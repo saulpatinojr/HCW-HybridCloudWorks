@@ -222,4 +222,33 @@ describe('the Overview and Alerts cards', () => {
       expect(slot.querySelector('[data-status]').getAttribute('data-status'), title).toBe(status);
     }
   });
+
+  // A jobs read that failed must not leave the header saying Healthy over a
+  // body that says the jobs could not be counted (#1491). Degraded, not
+  // unknown: worstStatus ranks unknown only when nothing else is known.
+  it('mark Operational Signals degraded when a jobs read failed or the day had a failed job', () => {
+    const quiet = {
+      queueBreachCount: 0,
+      publishFailureCount: 0,
+      orphanedGeneratedImages: 0,
+      failedJobs: [],
+    };
+    const statusOf = (signals) => {
+      const { unmount } = render(<OperationalSignalsCard signals={signals} />);
+      const slot = expectStatusTopRight(card('Operational Signals'));
+      const status = slot.querySelector('[data-status]').getAttribute('data-status');
+      unmount();
+      return status;
+    };
+    expect(statusOf({ ...quiet, jobs24h: { failed: 0, total: 3, unavailable: false } })).toBe(
+      'healthy'
+    );
+    expect(statusOf({ ...quiet, failedJobsUnavailable: true })).toBe('degraded');
+    expect(statusOf({ ...quiet, jobs24h: { failed: 0, total: 0, unavailable: true } })).toBe(
+      'degraded'
+    );
+    expect(statusOf({ ...quiet, jobs24h: { failed: 2, total: 9, unavailable: false } })).toBe(
+      'degraded'
+    );
+  });
 });

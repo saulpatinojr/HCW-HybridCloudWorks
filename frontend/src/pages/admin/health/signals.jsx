@@ -112,8 +112,15 @@ export function readinessStatus(readiness) {
 /** A count that is fine at zero and worth a look above it. */
 const countStatus = (count, above = 'degraded') => ((Number(count) || 0) > 0 ? above : 'healthy');
 
-/** The four tiles' words and the publish-failure count, worst first: the card's status. */
+/**
+ * The four tiles' words, the publish-failure count and the day's jobs, worst
+ * first: the card's status. A jobs read that failed is degraded, not unknown:
+ * worstStatus lets unknown count only when nothing else is known, so an
+ * unknown here would hide behind the healthy tiles and the header would say
+ * Healthy over a body that says it could not count (#1491).
+ */
 export function signalsStatus(signals) {
+  const jobsUnreadable = Boolean(signals?.failedJobsUnavailable || signals?.jobs24h?.unavailable);
   return worstStatus([
     countStatus(signals?.queueBreachCount),
     (signals?.oldestStagedHours || 0) > 72 ? 'degraded' : 'healthy',
@@ -121,6 +128,8 @@ export function signalsStatus(signals) {
     countStatus(signals?.orphanedGeneratedImages),
     countStatus(signals?.publishFailureCount),
     countStatus((signals?.failedJobs || []).length),
+    countStatus(signals?.jobs24h?.failed),
+    jobsUnreadable ? 'degraded' : 'healthy',
   ]);
 }
 

@@ -122,8 +122,11 @@ delete switch: the key has no delete route at all.
 The [Health page](https://hybridcloudworks.com/admin/health) shows the same key
 on its **Content agent (Koda)** card: whether a key exists and is active, when
 it was last used and rotated, which switches are off, and the refusals of the
-last day by reason (the content-free audit rows the API writes on every
-refusal). The card says when it could not look (the key record or the audit
+last day by reason. That count is of logged refusals only: the content-free
+audit rows the API writes when a call presented a value shaped like a site key
+and was refused. A call with no key, or with a value of another shape, is
+refused without a row (see "Refused calls" below), so a zero on the card does
+not mean no call was refused. The card says when it could not look (the key record or the audit
 rows could not be read) instead of showing "none" or a zero. The **Content
 agent** probe on its Checks tab gives the same verdict, and the five-minute
 pulse records it. The card counts refusals through the two fields the audit
