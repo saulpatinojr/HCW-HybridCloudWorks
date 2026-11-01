@@ -151,6 +151,42 @@ const SNAPSHOT = {
     publishFailureCount: 1,
     orphanedGeneratedImages: 2,
     lastSchedulerSuccessAt: { toDate: () => new Date('2026-04-12T09:00:00Z') },
+    failedJobsUnavailable: false,
+    jobs24h: {
+      since: '2026-04-11T09:00:00Z',
+      queued: 2,
+      running: 1,
+      succeeded: 7,
+      failed: 1,
+      other: 0,
+      total: 11,
+      unavailable: false,
+    },
+  },
+  agent: {
+    id: 'koda',
+    label: 'Koda',
+    key: {
+      present: true,
+      active: true,
+      createdAt: '2026-04-01T00:00:00Z',
+      rotatedAt: '2026-04-10T00:00:00Z',
+      revokedAt: null,
+      lastUsedAt: '2026-04-12T08:50:00Z',
+    },
+    sectionsOff: [{ id: 'admin.brain', label: 'Second Brain' }],
+    denials: {
+      since: '2026-04-11T09:00:00Z',
+      total: 3,
+      byReason: [
+        { reason: 'route-not-allowed', count: 2 },
+        { reason: 'wrong-key', count: 1 },
+      ],
+      lastAt: '2026-04-12T08:40:00Z',
+      bounded: false,
+      unavailable: false,
+    },
+    lastCheckedAt: '2026-04-12T09:00:00Z',
   },
 };
 
@@ -370,6 +406,60 @@ describe('the hub', () => {
 
     openTab('Alerts');
     expect(screen.getByText('No alerts in this filter.')).toBeInTheDocument();
+  });
+
+  it('shows the content agent, the day’s jobs and the scheduler’s last run on Overview (#1491)', async () => {
+    renderAt();
+    expect(await screen.findByText('Content agent (Koda)')).toBeInTheDocument();
+    const card = screen.getByTestId('content-agent-card');
+    expect(within(card).getByText('active')).toBeInTheDocument();
+    expect(within(card).getByText('Second Brain')).toBeInTheDocument();
+    expect(within(card).getByText('route-not-allowed')).toBeInTheDocument();
+    expect(within(card).getByText('3')).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: /Koda tab/ })).toHaveAttribute(
+      'href',
+      '/admin/ai-engine?tab=koda'
+    );
+    // The key itself never reaches the page: no hint, no hash field.
+    expect(JSON.stringify(SNAPSHOT.agent)).not.toContain('keyHash');
+    expect(screen.getByTestId('jobs-24h')).toHaveTextContent('11 total');
+    expect(screen.getByTestId('publishing-run')).toHaveTextContent('degraded');
+  });
+
+  it('says when the jobs or the denial reads could not be made, and explains a quiet scheduler (#1491)', async () => {
+    postJSON.mockImplementation(async (name) => {
+      if (name === 'getOpsHealthSnapshot') {
+        return {
+          ...SNAPSHOT,
+          digest: {
+            ...SNAPSHOT.digest,
+            publishingOps: {
+              ...SNAPSHOT.digest.publishingOps,
+              due: 0,
+              published: 0,
+              skipped: 0,
+              failed: 0,
+              status: 'success',
+            },
+          },
+          operationalSignals: {
+            ...SNAPSHOT.operationalSignals,
+            failedJobsUnavailable: true,
+            jobs24h: { ...SNAPSHOT.operationalSignals.jobs24h, unavailable: true, total: 0 },
+          },
+          agent: {
+            ...SNAPSHOT.agent,
+            denials: { ...SNAPSHOT.agent.denials, total: 0, byReason: [], unavailable: true },
+          },
+        };
+      }
+      return {};
+    });
+    renderAt();
+    expect(await screen.findByTestId('failed-jobs-unavailable')).toBeInTheDocument();
+    expect(screen.getByTestId('jobs-unavailable')).toBeInTheDocument();
+    expect(screen.getByText('could not be counted')).toBeInTheDocument();
+    expect(screen.getByTestId('publishing-nothing-due')).toHaveTextContent('Nothing was due');
   });
 
   it('renders a failed forge job with its error text on Health Overview within one refresh', async () => {

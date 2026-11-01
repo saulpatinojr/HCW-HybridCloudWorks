@@ -27,6 +27,7 @@ vi.mock('@/lib/publicApi', () => ({ fetchCloudPricing: vi.fn() }));
 import * as page from '@/lib/status';
 import {
   PROBES,
+  evaluateContentAgent,
   evaluateCosmos,
   evaluateForge,
   evaluateLinkRot,
@@ -126,6 +127,28 @@ const snapshot = (overrides = {}) => ({
     unresolvedSecrets: [],
     lastCheckedAt: minutesAgo(0),
   },
+  agent: {
+    id: 'koda',
+    label: 'Koda',
+    key: {
+      present: true,
+      active: true,
+      lastUsedAt: minutesAgo(40),
+      rotatedAt: null,
+      revokedAt: null,
+      createdAt: null,
+    },
+    sectionsOff: [{ id: 'admin.brain', label: 'Second Brain' }],
+    denials: {
+      since: minutesAgo(1440),
+      total: 2,
+      byReason: [{ reason: 'wrong-key', count: 2 }],
+      lastAt: minutesAgo(5),
+      bounded: false,
+      unavailable: false,
+    },
+    lastCheckedAt: minutesAgo(0),
+  },
   digest: {
     lastCheckedAt: minutesAgo(0),
     publishingOps: {
@@ -220,6 +243,7 @@ const PAIRS = {
   'link-rot': [evaluateLinkRot, pulse.checkLinkRot],
   forge: [evaluateForge, pulse.checkForge],
   'telegram-notify': [evaluateTelegramNotify, pulse.checkTelegramNotify],
+  'content-agent': [evaluateContentAgent, pulse.checkContentAgent],
 };
 
 const verdict = (r) => ({ status: r.status, summary: r.summary, detail: r.detail ?? null });

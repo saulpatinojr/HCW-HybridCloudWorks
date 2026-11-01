@@ -119,6 +119,13 @@ switch opens it depends on the storage container asked for: article images
 images follow Spotlight, and any other container answers `403`. There is no
 delete switch: the key has no delete route at all.
 
+The [Health page](https://hybridcloudworks.com/admin/health) shows the same key
+on its **Content agent (Koda)** card: whether a key exists and is active, when
+it was last used and rotated, which switches are off, and the refusals of the
+last day by reason (the content-free audit rows the API writes on every
+refusal). The **Content agent** probe on its Checks tab gives the same verdict,
+and the five-minute pulse records it.
+
 ## 5. Revoke the key
 
 1. Press **Revoke key** and confirm. Koda's next request is refused with

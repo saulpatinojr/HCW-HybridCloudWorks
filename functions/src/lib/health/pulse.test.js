@@ -9,6 +9,7 @@ import {
   AI_TEST_STALE_AFTER_MS,
   PUBLISHER_LATE_AFTER_MS,
   aiProvidersVerdict,
+  checkContentAgent,
   checkRuntimeConfig,
   checkScheduledPublishing,
   labAgentsFromRows,
@@ -42,6 +43,14 @@ const snapshot = (overrides = {}) => ({
   operationalSignals: { queueBreachCount: 0, publishFailureCount: 0, orphanedGeneratedImages: 0 },
   storage: { generatedImages: 12, bounded: false },
   forge: { updatedAt: minutesAgo(30), todayDate: '2026-10-08', forgedToday: 2 },
+  agent: {
+    id: 'koda',
+    label: 'Koda',
+    key: { present: true, active: true, lastUsedAt: minutesAgo(40), rotatedAt: null, revokedAt: null, createdAt: null },
+    sectionsOff: [],
+    denials: { since: minutesAgo(1440), total: 0, byReason: [], lastAt: null, bounded: false, unavailable: false },
+    lastCheckedAt: NOW.toISOString(),
+  },
   telegramNotifyState: { lab_agent_offline: { lastNotifiedAt: minutesAgo(90) } },
   ...overrides,
 });
@@ -139,7 +148,7 @@ describe('the pulse run', () => {
       },
     });
     const summary = await pulse(store).run();
-    expect(summary).toMatchObject({ checks: 19, recorded: 19, failures: 0 });
+    expect(summary).toMatchObject({ checks: 20, recorded: 20, failures: 0 });
 
     for (const id of [
       'cosmos',
@@ -153,6 +162,7 @@ describe('the pulse run', () => {
       'link-rot',
       'forge',
       'telegram-notify',
+      'content-agent',
       'lab-agents',
       'ai-providers',
       'mcp-servers',
@@ -176,8 +186,8 @@ describe('the pulse run', () => {
       lastBeatAt: NOW.toISOString(),
       intervalMs: PULSE_INTERVAL_MS,
       lateAfterMs: PULSE_LATE_AFTER_MS,
-      checks: 19,
-      recorded: 19,
+      checks: 20,
+      recorded: 20,
       failures: [],
     });
     expect(store.upsertDoc.mock.calls.at(-1)[1].id).toBe(PULSE_DOC_ID);
@@ -231,6 +241,37 @@ describe('the pulse run', () => {
 });
 
 describe('the pulse’s checks', () => {
+  it('judges the content agent by its key and the day’s refusals (#1491)', () => {
+    const base = snapshot();
+    expect(checkContentAgent(base, nowMs)).toMatchObject({
+      status: 'healthy',
+      summary: "Koda's key is active, last used 40 min ago; 0 refusals in the last day.",
+    });
+    // Refusals with an active key: something is calling wrong, worth a look.
+    const refused = snapshot();
+    refused.agent.denials = { ...refused.agent.denials, total: 3 };
+    refused.agent.sectionsOff = [{ id: 'admin.brain', label: 'Second Brain' }];
+    expect(checkContentAgent(refused, nowMs)).toMatchObject({
+      status: 'degraded',
+      summary: "Koda's key is active, last used 40 min ago; 3 refusals in the last day. 1 switch off.",
+    });
+    // A revoked key that nothing calls is quiet; one still being called is not.
+    const revoked = snapshot();
+    revoked.agent.key = { ...revoked.agent.key, active: false };
+    expect(checkContentAgent(revoked, nowMs).status).toBe('healthy');
+    revoked.agent.denials = { ...revoked.agent.denials, total: 1 };
+    expect(checkContentAgent(revoked, nowMs).status).toBe('degraded');
+    // No key yet is a fact, not a fault; a read that failed is unknown, not zero.
+    const none = snapshot();
+    none.agent.key = { present: false, active: false };
+    expect(checkContentAgent(none, nowMs)).toMatchObject({ status: 'healthy' });
+    const blind = snapshot();
+    blind.agent.denials = { ...blind.agent.denials, unavailable: true };
+    expect(checkContentAgent(blind, nowMs)).toMatchObject({ status: 'unknown' });
+    expect(checkContentAgent(blind, nowMs).summary).toContain('could not be counted');
+    expect(checkContentAgent(snapshot({ agent: undefined }), nowMs).status).toBe('unknown');
+  });
+
   it('calls the scheduler offline after three missed fifteen-minute runs', () => {
     const late = snapshot();
     late.digest.publishingOps.lastRunAt = new Date(nowMs - PUBLISHER_LATE_AFTER_MS - 60 * 1000).toISOString();

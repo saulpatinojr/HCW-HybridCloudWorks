@@ -15,6 +15,7 @@ import {
   evaluateRegistrySession,
   evaluateRuntimeConfig,
   evaluateStorage,
+  evaluateContentAgent,
 } from '../probeEvaluators';
 import { runBlob, runUnresolvedSecrets } from '../probeRunners';
 
@@ -33,6 +34,9 @@ const identityProbe = (entry) =>
     run: (ctx) => ctx.actions.rerunIdentity(),
     ...entry,
   });
+
+/** The Koda tab on the AI Engine: the key, its switches and the route list (ADR 0037, 0038). */
+const KODA = { to: '/admin/ai-engine?tab=koda', label: 'Koda tab' };
 
 export const PLATFORM_PROBES = [
   snapshotProbe({
@@ -75,6 +79,18 @@ export const PLATFORM_PROBES = [
     action: 'Seed the named key on Keys, or check the vault firewall and RBAC.',
     href: KEYS,
     evaluate: evaluateRuntimeConfig,
+  }),
+  snapshotProbe({
+    id: 'content-agent',
+    label: 'Content agent (Koda)',
+    hub: 'platform',
+    covers:
+      "Koda's key (present, active, last used), the admin switches that are off, and its refusals in the last day by reason.",
+    impact:
+      'Refusals with a live key mean Koda is calling something it may not; a revoked key being called means a stale copy is in use.',
+    action: 'Open the Koda tab: rotate or revoke the key, or turn a switch back on.',
+    href: KODA,
+    evaluate: evaluateContentAgent,
   }),
   liveProbe({
     id: 'unresolved-secrets',

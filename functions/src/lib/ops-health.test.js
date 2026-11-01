@@ -114,6 +114,24 @@ function opsStore() {
           { id: 'img-noid', contentId: '' },
         ];
       }
+      if (container === 'admin_audit_logs') {
+        expect(query).toContain("c.kind = 'agent-content-denial'");
+        expect(params?.[0]?.name).toBe('@since');
+        return [
+          { reason: 'wrong-key', at: '2026-08-07T02:00:00Z' },
+          { reason: 'route-not-allowed', at: '2026-08-07T03:10:00Z' },
+          { reason: 'wrong-key', at: '2026-08-07T01:00:00Z' },
+          { at: '2026-08-07T00:30:00Z' },
+        ];
+      }
+      if (container === 'jobs' && query.includes('GROUP BY')) {
+        return [
+          { status: 'succeeded', n: 7 },
+          { status: 'failed', n: 1 },
+          { status: 'queued', n: 2 },
+          { status: 'cancelled', n: 1 },
+        ];
+      }
       if (container === 'jobs') {
         return [
           {
@@ -132,6 +150,18 @@ function opsStore() {
       if (container === 'workflow_digests') return null;
       if (container === 'system') return { telegram: 'state' };
       if (container === 'content') return id === 'c-exists' ? { id } : null;
+      if (container === 'admin_config' && id === 'agent_content_key:koda') {
+        return {
+          id,
+          keyHash: 'never-in-the-answer',
+          keyHint: 'hcwk_abc',
+          createdAt: '2026-08-01T00:00:00.000Z',
+          rotatedAt: '2026-08-06T00:00:00.000Z',
+          lastUsedAt: '2026-08-07T03:00:00.000Z',
+          revokedAt: null,
+          capabilities: { 'admin.brain': false },
+        };
+      }
       if (container === 'admin_config' && id === 'forge_stats') {
         return {
           updatedAt: '2026-08-07T01:00:00.000Z',
@@ -295,10 +325,75 @@ describe('getOpsHealthSnapshot', () => {
       lastSchedulerSuccessAt: 'run-ts',
     });
     expect(body.operationalSignals.oldestStagedHours).toBe(24); // staged Live item excluded
+    // The last day's jobs by status (#1491): the GROUP BY read, with the
+    // statuses the card does not name folded into `other`.
+    expect(body.operationalSignals.failedJobsUnavailable).toBe(false);
+    expect(body.operationalSignals.jobs24h).toMatchObject({
+      queued: 2,
+      running: 0,
+      succeeded: 7,
+      failed: 1,
+      other: 1,
+      total: 11,
+      unavailable: false,
+    });
+    // The content agent (#1491): key state without the hint or the hash, the
+    // switches off by label, the day's refusals by reason, most first.
+    expect(body.agent).toEqual({
+      id: 'koda',
+      label: 'Koda',
+      key: {
+        present: true,
+        active: true,
+        createdAt: '2026-08-01T00:00:00.000Z',
+        rotatedAt: '2026-08-06T00:00:00.000Z',
+        revokedAt: null,
+        lastUsedAt: '2026-08-07T03:00:00.000Z',
+      },
+      sectionsOff: [{ id: 'admin.brain', label: 'Second Brain' }],
+      denials: {
+        since: new Date(NOW.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+        total: 4,
+        byReason: [
+          { reason: 'wrong-key', count: 2 },
+          { reason: 'route-not-allowed', count: 1 },
+          { reason: 'unstated', count: 1 },
+        ],
+        lastAt: '2026-08-07T03:10:00Z',
+        bounded: false,
+        unavailable: false,
+      },
+      lastCheckedAt: NOW.toISOString(),
+    });
+    expect(JSON.stringify(body)).not.toContain('never-in-the-answer');
+    expect(JSON.stringify(body)).not.toContain('hcwk_abc');
     expect(body.telegramNotifyState).toEqual({
       telegram: 'state',
       lastCheckedAt: NOW.toISOString(),
     });
+  });
+
+  it('says when the failed-jobs, jobs-by-status and denial reads could not be made, instead of reporting zero (#1491)', async () => {
+    const store = opsStore();
+    const inner = store.queryDocs.getMockImplementation();
+    store.queryDocs.mockImplementation(async (container, query, params) => {
+      if (container === 'jobs' || container === 'admin_audit_logs') throw new Error('container offline');
+      return inner(container, query, params);
+    });
+    const innerRead = store.readDoc.getMockImplementation();
+    store.readDoc.mockImplementation(async (container, id, pk) => {
+      if (container === 'admin_config' && id === 'agent_content_key:koda') return null;
+      return innerRead(container, id, pk);
+    });
+    const h = createOpsHealthHandlers({ guard: allowGuard(), store, ...fixed });
+    const body = JSON.parse((await h.getOpsHealthSnapshot(makeRequest({}), context)).body);
+    expect(body.operationalSignals.failedJobs).toEqual([]);
+    expect(body.operationalSignals.failedJobsUnavailable).toBe(true);
+    expect(body.operationalSignals.jobs24h).toMatchObject({ total: 0, unavailable: true });
+    expect(body.agent.key).toMatchObject({ present: false, active: false });
+    // No record: every switch reads as on (keys.js defaults), so none is off.
+    expect(body.agent.sectionsOff).toEqual([]);
+    expect(body.agent.denials).toMatchObject({ total: 0, byReason: [], unavailable: true });
   });
 
   it('derives readiness from the config stamp and the unresolved references, not a constant', async () => {
