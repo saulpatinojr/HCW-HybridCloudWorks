@@ -786,8 +786,13 @@ describe("a draft never reaches a public read", () => {
     ).toBe(false);
   });
 
-  it("is not previewable through the signed staging link", () => {
-    expect(PREVIEWABLE_STATUSES.has(DRAFTS_STAGE_STATUS)).toBe(false);
+  it("is previewable only through the signed staging link, never as a public read", () => {
+    // Owner request 2026-11-01 (#1477): every draft answer carries a signed
+    // `previewUrl`, so the Drafts stage is previewable. The link is still an
+    // HMAC token that expires; without it the draft stays out of every
+    // public read, which the assertions above and below hold.
+    expect(PREVIEWABLE_STATUSES.has(DRAFTS_STAGE_STATUS)).toBe(true);
+    expect(isPublicDocument({ contentStatus: DRAFTS_STAGE_STATUS })).toBe(false);
   });
 
   it("is in no Content Queue filter and on no dashboard counter", () => {

@@ -246,7 +246,9 @@ in-editor preview stops rendering with the wrong typography.
 
 - **Signed preview route** `GET /api/public/preview/{contentId}?t={token}`:
   token = HMAC-SHA256(`PREVIEW_SIGNING_SECRET`, `contentId.exp`), 72 h
-  expiry, serves only `{forge_ready, editing, approved}`, and answers
+  expiry, serves only `{drafting, in_review, forge_ready, editing, approved}`
+  (the two Drafts-stage statuses joined on 2026-11-01, when every draft answer
+  gained a signed `previewUrl`), and answers
   invalid/expired/missing identically (404) — preserving the public-reads
   invariant in spirit. The first token-signing code in `functions/src`; the
   route is a deliberate, justified addition to `PUBLIC_ROUTES` in

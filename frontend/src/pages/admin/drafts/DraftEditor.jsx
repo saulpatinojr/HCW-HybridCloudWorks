@@ -200,6 +200,14 @@ export default function DraftEditor({
         </div>
 
         <StageNote draft={draft} />
+        {draft.previewUrl ? (
+          <p className="text-sm text-muted-foreground">
+            <a href={draft.previewUrl} target="_blank" rel="noreferrer" className="underline">
+              Preview as the public page would show it
+            </a>{' '}
+            (the link is signed and expires after 72 hours).
+          </p>
+        ) : null}
 
         <ActionBar
           draft={draft}
