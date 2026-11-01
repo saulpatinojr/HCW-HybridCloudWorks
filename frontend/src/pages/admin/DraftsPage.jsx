@@ -105,12 +105,6 @@ export default function DraftsPage() {
   const [searchParams] = useSearchParams();
   const linkedId = searchParams.get('draft');
   const linkOpened = useRef(false);
-  useEffect(() => {
-    if (!linkedId || linkOpened.current || list.loading) return;
-    linkOpened.current = true;
-    if (editor.current?.id !== linkedId) editor.open(linkedId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- open once, when the list first loads
-  }, [linkedId, list.loading]);
   const writes = useDraftWrites({ editor, list, toast });
   const markdownDrafts = useMarkdownDrafts({ list, toast });
   // A pending switch away from unsaved changes: () => void, run on confirm.
@@ -130,6 +124,17 @@ export default function DraftsPage() {
     if (dirty) setPendingSwitch(() => run);
     else run();
   };
+  useEffect(() => {
+    if (!linkedId || linkOpened.current || list.loading) return;
+    linkOpened.current = true;
+    // Through the same guard as an in-page switch: if the owner started a new
+    // draft while the list was still loading, the link asks before replacing
+    // it. Deferred a tick so the guard's state change is not made inside the
+    // effect body itself.
+    if (editor.current?.id !== linkedId)
+      queueMicrotask(() => guardSwitch(() => editor.open(linkedId)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open once, when the list first loads
+  }, [linkedId, list.loading]);
 
   const handleSelect = (id) => {
     if (current?.id !== id) guardSwitch(() => editor.open(id));

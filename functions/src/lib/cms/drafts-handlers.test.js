@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
-import { LIST_QUERY, createDraftsHandlers } from "./drafts-handlers.js";
+import { LIST_QUERY, createDraftsHandlers, draftLinks } from "./drafts-handlers.js";
 import { DRAFTS_STAGE_STATUS } from "./drafts.js";
 import {
   MAX_MARKDOWN_BYTES,
@@ -1221,5 +1221,17 @@ describe("every draft answer carries its links (owner request 2026-11-01)", () =
     // An unresolved Key Vault reference reads as unset.
     const unresolved = setup({ env: { PREVIEW_SIGNING_SECRET: "@Microsoft.KeyVault(SecretUri=https://kv/secrets/x)" } });
     expect((await created(unresolved.handlers)).previewUrl).toBeNull();
+  });
+
+  it("signs no preview link for a status the preview route would refuse (a published article from Drafts is listed, not previewed)", () => {
+    const deps = { env: { PREVIEW_SIGNING_SECRET: "preview-secret-for-tests" }, now: () => new Date("2026-11-01T06:00:00.000Z") };
+    expect(draftLinks({ id: "d-live", contentStatus: "published" }, deps).previewUrl).toBeNull();
+    expect(draftLinks({ id: "d-live", contentStatus: "published_blog" }, deps).previewUrl).toBeNull();
+    expect(draftLinks({ id: "d-live", contentStatus: "archived" }, deps).previewUrl).toBeNull();
+    for (const status of ["drafting", "in_review", "forge_ready", "editing", "approved"]) {
+      expect(draftLinks({ id: "d-1", contentStatus: status }, deps).previewUrl, status).toContain("/preview/d-1?t=");
+    }
+    // The edit link is there either way: the Drafts page lists the article.
+    expect(draftLinks({ id: "d-live", contentStatus: "published" }, deps).editUrl).toContain("?draft=d-live");
   });
 });

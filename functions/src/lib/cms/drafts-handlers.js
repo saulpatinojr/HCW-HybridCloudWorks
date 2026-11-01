@@ -62,7 +62,8 @@ import {
   readMarkdownRequest,
 } from "./drafts-markdown.js";
 import { buildDedupFields, normalizeTitleForDedup } from "./content-dedup.js";
-import { previewPathFor } from "../public-preview.js";
+import { PREVIEWABLE_STATUSES, previewPathFor } from "../public-preview.js";
+import { normalizeCurrentStatusForBlogOnly } from "./content-update-validation.js";
 import {
   TaxonomyFieldError,
   validateTaxonomyFieldsWithStore,
@@ -771,16 +772,20 @@ function previewSecretOf(env) {
  *               the owner or an admin edits it;
  *   previewUrl  the public preview page with a signed, expiring token
  *               (public-preview.js: 72 h, bound to this id), or null while
- *               PREVIEW_SIGNING_SECRET is not seeded.
+ *               PREVIEW_SIGNING_SECRET is not seeded, and null for a status
+ *               the preview route would refuse anyway (a Drafts-origin
+ *               article that has been published is still listed here, and
+ *               its live page is the place to read it).
  *
  * Minted per answer, so a list of fifty drafts is fifty fresh links; an old
  * answer's link simply expires. Nothing is stored.
  */
 export function draftLinks(doc, deps) {
   if (!doc?.id) return { editUrl: null, previewUrl: null };
-  const path = previewPathFor(previewSecretOf(deps.env), doc.id, {
-    now: () => deps.now().getTime(),
-  });
+  const previewable = PREVIEWABLE_STATUSES.has(normalizeCurrentStatusForBlogOnly(doc.contentStatus));
+  const path = previewable
+    ? previewPathFor(previewSecretOf(deps.env), doc.id, { now: () => deps.now().getTime() })
+    : "";
   return {
     editUrl: `${SITE_ORIGIN}/admin/drafts?draft=${encodeURIComponent(doc.id)}`,
     previewUrl: path ? `${SITE_ORIGIN}${path}` : null,
