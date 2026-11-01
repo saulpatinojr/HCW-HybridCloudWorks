@@ -130,9 +130,14 @@ audit log.
   `revoked-key`, `capability-off`, `rate-limited`). A call with no key, or
   with a value of any other shape in those headers (`hcwk_bad` included), is
   refused without a row, so internet scanners do not fill the log. The key
-  itself is never in a row. Many 401s with no rows means the connector is
-  sending the key somewhere the site does not read (the address, or a
-  header other than `Authorization`, `X-API-Key` and `X-Agent-Key`).
+  itself is never in a row. Many 401s with no rows means the site never saw a
+  value shaped like a key: the connector sends it somewhere the site does not
+  read (the address, or a header other than `Authorization`, `X-API-Key` and
+  `X-Agent-Key`), or the value in the header is not the whole key (cut short,
+  or wrapped in quotes), or a non-empty `Authorization` holds something else
+  (a stale token, for example), which is read instead of a good `X-API-Key`
+  beside it. Check the header name and the value before moving or rotating
+  the key: part 2's command, run with the key Muse holds, says which.
 - **Key events:** rows with `action` `agent_content_key_generated`,
   `agent_content_key_rotated`, `agent_content_capabilities_changed` or
   `agent_content_key_revoked`, each with the key's first characters and who
