@@ -147,3 +147,54 @@ CI run, [run 40484003062](https://github.com/saulpatinojr/HCW-HybridCloudWorks/a
 The row is not on the longest path, so nobody waits longer, and runner time is
 free on a public repository. If it ever matters, the guard can be skipped where the row's own
 `Test` step already runs it.
+
+## Addendum, 2026-11-01: what the skip looks like on a pull request
+
+The "Risk accepted" line above said the roll-up's behaviour on a pull request
+where no analysis uploads results was unverified. Two pull requests on
+2026-11-01 answered it, and also showed a side effect this record had not
+named. Nothing about the decision changes; this is written so the next reader
+does not spend time on a warning that is expected.
+
+- **When some languages skip, GitHub posts a warning.** On
+  [#1484](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1484),
+  which changed JavaScript, JSON, Markdown and YAML only, the `actions` and
+  `python` jobs skipped their analysis
+  ([Analyze actions](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/41284680765/job/124783471447),
+  [Analyze python](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/41284680765/job/124783471719),
+  both green with `skipping analysis, still reporting this context` in the
+  log). GitHub's own `CodeQL` status (the roll-up that code scanning posts
+  after results arrive) then reported `2 configurations not found`, with the
+  text "Code scanning cannot determine the alerts introduced by this pull
+  request, because 2 configurations present on `refs/heads/main` were not
+  found" and the two `/language:*` categories, and its conclusion was
+  `neutral`
+  ([the status](https://github.com/saulpatinojr/HCW-HybridCloudWorks/runs/124784100043)).
+  The meaning is only that those two analyses ran on `main` and not on this
+  pull request, which is exactly the skip. A pull request that changes no
+  file of a language cannot introduce an alert in that language, and `main`
+  is still analysed in full on every merge and on the weekly schedule, so no
+  coverage is lost.
+- **When every language skips, no roll-up is posted and nothing hangs.** On
+  [#1458](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1458),
+  which changed one JSON file, all three Analyze jobs skipped and reported
+  green
+  ([run 41259169180](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/41259169180)),
+  and the commit carries no `CodeQL` status at all. The roll-up is not one of
+  the ruleset's required checks (read from the `Default` ruleset on
+  2026-11-01: the three `Analyze …` contexts are required, `CodeQL` is not),
+  so its absence, like its `neutral` conclusion, does not hold a merge. The
+  risk named above did not materialise.
+- **No official page explains the warning.** GitHub's troubleshooting hub
+  ([Troubleshoot analysis errors](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors))
+  and its
+  [Results are different than expected](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/results-different-than-expected)
+  page cover stale configurations, not this message, as of 2026-11-01. The
+  comment above the `Detect language changes` step in `codeql.yml` now says
+  the same thing in short, so the explanation is in the file a reader opens
+  first.
+
+The alternative, analysing every language on every pull request so the
+warning never appears, is the cost this decision was taken to avoid, and the
+warning carries no information the skip log does not. It is accepted and
+documented rather than removed.

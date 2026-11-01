@@ -73,6 +73,19 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # WHAT THE SKIP LOOKS LIKE ON THE PULL REQUEST. When a language's job
+      # skips, it uploads no results for its category, and GitHub's own
+      # "CodeQL" status (the roll-up code scanning posts, not one of the
+      # ruleset's required checks) says so: a Warning reading "Code scanning
+      # cannot determine the alerts introduced by this pull request, because N
+      # configurations present on refs/heads/main were not found", listing the
+      # skipped /language:* categories, with the status itself neutral. That is
+      # this skip, not a broken scan: a pull request that changes no file of a
+      # language cannot add an alert in that language, and main is still
+      # analysed in full on every merge and every Monday. When every language
+      # skips, no "CodeQL" status is posted at all and the three Analyze
+      # contexts still report green (seen on #1458, a JSON-only change). Seen
+      # with two of three skipped on #1484; the history is in ADR 0026.
       - name: Detect language changes
         id: changes
         env:
