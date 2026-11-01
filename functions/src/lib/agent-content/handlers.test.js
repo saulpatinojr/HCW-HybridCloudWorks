@@ -440,6 +440,17 @@ describe('a key whose Read drafts switch is off', () => {
     );
     expect(stale.status).toBe(412);
     expect(JSON.stringify(stale.body)).not.toContain(FIELDS.body);
+    // The stale answer's `current` summary carries no preview token either.
+    expect(stale.body.current.previewUrl).toBeNull();
+    expect(stale.body.current.etag).toBeDefined();
+
+    // The markdown route answers with a summary (no fields), and it carries no preview token.
+    const markdown = '---\ntitle: From markdown, switch off\n---\nA body only the page may read.';
+    const imported = parse(await handlers.createDraftFromMarkdown(request({ body: { markdown } }), context));
+    expect(imported.status).toBe(201);
+    expect(imported.body.draft.previewUrl).toBeNull();
+    expect(imported.body.draft.editUrl).toContain('/admin/drafts?draft=');
+    expect(imported.body.draft.bodyWithheld).toBeUndefined();
   });
 
   it('with the switch on, a write answers with the text as the page would see it', async () => {
