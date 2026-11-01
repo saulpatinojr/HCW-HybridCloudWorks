@@ -57,10 +57,18 @@ jobs:
 
       - name: Read the Drills table
         id: drill
+        # `|| code=$?` IS LOAD-BEARING. With no `shell:`, GitHub runs this step
+        # as `bash -e`, which stops at the first failing command. A `code=$?`
+        # on the next line never ran when the drill was overdue (exit 1) or the
+        # table unreadable (exit 2): the step failed before writing `exit=`, so
+        # the two steps below were skipped and no issue was opened (run
+        # 38279975200, 2026-10-12). A command on the left of `||` is exempt
+        # from -e. scripts/workflow-exit-code-steps.test.mjs runs this block
+        # under bash -e and is the tripwire.
         run: |
           set -uo pipefail
-          node scripts/check-drill-age.mjs --summary "${RUNNER_TEMP}/drill.md"
-          code=$?
+          code=0
+          node scripts/check-drill-age.mjs --summary "${RUNNER_TEMP}/drill.md" || code=$?
           echo "exit=${code}" >> "$GITHUB_OUTPUT"
           cat "${RUNNER_TEMP}/drill.md" >> "$GITHUB_STEP_SUMMARY"
           exit 0

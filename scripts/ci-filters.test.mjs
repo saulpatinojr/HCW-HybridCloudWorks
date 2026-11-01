@@ -155,6 +155,13 @@ const REVIEWED_READS = [
       'and it reads the pin file that version-floors.json names (lab-host/ansible/group_vars/all.yml, under lab-host/, which the filter matches).',
   },
   {
+    file: 'scripts/workflow-exit-code-steps.test.mjs',
+    expression: "readFileSync(join(WORKFLOWS, file), 'utf8')",
+    reason:
+      'Reads every workflow in .github/workflows (it lists the folder) to check no step reads an exit code where bash -e ' +
+      'stops the step first. The scripts filter matches the workflows folder, so a change to any of them runs it.',
+  },
+  {
     file: 'scripts/ideas/idea-notes.test.mjs',
     expression: 'readdirSync(folder)',
     reason: 'Lists docs/content before and after running the promote script and checks the two lists match. It compares the folder with itself, so what is in it does not matter.',
