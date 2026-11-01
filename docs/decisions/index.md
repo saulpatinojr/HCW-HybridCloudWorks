@@ -19,9 +19,10 @@ twice, first to the deferred Container Apps CI runner record and then to Key Vau
 before this rule was written down; both records are kept and marked so the collision cannot be
 mistaken for a revision. Accepted ADRs are immutable except for spelling, links, status, and a dated
 addendum at the end of the record that reports what happened after acceptance (a risk that did or did
-not materialise, a follow-up closed, a limit found) without changing the decision; ADRs 0025 and 0026
-carry such addenda. A changed decision gets a new ADR that supersedes the old one, never an addendum.
-Pull requests implementing architecture
+not materialise, a follow-up closed, a limit found) without changing the decision; ADR 0026 carries
+two such addenda. A changed decision gets a new ADR that supersedes the old one, never an addendum;
+ADR 0025's addendum of 2026-08-30 changed its decision in place before this sentence was written and
+is kept as the one historical exception. Pull requests implementing architecture
 must link the applicable ADRs. If no ADR applies, the pull request must say why the change is not
 architecturally significant.
 
