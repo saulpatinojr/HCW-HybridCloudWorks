@@ -77,6 +77,7 @@ jobs:
   copilot-setup-steps:
     name: Sign in to Azure and mint the GitHub read token
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.6 min; Copilot allows at most 59 (#1441)
     # Declaring the environment is what puts `:environment:copilot` in the OIDC
     # subject (see infra/oidc.tf github_copilot_review_environment).
     environment: copilot

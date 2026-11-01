@@ -118,6 +118,7 @@ jobs:
   check:
     name: Is production behind main?
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.4 min, Oct 2026 (#1441)
     # For TFC_TOKEN, and nothing else — see the header. The `workflows` job
     # below reads only this repository's run history and stays outside it.
     environment: automation
@@ -163,6 +164,7 @@ jobs:
   workflows:
     name: Can every workflow still succeed?
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.6 min, Oct 2026 (#1441)
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

@@ -26,14 +26,27 @@ import { checkRepoDraftPath, repoDraftContentId } from "./repo-draft.js";
 const FILE = "---\ntitle: T\ntags: [a, b]\n---\n\nBody\n";
 
 describe("the draft origins", () => {
-  it("add vault and paste beside the two that exist, with the old values unchanged", () => {
+  it("add vault, paste and agent beside the two that exist, with the old values unchanged", () => {
     expect(DRAFT_ORIGINS).toEqual({
       site: "drafts",
       repo: "repo-import",
       vault: "vault",
       paste: "paste",
+      // The Agent Content API's drafts (ADR 0037); forced by its handlers,
+      // never chosen by a request body.
+      agent: "agent",
     });
+    // `agent` is not a value a body may send; it reaches a draft only as the
+    // forced origin the Agent Content API's handlers pass.
     expect(MARKDOWN_ORIGINS).toEqual({ vault: "vault", paste: "paste" });
+    expect(() => readMarkdownRequest({ markdown: "x", origin: "agent" })).toThrow(
+      /origin must be "vault"/,
+    );
+    expect(readMarkdownRequest({ markdown: "x", origin: "vault" }, { origin: "agent" })).toEqual({
+      markdown: "x",
+      draftOrigin: "agent",
+    });
+    expect(readMarkdownRequest({ markdown: "x" }, { origin: "agent" }).draftOrigin).toBe("agent");
   });
 
   it("buildNewDraftDocument stores the origin it is given, and 'drafts' by default", () => {
