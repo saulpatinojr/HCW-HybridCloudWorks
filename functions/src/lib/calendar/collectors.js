@@ -7,6 +7,7 @@
  * 4); its collector treats "container not found" as "nothing there".
  */
 import { collectAlerts } from '../calendar-alerts/collector.js';
+import { collectRenewals } from '../cost/collector.js';
 import {
   PER_SOURCE_LIMIT,
   dayParams,
@@ -323,4 +324,6 @@ export const COLLECTORS = Object.freeze({
   audio: collectListenAndLearnReleases,
   // The owner's own dated alerts (lib/calendar-alerts); read-only, like every source.
   alert: collectAlerts,
+  // Subscription renewals from the Cost page's ledger (lib/cost); read-only too.
+  renewal: collectRenewals,
 });

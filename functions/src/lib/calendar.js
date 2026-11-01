@@ -48,6 +48,7 @@ export const CALENDAR_KINDS = Object.freeze([
   'ambassador',
   'audio',
   'alert',
+  'renewal',
 ]);
 
 /** The longest window one read may ask for: a quarter, with room for the grid's padding. */

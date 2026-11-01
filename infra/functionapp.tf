@@ -426,6 +426,18 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # reference its own attributes from inside its own arguments.
     "FUNCTION_APP_RESOURCE_ID" = "/subscriptions/${var.subscription_app}/resourceGroups/${azurerm_resource_group.app["web"].name}/providers/Microsoft.Web/sites/${var.function_app_name}"
 
+    # The scopes the Cost page reads (ADR 0039, functions/src/lib/cost/azure.js):
+    # the two subscriptions that carry a budget (budget.tf) and the AI resource
+    # group with its own (foundry.tf). Not a secret; the app already holds the
+    # application subscription in FUNCTION_APP_RESOURCE_ID above. The page shows
+    # each by its label and name, never the subscription id. What the app may
+    # read there is the Cost Management Reader grant in budget.tf.
+    "COST_SCOPES" = jsonencode([
+      { id = "app", label = "Application subscription", kind = "subscription", name = "sub-app-site-prod-cus", scope = "/subscriptions/${var.subscription_app}" },
+      { id = "mgmt", label = "Platform Management subscription", kind = "subscription", name = "sub-plat-mgmt-prod-cus", scope = "/subscriptions/${var.subscription_mgmt}" },
+      { id = "foundry", label = "Microsoft Foundry (AI resource group)", kind = "resourceGroup", name = azurerm_resource_group.app["ai"].name, scope = azurerm_resource_group.app["ai"].id },
+    ])
+
     "ENTRA_TENANT_ID" = var.entra_tenant_id
     # The API's OWN audience, not the SPA's client id. verify-token.js refuses to
     # start without it — an unset audience makes jsonwebtoken SKIP the audience

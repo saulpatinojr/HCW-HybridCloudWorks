@@ -33,6 +33,17 @@ application, Platform Management, Platform Connectivity. Cloudflare, Hostinger
 and the external AI provider APIs are shown separately because they are not
 billed by Azure and no Azure budget can see them.
 
+> **Live figures since 2026-11-01.** The admin portal's
+> [Cost page](../runbooks/cost.md) shows this month's spend against each
+> budget, Azure's forecast for the month, the AI usage estimate and credits,
+> and a hand-kept ledger of the subscriptions paid outside Azure (Cloudflare,
+> the domain host, the AI provider plans), with alerts
+> ([ADR 0039](../decisions/0039-cost-page.md)). This page stays the record of
+> what was measured and decided; the Cost page is where to look today. It
+> reads Azure only once the owner has granted the Function App's identity
+> Cost Management Reader on the two subscriptions (the runbook has the
+> commands).
+
 ## Corrected 2026-08-25
 
 The Go-Live readiness review read this page against `infra/*.tf` and found it
