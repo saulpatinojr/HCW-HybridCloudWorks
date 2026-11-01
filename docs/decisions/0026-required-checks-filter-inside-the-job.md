@@ -230,4 +230,6 @@ warning never stays, is the cost this decision was taken to avoid, and the
 warning carries no information the skip log does not. It is accepted and
 documented rather than removed, and the accepted risk is recorded where this
 repository keeps them, in the "Accepted risks" table of
-[`TODO.md`](../../TODO.md).
+[`TODO.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/TODO.md)
+(linked by its GitHub address, because the docs site build rejects a relative
+link to a file outside `docs/`).
