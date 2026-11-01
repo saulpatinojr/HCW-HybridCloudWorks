@@ -96,9 +96,9 @@ function respond({ drafts = [view(), DOCKER], open = {} } = {}) {
  * The Drafts page with a link to the Review Queue beside it and a route for it,
  * so a navigation away from unsaved work has somewhere to land.
  */
-function renderPage() {
+function renderPage(path = '/admin/drafts') {
   return render(
-    <MemoryRouter initialEntries={['/admin/drafts']}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route
           path="/admin/drafts"
@@ -177,6 +177,17 @@ describe('DraftsPage', () => {
       await within(preview).findByRole('heading', { name: 'Management groups', level: 2 })
     ).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Saved');
+  });
+
+  it('opens the draft a ?draft= link names once the list has loaded, and shows its preview link', async () => {
+    const linked = view({ previewUrl: 'https://hybridcloudworks.com/preview/d-1?t=1.sig' });
+    respond({ drafts: [linked, DOCKER] });
+    renderPage(`/admin/drafts?draft=${encodeURIComponent(linked.id)}`);
+    const title = await screen.findByLabelText('Title');
+    expect(title).toHaveValue(FIELDS.title);
+    const preview = screen.getByRole('link', { name: /Preview as the public page would show it/ });
+    expect(preview).toHaveAttribute('href', linked.previewUrl);
+    expect(preview).toHaveAttribute('target', '_blank');
   });
 
   it('marks an edit unsaved, saves it with the etag, and shows it saved', async () => {

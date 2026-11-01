@@ -61,10 +61,14 @@ export const LIMITS = Object.freeze({
 const canRead = (record) => record?.capabilities?.['drafts.read'] !== false;
 
 /**
- * The same answer without the draft's text: `draft.fields` (the eight editor
- * fields, body included) is replaced by `bodyWithheld: true`. The summary
- * fields (id, title, stage, etag, actions) stay, because a caller that may
- * write needs the etag to write again.
+ * The same answer without the draft's text. On every draft summary the answer
+ * carries (`draft`, or `current` on a stale write), `fields` (the eight
+ * editor fields, body included) is replaced by `bodyWithheld: true` when it
+ * was there, and `previewUrl` is nulled whenever it is there, because the
+ * signed preview link shows the body to whoever holds it and would hand back
+ * what the switch withholds. The summary fields (id, title, stage, etag,
+ * actions) and `editUrl` (an admin sign-in, not a token) stay, because a
+ * caller that may write needs the etag to write again.
  */
 export function withoutBody(response) {
   if (!response || typeof response.body !== 'string') return response;
@@ -74,9 +78,24 @@ export function withoutBody(response) {
   } catch {
     return response;
   }
-  if (!parsed || typeof parsed !== 'object' || !parsed.draft || !('fields' in parsed.draft)) return response;
-  const { fields: _withheld, ...rest } = parsed.draft;
-  return { ...response, body: JSON.stringify({ ...parsed, draft: { ...rest, bodyWithheld: true } }) };
+  if (!parsed || typeof parsed !== 'object') return response;
+  let changed = false;
+  const next = { ...parsed };
+  for (const key of ['draft', 'current']) {
+    const summary = parsed[key];
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary)) continue;
+    const { fields: _withheld, ...rest } = summary;
+    const redacted = {
+      ...rest,
+      ...('fields' in summary ? { bodyWithheld: true } : {}),
+      ...('previewUrl' in rest ? { previewUrl: null } : {}),
+    };
+    if ('fields' in summary || 'previewUrl' in rest) {
+      next[key] = redacted;
+      changed = true;
+    }
+  }
+  return changed ? { ...response, body: JSON.stringify(next) } : response;
 }
 
 /**

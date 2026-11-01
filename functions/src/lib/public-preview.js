@@ -87,8 +87,14 @@ export function projectPreviewItem(doc) {
   return item;
 }
 
-/** Statuses a preview link may show. Keep in lockstep with the wiki Phase 5 spec. */
-export const PREVIEWABLE_STATUSES = new Set(['forge_ready', 'editing', 'approved']);
+/**
+ * Statuses a preview link may show. Keep in lockstep with the wiki Phase 5
+ * spec. `drafting` and `in_review` joined on 2026-11-01 (owner request): every
+ * draft answer now carries a signed `previewUrl`, so the Drafts stage must be
+ * previewable; the link is still signed, still expires, and still shows the
+ * draft only as the public page would.
+ */
+export const PREVIEWABLE_STATUSES = new Set(['drafting', 'in_review', 'forge_ready', 'editing', 'approved']);
 
 /** Token for a caller-chosen expiry. Exposed for verification; prefer buildPreviewToken. */
 export function signPreviewToken(secret, contentId, expMs) {
@@ -101,6 +107,16 @@ export function signPreviewToken(secret, contentId, expMs) {
 /** The token the notifier embeds in a staging link: 72 h from now. */
 export function buildPreviewToken(secret, contentId, { now = Date.now, ttlMs = PREVIEW_TTL_MS } = {}) {
   return signPreviewToken(secret, contentId, now() + ttlMs);
+}
+
+/**
+ * The site path of a preview link, `/preview/{id}?t={token}`, or null when no
+ * secret is configured (the link would only ever answer 404). One place to
+ * spell it, for the notifier and the draft answers.
+ */
+export function previewPathFor(secret, contentId, options = {}) {
+  if (!secret || !contentId) return null;
+  return `/preview/${encodeURIComponent(contentId)}?t=${encodeURIComponent(buildPreviewToken(secret, contentId, options))}`;
 }
 
 /**
