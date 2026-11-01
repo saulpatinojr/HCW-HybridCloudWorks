@@ -1023,9 +1023,9 @@ describe('DECLARED', () => {
   });
 
   it('prunes the stateful-rule and export-latency entries once applied (#1207, #964, #970)', () => {
-    // timer_overdue left this list when #1302 declared the rule again (one
-    // row more, the test above); it returns once that change has applied
-    // and the entry is deleted.
+    // timer_overdue left this list while #1302, the Second Brain and #1403
+    // declared the rule again (three rows more); those applied and were
+    // deleted on 2026-11-01, so it is back.
     const addresses = DECLARED.map((entry) => entry.address);
     for (const name of [
       'lab_hybrid_backup_missing_coder',

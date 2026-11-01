@@ -283,11 +283,16 @@ export const SSH_LOGIN_ALERT_DESCRIPTION =
   "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (and, while lab_ssh_loopback_only is set, through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953.";
 
 /**
- * `local.timer_schedules` as applied: the 26 rows the live alert-timer-overdue
- * carried when #964 read it back on 2026-10-15, unchanged since. Pinned
- * rather than read from the tree, as #1009 did, so a timer added while the
- * #1302 declaration below waits makes assert-expected-plan.test.mjs fail
- * instead of moving `before` to a query Azure never held.
+ * `local.timer_schedules` as applied: the 29 rows the live alert-timer-overdue
+ * carries. 26 of them are what #964 read back on 2026-10-15; the other three
+ * (ambassadorAudienceMonthly, brainIndexReconcile, sweepVisitorSessions) were
+ * declared by #1302, the Second Brain and #1403 and folded in on 2026-11-01,
+ * when the plan check on the run for 1ccc72a (actions run 41200891363) showed
+ * no diff on the rule, whose query infra/ renders unconditionally. Pinned
+ * rather than read from the tree, as #1009 did, so a timer added while a
+ * declaration of this rule waits below makes assert-expected-plan.test.mjs
+ * fail instead of moving `before` to a query Azure never held; with nothing
+ * declared, the test holds this list equal to the tree's rows.
  */
 export const TIMER_SCHEDULES_APPLIED = [
   ["ambassadorAudienceMonthly", "1d", "2026-01-01 06:45"],
@@ -522,7 +527,9 @@ export const DECLARED = [
   //   TIMER_SCHEDULES_APPLIED above, so a later row is declared against the
   //   query the rule holds today;
   // - #1479's Code Conductor retirement: the two deletes and five CODE_BRAIN_*
-  //   removals, applied in run-BN7KzWpfvXom9SFC on 2026-10-31.
+  //   removals. The owner confirmed run-BN7KzWpfvXom9SFC on 2026-10-31, and
+  //   the plan check read it back as status "applied" on 2026-11-01 (actions
+  //   run 41256643007).
   // Kept, because "not in this plan" cannot tell them from applied: the three
   // arming plans (PROBE_AI_PROVIDERS, AMBASSADOR_AUDIENCE_MONTHLY,
   // SWEEP_VISITOR_SESSIONS false -> true), #953 stage 3's two entries
