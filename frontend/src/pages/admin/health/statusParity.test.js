@@ -252,7 +252,10 @@ const SNAPSHOTS = {
     agent: { ...snapshot().agent, denials: { ...snapshot().agent.denials, unavailable: true } },
   }),
   'agent refusals at the bound': snapshot({
-    agent: { ...snapshot().agent, denials: { ...snapshot().agent.denials, total: 200, bounded: true } },
+    agent: {
+      ...snapshot().agent,
+      denials: { ...snapshot().agent.denials, total: 200, bounded: true },
+    },
   }),
   'agent last use unparseable': snapshot({
     agent: { ...snapshot().agent, key: { ...snapshot().agent.key, lastUsedAt: 'not-a-date' } },

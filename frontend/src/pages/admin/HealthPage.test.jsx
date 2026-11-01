@@ -505,12 +505,18 @@ describe('the hub', () => {
         expectWord: 'none',
       },
       {
-        agent: { ...SNAPSHOT.agent, key: { present: false, active: false, unavailable: true }, sectionsOff: [] },
+        agent: {
+          ...SNAPSHOT.agent,
+          key: { present: false, active: false, unavailable: true },
+          sectionsOff: [],
+        },
         expectWord: 'could not be read',
       },
     ];
     for (const { agent, expectWord } of shapes) {
-      postJSON.mockImplementation(async (name) => (name === 'getOpsHealthSnapshot' ? { ...SNAPSHOT, agent } : {}));
+      postJSON.mockImplementation(async (name) =>
+        name === 'getOpsHealthSnapshot' ? { ...SNAPSHOT, agent } : {}
+      );
       const { unmount } = renderAt();
       const card = await screen.findByTestId('content-agent-card');
       // No key: no "last used", no rotation date and no switch row, none of which would be a fact.

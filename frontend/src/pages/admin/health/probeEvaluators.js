@@ -245,7 +245,11 @@ export function contentAgentVerdict(agent, now = Date.now()) {
   const label = agent.label || 'The content agent';
   const extra = { checkedAt: agent.lastCheckedAt ?? stamp() };
   if (key.unavailable) {
-    return result('unknown', `${label}'s key record could not be read, so its state is not known.`, extra);
+    return result(
+      'unknown',
+      `${label}'s key record could not be read, so its state is not known.`,
+      extra
+    );
   }
   if (!key.present) {
     return result('healthy', `${label} has no key yet: nothing can call as it.`, extra);
