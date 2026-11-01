@@ -27,6 +27,7 @@ vi.mock('@/lib/publicApi', () => ({ fetchCloudPricing: vi.fn() }));
 import * as page from '@/lib/status';
 import {
   PROBES,
+  evaluateContentAgent,
   evaluateCosmos,
   evaluateForge,
   evaluateLinkRot,
@@ -126,6 +127,29 @@ const snapshot = (overrides = {}) => ({
     unresolvedSecrets: [],
     lastCheckedAt: minutesAgo(0),
   },
+  agent: {
+    id: 'koda',
+    label: 'Koda',
+    key: {
+      present: true,
+      active: true,
+      lastUsedAt: minutesAgo(40),
+      rotatedAt: null,
+      revokedAt: null,
+      createdAt: null,
+      unavailable: false,
+    },
+    sectionsOff: [{ id: 'admin.brain', label: 'Second Brain' }],
+    denials: {
+      since: minutesAgo(1440),
+      total: 2,
+      byReason: [{ reason: 'wrong-key', count: 2 }],
+      lastAt: minutesAgo(5),
+      bounded: false,
+      unavailable: false,
+    },
+    lastCheckedAt: minutesAgo(0),
+  },
   digest: {
     lastCheckedAt: minutesAgo(0),
     publishingOps: {
@@ -201,7 +225,40 @@ const SNAPSHOTS = {
     forge: undefined,
     telegramNotifyState: undefined,
     operationalSignals: undefined,
+    agent: undefined,
     digest: null,
+  }),
+  'agent key revoked and still called': snapshot({
+    agent: { ...snapshot().agent, key: { ...snapshot().agent.key, active: false } },
+  }),
+  'agent key revoked and quiet': snapshot({
+    agent: {
+      ...snapshot().agent,
+      key: { ...snapshot().agent.key, active: false },
+      denials: { ...snapshot().agent.denials, total: 0, byReason: [] },
+    },
+  }),
+  'agent without a key': snapshot({
+    agent: {
+      ...snapshot().agent,
+      key: { present: false, active: false, unavailable: false },
+      sectionsOff: [],
+    },
+  }),
+  'agent key record unread': snapshot({
+    agent: { ...snapshot().agent, key: { present: false, active: false, unavailable: true } },
+  }),
+  'agent refusals uncounted': snapshot({
+    agent: { ...snapshot().agent, denials: { ...snapshot().agent.denials, unavailable: true } },
+  }),
+  'agent refusals at the bound': snapshot({
+    agent: {
+      ...snapshot().agent,
+      denials: { ...snapshot().agent.denials, total: 200, bounded: true },
+    },
+  }),
+  'agent last use unparseable': snapshot({
+    agent: { ...snapshot().agent, key: { ...snapshot().agent.key, lastUsedAt: 'not-a-date' } },
   }),
   'forge never ran, nothing notified': snapshot({
     forge: { updatedAt: null },
@@ -220,6 +277,7 @@ const PAIRS = {
   'link-rot': [evaluateLinkRot, pulse.checkLinkRot],
   forge: [evaluateForge, pulse.checkForge],
   'telegram-notify': [evaluateTelegramNotify, pulse.checkTelegramNotify],
+  'content-agent': [evaluateContentAgent, pulse.checkContentAgent],
 };
 
 const verdict = (r) => ({ status: r.status, summary: r.summary, detail: r.detail ?? null });

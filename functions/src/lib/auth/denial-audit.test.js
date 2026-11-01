@@ -48,6 +48,16 @@ describe('writeDenialAudit', () => {
     const [container, doc] = cosmos.calls[0];
     expect(container).toBe('admin_audit_logs');
     expect(doc).toMatchObject({ kind: 'auth-denial', outcome: 'denied', reason: 'missing-scope' });
+    // The indexed twins the Health page's denial count reads (ops-health.js).
+    expect(doc.action).toBe('auth-denial');
+    expect(doc.timestamp).toBe(doc.at);
+  });
+
+  it("mirrors the entry's own kind into the indexed action", async () => {
+    await writeDenialAudit({ kind: 'agent-content-denial', reason: 'wrong-key' });
+    const [, doc] = cosmos.calls[0];
+    expect(doc).toMatchObject({ kind: 'agent-content-denial', action: 'agent-content-denial', reason: 'wrong-key' });
+    expect(doc.timestamp).toBe(doc.at);
   });
 
   it('resolves, and logs only the error code, when the write fails', async () => {
