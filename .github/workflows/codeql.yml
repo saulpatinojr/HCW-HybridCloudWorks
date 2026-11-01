@@ -73,24 +73,29 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      # WHAT THE SKIP LOOKS LIKE ON THE PULL REQUEST. GitHub posts its own
-      # "CodeQL" status (the roll-up code scanning posts, not one of the
-      # ruleset's required checks) as soon as the first language uploads
-      # results, and that status lists every /language:* category that ran on
-      # main but has not uploaded for this pull request yet: a Warning reading
-      # "Code scanning cannot determine the alerts introduced by this pull
-      # request, because N configurations present on refs/heads/main were not
-      # found", with the status neutral. Two things produce it. A language
-      # whose job is still running: the same status is updated in place to "No
-      # new alerts" once it uploads, so that one clears itself (seen on #1485,
-      # where all three ran). A language whose job skipped above: nothing will
-      # upload, so the warning stays, and that is this skip, not a broken scan.
-      # A pull request that changes no file of a language cannot add an alert
-      # in that language, and main is still analysed in full on every merge
-      # and every Monday (seen on #1484, two of three skipped). When every
-      # language skips, no "CodeQL" status is posted at all and the three
-      # Analyze contexts still report green (seen on #1458, a JSON-only
-      # change). The history is in ADR 0026.
+      # WHAT THE SKIP LOOKS LIKE ON THE PULL REQUEST. The job itself never
+      # skips: this step always runs and writes relevant=false when the pull
+      # request changed no file of its language, and it is the two CodeQL
+      # steps below (init and analyze) that then skip, so nothing is uploaded
+      # for that language. GitHub posts its own "CodeQL" status (the roll-up
+      # code scanning posts, not one of the ruleset's required checks) as soon
+      # as the first language uploads results, listing every /language:*
+      # category that ran on main but has not uploaded for this pull request
+      # yet: a Warning reading "Code scanning cannot determine the alerts
+      # introduced by this pull request, because N configurations present on
+      # refs/heads/main were not found", with the status neutral. Two things
+      # keep a category on that list. A language whose analysis is still
+      # running: once every language that will run has uploaded, the same
+      # status is updated in place to "No new alerts", so that case clears
+      # itself (seen on #1485, where all three ran: neutral after the first
+      # upload, success about two minutes later). A language whose analysis
+      # steps skipped: nothing will ever upload, so the warning stays, and
+      # that is this skip, not a broken scan. A pull request that changes no
+      # file of a language cannot add an alert in that language, and main is
+      # still analysed in full on every merge and every Monday (seen on #1484,
+      # two of three skipped). When every language skips, no "CodeQL" status
+      # is posted at all and the three Analyze contexts still report green
+      # (seen on #1458, a JSON-only change). The history is in ADR 0026.
       - name: Detect language changes
         id: changes
         env:

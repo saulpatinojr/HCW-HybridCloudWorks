@@ -153,8 +153,15 @@ free on a public repository. If it ever matters, the guard can be skipped where 
 The "Risk accepted" line above said the roll-up's behaviour on a pull request
 where no analysis uploads results was unverified. Three pull requests on
 2026-11-01 answered it, and also showed a side effect this record had not
-named. Nothing about the decision changes; this is written so the next reader
-does not spend time on a warning that is expected.
+named. Nothing about the decision changes; an accepted record is not rewritten,
+so, as with the addendum above, what was learned is added here, and this is
+written so the next reader does not spend time on a warning that is expected.
+
+One precise word first. The `Analyze …` job never skips: its `Detect language
+changes` step always runs and records whether the pull request changed a file
+of that language, and it is the two CodeQL steps after it (initialise and
+analyse) that skip when it did not. The check is therefore always posted, and
+nothing is uploaded for that language.
 
 GitHub posts its own `CodeQL` status on a pull request (the roll-up that code
 scanning posts, separate from the three `Analyze …` jobs) as soon as the first
@@ -168,11 +175,13 @@ list clears depends on why a category is missing.
   three languages), the `actions` analysis finished first and the status
   ([the same check run](https://github.com/saulpatinojr/HCW-HybridCloudWorks/runs/124785617486))
   read `2 configurations not found`, naming `javascript-typescript` and
-  `python`, with the conclusion `neutral`. About two minutes later, once both
-  had uploaded, the same check run was updated in place to `No new alerts in
-  code changed by this pull request` with the conclusion `success`. So on a
-  pull request where every language runs, the warning is a snapshot taken too
-  early and goes away on its own.
+  `python`, with the conclusion `neutral`. It stayed neutral while either was
+  still running; about two minutes later, once both had uploaded, the same
+  check run was updated in place to `No new alerts in code changed by this
+  pull request` with the conclusion `success`. So the warning clears only
+  after every analysis that is going to run has uploaded, and on a pull
+  request where every language runs it is a snapshot taken too early that
+  goes away on its own.
 - **When a language skips, the warning stays, and that is the skip.** On
   [#1484](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1484),
   which changed JavaScript, JSON, Markdown and YAML only, the `actions` and
@@ -199,10 +208,14 @@ list clears depends on why a category is missing.
   green
   ([run 41259169180](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/41259169180)),
   and the commit carries no `CodeQL` status at all. The roll-up is not one of
-  the ruleset's required checks (read from the `Default` ruleset on
-  2026-11-01: the three `Analyze …` contexts are required, `CodeQL` is not),
-  so its absence, like its `neutral` conclusion, does not hold a merge. The
-  risk named above did not materialise.
+  the ruleset's required checks any more (read from the `Default` ruleset on
+  2026-11-01: the three `Analyze …` contexts are required, `CodeQL` is not;
+  the Context section above counted it among the fourteen required contexts
+  of 2026-09-01, and no record of when it left was found), so its absence,
+  like its `neutral` conclusion, does not hold a merge. The risk named above
+  did not materialise, and the first follow-up above ("watch the first
+  documentation-only pull request for the rollup behaviour") is closed by
+  this observation.
 - **No official page explains the warning.** GitHub's troubleshooting hub
   ([Troubleshoot analysis errors](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors))
   and its
