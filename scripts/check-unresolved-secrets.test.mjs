@@ -271,6 +271,26 @@ describe("evaluate", () => {
     expect(got.unexpected.map((s) => s.name)).toEqual(["CODER_STATUS_TOKEN"]);
     expect(got.expected).toEqual([]);
   });
+
+  // The two Podbean secrets and the StreamYard key came off the allow-list on
+  // 2026-11-01, once all three resolved (#1490). From then on an unresolved
+  // one is a finding again, under its plain name once, however many aliases
+  // the platform shows it under; putting a name back on the list makes this
+  // fail, which is the point.
+  it("flags the retired Podbean and StreamYard entries as unexpected, once each", () => {
+    for (const name of ["PODBEAN_CLIENT_ID", "PODBEAN_CLIENT_SECRET", "STREAMYARD_API_KEY"]) {
+      expect(EXPECTED_UNRESOLVED.has(name)).toBe(false);
+      const got = evaluate(
+        shapeA({
+          [name]: { status: "SecretNotFound" },
+          [`APPSETTING_${name}`]: { status: "SecretNotFound" },
+        }),
+      );
+      expect(got.unexpected.map((s) => s.name)).toEqual([name]);
+      expect(got.expected).toEqual([]);
+      expect(got.staleAllowlist).toEqual([]);
+    }
+  });
 });
 
 describe("EXPECTED_UNRESOLVED", () => {

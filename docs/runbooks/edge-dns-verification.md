@@ -211,19 +211,24 @@ Invoke-RestMethod -Uri 'https://api-azure.hybridcloudworks.com/api/health'
 ```
 
 **Success:** `status` is `ok`, `service` is `hcw-functions`, and
-`unresolvedSecrets` is **2**. `generation` names the CI run and commit that
-stamped the running configuration, which is worth comparing against the deploy
-you just made when the trigger was a Functions change.
+`unresolvedSecrets` matches the number of entries in `EXPECTED_UNRESOLVED` in
+`scripts/check-unresolved-secrets.mjs` (**3** as of 2026-11-01:
+`AZURE_SPEECH_KEY`, `CLOUDFLARE_ANALYTICS_TOKEN` and `CODER_BROKER_TOKEN`).
+`generation` names the CI run and commit that stamped the running
+configuration, which is worth comparing against the deploy you just made when
+the trigger was a Functions change.
 
-**`unresolvedSecrets: 2` is the healthy answer, and an operator who does not
+**A count above zero can be the healthy answer, and an operator who does not
 know that will chase it.** The count is Key Vault references that arrived as
-the literal `@Microsoft.KeyVault(…)` string instead of a resolved secret. Two
-findings, one setting: Azure surfaces every app setting twice, plain and
-`APPSETTING_`-prefixed, so a single unresolved reference reads as two. The
-setting is `AZURE_SPEECH_KEY`, and `scripts/check-unresolved-secrets.mjs`
-carries it in `EXPECTED_UNRESOLVED` with the reason — Azure AI Speech is the
-written, tested fallback TTS path, deliberately unprovisioned because standing
-one up is a spend decision nobody has made.
+the literal `@Microsoft.KeyVault(…)` string instead of a resolved secret. Each
+entry in `EXPECTED_UNRESOLVED` is one of those on purpose, with its reason
+beside it: Azure AI Speech is the written, tested fallback TTS path,
+deliberately unprovisioned because standing one up is a spend decision nobody
+has made, and the other two wait on a token the owner has not minted yet. Azure
+surfaces every app setting twice, plain and `APPSETTING_`-prefixed; since
+#1490 the health endpoint counts such a pair once, so the number is settings,
+not aliases (before that it read 2 for the one Speech setting, and the table
+below records that older reading).
 
 Any other number is actionable. Which references are unresolved is deliberately
 not in this anonymous response; the names are on the authenticated Integrations
