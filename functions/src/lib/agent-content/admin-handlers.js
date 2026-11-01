@@ -24,6 +24,7 @@
 import { randomUUID } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { authoredMessage, errorResponse, isAuthoredError } from '../http/error-response.js';
+import { describePolicy } from './admin-access.js';
 import {
   AGENT_ID,
   API_BASE_PATH,
@@ -136,6 +137,7 @@ export function createAgentContentAdminHandlers({
     limits: LIMITS,
     basePath: `/api/${API_BASE_PATH}`,
     endpoints: ENDPOINTS.map(([method, path, capability]) => ({ method, path, capability })),
+    adminAccess: describePolicy(record),
   });
 
   const route = (role, what, work) => async (request, context) => {

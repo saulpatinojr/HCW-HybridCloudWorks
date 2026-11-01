@@ -28,6 +28,14 @@ host registered when the connector is set up. It cannot run an OAuth flow,
 cannot sign requests and cannot send a second header. So the choice is an API
 key or no connection.
 
+Amended 2026-11-01 (sections): the owner widened Koda's job to the Pipeline,
+Enhanced, Spotlight and Second Brain sections and the Platform health and
+integration reads, creating and reviewing but never deleting. The key now also
+reaches an allow-list of admin routes through the admin role guard; the
+sentence "Koda's key passes nothing that calls `requireRole`" is superseded by
+[ADR 0038](0038-koda-admin-access.md). The v1 API, the drafts switches and the
+publishing line below are unchanged.
+
 Amended 2026-11-01: the paragraph above describes the connector as the
 proposal described it. In practice Muse's first calls carried a working key in
 a shape other than `Authorization: Bearer`, and the guard refused them. It now

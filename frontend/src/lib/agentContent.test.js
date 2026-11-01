@@ -38,9 +38,9 @@ describe('the calls', () => {
     expect(getJSON).toHaveBeenCalledWith(KODA_KEY_ROUTE);
     await generateKodaKey();
     expect(postJSON).toHaveBeenCalledWith(KODA_KEY_ROUTE, {});
-    await setKodaCapabilities({ 'drafts.delete': false });
+    await setKodaCapabilities({ 'drafts.review': false });
     expect(sendJSON).toHaveBeenCalledWith(KODA_KEY_ROUTE, 'PATCH', {
-      capabilities: { 'drafts.delete': false },
+      capabilities: { 'drafts.review': false },
     });
     await revokeKodaKey();
     expect(sendJSON).toHaveBeenCalledWith(KODA_KEY_ROUTE, 'DELETE');
