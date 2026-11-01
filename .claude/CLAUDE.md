@@ -536,8 +536,11 @@ so it is recorded here, where every session reads it.
   findings is open, and approves the head once every thread is resolved and
   its pre-merge checks pass. That approval of the **current head** is the
   signal to merge, read the same way as Copilot's verdict above, and the round
-  cap in the next bullet still applies. Sessions merge the pull requests they
-  open on it; never hand the owner a merge. **Dependabot's pull requests are
+  cap in the next bullet still applies. Since 2026-11-01 the review that
+  carries it is asked for, not automatic (`auto_review.enabled: false`,
+  [#1487](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1487);
+  how to ask is in "Each bot's first review is waited for" below). Sessions
+  merge the pull requests they open on it; never hand the owner a merge. **Dependabot's pull requests are
   the exception:** `.coderabbit.yaml` lists `dependabot[bot]` under
   `ignore_usernames`, so CodeRabbit never reviews them and no CodeRabbit
   approval will arrive, and its comment says the owner approves them (no
@@ -573,13 +576,26 @@ so it is recorded here, where every session reads it.
     review a PR. Every finding from each is fixed, or answered on its thread
     with the reason, and the thread resolved, as the bullets above and below
     say. A finding is not optional because its bot is not a required check.
-  - **Each bot's first review is waited for.** A PR is not merge-ready
-    until Copilot and CodeRabbit have each reviewed it once and the `CodeQL`
-    check has finished on its head. If a bot's first review has not arrived
-    an hour after the required checks went green, say so on the PR, naming
-    the bot, and treat it as unavailable for that PR: reviews stopped
-    arriving altogether once before (2026-10-03), and a PR does not wait on
-    a reviewer that is not coming.
+  - **Each bot's first review is waited for, and CodeRabbit's is asked
+    for.** A PR is not merge-ready until Copilot and CodeRabbit have each
+    reviewed it once and the `CodeQL` check has finished on its head.
+    Copilot reviews on its own. CodeRabbit does not, since the owner's
+    decision of 2026-11-01
+    ([#1487](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1487)):
+    `.coderabbit.yaml` has `auto_review.enabled: false`, because on the free
+    plan every push and every "Update branch" spent one of the five included
+    reviews an hour, and on 2026-11-01 three pull requests used the hour
+    between them while #1485 waited for the review that would lift a stale
+    request for changes. So once the required checks are green on the head
+    you want read, comment `@coderabbitai review` (the whole comment is the
+    command), and ask again only for a head that changed; "Review rate
+    limited" in its reply means the hour's allowance is spent, and the next
+    ask waits for the minute it names. If a bot's first review has not
+    arrived an hour after it was due (Copilot: after the required checks
+    went green; CodeRabbit: after the ask), say so on the PR, naming the
+    bot, and treat it as unavailable for that PR: reviews stopped arriving
+    altogether once before (2026-10-03), and a PR does not wait on a
+    reviewer that is not coming.
   - **At most three rounds per bot.** A round is one review of a head by one
     bot, and the fixes pushed in answer to it. Work the loop above for a
     bot's first three reviews; after the third round's fixes are pushed,
