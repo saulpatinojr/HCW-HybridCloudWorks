@@ -149,7 +149,7 @@ function memoryStore(seed = []) {
   };
 }
 
-function setup({ seed = [], guard = allowGuard() } = {}) {
+function setup({ seed = [], guard = allowGuard(), env = {}, now = () => new Date("2026-10-03T12:00:00.000Z") } = {}) {
   const store = memoryStore(seed);
   const onContentDeleted = vi.fn(async () => ({}));
   let n = 0;
@@ -157,7 +157,8 @@ function setup({ seed = [], guard = allowGuard() } = {}) {
     guard,
     store,
     onContentDeleted,
-    now: () => new Date("2026-10-03T12:00:00.000Z"),
+    env,
+    now,
     uuid: () => `id-${++n}`,
   });
   return { handlers, store, guard, onContentDeleted };
@@ -1188,5 +1189,37 @@ describe("the typed routes' body bound and the audit's credential (review of #14
     expect(line).not.toContain(draft.id);
     expect(line).not.toContain("secret-ish");
     expect(line).toContain("429");
+  });
+});
+
+describe("every draft answer carries its links (owner request 2026-11-01)", () => {
+  it("puts editUrl on every row and draft, and previewUrl null while no preview secret is set", async () => {
+    const { handlers } = setup();
+    const draft = await created(handlers);
+    expect(draft.editUrl).toBe(`https://hybridcloudworks.com/admin/drafts?draft=${encodeURIComponent(draft.id)}`);
+    expect(draft.previewUrl).toBeNull();
+    const list = parse(await handlers.list(request(), context));
+    for (const row of list.body.drafts) {
+      expect(row.editUrl).toBe(`https://hybridcloudworks.com/admin/drafts?draft=${encodeURIComponent(row.id)}`);
+      expect(row).toHaveProperty("previewUrl", null);
+    }
+  });
+
+  it("signs a 72-hour preview link per answer when the secret is set, and never puts the secret in the answer", async () => {
+    const { verifyPreviewToken } = await import("../public-preview.js");
+    const now = new Date("2026-11-01T06:00:00.000Z");
+    const { handlers } = setup({ env: { PREVIEW_SIGNING_SECRET: "preview-secret-for-tests" }, now: () => now });
+    const draft = await created(handlers);
+    const url = new URL(draft.previewUrl);
+    expect(url.origin).toBe("https://hybridcloudworks.com");
+    expect(url.pathname).toBe(`/preview/${encodeURIComponent(draft.id)}`);
+    const token = url.searchParams.get("t");
+    expect(verifyPreviewToken("preview-secret-for-tests", draft.id, token, now.getTime() + 71 * 3600_000)).toBe(true);
+    expect(verifyPreviewToken("preview-secret-for-tests", draft.id, token, now.getTime() + 73 * 3600_000)).toBe(false);
+    expect(verifyPreviewToken("preview-secret-for-tests", "another-id", token, now.getTime())).toBe(false);
+    expect(JSON.stringify(draft)).not.toContain("preview-secret-for-tests");
+    // An unresolved Key Vault reference reads as unset.
+    const unresolved = setup({ env: { PREVIEW_SIGNING_SECRET: "@Microsoft.KeyVault(SecretUri=https://kv/secrets/x)" } });
+    expect((await created(unresolved.handlers)).previewUrl).toBeNull();
   });
 });

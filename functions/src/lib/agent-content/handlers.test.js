@@ -418,6 +418,9 @@ describe('a key whose Read drafts switch is off', () => {
     expect(made.body.draft.etag).toBeDefined();
     expect(made.body.draft.fields).toBeUndefined();
     expect(made.body.draft.bodyWithheld).toBe(true);
+    // The links survive the withholding: they are not the body.
+    expect(made.body.draft.editUrl).toContain('/admin/drafts?draft=');
+    expect(made.body.draft).toHaveProperty('previewUrl');
     expect(JSON.stringify(made.body)).not.toContain(FIELDS.body);
     // The document itself is whole.
     expect(store.docs.get(made.body.draft.id).postContent).toBe(FIELDS.body);

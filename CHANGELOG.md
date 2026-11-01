@@ -17,6 +17,10 @@ This project has not cut a tagged release; entries are grouped under
 
 ## [Unreleased]
 
+### Added
+
+- **Every draft answer carries an edit link and a preview link (owner request 2026-11-01, [#1477](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1477)).** The Drafts routes, on the admin API and on Koda's agent API alike, now put `editUrl` (the Drafts page with that draft open, `/admin/drafts?draft=<id>`) and `previewUrl` (the public preview page with a signed token that expires after 72 hours, or `null` while the preview secret is not seeded) on every draft, in the list and alone ([`functions/src/lib/cms/drafts-handlers.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/cms/drafts-handlers.js)). The preview route now shows drafts on the desk and in review, not only content past review; the Drafts page opens the draft a link names, and shows the preview link beside the open draft.
+
 ### Session continuity
 
 - **Two review notes from [#1459](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1459) are answered ([#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455)).** `.claude/CLAUDE.md` now names the two separate controls that stop a session approving its own pull request: GitHub's rule that an author cannot approve, and CodeRabbit's `allow_author_approval: false`, which makes it ignore `@coderabbitai approve` from the author. It also records what cleared [#1460](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1460): a fresh CodeRabbit review did not replace its old request for changes and CodeRabbit refuses `resolve` from the author, so the owner dismisses such a review, with a link to where CodeRabbit withdrew it, and a session does not. `MEMORY.md`'s header now says that #1346 left its later list because #1461 closed it.

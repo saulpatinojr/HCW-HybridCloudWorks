@@ -154,6 +154,13 @@ audit log.
 
 - Drafts are addressed by `id`, not slug. `GET drafts` returns the list with
   each draft's `id` and `etag`; `GET drafts/{id}` returns the body.
+- Every draft answer, in the list and alone, carries two links: `editUrl`,
+  the Drafts page with that draft open
+  (`https://hybridcloudworks.com/admin/drafts?draft=<id>`, for the owner or an
+  admin, signed in), and `previewUrl`, the public preview page with a signed
+  token that expires after 72 hours and shows the draft as the public page
+  would. `previewUrl` is `null` while the site's preview secret is not
+  seeded. Koda can hand either to the owner without any further call.
 - Every change (`PUT`, `DELETE`, `send-to-review`, `back-to-drafts`) carries
   the `etag` of the version Koda last read. A stale one answers
   `412 CONFLICT`: read again, then retry.
