@@ -165,6 +165,13 @@ describe('body rules', () => {
     for (const alias of ['published_blog', 'published_news', 'published_both']) {
       expect((await checkBodyRule(create, request({ body: { data: { contentStatus: alias } } }))).reason).toBe('body-not-allowed');
     }
+    // A value that is not a plain string, boolean or number is refused outright: the handler
+    // stores it as given and String(['published']) reads back as 'published'.
+    expect((await checkBodyRule(create, request({ body: { data: { contentStatus: ['published'] } } }))).reason).toBe('body-not-allowed');
+    expect((await checkBodyRule(create, request({ body: { data: { contentStatus: { toString: 'x' } } } }))).reason).toBe('body-not-allowed');
+    expect((await checkBodyRule(create, request({ body: { data: { Live: [true] } } }))).reason).toBe('body-not-allowed');
+    expect((await checkBodyRule(create, request({ body: { data: { Status: ['Live'] } } }))).reason).toBe('body-not-allowed');
+    expect(await checkBodyRule(create, request({ body: { data: { contentStatus: null, Live: false } } }))).toEqual({ ok: true });
     // approved_blog maps to approved, a review state, which the key may ask for.
     expect(await checkBodyRule(create, request({ body: { data: { contentStatus: 'approved_blog' } } }))).toEqual({ ok: true });
     expect((await checkBodyRule(create, request({ body: { data: { Live: true } } }))).reason).toBe('body-not-allowed');

@@ -318,7 +318,14 @@ export async function checkBodyRule(row, request) {
     const raw = pick(read.body, rule.field);
     const value = typeof raw === 'string' ? raw.trim() : raw;
     if (rule.allow && !rule.allow.includes(value)) return { ok: false, reason: 'body-not-allowed', field: rule.field };
-    if (rule.refuse && rule.refuse.includes(value)) return { ok: false, reason: 'body-not-allowed', field: rule.field };
+    if (!rule.refuse) continue;
+    // A refused field is compared as a plain value; anything else that is present (an
+    // array, an object) is refused too, because a handler that stores it as given and a
+    // reader that calls String() on it would turn ['published'] back into 'published'.
+    const present = raw !== undefined && raw !== null;
+    const plain = typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number';
+    if (present && !plain) return { ok: false, reason: 'body-not-allowed', field: rule.field };
+    if (rule.refuse.includes(value)) return { ok: false, reason: 'body-not-allowed', field: rule.field };
   }
   return { ok: true };
 }
