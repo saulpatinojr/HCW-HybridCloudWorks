@@ -62,9 +62,12 @@ const canRead = (record) => record?.capabilities?.['drafts.read'] !== false;
 
 /**
  * The same answer without the draft's text: `draft.fields` (the eight editor
- * fields, body included) is replaced by `bodyWithheld: true`. The summary
- * fields (id, title, stage, etag, actions) stay, because a caller that may
- * write needs the etag to write again.
+ * fields, body included) is replaced by `bodyWithheld: true`, and
+ * `previewUrl` is nulled, because the signed preview link shows the body to
+ * whoever holds it and would hand back what the switch withholds. The summary
+ * fields (id, title, stage, etag, actions) and `editUrl` (an admin sign-in,
+ * not a token) stay, because a caller that may write needs the etag to write
+ * again.
  */
 export function withoutBody(response) {
   if (!response || typeof response.body !== 'string') return response;
@@ -76,7 +79,8 @@ export function withoutBody(response) {
   }
   if (!parsed || typeof parsed !== 'object' || !parsed.draft || !('fields' in parsed.draft)) return response;
   const { fields: _withheld, ...rest } = parsed.draft;
-  return { ...response, body: JSON.stringify({ ...parsed, draft: { ...rest, bodyWithheld: true } }) };
+  const withheld = { ...rest, bodyWithheld: true, ...('previewUrl' in rest ? { previewUrl: null } : {}) };
+  return { ...response, body: JSON.stringify({ ...parsed, draft: withheld }) };
 }
 
 /**

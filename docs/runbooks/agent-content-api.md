@@ -218,7 +218,9 @@ that is not listed, or to let it publish, change the table in
   admin, signed in), and `previewUrl`, the public preview page with a signed
   token that expires after 72 hours and shows the draft as the public page
   would. `previewUrl` is `null` while the site's preview secret is not
-  seeded. Koda can hand either to the owner without any further call.
+  seeded, and `null` on every answer to a key whose **Read drafts** switch is
+  off, because whoever holds the link can read the body. Koda can hand either
+  to the owner without any further call.
 - Every change (`PUT`, `send-to-review`, `back-to-drafts`) carries
   the `etag` of the version Koda last read. A stale one answers
   `412 CONFLICT`: read again, then retry.

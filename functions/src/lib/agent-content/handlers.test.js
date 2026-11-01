@@ -417,9 +417,10 @@ describe('a key whose Read drafts switch is off', () => {
     expect(made.body.draft.etag).toBeDefined();
     expect(made.body.draft.fields).toBeUndefined();
     expect(made.body.draft.bodyWithheld).toBe(true);
-    // The links survive the withholding: they are not the body.
+    // The edit link survives the withholding (it needs an admin sign-in); the
+    // preview link does not, because whoever holds it can read the body.
     expect(made.body.draft.editUrl).toContain('/admin/drafts?draft=');
-    expect(made.body.draft).toHaveProperty('previewUrl');
+    expect(made.body.draft.previewUrl).toBeNull();
     expect(JSON.stringify(made.body)).not.toContain(FIELDS.body);
     // The document itself is whole.
     expect(store.docs.get(made.body.draft.id).postContent).toBe(FIELDS.body);
