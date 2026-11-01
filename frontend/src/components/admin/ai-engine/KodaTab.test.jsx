@@ -48,10 +48,19 @@ const ADMIN_ACCESS = [
     on: true,
     routes: [
       { method: 'GET', path: '/api/cms/content' },
-      { method: 'POST', path: '/api/transitionContentStatus', limit: 'newStatus must be one of approved, editing' },
+      {
+        method: 'POST',
+        path: '/api/transitionContentStatus',
+        limit: 'newStatus must be one of approved, editing',
+      },
     ],
   },
-  { id: 'admin.brain', label: 'Second Brain', on: false, routes: [{ method: 'POST', path: '/api/cms/brain/items' }] },
+  {
+    id: 'admin.brain',
+    label: 'Second Brain',
+    on: false,
+    routes: [{ method: 'POST', path: '/api/cms/brain/items' }],
+  },
 ];
 const answer = (key) => ({
   ok: true,
