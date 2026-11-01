@@ -267,3 +267,17 @@ describe('the key is read in the shapes connectors send (#1477, 2026-11-01)', ()
     expect(auditDenial).not.toHaveBeenCalled();
   });
 });
+
+describe('the audit context a caller passes (admin-access.js, ADR 0038)', () => {
+  it('is written into the key guard’s own denial rows, before the reason', async () => {
+    const { guard } = setup();
+    await guard.authenticate(request(`Bearer ${generateKey()}`), { surface: 'admin', method: 'GET', route: 'cms/content' });
+    expect(audits).toEqual([
+      expect.objectContaining({ kind: 'agent-content-denial', reason: 'wrong-key', surface: 'admin', method: 'GET', route: 'cms/content' }),
+    ]);
+    // Without a context the row is as before: no surface.
+    audits.length = 0;
+    await guard.authenticate(request(`Bearer ${generateKey()}`));
+    expect(audits[0].surface).toBeUndefined();
+  });
+});

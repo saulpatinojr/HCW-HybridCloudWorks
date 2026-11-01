@@ -39,9 +39,12 @@
  *     handler asks for more than the grant is refused with 403.
  *
  * Every refusal of a presented key is an `admin_audit_logs` row of kind
- * agent-content-denial with the reason (`route-not-allowed`, `section-off`,
- * `role`, `body-not-allowed`, `body-unreadable`), the method and the route,
- * and never the key or the body.
+ * agent-content-denial with `surface: 'admin'`, the reason
+ * (`route-not-allowed`, `section-off`, `role`, `body-not-allowed`,
+ * `body-unreadable`, `user-only-route`, or the key guard's own `wrong-key`,
+ * `revoked-key`, `no-key`, `rate-limited`), the method and the route as the
+ * policy spells it (the template, or `unlisted`), and never the key, the
+ * body or the concrete path, whose segments can be document ids.
  */
 import { satisfiesRole, minimumRole } from '../auth/roles.js';
 import { AGENT_ID, AGENT_USER, CAPABILITIES, agentKeyFrom, looksLikeKey } from './keys.js';
@@ -101,7 +104,13 @@ export const POLICY = Object.freeze(
     ['PUT', 'cms/drafts/{id}', P],
     ['POST', 'cms/drafts/{id}/send-to-review', P],
     ['POST', 'cms/drafts/{id}/back-to-drafts', P],
-    ['POST', 'createContentItem', P, { body: { field: 'contentStatus', refuse: CREATE_STATUSES_REFUSED } }],
+    // content-create.js reads the item from `body.data`, so the rules look there.
+    [
+      'POST',
+      'createContentItem',
+      P,
+      { body: [{ field: 'data.contentStatus', refuse: CREATE_STATUSES_REFUSED }, { field: 'data.Live', refuse: [true] }] },
+    ],
     ['POST', 'updateContentItem', P],
     ['PATCH', 'updateContentItem', P],
     ['POST', 'saveEditorDraft', P],
@@ -121,10 +130,10 @@ export const POLICY = Object.freeze(
     ['POST', 'getPublishSnapshot', P, { role: 'viewer' }],
     ['POST', 'getDecisionCenter', P, { role: 'viewer' }],
     ['POST', 'getAdminDashboardSnapshot', P, { role: 'viewer' }],
-    // What the editor reads to fill its pickers, and the images an article can use.
+    // What the editor reads to fill its pickers, and the images an article can
+    // use. Not cms/config/{collection}: its only collections are the AI
+    // providers and the MCP servers, which stay closed.
     ['GET', 'cms/settings', P],
-    ['GET', 'cms/config/{collection}', P],
-    ['GET', 'cms/keyword-config', P],
     ['GET', 'cms/images', P],
     ['GET', 'cms/images/folders', P],
     ['GET', 'cms/images/{id}/usage', P],
@@ -206,7 +215,7 @@ export const POLICY = Object.freeze(
       sections: Object.freeze(Array.isArray(sections) ? sections : [sections]),
       role: options.role || 'editor',
       asOwner: Boolean(options.asOwner),
-      body: options.body ? Object.freeze({ ...options.body }) : null,
+      body: options.body ? Object.freeze((Array.isArray(options.body) ? options.body : [options.body]).map((rule) => Object.freeze({ ...rule }))) : null,
       pattern: templateToPattern(route),
     })
   )
@@ -258,25 +267,36 @@ export function openSection(row, record) {
  * the rule: the handler would refuse it anyway, and the rule must not be
  * passable by sending nothing.
  */
-async function bodyFieldOf(request, field) {
+async function bodyOf(request) {
   try {
     const source = typeof request?.clone === 'function' ? request.clone() : request;
     const body = await source.json();
     if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false };
-    return { ok: true, value: body[field] };
+    return { ok: true, body };
   } catch {
     return { ok: false };
   }
 }
 
-/** Whether the body rule of a row holds for this request: `{ ok, reason }`. */
+/** `a.b.c` read off an object, undefined where the path ends early. */
+const pick = (object, path) =>
+  path.split('.').reduce((value, key) => (value && typeof value === 'object' ? value[key] : undefined), object);
+
+/**
+ * Whether every body rule of a row holds for this request: `{ ok, reason,
+ * field }`. The body is read once; each rule reads its field by path (the
+ * create handler keeps the item under `data`, so `data.contentStatus`).
+ */
 export async function checkBodyRule(row, request) {
   if (!row.body) return { ok: true };
-  const read = await bodyFieldOf(request, row.body.field);
-  if (!read.ok) return { ok: false, reason: 'body-unreadable' };
-  const value = typeof read.value === 'string' ? read.value.trim() : read.value;
-  if (row.body.allow && !row.body.allow.includes(value)) return { ok: false, reason: 'body-not-allowed' };
-  if (row.body.refuse && row.body.refuse.includes(value)) return { ok: false, reason: 'body-not-allowed' };
+  const read = await bodyOf(request);
+  if (!read.ok) return { ok: false, reason: 'body-unreadable', field: row.body[0].field };
+  for (const rule of row.body) {
+    const raw = pick(read.body, rule.field);
+    const value = typeof raw === 'string' ? raw.trim() : raw;
+    if (rule.allow && !rule.allow.includes(value)) return { ok: false, reason: 'body-not-allowed', field: rule.field };
+    if (rule.refuse && rule.refuse.includes(value)) return { ok: false, reason: 'body-not-allowed', field: rule.field };
+  }
   return { ok: true };
 }
 
@@ -306,7 +326,7 @@ export function describePolicy(record = null) {
       routes: POLICY.filter((row) => row.sections.includes(section)).map((row) => ({
         method: row.method,
         path: `/api/${row.route}`,
-        ...(row.body ? { limit: bodyLimitText(row.body) } : {}),
+        ...(row.body ? { limit: row.body.map(bodyLimitText).join('; ') } : {}),
       })),
     };
   });
@@ -339,7 +359,7 @@ const FORBIDDEN = 'This key may not call that route.';
 export function withAgentAccess(roleGuard, { agentGuard, auditDenial = null, env = process.env }) {
   const audit = (entry) => {
     try {
-      const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_ID, surface: 'admin', ...entry });
+      const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_ID, ...entry });
       if (result && typeof result.catch === 'function') result.catch(() => {});
     } catch {
       // The refusal is unchanged when the audit sink fails.
@@ -355,30 +375,46 @@ export function withAgentAccess(roleGuard, { agentGuard, auditDenial = null, env
     const minimum = minimumRole(required);
     if (!minimum) throw new Error(`requireRole: unknown role requirement ${JSON.stringify(required)}`);
 
-    const auth = await agentGuard.authenticate(request);
+    // The route is matched before the key is checked, so the key guard's own
+    // refusals (wrong, revoked, over the limit) carry the admin surface and
+    // the route template too. The concrete path is matched and then dropped:
+    // its segments can be document ids, and telemetry is content-free.
+    const method = String(request?.method || '').toUpperCase();
+    const row = matchPolicy(method, apiPathOf(request));
+    const where = { surface: 'admin', method, route: row ? row.route : 'unlisted' };
+
+    const auth = await agentGuard.authenticate(request, where);
     if (auth.error) return { user: null, role: null, error: auth.error };
 
-    const method = String(request?.method || '').toUpperCase();
-    const path = apiPathOf(request);
     const refuse = (reason, extra = {}) => {
-      audit({ outcome: 'denied', reason, method, route: path, ...extra });
+      audit({ outcome: 'denied', reason, ...where, ...extra });
       return { user: null, role: null, error: deny(403, FORBIDDEN) };
     };
 
-    const row = matchPolicy(method, path);
     if (!row) return refuse('route-not-allowed');
     const section = openSection(row, auth.record);
     if (!section) return refuse('section-off', { section: row.sections[0] });
     if (!satisfiesRole(row.role, minimum)) return refuse('role', { required: minimum, granted: row.role });
     const body = await checkBodyRule(row, request);
-    if (!body.ok) return refuse(body.reason, { field: row.body.field });
+    if (!body.ok) return refuse(body.reason, { field: body.field });
 
     return { user: agentUserFor(row, env), role: row.role, error: null };
   }
 
-  /** A key is not a user: the user-only routes refuse it without a verifier round trip. */
+  /**
+   * A key is not a user: the user-only routes (the sign-in expectations, the
+   * current-admin status, the bootstrap) refuse it without a verifier round
+   * trip, and the refusal is a denial row like any other presented key's.
+   */
   async function requireUser(request) {
     if (!presentsKey(request)) return roleGuard.requireUser(request);
+    audit({
+      outcome: 'denied',
+      reason: 'user-only-route',
+      surface: 'admin',
+      method: String(request?.method || '').toUpperCase(),
+      route: 'unlisted',
+    });
     return { user: null, role: null, error: deny(401, 'Authentication required') };
   }
 

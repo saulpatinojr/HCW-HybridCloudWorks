@@ -71,6 +71,7 @@ describe('the policy table', () => {
       'cms/labs/coder-token', 'cms/labs/agents', 'cms/brain/reindex', 'cms/brain/sync',
       'cms/newsletters', 'cms/social-posts', 'cms/calendar', 'publishSnapshot',
       'cms/podcast/transcripts/{id}/publish', 'cms/integration-status PUT', 'cms/agent-content/key',
+      'cms/config/{collection}', 'cms/keyword-config',
     ]) {
       if (never === 'cms/settings') {
         // read is allowed for the editor's pickers; the write is not
@@ -155,9 +156,14 @@ describe('body rules', () => {
     expect((await checkBodyRule(enqueue, request({ body: { type: ' forge-article ' } }))).ok).toBe(true);
   });
 
-  it('refuses a create that asks to be born published, and allows one that does not say', async () => {
-    expect((await checkBodyRule(create, request({ body: { contentStatus: 'published' } }))).reason).toBe('body-not-allowed');
-    expect(await checkBodyRule(create, request({ body: { title: 'x' } }))).toEqual({ ok: true });
+  it('refuses a create whose item (under `data`, where the handler reads it) asks to be born published or live, and allows one that does not say', async () => {
+    expect((await checkBodyRule(create, request({ body: { data: { contentStatus: 'published' } } }))).reason).toBe('body-not-allowed');
+    expect((await checkBodyRule(create, request({ body: { data: { contentStatus: 'archived' } } }))).reason).toBe('body-not-allowed');
+    expect((await checkBodyRule(create, request({ body: { data: { Live: true } } }))).reason).toBe('body-not-allowed');
+    expect(await checkBodyRule(create, request({ body: { data: { title: 'x', contentStatus: 'drafting' } } }))).toEqual({ ok: true });
+    expect(await checkBodyRule(create, request({ body: { data: { title: 'x' } } }))).toEqual({ ok: true });
+    // The top level is not where the handler reads, so a status there is neither refused nor honoured.
+    expect(await checkBodyRule(create, request({ body: { contentStatus: 'published', data: { title: 'x' } } }))).toEqual({ ok: true });
   });
 
   it('fails closed on a body it cannot read, and reads a clone so the handler still gets the body', async () => {
@@ -196,9 +202,11 @@ describe('withAgentAccess', () => {
     expect(result.error.status).toBe(403);
     expect(JSON.parse(result.error.body)).toEqual({ ok: false, error: 'This key may not call that route.' });
     expect(audits).toEqual([
-      expect.objectContaining({ kind: 'agent-content-denial', agent: 'koda', surface: 'admin', reason: 'route-not-allowed', method: 'POST', route: 'publishContent' }),
+      expect.objectContaining({ kind: 'agent-content-denial', agent: 'koda', surface: 'admin', reason: 'route-not-allowed', method: 'POST', route: 'unlisted' }),
     ]);
     expect(JSON.stringify(audits)).not.toContain(SECRET.slice(5));
+    // The concrete path never reaches the row: its segments can be document ids.
+    expect(JSON.stringify(audits)).not.toContain('publishContent');
   });
 
   it('refuses every DELETE, listed route or not', async () => {
@@ -215,7 +223,7 @@ describe('withAgentAccess', () => {
     const { guard, audits } = setup({ record });
     const result = await guard.requireRole(request({ method: 'GET', path: 'cms/certifications' }), 'editor');
     expect(result.error.status).toBe(403);
-    expect(audits[0]).toMatchObject({ reason: 'section-off', section: 'admin.spotlight' });
+    expect(audits[0]).toMatchObject({ reason: 'section-off', section: 'admin.spotlight', route: 'cms/certifications' });
     // The upload route stays open through Pipeline when Spotlight is off.
     expect((await guard.requireRole(request({ method: 'POST', path: 'cms/uploads/certifications' }), 'editor')).error).toBeNull();
   });
@@ -240,6 +248,13 @@ describe('withAgentAccess', () => {
     expect(refused.error.status).toBe(403);
     expect(audits[0]).toMatchObject({ reason: 'body-not-allowed', field: 'newStatus', route: 'transitionContentStatus' });
     expect(JSON.stringify(audits)).not.toContain('c1');
+    const born = await guard.requireRole(
+      request({ method: 'POST', path: 'createContentItem', body: { data: { contentStatus: 'published', title: 'secret title' } } }),
+      'editor'
+    );
+    expect(born.error.status).toBe(403);
+    expect(audits[1]).toMatchObject({ reason: 'body-not-allowed', field: 'data.contentStatus' });
+    expect(JSON.stringify(audits)).not.toContain('secret title');
     const allowed = await guard.requireRole(
       request({ method: 'POST', path: 'transitionContentStatus', body: { newStatus: 'approved' } }),
       'editor'
@@ -257,12 +272,25 @@ describe('withAgentAccess', () => {
     expect(agentUserFor(matchPolicy('GET', 'cms/brain/status'), {}).oid).toBe('agent:koda');
   });
 
-  it('passes the key guard’s own refusals through (wrong key, limit) without touching the policy', async () => {
+  it('passes the key guard’s own refusals through (wrong key, limit), telling the key guard the surface and route template for its own audit row', async () => {
     const limited = { status: 429, headers: { 'Retry-After': '7' }, body: '{}' };
-    const { guard, audits } = setup({ agentError: limited });
-    const result = await guard.requireRole(request({ method: 'GET', path: 'cms/content' }), 'editor');
+    const { guard, agentGuard, audits } = setup({ agentError: limited });
+    const result = await guard.requireRole(request({ method: 'GET', path: 'cms/drafts/draft-id-77' }), 'editor');
     expect(result.error).toBe(limited);
+    // The wrapper writes nothing itself: the key guard wrote the row, with this context.
     expect(audits).toEqual([]);
+    expect(agentGuard.authenticate).toHaveBeenCalledWith(expect.anything(), { surface: 'admin', method: 'GET', route: 'cms/drafts/{id}' });
+    await guard.requireRole(request({ method: 'POST', path: 'publishContent' }), 'publisher');
+    expect(agentGuard.authenticate).toHaveBeenLastCalledWith(expect.anything(), { surface: 'admin', method: 'POST', route: 'unlisted' });
+  });
+
+  it('never writes a concrete path into a denial row, only the template or unlisted', async () => {
+    const record = { capabilities: { ...defaultCapabilities(), 'admin.brain': false } };
+    const { guard, audits } = setup({ record });
+    await guard.requireRole(request({ method: 'GET', path: 'cms/brain/items/note-id-42' }), 'editor');
+    await guard.requireRole(request({ method: 'DELETE', path: 'cms/drafts/draft-id-77' }), 'editor');
+    expect(audits.map((a) => a.route)).toEqual(['cms/brain/items/{id}', 'unlisted']);
+    expect(JSON.stringify(audits)).not.toMatch(/note-id-42|draft-id-77/);
   });
 
   it('throws on an unknown role requirement, like the role guard does', async () => {
@@ -270,11 +298,14 @@ describe('withAgentAccess', () => {
     await expect(guard.requireRole(request(), 'publishor')).rejects.toThrow(/unknown role requirement/);
   });
 
-  it('refuses a key on the user-only routes without a verifier round trip', async () => {
-    const { guard, roleGuard } = setup();
-    const result = await guard.requireUser(request());
+  it('refuses a key on the user-only routes without a verifier round trip, and writes the denial row', async () => {
+    const { guard, roleGuard, audits } = setup();
+    const result = await guard.requireUser(request({ method: 'GET', path: 'getCurrentAdminStatus' }));
     expect(result.error.status).toBe(401);
     expect(roleGuard.requireUser).not.toHaveBeenCalled();
+    expect(audits).toEqual([
+      expect.objectContaining({ kind: 'agent-content-denial', surface: 'admin', reason: 'user-only-route', method: 'GET', route: 'unlisted' }),
+    ]);
     await guard.requireUser(request({ key: null, token: 'a.b.c' }));
     expect(roleGuard.requireUser).toHaveBeenCalledTimes(1);
   });
@@ -293,6 +324,7 @@ describe('describePolicy', () => {
     expect(sections.find((s) => s.id === 'admin.pipeline').on).toBe(true);
     const pipeline = sections.find((s) => s.id === 'admin.pipeline');
     expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/transitionContentStatus', limit: `newStatus must be one of ${TRANSITION_TARGETS_ALLOWED.join(', ')}` });
+    expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/createContentItem', limit: 'data.contentStatus must not be published or archived; data.Live must not be true' });
     expect(pipeline.routes).toContainEqual({ method: 'GET', path: '/api/cms/content' });
     expect(sections.reduce((n, s) => n + s.routes.length, 0)).toBeGreaterThanOrEqual(POLICY.length);
   });

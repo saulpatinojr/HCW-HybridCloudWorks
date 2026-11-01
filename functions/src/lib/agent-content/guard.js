@@ -98,9 +98,12 @@ export function createAgentContentGuard({
 }) {
   if (!store) throw new Error('createAgentContentGuard requires a store');
 
-  const audit = (entry) => {
+  // `where` is what the caller knows about the request that the guard does
+  // not: the admin surface and the route template, when the admin role guard
+  // delegates here (admin-access.js, ADR 0038). The v1 routes pass nothing.
+  const audit = (entry, where = {}) => {
     try {
-      const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_USER.agent, ...entry });
+      const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_USER.agent, ...where, ...entry });
       // writeDenialAudit never rejects; a test double might. Nothing on a
       // denial path may become an unhandled rejection.
       if (result && typeof result.catch === 'function') result.catch(() => {});
@@ -129,7 +132,7 @@ export function createAgentContentGuard({
    * The three gates. Resolves `{ record, user }` or `{ error }`, where `error`
    * is the HTTP answer to return.
    */
-  async function authenticate(request) {
+  async function authenticate(request, where = {}) {
     const secret = agentKeyFrom(request);
     if (!secret) {
       return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
@@ -144,11 +147,11 @@ export function createAgentContentGuard({
 
     const record = await store.readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION);
     if (!isUsable(record)) {
-      audit({ outcome: 'denied', reason: record ? 'revoked-key' : 'no-key' });
+      audit({ outcome: 'denied', reason: record ? 'revoked-key' : 'no-key' }, where);
       return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
     }
     if (!hashMatches(secret, record.keyHash)) {
-      audit({ outcome: 'denied', reason: 'wrong-key' });
+      audit({ outcome: 'denied', reason: 'wrong-key' }, where);
       return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
     }
 
@@ -157,7 +160,7 @@ export function createAgentContentGuard({
       await enforceSubmissionQuota(store, quotaKeyFor(nowMs), { now: nowMs, limit: requestsPerMinute });
     } catch (error) {
       if (error?.code !== 'SUBMISSION_RATE_LIMIT') throw error;
-      audit({ outcome: 'denied', reason: 'rate-limited' });
+      audit({ outcome: 'denied', reason: 'rate-limited' }, where);
       return {
         record: null,
         user: null,

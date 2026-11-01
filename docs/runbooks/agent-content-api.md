@@ -175,9 +175,12 @@ rules that hold on every one of them:
   Amplify section, Platform Settings, admins and the lab agent registry
   answer `403`.
 - **Every refusal is logged**: an `admin_audit_logs` row of kind
-  `agent-content-denial` with `surface: "admin"`, the method, the route and a
-  reason (`route-not-allowed`, `section-off`, `role`, `body-not-allowed`,
-  `body-unreadable`), never the key or the body.
+  `agent-content-denial` with `surface: "admin"`, the method, the route as
+  the list spells it (`cms/drafts/{id}`, never the id itself; `unlisted` for
+  a route not on the list) and a reason (`route-not-allowed`, `section-off`,
+  `role`, `body-not-allowed`, `body-unreadable`, `user-only-route`, or the
+  key's own `wrong-key`, `revoked-key`, `rate-limited`), never the key or
+  the body.
 
 The full list, as the API reports it, is on the tab under **What Koda may do
 in the admin** and in `GET …/agent-content/v1/status` as `adminAccess`. In

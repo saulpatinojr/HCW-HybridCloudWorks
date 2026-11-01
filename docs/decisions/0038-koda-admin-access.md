@@ -40,7 +40,9 @@ either changed.
   publishing, scheduling or unpublishing, no settings, keys or secrets.
 - Keep the owner able to narrow Koda's reach without a deploy, as the five
   switches already do.
-- Keep every refusal explainable: a row in `admin_audit_logs` with the reason.
+- Keep every refusal explainable: a row in `admin_audit_logs` with the reason,
+  and content-free: the route as the policy spells it (the template, or
+  `unlisted`), never the concrete path, whose segments can be document ids.
 
 ## Decision
 
@@ -52,7 +54,7 @@ either changed.
    then the policy table. Any other request takes the role guard's path
    unchanged. `requireUser` refuses a key outright.
 2. **The policy is a table of method and route, each under a section switch.**
-   `POLICY` lists 101 rows, every one a route this Function App registers
+   `POLICY` lists about a hundred rows, every one a route this Function App registers
    (`admin-access-registry.test.js` holds each row to a registration and its
    methods). Five new switches on the Koda tab, `admin.pipeline`,
    `admin.enhanced`, `admin.brain`, `admin.spotlight` and `admin.platform`, open
@@ -72,9 +74,10 @@ either changed.
    `forge_ready` or `rejected` and never to `published` or `archived`; an
    `enqueueJob` may enqueue `forge-article`, `forge-from-url`, `batch-inspect`,
    `sync-blog-source` or `generate-listen-and-learn` and never
-   `publish-content`; a `createContentItem` may not ask to be born `published`
-   or `archived`. `updateContentItem` needs no rule: it already refuses the
-   workflow fields (`contentStatus`, `Status`, `Live`).
+   `publish-content`; a `createContentItem` may not ask, under `data` where
+   the handler reads the item, to be born `published` or `archived` or
+   `Live`. `updateContentItem` needs no rule: it already refuses the workflow
+   fields (`contentStatus`, `Status`, `Live`).
 5. **The role each row grants is the least that opens it.** `editor` nearly
    everywhere; `viewer` for the dashboard, queue, publish-board, health and lab
    reads; `publisher` only for the Doc Vault, whose every route, reads included,
@@ -89,14 +92,22 @@ either changed.
    owner's partition; the audit rows still name the key. The sync routes, the
    desktop plugin's, and `reindex` are not listed.
 7. **Not listed, by the owner's section list:** Forge Studio, AI Engine, Image
-   Prompts and the Image Gallery's writes (Creative, other than the brain),
+   Prompts (including its keyword configuration) and the Image Gallery's
+   writes (Creative, other than the brain), the generic config read
+   (`cms/config/{collection}`, whose only collections are the AI providers and
+   the MCP servers),
    every Amplify route (calendar, newsletters, mailing list, social, Linkie,
    recordings), Platform Settings, secrets, credentials, admins, bootstrap,
    MCP, AI routing and model catalogue, the lab agent registry, the Coder
    token, lab job launches and cancels, and the integration-status and
    probe-results writes. Gallery reads are allowed under Pipeline so an article
    can pick an image.
-8. **Discovery and the tab.** `GET /api/agent-content/v1/status` and the key
+8. **Every refusal of a presented key is a row**, including the key guard's
+   own (wrong, revoked, over the limit), which the wrapper tells the surface
+   and the route template before it checks the key, and the user-only
+   routes (the sign-in expectations, the current-admin status, the
+   bootstrap), which refuse a key with 401 and a `user-only-route` row.
+9. **Discovery and the tab.** `GET /api/agent-content/v1/status` and the key
    route both carry `adminAccess`: each section, its switch state and its
    routes with their body limits. The Koda tab shows it as "What Koda may do
    in the admin".
