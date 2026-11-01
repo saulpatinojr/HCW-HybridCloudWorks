@@ -464,6 +464,34 @@ describe('the hub', () => {
     expect(screen.getByTestId('publishing-nothing-due')).toHaveTextContent('Nothing was due');
   });
 
+  it('marks the refusal total and every reason count as a floor at the read bound (#1491)', async () => {
+    postJSON.mockImplementation(async (name) =>
+      name === 'getOpsHealthSnapshot'
+        ? {
+            ...SNAPSHOT,
+            agent: {
+              ...SNAPSHOT.agent,
+              denials: {
+                ...SNAPSHOT.agent.denials,
+                total: 200,
+                bounded: true,
+                byReason: [
+                  { reason: 'wrong-key', count: 150 },
+                  { reason: 'over-limit', count: 50 },
+                ],
+              },
+            },
+          }
+        : {}
+    );
+    renderAt();
+    const card = await screen.findByTestId('content-agent-card');
+    expect(within(card).getByText('200+')).toBeInTheDocument();
+    const reasons = within(card).getByTestId('agent-denials-by-reason');
+    expect(within(reasons).getByText('150+')).toBeInTheDocument();
+    expect(within(reasons).getByText('50+')).toBeInTheDocument();
+  });
+
   it('does not say nothing was due beside a scheduler run that broke (#1491)', async () => {
     postJSON.mockImplementation(async (name) => {
       if (name === 'getOpsHealthSnapshot') {

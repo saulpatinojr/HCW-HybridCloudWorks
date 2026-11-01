@@ -463,15 +463,23 @@ function RefusalsBadge({ denials }) {
   );
 }
 
-/** The reasons, most frequent first, when the read made it and found any. */
+/**
+ * The reasons, most frequent first, when the read made it and found any. At
+ * the read's bound each count is a floor, like the total, so it carries the
+ * same "+".
+ */
 function RefusalReasons({ denials }) {
   if (denials.unavailable || !denials.byReason?.length) return null;
+  const floor = denials.bounded ? '+' : '';
   return (
     <ul className="space-y-1 text-xs" data-testid="agent-denials-by-reason">
       {denials.byReason.slice(0, 6).map((row) => (
         <li key={row.reason} className="flex items-center justify-between font-mono">
           <span>{row.reason}</span>
-          <span className="text-muted-foreground">{row.count}</span>
+          <span className="text-muted-foreground">
+            {row.count}
+            {floor}
+          </span>
         </li>
       ))}
     </ul>
