@@ -217,6 +217,71 @@ export function evaluateForge(ctx, now = Date.now()) {
   );
 }
 
+/** "last used 40 min ago" or "never used". */
+const keyUsage = (key, now) =>
+  key.lastUsedAt ? `last used ${agoOf(key.lastUsedAt, now) ?? 'at an unknown time'}` : 'never used';
+
+/** "2 refusals in the last day", "200 refusals or more …", or that they could not be counted. */
+const refusalsText = (denials) =>
+  denials.unavailable
+    ? 'its refusals could not be counted'
+    : `${plural(denials.total ?? 0, 'refusal')}${denials.bounded ? ' or more' : ''} in the last day`;
+
+/** Refusals with a key that can still be used are worth a look. */
+const refusalsStatus = (denials) => ((denials.total ?? 0) > 0 ? 'degraded' : 'healthy');
+
+/**
+ * The content agent (Koda, ADR 0037 and 0038) from the snapshot's `agent`
+ * block: the same words as the pulse's checkContentAgent, so the Overview
+ * card and the Checks probe never disagree. No key is a fact, not a fault; a
+ * key record the read could not reach is unknown, not "no key"; refusals
+ * with a live key are worth a look; refusals the read could not count are
+ * unknown, never zero.
+ */
+export function contentAgentVerdict(agent, now = Date.now()) {
+  if (!agent) return result('unknown', 'This snapshot carries no content-agent block.');
+  const key = agent.key || {};
+  const denials = agent.denials || {};
+  const label = agent.label || 'The content agent';
+  const extra = { checkedAt: agent.lastCheckedAt ?? stamp() };
+  if (key.unavailable) {
+    return result(
+      'unknown',
+      `${label}'s key record could not be read, so its state is not known.`,
+      extra
+    );
+  }
+  if (!key.present) {
+    return result('healthy', `${label} has no key yet: nothing can call as it.`, extra);
+  }
+  const used = keyUsage(key, now);
+  const refusals = refusalsText(denials);
+  const state = key.active ? 'active' : 'revoked';
+  if (denials.unavailable) {
+    return result('unknown', `${label}'s key is ${state}, ${used}; ${refusals}.`, extra);
+  }
+  if (!key.active) {
+    return result(
+      refusalsStatus(denials),
+      `${label}'s key is revoked, ${used}; ${refusals}.`,
+      extra
+    );
+  }
+  const off = Array.isArray(agent.sectionsOff) ? agent.sectionsOff.length : 0;
+  const switches = off > 0 ? ` ${plural(off, 'switch')} off.` : '';
+  return result(
+    refusalsStatus(denials),
+    `${label}'s key is active, ${used}; ${refusals}.${switches}`,
+    extra
+  );
+}
+
+export function evaluateContentAgent(ctx, now = Date.now()) {
+  const agent = ctx?.snapshot?.agent;
+  if (!agent) return blockMissing(ctx, 'This snapshot carries no content-agent block.');
+  return contentAgentVerdict(agent, now);
+}
+
 export function evaluateTelegramNotify(ctx, now = Date.now()) {
   const state = ctx?.snapshot?.telegramNotifyState;
   if (!state) return blockMissing(ctx, 'This snapshot carries no Telegram notify state.');

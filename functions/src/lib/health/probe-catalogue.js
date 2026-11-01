@@ -80,6 +80,9 @@ export const HEALTH_PROBES = Object.freeze({
   storage: probe("snapshot", "viewer"),
   "runtime-config": probe("snapshot", "viewer"),
   "unresolved-secrets": probe("live", "viewer"),
+  // #1491: the content agent's key state and the day's refusals, from the
+  // ops snapshot's `agent` block (ops-health.js agentSummary).
+  "content-agent": probe("snapshot", "viewer"),
   qlty: probe("live", "editor"),
   "cloud-pricing": probe("live", "viewer"),
   "identity-token": probe("session", "viewer"),

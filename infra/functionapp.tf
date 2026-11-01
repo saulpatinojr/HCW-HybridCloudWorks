@@ -639,18 +639,19 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # client secret the credential, and lib/podcast/podbean.js exchanges the
     # pair for an access token (client credentials, POST /v1/oauth/token) on
     # each run. The Integrations page checks them with GET /v1/podcast. They
-    # travel together like the Publer workspace id and key. Unseeded,
-    # readKey() sees the unresolved reference as "not configured" and
-    # approving an episode leaves it on the manual upload path rather than
-    # failing.
+    # travel together like the Publer workspace id and key. Seeded by the
+    # owner by 2026-11-01. Were they ever unseeded again, readKey() would see
+    # the unresolved reference as "not configured" and approving an episode
+    # would take the manual upload path rather than failing.
     "PODBEAN_CLIENT_ID"     = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/PODBEAN-CLIENT-ID)"
     "PODBEAN_CLIENT_SECRET" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/PODBEAN-CLIENT-SECRET)"
 
     # StreamYard On-Air webinar integration (lib/streamyard/onair.js). Issued in
     # StreamYard under Team settings -> Integrations -> Zapier -> Generate API key.
     # Authenticates inbound webinar registrant and attendance webhooks and signs
-    # outbound registration forwards. Listed in EXPECTED_UNRESOLVED in
-    # scripts/check-unresolved-secrets.mjs until seeded on the Integrations Keys tab.
+    # outbound registration forwards. Seeded on the Integrations Keys tab by
+    # 2026-11-01, so no longer in EXPECTED_UNRESOLVED in
+    # scripts/check-unresolved-secrets.mjs.
     "STREAMYARD_API_KEY" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/STREAMYARD-API-KEY)"
 
     # Qlty (#569): read-only access to this repository's open findings and

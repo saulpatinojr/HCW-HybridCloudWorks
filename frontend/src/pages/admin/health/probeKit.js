@@ -30,6 +30,8 @@ export const SETTINGS = (tab) => ({
   label: 'Platform Settings',
 });
 export const AI_ENGINE = { to: '/admin/ai-engine', label: 'AI Engine' };
+/** The Koda tab on the AI Engine: the key, its switches and the route list (ADR 0037, 0038). */
+export const KODA = { to: '/admin/ai-engine?tab=koda', label: 'Koda tab' };
 export const LABS = { to: '/admin/labs?tab=agents', label: 'Labs' };
 export const NEWSLETTER = { to: '/admin/newsletter-hub?tab=settings', label: 'Newsletter Hub' };
 export const QUEUE = { to: '/admin/review-queue', label: 'Review Queue' };

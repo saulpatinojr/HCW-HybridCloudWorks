@@ -231,6 +231,44 @@ export function checkTelegramNotify(snapshot, now) {
   );
 }
 
+/**
+ * The content agent (Koda): its key and the day's refusals, from the
+ * snapshot's `agent` block. No key is a fact, not a fault (the agent is not
+ * set up); a key record the read could not reach is unknown, not "no key";
+ * a revoked key with recent refusals is degraded, because something is
+ * still calling with it; denials the read could not count are unknown.
+ */
+export function checkContentAgent(snapshot, now) {
+  const agent = snapshot?.agent;
+  if (!agent) return result('unknown', 'This snapshot carries no content-agent block.');
+  const key = agent.key || {};
+  const denials = agent.denials || {};
+  const label = agent.label || 'The content agent';
+  if (key.unavailable) {
+    return result('unknown', `${label}'s key record could not be read, so its state is not known.`);
+  }
+  if (!key.present) return result('healthy', `${label} has no key yet: nothing can call as it.`);
+  const used = key.lastUsedAt ? `last used ${ago(key.lastUsedAt, now) ?? 'at an unknown time'}` : 'never used';
+  const refusals = denials.unavailable
+    ? 'its refusals could not be counted'
+    : `${plural(denials.total ?? 0, 'refusal')}${denials.bounded ? ' or more' : ''} in the last day`;
+  if (denials.unavailable) {
+    return result('unknown', `${label}'s key is ${key.active ? 'active' : 'revoked'}, ${used}; ${refusals}.`);
+  }
+  if (!key.active) {
+    return result(
+      (denials.total ?? 0) > 0 ? 'degraded' : 'healthy',
+      `${label}'s key is revoked, ${used}; ${refusals}.`
+    );
+  }
+  const off = Array.isArray(agent.sectionsOff) ? agent.sectionsOff.length : 0;
+  const switches = off > 0 ? ` ${plural(off, 'switch')} off.` : '';
+  return result(
+    (denials.total ?? 0) > 0 ? 'degraded' : 'healthy',
+    `${label}'s key is active, ${used}; ${refusals}.${switches}`
+  );
+}
+
 /** Every check the snapshot answers, by the probe id it records. */
 export const SNAPSHOT_CHECKS = Object.freeze({
   cosmos: checkCosmos,
@@ -244,6 +282,7 @@ export const SNAPSHOT_CHECKS = Object.freeze({
   'link-rot': checkLinkRot,
   forge: checkForge,
   'telegram-notify': checkTelegramNotify,
+  'content-agent': checkContentAgent,
 });
 
 // ── From the registries ──────────────────────────────────────────────────────

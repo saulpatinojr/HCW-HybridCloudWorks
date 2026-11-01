@@ -151,6 +151,43 @@ const SNAPSHOT = {
     publishFailureCount: 1,
     orphanedGeneratedImages: 2,
     lastSchedulerSuccessAt: { toDate: () => new Date('2026-04-12T09:00:00Z') },
+    failedJobsUnavailable: false,
+    jobs24h: {
+      since: '2026-04-11T09:00:00Z',
+      queued: 2,
+      running: 1,
+      succeeded: 7,
+      failed: 1,
+      other: 0,
+      total: 11,
+      unavailable: false,
+    },
+  },
+  agent: {
+    id: 'koda',
+    label: 'Koda',
+    key: {
+      present: true,
+      active: true,
+      createdAt: '2026-04-01T00:00:00Z',
+      rotatedAt: '2026-04-10T00:00:00Z',
+      revokedAt: null,
+      lastUsedAt: '2026-04-12T08:50:00Z',
+      unavailable: false,
+    },
+    sectionsOff: [{ id: 'admin.brain', label: 'Second Brain' }],
+    denials: {
+      since: '2026-04-11T09:00:00Z',
+      total: 3,
+      byReason: [
+        { reason: 'route-not-allowed', count: 2 },
+        { reason: 'wrong-key', count: 1 },
+      ],
+      lastAt: '2026-04-12T08:40:00Z',
+      bounded: false,
+      unavailable: false,
+    },
+    lastCheckedAt: '2026-04-12T09:00:00Z',
   },
 };
 
@@ -370,6 +407,161 @@ describe('the hub', () => {
 
     openTab('Alerts');
     expect(screen.getByText('No alerts in this filter.')).toBeInTheDocument();
+  });
+
+  it('shows the content agent, the day’s jobs and the scheduler’s last run on Overview (#1491)', async () => {
+    renderAt();
+    expect(await screen.findByText('Content agent (Koda)')).toBeInTheDocument();
+    const card = screen.getByTestId('content-agent-card');
+    expect(within(card).getByText('active')).toBeInTheDocument();
+    expect(within(card).getByText('Second Brain')).toBeInTheDocument();
+    expect(within(card).getByText('route-not-allowed')).toBeInTheDocument();
+    expect(within(card).getByText('3')).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: /Koda tab/ })).toHaveAttribute(
+      'href',
+      '/admin/ai-engine?tab=koda'
+    );
+    // Rotated on the date it was rotated, not on the date it was created.
+    expect(within(card).getByText('Rotated')).toBeInTheDocument();
+    expect(within(card).queryByText(/Created, never rotated/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('jobs-24h')).toHaveTextContent('11 total');
+    expect(screen.getByTestId('publishing-run')).toHaveTextContent('degraded');
+  });
+
+  it('says when the jobs or the denial reads could not be made, and explains a quiet scheduler (#1491)', async () => {
+    postJSON.mockImplementation(async (name) => {
+      if (name === 'getOpsHealthSnapshot') {
+        return {
+          ...SNAPSHOT,
+          digest: {
+            ...SNAPSHOT.digest,
+            publishingOps: {
+              ...SNAPSHOT.digest.publishingOps,
+              due: 0,
+              published: 0,
+              skipped: 0,
+              failed: 0,
+              status: 'success',
+            },
+          },
+          operationalSignals: {
+            ...SNAPSHOT.operationalSignals,
+            failedJobsUnavailable: true,
+            jobs24h: { ...SNAPSHOT.operationalSignals.jobs24h, unavailable: true, total: 0 },
+          },
+          agent: {
+            ...SNAPSHOT.agent,
+            denials: { ...SNAPSHOT.agent.denials, total: 0, byReason: [], unavailable: true },
+          },
+        };
+      }
+      return {};
+    });
+    renderAt();
+    expect(await screen.findByTestId('failed-jobs-unavailable')).toBeInTheDocument();
+    expect(screen.getByTestId('jobs-unavailable')).toBeInTheDocument();
+    expect(screen.getByText('could not be counted')).toBeInTheDocument();
+    expect(screen.getByTestId('publishing-nothing-due')).toHaveTextContent('Nothing was due');
+  });
+
+  it('marks the refusal total and every reason count as a floor at the read bound (#1491)', async () => {
+    postJSON.mockImplementation(async (name) =>
+      name === 'getOpsHealthSnapshot'
+        ? {
+            ...SNAPSHOT,
+            agent: {
+              ...SNAPSHOT.agent,
+              denials: {
+                ...SNAPSHOT.agent.denials,
+                total: 200,
+                bounded: true,
+                byReason: [
+                  { reason: 'wrong-key', count: 150 },
+                  { reason: 'over-limit', count: 50 },
+                ],
+              },
+            },
+          }
+        : {}
+    );
+    renderAt();
+    const card = await screen.findByTestId('content-agent-card');
+    expect(within(card).getByText('200+')).toBeInTheDocument();
+    const reasons = within(card).getByTestId('agent-denials-by-reason');
+    expect(within(reasons).getByText('150+')).toBeInTheDocument();
+    expect(within(reasons).getByText('50+')).toBeInTheDocument();
+  });
+
+  it('does not say nothing was due beside a scheduler run that broke (#1491)', async () => {
+    postJSON.mockImplementation(async (name) => {
+      if (name === 'getOpsHealthSnapshot') {
+        return {
+          ...SNAPSHOT,
+          digest: {
+            ...SNAPSHOT.digest,
+            // The shape scheduled-publish.js records when the run itself throws.
+            publishingOps: {
+              ...SNAPSHOT.digest.publishingOps,
+              due: 0,
+              published: 0,
+              skipped: 0,
+              failed: 0,
+              status: 'failed',
+              error: 'Cosmos answered 503 while listing approved items',
+            },
+          },
+        };
+      }
+      return {};
+    });
+    renderAt();
+    expect(await screen.findByTestId('publishing-run')).toHaveTextContent('failed');
+    expect(screen.getByTestId('publishing-run')).toHaveTextContent('Cosmos answered 503');
+    expect(screen.queryByTestId('publishing-nothing-due')).not.toBeInTheDocument();
+  });
+
+  it('states no key facts it does not have: an older snapshot, no key, an unread key record (#1491)', async () => {
+    const shapes = [
+      { agent: null, expectWord: null },
+      {
+        agent: {
+          ...SNAPSHOT.agent,
+          key: { present: false, active: false, unavailable: false },
+          sectionsOff: [],
+          denials: { ...SNAPSHOT.agent.denials, total: 0, byReason: [], lastAt: null },
+        },
+        expectWord: 'none',
+      },
+      {
+        agent: {
+          ...SNAPSHOT.agent,
+          key: { present: false, active: false, unavailable: true },
+          sectionsOff: [],
+        },
+        expectWord: 'could not be read',
+      },
+    ];
+    for (const { agent, expectWord } of shapes) {
+      postJSON.mockImplementation(async (name) =>
+        name === 'getOpsHealthSnapshot' ? { ...SNAPSHOT, agent } : {}
+      );
+      const { unmount } = renderAt();
+      const card = await screen.findByTestId('content-agent-card');
+      // No key: no "last used", no rotation date and no switch row, none of which would be a fact.
+      expect(within(card).queryByText('Last used')).not.toBeInTheDocument();
+      expect(within(card).queryByTestId('agent-switches-off')).not.toBeInTheDocument();
+      expect(within(card).queryByText(/every switch is on/)).not.toBeInTheDocument();
+      if (expectWord) {
+        expect(within(card).getByText(expectWord)).toBeInTheDocument();
+      } else {
+        // An older snapshot without the block: the verdict sentence and the link only.
+        expect(within(card).getByText(/carries no content-agent block/)).toBeInTheDocument();
+        expect(within(card).queryByText('Key')).not.toBeInTheDocument();
+        expect(within(card).queryByText(/Refusals/)).not.toBeInTheDocument();
+      }
+      expect(within(card).getByRole('link', { name: /Koda tab/ })).toBeInTheDocument();
+      unmount();
+    }
   });
 
   it('renders a failed forge job with its error text on Health Overview within one refresh', async () => {
