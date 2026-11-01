@@ -21,6 +21,7 @@ import { MAX_DRAFT_BODY_BYTES } from '../cms/drafts.js';
 import { MAX_LISTED_DRAFTS } from '../cms/drafts-handlers.js';
 import { createPublicReadHandlers } from '../public-reads.js';
 import { errorResponse } from '../http/error-response.js';
+import { describePolicy } from './admin-access.js';
 import { AGENT_ID, API_BASE_PATH, REQUESTS_PER_MINUTE, enabledCapabilities } from './keys.js';
 
 /** What the transition audit rows record as the credential for Koda's moves. */
@@ -39,7 +40,6 @@ export const ENDPOINTS = Object.freeze([
   ['PUT', 'drafts/{id}', 'drafts.write'],
   ['POST', 'drafts/{id}/send-to-review', 'drafts.review'],
   ['POST', 'drafts/{id}/back-to-drafts', 'drafts.review'],
-  ['DELETE', 'drafts/{id}', 'drafts.delete'],
   ['GET', 'published', 'published.read'],
   ['GET', 'published/{slugOrId}', 'published.read'],
 ]);
@@ -61,10 +61,14 @@ export const LIMITS = Object.freeze({
 const canRead = (record) => record?.capabilities?.['drafts.read'] !== false;
 
 /**
- * The same answer without the draft's text: `draft.fields` (the eight editor
- * fields, body included) is replaced by `bodyWithheld: true`. The summary
- * fields (id, title, stage, etag, actions) stay, because a caller that may
- * write needs the etag to write again.
+ * The same answer without the draft's text. On every draft summary the answer
+ * carries (`draft`, or `current` on a stale write), `fields` (the eight
+ * editor fields, body included) is replaced by `bodyWithheld: true` when it
+ * was there, and `previewUrl` is nulled whenever it is there, because the
+ * signed preview link shows the body to whoever holds it and would hand back
+ * what the switch withholds. The summary fields (id, title, stage, etag,
+ * actions) and `editUrl` (an admin sign-in, not a token) stay, because a
+ * caller that may write needs the etag to write again.
  */
 export function withoutBody(response) {
   if (!response || typeof response.body !== 'string') return response;
@@ -74,9 +78,24 @@ export function withoutBody(response) {
   } catch {
     return response;
   }
-  if (!parsed || typeof parsed !== 'object' || !parsed.draft || !('fields' in parsed.draft)) return response;
-  const { fields: _withheld, ...rest } = parsed.draft;
-  return { ...response, body: JSON.stringify({ ...parsed, draft: { ...rest, bodyWithheld: true } }) };
+  if (!parsed || typeof parsed !== 'object') return response;
+  let changed = false;
+  const next = { ...parsed };
+  for (const key of ['draft', 'current']) {
+    const summary = parsed[key];
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary)) continue;
+    const { fields: _withheld, ...rest } = summary;
+    const redacted = {
+      ...rest,
+      ...('fields' in summary ? { bodyWithheld: true } : {}),
+      ...('previewUrl' in rest ? { previewUrl: null } : {}),
+    };
+    if ('fields' in summary || 'previewUrl' in rest) {
+      next[key] = redacted;
+      changed = true;
+    }
+  }
+  return changed ? { ...response, body: JSON.stringify(next) } : response;
 }
 
 /**
@@ -154,6 +173,7 @@ export function createAgentContentHandlers({
         limits: LIMITS,
         basePath: `/api/${API_BASE_PATH}`,
         endpoints: ENDPOINTS.map(([method, path, capability]) => ({ method, path, capability })),
+        adminAccess: describePolicy(auth.record),
       }),
     ),
     listDrafts: draftRoute('drafts.read', 'list the drafts', 'list'),
@@ -161,7 +181,6 @@ export function createAgentContentHandlers({
     createDraft: draftRoute('drafts.write', 'create the draft', 'create'),
     createDraftFromMarkdown: draftRoute('drafts.write', 'create the draft from the markdown file', 'createFromMarkdown'),
     saveDraft: draftRoute('drafts.write', 'save the draft', 'update'),
-    deleteDraft: draftRoute('drafts.delete', 'delete the draft', 'remove'),
     sendToReview: draftRoute('drafts.review', 'send the draft to review', 'sendToReview'),
     backToDrafts: draftRoute('drafts.review', 'move the article back to Drafts', 'backToDrafts'),
     listPublished: withCapability('published.read', 'list the published posts', (request, context) =>

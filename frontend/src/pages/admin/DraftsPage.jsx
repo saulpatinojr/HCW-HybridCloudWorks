@@ -25,7 +25,8 @@
  * writes and the markdown upload — and this component lays them out. Server side:
  * functions/src/lib/cms/drafts-handlers.js, drafts.js and drafts-stage.js.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import BrainContextPanel from '@/components/admin/BrainContextPanel';
 import { FilePen, Loader2, Plus, RefreshCw } from 'lucide-react';
 import ConfirmModal from '@/components/admin/ConfirmModal';
@@ -97,6 +98,13 @@ export default function DraftsPage() {
   const { toast } = useToast();
   const list = useDraftList(authReady);
   const editor = useOpenDraft(list.upsert);
+  // A link into this page (`?draft=<id>`, the editUrl every draft answer
+  // carries) opens that draft once the list has loaded. Once only: after that
+  // the page is the owner's, and the parameter is not kept in step with what
+  // they open next.
+  const [searchParams] = useSearchParams();
+  const linkedId = searchParams.get('draft');
+  const linkOpened = useRef(false);
   const writes = useDraftWrites({ editor, list, toast });
   const markdownDrafts = useMarkdownDrafts({ list, toast });
   // A pending switch away from unsaved changes: () => void, run on confirm.
@@ -116,6 +124,29 @@ export default function DraftsPage() {
     if (dirty) setPendingSwitch(() => run);
     else run();
   };
+  useEffect(() => {
+    // Also wait out a write in flight: when it returns, useDraftWrites shows
+    // its result, which would replace a linked draft opened in the meantime.
+    // And hold while a failed write's error or conflict is on screen, so the
+    // switch (which clears them) does not hide what went wrong.
+    if (
+      !linkedId ||
+      linkOpened.current ||
+      list.loading ||
+      writes.busy ||
+      writes.actionError ||
+      writes.conflict
+    )
+      return;
+    linkOpened.current = true;
+    // Through the same guard as an in-page switch: if the owner started a new
+    // draft while the list was still loading, the link asks before replacing
+    // it. Deferred a tick so the guard's state change is not made inside the
+    // effect body itself.
+    if (editor.current?.id !== linkedId)
+      queueMicrotask(() => guardSwitch(() => editor.open(linkedId)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open once, when the list first loads with no write in flight
+  }, [linkedId, list.loading, writes.busy, writes.actionError, writes.conflict]);
 
   const handleSelect = (id) => {
     if (current?.id !== id) guardSwitch(() => editor.open(id));

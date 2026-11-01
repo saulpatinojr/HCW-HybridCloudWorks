@@ -19,8 +19,15 @@ const RECORD = buildKeyRecord({ secret: SECRET, actor: 'owner@hcw.dev', now: () 
  */
 const TOKEN_SHAPED = `Bearer ${Buffer.from('{"alg":"RS256"}').toString('base64url')}.${Buffer.from('{}').toString('base64url')}.sig`;
 
-const request = (authorization) => ({
-  headers: { get: (name) => (name.toLowerCase() === 'authorization' ? authorization : null) },
+const request = (authorization, extra = {}) => ({
+  headers: {
+    get: (name) => {
+      const lower = name.toLowerCase();
+      if (lower === 'authorization') return authorization;
+      return extra[lower] ?? null;
+    },
+  },
+  query: { get: (name) => (name === 'key' || name === 'api_key' ? SECRET : null) },
 });
 const body = (res) => JSON.parse(res.body);
 
@@ -196,14 +203,14 @@ describe('a key that passes', () => {
 
 describe('the capability', () => {
   it('passes when on, and answers 403 naming the switch when off', async () => {
-    const off = { ...RECORD, capabilities: { ...RECORD.capabilities, 'drafts.delete': false } };
+    const off = { ...RECORD, capabilities: { ...RECORD.capabilities, 'drafts.review': false } };
     const { guard } = setup({ record: off });
     expect((await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.read')).error).toBeNull();
-    const refused = await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.delete');
+    const refused = await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.review');
     expect(refused.error.status).toBe(403);
-    expect(body(refused.error).error).toContain('Delete drafts');
+    expect(body(refused.error).error).toContain('Send to review and back');
     expect(body(refused.error).error).toContain('Koda tab');
-    expect(audits.at(-1)).toEqual(expect.objectContaining({ reason: 'capability-off', capability: 'drafts.delete' }));
+    expect(audits.at(-1)).toEqual(expect.objectContaining({ reason: 'capability-off', capability: 'drafts.review' }));
   });
 
   it('a record with no switches has every capability', async () => {
@@ -231,5 +238,56 @@ describe('the audit sink', () => {
     const auth = await guard.requireCapability(request(TOKEN_SHAPED), 'drafts.read');
     expect(auth.error.status).toBe(401);
     expect(store.readDoc).not.toHaveBeenCalled();
+  });
+});
+
+describe('the key is read in the shapes connectors send (#1477, 2026-11-01)', () => {
+  it('accepts Bearer, the bare Authorization value, X-API-Key and X-Agent-Key, and never the query string', async () => {
+    const { guard } = setup();
+    expect((await guard.authenticate(request(`Bearer ${SECRET}`))).error).toBeNull();
+    expect((await guard.authenticate(request(`bearer ${SECRET}`))).error).toBeNull();
+    expect((await guard.authenticate(request(SECRET))).error).toBeNull();
+    expect((await guard.authenticate(request(null, { 'x-api-key': SECRET }))).error).toBeNull();
+    expect((await guard.authenticate(request(null, { 'x-agent-key': ` ${SECRET} ` }))).error).toBeNull();
+    // Only headers: the helper's query string carries the key and is ignored.
+    expect((await guard.authenticate(request(null))).error.status).toBe(401);
+  });
+
+  it('lets a non-empty Authorization win, treats a blank one as absent, and still refuses without a row what is not a site key', async () => {
+    const { guard } = setup();
+    // A token in Authorization is not rescued by a good key in X-API-Key.
+    expect((await guard.authenticate(request(TOKEN_SHAPED, { 'x-api-key': SECRET }))).error.status).toBe(401);
+    expect((await guard.authenticate(request('Basic abc', { 'x-api-key': SECRET }))).error.status).toBe(401);
+    // A blank Authorization carries nothing to prefer: the key header is read
+    // (a client that sends an empty Authorization beside its API key header).
+    expect((await guard.authenticate(request('   ', { 'x-api-key': SECRET }))).error).toBeNull();
+    expect((await guard.authenticate(request('', { 'x-agent-key': SECRET }))).error).toBeNull();
+    expect((await guard.authenticate(request(null, { 'x-api-key': 'hcwk_bad' }))).error.status).toBe(401);
+    expect(audits).toEqual([]);
+    expect(auditDenial).not.toHaveBeenCalled();
+  });
+});
+
+describe('the audit context a caller passes (admin-access.js, ADR 0038)', () => {
+  it('is written into the key guard’s own denial rows, before the reason', async () => {
+    const { guard } = setup();
+    await guard.authenticate(request(`Bearer ${generateKey()}`), { surface: 'admin', method: 'GET', route: 'cms/content' });
+    expect(audits).toEqual([
+      expect.objectContaining({ kind: 'agent-content-denial', reason: 'wrong-key', surface: 'admin', method: 'GET', route: 'cms/content' }),
+    ]);
+    // Without a context the row is as before: no surface.
+    audits.length = 0;
+    await guard.authenticate(request(`Bearer ${generateKey()}`));
+    expect(audits[0].surface).toBeUndefined();
+  });
+});
+
+describe('an older key record', () => {
+  it('is read with the defaults filled in: a switch it never stored is on, a stored false stays off', async () => {
+    const silent = { ...RECORD, capabilities: { 'drafts.read': true } };
+    const { guard } = setup({ record: silent });
+    expect((await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.write')).error).toBeNull();
+    const stored = { ...RECORD, capabilities: { 'drafts.write': false } };
+    expect((await setup({ record: stored }).guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.write')).error.status).toBe(403);
   });
 });

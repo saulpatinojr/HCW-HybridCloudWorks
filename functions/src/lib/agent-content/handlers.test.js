@@ -168,7 +168,6 @@ describe('every route reaches the key guard with its own capability', () => {
     ['saveDraft', { id: 'x', body: { fields: FIELDS, etag: '"e1"' } }, 'drafts.write'],
     ['sendToReview', { id: 'x', body: { etag: '"e1"' } }, 'drafts.review'],
     ['backToDrafts', { id: 'x', body: { etag: '"e1"' } }, 'drafts.review'],
-    ['deleteDraft', { id: 'x', body: { etag: '"e1"' } }, 'drafts.delete'],
     ['listPublished', {}, 'published.read'],
     ['getPublished', { slugOrId: 'x' }, 'published.read'],
   ];
@@ -192,7 +191,9 @@ describe('every route reaches the key guard with its own capability', () => {
     const named = new Set(ENDPOINTS.map(([method, path]) => `${method} ${path}`));
     expect(named.size).toBe(ENDPOINTS.length);
     const capabilities = new Set(ENDPOINTS.map(([, , capability]) => capability).filter(Boolean));
-    expect([...capabilities].sort()).toEqual([...CAPABILITY_IDS].sort());
+    // The admin section switches open admin routes through the role guard
+    // (admin-access.js), not routes of this API, so they have no endpoint here.
+    expect([...capabilities].sort()).toEqual(CAPABILITY_IDS.filter((id) => !id.startsWith('admin.')).sort());
   });
 });
 
@@ -325,18 +326,17 @@ describe('a draft Koda writes', () => {
     expect(back.status).toBe(200);
     expect(store.docs.get(made.id).contentStatus).toBe(DRAFTS_STAGE_STATUS);
 
-    const gone = await handlers.deleteDraft(request({ id: made.id, body: { etag: back.body.draft.etag } }), context);
-    expect(gone.status).toBe(200);
-    expect(store.docs.has(made.id)).toBe(false);
+    // There is no delete route: the key never deletes (owner instruction 2026-11-01).
+    expect(handlers.deleteDraft).toBeUndefined();
+    expect(ENDPOINTS.some(([method]) => method === 'DELETE')).toBe(false);
   });
 
   it('cannot save, move or delete anything live', async () => {
     const { handlers, store } = setup({ seed: [{ ...PUBLISHED, draftOrigin: 'drafts' }] });
     const etag = store.docs.get('live-1')._etag;
     const saved = parse(await handlers.saveDraft(request({ id: 'live-1', body: { fields: FIELDS, etag } }), context));
-    const deleted = parse(await handlers.deleteDraft(request({ id: 'live-1', body: { etag } }), context));
     const sent = parse(await handlers.sendToReview(request({ id: 'live-1', body: { etag } }), context));
-    for (const res of [saved, deleted, sent]) {
+    for (const res of [saved, sent]) {
       expect(res.status).toBeGreaterThanOrEqual(400);
       expect(res.status).toBeLessThan(500);
     }
@@ -394,7 +394,6 @@ describe('a store fault inside the guard', () => {
       ['getDraft', { id: 'x' }],
       ['createDraft', { body: { fields: FIELDS } }],
       ['saveDraft', { id: 'x', body: { fields: FIELDS, etag: '"e1"' } }],
-      ['deleteDraft', { id: 'x', body: { etag: '"e1"' } }],
       ['sendToReview', { id: 'x', body: { etag: '"e1"' } }],
     ];
     for (const [name, req] of routes) {
@@ -418,6 +417,10 @@ describe('a key whose Read drafts switch is off', () => {
     expect(made.body.draft.etag).toBeDefined();
     expect(made.body.draft.fields).toBeUndefined();
     expect(made.body.draft.bodyWithheld).toBe(true);
+    // The edit link survives the withholding (it needs an admin sign-in); the
+    // preview link does not, because whoever holds it can read the body.
+    expect(made.body.draft.editUrl).toContain('/admin/drafts?draft=');
+    expect(made.body.draft.previewUrl).toBeNull();
     expect(JSON.stringify(made.body)).not.toContain(FIELDS.body);
     // The document itself is whole.
     expect(store.docs.get(made.body.draft.id).postContent).toBe(FIELDS.body);
@@ -437,6 +440,17 @@ describe('a key whose Read drafts switch is off', () => {
     );
     expect(stale.status).toBe(412);
     expect(JSON.stringify(stale.body)).not.toContain(FIELDS.body);
+    // The stale answer's `current` summary carries no preview token either.
+    expect(stale.body.current.previewUrl).toBeNull();
+    expect(stale.body.current.etag).toBeDefined();
+
+    // The markdown route answers with a summary (no fields), and it carries no preview token.
+    const markdown = '---\ntitle: From markdown, switch off\n---\nA body only the page may read.';
+    const imported = parse(await handlers.createDraftFromMarkdown(request({ body: { markdown } }), context));
+    expect(imported.status).toBe(201);
+    expect(imported.body.draft.previewUrl).toBeNull();
+    expect(imported.body.draft.editUrl).toContain('/admin/drafts?draft=');
+    expect(imported.body.draft.bodyWithheld).toBeUndefined();
   });
 
   it('with the switch on, a write answers with the text as the page would see it', async () => {
@@ -449,13 +463,13 @@ describe('a key whose Read drafts switch is off', () => {
 
 describe('the status route', () => {
   it('describes the key without revealing it', async () => {
-    const off = { ...RECORD, capabilities: { ...RECORD.capabilities, 'drafts.delete': false } };
+    const off = { ...RECORD, capabilities: { ...RECORD.capabilities, 'drafts.review': false } };
     const { handlers } = setup({ guard: allowingGuard(off) });
     const res = parse(await handlers.status(request(), context));
     expect(res.status).toBe(200);
     expect(res.body.agent).toBe('koda');
     expect(res.body.keyHint).toBe(RECORD.keyHint);
-    expect(res.body.capabilities).toEqual(CAPABILITY_IDS.filter((id) => id !== 'drafts.delete'));
+    expect(res.body.capabilities).toEqual(CAPABILITY_IDS.filter((id) => id !== 'drafts.review'));
     expect(res.body.limits.requestsPerMinute).toBe(120);
     expect(res.body.basePath).toBe('/api/agent-content/v1');
     expect(res.body.endpoints).toHaveLength(ENDPOINTS.length);

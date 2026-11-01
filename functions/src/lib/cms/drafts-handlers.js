@@ -62,6 +62,8 @@ import {
   readMarkdownRequest,
 } from "./drafts-markdown.js";
 import { buildDedupFields, normalizeTitleForDedup } from "./content-dedup.js";
+import { PREVIEWABLE_STATUSES, previewPathFor } from "../public-preview.js";
+import { normalizeCurrentStatusForBlogOnly } from "./content-update-validation.js";
 import {
   TaxonomyFieldError,
   validateTaxonomyFieldsWithStore,
@@ -289,7 +291,7 @@ async function conflict(deps, id) {
   refuseIf(!latest && { ...NOT_FOUND, error: "This draft no longer exists." });
   throw new Refusal(
     { status: 412, code: "CONFLICT", error: CONFLICT_MESSAGE },
-    { current: toDraftSummary(latest) },
+    { current: withLinks(deps, toDraftSummary(latest)) },
   );
 }
 
@@ -429,7 +431,7 @@ async function listDrafts(deps) {
     { name: "@drafting", value: DRAFTS_STAGE_STATUS },
   ]);
   const drafts = rows
-    .map(toDraftSummary)
+    .map((row) => withLinks(deps, toDraftSummary(row)))
     .sort((a, b) =>
       String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")),
     );
@@ -439,7 +441,7 @@ async function listDrafts(deps) {
 /** GET cms/drafts/{id} */
 async function getDraft(deps, { request }) {
   const doc = await readDraft(deps, readId(request));
-  return json(200, { ok: true, draft: toDraftView(doc) });
+  return json(200, { ok: true, draft: withLinks(deps, toDraftView(doc)) });
 }
 
 /** POST cms/drafts — { fields } */
@@ -462,7 +464,7 @@ async function createDraft(deps, { request, user }) {
     contentId: doc.id,
     title: doc.Title,
   });
-  return json(201, { ok: true, draft: toDraftView(created) });
+  return json(201, { ok: true, draft: withLinks(deps, toDraftView(created)) });
 }
 
 /** A draft already on the desk (or put forward from it) under this title, or null. */
@@ -600,7 +602,7 @@ async function createFromMarkdown(deps, { request, user }) {
     contentId: id,
     title: fields.title,
     warnings: parsed.warnings,
-    draft: toDraftSummary(created),
+    draft: withLinks(deps, toDraftSummary(created)),
   });
 }
 
@@ -625,7 +627,7 @@ async function saveDraft(deps, { request, user, id, body, etag, current }) {
     title: fields.title,
     details: { updatedFields: Object.keys(update) },
   });
-  return json(200, { ok: true, draft: toDraftView(written) });
+  return json(200, { ok: true, draft: withLinks(deps, toDraftView(written)) });
 }
 
 /**
@@ -690,7 +692,7 @@ async function sendToReview(deps, { request, user, id, etag, current }) {
   });
   return json(200, {
     ok: true,
-    draft: toDraftView(written),
+    draft: withLinks(deps, toDraftView(written)),
     reviewPath: `/admin/review-queue/${encodeURIComponent(id)}`,
   });
 }
@@ -710,7 +712,7 @@ async function backToDrafts(deps, { request, user, id, etag, current }) {
     from: REVIEW_STATUS,
     to: DRAFTS_STAGE_STATUS,
   });
-  return json(200, { ok: true, draft: toDraftView(written) });
+  return json(200, { ok: true, draft: withLinks(deps, toDraftView(written)) });
 }
 
 /** Handler name → what a failure says it was doing, whether it writes an existing draft, the work. */
@@ -748,6 +750,51 @@ const ROUTES = Object.freeze({
  *   the admin page's Entra token by default, `agent_key` for the Agent Content API
  * @returns {Record<keyof typeof ROUTES, (request: object, context: object) => Promise<object>>}
  */
+/** The public site every link points at; the admin SPA and the preview page live there. */
+const SITE_ORIGIN = "https://hybridcloudworks.com";
+
+/**
+ * The secret the preview links are signed with, read at answer time so a
+ * secret seeded after start-up is picked up. An unresolved Key Vault
+ * reference reads as unset, as ai/router.js readKey treats it.
+ */
+function previewSecretOf(env) {
+  const raw = env?.PREVIEW_SIGNING_SECRET;
+  if (typeof raw !== "string") return "";
+  const value = raw.replace(/^\uFEFF/, "").trim();
+  return !value || value.startsWith("@Microsoft.KeyVault(") ? "" : value;
+}
+
+/**
+ * The two links every draft answer carries (owner request 2026-11-01):
+ *
+ *   editUrl     the Drafts page with this draft open (`?draft=<id>`), where
+ *               the owner or an admin edits it;
+ *   previewUrl  the public preview page with a signed, expiring token
+ *               (public-preview.js: 72 h, bound to this id), or null while
+ *               PREVIEW_SIGNING_SECRET is not seeded, and null for a status
+ *               the preview route would refuse anyway (a Drafts-origin
+ *               article that has been published is still listed here, and
+ *               its live page is the place to read it).
+ *
+ * Minted per answer, so a list of fifty drafts is fifty fresh links; an old
+ * answer's link simply expires. Nothing is stored.
+ */
+export function draftLinks(doc, deps) {
+  if (!doc?.id) return { editUrl: null, previewUrl: null };
+  const previewable = PREVIEWABLE_STATUSES.has(normalizeCurrentStatusForBlogOnly(doc.contentStatus));
+  const path = previewable
+    ? previewPathFor(previewSecretOf(deps.env), doc.id, { now: () => deps.now().getTime() })
+    : "";
+  return {
+    editUrl: `${SITE_ORIGIN}/admin/drafts?draft=${encodeURIComponent(doc.id)}`,
+    previewUrl: path ? `${SITE_ORIGIN}${path}` : null,
+  };
+}
+
+/** A draft summary or view with its links. */
+const withLinks = (deps, draft) => ({ ...draft, ...draftLinks(draft, deps) });
+
 export function createDraftsHandlers({
   guard,
   store,
@@ -758,6 +805,7 @@ export function createDraftsHandlers({
   origin = null,
   defaultIdeaOrigin = null,
   authMethod = "entra_bearer_token",
+  env = process.env,
 }) {
   const deps = {
     guard,
@@ -769,6 +817,7 @@ export function createDraftsHandlers({
     origin,
     defaultIdeaOrigin,
     authMethod,
+    env,
   };
   return Object.fromEntries(
     Object.entries(ROUTES).map(([name, [what, wrap, work]]) => [

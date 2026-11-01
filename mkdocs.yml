@@ -128,6 +128,7 @@ nav:
       - 0035 AddOn pane model: decisions/0035-addon-pane-model.md
       - 0036 Code Conductor brain (withdrawn): decisions/0036-code-conductor-brain.md
       - 0037 Agent Content API (Koda): decisions/0037-agent-content-api.md
+      - 0038 Koda's admin access: decisions/0038-koda-admin-access.md
   - Runbooks:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md

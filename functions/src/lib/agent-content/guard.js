@@ -3,14 +3,19 @@
  *
  * The fourth guard in this API, beside the admin role guard, the lab agent's
  * App Role guard and the brains' delegated-scope guards. It is deliberately
- * disjoint from all three: an admin token does not pass here, and Koda's key
- * passes nothing that calls `requireRole`. The route-inventory test mocks this
+ * disjoint from all three on this API: an admin token does not pass here.
+ * Since ADR 0038 the key also passes the admin role guard, but only for the
+ * allow-listed admin routes in admin-access.js, which composes this guard's
+ * `authenticate` with its own policy. The route-inventory test mocks this
  * module by name, so a route that uses it counts as guarded there.
  *
  * Three gates, in order, and a refusal at any of them reads nothing further:
  *
- *   1. The bearer value is shaped like a key this site issued (keys.js
+ *   1. The presented value is shaped like a key this site issued (keys.js
  *      looksLikeKey). A random token is refused before the database is read.
+ *      The key is read from the shapes connectors send (agentKeyFrom):
+ *      `Authorization: Bearer <key>`, the bare key as the Authorization
+ *      value, or an X-API-Key / X-Agent-Key header; never a query string.
  *   2. Its SHA-256 matches the hash in the one key record, which is not
  *      revoked. Compared in constant time. No cache: revoking the key on the
  *      Koda tab must cut the next request, the same reason require-agent.js
@@ -25,15 +30,14 @@
  * Every refusal of a presented site key (one shaped like ours: wrong, revoked,
  * over the limit, or without the capability) is one `admin_audit_logs` row of
  * kind agent-content-denial, with the reason and never the key or any part of
- * it. A request with no Authorization header, or with a bearer value not
- * shaped like a site key, is refused without a row, as the admin guard refuses
+ * it. A request with no key header, or with a value not shaped like a site
+ * key, is refused without a row, as the admin guard refuses
  * a missing token: there is no attempt worth describing, and the anonymous
  * probes the internet sends would otherwise be a write each. 401 for a missing,
  * wrong or revoked key (one sentence for all three, so the answer does not
  * say whether a key exists), 403 for a capability that is off, 429 with
  * Retry-After for the limit.
  */
-import { bearerTokenFrom } from '../auth/verify-token.js';
 import { writeDenialAudit } from '../auth/denial-audit.js';
 import {
   ADMIN_CONFIG_PARTITION,
@@ -54,6 +58,8 @@ import {
   looksLikeKey,
   quotaKeyFor,
   secondsToNextMinute,
+  agentKeyFrom,
+  enabledCapabilities,
 } from './keys.js';
 
 /** How often lastUsedAt is written: a stamp per call would be a write per call. */
@@ -71,6 +77,12 @@ const deny = (status, code, error, headers = {}) => ({
 const labelOf = (capability) =>
   CAPABILITIES.find((entry) => entry.id === capability)?.label || capability;
 
+// agentKeyFrom and KEY_HEADERS moved to keys.js (ADR 0038), where the admin
+// role guard reads them too; re-exported so nothing that imported them here
+// has to move.
+export { agentKeyFrom, KEY_HEADERS } from './keys.js';
+
+
 /**
  * @param {object} deps
  * @param {{ readDoc: Function, patchDoc: Function, incrementIf: Function, createDoc: Function,
@@ -87,9 +99,12 @@ export function createAgentContentGuard({
 }) {
   if (!store) throw new Error('createAgentContentGuard requires a store');
 
-  const audit = (entry) => {
+  // `where` is what the caller knows about the request that the guard does
+  // not: the admin surface and the route template, when the admin role guard
+  // delegates here (admin-access.js, ADR 0038). The v1 routes pass nothing.
+  const audit = (entry, where = {}) => {
     try {
-      const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_USER.agent, ...entry });
+      const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_USER.agent, ...where, ...entry });
       // writeDenialAudit never rejects; a test double might. Nothing on a
       // denial path may become an unhandled rejection.
       if (result && typeof result.catch === 'function') result.catch(() => {});
@@ -118,13 +133,13 @@ export function createAgentContentGuard({
    * The three gates. Resolves `{ record, user }` or `{ error }`, where `error`
    * is the HTTP answer to return.
    */
-  async function authenticate(request) {
-    const secret = bearerTokenFrom(request);
+  async function authenticate(request, where = {}) {
+    const secret = agentKeyFrom(request);
     if (!secret) {
       return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
     }
-    // A bearer value not shaped like a site key is no credential at all, like
-    // a missing header: refused without a store read and without an audit
+    // A value not shaped like a site key is no credential at all, like a
+    // missing header: refused without a store read and without an audit
     // row, so the random tokens internet scanners send cannot turn into a
     // write per request on admin_audit_logs.
     if (!looksLikeKey(secret)) {
@@ -133,11 +148,11 @@ export function createAgentContentGuard({
 
     const record = await store.readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION);
     if (!isUsable(record)) {
-      audit({ outcome: 'denied', reason: record ? 'revoked-key' : 'no-key' });
+      audit({ outcome: 'denied', reason: record ? 'revoked-key' : 'no-key' }, where);
       return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
     }
     if (!hashMatches(secret, record.keyHash)) {
-      audit({ outcome: 'denied', reason: 'wrong-key' });
+      audit({ outcome: 'denied', reason: 'wrong-key' }, where);
       return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
     }
 
@@ -146,7 +161,7 @@ export function createAgentContentGuard({
       await enforceSubmissionQuota(store, quotaKeyFor(nowMs), { now: nowMs, limit: requestsPerMinute });
     } catch (error) {
       if (error?.code !== 'SUBMISSION_RATE_LIMIT') throw error;
-      audit({ outcome: 'denied', reason: 'rate-limited' });
+      audit({ outcome: 'denied', reason: 'rate-limited' }, where);
       return {
         record: null,
         user: null,
@@ -167,7 +182,10 @@ export function createAgentContentGuard({
   async function requireCapability(request, capability) {
     const auth = await authenticate(request);
     if (auth.error) return auth;
-    if (auth.record.capabilities?.[capability] === false) {
+    // What the record allows, with the defaults filled in, so an older key
+    // record is read the same way as a new one: a switch it never stored
+    // takes today's default, and a switch stored false stays off.
+    if (!enabledCapabilities(auth.record).includes(capability)) {
       audit({ outcome: 'denied', reason: 'capability-off', capability });
       return {
         record: null,

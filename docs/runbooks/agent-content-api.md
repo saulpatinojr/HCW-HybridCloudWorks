@@ -12,9 +12,9 @@ Everything here happens on the AI Engine's **Koda** tab:
 tab but the buttons say they are not theirs.
 
 What the key can do, in plain words: everything the Drafts page can do (list,
-read, create, edit, send to review, pull back, delete a draft) and read the
+read, create, edit, send to review, pull back a draft) and read the
 published articles the public site shows. It cannot publish, unpublish, change
-a setting, read a secret or touch anything live. Each of those five things is a
+a setting, read a secret or touch anything live. Each of those four groups is a
 switch on the tab, so any of them can be turned off without touching the key.
 
 Until a key exists, every call to the API is refused and nothing is on.
@@ -32,7 +32,10 @@ Until a key exists, every call to the API is refused and nothing is on.
    tab lists every value the form asks for; the ones that matter are:
    - Provider host: `api-azure.hybridcloudworks.com`
    - Base URL: `https://api-azure.hybridcloudworks.com/api/agent-content/v1`
-   - Authentication: API key, sent in the `Authorization` header as `Bearer`
+   - Authentication: API key. The site reads it from the `Authorization`
+     header as `Bearer <key>` or as the bare key, or from an `X-API-Key`
+     (or `X-Agent-Key`) header, so whichever shape the connector form
+     offers works. It never reads a key from the address.
 4. Paste the key into Muse's secure field. Never paste it into chat, a note
    or a ticket.
 5. Back on the tab, press **I have pasted it, hide the key**. The box closes
@@ -107,7 +110,14 @@ the key.
 On the **What Koda may do** card, turn a switch off. The change applies to
 Koda's next call: any endpoint in that group answers `403` with a sentence
 naming the switch. Turn it back on the same way. Both are written to the
-audit log.
+audit log. The first four switches are the agent API's own; the five below
+them (Pipeline, Enhanced, Second Brain, Spotlight, Platform) are the admin
+sections of part 7, and turning one off closes every admin route under it.
+The image upload route is listed under Pipeline and Spotlight both, but which
+switch opens it depends on the storage container asked for: article images
+(`content`, `blogs`, `covers`) follow Pipeline, certification and speaker-event
+images follow Spotlight, and any other container answers `403`. There is no
+delete switch: the key has no delete route at all.
 
 ## 5. Revoke the key
 
@@ -125,9 +135,20 @@ audit log.
   refused is a row in the `admin_audit_logs` container with
   `kind: "agent-content-denial"` and a `reason` (`no-key`, `wrong-key`,
   `revoked-key`, `capability-off`, `rate-limited`). A call with no key, or
-  with a bearer value of any other shape (`hcwk_bad` included), is refused
-  without a row, so internet scanners do not fill the log. The key itself is
-  never in a row.
+  with a value of any other shape in those headers (`hcwk_bad` included), is
+  refused without a row, so internet scanners do not fill the log. The key
+  itself is never in a row. Many 401s with no rows means the site never saw a
+  value shaped like a key: the connector sends it somewhere the site does not
+  read (the address, or a header other than `Authorization`, `X-API-Key` and
+  `X-Agent-Key`), or the value in the header is not the whole key (cut short,
+  or wrapped in quotes), or a non-empty `Authorization` holds something else
+  (a stale token, for example), which is read instead of a good `X-API-Key`
+  beside it. Check the header name and the value before moving or rotating
+  the key. Part 2's command sends the value you paste at its prompt as
+  `Authorization: Bearer`, so a `200` there proves that pasted value is the
+  current key. It does not prove Muse holds the same value or sends it the
+  same way, so compare Muse's header name and value with it next; the
+  command cannot show what Muse sent.
 - **Key events:** rows with `action` `agent_content_key_generated`,
   `agent_content_key_rotated`, `agent_content_capabilities_changed` or
   `agent_content_key_revoked`, each with the key's first characters and who
@@ -136,11 +157,71 @@ audit log.
   `.azure/api-surface.json`, sections `agentContentApi` and
   `adminAgentContent`.
 
+## 7. What Koda may do in the admin
+
+Since 2026-11-01 ([ADR 0038](../decisions/0038-koda-admin-access.md)) the same
+key also works on the admin routes under `/api/` that the five section
+switches open. Koda calls them exactly as the admin pages do, with the key in
+place of a sign-in, and the site treats it as `koda (agent)` with an editor's
+rights (a publisher's in the Doc Vault, and as you in the Second Brain). The
+rules that hold on every one of them:
+
+- **Nothing can be deleted.** A `DELETE` is refused everywhere (the agent
+  API's own draft delete is gone too), and the routes that delete or trash by
+  `POST` are not open.
+- **Nothing can be published, scheduled or unpublished.** Those routes are not
+  open, nor are the routes that unpublish as a side effect (request
+  inspection, reset review state, the Listen & Learn episode review). The
+  routes that could reach publishing through their body are limited: a status
+  change may go to `approved`, `editing`, `forge_ready` or `rejected`; a job
+  may be `forge-article`, `forge-from-url`, `batch-inspect`,
+  `sync-blog-source` or `generate-listen-and-learn`; a new content item may
+  not be created already `published` (or one of the older `published_blog`,
+  `published_news`, `published_both` spellings) or `archived`; a book or
+  chapter may be restored but not archived.
+- **No secret or credential can be read, and no setting can be changed**
+  (settings are read-only, where the editor needs them), and no section the
+  owner did not name is open: Forge Studio, AI Engine, Image Prompts, the
+  Amplify section, Platform Settings, admins and the lab agent registry
+  answer `403`.
+- **Every refusal is logged**: an `admin_audit_logs` row of kind
+  `agent-content-denial` with `surface: "admin"`, the method, the route as
+  the list spells it (`cms/drafts/{id}`, never the id itself; `unlisted` for
+  a route not on the list) and a reason (`route-not-allowed`, `section-off`,
+  `role`, `body-not-allowed`, `body-unreadable`, `user-only-route`, or the
+  key's own `wrong-key`, `revoked-key`, `rate-limited`), never the key or
+  the body.
+
+The full list, as the API reports it, is on the tab under **What Koda may do
+in the admin** and in `GET …/agent-content/v1/status` as `adminAccess`. In
+short, by switch:
+
+| Switch | Pages | Koda may | Koda may not |
+|---|---|---|---|
+| Pipeline | New Content, Drafts, Review Queue, Editor, Live Pages | List and read content, versions and drafts; create and edit drafts and articles; save the editor; reorder images; move content between review states; generate article drafts, hero and preview images and captions; enqueue the producing jobs and read job state; read the queue, publish board, decision centre and dashboard; read settings, taxonomy and the image gallery; upload images | Publish, schedule, unpublish, set a slug, rehost images, delete anything |
+| Enhanced | Listen & Learn, Labs, Frameworks, Coder Corner, Blogs | Read, create and edit Listen & Learn books and chapters, estimate and regenerate, restore an archived book or chapter; read the lab estate, a lab job, the starts and the Coder automation; read, create and edit blog sources (Frameworks and Coder Corner are content, so the Pipeline rows cover them) | Archive or delete books, chapters or versions; publish or withdraw an episode; launch or cancel lab jobs; change lab agents; read the Coder token; delete a blog |
+| Second Brain | Second Brain | Read status, notes, history, graph and context; search and ask; create and edit notes and collections; draft from a note, acting as you | Reindex; the desktop sync routes |
+| Spotlight | Speaking, Certifications, Ambassador, Doc Vault | Read talks and upsert one; read, create and edit certifications; read, create and edit applications and evidence, import evidence, read sources, files, programs and readiness; in the Doc Vault read, create, upload, edit, untrash and restore a version | Delete a talk, a certification, an application, evidence or a document; create or edit a program |
+| Platform | Health, Integrations | Read the health probe results and the ops snapshot; read the integration status and the StreamYard status; run a connection test | Change a probe result or an integration setting; read secrets or credentials; change platform settings |
+
+To take a section away, turn its switch off on the tab; to give Koda a route
+that is not listed, or to let it publish, change the table in
+`functions/src/lib/agent-content/admin-access.js` through a pull request.
+
 ## What the API expects from Koda, in brief
 
 - Drafts are addressed by `id`, not slug. `GET drafts` returns the list with
   each draft's `id` and `etag`; `GET drafts/{id}` returns the body.
-- Every change (`PUT`, `DELETE`, `send-to-review`, `back-to-drafts`) carries
+- Every draft answer, in the list and alone, carries two links: `editUrl`,
+  the Drafts page with that draft open
+  (`https://hybridcloudworks.com/admin/drafts?draft=<id>`, for the owner or an
+  admin, signed in), and `previewUrl`, the public preview page with a signed
+  token that expires after 72 hours and shows the draft as the public page
+  would. `previewUrl` is `null` while the site's preview secret is not
+  seeded, and `null` on every answer to a key whose **Read drafts** switch is
+  off, because whoever holds the link can read the body. Koda can hand either
+  to the owner without any further call.
+- Every change (`PUT`, `send-to-review`, `back-to-drafts`) carries
   the `etag` of the version Koda last read. A stale one answers
   `412 CONFLICT`: read again, then retry.
 - A new draft is `POST drafts` with `{ "fields": { title, subtitle, date,
@@ -157,12 +238,11 @@ audit log.
   wherever one would carry the draft as the page sees it (`draft` with
   `fields`), the text is replaced by `bodyWithheld: true` and the summary
   (id, title, stage, etag, allowed actions) stays. The markdown route's
-  answers and a delete's answer are the same for every key: a created
-  markdown draft answers `201` with `contentId` and a `draft` summary that
-  includes its `etag` (keep it; it is the version token for the next
-  change); the skipped answers, `200 ALREADY_IMPORTED` with `contentId` and
-  `200 PUBLISHED_ELSEWHERE` with `existingId`, carry no etag; a delete
-  answers `deleted` and `stage`.
+  answers are the same for every key: a created markdown draft answers `201`
+  with `contentId` and a `draft` summary that includes its `etag` (keep it;
+  it is the version token for the next change); the skipped answers,
+  `200 ALREADY_IMPORTED` with `contentId` and `200 PUBLISHED_ELSEWHERE` with
+  `existingId`, carry no etag.
 - The body is at most 256 KB. Errors are `{ "ok": false, "code", "error" }`.
 - `GET published` and `GET published/{slugOrId}` answer exactly as the public
   site's own reads do.

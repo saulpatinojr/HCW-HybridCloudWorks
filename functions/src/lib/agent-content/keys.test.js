@@ -89,14 +89,14 @@ describe('the record', () => {
   it('a rotation keeps the first creation and the switches, and stamps the rotation', () => {
     const previous = {
       ...buildKeyRecord({ secret: generateKey(), actor: 'first@hcw.dev', now: () => new Date('2026-10-01T00:00:00.000Z') }),
-      capabilities: { ...defaultCapabilities(), 'drafts.delete': false },
+      capabilities: { ...defaultCapabilities(), 'drafts.review': false },
     };
     const next = buildKeyRecord({ secret: generateKey(), actor: 'second@hcw.dev', now: NOW, previous });
     expect(next.createdAt).toBe('2026-10-01T00:00:00.000Z');
     expect(next.createdBy).toBe('first@hcw.dev');
     expect(next.rotatedAt).toBe('2026-10-31T12:00:00.000Z');
     expect(next.rotatedBy).toBe('second@hcw.dev');
-    expect(next.capabilities['drafts.delete']).toBe(false);
+    expect(next.capabilities['drafts.review']).toBe(false);
     expect(next.keyHash).not.toBe(previous.keyHash);
   });
 
@@ -134,8 +134,8 @@ describe('the record', () => {
 
 describe('the capabilities', () => {
   it('merge a change over the stored switches and refuse unknown ids and non-booleans by name', () => {
-    const next = normalizeCapabilities({ 'drafts.delete': false }, { 'drafts.review': false });
-    expect(next).toEqual({ ...defaultCapabilities(), 'drafts.review': false, 'drafts.delete': false });
+    const next = normalizeCapabilities({ 'drafts.write': false }, { 'drafts.review': false });
+    expect(next).toEqual({ ...defaultCapabilities(), 'drafts.review': false, 'drafts.write': false });
     expect(() => normalizeCapabilities({ publish: true })).toThrow(AgentContentInputError);
     expect(() => normalizeCapabilities({ publish: true })).toThrow('Not a capability: publish');
     expect(() => normalizeCapabilities({ 'drafts.read': 'yes' })).toThrow('drafts.read must be true or false');
@@ -144,13 +144,19 @@ describe('the capabilities', () => {
 
   it('a record with no switches has every capability; a switch off removes one', () => {
     expect(enabledCapabilities({})).toEqual([...CAPABILITY_IDS]);
+    expect(enabledCapabilities({ capabilities: { 'drafts.review': true } })).toEqual([...CAPABILITY_IDS]);
     expect(enabledCapabilities({ capabilities: { 'published.read': false } })).toEqual(
       CAPABILITY_IDS.filter((id) => id !== 'published.read'),
     );
+    // There is no delete switch: the key never deletes.
+    expect(CAPABILITY_IDS).not.toContain('drafts.delete');
   });
 
   it('has no publish, slug or settings capability to switch on', () => {
-    expect(CAPABILITY_IDS.some((id) => /publish|slug|setting|secret|admin/.test(id) && id !== 'published.read')).toBe(false);
+    // No capability publishes, sets a slug, or touches settings or secrets; the
+    // `admin.*` ids are section switches over admin-access.js's allow-list.
+    expect(CAPABILITY_IDS.some((id) => /publish|slug|setting|secret/.test(id) && id !== 'published.read')).toBe(false);
+    expect(CAPABILITY_IDS.filter((id) => id.startsWith('admin.'))).toEqual(['admin.pipeline', 'admin.enhanced', 'admin.brain', 'admin.spotlight', 'admin.platform']);
   });
 });
 

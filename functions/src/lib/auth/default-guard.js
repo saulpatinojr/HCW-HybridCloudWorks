@@ -16,12 +16,17 @@ import { createTokenVerifier } from './verify-token.js';
 import { createRoleGuard } from './require-role.js';
 import { readDoc } from '../cosmos-client.js';
 import { writeDenialAudit } from './denial-audit.js';
+import { getAgentContentGuard } from '../agent-content/guard.js';
+import { withAgentAccess } from '../agent-content/admin-access.js';
 
 let guard = null;
 
 export function getDefaultGuard() {
   if (guard) return guard;
-  guard = createRoleGuard({
+  // Koda's key takes its own path through this guard, for the admin routes
+  // admin-access.js lists and no others (ADR 0038); a token takes the role
+  // guard's path unchanged.
+  guard = withAgentAccess(createRoleGuard({
     verifier: createTokenVerifier({
       tenantId: process.env.ENTRA_TENANT_ID,
       audience: process.env.ENTRA_API_AUDIENCE,
@@ -32,7 +37,7 @@ export function getDefaultGuard() {
     // (admin-auth.js:405-411); the container exists here and now has its
     // writer. Failures inside the sink are swallowed by the guard itself.
     auditDenial: writeDenialAudit,
-  });
+  }), { agentGuard: getAgentContentGuard(), auditDenial: writeDenialAudit });
   return guard;
 }
 
