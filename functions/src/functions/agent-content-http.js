@@ -5,10 +5,12 @@
  * routes and the public reads behind the key guard) and
  * lib/agent-content/admin-handlers.js (the key's lifecycle).
  *
- * Two guards, never mixed. The /api/agent-content/v1/* routes take Koda's
- * key (lib/agent-content/guard.js) and nothing else: an admin token is
- * refused there. The cms/agent-content/key route takes the admin role guard
- * and nothing else: Koda's key cannot read, make, change or revoke itself.
+ * Two guards. The /api/agent-content/v1/* routes take Koda's key
+ * (lib/agent-content/guard.js) and nothing else: an admin token is refused
+ * there. The cms/agent-content/key route takes the admin role guard, which
+ * since ADR 0038 lets the key through only for the routes admin-access.js
+ * lists, and this is not one of them: Koda's key still cannot read, make,
+ * change or revoke itself.
  * The route-inventory test knows the key guard by name, as it knows the lab
  * agent's.
  *
@@ -59,7 +61,7 @@ export const AGENT_CONTENT_ROUTES = Object.freeze([
   ['agentContentStatus', 'status', { GET: 'status' }],
   ['agentContentDrafts', 'drafts', { GET: 'listDrafts', POST: 'createDraft' }],
   ['agentContentDraftFromMarkdown', 'drafts/from-markdown', { POST: 'createDraftFromMarkdown' }],
-  ['agentContentDraft', 'drafts/{id}', { GET: 'getDraft', PUT: 'saveDraft', DELETE: 'deleteDraft' }],
+  ['agentContentDraft', 'drafts/{id}', { GET: 'getDraft', PUT: 'saveDraft' }],
   ['agentContentDraftSendToReview', 'drafts/{id}/send-to-review', { POST: 'sendToReview' }],
   ['agentContentDraftBackToDrafts', 'drafts/{id}/back-to-drafts', { POST: 'backToDrafts' }],
   ['agentContentPublished', 'published', { GET: 'listPublished' }],

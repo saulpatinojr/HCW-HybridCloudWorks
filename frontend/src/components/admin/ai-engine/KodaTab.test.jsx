@@ -33,13 +33,34 @@ const { default: KodaTab } = await import('./KodaTab.jsx');
 const CATALOGUE = [
   { id: 'drafts.read', label: 'Read drafts', description: 'List and open.' },
   { id: 'drafts.write', label: 'Create and edit drafts', description: 'Create and save.' },
-  { id: 'drafts.delete', label: 'Delete drafts', description: 'Delete.' },
+  { id: 'drafts.review', label: 'Send to review and back', description: 'Review.' },
 ];
 const ENDPOINTS = [
   { method: 'GET', path: 'status', capability: null },
   { method: 'GET', path: 'drafts', capability: 'drafts.read' },
   { method: 'POST', path: 'drafts', capability: 'drafts.write' },
-  { method: 'DELETE', path: 'drafts/{id}', capability: 'drafts.delete' },
+  { method: 'POST', path: 'drafts/{id}/send-to-review', capability: 'drafts.review' },
+];
+const ADMIN_ACCESS = [
+  {
+    id: 'admin.pipeline',
+    label: 'Pipeline',
+    on: true,
+    routes: [
+      { method: 'GET', path: '/api/cms/content' },
+      {
+        method: 'POST',
+        path: '/api/transitionContentStatus',
+        limit: 'newStatus must be one of approved, editing',
+      },
+    ],
+  },
+  {
+    id: 'admin.brain',
+    label: 'Second Brain',
+    on: false,
+    routes: [{ method: 'POST', path: '/api/cms/brain/items' }],
+  },
 ];
 const answer = (key) => ({
   ok: true,
@@ -49,6 +70,7 @@ const answer = (key) => ({
   limits: { requestsPerMinute: 120 },
   basePath: '/api/agent-content/v1',
   endpoints: ENDPOINTS,
+  adminAccess: ADMIN_ACCESS,
 });
 const NO_KEY = { present: false, active: false, capabilities: {} };
 const ACTIVE = {
@@ -60,7 +82,7 @@ const ACTIVE = {
   rotatedAt: null,
   lastUsedAt: null,
   revokedAt: null,
-  capabilities: { 'drafts.read': true, 'drafts.write': true, 'drafts.delete': false },
+  capabilities: { 'drafts.read': true, 'drafts.write': true, 'drafts.review': false },
 };
 const SECRET = 'hcwk_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz';
 
@@ -93,7 +115,12 @@ describe('KodaTab', () => {
     expect(
       screen.getByText('GET https://api-azure.hybridcloudworks.com/api/agent-content/v1/status')
     ).toBeInTheDocument();
-    expect(screen.getByText('DELETE drafts/{id}')).toBeInTheDocument();
+    expect(screen.getByText('POST drafts/{id}/send-to-review')).toBeInTheDocument();
+    // The admin routes the key may call, per section, with the section's switch state and a body limit.
+    expect(screen.getByText('What Koda may do in the admin')).toBeInTheDocument();
+    expect(screen.getByText('Second Brain (off)')).toBeInTheDocument();
+    expect(screen.getByText(/POST \/api\/transitionContentStatus/)).toBeInTheDocument();
+    expect(screen.getByText('(newStatus must be one of approved, editing)')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Read drafts' })).toBeDisabled();
     expect(screen.getByText('The switches apply once a key exists.')).toBeInTheDocument();
   });
@@ -132,14 +159,14 @@ describe('KodaTab', () => {
   it('switches a capability through the API and re-reads', async () => {
     readKodaKey.mockResolvedValue(answer(ACTIVE));
     setKodaCapabilities.mockResolvedValue(
-      answer({ ...ACTIVE, capabilities: { ...ACTIVE.capabilities, 'drafts.delete': true } })
+      answer({ ...ACTIVE, capabilities: { ...ACTIVE.capabilities, 'drafts.review': true } })
     );
     renderTab();
-    const toggle = await screen.findByRole('switch', { name: 'Delete drafts' });
+    const toggle = await screen.findByRole('switch', { name: 'Send to review and back' });
     expect(toggle).toHaveAttribute('aria-checked', 'false');
     fireEvent.click(toggle);
     await waitFor(() =>
-      expect(setKodaCapabilities).toHaveBeenCalledWith({ 'drafts.delete': true })
+      expect(setKodaCapabilities).toHaveBeenCalledWith({ 'drafts.review': true })
     );
     expect(readKodaKey).toHaveBeenCalledTimes(2);
   });
