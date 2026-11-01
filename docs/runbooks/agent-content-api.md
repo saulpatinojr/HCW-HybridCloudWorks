@@ -14,7 +14,7 @@ tab but the buttons say they are not theirs.
 What the key can do, in plain words: everything the Drafts page can do (list,
 read, create, edit, send to review, pull back a draft) and read the
 published articles the public site shows. It cannot publish, unpublish, change
-a setting, read a secret or touch anything live. Each of those five things is a
+a setting, read a secret or touch anything live. Each of those four groups is a
 switch on the tab, so any of them can be turned off without touching the key.
 
 Until a key exists, every call to the API is refused and nothing is on.
