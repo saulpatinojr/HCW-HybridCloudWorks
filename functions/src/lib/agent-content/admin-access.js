@@ -72,6 +72,9 @@ export const JOB_TYPES_ALLOWED = Object.freeze([
 /** Statuses a new content item may not be created in by the key. */
 export const CREATE_STATUSES_REFUSED = Object.freeze(['published', 'archived']);
 
+/** The legacy `Status` spellings that mean live or published; a create may not carry one. */
+export const LEGACY_LIVE_STATUSES = Object.freeze(['Live', 'live', 'Published', 'published']);
+
 const P = 'admin.pipeline';
 const E = 'admin.enhanced';
 const B = 'admin.brain';
@@ -109,7 +112,13 @@ export const POLICY = Object.freeze(
       'POST',
       'createContentItem',
       P,
-      { body: [{ field: 'data.contentStatus', refuse: CREATE_STATUSES_REFUSED }, { field: 'data.Live', refuse: [true] }] },
+      {
+        body: [
+          { field: 'data.contentStatus', refuse: CREATE_STATUSES_REFUSED },
+          { field: 'data.Live', refuse: [true] },
+          { field: 'data.Status', refuse: LEGACY_LIVE_STATUSES },
+        ],
+      },
     ],
     ['POST', 'updateContentItem', P],
     ['PATCH', 'updateContentItem', P],
@@ -236,13 +245,16 @@ export function templateToPattern(template) {
 
 /** The path after `/api/`, from the request's URL, without a query string or trailing slash. */
 export function apiPathOf(request) {
-  let pathname;
+  // A URL that does not parse, or a path with malformed percent-encoding
+  // (`/api/cms/drafts/%ZZ`), is no route: '' matches nothing and the request
+  // gets the audited 403, never a throw past the key check.
+  let decoded;
   try {
-    pathname = new URL(request?.url || '', 'http://request.local').pathname;
+    decoded = decodeURIComponent(new URL(request?.url || '', 'http://request.local').pathname);
   } catch {
     return '';
   }
-  return decodeURIComponent(pathname)
+  return decoded
     .replace(/^\/+/, '')
     .replace(/^api\//i, '')
     .replace(/\/+$/, '');

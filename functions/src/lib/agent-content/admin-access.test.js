@@ -117,6 +117,8 @@ describe('matching', () => {
     expect(apiPathOf({ url: 'https://h/api/cms/drafts/' })).toBe('cms/drafts');
     expect(apiPathOf({ url: 'not a url' })).toBe('not a url');
     expect(apiPathOf({})).toBe('');
+    // Malformed percent-encoding is no route, not a throw.
+    expect(apiPathOf({ url: 'https://h/api/cms/drafts/%ZZ' })).toBe('');
     expect(matchPolicy('get', 'CMS/Content')?.route).toBe('cms/content');
   });
 
@@ -160,6 +162,9 @@ describe('body rules', () => {
     expect((await checkBodyRule(create, request({ body: { data: { contentStatus: 'published' } } }))).reason).toBe('body-not-allowed');
     expect((await checkBodyRule(create, request({ body: { data: { contentStatus: 'archived' } } }))).reason).toBe('body-not-allowed');
     expect((await checkBodyRule(create, request({ body: { data: { Live: true } } }))).reason).toBe('body-not-allowed');
+    expect((await checkBodyRule(create, request({ body: { data: { Status: 'Live' } } }))).reason).toBe('body-not-allowed');
+    expect((await checkBodyRule(create, request({ body: { data: { Status: 'published' } } }))).reason).toBe('body-not-allowed');
+    expect(await checkBodyRule(create, request({ body: { data: { Status: 'Draft' } } }))).toEqual({ ok: true });
     expect(await checkBodyRule(create, request({ body: { data: { title: 'x', contentStatus: 'drafting' } } }))).toEqual({ ok: true });
     expect(await checkBodyRule(create, request({ body: { data: { title: 'x' } } }))).toEqual({ ok: true });
     // The top level is not where the handler reads, so a status there is neither refused nor honoured.
@@ -207,6 +212,13 @@ describe('withAgentAccess', () => {
     expect(JSON.stringify(audits)).not.toContain(SECRET.slice(5));
     // The concrete path never reaches the row: its segments can be document ids.
     expect(JSON.stringify(audits)).not.toContain('publishContent');
+  });
+
+  it('answers a malformed path with the audited 403, never a throw past the key check', async () => {
+    const { guard, audits } = setup();
+    const result = await guard.requireRole(request({ method: 'GET', path: 'cms/drafts/%ZZ' }), 'editor');
+    expect(result.error.status).toBe(403);
+    expect(audits[0]).toMatchObject({ reason: 'route-not-allowed', route: 'unlisted' });
   });
 
   it('refuses every DELETE, listed route or not', async () => {
@@ -324,7 +336,7 @@ describe('describePolicy', () => {
     expect(sections.find((s) => s.id === 'admin.pipeline').on).toBe(true);
     const pipeline = sections.find((s) => s.id === 'admin.pipeline');
     expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/transitionContentStatus', limit: `newStatus must be one of ${TRANSITION_TARGETS_ALLOWED.join(', ')}` });
-    expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/createContentItem', limit: 'data.contentStatus must not be published or archived; data.Live must not be true' });
+    expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/createContentItem', limit: 'data.contentStatus must not be published or archived; data.Live must not be true; data.Status must not be Live or live or Published or published' });
     expect(pipeline.routes).toContainEqual({ method: 'GET', path: '/api/cms/content' });
     expect(sections.reduce((n, s) => n + s.routes.length, 0)).toBeGreaterThanOrEqual(POLICY.length);
   });

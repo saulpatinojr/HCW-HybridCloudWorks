@@ -59,6 +59,7 @@ import {
   quotaKeyFor,
   secondsToNextMinute,
   agentKeyFrom,
+  enabledCapabilities,
 } from './keys.js';
 
 /** How often lastUsedAt is written: a stamp per call would be a write per call. */
@@ -181,7 +182,10 @@ export function createAgentContentGuard({
   async function requireCapability(request, capability) {
     const auth = await authenticate(request);
     if (auth.error) return auth;
-    if (auth.record.capabilities?.[capability] === false) {
+    // What the record allows, with the defaults filled in: a switch the record
+    // never stored is off when it starts off (drafts.delete), so an older key
+    // record is bound by today's default, not by its silence.
+    if (!enabledCapabilities(auth.record).includes(capability)) {
       audit({ outcome: 'denied', reason: 'capability-off', capability });
       return {
         record: null,

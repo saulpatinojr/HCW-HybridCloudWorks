@@ -349,8 +349,9 @@ function AdminReachCard({ data }) {
           With the same key, on the admin routes under <code>/api/</code>, Koda acts as{' '}
           <code>koda (agent)</code> with an editor’s rights (a publisher’s in the Doc Vault, and as
           you in the Second Brain). Each section is a switch above. Nothing can be deleted,
-          published, scheduled or unpublished, and no setting, key or secret can be read or changed;
-          a route that is not listed answers 403 and is logged.
+          published, scheduled or unpublished; no secret or credential can be read, and no setting
+          can be changed (settings are read-only, where the editor needs them); a route that is not
+          listed answers 403 and is logged.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

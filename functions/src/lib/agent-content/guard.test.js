@@ -281,3 +281,14 @@ describe('the audit context a caller passes (admin-access.js, ADR 0038)', () => 
     expect(audits[0].surface).toBeUndefined();
   });
 });
+
+describe('a switch that starts off (owner instruction 2026-11-01)', () => {
+  it('is off for a record that never stored it, on only when stored true', async () => {
+    const silent = { ...RECORD, capabilities: { 'drafts.read': true } };
+    const { guard } = setup({ record: silent });
+    expect((await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.delete')).error.status).toBe(403);
+    expect((await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.write')).error).toBeNull();
+    const turnedOn = { ...RECORD, capabilities: { 'drafts.delete': true } };
+    expect((await setup({ record: turnedOn }).guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.delete')).error).toBeNull();
+  });
+});
