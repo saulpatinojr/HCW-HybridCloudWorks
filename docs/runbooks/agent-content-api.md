@@ -169,7 +169,8 @@ rules that hold on every one of them:
   are limited: a status change may go to `approved`, `editing`, `forge_ready`
   or `rejected`; a job may be `forge-article`, `forge-from-url`,
   `batch-inspect`, `sync-blog-source` or `generate-listen-and-learn`; a new
-  content item may not be created already `published` or `archived`.
+  content item may not be created already `published` (or one of the older
+  `published_blog`, `published_news`, `published_both` spellings) or `archived`.
 - **No secret or credential can be read, and no setting can be changed**
   (settings are read-only, where the editor needs them), and no section the
   owner did not name is open: Forge Studio, AI Engine, Image Prompts, the

@@ -161,6 +161,12 @@ describe('body rules', () => {
   it('refuses a create whose item (under `data`, where the handler reads it) asks to be born published or live, and allows one that does not say', async () => {
     expect((await checkBodyRule(create, request({ body: { data: { contentStatus: 'published' } } }))).reason).toBe('body-not-allowed');
     expect((await checkBodyRule(create, request({ body: { data: { contentStatus: 'archived' } } }))).reason).toBe('body-not-allowed');
+    // The older spellings are stored as given and read as published (lib/public-reads.js), so they are refused too.
+    for (const alias of ['published_blog', 'published_news', 'published_both']) {
+      expect((await checkBodyRule(create, request({ body: { data: { contentStatus: alias } } }))).reason).toBe('body-not-allowed');
+    }
+    // approved_blog maps to approved, a review state, which the key may ask for.
+    expect(await checkBodyRule(create, request({ body: { data: { contentStatus: 'approved_blog' } } }))).toEqual({ ok: true });
     expect((await checkBodyRule(create, request({ body: { data: { Live: true } } }))).reason).toBe('body-not-allowed');
     expect((await checkBodyRule(create, request({ body: { data: { Status: 'Live' } } }))).reason).toBe('body-not-allowed');
     expect((await checkBodyRule(create, request({ body: { data: { Status: 'published' } } }))).reason).toBe('body-not-allowed');
@@ -336,7 +342,7 @@ describe('describePolicy', () => {
     expect(sections.find((s) => s.id === 'admin.pipeline').on).toBe(true);
     const pipeline = sections.find((s) => s.id === 'admin.pipeline');
     expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/transitionContentStatus', limit: `newStatus must be one of ${TRANSITION_TARGETS_ALLOWED.join(', ')}` });
-    expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/createContentItem', limit: 'data.contentStatus must not be published or archived; data.Live must not be true; data.Status must not be Live or live or Published or published' });
+    expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/createContentItem', limit: 'data.contentStatus must not be published or published_blog or published_news or published_both or archived; data.Live must not be true; data.Status must not be Live or live or Published or published' });
     expect(pipeline.routes).toContainEqual({ method: 'GET', path: '/api/cms/content' });
     expect(sections.reduce((n, s) => n + s.routes.length, 0)).toBeGreaterThanOrEqual(POLICY.length);
   });

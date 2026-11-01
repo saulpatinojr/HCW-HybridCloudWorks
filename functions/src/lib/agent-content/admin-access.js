@@ -69,8 +69,19 @@ export const JOB_TYPES_ALLOWED = Object.freeze([
   'generate-listen-and-learn',
 ]);
 
-/** Statuses a new content item may not be created in by the key. */
-export const CREATE_STATUSES_REFUSED = Object.freeze(['published', 'archived']);
+/**
+ * Statuses a new content item may not be created in by the key. The three
+ * `published_*` names are the older spellings the create handler still
+ * stores as given and the public reads still count as published
+ * (`lib/cms/content-update-validation.js` STATUS_ALIASES, `lib/public-reads.js`).
+ */
+export const CREATE_STATUSES_REFUSED = Object.freeze([
+  'published',
+  'published_blog',
+  'published_news',
+  'published_both',
+  'archived',
+]);
 
 /** The legacy `Status` spellings that mean live or published; a create may not carry one. */
 export const LEGACY_LIVE_STATUSES = Object.freeze(['Live', 'live', 'Published', 'published']);

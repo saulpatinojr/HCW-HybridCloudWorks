@@ -75,8 +75,9 @@ either changed.
    `enqueueJob` may enqueue `forge-article`, `forge-from-url`, `batch-inspect`,
    `sync-blog-source` or `generate-listen-and-learn` and never
    `publish-content`; a `createContentItem` may not ask, under `data` where
-   the handler reads the item, to be born `published` or `archived` or
-   `Live`. `updateContentItem` needs no rule: it already refuses the workflow
+   the handler reads the item, to be born `published` (or one of the older
+   `published_blog`, `published_news`, `published_both` spellings, which are
+   stored as given and read as published) or `archived` or `Live`. `updateContentItem` needs no rule: it already refuses the workflow
    fields (`contentStatus`, `Status`, `Live`).
 5. **The role each row grants is the least that opens it.** `editor` nearly
    everywhere; `viewer` for the dashboard, queue, publish-board, health and lab
