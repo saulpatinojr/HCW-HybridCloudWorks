@@ -156,7 +156,15 @@ export const POLICY = Object.freeze(
     ['GET', 'cms/images/folders', P],
     ['GET', 'cms/images/{id}/usage', P],
     ['GET', 'cms/images/curated/{id}', P],
-    ['POST', 'cms/uploads/{container}', [P, S]],
+    // One registered route, five containers: which switch opens it depends
+    // on the container asked for, so a key with only Spotlight on cannot
+    // write article images and the reverse (Copilot review, 2026-11-01).
+    [
+      'POST',
+      'cms/uploads/{container}',
+      [P, S],
+      { segments: { container: { content: P, blogs: P, covers: P, certifications: S, speakerevents: S } } },
+    ],
 
     // Enhanced: Listen & Learn, Labs (read), Frameworks and Coder Corner
     // (content routes above), Blogs.
@@ -238,6 +246,9 @@ export const POLICY = Object.freeze(
       role: options.role || 'editor',
       asOwner: Boolean(options.asOwner),
       body: options.body ? Object.freeze((Array.isArray(options.body) ? options.body : [options.body]).map((rule) => Object.freeze({ ...rule }))) : null,
+      segments: options.segments
+        ? Object.freeze(Object.fromEntries(Object.entries(options.segments).map(([name, map]) => [name, Object.freeze({ ...map })])))
+        : null,
       pattern: templateToPattern(route),
     })
   )
@@ -280,10 +291,31 @@ export function matchPolicy(method, path) {
   return POLICY.find((row) => row.method === verb && row.pattern.test(path)) || null;
 }
 
-/** Which of a row's sections the record has on, or null when none is. */
-export function openSection(row, record) {
+/**
+ * The sections that can open this row for this concrete path. Most rows
+ * answer with their own sections; a row with `segments` narrows them by a
+ * path segment (the upload container), and a value the map does not know
+ * opens nothing.
+ */
+export function sectionsFor(row, path = '') {
+  if (!row.segments) return row.sections;
+  const templateParts = row.route.split('/');
+  const pathParts = String(path || '').split('/');
+  const sections = [];
+  for (const [name, map] of Object.entries(row.segments)) {
+    const index = templateParts.indexOf(`{${name}}`);
+    const value = index === -1 ? undefined : pathParts[index];
+    const section = Object.hasOwn(map, value) ? map[value] : null;
+    if (!section) return [];
+    sections.push(section);
+  }
+  return sections;
+}
+
+/** Which of the sections that open this row for this path the record has on, or null when none is. */
+export function openSection(row, record, path = '') {
   const switches = record?.capabilities || {};
-  return row.sections.find((section) => switches[section] !== false) || null;
+  return sectionsFor(row, path).find((section) => switches[section] !== false) || null;
 }
 
 /**
@@ -355,13 +387,24 @@ export function describePolicy(record = null) {
       id: section,
       label: capability?.label || section,
       on: switches[section] !== false,
-      routes: POLICY.filter((row) => row.sections.includes(section)).map((row) => ({
-        method: row.method,
-        path: `/api/${row.route}`,
-        ...(row.body ? { limit: row.body.map(bodyLimitText).join('; ') } : {}),
-      })),
+      routes: POLICY.filter((row) => row.sections.includes(section)).map((row) => {
+        const limits = [
+          ...(row.body ? row.body.map(bodyLimitText) : []),
+          ...(row.segments ? Object.entries(row.segments).map(([name, map]) => segmentLimitText(name, map, section)) : []),
+        ];
+        return {
+          method: row.method,
+          path: `/api/${row.route}`,
+          ...(limits.length ? { limit: limits.join('; ') } : {}),
+        };
+      }),
     };
   });
+}
+
+function segmentLimitText(name, map, section) {
+  const values = Object.entries(map).filter(([, opens]) => opens === section).map(([value]) => value);
+  return `${name} must be one of ${values.join(', ')}`;
 }
 
 function bodyLimitText(body) {
@@ -412,7 +455,8 @@ export function withAgentAccess(roleGuard, { agentGuard, auditDenial = null, env
     // the route template too. The concrete path is matched and then dropped:
     // its segments can be document ids, and telemetry is content-free.
     const method = String(request?.method || '').toUpperCase();
-    const row = matchPolicy(method, apiPathOf(request));
+    const path = apiPathOf(request);
+    const row = matchPolicy(method, path);
     const where = { surface: 'admin', method, route: row ? row.route : 'unlisted' };
 
     const auth = await agentGuard.authenticate(request, where);
@@ -424,8 +468,10 @@ export function withAgentAccess(roleGuard, { agentGuard, auditDenial = null, env
     };
 
     if (!row) return refuse('route-not-allowed');
-    const section = openSection(row, auth.record);
-    if (!section) return refuse('section-off', { section: row.sections[0] });
+    const sections = sectionsFor(row, path);
+    if (!sections.length) return refuse('route-not-allowed');
+    const section = openSection(row, auth.record, path);
+    if (!section) return refuse('section-off', { section: sections[0] });
     if (!satisfiesRole(row.role, minimum)) return refuse('role', { required: minimum, granted: row.role });
     const body = await checkBodyRule(row, request);
     if (!body.ok) return refuse(body.reason, { field: body.field });

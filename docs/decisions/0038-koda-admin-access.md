@@ -60,7 +60,11 @@ either changed.
    `admin.enhanced`, `admin.brain`, `admin.spotlight` and `admin.platform`, open
    their rows; a switch that is off refuses with 403 and an audit row, like a
    capability. The upload route is under Pipeline and Spotlight both, because
-   articles and certifications both carry images.
+   articles and certifications both carry images, but the row carries a
+   `segments` map so the container asked for decides which switch opens it:
+   `content`, `blogs` and `covers` are Pipeline's, `certifications` and
+   `speakerevents` are Spotlight's, and any other container is refused as an
+   unlisted route (Copilot review, 2026-11-01).
 3. **DELETE is never allowed.** No row has it, and `matchPolicy` refuses the verb
    before looking. The POST routes that delete or trash (`deleteContentItem`,
    `deleteRejectedContent`, `deleteSpeakerEvent`, `softDeleteLivePage`, the

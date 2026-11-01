@@ -9,6 +9,7 @@ import {
   apiPathOf,
   matchPolicy,
   openSection,
+  sectionsFor,
   checkBodyRule,
   agentUserFor,
   describePolicy,
@@ -132,11 +133,20 @@ describe('matching', () => {
     expect(matchPolicy('PUT', 'cms/drafts/abc')?.route).toBe('cms/drafts/{id}');
   });
 
-  it('opens a row through any of its sections', () => {
+  it('opens the upload row through the section that owns the container asked for', () => {
     const uploads = matchPolicy('POST', 'cms/uploads/covers');
     expect(uploads.sections).toEqual(['admin.pipeline', 'admin.spotlight']);
-    expect(openSection(uploads, { capabilities: { 'admin.pipeline': false } })).toBe('admin.spotlight');
-    expect(openSection(uploads, { capabilities: { 'admin.pipeline': false, 'admin.spotlight': false } })).toBeNull();
+    // Article images (content, blogs, covers) are Pipeline's; certification and speaker-event images are Spotlight's.
+    for (const container of ['content', 'blogs', 'covers']) expect(sectionsFor(uploads, `cms/uploads/${container}`)).toEqual(['admin.pipeline']);
+    for (const container of ['certifications', 'speakerevents']) expect(sectionsFor(uploads, `cms/uploads/${container}`)).toEqual(['admin.spotlight']);
+    expect(sectionsFor(uploads, 'cms/uploads/other')).toEqual([]);
+    expect(sectionsFor(uploads, 'cms/uploads/hasOwnProperty')).toEqual([]);
+    expect(openSection(uploads, { capabilities: { 'admin.pipeline': false } }, 'cms/uploads/covers')).toBeNull();
+    expect(openSection(uploads, { capabilities: { 'admin.pipeline': false } }, 'cms/uploads/certifications')).toBe('admin.spotlight');
+    expect(openSection(uploads, { capabilities: { 'admin.pipeline': false, 'admin.spotlight': false } }, 'cms/uploads/certifications')).toBeNull();
+    // A row without segments is opened by any of its sections, as before.
+    const brain = matchPolicy('GET', 'cms/brain/items');
+    expect(sectionsFor(brain, 'cms/brain/items')).toEqual(brain.sections);
   });
 });
 
@@ -264,8 +274,15 @@ describe('withAgentAccess', () => {
     const result = await guard.requireRole(request({ method: 'GET', path: 'cms/certifications' }), 'editor');
     expect(result.error.status).toBe(403);
     expect(audits[0]).toMatchObject({ reason: 'section-off', section: 'admin.spotlight', route: 'cms/certifications' });
-    // The upload route stays open through Pipeline when Spotlight is off.
-    expect((await guard.requireRole(request({ method: 'POST', path: 'cms/uploads/certifications' }), 'editor')).error).toBeNull();
+    // The upload route follows its container: certification images are Spotlight's and close with it,
+    // article images are Pipeline's and stay open; a container the map does not know is not a route at all.
+    const certs = await guard.requireRole(request({ method: 'POST', path: 'cms/uploads/certifications' }), 'editor');
+    expect(certs.error.status).toBe(403);
+    expect(audits.at(-1)).toMatchObject({ reason: 'section-off', section: 'admin.spotlight', route: 'cms/uploads/{container}' });
+    expect((await guard.requireRole(request({ method: 'POST', path: 'cms/uploads/content' }), 'editor')).error).toBeNull();
+    const other = await guard.requireRole(request({ method: 'POST', path: 'cms/uploads/other' }), 'editor');
+    expect(other.error.status).toBe(403);
+    expect(audits.at(-1)).toMatchObject({ reason: 'route-not-allowed', route: 'cms/uploads/{container}' });
   });
 
   it('refuses when the handler asks for more than the row grants', async () => {
@@ -364,6 +381,10 @@ describe('describePolicy', () => {
     expect(sections.find((s) => s.id === 'admin.pipeline').on).toBe(true);
     const pipeline = sections.find((s) => s.id === 'admin.pipeline');
     const enhanced = sections.find((s) => s.id === 'admin.enhanced');
+    const spotlight = sections.find((s) => s.id === 'admin.spotlight');
+    // The upload row is listed under both sections, each with its own containers.
+    expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/cms/uploads/{container}', limit: 'container must be one of content, blogs, covers' });
+    expect(spotlight.routes).toContainEqual({ method: 'POST', path: '/api/cms/uploads/{container}', limit: 'container must be one of certifications, speakerevents' });
     // Archiving a book or a chapter takes it off the site, so the key may only restore (archived: false).
     expect(enhanced.routes).toContainEqual({ method: 'PATCH', path: '/api/cms/listen-and-learn/{platform}/{examCode}', limit: 'archived must not be true' });
     expect(enhanced.routes).toContainEqual({ method: 'PATCH', path: '/api/cms/listen-and-learn/{platform}/{examCode}/chapters/{chapterId}', limit: 'archived must not be true' });

@@ -110,10 +110,14 @@ the key.
 On the **What Koda may do** card, turn a switch off. The change applies to
 Koda's next call: any endpoint in that group answers `403` with a sentence
 naming the switch. Turn it back on the same way. Both are written to the
-audit log. The first five switches are the agent API's own; the five below
+audit log. The first four switches are the agent API's own; the five below
 them (Pipeline, Enhanced, Second Brain, Spotlight, Platform) are the admin
 sections of part 7, and turning one off closes every admin route under it.
-There is no delete switch: the key has no delete route at all.
+The image upload route is listed under Pipeline and Spotlight both, but which
+switch opens it depends on the storage container asked for: article images
+(`content`, `blogs`, `covers`) follow Pipeline, certification and speaker-event
+images follow Spotlight, and any other container answers `403`. There is no
+delete switch: the key has no delete route at all.
 
 ## 5. Revoke the key
 
@@ -194,7 +198,7 @@ short, by switch:
 
 | Switch | Pages | Koda may | Koda may not |
 |---|---|---|---|
-| Pipeline | New Content, Drafts, Review Queue, Editor, Live Pages | List and read content, versions and drafts; create and edit drafts and articles; save the editor; reorder images; move content between review states; ask for an inspection or reset a review; generate article drafts, hero and preview images and captions; enqueue the producing jobs and read job state; read the queue, publish board, decision centre and dashboard; read settings, taxonomy and the image gallery; upload images | Publish, schedule, unpublish, set a slug, rehost images, delete anything |
+| Pipeline | New Content, Drafts, Review Queue, Editor, Live Pages | List and read content, versions and drafts; create and edit drafts and articles; save the editor; reorder images; move content between review states; generate article drafts, hero and preview images and captions; enqueue the producing jobs and read job state; read the queue, publish board, decision centre and dashboard; read settings, taxonomy and the image gallery; upload images | Publish, schedule, unpublish, set a slug, rehost images, delete anything |
 | Enhanced | Listen & Learn, Labs, Frameworks, Coder Corner, Blogs | Read, create and edit Listen & Learn books and chapters, estimate and regenerate, restore an archived book or chapter; read the lab estate, a lab job, the starts and the Coder automation; read, create and edit blog sources (Frameworks and Coder Corner are content, so the Pipeline rows cover them) | Archive or delete books, chapters or versions; publish or withdraw an episode; launch or cancel lab jobs; change lab agents; read the Coder token; delete a blog |
 | Second Brain | Second Brain | Read status, notes, history, graph and context; search and ask; create and edit notes and collections; draft from a note, acting as you | Reindex; the desktop sync routes |
 | Spotlight | Speaking, Certifications, Ambassador, Doc Vault | Read talks and upsert one; read, create and edit certifications; read, create and edit applications and evidence, import evidence, read sources, files, programs and readiness; in the Doc Vault read, create, upload, edit, untrash and restore a version | Delete a talk, a certification, an application, evidence or a document; create or edit a program |
