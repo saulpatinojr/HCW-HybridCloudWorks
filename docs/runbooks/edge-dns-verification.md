@@ -230,11 +230,16 @@ surfaces every app setting twice, plain and `APPSETTING_`-prefixed; since
 not aliases (before that it read 2 for the one Speech setting, and the table
 below records that older reading).
 
-Any other number is actionable. Which references are unresolved is deliberately
-not in this anonymous response; the names are on the authenticated Integrations
-page at <https://hybridcloudworks.com/admin/integrations>, and Actions →
+Any other number is actionable, and a matching number is not yet a pass: the
+same count can hide a swap (one expected name starting to resolve while another
+setting stops). Which references are unresolved is deliberately not in this
+anonymous response; the names are on the authenticated Integrations page at
+<https://hybridcloudworks.com/admin/integrations>, and Actions →
 **Monitor Unresolved Secrets** answers the same question from ARM without
-traversing Cloudflare at all.
+traversing Cloudflare at all and compares the names with the list itself. Call
+this step passed only when the unresolved names are exactly the names on
+`EXPECTED_UNRESOLVED`: the monitor says so as "nothing unexpected" with no stale
+entry.
 
 That page, not Ops Health. This line used to point at `/admin/ops-health`,
 which never carried the names: `getOpsHealthSnapshot` returns readiness, the
