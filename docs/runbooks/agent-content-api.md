@@ -12,7 +12,7 @@ Everything here happens on the AI Engine's **Koda** tab:
 tab but the buttons say they are not theirs.
 
 What the key can do, in plain words: everything the Drafts page can do (list,
-read, create, edit, send to review, pull back, delete a draft) and read the
+read, create, edit, send to review, pull back a draft) and read the
 published articles the public site shows. It cannot publish, unpublish, change
 a setting, read a secret or touch anything live. Each of those five things is a
 switch on the tab, so any of them can be turned off without touching the key.
@@ -229,12 +229,11 @@ that is not listed, or to let it publish, change the table in
   wherever one would carry the draft as the page sees it (`draft` with
   `fields`), the text is replaced by `bodyWithheld: true` and the summary
   (id, title, stage, etag, allowed actions) stays. The markdown route's
-  answers and a delete's answer are the same for every key: a created
-  markdown draft answers `201` with `contentId` and a `draft` summary that
-  includes its `etag` (keep it; it is the version token for the next
-  change); the skipped answers, `200 ALREADY_IMPORTED` with `contentId` and
-  `200 PUBLISHED_ELSEWHERE` with `existingId`, carry no etag; a delete
-  answers `deleted` and `stage`.
+  answers are the same for every key: a created markdown draft answers `201`
+  with `contentId` and a `draft` summary that includes its `etag` (keep it;
+  it is the version token for the next change); the skipped answers,
+  `200 ALREADY_IMPORTED` with `contentId` and `200 PUBLISHED_ELSEWHERE` with
+  `existingId`, carry no etag.
 - The body is at most 256 KB. Errors are `{ "ok": false, "code", "error" }`.
 - `GET published` and `GET published/{slugOrId}` answer exactly as the public
   site's own reads do.
