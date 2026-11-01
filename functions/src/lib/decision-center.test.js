@@ -300,6 +300,7 @@ describe('collectDecisions — roles', () => {
       'newsletters',
       'social',
       'forge-queue',
+      'cost',
       'reminders',
       'ambassador',
     ]);

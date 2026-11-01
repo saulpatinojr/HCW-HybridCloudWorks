@@ -154,3 +154,23 @@ resource "azurerm_consumption_budget_subscription" "platform_mgmt" {
     contact_groups = [azurerm_monitor_action_group.ops.id]
   }
 }
+
+# =============================================================================
+# The Cost page reads what these budgets read (ADR 0039)
+# =============================================================================
+# The admin Cost page (functions/src/lib/cost/azure.js) shows each budget's
+# current and forecast spend and the month's cost by service, read with the
+# Function App's own managed identity. That identity needs the built-in Cost
+# Management Reader role (every read under Microsoft.Consumption and
+# Microsoft.CostManagement, nothing that changes anything) on the application
+# and Platform Management subscriptions.
+#
+# THAT GRANT IS NOT DECLARED HERE, ON PURPOSE. It sits at subscription scope,
+# and since SEC-1 step two the Terraform identity creates no role assignment
+# above a declared resource group: its RBAC Administrator condition refuses
+# only Owner, Contributor and the Key Vault officer roles, so a subscription
+# grant from this module would be a widening the condition does not stop
+# (scripts/terraform-identity-grants.test.mjs holds that). The owner makes the
+# two assignments once, by hand, as for the custom reader roles in
+# infra/roles/: the commands are in docs/runbooks/cost.md. Until they exist the
+# page says the Azure figures cannot be read and names the missing role.

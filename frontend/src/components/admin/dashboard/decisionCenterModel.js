@@ -48,6 +48,8 @@ export const KIND_LABELS = Object.freeze({
   secret: 'App setting',
   reminder: 'Reminder',
   ambassador: 'Ambassador',
+  // A Cost page warning: a budget, a credit balance or a renewal (ADR 0039).
+  cost: 'Cost',
 });
 
 /** Where each item waits. Content stages are lib/status.js's; the rest are the API's. */
@@ -106,6 +108,7 @@ export const SOURCE_PAGES = Object.freeze({
   'forge-queue': '/admin/forge-studio?tab=queue',
   'workflow-alerts': '/admin/health?tab=alerts',
   'unresolved-secrets': '/admin/health?tab=overview',
+  cost: '/admin/cost?tab=alerts',
   reminders: '/admin/platform-settings?tab=reminders',
   ambassador: '/admin/ambassador?tab=applications',
 });

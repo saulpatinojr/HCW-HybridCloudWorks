@@ -66,6 +66,7 @@ import {
   Share2,
   SlidersHorizontal,
   Vault,
+  Wallet,
   Zap,
 } from 'lucide-react';
 
@@ -200,6 +201,7 @@ export function roleLabel(role) {
  *                                 updateWorkflowAlert is publisher (ops-health.js), gated
  *   Integrations       editor     connectionProbe (integrations/connection-probe.js), cms/integration-status
  *                                 (integrations/integration-status.js); the Keys tab's cms/secrets is super_admin (admin-secrets.js)
+ *   Cost               editor     cms/cost/summary, cms/cost/services, cms/cost/settings (cost/handlers.js, ADR 0039)
  *   Doc Vault          publisher  cms/doc-vault (doc-vault/handlers.js), every route, reads included: the vault holds
  *                                 private letters and applications, so it is above the editor role (doc-vault/model.js)
  */
@@ -439,6 +441,14 @@ const ITEMS = [
     Plug,
     'Integrations',
     'Every external service, its keys, its connection test, where it is used, and a directory explaining each one.',
+    { minRole: 'editor' },
+  ],
+  [
+    'platform',
+    '/admin/cost',
+    Wallet,
+    'Cost',
+    'What the platform costs this month: Azure against its budgets, AI usage and credits, and the subscriptions paid outside Azure, with alerts.',
     { minRole: 'editor' },
   ],
 

@@ -49,6 +49,7 @@ import { createSkillsHubScrape } from '../lib/timers/skills-hub.js';
 import { createMcpTokenRefresh } from '../lib/timers/mcp-token-refresh.js';
 import { createAgentHealthCheck } from '../lib/timers/agent-health.js';
 import { createDeliveryMonitorWatch } from '../lib/timers/delivery-monitor-watch.js';
+import { createCostWatch } from '../lib/cost/watch.js';
 import { createMainHistoryReader } from '../lib/labs/drift.js';
 import { createCoderStatusHandlers } from '../lib/labs/coder-status.js';
 import { createTempStorageCleanup } from '../lib/timers/temp-storage.js';
@@ -273,6 +274,9 @@ timer('checkAgentHealth', 'CHECK_AGENT_HEALTH', '0 */5 * * * *', (context) =>
   // monitor's own runs are read from GitHub's public API and the owner is
   // told on Telegram when it goes red or back to green
   // (timers/delivery-monitor-watch.js; no GitHub secret, no new timer).
+  // Last, the Cost page's snapshot is refreshed every few hours and a budget,
+  // credit or renewal warning is said once on Telegram (cost/watch.js, ADR
+  // 0039; same reasoning, no new timer).
   createAgentHealthCheck({
     store,
     notifier: createNotifier({ store, log: context }),
@@ -280,6 +284,11 @@ timer('checkAgentHealth', 'CHECK_AGENT_HEALTH', '0 */5 * * * *', (context) =>
     driftReader: createMainHistoryReader(),
     coderTokenCheck: () => createCoderStatusHandlers({ store }).checkTokenIfDue(context),
     deliveryWatch: createDeliveryMonitorWatch({
+      store,
+      notifier: createNotifier({ store, log: context }),
+      log: context,
+    }),
+    costWatch: createCostWatch({
       store,
       notifier: createNotifier({ store, log: context }),
       log: context,
