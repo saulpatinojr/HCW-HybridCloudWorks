@@ -3,8 +3,10 @@
  *
  * The fourth guard in this API, beside the admin role guard, the lab agent's
  * App Role guard and the brains' delegated-scope guards. It is deliberately
- * disjoint from all three: an admin token does not pass here, and Koda's key
- * passes nothing that calls `requireRole`. The route-inventory test mocks this
+ * disjoint from all three on this API: an admin token does not pass here.
+ * Since ADR 0038 the key also passes the admin role guard, but only for the
+ * allow-listed admin routes in admin-access.js, which composes this guard's
+ * `authenticate` with its own policy. The route-inventory test mocks this
  * module by name, so a route that uses it counts as guarded there.
  *
  * Three gates, in order, and a refusal at any of them reads nothing further:
@@ -56,6 +58,7 @@ import {
   looksLikeKey,
   quotaKeyFor,
   secondsToNextMinute,
+  agentKeyFrom,
 } from './keys.js';
 
 /** How often lastUsedAt is written: a stamp per call would be a write per call. */
@@ -73,39 +76,11 @@ const deny = (status, code, error, headers = {}) => ({
 const labelOf = (capability) =>
   CAPABILITIES.find((entry) => entry.id === capability)?.label || capability;
 
-/** Header names, besides Authorization, a connector may put an API key in. */
-export const KEY_HEADERS = Object.freeze(['x-api-key', 'x-agent-key']);
+// agentKeyFrom and KEY_HEADERS moved to keys.js (ADR 0038), where the admin
+// role guard reads them too; re-exported so nothing that imported them here
+// has to move.
+export { agentKeyFrom, KEY_HEADERS } from './keys.js';
 
-/**
- * The key a request presents, in any of the shapes connectors send:
- * `Authorization: Bearer <key>`, the bare key as the whole Authorization value
- * (a connector that drops the scheme), or an X-API-Key / X-Agent-Key header.
- * A non-empty Authorization wins; one that is absent or blank is the same
- * thing, and the key headers are read. Muse's first calls on 2026-11-01
- * carried a working key in one of the other shapes and were refused for it;
- * the same hash compare sits behind every shape, so reading them costs
- * nothing. A query string is never read: URLs end up in logs.
- *
- * @param {{ headers?: { get?: (name: string) => string | null } }} request
- * @returns {string | null}
- */
-export function agentKeyFrom(request) {
-  const read = (name) => {
-    const value = request?.headers?.get?.(name);
-    return typeof value === 'string' && value.trim() ? value.trim() : null;
-  };
-  const authorization = read('authorization');
-  if (authorization) {
-    const bearer = /^Bearer\s+(.+)$/i.exec(authorization);
-    if (bearer) return bearer[1].trim() || null;
-    return looksLikeKey(authorization) ? authorization : null;
-  }
-  for (const name of KEY_HEADERS) {
-    const value = read(name);
-    if (value) return value;
-  }
-  return null;
-}
 
 /**
  * @param {object} deps

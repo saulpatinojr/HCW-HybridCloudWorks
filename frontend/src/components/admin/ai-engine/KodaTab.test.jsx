@@ -41,6 +41,18 @@ const ENDPOINTS = [
   { method: 'POST', path: 'drafts', capability: 'drafts.write' },
   { method: 'DELETE', path: 'drafts/{id}', capability: 'drafts.delete' },
 ];
+const ADMIN_ACCESS = [
+  {
+    id: 'admin.pipeline',
+    label: 'Pipeline',
+    on: true,
+    routes: [
+      { method: 'GET', path: '/api/cms/content' },
+      { method: 'POST', path: '/api/transitionContentStatus', limit: 'newStatus must be one of approved, editing' },
+    ],
+  },
+  { id: 'admin.brain', label: 'Second Brain', on: false, routes: [{ method: 'POST', path: '/api/cms/brain/items' }] },
+];
 const answer = (key) => ({
   ok: true,
   agent: 'koda',
@@ -49,6 +61,7 @@ const answer = (key) => ({
   limits: { requestsPerMinute: 120 },
   basePath: '/api/agent-content/v1',
   endpoints: ENDPOINTS,
+  adminAccess: ADMIN_ACCESS,
 });
 const NO_KEY = { present: false, active: false, capabilities: {} };
 const ACTIVE = {
@@ -94,6 +107,11 @@ describe('KodaTab', () => {
       screen.getByText('GET https://api-azure.hybridcloudworks.com/api/agent-content/v1/status')
     ).toBeInTheDocument();
     expect(screen.getByText('DELETE drafts/{id}')).toBeInTheDocument();
+    // The admin routes the key may call, per section, with the section's switch state and a body limit.
+    expect(screen.getByText('What Koda may do in the admin')).toBeInTheDocument();
+    expect(screen.getByText('Second Brain (off)')).toBeInTheDocument();
+    expect(screen.getByText(/POST \/api\/transitionContentStatus/)).toBeInTheDocument();
+    expect(screen.getByText('(newStatus must be one of approved, editing)')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Read drafts' })).toBeDisabled();
     expect(screen.getByText('The switches apply once a key exists.')).toBeInTheDocument();
   });

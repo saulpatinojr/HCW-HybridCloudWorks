@@ -21,6 +21,7 @@ import { MAX_DRAFT_BODY_BYTES } from '../cms/drafts.js';
 import { MAX_LISTED_DRAFTS } from '../cms/drafts-handlers.js';
 import { createPublicReadHandlers } from '../public-reads.js';
 import { errorResponse } from '../http/error-response.js';
+import { describePolicy } from './admin-access.js';
 import { AGENT_ID, API_BASE_PATH, REQUESTS_PER_MINUTE, enabledCapabilities } from './keys.js';
 
 /** What the transition audit rows record as the credential for Koda's moves. */
@@ -154,6 +155,7 @@ export function createAgentContentHandlers({
         limits: LIMITS,
         basePath: `/api/${API_BASE_PATH}`,
         endpoints: ENDPOINTS.map(([method, path, capability]) => ({ method, path, capability })),
+        adminAccess: describePolicy(auth.record),
       }),
     ),
     listDrafts: draftRoute('drafts.read', 'list the drafts', 'list'),

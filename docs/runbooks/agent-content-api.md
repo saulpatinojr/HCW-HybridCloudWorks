@@ -110,7 +110,10 @@ the key.
 On the **What Koda may do** card, turn a switch off. The change applies to
 Koda's next call: any endpoint in that group answers `403` with a sentence
 naming the switch. Turn it back on the same way. Both are written to the
-audit log.
+audit log. The first five switches are the agent API's own; the five below
+them (Pipeline, Enhanced, Second Brain, Spotlight, Platform) are the admin
+sections of part 7, and turning one off closes every admin route under it.
+**Delete drafts** starts off and stays off unless you turn it on.
 
 ## 5. Revoke the key
 
@@ -149,6 +152,48 @@ audit log.
 - **The contract:** every route and what it answers is in
   `.azure/api-surface.json`, sections `agentContentApi` and
   `adminAgentContent`.
+
+## 7. What Koda may do in the admin
+
+Since 2026-11-01 ([ADR 0038](../decisions/0038-koda-admin-access.md)) the same
+key also works on the admin routes under `/api/` that the five section
+switches open. Koda calls them exactly as the admin pages do, with the key in
+place of a sign-in, and the site treats it as `koda (agent)` with an editor's
+rights (a publisher's in the Doc Vault, and as you in the Second Brain). The
+rules that hold on every one of them:
+
+- **Nothing can be deleted.** A `DELETE` is refused everywhere, and the
+  routes that delete or trash by `POST` are not open.
+- **Nothing can be published, scheduled or unpublished.** Those routes are not
+  open, and the three routes that could reach publishing through their body
+  are limited: a status change may go to `approved`, `editing`, `forge_ready`
+  or `rejected`; a job may be `forge-article`, `forge-from-url`,
+  `batch-inspect`, `sync-blog-source` or `generate-listen-and-learn`; a new
+  content item may not be created already `published` or `archived`.
+- **No setting, key or secret** can be read or changed, and no section the
+  owner did not name is open: Forge Studio, AI Engine, Image Prompts, the
+  Amplify section, Platform Settings, admins and the lab agent registry
+  answer `403`.
+- **Every refusal is logged**: an `admin_audit_logs` row of kind
+  `agent-content-denial` with `surface: "admin"`, the method, the route and a
+  reason (`route-not-allowed`, `section-off`, `role`, `body-not-allowed`,
+  `body-unreadable`), never the key or the body.
+
+The full list, as the API reports it, is on the tab under **What Koda may do
+in the admin** and in `GET …/agent-content/v1/status` as `adminAccess`. In
+short, by switch:
+
+| Switch | Pages | Koda may | Koda may not |
+|---|---|---|---|
+| Pipeline | New Content, Drafts, Review Queue, Editor, Live Pages | List and read content, versions and drafts; create and edit drafts and articles; save the editor; reorder images; move content between review states; ask for an inspection or reset a review; generate article drafts, hero and preview images and captions; enqueue the producing jobs and read job state; read the queue, publish board, decision centre and dashboard; read settings, taxonomy and the image gallery; upload images | Publish, schedule, unpublish, set a slug, rehost images, delete anything |
+| Enhanced | Listen & Learn, Labs, Frameworks, Coder Corner, Blogs | Read, create and edit Listen & Learn books and chapters, estimate, review and regenerate; read the lab estate, a lab job, the starts and the Coder automation; read, create and edit blog sources (Frameworks and Coder Corner are content, so the Pipeline rows cover them) | Delete books, chapters or versions; launch or cancel lab jobs; change lab agents; read the Coder token; delete a blog |
+| Second Brain | Second Brain | Read status, notes, history, graph and context; search and ask; create and edit notes and collections; draft from a note, acting as you | Reindex; the desktop sync routes |
+| Spotlight | Speaking, Certifications, Ambassador, Doc Vault | Read talks and upsert one; read, create and edit certifications; read, create and edit applications and evidence, import evidence, read sources, files, programs and readiness; in the Doc Vault read, create, upload, edit, untrash and restore a version | Delete a talk, a certification, an application, evidence or a document; create or edit a program |
+| Platform | Health, Integrations | Read the health probe results and the ops snapshot; read the integration status and the StreamYard status; run a connection test | Change a probe result or an integration setting; read secrets or credentials; change platform settings |
+
+To take a section away, turn its switch off on the tab; to give Koda a route
+that is not listed, or to let it publish, change the table in
+`functions/src/lib/agent-content/admin-access.js` through a pull request.
 
 ## What the API expects from Koda, in brief
 

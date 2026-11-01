@@ -143,14 +143,19 @@ describe('the capabilities', () => {
   });
 
   it('a record with no switches has every capability; a switch off removes one', () => {
-    expect(enabledCapabilities({})).toEqual([...CAPABILITY_IDS]);
+    // Everything on but deleting, which starts off (owner instruction 2026-11-01).
+    expect(enabledCapabilities({})).toEqual(CAPABILITY_IDS.filter((id) => id !== 'drafts.delete'));
+    expect(enabledCapabilities({ capabilities: { 'drafts.delete': true } })).toEqual([...CAPABILITY_IDS]);
     expect(enabledCapabilities({ capabilities: { 'published.read': false } })).toEqual(
-      CAPABILITY_IDS.filter((id) => id !== 'published.read'),
+      CAPABILITY_IDS.filter((id) => id !== 'published.read' && id !== 'drafts.delete'),
     );
   });
 
   it('has no publish, slug or settings capability to switch on', () => {
-    expect(CAPABILITY_IDS.some((id) => /publish|slug|setting|secret|admin/.test(id) && id !== 'published.read')).toBe(false);
+    // No capability publishes, sets a slug, or touches settings or secrets; the
+    // `admin.*` ids are section switches over admin-access.js's allow-list.
+    expect(CAPABILITY_IDS.some((id) => /publish|slug|setting|secret/.test(id) && id !== 'published.read')).toBe(false);
+    expect(CAPABILITY_IDS.filter((id) => id.startsWith('admin.'))).toEqual(['admin.pipeline', 'admin.enhanced', 'admin.brain', 'admin.spotlight', 'admin.platform']);
   });
 });
 

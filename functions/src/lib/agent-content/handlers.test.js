@@ -192,7 +192,9 @@ describe('every route reaches the key guard with its own capability', () => {
     const named = new Set(ENDPOINTS.map(([method, path]) => `${method} ${path}`));
     expect(named.size).toBe(ENDPOINTS.length);
     const capabilities = new Set(ENDPOINTS.map(([, , capability]) => capability).filter(Boolean));
-    expect([...capabilities].sort()).toEqual([...CAPABILITY_IDS].sort());
+    // The admin section switches open admin routes through the role guard
+    // (admin-access.js), not routes of this API, so they have no endpoint here.
+    expect([...capabilities].sort()).toEqual(CAPABILITY_IDS.filter((id) => !id.startsWith('admin.')).sort());
   });
 });
 

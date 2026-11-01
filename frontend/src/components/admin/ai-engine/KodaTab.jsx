@@ -311,9 +311,9 @@ function ReachCard({ data }) {
       <CardHeader>
         <CardTitle className="text-lg">What Koda can reach</CardTitle>
         <CardDescription>
-          The whole surface, as the API reports it. Paths are under the base URL. Drafts are the
-          same documents the Drafts page edits: the same fields, size cap, version check and audit
-          rows. Nothing under <code>/api/cms/</code> accepts the key.
+          The agent API, as it reports itself. Paths are under the base URL. Drafts are the same
+          documents the Drafts page edits: the same fields, size cap, version check and audit rows.
+          The admin routes the key may also call are in the next card.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -323,6 +323,49 @@ function ReachCard({ data }) {
             <ul className="text-sm font-mono text-muted-foreground">
               {group.endpoints.map((line) => (
                 <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The admin routes the key may call through the admin API (the section
+ * switches above), as the API reports them: one list per section, with the
+ * body limit where a route has one. Deletes are never listed because the
+ * key can never delete.
+ */
+function AdminReachCard({ data }) {
+  const sections = Array.isArray(data.adminAccess) ? data.adminAccess : [];
+  if (sections.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">What Koda may do in the admin</CardTitle>
+        <CardDescription>
+          With the same key, on the admin routes under <code>/api/</code>, Koda acts as{' '}
+          <code>koda (agent)</code> with an editor’s rights (a publisher’s in the Doc Vault, and
+          as you in the Second Brain). Each section is a switch above. Nothing can be deleted,
+          published, scheduled or unpublished, and no setting, key or secret can be read or
+          changed; a route that is not listed answers 403 and is logged.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {sections.map((section) => (
+          <div key={section.id}>
+            <p className="text-sm font-medium">
+              {section.label}
+              {section.on ? '' : ' (off)'}
+            </p>
+            <ul className="text-sm font-mono text-muted-foreground">
+              {section.routes.map((route) => (
+                <li key={`${route.method} ${route.path}`}>
+                  {route.method} {route.path}
+                  {route.limit ? <span className="font-sans"> ({route.limit})</span> : null}
+                </li>
               ))}
             </ul>
           </div>
@@ -431,6 +474,7 @@ export default function KodaTab() {
       />
       <ConnectCard data={data} />
       <ReachCard data={data} />
+      <AdminReachCard data={data} />
     </div>
   );
 }
