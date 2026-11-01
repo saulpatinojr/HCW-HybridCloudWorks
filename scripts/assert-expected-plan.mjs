@@ -289,7 +289,9 @@ export const SSH_LOGIN_ALERT_DESCRIPTION =
  * #1302 declaration below waits makes assert-expected-plan.test.mjs fail
  * instead of moving `before` to a query Azure never held.
  */
-const TIMER_SCHEDULES_APPLIED = [
+export const TIMER_SCHEDULES_APPLIED = [
+  ["ambassadorAudienceMonthly", "1d", "2026-01-01 06:45"],
+  ["brainIndexReconcile", "15m", "2026-01-01 00:00"],
   ["buildWeeklyNewsletter", "7d", "2026-01-05 13:00"],
   ["checkAgentHealth", "5m", "2026-01-01 00:00"],
   ["checkLiveLinks", "7d", "2026-01-05 06:00"],
@@ -314,6 +316,7 @@ const TIMER_SCHEDULES_APPLIED = [
   ["refreshToolServiceCache", "1d", "2026-01-01 02:00"],
   ["scrapeSkillsHubRss", "7d", "2026-01-02 09:00"],
   ["sendReminders", "1d", "2026-01-01 13:00"],
+  ["sweepVisitorSessions", "2m", "2026-01-01 00:00"],
   ["syncRssFeeds", "2h", "2026-01-01 00:00"],
   ["syncSocialCalendarScheduled", "5m", "2026-01-01 00:00"],
 ];
@@ -467,41 +470,9 @@ export const DECLARED = [
     reason:
       "#1302: the Web Analytics site, created once cloudflare_account_id is set",
   },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.CLOUDFLARE_ANALYTICS_TOKEN",
-    before: undefined,
-    after:
-      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/CLOUDFLARE-ANALYTICS-TOKEN)",
-    reason:
-      "#1302: Key Vault reference for CLOUDFLARE-ANALYTICS-TOKEN, the read-only analytics token",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.CF_WEB_ANALYTICS_SITE_TAG",
-    before: undefined,
-    after: "",
-    reason:
-      "#1302: the site tag, empty until cloudflare_account_id is set and the site exists",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.CF_ACCOUNT_ID",
-    before: undefined,
-    after: "",
-    reason:
-      "#1302: the Cloudflare account id, empty until cloudflare_account_id is set",
-  },
-  // The timer's flag, in its two runs or taken as one, the same three
-  // shapes as SEND_REMINDERS had (#910).
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY",
-    before: undefined,
-    after: "false",
-    reason:
-      "#1302: the ambassadorAudienceMonthly timer catalogued, disarmed until enabled_timers names it",
-  },
+  // The audience timer's flag applied disarmed (deleted below, 2026-11-01);
+  // the arming plan (false -> true) stays declared until the owner arms it,
+  // because this file cannot read what has applied.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY",
@@ -510,106 +481,12 @@ export const DECLARED = [
     reason:
       "#1302: AMBASSADOR_AUDIENCE_MONTHLY added to enabled_timers, arming the daily read",
   },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY",
-    before: undefined,
-    after: "true",
-    reason:
-      "#1302: the ambassadorAudienceMonthly timer catalogued and armed in one apply",
-  },
-  {
-    address: "azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue",
-    path: "criteria[0].query",
-    before: overdueQuery(TIMER_SCHEDULES_APPLIED),
-    after: overdueQuery([
-      ...TIMER_SCHEDULES_APPLIED,
-      ["ambassadorAudienceMonthly", "1d", "2026-01-01 06:45"],
-      ["brainIndexReconcile", "15m", "2026-01-01 00:00"],
-      ["sweepVisitorSessions", "2m", "2026-01-01 00:00"],
-    ]),
-    reason:
-      "#1302, Second Brain and #1403: alert-timer-overdue watches the audience timer, private indexing reconciliation and the visitor-session sweep",
-  },
-  // Second Brain: initial deployment is deliberately disabled. Owner IDs and
-  // activation are separate, exact-value configuration reviews.
-  ...['brain_records', 'brain_search'].map((name) => ({
-    address: `azurerm_cosmosdb_sql_container.hcw["${name}"]`, action: 'create',
-    reason: 'Second Brain: dedicated private owner-partitioned storage; search is rebuildable.',
-  })),
-  ...['BRAIN_ENABLED', 'BRAIN_AI_ENABLED', 'BRAIN_OWNER_OID', 'BRAIN_OWNER_TENANT_ID', 'BRAIN_SYNC_CLIENT_ID'].map((name) => ({
-    address: 'azurerm_function_app_flex_consumption.hcw', path: `app_settings.${name}`, before: undefined,
-    after: name.endsWith('_ENABLED') ? 'false' : '',
-    reason: 'Second Brain: disabled-by-default settings; no owner is inferred.',
-  })),
-  // The Code Conductor brain's retirement (#1479, ADR 0036 withdrawn): #1465's
-  // apply (dfac635, run confirmed by the owner on 2026-10-31) created its own
-  // database, one container and five app settings, all off and empty. This
-  // pull request removes them from infra/, so the next plan deletes the two
-  // resources and drops the five settings from the Function App. Both were
-  // empty: the brain never held a record. Delete these entries once that run
-  // has applied and the plan reads clean without them.
-  //
-  // The five `before` values are the defaults dfac635 applied and declared,
-  // and nothing else is declared on purpose. Had the workspace since set the
-  // brain on or given it an owner, tenant or client, the removal would carry
-  // that value instead, and the plan would read UNEXPECTED: an owner id is a
-  // GUID this public file must not hold, and a change the owner made by hand
-  // is not pre-approved here, the same rule the sweep's disarming plan
-  // follows above. UNEXPECTED is then the prompt to read the plan, not a
-  // reason to widen the match.
-  {
-    address: 'azurerm_cosmosdb_sql_database.code_brain', action: 'delete',
-    reason: '#1479: the Code Conductor brain leaves the site; its empty database goes with it.',
-  },
-  {
-    address: 'azurerm_cosmosdb_sql_container.code_brain["code_brain_records"]', action: 'delete',
-    reason: '#1479: the Code Conductor brain leaves the site; its empty records container goes with it.',
-  },
-  ...[
-    ['CODE_BRAIN_ENABLED', 'false'],
-    ['CODE_BRAIN_OWNER_OID', ''],
-    ['CODE_BRAIN_OWNER_TENANT_ID', ''],
-    ['CODE_BRAIN_SYNC_CLIENT_ID', ''],
-    ['CODE_BRAIN_COSMOS_DATABASE', 'hcw_code_brain'],
-  ].map(([name, before]) => ({
-    address: 'azurerm_function_app_flex_consumption.hcw', path: `app_settings.${name}`, before, after: undefined,
-    reason: '#1479: the Code Conductor brain setting is removed; it was applied off or empty and never set.',
-  })),
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue', path: 'criteria[0].query',
-    before: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45']]),
-    after: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45'], ['brainIndexReconcile', '15m', '2026-01-01 00:00'], ['sweepVisitorSessions', '2m', '2026-01-01 00:00']]),
-    reason: 'Second Brain and #1403: exact timer-alert update if the audience timer was already applied.',
-  },
-  // #1403: the visitor-session sweep timer. Which rows alert-timer-overdue
-  // already holds depends on what has applied, and this file cannot read that,
-  // so the update is declared for each state it can be in. The two entries
-  // above carry the sweep row for the states where the audience timer and the
-  // private indexing row are still to come; this one is for the state where
-  // both have applied and the sweep row is the only difference.
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue', path: 'criteria[0].query',
-    before: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45'], ['brainIndexReconcile', '15m', '2026-01-01 00:00']]),
-    after: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45'], ['brainIndexReconcile', '15m', '2026-01-01 00:00'], ['sweepVisitorSessions', '2m', '2026-01-01 00:00']]),
-    reason: '#1403: alert-timer-overdue watches the visitor-session sweep, one row more.',
-  },
-  // The sweep's flag, in its two runs or taken as one, the same three shapes as
-  // the other timers' (#910, #1302). It applies disarmed; adding
-  // SWEEP_VISITOR_SESSIONS to enabled_timers arms it. Delete the first and
-  // third entries once the catalogue apply has run. Keep the middle one
-  // (false -> true) until the arming apply has run too: it is the plan the
-  // owner sees when they add the name to enabled_timers, and this file cannot
-  // read what has applied. A disarming plan (true -> false) is deliberately
-  // not declared: it shows as UNEXPECTED, which is the prompt to read it.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS",
-    before: undefined,
-    after: "false",
-    reason:
-      "#1403: the sweepVisitorSessions timer catalogued, disarmed until enabled_timers names it",
-  },
+  // The sweep's flag applied disarmed (deleted below, 2026-11-01). Keep this
+  // one (false -> true) until the arming apply has run too: it is the plan the
+  // owner sees when they add SWEEP_VISITOR_SESSIONS to enabled_timers, and this
+  // file cannot read what has applied. A disarming plan (true -> false) is
+  // deliberately not declared: it shows as UNEXPECTED, which is the prompt to
+  // read it.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS",
@@ -617,30 +494,6 @@ export const DECLARED = [
     after: "true",
     reason:
       "#1403: SWEEP_VISITOR_SESSIONS added to enabled_timers, arming the visitor-session sweep",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS",
-    before: undefined,
-    after: "true",
-    reason:
-      "#1403: the sweepVisitorSessions timer catalogued and armed in one apply",
-  },
-  // The visitor session broker's Coder token (#1403): one new app setting, a
-  // Key Vault reference like CLOUDFLARE_ANALYTICS_TOKEN's above. The plan shows
-  // it as a single added key and nothing else; it does not read the vault, so
-  // the plan and the apply are the same whether or not the owner has seeded
-  // CODER-BROKER-TOKEN yet. Delete this entry once the apply has run, and its
-  // test in assert-expected-plan.test.mjs ("declares the Coder broker token's
-  // Key Vault reference") with it.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.CODER_BROKER_TOKEN",
-    before: undefined,
-    after:
-      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/CODER-BROKER-TOKEN)",
-    reason:
-      "#1403: Key Vault reference for CODER-BROKER-TOKEN, the visitor session broker's Coder token",
   },
   // #1360's create, notes_obsidian_publish, applied on 2026-10-24 (run-bb1XtRGJEbuK1Cec,
   // read as applied by tfc-plan-check with only the known permanent diff besides it) and was
@@ -652,16 +505,29 @@ export const DECLARED = [
   // deleted here. Both records then answered on 1.1.1.1 and 8.8.8.8, the CNAME
   // with app.linkie.bio and the TXT with Linkie's ownership value.
   //
-  // The Doc Vault's container (owner request 2026-10-26): one create, from the
-  // new entry in infra/cosmos-containers.json. Nothing else in the plan
-  // changes for it. Delete this entry once that run has applied and
-  // /api/cms/doc-vault answers 200 instead of 503 NOT_PROVISIONED.
-  {
-    address: 'azurerm_cosmosdb_sql_container.hcw["doc_vault"]',
-    action: "create",
-    reason:
-      "Doc Vault (owner request 2026-10-26): the doc_vault container, the owner's private documents and their versions",
-  },
+  // Applied and deleted here on 2026-11-01, as the header asks. The plan check
+  // on the run for 1ccc72a (run-BN7KzWpfvXom9SFC, read by actions run
+  // 41200891363 as the Code Conductor retirement beside the permanent diff and
+  // nothing else) listed each of these as "declared, not in this plan", and
+  // each is set unconditionally in infra/, so no diff means it is in state:
+  // - the Second Brain's brain_records and brain_search creates and its five
+  //   BRAIN_* settings, and the Doc Vault's doc_vault create (owner request
+  //   2026-10-26);
+  // - #1302's CLOUDFLARE_ANALYTICS_TOKEN reference, CF_WEB_ANALYTICS_SITE_TAG
+  //   and CF_ACCOUNT_ID as "", and the audience timer's flag catalogued
+  //   disarmed; #1403's sweep flag catalogued disarmed and CODER_BROKER_TOKEN's
+  //   reference;
+  // - alert-timer-overdue's three rows (ambassadorAudienceMonthly,
+  //   brainIndexReconcile, sweepVisitorSessions), folded into
+  //   TIMER_SCHEDULES_APPLIED above, so a later row is declared against the
+  //   query the rule holds today;
+  // - #1479's Code Conductor retirement: the two deletes and five CODE_BRAIN_*
+  //   removals, applied in run-BN7KzWpfvXom9SFC on 2026-10-31.
+  // Kept, because "not in this plan" cannot tell them from applied: the three
+  // arming plans (PROBE_AI_PROVIDERS, AMBASSADOR_AUDIENCE_MONTHLY,
+  // SWEEP_VISITOR_SESSIONS false -> true), #953 stage 3's two entries
+  // (lab_ssh_loopback_only) and #1302's Web Analytics site create
+  // (cloudflare_account_id). Each is a value the owner sets in the workspace.
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
