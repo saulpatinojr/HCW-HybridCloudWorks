@@ -223,9 +223,9 @@ function CapabilitiesCard({ data, busyIds, onToggle }) {
       <CardHeader>
         <CardTitle className="text-lg">What Koda may do</CardTitle>
         <CardDescription>
-          Each switch is a group of endpoints. All are on for a new key. Publishing is not on this
-          list and has no endpoint: a draft Koda sends to review is published by a person, on the
-          Review board, as every other draft is.
+          Each switch is a group of endpoints. All are on for a new key. Deleting and publishing are
+          not on this list and have no endpoint: a draft Koda sends to review is published by a
+          person, on the Review board, as every other draft is.
         </CardDescription>
       </CardHeader>
       <CardContent className="divide-y">
@@ -311,9 +311,9 @@ function ReachCard({ data }) {
       <CardHeader>
         <CardTitle className="text-lg">What Koda can reach</CardTitle>
         <CardDescription>
-          The whole surface, as the API reports it. Paths are under the base URL. Drafts are the
-          same documents the Drafts page edits: the same fields, size cap, version check and audit
-          rows. Nothing under <code>/api/cms/</code> accepts the key.
+          The agent API, as it reports itself. Paths are under the base URL. Drafts are the same
+          documents the Drafts page edits: the same fields, size cap, version check and audit rows.
+          The admin routes the key may also call are in the next card.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -323,6 +323,50 @@ function ReachCard({ data }) {
             <ul className="text-sm font-mono text-muted-foreground">
               {group.endpoints.map((line) => (
                 <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The admin routes the key may call through the admin API (the section
+ * switches above), as the API reports them: one list per section, with the
+ * body limit where a route has one. Deletes are never listed because the
+ * key can never delete.
+ */
+function AdminReachCard({ data }) {
+  const sections = Array.isArray(data.adminAccess) ? data.adminAccess : [];
+  if (sections.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">What Koda may do in the admin</CardTitle>
+        <CardDescription>
+          With the same key, on the admin routes under <code>/api/</code>, Koda acts as{' '}
+          <code>koda (agent)</code> with an editor’s rights (a publisher’s in the Doc Vault, and as
+          you in the Second Brain). Each section is a switch above. Nothing can be deleted,
+          published, scheduled or unpublished; no secret or credential can be read, and no setting
+          can be changed (settings are read-only, where the editor needs them); a route that is not
+          listed answers 403 and is logged.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {sections.map((section) => (
+          <div key={section.id}>
+            <p className="text-sm font-medium">
+              {section.label}
+              {section.on ? '' : ' (off)'}
+            </p>
+            <ul className="text-sm font-mono text-muted-foreground">
+              {section.routes.map((route) => (
+                <li key={`${route.method} ${route.path}`}>
+                  {route.method} {route.path}
+                  {route.limit ? <span className="font-sans"> ({route.limit})</span> : null}
+                </li>
               ))}
             </ul>
           </div>
@@ -396,8 +440,9 @@ export default function KodaTab() {
         <Bot className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
         <span>
           Koda is the content agent that drafts and reviews posts for the series. It signs in with
-          the key below and works only on the Drafts stage and the published reads; it cannot
-          publish, change settings or read anything else.
+          the key below. It works on the Drafts stage, the published reads and the admin sections
+          switched on in the card below; it cannot publish, delete, change a setting or read a
+          secret.
         </span>
       </p>
       <KeyCard
@@ -431,6 +476,7 @@ export default function KodaTab() {
       />
       <ConnectCard data={data} />
       <ReachCard data={data} />
+      <AdminReachCard data={data} />
     </div>
   );
 }

@@ -163,6 +163,11 @@ describe('lock 1: nothing outside the Doc Vault names its container or its code'
     'infra/cosmos-containers.json',
     // The reviewed Terraform plan that creates it.
     'scripts/assert-expected-plan.mjs',
+    // Koda's admin access policy names the Doc Vault routes it may call (ADR
+    // 0038: read, create, edit, upload, untrash, restore; never the DELETE),
+    // as doc-vault-http.js registers them. It reads nothing of the vault's
+    // code or container; the handlers behind those routes do.
+    'functions/src/lib/agent-content/admin-access.js',
     // The route inventory, the API contract and the function inventory name
     // routes, not the container.
     'functions/function-inventory.json',

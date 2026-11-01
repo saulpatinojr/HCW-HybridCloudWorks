@@ -21,6 +21,7 @@ import { MAX_DRAFT_BODY_BYTES } from '../cms/drafts.js';
 import { MAX_LISTED_DRAFTS } from '../cms/drafts-handlers.js';
 import { createPublicReadHandlers } from '../public-reads.js';
 import { errorResponse } from '../http/error-response.js';
+import { describePolicy } from './admin-access.js';
 import { AGENT_ID, API_BASE_PATH, REQUESTS_PER_MINUTE, enabledCapabilities } from './keys.js';
 
 /** What the transition audit rows record as the credential for Koda's moves. */
@@ -39,7 +40,6 @@ export const ENDPOINTS = Object.freeze([
   ['PUT', 'drafts/{id}', 'drafts.write'],
   ['POST', 'drafts/{id}/send-to-review', 'drafts.review'],
   ['POST', 'drafts/{id}/back-to-drafts', 'drafts.review'],
-  ['DELETE', 'drafts/{id}', 'drafts.delete'],
   ['GET', 'published', 'published.read'],
   ['GET', 'published/{slugOrId}', 'published.read'],
 ]);
@@ -154,6 +154,7 @@ export function createAgentContentHandlers({
         limits: LIMITS,
         basePath: `/api/${API_BASE_PATH}`,
         endpoints: ENDPOINTS.map(([method, path, capability]) => ({ method, path, capability })),
+        adminAccess: describePolicy(auth.record),
       }),
     ),
     listDrafts: draftRoute('drafts.read', 'list the drafts', 'list'),
@@ -161,7 +162,6 @@ export function createAgentContentHandlers({
     createDraft: draftRoute('drafts.write', 'create the draft', 'create'),
     createDraftFromMarkdown: draftRoute('drafts.write', 'create the draft from the markdown file', 'createFromMarkdown'),
     saveDraft: draftRoute('drafts.write', 'save the draft', 'update'),
-    deleteDraft: draftRoute('drafts.delete', 'delete the draft', 'remove'),
     sendToReview: draftRoute('drafts.review', 'send the draft to review', 'sendToReview'),
     backToDrafts: draftRoute('drafts.review', 'move the article back to Drafts', 'backToDrafts'),
     listPublished: withCapability('published.read', 'list the published posts', (request, context) =>

@@ -61,15 +61,39 @@ export const CAPABILITIES = Object.freeze([
     description: 'Move a draft to In Review, and move an article from Drafts back to Drafts.',
   },
   {
-    id: 'drafts.delete',
-    label: 'Delete drafts',
-    description:
-      'Delete a draft, or an article from Drafts that is still in review. Nothing live can be deleted.',
-  },
-  {
     id: 'published.read',
     label: 'Read published posts',
     description: 'Read the published articles the public site shows, in the shape the site reads them.',
+  },
+  // The admin sections (ADR 0038). Each opens the routes admin-access.js lists
+  // under it, through the admin role guard, with the same key.
+  {
+    id: 'admin.pipeline',
+    label: 'Pipeline (New Content, Drafts, Review Queue, Editor, Live Pages)',
+    description:
+      'Read all content, create and edit articles, generate drafts and images, move content between review states, and read the queue and publish boards. No publishing, scheduling, unpublishing or deleting.',
+  },
+  {
+    id: 'admin.enhanced',
+    label: 'Enhanced (Listen & Learn, Labs, Frameworks, Coder Corner, Blogs)',
+    description:
+      'Read, create and edit Listen & Learn books and chapters and blog sources; read the lab estate. No deleting, no lab launches, no agent changes.',
+  },
+  {
+    id: 'admin.brain',
+    label: 'Second Brain',
+    description:
+      'Read, search, ask, create and edit your private notes and collections, acting as you. No reindex and no desktop sync routes.',
+  },
+  {
+    id: 'admin.spotlight',
+    label: 'Spotlight (Speaking, Certifications, Ambassador, Doc Vault)',
+    description: 'Read, create and edit talks, credentials, applications, evidence and vault documents. No deleting or trashing.',
+  },
+  {
+    id: 'admin.platform',
+    label: 'Platform (Health and Integrations)',
+    description: 'Read platform health and the integration status, and run a connection test. No settings, keys or secrets.',
   },
 ]);
 export const CAPABILITY_IDS = Object.freeze(CAPABILITIES.map((capability) => capability.id));
@@ -87,7 +111,11 @@ export const AGENT_USER = Object.freeze({
 /** Thrown for input the owner can correct; the handler answers 400 with the message. */
 export class AgentContentInputError extends AuthoredError {}
 
-/** Every capability on: what a new key gets. */
+/**
+ * What a new key gets: every capability on. There is no delete switch to
+ * turn on: the key never deletes (owner instruction 2026-11-01: create,
+ * produce and review, never delete), so the v1 delete route is gone.
+ */
 export function defaultCapabilities() {
   return Object.fromEntries(CAPABILITY_IDS.map((id) => [id, true]));
 }
@@ -146,6 +174,43 @@ export function looksLikeKey(value) {
     value.startsWith(KEY_PREFIX) &&
     /^[A-Za-z0-9_-]{40,64}$/.test(value.slice(KEY_PREFIX.length))
   );
+}
+
+/** Header names, besides Authorization, a connector may put an API key in. */
+export const KEY_HEADERS = Object.freeze(['x-api-key', 'x-agent-key']);
+
+/**
+ * The key a request presents, in any of the shapes connectors send:
+ * `Authorization: Bearer <key>`, the bare key as the whole Authorization value
+ * (a connector that drops the scheme), or an X-API-Key / X-Agent-Key header.
+ * A non-empty Authorization wins; one that is absent or blank is the same
+ * thing, and the key headers are read. Muse's first calls on 2026-11-01
+ * carried a working key in one of the other shapes and were refused for it;
+ * the same hash compare sits behind every shape, so reading them costs
+ * nothing. A query string is never read: URLs end up in logs.
+ *
+ * Lives here, not in guard.js, because the admin role guard (admin-access.js)
+ * asks the same question to decide which path a request takes.
+ *
+ * @param {{ headers?: { get?: (name: string) => string | null } }} request
+ * @returns {string | null}
+ */
+export function agentKeyFrom(request) {
+  const read = (name) => {
+    const value = request?.headers?.get?.(name);
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  };
+  const authorization = read('authorization');
+  if (authorization) {
+    const bearer = /^Bearer\s+(.+)$/i.exec(authorization);
+    if (bearer) return bearer[1].trim() || null;
+    return looksLikeKey(authorization) ? authorization : null;
+  }
+  for (const name of KEY_HEADERS) {
+    const value = read(name);
+    if (value) return value;
+  }
+  return null;
 }
 
 /**
