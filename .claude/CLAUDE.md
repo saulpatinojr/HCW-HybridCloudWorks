@@ -586,11 +586,12 @@ so it is recorded here, where every session reads it.
     plan every push and every "Update branch" spent one of the five included
     reviews an hour, and on 2026-11-01 three pull requests used the hour
     between them while #1485 waited for the review that would lift a stale
-    request for changes. So once the required checks are green on the head
-    you want read, comment `@coderabbitai review` (the whole comment is the
-    command), and ask again only for a head that changed; "Review rate
-    limited" in its reply means the hour's allowance is spent, and the next
-    ask waits for the minute it names. If a bot's first review has not
+    request for changes. Now a push or an "Update branch" starts no review
+    and spends nothing; only the ask does. So once the required checks are
+    green on the head you want read, comment `@coderabbitai review` (the
+    whole comment is the command), and ask again only for a head that
+    changed; "Review rate limited" in its reply means the hour's allowance
+    is spent, and the next ask waits for the minute it names. If a bot's first review has not
     arrived an hour after it was due (Copilot: after the required checks
     went green; CodeRabbit: after the ask), say so on the PR, naming the
     bot, and treat it as unavailable for that PR: reviews stopped arriving
