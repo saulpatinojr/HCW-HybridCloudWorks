@@ -125,7 +125,9 @@ export default function DraftsPage() {
     else run();
   };
   useEffect(() => {
-    if (!linkedId || linkOpened.current || list.loading) return;
+    // Also wait out a write in flight: when it returns, useDraftWrites shows
+    // its result, which would replace a linked draft opened in the meantime.
+    if (!linkedId || linkOpened.current || list.loading || writes.busy) return;
     linkOpened.current = true;
     // Through the same guard as an in-page switch: if the owner started a new
     // draft while the list was still loading, the link asks before replacing
@@ -133,8 +135,8 @@ export default function DraftsPage() {
     // effect body itself.
     if (editor.current?.id !== linkedId)
       queueMicrotask(() => guardSwitch(() => editor.open(linkedId)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- open once, when the list first loads
-  }, [linkedId, list.loading]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open once, when the list first loads with no write in flight
+  }, [linkedId, list.loading, writes.busy]);
 
   const handleSelect = (id) => {
     if (current?.id !== id) guardSwitch(() => editor.open(id));
