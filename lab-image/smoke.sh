@@ -287,18 +287,54 @@ if [ "$target" = full ]; then
   step "full tools"
   expect_version az      "\"azure-cli\": \"${AZURE_CLI_VERSION}\""     az version --output json
   # The packages versions.env replaces inside the Azure CLI's own Python
-  # (AZURE_CLI_PYTHON_OVERRIDES): each must be the version listed, and the
-  # libraries the CLI signs in and talks HTTP with must still import on them.
+  # (AZURE_CLI_PYTHON_OVERRIDES, which may be empty or absent): each must be
+  # the version listed, and the libraries the CLI signs in and talks HTTP
+  # with must still import and work on them.
   while read -r spec _; do
     [ -n "$spec" ] || continue
     name="${spec%%==*}"; want="${spec#*==}"
     have="$(/opt/az/bin/python3 -I -c 'import importlib.metadata,sys; print(importlib.metadata.version(sys.argv[1]))' "$name" 2>&1 || true)"
     if [ "$have" = "$want" ]; then ok "Azure CLI's Python has $name $have"; else bad "Azure CLI's Python has $name '$have', expected $want"; fi
-  done <<<"$AZURE_CLI_PYTHON_OVERRIDES"
+  done <<<"${AZURE_CLI_PYTHON_OVERRIDES-}"
   if out="$(/opt/az/bin/python3 -I -c 'import certifi, jwt, msal, requests, urllib3, azure.core, azure.cli.core' 2>&1)"; then
     ok "Azure CLI's Python imports certifi, jwt, msal, requests, urllib3, azure.core and azure.cli.core"
   else
     bad "Azure CLI's Python failed an import:"; printf '%s\n' "$out" | indent
+  fi
+  # With no network: msal signs a certificate sign-in assertion the two ways
+  # it does for a service principal (RS256 with an x5t header, PS256 with
+  # x5t#S256) through PyJWT and cryptography, PyJWT reads a tenant id out of
+  # a token the way the CLI does, and requests and urllib3 each fetch a page
+  # from a server on 127.0.0.1. The key is made here and thrown away.
+  if out="$(/opt/az/bin/python3 -I -c 'import hashlib, http.server, threading
+import jwt, requests, urllib3
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from msal.oauth2cli.assertion import JwtAssertionCreator
+tid = "00000000-0000-0000-0000-000000000001"
+key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+der = key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+for alg, thumb, header in (("RS256", {"sha1_thumbprint": hashlib.sha1(der).hexdigest()}, "x5t"), ("PS256", {"sha256_thumbprint": hashlib.sha256(der).hexdigest()}, "x5t#S256")):
+    signed = JwtAssertionCreator(key, algorithm=alg, **thumb).create_normal_assertion(audience="https://login.invalid/token", issuer=tid)
+    assert jwt.decode(signed, key.public_key(), algorithms=[alg], audience="https://login.invalid/token")["iss"] == tid, alg
+    assert header in jwt.get_unverified_header(signed), alg
+token = jwt.encode({"tid": tid}, key, algorithm="RS256")
+assert jwt.decode(token, algorithms=["RS256"], options={"verify_signature": False})["tid"] == tid
+class Page(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *args):
+        pass
+server = http.server.HTTPServer(("127.0.0.1", 0), Page)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+url = f"http://127.0.0.1:{server.server_port}/"
+session = requests.Session(); session.trust_env = False
+assert session.get(url, timeout=5).text == "ok"
+assert urllib3.PoolManager().request("GET", url, timeout=5).data == b"ok"
+server.shutdown()' 2>&1)"; then
+    ok "Azure CLI's Python signs RS256 and PS256 sign-in assertions with msal, decodes a token's tid with PyJWT, and fetches over requests and urllib3 on 127.0.0.1"
+  else
+    bad "Azure CLI's Python failed a sign-in or HTTP check:"; printf '%s\n' "$out" | indent
   fi
   expect_version kubectl "Client Version: v${KUBECTL_VERSION}"          kubectl version --client
   expect_version git     "git version"                                   git --version

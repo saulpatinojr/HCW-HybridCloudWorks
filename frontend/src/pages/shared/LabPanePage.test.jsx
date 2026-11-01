@@ -37,6 +37,7 @@ import LabPanePage, {
   SIGN_IN_HEADING,
   SIGN_IN_PENDING_SENTENCE,
   UNAVAILABLE_SENTENCE,
+  VISITOR_START_REREAD_MS,
   paneMessageState,
   workspaceService,
 } from './LabPanePage';
@@ -780,6 +781,65 @@ describe('LabPanePage, the lab itself (ADR 0033 §4)', () => {
       // Team sign-in remains available
       expect(screen.getByTestId('lab-sign-in-link')).toHaveTextContent('Sign in with GitHub');
       expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
+    });
+
+    it('shows the sentence of a status read refused for too many requests, instead of hiding it (#1464)', async () => {
+      fetchCoderStatus.mockResolvedValue(REACHABLE);
+      const reason =
+        'Too many requests from this browser in the last few minutes. Try again in about ten minutes.';
+      fetchVisitorSessionStatus.mockRejectedValue(
+        Object.assign(new Error(reason), { status: 429, code: 'VISITOR_READS_RATE_LIMITED' })
+      );
+
+      const { container } = renderPane(LAB.id, 'azure', fakeTurnstile());
+
+      expect(await screen.findByTestId('visitor-session-notice')).toHaveTextContent(reason);
+      expect(screen.getByTestId('lab-sign-in-link')).toHaveTextContent('Sign in with GitHub');
+      expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
+    });
+
+    it("shows the server's sentence for a refused start, and reads the status again after a start still being set up (#1464)", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        fetchCoderStatus.mockResolvedValue(REACHABLE);
+        fetchVisitorSessionStatus.mockResolvedValue({
+          configured: true,
+          open: true,
+          code: 'OPEN',
+          reason: 'Visitor lab session available.',
+        });
+        const reason = 'Your visitor lab session is still being set up. Please wait a moment.';
+        startVisitorSession.mockRejectedValue(
+          Object.assign(new Error(reason), { status: 409, code: 'VISITOR_START_IN_PROGRESS' })
+        );
+
+        renderPane(LAB.id, 'azure', fakeTurnstile());
+        const startBtn = await screen.findByTestId('start-visitor-session-button');
+        await waitFor(() => expect(startBtn).not.toBeDisabled());
+        fireEvent.click(startBtn);
+
+        expect(await screen.findByTestId('visitor-session-error')).toHaveTextContent(reason);
+        expect(fetchVisitorSessionStatus).toHaveBeenCalledTimes(1);
+
+        fetchVisitorSessionStatus.mockResolvedValue({
+          configured: true,
+          open: true,
+          session: {
+            id: 'sess-v-late',
+            labId: LAB.id,
+            accessUrl: 'https://v-late.lab.hybridcloudworks.com',
+            expiresAt: '2026-10-17T03:30:00Z',
+          },
+        });
+        await vi.advanceTimersByTimeAsync(VISITOR_START_REREAD_MS);
+
+        expect(await screen.findByTestId('visitor-lab-pane')).toHaveTextContent(
+          `${LAB.title} (Visitor Session)`
+        );
+        expect(fetchVisitorSessionStatus).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('resumes active visitor session immediately if caller already has one running', async () => {

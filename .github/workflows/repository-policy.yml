@@ -18,6 +18,7 @@ jobs:
   validate-structure:
     name: Validate root and documentation policy
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 1.9 min, Oct 2026 (#1441)
     steps:
       # fetch-depth: 0 for the TODO/CHANGELOG movement gate below, which reads
       # TODO.md at the pull request's base commit.

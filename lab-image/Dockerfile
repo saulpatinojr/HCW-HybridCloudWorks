@@ -101,12 +101,15 @@ RUN set -eu; . /build/versions.env; \
 # Python (AZURE_CLI_PYTHON_OVERRIDES; versions.env says which and why), the
 # same way: hash-checked, wheels only. --no-deps because each of them depends
 # on nothing the CLI does not already carry, and the install in the full
-# target, which does resolve, proves it.
+# target, which does resolve, proves it. An empty or deleted block leaves an
+# empty requirements file, and the full target then installs nothing.
 RUN set -eu; . /build/versions.env; \
     mkdir -p /out/az-wheels; \
-    printf '%s\n' "${AZURE_CLI_PYTHON_OVERRIDES}" | sed '/^[[:space:]]*$/d' > /out/az-wheels/requirements.txt; \
-    python3 -m pip download --disable-pip-version-check --no-cache-dir --no-deps \
-      --only-binary=:all: --require-hashes --dest /out/az-wheels -r /out/az-wheels/requirements.txt; \
+    printf '%s\n' "${AZURE_CLI_PYTHON_OVERRIDES-}" | sed '/^[[:space:]]*$/d' > /out/az-wheels/requirements.txt; \
+    if [ -s /out/az-wheels/requirements.txt ]; then \
+      python3 -m pip download --disable-pip-version-check --no-cache-dir --no-deps \
+        --only-binary=:all: --require-hashes --dest /out/az-wheels -r /out/az-wheels/requirements.txt; \
+    fi; \
     test "$(find /out/az-wheels -name '*.whl' | wc -l)" -eq "$(wc -l < /out/az-wheels/requirements.txt)"
 
 # The builder modules: every Azure Verified Module the Landing Zone Builder
@@ -272,8 +275,10 @@ COPY --from=mirror /out/mirror/ /opt/terraform/mirror/
 # the base image's Python: the image carries no pip command, and what runs
 # is exactly what versions.env names. The wheels are bind-mounted from the
 # fetch stage for this one RUN rather than copied in, so they leave no layer
-# behind (a COPY and a later rm kept 8.6 MB of them in the image).
-RUN --mount=type=bind,from=fetch,source=/out/wheels,target=/tmp/wheels \
+# behind (a COPY and a later rm kept 8.6 MB of them in the image). Nothing in
+# it needs the network (venv seeds pip from the copy Python ships), so it
+# runs with none, and a mistake that let pip reach an index fails here.
+RUN --mount=type=bind,from=fetch,source=/out/wheels,target=/tmp/wheels --network=none \
     python3 -m venv /opt/ansible \
  && /opt/ansible/bin/pip install --disable-pip-version-check --no-cache-dir \
       --no-index --find-links /tmp/wheels --require-hashes -r /tmp/wheels/requirements.txt \
@@ -347,7 +352,21 @@ FROM runner AS full
 
 USER root
 COPY versions.env /tmp/versions.env
-RUN set -eu; . /tmp/versions.env; \
+# The same RUN also replaces the Azure CLI's outdated Python packages in its
+# own Python under /opt/az (AZURE_CLI_PYTHON_OVERRIDES in versions.env lists
+# them and says why). Doing it in the RUN that installs the CLI means the old
+# files are deleted before this layer is saved, so no image layer keeps a
+# copy of them for a scanner to find. First a guard: if the CLI already ships
+# a package at or above the version listed, the build stops, because
+# installing the listed version would be a downgrade that `pip check` and
+# smoke.sh would both accept. Then pip runs offline (`--no-index
+# --find-links`) on the fetch stage's hash-checked wheels only, and `pip
+# check` fails the build if a new version breaks a range another package
+# declares. The wheels are bind-mounted for this one RUN, as for ansible-core
+# above. This RUN keeps the network because apt and curl need it; pip does
+# not use it.
+RUN --mount=type=bind,from=fetch,source=/out/az-wheels,target=/tmp/az-wheels \
+    set -eu; . /tmp/versions.env; \
     apt-get update; \
     apt-get install -y --no-install-recommends curl git jq libatomic1 procps; \
     mkdir -p /etc/apt/keyrings; \
@@ -362,23 +381,21 @@ RUN set -eu; . /tmp/versions.env; \
       'Signed-By: /etc/apt/keyrings/microsoft.asc' > /etc/apt/sources.list.d/azure-cli.sources; \
     apt-get update; \
     apt-get install -y --no-install-recommends "azure-cli=${AZURE_CLI_VERSION}-1~${AZURE_CLI_SUITE}"; \
+    while read -r spec _; do \
+      [ -n "${spec}" ] || continue; \
+      /opt/az/bin/python3 -I -c 'import re, sys; from importlib.metadata import distributions; from pip._vendor.packaging.version import Version; norm = lambda n: re.sub("[-_.]+", "-", n).lower(); cli, (name, want) = sys.argv[1], sys.argv[2].split("=="); have = next((d.version for d in distributions() if norm(d.metadata["Name"] or "") == norm(name)), None); fix = "remove its AZURE_CLI_PYTHON_OVERRIDES line from lab-image/versions.env"; sys.exit(f"Azure CLI {cli} does not ship {name}; {fix}" if have is None else f"Azure CLI {cli} already ships {name} {have}, not older than the {want} listed; {fix}" if Version(have) >= Version(want) else 0)' "${AZURE_CLI_VERSION}" "${spec}"; \
+    done < /tmp/az-wheels/requirements.txt; \
+    if [ -s /tmp/az-wheels/requirements.txt ]; then \
+      /opt/az/bin/python3 -Im pip install --disable-pip-version-check --no-cache-dir \
+        --root-user-action=ignore --no-index --find-links /tmp/az-wheels \
+        --require-hashes -r /tmp/az-wheels/requirements.txt; \
+    fi; \
+    /opt/az/bin/python3 -Im pip check; \
     curl --proto '=https' --tlsv1.2 -fsSLo /usr/local/bin/kubectl \
       "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl"; \
     echo "${KUBECTL_SHA256}  /usr/local/bin/kubectl" | sha256sum -c -; \
     chmod 0755 /usr/local/bin/kubectl; \
     rm -rf /var/lib/apt/lists/* /tmp/versions.env
-
-# Replace the Azure CLI's outdated Python packages in its own Python under
-# /opt/az (AZURE_CLI_PYTHON_OVERRIDES in versions.env lists them and says
-# why). `--no-index --find-links` so pip cannot reach an index, the fetch
-# stage's hash-checked wheels only, and `pip check` afterwards so a package
-# whose declared range the new version breaks fails the build here. The
-# wheels are bind-mounted for this one RUN, as for ansible-core above.
-RUN --mount=type=bind,from=fetch,source=/out/az-wheels,target=/tmp/az-wheels \
-    /opt/az/bin/python3 -Im pip install --disable-pip-version-check --no-cache-dir \
-      --root-user-action=ignore --no-index --find-links /tmp/az-wheels \
-      --require-hashes -r /tmp/az-wheels/requirements.txt \
- && /opt/az/bin/python3 -Im pip check
 
 # Per-lab bootloaders invoked by the Coder workspace startup script (or
 # directly via `hcw-boot <lab-id>` in a local container).

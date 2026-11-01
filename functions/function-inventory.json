@@ -6,6 +6,14 @@
     "Keep each list sorted. Do not move this file: the monitor reads it by path at older commits."
   ],
   "http": [
+    "agentContentDraft",
+    "agentContentDraftBackToDrafts",
+    "agentContentDraftFromMarkdown",
+    "agentContentDraftSendToReview",
+    "agentContentDrafts",
+    "agentContentPublished",
+    "agentContentPublishedItem",
+    "agentContentStatus",
     "aiProxy",
     "approveNewsletter",
     "bootstrapCurrentUserAdmin",
@@ -14,6 +22,7 @@
     "claimLabJob",
     "cmsAdminDetail",
     "cmsAdmins",
+    "cmsAgentContentKey",
     "cmsAiFeatures",
     "cmsAiModelCatalog",
     "cmsAiModelCatalogModel",

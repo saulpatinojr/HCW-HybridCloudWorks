@@ -1,7 +1,7 @@
 /**
  * AI Engine — Admin Page  (/admin/ai-engine)
  *
- * Five tabs (components/admin/ai-engine/tabs.js), selected by `?tab=`:
+ * Six tabs (components/admin/ai-engine/tabs.js), selected by `?tab=`:
  *   1. AI Services   — the Priority list (ADR 0034 §4), feature switches,
  *                      provider cards with status, enable toggle, the
  *                      catalogue's model list, Test
@@ -13,6 +13,9 @@
  *                      (components/admin/ai-engine/McpOAuth.jsx)
  *   4. Playground    — one provider or MCP tool, a prompt, the answer and cost
  *   5. Usage         — every recorded call, by provider and by feature
+ *   6. Koda          — the content agent's API key, what it may do, and how
+ *                      the Muse connector reaches the site (ADR 0037;
+ *                      components/admin/ai-engine/KodaTab.jsx)
  *
  * The model catalogue drawer (CatalogDrawer) opens from the first two tabs.
  * The "Site Services" tab that sat between them until ADR 0033 was a
@@ -51,6 +54,7 @@ import ServicesTab, {
 } from '@/components/admin/ai-engine/ServicesTab';
 import McpTab, { McpServerCard } from '@/components/admin/ai-engine/McpTab';
 import PlaygroundTab from '@/components/admin/ai-engine/PlaygroundTab';
+import KodaTab from '@/components/admin/ai-engine/KodaTab';
 
 export {
   FeatureSwitches,
@@ -71,6 +75,7 @@ const HELP = [
   'Where AI is used (on AI Services) switches a task off entirely; Tasks decides who serves it when it is on.',
   'MCP Servers are tool servers the Playground and the bots can call; keys stay in app settings named MCP_* and are never sent to the browser.',
   'Usage & Cost lists every recorded call. Since ADR 0033 every call through the router records one row, sourced to its task.',
+  'Koda is the content agent (run by Muse) that drafts and reviews posts through its own API key. The tab makes, rotates and revokes that key, switches what it may do, and lists every address it can call; the key works on the Drafts stage and the published reads only, never on publishing or settings.',
 ];
 
 /**
@@ -263,6 +268,7 @@ export default function AIEnginePage() {
     ),
     mcp: () => <McpTab servers={servers} />,
     playground: () => <PlaygroundTab providers={providersWithModels} servers={servers} />,
+    koda: () => <KodaTab />,
     usage: () => (
       <Suspense
         fallback={

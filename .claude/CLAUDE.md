@@ -61,6 +61,13 @@ trips. The session is the orchestrator of a team of agents and does the work.
   soon as it is granted. The one thing you do not do is work around a refusal
   from the safety check; you ask the owner for an explicit "allow" and give
   the exact action.
+- **Call out every discrepancy you notice, even when nobody asked.** Owner
+  instruction 2026-10-31, given after a session pointed out that Cloud Crawler
+  was the only add-on without `CORE_AUTOMERGE=true`. When one repository, file
+  or setting differs from its siblings, from the documentation or from what a
+  ticket says, name the difference in your message with its link, say whether
+  it looks deliberate (and where that is written down) or like an oversight,
+  and give the fix. Do not quietly fix it or quietly leave it.
 - **GitHub administration is yours.** Rulesets, board fields and views,
   labels, issue and pull request housekeeping, variables, closing and
   reopening, merging a pull request whose checks and reviews are in order: do
@@ -73,7 +80,14 @@ trips. The session is the orchestrator of a team of agents and does the work.
 - **Use the team.** Hand each ticket, review, build and test run to the
   matching agent (see "Use the specialist agents"), brief it fully, run
   independent ones in parallel, and check what comes back yourself before you
-  call it done. Agents work in their own worktrees. Other Claude sessions
+  call it done. Agents work in their own worktrees (separate working folders
+  of the same clone), and those worktrees share one `git stash` list: on
+  2026-10-31 two agents stashed and popped within seconds of each other and
+  each got the other's changes. So an agent never uses `git stash`; to set
+  work aside it makes a temporary commit on its own branch. The session's
+  scratchpad folder is shared the same way (that day one agent's pull request
+  body overwrote another's `body.md`), so every file an agent writes there
+  carries a name unique to its task. Every briefing says both. Other Claude sessions
   work the App repositories: message them before touching the same files,
   never duplicate their branch, and never ask one to do something your own
   permissions refused.
@@ -93,6 +107,65 @@ trips. The session is the orchestrator of a team of agents and does the work.
   (`C:\Users\saulp\.hcw\check-links-hook.py`) refuses to end a turn when a
   next-steps or waiting-on-you list has a line without a link. The link goes on
   the same line as the item.
+
+## Lines a session does not cross
+
+Standing owner rules from earlier sessions. Until 2026-10-31 they were
+scattered across those sessions' private notes and the root `MEMORY.md` handoff
+file, and none of them was in this file, which is the one every session reads
+first; they are collected here since
+[#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455). The
+section above says the session does the work; this one says the few things it
+never does on its own.
+
+- **Never print a secret, and never ask for one.** A secret is any password,
+  token, key, client secret or connection string. Do not show its value in the
+  terminal, a log, a commit, a pull request, an issue or chat, and do not ask
+  the owner to paste one into chat; tell them which secure field to enter it
+  in (a Key Vault secret, a GitHub secret's settings page) and let them do it.
+- **Never put a real tenant, subscription or application id in a public file.**
+  These are the long identifiers (GUIDs) that name the owner's Microsoft Entra
+  directory, Azure subscriptions and app registrations. This repository is
+  public, so a real one in any file, test or example is published. Use the
+  placeholder `00000000-0000-0000-0000-000000000001` and the like instead. The
+  redaction check
+  ([`scripts/docs/check_redaction.py`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/docs/check_redaction.py))
+  catches some of these in the docs and `MEMORY.md`, but not every file, so the
+  rule is the session's to keep.
+- **A tag that publishes an image cannot be taken back.** In a repository that
+  publishes a Docker image (the four add-ons, for example), pushing a version
+  tag such as `v0.1.1` starts the workflow that
+  builds the Docker image and publishes it to the registry, where others can
+  pull it at once. Push one only when both are true: the owner has said yes to
+  that version, and a dry run (a run that builds and checks everything but
+  publishes nothing) is green on the exact commit the tag will point to. In
+  most add-ons that dry run is a manual run of `publish-images.yml`; its header
+  comment says so, as
+  [Cloud Assessor's does](https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/blob/main/.github/workflows/publish-images.yml).
+  Where the header does not say a manual run publishes nothing, do not assume
+  it; ask before tagging.
+- **No admin bypass and no force-push to `main`.** An admin bypass is merging
+  past the repository's rules with the owner's administrator rights (for
+  example `gh pr merge --admin`). A force-push rewrites history that others
+  have already pulled. Every change reaches `main` through a pull request that
+  meets the rules in "Pull requests open ready for review" below.
+- **Never run `terraform apply` or delete an Azure resource unless the owner
+  has asked for that exact change.** That includes `terraform destroy`,
+  confirming a run in HCP Terraform (its confirm button is an apply), an
+  `az ... delete` and a delete in the Azure portal. A plan, `terraform
+  validate` and the read-only `az ... show` and `list` commands are fine.
+- **Rules already written elsewhere in this file, listed here so this section
+  is complete:** a refusal from the safety check is never worked around ("A
+  missing permission is never the reason to hand work back", above); sessions
+  merge the pull requests they open and never hand the owner a merge, with
+  Dependabot's as the exception ("A Copilot
+  review that recommends approval" and "CodeRabbit's approval is the merge
+  signal; its request for changes is a gate", below); CodeRabbit's code-writing
+  boxes are never ticked
+  ("CodeRabbit's summary is a checklist to work, not to tick", below); and two
+  pull requests that touch the same lines, above all `CHANGELOG.md`, go one at a
+  time ("Several PRs at once, but conflicts are resolved one at a time", at the
+  end).
 
 ## Everything named to the owner carries its link
 
@@ -425,23 +498,69 @@ so it is recorded here, where every session reads it.
   recommends changes, or any review thread still unresolved on the head, is
   not that: fix, push, and wait for the next review of the new head. Ready
   for review on its own is still not permission to merge.
-- **CodeRabbit's approval is the ruleset's required review.** Owner decision
-  2026-10-18 on #972 (option F, with Copilot out of credits until
-  2026-10-31): the `Default` ruleset's `pull_request` rule carries
-  `required_approving_review_count: 1` with `require_last_push_approval`,
-  and `.coderabbit.yaml` has `request_changes_workflow: true` with
-  `allow_author_approval: false`. CodeRabbit posts a request-changes review
-  while any of its findings is open and approves the head once every thread
-  is resolved and its pre-merge checks pass; that approval is what satisfies
-  the rule, so the merge button follows the loop above rather than replacing
-  it. Proven on #1272, which sat `REVIEW_REQUIRED` until CodeRabbit's
-  `APPROVED` review and merged on it. A session cannot approve: it authors
-  as the owner's account, which is also why `@coderabbitai approve` from the
-  author is off. If CodeRabbit stops reviewing (a rate limit, an outage, a
-  plan change), every PR waits on it; the rollback is the owner's single
-  full-ruleset `PUT` with `required_approving_review_count` at `0` and
-  `require_last_push_approval` at `false`, the pre-change payload recorded
-  on #972.
+- **CodeRabbit's approval is the merge signal; its request for changes is a
+  gate.** The ruleset (the
+  repository's merge rules for `main`, the `Default` ruleset, id 20680114,
+  [settings page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/rules/20680114))
+  does not require any approving review. Read from the API on 2026-10-31 with
+  `gh api repos/saulpatinojr/HCW-HybridCloudWorks/rulesets/20680114` (the
+  ruleset was last changed 2026-10-20 09:05 UTC), its `pull_request` rule has
+  `required_approving_review_count: 0` and `require_last_push_approval:
+  false`. What it does require is every review conversation resolved
+  (`required_review_thread_resolution: true`), the required status checks
+  green on a head that is up to date with `main` (`required_status_checks`,
+  strict, 15 checks), and no deleting or force-pushing `main` (`deletion`,
+  `non_fast_forward`); it also dismisses an old approval when new commits are
+  pushed, and no one is on its bypass list. GitHub explains each of these
+  settings on
+  [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
+
+  So no approval is needed, but **a review that asks for changes still blocks
+  the merge** until a newer review from the same reviewer replaces it, even
+  after every thread is resolved and the commit it judged is long gone. Seen
+  on [#1460](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1460)
+  on 2026-10-31: CodeRabbit's request for changes on `baf10df` was still
+  standing three pushes later, and the merge API refused with `1 review
+  requesting changes by reviewers with write access` (HTTP 405). When that
+  happens, comment `@coderabbitai review` so it reviews the current head.
+  A fresh review does not always replace the old one: on #1460 CodeRabbit
+  withdrew its request on the thread and its next review found nothing, yet
+  it posted no approval, and it refuses `@coderabbitai resolve` and
+  `@coderabbitai approve` from the pull request's author. Then the owner
+  dismisses the old review (its **⋯** menu, **Dismiss review**), with a link
+  to where CodeRabbit withdrew it. A session does not dismiss a review to get
+  past it.
+  [`.coderabbit.yaml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.coderabbit.yaml)
+  still has `request_changes_workflow: true` and `allow_author_approval:
+  false`: CodeRabbit posts a review asking for changes while any of its
+  findings is open, and approves the head once every thread is resolved and
+  its pre-merge checks pass. That approval of the **current head** is the
+  signal to merge, read the same way as Copilot's verdict above, and the round
+  cap in the next bullet still applies. Sessions merge the pull requests they
+  open on it; never hand the owner a merge. **Dependabot's pull requests are
+  the exception:** `.coderabbit.yaml` lists `dependabot[bot]` under
+  `ignore_usernames`, so CodeRabbit never reviews them and no CodeRabbit
+  approval will arrive, and its comment says the owner approves them (no
+  runbook describes that step further). Do not wait for CodeRabbit on one,
+  and do not merge one on a session's own judgement; tell the owner it is
+  ready, with its link. Two separate controls stop a session approving its
+  own work. GitHub does not let the author of a pull request approve it, and
+  a session authors as the owner's account. Separately, `.coderabbit.yaml`'s
+  `allow_author_approval: false` makes CodeRabbit ignore `@coderabbitai
+  approve` from the author, so the author cannot have the bot approve
+  instead.
+
+  History, briefly: on 2026-10-18 the owner chose option F on
+  [#972](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/972),
+  which set the count to 1 with last-push approval so that CodeRabbit's
+  approval was a required gate (proven on
+  [#1272](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1272)).
+  By the ruleset's change of 2026-10-20 both settings were back at `0` and
+  `false`; no record of why was found in the repository when this was written.
+  Making the approval a gate again is the owner's decision, to be recorded on
+  [#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455),
+  and the ruleset change is the owner's to make. A session that finds the
+  count above 0 again reads it from the API and updates this bullet.
 - **Every review bot is worked, for at most three rounds each; then all
   green is the merge.** Owner instruction 2026-10-08, after Copilot reviews
   resumed on #1034 and #1035 and CodeRabbit (#1031) began posting a

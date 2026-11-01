@@ -86,8 +86,22 @@ const requireAgent = vi.fn(async () => ({
 
 /** Every gate the inventory recognises. A route must reach at least one. */
 const syncRequireRole = vi.fn(async () => ({ error: { status: 403, headers: {}, body: "Forbidden" } }));
-const GUARDS = [requireRole, requireUser, requireAgent, syncRequireRole];
-vi.mock("../lib/brain/guard.js", async (importOriginal) => ({ ...(await importOriginal()), getBrainSyncGuard: () => ({ requireRole: syncRequireRole }) }));
+// The Agent Content API's key guard (ADR 0037): Koda's key, never a token.
+// Its routes count as guarded only through this mock, which is the point.
+const agentKeyGuard = vi.fn(async () => ({
+  record: null,
+  user: null,
+  error: { status: 401, headers: {}, body: JSON.stringify({ ok: false, error: "Unauthorized" }) },
+}));
+const GUARDS = [requireRole, requireUser, requireAgent, syncRequireRole, agentKeyGuard];
+vi.mock("../lib/agent-content/guard.js", () => ({
+  getAgentContentGuard: () => ({
+    authenticate: agentKeyGuard,
+    requireCapability: agentKeyGuard,
+  }),
+  resetAgentContentGuard: () => {},
+}));
+vi.mock("../lib/brain/guard.js", async (importOriginal) => ({ ...(await importOriginal()), getBrainSyncGuard: () => ({ requireRole: syncRequireRole, requireUser: syncRequireRole }) }));
 const guardCalls = () => GUARDS.reduce((n, g) => n + g.mock.calls.length, 0);
 const clearGuards = () => GUARDS.forEach((g) => g.mockClear());
 

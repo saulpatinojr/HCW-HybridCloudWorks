@@ -13,21 +13,49 @@
  * `queryDocs` answers with `query({ container, query, parameters, docs })`
  * when one is given (docs are copies of that container's documents), and
  * with no rows otherwise: an in-memory store cannot run Cosmos SQL, so a test
- * that queries says what Cosmos would answer (test/mcp-projection.js).
+ * that queries says what Cosmos would answer (test/mcp-projection.js), or
+ * runs the query's own text with `runCosmosQuery` (test/cosmos-predicate.js).
+ *
+ * `now` (epoch ms), when given, turns on ageing out the way Cosmos's time to
+ * live does: each write stamps `_ts` (seconds), and a document whose numeric
+ * `ttl` has passed since then is gone for every verb, as if Cosmos had
+ * deleted it (#1403, item 8). A replace of one is a 404 and a create over one
+ * succeeds. Without `now` nothing ages, as before.
+ * https://learn.microsoft.com/azure/cosmos-db/time-to-live
  */
 import { vi } from 'vitest';
 import { assertReplaceDocIfMatchCall } from '../src/lib/cosmos-call-shape.js';
 
-export function memoryStore(initial = {}, { query = null } = {}) {
+export function memoryStore(initial = {}, { query = null, now = null } = {}) {
   const docs = new Map();
   const failures = new Map();
   let etag = 0;
   const key = (container, id) => `${container}/${id}`;
-  const stamp = (doc) => ({ ...structuredClone(doc), _etag: `"e${++etag}"` });
+  const stamp = (doc) => ({
+    ...structuredClone(doc),
+    _etag: `"e${++etag}"`,
+    ...(now ? { _ts: Math.floor(now() / 1000) } : {}),
+  });
   for (const [path, doc] of Object.entries(initial)) docs.set(path, stamp(doc));
 
+  /** Whether a document has outlived its `ttl` (only with `now`). */
+  const agedOut = (doc) =>
+    Boolean(now) && Number.isInteger(doc?.ttl) && doc.ttl > 0 && doc._ts + doc.ttl <= now() / 1000;
+  /** The live document at a path, or undefined; an aged-out one is deleted on the way. */
+  const live = (path) => {
+    const doc = docs.get(path);
+    if (doc && agedOut(doc)) {
+      docs.delete(path);
+      return undefined;
+    }
+    return doc;
+  };
+
   const docsIn = (container) =>
-    [...docs.entries()].filter(([path]) => path.startsWith(`${container}/`)).map(([, doc]) => doc);
+    [...docs.keys()]
+      .filter((path) => path.startsWith(`${container}/`))
+      .map(live)
+      .filter(Boolean);
   const maybeFail = (container, id, verb) => {
     const queue = failures.get(`${verb}:${key(container, id)}`);
     const error = queue?.shift();
@@ -37,7 +65,7 @@ export function memoryStore(initial = {}, { query = null } = {}) {
   const store = {
     docs,
     audit: [],
-    get: (container, id) => docs.get(key(container, id)) ?? null,
+    get: (container, id) => live(key(container, id)) ?? null,
     /** Queue errors for the next `times` calls of `verb` on one document. */
     fail(container, id, verb, error, times = 1) {
       const name = `${verb}:${key(container, id)}`;
@@ -45,12 +73,12 @@ export function memoryStore(initial = {}, { query = null } = {}) {
     },
     readDoc: vi.fn(async (container, id) => {
       maybeFail(container, id, 'readDoc');
-      const doc = docs.get(key(container, id));
+      const doc = live(key(container, id));
       return doc ? structuredClone(doc) : null;
     }),
     createDoc: vi.fn(async (container, doc) => {
       maybeFail(container, doc.id, 'createDoc');
-      if (docs.has(key(container, doc.id))) throw Object.assign(new Error('conflict'), { code: 409 });
+      if (live(key(container, doc.id))) throw Object.assign(new Error('conflict'), { code: 409 });
       docs.set(key(container, doc.id), stamp(doc));
       return structuredClone(docs.get(key(container, doc.id)));
     }),
@@ -60,7 +88,9 @@ export function memoryStore(initial = {}, { query = null } = {}) {
       // a call the real store cannot take pass every test (#1383).
       assertReplaceDocIfMatchCall(container, doc, options);
       maybeFail(container, doc.id, 'replaceDocIfMatch');
-      if (docs.get(key(container, doc.id))?._etag !== doc._etag) {
+      const current = live(key(container, doc.id));
+      if (!current) throw Object.assign(new Error('not found'), { code: 404 });
+      if (current._etag !== doc._etag) {
         throw Object.assign(new Error('precondition'), { code: 412 });
       }
       docs.set(key(container, doc.id), stamp(doc));

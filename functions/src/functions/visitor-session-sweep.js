@@ -19,9 +19,9 @@
  * takeover into up to 10; one minute would double the runs for no gain, because
  * the in-request sweep (at most once a minute per worker) already covers the
  * moments when visitors are about. The cost of a run with nothing to do is
- * three queries on `lab_jobs` (expired active sessions, then waiting ones, then
- * claims that ran out), so 720 runs a day are about 2,160 queries and no Coder
- * call. Not measured against the live account (request units per query are
+ * two queries on `lab_jobs` (expired active sessions; then, in one query,
+ * every record whose next try is due), so 720 runs a day are about 1,440
+ * queries and no Coder call. Not measured against the live account (request units per query are
  * Cosmos's to say); the bound is structural.
  *
  * OVERLAP. The Functions host runs one instance of a timer across all scaled-out
@@ -50,7 +50,8 @@
  * kind of error, and the next tick tries again.
  */
 import { app } from '@azure/functions';
-import { queryDocs, readDoc, replaceDocIfMatch } from '../lib/cosmos-client.js';
+import { createDoc, queryDocs, readDoc, replaceDocIfMatch } from '../lib/cosmos-client.js';
+import { REFUND_PREFIX } from '../lib/labs/visitor-session.js';
 import { logDisabledSkip, timerEnabled } from '../lib/timers/flag-gate.js';
 import { createVisitorSessionSweep } from '../lib/timers/visitor-session-sweep.js';
 
@@ -60,11 +61,28 @@ export const TIMER_FLAG = 'SWEEP_VISITOR_SESSIONS';
 export const TIMER_SCHEDULE = '0 */2 * * * *';
 
 /**
- * The store the sweep is given: the three verbs it uses and nothing that
- * creates a document, so a timer that runs on its own cannot create a session.
- * A test holds this list to exactly these names.
+ * A create that writes nothing but a refund document: `visitor-refund:<id>`,
+ * kind `visitor_refund`, in `submission_quota`. Anything else is refused
+ * before it reaches the database. The sweep writes one to give back the daily
+ * start of a start whose process died (#1464 review, finding C and round 2);
+ * one id per session, so a second write is a 409 and adds nothing.
  */
-export const SWEEP_STORE = Object.freeze({ queryDocs, readDoc, replaceDocIfMatch });
+export function createRefundOnly(container, doc) {
+  const refund =
+    container === 'submission_quota' &&
+    doc?.kind === 'visitor_refund' &&
+    typeof doc.id === 'string' &&
+    doc.id.startsWith(REFUND_PREFIX);
+  if (!refund) return Promise.reject(new TypeError('The visitor session sweep may create refund documents only.'));
+  return createDoc(container, doc);
+}
+
+/**
+ * The store the sweep is given: the verbs it uses, and a create that writes
+ * refund documents only, so a timer that runs on its own cannot create a
+ * session or a slot. A test holds this list to exactly these names.
+ */
+export const SWEEP_STORE = Object.freeze({ queryDocs, readDoc, replaceDocIfMatch, createDoc: createRefundOnly });
 
 /** "true" arms it; the schedulers master switch still holds it off. */
 export const sweepEnabled = (env = process.env) => timerEnabled(TIMER_FLAG, env);

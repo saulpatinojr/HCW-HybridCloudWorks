@@ -41,6 +41,7 @@ import {
   SSH_LOGIN_ALERT_DESCRIPTION,
   sshLoginAlertQuery,
   secretsOf,
+  TIMER_SCHEDULES_APPLIED,
 } from './assert-expected-plan.mjs';
 // The module-reading helper moved to its own file when a second check needed
 // it (terraform-role-definitions.test.mjs). Same eight lines, one copy.
@@ -879,9 +880,14 @@ describe('DECLARED', () => {
       }
       const [type, name] = declaration.address.replace(/\[.*$/, '').split('.');
       // A declared delete is the removal of a whole resource (#816), so its
-      // block must be gone; every other entry must name a block that exists.
-      if (declaration.action === 'delete' && !/\[.*\]$/.test(declaration.address)) {
-        expect(infraSource, label).not.toContain(`resource "${type}" "${name}"`);
+      // block must be gone. A delete of one for_each instance is either a key
+      // that left a block that stays, or a whole block removed with its keys
+      // (#1479), so nothing is asserted about the block for it. Every other
+      // entry must name a block that exists.
+      if (declaration.action === 'delete') {
+        if (!/\[.*\]$/.test(declaration.address)) {
+          expect(infraSource, label).not.toContain(`resource "${type}" "${name}"`);
+        }
       } else {
         expect(infraSource, label).toContain(`resource "${type}" "${name}"`);
       }
@@ -948,78 +954,28 @@ describe('DECLARED', () => {
     expect(declaration.after).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
   });
 
-  /** Every declaration of alert-timer-overdue's query, in the file's order. */
-  const timerRuleDeclarations = () =>
-    DECLARED.filter(
+  it('holds alert-timer-overdue’s applied rows equal to the tree’s while no change to the rule is declared (2026-11-01)', () => {
+    // TIMER_SCHEDULES_APPLIED is the query the rule holds in state, the
+    // `before` of the next declaration. With nothing declared for the rule, it
+    // must be exactly what infra/ renders, or the next declaration's `before`
+    // would describe a state the rule was never in.
+    const declared = DECLARED.some(
       (entry) =>
         entry.address === 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue' &&
         entry.path === 'criteria[0].query'
     );
-
-  it('declares the visitor-session sweep’s row for every state the timer rule can be in, each ending at the tree’s query (#1403)', () => {
-    // This file cannot read what has applied, so the update is declared three
-    // ways: nothing of the audience timer and private indexing applied yet, the
-    // audience timer applied, or both applied. Whichever is live, the plan's
-    // `after` is the tree's query, so every declaration must end there.
-    const rows = treeTimerRows();
-    const declarations = timerRuleDeclarations();
-    expect(declarations).toHaveLength(3);
-    for (const declaration of declarations) {
-      expect(declaration.after).toBe(overdueQuery(rows));
-    }
-    const addedLines = (declaration) => {
-      const before = declaration.before.split('\n');
-      return declaration.after.split('\n').filter((line) => !before.includes(line));
-    };
-    expect(declarations.map((declaration) => addedLines(declaration).length).sort()).toEqual([1, 2, 3]);
-    const sweepRow = '  "sweepVisitorSessions", 2m, datetime(2026-01-01 00:00),';
-    for (const declaration of declarations) expect(addedLines(declaration)).toContain(sweepRow);
-    // The tree holds the row under the registration's own schedule.
-    expect(rows).toContainEqual(['sweepVisitorSessions', '2m', '2026-01-01 00:00']);
+    if (declared) return;
+    expect(overdueQuery(TIMER_SCHEDULES_APPLIED)).toBe(overdueQuery(treeTimerRows()));
   });
 
-  it('declares the sweep’s flag as disarmed, as armed, and as armed in one apply, naming a flag the tree catalogues (#1403)', () => {
+  it('keeps only the sweep’s arming plan declared, naming a flag the tree catalogues (#1403, pruned 2026-11-01)', () => {
+    // The catalogue shapes (absent -> false, absent -> true) applied and were
+    // deleted; false -> true stays until the owner arms the sweep.
     const flag = 'app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS';
     const entries = DECLARED.filter((entry) => entry.path === flag);
-    expect(entries.map((entry) => [entry.before, entry.after])).toEqual([
-      [undefined, 'false'],
-      ['false', 'true'],
-      [undefined, 'true'],
-    ]);
+    expect(entries.map((entry) => [entry.before, entry.after])).toEqual([['false', 'true']]);
     for (const entry of entries) expect(entry.address).toBe(FUNCTION_APP);
     expect(infraSource).toMatch(/^\s*SWEEP_VISITOR_SESSIONS\s*=\s*"sweepVisitorSessions — /m);
-  });
-
-  it('declares the Coder broker token’s Key Vault reference exactly as infra/ writes it, and passes the plan that adds only that (#1403)', () => {
-    const entry = DECLARED.find((candidate) => candidate.path === 'app_settings.CODER_BROKER_TOKEN');
-    expect(entry, 'no declaration for the broker token’s app setting').toBeDefined();
-    expect(entry.address).toBe(FUNCTION_APP);
-    expect(entry.before).toBeUndefined();
-
-    // The declared value is the tree's reference with the vault's address filled in:
-    // the same setting, pointing at the secret that carries its name in Key Vault's spelling.
-    const tree =
-      /^\s*"CODER_BROKER_TOKEN"\s*=\s*"@Microsoft\.KeyVault\(SecretUri=\$\{azurerm_key_vault\.hcw\.vault_uri\}secrets\/([A-Z0-9-]+)\)"\s*$/m.exec(
-        infraSource
-      );
-    expect(tree, 'CODER_BROKER_TOKEN is not a Key Vault reference in infra/').not.toBeNull();
-    expect(tree[1]).toBe('CODER-BROKER-TOKEN');
-    expect(variableDefault('key_vault_name')).toBe('"kv-site-prod-cus-01"');
-    expect(entry.after).toBe(
-      '@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/CODER-BROKER-TOKEN)'
-    );
-
-    // The plan this pull request queues: the Function App gains that one key.
-    const added = fixture();
-    added.app.after.app_settings.CODER_BROKER_TOKEN = entry.after;
-    expect(checkPlan(added.plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
-
-    // The same key pointing at another secret (the status token's, say) is not what was declared.
-    const wrong = fixture();
-    wrong.app.after.app_settings.CODER_BROKER_TOKEN = entry.after.replace('CODER-BROKER-TOKEN', 'CODER-STATUS-TOKEN');
-    const result = checkPlan(wrong.plan);
-    expect(result.ok).toBe(false);
-    expect(result.unexpected.some((line) => line.includes('app_settings.CODER_BROKER_TOKEN'))).toBe(true);
   });
 
   /** An alert-timer-overdue update as a plan carries it, from one declaration. */
@@ -1035,48 +991,29 @@ describe('DECLARED', () => {
     },
   });
 
-  it.each([0, 1, 2])(
-    'passes the plan that adds the sweep to the timer alert, with its flag disarmed, whichever of the three states the alert is in: state %i (#1403)',
-    (index) => {
-      // The three declarations are the three states alert-timer-overdue's query
-      // can be in before this change; a plan built from any one of them is the
-      // plan the owner sees, so each must pass end to end, not only look right.
-      const declaration = timerRuleDeclarations()[index];
-      const { plan, app } = fixture();
-      app.after.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'false';
-      plan.resource_changes.push(timerRuleUpdate(declaration));
-
-      const result = checkPlan(plan);
-
-      expect(result).toMatchObject({ ok: true, unexpected: [], missing: [] });
-      expect(result.declared.map((entry) => entry.reason)).toEqual(
-        expect.arrayContaining(['#1403: the sweepVisitorSessions timer catalogued, disarmed until enabled_timers names it'])
-      );
-    }
-  );
-
-  it('passes the plan that arms the sweep: the flag false to true, or absent to true in one apply (#1403)', () => {
+  it('passes the plan that arms the sweep: the flag false to true (#1403)', () => {
     // false -> true is the arming apply after the catalogue apply. It stays
     // declared until that apply has run, because the file cannot read what has applied.
     const { plan, app } = fixture();
     app.before.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'false';
     app.after.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'true';
     expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
-
-    const oneApply = fixture();
-    oneApply.app.after.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'true';
-    oneApply.plan.resource_changes.push(timerRuleUpdate(timerRuleDeclarations()[2]));
-    expect(checkPlan(oneApply.plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
   });
 
-  it('names a second timer row, a changed schedule or any other setting riding along with the sweep’s (#1403)', () => {
-    const [, , lastState] = timerRuleDeclarations();
+  it('names a changed timer schedule or any other setting riding along with an arming (#1403)', () => {
+    const rows = treeTimerRows();
     const { plan, app } = fixture();
-    app.after.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'false';
+    app.before.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'false';
+    app.after.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'true';
     app.after.app_settings.FEATURE_FLAG_SOMETHING_ELSE = 'false';
-    // The sweep's row on another period, and one extra row.
-    const wrong = { ...lastState, after: lastState.after.replace('"sweepVisitorSessions", 2m,', '"sweepVisitorSessions", 5m,') };
-    plan.resource_changes.push(timerRuleUpdate(wrong));
+    // The sweep's row moved to another period: a query nothing declares.
+    plan.resource_changes.push(
+      timerRuleUpdate({
+        address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue',
+        before: overdueQuery(rows),
+        after: overdueQuery(rows.map(([name, period, anchor]) => [name, name === 'sweepVisitorSessions' ? '5m' : period, anchor])),
+      })
+    );
 
     const result = checkPlan(plan);
 
@@ -1086,9 +1023,9 @@ describe('DECLARED', () => {
   });
 
   it('prunes the stateful-rule and export-latency entries once applied (#1207, #964, #970)', () => {
-    // timer_overdue left this list when #1302 declared the rule again (one
-    // row more, the test above); it returns once that change has applied
-    // and the entry is deleted.
+    // timer_overdue left this list while #1302, the Second Brain and #1403
+    // declared the rule again (three rows more); those applied and were
+    // deleted on 2026-11-01, so it is back.
     const addresses = DECLARED.map((entry) => entry.address);
     for (const name of [
       'lab_hybrid_backup_missing_coder',
@@ -1096,9 +1033,35 @@ describe('DECLARED', () => {
       'lab_hybrid_disk_used',
       'logs_daily_cap',
       'export_window_latency',
+      'timer_overdue',
     ]) {
       expect(addresses, name).not.toContain(`azurerm_monitor_scheduled_query_rules_alert_v2.${name}`);
     }
+  });
+
+  it('prunes what applied by 2026-11-01 (Second Brain, Doc Vault, #1302, #1403, #1479), and keeps the arming plans', () => {
+    const creates = DECLARED.filter((entry) => entry.action === 'create').map((entry) => entry.address);
+    const deletes = DECLARED.filter((entry) => entry.action === 'delete').map((entry) => entry.address);
+    const paths = DECLARED.map((entry) => entry.path);
+    for (const name of ['brain_records', 'brain_search', 'doc_vault']) {
+      expect(creates, name).not.toContain(`azurerm_cosmosdb_sql_container.hcw["${name}"]`);
+    }
+    expect(deletes).toEqual([]);
+    expect(DECLARED.some((entry) => /code_brain|CODE_BRAIN_/.test(entry.address + (entry.path ?? '')))).toBe(false);
+    for (const name of [
+      'BRAIN_ENABLED', 'BRAIN_AI_ENABLED', 'BRAIN_OWNER_OID', 'BRAIN_OWNER_TENANT_ID', 'BRAIN_SYNC_CLIENT_ID',
+      'CLOUDFLARE_ANALYTICS_TOKEN', 'CF_WEB_ANALYTICS_SITE_TAG', 'CF_ACCOUNT_ID', 'CODER_BROKER_TOKEN',
+    ]) {
+      expect(paths, name).not.toContain(`app_settings.${name}`);
+    }
+    // The three arming plans and the site create stay: "not in this plan"
+    // cannot tell them from applied, and each waits on a workspace value.
+    const arming = (flag) =>
+      DECLARED.filter((entry) => entry.path === `app_settings.${flag}`).map((entry) => [entry.before, entry.after]);
+    expect(arming('FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY')).toEqual([['false', 'true']]);
+    expect(arming('FEATURE_FLAG_SWEEP_VISITOR_SESSIONS')).toEqual([['false', 'true']]);
+    expect(arming('FEATURE_FLAG_PROBE_AI_PROVIDERS')).toEqual([['false', 'true']]);
+    expect(creates).toContain('cloudflare_web_analytics_site.hcw[0]');
   });
 
   it('prunes alert-kv-config-write’s provider entries once applied (#1216)', () => {

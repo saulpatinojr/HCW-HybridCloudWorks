@@ -42,7 +42,11 @@
  *
  * Each edit carries the checksum or digest read from the publisher beside the
  * version (scripts/lib/lab-pin-bumps.mjs says what is read from where); a pin
- * whose checksum cannot be verified is not edited and becomes a note.
+ * whose checksum cannot be verified is not edited and becomes a note, and so
+ * does a product whose publisher could not be read, with the address and the
+ * status it got. Every read that fails with a server error, a 406 or no
+ * answer (each try is limited to 30 seconds) is tried again after a short
+ * pause first (fetchRetrying, #1447).
  * --evidence and --notes write the two Markdown sections the pull request
  * body and the weekly issue are made of. --dry-run prints the planned edits
  * and writes no repository file. Exit 0 when the plan was made (with or
@@ -122,13 +126,122 @@ export function readPins(text) {
 
 // ── Upstream readers ───────────────────────────────────────────────────────
 
-async function fetchText(url, headers = {}) {
-  const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT, ...headers } });
-  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-  return response.text();
+/**
+ * The pauses before each second and third try of a read that failed in a way
+ * a moment's wait can cure (#1447). A publisher behind a CDN can answer one
+ * request with a 5xx or a 406 and the next with the file: on 2026-10-27 a
+ * local run read Vault's index as HTTP 406 while the same address answered
+ * 200 to every later request, and the product dropped out of that run.
+ */
+export const RETRY_DELAYS_MS = [2000, 5000];
+
+/** A status worth asking again for, unchanged: a server error, or a 406 a different edge may not give. */
+export const retryableStatus = (status) => status >= 500 || status === 406;
+
+/**
+ * How long one try may take, the answer's body included, and how long one
+ * read may take over all its tries and pauses. Node's own fetch has no limit
+ * short of about five minutes, so a publisher that stops answering would
+ * otherwise hold a try that long, and three of them would outlast the
+ * `propose` job's 15 minutes on their own.
+ */
+export const TRY_TIMEOUT_MS = 30_000;
+export const READ_BUDGET_MS = 60_000;
+
+/** Wait `ms`, or less if `signal` aborts first: a caller that stops does not sit out the pause. */
+const pause = (ms, signal) =>
+  new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener('abort', done, { once: true });
+  });
+
+/** Why a try got no answer, in words: a timeout says so, a network error keeps its code (ECONNRESET). */
+function noAnswer(error, timeoutMs) {
+  if (error?.name === 'TimeoutError') return `no answer within ${Math.round(timeoutMs / 1000)} s`;
+  const code = error?.cause?.code;
+  return `${error?.message || String(error)}${code ? ` (${code})` : ''}`;
 }
-async function fetchJson(url, headers = {}) {
-  return JSON.parse(await fetchText(url, { Accept: 'application/json', ...headers }));
+
+/** Let go of an answer whose body is not going to be read, so its connection is freed. */
+const release = (response) => Promise.resolve(response?.body?.cancel?.()).catch(() => {});
+
+/**
+ * One read, tried again after each pause in `delays` when it fails with a
+ * retryable status or gets no answer: a reset connection, a DNS failure, no
+ * reply within TRY_TIMEOUT_MS, or a connection dropped while the body was
+ * coming in. `read` takes the body (text, bytes) inside the try, so that last
+ * case is tried again too. The request is the same every time, address and
+ * headers alike: a retry that changed it would read something other than what
+ * the pin rests on. Any other status fails at once, no try starts once
+ * READ_BUDGET_MS is spent (checked again after each pause, which can end
+ * late), and the last failure names the address, the status or the reason,
+ * and how many tries it had. A caller's own `init.signal` still cancels,
+ * during a try or a pause, and its reason is thrown without another try. `sleep`, `now` and `deadline` (the
+ * timeout signal for one try) are injectable so the tests do not wait.
+ */
+export async function fetchRetrying(
+  fetchImpl,
+  url,
+  init = {},
+  {
+    delays = RETRY_DELAYS_MS,
+    sleep = pause,
+    timeoutMs = TRY_TIMEOUT_MS,
+    budgetMs = READ_BUDGET_MS,
+    now = Date.now,
+    deadline = (ms) => AbortSignal.timeout(ms),
+    read = (response) => response,
+  } = {}
+) {
+  const started = now();
+  for (let attempt = 1; ; attempt += 1) {
+    const limit = Math.min(timeoutMs, Math.max(budgetMs - (now() - started), 1));
+    const timeout = deadline(limit);
+    const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    let response = null;
+    let status = null;
+    let failure;
+    try {
+      response = await fetchImpl(url, { ...init, signal });
+      if (response.ok) return await read(response);
+      status = response.status;
+      failure = `${url}: HTTP ${status}`;
+    } catch (error) {
+      if (init.signal?.aborted) throw error;
+      failure = `${url}: ${noAnswer(error, limit)}`;
+    }
+    await release(response);
+    const giveUp = () => new Error(attempt > 1 ? `${failure} (tried ${attempt} times)` : failure);
+    if (status !== null && !retryableStatus(status)) throw giveUp();
+    const wait = delays[attempt - 1];
+    if (wait === undefined || now() - started + wait >= budgetMs) throw giveUp();
+    if (init.signal?.aborted) throw init.signal.reason;
+    await sleep(wait, init.signal);
+    if (init.signal?.aborted) throw init.signal.reason;
+    if (now() - started >= budgetMs) throw giveUp();
+  }
+}
+
+/** A JSON body, or an error that names where it came from. */
+export function parseJsonFrom(url, text) {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${url}: the answer is not JSON (${error.message})`);
+  }
+}
+
+/** The plain readers behind `sources`: text and JSON, each through fetchRetrying, the body read inside it. */
+function makeFetchers({ fetchImpl = fetch, retry } = {}) {
+  const fetchText = (url, headers = {}) =>
+    fetchRetrying(fetchImpl, url, { headers: { 'User-Agent': USER_AGENT, ...headers } }, { ...retry, read: (r) => r.text() });
+  const fetchJson = async (url, headers = {}) => parseJsonFrom(url, await fetchText(url, { Accept: 'application/json', ...headers }));
+  return { fetchText, fetchJson };
 }
 
 /** A string as a regular-expression literal: every metacharacter escaped. */
@@ -189,31 +302,45 @@ function githubHeaders(env) {
   return env.GITHUB_TOKEN ? { Authorization: `Bearer ${env.GITHUB_TOKEN}` } : {};
 }
 
-/** Every source, each returning the newest stable version or throwing. */
-export function sources(env = process.env) {
-  const gh = (repo) => async () =>
-    newestGitHubRelease(await fetchJson(`https://api.github.com/repos/${repo}/releases?per_page=30`, githubHeaders(env)));
+/**
+ * Every source, each returning the newest stable version or throwing. `http`
+ * is for the tests: a fake `fetchImpl` and a `retry` that does not sleep.
+ */
+export function sources(env = process.env, http = {}) {
+  const { fetchText, fetchJson } = makeFetchers(http);
+  // One reader per product: read `url`, pick the newest stable version from
+  // it, and name the address when there is none, so a note can say where.
+  const reader = (url, pick, { json = true, headers } = {}) => async () => {
+    const body = await (json ? fetchJson : fetchText)(url, headers);
+    let version;
+    try {
+      version = pick(body);
+    } catch (error) {
+      throw new Error(`${url}: ${error?.message || String(error)}`);
+    }
+    if (!version) throw new Error(`${url}: no stable version found`);
+    return version;
+  };
+  const gh = (repo) => reader(`https://api.github.com/repos/${repo}/releases?per_page=30`, newestGitHubRelease, { headers: githubHeaders(env) });
   // caddy-dns/cloudflare tags its versions and publishes no releases.
-  const ghTags = (repo) => async () =>
-    newestGitHubTag(await fetchJson(`https://api.github.com/repos/${repo}/tags?per_page=30`, githubHeaders(env)));
+  const ghTags = (repo) => reader(`https://api.github.com/repos/${repo}/tags?per_page=30`, newestGitHubTag, { headers: githubHeaders(env) });
   const dockerApt = 'https://download.docker.com/linux/ubuntu/dists/resolute/stable/binary-amd64/Packages';
+  const apt = (name) => reader(dockerApt, (text) => newestAptVersion(text, name), { json: false });
   return {
-    dockerEngine: async () => newestAptVersion(await fetchText(dockerApt), 'docker-ce'),
-    containerd: async () => newestAptVersion(await fetchText(dockerApt), 'containerd.io'),
-    dockerBuildx: async () => newestAptVersion(await fetchText(dockerApt), 'docker-buildx-plugin'),
-    dockerCompose: async () => newestAptVersion(await fetchText(dockerApt), 'docker-compose-plugin'),
+    dockerEngine: apt('docker-ce'),
+    containerd: apt('containerd.io'),
+    dockerBuildx: apt('docker-buildx-plugin'),
+    dockerCompose: apt('docker-compose-plugin'),
     caddy: gh('caddyserver/caddy'),
     caddyCloudflare: ghTags('caddy-dns/cloudflare'),
     coder: gh('coder/coder'),
-    postgres: async () =>
-      newestDockerHubTag(
-        (await fetchJson('https://hub.docker.com/v2/repositories/library/postgres/tags?page_size=100&name=18.')).results,
-        '18'
-      ),
+    postgres: reader('https://hub.docker.com/v2/repositories/library/postgres/tags?page_size=100&name=18.', (page) =>
+      newestDockerHubTag(page.results, '18')
+    ),
     portainer: gh('portainer/portainer'),
-    vault: async () => newestHashicorp(await fetchJson('https://releases.hashicorp.com/vault/index.json')),
+    vault: reader('https://releases.hashicorp.com/vault/index.json', newestHashicorp),
     nodeExporter: gh('prometheus/node_exporter'),
-    node: async () => newestNodeLine(await fetchJson('https://nodejs.org/dist/index.json'), 26),
+    node: reader('https://nodejs.org/dist/index.json', (index) => newestNodeLine(index, 26)),
     cosign: gh('sigstore/cosign'),
   };
 }

@@ -8,6 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { runCosmosQuery } from '../../../test/cosmos-predicate.js';
 import { memoryStore } from '../../../test/memory-store.js';
 import { createClientIdentity } from '../auth/client-identity.js';
 import {
@@ -70,11 +71,9 @@ function brokerStore(sessions = []) {
   const store = memoryStore(
     {},
     {
-      query: ({ container, parameters }) => {
-        if (container !== 'lab_jobs') return [];
-        const status = parameters.find((p) => p.name === '@status')?.value;
-        return sessions.filter((s) => s.status === status);
-      },
+      // The broker's own SQL, run against the sessions given (#1403, item 8).
+      query: ({ container, query, parameters }) =>
+        container === 'lab_jobs' ? runCosmosQuery({ query, parameters, docs: sessions }) : [],
     }
   );
   store.incrementIf = vi.fn(async () => {

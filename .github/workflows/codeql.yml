@@ -38,6 +38,7 @@ jobs:
   analyze:
     name: Analyze ${{ matrix.language }}
     runs-on: ubuntu-26.04
+    timeout-minutes: 20 # slowest row 4.8 min (javascript-typescript), Oct 2026 (#1441)
     permissions:
       # Uploading results to the code-scanning API is the only write this
       # workflow performs. It uses no secrets, no cloud credentials, no OIDC.

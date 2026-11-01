@@ -20,6 +20,7 @@ import "./admin-snapshots-http.js";
 import "./cms-http.js";
 import "./code-quality-http.js";
 import "./drafts-http.js";
+import "./agent-content-http.js";
 import "./content-workflow-http.js";
 import "./generate-article-draft-http.js";
 import "./forge-config-http.js";

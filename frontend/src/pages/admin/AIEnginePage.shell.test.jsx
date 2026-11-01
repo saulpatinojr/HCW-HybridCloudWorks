@@ -244,7 +244,7 @@ beforeEach(() => {
 });
 
 describe('AIEnginePage shell', () => {
-  it('shows the five tabs with Tasks where Site Services was, and no Site Services or Routing at all', async () => {
+  it('shows the six tabs with Tasks where Site Services was, Koda last, and no Site Services or Routing at all', async () => {
     renderPage();
     expect(await screen.findByRole('tab', { name: 'Tasks' })).toBeInTheDocument();
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
@@ -253,6 +253,7 @@ describe('AIEnginePage shell', () => {
       'MCP Servers',
       'Playground',
       'Usage & Cost',
+      'Koda',
     ]);
     expect(screen.queryByText(/Site Services/)).toBeNull();
     expect(screen.queryByRole('tab', { name: 'Routing' })).toBeNull();

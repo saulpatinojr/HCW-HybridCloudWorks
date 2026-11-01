@@ -162,6 +162,68 @@ describe('startVisitorSession', () => {
   });
 });
 
+describe('visitor session refusals carry the sentence the server wrote (#1464)', () => {
+  it.each([
+    [
+      409,
+      'VISITOR_START_IN_PROGRESS',
+      'Your visitor lab session is still being set up. Please wait a moment.',
+    ],
+    [
+      429,
+      'TURNSTILE_RATE_LIMITED',
+      'Too many attempts to start a lab from this browser in the last few minutes.',
+    ],
+    [429, 'VISITOR_RATE_LIMITED', 'You have reached your visitor lab session limit for today.'],
+  ])(
+    'a %i %s start throws with the reason as its message, not the HTTP status',
+    async (status, code, reason) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => jsonResponse({ ok: false, code, reason }, status))
+      );
+      const error = await startVisitorSession({
+        labId: 'landing-zone-builder-output',
+        turnstileToken: 't',
+      }).catch((e) => e);
+      expect(error).toMatchObject({ message: reason, status, code });
+    }
+  );
+
+  it('a 429 status read throws with the reason, so the pane can show it', async () => {
+    const reason =
+      'Too many requests from this browser in the last few minutes. Try again in about ten minutes.';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse(
+          { ok: false, configured: true, open: false, code: 'VISITOR_READS_RATE_LIMITED', reason },
+          429
+        )
+      )
+    );
+    await expect(fetchVisitorSessionStatus()).rejects.toMatchObject({
+      message: reason,
+      status: 429,
+    });
+  });
+
+  it("still prefers the server's error, and falls back to the status only when neither is there", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ ok: false, error: 'Session not found', reason: 'x' }, 404))
+    );
+    await expect(stopVisitorSession('s')).rejects.toThrow('Session not found');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ ok: false }, 502))
+    );
+    await expect(startVisitorSession({ labId: 'l', turnstileToken: 't' })).rejects.toThrow(
+      'Start visitor session failed with HTTP 502'
+    );
+  });
+});
+
 describe('stopVisitorSession', () => {
   it('DELETEs public/labs/visitor-session with sessionId query param', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ ok: true, status: 'ended' }));
