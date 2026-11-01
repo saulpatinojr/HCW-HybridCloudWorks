@@ -223,9 +223,9 @@ function CapabilitiesCard({ data, busyIds, onToggle }) {
       <CardHeader>
         <CardTitle className="text-lg">What Koda may do</CardTitle>
         <CardDescription>
-          Each switch is a group of endpoints. All are on for a new key. Publishing is not on this
-          list and has no endpoint: a draft Koda sends to review is published by a person, on the
-          Review board, as every other draft is.
+          Each switch is a group of endpoints. All but “Delete drafts” are on for a new key.
+          Publishing is not on this list and has no endpoint: a draft Koda sends to review is
+          published by a person, on the Review board, as every other draft is.
         </CardDescription>
       </CardHeader>
       <CardContent className="divide-y">
@@ -440,8 +440,9 @@ export default function KodaTab() {
         <Bot className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
         <span>
           Koda is the content agent that drafts and reviews posts for the series. It signs in with
-          the key below and works only on the Drafts stage and the published reads; it cannot
-          publish, change settings or read anything else.
+          the key below. It works on the Drafts stage, the published reads and the admin sections
+          switched on in the card below; it cannot publish, delete, change a setting or read a
+          secret.
         </span>
       </p>
       <KeyCard
