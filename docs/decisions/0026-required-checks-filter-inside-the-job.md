@@ -228,4 +228,6 @@ list clears depends on why a category is missing.
 The alternative, analysing every language on every pull request so the
 warning never stays, is the cost this decision was taken to avoid, and the
 warning carries no information the skip log does not. It is accepted and
-documented rather than removed.
+documented rather than removed, and the accepted risk is recorded where this
+repository keeps them, in the "Accepted risks" table of
+[`TODO.md`](../../TODO.md).
