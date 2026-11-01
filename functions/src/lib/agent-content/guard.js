@@ -182,9 +182,9 @@ export function createAgentContentGuard({
   async function requireCapability(request, capability) {
     const auth = await authenticate(request);
     if (auth.error) return auth;
-    // What the record allows, with the defaults filled in: a switch the record
-    // never stored is off when it starts off (drafts.delete), so an older key
-    // record is bound by today's default, not by its silence.
+    // What the record allows, with the defaults filled in, so an older key
+    // record is read the same way as a new one: a switch it never stored
+    // takes today's default, and a switch stored false stays off.
     if (!enabledCapabilities(auth.record).includes(capability)) {
       audit({ outcome: 'denied', reason: 'capability-off', capability });
       return {

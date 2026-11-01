@@ -137,13 +137,13 @@ describe('Generate', () => {
   it('again is a rotation: a new key, the old one dead, the switches and the first creation kept', async () => {
     const { handlers, store } = setup();
     const first = parse(await handlers.generateKey(request(), context)).body.secret;
-    await handlers.updateCapabilities(request({ capabilities: { 'drafts.delete': false } }), context);
+    await handlers.updateCapabilities(request({ capabilities: { 'drafts.review': false } }), context);
     const second = parse(await handlers.generateKey(request(), context));
     expect(second.status).toBe(201);
     expect(second.body.secret).not.toBe(first);
     const stored = store.docs.get(KEY_RECORD_ID);
     expect(stored.keyHash).toBe(hashKey(second.body.secret));
-    expect(stored.capabilities['drafts.delete']).toBe(false);
+    expect(stored.capabilities['drafts.review']).toBe(false);
     expect(stored.createdBy).toBe('owner@hcw.dev');
     expect(stored.rotatedAt).toBe('2026-10-31T12:00:00.000Z');
     expect(store.audits.map((a) => a.action)).toEqual([
@@ -203,15 +203,15 @@ describe('two tabs toggling different switches', () => {
     const replace = store.replaceDocIfMatch.getMockImplementation();
     store.replaceDocIfMatch.mockImplementationOnce(async (container, doc, options) => {
       const other = { ...store.docs.get(KEY_RECORD_ID) };
-      other.capabilities = { ...other.capabilities, 'drafts.delete': false };
+      other.capabilities = { ...other.capabilities, 'drafts.review': false };
       await replace(container, { ...other }, options);
       return replace(container, doc, options);
     });
     const res = parse(await handlers.updateCapabilities(request({ capabilities: { 'published.read': false } }), context));
     expect(res.status).toBe(200);
     expect(res.body.key.capabilities['published.read']).toBe(false);
-    expect(res.body.key.capabilities['drafts.delete']).toBe(false);
-    expect(store.docs.get(KEY_RECORD_ID).capabilities['drafts.delete']).toBe(false);
+    expect(res.body.key.capabilities['drafts.review']).toBe(false);
+    expect(store.docs.get(KEY_RECORD_ID).capabilities['drafts.review']).toBe(false);
   });
 });
 

@@ -113,7 +113,7 @@ naming the switch. Turn it back on the same way. Both are written to the
 audit log. The first five switches are the agent API's own; the five below
 them (Pipeline, Enhanced, Second Brain, Spotlight, Platform) are the admin
 sections of part 7, and turning one off closes every admin route under it.
-**Delete drafts** starts off and stays off unless you turn it on.
+There is no delete switch: the key has no delete route at all.
 
 ## 5. Revoke the key
 
@@ -162,15 +162,19 @@ place of a sign-in, and the site treats it as `koda (agent)` with an editor's
 rights (a publisher's in the Doc Vault, and as you in the Second Brain). The
 rules that hold on every one of them:
 
-- **Nothing can be deleted.** A `DELETE` is refused everywhere, and the
-  routes that delete or trash by `POST` are not open.
+- **Nothing can be deleted.** A `DELETE` is refused everywhere (the agent
+  API's own draft delete is gone too), and the routes that delete or trash by
+  `POST` are not open.
 - **Nothing can be published, scheduled or unpublished.** Those routes are not
-  open, and the three routes that could reach publishing through their body
-  are limited: a status change may go to `approved`, `editing`, `forge_ready`
-  or `rejected`; a job may be `forge-article`, `forge-from-url`,
-  `batch-inspect`, `sync-blog-source` or `generate-listen-and-learn`; a new
-  content item may not be created already `published` (or one of the older
-  `published_blog`, `published_news`, `published_both` spellings) or `archived`.
+  open, nor are the routes that unpublish as a side effect (request
+  inspection, reset review state, the Listen & Learn episode review). The
+  routes that could reach publishing through their body are limited: a status
+  change may go to `approved`, `editing`, `forge_ready` or `rejected`; a job
+  may be `forge-article`, `forge-from-url`, `batch-inspect`,
+  `sync-blog-source` or `generate-listen-and-learn`; a new content item may
+  not be created already `published` (or one of the older `published_blog`,
+  `published_news`, `published_both` spellings) or `archived`; a book or
+  chapter may be restored but not archived.
 - **No secret or credential can be read, and no setting can be changed**
   (settings are read-only, where the editor needs them), and no section the
   owner did not name is open: Forge Studio, AI Engine, Image Prompts, the
@@ -191,7 +195,7 @@ short, by switch:
 | Switch | Pages | Koda may | Koda may not |
 |---|---|---|---|
 | Pipeline | New Content, Drafts, Review Queue, Editor, Live Pages | List and read content, versions and drafts; create and edit drafts and articles; save the editor; reorder images; move content between review states; ask for an inspection or reset a review; generate article drafts, hero and preview images and captions; enqueue the producing jobs and read job state; read the queue, publish board, decision centre and dashboard; read settings, taxonomy and the image gallery; upload images | Publish, schedule, unpublish, set a slug, rehost images, delete anything |
-| Enhanced | Listen & Learn, Labs, Frameworks, Coder Corner, Blogs | Read, create and edit Listen & Learn books and chapters, estimate, review and regenerate; read the lab estate, a lab job, the starts and the Coder automation; read, create and edit blog sources (Frameworks and Coder Corner are content, so the Pipeline rows cover them) | Delete books, chapters or versions; launch or cancel lab jobs; change lab agents; read the Coder token; delete a blog |
+| Enhanced | Listen & Learn, Labs, Frameworks, Coder Corner, Blogs | Read, create and edit Listen & Learn books and chapters, estimate and regenerate, restore an archived book or chapter; read the lab estate, a lab job, the starts and the Coder automation; read, create and edit blog sources (Frameworks and Coder Corner are content, so the Pipeline rows cover them) | Archive or delete books, chapters or versions; publish or withdraw an episode; launch or cancel lab jobs; change lab agents; read the Coder token; delete a blog |
 | Second Brain | Second Brain | Read status, notes, history, graph and context; search and ask; create and edit notes and collections; draft from a note, acting as you | Reindex; the desktop sync routes |
 | Spotlight | Speaking, Certifications, Ambassador, Doc Vault | Read talks and upsert one; read, create and edit certifications; read, create and edit applications and evidence, import evidence, read sources, files, programs and readiness; in the Doc Vault read, create, upload, edit, untrash and restore a version | Delete a talk, a certification, an application, evidence or a document; create or edit a program |
 | Platform | Health, Integrations | Read the health probe results and the ops snapshot; read the integration status and the StreamYard status; run a connection test | Change a probe result or an integration setting; read secrets or credentials; change platform settings |
@@ -204,7 +208,7 @@ that is not listed, or to let it publish, change the table in
 
 - Drafts are addressed by `id`, not slug. `GET drafts` returns the list with
   each draft's `id` and `etag`; `GET drafts/{id}` returns the body.
-- Every change (`PUT`, `DELETE`, `send-to-review`, `back-to-drafts`) carries
+- Every change (`PUT`, `send-to-review`, `back-to-drafts`) carries
   the `etag` of the version Koda last read. A stale one answers
   `412 CONFLICT`: read again, then retry.
 - A new draft is `POST drafts` with `{ "fields": { title, subtitle, date,

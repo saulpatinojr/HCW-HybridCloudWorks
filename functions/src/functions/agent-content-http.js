@@ -61,7 +61,7 @@ export const AGENT_CONTENT_ROUTES = Object.freeze([
   ['agentContentStatus', 'status', { GET: 'status' }],
   ['agentContentDrafts', 'drafts', { GET: 'listDrafts', POST: 'createDraft' }],
   ['agentContentDraftFromMarkdown', 'drafts/from-markdown', { POST: 'createDraftFromMarkdown' }],
-  ['agentContentDraft', 'drafts/{id}', { GET: 'getDraft', PUT: 'saveDraft', DELETE: 'deleteDraft' }],
+  ['agentContentDraft', 'drafts/{id}', { GET: 'getDraft', PUT: 'saveDraft' }],
   ['agentContentDraftSendToReview', 'drafts/{id}/send-to-review', { POST: 'sendToReview' }],
   ['agentContentDraftBackToDrafts', 'drafts/{id}/back-to-drafts', { POST: 'backToDrafts' }],
   ['agentContentPublished', 'published', { GET: 'listPublished' }],

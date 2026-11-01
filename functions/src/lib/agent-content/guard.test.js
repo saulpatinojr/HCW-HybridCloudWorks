@@ -203,14 +203,14 @@ describe('a key that passes', () => {
 
 describe('the capability', () => {
   it('passes when on, and answers 403 naming the switch when off', async () => {
-    const off = { ...RECORD, capabilities: { ...RECORD.capabilities, 'drafts.delete': false } };
+    const off = { ...RECORD, capabilities: { ...RECORD.capabilities, 'drafts.review': false } };
     const { guard } = setup({ record: off });
     expect((await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.read')).error).toBeNull();
-    const refused = await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.delete');
+    const refused = await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.review');
     expect(refused.error.status).toBe(403);
-    expect(body(refused.error).error).toContain('Delete drafts');
+    expect(body(refused.error).error).toContain('Send to review and back');
     expect(body(refused.error).error).toContain('Koda tab');
-    expect(audits.at(-1)).toEqual(expect.objectContaining({ reason: 'capability-off', capability: 'drafts.delete' }));
+    expect(audits.at(-1)).toEqual(expect.objectContaining({ reason: 'capability-off', capability: 'drafts.review' }));
   });
 
   it('a record with no switches has every capability', async () => {
@@ -282,13 +282,12 @@ describe('the audit context a caller passes (admin-access.js, ADR 0038)', () => 
   });
 });
 
-describe('a switch that starts off (owner instruction 2026-11-01)', () => {
-  it('is off for a record that never stored it, on only when stored true', async () => {
+describe('an older key record', () => {
+  it('is read with the defaults filled in: a switch it never stored is on, a stored false stays off', async () => {
     const silent = { ...RECORD, capabilities: { 'drafts.read': true } };
     const { guard } = setup({ record: silent });
-    expect((await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.delete')).error.status).toBe(403);
     expect((await guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.write')).error).toBeNull();
-    const turnedOn = { ...RECORD, capabilities: { 'drafts.delete': true } };
-    expect((await setup({ record: turnedOn }).guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.delete')).error).toBeNull();
+    const stored = { ...RECORD, capabilities: { 'drafts.write': false } };
+    expect((await setup({ record: stored }).guard.requireCapability(request(`Bearer ${SECRET}`), 'drafts.write')).error.status).toBe(403);
   });
 });

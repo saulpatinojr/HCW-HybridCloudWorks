@@ -72,6 +72,10 @@ describe('the policy table', () => {
       'cms/newsletters', 'cms/social-posts', 'cms/calendar', 'publishSnapshot',
       'cms/podcast/transcripts/{id}/publish', 'cms/integration-status PUT', 'cms/agent-content/key',
       'cms/config/{collection}', 'cms/keyword-config',
+      // These three unpublish without a body rule to stop them: inspection
+      // and reset write a published item back to ingested, review withdraws
+      // an episode to draft (Copilot review, 2026-11-01).
+      'requestContentInspection', 'resetContentReviewState', 'cms/listen-and-learn/review',
     ]) {
       if (never === 'cms/settings') {
         // read is allowed for the editor's pickers; the write is not
@@ -182,6 +186,17 @@ describe('body rules', () => {
     expect(await checkBodyRule(create, request({ body: { data: { title: 'x' } } }))).toEqual({ ok: true });
     // The top level is not where the handler reads, so a status there is neither refused nor honoured.
     expect(await checkBodyRule(create, request({ body: { contentStatus: 'published', data: { title: 'x' } } }))).toEqual({ ok: true });
+  });
+
+  it('lets a book or chapter be restored but not archived', async () => {
+    const book = POLICY.find((row) => row.method === 'PATCH' && row.route === 'cms/listen-and-learn/{platform}/{examCode}');
+    const chapter = POLICY.find((row) => row.method === 'PATCH' && row.route.endsWith('/chapters/{chapterId}'));
+    for (const row of [book, chapter]) {
+      expect((await checkBodyRule(row, request({ body: { archived: true } }))).reason).toBe('body-not-allowed');
+      expect((await checkBodyRule(row, request({ body: { archived: [true] } }))).reason).toBe('body-not-allowed');
+      expect(await checkBodyRule(row, request({ body: { archived: false } }))).toEqual({ ok: true });
+      expect(await checkBodyRule(row, request({ body: { title: 'Renamed' } }))).toEqual({ ok: true });
+    }
   });
 
   it('fails closed on a body it cannot read, and reads a clone so the handler still gets the body', async () => {
@@ -348,6 +363,10 @@ describe('describePolicy', () => {
     expect(sections.find((s) => s.id === 'admin.brain').on).toBe(false);
     expect(sections.find((s) => s.id === 'admin.pipeline').on).toBe(true);
     const pipeline = sections.find((s) => s.id === 'admin.pipeline');
+    const enhanced = sections.find((s) => s.id === 'admin.enhanced');
+    // Archiving a book or a chapter takes it off the site, so the key may only restore (archived: false).
+    expect(enhanced.routes).toContainEqual({ method: 'PATCH', path: '/api/cms/listen-and-learn/{platform}/{examCode}', limit: 'archived must not be true' });
+    expect(enhanced.routes).toContainEqual({ method: 'PATCH', path: '/api/cms/listen-and-learn/{platform}/{examCode}/chapters/{chapterId}', limit: 'archived must not be true' });
     expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/transitionContentStatus', limit: `newStatus must be one of ${TRANSITION_TARGETS_ALLOWED.join(', ')}` });
     expect(pipeline.routes).toContainEqual({ method: 'POST', path: '/api/createContentItem', limit: 'data.contentStatus must not be published or published_blog or published_news or published_both or archived; data.Live must not be true; data.Status must not be Live or live or Published or published' });
     expect(pipeline.routes).toContainEqual({ method: 'GET', path: '/api/cms/content' });

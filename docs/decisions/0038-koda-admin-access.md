@@ -64,12 +64,18 @@ either changed.
 3. **DELETE is never allowed.** No row has it, and `matchPolicy` refuses the verb
    before looking. The POST routes that delete or trash (`deleteContentItem`,
    `deleteRejectedContent`, `deleteSpeakerEvent`, `softDeleteLivePage`, the
-   image deletes) are not listed. `drafts.delete` on the v1 API now starts off.
+   image deletes) are not listed. The v1 API's `DELETE drafts/{id}` route and
+   its `drafts.delete` switch are removed, so there is no delete the owner
+   could turn on by mistake (Copilot review, 2026-11-01).
 4. **Publishing stays a human act.** `publishContent`, `saveContentSchedule`,
    `unscheduleContent`, `unpublishContentToInspected`, the slug and rehost
-   writes and the podcast publish are not listed. Three routes that could reach
-   publishing through their body are allowed with a body rule, read from a
-   clone of the request so the handler still gets its body: a
+   writes and the podcast publish are not listed, and neither are the three
+   routes that unpublish as a side effect with nothing in their body to stop
+   it: `requestContentInspection` and `resetContentReviewState` write a
+   published item back to `ingested`, and the Listen & Learn review route
+   withdraws an episode to `draft` (Copilot review, 2026-11-01). Routes that
+   could reach publishing through their body are allowed with a body rule,
+   read from a clone of the request so the handler still gets its body: a
    `transitionContentStatus` may move content to `approved`, `editing`,
    `forge_ready` or `rejected` and never to `published` or `archived`; an
    `enqueueJob` may enqueue `forge-article`, `forge-from-url`, `batch-inspect`,
@@ -77,8 +83,12 @@ either changed.
    `publish-content`; a `createContentItem` may not ask, under `data` where
    the handler reads the item, to be born `published` (or one of the older
    `published_blog`, `published_news`, `published_both` spellings, which are
-   stored as given and read as published) or `archived` or `Live`. `updateContentItem` needs no rule: it already refuses the workflow
-   fields (`contentStatus`, `Status`, `Live`).
+   stored as given and read as published) or `archived` or `Live`; a book or
+   chapter edit in Listen & Learn may restore (`archived: false`) but not
+   archive, since archiving takes it off the site. A refused field that
+   arrives as anything but a plain value (an array, an object) is refused
+   outright. `updateContentItem` needs no rule: it already refuses the
+   workflow fields (`contentStatus`, `Status`, `Live`).
 5. **The role each row grants is the least that opens it.** `editor` nearly
    everywhere; `viewer` for the dashboard, queue, publish-board, health and lab
    reads; `publisher` only for the Doc Vault, whose every route, reads included,

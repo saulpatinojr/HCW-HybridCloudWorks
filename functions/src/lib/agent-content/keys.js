@@ -61,12 +61,6 @@ export const CAPABILITIES = Object.freeze([
     description: 'Move a draft to In Review, and move an article from Drafts back to Drafts.',
   },
   {
-    id: 'drafts.delete',
-    label: 'Delete drafts',
-    description:
-      'Delete a draft, or an article from Drafts that is still in review. Nothing live can be deleted.',
-  },
-  {
     id: 'published.read',
     label: 'Read published posts',
     description: 'Read the published articles the public site shows, in the shape the site reads them.',
@@ -104,12 +98,6 @@ export const CAPABILITIES = Object.freeze([
 ]);
 export const CAPABILITY_IDS = Object.freeze(CAPABILITIES.map((capability) => capability.id));
 
-/**
- * Switches that start off: deleting is the owner's act unless they turn it on
- * (owner instruction 2026-11-01: create, produce and review, never delete).
- */
-export const CAPABILITIES_OFF_BY_DEFAULT = Object.freeze(['drafts.delete']);
-
 /** The identity the Drafts routes record for Koda's writes (createdBy, updatedBy, audit rows). */
 export const AGENT_USER = Object.freeze({
   oid: 'agent:koda',
@@ -123,9 +111,13 @@ export const AGENT_USER = Object.freeze({
 /** Thrown for input the owner can correct; the handler answers 400 with the message. */
 export class AgentContentInputError extends AuthoredError {}
 
-/** What a new key gets: every capability on, except the ones that start off. */
+/**
+ * What a new key gets: every capability on. There is no delete switch to
+ * turn on: the key never deletes (owner instruction 2026-11-01: create,
+ * produce and review, never delete), so the v1 delete route is gone.
+ */
 export function defaultCapabilities() {
-  return Object.fromEntries(CAPABILITY_IDS.map((id) => [id, !CAPABILITIES_OFF_BY_DEFAULT.includes(id)]));
+  return Object.fromEntries(CAPABILITY_IDS.map((id) => [id, true]));
 }
 
 /**

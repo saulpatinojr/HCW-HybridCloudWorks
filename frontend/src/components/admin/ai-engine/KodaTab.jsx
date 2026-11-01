@@ -223,9 +223,9 @@ function CapabilitiesCard({ data, busyIds, onToggle }) {
       <CardHeader>
         <CardTitle className="text-lg">What Koda may do</CardTitle>
         <CardDescription>
-          Each switch is a group of endpoints. All but “Delete drafts” are on for a new key.
-          Publishing is not on this list and has no endpoint: a draft Koda sends to review is
-          published by a person, on the Review board, as every other draft is.
+          Each switch is a group of endpoints. All are on for a new key. Deleting and publishing are
+          not on this list and have no endpoint: a draft Koda sends to review is published by a
+          person, on the Review board, as every other draft is.
         </CardDescription>
       </CardHeader>
       <CardContent className="divide-y">
