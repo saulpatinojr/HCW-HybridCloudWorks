@@ -49,6 +49,36 @@ describe('isUnresolvedReference', () => {
   });
 });
 
+describe('unresolvedSecretNames', () => {
+  it('counts a setting once although App Service exposes it twice', () => {
+    // On App Service every app setting is in the process as NAME and as
+    // APPSETTING_NAME, same value. The Health page read 6 for 3 on 2026-11-01.
+    const env = {
+      AZURE_SPEECH_KEY: REFERENCE,
+      APPSETTING_AZURE_SPEECH_KEY: REFERENCE,
+      CODER_BROKER_TOKEN: REFERENCE,
+      APPSETTING_CODER_BROKER_TOKEN: REFERENCE,
+      PUBLER_API_KEY: 'resolved-value',
+      APPSETTING_PUBLER_API_KEY: 'resolved-value',
+      WEBSITE_SITE_NAME: 'func-site-prod-cus-01',
+    };
+    expect(unresolvedSecretNames(env)).toEqual(['AZURE_SPEECH_KEY', 'CODER_BROKER_TOKEN']);
+    expect(unresolvedSecretCount(env)).toBe(2);
+  });
+
+  it('keeps a prefixed name that has no plain twin, so nothing is hidden by the prefix alone', () => {
+    const env = { APPSETTING_ONLY_HERE: REFERENCE };
+    expect(unresolvedSecretNames(env)).toEqual(['APPSETTING_ONLY_HERE']);
+  });
+
+  it('sorts the names and tolerates an empty or missing environment', () => {
+    expect(unresolvedSecretNames({ B_KEY: REFERENCE, A_KEY: REFERENCE })).toEqual(['A_KEY', 'B_KEY']);
+    expect(unresolvedSecretNames({})).toEqual([]);
+    expect(unresolvedSecretNames(undefined)).toEqual([]);
+    expect(unresolvedSecretCount(undefined)).toBe(0);
+  });
+});
+
 describe('agreement with readKey', () => {
   it('calls unresolved exactly what readKey calls absent', () => {
     // THE property. readKey decides whether a feature runs; this decides

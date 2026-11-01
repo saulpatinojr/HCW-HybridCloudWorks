@@ -62,8 +62,29 @@ export function isUnresolvedReference(value) {
   return value.replace(/^﻿/, '').trim().startsWith(KEY_VAULT_REFERENCE_PREFIX);
 }
 
+/** The copy App Service makes of every app setting, beside the plain name. */
+const APP_SETTING_TWIN_PREFIX = 'APPSETTING_';
+
 /**
- * Names of every setting holding an unresolved reference, sorted.
+ * Is this name the App Service twin of another setting in the same
+ * environment? On App Service (Functions included) every app setting arrives
+ * in the process twice: as `NAME` and again as `APPSETTING_NAME`. Both copies
+ * carry the same value, so an unresolved reference counted by name was
+ * counted twice (the Health page read 6 for 3 references on 2026-11-01).
+ * A name that starts with the prefix but has no plain twin is a setting in its
+ * own right and is kept.
+ */
+function isAppSettingTwin(name, env) {
+  return (
+    name.startsWith(APP_SETTING_TWIN_PREFIX) &&
+    Object.hasOwn(env, name.slice(APP_SETTING_TWIN_PREFIX.length))
+  );
+}
+
+/**
+ * Names of every setting holding an unresolved reference, sorted, each
+ * setting once: the `APPSETTING_` twin App Service adds is left out when its
+ * plain name is present.
  *
  * For the AUTHENTICATED surface only — see the module header on why the
  * anonymous endpoint gets a count.
@@ -72,8 +93,9 @@ export function isUnresolvedReference(value) {
  * @returns {string[]}
  */
 export function unresolvedSecretNames(env = {}) {
-  return Object.keys(env ?? {})
-    .filter((name) => isUnresolvedReference(env[name]))
+  const settings = env ?? {};
+  return Object.keys(settings)
+    .filter((name) => isUnresolvedReference(settings[name]) && !isAppSettingTwin(name, settings))
     .sort();
 }
 
