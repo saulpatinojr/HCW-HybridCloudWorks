@@ -57,19 +57,36 @@ const codeLines = (run) =>
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'));
 
+/** `|| name=$?` ending the line, optionally closing a `case` branch (`;;`) or followed by a comment. */
+const GUARDED = /\|\|\s*[A-Za-z_][A-Za-z0-9_]*=\$\?\s*(?:;;?)?\s*(?:#.*)?$/;
+/** `set +e` or `set +o errexit`: -e is off from this line on. */
+const E_OFF = /^set\s+(?:\+[a-z]*e[a-z]*|\+o\s+errexit)\b/;
+/** `set -e`, `set -euo pipefail` or `set -o errexit`: -e is back on. */
+const E_ON = /^set\s+(?:-[a-z]*e[a-z]*|-o\s+errexit)\b/;
+
 /**
- * The lines of one step that read `$?` where `-e` can stop the step first:
- * any use of `$?` except `|| name=$?` at the end of the command's own line
- * (optionally closing a `case` branch with `;;`, as
- * monitor-functions-registered.yml does). A step that turns `-e` off
- * (`set +e`) or picks its own `shell:` is not judged here.
+ * The lines of one step that read an exit code (`$?` or `PIPESTATUS`) where
+ * `-e` can stop the step first: any such read except `|| name=$?` at the end
+ * of the command's own line (as monitor-functions-registered.yml writes inside
+ * a `case`). Lines after a `set +e`, until `-e` is turned back on, are not
+ * judged, and neither is a step whose `shell:` is not bash or sh: GitHub runs
+ * `shell: bash` as `bash -eo pipefail` and `shell: sh` as `sh -e`, so those
+ * stop at the first failure too.
  */
 export function unguardedExitReads(step) {
-  if (!step.run || step.shell !== undefined || /^\s*set \+e\b/m.test(step.run)) return [];
-  return codeLines(step.run).filter(
-    (line) => line.includes('$?') && !/\|\|\s*[A-Za-z_][A-Za-z0-9_]*=\$\?\s*(?:;;?)?$/.test(line)
-  );
+  if (!step.run || (step.shell !== undefined && !/^(?:bash|sh)\b/.test(step.shell))) return [];
+  const found = [];
+  let errexit = true;
+  for (const line of codeLines(step.run)) {
+    if (E_OFF.test(line)) errexit = false;
+    else if (E_ON.test(line)) errexit = true;
+    else if (errexit && /\$\?|PIPESTATUS/.test(line) && !GUARDED.test(line)) found.push(line);
+  }
+  return found;
 }
+
+/** A `run:` whose block the parser did not read: `|-`, `>` and the like leave only the marker. */
+const unreadBlock = (step) => typeof step.run === 'string' && /^[|>][-+0-9]*$/.test(step.run.trim());
 
 describe('every workflow: no exit code read where bash -e cuts it short', () => {
   const files = readdirSync(WORKFLOWS).filter((file) => /\.ya?ml$/.test(file));
@@ -79,9 +96,10 @@ describe('every workflow: no exit code read where bash -e cuts it short', () => 
   });
 
   it.each(files)('%s', (file) => {
-    const found = jobsOf(file).flatMap((job) =>
-      job.steps.flatMap((step) => unguardedExitReads(step).map((line) => `${job.key} / ${step.name}: ${line}`))
-    );
+    const steps = jobsOf(file).flatMap((job) => job.steps.map((step) => ({ job: job.key, step })));
+    const unread = steps.filter(({ step }) => unreadBlock(step)).map(({ job, step }) => `${job} / ${step.name}: run: ${step.run}`);
+    expect(unread, 'this check reads only `run: |` blocks; write the step that way or teach scripts/lib/workflow-text.mjs the form').toEqual([]);
+    const found = steps.flatMap(({ job, step }) => unguardedExitReads(step).map((line) => `${job} / ${step.name}: ${line}`));
     expect(found, 'set the variable to 0 first, then read it as `command || name=$?` on the same line').toEqual([]);
   });
 
@@ -90,12 +108,30 @@ describe('every workflow: no exit code read where bash -e cuts it short', () => 
     expect(unguardedExitReads(step('node a.mjs\ncode=$?'))).toEqual(['code=$?']);
     expect(unguardedExitReads(step('report=$(node a.mjs)\nstatus=$?'))).toEqual(['status=$?']);
     expect(unguardedExitReads(step('node a.mjs\nif [ $? -ne 0 ]; then exit 1; fi'))).toEqual(['if [ $? -ne 0 ]; then exit 1; fi']);
+    expect(unguardedExitReads(step('a | b\nrc=${PIPESTATUS[0]}'))).toEqual(['rc=${PIPESTATUS[0]}']);
     expect(unguardedExitReads(step('code=0\nnode a.mjs || code=$?'))).toEqual([]);
+    expect(unguardedExitReads(step('code=0\nnode a.mjs || code=$?  # why'))).toEqual([]);
     expect(unguardedExitReads(step('case "$x" in\n  a) out=$(node a.mjs) || st=$? ;;\nesac'))).toEqual([]);
     expect(unguardedExitReads(step('node a.mjs || code=$?\necho "$?"'))).toEqual(['echo "$?"']);
     expect(unguardedExitReads(step('# code=$? in a comment\necho ok'))).toEqual([]);
+    // -e is off from `set +e` on, and on again from `set -e`.
     expect(unguardedExitReads(step('set +e\nnode a.mjs\ncode=$?'))).toEqual([]);
+    expect(unguardedExitReads(step('a | b\nset +e\nb | c\nrc=${PIPESTATUS[0]}'))).toEqual([]);
+    expect(unguardedExitReads(step('node a.mjs\ncode=$?\nset +e'))).toEqual(['code=$?']);
+    expect(unguardedExitReads(step('set +e\nset -euo pipefail\nnode a.mjs\ncode=$?'))).toEqual(['code=$?']);
+    // `set -uo pipefail` leaves -e as it was, which for a runner is on.
+    expect(unguardedExitReads(step('set -uo pipefail\nnode a.mjs\ncode=$?'))).toEqual(['code=$?']);
+    // bash and sh steps stop at the first failure too; pwsh is another shell.
+    expect(unguardedExitReads(step('node a.mjs\ncode=$?', { shell: 'bash' }))).toEqual(['code=$?']);
+    expect(unguardedExitReads(step('node a.mjs\ncode=$?', { shell: 'sh' }))).toEqual(['code=$?']);
     expect(unguardedExitReads(step('node a.mjs\ncode=$?', { shell: 'pwsh' }))).toEqual([]);
+  });
+
+  it('notices a run block it could not read', () => {
+    expect(unreadBlock({ run: '|-' })).toBe(true);
+    expect(unreadBlock({ run: '>' })).toBe(true);
+    expect(unreadBlock({ run: 'echo ok' })).toBe(false);
+    expect(unreadBlock({})).toBe(false);
   });
 });
 
@@ -160,7 +196,8 @@ describe.skipIf(!TOOLS.ready)(`the two fixed steps: run with bash -e${SKIPPED}`,
       `${bin}/node`,
       [
         '#!/usr/bin/env bash',
-        'if [ "${2:-}" = "--summary" ]; then printf "## Drill summary from the stand-in\\n" > "$3"; else cat > /dev/null; fi',
+        // FAKE_NO_SUMMARY plays a crash before the summary is written.
+        'if [ "${2:-}" = "--summary" ]; then [ -n "${FAKE_NO_SUMMARY:-}" ] || printf "## Drill summary from the stand-in\\n" > "$3"; else cat > /dev/null; fi',
         'printf "stand-in node, exiting %s\\n" "$FAKE_EXIT" >&2',
         'exit "$FAKE_EXIT"',
         '',
@@ -174,10 +211,10 @@ describe.skipIf(!TOOLS.ready)(`the two fixed steps: run with bash -e${SKIPPED}`,
   afterAll(() => rmSync(work, { recursive: true, force: true }));
 
   /** Runs one step's shell the way a runner does (`bash -e`), with the stand-in node exiting `code`. */
-  function run(file, jobKey, name, code) {
+  function run(file, jobKey, name, code, extraEnv = {}) {
     const dir = `${work}/run-${++runs}`;
     mkdirSync(dir);
-    for (const name of ['summary.md', 'output.txt']) writeFileSync(`${dir}/${name}`, '');
+    for (const file of ['summary.md', 'output.txt']) writeFileSync(`${dir}/${file}`, '');
     const step = stepOf(file, jobKey, name);
     const result = spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', step.run], {
       cwd: REPO,
@@ -185,6 +222,7 @@ describe.skipIf(!TOOLS.ready)(`the two fixed steps: run with bash -e${SKIPPED}`,
         ...process.env,
         PATH: `${bin}:${process.env.PATH}`,
         FAKE_EXIT: String(code),
+        ...extraEnv,
         RUNNER_TEMP: dir,
         GITHUB_STEP_SUMMARY: `${dir}/summary.md`,
         GITHUB_OUTPUT: `${dir}/output.txt`,
@@ -215,6 +253,15 @@ describe.skipIf(!TOOLS.ready)(`the two fixed steps: run with bash -e${SKIPPED}`,
     expect(result.status, result.stderr).toBe(0);
     expect(result.output, 'exit= was not written: the issue steps would be skipped').toContain(`exit=${code}`);
     expect(result.summary).toContain('## Drill summary from the stand-in');
+  });
+
+  it('Read the Drills table, script crashes before its summary: the step still records the exit and leaves a summary', () => {
+    // Without the fallback, `cat` of the missing file fails under -e and the
+    // issue steps are skipped, the same failure as the bug this file is for.
+    const result = run(...DRILL, 1, { FAKE_NO_SUMMARY: '1' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toContain('exit=1');
+    expect(result.summary).toContain('The check ended with exit 1 and wrote no summary');
   });
 
   it('Are the Key Vault references resolving?, script exits 0: the step passes', () => {

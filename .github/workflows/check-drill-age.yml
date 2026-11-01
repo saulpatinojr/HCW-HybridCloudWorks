@@ -70,6 +70,13 @@ jobs:
           code=0
           node scripts/check-drill-age.mjs --summary "${RUNNER_TEMP}/drill.md" || code=$?
           echo "exit=${code}" >> "$GITHUB_OUTPUT"
+          # The script writes the summary on every exit it handles. If it
+          # crashed before that, a missing file would make `cat` (here, and in
+          # the issue step) fail under -e and skip the issue again, so write
+          # one that says so.
+          if [ ! -s "${RUNNER_TEMP}/drill.md" ]; then
+            printf '## Cosmos restore drill age\n\nThe check ended with exit %s and wrote no summary; see the step log.\n' "${code}" > "${RUNNER_TEMP}/drill.md"
+          fi
           cat "${RUNNER_TEMP}/drill.md" >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
