@@ -589,9 +589,10 @@ so it is recorded here, where every session reads it.
     request for changes. Now a push or an "Update branch" starts no review
     and spends nothing; only the ask does. So once the required checks are
     green on the head you want read, comment `@coderabbitai review` (the
-    whole comment is the command), and ask again only for a head that
-    changed; "Review rate limited" in its reply means the hour's allowance
-    is spent, and the next ask waits for the minute it names. If a bot's first review has not
+    whole comment is the command). "Review rate limited" in its reply means
+    the hour's allowance is spent and no review happened: wait for the
+    minute it names, then ask again for the same head. Once a head has been
+    reviewed, ask again only for a head that changed. If a bot's first review has not
     arrived an hour after it was due (Copilot: after the required checks
     went green; CodeRabbit: after the ask), say so on the PR, naming the
     bot, and treat it as unavailable for that PR: reviews stopped arriving
