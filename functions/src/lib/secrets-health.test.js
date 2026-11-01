@@ -71,6 +71,15 @@ describe('unresolvedSecretNames', () => {
     expect(unresolvedSecretNames(env)).toEqual(['APPSETTING_ONLY_HERE']);
   });
 
+  it('keeps a prefixed name whose value differs from the plain one: only a true copy is dropped', () => {
+    // A resolved FOO beside an unresolved APPSETTING_FOO is not the platform's
+    // twin; it is a reference that did not resolve, and it must be reported.
+    const env = { FOO: 'resolved-value', APPSETTING_FOO: REFERENCE };
+    expect(unresolvedSecretNames(env)).toEqual(['APPSETTING_FOO']);
+    const reversed = { FOO: REFERENCE, APPSETTING_FOO: 'resolved-value' };
+    expect(unresolvedSecretNames(reversed)).toEqual(['FOO']);
+  });
+
   it('sorts the names and tolerates an empty or missing environment', () => {
     expect(unresolvedSecretNames({ B_KEY: REFERENCE, A_KEY: REFERENCE })).toEqual(['A_KEY', 'B_KEY']);
     expect(unresolvedSecretNames({})).toEqual([]);

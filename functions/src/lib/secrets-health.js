@@ -68,17 +68,17 @@ const APP_SETTING_TWIN_PREFIX = 'APPSETTING_';
 /**
  * Is this name the App Service twin of another setting in the same
  * environment? On App Service (Functions included) every app setting arrives
- * in the process twice: as `NAME` and again as `APPSETTING_NAME`. Both copies
- * carry the same value, so an unresolved reference counted by name was
- * counted twice (the Health page read 6 for 3 references on 2026-11-01).
- * A name that starts with the prefix but has no plain twin is a setting in its
- * own right and is kept.
+ * in the process twice: as `NAME` and again as `APPSETTING_NAME`, with the
+ * same value, so an unresolved reference counted by name was counted twice
+ * (the Health page read 6 for 3 references on 2026-11-01). A twin is only
+ * dropped when its value is the plain name's value: a prefixed name with no
+ * plain twin, or with a different value, is a setting in its own right and
+ * is kept, so nothing unresolved hides behind the prefix.
  */
 function isAppSettingTwin(name, env) {
-  return (
-    name.startsWith(APP_SETTING_TWIN_PREFIX) &&
-    Object.hasOwn(env, name.slice(APP_SETTING_TWIN_PREFIX.length))
-  );
+  if (!name.startsWith(APP_SETTING_TWIN_PREFIX)) return false;
+  const plain = name.slice(APP_SETTING_TWIN_PREFIX.length);
+  return Object.hasOwn(env, plain) && env[plain] === env[name];
 }
 
 /**
