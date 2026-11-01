@@ -32,7 +32,10 @@ Until a key exists, every call to the API is refused and nothing is on.
    tab lists every value the form asks for; the ones that matter are:
    - Provider host: `api-azure.hybridcloudworks.com`
    - Base URL: `https://api-azure.hybridcloudworks.com/api/agent-content/v1`
-   - Authentication: API key, sent in the `Authorization` header as `Bearer`
+   - Authentication: API key. The site reads it from the `Authorization`
+     header as `Bearer <key>` or as the bare key, or from an `X-API-Key`
+     (or `X-Agent-Key`) header, so whichever shape the connector form
+     offers works. It never reads a key from the address.
 4. Paste the key into Muse's secure field. Never paste it into chat, a note
    or a ticket.
 5. Back on the tab, press **I have pasted it, hide the key**. The box closes
@@ -125,9 +128,11 @@ audit log.
   refused is a row in the `admin_audit_logs` container with
   `kind: "agent-content-denial"` and a `reason` (`no-key`, `wrong-key`,
   `revoked-key`, `capability-off`, `rate-limited`). A call with no key, or
-  with a bearer value of any other shape (`hcwk_bad` included), is refused
-  without a row, so internet scanners do not fill the log. The key itself is
-  never in a row.
+  with a value of any other shape in those headers (`hcwk_bad` included), is
+  refused without a row, so internet scanners do not fill the log. The key
+  itself is never in a row. Many 401s with no rows means the connector is
+  sending the key somewhere the site does not read (the address, or a
+  header other than `Authorization`, `X-API-Key` and `X-Agent-Key`).
 - **Key events:** rows with `action` `agent_content_key_generated`,
   `agent_content_key_rotated`, `agent_content_capabilities_changed` or
   `agent_content_key_revoked`, each with the key's first characters and who

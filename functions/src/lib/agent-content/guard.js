@@ -9,8 +9,11 @@
  *
  * Three gates, in order, and a refusal at any of them reads nothing further:
  *
- *   1. The bearer value is shaped like a key this site issued (keys.js
+ *   1. The presented value is shaped like a key this site issued (keys.js
  *      looksLikeKey). A random token is refused before the database is read.
+ *      The key is read from the shapes connectors send (agentKeyFrom):
+ *      `Authorization: Bearer <key>`, the bare key as the Authorization
+ *      value, or an X-API-Key / X-Agent-Key header; never a query string.
  *   2. Its SHA-256 matches the hash in the one key record, which is not
  *      revoked. Compared in constant time. No cache: revoking the key on the
  *      Koda tab must cut the next request, the same reason require-agent.js
@@ -25,15 +28,14 @@
  * Every refusal of a presented site key (one shaped like ours: wrong, revoked,
  * over the limit, or without the capability) is one `admin_audit_logs` row of
  * kind agent-content-denial, with the reason and never the key or any part of
- * it. A request with no Authorization header, or with a bearer value not
- * shaped like a site key, is refused without a row, as the admin guard refuses
+ * it. A request with no key header, or with a value not shaped like a site
+ * key, is refused without a row, as the admin guard refuses
  * a missing token: there is no attempt worth describing, and the anonymous
  * probes the internet sends would otherwise be a write each. 401 for a missing,
  * wrong or revoked key (one sentence for all three, so the answer does not
  * say whether a key exists), 403 for a capability that is off, 429 with
  * Retry-After for the limit.
  */
-import { bearerTokenFrom } from '../auth/verify-token.js';
 import { writeDenialAudit } from '../auth/denial-audit.js';
 import {
   ADMIN_CONFIG_PARTITION,
@@ -70,6 +72,39 @@ const deny = (status, code, error, headers = {}) => ({
 
 const labelOf = (capability) =>
   CAPABILITIES.find((entry) => entry.id === capability)?.label || capability;
+
+/** Header names, besides Authorization, a connector may put an API key in. */
+export const KEY_HEADERS = Object.freeze(['x-api-key', 'x-agent-key']);
+
+/**
+ * The key a request presents, in any of the shapes connectors send:
+ * `Authorization: Bearer <key>`, the bare key as the whole Authorization value
+ * (a connector that drops the scheme), or an X-API-Key / X-Agent-Key header.
+ * Authorization wins when it is present. Muse's first calls on 2026-11-01
+ * carried a working key in one of the other shapes and were refused for it;
+ * the same hash compare sits behind every shape, so reading them costs
+ * nothing. A query string is never read: URLs end up in logs.
+ *
+ * @param {{ headers?: { get?: (name: string) => string | null } }} request
+ * @returns {string | null}
+ */
+export function agentKeyFrom(request) {
+  const read = (name) => {
+    const value = request?.headers?.get?.(name);
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  };
+  const authorization = read('authorization');
+  if (authorization) {
+    const bearer = /^Bearer\s+(.+)$/i.exec(authorization);
+    if (bearer) return bearer[1].trim() || null;
+    return looksLikeKey(authorization) ? authorization : null;
+  }
+  for (const name of KEY_HEADERS) {
+    const value = read(name);
+    if (value) return value;
+  }
+  return null;
+}
 
 /**
  * @param {object} deps
@@ -119,12 +154,12 @@ export function createAgentContentGuard({
    * is the HTTP answer to return.
    */
   async function authenticate(request) {
-    const secret = bearerTokenFrom(request);
+    const secret = agentKeyFrom(request);
     if (!secret) {
       return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
     }
-    // A bearer value not shaped like a site key is no credential at all, like
-    // a missing header: refused without a store read and without an audit
+    // A value not shaped like a site key is no credential at all, like a
+    // missing header: refused without a store read and without an audit
     // row, so the random tokens internet scanners send cannot turn into a
     // write per request on admin_audit_logs.
     if (!looksLikeKey(secret)) {
