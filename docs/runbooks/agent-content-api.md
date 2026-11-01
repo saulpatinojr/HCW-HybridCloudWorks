@@ -137,9 +137,11 @@ audit log.
   or wrapped in quotes), or a non-empty `Authorization` holds something else
   (a stale token, for example), which is read instead of a good `X-API-Key`
   beside it. Check the header name and the value before moving or rotating
-  the key. Part 2's command tests the key Muse holds as `Authorization:
-  Bearer`, so a `200` there proves the key and leaves the header name or
-  value Muse sends as the cause; it does not show what Muse sent.
+  the key. Part 2's command sends the value you paste at its prompt as
+  `Authorization: Bearer`, so a `200` there proves that pasted value is the
+  current key. It does not prove Muse holds the same value or sends it the
+  same way, so compare Muse's header name and value with it next; the
+  command cannot show what Muse sent.
 - **Key events:** rows with `action` `agent_content_key_generated`,
   `agent_content_key_rotated`, `agent_content_capabilities_changed` or
   `agent_content_key_revoked`, each with the key's first characters and who
