@@ -30,6 +30,7 @@ import { LINK_PARAMS } from '@/lib/itemLinks';
 import { describeAge, worstStatus } from '@/lib/status';
 import { AlertTriangle, Bot, CheckCircle2, Workflow } from 'lucide-react';
 import { contentAgentVerdict, scheduledPublishingVerdict } from './probeEvaluators';
+import { KODA } from './probeKit';
 import StatusSlot from './StatusSlot';
 
 export const ALERT_FILTERS = [
@@ -172,7 +173,10 @@ function renderPublishingHint(publishingOps) {
   // All zeros reads like a broken card. It is the scheduler's own ledger: it
   // counts items in Approved whose publish time has come, and nothing else.
   // Drafts, reviews, Koda's work and background jobs are on other cards (#1491).
-  if (!publishingOps.due && !publishingOps.failed) {
+  // Only a run that completed can say nothing was due: a run that broke
+  // records zeros too (scheduled-publish.js), and those zeros say nothing.
+  const ranClean = publishingOps.status !== 'failed' && !publishingOps.error;
+  if (ranClean && !publishingOps.due && !publishingOps.failed) {
     return (
       <p className="text-xs text-muted-foreground pb-1" data-testid="publishing-nothing-due">
         Nothing was due: these counts belong to the scheduler alone, items in Approved with a
@@ -388,17 +392,54 @@ function JobsStrip({ jobs }) {
   );
 }
 
-/**
- * The content agent (Koda): its key, the switches that are off and the day's
- * refusals by reason, from the snapshot's `agent` block (#1491). The same
- * verdict as the Content agent probe on Checks. Never the key or its hint:
- * that is the Koda tab's, behind super_admin.
- */
 /** The key's one word and the badge colour that goes with it. */
 function keyBadge(key) {
+  if (key.unavailable) return { word: 'could not be read', variant: 'outline' };
   if (!key.present) return { word: 'none', variant: 'outline' };
   if (key.active) return { word: 'active', variant: 'secondary' };
   return { word: 'revoked', variant: 'destructive' };
+}
+
+/** One label/value row of the card, in the shape the sibling cards use. */
+function CardRow({ label, children }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The rows that describe a key the snapshot has: when it was last used, when
+ * it was rotated (or, for a key never rotated, when it was created, said as
+ * such) and which switches are off. Nothing here is shown for a key that is
+ * absent or unread, because none of it would be a fact.
+ */
+function KeyRows({ keyState, sectionsOff }) {
+  return (
+    <>
+      <CardRow label="Last used">
+        <Badge variant="outline">{formatTimestamp(keyState.lastUsedAt)}</Badge>
+      </CardRow>
+      {keyState.rotatedAt ? (
+        <CardRow label="Rotated">
+          <Badge variant="outline">{formatTimestamp(keyState.rotatedAt)}</Badge>
+        </CardRow>
+      ) : (
+        <CardRow label="Created, never rotated">
+          <Badge variant="outline">{formatTimestamp(keyState.createdAt)}</Badge>
+        </CardRow>
+      )}
+      <CardRow label="Switches off">
+        <span className="text-right text-xs text-muted-foreground" data-testid="agent-switches-off">
+          {sectionsOff.length
+            ? sectionsOff.map((section) => section.label).join(', ')
+            : 'none, every switch is on'}
+        </span>
+      </CardRow>
+    </>
+  );
 }
 
 /** The refusal count, or the fact that it could not be made. */
@@ -428,12 +469,27 @@ function RefusalReasons({ denials }) {
   );
 }
 
+/**
+ * The content agent (Koda): its key, the switches that are off and the day's
+ * refusals by reason, from the snapshot's `agent` block (#1491). The same
+ * verdict as the Content agent probe on Checks. Never the key or its hint:
+ * that is the Koda tab's, behind super_admin. A snapshot without the block
+ * (one written before this card existed) gets the verdict sentence and the
+ * link only: rows of "none" and "0" would read as findings.
+ */
 export function ContentAgentCard({ agent }) {
   const verdict = contentAgentVerdict(agent);
   const key = agent?.key || {};
   const denials = agent?.denials || {};
   const badge = keyBadge(key);
   const sectionsOff = agent?.sectionsOff || [];
+  const kodaLink = (
+    <p className="text-xs">
+      <Link to={KODA.to} className="font-medium text-primary underline-offset-2 hover:underline">
+        {KODA.label}: the key, its switches and the route list
+      </Link>
+    </p>
+  );
   return (
     <Card className="flex h-full flex-col" data-testid="content-agent-card">
       <SignalCardHeader
@@ -443,44 +499,24 @@ export function ContentAgentCard({ agent }) {
       />
       <CardContent className="flex flex-1 flex-col gap-2 text-sm">
         <p className="text-xs text-muted-foreground">{verdict.summary}</p>
-        <div className="flex items-center justify-between">
-          <span>Key</span>
-          <Badge variant={badge.variant}>{badge.word}</Badge>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>Last used</span>
-          <Badge variant="outline">{formatTimestamp(key.lastUsedAt)}</Badge>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>Rotated</span>
-          <Badge variant="outline">{formatTimestamp(key.rotatedAt || key.createdAt)}</Badge>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>Switches off</span>
-          <span className="text-right text-xs text-muted-foreground">
-            {sectionsOff.length
-              ? sectionsOff.map((section) => section.label).join(', ')
-              : 'none, every switch is on'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>Refusals, last 24 h</span>
-          <RefusalsBadge denials={denials} />
-        </div>
-        <RefusalReasons denials={denials} />
-        {denials.lastAt ? (
-          <p className="text-xs text-muted-foreground">
-            Last refusal {formatTimestamp(denials.lastAt)}.
-          </p>
+        {agent ? (
+          <>
+            <CardRow label="Key">
+              <Badge variant={badge.variant}>{badge.word}</Badge>
+            </CardRow>
+            {key.present ? <KeyRows keyState={key} sectionsOff={sectionsOff} /> : null}
+            <CardRow label="Refusals, last 24 h">
+              <RefusalsBadge denials={denials} />
+            </CardRow>
+            <RefusalReasons denials={denials} />
+            {denials.lastAt ? (
+              <p className="text-xs text-muted-foreground">
+                Last refusal {formatTimestamp(denials.lastAt)}.
+              </p>
+            ) : null}
+          </>
         ) : null}
-        <p className="text-xs">
-          <Link
-            to="/admin/ai-engine?tab=koda"
-            className="font-medium text-primary underline-offset-2 hover:underline"
-          >
-            Koda tab: the key, its switches and the route list
-          </Link>
-        </p>
+        {kodaLink}
         <CheckedFooter at={agent?.lastCheckedAt} />
       </CardContent>
     </Card>

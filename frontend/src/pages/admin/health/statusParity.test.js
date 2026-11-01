@@ -137,6 +137,7 @@ const snapshot = (overrides = {}) => ({
       rotatedAt: null,
       revokedAt: null,
       createdAt: null,
+      unavailable: false,
     },
     sectionsOff: [{ id: 'admin.brain', label: 'Second Brain' }],
     denials: {
@@ -224,7 +225,37 @@ const SNAPSHOTS = {
     forge: undefined,
     telegramNotifyState: undefined,
     operationalSignals: undefined,
+    agent: undefined,
     digest: null,
+  }),
+  'agent key revoked and still called': snapshot({
+    agent: { ...snapshot().agent, key: { ...snapshot().agent.key, active: false } },
+  }),
+  'agent key revoked and quiet': snapshot({
+    agent: {
+      ...snapshot().agent,
+      key: { ...snapshot().agent.key, active: false },
+      denials: { ...snapshot().agent.denials, total: 0, byReason: [] },
+    },
+  }),
+  'agent without a key': snapshot({
+    agent: {
+      ...snapshot().agent,
+      key: { present: false, active: false, unavailable: false },
+      sectionsOff: [],
+    },
+  }),
+  'agent key record unread': snapshot({
+    agent: { ...snapshot().agent, key: { present: false, active: false, unavailable: true } },
+  }),
+  'agent refusals uncounted': snapshot({
+    agent: { ...snapshot().agent, denials: { ...snapshot().agent.denials, unavailable: true } },
+  }),
+  'agent refusals at the bound': snapshot({
+    agent: { ...snapshot().agent, denials: { ...snapshot().agent.denials, total: 200, bounded: true } },
+  }),
+  'agent last use unparseable': snapshot({
+    agent: { ...snapshot().agent, key: { ...snapshot().agent.key, lastUsedAt: 'not-a-date' } },
   }),
   'forge never ran, nothing notified': snapshot({
     forge: { updatedAt: null },

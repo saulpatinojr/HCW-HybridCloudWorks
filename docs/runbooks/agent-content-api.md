@@ -123,8 +123,13 @@ The [Health page](https://hybridcloudworks.com/admin/health) shows the same key
 on its **Content agent (Koda)** card: whether a key exists and is active, when
 it was last used and rotated, which switches are off, and the refusals of the
 last day by reason (the content-free audit rows the API writes on every
-refusal). The **Content agent** probe on its Checks tab gives the same verdict,
-and the five-minute pulse records it.
+refusal). The card says when it could not look (the key record or the audit
+rows could not be read) instead of showing "none" or a zero. The **Content
+agent** probe on its Checks tab gives the same verdict, and the five-minute
+pulse records it. The card counts refusals through the two fields the audit
+container indexes (`action` and `timestamp`, written on every denial row since
+this card existed), so refusals logged before that change are not in its
+count; the rows themselves are unchanged and still carry `kind` and `at`.
 
 ## 5. Revoke the key
 
@@ -140,7 +145,9 @@ and the five-minute pulse records it.
 - **Refused calls:** every call that presented a value shaped like a site
   key (`hcwk_` followed by 40 to 64 letters, digits, `-` or `_`) and was
   refused is a row in the `admin_audit_logs` container with
-  `kind: "agent-content-denial"` and a `reason` (`no-key`, `wrong-key`,
+  `kind: "agent-content-denial"` (also written as `action`, the field the
+  container indexes, with the time as both `at` and `timestamp`) and a
+  `reason` (`no-key`, `wrong-key`,
   `revoked-key`, `capability-off`, `rate-limited`). A call with no key, or
   with a value of any other shape in those headers (`hcwk_bad` included), is
   refused without a row, so internet scanners do not fill the log. The key

@@ -173,6 +173,7 @@ const SNAPSHOT = {
       rotatedAt: '2026-04-10T00:00:00Z',
       revokedAt: null,
       lastUsedAt: '2026-04-12T08:50:00Z',
+      unavailable: false,
     },
     sectionsOff: [{ id: 'admin.brain', label: 'Second Brain' }],
     denials: {
@@ -420,8 +421,9 @@ describe('the hub', () => {
       'href',
       '/admin/ai-engine?tab=koda'
     );
-    // The key itself never reaches the page: no hint, no hash field.
-    expect(JSON.stringify(SNAPSHOT.agent)).not.toContain('keyHash');
+    // Rotated on the date it was rotated, not on the date it was created.
+    expect(within(card).getByText('Rotated')).toBeInTheDocument();
+    expect(within(card).queryByText(/Created, never rotated/)).not.toBeInTheDocument();
     expect(screen.getByTestId('jobs-24h')).toHaveTextContent('11 total');
     expect(screen.getByTestId('publishing-run')).toHaveTextContent('degraded');
   });
@@ -460,6 +462,72 @@ describe('the hub', () => {
     expect(screen.getByTestId('jobs-unavailable')).toBeInTheDocument();
     expect(screen.getByText('could not be counted')).toBeInTheDocument();
     expect(screen.getByTestId('publishing-nothing-due')).toHaveTextContent('Nothing was due');
+  });
+
+  it('does not say nothing was due beside a scheduler run that broke (#1491)', async () => {
+    postJSON.mockImplementation(async (name) => {
+      if (name === 'getOpsHealthSnapshot') {
+        return {
+          ...SNAPSHOT,
+          digest: {
+            ...SNAPSHOT.digest,
+            // The shape scheduled-publish.js records when the run itself throws.
+            publishingOps: {
+              ...SNAPSHOT.digest.publishingOps,
+              due: 0,
+              published: 0,
+              skipped: 0,
+              failed: 0,
+              status: 'failed',
+              error: 'Cosmos answered 503 while listing approved items',
+            },
+          },
+        };
+      }
+      return {};
+    });
+    renderAt();
+    expect(await screen.findByTestId('publishing-run')).toHaveTextContent('failed');
+    expect(screen.getByTestId('publishing-run')).toHaveTextContent('Cosmos answered 503');
+    expect(screen.queryByTestId('publishing-nothing-due')).not.toBeInTheDocument();
+  });
+
+  it('states no key facts it does not have: an older snapshot, no key, an unread key record (#1491)', async () => {
+    const shapes = [
+      { agent: null, expectWord: null },
+      {
+        agent: {
+          ...SNAPSHOT.agent,
+          key: { present: false, active: false, unavailable: false },
+          sectionsOff: [],
+          denials: { ...SNAPSHOT.agent.denials, total: 0, byReason: [], lastAt: null },
+        },
+        expectWord: 'none',
+      },
+      {
+        agent: { ...SNAPSHOT.agent, key: { present: false, active: false, unavailable: true }, sectionsOff: [] },
+        expectWord: 'could not be read',
+      },
+    ];
+    for (const { agent, expectWord } of shapes) {
+      postJSON.mockImplementation(async (name) => (name === 'getOpsHealthSnapshot' ? { ...SNAPSHOT, agent } : {}));
+      const { unmount } = renderAt();
+      const card = await screen.findByTestId('content-agent-card');
+      // No key: no "last used", no rotation date and no switch row, none of which would be a fact.
+      expect(within(card).queryByText('Last used')).not.toBeInTheDocument();
+      expect(within(card).queryByTestId('agent-switches-off')).not.toBeInTheDocument();
+      expect(within(card).queryByText(/every switch is on/)).not.toBeInTheDocument();
+      if (expectWord) {
+        expect(within(card).getByText(expectWord)).toBeInTheDocument();
+      } else {
+        // An older snapshot without the block: the verdict sentence and the link only.
+        expect(within(card).getByText(/carries no content-agent block/)).toBeInTheDocument();
+        expect(within(card).queryByText('Key')).not.toBeInTheDocument();
+        expect(within(card).queryByText(/Refusals/)).not.toBeInTheDocument();
+      }
+      expect(within(card).getByRole('link', { name: /Koda tab/ })).toBeInTheDocument();
+      unmount();
+    }
   });
 
   it('renders a failed forge job with its error text on Health Overview within one refresh', async () => {

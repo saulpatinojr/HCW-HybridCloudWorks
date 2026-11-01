@@ -46,7 +46,15 @@ const snapshot = (overrides = {}) => ({
   agent: {
     id: 'koda',
     label: 'Koda',
-    key: { present: true, active: true, lastUsedAt: minutesAgo(40), rotatedAt: null, revokedAt: null, createdAt: null },
+    key: {
+      present: true,
+      active: true,
+      lastUsedAt: minutesAgo(40),
+      rotatedAt: null,
+      revokedAt: null,
+      createdAt: null,
+      unavailable: false,
+    },
     sectionsOff: [],
     denials: { since: minutesAgo(1440), total: 0, byReason: [], lastAt: null, bounded: false, unavailable: false },
     lastCheckedAt: NOW.toISOString(),
@@ -263,8 +271,19 @@ describe('the pulse’s checks', () => {
     expect(checkContentAgent(revoked, nowMs).status).toBe('degraded');
     // No key yet is a fact, not a fault; a read that failed is unknown, not zero.
     const none = snapshot();
-    none.agent.key = { present: false, active: false };
+    none.agent.key = { present: false, active: false, unavailable: false };
     expect(checkContentAgent(none, nowMs)).toMatchObject({ status: 'healthy' });
+    // A key record the read could not reach is not "no key".
+    const unread = snapshot();
+    unread.agent.key = { present: false, active: false, unavailable: true };
+    expect(checkContentAgent(unread, nowMs)).toMatchObject({
+      status: 'unknown',
+      summary: "Koda's key record could not be read, so its state is not known.",
+    });
+    // An unparseable lastUsedAt never prints "last used null".
+    const odd = snapshot();
+    odd.agent.key = { ...odd.agent.key, lastUsedAt: 'not-a-date' };
+    expect(checkContentAgent(odd, nowMs).summary).toContain('last used at an unknown time');
     const blind = snapshot();
     blind.agent.denials = { ...blind.agent.denials, unavailable: true };
     expect(checkContentAgent(blind, nowMs)).toMatchObject({ status: 'unknown' });

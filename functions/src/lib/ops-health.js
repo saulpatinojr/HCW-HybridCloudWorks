@@ -249,14 +249,22 @@ async function countOrphanedImages(store, generatedImages) {
   );
 }
 
-/**
- * The autonomous forge's rolling day bucket (content/forge.js) as the Health
- * page shows it: when the forge last did anything, and how much today.
- */
 /** How far back the content agent's denials and the platform jobs are counted. */
 export const AGENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** The most denial rows one snapshot reads; above it the count is a floor. */
 export const AGENT_DENIALS_BOUND = 200;
+/** The `action` (and `kind`) of the content agent's denial rows (agent-content/guard.js). */
+export const AGENT_DENIAL_ACTION = 'agent-content-denial';
+
+/** An unset key: what `agent.key` says when the record is absent or could not be read. */
+const NO_KEY = Object.freeze({
+  present: false,
+  active: false,
+  createdAt: null,
+  rotatedAt: null,
+  revokedAt: null,
+  lastUsedAt: null,
+});
 
 /**
  * The content agent (Koda, ADR 0037 and 0038) as the Health page shows it:
@@ -265,14 +273,18 @@ export const AGENT_DENIALS_BOUND = 200;
  * by design (`agent-content/guard.js`), so counting them by reason discloses
  * nothing a viewer may not see.
  *
- * `denials.unavailable` is true when the audit read failed: the card then
- * says it could not look, instead of a reassuring zero.
+ * Two different "no" answers are kept apart. `key.present: false` with
+ * `key.unavailable: false` means the store has no key record (the agent is
+ * not set up); `key.unavailable: true` means the read failed and nothing
+ * about the key is known. The same for the refusals: `denials.unavailable`
+ * is true when the audit read failed, so the card says it could not look
+ * instead of showing a reassuring zero.
+ *
+ * `denialRows` come newest first (the query orders by the indexed
+ * `timestamp`), so `lastAt` is the newest row's time even when the read hit
+ * its bound; `bounded` then says the total and the reasons are a floor.
  */
-export function agentSummary({ record, denialRows, sinceIso, lastCheckedAt }) {
-  const on = new Set(enabledCapabilities(record || {}));
-  const sectionsOff = CAPABILITIES.filter((capability) => !on.has(capability.id)).map(
-    (capability) => ({ id: capability.id, label: capability.label })
-  );
+export function agentSummary({ record, keyUnavailable = false, denialRows, sinceIso, lastCheckedAt }) {
   const key = record
     ? {
         present: true,
@@ -281,8 +293,18 @@ export function agentSummary({ record, denialRows, sinceIso, lastCheckedAt }) {
         rotatedAt: record.rotatedAt || null,
         revokedAt: record.revokedAt || null,
         lastUsedAt: record.lastUsedAt || null,
+        unavailable: false,
       }
-    : { present: false, active: false, createdAt: null, rotatedAt: null, revokedAt: null, lastUsedAt: null };
+    : { ...NO_KEY, unavailable: Boolean(keyUnavailable) };
+  // Switches mean nothing without a key: every capability reads as "on" for
+  // an empty record, which is not a fact about anything.
+  const on = new Set(record ? enabledCapabilities(record) : []);
+  const sectionsOff = record
+    ? CAPABILITIES.filter((capability) => !on.has(capability.id)).map((capability) => ({
+        id: capability.id,
+        label: capability.label,
+      }))
+    : [];
 
   let denials;
   if (!Array.isArray(denialRows)) {
@@ -293,7 +315,8 @@ export function agentSummary({ record, denialRows, sinceIso, lastCheckedAt }) {
     for (const row of denialRows) {
       const reason = typeof row?.reason === 'string' && row.reason ? row.reason : 'unstated';
       counts.set(reason, (counts.get(reason) || 0) + 1);
-      if (typeof row?.at === 'string' && (!lastAt || row.at > lastAt)) lastAt = row.at;
+      const at = typeof row?.timestamp === 'string' ? row.timestamp : row?.at;
+      if (typeof at === 'string' && (!lastAt || at > lastAt)) lastAt = at;
     }
     denials = {
       since: sinceIso,
@@ -309,6 +332,9 @@ export function agentSummary({ record, denialRows, sinceIso, lastCheckedAt }) {
   return { id: 'koda', label: 'Koda', key, sectionsOff, denials, lastCheckedAt };
 }
 
+/** The job statuses the day's strip counts by name; anything else is `other`. */
+const COUNTED_JOB_STATUSES = new Set(['queued', 'running', 'succeeded', 'failed']);
+
 /** The last day's platform jobs by status, from a GROUP BY the jobs index serves. */
 export function jobsSummary(rows, sinceIso) {
   if (!Array.isArray(rows)) {
@@ -318,13 +344,17 @@ export function jobsSummary(rows, sinceIso) {
   for (const row of rows) {
     const n = Number(row?.n) || 0;
     const status = String(row?.status || '');
-    if (Object.hasOwn(summary, status) && status !== 'total' && status !== 'other') summary[status] += n;
+    if (COUNTED_JOB_STATUSES.has(status)) summary[status] += n;
     else summary.other += n;
     summary.total += n;
   }
   return summary;
 }
 
+/**
+ * The autonomous forge's rolling day bucket (content/forge.js) as the Health
+ * page shows it: when the forge last did anything, and how much today.
+ */
 function forgeSummary(forgeStats, lastCheckedAt) {
   return {
     updatedAt: forgeStats?.updatedAt ?? null,
@@ -398,7 +428,7 @@ export function createOpsHealthHandlers({
       notifyState,
       forgeStats,
       failedJobRows,
-      agentKeyRecord,
+      agentKeyRead,
       agentDenialRows,
       jobStatusRows,
     ] = await Promise.all([
@@ -442,16 +472,26 @@ export function createOpsHealthHandlers({
         .catch(() => null),
       // The content agent's key record (agent-content/keys.js): read for its
       // state only; the hash never leaves the store and the hint stays on
-      // the Koda tab, which is super_admin.
-      store.readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION).catch(() => null),
-      // Its refusals in the last day, by reason. `kind` and `at` are not on
-      // the audit container's index, so this is a bounded scan of a 90-day
-      // container; null when it fails, so the card says so.
+      // the Koda tab, which is super_admin. readDoc answers null for a
+      // missing record; a failed read is kept apart from that, so the card
+      // can say "could not read" instead of "no key".
+      store
+        .readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION)
+        .then((record) => ({ record: record || null, unavailable: false }))
+        .catch(() => ({ record: null, unavailable: true })),
+      // Its refusals in the last day, by reason, newest first. The rows
+      // carry `action` and `timestamp` (auth/denial-audit.js), the two paths
+      // the audit container indexes, so this is an index seek, not a scan,
+      // and the order is served by the same index. Null when it fails, so
+      // the card says so.
       store
         .queryDocs(
           'admin_audit_logs',
-          `SELECT TOP ${AGENT_DENIALS_BOUND} c["reason"], c["at"] FROM c WHERE c.kind = 'agent-content-denial' AND c.at >= @since`,
-          [{ name: '@since', value: agentSinceIso }]
+          `SELECT TOP ${AGENT_DENIALS_BOUND} c.reason, c.timestamp FROM c WHERE c.action = @action AND c.timestamp >= @since ORDER BY c.timestamp DESC`,
+          [
+            { name: '@action', value: AGENT_DENIAL_ACTION },
+            { name: '@since', value: agentSinceIso },
+          ]
         )
         .catch(() => null),
       // The last day's jobs by status; status and createdAt are indexed.
@@ -548,7 +588,8 @@ export function createOpsHealthHandlers({
       storage,
       forge: forgeSummary(forgeStats, lastCheckedAt),
       agent: agentSummary({
-        record: agentKeyRecord,
+        record: agentKeyRead.record,
+        keyUnavailable: agentKeyRead.unavailable,
         denialRows: agentDenialRows,
         sinceIso: agentSinceIso,
         lastCheckedAt,

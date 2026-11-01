@@ -3,6 +3,7 @@ import {
   GALLERY,
   IDENTITY,
   KEYS,
+  KODA,
   SETTINGS,
   fromService,
   liveProbe,
@@ -10,12 +11,12 @@ import {
   snapshotProbe,
 } from '../probeKit';
 import {
+  evaluateContentAgent,
   evaluateCosmos,
   evaluateIdentitySession,
   evaluateRegistrySession,
   evaluateRuntimeConfig,
   evaluateStorage,
-  evaluateContentAgent,
 } from '../probeEvaluators';
 import { runBlob, runUnresolvedSecrets } from '../probeRunners';
 
@@ -34,9 +35,6 @@ const identityProbe = (entry) =>
     run: (ctx) => ctx.actions.rerunIdentity(),
     ...entry,
   });
-
-/** The Koda tab on the AI Engine: the key, its switches and the route list (ADR 0037, 0038). */
-const KODA = { to: '/admin/ai-engine?tab=koda', label: 'Koda tab' };
 
 export const PLATFORM_PROBES = [
   snapshotProbe({
