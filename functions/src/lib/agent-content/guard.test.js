@@ -253,11 +253,15 @@ describe('the key is read in the shapes connectors send (#1477, 2026-11-01)', ()
     expect((await guard.authenticate(request(null))).error.status).toBe(401);
   });
 
-  it('lets Authorization win when it is present, and still refuses without a row what is not a site key', async () => {
+  it('lets a non-empty Authorization win, treats a blank one as absent, and still refuses without a row what is not a site key', async () => {
     const { guard } = setup();
     // A token in Authorization is not rescued by a good key in X-API-Key.
     expect((await guard.authenticate(request(TOKEN_SHAPED, { 'x-api-key': SECRET }))).error.status).toBe(401);
     expect((await guard.authenticate(request('Basic abc', { 'x-api-key': SECRET }))).error.status).toBe(401);
+    // A blank Authorization carries nothing to prefer: the key header is read
+    // (a client that sends an empty Authorization beside its API key header).
+    expect((await guard.authenticate(request('   ', { 'x-api-key': SECRET }))).error).toBeNull();
+    expect((await guard.authenticate(request('', { 'x-agent-key': SECRET }))).error).toBeNull();
     expect((await guard.authenticate(request(null, { 'x-api-key': 'hcwk_bad' }))).error.status).toBe(401);
     expect(audits).toEqual([]);
     expect(auditDenial).not.toHaveBeenCalled();

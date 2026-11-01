@@ -28,11 +28,13 @@ host registered when the connector is set up. It cannot run an OAuth flow,
 cannot sign requests and cannot send a second header. So the choice is an API
 key or no connection.
 
-Amended 2026-11-01: Muse's first calls carried a working key in a shape other
-than `Authorization: Bearer`, and the guard refused them. It now reads the key
-from `Authorization: Bearer <key>`, from the bare key as the Authorization
-value, or from an `X-API-Key` / `X-Agent-Key` header, never from the address;
-the hash compare behind every shape is the same, so nothing below changes.
+Amended 2026-11-01: the paragraph above describes the connector as the
+proposal described it. In practice Muse's first calls carried a working key in
+a shape other than `Authorization: Bearer`, and the guard refused them. It now
+reads the key from `Authorization: Bearer <key>`, from the bare key as the
+Authorization value, or from an `X-API-Key` / `X-Agent-Key` header, never from
+the address; a non-empty Authorization wins, a blank one counts as absent. The
+hash compare behind every shape is the same, so nothing below changes.
 
 Everything else that calls this API by machine signs in with Entra: the lab
 agent with an App Role and a registry record

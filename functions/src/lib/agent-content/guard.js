@@ -80,7 +80,8 @@ export const KEY_HEADERS = Object.freeze(['x-api-key', 'x-agent-key']);
  * The key a request presents, in any of the shapes connectors send:
  * `Authorization: Bearer <key>`, the bare key as the whole Authorization value
  * (a connector that drops the scheme), or an X-API-Key / X-Agent-Key header.
- * Authorization wins when it is present. Muse's first calls on 2026-11-01
+ * A non-empty Authorization wins; one that is absent or blank is the same
+ * thing, and the key headers are read. Muse's first calls on 2026-11-01
  * carried a working key in one of the other shapes and were refused for it;
  * the same hash compare sits behind every shape, so reading them costs
  * nothing. A query string is never read: URLs end up in logs.
