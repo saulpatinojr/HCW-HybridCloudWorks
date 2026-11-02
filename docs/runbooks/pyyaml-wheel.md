@@ -173,6 +173,14 @@ cosign verify-blob-attestation --type slsaprovenance1 --bundle pyyaml-6.0.3-cp31
 The identity is the workflow's path at `refs/heads/main`: a wheel built by a
 manual run from a branch is never published, so no other identity is valid.
 
+`lab-host/bootstrap.sh` runs this same check itself on every build of its
+ansible-core environment, once `PYYAML_WHEEL_SHA256` in
+`lab-image/versions.env` holds the wheel's SHA256 (the workflow's step
+summary prints that line): it downloads the wheel and the bundle from the
+release, compares the SHA256, runs cosign, and only then lets uv install
+the file, still under `--require-hashes`. While that value is empty the
+host installs PyPI's wheel as before and says so in its log.
+
 ## When it fails
 
 - **"the GitHub App that writes releases is not configured"**: the wheel
