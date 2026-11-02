@@ -268,8 +268,87 @@ describe('markdownToPlainText', () => {
     expect(plain(undefined)).toBe('');
   });
 
-  it('is linear: pathological input grows in step with its size', () => {
-    const shapes = {
+  describe('is linear: pathological input grows in step with its size', () => {
+    /**
+     * How the time is measured: the same method as the server's twin of this
+     * test, functions/src/lib/doc-vault/markdown.test.js, group "linear time"
+     * (changed for #1431 after it failed once in CI with a ratio of 11.9 on a
+     * change that touched no code, and copied here for #1433, since the two
+     * packages share no test helpers).
+     *
+     * The first version timed five batches of one conversion for the large
+     * input, all inside a few milliseconds, against a small input floored at
+     * 0.02 ms. A slow spell on a shared machine is longer than that, slows all
+     * five large timings at once, and nothing in the small timings, taken
+     * earlier, cancels it. The floor also hid the real time of "ticks", which
+     * takes about 0.005 ms for the small input. So now:
+     *
+     *  - A batch repeats the conversion until it lasts at least BATCH_MS, so
+     *    every timing is several milliseconds whatever the input. Finding that
+     *    count also warms the converter up before anything is kept.
+     *  - The small batch reads at least as much text as the large one (one
+     *    addition to the server's method, explained in measureGrowth).
+     *  - The small and the large input are timed in alternating rounds, so a
+     *    slow spell falls on both of them and the ratio of the two cancels it.
+     *  - Each input keeps its fastest of ROUNDS rounds: noise only ever adds time.
+     *  - No floor under the small timing: it is now measured, not rounded up.
+     *
+     * A quadratic converter must still be found by a test that finishes in
+     * seconds, so an input stops taking rounds after BUDGET_MS once it has had
+     * MIN_ROUNDS. A synchronous conversion cannot be cut short by a test
+     * timeout, so these sizes keep a quadratic one to seconds, not minutes.
+     */
+    const BATCH_MS = 4;
+    const ROUNDS = 9;
+    const MIN_ROUNDS = 3;
+    const BUDGET_MS = 1_000;
+    const MAX_REPS = 2 ** 20;
+
+    function timeBatch(input, reps) {
+      const start = performance.now();
+      for (let rep = 0; rep < reps; rep += 1) markdownToPlainText(input);
+      return performance.now() - start;
+    }
+
+    /**
+     * How many conversions make a batch of at least BATCH_MS, taking the faster
+     * of two timings at each count, so one slow first batch (the converter not
+     * yet compiled, or a pause) cannot settle on too few.
+     */
+    function repsFor(input) {
+      let reps = 1;
+      while (reps < MAX_REPS && Math.min(timeBatch(input, reps), timeBatch(input, reps)) < BATCH_MS)
+        reps *= 2;
+      return reps;
+    }
+
+    /** Time per conversion of the large input over the small one, and each in ms. */
+    function measureGrowth(small, large) {
+      const largeReps = repsFor(large);
+      // The small batch reads at least as much text as the large one, so for a
+      // linear converter both batches last about as long and a pause on a busy
+      // machine is as likely to fall in either. Without this, "brackets" (about
+      // 11 ms and 47 ms a conversion) timed one conversion of each: the short
+      // one could slip between pauses and the long one could not, and with
+      // other programs fighting for the processors the ratio reached 9.5.
+      const sizeFactor = Math.max(1, Math.round(large.length / small.length));
+      const smallReps = Math.max(repsFor(small), largeReps * sizeFactor);
+      let smallMs = Infinity;
+      let largeMs = Infinity;
+      const began = performance.now();
+      for (let round = 1; round <= ROUNDS; round += 1) {
+        smallMs = Math.min(smallMs, timeBatch(small, smallReps) / smallReps);
+        largeMs = Math.min(largeMs, timeBatch(large, largeReps) / largeReps);
+        if (round >= MIN_ROUNDS && performance.now() - began > BUDGET_MS) break;
+      }
+      return { ratio: largeMs / smallMs, smallMs, largeMs };
+    }
+
+    // A quadratic converter takes 16x as long for 4x the input; a linear one 4x.
+    // Only the ratio is asserted, never a number of milliseconds.
+    const SMALL = 8_000;
+    const LARGE = 32_000;
+    const SHAPES = {
       brackets: (n) => '['.repeat(n),
       ticks: (n) => '`'.repeat(n),
       stars: (n) => '*a'.repeat(n / 2),
@@ -277,24 +356,14 @@ describe('markdownToPlainText', () => {
       angle: (n) => '<'.repeat(n),
       underscores: (n) => '_a'.repeat(n / 2),
     };
-    // Per conversion, the fastest of five batches. The small input is repeated
-    // so it is long enough to time; the large one runs once, so a converter that
-    // has gone quadratic is found in seconds (a synchronous run cannot be cut
-    // short by a test timeout).
-    const fastest = (text, reps) => {
-      let best = Infinity;
-      for (let batch = 0; batch < 5; batch += 1) {
-        const start = performance.now();
-        for (let rep = 0; rep < reps; rep += 1) markdownToPlainText(text);
-        best = Math.min(best, (performance.now() - start) / reps);
-      }
-      return best;
-    };
-    for (const [name, shape] of Object.entries(shapes)) {
-      const small = fastest(shape(8_000), 20);
-      const large = fastest(shape(32_000), 1);
-      expect(large / Math.max(small, 0.02), name).toBeLessThan(9);
-    }
+
+    it.each(Object.entries(SHAPES))('grows in step with the input for %s', (name, shape) => {
+      const { ratio, smallMs, largeMs } = measureGrowth(shape(SMALL), shape(LARGE));
+      expect(
+        ratio,
+        `${name}: 4x the input took ${ratio.toFixed(1)}x the time (${smallMs.toFixed(4)} ms -> ${largeMs.toFixed(4)} ms a conversion)`
+      ).toBeLessThan(9);
+    });
   });
 });
 

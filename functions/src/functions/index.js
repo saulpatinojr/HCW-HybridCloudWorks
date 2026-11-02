@@ -20,6 +20,7 @@ import "./admin-snapshots-http.js";
 import "./cms-http.js";
 import "./code-quality-http.js";
 import "./drafts-http.js";
+import "./agent-content-http.js";
 import "./content-workflow-http.js";
 import "./generate-article-draft-http.js";
 import "./forge-config-http.js";
@@ -72,6 +73,7 @@ import "./streamyard-http.js";
 import "./telegram-http.js";
 import "./doc-vault-http.js";
 import "./calendar-alerts-http.js";
+import "./cost-http.js";
 
 const BUILD_TIME = new Date().toISOString();
 

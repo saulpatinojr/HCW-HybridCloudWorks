@@ -33,6 +33,7 @@ import { randomUUID } from "node:crypto";
 import { readJsonBodyWithin } from "../http/bounded-body.js";
 import {
   authoredMessage,
+  errorCode,
   errorResponse,
   isAuthoredError,
 } from "../http/error-response.js";
@@ -61,7 +62,12 @@ import {
   readMarkdownRequest,
 } from "./drafts-markdown.js";
 import { buildDedupFields, normalizeTitleForDedup } from "./content-dedup.js";
-import { validateTaxonomyFieldsWithStore } from "./taxonomy-fields.js";
+import { PREVIEWABLE_STATUSES, previewPathFor } from "../public-preview.js";
+import { normalizeCurrentStatusForBlogOnly } from "./content-update-validation.js";
+import {
+  TaxonomyFieldError,
+  validateTaxonomyFieldsWithStore,
+} from "./taxonomy-fields.js";
 
 /** Who to record as the editor: the first identity the sign-in carries. */
 export const editorOf = (user = {}) =>
@@ -135,6 +141,12 @@ const TOO_LARGE = {
   error:
     "That file is too large to be a draft (at most about 272 KB: a 256 KB article and its front matter). Nothing was saved.",
 };
+const REQUEST_TOO_LARGE = {
+  status: 413,
+  code: "TOO_LARGE",
+  error:
+    "That request is too large to be a draft (the body is capped at 256 KB). Nothing was saved.",
+};
 const NOT_FOUND = { status: 404, code: "NOT_FOUND", error: "No such draft." };
 const BAD_ID = {
   status: 400,
@@ -163,9 +175,16 @@ const refuseIf = (refusal, extra) => {
   if (refusal) throw new Refusal(refusal, extra);
 };
 
+/**
+ * A typed request's JSON body, read under the same byte bound as a markdown
+ * file (MAX_REQUEST_BYTES: the body cap, the front matter allowance, and the
+ * doubling JSON escaping can cost), so an oversize save is refused as its
+ * bytes arrive instead of being buffered whole and parsed first.
+ */
 async function readBody(request) {
-  const body = await request.json().catch(() => null);
-  return body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const read = await readJsonBodyWithin(request, MAX_REQUEST_BYTES);
+  refuseIf(read.tooLarge && REQUEST_TOO_LARGE);
+  return read.body;
 }
 
 /**
@@ -255,7 +274,7 @@ const auditTransition = (deps, { user, request, doc, from, to }) =>
     ipAddress: null,
     userAgent: request.headers?.get?.("user-agent") || null,
     metadata: {
-      authMethod: "entra_bearer_token",
+      authMethod: deps.authMethod,
       reviewedBy: editorOf(user),
       via: "drafts",
     },
@@ -272,7 +291,7 @@ async function conflict(deps, id) {
   refuseIf(!latest && { ...NOT_FOUND, error: "This draft no longer exists." });
   throw new Refusal(
     { status: 412, code: "CONFLICT", error: CONFLICT_MESSAGE },
-    { current: toDraftSummary(latest) },
+    { current: withLinks(deps, toDraftSummary(latest)) },
   );
 }
 
@@ -317,11 +336,12 @@ async function deleteUnderEtag(deps, id, etag) {
 }
 
 /** Counters after a delete; the change feed never delivers one (T-324). */
+// Content-free: the error's code, never its message or the document id.
 async function countersAfterDelete(deps, id, context) {
   if (!deps.onContentDeleted) return;
   await Promise.resolve(deps.onContentDeleted(id)).catch((error) =>
     context?.warn?.(
-      `[drafts] counters not updated for ${id}: ${error?.message}`,
+      `[drafts] the dashboard counters were not updated after a delete (${errorCode(error)})`,
     ),
   );
 }
@@ -365,6 +385,27 @@ async function checkedTaxonomy(deps, fields, current = null) {
   return { ...fields, ...checked };
 }
 
+/**
+ * A new draft's taxonomy, with the factory's default ideaOrigin when the
+ * caller names none (the Agent Content API's `ai-recommendation`, ADR 0037).
+ * The default goes through the same stored-list check as a caller's own
+ * value, so an id the owner has disabled is not written; if the default is
+ * refused, the draft is checked again without it and keeps the stage's
+ * `manual`, because a classification is not a reason to refuse a draft.
+ */
+async function checkedTaxonomyWithDefault(deps, fields) {
+  if (!deps.defaultIdeaOrigin || fields.ideaOrigin) {
+    return checkedTaxonomy(deps, fields);
+  }
+  const defaulted = { ...fields, ideaOrigin: deps.defaultIdeaOrigin };
+  try {
+    return await checkedTaxonomy(deps, defaulted);
+  } catch (error) {
+    if (!(error instanceof TaxonomyFieldError)) throw error;
+    return checkedTaxonomy(deps, fields);
+  }
+}
+
 /** Every route: the guard, then the work. */
 const route = (deps, what, work) => async (request, context) => {
   const auth = await deps.guard.requireRole(request, "editor");
@@ -390,7 +431,7 @@ async function listDrafts(deps) {
     { name: "@drafting", value: DRAFTS_STAGE_STATUS },
   ]);
   const drafts = rows
-    .map(toDraftSummary)
+    .map((row) => withLinks(deps, toDraftSummary(row)))
     .sort((a, b) =>
       String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")),
     );
@@ -400,12 +441,12 @@ async function listDrafts(deps) {
 /** GET cms/drafts/{id} */
 async function getDraft(deps, { request }) {
   const doc = await readDraft(deps, readId(request));
-  return json(200, { ok: true, draft: toDraftView(doc) });
+  return json(200, { ok: true, draft: withLinks(deps, toDraftView(doc)) });
 }
 
 /** POST cms/drafts — { fields } */
 async function createDraft(deps, { request, user }) {
-  const fields = await checkedTaxonomy(
+  const fields = await checkedTaxonomyWithDefault(
     deps,
     validateDraftFields((await readBody(request)).fields),
   );
@@ -413,6 +454,7 @@ async function createDraft(deps, { request, user }) {
     id: deps.uuid(),
     fields,
     editor: editorOf(user),
+    ...(deps.origin ? { origin: deps.origin } : {}),
     now: deps.now,
   });
   const created = (await deps.store.createDoc("content", doc)) || doc;
@@ -422,7 +464,7 @@ async function createDraft(deps, { request, user }) {
     contentId: doc.id,
     title: doc.Title,
   });
-  return json(201, { ok: true, draft: toDraftView(created) });
+  return json(201, { ok: true, draft: withLinks(deps, toDraftView(created)) });
 }
 
 /** A draft already on the desk (or put forward from it) under this title, or null. */
@@ -464,8 +506,11 @@ const alreadyPresent = (row, title) =>
  * never logged and never put in an audit row.
  */
 async function createFromMarkdown(deps, { request, user }) {
+  // A caller whose origin is fixed (the Agent Content API) cannot name
+  // another: with `origin` set, the body's `origin` is not read at all.
   const { markdown, draftOrigin } = readMarkdownRequest(
     await readBodyWithin(request, MAX_REQUEST_BYTES),
+    { origin: deps.origin },
   );
   refuseIf(isMarkdownTooLarge(markdown) && TOO_LARGE);
 
@@ -473,7 +518,7 @@ async function createFromMarkdown(deps, { request, user }) {
   refuseIf(
     !parsed.ok && { status: 422, code: parsed.code, error: parsed.error },
   );
-  const fields = await checkedTaxonomy(
+  const fields = await checkedTaxonomyWithDefault(
     deps,
     validateDraftFields(parsed.fields),
   );
@@ -557,7 +602,7 @@ async function createFromMarkdown(deps, { request, user }) {
     contentId: id,
     title: fields.title,
     warnings: parsed.warnings,
-    draft: toDraftSummary(created),
+    draft: withLinks(deps, toDraftSummary(created)),
   });
 }
 
@@ -582,7 +627,7 @@ async function saveDraft(deps, { request, user, id, body, etag, current }) {
     title: fields.title,
     details: { updatedFields: Object.keys(update) },
   });
-  return json(200, { ok: true, draft: toDraftView(written) });
+  return json(200, { ok: true, draft: withLinks(deps, toDraftView(written)) });
 }
 
 /**
@@ -647,7 +692,7 @@ async function sendToReview(deps, { request, user, id, etag, current }) {
   });
   return json(200, {
     ok: true,
-    draft: toDraftView(written),
+    draft: withLinks(deps, toDraftView(written)),
     reviewPath: `/admin/review-queue/${encodeURIComponent(id)}`,
   });
 }
@@ -667,7 +712,7 @@ async function backToDrafts(deps, { request, user, id, etag, current }) {
     from: REVIEW_STATUS,
     to: DRAFTS_STAGE_STATUS,
   });
-  return json(200, { ok: true, draft: toDraftView(written) });
+  return json(200, { ok: true, draft: withLinks(deps, toDraftView(written)) });
 }
 
 /** Handler name → what a failure says it was doing, whether it writes an existing draft, the work. */
@@ -696,8 +741,60 @@ const ROUTES = Object.freeze({
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
  * @param {{ error?: Function }} [deps.log]
+ * @param {string|null} [deps.origin] a fixed `draftOrigin` for every draft created here
+ *   (DRAFT_ORIGINS.agent for the Agent Content API, ADR 0037); null keeps the page's
+ *   behaviour: `drafts` for a typed draft, the body's `origin` for a markdown file
+ * @param {string|null} [deps.defaultIdeaOrigin] the ideaOrigin a new draft gets when the
+ *   caller names none; null keeps buildNewDraftDocument's `manual`
+ * @param {string} [deps.authMethod] what the transition audit rows record as the credential:
+ *   the admin page's Entra token by default, `agent_key` for the Agent Content API
  * @returns {Record<keyof typeof ROUTES, (request: object, context: object) => Promise<object>>}
  */
+/** The public site every link points at; the admin SPA and the preview page live there. */
+const SITE_ORIGIN = "https://hybridcloudworks.com";
+
+/**
+ * The secret the preview links are signed with, read at answer time so a
+ * secret seeded after start-up is picked up. An unresolved Key Vault
+ * reference reads as unset, as ai/router.js readKey treats it.
+ */
+function previewSecretOf(env) {
+  const raw = env?.PREVIEW_SIGNING_SECRET;
+  if (typeof raw !== "string") return "";
+  const value = raw.replace(/^\uFEFF/, "").trim();
+  return !value || value.startsWith("@Microsoft.KeyVault(") ? "" : value;
+}
+
+/**
+ * The two links every draft answer carries (owner request 2026-11-01):
+ *
+ *   editUrl     the Drafts page with this draft open (`?draft=<id>`), where
+ *               the owner or an admin edits it;
+ *   previewUrl  the public preview page with a signed, expiring token
+ *               (public-preview.js: 72 h, bound to this id), or null while
+ *               PREVIEW_SIGNING_SECRET is not seeded, and null for a status
+ *               the preview route would refuse anyway (a Drafts-origin
+ *               article that has been published is still listed here, and
+ *               its live page is the place to read it).
+ *
+ * Minted per answer, so a list of fifty drafts is fifty fresh links; an old
+ * answer's link simply expires. Nothing is stored.
+ */
+export function draftLinks(doc, deps) {
+  if (!doc?.id) return { editUrl: null, previewUrl: null };
+  const previewable = PREVIEWABLE_STATUSES.has(normalizeCurrentStatusForBlogOnly(doc.contentStatus));
+  const path = previewable
+    ? previewPathFor(previewSecretOf(deps.env), doc.id, { now: () => deps.now().getTime() })
+    : "";
+  return {
+    editUrl: `${SITE_ORIGIN}/admin/drafts?draft=${encodeURIComponent(doc.id)}`,
+    previewUrl: path ? `${SITE_ORIGIN}${path}` : null,
+  };
+}
+
+/** A draft summary or view with its links. */
+const withLinks = (deps, draft) => ({ ...draft, ...draftLinks(draft, deps) });
+
 export function createDraftsHandlers({
   guard,
   store,
@@ -705,6 +802,10 @@ export function createDraftsHandlers({
   now = () => new Date(),
   uuid = randomUUID,
   log = {},
+  origin = null,
+  defaultIdeaOrigin = null,
+  authMethod = "entra_bearer_token",
+  env = process.env,
 }) {
   const deps = {
     guard,
@@ -713,6 +814,10 @@ export function createDraftsHandlers({
     now,
     uuid,
     log,
+    origin,
+    defaultIdeaOrigin,
+    authMethod,
+    env,
   };
   return Object.fromEntries(
     Object.entries(ROUTES).map(([name, [what, wrap, work]]) => [

@@ -18,6 +18,7 @@ import {
   Mail,
   Mic2,
   Share2,
+  Wallet,
 } from 'lucide-react';
 
 export const VIEWS = Object.freeze(['month', 'week', 'agenda']);
@@ -76,6 +77,14 @@ export const KIND_META = Object.freeze({
     Icon: BellRing,
     chip: 'border-orange-300 bg-orange-50 text-orange-900 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200',
     dot: 'bg-orange-500',
+  },
+  // A subscription renewing, from the Cost page's ledger (ADR 0039): a date
+  // to know about, never something the calendar can move.
+  renewal: {
+    label: 'Renewal',
+    Icon: Wallet,
+    chip: 'border-lime-300 bg-lime-50 text-lime-900 dark:border-lime-800 dark:bg-lime-950/40 dark:text-lime-200',
+    dot: 'bg-lime-500',
   },
 });
 

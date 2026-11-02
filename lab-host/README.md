@@ -1775,10 +1775,15 @@ A passing result prints `Passed: 0 failure(s), 0 warning(s) in N files
 processed of M encountered. Profile 'production' was required, and it
 passed.` followed by `playbook: site.yml`. That digest is
 `community-ansible-dev-tools:latest` as of 2026-09-23 (ansible-lint 26.9.0,
-ansible-core 2.21.4, the same pins CI installs with pip); when the pins in
-`ci.yml` move, move this digest with them. CI runs the same two commands in
-the `ansible-lint (lab-host)` job of `.github/workflows/ci.yml`, gated on
-changes under `lab-host/`.
+ansible-core 2.21.4); when the pins in `ci.yml` move, move this digest with
+them. Since 2026-11-02 CI's pins are ahead of it: the `ansible-lint
+(lab-host)` job installs ansible-lint 26.9.0 with ansible-core 2.22.0 on
+Python 3.15, and no dev-tools image carried 2.22.0 that day (the newest
+tag, v26.10.1, locks ansible-core 2.19.13 in its `uv.lock`), so the
+command above lints on an older ansible-core than CI does, and CI is the
+result that counts. Move the digest once a dev-tools release carries
+2.22.0. CI runs the same two commands in the `ansible-lint (lab-host)` job
+of `.github/workflows/ci.yml`, gated on changes under `lab-host/`.
 
 The same job runs the test of `hcw-vault-set`
 (`ansible/roles/vault_tools/README.md`, "Tests"). It runs as root, which

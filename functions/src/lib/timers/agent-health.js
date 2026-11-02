@@ -70,6 +70,12 @@
  * the runs of the repository's "Monitor delivery health" check from GitHub's
  * public API and tells the owner on Telegram when it goes red, and when it is
  * green again (delivery-monitor-watch.js). Never fatal, like the others.
+ *
+ * AND THE COST WATCH. Last, `costWatch` keeps the Cost page's snapshot fresh
+ * (every few hours, as its settings say) and tells the owner on Telegram when
+ * a budget, a credit balance or a renewal turns into a warning (cost/watch.js,
+ * ADR 0039). Same reasoning as the delivery watch: the notifier is here and
+ * this timer is armed, so no new timer and no new secret. Never fatal.
  */
 import { AGENT_DOWN_STATUSES, AGENT_STALE_AFTER_MS } from '../labs.js';
 import { refreshDriftRecord } from '../labs/drift.js';
@@ -235,6 +241,8 @@ export async function tellOwnerAgentBack({ notifier, agent, backAtMs, log = {}, 
  *   checkTokenIfDue); null skips it
  * @param {{ checkIfDue: Function }|null} [deps.deliveryWatch] the hourly read
  *   of the delivery monitor's runs (delivery-monitor-watch.js); null skips it
+ * @param {{ checkIfDue: Function }|null} [deps.costWatch] the Cost page's
+ *   snapshot refresh and Telegram signals (cost/watch.js); null skips it
  */
 export function createAgentHealthCheck({
   store,
@@ -244,6 +252,7 @@ export function createAgentHealthCheck({
   driftReader = null,
   coderTokenCheck = null,
   deliveryWatch = null,
+  costWatch = null,
 }) {
   const patchAgent = (agent, updates, options = {}) =>
     store.patchDoc('lab_agents', agentIdOf(agent), updates, { partitionKey: agentIdOf(agent), ...options });
@@ -325,6 +334,7 @@ export function createAgentHealthCheck({
     if (driftReader) summary.mainRead = await readMain(agents, atMs);
     if (coderTokenCheck) summary.tokenCheck = await checkToken();
     if (deliveryWatch) summary.deliveryWatch = await watchDelivery();
+    if (costWatch) summary.costWatch = await watchCosts();
     return summary;
   }
 
@@ -339,6 +349,21 @@ export function createAgentHealthCheck({
       return outcome.verdict || 'none';
     } catch (error) {
       log.warn?.(`[checkAgentHealth] the delivery monitor watch failed (${error?.code ?? 'error'})`);
+      return 'failed';
+    }
+  }
+
+  /**
+   * The cost watch: 'refreshed', 'checked', 'not due' or 'failed'. Never
+   * throws; cost/watch.js already catches its own failures.
+   */
+  async function watchCosts() {
+    try {
+      const outcome = await costWatch.checkIfDue();
+      if (!outcome?.checked) return outcome?.reason === 'failed' ? 'failed' : 'not due';
+      return outcome.refreshed ? 'refreshed' : 'checked';
+    } catch (error) {
+      log.warn?.(`[checkAgentHealth] the cost watch failed (${error?.code ?? 'error'})`);
       return 'failed';
     }
   }

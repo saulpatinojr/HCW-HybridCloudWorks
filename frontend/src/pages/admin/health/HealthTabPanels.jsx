@@ -12,6 +12,7 @@ import {
   PublishingOpsCard,
   WorkflowAlertsCard,
   readinessStatus,
+  ContentAgentCard,
 } from './signals';
 import {
   AdminRegistryCard,
@@ -160,7 +161,10 @@ export function OverviewTab({ ops, derived, identity, labs }) {
               digestForDisplay={derived.digestForDisplay}
             />
           </div>
-          <OperationalSignalsCard signals={derived.operationalSignals} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <ContentAgentCard agent={derived.agent} />
+            <OperationalSignalsCard signals={derived.operationalSignals} />
+          </div>
         </>
       ) : (
         <SnapshotNotice ops={ops} />

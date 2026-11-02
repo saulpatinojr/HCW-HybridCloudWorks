@@ -44,6 +44,7 @@ jobs:
   warn:
     name: Keep the catalogue-due issue in step with the next 21 days
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.8 min, Oct 2026 (#1441)
     permissions:
       contents: read # checkout only
       issues: write # open, refresh or close the one catalogue-due issue

@@ -16,9 +16,14 @@
 # (since #1034, 2026-10-08). The trial ended on 2026-10-20: #1293 still showed
 # "10 included reviews per hour", #1301 and #1304 "1", and #1301's commit
 # status reads "Review skipped: manual review required for this OSS
-# repository". A review is now asked for by hand with "@coderabbitai review",
-# one included review an hour, and auto_review below says what that review
-# is spent on.
+# repository". Automatic reviews came back with the free plan's hourly
+# allowance (five included reviews an hour on 2026-11-01) and were spent by
+# every push and every "Update branch": on 2026-11-01 three pull requests
+# used the hour's allowance between them and #1485 waited an hour for the
+# review that would lift a stale request for changes. Owner decision
+# 2026-11-01 (#1487): automatic reviews are off, and a review is asked for
+# by hand with "@coderabbitai review" when a head is ready to be read. The
+# repository stays on the free plan; nothing here turns on a paid add-on.
 # .claude/CLAUDE.md says how a session handles them, in two separate tasks:
 # each review finding is fixed or answered on its thread and the thread
 # resolved; and the summary comment's checklist is worked by hand and recorded
@@ -36,12 +41,16 @@ tone_instructions: >-
 
 reviews:
   profile: "chill"
-  # Owner decision 2026-10-18 (#972, option F): CodeRabbit's approval is the
-  # one approving review the Default ruleset now requires, so its review is a
-  # request for changes while a finding is open and an approval once every
-  # thread is resolved and the pre-merge checks pass. Author approval is off:
-  # sessions author as the owner's account, and "@coderabbitai approve" from
-  # the author would make the gate approve itself.
+  # CodeRabbit's review is a request for changes while a finding is open and
+  # an approval once every thread is resolved and the pre-merge checks pass.
+  # That approval is the signal sessions merge on (.claude/CLAUDE.md). It was
+  # the Default ruleset's required review from 2026-10-18 (#972, option F);
+  # read on 2026-10-31, the ruleset requires no approving review (count 0,
+  # unchanged since 2026-10-20), so the approval is practice, not a gate
+  # (#1455). Its request for changes does block the merge until a newer
+  # review replaces it (#1460, 2026-10-31).
+  # Author approval is off: sessions author as the owner's account, and
+  # "@coderabbitai approve" from the author would approve its own work.
   request_changes_workflow: true
   allow_author_approval: false
   high_level_summary: true
@@ -49,12 +58,20 @@ reviews:
   review_status: true
   collapse_walkthrough: true
   auto_review:
-    enabled: true
-    # The included allowance is one review an hour, and every push to an
-    # open pull request, every "Update branch" and every "@coderabbitai
-    # review" spends one (docs.coderabbit.ai/management/rate-limits). #1304
-    # asked eleven times on 2026-10-20 and was refused ten. The three
-    # settings below keep the review for a head someone will read.
+    # Off (owner decision 2026-11-01, #1487): CodeRabbit no longer reviews a
+    # push on its own. A session asks with "@coderabbitai review" once the
+    # required checks are green on the head it wants read, so the free plan's
+    # hourly allowance is spent on heads someone will act on, not on every
+    # push (docs.coderabbit.ai/configuration/auto-review: "Set enabled: false
+    # and use manual review commands"; the command works whether or not
+    # automatic reviews are enabled). With automatic reviews off, a push or
+    # an "Update branch" starts no review and so spends nothing ("Review
+    # skipped" is posted instead); only an "@coderabbitai review" spends one
+    # of the hour's included reviews (docs.coderabbit.ai/management/rate-limits:
+    # pull requests excluded by the automatic review controls do not count).
+    # #1304 asked eleven times on 2026-10-20 and was refused ten, so ask once
+    # per head. The settings below still govern a review once it is asked for.
+    enabled: false
     #
     # Drafts are not reviewed: pull requests open ready for review here
     # (.claude/CLAUDE.md, owner decision 2026-09-05), so a draft is work in
@@ -67,7 +84,7 @@ reviews:
     auto_pause_after_reviewed_commits: 2
     # Dependabot pull requests are approved by the owner (#1299), so a
     # CodeRabbit review of them is the review spent twice. hcw-site-app[bot]
-    # is not listed on purpose: CodeRabbit's approval is the required review
+    # is not listed on purpose: CodeRabbit's approval is the merge signal
     # on its pull requests (#1293).
     ignore_usernames:
       - "dependabot[bot]"

@@ -118,6 +118,7 @@ jobs:
   check:
     name: Is production behind main?
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.4 min, Oct 2026 (#1441)
     # For TFC_TOKEN, and nothing else — see the header. The `workflows` job
     # below reads only this repository's run history and stays outside it.
     environment: automation
@@ -155,14 +156,25 @@ jobs:
           # readable from the GitHub mobile app; stdout is what the REST logs API
           # exposes. verify-alert-state.yml's first run wrote only the summary
           # and could not be diagnosed without a browser.
-          report=$(node scripts/check-deploy-drift.mjs)
-          status=$?
+          #
+          # `|| status=$?` IS LOAD-BEARING. GitHub runs this step as
+          # `bash -e {0}` (no `shell:` is set), and `set -uo pipefail` does not
+          # turn `-e` off. With `-e`, a bare `report=$(...)` whose command exits
+          # non-zero ends the step on that line, so on exit 1 (drift found) or
+          # 2 (could not read) the echo below never ran and the log and summary
+          # were blank in exactly the runs that went red. A command on the left
+          # of `||` is exempt from `-e`. Pinned by
+          # scripts/monitor-deploy-drift-steps.test.mjs, which runs this step
+          # with `bash -e`.
+          status=0
+          report=$(node scripts/check-deploy-drift.mjs) || status=$?
           echo "$report" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $status
 
   workflows:
     name: Can every workflow still succeed?
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.6 min, Oct 2026 (#1441)
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -189,11 +201,16 @@ jobs:
           # went red with a BLANK step summary, in the one case an operator most
           # needs to read why. Caught in review on this PR;
           # scripts/check-workflow-health.invocation.test.mjs is the tripwire.
-          report=$(node scripts/check-workflow-health.mjs 2>&1)
-          # Immediately, and from the assignment rather than from a pipeline.
-          # `node ... | tee` would report tee's status, which is always 0 — a
-          # monitor that can never fail.
-          status=$?
+          #
+          # The status comes from the assignment itself, through `||`, and not
+          # from a pipeline: `node ... | tee` would report tee's status, which
+          # is always 0, a monitor that can never fail. And not from a
+          # `status=$?` on the next line either: GitHub runs this step as
+          # `bash -e {0}`, and with `-e` a failing `report=$(...)` ends the step
+          # before that line or the echo below runs, so every red run printed a
+          # blank report. A command on the left of `||` is exempt from `-e`.
+          status=0
+          report=$(node scripts/check-workflow-health.mjs 2>&1) || status=$?
           # Both destinations: the summary is readable from the mobile app, and
           # stdout is what the REST logs API exposes. verify-alert-state.yml's
           # first run wrote only the summary and could not be diagnosed without

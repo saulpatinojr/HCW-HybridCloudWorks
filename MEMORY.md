@@ -2,6 +2,9 @@
 
 Updated: 2026-10-27, America/Chicago (CDT). This is a dated handoff, not a live
 status feed or a replacement for GitHub issues. Refresh GitHub state before acting.
+On 2026-10-31 its list of standing rules moved into `.claude/CLAUDE.md` ([#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455)),
+and [#1346](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1346) left the later list because
+[#1461](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1461) closed it; nothing else in it was refreshed then.
 
 Two working sessions wrote this file on the same day: the application work (AI Engine,
 Ambassadors, Blogs and their deployments) and the infrastructure, CI and add-on work
@@ -101,8 +104,7 @@ leave it alone. A session never switches the main checkout's branch; it works in
 5. [#1431](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1431): stays open until 2026-11-10; close it if the Doc Vault "linear time" test is not seen failing in CI. Then
    [#1433](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1433), the same weakness in the frontend twin.
 6. Visitor-session follow-ups from reviews: [#1403](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1403) and [#1400](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1400).
-7. Later (P3): [#1346](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1346) (remove the forced version of a sign-in library, msal-node, once it is safe),
-   [#1447](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1447) (the lab pin bot silently drops a publisher it cannot read) and
+7. Later (P3): [#1447](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1447) (the lab pin bot silently drops a publisher it cannot read) and
    [#1441](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1441) (CI jobs that run repository code have no time limit).
 8. [#1426](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1426) is the weekly lab supply-chain issue (next refresh Tuesday 2026-11-03). Its pin table was written before #1449 merged, so it still shows four pins as
    behind; the next run shows them current whether or not `bootstrap.sh` has run, because it compares this repository's pins with the publishers, not the host. It also lists 1 critical and 164 high findings with
@@ -113,20 +115,13 @@ Tuesday 2026-11-03 06:45 UTC (lab supply-chain run); 2026-11-10 ([#1431](https:/
 
 ### Rules that were learned the hard way
 
-[`.claude/CLAUDE.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.claude/CLAUDE.md) holds the review, link, draft-article and refusal rules, and the commands to check a pull request's
-reviews. The lines below come from the owner's earlier sessions and are written down only here:
+The standing rules (secrets and ids, image tags, no admin bypass or force-push, no `terraform apply` or Azure deletes unless told to, safety-check refusals,
+merging your own pull requests, the review bots and their three-round cap, CodeRabbit's boxes, one pull request at a time on the same lines) are in
+[`.claude/CLAUDE.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.claude/CLAUDE.md), the file every session reads, with the commands to check a pull request's
+reviews. Its section "Lines a session does not cross" gathers the ones that used to be written only here ([#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455)). Follow that file, not a copy here.
+A few notes that are about this handoff rather than standing rules:
 
-- Never print or ask for a secret, and never put a tenant, subscription or application id in a public file.
-- A tag that publishes an image is irreversible: push one only after the owner's explicit word and a green dry run on the exact commit.
-- No admin bypass (merging past the repository's rules) and no force-push to `main`. Sessions never run `terraform apply` or delete Azure resources unless told to.
-- A safety-check refusal is not worked around: say exactly what is blocked and why, and carry on with everything else.
-- Sessions merge their own pull requests once the required checks are green, every review conversation is resolved and CodeRabbit has approved the last push; never hand the owner a merge.
-  The ruleset itself requires the checks and resolved conversations but no approving review (`required_approving_review_count` is 0, read from the API on 2026-10-27), so CodeRabbit's
-  approval is this repository's practice, not a gate. `.claude/CLAUDE.md` still says otherwise; fixing that is [#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455).
-- Review bots (CodeRabbit, Copilot and GitHub's code scanning, the automated reviewers on every pull request): at most three rounds each. Answer every finding on its thread, naming the commit,
-  before resolving it. Ask CodeRabbit with a comment containing `@coderabbitai review`, and never tick the boxes in its summary (Commit to this branch, Create a new PR, Fix all pre-merge checks with AI,
-  Autopilot): they make it write code. Copilot is out of credits until 2026-10-31; do not wait for its review.
-- Two pull requests that touch the same lines, above all `CHANGELOG.md`, go one at a time.
+- Ask CodeRabbit for a review with a comment containing `@coderabbitai review`. Copilot was out of credits until 2026-10-31; check whether its reviews are arriving again before waiting for one.
 - The Docker-Sponsored Open Source application is tracked only by the admin calendar alert for 2026-10-30. Do not list it as waiting.
 - Obsidian and the Second Brain work are not part of this workstream.
 
@@ -202,5 +197,5 @@ installed dependencies, and toolchains. Git recovery history is retained.
 - Production workflows are manually dispatched from `main`. The integration's
   production approval request returned HTTP 403; use GitHub's production review
   UI when approval is required. Deploy Functions before the frontend.
-- Keep review feedback addressed and threads resolved. Follow the repository's
-  three-round review cap; leave bot code-writing triggers and Autopilot unticked.
+- Review handling (threads, the three-round cap, the bot boxes left unticked) is
+  in [`.claude/CLAUDE.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.claude/CLAUDE.md).

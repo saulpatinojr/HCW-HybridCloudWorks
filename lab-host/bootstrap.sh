@@ -42,9 +42,12 @@ set -euo pipefail
 # uv-x86_64-unknown-linux-gnu.tar.gz.sha256 asset, read on 2026-10-31 from
 # Astral's download mirror (releases.astral.sh/github/uv/releases/download/),
 # which served the same value for 0.12.19 as the line this replaced, and
-# equal to the sha256sum of the tarball downloaded there. Not checked that
-# day: `gh attestation verify --repo astral-sh/uv`, which traces the file to
-# that repository's release workflow; run it before this leaves draft.
+# equal to the sha256sum of the tarball downloaded there. Checked on
+# 2026-11-02: `gh attestation verify uv-x86_64-unknown-linux-gnu.tar.gz
+# --repo astral-sh/uv` passed on the tarball from the GitHub release (its
+# SHA256 equal to this line): one SLSA v1 provenance attestation, signed by
+# that repository's .github/workflows/release.yml, names this file among its
+# 22 subjects.
 UV_VERSION=0.13.6
 UV_SHA256=f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645
 # CPython 3.15.2, the newest release of the newest line. uv 0.13.6 pins its

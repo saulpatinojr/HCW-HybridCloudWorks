@@ -82,8 +82,14 @@ describe('the job captures what the script actually writes', () => {
 
   it('reads the exit code from the assignment, not from a pipeline', () => {
     // `node ... | tee` would hand back tee's status, which is always 0 — a
-    // monitor that can never fail. Capture, then read `$?`, then echo.
-    expect(lines[index + 1].trim()).toBe('status=$?');
+    // monitor that can never fail. And through `||` on the same line, not a
+    // `status=$?` on the next: GitHub runs the step as `bash -e {0}`, and
+    // under `-e` a failing `report=$(...)` ends the step before the next line,
+    // so every red run printed a blank report. A command on the left of `||`
+    // is exempt from `-e`. monitor-deploy-drift-steps.test.mjs runs the step
+    // with `bash -e` to prove it.
+    expect(lines[index].trim()).toMatch(/\) \|\| status=\$\?$/);
+    expect(lines[index - 1].trim()).toBe('status=0');
     expect(lines[index]).not.toContain('| tee');
   });
 });

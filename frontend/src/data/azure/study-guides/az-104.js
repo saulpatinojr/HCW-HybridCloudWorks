@@ -86,10 +86,9 @@ export default {
         {
           title: 'Configure Azure Files and Azure Blob Storage',
           objectives: [
-            'Create and configure a file share in Azure Files',
-            'Create and configure a container in Azure Blob Storage',
+            'Create and configure a file share in Azure Storage',
+            'Create and configure a container in Blob Storage',
             'Configure storage tiers',
-            'Configure soft delete for blobs and containers',
             'Configure snapshots and soft delete for Azure Files',
             'Configure blob lifecycle management',
             'Configure blob versioning',
@@ -121,7 +120,7 @@ export default {
           title: 'Create and configure virtual machines',
           objectives: [
             'Create a virtual machine',
-            'Configure encryption at host for Azure virtual machines',
+            'Configure Azure Disk Encryption',
             'Move a virtual machine to another resource group, subscription, or region',
             'Manage virtual machine sizes',
             'Manage virtual machine disks',
@@ -132,7 +131,7 @@ export default {
         {
           title: 'Provision and manage containers in the Azure portal',
           objectives: [
-            'Create and manage an Azure Container Registry',
+            'Create and manage an Azure container registry',
             'Provision a container by using Azure Container Instances',
             'Provision a container by using Azure Container Apps',
             'Manage sizing and scaling for containers, including Azure Container Instances and Azure Container Apps',
@@ -168,7 +167,7 @@ export default {
             'Create and configure virtual networks and subnets',
             'Create and configure virtual network peering',
             'Configure public IP addresses',
-            'Configure user-defined routes',
+            'Configure user-defined network routes',
             'Troubleshoot network connectivity',
           ],
         },
@@ -209,7 +208,7 @@ export default {
             'Query and analyze logs in Azure Monitor',
             'Set up alert rules, action groups, and alert processing rules in Azure Monitor',
             'Configure and interpret monitoring of virtual machines, storage accounts, and networks by using Azure Monitor Insights',
-            'Use Azure Network Watcher and Connection monitor',
+            'Use Azure Network Watcher and Connection Monitor',
           ],
         },
         {

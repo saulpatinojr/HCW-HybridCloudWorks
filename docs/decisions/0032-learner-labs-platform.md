@@ -1094,7 +1094,8 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
   `scripts/cloudflare-dns-audit.mjs` daily over the window since its previous
   successful scheduled run (at least 26 hours, at most 14 days), allows the
   `hcp-terraform-cloudflare-dns` token's edits, the Caddy token's
-  `_acme-challenge.*.lab` TXT edits and the owner's own dashboard edits, and
+  `_acme-challenge.*.lab` TXT edits, the owner's own dashboard edits and
+  Cloudflare's own certificate-renewal TXT on the apex (since #1421), and
   opens an issue on anything else; a run that cannot read the log fails
   rather than passing quietly
   ([Edge and DNS verification](../runbooks/edge-dns-verification.md), "The

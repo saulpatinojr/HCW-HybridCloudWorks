@@ -61,6 +61,7 @@ jobs:
   delta:
     name: complexity delta
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.8 min, Oct 2026 (#1441)
 
     steps:
       # fetch-depth: 0 so the merge base is reachable. A shallow clone makes

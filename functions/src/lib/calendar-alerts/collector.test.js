@@ -250,7 +250,8 @@ describe('the Calendar read', () => {
     const handlers = createCalendarHandlers({ guard: allow, store });
     const body = JSON.parse((await handlers.read(request(window), context)).body);
     expect(body.items.map((entry) => entry.kind)).toEqual(['content']);
-    expect(body.warnings).toEqual(['alert: could not be read (Error)']);
+    // The Cost page's renewals are the other point read of admin_config, so the same store failure costs them too.
+    expect(body.warnings).toEqual(['alert: could not be read (Error)', 'renewal: could not be read (Error)']);
     expect(JSON.stringify(body)).not.toContain('store down');
   });
 

@@ -32,6 +32,9 @@ import { parseRepoDraft } from "./repo-draft.js";
 export const MARKDOWN_ORIGINS = Object.freeze({
   vault: DRAFT_ORIGINS.vault,
   paste: DRAFT_ORIGINS.paste,
+  // DRAFT_ORIGINS.agent is deliberately absent: a request body cannot claim
+  // it. The Agent Content API's handlers pass it as the forced `origin` of
+  // readMarkdownRequest (drafts-handlers.js createFromMarkdown).
 });
 
 /**
@@ -88,15 +91,20 @@ export function markdownDraftContentId(title) {
 /**
  * The request body → the markdown and the draftOrigin it is stored under.
  *
+ * A caller whose origin is fixed by its handlers (the Agent Content API,
+ * ADR 0037) passes it as `forcedOrigin`; the body's `origin` is then not
+ * read at all, so it can neither claim another origin nor be required.
+ *
  * @param {unknown} body - the parsed JSON
+ * @param {{ origin?: string|null }} [options] - `origin`: the forced draftOrigin
  * @returns {{ markdown: string, draftOrigin: string }}
  * @throws {MarkdownRequestError}
  */
-export function readMarkdownRequest(body) {
+export function readMarkdownRequest(body, { origin: forcedOrigin = null } = {}) {
   const { markdown, origin } = body && typeof body === "object" ? body : {};
-  const draftOrigin = Object.hasOwn(MARKDOWN_ORIGINS, origin)
-    ? MARKDOWN_ORIGINS[origin]
-    : null;
+  const draftOrigin =
+    forcedOrigin ||
+    (Object.hasOwn(MARKDOWN_ORIGINS, origin) ? MARKDOWN_ORIGINS[origin] : null);
   if (!draftOrigin) {
     throw new MarkdownRequestError(
       `origin must be "vault" (a file from your vault) or "paste" (text pasted into the page).`,

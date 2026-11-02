@@ -16,6 +16,10 @@ const roleGuard = vi.hoisted(() => ({ createRoleGuard: vi.fn(() => ({ requireRol
 vi.mock('../cosmos-client.js', () => cosmos);
 vi.mock('./require-role.js', () => roleGuard);
 vi.mock('./verify-token.js', () => ({ createTokenVerifier: vi.fn(() => ({ verify: vi.fn() })) }));
+const agentGuard = vi.hoisted(() => ({
+  authenticate: vi.fn(async () => ({ record: { capabilities: {} }, user: { oid: 'agent:koda' }, error: null })),
+}));
+vi.mock('../agent-content/guard.js', () => ({ getAgentContentGuard: () => agentGuard, resetAgentContentGuard: () => {} }));
 
 const { getDefaultGuard, resetDefaultGuard } = await import('./default-guard.js');
 
@@ -71,5 +75,22 @@ describe('getDefaultGuard', () => {
     // Composing at module load would take the whole app down at cold start on
     // a missing ENTRA_* setting, including /api/health.
     expect(roleGuard.createRoleGuard).not.toHaveBeenCalled();
+  });
+
+  it('sends a request that presents a site key down the agent path, and a token down the role guard (ADR 0038)', async () => {
+    const guard = getDefaultGuard();
+    const headers = (authorization) => ({ get: (name) => (name.toLowerCase() === 'authorization' ? authorization : null) });
+    const key = `hcwk_${'a'.repeat(43)}`;
+    const agent = await guard.requireRole(
+      { method: 'GET', url: 'https://h/api/cms/content', headers: headers(`Bearer ${key}`) },
+      'editor'
+    );
+    expect(agentGuard.authenticate).toHaveBeenCalledTimes(1);
+    expect(agent.error).toBeNull();
+    expect(agent.user.oid).toBe('agent:koda');
+    expect(roleGuard.createRoleGuard.mock.results[0].value.requireRole).not.toHaveBeenCalled();
+
+    await guard.requireRole({ method: 'GET', url: 'https://h/api/cms/content', headers: headers('Bearer not.a.key') }, 'editor');
+    expect(roleGuard.createRoleGuard.mock.results[0].value.requireRole).toHaveBeenCalledTimes(1);
   });
 });

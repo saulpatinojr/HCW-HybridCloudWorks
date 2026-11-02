@@ -17,5 +17,7 @@ describeTabResolver(tabs, {
     priority: 'services',
     cost: 'usage',
     servers: 'mcp',
+    agent: 'koda',
+    muse: 'koda',
   },
 });

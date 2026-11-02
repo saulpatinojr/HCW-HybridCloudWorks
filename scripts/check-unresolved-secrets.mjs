@@ -63,25 +63,9 @@ export const EXPECTED_UNRESOLVED = new Map([
     "AZURE_SPEECH_KEY",
     "fallback TTS provider, deliberately unprovisioned — infra/functionapp.tf:444",
   ],
-  // The two Podbean secrets wait on the owner, not on engineering: the show
-  // moved to Podbean on 2026-10-13 (ADR 0029 §1c), and they stay unseeded
-  // until the owner creates the Podbean developer app and pastes its client
-  // ID and secret on Integrations -> Keys. They took the places of the two
-  // podcast-host secrets this list carried before (unseeded since #432 and
-  // retired with that host). Take both off when the owner seeds them; this
-  // file then reports them as resolved-but-still-listed.
-  [
-    "PODBEAN_CLIENT_ID",
-    "Podbean developer-app client ID, unseeded until the owner creates the Podbean developer app",
-  ],
-  [
-    "PODBEAN_CLIENT_SECRET",
-    "Podbean developer-app client secret, unseeded until the owner creates the Podbean developer app",
-  ],
-  [
-    "STREAMYARD_API_KEY",
-    "StreamYard On-Air API key, unseeded until the owner seeds STREAMYARD-API-KEY on Integrations -> Keys",
-  ],
+  // The two Podbean secrets and the StreamYard key were on this list while
+  // they waited on the owner; by 2026-11-01 all three resolved (the monitor
+  // reported them as resolving-but-still-listed), so they came off.
   // The read-only Cloudflare analytics token (#1302) waits on the owner the
   // same way: the reference lands with its Terraform run, and the monthly
   // audience timer stays quiet (one log line, no writes) until

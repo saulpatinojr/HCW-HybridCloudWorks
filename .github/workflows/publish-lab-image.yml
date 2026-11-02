@@ -163,6 +163,7 @@ jobs:
   build:
     name: Build and smoke
     runs-on: ubuntu-26.04
+    timeout-minutes: 60 # slowest 17 min, Oct 2026 (#1441)
     permissions:
       contents: read
     # Read by `publish` on the schedule only (the weekly rebuild).
@@ -332,6 +333,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'schedule' && needs.build.outputs.rebuild == 'true'))
     runs-on: ubuntu-26.04
+    timeout-minutes: 60 # slowest 3.8 min; rebuilds as slowly as build on a cache miss (#1441)
     permissions:
       contents: read
       id-token: write # the Docker token exchange, and Sigstore's signing certificate

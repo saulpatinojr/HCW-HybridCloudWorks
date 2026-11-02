@@ -12,7 +12,12 @@
  *     OR, or a single term;
  *   - `c.X = literal` (true, false, a number or a quoted string);
  *   - `c.X IN (literal, ...)` and `NOT (c.X IN (literal, ...))`;
- *   - `NOT IS_DEFINED(c.X)`, `IS_NULL(c.X)` and `NOT IS_STRING(c.X)`.
+ *   - `NOT IS_DEFINED(c.X)`, `IS_NULL(c.X)` and `NOT IS_STRING(c.X)`;
+ *   - with `parameters` given (the `[{ name, value }]` list queryDocs takes):
+ *     `c.X <op> @name` for `=`, `!=`, `<`, `<=`, `>` and `>=`, and
+ *     `ARRAY_CONTAINS(@name, c.X)`. A name with no value throws. Comparing
+ *     values of two different types, or a missing field, is undefined, as in
+ *     Cosmos, and so not a match (the visitor sessions' queries, #1403 item 8).
  *
  * Cosmos's third truth value is kept where it can change an answer: a
  * comparison with a field the document does not carry is undefined, which a
@@ -37,13 +42,44 @@ const literal = (raw) => {
 /** The literals of an IN list. */
 const listOf = (raw) => raw.split(',').map(literal);
 
+/** The value of `@name` in a queryDocs parameter list; a name with none throws. */
+const parameterValue = (parameters, name) => {
+  const found = parameters.find((p) => p.name === name);
+  if (!found) throw new Error(`the query names ${name} and no parameter gives it`);
+  return found.value;
+};
+
+/** Cosmos compares only values of one type; anything else (a missing field included) is undefined. */
+const comparable = (a, b) =>
+  a !== undefined && b !== undefined && a !== null && b !== null && typeof a === typeof b && typeof a !== 'object';
+
+const COMPARE = {
+  '=': (a, b) => a === b,
+  '!=': (a, b) => a !== b,
+  '<': (a, b) => a < b,
+  '<=': (a, b) => a <= b,
+  '>': (a, b) => a > b,
+  '>=': (a, b) => a >= b,
+};
+
 /**
  * One OR operand's truth for `doc`, in the shapes the header lists; any other
  * shape throws, so a term this cannot read never passes silently.
  */
-function term(text, doc) {
+function term(text, doc, parameters) {
   const t = text.trim();
-  let m = /^NOT \(c\.(\w+) IN \((.*)\)\)$/.exec(t);
+  let m = /^ARRAY_CONTAINS\((@\w+), c\.(\w+)\)$/.exec(t);
+  if (m) {
+    const list = parameterValue(parameters, m[1]);
+    if (!Array.isArray(list)) throw new Error(`${m[1]} is not a list`);
+    return doc[m[2]] !== undefined && list.includes(doc[m[2]]);
+  }
+  m = /^c\.(\w+) (=|!=|<=|>=|<|>) (@\w+)$/.exec(t);
+  if (m) {
+    const value = parameterValue(parameters, m[3]);
+    return comparable(doc[m[1]], value) && COMPARE[m[2]](doc[m[1]], value);
+  }
+  m = /^NOT \(c\.(\w+) IN \((.*)\)\)$/.exec(t);
   if (m) return doc[m[1]] !== undefined && !listOf(m[2]).includes(doc[m[1]]);
   m = /^c\.(\w+) IN \((.*)\)$/.exec(t);
   if (m) return listOf(m[2]).includes(doc[m[1]]);
@@ -61,11 +97,24 @@ function term(text, doc) {
 /**
  * @param {string} predicate a WHERE clause, without the WHERE
  * @param {object} doc
+ * @param {Array<{ name: string, value: unknown }>} [parameters] the query's parameters
  * @returns {boolean} whether Cosmos would return the document
  */
-export function evaluatePredicate(predicate, doc) {
+export function evaluatePredicate(predicate, doc, parameters = []) {
   return predicate.split(/\s+AND\s+/).every((conjunct) => {
     const body = conjunct.trim().replace(/^\((.*)\)$/s, '$1');
-    return body.split(/\s+OR\s+/).some((part) => term(part, doc));
+    return body.split(/\s+OR\s+/).some((part) => term(part, doc, parameters));
   });
+}
+
+/**
+ * Run a whole `SELECT * FROM c WHERE ...` against a container's documents,
+ * with its parameters, as the `query` option of test/memory-store.js takes it:
+ * `({ query, parameters, docs }) => rows`. Any other shape of query throws, so
+ * a query that grows a form this does not read fails its test.
+ */
+export function runCosmosQuery({ query, parameters = [], docs }) {
+  const m = /^SELECT \* FROM c WHERE (.+)$/s.exec(String(query).trim());
+  if (!m) throw new Error(`unreadable query ${query}`);
+  return docs.filter((doc) => evaluatePredicate(m[1], doc, parameters));
 }

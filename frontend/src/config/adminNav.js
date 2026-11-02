@@ -66,6 +66,7 @@ import {
   Share2,
   SlidersHorizontal,
   Vault,
+  Wallet,
   Zap,
 } from 'lucide-react';
 
@@ -179,7 +180,9 @@ export function roleLabel(role) {
  *                                 cms/forge/assist (…/workspace.js)
  *   AI Engine          editor     cms/config/{collection} (admin-integrations/config-collections.js), cms/ai-features,
  *                                 cms/ai-routing (admin-integrations/ai-features.js, ai-routing.js); the MCP OAuth
- *                                 routes are super_admin (ai/mcp-oauth-handlers.js)
+ *                                 routes are super_admin (ai/mcp-oauth-handlers.js); the Koda tab reads
+ *                                 cms/agent-content/key at editor and its writes (generate, switch, revoke) are
+ *                                 super_admin (agent-content/admin-handlers.js, ADR 0037)
  *   Image Prompts      editor     cms/image-prompts (cms/image-prompts/handlers.js)
  *   Image Gallery      editor     cms/images (admin-integrations.js), cms/images/bulk (gallery-images.js)
  *   Calendar           editor     cms/calendar (calendar.js); saveContentSchedule and unscheduleContent are publisher
@@ -198,6 +201,7 @@ export function roleLabel(role) {
  *                                 updateWorkflowAlert is publisher (ops-health.js), gated
  *   Integrations       editor     connectionProbe (integrations/connection-probe.js), cms/integration-status
  *                                 (integrations/integration-status.js); the Keys tab's cms/secrets is super_admin (admin-secrets.js)
+ *   Cost               editor     cms/cost/summary, cms/cost/services, cms/cost/settings (cost/handlers.js, ADR 0039)
  *   Doc Vault          publisher  cms/doc-vault (doc-vault/handlers.js), every route, reads included: the vault holds
  *                                 private letters and applications, so it is above the editor role (doc-vault/model.js)
  */
@@ -437,6 +441,14 @@ const ITEMS = [
     Plug,
     'Integrations',
     'Every external service, its keys, its connection test, where it is used, and a directory explaining each one.',
+    { minRole: 'editor' },
+  ],
+  [
+    'platform',
+    '/admin/cost',
+    Wallet,
+    'Cost',
+    'What the platform costs this month: Azure against its budgets, AI usage and credits, and the subscriptions paid outside Azure, with alerts.',
     { minRole: 'editor' },
   ],
 
