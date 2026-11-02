@@ -30,7 +30,9 @@
 # no token name, and a user agent alone is a header anyone can send), the
 # owner's own workstation terraform runs, the Caddy token's
 # `_acme-challenge.*.lab` TXT edits (told by the lab host's address, the one
-# the token's IP filter allows), and the owner's own dashboard edits. The
+# the token's IP filter allows), the owner's own dashboard edits, and
+# Cloudflare's own certificate renewal (a bare `system` actor creating and
+# deleting the `_acme-challenge` TXT on the apex; #1421). The
 # script's exit code is the contract:
 #
 #   0  every change is expected, or there was none: a green run and nothing else;
