@@ -88,24 +88,21 @@ RUN set -eu; . /build/versions.env; \
 # so this stage builds one from the publisher's source archive, verified by
 # its PyPI SHA256, and nothing else in the image changes: the runner installs
 # the built wheel in the same offline, hash-checked step as every other
-# wheel. In order: the build tools (Cython, setuptools, wheel) are downloaded
-# as hash-checked wheels only and installed from that directory with no
-# index; the source archive is downloaded in hash-checking mode with
+# wheel. Two RUNs: the first downloads, the second builds with no network.
+#
+# The download RUN takes the build tools (Cython, setuptools, wheel) as
+# hash-checked wheels only, installs them from that directory with no
+# index, and then downloads the source archive in hash-checking mode with
 # --no-binary=:all:, the one place in this file that accepts a source
-# archive, and --no-build-isolation so pip reads its metadata with the tools
-# just installed instead of fetching unpinned ones into a throwaway
-# environment; libyaml's shared-library link is removed so the extension
-# links Debian's static libyaml.a and needs no libyaml in the runner (the
-# base carries none); `pip wheel --no-index` builds the wheel with the
-# network closed to pip. Then the build stops unless exactly one wheel came
-# out, its name says it is compiled for this CPython (cp3xx, not py3), its
-# extension links no libyaml dynamically (ldd), and, installed into a
-# throwaway venv, it imports with yaml.__with_libyaml__ true and the C
-# loader present. The wheel goes to /out/wheels for the runner and alone to
-# /out/pyyaml-wheel for the pyyaml-wheel stage below, and its SHA256 becomes
-# its requirements line, written to /build/pyyaml-wheel.txt for the next step.
+# archive. The tools are installed here, before the archive is downloaded,
+# because pip reads the archive's metadata to download it, and
+# --no-build-isolation makes it do that with the tools just installed
+# instead of fetching unpinned ones into a throwaway environment;
+# --check-build-dependencies makes pip check that what is installed meets
+# the archive's own pyproject.toml build requirements rather than silently
+# using whatever is there.
 RUN set -eu; . /build/versions.env; \
-    mkdir -p /build/pyyaml /out/wheels /out/pyyaml-wheel; cd /build/pyyaml; \
+    mkdir -p /build/pyyaml; cd /build/pyyaml; \
     printf '%s\n' "${PYYAML_BUILD_DEPS}" | sed '/^[[:space:]]*$/d' > tools.txt; \
     python3 -m pip download --disable-pip-version-check --no-cache-dir --no-deps \
       --only-binary=:all: --require-hashes --dest tools -r tools.txt; \
@@ -113,10 +110,27 @@ RUN set -eu; . /build/versions.env; \
       --no-index --find-links tools --no-deps --require-hashes -r tools.txt; \
     printf 'pyyaml==%s --hash=sha256:%s\n' "${PYYAML_VERSION}" "${PYYAML_SDIST_SHA256}" > sdist.txt; \
     python3 -m pip download --disable-pip-version-check --no-cache-dir --no-deps \
-      --no-binary=:all: --require-hashes --no-build-isolation --dest sdist -r sdist.txt; \
+      --no-binary=:all: --require-hashes --no-build-isolation --check-build-dependencies \
+      --dest sdist -r sdist.txt
+
+# The build RUN runs with no network at all (--network=none), so nothing in
+# it can reach an index or anywhere else. libyaml's shared-library link is
+# removed so the extension links Debian's static libyaml.a and needs no
+# libyaml in the runner (the base carries none); `pip wheel` builds from the
+# verified archive with the tools above, checking them against the
+# archive's build requirements again. Then the build stops unless exactly
+# one wheel came out, its name says it is compiled for this CPython (cp3xx,
+# not py3), its extension links no libyaml dynamically (ldd), and, installed
+# into a throwaway venv and imported under `python -I` (no site or
+# environment influence), it has yaml.__with_libyaml__ true and the C loader
+# present. The wheel goes to /out/wheels for the runner and alone to
+# /out/pyyaml-wheel for the pyyaml-wheel stage below, and its SHA256 becomes
+# its requirements line, written to /build/pyyaml-wheel.txt for the next step.
+RUN --network=none set -eu; . /build/versions.env; \
+    mkdir -p /out/wheels /out/pyyaml-wheel; cd /build/pyyaml; \
     rm "$(dpkg -L libyaml-dev | grep '/libyaml\.so$')"; \
     python3 -m pip wheel --disable-pip-version-check --no-cache-dir --no-deps \
-      --no-build-isolation --no-index --wheel-dir built "sdist/pyyaml-${PYYAML_VERSION}.tar.gz"; \
+      --no-build-isolation --check-build-dependencies --no-index --wheel-dir built "sdist/pyyaml-${PYYAML_VERSION}.tar.gz"; \
     test "$(find built -name '*.whl' | wc -l)" -eq 1; \
     whl="$(find built -name '*.whl')"; \
     case "${whl##*/}" in \
@@ -125,9 +139,9 @@ RUN set -eu; . /build/versions.env; \
     esac; \
     python3 -m venv check; \
     check/bin/pip install --disable-pip-version-check --no-cache-dir --no-index --no-deps "${whl}"; \
-    ext="$(find check -name '_yaml*.so')"; test -n "${ext}"; \
+    ext="$(find check/lib -name '_yaml*.so')"; test -n "${ext}"; \
     if ldd "${ext}" | grep -q yaml; then echo "PyYAML's extension links libyaml dynamically; the runner has no libyaml" >&2; ldd "${ext}" >&2; exit 1; fi; \
-    check/bin/python -c 'import sys, yaml; sys.exit(0 if yaml.__with_libyaml__ and yaml.CSafeLoader else "the built PyYAML has no libyaml C loader")'; \
+    check/bin/python -I -c 'import sys, yaml; sys.exit(0 if yaml.__with_libyaml__ and yaml.CSafeLoader else "the built PyYAML has no libyaml C loader")'; \
     sum="$(sha256sum "${whl}" | cut -d' ' -f1)"; \
     echo "built ${whl##*/} ${sum}"; \
     cp "${whl}" /out/wheels/; cp "${whl}" /out/pyyaml-wheel/; \

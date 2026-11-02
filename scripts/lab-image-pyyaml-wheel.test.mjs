@@ -40,7 +40,8 @@ const blockLines = (name) =>
     .map((line) => line.trim())
     .filter(Boolean);
 const HASH = '--hash=sha256:[0-9a-f]{64}';
-const LINE = new RegExp(`^([a-z0-9][a-z0-9._-]*)==(\\d+(?:\\.\\d+)*)( ${HASH})+$`);
+// Case-insensitive, because pip takes `Cython` and `cython` as one name; normalise() folds them for the once-each check.
+const LINE = new RegExp(`^([a-z0-9][a-z0-9._-]*)==(\\d+(?:\\.\\d+)*)( ${HASH})+$`, 'i');
 /** pip compares names this way (PEP 503), so `Cython` and `cython` are one package. */
 const normalise = (name) => name.replace(/[-_.]+/g, '-').toLowerCase();
 
@@ -69,8 +70,10 @@ describe('the PYYAML block in versions.env', () => {
   });
 
   it('says when the block goes away', () => {
-    expect(VERSIONS_ENV).toMatch(/Delete this whole block/);
-    expect(VERSIONS_ENV).toMatch(/the day PyYAML publishes a\s+#?\s*wheel for BASE_PYTHON_VERSION/);
+    expect(VERSIONS_ENV).toMatch(/This block is temporary: it is deleted the day PyYAML publishes a\s+#?\s*wheel\s+#?\s*for BASE_PYTHON_VERSION/);
+    // One deletion list, in the runbook; versions.env and the README only point at it.
+    expect(VERSIONS_ENV).toMatch(/docs\/runbooks\/pyyaml-wheel\.md under "Deleting it when PyYAML\s+#?\s*ships a wheel"/);
+    expect(VERSIONS_ENV).not.toMatch(/Delete this whole block/);
   });
 });
 
@@ -82,15 +85,20 @@ describe('the Dockerfile around the block', () => {
     // Instructions only; the comment above the step may name the flag.
     const code = DOCKERFILE.split('\n').filter((line) => !line.trimStart().startsWith('#'));
     expect(code.filter((line) => line.includes('--no-binary=:all:'))).toHaveLength(1);
-    expect(fetch).toMatch(/pip download [^\n]*--no-deps [\\\n ]*--no-binary=:all: --require-hashes --no-build-isolation --dest sdist -r sdist.txt/);
+    expect(fetch).toMatch(/pip download [^\n]*--no-deps [\\\n ]*--no-binary=:all: --require-hashes --no-build-isolation --check-build-dependencies [\\\n ]*--dest sdist -r sdist.txt/);
     expect(fetch).toContain(`printf 'pyyaml==%s --hash=sha256:%s\\n' "\${PYYAML_VERSION}" "\${PYYAML_SDIST_SHA256}" > sdist.txt`);
     // The tools: wheels only, hash-checked, installed with no index.
     expect(fetch).toMatch(/--only-binary=:all: --require-hashes --dest tools -r tools.txt/);
     expect(fetch).toMatch(/--no-index --find-links tools --no-deps --require-hashes -r tools.txt/);
   });
 
-  it('builds the wheel with no index and no build isolation, and checks what came out', () => {
-    expect(fetch).toMatch(/pip wheel [^\n]*--no-deps [\\\n ]*--no-build-isolation --no-index --wheel-dir built/);
+  it('builds the wheel in a RUN with no network, no index and no build isolation, and checks what came out', () => {
+    // The build RUN's flags, then the first things it does: no network at all.
+    expect(fetch).toMatch(/\nRUN --network=none set -eu; \. \/build\/versions\.env; \\\n[^\n]*cd \/build\/pyyaml; \\\n[^\n]*rm "\$\(dpkg -L libyaml-dev/);
+    expect(fetch).toMatch(/pip wheel [^\n]*--no-deps [\\\n ]*--no-build-isolation --check-build-dependencies --no-index --wheel-dir built/);
+    // The import guard runs under -I and the extension is looked for in the venv's lib only.
+    expect(fetch).toContain(`ext="$(find check/lib -name '_yaml*.so')"`);
+    expect(fetch).toContain(`check/bin/python -I -c 'import sys, yaml;`);
     expect(fetch).toContain('-linux_x86_64.whl") ;;');
     expect(fetch).toContain('if ldd "${ext}" | grep -q yaml; then');
     expect(fetch).toContain('yaml.__with_libyaml__ and yaml.CSafeLoader');
@@ -107,6 +115,8 @@ describe('the Dockerfile around the block', () => {
     // bootstrap.sh carries the same printf line, held equal by
     // lab-host-bootstrap-ansible-core.test.mjs, so the pyyaml line is set aside one pipe later.
     expect(fetch).toContain(`} | sed '/^pyyaml==/d' > /build/requirements-pypi.txt`);
+    expect(fetch).toContain('PYYAML_VERSION and the pyyaml line in ANSIBLE_CORE_DEPS name different releases');
+    expect(fetch).toMatch(/pip download [^\n]*--no-deps [\\\n ]*--only-binary=:all: --require-hashes --dest \/out\/wheels -r \/build\/requirements-pypi.txt/);
     expect(fetch).toContain('cat /build/requirements-pypi.txt /build/pyyaml-wheel.txt > /out/wheels/requirements.txt');
     expect(fetch).toMatch(/pip install [^\n]*--dry-run --ignore-installed [\\\n ]*--no-index --find-links \/out\/wheels --only-binary=:all: --require-hashes -r \/out\/wheels\/requirements.txt/);
     expect(fetch).toContain(`test "$(find /out/wheels -name '*.whl' | wc -l)" -eq "$(wc -l < /out/wheels/requirements.txt)"`);

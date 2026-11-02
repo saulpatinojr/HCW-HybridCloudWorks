@@ -213,10 +213,53 @@ host installs PyPI's wheel as before and says so in its log.
 
 When PyPI lists a `cp3NN-cp3NN-manylinux` wheel of PyYAML for the base's
 Python, put that wheel's hash on the `pyyaml==` line of
-`ANSIBLE_CORE_DEPS` in `versions.env` as for any other dependency, and in
-the same pull request delete: the `PYYAML_*` lines and the `pyyaml-wheel`
-stage in `lab-image/`, the host's pin of the release asset,
-`.github/workflows/publish-pyyaml-wheel.yml`,
-`scripts/publish-pyyaml-wheel-workflow.test.mjs`, this page and its line in
-`mkdocs.yml`. The releases already made can stay as history; a host held
-back to an older commit still finds its asset there.
+`ANSIBLE_CORE_DEPS` in `lab-image/versions.env` as for any other
+dependency, and in the same pull request delete everything below. This is
+the only list: `versions.env` and the lab image's README point here
+instead of keeping their own.
+
+In the image (`lab-image/`):
+
+1. `versions.env`: the whole `PYYAML` block, from the `--- PyYAML built from
+   source` line to the `--- end of the PyYAML block` line (`PYYAML_VERSION`,
+   `PYYAML_SDIST_SHA256`, `PYYAML_BUILD_DEPS`, `PYYAML_WHEEL_SHA256` and
+   their comments).
+2. `Dockerfile`, the fetch stage's apt step: `gcc`, `libc6-dev` and
+   `libyaml-dev` go; `curl unzip git` stay, with the comment above them.
+3. `Dockerfile`: the two `PyYAML from source` RUNs (the download RUN and the
+   `--network=none` build RUN) and their comments, whole.
+4. `Dockerfile`, the ansible-core RUN: restore the original download. Drop
+   the `PYYAML_VERSION and the pyyaml line in ANSIBLE_CORE_DEPS name
+   different releases` guard, the `| sed '/^pyyaml==/d'` pipe, the
+   `requirements-pypi.txt` and `pyyaml-wheel.txt` files, the `--no-deps` on
+   the download and the offline `pip install --dry-run` resolve, so the
+   step is again the two `printf` lines writing
+   `/out/wheels/requirements.txt`, one `pip download --only-binary=:all:
+   --require-hashes --dest /out/wheels -r /out/wheels/requirements.txt`
+   from it, and the wheel-count check. Reword its comment to match.
+5. `Dockerfile`: the `FROM scratch AS pyyaml-wheel` stage and its comment.
+6. `smoke.sh`: the `PyYAML ... with the libyaml C loader` check after the
+   ansible version line.
+7. `README.md`: the `PyYAML is the one exception to "wheels only"` bullet
+   under "Updating a version".
+
+In the workflows and on the host:
+
+8. `.github/workflows/publish-lab-image.yml`: the `elif [ "$from" = scratch
+   ]` arm of the FROM check, once no stage starts from `scratch`.
+9. `.github/workflows/publish-pyyaml-wheel.yml`, the workflow that builds
+   and attests the wheel for the host.
+10. `lab-host/bootstrap.sh`: the block that reads `PYYAML_WHEEL_SHA256` and
+    installs the release asset in place of the PyPI wheel, and the matching
+    lines in `lab-host/README.md`.
+
+Tests and docs:
+
+11. `scripts/lab-image-pyyaml-wheel.test.mjs`.
+12. `scripts/publish-pyyaml-wheel-workflow.test.mjs`, and the
+    `PYYAML_WHEEL_SHA256` cases in
+    `scripts/lab-host-bootstrap-ansible-core.test.mjs`.
+13. This page and its line in `mkdocs.yml`.
+
+The releases already made can stay as history; a host held back to an
+older commit still finds its asset there.
