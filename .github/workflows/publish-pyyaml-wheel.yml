@@ -1,0 +1,600 @@
+# Build PyYAML's wheel from the lab image, attest it, and attach it to a
+# release of this repository so the lab host can install it by hash (#1505).
+#
+# WHY THIS EXISTS, AND WHEN IT GOES AWAY. ansible-core imports PyYAML, and
+# both the lab image and the lab host (lab-host/bootstrap.sh) install Python
+# packages as hash-checked wheels only: never from source. PyYAML publishes no
+# wheel for the CPython line the image is moving to, and only a new PyYAML
+# release can add one. So the image's fetch stage builds the wheel itself from
+# PyYAML's source archive, verified by the archive's PyPI SHA256
+# (PYYAML_SDIST_SHA256 in lab-image/versions.env), and keeps the built file in
+# a stage called `pyyaml-wheel` that holds nothing else. The host cannot build
+# from source (its rule, LAB-13), so this workflow takes that one file out of
+# the image build, attests it, and attaches it to a GitHub release, where the
+# host downloads it by a stable URL and checks its SHA256 and its provenance.
+# The day PyYAML releases a wheel for the base's Python, this workflow, its
+# test (scripts/publish-pyyaml-wheel-workflow.test.mjs), its runbook
+# (docs/runbooks/pyyaml-wheel.md) and the PYYAML_* lines in versions.env are
+# deleted together, and the releases it made can stay as history.
+#
+# THE TAG. One wheel serves one Python line, so the tag names both the PyYAML
+# release and the CPython ABI: `pyyaml-6.0.3-cp314` for PyYAML 6.0.3 on
+# CPython 3.14, `pyyaml-6.0.3-cp315` once the base moves to 3.15 (#1468). Both
+# are read from versions.env (PYYAML_VERSION, BASE_PYTHON_VERSION), so a pin
+# move is the whole procedure and the two tags coexist while the move is in
+# flight. The repository had no releases before this (checked 2026-11-02 with
+# `gh release list`), and these are never marked "latest", so the repository's
+# releases page does not start presenting a wheel as the project's release.
+#
+# THE ASSETS. Two files on the release:
+#   pyyaml-<version>-cp<abi>-cp<abi>-linux_x86_64.whl   the wheel
+#   pyyaml-<version>-cp<abi>-cp<abi>-linux_x86_64.whl.sigstore.json
+#       the attestation bundle actions/attest-build-provenance wrote, so the
+#       host can verify offline from GitHub's API with
+#       `cosign verify-blob-attestation --bundle`, the way it verifies the
+#       add-on images today (lab-host/ansible/roles/addons/tasks/main.yml).
+#       The same attestation is also stored in this repository's attestations
+#       API, which is what `gh attestation verify <file> --repo
+#       saulpatinojr/HCW-HybridCloudWorks` reads.
+# The release notes carry the source archive's SHA256 and the wheel's SHA256
+# on two machine-readable lines (`source-sha256:` and `wheel-sha256:`), which
+# the next run reads back.
+#
+# IDEMPOTENT, AND NEVER A REPLACEMENT. A wheel build is not byte-for-byte
+# reproducible (the archive inside it carries timestamps), so a second build
+# of the same pins is a different file with a different SHA256. The rule is
+# therefore: the first wheel published for a tag is the wheel for that tag.
+#   - The tag exists with the wheel on it: nothing is built and nothing is
+#     published. The `plan` job downloads the published wheel, checks its
+#     provenance with `gh attestation verify`, checks that the release notes
+#     name the same source archive SHA256 versions.env names, and writes the
+#     asset URL and SHA256 to the step summary. That is the no-op, and it is
+#     what every re-run and every unrelated push to lab-image/Dockerfile gets.
+#   - The tag exists but the release notes name a different source archive:
+#     the run fails. Replacing the wheel behind a tag the host may already pin
+#     is never done here; a new PyYAML release gets a new tag.
+#   - The published wheel's provenance does not verify: the run fails, loudly,
+#     because the asset is not the one this workflow published.
+#   - The tag exists without the wheel (a run that stopped half way): the
+#     wheel is built and uploaded into that release.
+#   - Nothing exists: the release is created with both files.
+#   - The `publish` job looks again, with the token it holds, right before it
+#     uploads: an asset that appeared in the meantime is compared by SHA256
+#     with what this run built, and a different file fails the run.
+#   `gh release upload` is never run with `--clobber`.
+#
+# THREE JOBS, so the path a pull request can edit never holds a token that
+# can write anything (the same split as publish-lab-image.yml):
+#   plan     every trigger, `contents: read` only. Reads the pins, names the
+#            tag and the wheel, checks the Dockerfile has the `pyyaml-wheel`
+#            stage, and asks the releases API whether the wheel is already
+#            there. On a pull request this is the whole run: it builds
+#            nothing, attests nothing and publishes nothing, and its summary
+#            says what a push would publish. (publish-lab-image.yml already
+#            builds the whole image, the wheel stage included, on a pull
+#            request that touches lab-image/, so the build is proven there.)
+#   build    a push to main or a workflow_dispatch, never a pull request, and
+#            only when `plan` found no published wheel. `contents: read`.
+#            Builds the `pyyaml-wheel` stage to a local directory, checks that
+#            exactly the expected file came out, hashes it and hands it to
+#            `publish` as a workflow artifact. A dispatch from a branch stops
+#            here, which proves the build without publishing anything.
+#   publish  only after `build`, only on a push to main or a dispatch from
+#            main. Holds `id-token: write` and `attestations: write` for
+#            Sigstore and the attestations API, and `contents: read`. The
+#            release itself is written with a one-hour GitHub App installation
+#            token minted by scripts/github-app-token.mjs (the App the pin and
+#            manifest pull requests use), asked for `contents: write` and
+#            nothing else, masked before it is used and revoked at the end.
+#            Why the App token and not a `contents: write` grant on the job:
+#            scripts/workflow-write-permissions.test.mjs keeps the list of
+#            workflows allowed to hold that grant empty on purpose, because a
+#            job holding it can push any branch but main, create tags and
+#            releases, and write contents through the API for as long as the
+#            job runs; the App token does the one write this needs, is scoped
+#            to this repository, lives an hour and is revoked when the job
+#            ends, and is the route every other write in this repository
+#            already takes. The App's installation must hold "Contents: Read
+#            and write" (it does: the pin pull requests push branches with it).
+#            The job runs in the `automation` environment, as the other jobs
+#            that hold that token do.
+#
+# Path-filtered on purpose, like publish-lab-image.yml: this workflow is not a
+# required context on the main ruleset (a path-filtered required context is
+# never auto-satisfied and blocks unrelated pull requests forever, the T-523
+# doctrine in iac-validate.yml). If it is ever made required, remove `paths`
+# first and move the filtering inside the job as ci.yml does.
+name: Publish PyYAML wheel
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'lab-image/versions.env'
+      - 'lab-image/Dockerfile'
+      - '.github/workflows/publish-pyyaml-wheel.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'lab-image/versions.env'
+      - 'lab-image/Dockerfile'
+      - '.github/workflows/publish-pyyaml-wheel.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel a superseded pull request run, never a publish from main: the main
+  # run is the record of what was published under a tag.
+  group: publish-pyyaml-wheel-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Read the pins and look for the wheel
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.pins.outputs.version }}
+      source-sha256: ${{ steps.pins.outputs.source-sha256 }}
+      abi: ${{ steps.pins.outputs.abi }}
+      tag: ${{ steps.pins.outputs.tag }}
+      wheel: ${{ steps.pins.outputs.wheel }}
+      # `absent`, `release-without-wheel` or `published`.
+      state: ${{ steps.existing.outputs.state }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # The three lines are read as text with the same `env_value` sed
+      # publish-lab-image.yml uses; versions.env is never sourced here. The
+      # ABI tag is `cp` plus the major and minor of BASE_PYTHON_VERSION, which
+      # is how CPython names its wheels (3.14.10 is cp314). The wheel's name
+      # is what `pip wheel` writes for a C extension built on the image's
+      # linux/amd64 Python, and the build job refuses any other name.
+      - name: Read the pins and name the wheel
+        id: pins
+        run: |
+          set -euo pipefail
+          env_value() { sed -n "s/^$1=//p" lab-image/versions.env; }
+          version="$(env_value PYYAML_VERSION)"
+          source_sha256="$(env_value PYYAML_SDIST_SHA256)"
+          python="$(env_value BASE_PYTHON_VERSION)"
+          if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+            echo "::error file=lab-image/versions.env::PYYAML_VERSION is missing or is not a version (read '${version}')"
+            exit 1
+          fi
+          if ! [[ "$source_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error file=lab-image/versions.env::PYYAML_SDIST_SHA256 is missing or is not 64 hex characters"
+            exit 1
+          fi
+          if ! [[ "$python" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+            echo "::error file=lab-image/versions.env::BASE_PYTHON_VERSION is missing or is not major.minor.patch (read '${python}')"
+            exit 1
+          fi
+          abi="cp${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+          # grep's status is kept, not tested in an `if` (#1429): 1 is "no
+          # such stage" and 2 is "could not read the file", and both stop
+          # the run with their own message.
+          stage=0
+          grep -qiE '^FROM[[:space:]]+scratch[[:space:]]+AS[[:space:]]+pyyaml-wheel[[:space:]]*$' lab-image/Dockerfile || stage=$?
+          if [ "$stage" = 1 ]; then
+            echo "::error file=lab-image/Dockerfile::no stage 'FROM scratch AS pyyaml-wheel'; this workflow takes the wheel out of that stage and nothing else"
+            exit 1
+          elif [ "$stage" != 0 ]; then
+            echo "::error file=lab-image/Dockerfile::grep could not read lab-image/Dockerfile (exit status ${stage})"
+            exit 1
+          fi
+          tag="pyyaml-${version}-${abi}"
+          wheel="pyyaml-${version}-${abi}-${abi}-linux_x86_64.whl"
+          {
+            echo "version=${version}"
+            echo "source-sha256=${source_sha256}"
+            echo "abi=${abi}"
+            echo "tag=${tag}"
+            echo "wheel=${wheel}"
+          } >> "$GITHUB_OUTPUT"
+          echo "PyYAML ${version} from source archive sha256:${source_sha256}, for CPython ${python} (${abi}): tag ${tag}, wheel ${wheel}"
+
+      # The releases API answers a read token on a public repository. A 404
+      # is "no release with that tag"; any other failure stops the run, so
+      # an API outage is never read as "nothing published yet".
+      - name: Is the wheel already published?
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.pins.outputs.tag }}
+          WHEEL: ${{ steps.pins.outputs.wheel }}
+        run: |
+          set -euo pipefail
+          release="${RUNNER_TEMP}/release.json"
+          if gh api "repos/${REPO}/releases/tags/${TAG}" > "$release" 2> "${RUNNER_TEMP}/release.err"; then
+            if [ "$(jq -r --arg name "$WHEEL" '[.assets[] | select(.name == $name)] | length' "$release")" = "1" ]; then
+              state=published
+            else
+              state='release-without-wheel'
+            fi
+          else
+            # grep's status is kept, not tested in an `if` (#1429): only a
+            # clean "HTTP 404" match means "no release with that tag".
+            missing=0
+            grep -q 'HTTP 404' "${RUNNER_TEMP}/release.err" || missing=$?
+            if [ "$missing" != 0 ]; then
+              echo "::error::could not read release ${TAG}: $(cat "${RUNNER_TEMP}/release.err")"
+              exit 1
+            fi
+            state=absent
+          fi
+          echo "state=${state}" >> "$GITHUB_OUTPUT"
+          echo "release ${TAG}: ${state}"
+
+      # A release that exists names, in its notes, the source archive it was
+      # built from. versions.env naming a different archive under the same
+      # PyYAML version means the tag would be reused for different source,
+      # which this workflow refuses to do: a replacement is a new tag.
+      - name: The existing release was built from the source archive versions.env names
+        if: steps.existing.outputs.state != 'absent'
+        env:
+          TAG: ${{ steps.pins.outputs.tag }}
+          SOURCE_SHA256: ${{ steps.pins.outputs.source-sha256 }}
+        run: |
+          set -euo pipefail
+          recorded="$(jq -r '.body // ""' "${RUNNER_TEMP}/release.json" | sed -n 's/^source-sha256: \([0-9a-f]\{64\}\)$/\1/p' | head -n 1)"
+          if [ -z "$recorded" ]; then
+            echo "::error::release ${TAG} has no 'source-sha256:' line in its notes, so it is not a release this workflow made; it is not touched"
+            exit 1
+          fi
+          if [ "$recorded" != "$SOURCE_SHA256" ]; then
+            echo "::error file=lab-image/versions.env::release ${TAG} was built from source archive sha256:${recorded}, but PYYAML_SDIST_SHA256 is ${SOURCE_SHA256}. A tag is never reused for different source: a new PyYAML release gets a new PYYAML_VERSION and a new tag"
+            exit 1
+          fi
+          echo "release ${TAG} was built from sha256:${recorded}, as versions.env says"
+
+      # The no-op, with proof: the wheel on the release is downloaded, hashed
+      # and its provenance verified against this repository, so a run that
+      # publishes nothing still says what is there and that it is still ours.
+      - name: Already published, verify it and say so
+        if: steps.existing.outputs.state == 'published'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.pins.outputs.tag }}
+          WHEEL: ${{ steps.pins.outputs.wheel }}
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/existing"
+          mkdir -p "$dir"
+          gh release download "$TAG" --repo "$REPO" --pattern "$WHEEL" --dir "$dir"
+          sha256="$(sha256sum "${dir}/${WHEEL}" | cut -d ' ' -f 1)"
+          recorded="$(jq -r '.body // ""' "${RUNNER_TEMP}/release.json" | sed -n 's/^wheel-sha256: \([0-9a-f]\{64\}\)$/\1/p' | head -n 1)"
+          if [ "$recorded" != "$sha256" ]; then
+            echo "::error::the wheel on release ${TAG} has SHA256 ${sha256}, but the release notes record ${recorded}: the asset is not the file this workflow published. It is not replaced; find out what changed it"
+            exit 1
+          fi
+          if ! gh attestation verify "${dir}/${WHEEL}" --repo "$REPO"; then
+            echo "::error::the wheel on release ${TAG} has no build provenance from this repository: the asset is not the file this workflow published. It is not replaced; find out what changed it"
+            exit 1
+          fi
+          url="https://github.com/${REPO}/releases/download/${TAG}/${WHEEL}"
+          {
+            echo "## Already published, nothing changed"
+            echo
+            echo "Release [\`${TAG}\`](https://github.com/${REPO}/releases/tag/${TAG}) already carries the wheel, its notes record this SHA256, and its provenance verifies against this repository."
+            echo
+            echo '```'
+            echo "${url}"
+            echo "sha256:${sha256}"
+            echo "${url}.sigstore.json"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: What a push to main would publish
+        if: github.event_name == 'pull_request' && steps.existing.outputs.state != 'published'
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.pins.outputs.tag }}
+          WHEEL: ${{ steps.pins.outputs.wheel }}
+          SOURCE_SHA256: ${{ steps.pins.outputs.source-sha256 }}
+          STATE: ${{ steps.existing.outputs.state }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Dry run: nothing built, nothing published"
+            echo
+            if [ "$STATE" = "release-without-wheel" ]; then
+              echo "Release \`${TAG}\` exists without the wheel. A push to main builds it from source archive sha256:${SOURCE_SHA256} and uploads it there as:"
+            else
+              echo "A push to main creates release \`${TAG}\` from source archive sha256:${SOURCE_SHA256} with the wheel and its attestation bundle:"
+            fi
+            echo
+            echo '```'
+            echo "https://github.com/${REPO}/releases/download/${TAG}/${WHEEL}"
+            echo "https://github.com/${REPO}/releases/download/${TAG}/${WHEEL}.sigstore.json"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build the wheel
+    needs: plan
+    if: github.event_name != 'pull_request' && needs.plan.outputs.state != 'published'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      sha256: ${{ steps.wheel.outputs.sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The `pyyaml-wheel` stage is `FROM scratch` with the one built file in
+      # it, so a local output of that stage is a directory with one file.
+      # `provenance: false` as in publish-lab-image.yml: the provenance is
+      # actions/attest-build-provenance's, in the publish job. The build reads
+      # the lab image's layer cache (same scope) and writes nothing to it:
+      # publish-lab-image.yml fills it.
+      - name: Build the pyyaml-wheel stage to a directory
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: lab-image
+          target: pyyaml-wheel
+          push: false
+          provenance: false
+          outputs: type=local,dest=${{ runner.temp }}/wheel
+          cache-from: type=gha,scope=hcw-lab
+
+      - name: Exactly the expected wheel came out
+        id: wheel
+        env:
+          WHEEL: ${{ needs.plan.outputs.wheel }}
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/wheel"
+          echo "the stage wrote:"
+          ls -l "$dir"
+          count="$(find "$dir" -mindepth 1 | wc -l)"
+          if [ "$count" != "1" ] || [ ! -f "${dir}/${WHEEL}" ]; then
+            echo "::error file=lab-image/Dockerfile::expected the pyyaml-wheel stage to hold exactly one file named ${WHEEL}; it holds ${count} entries (listed above). The name is computed from PYYAML_VERSION and BASE_PYTHON_VERSION in versions.env; if pip named the file differently, the stage or the pins are out of step"
+            exit 1
+          fi
+          sha256="$(sha256sum "${dir}/${WHEEL}" | cut -d ' ' -f 1)"
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
+          echo "${WHEEL} sha256:${sha256}"
+
+      - name: Hand the wheel to the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pyyaml-wheel
+          path: ${{ runner.temp }}/wheel/${{ needs.plan.outputs.wheel }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # `id-token: write` is for Sigstore's signing certificate; `attestations:
+  # write` stores the provenance in this repository's attestations API;
+  # `artifact-metadata: write` is the attest step's storage record (the same
+  # three as publish-lab-image.yml's publish job, for the same reasons). The
+  # release is written with the App token, not with GITHUB_TOKEN: see the
+  # header.
+  publish:
+    name: Attest and attach to the release
+    needs: [plan, build]
+    if: >-
+      needs.plan.outputs.state != 'published' && (
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment: automation
+    permissions:
+      contents: read # checkout only; the release is written with the App token
+      id-token: write # Sigstore's signing certificate
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
+      - name: Take the wheel from the build job
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pyyaml-wheel
+          path: ${{ runner.temp }}/wheel
+
+      # The file this job attests and uploads is the file the build job
+      # hashed: the artifact store sits between the two jobs.
+      - name: The wheel is the one the build job hashed
+        env:
+          WHEEL: ${{ needs.plan.outputs.wheel }}
+          BUILT_SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          sha256="$(sha256sum "${RUNNER_TEMP}/wheel/${WHEEL}" | cut -d ' ' -f 1)"
+          if [ "$sha256" != "$BUILT_SHA256" ]; then
+            echo "::error::the downloaded wheel has SHA256 ${sha256}, but the build job hashed ${BUILT_SHA256}"
+            exit 1
+          fi
+          echo "${WHEEL} sha256:${sha256}"
+
+      - name: Attest the wheel's build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/wheel/${{ needs.plan.outputs.wheel }}
+
+      # The bundle goes on the release beside the wheel, under the wheel's
+      # name plus `.sigstore.json`, so the host can verify with the bundle it
+      # downloaded and no API call.
+      - name: Keep the attestation bundle beside the wheel
+        env:
+          WHEEL: ${{ needs.plan.outputs.wheel }}
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          test -s "$BUNDLE_PATH"
+          cp "$BUNDLE_PATH" "${RUNNER_TEMP}/wheel/${WHEEL}.sigstore.json"
+          ls -l "${RUNNER_TEMP}/wheel"
+
+      # Unlike the pin pull requests, this job has one purpose, so an App
+      # that is not configured is a failure that names what to set, not a
+      # warning: without the release the host has nothing to install.
+      - name: The App is configured
+        env:
+          MANIFEST_APP_PRIVATE_KEY: ${{ secrets.MANIFEST_APP_PRIVATE_KEY }}
+          MANIFEST_APP_ID: ${{ vars.MANIFEST_APP_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MANIFEST_APP_PRIVATE_KEY}" ] || [ -z "${MANIFEST_APP_ID}" ]; then
+            echo "::error::the wheel was built and attested but not published: the GitHub App that writes releases is not configured. Set the MANIFEST_APP_ID variable (Settings > Secrets and variables > Actions > Variables) and the MANIFEST_APP_PRIVATE_KEY secret (same page, Secrets), then re-run this workflow"
+            exit 1
+          fi
+
+      # No `npm ci`: the minter imports only node:crypto and node:url. Asked
+      # for `contents: write` alone, which is what creating a release and
+      # uploading its assets need; the pull_requests permission the pin jobs
+      # take is not asked for here.
+      - name: Mint an App installation token
+        id: token
+        env:
+          GITHUB_APP_ID: ${{ vars.MANIFEST_APP_ID }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.MANIFEST_APP_PRIVATE_KEY }}
+          GITHUB_APP_PERMISSIONS: '{"contents":"write"}'
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          token=$(node scripts/github-app-token.mjs)
+          # Masked BEFORE it is written anywhere, including to GITHUB_OUTPUT.
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "$GITHUB_OUTPUT"
+
+      # Looks again with the token it holds, because `plan` looked minutes
+      # ago. Creates the release when there is none, uploads into it when it
+      # has no wheel, and otherwise compares: the same bytes are a no-op and
+      # different bytes are a failure. Never `--clobber`. `--latest=false`
+      # keeps a wheel from becoming the repository's "latest release";
+      # `--target` points the tag at the commit whose Dockerfile built it.
+      - name: Create the release or upload into it, never replacing an asset
+        id: release
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          ABI: ${{ needs.plan.outputs.abi }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          WHEEL: ${{ needs.plan.outputs.wheel }}
+          SOURCE_SHA256: ${{ needs.plan.outputs.source-sha256 }}
+          WHEEL_SHA256: ${{ needs.build.outputs.sha256 }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/wheel"
+          bundle="${WHEEL}.sigstore.json"
+          notes="${RUNNER_TEMP}/notes.md"
+          cat > "$notes" <<EOF
+          PyYAML ${VERSION} built from its source archive for CPython ${ABI} on linux/amd64, by the \`pyyaml-wheel\` stage of \`lab-image/Dockerfile\` at ${SHA} ([run](${RUN_URL})). The lab host installs it by hash (#1505). This is not a release of this project.
+
+          source-sha256: ${SOURCE_SHA256}
+          wheel-sha256: ${WHEEL_SHA256}
+
+          Verify: \`gh attestation verify ${WHEEL} --repo ${REPO}\` ([attestation](${ATTESTATION_URL})), or offline with \`${bundle}\` and \`cosign verify-blob-attestation\`; the steps are in docs/runbooks/pyyaml-wheel.md.
+          EOF
+          release="${RUNNER_TEMP}/release-now.json"
+          if gh api "repos/${REPO}/releases/tags/${TAG}" > "$release" 2> "${RUNNER_TEMP}/release-now.err"; then
+            existing="$(jq -r --arg name "$WHEEL" '[.assets[] | select(.name == $name)] | length' "$release")"
+            if [ "$existing" = "0" ]; then
+              gh release upload "$TAG" --repo "$REPO" "${dir}/${WHEEL}" "${dir}/${bundle}"
+              echo "outcome=uploaded" >> "$GITHUB_OUTPUT"
+            else
+              mkdir -p "${RUNNER_TEMP}/raced"
+              gh release download "$TAG" --repo "$REPO" --pattern "$WHEEL" --dir "${RUNNER_TEMP}/raced"
+              raced="$(sha256sum "${RUNNER_TEMP}/raced/${WHEEL}" | cut -d ' ' -f 1)"
+              if [ "$raced" != "$WHEEL_SHA256" ]; then
+                echo "::error::release ${TAG} gained a ${WHEEL} with SHA256 ${raced} while this run was building one with SHA256 ${WHEEL_SHA256}. The published file stays; this run's file is not uploaded and not attached. Look at the release's history before doing anything else"
+                exit 1
+              fi
+              echo "release ${TAG} already carries this exact wheel (sha256:${raced}); nothing uploaded"
+              echo "outcome=already-there" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # grep's status is kept, not tested in an `if` (#1429): only a
+            # clean "HTTP 404" match means "no release with that tag".
+            missing=0
+            grep -q 'HTTP 404' "${RUNNER_TEMP}/release-now.err" || missing=$?
+            if [ "$missing" != 0 ]; then
+              echo "::error::could not read release ${TAG}: $(cat "${RUNNER_TEMP}/release-now.err")"
+              exit 1
+            fi
+            gh release create "$TAG" --repo "$REPO" --target "$SHA" --latest=false --title "PyYAML ${VERSION} wheel for CPython ${ABI}" --notes-file "$notes" "${dir}/${WHEEL}" "${dir}/${bundle}"
+            echo "outcome=created" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The token lives an hour; the work above takes seconds. `always()`, so
+      # a failed upload still cleans up.
+      - name: Revoke the installation token
+        if: always() && steps.token.outputs.token != ''
+        env:
+          GITHUB_APP_TOKEN: ${{ steps.token.outputs.token }}
+        run: node scripts/github-app-token.mjs --revoke
+
+      # Read back from the API with the ordinary token, the way the host and
+      # the owner will: the attestation is there, and the asset URL serves the
+      # bytes this run hashed.
+      - name: The published wheel verifies the way the host will read it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          WHEEL: ${{ needs.plan.outputs.wheel }}
+          WHEEL_SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/readback"
+          gh release download "$TAG" --repo "$REPO" --pattern "$WHEEL" --dir "${RUNNER_TEMP}/readback"
+          sha256="$(sha256sum "${RUNNER_TEMP}/readback/${WHEEL}" | cut -d ' ' -f 1)"
+          if [ "$sha256" != "$WHEEL_SHA256" ]; then
+            echo "::error::the asset on release ${TAG} reads back with SHA256 ${sha256}, not ${WHEEL_SHA256}"
+            exit 1
+          fi
+          gh attestation verify "${RUNNER_TEMP}/readback/${WHEEL}" --repo "$REPO"
+
+      - name: Published
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          WHEEL: ${{ needs.plan.outputs.wheel }}
+          WHEEL_SHA256: ${{ needs.build.outputs.sha256 }}
+          OUTCOME: ${{ steps.release.outputs.outcome }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/${REPO}/releases/download/${TAG}/${WHEEL}"
+          {
+            echo "## Published (${OUTCOME})"
+            echo
+            echo "Release [\`${TAG}\`](https://github.com/${REPO}/releases/tag/${TAG}). Pin the URL and the SHA256 in lab-image/versions.env for the host; the attestation is [here](${ATTESTATION_URL})."
+            echo
+            echo '```'
+            echo "${url}"
+            echo "sha256:${WHEEL_SHA256}"
+            echo "${url}.sigstore.json"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
