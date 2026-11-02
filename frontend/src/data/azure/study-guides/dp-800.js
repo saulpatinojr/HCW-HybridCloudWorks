@@ -25,7 +25,7 @@ export default {
         {
           title: 'Design and implement database objects',
           objectives: [
-            'Design and implement tables, including data types, size, columns, indexes, and columnstore indexes',
+            'Design and implement tables, including data types, size, columns, indexes, and column store indexes',
             'Design and implement specialized tables, including in-memory, temporal, external, ledger, and graph',
             'Design and implement JSON columns and indexes',
             'Design and implement database constraints, including PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK, and DEFAULT',
@@ -60,7 +60,7 @@ export default {
           title: 'Design and implement SQL solutions by using AI-assisted tools',
           objectives: [
             'Interpret security impact of using AI-assisted tools',
-            'Enable GitHub Copilot and Copilot in Fabric',
+            'Enable GitHub Copilot and Microsoft Copilot in Fabric',
             'Configure model and Model Context Protocol (MCP) tool options in a GitHub Copilot or Copilot in Fabric chat session',
             'Create and configure GitHub Copilot instruction files',
             'Connect to MCP server endpoints, including Microsoft SQL Server and Fabric lakehouse',
@@ -141,7 +141,7 @@ export default {
           objectives: [
             'Evaluate external models, including multimodal, multilanguage, sizes, and structured output',
             'Create and manage external models',
-            'Choose an embedding maintenance method, including table triggers, Change Tracking, Azure Functions with SQL trigger binding, Azure Logic Apps, CDC, and Microsoft Foundry',
+            'Choose an embedding maintenance method, including table triggers, Change Tracking, Azure Functions with SQL trigger binding, Azure Logic Apps, CDC, CES, and Microsoft Foundry',
             'Identify which columns to include in embeddings',
             'Design and implement chunks for embeddings',
             'Generate embeddings',
@@ -154,7 +154,7 @@ export default {
             'Implement full-text search',
             'Design for vector data, including vector data type, vector indexes, and size',
             'Identify when to use vector-related types and functions for semantic searching, including VECTOR_NORMALIZE, VECTOR_DISTANCE, VECTORPROPERTY, and VECTOR_SEARCH',
-            'Choose between using ANN and KNN for vector search',
+            'Choose between using ANN and ENN for vector search',
             'Evaluate vector index types and metrics',
             'Implement vector search',
             'Implement hybrid search',
