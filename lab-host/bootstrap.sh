@@ -577,11 +577,11 @@ hcw_ansible_requirements="$(mktemp)"
 hcw_pyyaml_dir="$(mktemp -d)"
 trap 'rm -rf "${hcw_ansible_requirements}" "${hcw_pyyaml_dir}"' EXIT
 # hcw_read_ansible_pins FILE: set the three ANSIBLE_CORE_* variables, and
-# the two PYYAML_* lines the host reads (#1505), from FILE's lines as
+# the PYYAML_* and BASE_PYTHON_VERSION lines the host reads (#1505), from FILE's lines as
 # text, never evaluating it; fails when no complete DEPS block is there.
 hcw_read_ansible_pins() {
   local line in_deps=0 saw_deps=0
-  ANSIBLE_CORE_VERSION='' ANSIBLE_CORE_SHA256='' ANSIBLE_CORE_DEPS='' PYYAML_VERSION='' PYYAML_WHEEL_SHA256=''
+  ANSIBLE_CORE_VERSION='' ANSIBLE_CORE_SHA256='' ANSIBLE_CORE_DEPS='' PYYAML_VERSION='' PYYAML_WHEEL_SHA256='' BASE_PYTHON_VERSION=''
   while IFS= read -r line || [ -n "${line}" ]; do
     if [ "${in_deps}" = 1 ]; then
       # A requirement starts lower-case; an assignment here means the block
@@ -602,6 +602,7 @@ hcw_read_ansible_pins() {
       "ANSIBLE_CORE_DEPS='") in_deps=1 ;;
       PYYAML_VERSION=*) PYYAML_VERSION="${line#PYYAML_VERSION=}" ;;
       PYYAML_WHEEL_SHA256=*) PYYAML_WHEEL_SHA256="${line#PYYAML_WHEEL_SHA256=}" ;;
+      BASE_PYTHON_VERSION=*) BASE_PYTHON_VERSION="${line#BASE_PYTHON_VERSION=}" ;;
     esac
   done <"$1"
   [ "${saw_deps}" = 1 ] && [ "${in_deps}" = 0 ]
@@ -648,18 +649,33 @@ if [ -n "${PYYAML_WHEEL_SHA256}" ]; then
     echo "refusing to run: lab-image/versions.env at ${hcw_repo_sha} pins PYYAML_WHEEL_SHA256, but PYYAML_VERSION (${PYYAML_VERSION}) is not the version of the one pyyaml line in ANSIBLE_CORE_DEPS (${hcw_pyyaml_pinned:-none}), or the SHA256 is not 64 hex" >&2
     exit 1
   fi
+  # One wheel serves one Python line, and the SHA256 is the wheel the
+  # workflow built for the image's BASE_PYTHON_VERSION. The host's own
+  # PYTHON_VERSION (at the top of this file) must be on the same line, or the
+  # release it would name is the wrong one, or does not exist; that is
+  # refused here with both values, rather than found out from a download
+  # error on every run.
   IFS=. read -r hcw_py_major hcw_py_minor _ <<<"${PYTHON_VERSION}"
+  IFS=. read -r hcw_base_major hcw_base_minor _ <<<"${BASE_PYTHON_VERSION}"
+  if [ "${hcw_py_major}.${hcw_py_minor}" != "${hcw_base_major}.${hcw_base_minor}" ]; then
+    echo "refusing to run: lab-image/versions.env at ${hcw_repo_sha} pins PYYAML_WHEEL_SHA256 for the wheel built on CPython ${BASE_PYTHON_VERSION} (BASE_PYTHON_VERSION), but this host's PYTHON_VERSION is ${PYTHON_VERSION}, another line; move PYTHON_VERSION in lab-host/bootstrap.sh to the same line, or leave PYYAML_WHEEL_SHA256 empty" >&2
+    exit 1
+  fi
   hcw_pyyaml_tag="pyyaml-${PYYAML_VERSION}-cp${hcw_py_major}${hcw_py_minor}"
   hcw_pyyaml_wheel="pyyaml-${PYYAML_VERSION}-cp${hcw_py_major}${hcw_py_minor}-cp${hcw_py_major}${hcw_py_minor}-linux_x86_64.whl"
   hcw_pyyaml_base="https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/${hcw_pyyaml_tag}"
   log "taking PyYAML ${PYYAML_VERSION} for CPython ${PYTHON_VERSION} from the ${hcw_pyyaml_tag} release of this repository, SHA256 and provenance checked"
-  curl -fsSL --proto '=https' --tlsv1.2 -o "${hcw_pyyaml_dir}/${hcw_pyyaml_wheel}" "${hcw_pyyaml_base}/${hcw_pyyaml_wheel}"
-  curl -fsSL --proto '=https' --tlsv1.2 -o "${hcw_pyyaml_dir}/${hcw_pyyaml_wheel}.sigstore.json" "${hcw_pyyaml_base}/${hcw_pyyaml_wheel}.sigstore.json"
+  for hcw_pyyaml_file in "${hcw_pyyaml_wheel}" "${hcw_pyyaml_wheel}.sigstore.json"; do
+    if ! curl -fsSL --proto '=https' --tlsv1.2 -o "${hcw_pyyaml_dir}/${hcw_pyyaml_file}" "${hcw_pyyaml_base}/${hcw_pyyaml_file}"; then
+      echo "refusing to run: could not download ${hcw_pyyaml_base}/${hcw_pyyaml_file}; the ${hcw_pyyaml_tag} release may not exist yet for this Python line, or may be missing that file (docs/runbooks/pyyaml-wheel.md says how it is published and repaired)" >&2
+      exit 1
+    fi
+  done
   if [ "$(sha256sum "${hcw_pyyaml_dir}/${hcw_pyyaml_wheel}" | cut -d ' ' -f 1)" != "${PYYAML_WHEEL_SHA256}" ]; then
     echo "refusing to run: ${hcw_pyyaml_wheel} from ${hcw_pyyaml_base} does not match PYYAML_WHEEL_SHA256 in lab-image/versions.env" >&2
     exit 1
   fi
-  if ! "${COSIGN_BIN}" verify-blob-attestation --type slsaprovenance1 --bundle "${hcw_pyyaml_dir}/${hcw_pyyaml_wheel}.sigstore.json" --new-bundle-format \
+  if ! "${COSIGN_BIN}" verify-blob-attestation --type slsaprovenance1 --bundle "${hcw_pyyaml_dir}/${hcw_pyyaml_wheel}.sigstore.json" \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       --certificate-identity-regexp '^https://github\.com/saulpatinojr/HCW-HybridCloudWorks/\.github/workflows/publish-pyyaml-wheel\.yml@refs/heads/main$' \
       "${hcw_pyyaml_dir}/${hcw_pyyaml_wheel}" >/dev/null; then

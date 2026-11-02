@@ -633,6 +633,7 @@ describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the releas
     'set -euo pipefail',
     'out=""; while [ "$#" -gt 1 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done',
     'printf "%s\\n" "$1" >>"$CURL_STUB_LOG"',
+    '[ "${CURL_STUB_FAIL:-}" != 1 ] || { echo "curl: (22) The requested URL returned error: 404" >&2; exit 22; }',
     `printf '%s' '${WHEEL_BYTES}' >"$out"`,
   ];
   const STAND_IN_COSIGN = [
@@ -687,7 +688,8 @@ describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the releas
     expect(logOf('curl.log').split('\n')).toEqual([`${base}/${wheel}`, `${base}/${wheel}.sigstore.json`]);
     const cosign = logOf('cosign.log');
     expect(cosign).toContain('verify-blob-attestation --type slsaprovenance1 --bundle ');
-    expect(cosign).toContain(`${wheel}.sigstore.json --new-bundle-format --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp ^https://github\\.com/saulpatinojr/HCW-HybridCloudWorks/\\.github/workflows/publish-pyyaml-wheel\\.yml@refs/heads/main$ `);
+    expect(cosign).not.toContain('--new-bundle-format');
+    expect(cosign).toContain(`${wheel}.sigstore.json --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp ^https://github\\.com/saulpatinojr/HCW-HybridCloudWorks/\\.github/workflows/publish-pyyaml-wheel\\.yml@refs/heads/main$ `);
     const install = logOf('uv.log').split('\n').find((line) => line.startsWith('pip install '));
     expect(install).toMatch(/ --find-links \S+ -r /);
     expect(recorded()).toContain(`pyyaml==${pyyamlVersion} --hash=sha256:${WHEEL_SHA256}`);
@@ -719,6 +721,25 @@ describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the releas
     expect(result.stderr).toContain(`${wheel}'s attestation does not verify as built by publish-pyyaml-wheel.yml on main`);
     expect(logOf('uv.log')).not.toContain('pip install');
     expect(inUse()).toBe('');
+  });
+
+  it('refuses a pin for another Python line than this host runs, before any download', () => {
+    const otherLine = withWheel(WHEEL_SHA256).replace(/^BASE_PYTHON_VERSION=.*$/m, 'BASE_PYTHON_VERSION=3.99.1');
+    const result = step(otherLine);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`for the wheel built on CPython 3.99.1 (BASE_PYTHON_VERSION), but this host's PYTHON_VERSION is ${PINNED_PYTHON}, another line`);
+    expect(logOf('curl.log')).toBe('');
+    expect(logOf('uv.log')).not.toContain('pip install');
+    expect(inUse()).toBe('');
+  });
+
+  it('says which file could not be downloaded and where the release is documented, when the download fails', () => {
+    const result = step(withWheel(WHEEL_SHA256), { CURL_STUB_FAIL: '1' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`refusing to run: could not download https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/${tag}/${wheel}; the ${tag} release may not exist yet`);
+    expect(result.stderr).toContain('docs/runbooks/pyyaml-wheel.md');
+    expect(logOf('cosign.log')).toBe('');
+    expect(logOf('uv.log')).not.toContain('pip install');
   });
 
   it('refuses a pin whose PYYAML_VERSION is not the pyyaml line\'s version, or whose SHA256 is not 64 hex', () => {

@@ -98,11 +98,16 @@ timestamps), so building the same pins twice gives two different files. The
 rule is therefore: **the first wheel published for a tag is the wheel for
 that tag.**
 
-- Tag exists with the wheel on it (every re-run, and every unrelated push
-  to `lab-image/Dockerfile`): nothing is built or published. `plan`
-  downloads the published wheel, checks its SHA256 against the release
-  notes, runs `gh attestation verify` on it, and writes the URL and SHA256
-  to the summary under "Already published, nothing changed".
+- Tag exists with both files on it, the wheel and its `.sigstore.json`
+  bundle (every re-run, and every unrelated push to
+  `lab-image/Dockerfile`): nothing is built or published. `plan` downloads
+  both, checks the wheel's SHA256 against the release notes, checks that
+  the bundle is a non-empty Sigstore bundle (cosign is not on the runner,
+  so the offline check itself is the host's), runs `gh attestation verify`
+  on the wheel, and writes the URL and SHA256 to the summary under "Already
+  published, nothing changed". "Published" means both files: a release
+  with the wheel and no bundle is not done, because the host would download
+  the wheel and have nothing to verify it with.
 - Tag exists but its notes name a different source archive than
   `versions.env`: the run fails. A tag is never reused for different
   source; a new PyYAML release gets a new `PYYAML_VERSION` and so a new
@@ -110,8 +115,20 @@ that tag.**
 - The published wheel's SHA256 or attestation does not check out: the run
   fails and says the asset is not the one the workflow published. Nothing
   is replaced; find out what changed it.
-- Tag exists without the wheel (a run that stopped half way): the wheel is
-  built and uploaded into that release.
+- Tag exists but the wheel or the bundle is missing (a run that stopped
+  after the release was made): the wheel is built, whichever file is
+  missing is uploaded (a wheel already there is kept and only the bundle is
+  added), and the release notes are rewritten with this run's notes, so the
+  `wheel-sha256:` line names the wheel that is on the release. Without that
+  rewrite a fresh wheel under the earlier notes would read as tampered at
+  every later run.
+- A failure while the release is being created leaves a **draft**, not a
+  release without the wheel: `gh release create` with files makes a draft
+  release first, uploads the files, then publishes it. A draft has no tag,
+  so the next run sees nothing there and would make a second draft. Delete
+  the draft by hand on the releases page
+  (<https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases>, the
+  draft is marked **Draft**, **Delete** is in its edit page), then re-run.
 - `publish` looks again right before uploading. A wheel that appeared in
   the meantime is compared by SHA256 with the one just built; the same
   bytes are a no-op and different bytes fail the run. `gh release upload`
@@ -167,7 +184,7 @@ is bash on the lab host, not PowerShell**, with cosign at the version
 `group_vars/all.yml` pins and both files downloaded to the current folder:
 
 ```bash
-cosign verify-blob-attestation --type slsaprovenance1 --bundle pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json --new-bundle-format --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '^https://github\.com/saulpatinojr/HCW-HybridCloudWorks/\.github/workflows/publish-pyyaml-wheel\.yml@refs/heads/main$' pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl
+cosign verify-blob-attestation --type slsaprovenance1 --bundle pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '^https://github\.com/saulpatinojr/HCW-HybridCloudWorks/\.github/workflows/publish-pyyaml-wheel\.yml@refs/heads/main$' pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl
 ```
 
 The identity is the workflow's path at `refs/heads/main`: a wheel built by a
