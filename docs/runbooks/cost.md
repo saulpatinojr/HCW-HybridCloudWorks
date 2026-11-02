@@ -67,22 +67,39 @@ else on the page works.
    ```
 
    A browser window opens; pick your account. The terminal then lists your
-   subscriptions.
+   subscriptions. Press Enter at the prompt; the next step picks the right
+   directory itself.
 
-2. Paste this one line. It looks up the Function App's identity, then gives it
-   Cost Management Reader on the application and Platform Management
-   subscriptions:
+2. Sign in again, to the directory (Microsoft Entra tenant) that holds the
+   production subscriptions. An account that belongs to several directories is
+   signed in to its home one first, and Azure then refuses the grant with
+   `InvalidAuthenticationTokenTenant` ("the access token is from the wrong
+   issuer"). This line asks Azure which directory owns the application
+   subscription and signs in there, so no directory id is typed:
 
    ```powershell
-   $p = az functionapp identity show -n func-site-prod-cus-01 -g rg-web-site-prod-cus --subscription sub-app-site-prod-cus --query principalId -o tsv; foreach ($s in 'sub-app-site-prod-cus', 'sub-plat-mgmt-prod-cus') { $id = az account show --subscription $s --query id -o tsv; az role assignment create --assignee-object-id $p --assignee-principal-type ServicePrincipal --role "Cost Management Reader" --scope "/subscriptions/$id" -o none; "$s done" }
+   $t = az account show --subscription sub-app-site-prod-cus --query tenantId -o tsv; az login --tenant $t
+   ```
+
+   If it asks you to pick a subscription, type the number next to
+   `sub-app-site-prod-cus`.
+
+3. Paste this one line. It looks up the Function App's identity, then gives it
+   Cost Management Reader on the application and Platform Management
+   subscriptions. It says `FAILED` for a step that failed, and stops if it
+   cannot find the identity:
+
+   ```powershell
+   $p = az functionapp identity show -n func-site-prod-cus-01 -g rg-web-site-prod-cus --subscription sub-app-site-prod-cus --query principalId -o tsv; if (-not $p) { 'Could not read the Function App identity. Stop and read the red text.' } else { foreach ($s in 'sub-app-site-prod-cus', 'sub-plat-mgmt-prod-cus') { $id = az account show --subscription $s --query id -o tsv; az role assignment create --assignee-object-id $p --assignee-principal-type ServicePrincipal --role "Cost Management Reader" --scope "/subscriptions/$id" -o none; if ($LASTEXITCODE -eq 0) { "$s done" } else { "$s FAILED, see the red text above" } } }
    ```
 
    **What you should see:** `sub-app-site-prod-cus done` and
    `sub-plat-mgmt-prod-cus done`, with no red text. If you see
-   `AuthorizationFailed`, the signed-in account cannot grant roles there; sign
-   in with the subscription's owner and run it again.
+   `InvalidAuthenticationTokenTenant`, step 2 did not take; run it again. If
+   you see `AuthorizationFailed`, the signed-in account cannot grant roles
+   there; sign in with the subscription's owner and run it again.
 
-3. Check the two grants exist:
+4. Check the two grants exist:
 
    ```powershell
    $p = az functionapp identity show -n func-site-prod-cus-01 -g rg-web-site-prod-cus --subscription sub-app-site-prod-cus --query principalId -o tsv; foreach ($s in 'sub-app-site-prod-cus', 'sub-plat-mgmt-prod-cus') { az role assignment list --assignee $p --subscription $s --role "Cost Management Reader" -o json | ConvertFrom-Json | Select-Object roleDefinitionName, @{ n = 'subscription'; e = { $s } } }
@@ -91,7 +108,7 @@ else on the page works.
    **What you should see:** two rows, each `Cost Management Reader`, one per
    subscription.
 
-4. Open the [Cost page](https://hybridcloudworks.com/admin/cost) and press
+5. Open the [Cost page](https://hybridcloudworks.com/admin/cost) and press
    **Refresh** on the Overview tab. A new role can take a few minutes to
    reach the app; if the Azure tab still names the role after ten minutes,
    press Refresh again.
