@@ -225,6 +225,42 @@ host installs PyPI's wheel as before and says so in its log.
   is a typo in `versions.env` or an archive from somewhere other than PyPI.
   Check the hash on PyPI's page for the release; do not delete the release
   to get past it.
+- **"release … has no usable ….whl.sigstore.json"** or **"is not a
+  Sigstore bundle"**: the wheel is on the release but the bundle the host
+  verifies offline is missing, empty or not a bundle. If it is missing,
+  simply re-run the workflow from `main` (**Run workflow** on
+  [its page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/publish-pyyaml-wheel.yml)):
+  `plan` reads the release as incomplete, `publish` keeps the wheel that is
+  there and uploads only the bundle, and rewrites the notes. If an unusable
+  file is there under that name, the workflow will not replace it: remove
+  that one asset by hand on the release's edit page first, then re-run. By
+  hand instead, the same attestation can be fetched from GitHub's API and
+  uploaded under the bundle's name (PowerShell; the first line writes a
+  file named after the wheel's digest in the current folder):
+
+  ```powershell
+  gh attestation download "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl" --repo saulpatinojr/HCW-HybridCloudWorks
+  ```
+
+  ```powershell
+  Get-ChildItem sha256*.jsonl | Rename-Item -NewName pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json
+  ```
+
+  ```powershell
+  gh release upload pyyaml-6.0.3-cp314 --repo saulpatinojr/HCW-HybridCloudWorks pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json
+  ```
+
+  (No `--clobber`: if the upload says the asset exists, the problem is the
+  file under that name, not a missing one.) `gh attestation download`
+  writes JSON Lines, one bundle per line; with the one attestation this
+  workflow makes that is a single line of plain JSON, which the workflow's
+  check reads. Whether cosign accepts it as `--bundle` has not been tried;
+  the re-run is the tested route.
+- **A draft release named like the tag, and runs that keep creating
+  drafts**: a `gh release create` stopped between making the draft and
+  publishing it. Delete the draft on
+  <https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases> (open
+  the one marked **Draft**, its edit page has **Delete**), then re-run.
 
 ## Deleting it when PyYAML ships a wheel
 

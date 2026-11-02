@@ -55,9 +55,22 @@
 #     is never done here; a new PyYAML release gets a new tag.
 #   - The published wheel's provenance does not verify: the run fails, loudly,
 #     because the asset is not the one this workflow published.
-#   - The tag exists without the wheel (a run that stopped half way): the
-#     wheel is built and uploaded into that release.
-#   - Nothing exists: the release is created with both files.
+#   - The tag exists but one of the two files is missing (a run that stopped
+#     after the release was made): "published" means BOTH the wheel and the
+#     bundle are on the release, so this is not the no-op. The wheel is
+#     built, and whichever file is missing is uploaded. A wheel that is
+#     already there is kept (compared by SHA256 with this run's build; a
+#     different file fails the run) and only the bundle is added. After any
+#     upload on this path the release notes are rewritten with this run's
+#     notes, so the `wheel-sha256:` line names the wheel that is actually on
+#     the release; without that, a fresh wheel under old notes would read as
+#     tampered at the next run's check, forever.
+#   - Nothing exists: the release is created with both files. `gh release
+#     create` with assets makes a DRAFT release first, uploads the files,
+#     then publishes it, so a failure in the middle leaves a draft (which
+#     has no tag, so the next run sees "absent" and would make a second
+#     draft) rather than a release without the wheel. A draft is deleted by
+#     hand on the releases page; the runbook says how.
 #   - The `publish` job looks again, with the token it holds, right before it
 #     uploads: an asset that appeared in the meantime is compared by SHA256
 #     with what this run built, and a different file fails the run.
@@ -214,10 +227,15 @@ jobs:
           set -euo pipefail
           release="${RUNNER_TEMP}/release.json"
           if gh api "repos/${REPO}/releases/tags/${TAG}" > "$release" 2> "${RUNNER_TEMP}/release.err"; then
-            if [ "$(jq -r --arg name "$WHEEL" '[.assets[] | select(.name == $name)] | length' "$release")" = "1" ]; then
+            # Both files, or it is not published: a release with the wheel
+            # and no bundle would leave the host with nothing to verify.
+            wheels="$(jq -r --arg name "$WHEEL" '[.assets[] | select(.name == $name)] | length' "$release")"
+            bundles="$(jq -r --arg name "${WHEEL}.sigstore.json" '[.assets[] | select(.name == $name)] | length' "$release")"
+            if [ "$wheels" = "1" ] && [ "$bundles" = "1" ]; then
               state=published
             else
-              state='release-without-wheel'
+              state='release-incomplete'
+              echo "release ${TAG} exists with ${wheels} wheel and ${bundles} bundle; a push to main uploads what is missing"
             fi
           else
             # grep's status is kept, not tested in an `if` (#1429): only a
@@ -269,11 +287,25 @@ jobs:
           set -euo pipefail
           dir="${RUNNER_TEMP}/existing"
           mkdir -p "$dir"
+          bundle="${WHEEL}.sigstore.json"
           gh release download "$TAG" --repo "$REPO" --pattern "$WHEEL" --dir "$dir"
+          gh release download "$TAG" --repo "$REPO" --pattern "$bundle" --dir "$dir"
           sha256="$(sha256sum "${dir}/${WHEEL}" | cut -d ' ' -f 1)"
           recorded="$(jq -r '.body // ""' "${RUNNER_TEMP}/release.json" | sed -n 's/^wheel-sha256: \([0-9a-f]\{64\}\)$/\1/p' | head -n 1)"
           if [ "$recorded" != "$sha256" ]; then
             echo "::error::the wheel on release ${TAG} has SHA256 ${sha256}, but the release notes record ${recorded}: the asset is not the file this workflow published. It is not replaced; find out what changed it"
+            exit 1
+          fi
+          # The bundle the host verifies offline: present, non-empty, and
+          # shaped like a Sigstore bundle (a signed statement and the
+          # material to check it). cosign is not on the runner, so the
+          # offline check itself is the host's; the online one follows.
+          if [ ! -s "${dir}/${bundle}" ]; then
+            echo "::error::release ${TAG} has no usable ${bundle}: the host would download the wheel and have nothing to verify it with. Re-run this workflow after removing the empty asset, or see docs/runbooks/pyyaml-wheel.md"
+            exit 1
+          fi
+          if ! jq -es 'length > 0 and all(has("verificationMaterial") and has("dsseEnvelope"))' "${dir}/${bundle}" > /dev/null; then
+            echo "::error::${bundle} on release ${TAG} is not a Sigstore bundle (no verificationMaterial and dsseEnvelope): the host could not verify the wheel with it. It is not replaced; find out what changed it"
             exit 1
           fi
           if ! gh attestation verify "${dir}/${WHEEL}" --repo "$REPO"; then
@@ -306,8 +338,8 @@ jobs:
           {
             echo "## Dry run: nothing built, nothing published"
             echo
-            if [ "$STATE" = "release-without-wheel" ]; then
-              echo "Release \`${TAG}\` exists without the wheel. A push to main builds it from source archive sha256:${SOURCE_SHA256} and uploads it there as:"
+            if [ "$STATE" = "release-incomplete" ]; then
+              echo "Release \`${TAG}\` exists without the wheel, or without its attestation bundle. A push to main builds the wheel from source archive sha256:${SOURCE_SHA256}, uploads whichever of the two files is missing, and rewrites the notes:"
             else
               echo "A push to main creates release \`${TAG}\` from source archive sha256:${SOURCE_SHA256} with the wheel and its attestation bundle:"
             fi
@@ -519,11 +551,16 @@ jobs:
           EOF
           release="${RUNNER_TEMP}/release-now.json"
           if gh api "repos/${REPO}/releases/tags/${TAG}" > "$release" 2> "${RUNNER_TEMP}/release-now.err"; then
-            existing="$(jq -r --arg name "$WHEEL" '[.assets[] | select(.name == $name)] | length' "$release")"
-            if [ "$existing" = "0" ]; then
-              gh release upload "$TAG" --repo "$REPO" "${dir}/${WHEEL}" "${dir}/${bundle}"
-              echo "outcome=uploaded" >> "$GITHUB_OUTPUT"
+            wheels="$(jq -r --arg name "$WHEEL" '[.assets[] | select(.name == $name)] | length' "$release")"
+            bundles="$(jq -r --arg name "$bundle" '[.assets[] | select(.name == $name)] | length' "$release")"
+            uploaded=0
+            if [ "$wheels" = "0" ]; then
+              gh release upload "$TAG" --repo "$REPO" "${dir}/${WHEEL}"
+              uploaded=1
             else
+              # A wheel is already there: it is the wheel for this tag. The
+              # same bytes as this run's build are a no-op; different bytes
+              # mean a run got in first, and the published file stays.
               mkdir -p "${RUNNER_TEMP}/raced"
               gh release download "$TAG" --repo "$REPO" --pattern "$WHEEL" --dir "${RUNNER_TEMP}/raced"
               raced="$(sha256sum "${RUNNER_TEMP}/raced/${WHEEL}" | cut -d ' ' -f 1)"
@@ -531,7 +568,20 @@ jobs:
                 echo "::error::release ${TAG} gained a ${WHEEL} with SHA256 ${raced} while this run was building one with SHA256 ${WHEEL_SHA256}. The published file stays; this run's file is not uploaded and not attached. Look at the release's history before doing anything else"
                 exit 1
               fi
-              echo "release ${TAG} already carries this exact wheel (sha256:${raced}); nothing uploaded"
+              echo "release ${TAG} already carries this exact wheel (sha256:${raced}); not uploaded again"
+            fi
+            if [ "$bundles" = "0" ]; then
+              gh release upload "$TAG" --repo "$REPO" "${dir}/${bundle}"
+              uploaded=1
+            fi
+            if [ "$uploaded" = 1 ]; then
+              # The notes name the wheel that is on the release now: after an
+              # upload they are this run's, so `wheel-sha256:` is the hash
+              # the next run's check reads against the asset.
+              gh release edit "$TAG" --repo "$REPO" --notes-file "$notes"
+              echo "outcome=uploaded" >> "$GITHUB_OUTPUT"
+            else
+              echo "release ${TAG} already carries both files; nothing uploaded"
               echo "outcome=already-there" >> "$GITHUB_OUTPUT"
             fi
           else

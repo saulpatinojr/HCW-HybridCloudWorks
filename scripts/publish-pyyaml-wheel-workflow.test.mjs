@@ -258,7 +258,6 @@ describe('publish-pyyaml-wheel.yml: never a replacement', () => {
     expect(step.run).toMatch(
       /missing=0\n\s*grep -q 'HTTP 404' "\$\{RUNNER_TEMP\}\/release-now\.err" \|\| missing=\$\?\n\s*if \[ "\$missing" != 0 \]; then\n\s*echo "::error::could not read release \$\{TAG\}[^\n]*\n\s*exit 1\n\s*fi\n\s*gh release create/
     );
-    expect(step.run).toContain('gh release upload "$TAG" --repo "$REPO" "${dir}/${WHEEL}" "${dir}/${bundle}"');
     expect(code).not.toMatch(/^\s*(?:el)?if\s[^\n]*\bgrep\b/m);
   });
 
@@ -268,6 +267,49 @@ describe('publish-pyyaml-wheel.yml: never a replacement', () => {
     expect(step.run).toContain('The published file stays; this run\'s file is not uploaded and not attached');
     expect(step.run).toMatch(/not uploaded and not attached[^\n]*\n\s*exit 1/);
     expect(step.run).toContain('echo "outcome=already-there" >> "$GITHUB_OUTPUT"');
+  });
+
+  // Review finding F3 (2026-11-02): a release with the wheel and no bundle was "published" for good, and the host 404ed on the bundle.
+  it('counts both the wheel and the bundle, in plan and in publish, before calling a release published or complete', () => {
+    const wheelFilter = `jq -r --arg name "$WHEEL" '[.assets[] | select(.name == $name)] | length'`;
+    const existing = stepOf('plan', 'Is the wheel already published?');
+    expect(existing.run).toContain(`wheels="$(${wheelFilter} "$release")"`);
+    expect(existing.run).toContain(`bundles="$(jq -r --arg name "\${WHEEL}.sigstore.json" '[.assets[] | select(.name == $name)] | length' "$release")"`);
+    expect(existing.run).toContain('if [ "$wheels" = "1" ] && [ "$bundles" = "1" ]; then\n    state=published\n  else\n    state=\'release-incomplete\'');
+    expect(code).not.toContain('release-without-wheel');
+    const release = stepOf('publish', 'Create the release or upload into it, never replacing an asset');
+    expect(release.run).toContain(`wheels="$(${wheelFilter} "$release")"`);
+    expect(release.run).toContain(`bundles="$(jq -r --arg name "$bundle" '[.assets[] | select(.name == $name)] | length' "$release")"`);
+    // Each file is uploaded on its own, only when its count is 0, never over an existing one.
+    expect(release.run).toContain('if [ "$wheels" = "0" ]; then\n    gh release upload "$TAG" --repo "$REPO" "${dir}/${WHEEL}"\n    uploaded=1');
+    expect(release.run).toContain('if [ "$bundles" = "0" ]; then\n    gh release upload "$TAG" --repo "$REPO" "${dir}/${bundle}"\n    uploaded=1');
+    expect((release.run.match(/gh release upload /g) ?? []).length).toBe(2);
+  });
+
+  // Review finding F2 (2026-11-02): a wheel uploaded into an existing release under the earlier run's notes read as tampered at every later check.
+  it('rewrites the release notes after an upload into an existing release, so wheel-sha256 names the wheel that is on it', () => {
+    const release = stepOf('publish', 'Create the release or upload into it, never replacing an asset');
+    expect(release.run).toMatch(
+      /if \[ "\$uploaded" = 1 \]; then\n(?:\s*#[^\n]*\n)*\s*gh release edit "\$TAG" --repo "\$REPO" --notes-file "\$notes"\n\s*echo "outcome=uploaded" >> "\$GITHUB_OUTPUT"/
+    );
+    // The edit comes after both uploads and only on that path; the create path writes the notes with the files.
+    const body = release.run;
+    expect(body.indexOf('gh release edit')).toBeGreaterThan(body.lastIndexOf('gh release upload'));
+    expect(body.indexOf('gh release edit')).toBeLessThan(body.indexOf('gh release create'));
+    expect((body.match(/gh release edit /g) ?? []).length).toBe(1);
+    expect(body).not.toMatch(/gh release edit [^\n]*--(tag|target|draft|prerelease|latest)/);
+  });
+
+  it('on the no-op path downloads the bundle too, refuses an empty or non-bundle file, and keeps the online check', () => {
+    const verify = stepOf('plan', 'Already published, verify it and say so');
+    expect(verify.run).toContain('gh release download "$TAG" --repo "$REPO" --pattern "$bundle" --dir "$dir"');
+    expect(verify.run).toContain('if [ ! -s "${dir}/${bundle}" ]; then');
+    expect(verify.run).toMatch(/has no usable \$\{bundle\}[^\n]*\n\s*exit 1/);
+    expect(verify.run).toContain(`jq -es 'length > 0 and all(has("verificationMaterial") and has("dsseEnvelope"))' "\${dir}/\${bundle}"`);
+    expect(verify.run).toMatch(/is not a Sigstore bundle[^\n]*\n\s*exit 1/);
+    const order = ['gh release download "$TAG" --repo "$REPO" --pattern "$bundle"', 'if [ ! -s "${dir}/${bundle}" ]', 'jq -es', 'gh attestation verify'].map((s) => verify.run.indexOf(s));
+    expect(order.every((at) => at !== -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
   it('records the source archive and the wheel SHA256 in the release notes on lines the next run reads back', () => {
