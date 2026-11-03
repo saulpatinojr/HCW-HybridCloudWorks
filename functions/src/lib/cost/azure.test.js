@@ -203,6 +203,10 @@ describe('summarizeBudgets', () => {
     };
     expect(summarizeBudgets(listed, sub).name).toBe('site-monthly-budget');
     expect(summarizeBudgets(listed, `${sub}/resourceGroups/RG-AI`).name).toBe('site-foundry-monthly-budget');
+    // A leading slash on only one side does not change the match.
+    expect(summarizeBudgets(listed, sub.slice(1)).name).toBe('site-monthly-budget');
+    const bare = { value: listed.value.map((b) => ({ ...b, id: b.id.slice(1) })) };
+    expect(summarizeBudgets(bare, sub).name).toBe('site-monthly-budget');
     // Only a group's budget in the list: the subscription has none of its own.
     expect(summarizeBudgets({ value: [listed.value[0]] }, sub)).toBeNull();
   });

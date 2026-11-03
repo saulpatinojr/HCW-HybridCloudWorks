@@ -251,9 +251,12 @@ export function totalOf(payload) {
  * A budget without an id is kept: there is nothing to tell it by.
  */
 function belongsTo(budget, scope) {
-  const id = String(budget?.id ?? '').toLowerCase();
+  // Compared without leading or trailing slashes, so "/subscriptions/…" and
+  // "subscriptions/…" are the same path whichever side carries the slash.
+  const trim = (value) => String(value ?? '').toLowerCase().replace(/^\/+|\/+$/g, '');
+  const id = trim(budget?.id);
   if (!id || !scope) return true;
-  return id.startsWith(`${String(scope).toLowerCase().replace(/\/+$/, '')}/providers/microsoft.consumption/budgets/`);
+  return id.startsWith(`${trim(scope)}/providers/microsoft.consumption/budgets/`);
 }
 
 /**
