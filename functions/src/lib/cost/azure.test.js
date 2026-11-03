@@ -216,7 +216,7 @@ function fakeArm({ refuse = {} } = {}) {
       };
     }
     const body = JSON.parse(init.body);
-    if (body.timeframe === 'TheLastMonth') {
+    if (body.timeframe === 'Custom') {
       return {
         ok: true,
         status: 200,
@@ -349,7 +349,7 @@ describe('living within Cost Management’s rate limits (2026-11-03)', () => {
   const lastMonthBody = { properties: { columns: [{ name: 'PreTaxCost' }], rows: [[34.32]] } };
   const answer = (url, init) => {
     if (url.includes('/budgets?')) return ok(budgetBody);
-    return JSON.parse(init.body).timeframe === 'TheLastMonth' ? ok(lastMonthBody) : ok(usagePayload);
+    return JSON.parse(init.body).timeframe === 'Custom' ? ok(lastMonthBody) : ok(usagePayload);
   };
 
   it('reads the wait from the QPU header, then Retry-After, then a default, and caps it', () => {
@@ -399,7 +399,8 @@ describe('living within Cost Management’s rate limits (2026-11-03)', () => {
     const fetchImpl = vi.fn(async () => throttled());
     const reader = createAzureCostReader({ env: { COST_SCOPES: ONE_SCOPE }, fetchImpl, credential, sleep });
     const result = await reader.readAll({ now: NOW });
-    expect(fetchImpl).toHaveBeenCalledTimes(MAX_ATTEMPTS);
+    // The budgets list and this month's costs, each tried MAX_ATTEMPTS times.
+    expect(fetchImpl).toHaveBeenCalledTimes(2 * MAX_ATTEMPTS);
     expect(result.available).toBe(false);
     expect(result.reason).toContain('HTTP 429');
     expect(result.reason).not.toContain('Cost Management Reader');
@@ -411,7 +412,8 @@ describe('living within Cost Management’s rate limits (2026-11-03)', () => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 403, headers: { get: () => null }, json: async () => ({}) }));
     const reader = createAzureCostReader({ env: { COST_SCOPES: ONE_SCOPE }, fetchImpl, credential, sleep });
     await reader.readAll({ now: NOW });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // Once each for the budgets and this month's costs: a 403 is never retried.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(sleep).not.toHaveBeenCalled();
   });
 
@@ -421,7 +423,7 @@ describe('living within Cost Management’s rate limits (2026-11-03)', () => {
     const previous = { scopes: [{ id: 'app', error: null, previousMonth: 30.5, previousMonthOf: '2026-10', readAt: '2026-11-03T00:00:00Z' }] };
     const result = await reader.readAll({ previous, now: NOW });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(fetchImpl.mock.calls.some(([, init]) => init.body && JSON.parse(init.body).timeframe === 'TheLastMonth')).toBe(false);
+    expect(fetchImpl.mock.calls.some(([, init]) => init.body && JSON.parse(init.body).timeframe === 'Custom')).toBe(false);
     expect(result.scopes[0]).toMatchObject({ previousMonth: 30.5, previousMonthOf: '2026-10' });
 
     // A total kept from a different month is asked for again.
@@ -462,7 +464,7 @@ describe('saying which read failed and why (2026-11-03, HTTP 400)', () => {
     text: async () => JSON.stringify(body),
     json: async () => body,
   });
-  const isLastMonth = (init) => init?.body && JSON.parse(init.body).timeframe === 'TheLastMonth';
+  const isLastMonth = (init) => init?.body && JSON.parse(init.body).timeframe === 'Custom';
   const lastMonthBody = { properties: { columns: [{ name: 'PreTaxCost' }], rows: [[34.32]] } };
   const budgetBody = { value: [{ name: 'b', properties: { amount: 150, currentSpend: { amount: 12 } } }] };
 
@@ -509,7 +511,69 @@ describe('saying which read failed and why (2026-11-03, HTTP 400)', () => {
     const result = await reader.readAll({ now: NOW });
     expect(result.available).toBe(false);
     expect(result.reason).toContain('HTTP 400 BadRequest to the read of this month’s costs');
-    // Nothing else is asked once the month itself cannot be read.
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // The budgets list, then the month; last month is not asked once the month cannot be read.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('what the live page showed on 2026-11-03', () => {
+  const ONE = JSON.stringify([{ id: 'app', label: 'App', scope: `/subscriptions/${APP}`, kind: 'subscription' }]);
+  const NOW = new Date('2026-11-03T04:30:00Z');
+  const ok = (body) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => body });
+  const throttled = () => ({
+    ok: false,
+    status: 429,
+    headers: { get: () => null },
+    text: async () => JSON.stringify({ error: { code: '429', message: 'PRIVATE-AZURE-TEXT' } }),
+    json: async () => ({}),
+  });
+  const budgetBody = {
+    value: [{ name: 'site-monthly-budget', properties: { amount: 150, currentSpend: { amount: 4.5 }, forecastSpend: { amount: 38 } } }],
+  };
+  const sleep = async () => {};
+
+  it('shows the budget’s own month when the cost query is throttled, with a note', async () => {
+    const fetchImpl = vi.fn(async (url) => (url.includes('/budgets?') ? ok(budgetBody) : throttled()));
+    const reader = createAzureCostReader({ env: { COST_SCOPES: ONE }, fetchImpl, credential, sleep });
+    const result = await reader.readAll({ now: NOW });
+    expect(result.available).toBe(true);
+    const scope = result.scopes[0];
+    expect(scope).toMatchObject({ monthToDate: 4.5, error: null, noteCode: 'throttled', byService: [], daily: [] });
+    expect(scope.budget).toMatchObject({ amount: 150, currentSpend: 4.5, forecastSpend: 38 });
+    expect(scope.note).toContain("This month's spend is the budget's own figure");
+    // Last month is not asked while the allowance is spent.
+    expect(fetchImpl.mock.calls.filter(([, init]) => init?.body && JSON.parse(init.body).timeframe === 'Custom')).toHaveLength(0);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE-AZURE-TEXT');
+  });
+
+  it('says HTTP 429 once, not "429 429", when Azure’s code is the status', () => {
+    expect(describeArmStatus(429, { azureCode: '429', step: STEPS.monthToDate })).toContain('(HTTP 429 to the read of this month');
+    expect(describeArmStatus(400, { azureCode: 'BadRequest' })).toContain('HTTP 400 BadRequest');
+  });
+
+  it('asks for last month by its dates, not with TheLastMonth', async () => {
+    const fetchImpl = vi.fn(async (url, init) => {
+      if (url.includes('/budgets?')) return ok(budgetBody);
+      const body = JSON.parse(init.body);
+      if (body.timeframe === 'Custom') return ok({ properties: { columns: [{ name: 'PreTaxCost' }], rows: [[34.32]] } });
+      return ok(usagePayload);
+    });
+    const reader = createAzureCostReader({ env: { COST_SCOPES: ONE }, fetchImpl, credential });
+    const scope = (await reader.readAll({ now: NOW })).scopes[0];
+    const lastMonthCall = fetchImpl.mock.calls.map(([, init]) => init?.body && JSON.parse(init.body)).find((b) => b?.timeframe === 'Custom');
+    expect(lastMonthCall).toEqual({
+      type: 'ActualCost',
+      timeframe: 'Custom',
+      timePeriod: { from: '2026-10-01T00:00:00Z', to: '2026-10-31T23:59:59Z' },
+      dataset: { granularity: 'None', aggregation: { totalCost: { name: 'PreTaxCost', function: 'Sum' } } },
+    });
+    expect(fetchImpl.mock.calls.some(([, init]) => init?.body && JSON.parse(init.body).timeframe === 'TheLastMonth')).toBe(false);
+    expect(scope).toMatchObject({ previousMonth: 34.32, previousMonthOf: '2026-10', note: null });
+
+    // February has its own length.
+    fetchImpl.mockClear();
+    await reader.readAll({ now: new Date('2027-03-02T00:00:00Z') });
+    const feb = fetchImpl.mock.calls.map(([, init]) => init?.body && JSON.parse(init.body)).find((b) => b?.timeframe === 'Custom');
+    expect(feb.timePeriod).toEqual({ from: '2027-02-01T00:00:00Z', to: '2027-02-28T23:59:59Z' });
   });
 });
