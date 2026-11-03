@@ -53,6 +53,9 @@ describe('forecasts and totals', () => {
     ]);
     expect(presentAi({ providers: [card] }, { scopes: [] }, null).providers[0]).toMatchObject({ monthToDate: null, budget: null });
     expect(presentAi(null, null, 5)).toMatchObject({ budgetUsd: 5, providers: [] });
+    // Before the first reading the AI month is zeros, never missing (the 2026-11-02 crash).
+    expect(presentAi(null, null, 5).monthToDate).toEqual({ costUsd: 0, calls: 0, unpricedCalls: 0, tokens: 0, byProvider: [], bySource: [] });
+    expect(presentAi({ providers: [] }, null, null).monthToDate.calls).toBe(0);
   });
 });
 
