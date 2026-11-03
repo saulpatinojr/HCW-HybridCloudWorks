@@ -95,7 +95,7 @@ export const COMMANDS = Object.freeze({
     }),
     Object.freeze({ shell: 'bash', command: "grep -n '^FROM' lab-image/Dockerfile" }),
   ]),
-  inspectBase: both('docker buildx imagetools inspect python:3.14.10-slim-trixie'),
+  inspectBase: both('docker buildx imagetools inspect python:3.15.2-slim-trixie'),
   mirror: Object.freeze([
     Object.freeze({
       shell: 'PowerShell',
@@ -188,9 +188,11 @@ export default function DockerBuildingImagesPage() {
 
       <GuideSection id="targets" title="One Dockerfile, two targets">
         <p className={PROSE}>
-          The file has five stages. Three of them, <Code>fetch</Code>, <Code>vendor</Code> and{' '}
-          <Code>mirror</Code>, only build: they download, verify and prepare, and nothing from them
-          ships except what a later stage copies out. The other two are the images people use:
+          The file has six stages. Four of them only build: <Code>fetch</Code>, <Code>vendor</Code>{' '}
+          and <Code>mirror</Code> download, verify and prepare, and <Code>pyyaml-wheel</Code> holds
+          the one Python wheel <Code>fetch</Code> builds from source, so a workflow can take the
+          file out; nothing from them ships except what a later stage copies out. The other two are
+          the images people use:
         </p>
         <ul className={`${PROSE} list-disc space-y-2 pl-5`}>
           <li>
@@ -223,12 +225,13 @@ export default function DockerBuildingImagesPage() {
       <GuideSection id="digest" title="Base images pinned by digest">
         <p className={PROSE}>
           Both stages that start from an image, <Code>fetch</Code> and <Code>runner</Code>, start
-          from the official <Code>python:3.14.10-slim-trixie</Code> (CPython 3.14.10 on Debian 13),
+          from the official <Code>python:3.15.2-slim-trixie</Code> (CPython 3.15.2 on Debian 13),
           written as the tag, an <Code>@</Code>, and the image’s index digest. A tag can be moved to
           a different image at any time; a digest is the hash of the content, so it cannot. As the
           Dockerfile’s own header puts it, the tag beside the digest is documentation: Docker
-          resolves the digest and ignores the tag. The other three stages start from an earlier
-          stage, which this lists alongside them:
+          resolves the digest and ignores the tag. Three of the other stages start from an earlier
+          stage, and <Code>pyyaml-wheel</Code> starts from <Code>scratch</Code>, Docker’s empty
+          image, which pulls nothing; this lists them all:
         </p>
         <Commands commands={COMMANDS.fromLines} testId="commands-from" />
         <p className={PROSE}>
@@ -236,8 +239,8 @@ export default function DockerBuildingImagesPage() {
           Dockerfile, and as <Code>BASE_IMAGE</Code> and <Code>BASE_DIGEST</Code> in{' '}
           <SourceLink href={SOURCE_LINKS.versions}>versions.env</SourceLink>. The publish workflow’s
           first step reads every <Code>FROM</Code> and fails the build unless each one is an earlier
-          stage or exactly that image and digest, tag included. A bare tag, a different digest or a{' '}
-          <Code>--platform</Code> flag on the line all fail it.
+          stage, the word <Code>scratch</Code>, or exactly that image and digest, tag included. A
+          bare tag, a different digest or a <Code>--platform</Code> flag on the line all fail it.
         </p>
         <p className={PROSE}>
           To see what the tag points at today, ask the registry. The <Code>Digest</Code> line it
