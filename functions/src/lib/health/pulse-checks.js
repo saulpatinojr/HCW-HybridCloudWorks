@@ -202,7 +202,7 @@ export const checkPublishingFailures = countCheck((s) => s.publishFailureCount, 
 export const checkQueueSla = countCheck((s) => s.queueBreachCount, {
   zero: 'Nothing has waited in the review queue for more than 24 hours.',
   some: (n, s) =>
-    `${plural(n, 'item')} waiting for review more than 24 hours; the oldest item waiting to go live is ${s.oldestStagedHours ?? 0} h old.`,
+    `${plural(n, 'item')} waiting for review more than 24 hours; the oldest item waiting to go live ${s.oldestStagedHours === null ? 'has no recorded time' : `is ${s.oldestStagedHours ?? 0} h old`}.`,
 });
 
 export const checkOrphanedImages = countCheck((s) => s.orphanedGeneratedImages, {

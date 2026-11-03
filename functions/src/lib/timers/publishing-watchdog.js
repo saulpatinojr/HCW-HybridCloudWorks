@@ -11,6 +11,8 @@ import { digestDateOf, mergeDigest, raiseAlert, toMillis } from './workflow-reco
 
 const STALE_SCHEDULED_MS = 45 * 60 * 1000;
 const STAGED_TOO_LONG_MS = 6 * 60 * 60 * 1000;
+/** The most candidates one run reads; at the bound the count is a floor. */
+export const STAGED_CANDIDATES_BOUND = 1000;
 
 export function createPublishingWatchdog({ store, now = () => new Date(), log = {} }) {
   async function run() {
@@ -23,17 +25,23 @@ export function createPublishingWatchdog({ store, now = () => new Date(), log = 
       'SELECT TOP 100 c.id FROM c WHERE c.Live = false AND IS_DEFINED(c.scheduledPublishDate) AND c.scheduledPublishDate != null AND c.scheduledPublishDate <= @threshold',
       [{ name: '@threshold', value: staleThreshold }]
     );
-    const nonLive = await store.queryDocs(
+    // Published, not live, no schedule (#1516). The status, Live and
+    // schedule filters are in the query, so the rows are only candidates and
+    // the count below is exact up to the bound. This used to read TOP 250 of
+    // every non-live item in no order and filter in code, so above 250 it
+    // was whichever 250 came back. `Live` may be absent, which `c.Live =
+    // false` alone left out. The age stays in code: migrated items can carry
+    // a Firestore-style `{ seconds }` time, which a query cannot compare.
+    const candidates = await store.queryDocs(
       'content',
-      'SELECT TOP 250 c.id, c.contentStatus, c.scheduledPublishDate, c.publishedAt, c.reviewedAt, c.updatedAt FROM c WHERE c.Live = false',
+      `SELECT TOP ${STAGED_CANDIDATES_BOUND} c.id, c.publishedAt, c.reviewedAt, c.updatedAt FROM c WHERE c.contentStatus = 'published' AND (NOT IS_DEFINED(c.Live) OR c.Live = false) AND (NOT IS_DEFINED(c.scheduledPublishDate) OR IS_NULL(c.scheduledPublishDate) OR c.scheduledPublishDate = '')`,
       []
     );
-    const stagedTooLong = (nonLive || []).filter((data) => {
-      if (data.contentStatus !== 'published') return false;
-      if (data.scheduledPublishDate) return false;
+    const stagedTooLong = (candidates || []).filter((data) => {
       const tsMs = toMillis(data.publishedAt || data.reviewedAt || data.updatedAt || null);
       return tsMs > 0 && tsMs <= stagedThresholdMs;
     });
+    const stagedBounded = (candidates || []).length >= STAGED_CANDIDATES_BOUND;
 
     const overdueCount = (overdue || []).length;
     await mergeDigest(store, digestDateOf(at), {
@@ -41,6 +49,7 @@ export function createPublishingWatchdog({ store, now = () => new Date(), log = 
         lastRunAt: at.toISOString(),
         overdueScheduledCount: overdueCount,
         stagedTooLongCount: stagedTooLong.length,
+        stagedTooLongBounded: stagedBounded,
       },
     });
 

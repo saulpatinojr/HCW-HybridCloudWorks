@@ -138,6 +138,17 @@ export function countNoun(count, singular, pluralWord) {
   return `${n} ${n === 1 ? singular : plural}`;
 }
 
+/** The /queue line about items waiting to go live (#1516). */
+function stagedLine(oldestStaged, waiting) {
+  if (oldestStaged === null && waiting > 0) {
+    return `${countNoun(waiting, 'item is', 'items are')} waiting to go live, with no recorded time to age ${waiting === 1 ? 'it' : 'them'} by.`;
+  }
+  if ((oldestStaged ?? 0) > 0) {
+    return `The oldest item staged for publishing has been sitting for about ${countNoun(oldestStaged, 'hour')}.`;
+  }
+  return 'Nothing is currently stuck in staging.';
+}
+
 export function formatOpsStatus(snapshot = {}) {
   const r = snapshot.readiness || {};
   const s = snapshot.operationalSignals || {};
@@ -280,14 +291,14 @@ export function createTelegramBot({
     queue: async () => {
       const s = (await snapshot()).operationalSignals || {};
       const breaches = s.queueBreachCount ?? 0;
-      const oldestStaged = s.oldestStagedHours ?? 0;
+      // null: items wait but none carries a time (#1516); not "nothing stuck".
+      const oldestStaged = s.oldestStagedHours;
+      const waiting = Number(s.stagedWaitingCount) || 0;
       const lines = [
         breaches > 0
           ? `${countNoun(breaches, 'item has', 'items have')} been waiting in the review queue for more than a day.`
           : 'The review queue is healthy — nothing has been waiting more than a day.',
-        oldestStaged > 0
-          ? `The oldest item staged for publishing has been sitting for about ${countNoun(oldestStaged, 'hour')}.`
-          : 'Nothing is currently stuck in staging.',
+        stagedLine(oldestStaged, waiting),
       ];
       // The Phase 5 loop's worklist: what forge_ready is waiting on /approve,
       // newest first, with the commands inline so approval is one reply (T-607).

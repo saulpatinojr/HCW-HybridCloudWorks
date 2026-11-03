@@ -168,6 +168,15 @@ function getDigestDocLabel(digestDate) {
   return ` (digest doc: ${digestDate})`;
 }
 
+/**
+ * The waiting-to-go-live tile's word: degraded past three days, unknown when
+ * items wait but none carries a time (#1516), healthy otherwise.
+ */
+function stagedAgeStatus(hours) {
+  if (hours === null) return 'unknown';
+  return (hours || 0) > 72 ? 'degraded' : 'healthy';
+}
+
 function formatHours(value) {
   if (!value) return '0h';
   return `${value}h`;
@@ -337,6 +346,7 @@ export function publishingMetrics(publishingOps, publishingWatchdog) {
     failed: publishingOps?.failed || 0,
     overdue: publishingWatchdog?.overdueScheduledCount || 0,
     stagedTooLong: publishingWatchdog?.stagedTooLongCount || 0,
+    stagedTooLongBounded: Boolean(publishingWatchdog?.stagedTooLongBounded),
   };
 }
 
@@ -390,8 +400,12 @@ export function PublishingOpsCard({ publishingOps, publishingWatchdog, digestFor
           <span title="Marked published but not live, with no schedule, for more than six hours (the watchdog's count)">
             Published, Not Live (6 h+)
           </span>
-          <Badge variant={getBadgeVariantByCount(metrics.stagedTooLong, 'outline')}>
+          <Badge
+            variant={getBadgeVariantByCount(metrics.stagedTooLong, 'outline')}
+            data-testid="published-not-live-count"
+          >
             {metrics.stagedTooLong}
+            {metrics.stagedTooLongBounded ? '+' : ''}
           </Badge>
         </div>
         <p className="text-xs text-muted-foreground">
@@ -603,16 +617,17 @@ export function OperationalSignalsCard({ signals }) {
           </div>
           <div className="p-3 border rounded-lg">
             <p className="text-muted-foreground text-xs">Oldest Waiting to Go Live</p>
-            <p className="text-xl font-bold">{formatHours(signals.oldestStagedHours)}</p>
+            <p className="text-xl font-bold" data-testid="oldest-staged-age">
+              {signals.oldestStagedHours === null
+                ? 'no recorded time'
+                : formatHours(signals.oldestStagedHours)}
+            </p>
             {Number.isFinite(signals.stagedWaitingCount) ? (
               <p className="text-muted-foreground text-xs" data-testid="staged-waiting-count">
                 {signals.stagedWaitingCount} approved or published, not live, not scheduled
               </p>
             ) : null}
-            <StatusBadge
-              system={(signals.oldestStagedHours || 0) > 72 ? 'degraded' : 'healthy'}
-              size="xs"
-            />
+            <StatusBadge system={stagedAgeStatus(signals.oldestStagedHours)} size="xs" />
           </div>
           <div className="p-3 border rounded-lg">
             <p className="text-muted-foreground text-xs">Open Alert Age</p>
