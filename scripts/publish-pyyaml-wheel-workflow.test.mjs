@@ -114,12 +114,31 @@ describe('publish-pyyaml-wheel.yml: what each job holds', () => {
     expect(code).not.toMatch(/pull-requests: write|packages: write|issues: write/);
   });
 
-  it('runs build and publish never on a pull request, and publish only from main after plan found no wheel', () => {
-    expect(build).toContain("if: github.event_name != 'pull_request' && needs.plan.outputs.state != 'published'");
+  it('runs build and publish never on a pull request, skips build on the repair path, and publishes only from main after plan found no complete release', () => {
+    expect(build).toContain("if: github.event_name != 'pull_request' && needs.plan.outputs.state != 'published' && needs.plan.outputs.repair != 'true'");
     expect(publish).toContain('needs: [plan, build]');
+    // `!cancelled()` so a build skipped on purpose (repair) does not skip publish; every other build outcome still does.
     expect(publish).toMatch(
-      /if: >-\n\s+needs\.plan\.outputs\.state != 'published' && \(\n\s+github\.event_name == 'push' \|\|\n\s+\(github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\)\)/
+      /if: >-\n\s+!cancelled\(\) && needs\.plan\.result == 'success' &&\n\s+\(needs\.build\.result == 'success' \|\| \(needs\.build\.result == 'skipped' && needs\.plan\.outputs\.repair == 'true'\)\) &&\n\s+needs\.plan\.outputs\.state != 'published' && \(\n\s+github\.event_name == 'push' \|\|\n\s+\(github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\)\)/
     );
+    expect(publish).not.toMatch(/always\(\)[^\n]*needs\./);
+  });
+
+  it('on the repair path leaves the new-wheel steps out and runs the two repair steps, and never both', () => {
+    const steps = jobs.find((j) => j.key === 'publish').steps;
+    const newWheel = ['Take the wheel from the build job', 'The wheel is the one the build job hashed', "Attest the wheel's build provenance", 'Keep the attestation bundle beside the wheel', 'Create the release or upload into it, never replacing an asset'];
+    for (const name of newWheel) expect(stepOf('publish', name).if, name).toBe("needs.plan.outputs.repair != 'true'");
+    for (const name of ['Repair, part one, the wheel that is on the release', 'Repair, part two, its attestation becomes the bundle']) {
+      expect(stepOf('publish', name).if, name).toBe("needs.plan.outputs.repair == 'true'");
+    }
+    // The notes, the read-back and the summary run on both paths and read the hash from whichever path ran.
+    for (const name of ['Write the release notes', 'The published pair verifies the way the host will read it', 'Published']) {
+      const step = stepOf('publish', name);
+      expect(step.if, name).toBeUndefined();
+      expect(step.env.WHEEL_SHA256, name).toBe('${{ needs.build.outputs.sha256 || steps.existing-wheel.outputs.sha256 }}');
+    }
+    expect(stepOf('publish', 'Published').env.OUTCOME).toBe('${{ steps.release.outputs.outcome || steps.repair.outputs.outcome }}');
+    expect(steps.map((s) => s.name).indexOf('Write the release notes')).toBeLessThan(steps.map((s) => s.name).indexOf('Repair, part two, its attestation becomes the bundle'));
   });
 
   it('reads the App secret in the publish job only, under the automation environment, scoped to contents, masked, and revoked whatever happens', () => {
@@ -137,10 +156,12 @@ describe('publish-pyyaml-wheel.yml: what each job holds', () => {
     const revoke = stepOf('publish', 'Revoke the installation token');
     expect(revoke.if).toBe("always() && steps.token.outputs.token != ''");
     expect(revoke.run).toBe('node scripts/github-app-token.mjs --revoke');
-    // The App token reaches gh in the release step and nowhere else; the read-back uses the ordinary token.
+    // The App token reaches gh in the two steps that write the release and nowhere else; the reads use the ordinary token.
     const appTokenSteps = jobs.find((j) => j.key === 'publish').steps.filter((s) => s.env.GH_TOKEN === '${{ steps.token.outputs.token }}').map((s) => s.name);
-    expect(appTokenSteps).toEqual(['Create the release or upload into it, never replacing an asset']);
-    expect(stepOf('publish', 'The published wheel verifies the way the host will read it').env.GH_TOKEN).toBe('${{ github.token }}');
+    expect(appTokenSteps).toEqual(['Repair, part two, its attestation becomes the bundle', 'Create the release or upload into it, never replacing an asset']);
+    for (const name of ['Repair, part one, the wheel that is on the release', 'The published pair verifies the way the host will read it']) {
+      expect(stepOf('publish', name).env.GH_TOKEN, name).toBe('${{ github.token }}');
+    }
   });
 
   it('fails, naming the variable and the secret, when the App is not configured, rather than warning and passing', () => {
@@ -227,11 +248,28 @@ describe('publish-pyyaml-wheel.yml: the build and the attestation', () => {
     expect(publish).toContain('bundle="${WHEEL}.sigstore.json"');
   });
 
-  it('reads the published wheel back with the ordinary token and verifies it with gh attestation verify --repo, the way the host will', () => {
-    const step = stepOf('publish', 'The published wheel verifies the way the host will read it');
-    expect(step.run).toContain('gh release download "$TAG" --repo "$REPO" --pattern "$WHEEL"');
-    expect(step.run).toContain('gh attestation verify "${RUNNER_TEMP}/readback/${WHEEL}" --repo "$REPO"');
+  // CodeRabbit on #1506 (comment 4449208082): `gh attestation verify --repo` alone reads the API's copy, not the file the host downloads.
+  it('reads both files back with the ordinary token and verifies the wheel with the downloaded bundle and the exact signer identity, the way the host will', () => {
+    const step = stepOf('publish', 'The published pair verifies the way the host will read it');
+    expect(step.run).toContain('gh release download "$TAG" --repo "$REPO" --pattern "$WHEEL" --dir "$readback"');
+    expect(step.run).toContain('gh release download "$TAG" --repo "$REPO" --pattern "$bundle" --dir "$readback"');
     expect(step.run).toContain('if [ "$sha256" != "$WHEEL_SHA256" ]; then');
+    expect(step.run).toContain('test -s "${readback}/${bundle}"');
+    expect(step.run).toContain('gh attestation verify "${readback}/${WHEEL}" --repo "$REPO" --bundle "${readback}/${bundle}" --cert-identity "$SIGNER_IDENTITY"');
+  });
+
+  it('pins one exact signer identity, this workflow on main, the same the host requires, and never the prefix-matched --signer-workflow', () => {
+    expect(code).toContain('SIGNER_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/publish-pyyaml-wheel.yml@refs/heads/main');
+    expect(code).not.toContain('--signer-workflow');
+    expect(code).not.toContain('--cert-identity-regex');
+    // Every verify in the file is the --bundle form with the identity: none reads the API's copy alone.
+    // The commands, not the mention in the release notes text.
+    const verifies = code.match(/^\s*(?:if ! )?gh attestation verify [^\n]*/gm) ?? [];
+    expect(verifies.length).toBe(3);
+    for (const line of verifies) expect(line).toMatch(/--repo "\$REPO" --bundle "[^"]+" --cert-identity "\$SIGNER_IDENTITY"(?:; then)?$/);
+    // The host's anchored regexp names the same identity.
+    const bootstrap = readFileSync(join(REPO, 'lab-host', 'bootstrap.sh'), 'utf8');
+    expect(bootstrap).toContain("--certificate-identity-regexp '^https://github\\.com/saulpatinojr/HCW-HybridCloudWorks/\\.github/workflows/publish-pyyaml-wheel\\.yml@refs/heads/main$'");
   });
 
   it('writes the asset URL, the SHA256 and the attestation to the step summary', () => {
@@ -261,43 +299,87 @@ describe('publish-pyyaml-wheel.yml: never a replacement', () => {
     expect(code).not.toMatch(/^\s*(?:el)?if\s[^\n]*\bgrep\b/m);
   });
 
-  it('compares an asset that appeared during the run by SHA256, and fails on a different file instead of replacing it', () => {
+  it('compares a wheel that appeared during the run by SHA256, and fails on a different file instead of replacing it', () => {
     const step = stepOf('publish', 'Create the release or upload into it, never replacing an asset');
-    expect(step.run).toContain('if [ "$raced" != "$WHEEL_SHA256" ]; then');
+    expect(step.run).toContain('if [ "$raced" != "$BUILT_SHA256" ]; then');
     expect(step.run).toContain('The published file stays; this run\'s file is not uploaded and not attached');
     expect(step.run).toMatch(/not uploaded and not attached[^\n]*\n\s*exit 1/);
     expect(step.run).toContain('echo "outcome=already-there" >> "$GITHUB_OUTPUT"');
+    // A wheel that arrived without its bundle is the repair case, which this run did not prepare for: nothing is uploaded.
+    expect(step.run).toMatch(/elif \[ "\$bundles" = "0" \]; then\n(?:\s*#[^\n]*\n)*\s*echo "::error::release \$\{TAG\} gained a \$\{WHEEL\} without its bundle[^\n]*\n\s*exit 1/);
   });
 
   // Review finding F3 (2026-11-02): a release with the wheel and no bundle was "published" for good, and the host 404ed on the bundle.
-  it('counts both the wheel and the bundle, in plan and in publish, before calling a release published or complete', () => {
+  it('counts both the wheel and the bundle, in plan and in publish, before calling a release published, and uploads both or neither on the new-wheel path', () => {
     const wheelFilter = `jq -r --arg name "$WHEEL" '[.assets[] | select(.name == $name)] | length'`;
     const existing = stepOf('plan', 'Is the wheel already published?');
     expect(existing.run).toContain(`wheels="$(${wheelFilter} "$release")"`);
     expect(existing.run).toContain(`bundles="$(jq -r --arg name "\${WHEEL}.sigstore.json" '[.assets[] | select(.name == $name)] | length' "$release")"`);
-    expect(existing.run).toContain('if [ "$wheels" = "1" ] && [ "$bundles" = "1" ]; then\n    state=published\n  else\n    state=\'release-incomplete\'');
+    expect(existing.run).toContain('if [ "$wheels" = "1" ] && [ "$bundles" = "1" ]; then\n    state=published');
     expect(code).not.toContain('release-without-wheel');
     const release = stepOf('publish', 'Create the release or upload into it, never replacing an asset');
     expect(release.run).toContain(`wheels="$(${wheelFilter} "$release")"`);
     expect(release.run).toContain(`bundles="$(jq -r --arg name "$bundle" '[.assets[] | select(.name == $name)] | length' "$release")"`);
-    // Each file is uploaded on its own, only when its count is 0, never over an existing one.
-    expect(release.run).toContain('if [ "$wheels" = "0" ]; then\n    gh release upload "$TAG" --repo "$REPO" "${dir}/${WHEEL}"\n    uploaded=1');
-    expect(release.run).toContain('if [ "$bundles" = "0" ]; then\n    gh release upload "$TAG" --repo "$REPO" "${dir}/${bundle}"\n    uploaded=1');
+    // Neither file there: both go up, then the notes; never over an existing one.
+    expect(release.run).toContain('elif [ "$wheels" = "0" ]; then\n    gh release upload "$TAG" --repo "$REPO" "${dir}/${WHEEL}"\n    gh release upload "$TAG" --repo "$REPO" "${dir}/${bundle}"\n    gh release edit "$TAG" --repo "$REPO" --notes-file "$notes"\n    echo "outcome=uploaded" >> "$GITHUB_OUTPUT"');
     expect((release.run.match(/gh release upload /g) ?? []).length).toBe(2);
+    expect((release.run.match(/gh release edit /g) ?? []).length).toBe(1);
+    expect(code).not.toMatch(/gh release edit [^\n]*--(tag|target|draft|prerelease|latest)/);
+  });
+
+  // CodeRabbit on #1506 (comment 4449208095): a bundle whose wheel is gone must stop the run, in plan and again in publish.
+  it('fails closed, in plan and in publish, when the release has the bundle but not the wheel, naming the by-hand step', () => {
+    const existing = stepOf('plan', 'Is the wheel already published?');
+    expect(existing.run).toMatch(/elif \[ "\$wheels" = "0" \] && \[ "\$bundles" != "0" \]; then\n(?:\s*#[^\n]*\n)*\s*echo "::error::release \$\{TAG\} has \$\{WHEEL\}\.sigstore\.json but no \$\{WHEEL\}[^\n]*Remove that bundle asset by hand[^\n]*\n\s*exit 1/);
+    const release = stepOf('publish', 'Create the release or upload into it, never replacing an asset');
+    expect(release.run).toMatch(/if \[ "\$wheels" = "0" \] && \[ "\$bundles" != "0" \]; then\n(?:\s*#[^\n]*\n)*\s*echo "::error::release \$\{TAG\} has \$\{bundle\} but no \$\{WHEEL\}[^\n]*Nothing is uploaded[^\n]*\n\s*exit 1/);
+    // The fail-closed branch comes before any upload in both.
+    expect(release.run.indexOf('&& [ "$bundles" != "0" ]')).toBeLessThan(release.run.indexOf('gh release upload'));
+  });
+
+  // CodeRabbit on #1506 (comment 4449208095): the wheel on the release is the wheel; a rebuild is a different file, so the bundle comes from its own attestation.
+  it('repairs a release that has the wheel but not the bundle from the existing wheel\'s own attestation, verified with the bundle before it is uploaded, and rewrites the notes', () => {
+    expect(stepOf('plan', 'Is the wheel already published?').run).toContain('elif [ "$wheels" = "1" ]; then\n    state=\'release-incomplete\'\n    repair=true');
+    expect(plan).toContain('repair: ${{ steps.existing.outputs.repair }}');
+    const one = stepOf('publish', 'Repair, part one, the wheel that is on the release');
+    expect(one.id).toBe('existing-wheel');
+    expect(one.run).toContain('gh release download "$TAG" --repo "$REPO" --pattern "$WHEEL" --dir "$repairdir"');
+    expect(one.run).toContain('echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"');
+    const two = stepOf('publish', 'Repair, part two, its attestation becomes the bundle');
+    expect(two.id).toBe('repair');
+    expect(two.env.EXISTING_SHA256).toBe('${{ steps.existing-wheel.outputs.sha256 }}');
+    expect(two.run).toContain('gh attestation download "${repairdir}/${WHEEL}" --repo "$REPO"');
+    // One bundle per line of sha256-<digest>.jsonl; the first line is the bundle object the host reads.
+    expect(two.run).toContain('jsonl="$(find "$repairdir" -maxdepth 1 -name "sha256*${EXISTING_SHA256}.jsonl" | head -n 1)"');
+    expect(two.run).toMatch(/if \[ -z "\$jsonl" \] \|\| \[ ! -s "\$jsonl" \]; then\n\s*echo "::error::GitHub's API holds no attestation[^\n]*\n\s*exit 1/);
+    expect(two.run).toContain('head -n 1 "$jsonl" > "${repairdir}/${bundle}"');
+    const order = [
+      'head -n 1 "$jsonl"',
+      'gh attestation verify "${repairdir}/${WHEEL}" --repo "$REPO" --bundle "${repairdir}/${bundle}" --cert-identity "$SIGNER_IDENTITY"',
+      'if [ "$bundles" != "0" ]; then',
+      'gh release upload "$TAG" --repo "$REPO" "${repairdir}/${bundle}"',
+      'gh release edit "$TAG" --repo "$REPO" --notes-file "${RUNNER_TEMP}/notes.md"',
+      'echo "outcome=repaired" >> "$GITHUB_OUTPUT"',
+    ].map((s) => two.run.indexOf(s));
+    expect(order.every((at) => at !== -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect((two.run.match(/gh release upload /g) ?? []).length).toBe(1);
+    expect(two.run).not.toContain('${dir}/');
+    expect(two.run).not.toContain('BUILT_SHA256');
   });
 
   // Review finding F2 (2026-11-02): a wheel uploaded into an existing release under the earlier run's notes read as tampered at every later check.
-  it('rewrites the release notes after an upload into an existing release, so wheel-sha256 names the wheel that is on it', () => {
-    const release = stepOf('publish', 'Create the release or upload into it, never replacing an asset');
-    expect(release.run).toMatch(
-      /if \[ "\$uploaded" = 1 \]; then\n(?:\s*#[^\n]*\n)*\s*gh release edit "\$TAG" --repo "\$REPO" --notes-file "\$notes"\n\s*echo "outcome=uploaded" >> "\$GITHUB_OUTPUT"/
-    );
-    // The edit comes after both uploads and only on that path; the create path writes the notes with the files.
-    const body = release.run;
-    expect(body.indexOf('gh release edit')).toBeGreaterThan(body.lastIndexOf('gh release upload'));
-    expect(body.indexOf('gh release edit')).toBeLessThan(body.indexOf('gh release create'));
-    expect((body.match(/gh release edit /g) ?? []).length).toBe(1);
-    expect(body).not.toMatch(/gh release edit [^\n]*--(tag|target|draft|prerelease|latest)/);
+  it('writes the notes for the wheel that will be on the release, and rewrites them after every upload into an existing release', () => {
+    const notes = stepOf('publish', 'Write the release notes');
+    expect(notes.run).toContain('test -n "$WHEEL_SHA256"');
+    expect(notes.run).toContain('"source-sha256: ${SOURCE_SHA256}" "wheel-sha256: ${WHEEL_SHA256}"');
+    expect(notes.run).toContain('> "${RUNNER_TEMP}/notes.md"');
+    expect(notes.run).toContain('--bundle ${bundle} --cert-identity ${SIGNER_IDENTITY}');
+    const edits = jobs.find((j) => j.key === 'publish').steps.filter((s) => (s.run ?? '').includes('gh release edit ')).map((s) => s.name);
+    expect(edits).toEqual(['Repair, part two, its attestation becomes the bundle', 'Create the release or upload into it, never replacing an asset']);
+    // The create path hands the same file to gh release create, so the notes are never written twice.
+    expect(stepOf('publish', 'Create the release or upload into it, never replacing an asset').run).toContain('notes="${RUNNER_TEMP}/notes.md"');
+    expect(code.match(/"wheel-sha256: \$\{WHEEL_SHA256\}"/g) ?? []).toHaveLength(1);
   });
 
   it('on the no-op path downloads the bundle too, refuses an empty or non-bundle file, and keeps the online check', () => {
@@ -313,9 +395,9 @@ describe('publish-pyyaml-wheel.yml: never a replacement', () => {
   });
 
   it('records the source archive and the wheel SHA256 in the release notes on lines the next run reads back', () => {
-    const create = stepOf('publish', 'Create the release or upload into it, never replacing an asset');
-    expect(create.run).toContain('source-sha256: ${SOURCE_SHA256}');
-    expect(create.run).toContain('wheel-sha256: ${WHEEL_SHA256}');
+    const notes = stepOf('publish', 'Write the release notes');
+    expect(notes.run).toContain('source-sha256: ${SOURCE_SHA256}');
+    expect(notes.run).toContain('wheel-sha256: ${WHEEL_SHA256}');
     const check = stepOf('plan', 'The existing release was built from the source archive versions.env names');
     expect(check.if).toBe("steps.existing.outputs.state != 'absent'");
     expect(check.run).toContain("sed -n 's/^source-sha256: \\([0-9a-f]\\{64\\}\\)$/\\1/p'");
@@ -325,7 +407,8 @@ describe('publish-pyyaml-wheel.yml: never a replacement', () => {
     const verify = stepOf('plan', 'Already published, verify it and say so');
     expect(verify.if).toBe("steps.existing.outputs.state == 'published'");
     expect(verify.run).toContain("sed -n 's/^wheel-sha256: \\([0-9a-f]\\{64\\}\\)$/\\1/p'");
-    expect(verify.run).toContain('gh attestation verify "${dir}/${WHEEL}" --repo "$REPO"');
+    expect(verify.run).toContain('gh attestation verify "${dir}/${WHEEL}" --repo "$REPO" --bundle "${dir}/${bundle}" --cert-identity "$SIGNER_IDENTITY"');
+    expect(verify.run).toMatch(/does not verify \$\{WHEEL\} as built by \$\{SIGNER_IDENTITY\}[^\n]*\n\s*exit 1/);
     expect(verify.run).toContain('## Already published, nothing changed');
   });
 

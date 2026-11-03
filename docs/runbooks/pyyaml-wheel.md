@@ -101,13 +101,17 @@ that tag.**
 - Tag exists with both files on it, the wheel and its `.sigstore.json`
   bundle (every re-run, and every unrelated push to
   `lab-image/Dockerfile`): nothing is built or published. `plan` downloads
-  both, checks the wheel's SHA256 against the release notes, checks that
-  the bundle is a non-empty Sigstore bundle (cosign is not on the runner,
-  so the offline check itself is the host's), runs `gh attestation verify`
-  on the wheel, and writes the URL and SHA256 to the summary under "Already
-  published, nothing changed". "Published" means both files: a release
-  with the wheel and no bundle is not done, because the host would download
-  the wheel and have nothing to verify it with.
+  both, checks the wheel's SHA256 against the release notes, and verifies
+  the wheel **with that downloaded bundle** (`gh attestation verify
+  --bundle`, requiring the exact signer identity
+  `https://github.com/saulpatinojr/HCW-HybridCloudWorks/.github/workflows/publish-pyyaml-wheel.yml@refs/heads/main`),
+  which is the pair the host checks. The copy of the attestation in
+  GitHub's API is not what is verified, because that copy could be fine
+  while the file on the release is stale or wrong. Then it writes the URL
+  and SHA256 to the summary under "Already published, nothing changed".
+  "Published" means both files: a release with the wheel and no bundle is
+  not done, because the host would download the wheel and have nothing to
+  verify it with.
 - Tag exists but its notes name a different source archive than
   `versions.env`: the run fails. A tag is never reused for different
   source; a new PyYAML release gets a new `PYYAML_VERSION` and so a new
@@ -115,13 +119,22 @@ that tag.**
 - The published wheel's SHA256 or attestation does not check out: the run
   fails and says the asset is not the one the workflow published. Nothing
   is replaced; find out what changed it.
-- Tag exists but the wheel or the bundle is missing (a run that stopped
-  after the release was made): the wheel is built, whichever file is
-  missing is uploaded (a wheel already there is kept and only the bundle is
-  added), and the release notes are rewritten with this run's notes, so the
-  `wheel-sha256:` line names the wheel that is on the release. Without that
-  rewrite a fresh wheel under the earlier notes would read as tampered at
-  every later run.
+- Tag exists with the wheel but not the bundle (a run that stopped between
+  the two uploads): nothing is rebuilt, because a rebuilt wheel would be a
+  different file and the wheel already on the release is the wheel for
+  that tag. The `build` job is skipped and `publish` repairs the release:
+  it downloads the existing wheel, fetches that wheel's own attestation
+  from GitHub's API (`gh attestation download`, which writes one Sigstore
+  bundle per line of a `.jsonl` file; the first line is the same bundle
+  object the attest action writes), verifies the wheel with it the same
+  way, uploads it as the bundle, and rewrites the release notes so the
+  `wheel-sha256:` line names the wheel that is on the release.
+- Tag exists with the bundle but not the wheel: the run **fails closed**,
+  in `plan` and again in `publish`, because a new wheel would not be the
+  file that bundle attests and the host checks the pair offline. This is
+  the one case left for a person; "When it fails" below says what to do.
+- Tag exists with neither file: the wheel is built and both files are
+  uploaded, and the notes are rewritten.
 - A failure while the release is being created leaves a **draft**, not a
   release without the wheel: `gh release create` with files makes a draft
   release first, uploads the files, then publishes it. A draft has no tag,
@@ -149,7 +162,11 @@ the owner's workstation. Each line is complete as written.
    gh release download pyyaml-6.0.3-cp314 --repo saulpatinojr/HCW-HybridCloudWorks --pattern pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl --dir "$env:TEMP\pyyaml-wheel"
    ```
 
-   You should see no output and the file in the folder. `release not found`
+   ```powershell
+   gh release download pyyaml-6.0.3-cp314 --repo saulpatinojr/HCW-HybridCloudWorks --pattern pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json --dir "$env:TEMP\pyyaml-wheel"
+   ```
+
+   You should see no output and both files in the folder. `release not found`
    means no run has published that tag yet: open
    [the workflow's runs](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/publish-pyyaml-wheel.yml)
    and read the latest summary.
@@ -165,18 +182,28 @@ the owner's workstation. Each line is complete as written.
    file on the release is not the file the run hashed; stop and read the
    release's history on its page before anything else.
 
-3. Its provenance, read from GitHub's attestations API:
+3. Its provenance, checked with the bundle that is on the release (the
+   pair the host checks), requiring the exact signer identity:
 
    ```powershell
-   gh attestation verify "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl" --repo saulpatinojr/HCW-HybridCloudWorks
+   gh attestation verify "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl" --repo saulpatinojr/HCW-HybridCloudWorks --bundle "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json" --cert-identity https://github.com/saulpatinojr/HCW-HybridCloudWorks/.github/workflows/publish-pyyaml-wheel.yml@refs/heads/main
    ```
 
    Success prints `Verification succeeded!` (or `✓ Verification succeeded!`)
    and names `.github/workflows/publish-pyyaml-wheel.yml` as the signer
-   workflow. `No attestations found` means the file is not one this
-   workflow attested. GitHub documents the command on
+   workflow. A failure naming the issuer or the identity means the bundle
+   on the release does not attest this wheel, or was made by another
+   workflow. `--bundle` makes `gh` read that file instead of the copy of
+   the attestation in GitHub's API; `--cert-identity` compares the whole
+   identity, so a workflow whose path merely starts the same way cannot
+   pass (`--signer-workflow` matched a prefix in `gh` before 2.102.0,
+   [GHSA-wjmr-j3rp-mh2g](https://github.com/cli/cli/security/advisories/GHSA-wjmr-j3rp-mh2g)).
+   GitHub documents the command on
    [Verifying attestations offline](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/verify-attestations-offline)
-   and the surrounding pages.
+   and the surrounding pages. Checked on 2026-11-02 against the lab image's
+   own attestation: the same command verified it with its downloaded
+   bundle and the lab image workflow's identity, and failed with this
+   workflow's identity, as it should.
 
 Offline, with the bundle and no API call, the way the host already checks
 the add-on images (`lab-host/ansible/roles/addons/tasks/main.yml`). **This
@@ -200,8 +227,9 @@ host installs PyPI's wheel as before and says so in its log.
 
 ## When it fails
 
-- **"the GitHub App that writes releases is not configured"**: the wheel
-  was built and attested but not published. The `MANIFEST_APP_ID` variable
+- **"the GitHub App that writes releases is not configured"**: nothing was
+  published (on the new-wheel path the wheel was built and attested, on
+  the repair path nothing was fetched yet). The `MANIFEST_APP_ID` variable
   and the `MANIFEST_APP_PRIVATE_KEY` secret are the ones the pin pull
   requests use; they live on the repository's Actions settings page
   (<https://github.com/saulpatinojr/HCW-HybridCloudWorks/settings/secrets/actions>
@@ -225,37 +253,29 @@ host installs PyPI's wheel as before and says so in its log.
   is a typo in `versions.env` or an archive from somewhere other than PyPI.
   Check the hash on PyPI's page for the release; do not delete the release
   to get past it.
-- **"release … has no usable ….whl.sigstore.json"** or **"is not a
-  Sigstore bundle"**: the wheel is on the release but the bundle the host
-  verifies offline is missing, empty or not a bundle. If it is missing,
-  simply re-run the workflow from `main` (**Run workflow** on
-  [its page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/publish-pyyaml-wheel.yml)):
-  `plan` reads the release as incomplete, `publish` keeps the wheel that is
-  there and uploads only the bundle, and rewrites the notes. If an unusable
-  file is there under that name, the workflow will not replace it: remove
-  that one asset by hand on the release's edit page first, then re-run. By
-  hand instead, the same attestation can be fetched from GitHub's API and
-  uploaded under the bundle's name (PowerShell; the first line writes a
-  file named after the wheel's digest in the current folder):
-
-  ```powershell
-  gh attestation download "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl" --repo saulpatinojr/HCW-HybridCloudWorks
-  ```
-
-  ```powershell
-  Get-ChildItem sha256*.jsonl | Rename-Item -NewName pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json
-  ```
-
-  ```powershell
-  gh release upload pyyaml-6.0.3-cp314 --repo saulpatinojr/HCW-HybridCloudWorks pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json
-  ```
-
-  (No `--clobber`: if the upload says the asset exists, the problem is the
-  file under that name, not a missing one.) `gh attestation download`
-  writes JSON Lines, one bundle per line; with the one attestation this
-  workflow makes that is a single line of plain JSON, which the workflow's
-  check reads. Whether cosign accepts it as `--bundle` has not been tried;
-  the re-run is the tested route.
+- **The release has the wheel but no `….whl.sigstore.json`** (the run
+  summary or the releases page shows one asset): re-run the workflow from
+  `main` (**Run workflow** on
+  [its page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/publish-pyyaml-wheel.yml)).
+  That is the repair path: `build` is skipped, `publish` downloads the
+  wheel that is there, fetches its own attestation from GitHub's API with
+  `gh attestation download`, verifies the pair, uploads the bundle and
+  rewrites the notes. No file is uploaded by hand.
+- **"… has no usable ….whl.sigstore.json"**, **"is not a Sigstore
+  bundle"** or **"does not verify … as built by …"**: a file is there
+  under the bundle's name but it is empty, not a bundle, or does not attest
+  this wheel. The workflow never replaces an asset, so remove that one
+  asset by hand first (the release's edit page,
+  <https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/edit/pyyaml-6.0.3-cp314>,
+  the **x** beside the file), then re-run: with the wheel alone on the
+  release, the repair path above fetches the right bundle for it.
+- **"release … has ….whl.sigstore.json but no ….whl"** (`plan` or
+  `publish`): the wheel was removed and its bundle stayed. The workflow
+  fails closed here on purpose, because a new wheel would be a different
+  file from the one that bundle attests, and the host checks the pair
+  offline. This is the one repair a person does: remove the bundle asset
+  by hand on the same edit page, then re-run, which builds a wheel and
+  publishes a fresh pair.
 - **A draft release named like the tag, and runs that keep creating
   drafts**: a `gh release create` stopped between making the draft and
   publishing it. Delete the draft on
