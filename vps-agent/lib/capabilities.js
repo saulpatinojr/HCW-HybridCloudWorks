@@ -148,9 +148,10 @@ export const CAPABILITIES = {
   },
 
   // Syntax-checks an Ansible playbook. No inventory, no remote hosts.
-  // ansible-core 2.21 on the runner image (lab-image/versions.env), which
-  // carries ansible-core alone and no collections: a task naming a module
-  // outside ansible.builtin fails with `couldn't resolve module/action`.
+  // ansible-core on the runner image (ANSIBLE_CORE_VERSION in
+  // lab-image/versions.env), which carries ansible-core alone and no
+  // collections: a task naming a module outside ansible.builtin fails with
+  // `couldn't resolve module/action`.
   // ansible-core creates ANSIBLE_LOCAL_TEMP (/tmp/run/ansible in the image)
   // before it reads anything, so the job needs the tmpfs; ANSIBLE_HOME moves
   // ~/.ansible there too, because the image's HOME is on the read-only root
