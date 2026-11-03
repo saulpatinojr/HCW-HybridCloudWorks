@@ -20,6 +20,7 @@ import {
   retryAfterMs,
   rowsOf,
   summarizeBudgets,
+  withSpendAtLeast,
   summarizeUsage,
   totalOf,
   usageDateOf,
@@ -212,6 +213,21 @@ describe('summarizeBudgets', () => {
   });
 });
 
+describe('withSpendAtLeast', () => {
+  const budget = { name: 'site-monthly-budget', amount: 150, currentSpend: 0, forecastSpend: null, percentUsed: 0, percentForecast: null };
+
+  it('raises a lagging budget to the queried spend, so the bar and the alerts see it', () => {
+    expect(withSpendAtLeast(budget, 7.33)).toEqual({ ...budget, currentSpend: 7.33, percentUsed: 4.9, spendSource: 'query' });
+  });
+
+  it("keeps Azure's figure when it is the same or higher, and passes no budget through", () => {
+    const ahead = { ...budget, currentSpend: 9, percentUsed: 6 };
+    expect(withSpendAtLeast(ahead, 7.33)).toEqual({ ...ahead, spendSource: 'budget' });
+    expect(withSpendAtLeast(ahead, null)).toEqual({ ...ahead, spendSource: 'budget' });
+    expect(withSpendAtLeast(null, 7.33)).toBeNull();
+  });
+});
+
 describe('describeArmStatus', () => {
   it('names the role for a refusal and says what the others mean', () => {
     expect(describeArmStatus(403)).toContain('Cost Management Reader');
@@ -224,7 +240,7 @@ describe('describeArmStatus', () => {
 });
 
 /** A fake ARM: answers by path, records every request, and can refuse one scope. */
-function fakeArm({ refuse = {} } = {}) {
+function fakeArm({ refuse = {}, budgetSpend = 12 } = {}) {
   const calls = [];
   const fetchImpl = vi.fn(async (url, init) => {
     calls.push({ url, init });
@@ -237,7 +253,7 @@ function fakeArm({ refuse = {} } = {}) {
         ok: true,
         status: 200,
         json: async () => ({
-          value: [{ name: 'b', properties: { amount: 150, currentSpend: { amount: 12 }, forecastSpend: { amount: 30 } } }],
+          value: [{ name: 'b', properties: { amount: 150, currentSpend: { amount: budgetSpend }, forecastSpend: { amount: 30 } } }],
         }),
       };
     }
@@ -257,6 +273,14 @@ function fakeArm({ refuse = {} } = {}) {
 const credential = { getToken: vi.fn(async () => ({ token: 'tok' })) };
 
 describe('createAzureCostReader', () => {
+  it("measures the budget bar by the queried month when Azure's budget figure lags", async () => {
+    const arm = fakeArm({ budgetSpend: 0 });
+    const reader = createAzureCostReader({ env: { COST_SCOPES: SCOPES }, fetchImpl: arm.fetchImpl, credential });
+    const [app] = (await reader.readAll()).scopes;
+    expect(app.monthToDate).toBe(5);
+    expect(app.budget).toMatchObject({ currentSpend: 5, percentUsed: 3.3, forecastSpend: 30, spendSource: 'query' });
+  });
+
   it('reads every scope with the identity token and the documented api-versions', async () => {
     const arm = fakeArm();
     const reader = createAzureCostReader({ env: { COST_SCOPES: SCOPES }, fetchImpl: arm.fetchImpl, credential });
@@ -275,7 +299,7 @@ describe('createAzureCostReader', () => {
       previousMonth: 34.32,
       error: null,
     });
-    expect(app.budget.amount).toBe(150);
+    expect(app.budget).toMatchObject({ amount: 150, currentSpend: 12, percentUsed: 8, spendSource: 'budget' });
     expect(app.daily).toHaveLength(2);
     // Three calls a scope: budgets, this month by day and service, last month's total.
     expect(arm.calls).toHaveLength(9);
