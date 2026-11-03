@@ -237,6 +237,15 @@ const SNAPSHOTS = {
       orphanedGeneratedImages: 1,
     },
   }),
+  'items waiting with no recorded time': snapshot({
+    operationalSignals: {
+      queueBreachCount: 4,
+      oldestStagedHours: null,
+      stagedWaitingCount: 1,
+      publishFailureCount: 0,
+      orphanedGeneratedImages: 0,
+    },
+  }),
   'broken links': withDigest({
     linkRot: { checked: 40, broken: 2, sampleBroken: [{ url: 'https://x/y', status: 404 }] },
   }),

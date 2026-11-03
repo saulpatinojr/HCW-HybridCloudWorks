@@ -96,6 +96,10 @@ export function toMillis(value) {
   if (value instanceof Date) return value.getTime();
   if (typeof value.toMillis === 'function') return value.toMillis();
   if (typeof value.toDate === 'function') return value.toDate().getTime();
+  // A migrated Firestore time stored as plain JSON: { seconds, nanoseconds }
+  // or { _seconds, _nanoseconds } (#1516).
+  const seconds = value.seconds ?? value._seconds;
+  if (typeof seconds === 'number') return seconds * 1000;
   const parsed = Date.parse(String(value));
   return Number.isNaN(parsed) ? 0 : parsed;
 }

@@ -7,7 +7,7 @@ import {
   getRejectionReferenceDate,
   deletionOrigin,
 } from './content-cleanup.js';
-import { createPublishingWatchdog } from './publishing-watchdog.js';
+import { STAGED_CANDIDATES_BOUND, createPublishingWatchdog } from './publishing-watchdog.js';
 import { createLinkCheck, collectLiveLinkTargets, probeUrl } from './link-check.js';
 import { createCertReverify, parseExpiryMs, isCredlyUrl } from './cert-reverify.js';
 import {
@@ -597,29 +597,66 @@ describe('content cleanup', () => {
 });
 
 describe('publishing watchdog', () => {
+  it('ages a migrated Firestore-style time, and marks the count a floor at the bound (#1516)', async () => {
+    const seconds = (ms) => Math.floor((NOW.getTime() + ms) / 1000);
+    const store = memStore({}, (c, q) =>
+      q.includes('scheduledPublishDate <= @threshold')
+        ? []
+        : [
+            { id: 'm1', updatedAt: { _seconds: seconds(-30 * H), _nanoseconds: 0 } },
+            { id: 'm2', publishedAt: { seconds: seconds(-2 * H), nanoseconds: 0 } },
+          ]
+    );
+    expect(await createPublishingWatchdog({ store, now }).run()).toEqual({
+      overdueScheduledCount: 0,
+      stagedTooLongCount: 1,
+    });
+
+    const full = memStore({}, (c, q) =>
+      q.includes('scheduledPublishDate <= @threshold')
+        ? []
+        : Array.from({ length: STAGED_CANDIDATES_BOUND }, (_, i) => ({ id: `p${i}`, publishedAt: iso(-8 * H) }))
+    );
+    await createPublishingWatchdog({ store: full, now }).run();
+    expect(full.data.workflow_digests.get('2026-08-21').publishingWatchdog).toMatchObject({
+      stagedTooLongCount: STAGED_CANDIDATES_BOUND,
+      stagedTooLongBounded: true,
+    });
+    // The alert says its count is a floor too.
+    expect(full.data.workflow_alerts.get('publishing-watchdog-2026-08-21T12')).toMatchObject({
+      stagedTooLongCount: STAGED_CANDIDATES_BOUND,
+      stagedTooLongBounded: true,
+    });
+  });
+
+
   it('records counts in the digest and raises a critical alert for overdue schedules', async () => {
+    // The status, Live and schedule filters are the query's now (#1516), so
+    // the store returns only published, not-live, unscheduled candidates;
+    // the age is still judged in code.
     const store = memStore({}, (c, q) =>
       q.includes('scheduledPublishDate <= @threshold')
         ? [{ id: 's1' }]
         : [
-            { id: 'p1', contentStatus: 'published', publishedAt: iso(-7 * H) },
-            { id: 'p2', contentStatus: 'published', publishedAt: iso(-1 * H) },
-            {
-              id: 'p3',
-              contentStatus: 'published',
-              scheduledPublishDate: iso(1 * H),
-              updatedAt: iso(-20 * H),
-            },
-            { id: 'p4', contentStatus: 'approved', updatedAt: iso(-20 * H) },
+            { id: 'p1', publishedAt: iso(-7 * H) },
+            { id: 'p2', publishedAt: iso(-1 * H) },
           ]
     );
     const r = await createPublishingWatchdog({ store, now }).run();
     expect(r).toEqual({ overdueScheduledCount: 1, stagedTooLongCount: 1 });
     expect(store.queryDocs.mock.calls[0][2][0].value).toBe(iso(-45 * 60 * 1000));
+    // Both reads treat an item with no Live field as not live (#1516).
+    expect(store.queryDocs.mock.calls[0][1]).toContain('NOT IS_DEFINED(c.Live) OR c.Live = false');
+    const candidates = store.queryDocs.mock.calls[1][1];
+    expect(candidates).toContain("c.contentStatus = 'published'");
+    expect(candidates).toContain('NOT IS_DEFINED(c.Live) OR c.Live = false');
+    expect(candidates).toContain('NOT IS_DEFINED(c.scheduledPublishDate)');
+    expect(candidates).toContain(`TOP ${STAGED_CANDIDATES_BOUND}`);
     expect(store.data.workflow_digests.get('2026-08-21').publishingWatchdog).toEqual({
       lastRunAt: NOW.toISOString(),
       overdueScheduledCount: 1,
       stagedTooLongCount: 1,
+      stagedTooLongBounded: false,
     });
     expect(store.data.workflow_alerts.get('publishing-watchdog-2026-08-21T12')).toMatchObject({
       alertType: 'publishing_pipeline_stalled_items',

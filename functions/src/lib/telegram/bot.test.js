@@ -234,6 +234,31 @@ describe('alert actions', () => {
   });
 });
 
+describe('/queue waiting-to-go-live line (#1516)', () => {
+  const queueReply = async (operationalSignals) => {
+    const { bot, send } = makeBot({
+      snapshot: vi.fn(async () => ({ readiness: {}, alerts: [], digest: null, operationalSignals })),
+    });
+    await bot.handleUpdate(message('/queue'));
+    return send.mock.calls[0][0];
+  };
+
+  it('says items are waiting with no time, not that nothing is stuck', async () => {
+    const reply = await queueReply({ queueBreachCount: 0, oldestStagedHours: null, stagedWaitingCount: 1 });
+    expect(reply).toContain('1 item is waiting to go live, with no recorded time to age it by.');
+    expect(reply).not.toContain('Nothing is currently stuck in staging.');
+  });
+
+  it('keeps the age line and the all-clear as they were', async () => {
+    expect(await queueReply({ oldestStagedHours: 30, stagedWaitingCount: 2 })).toContain(
+      'The oldest item staged for publishing has been sitting for about 30 hours.'
+    );
+    expect(await queueReply({ oldestStagedHours: 0, stagedWaitingCount: 0 })).toContain(
+      'Nothing is currently stuck in staging.'
+    );
+  });
+});
+
 describe('/queue staged listing (T-607)', () => {
   it('lists forge_ready items with grade and an inline /approve command', async () => {
     const { bot, send } = makeBot({

@@ -78,6 +78,12 @@ function opsStore() {
         const ids = params?.[0]?.value || [];
         return ids.filter((id) => id === 'c-exists').map((id) => ({ id }));
       }
+      if (container === 'content' && query.includes('NOT IS_STRING(c.updatedAt)')) {
+        // The waiting items the ordered read cannot see (#1516): none here.
+        expect(query).toContain('TOP 50');
+        expect(query).toContain("(NOT IS_STRING(c.updatedAt) OR c.updatedAt = '')");
+        return [];
+      }
       if (container === 'content') {
         // The oldest not-live Approved or Published item (#1512): the filter
         // and the order are in the query, so the store returns one row.
@@ -85,7 +91,8 @@ function opsStore() {
         expect(query).toContain('NOT IS_DEFINED(c.Live) OR c.Live = false');
         // Never ORDER BY a field a row may lack (public-reads.js): a missing
         // or null updatedAt must not sort first and show the tile as 0 h.
-        expect(query).toContain('IS_STRING(c.updatedAt) ORDER BY c.updatedAt ASC');
+        // An empty string is not a time: it would sort first and hide the oldest.
+        expect(query).toContain("IS_STRING(c.updatedAt) AND c.updatedAt > '' ORDER BY c.updatedAt ASC");
         // Scheduled for later is not stuck.
         expect(query).toContain('c.scheduledPublishDate <= @now');
         // `@now` is the build's own clock (the cache tests move it).
@@ -519,6 +526,60 @@ describe('getOpsHealthSnapshot', () => {
       configGeneration: 'unset',
       configWriter: 'unset',
     });
+  });
+
+  it('ages waiting items that carry no string updatedAt, and never shows 0 h for items with no time (#1516)', async () => {
+    const build = async ({ dated, undated, waiting }) => {
+      const store = opsStore();
+      const inner = store.queryDocs.getMockImplementation();
+      store.queryDocs.mockImplementation(async (container, query, params) => {
+        if (container === 'content' && query.includes('VALUE COUNT') && query.includes('@stagedStatuses')) {
+          return [waiting];
+        }
+        if (container === 'content' && query.includes('NOT IS_STRING(c.updatedAt)')) return undated;
+        if (container === 'content' && query.includes('ORDER BY c.updatedAt ASC')) return dated;
+        return inner(container, query, params);
+      });
+      const h = createOpsHealthHandlers({ guard: allowGuard(), store, ...fixed });
+      return JSON.parse((await h.getOpsHealthSnapshot(makeRequest({}), context)).body).operationalSignals;
+    };
+    const tenDaysAgo = Math.floor((NOW.getTime() - 240 * 60 * 60 * 1000) / 1000);
+
+    // A migrated item with a Firestore-style time, older than the dated one.
+    const migrated = await build({
+      dated: [{ id: 'd1', updatedAt: '2026-08-06T04:00:00Z' }],
+      undated: [{ id: 'm1', updatedAt: { _seconds: tenDaysAgo, _nanoseconds: 0 } }],
+      waiting: 2,
+    });
+    expect(migrated.oldestStagedHours).toBe(240);
+    expect(migrated.stagedWaitingCount).toBe(2);
+
+    // An undated item that falls back to the time it was reviewed.
+    const reviewedOnly = await build({
+      dated: [],
+      undated: [{ id: 'r1', reviewedAt: '2026-08-05T04:00:00Z' }],
+      waiting: 1,
+    });
+    expect(reviewedOnly.oldestStagedHours).toBe(48);
+
+    // An empty or unreadable updatedAt does not hide the times after it.
+    const fallsThrough = await build({
+      dated: [],
+      undated: [
+        { id: 'e1', updatedAt: '', reviewedAt: '2026-08-05T04:00:00Z' },
+        { id: 'o1', updatedAt: {}, fetchedAt: '2026-08-04T04:00:00Z' },
+      ],
+      waiting: 2,
+    });
+    expect(fallsThrough.oldestStagedHours).toBe(72);
+
+    // Waiting, but no time anywhere: null ("no recorded time"), not 0.
+    const timeless = await build({ dated: [], undated: [{ id: 't1' }], waiting: 1 });
+    expect(timeless.oldestStagedHours).toBeNull();
+
+    // Nothing waiting: 0, as before.
+    const empty = await build({ dated: [], undated: [], waiting: 0 });
+    expect(empty.oldestStagedHours).toBe(0);
   });
 
   it('keeps a worker configured when only references on the expected list are unresolved (#1512)', async () => {

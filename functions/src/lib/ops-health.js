@@ -114,6 +114,10 @@ export function toMillis(value) {
   if (!value) return 0;
   if (typeof value.toMillis === 'function') return value.toMillis();
   if (typeof value.toDate === 'function') return value.toDate().getTime();
+  // A migrated Firestore time stored as plain JSON: { seconds, nanoseconds }
+  // or { _seconds, _nanoseconds } (#1516).
+  const seconds = value.seconds ?? value._seconds;
+  if (typeof seconds === 'number') return seconds * 1000;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
 }
@@ -261,6 +265,9 @@ const STAGED_NOT_LIVE =
   // An item scheduled for later is not stuck: it is waiting on purpose, and
   // the scheduler's own card (Overdue Scheduled) covers it once it is due.
   ' AND (NOT IS_DEFINED(c.scheduledPublishDate) OR IS_NULL(c.scheduledPublishDate) OR c.scheduledPublishDate <= @now)';
+
+/** The most undated waiting items one snapshot reads for their age (#1516). */
+const UNDATED_STAGED_BOUND = 50;
 
 /** How far back the content agent's denials and the platform jobs are counted. */
 export const AGENT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -435,6 +442,7 @@ export function createOpsHealthHandlers({
       rssCount,
       queueBreachCount,
       stagedRows,
+      undatedStagedRows,
       stagedWaitingCount,
       digestDoc,
       latestDigestRows,
@@ -473,7 +481,20 @@ export function createOpsHealthHandlers({
       // oldest dated one.
       store.queryDocs(
         'content',
-        `SELECT TOP 1 c.id, c["contentStatus"], c["updatedAt"] FROM c WHERE ${STAGED_NOT_LIVE} AND IS_STRING(c.updatedAt) ORDER BY c.updatedAt ASC`,
+        `SELECT TOP 1 c.id, c["contentStatus"], c["updatedAt"] FROM c WHERE ${STAGED_NOT_LIVE} AND IS_STRING(c.updatedAt) AND c.updatedAt > '' ORDER BY c.updatedAt ASC`,
+        stagedParams
+      ),
+      // The items the ordered read cannot see: no string `updatedAt`, which
+      // is what a migrated item with a Firestore-style time looks like. The
+      // first deploy of #1513 showed "0h" over "1 waiting" for exactly this
+      // (#1516). An empty string counts as no time here, and is kept out of
+      // the ordered read, where it would sort first and hide the real oldest.
+      // Their age comes from the first field that holds a readable time:
+      // updatedAt, reviewedAt, fetchedAt (the order the tile used before
+      // #1513), then publishedAt.
+      store.queryDocs(
+        'content',
+        `SELECT TOP ${UNDATED_STAGED_BOUND} c.id, c["updatedAt"], c["reviewedAt"], c["fetchedAt"], c["publishedAt"] FROM c WHERE ${STAGED_NOT_LIVE} AND (NOT IS_STRING(c.updatedAt) OR c.updatedAt = '')`,
         stagedParams
       ),
       count(STAGED_NOT_LIVE, stagedParams),
@@ -575,9 +596,22 @@ export function createOpsHealthHandlers({
 
     const digestData = digestDoc || latestDigestRows[0] || null;
 
-    const stagedHours = (stagedRows || [])
-      .map((item) => toHoursSince(item.updatedAt, nowMs))
-      .filter((value) => value !== null);
+    const stagedHours = [
+      ...(stagedRows || []).map((item) => toHoursSince(item.updatedAt, nowMs)),
+      ...(undatedStagedRows || []).map((item) =>
+        toHoursSince(
+          ['updatedAt', 'reviewedAt', 'fetchedAt', 'publishedAt']
+            .map((field) => item[field])
+            .find((value) => toMillis(value) > 0),
+          nowMs
+        )
+      ),
+    ].filter((value) => value !== null);
+    const waitingCount = Number(stagedWaitingCount) || 0;
+    // Items are waiting but none carries a time at all: say so (null), never 0 h.
+    let oldestStagedHours = 0;
+    if (stagedHours.length > 0) oldestStagedHours = Math.max(...stagedHours);
+    else if (waitingCount > 0) oldestStagedHours = null;
     const openAlerts = alerts.filter((alert) => getWorkflowAlertStatus(alert) !== 'resolved');
     const openAlertHours = openAlerts
       .map((alert) => toHoursSince(alert.updatedAt || alert.firstSeenAt, nowMs))
@@ -592,8 +626,8 @@ export function createOpsHealthHandlers({
 
     const operationalSignals = {
       queueBreachCount,
-      oldestStagedHours: stagedHours.length > 0 ? Math.max(...stagedHours) : 0,
-      stagedWaitingCount: Number(stagedWaitingCount) || 0,
+      oldestStagedHours,
+      stagedWaitingCount: waitingCount,
       openAlertAgeHours: openAlertHours.length > 0 ? Math.max(...openAlertHours) : 0,
       publishFailureCount,
       orphanedGeneratedImages,
