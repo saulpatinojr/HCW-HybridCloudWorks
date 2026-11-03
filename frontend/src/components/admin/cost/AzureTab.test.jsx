@@ -52,6 +52,15 @@ describe('AzureTab', () => {
     expect(screen.getByRole('button', { name: 'Show fewer' })).toBeInTheDocument();
   });
 
+  it("says when the bar uses the queried spend because Azure's budget figure lags", () => {
+    const lagging = structuredClone(SUMMARY);
+    lagging.azure.scopes[0].budget.spendSource = 'query';
+    renderTab(lagging);
+    expect(screen.getByText(/Azure's own figure on the budget was lower/)).toBeInTheDocument();
+    renderTab();
+    expect(screen.getAllByText(/Azure's own figure on the budget was lower/)).toHaveLength(1);
+  });
+
   it('names a resource group as one, and says when a scope could not be read', () => {
     renderTab();
     expect(
