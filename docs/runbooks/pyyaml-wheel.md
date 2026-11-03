@@ -1,12 +1,13 @@
 # PyYAML wheel for the lab host — built here, attested, attached to a release
 
-> **Status: written 2026-11-02 under
-> [#1505](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1505);
-> no run has published a wheel yet.** The workflow runs for the first time
-> when the pull request that adds the `PYYAML_*` lines to
-> `lab-image/versions.env` and the `pyyaml-wheel` stage to
-> `lab-image/Dockerfile` merges. Until then there is no release to verify,
-> and the commands below have not been run against a published asset.
+> **Status: live since 2026-11-03 under
+> [#1505](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1505).**
+> The workflow has published two releases, `pyyaml-6.0.3-cp314` (while the
+> base was Python 3.14) and `pyyaml-6.0.3-cp315` (the current base), and the
+> by-hand commands below were run against the cp315 asset on 2026-11-03:
+> the SHA256 matched the release notes and `gh attestation verify` passed
+> with the workflow's identity. The lab host's first build with the pin set
+> is recorded on #1505 once it has run.
 >
 > **This whole page is temporary.** It goes, with the workflow, its test
 > and the `PYYAML_*` lines, the day PyYAML publishes a wheel for the Python
