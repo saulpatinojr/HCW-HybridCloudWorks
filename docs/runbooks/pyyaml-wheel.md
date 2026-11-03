@@ -1,12 +1,13 @@
 # PyYAML wheel for the lab host — built here, attested, attached to a release
 
-> **Status: written 2026-11-02 under
-> [#1505](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1505);
-> no run has published a wheel yet.** The workflow runs for the first time
-> when the pull request that adds the `PYYAML_*` lines to
-> `lab-image/versions.env` and the `pyyaml-wheel` stage to
-> `lab-image/Dockerfile` merges. Until then there is no release to verify,
-> and the commands below have not been run against a published asset.
+> **Status: live since 2026-11-03 under
+> [#1505](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1505).**
+> The workflow has published two releases, `pyyaml-6.0.3-cp314` (while the
+> base was Python 3.14) and `pyyaml-6.0.3-cp315` (the current base), and the
+> by-hand commands below were run against the cp315 asset on 2026-11-03:
+> the SHA256 matched the release notes and `gh attestation verify` passed
+> with the workflow's identity. The lab host's first build with the pin set
+> is recorded on #1505 once it has run.
 >
 > **This whole page is temporary.** It goes, with the workflow, its test
 > and the `PYYAML_*` lines, the day PyYAML publishes a wheel for the Python
@@ -71,19 +72,20 @@ lines the host side needs: the asset URL, `sha256:<hex>` and the bundle URL.
 ### The tag and the files
 
 One wheel serves one Python line, so the tag names both the PyYAML release
-and the CPython ABI (the `cp314` in a wheel's name, meaning CPython 3.14):
+and the CPython ABI (the `cp315` in a wheel's name, meaning CPython 3.15):
 
 | What | Value today |
 | --- | --- |
-| Tag | `pyyaml-6.0.3-cp314` |
-| Release | <https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/tag/pyyaml-6.0.3-cp314> |
-| Wheel | <https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/pyyaml-6.0.3-cp314/pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl> |
-| Attestation bundle | <https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/pyyaml-6.0.3-cp314/pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json> |
+| Tag | `pyyaml-6.0.3-cp315` |
+| Release | <https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/tag/pyyaml-6.0.3-cp315> |
+| Wheel | <https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/pyyaml-6.0.3-cp315/pyyaml-6.0.3-cp315-cp315-linux_x86_64.whl> |
+| Attestation bundle | <https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/pyyaml-6.0.3-cp315/pyyaml-6.0.3-cp315-cp315-linux_x86_64.whl.sigstore.json> |
 
-When the base moves to Python 3.15
-([#1468](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1468)),
-the same pins name `pyyaml-6.0.3-cp315`, a second release beside the first,
-and nothing on the first changes. The release is never marked as the
+The base moved to Python 3.15 in
+[#1468](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1468),
+so the pins name `pyyaml-6.0.3-cp315`; the earlier `pyyaml-6.0.3-cp314`
+release, published while the base was 3.14, stays beside it unchanged, and
+each Python line gets its own release this way. The release is never marked as the
 repository's "latest release", and its notes say it is not a release of this
 project.
 
@@ -159,11 +161,11 @@ the owner's workstation. Each line is complete as written.
    ```
 
    ```powershell
-   gh release download pyyaml-6.0.3-cp314 --repo saulpatinojr/HCW-HybridCloudWorks --pattern pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl --dir "$env:TEMP\pyyaml-wheel"
+   gh release download pyyaml-6.0.3-cp315 --repo saulpatinojr/HCW-HybridCloudWorks --pattern pyyaml-6.0.3-cp315-cp315-linux_x86_64.whl --dir "$env:TEMP\pyyaml-wheel"
    ```
 
    ```powershell
-   gh release download pyyaml-6.0.3-cp314 --repo saulpatinojr/HCW-HybridCloudWorks --pattern pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json --dir "$env:TEMP\pyyaml-wheel"
+   gh release download pyyaml-6.0.3-cp315 --repo saulpatinojr/HCW-HybridCloudWorks --pattern pyyaml-6.0.3-cp315-cp315-linux_x86_64.whl.sigstore.json --dir "$env:TEMP\pyyaml-wheel"
    ```
 
    You should see no output and both files in the folder. `release not found`
@@ -175,7 +177,7 @@ the owner's workstation. Each line is complete as written.
    `wheel-sha256:` line and the hash `versions.env` pins for the host:
 
    ```powershell
-   Get-FileHash "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl" -Algorithm SHA256
+   Get-FileHash "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp315-cp315-linux_x86_64.whl" -Algorithm SHA256
    ```
 
    The `Hash` column, lower-cased, is the value. A different value means the
@@ -186,7 +188,7 @@ the owner's workstation. Each line is complete as written.
    pair the host checks), requiring the exact signer identity:
 
    ```powershell
-   gh attestation verify "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl" --repo saulpatinojr/HCW-HybridCloudWorks --bundle "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json" --cert-identity https://github.com/saulpatinojr/HCW-HybridCloudWorks/.github/workflows/publish-pyyaml-wheel.yml@refs/heads/main
+   gh attestation verify "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp315-cp315-linux_x86_64.whl" --repo saulpatinojr/HCW-HybridCloudWorks --bundle "$env:TEMP\pyyaml-wheel\pyyaml-6.0.3-cp315-cp315-linux_x86_64.whl.sigstore.json" --cert-identity https://github.com/saulpatinojr/HCW-HybridCloudWorks/.github/workflows/publish-pyyaml-wheel.yml@refs/heads/main
    ```
 
    Success prints `Verification succeeded!` (or `✓ Verification succeeded!`)
@@ -211,7 +213,7 @@ is bash on the lab host, not PowerShell**, with cosign at the version
 `group_vars/all.yml` pins and both files downloaded to the current folder:
 
 ```bash
-cosign verify-blob-attestation --type slsaprovenance1 --bundle pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl.sigstore.json --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '^https://github\.com/saulpatinojr/HCW-HybridCloudWorks/\.github/workflows/publish-pyyaml-wheel\.yml@refs/heads/main$' pyyaml-6.0.3-cp314-cp314-linux_x86_64.whl
+cosign verify-blob-attestation --type slsaprovenance1 --bundle pyyaml-6.0.3-cp315-cp315-linux_x86_64.whl.sigstore.json --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '^https://github\.com/saulpatinojr/HCW-HybridCloudWorks/\.github/workflows/publish-pyyaml-wheel\.yml@refs/heads/main$' pyyaml-6.0.3-cp315-cp315-linux_x86_64.whl
 ```
 
 The identity is the workflow's path at `refs/heads/main`: a wheel built by a
@@ -266,7 +268,7 @@ host installs PyPI's wheel as before and says so in its log.
   under the bundle's name but it is empty, not a bundle, or does not attest
   this wheel. The workflow never replaces an asset, so remove that one
   asset by hand first (the release's edit page,
-  <https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/edit/pyyaml-6.0.3-cp314>,
+  <https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/edit/pyyaml-6.0.3-cp315>,
   the **x** beside the file), then re-run: with the wheel alone on the
   release, the repair path above fetches the right bundle for it.
 - **"release … has ….whl.sigstore.json but no ….whl"** (`plan` or
