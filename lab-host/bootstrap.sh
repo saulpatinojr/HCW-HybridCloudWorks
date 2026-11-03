@@ -22,7 +22,7 @@
 # Python. Ansible's control side (ansible-playbook, templating, the vault)
 # runs on CPython from uv, not on the distribution's python3. Owner rule
 # 2026-09-26: Python is on the newest release line and no more than two patch
-# releases behind that line's newest (3.14.7 then, so a 3.14.5 floor), and
+# releases behind that line's newest (3.14.7 that day, so a 3.14.5 floor), and
 # Ubuntu 26.04's /usr/bin/python3 is 3.14.4 (python3.14 3.14.4, package
 # python3 3.14.3), below that floor. uv comes from its GitHub release asset, checked against
 # UV_SHA256 before it runs (no curl | sh), and uv checks the interpreter it
@@ -35,17 +35,24 @@
 # Python and cannot be loaded by another interpreter.
 set -euo pipefail
 
-# Tool versions, each checked 2026-09-26. A bump is an edit here and a re-run.
-# uv 0.12.19, the newest release; UV_SHA256 is the sha256sum of
-# uv-x86_64-unknown-linux-gnu.tar.gz from
-# https://github.com/astral-sh/uv/releases/tag/0.12.19, equal to the
-# release's own .sha256 asset, and `gh attestation verify --repo astral-sh/uv`
-# traces the file to that repository's release workflow.
-UV_VERSION=0.12.19
-UV_SHA256=23bf5552d220e0842b65c862097b2ebaeba0064b74eda5e565e77fd25969d8c8
-# CPython 3.14.7, the newest release of the newest line. uv 0.12.19 pins its
-# python-build-standalone 20260924 build by SHA256.
-PYTHON_VERSION=3.14.7
+# Tool versions. A bump is an edit here and a re-run.
+# uv 0.13.6 (released 2026-10-26), the newest release and the first whose
+# built-in list of interpreters has CPython 3.15.2 (0.12.19 stopped at
+# 3.15.0rc2, 0.13.5 at 3.15.1). UV_SHA256 is the release's own
+# uv-x86_64-unknown-linux-gnu.tar.gz.sha256 asset, read on 2026-10-31 from
+# Astral's download mirror (releases.astral.sh/github/uv/releases/download/),
+# which served the same value for 0.12.19 as the line this replaced, and
+# equal to the sha256sum of the tarball downloaded there. Checked on
+# 2026-11-02: `gh attestation verify uv-x86_64-unknown-linux-gnu.tar.gz
+# --repo astral-sh/uv` passed on the tarball from the GitHub release (its
+# SHA256 equal to this line): one SLSA v1 provenance attestation, signed by
+# that repository's .github/workflows/release.yml, names this file among its
+# 22 subjects.
+UV_VERSION=0.13.6
+UV_SHA256=f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645
+# CPython 3.15.2, the newest release of the newest line. uv 0.13.6 pins its
+# python-build-standalone 20261026 build by SHA256.
+PYTHON_VERSION=3.15.2
 # cosign, for SLSA build provenance attestation verification of add-on
 # images before pull (#1069). COSIGN_SHA256 is the sha256sum of cosign-linux-amd64
 # from the release page of COSIGN_VERSION, https://github.com/sigstore/cosign/releases,
@@ -574,13 +581,14 @@ fi
 # removed then. Before a build, the other builds of these pins, none of which
 # is complete, are removed, except the one in use.
 hcw_ansible_requirements="$(mktemp)"
-trap 'rm -f "${hcw_ansible_requirements}"' EXIT
-# hcw_read_ansible_pins FILE: set the three ANSIBLE_CORE_* variables from
-# FILE's lines as text, never evaluating it; fails when no complete DEPS
-# block is there.
+hcw_pyyaml_dir="$(mktemp -d)"
+trap 'rm -rf "${hcw_ansible_requirements}" "${hcw_pyyaml_dir}"' EXIT
+# hcw_read_ansible_pins FILE: set the three ANSIBLE_CORE_* variables, and
+# the PYYAML_* and BASE_PYTHON_VERSION lines the host reads (#1505), from FILE's lines as
+# text, never evaluating it; fails when no complete DEPS block is there.
 hcw_read_ansible_pins() {
   local line in_deps=0 saw_deps=0
-  ANSIBLE_CORE_VERSION='' ANSIBLE_CORE_SHA256='' ANSIBLE_CORE_DEPS=''
+  ANSIBLE_CORE_VERSION='' ANSIBLE_CORE_SHA256='' ANSIBLE_CORE_DEPS='' PYYAML_VERSION='' PYYAML_WHEEL_SHA256='' BASE_PYTHON_VERSION=''
   while IFS= read -r line || [ -n "${line}" ]; do
     if [ "${in_deps}" = 1 ]; then
       # A requirement starts lower-case; an assignment here means the block
@@ -599,6 +607,9 @@ hcw_read_ansible_pins() {
       ANSIBLE_CORE_VERSION=*) ANSIBLE_CORE_VERSION="${line#ANSIBLE_CORE_VERSION=}" ;;
       ANSIBLE_CORE_SHA256=*) ANSIBLE_CORE_SHA256="${line#ANSIBLE_CORE_SHA256=}" ;;
       "ANSIBLE_CORE_DEPS='") in_deps=1 ;;
+      PYYAML_VERSION=*) PYYAML_VERSION="${line#PYYAML_VERSION=}" ;;
+      PYYAML_WHEEL_SHA256=*) PYYAML_WHEEL_SHA256="${line#PYYAML_WHEEL_SHA256=}" ;;
+      BASE_PYTHON_VERSION=*) BASE_PYTHON_VERSION="${line#BASE_PYTHON_VERSION=}" ;;
     esac
   done <"$1"
   [ "${saw_deps}" = 1 ] && [ "${in_deps}" = 0 ]
@@ -620,6 +631,68 @@ if [ -z "${hcw_ansible_core_version}" ]; then
 elif grep -qvE '^[a-z0-9][a-z0-9._-]*==[0-9][0-9A-Za-z.+!]* --hash=sha256:[0-9a-f]{64}$' "${hcw_ansible_requirements}"; then
   echo "refusing to run: lab-image/versions.env at ${hcw_repo_sha} has an ansible-core requirement that is not one pinned, hashed wheel (name==version --hash=sha256:<64 hex>)" >&2
   exit 1
+fi
+
+# PyYAML's wheel for this Python, when lab-image/versions.env pins one in
+# PYYAML_WHEEL_SHA256 (#1505). PyYAML publishes no wheel for CPython 3.15, so
+# publish-pyyaml-wheel.yml builds one from PyYAML's source archive in the lab
+# image's fetch stage, attests it and attaches it to a release of this
+# repository tagged pyyaml-<version>-cp<major><minor>. This host builds
+# nothing from source (the rule above), so it takes that file instead:
+# downloaded with its attestation bundle, its SHA256 compared with the pin,
+# its provenance checked offline with cosign against the publishing
+# workflow's identity on main (the way the addons role checks the add-on
+# images), then handed to uv as the one file in a --find-links directory,
+# with the pyyaml line of the requirements file carrying its SHA256 in place
+# of PyPI's, so --require-hashes still decides. An empty PYYAML_WHEEL_SHA256
+# means no wheel is published for this Python yet and PyPI's wheel is
+# installed as before; the directory is empty then and changes nothing.
+# The pins were read inside the subshell that wrote the requirements file,
+# so they are read once more here, the same way, as data.
+hcw_read_ansible_pins "${HCW_SRC_DIR}/lab-image/versions.env"
+if [ -n "${PYYAML_WHEEL_SHA256}" ]; then
+  hcw_pyyaml_pinned="$(sed -n 's/^pyyaml==\([0-9][0-9A-Za-z.+!]*\) --hash=sha256:[0-9a-f]\{64\}$/\1/p' "${hcw_ansible_requirements}")"
+  if [ "${hcw_pyyaml_pinned}" != "${PYYAML_VERSION}" ] || ! [[ "${PYYAML_WHEEL_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "refusing to run: lab-image/versions.env at ${hcw_repo_sha} pins PYYAML_WHEEL_SHA256, but PYYAML_VERSION (${PYYAML_VERSION}) is not the version of the one pyyaml line in ANSIBLE_CORE_DEPS (${hcw_pyyaml_pinned:-none}), or the SHA256 is not 64 hex" >&2
+    exit 1
+  fi
+  # One wheel serves one Python line, and the SHA256 is the wheel the
+  # workflow built for the image's BASE_PYTHON_VERSION. The host's own
+  # PYTHON_VERSION (at the top of this file) must be on the same line, or the
+  # release it would name is the wrong one, or does not exist; that is
+  # refused here with both values, rather than found out from a download
+  # error on every run.
+  IFS=. read -r hcw_py_major hcw_py_minor _ <<<"${PYTHON_VERSION}"
+  IFS=. read -r hcw_base_major hcw_base_minor _ <<<"${BASE_PYTHON_VERSION}"
+  if [ "${hcw_py_major}.${hcw_py_minor}" != "${hcw_base_major}.${hcw_base_minor}" ]; then
+    echo "refusing to run: lab-image/versions.env at ${hcw_repo_sha} pins PYYAML_WHEEL_SHA256 for the wheel built on CPython ${BASE_PYTHON_VERSION} (BASE_PYTHON_VERSION), but this host's PYTHON_VERSION is ${PYTHON_VERSION}, another line; move PYTHON_VERSION in lab-host/bootstrap.sh to the same line, or leave PYYAML_WHEEL_SHA256 empty" >&2
+    exit 1
+  fi
+  hcw_pyyaml_tag="pyyaml-${PYYAML_VERSION}-cp${hcw_py_major}${hcw_py_minor}"
+  hcw_pyyaml_wheel="pyyaml-${PYYAML_VERSION}-cp${hcw_py_major}${hcw_py_minor}-cp${hcw_py_major}${hcw_py_minor}-linux_x86_64.whl"
+  hcw_pyyaml_base="https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/${hcw_pyyaml_tag}"
+  log "taking PyYAML ${PYYAML_VERSION} for CPython ${PYTHON_VERSION} from the ${hcw_pyyaml_tag} release of this repository, SHA256 and provenance checked"
+  for hcw_pyyaml_file in "${hcw_pyyaml_wheel}" "${hcw_pyyaml_wheel}.sigstore.json"; do
+    if ! curl -fsSL --proto '=https' --tlsv1.2 -o "${hcw_pyyaml_dir}/${hcw_pyyaml_file}" "${hcw_pyyaml_base}/${hcw_pyyaml_file}"; then
+      echo "refusing to run: could not download ${hcw_pyyaml_base}/${hcw_pyyaml_file}; the ${hcw_pyyaml_tag} release may not exist yet for this Python line, or may be missing that file (docs/runbooks/pyyaml-wheel.md says how it is published and repaired)" >&2
+      exit 1
+    fi
+  done
+  if [ "$(sha256sum "${hcw_pyyaml_dir}/${hcw_pyyaml_wheel}" | cut -d ' ' -f 1)" != "${PYYAML_WHEEL_SHA256}" ]; then
+    echo "refusing to run: ${hcw_pyyaml_wheel} from ${hcw_pyyaml_base} does not match PYYAML_WHEEL_SHA256 in lab-image/versions.env" >&2
+    exit 1
+  fi
+  if ! "${COSIGN_BIN}" verify-blob-attestation --type slsaprovenance1 --bundle "${hcw_pyyaml_dir}/${hcw_pyyaml_wheel}.sigstore.json" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --certificate-identity-regexp '^https://github\.com/saulpatinojr/HCW-HybridCloudWorks/\.github/workflows/publish-pyyaml-wheel\.yml@refs/heads/main$' \
+      "${hcw_pyyaml_dir}/${hcw_pyyaml_wheel}" >/dev/null; then
+    echo "refusing to run: ${hcw_pyyaml_wheel}'s attestation does not verify as built by publish-pyyaml-wheel.yml on main" >&2
+    exit 1
+  fi
+  rm -f "${hcw_pyyaml_dir}/${hcw_pyyaml_wheel}.sigstore.json"
+  sed -i "s|^pyyaml==.*\$|pyyaml==${PYYAML_VERSION} --hash=sha256:${PYYAML_WHEEL_SHA256}|" "${hcw_ansible_requirements}"
+else
+  log "lab-image/versions.env pins no self-built PyYAML wheel for CPython ${PYTHON_VERSION} (PYYAML_WHEEL_SHA256 is empty), so PyPI's wheel is installed"
 fi
 hcw_ansible_lines="$(wc -l <"${hcw_ansible_requirements}")"
 hcw_ansible_prefix="${HCW_ANSIBLE_GENERATIONS}/${hcw_ansible_core_version}-py${PYTHON_VERSION}-$(sha256sum "${hcw_ansible_requirements}" | cut -c 1-12)"
@@ -677,7 +750,7 @@ if [ -z "${hcw_ansible_generation}" ]; then
   hcw_ansible_record="${hcw_ansible_generation}/hcw-requirements.txt"
   log "installing ansible-core ${hcw_ansible_core_version} and the $((hcw_ansible_lines - 1)) wheels it depends on into ${hcw_ansible_generation} on CPython ${PYTHON_VERSION}, each checked against its SHA256 in lab-image/versions.env; ${HCW_ANSIBLE_VENV} moves to it only once it passes"
   "${UV_BIN}" venv --managed-python --python "${PYTHON_VERSION}" "${hcw_ansible_generation}"
-  "${UV_BIN}" pip install --python "${hcw_ansible_python}" --require-hashes --only-binary :all: -r "${hcw_ansible_requirements}"
+  "${UV_BIN}" pip install --python "${hcw_ansible_python}" --require-hashes --only-binary :all: --find-links "${hcw_pyyaml_dir}" -r "${hcw_ansible_requirements}"
   "${UV_BIN}" pip check --python "${hcw_ansible_python}"
   hcw_ansible_installed="$("${UV_BIN}" pip freeze --python "${hcw_ansible_python}" | wc -l)"
   if [ "${hcw_ansible_installed}" -ne "${hcw_ansible_lines}" ]; then
@@ -690,7 +763,7 @@ if [ -z "${hcw_ansible_generation}" ]; then
   fi
   install -m 0644 -o root -g root "${hcw_ansible_requirements}" "${hcw_ansible_record}"
 fi
-rm -f "${hcw_ansible_requirements}"
+rm -rf "${hcw_ansible_requirements}" "${hcw_pyyaml_dir}"
 trap - EXIT
 if [ -n "${hcw_worktree_dir:-}" ]; then
   trap hcw_cleanup EXIT
