@@ -182,7 +182,7 @@ describe('the building images guide matches the files it describes', () => {
   const smoke = repoFile('lab-image', 'smoke.sh');
   const envValue = (name) => versions.match(new RegExp(`^${name}=(.*)$`, 'm'))?.[1];
 
-  it('has the five stages the page names, with runner and full the two that ship', () => {
+  it('has the six stages the page names, with runner and full the two that ship', () => {
     const stages = [...dockerfile.matchAll(/^FROM\s+(\S+)\s+AS\s+(\S+)/gim)].map((m) => [
       m[2],
       m[1],
@@ -190,6 +190,8 @@ describe('the building images guide matches the files it describes', () => {
     const base = `${envValue('BASE_IMAGE')}@${envValue('BASE_DIGEST')}`;
     expect(stages).toEqual([
       ['fetch', base],
+      // The empty image: it holds the one wheel fetch builds from source (#1505).
+      ['pyyaml-wheel', 'scratch'],
       ['vendor', 'fetch'],
       ['mirror', 'fetch'],
       ['runner', base],
