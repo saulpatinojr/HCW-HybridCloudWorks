@@ -305,6 +305,25 @@ export function summarizeBudgets(payload, scope) {
 }
 
 /**
+ * The budget with its spend raised to `spend` when Azure's own figure on the
+ * budget is lower. A budget's currentSpend is evaluated on Azure's schedule
+ * and can lag the cost query: on 2026-11-03 site-monthly-budget still said
+ * USD 0.00 while the query had USD 7.33, so the bar read "0% used" and the
+ * 50/75/90 % alerts, which read the same percentage, would have warned late.
+ * The higher of the two is used so a lagging budget never hides spend;
+ * `spendSource` says which one the bar shows. Azure's forecast is left as is.
+ */
+export function withSpendAtLeast(budget, spend) {
+  if (!budget) return budget;
+  const queried = Number(spend);
+  if (!Number.isFinite(queried) || queried <= (Number(budget.currentSpend) || 0)) {
+    return { ...budget, spendSource: 'budget' };
+  }
+  const currentSpend = money(queried);
+  return { ...budget, currentSpend, percentUsed: percent(currentSpend, budget.amount), spendSource: 'query' };
+}
+
+/**
  * What a non-2xx answer means, as a sentence the page may show. No ARM text is
  * copied: only the status, Azure's code when it is code-shaped, and which read
  * it was (STEPS), so the owner can tell a refused budgets list from a refused
@@ -532,7 +551,7 @@ export function createAzureCostReader({
         daily: summary.daily,
         previousMonth,
         previousMonthOf: previousMonth === null ? null : lastMonth,
-        budget,
+        budget: withSpendAtLeast(budget, summary.monthToDate),
         readAt: now.toISOString(),
         note: partial.length ? `Part of this scope could not be read: ${partial.join(' ')}` : null,
         noteCode: partial.length ? 'partial' : undefined,
