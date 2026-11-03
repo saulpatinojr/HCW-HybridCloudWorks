@@ -14,8 +14,10 @@ import {
   isUnresolvedReference,
   unresolvedSecretNames,
   unresolvedSecretCount,
+  splitUnresolved,
   KEY_VAULT_REFERENCE_PREFIX,
 } from './secrets-health.js';
+import { EXPECTED_UNRESOLVED, EXPECTED_UNRESOLVED_NAMES } from './expected-unresolved.js';
 import { readKey } from './ai/router.js';
 
 const REFERENCE = '@Microsoft.KeyVault(SecretUri=https://kv.vault.azure.net/secrets/PUBLER-API-KEY)';
@@ -152,5 +154,27 @@ describe('unresolvedSecretCount', () => {
     // What makes a bare count sufficient for an alert without disclosing which
     // integrations exist.
     expect(unresolvedSecretCount({ ANTHROPIC_API_KEY: 'sk-ant-real' })).toBe(0);
+  });
+});
+
+describe('splitUnresolved (#1512)', () => {
+  it('puts names on the expected list, with their reason, apart from the rest, keeping order', () => {
+    const got = splitUnresolved(['AZURE_SPEECH_KEY', 'PUBLER_API_KEY', 'CODER_BROKER_TOKEN']);
+    expect(got.unexpected).toEqual(['PUBLER_API_KEY']);
+    expect(got.expected).toEqual([
+      { name: 'AZURE_SPEECH_KEY', reason: EXPECTED_UNRESOLVED.get('AZURE_SPEECH_KEY') },
+      { name: 'CODER_BROKER_TOKEN', reason: EXPECTED_UNRESOLVED.get('CODER_BROKER_TOKEN') },
+    ]);
+  });
+
+  it('answers empty halves for no names or nothing passed', () => {
+    expect(splitUnresolved([])).toEqual({ expected: [], unexpected: [] });
+    expect(splitUnresolved()).toEqual({ expected: [], unexpected: [] });
+    expect(splitUnresolved(null)).toEqual({ expected: [], unexpected: [] });
+  });
+
+  it('reads the same list the nightly monitor reads, sorted, with a reason for each', () => {
+    expect(EXPECTED_UNRESOLVED_NAMES).toEqual([...EXPECTED_UNRESOLVED.keys()].sort());
+    for (const [, reason] of EXPECTED_UNRESOLVED) expect(reason.length).toBeGreaterThan(10);
   });
 });

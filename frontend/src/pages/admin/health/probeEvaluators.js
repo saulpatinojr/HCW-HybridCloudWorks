@@ -48,10 +48,35 @@ export function evaluateCosmos(ctx) {
   return snapshotMissing(ctx);
 }
 
+/**
+ * The unresolved names split into on-purpose and not (#1512), the same as the
+ * pulse's unresolvedSplit. A snapshot from before the split carries only
+ * `unresolvedSecrets`; every name in it then counts as unexpected.
+ */
+export function unresolvedSplit(readiness) {
+  const all = Array.isArray(readiness?.unresolvedSecrets) ? readiness.unresolvedSecrets : [];
+  if (!Array.isArray(readiness?.unexpectedUnresolved)) return { expected: [], unexpected: all };
+  const expected = (
+    Array.isArray(readiness.expectedUnresolved) ? readiness.expectedUnresolved : []
+  ).map((entry) => (typeof entry === 'string' ? entry : entry?.name));
+  return { expected: expected.filter(Boolean), unexpected: readiness.unexpectedUnresolved };
+}
+
+/** "3 Key Vault references are unresolved on purpose, waiting on the owner: A, B, C" */
+export function expectedPhrase(names) {
+  return `${plural(names.length, 'Key Vault reference')} ${names.length === 1 ? 'is' : 'are'} unresolved on purpose, waiting on the owner: ${names.join(', ')}`;
+}
+
+/** " 2 more are unresolved on purpose." after a Critical sentence, or nothing. */
+export const alsoExpected = (names) =>
+  names.length
+    ? ` ${names.length} more ${names.length === 1 ? 'is' : 'are'} unresolved on purpose.`
+    : '';
+
 export function evaluateRuntimeConfig(ctx) {
   const readiness = ctx?.snapshot?.readiness;
   if (!readiness) return snapshotMissing(ctx);
-  const unresolved = Array.isArray(readiness.unresolvedSecrets) ? readiness.unresolvedSecrets : [];
+  const { expected, unexpected } = unresolvedSplit(readiness);
   const checkedAt = readiness.lastCheckedAt ?? stamp();
   if (readiness.configGeneration === 'unset') {
     return result(
@@ -60,21 +85,25 @@ export function evaluateRuntimeConfig(ctx) {
       { checkedAt }
     );
   }
-  if (unresolved.length > 0) {
+  if (unexpected.length > 0) {
     return result(
       'critical',
-      `${plural(unresolved.length, 'Key Vault reference')} did not resolve: ${unresolved.join(', ')}.`,
+      `${plural(unexpected.length, 'Key Vault reference')} did not resolve: ${unexpected.join(', ')}.${alsoExpected(expected)}`,
       {
         checkedAt,
         detail: `Generation ${readiness.configGeneration} by ${readiness.configWriter}.`,
       }
     );
   }
-  return result(
-    'healthy',
-    `Configuration generation ${readiness.configGeneration ?? 'unknown'} (${readiness.configWriter ?? 'unknown writer'}); every Key Vault reference resolved.`,
-    { checkedAt }
-  );
+  const generation = `Configuration generation ${readiness.configGeneration ?? 'unknown'} (${readiness.configWriter ?? 'unknown writer'})`;
+  if (expected.length > 0) {
+    return result(
+      'healthy',
+      `${generation}; ${expectedPhrase(expected)}; every other one resolved.`,
+      { checkedAt }
+    );
+  }
+  return result('healthy', `${generation}; every Key Vault reference resolved.`, { checkedAt });
 }
 
 /** The scheduler has written no run: idle, unless the watchdog says items are overdue. */
@@ -162,7 +191,7 @@ export const evaluatePublishingFailures = countProbe((s) => s.publishFailureCoun
 export const evaluateQueueSla = countProbe((s) => s.queueBreachCount, {
   zero: 'Nothing has waited in the review queue for more than 24 hours.',
   some: (n, s) =>
-    `${plural(n, 'item')} waiting more than 24 hours; the oldest staged item is ${s.oldestStagedHours ?? 0} h old.`,
+    `${plural(n, 'item')} waiting for review more than 24 hours; the oldest item waiting to go live is ${s.oldestStagedHours ?? 0} h old.`,
 });
 
 export const evaluateOrphanedImages = countProbe((s) => s.orphanedGeneratedImages, {

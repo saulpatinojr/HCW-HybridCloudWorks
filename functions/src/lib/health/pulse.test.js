@@ -302,6 +302,38 @@ describe('the pulse’s checks', () => {
     expect(checkScheduledPublishing(idle, nowMs).status).toBe('unknown');
   });
 
+  it('names references unresolved on purpose without calling them critical (#1512)', () => {
+    const onPurpose = snapshot();
+    onPurpose.readiness = {
+      ...onPurpose.readiness,
+      unresolvedSecrets: ['AZURE_SPEECH_KEY', 'CODER_BROKER_TOKEN'],
+      expectedUnresolved: [
+        { name: 'AZURE_SPEECH_KEY', reason: 'fallback' },
+        { name: 'CODER_BROKER_TOKEN', reason: 'owner' },
+      ],
+      unexpectedUnresolved: [],
+    };
+    expect(checkRuntimeConfig(onPurpose)).toMatchObject({
+      status: 'healthy',
+      summary:
+        'Configuration generation 2026-10-01.3 (terraform); 2 Key Vault references are unresolved on purpose, waiting on the owner: AZURE_SPEECH_KEY, CODER_BROKER_TOKEN; every other one resolved.',
+    });
+    const offList = snapshot();
+    offList.readiness = {
+      ...onPurpose.readiness,
+      unresolvedSecrets: ['AZURE_SPEECH_KEY', 'CODER_BROKER_TOKEN', 'RESEND_API_KEY'],
+      unexpectedUnresolved: ['RESEND_API_KEY'],
+    };
+    expect(checkRuntimeConfig(offList)).toMatchObject({
+      status: 'critical',
+      summary: '1 Key Vault reference did not resolve: RESEND_API_KEY. 2 more are unresolved on purpose.',
+    });
+    // A snapshot from before the split: every name is unexpected, as before.
+    const older = snapshot();
+    older.readiness = { ...older.readiness, unresolvedSecrets: ['AZURE_SPEECH_KEY'] };
+    expect(checkRuntimeConfig(older).status).toBe('critical');
+  });
+
   it('calls a missing or unset configuration critical', () => {
     const unset = snapshot();
     unset.readiness.configGeneration = 'unset';
