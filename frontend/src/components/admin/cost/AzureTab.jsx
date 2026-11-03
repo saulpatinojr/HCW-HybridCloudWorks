@@ -12,7 +12,7 @@
  */
 import React, { useState } from 'react';
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { AlertTriangle, CloudOff } from 'lucide-react';
+import { AlertTriangle, CloudOff, Info } from 'lucide-react';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import { Button } from '@/components/ui/button';
 import { fmtUsd } from '@/lib/cost';
@@ -154,6 +154,15 @@ export function ScopeCard({ scope }) {
           <span>This scope could not be read: {scope.error}</span>
         </p>
       ) : null}
+      {scope.note ? (
+        <p
+          role="status"
+          className="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground"
+        >
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>{scope.note}</span>
+        </p>
+      ) : null}
       <BudgetFigures budget={scope.budget} />
       <Figures>
         <Figure label="Month to date" value={<Money value={scope.monthToDate} />} />
@@ -179,7 +188,7 @@ export default function AzureTab({ summary }) {
         <EmptyState
           icon={CloudOff}
           title="Azure costs are not available"
-          description={`${azure.reason || 'No scope could be read.'} To fix it, give the site's identity the Cost Management Reader role on each subscription it should read and name the scopes in the COST_SCOPES setting; the Cost runbook (docs/runbooks/cost.md) has the steps.`}
+          description={`${azure.reason || 'No scope could be read.'} The Cost runbook (docs/runbooks/cost.md, "When a number looks wrong") says what each message means and what to do.`}
         />
       </div>
     );

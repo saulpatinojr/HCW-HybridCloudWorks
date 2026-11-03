@@ -69,6 +69,11 @@ function azureSignals(azure, period) {
       );
       continue;
     }
+    if (scope.note) {
+      out.push(
+        signal(`azure:${scope.id}:kept`, 'info', 'data', `${scope.label}: showing earlier figures`, scope.note, AZURE_HREF)
+      );
+    }
     const budget = scope.budget;
     if (!budget) continue;
     const used = budgetRung(budget.percentUsed);

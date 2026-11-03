@@ -222,8 +222,9 @@ export async function refreshSnapshot({
   readAi = readAiCosts,
 }) {
   const at = now();
+  const stored = await readSnapshot(store);
   const [azure, aiResult] = await Promise.all([
-    azureReader.readAll(),
+    azureReader.readAll({ previous: stored?.azure ?? null, now: at }),
     readAi({ store, env, fetchImpl, now, budgetUsd: ledger.settings.aiMonthlyBudgetUsd }),
   ]);
   const sources = [

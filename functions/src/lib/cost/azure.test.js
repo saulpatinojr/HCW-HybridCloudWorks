@@ -8,10 +8,14 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ARM_ORIGIN,
   BUDGETS_API_VERSION,
+  MAX_ATTEMPTS,
+  RETRY_WAIT_CAP_MS,
+  RETRY_WAIT_DEFAULT_MS,
   QUERY_API_VERSION,
   createAzureCostReader,
   describeArmStatus,
   parseScopes,
+  retryAfterMs,
   rowsOf,
   summarizeBudgets,
   summarizeUsage,
@@ -185,7 +189,8 @@ describe('describeArmStatus', () => {
     expect(describeArmStatus(403)).toContain('Cost Management Reader');
     expect(describeArmStatus(401)).toContain('HTTP 401');
     expect(describeArmStatus(404)).toContain('404');
-    expect(describeArmStatus(429)).toContain('rate-limited');
+    expect(describeArmStatus(429)).toContain('HTTP 429');
+    expect(describeArmStatus(429)).toContain('Azure portal');
     expect(describeArmStatus(500)).toBe('Azure answered HTTP 500.');
   });
 });
@@ -325,5 +330,121 @@ describe('createAzureCostReader', () => {
     const result = await reader.readAll();
     expect(result.available).toBe(false);
     expect(result.scopes[0].errorCode).toBe('error');
+  });
+});
+
+describe('living within Cost Management’s rate limits (2026-11-03)', () => {
+  const ONE_SCOPE = JSON.stringify([{ id: 'app', label: 'App', scope: `/subscriptions/${APP}`, kind: 'subscription' }]);
+  const NOW = new Date('2026-11-03T03:30:00Z');
+  const ok = (body) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => body });
+  const throttled = (headers = {}) => ({
+    ok: false,
+    status: 429,
+    headers: { get: (name) => headers[name.toLowerCase()] ?? null },
+    json: async () => ({}),
+  });
+  const budgetBody = { value: [{ name: 'b', properties: { amount: 150, currentSpend: { amount: 12 }, forecastSpend: { amount: 30 } } }] };
+  const lastMonthBody = { properties: { columns: [{ name: 'PreTaxCost' }], rows: [[34.32]] } };
+  const answer = (url, init) => {
+    if (url.includes('/budgets?')) return ok(budgetBody);
+    return JSON.parse(init.body).timeframe === 'TheLastMonth' ? ok(lastMonthBody) : ok(usagePayload);
+  };
+
+  it('reads the wait from the QPU header, then Retry-After, then a default, and caps it', () => {
+    const headers = (h) => ({ get: (name) => h[name] ?? null });
+    expect(retryAfterMs(headers({ 'x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after': '4' }))).toBe(4000);
+    expect(retryAfterMs(headers({ 'retry-after': '7' }))).toBe(7000);
+    expect(retryAfterMs(headers({}))).toBe(RETRY_WAIT_DEFAULT_MS);
+    expect(retryAfterMs(headers({ 'retry-after': '600' }))).toBe(RETRY_WAIT_CAP_MS);
+    expect(retryAfterMs(undefined)).toBe(RETRY_WAIT_DEFAULT_MS);
+  });
+
+  it('asks one question at a time, never two together', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const fetchImpl = vi.fn(async (url, init) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      return answer(url, init);
+    });
+    const reader = createAzureCostReader({ env: { COST_SCOPES: SCOPES }, fetchImpl, credential });
+    const result = await reader.readAll({ now: NOW });
+    expect(result.available).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(9);
+    expect(most).toBe(1);
+  });
+
+  it('waits as long as Azure asks after a 429 and tries once more', async () => {
+    const sleep = vi.fn(async () => {});
+    let first = true;
+    const fetchImpl = vi.fn(async (url, init) => {
+      if (first && !url.includes('/budgets?')) {
+        first = false;
+        return throttled({ 'x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after': '3' });
+      }
+      return answer(url, init);
+    });
+    const reader = createAzureCostReader({ env: { COST_SCOPES: ONE_SCOPE }, fetchImpl, credential, sleep });
+    const result = await reader.readAll({ now: NOW });
+    expect(sleep).toHaveBeenCalledWith(3000);
+    expect(result.scopes[0]).toMatchObject({ monthToDate: 5, error: null, readAt: NOW.toISOString() });
+  });
+
+  it('gives up after MAX_ATTEMPTS and says it is the shared allowance, not the role', async () => {
+    const sleep = vi.fn(async () => {});
+    const fetchImpl = vi.fn(async () => throttled());
+    const reader = createAzureCostReader({ env: { COST_SCOPES: ONE_SCOPE }, fetchImpl, credential, sleep });
+    const result = await reader.readAll({ now: NOW });
+    expect(fetchImpl).toHaveBeenCalledTimes(MAX_ATTEMPTS);
+    expect(result.available).toBe(false);
+    expect(result.reason).toContain('HTTP 429');
+    expect(result.reason).not.toContain('Cost Management Reader');
+    expect(result.scopes[0]).toMatchObject({ errorStatus: 429 });
+  });
+
+  it('does not retry a refusal that waiting cannot fix', async () => {
+    const sleep = vi.fn(async () => {});
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 403, headers: { get: () => null }, json: async () => ({}) }));
+    const reader = createAzureCostReader({ env: { COST_SCOPES: ONE_SCOPE }, fetchImpl, credential, sleep });
+    await reader.readAll({ now: NOW });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('reuses last month’s total read earlier this month instead of asking again', async () => {
+    const fetchImpl = vi.fn(async (url, init) => answer(url, init));
+    const reader = createAzureCostReader({ env: { COST_SCOPES: ONE_SCOPE }, fetchImpl, credential });
+    const previous = { scopes: [{ id: 'app', error: null, previousMonth: 30.5, previousMonthOf: '2026-10', readAt: '2026-11-03T00:00:00Z' }] };
+    const result = await reader.readAll({ previous, now: NOW });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.some(([, init]) => init.body && JSON.parse(init.body).timeframe === 'TheLastMonth')).toBe(false);
+    expect(result.scopes[0]).toMatchObject({ previousMonth: 30.5, previousMonthOf: '2026-10' });
+
+    // A total kept from a different month is asked for again.
+    const stale = { scopes: [{ ...previous.scopes[0], previousMonthOf: '2026-09' }] };
+    fetchImpl.mockClear();
+    const again = await reader.readAll({ previous: stale, now: NOW });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(again.scopes[0]).toMatchObject({ previousMonth: 34.32, previousMonthOf: '2026-10' });
+  });
+
+  it('keeps this month’s last good figures when a refresh is refused, and says when they were read', async () => {
+    const sleep = vi.fn(async () => {});
+    const fetchImpl = vi.fn(async () => throttled());
+    const reader = createAzureCostReader({ env: { COST_SCOPES: ONE_SCOPE }, fetchImpl, credential, sleep });
+    const good = { id: 'app', label: 'Old label', error: null, monthToDate: 11, previousMonth: 30, previousMonthOf: '2026-10', budget: { amount: 150 }, byService: [], daily: [], readAt: '2026-11-03T00:10:00.000Z' };
+    const result = await reader.readAll({ previous: { scopes: [good] }, now: NOW });
+    expect(result.available).toBe(true);
+    expect(result.scopes[0]).toMatchObject({ label: 'App', monthToDate: 11, error: null, noteCode: 'throttled' });
+    expect(result.scopes[0].note).toContain('read at 2026-11-03 00:10 UTC');
+    expect(result.scopes[0].note).toContain('HTTP 429');
+
+    // Last month's figures are not kept into a new month.
+    const october = { ...good, readAt: '2026-10-31T23:00:00.000Z' };
+    const fresh = await reader.readAll({ previous: { scopes: [october] }, now: NOW });
+    expect(fresh.available).toBe(false);
+    expect(fresh.scopes[0].monthToDate).toBeNull();
   });
 });

@@ -49,7 +49,7 @@
 import { DefaultAzureCredential } from '@azure/identity';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 import { AuthoredError, storedFailure } from '../http/error-response.js';
-import { money, percent } from './model.js';
+import { money, percent, previousMonthOf } from './model.js';
 
 export const ARM_ORIGIN = 'https://management.azure.com';
 export const ARM_SCOPE = 'https://management.azure.com/.default';
@@ -61,6 +61,21 @@ export const ARM_TIMEOUT_MS = 20_000;
 export const SCOPES_SETTING = 'COST_SCOPES';
 
 export const SCOPE_KINDS = Object.freeze(['subscription', 'resourceGroup']);
+
+/**
+ * Cost Management's Query API is limited per TENANT in query processing units
+ * (QPU): 12 per 10 seconds, 60 per minute, 600 per hour, one QPU per month of
+ * data asked for, and the owner's own Cost Analysis in the portal spends the
+ * same allowance. A 429 names the wait in
+ * `x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after` (seconds)
+ * (https://learn.microsoft.com/azure/cost-management-billing/costs/manage-automation#data-latency-and-rate-limits,
+ * read 2026-11-03). So the reader asks one question at a time, and on a 429
+ * waits as long as Azure says, at most RETRY_WAIT_CAP_MS, and tries once more.
+ */
+export const QPU_RETRY_HEADER = 'x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after';
+export const RETRY_WAIT_CAP_MS = 30_000;
+export const RETRY_WAIT_DEFAULT_MS = 10_000;
+export const MAX_ATTEMPTS = 2;
 
 const TIMEOUT_SENTENCE = 'Azure did not answer in time; the next refresh will try again.';
 const UNREADABLE_SENTENCE = 'Azure could not be read; the next refresh will try again.';
@@ -114,10 +129,24 @@ export class CostScopesError extends AuthoredError {
 
 /** ARM answered something other than 2xx; describeArmStatus wrote the sentence, no ARM text is in it. */
 export class ArmStatusError extends AuthoredError {
-  constructor(status) {
+  constructor(status, retryAfterMs = null) {
     super(describeArmStatus(status), { code: 'ARM_STATUS' });
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
+}
+
+/** How long a 429 asks to wait, in ms: the QPU header, else Retry-After, else the default; capped. */
+export function retryAfterMs(headers) {
+  const read = (name) => {
+    const raw = headers?.get?.(name);
+    // An absent header is null, and Number(null) is 0: that would mean "retry now".
+    if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value * 1000 : null;
+  };
+  const ms = read(QPU_RETRY_HEADER) ?? read('retry-after') ?? RETRY_WAIT_DEFAULT_MS;
+  return Math.min(ms, RETRY_WAIT_CAP_MS);
 }
 
 function invalidScopes(reason) {
@@ -235,7 +264,9 @@ export function describeArmStatus(status) {
     return `Azure refused the read (HTTP ${status}): the Function App's identity needs the Cost Management Reader role on this scope.`;
   }
   if (status === 404) return 'Azure answered 404: the scope does not exist or is not visible to this identity.';
-  if (status === 429) return 'Azure rate-limited the read (HTTP 429); the next refresh will try again.';
+  if (status === 429) {
+    return 'Azure Cost Management is limiting how often it can be asked (HTTP 429), and still was after a wait; the next refresh will try again. Its allowance is shared with Cost Analysis in the Azure portal.';
+  }
   return `Azure answered HTTP ${status}.`;
 }
 
@@ -245,11 +276,16 @@ export function describeArmStatus(status) {
  * @param {Function} [deps.fetchImpl]
  * @param {{ getToken: Function }} [deps.credential] test seam; production builds DefaultAzureCredential lazily
  */
-export function createAzureCostReader({ env = process.env, fetchImpl = globalThis.fetch, credential } = {}) {
+export function createAzureCostReader({
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+  credential,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
   let cached = credential ?? null;
   const getCredential = () => (cached ??= new DefaultAzureCredential());
 
-  async function armFetch(path, init = {}) {
+  async function armFetchOnce(path, init) {
     const token = await getCredential().getToken(ARM_SCOPE);
     if (!token?.token) throw new Error(`Could not acquire a token for ${ARM_SCOPE}`);
     const response = await fetchWithTimeout(fetchImpl, `${ARM_ORIGIN}${path}`, {
@@ -262,8 +298,22 @@ export function createAzureCostReader({ env = process.env, fetchImpl = globalThi
       },
       timeoutMs: ARM_TIMEOUT_MS,
     });
-    if (!response.ok) throw new ArmStatusError(response.status);
+    if (!response.ok) {
+      throw new ArmStatusError(response.status, response.status === 429 ? retryAfterMs(response.headers) : null);
+    }
     return response.json();
+  }
+
+  /** One ARM call; a 429 waits as long as Azure asks (capped) and tries again, up to MAX_ATTEMPTS. */
+  async function armFetch(path, init = {}) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await armFetchOnce(path, init);
+      } catch (error) {
+        if (error?.status !== 429 || attempt >= MAX_ATTEMPTS) throw error;
+        await sleep(error.retryAfterMs ?? RETRY_WAIT_DEFAULT_MS);
+      }
+    }
   }
 
   const query = (scope, body) =>
@@ -277,8 +327,20 @@ export function createAzureCostReader({ env = process.env, fetchImpl = globalThi
   /**
    * One scope's figures. Never throws: a failed read is `{ error }` with the
    * figures null, so one scope that cannot be read never hides the others.
+   *
+   * The calls run one after another, never together (the QPU note above).
+   * Last month's total does not change once the month is over, so when
+   * `previous` (this scope as the last snapshot holds it) already has it for
+   * the same month, it is reused and the query is not sent: half the QPU of
+   * every refresh after the first of the month.
+   *
+   * When this read fails and `previous` has good figures from this same
+   * month, those are kept, marked with `readAt` and a `note` saying why they
+   * were not renewed, so a throttled refresh does not blank the card.
    */
-  async function readScope(scope) {
+  async function readScope(scope, previous, now) {
+    const month = now.toISOString().slice(0, 7);
+    const lastMonth = previousMonthOf(month);
     const base = {
       id: scope.id,
       label: scope.label,
@@ -286,47 +348,68 @@ export function createAzureCostReader({ env = process.env, fetchImpl = globalThi
       name: scope.name,
       monthToDate: null,
       previousMonth: null,
+      previousMonthOf: null,
       budget: null,
       byService: [],
       daily: [],
+      readAt: null,
+      note: null,
       error: null,
     };
     try {
-      const [budgets, usage, lastMonth] = await Promise.all([
-        armFetch(`${scope.scope}/providers/Microsoft.Consumption/budgets?api-version=${BUDGETS_API_VERSION}`),
-        query(scope.scope, {
-          type: 'ActualCost',
-          timeframe: 'MonthToDate',
-          dataset: {
-            granularity: 'Daily',
-            aggregation,
-            grouping: [
-              { type: 'Dimension', name: 'ResourceGroupName' },
-              { type: 'Dimension', name: 'ServiceName' },
-            ],
-          },
-        }),
-        query(scope.scope, {
-          type: 'ActualCost',
-          timeframe: 'TheLastMonth',
-          dataset: { granularity: 'None', aggregation },
-        }),
-      ]);
+      const budgets = await armFetch(
+        `${scope.scope}/providers/Microsoft.Consumption/budgets?api-version=${BUDGETS_API_VERSION}`
+      );
+      const usage = await query(scope.scope, {
+        type: 'ActualCost',
+        timeframe: 'MonthToDate',
+        dataset: {
+          granularity: 'Daily',
+          aggregation,
+          grouping: [
+            { type: 'Dimension', name: 'ResourceGroupName' },
+            { type: 'Dimension', name: 'ServiceName' },
+          ],
+        },
+      });
+      const known = previous && !previous.error && previous.previousMonthOf === lastMonth && Number.isFinite(previous.previousMonth);
+      const previousMonth = known
+        ? previous.previousMonth
+        : totalOf(
+            await query(scope.scope, {
+              type: 'ActualCost',
+              timeframe: 'TheLastMonth',
+              dataset: { granularity: 'None', aggregation },
+            })
+          );
       const summary = summarizeUsage(usage);
       return {
         ...base,
         monthToDate: summary.monthToDate,
         byService: summary.byService,
         daily: summary.daily,
-        previousMonth: totalOf(lastMonth),
+        previousMonth,
+        previousMonthOf: lastMonth,
         budget: summarizeBudgets(budgets),
+        readAt: now.toISOString(),
       };
     } catch (error) {
-      return {
-        ...base,
-        error: error?.code === 'FETCH_TIMEOUT' ? TIMEOUT_SENTENCE : storedFailure(error, UNREADABLE_SENTENCE),
-        errorCode: error?.code ?? 'error',
-      };
+      const message = error?.code === 'FETCH_TIMEOUT' ? TIMEOUT_SENTENCE : storedFailure(error, UNREADABLE_SENTENCE);
+      const keep = previous && !previous.error && typeof previous.readAt === 'string' && previous.readAt.slice(0, 7) === month;
+      if (keep) {
+        return {
+          ...base,
+          ...previous,
+          id: scope.id,
+          label: scope.label,
+          kind: scope.kind,
+          name: scope.name,
+          note: `These figures were read at ${previous.readAt.slice(0, 16).replace('T', ' ')} UTC and could not be renewed this time: ${message}`,
+          noteCode: error?.status === 429 ? 'throttled' : error?.code ?? 'error',
+          error: null,
+        };
+      }
+      return { ...base, error: message, errorCode: error?.code ?? 'error', errorStatus: error?.status ?? null };
     }
   }
 
@@ -337,11 +420,13 @@ export function createAzureCostReader({ env = process.env, fetchImpl = globalThi
     },
 
     /**
-     * Every configured scope, read together. `available` is false, with a
+     * Every configured scope, read one after another. `previous` is the last
+     * snapshot's Azure section, used to reuse last month's totals and to keep
+     * good figures through a throttled refresh. `available` is false, with a
      * `reason`, when no scope is configured, the setting is malformed, or
      * every scope failed.
      */
-    async readAll() {
+    async readAll({ previous = null, now = new Date() } = {}) {
       let scopes;
       try {
         scopes = parseScopes(env);
@@ -355,7 +440,10 @@ export function createAzureCostReader({ env = process.env, fetchImpl = globalThi
           scopes: [],
         };
       }
-      const results = await Promise.all(scopes.map((scope) => readScope(scope)));
+      const before = new Map((previous?.scopes ?? []).map((row) => [row.id, row]));
+      const results = [];
+      // One scope after another: the QPU allowance is per tenant (see above).
+      for (const scope of scopes) results.push(await readScope(scope, before.get(scope.id), now));
       const failed = results.filter((row) => row.error);
       if (failed.length === results.length) {
         return { available: false, reason: failed[0].error, scopes: results };
