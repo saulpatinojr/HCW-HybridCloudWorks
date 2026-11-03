@@ -622,6 +622,11 @@ describe('publishing watchdog', () => {
       stagedTooLongCount: STAGED_CANDIDATES_BOUND,
       stagedTooLongBounded: true,
     });
+    // The alert says its count is a floor too.
+    expect(full.data.workflow_alerts.get('publishing-watchdog-2026-08-21T12')).toMatchObject({
+      stagedTooLongCount: STAGED_CANDIDATES_BOUND,
+      stagedTooLongBounded: true,
+    });
   });
 
 
@@ -640,6 +645,8 @@ describe('publishing watchdog', () => {
     const r = await createPublishingWatchdog({ store, now }).run();
     expect(r).toEqual({ overdueScheduledCount: 1, stagedTooLongCount: 1 });
     expect(store.queryDocs.mock.calls[0][2][0].value).toBe(iso(-45 * 60 * 1000));
+    // Both reads treat an item with no Live field as not live (#1516).
+    expect(store.queryDocs.mock.calls[0][1]).toContain('NOT IS_DEFINED(c.Live) OR c.Live = false');
     const candidates = store.queryDocs.mock.calls[1][1];
     expect(candidates).toContain("c.contentStatus = 'published'");
     expect(candidates).toContain('NOT IS_DEFINED(c.Live) OR c.Live = false');

@@ -481,17 +481,20 @@ export function createOpsHealthHandlers({
       // oldest dated one.
       store.queryDocs(
         'content',
-        `SELECT TOP 1 c.id, c["contentStatus"], c["updatedAt"] FROM c WHERE ${STAGED_NOT_LIVE} AND IS_STRING(c.updatedAt) ORDER BY c.updatedAt ASC`,
+        `SELECT TOP 1 c.id, c["contentStatus"], c["updatedAt"] FROM c WHERE ${STAGED_NOT_LIVE} AND IS_STRING(c.updatedAt) AND c.updatedAt > '' ORDER BY c.updatedAt ASC`,
         stagedParams
       ),
       // The items the ordered read cannot see: no string `updatedAt`, which
       // is what a migrated item with a Firestore-style time looks like. The
       // first deploy of #1513 showed "0h" over "1 waiting" for exactly this
-      // (#1516). Their age comes from the first time they carry, in the
-      // order the tile used before #1513.
+      // (#1516). An empty string counts as no time here, and is kept out of
+      // the ordered read, where it would sort first and hide the real oldest.
+      // Their age comes from the first field that holds a readable time:
+      // updatedAt, reviewedAt, fetchedAt (the order the tile used before
+      // #1513), then publishedAt.
       store.queryDocs(
         'content',
-        `SELECT TOP ${UNDATED_STAGED_BOUND} c.id, c["updatedAt"], c["reviewedAt"], c["fetchedAt"], c["publishedAt"] FROM c WHERE ${STAGED_NOT_LIVE} AND NOT IS_STRING(c.updatedAt)`,
+        `SELECT TOP ${UNDATED_STAGED_BOUND} c.id, c["updatedAt"], c["reviewedAt"], c["fetchedAt"], c["publishedAt"] FROM c WHERE ${STAGED_NOT_LIVE} AND (NOT IS_STRING(c.updatedAt) OR c.updatedAt = '')`,
         stagedParams
       ),
       count(STAGED_NOT_LIVE, stagedParams),
@@ -596,7 +599,12 @@ export function createOpsHealthHandlers({
     const stagedHours = [
       ...(stagedRows || []).map((item) => toHoursSince(item.updatedAt, nowMs)),
       ...(undatedStagedRows || []).map((item) =>
-        toHoursSince(item.updatedAt || item.reviewedAt || item.fetchedAt || item.publishedAt, nowMs)
+        toHoursSince(
+          ['updatedAt', 'reviewedAt', 'fetchedAt', 'publishedAt']
+            .map((field) => item[field])
+            .find((value) => toMillis(value) > 0),
+          nowMs
+        )
       ),
     ].filter((value) => value !== null);
     const waitingCount = Number(stagedWaitingCount) || 0;

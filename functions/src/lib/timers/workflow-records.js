@@ -100,7 +100,6 @@ export function toMillis(value) {
   // or { _seconds, _nanoseconds } (#1516).
   const seconds = value.seconds ?? value._seconds;
   if (typeof seconds === 'number') return seconds * 1000;
-  if (typeof value === 'number') return value;
   const parsed = Date.parse(String(value));
   return Number.isNaN(parsed) ? 0 : parsed;
 }

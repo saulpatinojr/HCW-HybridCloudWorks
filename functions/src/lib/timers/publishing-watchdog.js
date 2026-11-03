@@ -22,7 +22,7 @@ export function createPublishingWatchdog({ store, now = () => new Date(), log = 
 
     const overdue = await store.queryDocs(
       'content',
-      'SELECT TOP 100 c.id FROM c WHERE c.Live = false AND IS_DEFINED(c.scheduledPublishDate) AND c.scheduledPublishDate != null AND c.scheduledPublishDate <= @threshold',
+      'SELECT TOP 100 c.id FROM c WHERE (NOT IS_DEFINED(c.Live) OR c.Live = false) AND IS_DEFINED(c.scheduledPublishDate) AND c.scheduledPublishDate != null AND c.scheduledPublishDate <= @threshold',
       [{ name: '@threshold', value: staleThreshold }]
     );
     // Published, not live, no schedule (#1516). The status, Live and
@@ -62,6 +62,7 @@ export function createPublishingWatchdog({ store, now = () => new Date(), log = 
           severity: overdueCount > 0 ? 'critical' : 'warning',
           overdueScheduledCount: overdueCount,
           stagedTooLongCount: stagedTooLong.length,
+          stagedTooLongBounded: stagedBounded,
           sampleOverdueIds: (overdue || []).slice(0, 10).map((d) => d.id),
           sampleStagedIds: stagedTooLong.slice(0, 10).map((d) => d.id),
           source: 'monitorPublishingPipeline',

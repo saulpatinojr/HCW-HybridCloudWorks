@@ -81,6 +81,7 @@ function opsStore() {
       if (container === 'content' && query.includes('NOT IS_STRING(c.updatedAt)')) {
         // The waiting items the ordered read cannot see (#1516): none here.
         expect(query).toContain('TOP 50');
+        expect(query).toContain("(NOT IS_STRING(c.updatedAt) OR c.updatedAt = '')");
         return [];
       }
       if (container === 'content') {
@@ -90,7 +91,8 @@ function opsStore() {
         expect(query).toContain('NOT IS_DEFINED(c.Live) OR c.Live = false');
         // Never ORDER BY a field a row may lack (public-reads.js): a missing
         // or null updatedAt must not sort first and show the tile as 0 h.
-        expect(query).toContain('IS_STRING(c.updatedAt) ORDER BY c.updatedAt ASC');
+        // An empty string is not a time: it would sort first and hide the oldest.
+        expect(query).toContain("IS_STRING(c.updatedAt) AND c.updatedAt > '' ORDER BY c.updatedAt ASC");
         // Scheduled for later is not stuck.
         expect(query).toContain('c.scheduledPublishDate <= @now');
         // `@now` is the build's own clock (the cache tests move it).
@@ -559,6 +561,17 @@ describe('getOpsHealthSnapshot', () => {
       waiting: 1,
     });
     expect(reviewedOnly.oldestStagedHours).toBe(48);
+
+    // An empty or unreadable updatedAt does not hide the times after it.
+    const fallsThrough = await build({
+      dated: [],
+      undated: [
+        { id: 'e1', updatedAt: '', reviewedAt: '2026-08-05T04:00:00Z' },
+        { id: 'o1', updatedAt: {}, fetchedAt: '2026-08-04T04:00:00Z' },
+      ],
+      waiting: 2,
+    });
+    expect(fallsThrough.oldestStagedHours).toBe(72);
 
     // Waiting, but no time anywhere: null ("no recorded time"), not 0.
     const timeless = await build({ dated: [], undated: [{ id: 't1' }], waiting: 1 });

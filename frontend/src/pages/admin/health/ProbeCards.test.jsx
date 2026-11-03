@@ -250,5 +250,7 @@ describe('the Overview and Alerts cards', () => {
     expect(statusOf({ ...quiet, jobs24h: { failed: 2, total: 9, unavailable: false } })).toBe(
       'degraded'
     );
+    // Items wait but none carries a time (#1516): the header agrees with the tile.
+    expect(statusOf({ ...quiet, oldestStagedHours: null, stagedWaitingCount: 1 })).toBe('degraded');
   });
 });

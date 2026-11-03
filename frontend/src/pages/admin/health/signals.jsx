@@ -127,7 +127,7 @@ export function signalsStatus(signals) {
   const jobsUnreadable = Boolean(signals?.failedJobsUnavailable || signals?.jobs24h?.unavailable);
   return worstStatus([
     countStatus(signals?.queueBreachCount),
-    (signals?.oldestStagedHours || 0) > 72 ? 'degraded' : 'healthy',
+    stagedAgeStatus(signals?.oldestStagedHours),
     (signals?.openAlertAgeHours || 0) > 24 ? 'degraded' : 'healthy',
     countStatus(signals?.orphanedGeneratedImages),
     countStatus(signals?.publishFailureCount),
@@ -169,11 +169,15 @@ function getDigestDocLabel(digestDate) {
 }
 
 /**
- * The waiting-to-go-live tile's word: degraded past three days, unknown when
- * items wait but none carries a time (#1516), healthy otherwise.
+ * The waiting-to-go-live tile's word, and its share of the card's header:
+ * degraded past three days, and degraded when items wait but none carries a
+ * time (#1516). Not unknown: worstStatus counts unknown only when nothing
+ * else is known, so the header would read Healthy over the tile, and
+ * "unknown" there means "never checked", which this is not (the #1491 rule
+ * for a read that could not count).
  */
 function stagedAgeStatus(hours) {
-  if (hours === null) return 'unknown';
+  if (hours === null) return 'degraded';
   return (hours || 0) > 72 ? 'degraded' : 'healthy';
 }
 
