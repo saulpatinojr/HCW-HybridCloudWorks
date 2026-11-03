@@ -35,6 +35,9 @@ const read = (path) => readFileSync(join(REPO, path), 'utf8');
 const SCRIPT = read('lab-host/bootstrap.sh');
 const DOCKERFILE = read('lab-image/Dockerfile');
 const VERSIONS_ENV = read('lab-image/versions.env');
+// The same file with no published wheel pinned: the blocks below that are
+// run with stand-ins for uv alone must never reach a release on the network.
+const PINS_WITHOUT_WHEEL = VERSIONS_ENV.replace(/^PYYAML_WHEEL_SHA256=.*$/m, 'PYYAML_WHEEL_SHA256=');
 const VAULT_HELPER = read('lab-host/ansible/roles/vault_tools/files/hcw-vault-set');
 
 /** From the line that starts `start` to the first line after it that is exactly `end`. */
@@ -411,10 +414,10 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
   const pinned = VERSIONS_ENV.match(/^ANSIBLE_CORE_VERSION=(.*)$/m)[1];
   const [major, minor] = pinned.split('.');
   const later = (patch) => `${major}.${minor}.${patch}`;
-  const withVersion = (version) => VERSIONS_ENV.replace(/^ANSIBLE_CORE_VERSION=.*$/m, `ANSIBLE_CORE_VERSION=${version}`);
+  const withVersion = (version) => PINS_WITHOUT_WHEEL.replace(/^ANSIBLE_CORE_VERSION=.*$/m, `ANSIBLE_CORE_VERSION=${version}`);
 
   it('builds the first generation, links the four commands through HCW_ANSIBLE_VENV, and installs nothing on a re-run', () => {
-    const first = step(VERSIONS_ENV);
+    const first = step(PINS_WITHOUT_WHEEL);
     expect(first.status, first.stderr).toBe(0);
     const generation = inUse();
     expect(generation).toMatch(
@@ -424,7 +427,7 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     for (const command of COMMANDS) expect(sh(`readlink "$ROOT/bin/${command}"`)).toBe(`${root}/opt/uv/ansible-core/bin/${command}`);
     expect(first.stdout).toContain(`ansible-playbook [core ${pinned}]`);
 
-    const again = step(VERSIONS_ENV);
+    const again = step(PINS_WITHOUT_WHEEL);
     expect(again.status, again.stderr).toBe(0);
     expect(again.stdout).not.toContain('installing ansible-core');
     expect(again.stdout).not.toContain('switched');
@@ -439,7 +442,7 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     ['an ansible-playbook that reports another Python', { UV_STUB_PYTHON: '3.0.0' }],
   ]) {
     it(`leaves HCW_ANSIBLE_VENV and every command on the generation that worked after ${failure}, and the next run rebuilds the new one`, () => {
-      expect(step(VERSIONS_ENV).status).toBe(0);
+      expect(step(PINS_WITHOUT_WHEEL).status).toBe(0);
       const working = inUse();
       const failed = step(withVersion(later(99)), env);
       expect(failed.status).not.toBe(0);
@@ -476,7 +479,7 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
 
   it('replaces a venv built in place at HCW_ANSIBLE_VENV with the link', () => {
     sh('mkdir -p "$ROOT/opt/uv/ansible-core/bin" && touch "$ROOT/opt/uv/ansible-core/hcw-requirements.txt"');
-    const result = step(VERSIONS_ENV);
+    const result = step(PINS_WITHOUT_WHEEL);
     expect(result.status, result.stderr).toBe(0);
     expect(inUse()).toContain('/opt/uv/ansible-core-generations/');
     expect(answer()).toContain(`[core ${pinned}]`);
@@ -492,26 +495,26 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     ['carries a stale record', 'echo "stale==0 --hash=sha256:0" >>"$GEN/hcw-requirements.txt"'],
   ]) {
     it(`keeps the generation in use, which ${spoiled}, in use and on disk when the rebuild of the same pins fails`, () => {
-      expect(step(VERSIONS_ENV).status).toBe(0);
+      expect(step(PINS_WITHOUT_WHEEL).status).toBe(0);
       const active = inUse();
       sh(spoil, { GEN: active });
-      const failed = step(VERSIONS_ENV, { UV_STUB_FAIL: 'install' });
+      const failed = step(PINS_WITHOUT_WHEEL, { UV_STUB_FAIL: 'install' });
       expect(failed.status).not.toBe(0);
       expect(inUse()).toBe(active);
       expect(sh('[ -d "$GEN" ] && echo there', { GEN: active })).toBe('there');
       expect(sh('"$ROOT/bin/ansible-vault" --version')).toContain(`[core ${pinned}]`);
 
       // The next good run replaces it, and the failed build's directory goes too.
-      const rebuilt = step(VERSIONS_ENV);
+      const rebuilt = step(PINS_WITHOUT_WHEEL);
       expect(rebuilt.status, rebuilt.stderr).toBe(0);
       expect(generations()).toEqual([name(inUse())]);
     });
 
     it(`replaces the generation in use, which ${spoiled}, with a build in a directory of its own, and removes it only after the switch`, () => {
-      expect(step(VERSIONS_ENV).status).toBe(0);
+      expect(step(PINS_WITHOUT_WHEEL).status).toBe(0);
       const active = inUse();
       sh(spoil, { GEN: active });
-      const rebuilt = step(VERSIONS_ENV);
+      const rebuilt = step(PINS_WITHOUT_WHEEL);
       expect(rebuilt.status, rebuilt.stderr).toBe(0);
       const now = inUse();
       expect(now).not.toBe(active);
@@ -624,7 +627,7 @@ describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the releas
   const pyyamlVersion = VERSIONS_ENV.match(/^PYYAML_VERSION=(.*)$/m)[1];
   const tag = `pyyaml-${pyyamlVersion}-cp${pyMajor}${pyMinor}`;
   const wheel = `pyyaml-${pyyamlVersion}-cp${pyMajor}${pyMinor}-cp${pyMajor}${pyMinor}-linux_x86_64.whl`;
-  const withWheel = (sha, text = VERSIONS_ENV) => text.replace(/^PYYAML_WHEEL_SHA256=.*$/m, `PYYAML_WHEEL_SHA256=${sha}`);
+  const withWheel = (sha, text = PINS_WITHOUT_WHEEL) => text.replace(/^PYYAML_WHEEL_SHA256=.*$/m, `PYYAML_WHEEL_SHA256=${sha}`);
 
   // curl writes the same bytes to whatever -o names and logs the URL; cosign
   // logs its arguments and fails only when asked to.
@@ -698,7 +701,7 @@ describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the releas
   });
 
   it('installs PyPI\'s wheel and downloads nothing while PYYAML_WHEEL_SHA256 is empty', () => {
-    const result = step(VERSIONS_ENV);
+    const result = step(PINS_WITHOUT_WHEEL);
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('PYYAML_WHEEL_SHA256 is empty');
     expect(logOf('curl.log')).toBe('');
