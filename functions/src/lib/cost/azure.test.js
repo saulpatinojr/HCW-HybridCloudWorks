@@ -20,6 +20,7 @@ import {
   retryAfterMs,
   rowsOf,
   summarizeBudgets,
+  withSpendAtLeast,
   summarizeUsage,
   totalOf,
   usageDateOf,
@@ -184,6 +185,47 @@ describe('summarizeBudgets', () => {
     });
     expect(two.name).toBe('aa');
   });
+
+  it('leaves out a resource group budget listed under its subscription', () => {
+    const sub = '/subscriptions/00000000-0000-0000-0000-000000000001';
+    const listed = {
+      value: [
+        {
+          id: `${sub}/resourceGroups/rg-ai/providers/Microsoft.Consumption/budgets/site-foundry-monthly-budget`,
+          name: 'site-foundry-monthly-budget',
+          properties: { amount: 75, currentSpend: { amount: 0.02 } },
+        },
+        {
+          id: `${sub}/providers/Microsoft.Consumption/budgets/site-monthly-budget`,
+          name: 'site-monthly-budget',
+          properties: { amount: 150, currentSpend: { amount: 3 } },
+        },
+      ],
+    };
+    expect(summarizeBudgets(listed, sub).name).toBe('site-monthly-budget');
+    expect(summarizeBudgets(listed, `${sub}/resourceGroups/RG-AI`).name).toBe('site-foundry-monthly-budget');
+    // A leading slash on only one side does not change the match.
+    expect(summarizeBudgets(listed, sub.slice(1)).name).toBe('site-monthly-budget');
+    const bare = { value: listed.value.map((b) => ({ ...b, id: b.id.slice(1) })) };
+    expect(summarizeBudgets(bare, sub).name).toBe('site-monthly-budget');
+    // Only a group's budget in the list: the subscription has none of its own.
+    expect(summarizeBudgets({ value: [listed.value[0]] }, sub)).toBeNull();
+  });
+});
+
+describe('withSpendAtLeast', () => {
+  const budget = { name: 'site-monthly-budget', amount: 150, currentSpend: 0, forecastSpend: null, percentUsed: 0, percentForecast: null };
+
+  it('raises a lagging budget to the queried spend, so the bar and the alerts see it', () => {
+    expect(withSpendAtLeast(budget, 7.33)).toEqual({ ...budget, currentSpend: 7.33, percentUsed: 4.9, spendSource: 'query' });
+  });
+
+  it("keeps Azure's figure when it is the same or higher, and passes no budget through", () => {
+    const ahead = { ...budget, currentSpend: 9, percentUsed: 6 };
+    expect(withSpendAtLeast(ahead, 7.33)).toEqual({ ...ahead, spendSource: 'budget' });
+    expect(withSpendAtLeast(ahead, null)).toEqual({ ...ahead, spendSource: 'budget' });
+    expect(withSpendAtLeast(null, 7.33)).toBeNull();
+  });
 });
 
 describe('describeArmStatus', () => {
@@ -198,7 +240,7 @@ describe('describeArmStatus', () => {
 });
 
 /** A fake ARM: answers by path, records every request, and can refuse one scope. */
-function fakeArm({ refuse = {} } = {}) {
+function fakeArm({ refuse = {}, budgetSpend = 12 } = {}) {
   const calls = [];
   const fetchImpl = vi.fn(async (url, init) => {
     calls.push({ url, init });
@@ -211,7 +253,7 @@ function fakeArm({ refuse = {} } = {}) {
         ok: true,
         status: 200,
         json: async () => ({
-          value: [{ name: 'b', properties: { amount: 150, currentSpend: { amount: 12 }, forecastSpend: { amount: 30 } } }],
+          value: [{ name: 'b', properties: { amount: 150, currentSpend: { amount: budgetSpend }, forecastSpend: { amount: 30 } } }],
         }),
       };
     }
@@ -231,6 +273,14 @@ function fakeArm({ refuse = {} } = {}) {
 const credential = { getToken: vi.fn(async () => ({ token: 'tok' })) };
 
 describe('createAzureCostReader', () => {
+  it("measures the budget bar by the queried month when Azure's budget figure lags", async () => {
+    const arm = fakeArm({ budgetSpend: 0 });
+    const reader = createAzureCostReader({ env: { COST_SCOPES: SCOPES }, fetchImpl: arm.fetchImpl, credential });
+    const [app] = (await reader.readAll()).scopes;
+    expect(app.monthToDate).toBe(5);
+    expect(app.budget).toMatchObject({ currentSpend: 5, percentUsed: 3.3, forecastSpend: 30, spendSource: 'query' });
+  });
+
   it('reads every scope with the identity token and the documented api-versions', async () => {
     const arm = fakeArm();
     const reader = createAzureCostReader({ env: { COST_SCOPES: SCOPES }, fetchImpl: arm.fetchImpl, credential });
@@ -249,7 +299,7 @@ describe('createAzureCostReader', () => {
       previousMonth: 34.32,
       error: null,
     });
-    expect(app.budget.amount).toBe(150);
+    expect(app.budget).toMatchObject({ amount: 150, currentSpend: 12, percentUsed: 8, spendSource: 'budget' });
     expect(app.daily).toHaveLength(2);
     // Three calls a scope: budgets, this month by day and service, last month's total.
     expect(arm.calls).toHaveLength(9);

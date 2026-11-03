@@ -243,13 +243,33 @@ export function totalOf(payload) {
 }
 
 /**
+ * True when a budget's id says it was created at `scope` itself. Listing a
+ * subscription's budgets also returns the budgets of its resource groups
+ * (seen 2026-11-03: the application subscription's list carried the Foundry
+ * group's site-foundry-monthly-budget, which sorts before site-monthly-budget
+ * and was shown as the subscription's), so the id is what tells them apart.
+ * A budget without an id is kept: there is nothing to tell it by.
+ */
+function belongsTo(budget, scope) {
+  // Compared without leading or trailing slashes, so "/subscriptions/…" and
+  // "subscriptions/…" are the same path whichever side carries the slash.
+  const trim = (value) => String(value ?? '').toLowerCase().replace(/^\/+|\/+$/g, '');
+  const id = trim(budget?.id);
+  if (!id || !scope) return true;
+  return id.startsWith(`${trim(scope)}/providers/microsoft.consumption/budgets/`);
+}
+
+/**
  * The first budget of a scope as the page shows it, or null when the scope
  * has none. A scope here has one budget by design (infra/budget.tf,
- * infra/foundry.tf); when it has several the first by name is shown.
+ * infra/foundry.tf); when it has several the first by name is shown. With
+ * `scope`, a budget set on a narrower scope inside it (a resource group's
+ * budget in a subscription's list) is left out.
  */
-export function summarizeBudgets(payload) {
+export function summarizeBudgets(payload, scope) {
   const budgets = Array.isArray(payload?.value) ? payload.value : [];
   const monthly = budgets
+    .filter((b) => belongsTo(b, scope))
     .filter((b) => String(b?.properties?.timeGrain ?? 'Monthly').toLowerCase() === 'monthly')
     .sort((a, b) => String(a?.name ?? '').localeCompare(String(b?.name ?? '')));
   const budget = monthly[0];
@@ -282,6 +302,25 @@ export function summarizeBudgets(payload) {
     thresholds,
     forecastThresholds,
   };
+}
+
+/**
+ * The budget with its spend raised to `spend` when Azure's own figure on the
+ * budget is lower. A budget's currentSpend is evaluated on Azure's schedule
+ * and can lag the cost query: on 2026-11-03 site-monthly-budget still said
+ * USD 0.00 while the query had USD 7.33, so the bar read "0% used" and the
+ * 50/75/90 % alerts, which read the same percentage, would have warned late.
+ * The higher of the two is used so a lagging budget never hides spend;
+ * `spendSource` says which one the bar shows. Azure's forecast is left as is.
+ */
+export function withSpendAtLeast(budget, spend) {
+  if (!budget) return budget;
+  const queried = Number(spend);
+  if (!Number.isFinite(queried) || queried <= (Number(budget.currentSpend) || 0)) {
+    return { ...budget, spendSource: 'budget' };
+  }
+  const currentSpend = money(queried);
+  return { ...budget, currentSpend, percentUsed: percent(currentSpend, budget.amount), spendSource: 'query' };
 }
 
 /**
@@ -441,7 +480,7 @@ export function createAzureCostReader({
         STEPS.budgets
       )
     );
-    const budget = budgets.value ? summarizeBudgets(budgets.value) : null;
+    const budget = budgets.value ? summarizeBudgets(budgets.value, scope.scope) : null;
     let usage;
     try {
       usage = await query(
@@ -512,7 +551,7 @@ export function createAzureCostReader({
         daily: summary.daily,
         previousMonth,
         previousMonthOf: previousMonth === null ? null : lastMonth,
-        budget,
+        budget: withSpendAtLeast(budget, summary.monthToDate),
         readAt: now.toISOString(),
         note: partial.length ? `Part of this scope could not be read: ${partial.join(' ')}` : null,
         noteCode: partial.length ? 'partial' : undefined,
