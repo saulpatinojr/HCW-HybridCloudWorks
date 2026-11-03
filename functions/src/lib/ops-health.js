@@ -24,7 +24,7 @@
 import { randomUUID } from 'node:crypto';
 import { readConfigStamp } from './auth/http-route.js';
 import { ADMIN_CONFIG_PARTITION } from './cosmos-client.js';
-import { unresolvedSecretNames } from './secrets-health.js';
+import { splitUnresolved, unresolvedSecretNames } from './secrets-health.js';
 import { CAPABILITIES, KEY_RECORD_ID, enabledCapabilities, isUsable } from './agent-content/keys.js';
 import { errorResponse } from './http/error-response.js';
 import { recordMutationAudit } from './audit.js';
@@ -249,6 +249,15 @@ async function countOrphanedImages(store, generatedImages) {
   );
 }
 
+/**
+ * Approved or Published and not live yet: what "waiting to go live" means on
+ * the Operational Signals tile (#1512). `Live` may be absent on an item that
+ * was never published, and a comparison with an absent field is undefined in
+ * Cosmos, so absence is spelled out.
+ */
+const STAGED_NOT_LIVE =
+  'ARRAY_CONTAINS(@stagedStatuses, c.contentStatus) AND (NOT IS_DEFINED(c.Live) OR c.Live != true)';
+
 /** How far back the content agent's denials and the platform jobs are counted. */
 export const AGENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** The most denial rows one snapshot reads; above it the count is a floor. */
@@ -421,6 +430,7 @@ export function createOpsHealthHandlers({
       rssCount,
       queueBreachCount,
       stagedRows,
+      stagedWaitingCount,
       digestDoc,
       latestDigestRows,
       alertRows,
@@ -443,11 +453,20 @@ export function createOpsHealthHandlers({
         needsReviewIn,
         { name: '@cutoff', value: breachCutoffIso },
       ]),
+      // The oldest Approved or Published item that is not live yet, by its
+      // last edit (#1512). This used to be TOP 50 in no order, filtered for
+      // Live afterwards; most published items are live, so the sample was
+      // mostly discarded and the "oldest" was whichever old item happened to
+      // be in it. The filter and the order are now in the query, and the
+      // content container's `/*` range index serves the ORDER BY. A document
+      // with no `updatedAt` sorts out of an ORDER BY in Cosmos, so one that
+      // was never edited does not count here; content writes stamp it.
       store.queryDocs(
         'content',
-        'SELECT TOP 50 c.id, c["contentStatus"], c["Live"], c["updatedAt"], c["reviewedAt"], c["fetchedAt"] FROM c WHERE ARRAY_CONTAINS(@stagedStatuses, c.contentStatus)',
+        `SELECT TOP 1 c.id, c["contentStatus"], c["updatedAt"] FROM c WHERE ${STAGED_NOT_LIVE} ORDER BY c.updatedAt ASC`,
         [stagedIn]
       ),
+      count(STAGED_NOT_LIVE, [stagedIn]),
       store.readDoc('workflow_digests', digestDate, digestDate),
       // The digest id IS the date — ORDER BY c.id is exactly the source fix.
       store.queryDocs('workflow_digests', 'SELECT TOP 1 * FROM c ORDER BY c.id DESC', []),
@@ -521,13 +540,23 @@ export function createOpsHealthHandlers({
     // stamp reached this process (T-513), and every Key Vault reference in
     // its environment resolved (T-720). The names are the authenticated
     // surface's to show — /api/health gives anonymous callers the count only.
+    //
+    // Since #1512 a reference that is unresolved ON PURPOSE (on the list in
+    // expected-unresolved.js, with its reason) no longer makes the worker
+    // "not configured": the page and the pulse name it as expected, and only
+    // a name off that list is Critical. `unresolvedSecrets` still lists every
+    // name, so a reader that knows nothing of the split sees what it always did.
     const configStamp = readConfigStamp(env);
     const unresolvedSecrets = unresolvedSecretNames(env);
+    const { expected: expectedUnresolved, unexpected: unexpectedUnresolved } =
+      splitUnresolved(unresolvedSecrets);
     const readiness = {
-      functionsConfigured: configStamp.generation !== 'unset' && unresolvedSecrets.length === 0,
+      functionsConfigured: configStamp.generation !== 'unset' && unexpectedUnresolved.length === 0,
       configGeneration: configStamp.generation,
       configWriter: configStamp.writer,
       unresolvedSecrets,
+      expectedUnresolved,
+      unexpectedUnresolved,
       publishedItems: publishedCount,
       missingSlugCount,
       rssSources: rssCount,
@@ -536,9 +565,8 @@ export function createOpsHealthHandlers({
 
     const digestData = digestDoc || latestDigestRows[0] || null;
 
-    const stagedHours = stagedRows
-      .filter((item) => item.Live !== true)
-      .map((item) => toHoursSince(item.updatedAt || item.reviewedAt || item.fetchedAt, nowMs))
+    const stagedHours = (stagedRows || [])
+      .map((item) => toHoursSince(item.updatedAt, nowMs))
       .filter((value) => value !== null);
     const openAlerts = alerts.filter((alert) => getWorkflowAlertStatus(alert) !== 'resolved');
     const openAlertHours = openAlerts
@@ -555,6 +583,7 @@ export function createOpsHealthHandlers({
     const operationalSignals = {
       queueBreachCount,
       oldestStagedHours: stagedHours.length > 0 ? Math.max(...stagedHours) : 0,
+      stagedWaitingCount: Number(stagedWaitingCount) || 0,
       openAlertAgeHours: openAlertHours.length > 0 ? Math.max(...openAlertHours) : 0,
       publishFailureCount,
       orphanedGeneratedImages,
