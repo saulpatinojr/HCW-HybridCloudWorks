@@ -11,6 +11,8 @@ import {
   MAX_ATTEMPTS,
   RETRY_WAIT_CAP_MS,
   RETRY_WAIT_DEFAULT_MS,
+  STEPS,
+  azureErrorCode,
   QUERY_API_VERSION,
   createAzureCostReader,
   describeArmStatus,
@@ -446,5 +448,68 @@ describe('living within Cost Management’s rate limits (2026-11-03)', () => {
     const fresh = await reader.readAll({ previous: { scopes: [october] }, now: NOW });
     expect(fresh.available).toBe(false);
     expect(fresh.scopes[0].monthToDate).toBeNull();
+  });
+});
+
+describe('saying which read failed and why (2026-11-03, HTTP 400)', () => {
+  const ONE = JSON.stringify([{ id: 'app', label: 'App', scope: `/subscriptions/${APP}`, kind: 'subscription' }]);
+  const NOW = new Date('2026-11-03T04:30:00Z');
+  const ok = (body) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => body });
+  const refused = (status, body) => ({
+    ok: false,
+    status,
+    headers: { get: () => null },
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  });
+  const isLastMonth = (init) => init?.body && JSON.parse(init.body).timeframe === 'TheLastMonth';
+  const lastMonthBody = { properties: { columns: [{ name: 'PreTaxCost' }], rows: [[34.32]] } };
+  const budgetBody = { value: [{ name: 'b', properties: { amount: 150, currentSpend: { amount: 12 } } }] };
+
+  it('names the step and Azure’s code, and never Azure’s own sentence', () => {
+    expect(azureErrorCode(JSON.stringify({ error: { code: 'BadRequest', message: 'secret detail' } }))).toBe('BadRequest');
+    expect(azureErrorCode(JSON.stringify({ error: { code: 'not a code, a sentence' } }))).toBe('');
+    expect(azureErrorCode('<html>')).toBe('');
+    expect(describeArmStatus(400, { azureCode: 'BadRequest', step: STEPS.lastMonth })).toBe(
+      'Azure answered HTTP 400 BadRequest to the read of last month’s total: it did not accept the question as asked. The code names the reason; the Cost runbook lists the ones seen so far.'
+    );
+    expect(describeArmStatus(403, { step: STEPS.budgets })).toContain('Azure refused the budgets read (HTTP 403)');
+  });
+
+  it('keeps this month’s costs when last month’s total is refused, and says so', async () => {
+    const fetchImpl = vi.fn(async (url, init) => {
+      if (url.includes('/budgets?')) return ok(budgetBody);
+      if (isLastMonth(init)) return refused(400, { error: { code: 'BadRequest', message: 'PRIVATE-AZURE-TEXT' } });
+      return ok(usagePayload);
+    });
+    const reader = createAzureCostReader({ env: { COST_SCOPES: ONE }, fetchImpl, credential });
+    const result = await reader.readAll({ now: NOW });
+    expect(result.available).toBe(true);
+    const scope = result.scopes[0];
+    expect(scope).toMatchObject({ monthToDate: 5, previousMonth: null, previousMonthOf: null, error: null, noteCode: 'partial' });
+    expect(scope.budget.amount).toBe(150);
+    expect(scope.note).toContain('HTTP 400 BadRequest to the read of last month’s total');
+    expect(JSON.stringify(result)).not.toContain('PRIVATE-AZURE-TEXT');
+  });
+
+  it('keeps this month’s costs when the budgets list is refused', async () => {
+    const fetchImpl = vi.fn(async (url, init) => {
+      if (url.includes('/budgets?')) return refused(400, { error: { code: 'InvalidScope' } });
+      return isLastMonth(init) ? ok(lastMonthBody) : ok(usagePayload);
+    });
+    const reader = createAzureCostReader({ env: { COST_SCOPES: ONE }, fetchImpl, credential });
+    const scope = (await reader.readAll({ now: NOW })).scopes[0];
+    expect(scope).toMatchObject({ monthToDate: 5, previousMonth: 34.32, budget: null, error: null });
+    expect(scope.note).toContain('HTTP 400 InvalidScope to the budgets read');
+  });
+
+  it('fails the scope, naming the step, when this month’s costs are refused', async () => {
+    const fetchImpl = vi.fn(async () => refused(400, { error: { code: 'BadRequest' } }));
+    const reader = createAzureCostReader({ env: { COST_SCOPES: ONE }, fetchImpl, credential });
+    const result = await reader.readAll({ now: NOW });
+    expect(result.available).toBe(false);
+    expect(result.reason).toContain('HTTP 400 BadRequest to the read of this month’s costs');
+    // Nothing else is asked once the month itself cannot be read.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

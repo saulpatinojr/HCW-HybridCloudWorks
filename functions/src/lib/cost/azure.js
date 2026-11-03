@@ -48,7 +48,7 @@
  */
 import { DefaultAzureCredential } from '@azure/identity';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
-import { AuthoredError, storedFailure } from '../http/error-response.js';
+import { AuthoredError, codeShaped, storedFailure } from '../http/error-response.js';
 import { money, percent, previousMonthOf } from './model.js';
 
 export const ARM_ORIGIN = 'https://management.azure.com';
@@ -129,10 +129,36 @@ export class CostScopesError extends AuthoredError {
 
 /** ARM answered something other than 2xx; describeArmStatus wrote the sentence, no ARM text is in it. */
 export class ArmStatusError extends AuthoredError {
-  constructor(status, retryAfterMs = null) {
-    super(describeArmStatus(status), { code: 'ARM_STATUS' });
+  /**
+   * @param {number} status
+   * @param {{ retryAfterMs?: number|null, azureCode?: string, step?: string }} [details]
+   *   azureCode is Azure's own error code from the answer body, kept only when
+   *   it is code-shaped (http/error-response.js codeShaped), so no sentence of
+   *   Azure's reaches the page; step names which of the reads it was.
+   */
+  constructor(status, { retryAfterMs = null, azureCode = '', step = '' } = {}) {
+    super(describeArmStatus(status, { azureCode, step }), { code: 'ARM_STATUS' });
     this.status = status;
     this.retryAfterMs = retryAfterMs;
+    this.azureCode = azureCode;
+    this.step = step;
+  }
+}
+
+/** The names of the three reads, as the page says them. */
+export const STEPS = Object.freeze({
+  budgets: 'the budgets read',
+  monthToDate: 'the read of this month\u2019s costs',
+  lastMonth: 'the read of last month\u2019s total',
+});
+
+/** Azure's error code from an answer body (`{ error: { code } }`), when it is code-shaped; else ''. */
+export function azureErrorCode(bodyText) {
+  try {
+    const body = JSON.parse(bodyText);
+    return codeShaped(body?.error?.code ?? body?.code ?? '');
+  } catch {
+    return '';
   }
 }
 
@@ -258,16 +284,26 @@ export function summarizeBudgets(payload) {
   };
 }
 
-/** What a non-2xx answer means, as a sentence the page may show (no ARM text is copied). */
-export function describeArmStatus(status) {
+/**
+ * What a non-2xx answer means, as a sentence the page may show. No ARM text is
+ * copied: only the status, Azure's code when it is code-shaped, and which read
+ * it was (STEPS), so the owner can tell a refused budgets list from a refused
+ * cost query.
+ */
+export function describeArmStatus(status, { azureCode = '', step = '' } = {}) {
+  const label = `HTTP ${status}${azureCode ? ` ${azureCode}` : ''}`;
+  const where = step ? ` to ${step}` : '';
   if (status === 401 || status === 403) {
-    return `Azure refused the read (HTTP ${status}): the Function App's identity needs the Cost Management Reader role on this scope.`;
+    return `Azure refused${where ? ` ${step}` : ' the read'} (${label}): the Function App's identity needs the Cost Management Reader role on this scope.`;
   }
-  if (status === 404) return 'Azure answered 404: the scope does not exist or is not visible to this identity.';
+  if (status === 404) return `Azure answered ${label}${where}: the scope does not exist or is not visible to this identity.`;
   if (status === 429) {
-    return 'Azure Cost Management is limiting how often it can be asked (HTTP 429), and still was after a wait; the next refresh will try again. Its allowance is shared with Cost Analysis in the Azure portal.';
+    return `Azure Cost Management is limiting how often it can be asked (${label}${where}), and still was after a wait; the next refresh will try again. Its allowance is shared with Cost Analysis in the Azure portal.`;
   }
-  return `Azure answered HTTP ${status}.`;
+  if (status === 400) {
+    return `Azure answered ${label}${where}: it did not accept the question as asked. The code names the reason; the Cost runbook lists the ones seen so far.`;
+  }
+  return `Azure answered ${label}${where}.`;
 }
 
 /**
@@ -285,7 +321,7 @@ export function createAzureCostReader({
   let cached = credential ?? null;
   const getCredential = () => (cached ??= new DefaultAzureCredential());
 
-  async function armFetchOnce(path, init) {
+  async function armFetchOnce(path, init, step) {
     const token = await getCredential().getToken(ARM_SCOPE);
     if (!token?.token) throw new Error(`Could not acquire a token for ${ARM_SCOPE}`);
     const response = await fetchWithTimeout(fetchImpl, `${ARM_ORIGIN}${path}`, {
@@ -299,16 +335,21 @@ export function createAzureCostReader({
       timeoutMs: ARM_TIMEOUT_MS,
     });
     if (!response.ok) {
-      throw new ArmStatusError(response.status, response.status === 429 ? retryAfterMs(response.headers) : null);
+      const bodyText = await response.text?.().catch(() => '') ?? '';
+      throw new ArmStatusError(response.status, {
+        retryAfterMs: response.status === 429 ? retryAfterMs(response.headers) : null,
+        azureCode: azureErrorCode(bodyText),
+        step,
+      });
     }
     return response.json();
   }
 
   /** One ARM call; a 429 waits as long as Azure asks (capped) and tries again, up to MAX_ATTEMPTS. */
-  async function armFetch(path, init = {}) {
+  async function armFetch(path, init = {}, step = '') {
     for (let attempt = 1; ; attempt += 1) {
       try {
-        return await armFetchOnce(path, init);
+        return await armFetchOnce(path, init, step);
       } catch (error) {
         if (error?.status !== 429 || attempt >= MAX_ATTEMPTS) throw error;
         await sleep(error.retryAfterMs ?? RETRY_WAIT_DEFAULT_MS);
@@ -316,11 +357,12 @@ export function createAzureCostReader({
     }
   }
 
-  const query = (scope, body) =>
-    armFetch(`${scope}/providers/Microsoft.CostManagement/query?api-version=${QUERY_API_VERSION}`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+  const query = (scope, body, step) =>
+    armFetch(
+      `${scope}/providers/Microsoft.CostManagement/query?api-version=${QUERY_API_VERSION}`,
+      { method: 'POST', body: JSON.stringify(body) },
+      step
+    );
 
   const aggregation = { totalCost: { name: 'PreTaxCost', function: 'Sum' } };
 
@@ -356,32 +398,54 @@ export function createAzureCostReader({
       note: null,
       error: null,
     };
+    // A read that is not this month's costs may fail on its own: the card
+    // still shows the month, and its note says what could not be read.
+    const partial = [];
+    const optional = async (read) => {
+      try {
+        return { value: await read() };
+      } catch (error) {
+        partial.push(error?.code === 'FETCH_TIMEOUT' ? TIMEOUT_SENTENCE : storedFailure(error, UNREADABLE_SENTENCE));
+        return { value: null };
+      }
+    };
     try {
-      const budgets = await armFetch(
-        `${scope.scope}/providers/Microsoft.Consumption/budgets?api-version=${BUDGETS_API_VERSION}`
-      );
-      const usage = await query(scope.scope, {
-        type: 'ActualCost',
-        timeframe: 'MonthToDate',
-        dataset: {
-          granularity: 'Daily',
-          aggregation,
-          grouping: [
-            { type: 'Dimension', name: 'ResourceGroupName' },
-            { type: 'Dimension', name: 'ServiceName' },
-          ],
+      const usage = await query(
+        scope.scope,
+        {
+          type: 'ActualCost',
+          timeframe: 'MonthToDate',
+          dataset: {
+            granularity: 'Daily',
+            aggregation,
+            grouping: [
+              { type: 'Dimension', name: 'ResourceGroupName' },
+              { type: 'Dimension', name: 'ServiceName' },
+            ],
+          },
         },
-      });
+        STEPS.monthToDate
+      );
+      const budgets = await optional(() =>
+        armFetch(
+          `${scope.scope}/providers/Microsoft.Consumption/budgets?api-version=${BUDGETS_API_VERSION}`,
+          {},
+          STEPS.budgets
+        )
+      );
       const known = previous && !previous.error && previous.previousMonthOf === lastMonth && Number.isFinite(previous.previousMonth);
-      const previousMonth = known
-        ? previous.previousMonth
-        : totalOf(
-            await query(scope.scope, {
-              type: 'ActualCost',
-              timeframe: 'TheLastMonth',
-              dataset: { granularity: 'None', aggregation },
-            })
+      const lastTotal = known
+        ? { value: null }
+        : await optional(() =>
+            query(
+              scope.scope,
+              { type: 'ActualCost', timeframe: 'TheLastMonth', dataset: { granularity: 'None', aggregation } },
+              STEPS.lastMonth
+            )
           );
+      let previousMonth = null;
+      if (known) previousMonth = previous.previousMonth;
+      else if (lastTotal.value) previousMonth = totalOf(lastTotal.value);
       const summary = summarizeUsage(usage);
       return {
         ...base,
@@ -389,9 +453,11 @@ export function createAzureCostReader({
         byService: summary.byService,
         daily: summary.daily,
         previousMonth,
-        previousMonthOf: lastMonth,
-        budget: summarizeBudgets(budgets),
+        previousMonthOf: previousMonth === null ? null : lastMonth,
+        budget: budgets.value ? summarizeBudgets(budgets.value) : null,
         readAt: now.toISOString(),
+        note: partial.length ? `Part of this scope could not be read: ${partial.join(' ')}` : null,
+        noteCode: partial.length ? 'partial' : undefined,
       };
     } catch (error) {
       const message = error?.code === 'FETCH_TIMEOUT' ? TIMEOUT_SENTENCE : storedFailure(error, UNREADABLE_SENTENCE);
