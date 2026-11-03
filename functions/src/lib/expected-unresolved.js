@@ -30,8 +30,9 @@
  * A monitor that is red every six hours for a condition its own repository
  * documents as intended is not a monitor. It is a thing people mute, and then
  * the real finding arrives into a channel nobody reads. That failure mode is
- * named in this workflow's own header, which makes shipping it here worse than
- * careless.
+ * named in the monitor workflow's own header
+ * (.github/workflows/monitor-unresolved-secrets.yml), which made shipping it
+ * there worse than careless.
  *
  * THIS IS NOT A MUTE. An entry here is reported every run, just not as a
  * failure — and if one ever starts resolving, that is reported too, because it

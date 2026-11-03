@@ -255,10 +255,15 @@ export async function runNewsletterBuild() {
 /**
  * The anonymous /api/health count, read live, judged against the snapshot's
  * split (#1512): a count no larger than the names the snapshot calls
- * unresolved on purpose is those names, so it is healthy; anything above
- * them, or any name the snapshot calls unexpected, is Critical. A snapshot
- * from before the split has no expected names, so any count is Critical, as
- * it always was.
+ * unresolved on purpose is taken to be those names, so it is healthy;
+ * anything above them, or any name the snapshot calls unexpected, is
+ * Critical. A snapshot from before the split has no expected names, so any
+ * count is Critical, as it always was.
+ *
+ * An assumption, stated because the anonymous endpoint gives a count and no
+ * names: if another worker answers with a different unexpected name while an
+ * expected one resolves there, the counts can match and this reads healthy.
+ * The Runtime configuration probe, which reads the names, would still say so.
  */
 export async function runUnresolvedSecrets(ctx) {
   const read = await attempt('/api/health did not answer', async () =>
@@ -284,6 +289,15 @@ export async function runUnresolvedSecrets(ctx) {
       'critical',
       `${plural(unexpected.length, 'Key Vault reference')} did not resolve: ${unexpected.join(', ')}.${alsoExpected(expected)}`
     );
+  // More than the expected ones and none named as unexpected: the extra ones
+  // are not in the snapshot, so say that rather than blame the expected names.
+  if (unexpected.length === 0 && expected.length > 0) {
+    const extra = count - expected.length;
+    return result(
+      'critical',
+      `${plural(count, 'Key Vault reference')} did not resolve on the answering worker: ${expected.length} on purpose (${expected.join(', ')}) and ${extra} more the snapshot does not name.`
+    );
+  }
   // They disagree (another worker answered, or no snapshot): the live count, with any names known.
   const known = unexpected.length ? unexpected : names;
   return result(

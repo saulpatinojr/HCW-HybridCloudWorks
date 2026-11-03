@@ -60,7 +60,13 @@ function opsStore() {
   return {
     queryDocs: vi.fn(async (container, query, params) => {
       if (query.includes('VALUE COUNT')) {
-        if (query.includes('@stagedStatuses')) return [5]; // approved or published, not live
+        if (query.includes('@stagedStatuses')) {
+          // The count covers every item waiting, dated or not; only the
+          // ordered read needs a string updatedAt.
+          expect(query).not.toContain('IS_STRING(c.updatedAt)');
+          expect(query).toContain('c.scheduledPublishDate <= @now');
+          return [5]; // approved or published, not live, not scheduled for later
+        }
         if (query.includes("'published'")) return [12];
         if (query.includes("'rss'")) return [3];
         return [2]; // queue breach
@@ -76,9 +82,17 @@ function opsStore() {
         // The oldest not-live Approved or Published item (#1512): the filter
         // and the order are in the query, so the store returns one row.
         expect(query).toContain('TOP 1');
-        expect(query).toContain('NOT IS_DEFINED(c.Live) OR c.Live != true');
-        expect(query).toContain('ORDER BY c.updatedAt ASC');
-        expect(params).toEqual([{ name: '@stagedStatuses', value: ['approved', 'published'] }]);
+        expect(query).toContain('NOT IS_DEFINED(c.Live) OR c.Live = false');
+        // Never ORDER BY a field a row may lack (public-reads.js): a missing
+        // or null updatedAt must not sort first and show the tile as 0 h.
+        expect(query).toContain('IS_STRING(c.updatedAt) ORDER BY c.updatedAt ASC');
+        // Scheduled for later is not stuck.
+        expect(query).toContain('c.scheduledPublishDate <= @now');
+        // `@now` is the build's own clock (the cache tests move it).
+        expect(params).toEqual([
+          { name: '@stagedStatuses', value: ['approved', 'published'] },
+          { name: '@now', value: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) },
+        ]);
         return [{ id: 's1', contentStatus: 'approved', updatedAt: '2026-08-06T04:00:00Z' }];
       }
       if (container === 'workflow_digests') {

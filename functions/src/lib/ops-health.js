@@ -250,13 +250,17 @@ async function countOrphanedImages(store, generatedImages) {
 }
 
 /**
- * Approved or Published and not live yet: what "waiting to go live" means on
- * the Operational Signals tile (#1512). `Live` may be absent on an item that
- * was never published, and a comparison with an absent field is undefined in
- * Cosmos, so absence is spelled out.
+ * Approved or Published, not live yet and not scheduled for later: what
+ * "waiting to go live" means on the Operational Signals tile (#1512). `Live`
+ * may be absent on an item that was never published, and a comparison with an
+ * absent field is undefined in Cosmos, so absence is spelled out, in the same
+ * spelling scheduled-publish.js uses. Writes only ever store a boolean.
  */
 const STAGED_NOT_LIVE =
-  'ARRAY_CONTAINS(@stagedStatuses, c.contentStatus) AND (NOT IS_DEFINED(c.Live) OR c.Live != true)';
+  'ARRAY_CONTAINS(@stagedStatuses, c.contentStatus) AND (NOT IS_DEFINED(c.Live) OR c.Live = false)' +
+  // An item scheduled for later is not stuck: it is waiting on purpose, and
+  // the scheduler's own card (Overdue Scheduled) covers it once it is due.
+  ' AND (NOT IS_DEFINED(c.scheduledPublishDate) OR IS_NULL(c.scheduledPublishDate) OR c.scheduledPublishDate <= @now)';
 
 /** How far back the content agent's denials and the platform jobs are counted. */
 export const AGENT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -423,6 +427,7 @@ export function createOpsHealthHandlers({
       name: '@stagedStatuses',
       value: ['approved', 'published'],
     };
+    const stagedParams = [stagedIn, { name: '@now', value: nowDate.toISOString() }];
 
     const [
       publishedCount,
@@ -458,15 +463,20 @@ export function createOpsHealthHandlers({
       // Live afterwards; most published items are live, so the sample was
       // mostly discarded and the "oldest" was whichever old item happened to
       // be in it. The filter and the order are now in the query, and the
-      // content container's `/*` range index serves the ORDER BY. A document
-      // with no `updatedAt` sorts out of an ORDER BY in Cosmos, so one that
-      // was never edited does not count here; content writes stamp it.
+      // content container's `/*` range index serves the ORDER BY.
+      //
+      // `IS_STRING(c.updatedAt)` keeps the ORDER BY on a field every row has,
+      // the rule public-reads.js states and scheduled-publish.js follows. An
+      // item with a missing or null `updatedAt` would otherwise be able to
+      // sort first and show the tile as 0 h. Such an item is still in the
+      // count below, so the count is every item waiting and the age is the
+      // oldest dated one.
       store.queryDocs(
         'content',
-        `SELECT TOP 1 c.id, c["contentStatus"], c["updatedAt"] FROM c WHERE ${STAGED_NOT_LIVE} ORDER BY c.updatedAt ASC`,
-        [stagedIn]
+        `SELECT TOP 1 c.id, c["contentStatus"], c["updatedAt"] FROM c WHERE ${STAGED_NOT_LIVE} AND IS_STRING(c.updatedAt) ORDER BY c.updatedAt ASC`,
+        stagedParams
       ),
-      count(STAGED_NOT_LIVE, [stagedIn]),
+      count(STAGED_NOT_LIVE, stagedParams),
       store.readDoc('workflow_digests', digestDate, digestDate),
       // The digest id IS the date — ORDER BY c.id is exactly the source fix.
       store.queryDocs('workflow_digests', 'SELECT TOP 1 * FROM c ORDER BY c.id DESC', []),

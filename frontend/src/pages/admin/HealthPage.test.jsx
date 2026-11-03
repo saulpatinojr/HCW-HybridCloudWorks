@@ -518,10 +518,11 @@ describe('the hub', () => {
     );
     const { unmount } = renderAt();
     const expectedRow = await screen.findByTestId('unresolved-expected');
-    expect(within(expectedRow).getByText('AZURE_SPEECH_KEY')).toHaveAttribute(
-      'title',
-      'fallback speech provider, not bought'
-    );
+    // The reason is on the page, not in a hover-only tooltip (phones, keyboards).
+    expect(within(expectedRow).getByText('AZURE_SPEECH_KEY')).toBeInTheDocument();
+    expect(
+      within(expectedRow).getByText('fallback speech provider, not bought')
+    ).toBeInTheDocument();
     expect(screen.getByTestId('unresolved-unexpected-count')).toHaveTextContent('0');
     // Not a fault: the card's own status is not Critical.
     const card = screen.getByRole('heading', { name: 'Pipeline Readiness' }).closest('.rounded-lg');
@@ -557,7 +558,7 @@ describe('the hub', () => {
     renderAt();
     expect(await screen.findByText('Oldest Waiting to Go Live')).toBeInTheDocument();
     expect(screen.getByTestId('staged-waiting-count')).toHaveTextContent(
-      '4 approved or published, not live'
+      '4 approved or published, not live, not scheduled'
     );
     expect(screen.getByText('Published, Not Live (6 h+)')).toBeInTheDocument();
     expect(screen.queryByText('Oldest Staged Age')).not.toBeInTheDocument();
