@@ -184,6 +184,28 @@ describe('summarizeBudgets', () => {
     });
     expect(two.name).toBe('aa');
   });
+
+  it('leaves out a resource group budget listed under its subscription', () => {
+    const sub = '/subscriptions/00000000-0000-0000-0000-000000000001';
+    const listed = {
+      value: [
+        {
+          id: `${sub}/resourceGroups/rg-ai/providers/Microsoft.Consumption/budgets/site-foundry-monthly-budget`,
+          name: 'site-foundry-monthly-budget',
+          properties: { amount: 75, currentSpend: { amount: 0.02 } },
+        },
+        {
+          id: `${sub}/providers/Microsoft.Consumption/budgets/site-monthly-budget`,
+          name: 'site-monthly-budget',
+          properties: { amount: 150, currentSpend: { amount: 3 } },
+        },
+      ],
+    };
+    expect(summarizeBudgets(listed, sub).name).toBe('site-monthly-budget');
+    expect(summarizeBudgets(listed, `${sub}/resourceGroups/RG-AI`).name).toBe('site-foundry-monthly-budget');
+    // Only a group's budget in the list: the subscription has none of its own.
+    expect(summarizeBudgets({ value: [listed.value[0]] }, sub)).toBeNull();
+  });
 });
 
 describe('describeArmStatus', () => {
