@@ -238,6 +238,11 @@ export const POLICY = Object.freeze(
     ['GET', 'cms/integration-status', H],
     ['GET', 'cms/streamyard/status', H],
     ['POST', 'connectionProbe', H],
+    // The Cost page's reads (ADR 0039): what the platform costs, the
+    // subscriptions ledger and its settings. The writes stay closed.
+    ['GET', 'cms/cost/summary', H],
+    ['GET', 'cms/cost/services', H],
+    ['GET', 'cms/cost/settings', H],
   ].map(([method, route, sections, options = {}]) =>
     Object.freeze({
       method,

@@ -23,6 +23,7 @@
  * and root, so it is not repeated here.
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -34,6 +35,9 @@ const read = (path) => readFileSync(join(REPO, path), 'utf8');
 const SCRIPT = read('lab-host/bootstrap.sh');
 const DOCKERFILE = read('lab-image/Dockerfile');
 const VERSIONS_ENV = read('lab-image/versions.env');
+// The same file with no published wheel pinned: the blocks below that are
+// run with stand-ins for uv alone must never reach a release on the network.
+const PINS_WITHOUT_WHEEL = VERSIONS_ENV.replace(/^PYYAML_WHEEL_SHA256=.*$/m, 'PYYAML_WHEEL_SHA256=');
 const VAULT_HELPER = read('lab-host/ansible/roles/vault_tools/files/hcw-vault-set');
 
 /** From the line that starts `start` to the first line after it that is exactly `end`. */
@@ -96,7 +100,7 @@ describe('bootstrap.sh and lab-image/versions.env', () => {
 
   it('installs with --require-hashes and --only-binary :all: into a generation of its own, and never with uv tool install', () => {
     expect(SCRIPT).toMatch(
-      /^ {2}"\$\{UV_BIN\}" pip install --python "\$\{hcw_ansible_python\}" --require-hashes --only-binary :all: -r "\$\{hcw_ansible_requirements\}"$/m
+      /^ {2}"\$\{UV_BIN\}" pip install --python "\$\{hcw_ansible_python\}" --require-hashes --only-binary :all: --find-links "\$\{hcw_pyyaml_dir\}" -r "\$\{hcw_ansible_requirements\}"$/m
     );
     expect(SCRIPT).toMatch(/^ {2}"\$\{UV_BIN\}" venv --managed-python --python "\$\{PYTHON_VERSION\}" "\$\{hcw_ansible_generation\}"$/m);
     expect(SCRIPT).toContain('hcw_ansible_python="${hcw_ansible_generation}/bin/python"');
@@ -410,10 +414,10 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
   const pinned = VERSIONS_ENV.match(/^ANSIBLE_CORE_VERSION=(.*)$/m)[1];
   const [major, minor] = pinned.split('.');
   const later = (patch) => `${major}.${minor}.${patch}`;
-  const withVersion = (version) => VERSIONS_ENV.replace(/^ANSIBLE_CORE_VERSION=.*$/m, `ANSIBLE_CORE_VERSION=${version}`);
+  const withVersion = (version) => PINS_WITHOUT_WHEEL.replace(/^ANSIBLE_CORE_VERSION=.*$/m, `ANSIBLE_CORE_VERSION=${version}`);
 
   it('builds the first generation, links the four commands through HCW_ANSIBLE_VENV, and installs nothing on a re-run', () => {
-    const first = step(VERSIONS_ENV);
+    const first = step(PINS_WITHOUT_WHEEL);
     expect(first.status, first.stderr).toBe(0);
     const generation = inUse();
     expect(generation).toMatch(
@@ -423,7 +427,7 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     for (const command of COMMANDS) expect(sh(`readlink "$ROOT/bin/${command}"`)).toBe(`${root}/opt/uv/ansible-core/bin/${command}`);
     expect(first.stdout).toContain(`ansible-playbook [core ${pinned}]`);
 
-    const again = step(VERSIONS_ENV);
+    const again = step(PINS_WITHOUT_WHEEL);
     expect(again.status, again.stderr).toBe(0);
     expect(again.stdout).not.toContain('installing ansible-core');
     expect(again.stdout).not.toContain('switched');
@@ -438,7 +442,7 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     ['an ansible-playbook that reports another Python', { UV_STUB_PYTHON: '3.0.0' }],
   ]) {
     it(`leaves HCW_ANSIBLE_VENV and every command on the generation that worked after ${failure}, and the next run rebuilds the new one`, () => {
-      expect(step(VERSIONS_ENV).status).toBe(0);
+      expect(step(PINS_WITHOUT_WHEEL).status).toBe(0);
       const working = inUse();
       const failed = step(withVersion(later(99)), env);
       expect(failed.status).not.toBe(0);
@@ -475,7 +479,7 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
 
   it('replaces a venv built in place at HCW_ANSIBLE_VENV with the link', () => {
     sh('mkdir -p "$ROOT/opt/uv/ansible-core/bin" && touch "$ROOT/opt/uv/ansible-core/hcw-requirements.txt"');
-    const result = step(VERSIONS_ENV);
+    const result = step(PINS_WITHOUT_WHEEL);
     expect(result.status, result.stderr).toBe(0);
     expect(inUse()).toContain('/opt/uv/ansible-core-generations/');
     expect(answer()).toContain(`[core ${pinned}]`);
@@ -491,26 +495,26 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     ['carries a stale record', 'echo "stale==0 --hash=sha256:0" >>"$GEN/hcw-requirements.txt"'],
   ]) {
     it(`keeps the generation in use, which ${spoiled}, in use and on disk when the rebuild of the same pins fails`, () => {
-      expect(step(VERSIONS_ENV).status).toBe(0);
+      expect(step(PINS_WITHOUT_WHEEL).status).toBe(0);
       const active = inUse();
       sh(spoil, { GEN: active });
-      const failed = step(VERSIONS_ENV, { UV_STUB_FAIL: 'install' });
+      const failed = step(PINS_WITHOUT_WHEEL, { UV_STUB_FAIL: 'install' });
       expect(failed.status).not.toBe(0);
       expect(inUse()).toBe(active);
       expect(sh('[ -d "$GEN" ] && echo there', { GEN: active })).toBe('there');
       expect(sh('"$ROOT/bin/ansible-vault" --version')).toContain(`[core ${pinned}]`);
 
       // The next good run replaces it, and the failed build's directory goes too.
-      const rebuilt = step(VERSIONS_ENV);
+      const rebuilt = step(PINS_WITHOUT_WHEEL);
       expect(rebuilt.status, rebuilt.stderr).toBe(0);
       expect(generations()).toEqual([name(inUse())]);
     });
 
     it(`replaces the generation in use, which ${spoiled}, with a build in a directory of its own, and removes it only after the switch`, () => {
-      expect(step(VERSIONS_ENV).status).toBe(0);
+      expect(step(PINS_WITHOUT_WHEEL).status).toBe(0);
       const active = inUse();
       sh(spoil, { GEN: active });
-      const rebuilt = step(VERSIONS_ENV);
+      const rebuilt = step(PINS_WITHOUT_WHEEL);
       expect(rebuilt.status, rebuilt.stderr).toBe(0);
       const now = inUse();
       expect(now).not.toBe(active);
@@ -604,5 +608,151 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     linkTo(`${root}/opt/uv/tools/ansible-core/bin/ansible-playbook`);
     expect(handOver(before).status).toBe(0);
     expect(link()).toBe(`${root}/opt/uv/tools/ansible-core/bin/ansible-playbook`);
+  });
+});
+
+// The PyYAML wheel the host takes from this repository's release when
+// versions.env pins its SHA256 (#1505), run with stand-ins for curl and
+// cosign beside the stand-in uv: the download, the hash check, the
+// provenance check and the rewritten pyyaml line, and the three refusals.
+describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the release when versions.env pins it', { timeout: 60_000 }, () => {
+  let dir;
+  let root;
+  const slash = (path) => path.replace(/\\/g, '/');
+  const scriptAt = (name) => slash(join(dir, name));
+  const posix = (path) => bash(['-c', 'cygpath -u "$1" 2>/dev/null || printf %s "$1"', '_', slash(path)]).stdout.trim();
+  const WHEEL_BYTES = 'stand-in wheel bytes';
+  const WHEEL_SHA256 = createHash('sha256').update(WHEEL_BYTES).digest('hex');
+  const [pyMajor, pyMinor] = PINNED_PYTHON.split('.');
+  const pyyamlVersion = VERSIONS_ENV.match(/^PYYAML_VERSION=(.*)$/m)[1];
+  const tag = `pyyaml-${pyyamlVersion}-cp${pyMajor}${pyMinor}`;
+  const wheel = `pyyaml-${pyyamlVersion}-cp${pyMajor}${pyMinor}-cp${pyMajor}${pyMinor}-linux_x86_64.whl`;
+  const withWheel = (sha, text = PINS_WITHOUT_WHEEL) => text.replace(/^PYYAML_WHEEL_SHA256=.*$/m, `PYYAML_WHEEL_SHA256=${sha}`);
+
+  // curl writes the same bytes to whatever -o names and logs the URL; cosign
+  // logs its arguments and fails only when asked to.
+  const STAND_IN_CURL = [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'out=""; while [ "$#" -gt 1 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done',
+    'printf "%s\\n" "$1" >>"$CURL_STUB_LOG"',
+    '[ "${CURL_STUB_FAIL:-}" != 1 ] || { echo "curl: (22) The requested URL returned error: 404" >&2; exit 22; }',
+    `printf '%s' '${WHEEL_BYTES}' >"$out"`,
+  ];
+  const STAND_IN_COSIGN = [
+    '#!/usr/bin/env bash',
+    'printf "%s\\n" "$*" >>"$COSIGN_STUB_LOG"',
+    'exit "${COSIGN_STUB_FAIL:-0}"',
+  ];
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hcw-bootstrap-pyyaml-'));
+    writeFileSync(join(dir, 'uv'), `${STAND_IN_UV.join('\n')}\n`, { mode: 0o755 });
+    writeFileSync(join(dir, 'curl'), `${STAND_IN_CURL.join('\n')}\n`, { mode: 0o755 });
+    writeFileSync(join(dir, 'cosign'), `${STAND_IN_COSIGN.join('\n')}\n`, { mode: 0o755 });
+    const preamble = [
+      'set -euo pipefail',
+      'log() { printf "[bootstrap] %s\\n" "$*"; }',
+      'install() { local a=(); while [ "$#" -gt 0 ]; do case "$1" in -o | -g) shift 2 ;; *) a+=("$1"); shift ;; esac; done; command install "${a[@]}"; }',
+      // bash splits PATH on ':', so a Windows path with a drive letter would
+      // never be searched; the stubs' folder goes in as bash spells it.
+      `PATH='${posix(dir)}':"$PATH"`,
+      'HCW_SRC_DIR="$ROOT/src"',
+      'hcw_repo_sha=0123456789abcdef0123456789abcdef01234567',
+      `export PYTHON_VERSION=${PINNED_PYTHON}`,
+      `UV_BIN='${scriptAt('uv')}'`,
+      `COSIGN_BIN='${scriptAt('cosign')}'`,
+      'HCW_ANSIBLE_VENV="$ROOT/opt/uv/ansible-core"',
+      'HCW_ANSIBLE_GENERATIONS="$ROOT/opt/uv/ansible-core-generations"',
+      'HCW_VAULT_HELPER="$ROOT/sbin/hcw-vault-set"',
+      'export UV_TOOL_DIR="$ROOT/opt/uv/tools" UV_TOOL_BIN_DIR="$ROOT/bin" UV_STUB_LOG="$ROOT/uv.log" CURL_STUB_LOG="$ROOT/curl.log" COSIGN_STUB_LOG="$ROOT/cosign.log"',
+      'mkdir -p "$UV_TOOL_BIN_DIR" "$ROOT/opt/uv" "$ROOT/sbin" "$HCW_SRC_DIR/lab-image" "$ROOT/checked-out"',
+      'printf "%s" "$HCW_TEST_VERSIONS_ENV" >"$HCW_SRC_DIR/lab-image/versions.env"',
+    ];
+    writeFileSync(join(dir, 'switch.sh'), `${[...preamble, SWITCH_BLOCK].join('\n')}\n`);
+  });
+  afterAll(() => dir && rmSync(dir, { recursive: true, force: true }));
+  beforeEach(() => {
+    root = bash(['-c', 'mktemp -d']).stdout.trim();
+  });
+  afterEach(() => root && bash(['-c', 'rm -rf "$1"', '_', root]));
+
+  const sh = (command) => bash(['-c', command], { ROOT: root }).stdout.trim();
+  const step = (envText, env = {}) => bash([scriptAt('switch.sh')], { ROOT: root, HCW_TEST_VERSIONS_ENV: envText, ...env });
+  const logOf = (name) => sh(`cat "$ROOT/${name}" 2>/dev/null || true`);
+  const inUse = () => sh('readlink "$ROOT/opt/uv/ansible-core" 2>/dev/null || true');
+  const recorded = () => sh('cat "$ROOT/opt/uv/ansible-core/hcw-requirements.txt"');
+
+  it('downloads the wheel and its bundle from the release named by the pins, checks both, and installs it in place of PyPI\'s', () => {
+    const result = step(withWheel(WHEEL_SHA256));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`taking PyYAML ${pyyamlVersion} for CPython ${PINNED_PYTHON} from the ${tag} release`);
+    const base = `https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/${tag}`;
+    expect(logOf('curl.log').split('\n')).toEqual([`${base}/${wheel}`, `${base}/${wheel}.sigstore.json`]);
+    const cosign = logOf('cosign.log');
+    expect(cosign).toContain('verify-blob-attestation --type slsaprovenance1 --bundle ');
+    expect(cosign).not.toContain('--new-bundle-format');
+    expect(cosign).toContain(`${wheel}.sigstore.json --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp ^https://github\\.com/saulpatinojr/HCW-HybridCloudWorks/\\.github/workflows/publish-pyyaml-wheel\\.yml@refs/heads/main$ `);
+    const install = logOf('uv.log').split('\n').find((line) => line.startsWith('pip install '));
+    expect(install).toMatch(/ --find-links \S+ -r /);
+    expect(recorded()).toContain(`pyyaml==${pyyamlVersion} --hash=sha256:${WHEEL_SHA256}`);
+    expect(recorded()).not.toContain(expectedRequirements(VERSIONS_ENV).find((line) => line.startsWith('pyyaml==')));
+    expect(inUse()).not.toBe('');
+  });
+
+  it('installs PyPI\'s wheel and downloads nothing while PYYAML_WHEEL_SHA256 is empty', () => {
+    const result = step(PINS_WITHOUT_WHEEL);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('PYYAML_WHEEL_SHA256 is empty');
+    expect(logOf('curl.log')).toBe('');
+    expect(logOf('cosign.log')).toBe('');
+    expect(recorded()).toContain(expectedRequirements(VERSIONS_ENV).find((line) => line.startsWith('pyyaml==')));
+  });
+
+  it('refuses a wheel whose SHA256 is not the pin, before cosign and before uv', () => {
+    const result = step(withWheel('0'.repeat(64)));
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${wheel} from https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/${tag} does not match PYYAML_WHEEL_SHA256`);
+    expect(logOf('cosign.log')).toBe('');
+    expect(logOf('uv.log')).not.toContain('pip install');
+    expect(inUse()).toBe('');
+  });
+
+  it('refuses a wheel whose attestation cosign does not accept, before uv', () => {
+    const result = step(withWheel(WHEEL_SHA256), { COSIGN_STUB_FAIL: '1' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${wheel}'s attestation does not verify as built by publish-pyyaml-wheel.yml on main`);
+    expect(logOf('uv.log')).not.toContain('pip install');
+    expect(inUse()).toBe('');
+  });
+
+  it('refuses a pin for another Python line than this host runs, before any download', () => {
+    const otherLine = withWheel(WHEEL_SHA256).replace(/^BASE_PYTHON_VERSION=.*$/m, 'BASE_PYTHON_VERSION=3.99.1');
+    const result = step(otherLine);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`for the wheel built on CPython 3.99.1 (BASE_PYTHON_VERSION), but this host's PYTHON_VERSION is ${PINNED_PYTHON}, another line`);
+    expect(logOf('curl.log')).toBe('');
+    expect(logOf('uv.log')).not.toContain('pip install');
+    expect(inUse()).toBe('');
+  });
+
+  it('says which file could not be downloaded and where the release is documented, when the download fails', () => {
+    const result = step(withWheel(WHEEL_SHA256), { CURL_STUB_FAIL: '1' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`refusing to run: could not download https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/${tag}/${wheel}; the ${tag} release may not exist yet`);
+    expect(result.stderr).toContain('docs/runbooks/pyyaml-wheel.md');
+    expect(logOf('cosign.log')).toBe('');
+    expect(logOf('uv.log')).not.toContain('pip install');
+  });
+
+  it('refuses a pin whose PYYAML_VERSION is not the pyyaml line\'s version, or whose SHA256 is not 64 hex', () => {
+    const otherVersion = withWheel(WHEEL_SHA256).replace(/^PYYAML_VERSION=.*$/m, 'PYYAML_VERSION=9.9.9');
+    const notHex = withWheel('g'.repeat(64));
+    for (const text of [otherVersion, notHex]) {
+      const result = step(text);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('pins PYYAML_WHEEL_SHA256, but PYYAML_VERSION');
+      expect(logOf('curl.log')).toBe('');
+    }
   });
 });

@@ -129,6 +129,7 @@ nav:
       - 0036 Code Conductor brain (withdrawn): decisions/0036-code-conductor-brain.md
       - 0037 Agent Content API (Koda): decisions/0037-agent-content-api.md
       - 0038 Koda's admin access: decisions/0038-koda-admin-access.md
+      - 0039 The Cost page: decisions/0039-cost-page.md
   - Runbooks:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md
@@ -157,6 +158,8 @@ nav:
       - "Doc Vault: what goes here, what does not": runbooks/doc-vault.md
       - Calendar Alerts: runbooks/calendar-alerts.md
       - AI Engine models and costs: runbooks/ai-engine-model-review.md
+      - Cost page: runbooks/cost.md
+      - PyYAML wheel for the lab host: runbooks/pyyaml-wheel.md
   - Standards:
       - IaC repository standard: standards/iac-repository-standard.md
       - Naming convention: standards/naming-convention.md

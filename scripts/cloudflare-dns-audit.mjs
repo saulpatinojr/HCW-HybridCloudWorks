@@ -23,7 +23,9 @@
  * (Audit Logs v2, `GET /accounts/{account_id}/logs/audit`), keeps the
  * create, update and delete events on DNS records in the production zone,
  * and judges each against ALLOWLIST below. Anything the allowlist does not
- * name is UNEXPECTED, and the workflow turns that into an issue.
+ * name is UNEXPECTED, and the workflow turns that into an issue. Cloudflare's
+ * own certificate renewal writes challenge TXT records into the zone too
+ * (the cloudflare-dcv entry, since #1421), so a quiet run also covers those.
  *
  * Exit codes, and they are the contract the workflow reads:
  *
@@ -155,6 +157,44 @@ function isCaddyToken(change, settings) {
 }
 
 /**
+ * The name Cloudflare writes its own certificate-validation TXT records to:
+ * `_acme-challenge.` on the zone apex, which validates the apex and the
+ * wildcard the universal certificate covers. Exactly this name: a challenge
+ * for `www` or any other host is not Cloudflare's renewal and stays UNEXPECTED.
+ */
+export const CLOUDFLARE_DCV_CHALLENGE_NAME = `${ACME_CHALLENGE_PREFIX}${ZONE_NAME}`;
+
+/**
+ * Cloudflare acting on its own, as the audit log carries it (read on
+ * 2026-10-26, 10-27 and 10-30, #1421): an actor whose ONLY field is
+ * `type: system`, with no context, id, e-mail, address or token fields, and a
+ * request with no method and no user agent. Cloudflare's audit-log reference
+ * defines `system` as "changes made automatically by Cloudflare systems,
+ * without direct user input"; an API token, stolen or not, is authenticated
+ * and arrives as `account` or `user` with `context: api_token`, so this shape
+ * is not one a token can produce.
+ */
+export function isCloudflareSystemActor(change) {
+  return (
+    change.actorType === 'system' &&
+    change.actorFields === 'type' &&
+    change.actorContext === '' &&
+    change.actorId === '' &&
+    change.actorEmail === '' &&
+    change.actorIp === '' &&
+    change.tokenName === '' &&
+    change.tokenId === '' &&
+    change.method === '' &&
+    change.userAgent === ''
+  );
+}
+
+/** The apex challenge name and nothing else, case- and trailing-dot-insensitively. */
+export function isCloudflareDcvChallenge(name) {
+  return String(name ?? '').toLowerCase().replace(/\.$/, '') === CLOUDFLARE_DCV_CHALLENGE_NAME;
+}
+
+/**
  * THE ALLOWLIST. A change is EXPECTED when one entry matches it and
  * UNEXPECTED otherwise, so an entry that is too narrow costs an issue to
  * read, never a missed edit. Each entry says why it exists; extending the
@@ -238,6 +278,31 @@ export const ALLOWLIST = [
       change.actorContext === 'dash' &&
       change.actorType === 'user' &&
       change.actorEmail.toLowerCase() === settings.ownerEmail.toLowerCase(),
+  },
+  {
+    id: 'cloudflare-dcv',
+    reason:
+      "Cloudflare's own certificate validation. The zone is a full setup (Cloudflare runs its " +
+      'nameservers), and for such a zone Cloudflare "handles DCV automatically on your behalf using a ' +
+      'TXT record" (developers.cloudflare.com/ssl/edge-certificates/changing-dcv-method/, read ' +
+      '2026-11-02): when the universal certificate renews, which starts 30 days before it expires ' +
+      '(developers.cloudflare.com/ssl/reference/certificate-validity-periods/), Cloudflare creates one ' +
+      `or two TXT records at \`${CLOUDFLARE_DCV_CHALLENGE_NAME}\` (the \`_acme-challenge.<domain>\` name of ` +
+      'developers.cloudflare.com/ssl/edge-certificates/changing-dcv-method/methods/txt/) and deletes them ' +
+      'minutes later. The first live renewal was 2026-10-26 (#1421): 12 entries, each a create or a ' +
+      'delete of that TXT, by an actor carrying `type: system` and nothing else, with no request ' +
+      "method and no user agent. Cloudflare's audit-log reference defines `system` as changes made " +
+      'automatically by Cloudflare systems, so the entry is bound to that shape exactly: a `TXT` ' +
+      'named `_acme-challenge.<apex>`, created or deleted (never updated) by a bare `system` actor. ' +
+      "A token cannot imitate it: a token's request is authenticated and lands in the log as " +
+      '`account` or `user` with `context: api_token`. A challenge TXT for any other name, or a ' +
+      '`system` actor on any other record, stays UNEXPECTED. Needs no setting.',
+    active: () => true,
+    matches: (change) =>
+      isCloudflareSystemActor(change) &&
+      (change.actionType === 'create' || change.actionType === 'delete') &&
+      change.recordType === 'TXT' &&
+      isCloudflareDcvChallenge(change.recordName),
   },
 ];
 
@@ -589,11 +654,12 @@ export function resolveWindow(options, now = Date.now()) {
   return { since: iso(sinceMs), before: iso(beforeMs), hours: Math.round(((beforeMs - sinceMs) / 3_600_000) * 10) / 10 };
 }
 
-/** The actor cell: a token by name, a dashboard user by masked e-mail, anything else by type and id. */
+/** The actor cell: a token by name, a dashboard user by masked e-mail, Cloudflare itself by name, anything else by type and id. */
 export function describeActor(change) {
   // Every part the actor chose (a token name, an e-mail, an id, an address)
   // goes through `cell` here, so the cell itself is placed in the table as is.
   const from = change.actorIp ? ` from ${cell(change.actorIp)}` : '';
+  if (isCloudflareSystemActor(change)) return 'Cloudflare (system, no token)';
   if (change.tokenName || change.tokenId) {
     const id = change.tokenId ? ` (${cell(change.tokenId.slice(0, 8))}…)` : '';
     return `token \`${cell(change.tokenName || 'unnamed')}\`${id}${from}`;

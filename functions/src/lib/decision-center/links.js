@@ -77,6 +77,9 @@ export const alertHref = (id) => `/admin/health?tab=alerts&alert=${enc(id)}`;
 /** Where the Health Hub lists the Key Vault references that did not resolve. */
 export const UNRESOLVED_SECRETS_HREF = '/admin/health?tab=overview';
 
+/** The Cost page's Alerts tab, where every cost warning is listed with its rule (ADR 0039). */
+export const COST_ALERTS_HREF = '/admin/cost?tab=alerts';
+
 /** One reminder, opened on Platform Settings' Reminders tab. */
 export const reminderHref = (id) => `/admin/platform-settings?tab=reminders&reminder=${enc(id)}`;
 

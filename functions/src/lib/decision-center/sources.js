@@ -11,6 +11,8 @@
  *   forge-queue          pipelines   Forge Studio Queue entries that failed
  *   workflow-alerts      governance  open workflow alerts (not acknowledged)
  *   unresolved-secrets   governance  Key Vault references that did not resolve
+ *   cost                 governance  cost warnings: a budget past 75 %, credits
+ *                                    running out, a renewal due (lib/cost)
  *   reminders            other       reminders due today or overdue
  *   ambassador           other       application deadlines within two weeks
  *                                    or past, on an application still open
@@ -34,6 +36,10 @@ import { isSoftDeleted } from '../listen-and-learn/handlers-shared.js';
 import { CONTAINER as AMBASSADOR_CONTAINER } from '../ambassador/model.js';
 import { QUEUE_DOC_TYPE } from '../content/forge-studio/queue.js';
 import { decisionItem, fromTs, text } from './items.js';
+import { readLedger } from '../cost/ledger-store.js';
+import { buildSummary, readSnapshot } from '../cost/snapshot.js';
+import { notable } from '../cost/signals.js';
+import { COST_ALERTS_HREF } from './links.js';
 import {
   FORGE_QUEUE_HREF,
   SOCIAL_QUEUE_HREF,
@@ -331,6 +337,41 @@ const unresolvedSecrets = Object.freeze({
   },
 });
 
+// ── cost ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The Cost page's warning and critical signals (ADR 0039), from the stored
+ * snapshot and the ledger: two point reads, nothing live. Editor, like the
+ * page: what the platform costs is not a viewer's read.
+ */
+const cost = Object.freeze({
+  id: 'cost',
+  label: 'Cost warnings',
+  category: 'governance',
+  role: 'editor',
+  async collect({ store, now }) {
+    const [snapshot, ledger] = await Promise.all([readSnapshot(store), readLedger(store)]);
+    const at = now();
+    const summary = buildSummary({ snapshot, ledger, now: at });
+    const items = notable(summary.signals).map((signal) =>
+      decisionItem({
+        id: `cost:${signal.id}`,
+        category: 'governance',
+        kind: 'cost',
+        title: signal.title,
+        stage: 'review',
+        status: signal.severity,
+        waitingSince: snapshot?.notified?.[signal.id] || summary.readAt || at,
+        priority: signal.severity === 'critical' ? 'high' : 'normal',
+        href: signal.href || COST_ALERTS_HREF,
+        source: { collection: 'admin_config', id: 'cost_snapshot', signal: signal.id },
+        detail: signal.detail,
+      })
+    );
+    return { items, truncated: false };
+  },
+});
+
 // ── reminders ────────────────────────────────────────────────────────────────
 
 /** Due today or overdue and not done: the reminders the daily Telegram check is saying now. */
@@ -438,6 +479,7 @@ export const OTHER_SOURCES = Object.freeze([
   forgeQueue,
   workflowAlerts,
   unresolvedSecrets,
+  cost,
   reminders,
   ambassador,
 ]);

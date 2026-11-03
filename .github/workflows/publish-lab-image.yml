@@ -197,6 +197,11 @@ jobs:
               elif [ "$from" = "$want" ]; then
                 external=$((external + 1))
                 echo "ok    ${file}: FROM ${from}"
+              elif [ "$from" = scratch ]; then
+                # The empty image: nothing is pulled, so nothing can drift. Used
+                # by the pyyaml-wheel stage, which exists only to hand the built
+                # wheel to publish-pyyaml-wheel.yml (#1505).
+                echo "ok    ${file}: FROM ${from} (the empty image)"
               else
                 bad=1
                 echo "::error file=lab-image/${file}::FROM ${from} is neither an earlier stage nor ${want} from versions.env"

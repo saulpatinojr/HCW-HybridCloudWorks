@@ -3,6 +3,7 @@ import {
   GALLERY,
   IDENTITY,
   KEYS,
+  KODA,
   SETTINGS,
   fromService,
   liveProbe,
@@ -10,6 +11,7 @@ import {
   snapshotProbe,
 } from '../probeKit';
 import {
+  evaluateContentAgent,
   evaluateCosmos,
   evaluateIdentitySession,
   evaluateRegistrySession,
@@ -75,6 +77,18 @@ export const PLATFORM_PROBES = [
     action: 'Seed the named key on Keys, or check the vault firewall and RBAC.',
     href: KEYS,
     evaluate: evaluateRuntimeConfig,
+  }),
+  snapshotProbe({
+    id: 'content-agent',
+    label: 'Content agent (Koda)',
+    hub: 'platform',
+    covers:
+      "Koda's key (present, active, last used), the admin switches that are off, and its refusals in the last day by reason.",
+    impact:
+      'Refusals with a live key mean Koda is calling something it may not; a revoked key being called means a stale copy is in use.',
+    action: 'Open the Koda tab: rotate or revoke the key, or turn a switch back on.',
+    href: KODA,
+    evaluate: evaluateContentAgent,
   }),
   liveProbe({
     id: 'unresolved-secrets',

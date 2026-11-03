@@ -20,10 +20,19 @@ import { errorCode } from '../http/error-response.js';
  */
 export async function writeDenialAudit(entry, log = console) {
   try {
+    const at = new Date().toISOString();
+    const kind = typeof entry?.kind === 'string' && entry.kind ? entry.kind : 'auth-denial';
     await upsertDoc('admin_audit_logs', {
       id: randomUUID(),
-      kind: 'auth-denial',
-      at: new Date().toISOString(),
+      kind,
+      at,
+      // The same two facts under the names the container indexes (`action`
+      // and `timestamp`, infra/cosmos-containers.json), so a read that counts
+      // denials by kind and time (ops-health.js) is an index seek and not a
+      // scan of ninety days of audit rows. `kind` and `at` stay for the rows
+      // and readers that already use them.
+      action: kind,
+      timestamp: at,
       ...entry,
     });
   } catch (error) {

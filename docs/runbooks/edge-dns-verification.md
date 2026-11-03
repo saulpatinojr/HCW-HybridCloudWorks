@@ -211,25 +211,35 @@ Invoke-RestMethod -Uri 'https://api-azure.hybridcloudworks.com/api/health'
 ```
 
 **Success:** `status` is `ok`, `service` is `hcw-functions`, and
-`unresolvedSecrets` is **2**. `generation` names the CI run and commit that
-stamped the running configuration, which is worth comparing against the deploy
-you just made when the trigger was a Functions change.
+`unresolvedSecrets` matches the number of entries in `EXPECTED_UNRESOLVED` in
+`scripts/check-unresolved-secrets.mjs` (**3** as of 2026-11-01:
+`AZURE_SPEECH_KEY`, `CLOUDFLARE_ANALYTICS_TOKEN` and `CODER_BROKER_TOKEN`).
+`generation` names the CI run and commit that stamped the running
+configuration, which is worth comparing against the deploy you just made when
+the trigger was a Functions change.
 
-**`unresolvedSecrets: 2` is the healthy answer, and an operator who does not
+**A count above zero can be the healthy answer, and an operator who does not
 know that will chase it.** The count is Key Vault references that arrived as
-the literal `@Microsoft.KeyVault(…)` string instead of a resolved secret. Two
-findings, one setting: Azure surfaces every app setting twice, plain and
-`APPSETTING_`-prefixed, so a single unresolved reference reads as two. The
-setting is `AZURE_SPEECH_KEY`, and `scripts/check-unresolved-secrets.mjs`
-carries it in `EXPECTED_UNRESOLVED` with the reason — Azure AI Speech is the
-written, tested fallback TTS path, deliberately unprovisioned because standing
-one up is a spend decision nobody has made.
+the literal `@Microsoft.KeyVault(…)` string instead of a resolved secret. Each
+entry in `EXPECTED_UNRESOLVED` is one of those on purpose, with its reason
+beside it: Azure AI Speech is the written, tested fallback TTS path,
+deliberately unprovisioned because standing one up is a spend decision nobody
+has made, and the other two wait on a token the owner has not minted yet. Azure
+surfaces every app setting twice, plain and `APPSETTING_`-prefixed; since
+#1490 the health endpoint counts such a pair once, so the number is settings,
+not aliases (before that it read 2 for the one Speech setting, and the table
+below records that older reading).
 
-Any other number is actionable. Which references are unresolved is deliberately
-not in this anonymous response; the names are on the authenticated Integrations
-page at <https://hybridcloudworks.com/admin/integrations>, and Actions →
+Any other number is actionable, and a matching number is not yet a pass: the
+same count can hide a swap (one expected name starting to resolve while another
+setting stops). Which references are unresolved is deliberately not in this
+anonymous response; the names are on the authenticated Integrations page at
+<https://hybridcloudworks.com/admin/integrations>, and Actions →
 **Monitor Unresolved Secrets** answers the same question from ARM without
-traversing Cloudflare at all.
+traversing Cloudflare at all and compares the names with the list itself. Call
+this step passed only when the unresolved names are exactly the names on
+`EXPECTED_UNRESOLVED`: the monitor says so as "nothing unexpected" with no stale
+entry.
 
 That page, not Ops Health. This line used to point at `/admin/ops-health`,
 which never carried the names: `getOpsHealthSnapshot` returns readiness, the
@@ -318,7 +328,7 @@ allowlist does not name is UNEXPECTED. A run that could not read the log
 fails, on purpose: a quiet run means the window was read and every change
 was expected, never that the token was missing.
 
-**The allowlist, and how to extend it.** Four entries, each with its reason
+**The allowlist, and how to extend it.** Five entries, each with its reason
 beside it in the script. They are bound to what the audit log really carries,
 read on the first live run (2026-10-18): for this account's API tokens the
 entries have **no `token_name` or `token_id`** (the API reference lists both
@@ -332,6 +342,7 @@ it to.
 | `terraform-owner-token` | the owner's own `terraform` runs from the workstation with a user-owned token (the 2026-10-06 00:26Z edits) — kept as a separate entry so they stay visible: the workspace is the normal path | a user-owned API token (`actor.type` `user`, `actor.context` `api_token`) under the `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` e-mail with the provider's user agent |
 | `caddy-acme` | the Caddy runtime token, **only** on a `TXT` record named `_acme-challenge.<lab name>` (`_acme-challenge.lab.hybridcloudworks.com` or `_acme-challenge.coder.lab.hybridcloudworks.com`); an A record from it, or a challenge for `www`, is the finding the poller exists for | an API-token request from the lab host's address in the `CLOUDFLARE_CADDY_HOST_IP` repository variable (the token's client-IP filter allows that address alone), or the token name in `CLOUDFLARE_CADDY_TOKEN_NAME` should the log carry it |
 | `owner-dashboard` | the owner's own edits in the Cloudflare dashboard (the apex and `www` records are hand-made by design, above) | a `dash` session whose e-mail is the `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` repository variable |
+| `cloudflare-dcv` | Cloudflare's own certificate validation: a `TXT` record named exactly `_acme-challenge.hybridcloudworks.com` (the apex, which validates the universal certificate for the apex and its wildcard), created and deleted minutes later when that certificate renews, which starts 30 days before it expires ([Certificate validity periods](https://developers.cloudflare.com/ssl/reference/certificate-validity-periods/)). The zone is a full setup, and for one Cloudflare "handles DCV automatically on your behalf using a TXT record" ([Changing DCV method](https://developers.cloudflare.com/ssl/edge-certificates/changing-dcv-method/), read 2026-11-02; the record's name is the `_acme-challenge.<domain>` of the [TXT method](https://developers.cloudflare.com/ssl/edge-certificates/changing-dcv-method/methods/txt/)). First seen 2026-10-26 ([#1421](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1421)). A challenge for any other name (`www`, a lab name), an update, or a `system` actor on any other record, stays UNEXPECTED | an actor whose only field is `type` `system`, with no context, id, e-mail, address or token fields, no request method and no user agent. Cloudflare's [audit-log reference](https://developers.cloudflare.com/fundamentals/account/account-security/audit-logs/) defines `system` as changes made automatically by Cloudflare systems; a token's request is authenticated and lands as `account` or `user` with `context` `api_token`, so a token cannot take this shape. That shape was read from the live entries of 2026-10-26, 10-27 and 10-30, not promised by the documentation, which says a system entry "may include associated user context": if a renewal entry ever carries more than `type`, the entry stops matching and the issue re-opens; re-read the shape before widening. Needs no variable; always active |
 
 A Terraform user agent is a header anyone can send, which is why
 `hcp-terraform` needs an apply in progress and why both Terraform entries

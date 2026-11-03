@@ -28,8 +28,9 @@ import StatusBadge from '@/components/admin/shared/StatusBadge';
 import useLinkedItem from '@/hooks/useLinkedItem';
 import { LINK_PARAMS } from '@/lib/itemLinks';
 import { describeAge, worstStatus } from '@/lib/status';
-import { AlertTriangle, CheckCircle2, Workflow } from 'lucide-react';
-import { scheduledPublishingVerdict } from './probeEvaluators';
+import { AlertTriangle, Bot, CheckCircle2, Workflow } from 'lucide-react';
+import { contentAgentVerdict, scheduledPublishingVerdict } from './probeEvaluators';
+import { KODA } from './probeKit';
 import StatusSlot from './StatusSlot';
 
 export const ALERT_FILTERS = [
@@ -111,8 +112,15 @@ export function readinessStatus(readiness) {
 /** A count that is fine at zero and worth a look above it. */
 const countStatus = (count, above = 'degraded') => ((Number(count) || 0) > 0 ? above : 'healthy');
 
-/** The four tiles' words and the publish-failure count, worst first: the card's status. */
+/**
+ * The four tiles' words, the publish-failure count and the day's jobs, worst
+ * first: the card's status. A jobs read that failed is degraded, not unknown:
+ * worstStatus lets unknown count only when nothing else is known, so an
+ * unknown here would hide behind the healthy tiles and the header would say
+ * Healthy over a body that says it could not count (#1491).
+ */
 export function signalsStatus(signals) {
+  const jobsUnreadable = Boolean(signals?.failedJobsUnavailable || signals?.jobs24h?.unavailable);
   return worstStatus([
     countStatus(signals?.queueBreachCount),
     (signals?.oldestStagedHours || 0) > 72 ? 'degraded' : 'healthy',
@@ -120,6 +128,8 @@ export function signalsStatus(signals) {
     countStatus(signals?.orphanedGeneratedImages),
     countStatus(signals?.publishFailureCount),
     countStatus((signals?.failedJobs || []).length),
+    countStatus(signals?.jobs24h?.failed),
+    jobsUnreadable ? 'degraded' : 'healthy',
   ]);
 }
 
@@ -160,13 +170,57 @@ function formatHours(value) {
 }
 
 function renderPublishingHint(publishingOps) {
-  if (publishingOps) return null;
+  if (!publishingOps) {
+    return (
+      <p className="text-xs text-muted-foreground pb-1">
+        The scheduler records every run here, every 15 minutes, nothing due included. No values
+        means no run is recorded in the latest digest — the scheduler is off or has not run today.
+        The Watchdog rows below still report overdue items.
+      </p>
+    );
+  }
+  // All zeros reads like a broken card. It is the scheduler's own ledger: it
+  // counts items in Approved whose publish time has come, and nothing else.
+  // Drafts, reviews, Koda's work and background jobs are on other cards (#1491).
+  // Only a run that completed can say nothing was due: a run that broke
+  // records zeros too (scheduled-publish.js), and those zeros say nothing.
+  const ranClean = publishingOps.status !== 'failed' && !publishingOps.error;
+  if (ranClean && !publishingOps.due && !publishingOps.failed) {
+    return (
+      <p className="text-xs text-muted-foreground pb-1" data-testid="publishing-nothing-due">
+        Nothing was due: these counts belong to the scheduler alone, items in Approved with a
+        publish time that has come. Drafts, reviews and background jobs are counted on the other
+        cards.
+      </p>
+    );
+  }
+  return null;
+}
+
+/** The badge for the scheduler's one-word run status (scheduled-publish.js publishingStatus). */
+const RUN_STATUS_VARIANT = Object.freeze({
+  success: 'secondary',
+  degraded: 'outline',
+  failed: 'destructive',
+});
+
+/** The scheduler's own word for its last run, and the sentence it recorded when the run broke. */
+function renderPublishingRun(publishingOps) {
+  if (!publishingOps?.status && !publishingOps?.error) return null;
+  const status = String(publishingOps.status || '');
+  const variant = RUN_STATUS_VARIANT[status] || 'outline';
   return (
-    <p className="text-xs text-muted-foreground pb-1">
-      The scheduler records every run here, every 15 minutes, nothing due included. No values means
-      no run is recorded in the latest digest — the scheduler is off or has not run today. The
-      Watchdog rows below still report overdue items.
-    </p>
+    <div className="space-y-1" data-testid="publishing-run">
+      <div className="flex items-center justify-between">
+        <span>Last run</span>
+        <Badge variant={variant}>{status || 'not recorded'}</Badge>
+      </div>
+      {publishingOps.error ? (
+        <p className="rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+          {publishingOps.error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -260,6 +314,7 @@ export function PublishingOpsCard({ publishingOps, publishingWatchdog, digestFor
       />
       <CardContent className="flex flex-1 flex-col gap-3 text-sm">
         {renderPublishingHint(publishingOps)}
+        {renderPublishingRun(publishingOps)}
         <p className="text-xs text-muted-foreground" data-testid="scheduler-verdict">
           {verdict.summary}
         </p>
@@ -302,6 +357,184 @@ export function PublishingOpsCard({ publishingOps, publishingWatchdog, digestFor
           {getDigestDocLabel(digestForDisplay?.digestDate)}
         </p>
         <CheckedFooter at={digestForDisplay?.lastCheckedAt} />
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The last day's platform jobs by status (#1491), or the fact that they could not be counted. */
+function JobsStrip({ jobs }) {
+  if (jobs.unavailable) {
+    return (
+      <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="jobs-unavailable">
+        The jobs container did not answer, so the jobs of the last day could not be counted.
+      </p>
+    );
+  }
+  const tiles = [
+    ['Queued', jobs.queued, 'healthy'],
+    ['Running', jobs.running, 'healthy'],
+    ['Succeeded', jobs.succeeded, 'healthy'],
+    ['Failed', jobs.failed, countStatus(jobs.failed)],
+  ];
+  return (
+    <div className="space-y-1.5" data-testid="jobs-24h">
+      <div className="flex items-center justify-between">
+        <span className="font-medium">Platform jobs, last 24 h</span>
+        <Badge variant="outline">{jobs.total || 0} total</Badge>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {tiles.map(([label, count, status]) => (
+          <div key={label} className="p-3 border rounded-lg">
+            <p className="text-muted-foreground text-xs">{label}</p>
+            <p className="text-xl font-bold">{count || 0}</p>
+            <StatusBadge system={status} size="xs" />
+          </div>
+        ))}
+      </div>
+      {jobs.other ? (
+        <p className="text-xs text-muted-foreground">
+          {jobs.other} in other states (cancelled or unknown).
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** The key's one word and the badge colour that goes with it. */
+function keyBadge(key) {
+  if (key.unavailable) return { word: 'could not be read', variant: 'outline' };
+  if (!key.present) return { word: 'none', variant: 'outline' };
+  if (key.active) return { word: 'active', variant: 'secondary' };
+  return { word: 'revoked', variant: 'destructive' };
+}
+
+/** One label/value row of the card, in the shape the sibling cards use. */
+function CardRow({ label, children }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The rows that describe a key the snapshot has: when it was last used, when
+ * it was rotated (or, for a key never rotated, when it was created, said as
+ * such) and which switches are off. Nothing here is shown for a key that is
+ * absent or unread, because none of it would be a fact.
+ */
+function KeyRows({ keyState, sectionsOff }) {
+  return (
+    <>
+      <CardRow label="Last used">
+        <Badge variant="outline">{formatTimestamp(keyState.lastUsedAt)}</Badge>
+      </CardRow>
+      {keyState.rotatedAt ? (
+        <CardRow label="Rotated">
+          <Badge variant="outline">{formatTimestamp(keyState.rotatedAt)}</Badge>
+        </CardRow>
+      ) : (
+        <CardRow label="Created, never rotated">
+          <Badge variant="outline">{formatTimestamp(keyState.createdAt)}</Badge>
+        </CardRow>
+      )}
+      <CardRow label="Switches off">
+        <span className="text-right text-xs text-muted-foreground" data-testid="agent-switches-off">
+          {sectionsOff.length
+            ? sectionsOff.map((section) => section.label).join(', ')
+            : 'none, every switch is on'}
+        </span>
+      </CardRow>
+    </>
+  );
+}
+
+/** The refusal count, or the fact that it could not be made. */
+function RefusalsBadge({ denials }) {
+  if (denials.unavailable) return <Badge variant="outline">could not be counted</Badge>;
+  const total = denials.total || 0;
+  return (
+    <Badge variant={getBadgeVariantByCount(total, 'destructive')}>
+      {total}
+      {denials.bounded ? '+' : ''}
+    </Badge>
+  );
+}
+
+/**
+ * The reasons, most frequent first, when the read made it and found any. At
+ * the read's bound each count is a floor, like the total, so it carries the
+ * same "+".
+ */
+function RefusalReasons({ denials }) {
+  if (denials.unavailable || !denials.byReason?.length) return null;
+  const floor = denials.bounded ? '+' : '';
+  return (
+    <ul className="space-y-1 text-xs" data-testid="agent-denials-by-reason">
+      {denials.byReason.slice(0, 6).map((row) => (
+        <li key={row.reason} className="flex items-center justify-between font-mono">
+          <span>{row.reason}</span>
+          <span className="text-muted-foreground">
+            {row.count}
+            {floor}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * The content agent (Koda): its key, the switches that are off and the day's
+ * refusals by reason, from the snapshot's `agent` block (#1491). The same
+ * verdict as the Content agent probe on Checks. Never the key or its hint:
+ * that is the Koda tab's, behind super_admin. A snapshot without the block
+ * (one written before this card existed) gets the verdict sentence and the
+ * link only: rows of "none" and "0" would read as findings.
+ */
+export function ContentAgentCard({ agent }) {
+  const verdict = contentAgentVerdict(agent);
+  const key = agent?.key || {};
+  const denials = agent?.denials || {};
+  const badge = keyBadge(key);
+  const sectionsOff = agent?.sectionsOff || [];
+  const kodaLink = (
+    <p className="text-xs">
+      <Link to={KODA.to} className="font-medium text-primary underline-offset-2 hover:underline">
+        {KODA.label}: the key, its switches and the route list
+      </Link>
+    </p>
+  );
+  return (
+    <Card className="flex h-full flex-col" data-testid="content-agent-card">
+      <SignalCardHeader
+        icon={<Bot className="h-4 w-4 text-violet-500" aria-hidden="true" />}
+        title={`Content agent (${agent?.label || 'Koda'})`}
+        status={verdict.status}
+      />
+      <CardContent className="flex flex-1 flex-col gap-2 text-sm">
+        <p className="text-xs text-muted-foreground">{verdict.summary}</p>
+        {agent ? (
+          <>
+            <CardRow label="Key">
+              <Badge variant={badge.variant}>{badge.word}</Badge>
+            </CardRow>
+            {key.present ? <KeyRows keyState={key} sectionsOff={sectionsOff} /> : null}
+            <CardRow label="Refusals, last 24 h">
+              <RefusalsBadge denials={denials} />
+            </CardRow>
+            <RefusalReasons denials={denials} />
+            {denials.lastAt ? (
+              <p className="text-xs text-muted-foreground">
+                Last refusal {formatTimestamp(denials.lastAt)}.
+              </p>
+            ) : null}
+          </>
+        ) : null}
+        {kodaLink}
+        <CheckedFooter at={agent?.lastCheckedAt} />
       </CardContent>
     </Card>
   );
@@ -354,6 +587,16 @@ export function OperationalSignalsCard({ signals }) {
           <span>Last Scheduler Success</span>
           <Badge variant="outline">{formatTimestamp(signals.lastSchedulerSuccessAt)}</Badge>
         </div>
+        {signals?.jobs24h ? <JobsStrip jobs={signals.jobs24h} /> : null}
+        {signals?.failedJobsUnavailable ? (
+          <p
+            className="text-xs text-amber-700 dark:text-amber-400"
+            data-testid="failed-jobs-unavailable"
+          >
+            The failed-jobs read did not answer, so no failed job can be listed here. That is not
+            the same as none; check again, and the Cosmos DB probe on Checks.
+          </p>
+        ) : null}
         {(signals?.failedJobs || []).length > 0 && (
           <div className="space-y-2 pt-2 border-t" data-testid="failed-jobs-section">
             <div className="flex items-center justify-between">
