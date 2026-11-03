@@ -127,7 +127,7 @@ export function signalsStatus(signals) {
   const jobsUnreadable = Boolean(signals?.failedJobsUnavailable || signals?.jobs24h?.unavailable);
   return worstStatus([
     countStatus(signals?.queueBreachCount),
-    (signals?.oldestStagedHours || 0) > 72 ? 'degraded' : 'healthy',
+    stagedAgeStatus(signals?.oldestStagedHours),
     (signals?.openAlertAgeHours || 0) > 24 ? 'degraded' : 'healthy',
     countStatus(signals?.orphanedGeneratedImages),
     countStatus(signals?.publishFailureCount),
@@ -166,6 +166,19 @@ function getBadgeVariantByCount(count, positiveVariant) {
 function getDigestDocLabel(digestDate) {
   if (!digestDate) return '';
   return ` (digest doc: ${digestDate})`;
+}
+
+/**
+ * The waiting-to-go-live tile's word, and its share of the card's header:
+ * degraded past three days, and degraded when items wait but none carries a
+ * time (#1516). Not unknown: worstStatus counts unknown only when nothing
+ * else is known, so the header would read Healthy over the tile, and
+ * "unknown" there means "never checked", which this is not (the #1491 rule
+ * for a read that could not count).
+ */
+function stagedAgeStatus(hours) {
+  if (hours === null) return 'degraded';
+  return (hours || 0) > 72 ? 'degraded' : 'healthy';
 }
 
 function formatHours(value) {
@@ -337,6 +350,7 @@ export function publishingMetrics(publishingOps, publishingWatchdog) {
     failed: publishingOps?.failed || 0,
     overdue: publishingWatchdog?.overdueScheduledCount || 0,
     stagedTooLong: publishingWatchdog?.stagedTooLongCount || 0,
+    stagedTooLongBounded: Boolean(publishingWatchdog?.stagedTooLongBounded),
   };
 }
 
@@ -390,8 +404,12 @@ export function PublishingOpsCard({ publishingOps, publishingWatchdog, digestFor
           <span title="Marked published but not live, with no schedule, for more than six hours (the watchdog's count)">
             Published, Not Live (6 h+)
           </span>
-          <Badge variant={getBadgeVariantByCount(metrics.stagedTooLong, 'outline')}>
+          <Badge
+            variant={getBadgeVariantByCount(metrics.stagedTooLong, 'outline')}
+            data-testid="published-not-live-count"
+          >
             {metrics.stagedTooLong}
+            {metrics.stagedTooLongBounded ? '+' : ''}
           </Badge>
         </div>
         <p className="text-xs text-muted-foreground">
@@ -603,16 +621,17 @@ export function OperationalSignalsCard({ signals }) {
           </div>
           <div className="p-3 border rounded-lg">
             <p className="text-muted-foreground text-xs">Oldest Waiting to Go Live</p>
-            <p className="text-xl font-bold">{formatHours(signals.oldestStagedHours)}</p>
+            <p className="text-xl font-bold" data-testid="oldest-staged-age">
+              {signals.oldestStagedHours === null
+                ? 'no recorded time'
+                : formatHours(signals.oldestStagedHours)}
+            </p>
             {Number.isFinite(signals.stagedWaitingCount) ? (
               <p className="text-muted-foreground text-xs" data-testid="staged-waiting-count">
                 {signals.stagedWaitingCount} approved or published, not live, not scheduled
               </p>
             ) : null}
-            <StatusBadge
-              system={(signals.oldestStagedHours || 0) > 72 ? 'degraded' : 'healthy'}
-              size="xs"
-            />
+            <StatusBadge system={stagedAgeStatus(signals.oldestStagedHours)} size="xs" />
           </div>
           <div className="p-3 border rounded-lg">
             <p className="text-muted-foreground text-xs">Open Alert Age</p>

@@ -48,8 +48,8 @@
  */
 import { DefaultAzureCredential } from '@azure/identity';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
-import { AuthoredError, storedFailure } from '../http/error-response.js';
-import { money, percent } from './model.js';
+import { AuthoredError, codeShaped, storedFailure } from '../http/error-response.js';
+import { money, percent, previousMonthOf } from './model.js';
 
 export const ARM_ORIGIN = 'https://management.azure.com';
 export const ARM_SCOPE = 'https://management.azure.com/.default';
@@ -61,6 +61,21 @@ export const ARM_TIMEOUT_MS = 20_000;
 export const SCOPES_SETTING = 'COST_SCOPES';
 
 export const SCOPE_KINDS = Object.freeze(['subscription', 'resourceGroup']);
+
+/**
+ * Cost Management's Query API is limited per TENANT in query processing units
+ * (QPU): 12 per 10 seconds, 60 per minute, 600 per hour, one QPU per month of
+ * data asked for, and the owner's own Cost Analysis in the portal spends the
+ * same allowance. A 429 names the wait in
+ * `x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after` (seconds)
+ * (https://learn.microsoft.com/azure/cost-management-billing/costs/manage-automation#data-latency-and-rate-limits,
+ * read 2026-11-03). So the reader asks one question at a time, and on a 429
+ * waits as long as Azure says, at most RETRY_WAIT_CAP_MS, and tries once more.
+ */
+export const QPU_RETRY_HEADER = 'x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after';
+export const RETRY_WAIT_CAP_MS = 30_000;
+export const RETRY_WAIT_DEFAULT_MS = 10_000;
+export const MAX_ATTEMPTS = 2;
 
 const TIMEOUT_SENTENCE = 'Azure did not answer in time; the next refresh will try again.';
 const UNREADABLE_SENTENCE = 'Azure could not be read; the next refresh will try again.';
@@ -114,10 +129,50 @@ export class CostScopesError extends AuthoredError {
 
 /** ARM answered something other than 2xx; describeArmStatus wrote the sentence, no ARM text is in it. */
 export class ArmStatusError extends AuthoredError {
-  constructor(status) {
-    super(describeArmStatus(status), { code: 'ARM_STATUS' });
+  /**
+   * @param {number} status
+   * @param {{ retryAfterMs?: number|null, azureCode?: string, step?: string }} [details]
+   *   azureCode is Azure's own error code from the answer body, kept only when
+   *   it is code-shaped (http/error-response.js codeShaped), so no sentence of
+   *   Azure's reaches the page; step names which of the reads it was.
+   */
+  constructor(status, { retryAfterMs = null, azureCode = '', step = '' } = {}) {
+    super(describeArmStatus(status, { azureCode, step }), { code: 'ARM_STATUS' });
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
+    this.azureCode = azureCode;
+    this.step = step;
   }
+}
+
+/** The names of the three reads, as the page says them. */
+export const STEPS = Object.freeze({
+  budgets: 'the budgets read',
+  monthToDate: 'the read of this month\u2019s costs',
+  lastMonth: 'the read of last month\u2019s total',
+});
+
+/** Azure's error code from an answer body (`{ error: { code } }`), when it is code-shaped; else ''. */
+export function azureErrorCode(bodyText) {
+  try {
+    const body = JSON.parse(bodyText);
+    return codeShaped(body?.error?.code ?? body?.code ?? '');
+  } catch {
+    return '';
+  }
+}
+
+/** How long a 429 asks to wait, in ms: the QPU header, else Retry-After, else the default; capped. */
+export function retryAfterMs(headers) {
+  const read = (name) => {
+    const raw = headers?.get?.(name);
+    // An absent header is null, and Number(null) is 0: that would mean "retry now".
+    if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value * 1000 : null;
+  };
+  const ms = read(QPU_RETRY_HEADER) ?? read('retry-after') ?? RETRY_WAIT_DEFAULT_MS;
+  return Math.min(ms, RETRY_WAIT_CAP_MS);
 }
 
 function invalidScopes(reason) {
@@ -188,13 +243,33 @@ export function totalOf(payload) {
 }
 
 /**
+ * True when a budget's id says it was created at `scope` itself. Listing a
+ * subscription's budgets also returns the budgets of its resource groups
+ * (seen 2026-11-03: the application subscription's list carried the Foundry
+ * group's site-foundry-monthly-budget, which sorts before site-monthly-budget
+ * and was shown as the subscription's), so the id is what tells them apart.
+ * A budget without an id is kept: there is nothing to tell it by.
+ */
+function belongsTo(budget, scope) {
+  // Compared without leading or trailing slashes, so "/subscriptions/…" and
+  // "subscriptions/…" are the same path whichever side carries the slash.
+  const trim = (value) => String(value ?? '').toLowerCase().replace(/^\/+|\/+$/g, '');
+  const id = trim(budget?.id);
+  if (!id || !scope) return true;
+  return id.startsWith(`${trim(scope)}/providers/microsoft.consumption/budgets/`);
+}
+
+/**
  * The first budget of a scope as the page shows it, or null when the scope
  * has none. A scope here has one budget by design (infra/budget.tf,
- * infra/foundry.tf); when it has several the first by name is shown.
+ * infra/foundry.tf); when it has several the first by name is shown. With
+ * `scope`, a budget set on a narrower scope inside it (a resource group's
+ * budget in a subscription's list) is left out.
  */
-export function summarizeBudgets(payload) {
+export function summarizeBudgets(payload, scope) {
   const budgets = Array.isArray(payload?.value) ? payload.value : [];
   const monthly = budgets
+    .filter((b) => belongsTo(b, scope))
     .filter((b) => String(b?.properties?.timeGrain ?? 'Monthly').toLowerCase() === 'monthly')
     .sort((a, b) => String(a?.name ?? '').localeCompare(String(b?.name ?? '')));
   const budget = monthly[0];
@@ -229,14 +304,28 @@ export function summarizeBudgets(payload) {
   };
 }
 
-/** What a non-2xx answer means, as a sentence the page may show (no ARM text is copied). */
-export function describeArmStatus(status) {
+/**
+ * What a non-2xx answer means, as a sentence the page may show. No ARM text is
+ * copied: only the status, Azure's code when it is code-shaped, and which read
+ * it was (STEPS), so the owner can tell a refused budgets list from a refused
+ * cost query.
+ */
+export function describeArmStatus(status, { azureCode = '', step = '' } = {}) {
+  // Azure sometimes sends the status itself as the code ("429"): saying it twice tells nothing.
+  const code = azureCode && azureCode !== String(status) ? azureCode : '';
+  const label = `HTTP ${status}${code ? ` ${code}` : ''}`;
+  const where = step ? ` to ${step}` : '';
   if (status === 401 || status === 403) {
-    return `Azure refused the read (HTTP ${status}): the Function App's identity needs the Cost Management Reader role on this scope.`;
+    return `Azure refused${where ? ` ${step}` : ' the read'} (${label}): the Function App's identity needs the Cost Management Reader role on this scope.`;
   }
-  if (status === 404) return 'Azure answered 404: the scope does not exist or is not visible to this identity.';
-  if (status === 429) return 'Azure rate-limited the read (HTTP 429); the next refresh will try again.';
-  return `Azure answered HTTP ${status}.`;
+  if (status === 404) return `Azure answered ${label}${where}: the scope does not exist or is not visible to this identity.`;
+  if (status === 429) {
+    return `Azure Cost Management is limiting how often it can be asked (${label}${where}), and still was after a wait; the next refresh will try again. Its allowance is shared with Cost Analysis in the Azure portal.`;
+  }
+  if (status === 400) {
+    return `Azure answered ${label}${where}: it did not accept the question as asked. The code names the reason; the Cost runbook lists the ones seen so far.`;
+  }
+  return `Azure answered ${label}${where}.`;
 }
 
 /**
@@ -245,11 +334,16 @@ export function describeArmStatus(status) {
  * @param {Function} [deps.fetchImpl]
  * @param {{ getToken: Function }} [deps.credential] test seam; production builds DefaultAzureCredential lazily
  */
-export function createAzureCostReader({ env = process.env, fetchImpl = globalThis.fetch, credential } = {}) {
+export function createAzureCostReader({
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+  credential,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
   let cached = credential ?? null;
   const getCredential = () => (cached ??= new DefaultAzureCredential());
 
-  async function armFetch(path, init = {}) {
+  async function armFetchOnce(path, init, step) {
     const token = await getCredential().getToken(ARM_SCOPE);
     if (!token?.token) throw new Error(`Could not acquire a token for ${ARM_SCOPE}`);
     const response = await fetchWithTimeout(fetchImpl, `${ARM_ORIGIN}${path}`, {
@@ -262,23 +356,55 @@ export function createAzureCostReader({ env = process.env, fetchImpl = globalThi
       },
       timeoutMs: ARM_TIMEOUT_MS,
     });
-    if (!response.ok) throw new ArmStatusError(response.status);
+    if (!response.ok) {
+      const bodyText = await response.text?.().catch(() => '') ?? '';
+      throw new ArmStatusError(response.status, {
+        retryAfterMs: response.status === 429 ? retryAfterMs(response.headers) : null,
+        azureCode: azureErrorCode(bodyText),
+        step,
+      });
+    }
     return response.json();
   }
 
-  const query = (scope, body) =>
-    armFetch(`${scope}/providers/Microsoft.CostManagement/query?api-version=${QUERY_API_VERSION}`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+  /** One ARM call; a 429 waits as long as Azure asks (capped) and tries again, up to MAX_ATTEMPTS. */
+  async function armFetch(path, init = {}, step = '') {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await armFetchOnce(path, init, step);
+      } catch (error) {
+        if (error?.status !== 429 || attempt >= MAX_ATTEMPTS) throw error;
+        await sleep(error.retryAfterMs ?? RETRY_WAIT_DEFAULT_MS);
+      }
+    }
+  }
+
+  const query = (scope, body, step) =>
+    armFetch(
+      `${scope}/providers/Microsoft.CostManagement/query?api-version=${QUERY_API_VERSION}`,
+      { method: 'POST', body: JSON.stringify(body) },
+      step
+    );
 
   const aggregation = { totalCost: { name: 'PreTaxCost', function: 'Sum' } };
 
   /**
    * One scope's figures. Never throws: a failed read is `{ error }` with the
    * figures null, so one scope that cannot be read never hides the others.
+   *
+   * The calls run one after another, never together (the QPU note above).
+   * Last month's total does not change once the month is over, so when
+   * `previous` (this scope as the last snapshot holds it) already has it for
+   * the same month, it is reused and the query is not sent: half the QPU of
+   * every refresh after the first of the month.
+   *
+   * When this read fails and `previous` has good figures from this same
+   * month, those are kept, marked with `readAt` and a `note` saying why they
+   * were not renewed, so a throttled refresh does not blank the card.
    */
-  async function readScope(scope) {
+  async function readScope(scope, previous, now) {
+    const month = now.toISOString().slice(0, 7);
+    const lastMonth = previousMonthOf(month);
     const base = {
       id: scope.id,
       label: scope.label,
@@ -286,15 +412,61 @@ export function createAzureCostReader({ env = process.env, fetchImpl = globalThi
       name: scope.name,
       monthToDate: null,
       previousMonth: null,
+      previousMonthOf: null,
       budget: null,
       byService: [],
       daily: [],
+      readAt: null,
+      note: null,
       error: null,
     };
+    // A read that is not this month's costs may fail on its own: the card
+    // still shows the month, and its note says what could not be read.
+    const partial = [];
+    const optional = async (read) => {
+      try {
+        return { value: await read() };
+      } catch (error) {
+        partial.push(error?.code === 'FETCH_TIMEOUT' ? TIMEOUT_SENTENCE : storedFailure(error, UNREADABLE_SENTENCE));
+        return { value: null };
+      }
+    };
+    /** This scope could not be read: keep this month's last good figures, or say why. */
+    const failed = (error) => {
+      const message = error?.code === 'FETCH_TIMEOUT' ? TIMEOUT_SENTENCE : storedFailure(error, UNREADABLE_SENTENCE);
+      const keep = previous && !previous.error && typeof previous.readAt === 'string' && previous.readAt.slice(0, 7) === month;
+      if (keep) {
+        return {
+          ...base,
+          ...previous,
+          id: scope.id,
+          label: scope.label,
+          kind: scope.kind,
+          name: scope.name,
+          note: `These figures were read at ${previous.readAt.slice(0, 16).replace('T', ' ')} UTC and could not be renewed this time: ${message}`,
+          noteCode: error?.status === 429 ? 'throttled' : error?.code ?? 'error',
+          error: null,
+        };
+      }
+      return { ...base, error: message, errorCode: error?.code ?? 'error', errorStatus: error?.status ?? null };
+    };
+    // The budgets come first, from the Consumption API, which the Query
+    // API's QPU allowance does not cover: each budget carries Azure's own
+    // spend so far and forecast, so a scope with a budget still has a month
+    // when the cost query is throttled (2026-11-03: both subscriptions 429).
+    const budgets = await optional(() =>
+      armFetch(
+        `${scope.scope}/providers/Microsoft.Consumption/budgets?api-version=${BUDGETS_API_VERSION}`,
+        {},
+        STEPS.budgets
+      )
+    );
+    const budget = budgets.value ? summarizeBudgets(budgets.value, scope.scope) : null;
+    let usage;
     try {
-      const [budgets, usage, lastMonth] = await Promise.all([
-        armFetch(`${scope.scope}/providers/Microsoft.Consumption/budgets?api-version=${BUDGETS_API_VERSION}`),
-        query(scope.scope, {
+      usage = await query(
+        scope.scope,
+        {
           type: 'ActualCost',
           timeframe: 'MonthToDate',
           dataset: {
@@ -305,28 +477,68 @@ export function createAzureCostReader({ env = process.env, fetchImpl = globalThi
               { type: 'Dimension', name: 'ServiceName' },
             ],
           },
-        }),
-        query(scope.scope, {
-          type: 'ActualCost',
-          timeframe: 'TheLastMonth',
-          dataset: { granularity: 'None', aggregation },
-        }),
-      ]);
+        },
+        STEPS.monthToDate
+      );
+    } catch (error) {
+      if (!budget) return failed(error);
+      // The month from the budget: no breakdown, and last month waits too
+      // (asking again now would only spend more of the same allowance).
+      const message = error?.code === 'FETCH_TIMEOUT' ? TIMEOUT_SENTENCE : storedFailure(error, UNREADABLE_SENTENCE);
+      const keepLast = previous && !previous.error && previous.previousMonthOf === lastMonth && Number.isFinite(previous.previousMonth);
+      return {
+        ...base,
+        monthToDate: budget.currentSpend,
+        previousMonth: keepLast ? previous.previousMonth : null,
+        previousMonthOf: keepLast ? lastMonth : null,
+        budget,
+        readAt: now.toISOString(),
+        note: `This month's spend is the budget's own figure; the daily line and the cost by service could not be read: ${message}`,
+        noteCode: error?.status === 429 ? 'throttled' : 'partial',
+      };
+    }
+    try {
+      const known = previous && !previous.error && previous.previousMonthOf === lastMonth && Number.isFinite(previous.previousMonth);
+      // Last month by its dates. `TheLastMonth` with no granularity was
+      // refused with 400 BadRequest on 2026-11-03; a Custom period with
+      // granularity None is the form cost-analysis.md measured September with.
+      const [y, m] = lastMonth.split('-').map(Number);
+      const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      const lastTotal = known
+        ? { value: null }
+        : await optional(() =>
+            query(
+              scope.scope,
+              {
+                type: 'ActualCost',
+                timeframe: 'Custom',
+                timePeriod: {
+                  from: `${lastMonth}-01T00:00:00Z`,
+                  to: `${lastMonth}-${String(lastDay).padStart(2, '0')}T23:59:59Z`,
+                },
+                dataset: { granularity: 'None', aggregation },
+              },
+              STEPS.lastMonth
+            )
+          );
+      let previousMonth = null;
+      if (known) previousMonth = previous.previousMonth;
+      else if (lastTotal.value) previousMonth = totalOf(lastTotal.value);
       const summary = summarizeUsage(usage);
       return {
         ...base,
         monthToDate: summary.monthToDate,
         byService: summary.byService,
         daily: summary.daily,
-        previousMonth: totalOf(lastMonth),
-        budget: summarizeBudgets(budgets),
+        previousMonth,
+        previousMonthOf: previousMonth === null ? null : lastMonth,
+        budget,
+        readAt: now.toISOString(),
+        note: partial.length ? `Part of this scope could not be read: ${partial.join(' ')}` : null,
+        noteCode: partial.length ? 'partial' : undefined,
       };
     } catch (error) {
-      return {
-        ...base,
-        error: error?.code === 'FETCH_TIMEOUT' ? TIMEOUT_SENTENCE : storedFailure(error, UNREADABLE_SENTENCE),
-        errorCode: error?.code ?? 'error',
-      };
+      return failed(error);
     }
   }
 
@@ -337,11 +549,13 @@ export function createAzureCostReader({ env = process.env, fetchImpl = globalThi
     },
 
     /**
-     * Every configured scope, read together. `available` is false, with a
+     * Every configured scope, read one after another. `previous` is the last
+     * snapshot's Azure section, used to reuse last month's totals and to keep
+     * good figures through a throttled refresh. `available` is false, with a
      * `reason`, when no scope is configured, the setting is malformed, or
      * every scope failed.
      */
-    async readAll() {
+    async readAll({ previous = null, now = new Date() } = {}) {
       let scopes;
       try {
         scopes = parseScopes(env);
@@ -355,7 +569,10 @@ export function createAzureCostReader({ env = process.env, fetchImpl = globalThi
           scopes: [],
         };
       }
-      const results = await Promise.all(scopes.map((scope) => readScope(scope)));
+      const before = new Map((previous?.scopes ?? []).map((row) => [row.id, row]));
+      const results = [];
+      // One scope after another: the QPU allowance is per tenant (see above).
+      for (const scope of scopes) results.push(await readScope(scope, before.get(scope.id), now));
       const failed = results.filter((row) => row.error);
       if (failed.length === results.length) {
         return { available: false, reason: failed[0].error, scopes: results };

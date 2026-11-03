@@ -69,10 +69,27 @@ describe('AzureTab', () => {
       azure: { available: false, reason: 'COST_SCOPES is not set.', scopes: [], totals: {} },
     });
     expect(screen.getByText('Azure costs are not available')).toBeInTheDocument();
-    expect(screen.getByText(/COST_SCOPES is not set\./)).toHaveTextContent(
-      /Cost Management Reader role/
-    );
-    expect(screen.getByText(/docs\/runbooks\/cost\.md/)).toBeInTheDocument();
+    // The server's reason, then a pointer to the runbook. The role is named
+    // only when the reason itself is about the role (2026-11-03: a 429 was
+    // shown with role advice beside it).
+    const text = screen.getByText(/COST_SCOPES is not set\./);
+    expect(text).toHaveTextContent(/docs\/runbooks\/cost\.md/);
+    expect(text).not.toHaveTextContent(/Cost Management Reader/);
     expect(screen.queryByRole('progressbar')).toBeNull();
+  });
+
+  it('shows earlier figures, with when they were read, when a refresh was refused', () => {
+    const [first, ...rest] = SUMMARY.azure.scopes;
+    const note =
+      'These figures were read at 2026-11-13 09:00 UTC and could not be renewed this time: HTTP 429.';
+    renderTab({
+      ...SUMMARY,
+      azure: { ...SUMMARY.azure, scopes: [{ ...first, error: null, note }, ...rest] },
+    });
+    expect(screen.getByText(note)).toBeInTheDocument();
+    // The kept scope reads as working: only the fixture's own failed scopes say "could not be read".
+    expect(screen.queryAllByText(/This scope could not be read/)).toHaveLength(
+      rest.filter((scope) => scope.error).length
+    );
   });
 });

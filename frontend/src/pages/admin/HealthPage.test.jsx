@@ -554,6 +554,33 @@ describe('the hub', () => {
     );
   });
 
+  it('says "no recorded time" when items wait with no time, and marks a bounded count (#1516)', async () => {
+    postJSON.mockImplementation(async (name) =>
+      name === 'getOpsHealthSnapshot'
+        ? {
+            ...SNAPSHOT,
+            digest: {
+              ...SNAPSHOT.digest,
+              publishingWatchdog: {
+                ...SNAPSHOT.digest.publishingWatchdog,
+                stagedTooLongCount: 1000,
+                stagedTooLongBounded: true,
+              },
+            },
+            operationalSignals: {
+              ...SNAPSHOT.operationalSignals,
+              oldestStagedHours: null,
+              stagedWaitingCount: 1,
+            },
+          }
+        : {}
+    );
+    renderAt();
+    expect(await screen.findByTestId('oldest-staged-age')).toHaveTextContent('no recorded time');
+    expect(screen.getByTestId('oldest-staged-age')).not.toHaveTextContent('0h');
+    expect(screen.getByTestId('published-not-live-count')).toHaveTextContent('1000+');
+  });
+
   it('labels the two staged numbers by what they count (#1512)', async () => {
     renderAt();
     expect(await screen.findByText('Oldest Waiting to Go Live')).toBeInTheDocument();

@@ -10,6 +10,7 @@ import {
   PUBLISHER_LATE_AFTER_MS,
   aiProvidersVerdict,
   checkContentAgent,
+  checkQueueSla,
   checkRuntimeConfig,
   checkScheduledPublishing,
   labAgentsFromRows,
@@ -332,6 +333,15 @@ describe('the pulse’s checks', () => {
     const older = snapshot();
     older.readiness = { ...older.readiness, unresolvedSecrets: ['AZURE_SPEECH_KEY'] };
     expect(checkRuntimeConfig(older).status).toBe('critical');
+  });
+
+  it('says the oldest waiting item has no recorded time instead of 0 h (#1516)', () => {
+    const timeless = snapshot({
+      operationalSignals: { ...snapshot().operationalSignals, queueBreachCount: 2, oldestStagedHours: null },
+    });
+    expect(checkQueueSla(timeless).summary).toContain(
+      'the oldest item waiting to go live has no recorded time.'
+    );
   });
 
   it('calls a missing or unset configuration critical', () => {

@@ -28,7 +28,7 @@
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { isContainerMissing } from '../calendar/collectors.js';
 import { getWorkflowAlertStatus } from '../ops-health.js';
-import { unresolvedSecretNames } from '../secrets-health.js';
+import { splitUnresolved, unresolvedSecretNames } from '../secrets-health.js';
 import { REMINDERS_CONFIG_ID, dateOnly, daysUntil, readStoredReminders } from '../reminders/settings.js';
 import { STATUS as PODCAST_STATUS, TRANSCRIPT_CONTAINER } from '../podcast/store.js';
 import { EPISODE_CONTAINER, STATUS as CHAPTER_STATUS } from '../listen-and-learn/publish.js';
@@ -313,6 +313,11 @@ const workflowAlerts = windowSource({
  * Key Vault references this worker could not resolve (secrets-health.js). The
  * names are what the Health Hub's Overview already shows its viewers; the
  * anonymous /api/health gets the count only.
+ *
+ * Since #1516 the two kinds are worded the way the Health page words them
+ * (#1512). A name on the expected list (expected-unresolved.js) is a decision
+ * waiting on the owner, so it stays here, low priority, with its reason as
+ * the detail. Any other name is a fault, high priority.
  */
 const unresolvedSecrets = Object.freeze({
   id: 'unresolved-secrets',
@@ -320,19 +325,34 @@ const unresolvedSecrets = Object.freeze({
   category: 'governance',
   role: 'viewer',
   async collect({ env }) {
-    const items = unresolvedSecretNames(env).map((name) =>
+    const { expected, unexpected } = splitUnresolved(unresolvedSecretNames(env));
+    const item = (name, fields) =>
       decisionItem({
         id: `secret:${name}`,
         category: 'governance',
         kind: 'secret',
-        title: `${name} is not resolving its Key Vault reference`,
         stage: 'configure',
         status: 'unresolved',
         href: UNRESOLVED_SECRETS_HREF,
         source: { collection: 'app_settings', id: name },
-        detail: 'The feature that reads it is switched off until the reference resolves.',
-      })
-    );
+        ...fields,
+      });
+    const items = [
+      ...unexpected.map((name) =>
+        item(name, {
+          title: `${name} is not resolving its Key Vault reference`,
+          priority: 'high',
+          detail: 'Not on the expected list: the feature that reads it is switched off until the reference resolves.',
+        })
+      ),
+      ...expected.map(({ name, reason }) =>
+        item(name, {
+          title: `${name} is unresolved on purpose, waiting on you`,
+          priority: 'low',
+          detail: reason,
+        })
+      ),
+    ];
     return { items, truncated: false };
   },
 });

@@ -63,6 +63,13 @@ describe('computeSignals', () => {
     expect(ids(snapshot)).toEqual(['critical azure:app:actual:100']);
   });
 
+  it('notes a scope showing earlier figures after a refused refresh', () => {
+    const kept = scope({ note: 'These figures were read at 2026-11-10 09:00 UTC and could not be renewed this time.' });
+    const signals = computeSignals(base({ azure: { available: true, scopes: [kept] } }), settings, NOW);
+    expect(signals.map((s) => `${s.severity} ${s.id}`)).toEqual(['info azure:app:kept']);
+    expect(signals[0].detail).toBe(kept.note);
+  });
+
   it('warns when Azure could not be read at all, or one scope could not', () => {
     expect(ids(base({ azure: { available: false, reason: 'COST_SCOPES is not set' } }))).toEqual(['warning azure:unavailable']);
     expect(ids(base({ azure: { available: true, scopes: [scope({ error: 'HTTP 403' }), scope({ id: 'mgmt', label: 'M' })] } }))).toEqual([

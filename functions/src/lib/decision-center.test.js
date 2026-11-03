@@ -125,6 +125,30 @@ async function collectAs(role, data = FULL, extra = {}) {
 
 const ids = (items) => items.map((item) => item.id);
 
+describe('collectDecisions — Key Vault references (#1516)', () => {
+  it('words a reference on the expected list as waiting on the owner, and any other as a fault', async () => {
+    const ref = '@Microsoft.KeyVault(SecretUri=https://x)';
+    const { items } = await collectDecisions({
+      store: fakeStore(FULL),
+      now,
+      env: { AZURE_SPEECH_KEY: ref, ELEVENLABS_API_KEY: ref },
+      role: 'viewer',
+      log: context,
+    });
+    const byId = Object.fromEntries(items.map((item) => [item.id, item]));
+    expect(byId['secret:ELEVENLABS_API_KEY']).toMatchObject({
+      title: 'ELEVENLABS_API_KEY is not resolving its Key Vault reference',
+      priority: 'high',
+    });
+    expect(byId['secret:AZURE_SPEECH_KEY']).toMatchObject({
+      title: 'AZURE_SPEECH_KEY is unresolved on purpose, waiting on you',
+      priority: 'low',
+      category: 'governance',
+    });
+    expect(byId['secret:AZURE_SPEECH_KEY'].detail).toMatch(/fallback TTS provider/);
+  });
+});
+
 describe('collectDecisions — categories and order', () => {
   it('puts every source in its tab, newest first', async () => {
     const { items, counts, errors } = await collectAs('editor');
