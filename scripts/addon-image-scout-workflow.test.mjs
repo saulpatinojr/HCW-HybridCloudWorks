@@ -65,7 +65,11 @@ describe('addon-image-scout.yml', () => {
     expect(uses.length).toBeGreaterThanOrEqual(3);
     for (const [, , sha] of uses) expect(sha).toMatch(/^[0-9a-f]{40}$/);
     expect(code).not.toMatch(/uses: [^@\s]+@(?![0-9a-f]{40}\b)\S+/);
-    expect(code).toContain('docker/scout-action@a4119c5a8c5076236a54e4ce99531f7e4dd2ef84 # v1.27.0');
+    // The commit itself is Dependabot's to move (#1502 went red on a value
+    // written here), so this holds the shape: a full commit and the release
+    // it is, as a version comment.
+    const scoutPin = code.match(/uses: docker\/scout-action@([0-9a-f]{40}) # (v\d+\.\d+\.\d+)$/m);
+    expect(scoutPin, 'docker/scout-action pinned to a full commit with its release as the comment').not.toBeNull();
   });
 
   it('makes a missing credential a warning on a pull request and an error everywhere else, never a quiet pass', () => {
