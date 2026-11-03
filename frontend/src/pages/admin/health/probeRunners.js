@@ -12,6 +12,7 @@
  */
 import { getJSON, postJSON } from '@/lib/api';
 import { ago, classifyFailure, messageOf, plural, result } from './probeKit';
+import { alsoExpected, expectedPhrase, unresolvedSplit } from './probeEvaluators';
 
 /**
  * A read as a probe sees it: `{ value }` when it answered, `{ failure }` — the
@@ -251,20 +252,57 @@ export async function runNewsletterBuild() {
 
 // ── Key Vault references ─────────────────────────────────────────────────────
 
+/**
+ * The anonymous /api/health count, read live, judged against the snapshot's
+ * split (#1512): a count no larger than the names the snapshot calls
+ * unresolved on purpose is taken to be those names, so it is healthy;
+ * anything above them, or any name the snapshot calls unexpected, is
+ * Critical. A snapshot from before the split has no expected names, so any
+ * count is Critical, as it always was.
+ *
+ * An assumption, stated because the anonymous endpoint gives a count and no
+ * names: if another worker answers with a different unexpected name while an
+ * expected one resolves there, the counts can match and this reads healthy.
+ * The Runtime configuration probe, which reads the names, would still say so.
+ */
 export async function runUnresolvedSecrets(ctx) {
   const read = await attempt('/api/health did not answer', async () =>
     Number((await getJSON('health'))?.unresolvedSecrets)
   );
   if (read.failure) return read.failure;
   const count = read.value;
-  const names = ctx?.snapshot?.readiness?.unresolvedSecrets ?? [];
+  const readiness = ctx?.snapshot?.readiness;
+  const names = readiness?.unresolvedSecrets ?? [];
+  const { expected, unexpected } = unresolvedSplit(readiness);
   if (!Number.isFinite(count))
     return result('unknown', '/api/health answered without an unresolvedSecrets count.');
   if (count === 0)
     return result('healthy', 'Every Key Vault reference resolved on the answering worker.');
+  if (unexpected.length === 0 && expected.length > 0 && count <= expected.length)
+    return result(
+      'healthy',
+      `${expectedPhrase(expected)}; every other one resolved on the answering worker.`
+    );
+  // The live count agrees with the snapshot: the pulse's own sentence, word for word.
+  if (count === names.length && unexpected.length > 0)
+    return result(
+      'critical',
+      `${plural(unexpected.length, 'Key Vault reference')} did not resolve: ${unexpected.join(', ')}.${alsoExpected(expected)}`
+    );
+  // More than the expected ones and none named as unexpected: the extra ones
+  // are not in the snapshot, so say that rather than blame the expected names.
+  if (unexpected.length === 0 && expected.length > 0) {
+    const extra = count - expected.length;
+    return result(
+      'critical',
+      `${plural(count, 'Key Vault reference')} did not resolve on the answering worker: ${expected.length} on purpose (${expected.join(', ')}) and ${extra} more the snapshot does not name.`
+    );
+  }
+  // They disagree (another worker answered, or no snapshot): the live count, with any names known.
+  const known = unexpected.length ? unexpected : names;
   return result(
     'critical',
-    `${plural(count, 'Key Vault reference')} did not resolve${names.length ? `: ${names.join(', ')}` : ''}.`
+    `${plural(count, 'Key Vault reference')} did not resolve${known.length ? `: ${known.join(', ')}` : ''}.`
   );
 }
 

@@ -29,7 +29,11 @@ import useLinkedItem from '@/hooks/useLinkedItem';
 import { LINK_PARAMS } from '@/lib/itemLinks';
 import { describeAge, worstStatus } from '@/lib/status';
 import { AlertTriangle, Bot, CheckCircle2, Workflow } from 'lucide-react';
-import { contentAgentVerdict, scheduledPublishingVerdict } from './probeEvaluators';
+import {
+  contentAgentVerdict,
+  scheduledPublishingVerdict,
+  unresolvedSplit,
+} from './probeEvaluators';
 import { KODA } from './probeKit';
 import StatusSlot from './StatusSlot';
 
@@ -224,6 +228,58 @@ function renderPublishingRun(publishingOps) {
   );
 }
 
+/** The reason an expected name is unresolved, from the snapshot. */
+const reasonOf = (readiness, name) =>
+  (readiness.expectedUnresolved || []).find((entry) => entry?.name === name)?.reason || '';
+
+/**
+ * Unresolved Key Vault references in two rows (#1512): the ones nobody meant,
+ * red and counted, then the ones unresolved on purpose (on the list the
+ * nightly monitor reads), named with their reason and not counted as a fault.
+ * The expected row is left out when there are none.
+ */
+function UnresolvedRows({ readiness }) {
+  const { expected, unexpected } = unresolvedSplit(readiness);
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3">
+        <span>Unresolved, not expected</span>
+        <span className="flex items-center gap-2 text-right text-xs">
+          {unexpected.length ? (
+            <span className="font-mono text-muted-foreground">{unexpected.join(', ')}</span>
+          ) : null}
+          <Badge
+            variant={unexpected.length ? 'destructive' : 'secondary'}
+            data-testid="unresolved-unexpected-count"
+          >
+            {unexpected.length}
+          </Badge>
+        </span>
+      </div>
+      {expected.length ? (
+        <div className="space-y-1" data-testid="unresolved-expected">
+          <div className="flex items-center justify-between gap-3">
+            <span>Unresolved on purpose</span>
+            <Badge variant="outline">{expected.length}</Badge>
+          </div>
+          <ul className="space-y-1 text-xs">
+            {expected.map((name) => (
+              <li key={name}>
+                <span className="font-mono">{name}</span>
+                <span className="block text-muted-foreground">{reasonOf(readiness, name)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-muted-foreground">
+            Each waits on the owner to create or buy it. The nightly monitor reads the same list,
+            and any name not on it shows above in red.
+          </p>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function PipelineReadinessCard({ readiness, digestForDisplay }) {
   return (
     <Card className="flex h-full flex-col">
@@ -237,19 +293,7 @@ export function PipelineReadinessCard({ readiness, digestForDisplay }) {
               : 'Generation not reported'}
           </span>
         </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>Unresolved Key Vault references</span>
-          <span className="flex items-center gap-2 text-right text-xs">
-            {readiness.unresolvedSecrets?.length ? (
-              <span className="font-mono text-muted-foreground">
-                {readiness.unresolvedSecrets.join(', ')}
-              </span>
-            ) : null}
-            <Badge variant={readiness.unresolvedSecrets?.length ? 'destructive' : 'secondary'}>
-              {readiness.unresolvedSecrets?.length ?? 0}
-            </Badge>
-          </span>
-        </div>
+        <UnresolvedRows readiness={readiness} />
         <div className="flex items-center justify-between">
           <span>Published Entries</span>
           <Badge variant="outline">{readiness.publishedItems}</Badge>
@@ -343,7 +387,9 @@ export function PublishingOpsCard({ publishingOps, publishingWatchdog, digestFor
           </Badge>
         </div>
         <div className="flex items-center justify-between">
-          <span>Staged Too Long</span>
+          <span title="Marked published but not live, with no schedule, for more than six hours (the watchdog's count)">
+            Published, Not Live (6 h+)
+          </span>
           <Badge variant={getBadgeVariantByCount(metrics.stagedTooLong, 'outline')}>
             {metrics.stagedTooLong}
           </Badge>
@@ -556,8 +602,13 @@ export function OperationalSignalsCard({ signals }) {
             <StatusBadge system={countStatus(signals.queueBreachCount)} size="xs" />
           </div>
           <div className="p-3 border rounded-lg">
-            <p className="text-muted-foreground text-xs">Oldest Staged Age</p>
+            <p className="text-muted-foreground text-xs">Oldest Waiting to Go Live</p>
             <p className="text-xl font-bold">{formatHours(signals.oldestStagedHours)}</p>
+            {Number.isFinite(signals.stagedWaitingCount) ? (
+              <p className="text-muted-foreground text-xs" data-testid="staged-waiting-count">
+                {signals.stagedWaitingCount} approved or published, not live, not scheduled
+              </p>
+            ) : null}
             <StatusBadge
               system={(signals.oldestStagedHours || 0) > 72 ? 'degraded' : 'healthy'}
               size="xs"

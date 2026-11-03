@@ -192,6 +192,26 @@ const SNAPSHOTS = {
       unresolvedSecrets: ['A', 'B'],
     },
   }),
+  'only references unresolved on purpose': snapshot({
+    readiness: {
+      ...snapshot().readiness,
+      unresolvedSecrets: ['AZURE_SPEECH_KEY', 'CODER_BROKER_TOKEN'],
+      expectedUnresolved: [
+        { name: 'AZURE_SPEECH_KEY', reason: 'fallback provider, not bought' },
+        { name: 'CODER_BROKER_TOKEN', reason: 'waiting on the owner' },
+      ],
+      unexpectedUnresolved: [],
+    },
+  }),
+  'one unexpected beside the ones on purpose': snapshot({
+    readiness: {
+      ...snapshot().readiness,
+      functionsConfigured: false,
+      unresolvedSecrets: ['AZURE_SPEECH_KEY', 'RESEND_API_KEY'],
+      expectedUnresolved: [{ name: 'AZURE_SPEECH_KEY', reason: 'fallback provider, not bought' }],
+      unexpectedUnresolved: ['RESEND_API_KEY'],
+    },
+  }),
   'configuration stamp unset': snapshot({
     readiness: { ...snapshot().readiness, configGeneration: 'unset' },
   }),
@@ -313,6 +333,28 @@ describe('the page and the pulse read registries the same way', () => {
       expect(verdict(await runUnresolvedSecrets({ snapshot: snap }))).toEqual(
         verdict(pulse.checkUnresolvedSecrets(snap))
       );
+    }
+  });
+
+  it('agrees on references unresolved on purpose, with and without one that is not (#1512)', async () => {
+    const shapes = [
+      { expected: ['AZURE_SPEECH_KEY', 'CODER_BROKER_TOKEN'], unexpected: [] },
+      { expected: ['AZURE_SPEECH_KEY'], unexpected: ['RESEND_API_KEY'] },
+    ];
+    for (const { expected, unexpected } of shapes) {
+      const names = [...expected, ...unexpected].sort();
+      getJSON.mockResolvedValueOnce({ status: 'ok', unresolvedSecrets: names.length });
+      const snap = snapshot({
+        readiness: {
+          ...snapshot().readiness,
+          unresolvedSecrets: names,
+          expectedUnresolved: expected.map((name) => ({ name, reason: 'on purpose' })),
+          unexpectedUnresolved: unexpected,
+        },
+      });
+      const live = verdict(await runUnresolvedSecrets({ snapshot: snap }));
+      expect(live).toEqual(verdict(pulse.checkUnresolvedSecrets(snap)));
+      expect(live.status).toBe(unexpected.length ? 'critical' : 'healthy');
     }
   });
 
