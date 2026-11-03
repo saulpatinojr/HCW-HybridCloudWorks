@@ -9,27 +9,27 @@
   "kinds": {
     "python": {
       "rule": "The newest release line, no more than two patch releases behind that line's newest (N-2 patches). A new line is adopted once its N-2 patch exists (3.15.2 for 3.15). A pin that names the line only (actions/setup-python '3.14') resolves to the newest patch when it runs. Owner rule 2026-09-26 (#714).",
-      "line": "3.14",
-      "newest": "3.14.8",
-      "floor": "3.14.6",
-      "checkedOn": "2026-10-07",
+      "line": "3.15",
+      "newest": "3.15.2",
+      "floor": "3.15.0",
+      "checkedOn": "2026-10-28",
       "source": "https://endoflife.date/api/v1/products/python/"
     },
     "node": {
       "rule": "The newest line the platform that runs it allows, among lines that are or will become LTS; within a line, no more than two minor releases behind that line's newest (N-2 minors), and a new line is adopted once its N-2 minor exists. A component whose platform caps the line is held exactly at that ceiling. A pin that names the line only (actions/setup-node '26') resolves to the newest release when it runs; an engines.node range's lowest admitted version must meet the floor and the range must admit the newest release. Owner direction 2026-09-25: the latest current release line.",
       "line": "26",
-      "newest": "26.12.0",
+      "newest": "26.12.1",
       "floor": "26.10.0",
-      "checkedOn": "2026-10-21",
+      "checkedOn": "2026-10-28",
       "source": "https://endoflife.date/api/v1/products/nodejs/",
       "platformCeilings": {
         "functions": {
           "platform": "Azure Functions Flex Consumption",
           "rule": "Flex Consumption supports Node.js 22 and 24 (both GA) and does not offer 26, so functions/ runs the newest of those two, 24, and every pin that builds, tests, deploys or runs its code names 24 (update-learn-catalogue.yml imports functions/src and resolves functions/node_modules).",
           "line": "24",
-          "newest": "24.22.0",
+          "newest": "24.22.1",
           "floor": "24.20.0",
-          "checkedOn": "2026-10-21",
+          "checkedOn": "2026-10-28",
           "source": "https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#supported-language-stack-versions",
           "appliesTo": [
             "functions/.nvmrc",
@@ -81,17 +81,17 @@
     "alpine": {
       "rule": "Alpine Linux's newest release line, no more than two patch releases behind that line's newest (N-2 patches), the same rule as Python and Terraform; a new line is adopted once its N-2 patch exists (3.25.2 for 3.25). An image pinned by digest must name the exact release its digest is, MAJOR.MINOR.PATCH, because a digest does not float: alpine:3.24@sha256:... would meet the floor at line precision whatever patch it holds. The pins are the lab job images in vps-agent/lib/capabilities.js (IMAGES) and any FROM alpine in a tracked Dockerfile. shell-echo ran alpine:3.20, past its end of life on 2026-04-01, until 2026-09-28, with nothing reading that map. Owner rule 2026-09-26 (#714): every runtime, OS and base image on its newest supported release.",
       "line": "3.24",
-      "newest": "3.24.2",
-      "floor": "3.24.0",
-      "checkedOn": "2026-09-28",
+      "newest": "3.24.3",
+      "floor": "3.24.1",
+      "checkedOn": "2026-10-28",
       "source": "https://endoflife.date/api/v1/products/alpine-linux/"
     },
     "terraform": {
       "rule": "The newest minor line, no more than two patch releases behind its newest (N-2 patches), for an exact pin; a new line is adopted once its N-2 patch exists. Every required_version constraint must admit the newest release.",
       "line": "1.16",
-      "newest": "1.16.6",
-      "floor": "1.16.4",
-      "checkedOn": "2026-10-21",
+      "newest": "1.16.7",
+      "floor": "1.16.5",
+      "checkedOn": "2026-10-28",
       "source": "https://endoflife.date/api/v1/products/terraform/"
     },
     "postgresql": {
