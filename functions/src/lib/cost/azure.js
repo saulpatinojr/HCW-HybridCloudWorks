@@ -291,7 +291,9 @@ export function summarizeBudgets(payload) {
  * cost query.
  */
 export function describeArmStatus(status, { azureCode = '', step = '' } = {}) {
-  const label = `HTTP ${status}${azureCode ? ` ${azureCode}` : ''}`;
+  // Azure sometimes sends the status itself as the code ("429"): saying it twice tells nothing.
+  const code = azureCode && azureCode !== String(status) ? azureCode : '';
+  const label = `HTTP ${status}${code ? ` ${code}` : ''}`;
   const where = step ? ` to ${step}` : '';
   if (status === 401 || status === 403) {
     return `Azure refused${where ? ` ${step}` : ' the read'} (${label}): the Function App's identity needs the Cost Management Reader role on this scope.`;
@@ -409,57 +411,8 @@ export function createAzureCostReader({
         return { value: null };
       }
     };
-    try {
-      const usage = await query(
-        scope.scope,
-        {
-          type: 'ActualCost',
-          timeframe: 'MonthToDate',
-          dataset: {
-            granularity: 'Daily',
-            aggregation,
-            grouping: [
-              { type: 'Dimension', name: 'ResourceGroupName' },
-              { type: 'Dimension', name: 'ServiceName' },
-            ],
-          },
-        },
-        STEPS.monthToDate
-      );
-      const budgets = await optional(() =>
-        armFetch(
-          `${scope.scope}/providers/Microsoft.Consumption/budgets?api-version=${BUDGETS_API_VERSION}`,
-          {},
-          STEPS.budgets
-        )
-      );
-      const known = previous && !previous.error && previous.previousMonthOf === lastMonth && Number.isFinite(previous.previousMonth);
-      const lastTotal = known
-        ? { value: null }
-        : await optional(() =>
-            query(
-              scope.scope,
-              { type: 'ActualCost', timeframe: 'TheLastMonth', dataset: { granularity: 'None', aggregation } },
-              STEPS.lastMonth
-            )
-          );
-      let previousMonth = null;
-      if (known) previousMonth = previous.previousMonth;
-      else if (lastTotal.value) previousMonth = totalOf(lastTotal.value);
-      const summary = summarizeUsage(usage);
-      return {
-        ...base,
-        monthToDate: summary.monthToDate,
-        byService: summary.byService,
-        daily: summary.daily,
-        previousMonth,
-        previousMonthOf: previousMonth === null ? null : lastMonth,
-        budget: budgets.value ? summarizeBudgets(budgets.value) : null,
-        readAt: now.toISOString(),
-        note: partial.length ? `Part of this scope could not be read: ${partial.join(' ')}` : null,
-        noteCode: partial.length ? 'partial' : undefined,
-      };
-    } catch (error) {
+    /** This scope could not be read: keep this month's last good figures, or say why. */
+    const failed = (error) => {
       const message = error?.code === 'FETCH_TIMEOUT' ? TIMEOUT_SENTENCE : storedFailure(error, UNREADABLE_SENTENCE);
       const keep = previous && !previous.error && typeof previous.readAt === 'string' && previous.readAt.slice(0, 7) === month;
       if (keep) {
@@ -476,6 +429,96 @@ export function createAzureCostReader({
         };
       }
       return { ...base, error: message, errorCode: error?.code ?? 'error', errorStatus: error?.status ?? null };
+    };
+    // The budgets come first, from the Consumption API, which the Query
+    // API's QPU allowance does not cover: each budget carries Azure's own
+    // spend so far and forecast, so a scope with a budget still has a month
+    // when the cost query is throttled (2026-11-03: both subscriptions 429).
+    const budgets = await optional(() =>
+      armFetch(
+        `${scope.scope}/providers/Microsoft.Consumption/budgets?api-version=${BUDGETS_API_VERSION}`,
+        {},
+        STEPS.budgets
+      )
+    );
+    const budget = budgets.value ? summarizeBudgets(budgets.value) : null;
+    let usage;
+    try {
+      usage = await query(
+        scope.scope,
+        {
+          type: 'ActualCost',
+          timeframe: 'MonthToDate',
+          dataset: {
+            granularity: 'Daily',
+            aggregation,
+            grouping: [
+              { type: 'Dimension', name: 'ResourceGroupName' },
+              { type: 'Dimension', name: 'ServiceName' },
+            ],
+          },
+        },
+        STEPS.monthToDate
+      );
+    } catch (error) {
+      if (!budget) return failed(error);
+      // The month from the budget: no breakdown, and last month waits too
+      // (asking again now would only spend more of the same allowance).
+      const message = error?.code === 'FETCH_TIMEOUT' ? TIMEOUT_SENTENCE : storedFailure(error, UNREADABLE_SENTENCE);
+      const keepLast = previous && !previous.error && previous.previousMonthOf === lastMonth && Number.isFinite(previous.previousMonth);
+      return {
+        ...base,
+        monthToDate: budget.currentSpend,
+        previousMonth: keepLast ? previous.previousMonth : null,
+        previousMonthOf: keepLast ? lastMonth : null,
+        budget,
+        readAt: now.toISOString(),
+        note: `This month's spend is the budget's own figure; the daily line and the cost by service could not be read: ${message}`,
+        noteCode: error?.status === 429 ? 'throttled' : 'partial',
+      };
+    }
+    try {
+      const known = previous && !previous.error && previous.previousMonthOf === lastMonth && Number.isFinite(previous.previousMonth);
+      // Last month by its dates. `TheLastMonth` with no granularity was
+      // refused with 400 BadRequest on 2026-11-03; a Custom period with
+      // granularity None is the form cost-analysis.md measured September with.
+      const [y, m] = lastMonth.split('-').map(Number);
+      const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      const lastTotal = known
+        ? { value: null }
+        : await optional(() =>
+            query(
+              scope.scope,
+              {
+                type: 'ActualCost',
+                timeframe: 'Custom',
+                timePeriod: {
+                  from: `${lastMonth}-01T00:00:00Z`,
+                  to: `${lastMonth}-${String(lastDay).padStart(2, '0')}T23:59:59Z`,
+                },
+                dataset: { granularity: 'None', aggregation },
+              },
+              STEPS.lastMonth
+            )
+          );
+      let previousMonth = null;
+      if (known) previousMonth = previous.previousMonth;
+      else if (lastTotal.value) previousMonth = totalOf(lastTotal.value);
+      const summary = summarizeUsage(usage);
+      return {
+        ...base,
+        monthToDate: summary.monthToDate,
+        byService: summary.byService,
+        daily: summary.daily,
+        previousMonth,
+        previousMonthOf: previousMonth === null ? null : lastMonth,
+        budget,
+        readAt: now.toISOString(),
+        note: partial.length ? `Part of this scope could not be read: ${partial.join(' ')}` : null,
+        noteCode: partial.length ? 'partial' : undefined,
+      };
+    } catch (error) {
+      return failed(error);
     }
   }
 
