@@ -9,6 +9,7 @@ import {
   ALLOWLIST,
   AuditReadError,
   CADDY_PRODUCTION_ZONE_ACCESS_ENDED,
+  CLOUDFLARE_DCV_CHALLENGE_NAME,
   DEFAULT_WINDOW_HOURS,
   ENV,
   HCP_TERRAFORM_TOKEN_NAME,
@@ -21,6 +22,7 @@ import {
   describeActor,
   dnsRecordChanges,
   fetchAuditLog,
+  isCloudflareDcvChallenge,
   isDnsRecordEntry,
   isLabAcmeChallenge,
   isProductionZone,
@@ -97,6 +99,11 @@ const TFC_ACCOUNT_TOKEN = { id: ACCOUNT, context: 'api_token', ip_address: '54.2
 const OWNER_USER_TOKEN = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'api_token', email: OWNER, ip_address: '192.0.2.44', type: 'user' };
 const CADDY_BY_IP = { id: ACCOUNT, context: 'api_token', ip_address: CADDY_HOST_IP, type: 'account' };
 const TERRAFORM_RAW = { user_agent: 'terraform-provider-cloudflare/5.27.0 terraform-plugin-framework/1.15.0 Terraform/1.16.0' };
+// Cloudflare renewing its own certificate, as the 2026-10-26 entries carried it (#1421):
+// the actor is `{ type: 'system' }` and nothing else, and the request has no method and no user agent.
+const CLOUDFLARE_SYSTEM = { type: 'system' };
+const SYSTEM_RAW = { method: '', user_agent: '' };
+const APEX_CHALLENGE = { name: `_acme-challenge.${ZONE_NAME}`, type: 'TXT', content: 'dcv-token-never-printed' };
 
 const envelope = (result, cursor = '') => ({ success: true, errors: [], messages: [], result, result_info: { count: String(result.length), cursor } });
 
@@ -161,9 +168,66 @@ describe('the allowlist', () => {
   const MORNING_APPLY = { runId: 'run-morning', start: Date.parse('2026-10-18T00:30:00Z'), end: Date.parse('2026-10-18T09:30:00Z') };
   const settings = { zoneId: ZONE, ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, caddyHostIp: CADDY_HOST_IP, applyWindows: [MORNING_APPLY] };
 
-  it('names four entries, each with a reason', () => {
-    expect(ALLOWLIST.map((e) => e.id)).toEqual(['hcp-terraform', 'terraform-owner-token', 'caddy-acme', 'owner-dashboard']);
+  it('names five entries, each with a reason', () => {
+    expect(ALLOWLIST.map((e) => e.id)).toEqual(['hcp-terraform', 'terraform-owner-token', 'caddy-acme', 'owner-dashboard', 'cloudflare-dcv']);
     for (const e of ALLOWLIST) expect(e.reason.length, e.id).toBeGreaterThan(40);
+  });
+
+  it("allows Cloudflare's own certificate validation: a bare system actor creating or deleting the apex challenge TXT", () => {
+    const created = normalise(entry({ actor: CLOUDFLARE_SYSTEM, record: APEX_CHALLENGE, raw: SYSTEM_RAW, time: '2026-10-26T10:40:58.208Z' }));
+    expect(created.actorFields).toBe('type');
+    expect(classify(created, settings)).toEqual({ verdict: 'EXPECTED', rule: 'cloudflare-dcv' });
+    // The live delete entries named the record themselves (the 2026-10-30 run read two deletes with no
+    // create in its window and still printed the name), so the fixture carries it in the response.
+    const deleted = normalise(
+      entry({ actor: CLOUDFLARE_SYSTEM, action: 'delete', raw: SYSTEM_RAW, time: '2026-10-26T10:43:21.065Z', resource: { request: {}, response: { result: { name: APEX_CHALLENGE.name, type: 'TXT' } } } })
+    );
+    expect(deleted.recordName).toBe(APEX_CHALLENGE.name);
+    expect(classify(deleted, settings)).toEqual({ verdict: 'EXPECTED', rule: 'cloudflare-dcv' });
+    // A bare delete that borrows its name from the create in the same window matches too.
+    const create = entry({ actor: CLOUDFLARE_SYSTEM, record: APEX_CHALLENGE, raw: SYSTEM_RAW, resource: { id: 'r0000000000000000000000000000dcv' } });
+    const paired = entry({ actor: CLOUDFLARE_SYSTEM, action: 'delete', raw: SYSTEM_RAW, resource: { id: 'r0000000000000000000000000000dcv', request: {}, response: {} } });
+    expect(classify(normalise(paired, [create, paired]), settings)).toEqual({ verdict: 'EXPECTED', rule: 'cloudflare-dcv' });
+    // Needs no setting: the entry is active, and matches, with every variable unset.
+    const none = { zoneId: '', ownerEmail: '', caddyTokenName: '', caddyHostIp: '', applyWindows: null };
+    expect(ALLOWLIST.find((e) => e.id === 'cloudflare-dcv').active(none)).toBe(true);
+    expect(classify(created, none).rule).toBe('cloudflare-dcv');
+    // The name is matched without regard to case or a trailing dot.
+    expect(isCloudflareDcvChallenge(`_ACME-Challenge.${ZONE_NAME}.`)).toBe(true);
+    expect(CLOUDFLARE_DCV_CHALLENGE_NAME).toBe(`_acme-challenge.${ZONE_NAME}`);
+  });
+
+  it('refuses a system actor on anything but a create or delete of the apex challenge TXT', () => {
+    const sys = (overrides) => normalise(entry({ actor: CLOUDFLARE_SYSTEM, raw: SYSTEM_RAW, ...overrides }));
+    expect(classify(sys({ record: { name: 'www.hybridcloudworks.com', type: 'A', content: '192.0.2.1' } }), settings).verdict).toBe('UNEXPECTED');
+    expect(classify(sys({ record: { name: `_acme-challenge.www.${ZONE_NAME}`, type: 'TXT' } }), settings).verdict).toBe('UNEXPECTED');
+    expect(classify(sys({ record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }), settings).verdict).toBe('UNEXPECTED');
+    expect(classify(sys({ record: { name: `_acme-challenge.${ZONE_NAME}`, type: 'CNAME' } }), settings).verdict).toBe('UNEXPECTED');
+    expect(classify(sys({ action: 'update', record: APEX_CHALLENGE }), settings).verdict).toBe('UNEXPECTED');
+    // A delete that names its record id only, with no create in the window to borrow the name from.
+    const bareDelete = normalise(entry({ actor: CLOUDFLARE_SYSTEM, action: 'delete', raw: SYSTEM_RAW, resource: { request: {}, response: {} } }));
+    expect(bareDelete.recordName).toBe('unknown');
+    expect(classify(bareDelete, settings).verdict).toBe('UNEXPECTED');
+  });
+
+  it('refuses the apex challenge TXT from anything that is not a bare system actor: a token, a user, or a system actor with extra fields', () => {
+    const at = (actor, raw = SYSTEM_RAW) => classify(normalise(entry({ actor, record: APEX_CHALLENGE, raw })), settings);
+    expect(at(STRANGER, {})).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at(TFC_ACCOUNT_TOKEN, {})).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at(OWNER_USER_TOKEN, {})).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at({ ...CLOUDFLARE_SYSTEM, context: 'api_token' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at({ ...CLOUDFLARE_SYSTEM, id: '0000000000000000000000000000beef' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at({ ...CLOUDFLARE_SYSTEM, ip_address: '192.0.2.99' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at({ ...CLOUDFLARE_SYSTEM, token_name: 'totally-legit' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at({ ...CLOUDFLARE_SYSTEM, token_id: 'bad0bad0bad0bad0bad0bad0bad0bad0' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at({ ...CLOUDFLARE_SYSTEM, email: 'mallory@example.org' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    // A bare `account` or `user` actor with the same empty request is not Cloudflare either.
+    expect(at({ type: 'account' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at({ type: 'user' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at(CLOUDFLARE_SYSTEM, { method: 'POST', user_agent: '' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at(CLOUDFLARE_SYSTEM, { method: '', user_agent: 'curl/8.0' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at({ type: 'cloudflare_admin' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(at({ type: 'delegated_service' })).toEqual({ verdict: 'UNEXPECTED', rule: null });
   });
 
   it("allows every record action by the HCP Terraform token, by the token's name when the log carries it", () => {
@@ -368,6 +432,7 @@ describe('reading an entry', () => {
     expect(describeActor(normalise(entry({ actor: TERRAFORM, record: { name: 'a', type: 'A' } })))).toBe(`token \`${HCP_TERRAFORM_TOKEN_NAME}\` (c0ffee01…) from 203.0.113.10`);
     expect(describeActor(normalise(entry({ actor: OWNER_DASH, record: { name: 'a', type: 'A' } })))).toBe('dashboard user o***@example.com from 192.0.2.44');
     expect(describeActor(normalise(entry({ actor: { id: 'sys1', type: 'system' }, record: { name: 'a', type: 'A' } })))).toBe('system sys1');
+    expect(describeActor(normalise(entry({ actor: CLOUDFLARE_SYSTEM, record: APEX_CHALLENGE, raw: SYSTEM_RAW })))).toBe('Cloudflare (system, no token)');
   });
 });
 
@@ -488,6 +553,29 @@ describe('fetchTerraformApplies', () => {
 });
 
 describe('main', () => {
+  it("exits 0 on Cloudflare's own certificate validation, names the actor, and prints neither the challenge content nor a shape section", async () => {
+    const create = entry({ actor: CLOUDFLARE_SYSTEM, record: APEX_CHALLENGE, raw: SYSTEM_RAW, time: '2026-10-17T10:40:58Z', resource: { id: 'r0000000000000000000000000000dcv' } });
+    const remove = entry({ actor: CLOUDFLARE_SYSTEM, action: 'delete', raw: SYSTEM_RAW, time: '2026-10-17T10:43:21Z', resource: { id: 'r0000000000000000000000000000dcv', request: {}, response: { result: { name: APEX_CHALLENGE.name, type: 'TXT' } } } });
+    const got = await run([envelope([create, remove])]);
+    expect(got.code).toBe(0);
+    expect(got.report).toContain('2 DNS-record changes on the zone, **0 unexpected**');
+    expect(got.report).toContain(`| Cloudflare (system, no token) | create | TXT | \`${APEX_CHALLENGE.name}\` | EXPECTED (\`cloudflare-dcv\`) |`);
+    expect(got.report).toContain(`| Cloudflare (system, no token) | delete | TXT | \`${APEX_CHALLENGE.name}\` | EXPECTED (\`cloudflare-dcv\`) |`);
+    expect(got.report).toContain('`cloudflare-dcv` active.');
+    expect(got.report).not.toContain('Shape of the unexpected entries');
+    for (const text of [got.report, got.out]) expect(text).not.toContain(APEX_CHALLENGE.content);
+  });
+
+  it("exits 2 when a token writes the apex challenge TXT and Cloudflare's own delete pairs with it: the delete is cleared, the create is not", async () => {
+    const byToken = entry({ actor: STRANGER, record: APEX_CHALLENGE, raw: {}, time: '2026-10-17T10:40:58Z', resource: { id: 'r0000000000000000000000000000dcv' } });
+    const bySystem = entry({ actor: CLOUDFLARE_SYSTEM, action: 'delete', raw: SYSTEM_RAW, time: '2026-10-17T10:43:21Z', resource: { id: 'r0000000000000000000000000000dcv', request: {}, response: {} } });
+    const got = await run([envelope([byToken, bySystem])]);
+    expect(got.code).toBe(2);
+    expect(got.report).toContain('2 DNS-record changes on the zone, **1 unexpected**');
+    expect(got.report).toContain(`| token \`totally-legit\` (bad0bad0…) from 192.0.2.99 | create | TXT | \`${APEX_CHALLENGE.name}\` | **UNEXPECTED** |`);
+    expect(got.report).toContain(`\`${APEX_CHALLENGE.name} (from the paired entry)\` | EXPECTED (\`cloudflare-dcv\`) |`);
+  });
+
   it('exits 0 on an empty window and says nothing changed', async () => {
     const got = await run([envelope([])]);
     expect(got.code).toBe(0);
@@ -512,7 +600,7 @@ describe('main', () => {
     expect(got.report).toContain('| EXPECTED (`hcp-terraform`) |');
     expect(got.report).toContain('| TXT | `_acme-challenge.lab.hybridcloudworks.com` | EXPECTED (`caddy-acme`) |');
     expect(got.report).toContain('| delete | TXT | `_acme-challenge.lab.hybridcloudworks.com (from the paired entry)` | EXPECTED (`caddy-acme`) |');
-    expect(got.report).toContain('`hcp-terraform` active (1 apply of `hcw/hcw-azure` in the window), `terraform-owner-token` active, `caddy-acme` active, `owner-dashboard` active.');
+    expect(got.report).toContain('`hcp-terraform` active (1 apply of `hcw/hcw-azure` in the window), `terraform-owner-token` active, `caddy-acme` active, `owner-dashboard` active, `cloudflare-dcv` active.');
     for (const secret of ['cf-test-token-never-printed', 'func-site-prod-cus-01.azurewebsites.net', 'AbCdEf-challenge-token', SECRET_CONTENT, OWNER]) {
       expect(got.report, secret).not.toContain(secret);
       expect(got.out, secret).not.toContain(secret);

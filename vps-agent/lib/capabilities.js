@@ -102,7 +102,7 @@
 export const IMAGES = {
   alpine: 'alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6',
   hcwLabRunner:
-    'docker.io/hybridcloudworks/hcw-lab-runner:7286f5a50c37ea48d4e28792f18c9a43f8639266@sha256:5e2c3f472a75b623d4914d7e5dde02f0fb75d8964d04b1bf157b5f67cacbd973',
+    'docker.io/hybridcloudworks/hcw-lab-runner:b646c0cb60c0066231519fb23f44df8d59751a3a@sha256:507a4be72fe04d94c475d0582889de4f852e07067afb1db6581950d06138f5b8',
 };
 
 /**
@@ -148,9 +148,10 @@ export const CAPABILITIES = {
   },
 
   // Syntax-checks an Ansible playbook. No inventory, no remote hosts.
-  // ansible-core 2.21 on the runner image (lab-image/versions.env), which
-  // carries ansible-core alone and no collections: a task naming a module
-  // outside ansible.builtin fails with `couldn't resolve module/action`.
+  // ansible-core on the runner image (ANSIBLE_CORE_VERSION in
+  // lab-image/versions.env), which carries ansible-core alone and no
+  // collections: a task naming a module outside ansible.builtin fails with
+  // `couldn't resolve module/action`.
   // ansible-core creates ANSIBLE_LOCAL_TEMP (/tmp/run/ansible in the image)
   // before it reads anything, so the job needs the tmpfs; ANSIBLE_HOME moves
   // ~/.ansible there too, because the image's HOME is on the read-only root

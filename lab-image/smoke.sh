@@ -80,6 +80,20 @@ expect_version terraform   "Terraform v${TERRAFORM_VERSION}" terraform version
 expect_version kubeconform "v${KUBECONFORM_VERSION}"         kubeconform -v
 expect_version helm        "Version:\"v${HELM_VERSION}\""     helm version
 expect_version ansible     "core ${ANSIBLE_CORE_VERSION}"     ansible --version
+# PyYAML in the ansible venv is the wheel the fetch stage built from source
+# (#1505; the PYYAML block in versions.env). It must be the pinned release and
+# carry the libyaml C loader. This image has no libyaml shared library, so a
+# true __with_libyaml__ here also proves the extension linked libyaml in
+# statically; a wheel that only looked right in the fetch stage fails here.
+if out="$(/opt/ansible/bin/python -c 'import yaml; print(yaml.__version__, yaml.__with_libyaml__, yaml.CSafeLoader.__name__)' 2>&1)"; then
+  if [ "$out" = "${PYYAML_VERSION} True CSafeLoader" ]; then
+    ok "PyYAML ${PYYAML_VERSION} with the libyaml C loader (self-built wheel)"
+  else
+    bad "PyYAML in /opt/ansible is not ${PYYAML_VERSION} with the libyaml C loader: ${out}"
+  fi
+else
+  bad "PyYAML failed to import in /opt/ansible:"; printf '%s\n' "$out" | indent
+fi
 
 step "provider mirror (unpacked layout)"
 mirror=/opt/terraform/mirror/registry.terraform.io
