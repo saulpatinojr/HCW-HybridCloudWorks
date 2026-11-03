@@ -8,6 +8,7 @@ import {
   parseReferenceStatuses,
   unresolvedFrom,
 } from "./check-unresolved-secrets.mjs";
+import { EXPECTED_UNRESOLVED as SHARED_LIST } from "../functions/src/lib/expected-unresolved.js";
 
 const shapeA = (entries) => ({
   properties: { keyToReferenceStatuses: entries },
@@ -294,6 +295,12 @@ describe("evaluate", () => {
 });
 
 describe("EXPECTED_UNRESOLVED", () => {
+  // One list, read by this monitor and by the Health page's snapshot (#1512):
+  // the script re-exports the functions module's Map rather than keeping a copy.
+  it("is the same list the Health page reads", () => {
+    expect(EXPECTED_UNRESOLVED).toBe(SHARED_LIST);
+  });
+
   // An entry without a reason is a mute wearing a disguise. Every one has to
   // say why, and point at where the decision lives.
   it("gives a reason for every entry", () => {

@@ -347,6 +347,28 @@ describe('live runners', () => {
     });
     expect(getJSON).toHaveBeenCalledWith('health');
   });
+
+  it('does not blame the expected names when the live count is above them (#1512)', async () => {
+    getJSON.mockResolvedValueOnce({ status: 'ok', unresolvedSecrets: 3 });
+    expect(
+      await runUnresolvedSecrets({
+        snapshot: {
+          readiness: {
+            unresolvedSecrets: ['A_KEY', 'B_KEY'],
+            expectedUnresolved: [
+              { name: 'A_KEY', reason: 'on purpose' },
+              { name: 'B_KEY', reason: 'on purpose' },
+            ],
+            unexpectedUnresolved: [],
+          },
+        },
+      })
+    ).toMatchObject({
+      status: 'critical',
+      summary:
+        '3 Key Vault references did not resolve on the answering worker: 2 on purpose (A_KEY, B_KEY) and 1 more the snapshot does not name.',
+    });
+  });
 });
 
 describe('the report section', () => {

@@ -60,6 +60,13 @@ function opsStore() {
   return {
     queryDocs: vi.fn(async (container, query, params) => {
       if (query.includes('VALUE COUNT')) {
+        if (query.includes('@stagedStatuses')) {
+          // The count covers every item waiting, dated or not; only the
+          // ordered read needs a string updatedAt.
+          expect(query).not.toContain('IS_STRING(c.updatedAt)');
+          expect(query).toContain('c.scheduledPublishDate <= @now');
+          return [5]; // approved or published, not live, not scheduled for later
+        }
         if (query.includes("'published'")) return [12];
         if (query.includes("'rss'")) return [3];
         return [2]; // queue breach
@@ -72,19 +79,21 @@ function opsStore() {
         return ids.filter((id) => id === 'c-exists').map((id) => ({ id }));
       }
       if (container === 'content') {
-        return [
-          {
-            id: 's1',
-            contentStatus: 'approved',
-            updatedAt: '2026-08-06T04:00:00Z',
-          },
-          {
-            id: 's-live',
-            contentStatus: 'published',
-            Live: true,
-            updatedAt: '2026-08-07T03:00:00Z',
-          },
-        ];
+        // The oldest not-live Approved or Published item (#1512): the filter
+        // and the order are in the query, so the store returns one row.
+        expect(query).toContain('TOP 1');
+        expect(query).toContain('NOT IS_DEFINED(c.Live) OR c.Live = false');
+        // Never ORDER BY a field a row may lack (public-reads.js): a missing
+        // or null updatedAt must not sort first and show the tile as 0 h.
+        expect(query).toContain('IS_STRING(c.updatedAt) ORDER BY c.updatedAt ASC');
+        // Scheduled for later is not stuck.
+        expect(query).toContain('c.scheduledPublishDate <= @now');
+        // `@now` is the build's own clock (the cache tests move it).
+        expect(params).toEqual([
+          { name: '@stagedStatuses', value: ['approved', 'published'] },
+          { name: '@now', value: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) },
+        ]);
+        return [{ id: 's1', contentStatus: 'approved', updatedAt: '2026-08-06T04:00:00Z' }];
       }
       if (container === 'workflow_digests') {
         expect(query).toContain('ORDER BY c.id DESC');
@@ -296,6 +305,8 @@ describe('getOpsHealthSnapshot', () => {
       configGeneration: 'run-77-abc1234',
       configWriter: 'azapi-strip',
       unresolvedSecrets: [],
+      expectedUnresolved: [],
+      unexpectedUnresolved: [],
       publishedItems: 12,
       missingSlugCount: 1,
       rssSources: 3,
@@ -335,7 +346,8 @@ describe('getOpsHealthSnapshot', () => {
       ],
       lastSchedulerSuccessAt: 'run-ts',
     });
-    expect(body.operationalSignals.oldestStagedHours).toBe(24); // staged Live item excluded
+    expect(body.operationalSignals.oldestStagedHours).toBe(24); // the one ordered row
+    expect(body.operationalSignals.stagedWaitingCount).toBe(5);
     // The last day's jobs by status (#1491): the GROUP BY read, with the
     // statuses the card does not name folded into `other`.
     expect(body.operationalSignals.failedJobsUnavailable).toBe(false);
@@ -492,6 +504,8 @@ describe('getOpsHealthSnapshot', () => {
     const body = JSON.parse((await h.getOpsHealthSnapshot(makeRequest({}), context)).body);
     expect(body.readiness.functionsConfigured).toBe(false);
     expect(body.readiness.unresolvedSecrets).toEqual(['PUBLER_API_KEY']);
+    expect(body.readiness.unexpectedUnresolved).toEqual(['PUBLER_API_KEY']);
+    expect(body.readiness.expectedUnresolved).toEqual([]);
 
     const unset = createOpsHealthHandlers({
       guard: allowGuard(),
@@ -505,6 +519,45 @@ describe('getOpsHealthSnapshot', () => {
       configGeneration: 'unset',
       configWriter: 'unset',
     });
+  });
+
+  it('keeps a worker configured when only references on the expected list are unresolved (#1512)', async () => {
+    const ref = (name) => `@Microsoft.KeyVault(SecretUri=https://kv/secrets/${name})`;
+    const build = async (extra) => {
+      const h = createOpsHealthHandlers({
+        guard: allowGuard(),
+        store: opsStore(),
+        ...fixed,
+        env: {
+          RUNTIME_CONFIG_GENERATION: 'run-79',
+          RUNTIME_CONFIG_WRITER: 'azapi-strip',
+          AZURE_SPEECH_KEY: ref('AZURE-SPEECH-KEY'),
+          APPSETTING_AZURE_SPEECH_KEY: ref('AZURE-SPEECH-KEY'),
+          CODER_BROKER_TOKEN: ref('CODER-BROKER-TOKEN'),
+          ...extra,
+        },
+      });
+      return JSON.parse((await h.getOpsHealthSnapshot(makeRequest({}), context)).body).readiness;
+    };
+
+    const onPurpose = await build({});
+    expect(onPurpose.functionsConfigured).toBe(true);
+    expect(onPurpose.unresolvedSecrets).toEqual(['AZURE_SPEECH_KEY', 'CODER_BROKER_TOKEN']);
+    expect(onPurpose.unexpectedUnresolved).toEqual([]);
+    expect(onPurpose.expectedUnresolved.map((entry) => entry.name)).toEqual([
+      'AZURE_SPEECH_KEY',
+      'CODER_BROKER_TOKEN',
+    ]);
+    // A reason is prose about the setting, never its value.
+    for (const entry of onPurpose.expectedUnresolved) {
+      expect(typeof entry.reason).toBe('string');
+      expect(entry.reason).not.toContain('@Microsoft.KeyVault');
+    }
+
+    const offList = await build({ RESEND_API_KEY: ref('RESEND-API-KEY') });
+    expect(offList.functionsConfigured).toBe(false);
+    expect(offList.unexpectedUnresolved).toEqual(['RESEND_API_KEY']);
+    expect(offList.expectedUnresolved).toHaveLength(2);
   });
 
   it('denies without touching the store', async () => {

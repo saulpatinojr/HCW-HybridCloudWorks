@@ -241,10 +241,18 @@ this step passed only when the unresolved names are exactly the names on
 `EXPECTED_UNRESOLVED`: the monitor says so as "nothing unexpected" with no stale
 entry.
 
-That page, not Ops Health. This line used to point at `/admin/ops-health`,
-which never carried the names: `getOpsHealthSnapshot` returns readiness, the
-digest, alerts and operational signals, and nothing about secrets. The names
-come from `cms/secrets`, which is the credential surface — the old API Keys
+The [Health page](https://hybridcloudworks.com/admin/health) shows the same
+answer on its **Pipeline Readiness** card. Names off the list are in red and
+make the card Critical. Names on it are listed under **Unresolved on purpose**,
+with each one's reason when you hover it, and do not. The page and the monitor
+read one list, `functions/src/lib/expected-unresolved.js`, since
+[#1512](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1512).
+
+This line once pointed at `/admin/ops-health`, which at the time carried no
+names: `getOpsHealthSnapshot` returned readiness, the digest, alerts and
+operational signals, and nothing about secrets. Its `readiness` block has
+carried the names since T-720. The Integrations page reads them another way,
+from `cms/secrets`, which is the credential surface — the old API Keys
 page, now merged into Integrations. There an unresolved reference shows the
 same gray **Not set** light as a secret nobody ever seeded, because
 `computeSecretState` cannot tell the two apart from inside the worker: both

@@ -147,6 +147,7 @@ const SNAPSHOT = {
   operationalSignals: {
     queueBreachCount: 3,
     oldestStagedHours: 18,
+    stagedWaitingCount: 4,
     openAlertAgeHours: 6,
     publishFailureCount: 1,
     orphanedGeneratedImages: 2,
@@ -490,6 +491,78 @@ describe('the hub', () => {
     const reasons = within(card).getByTestId('agent-denials-by-reason');
     expect(within(reasons).getByText('150+')).toBeInTheDocument();
     expect(within(reasons).getByText('50+')).toBeInTheDocument();
+  });
+
+  it('names references unresolved on purpose apart from the ones that are a fault (#1512)', async () => {
+    const readinessWith = (extra) => ({
+      ...SNAPSHOT,
+      readiness: {
+        ...SNAPSHOT.readiness,
+        configGeneration: 'run-90',
+        configWriter: 'azapi-strip',
+        ...extra,
+      },
+    });
+    postJSON.mockImplementation(async (name) =>
+      name === 'getOpsHealthSnapshot'
+        ? readinessWith({
+            functionsConfigured: true,
+            unresolvedSecrets: ['AZURE_SPEECH_KEY', 'CODER_BROKER_TOKEN'],
+            expectedUnresolved: [
+              { name: 'AZURE_SPEECH_KEY', reason: 'fallback speech provider, not bought' },
+              { name: 'CODER_BROKER_TOKEN', reason: 'waiting on the owner to mint it' },
+            ],
+            unexpectedUnresolved: [],
+          })
+        : {}
+    );
+    const { unmount } = renderAt();
+    const expectedRow = await screen.findByTestId('unresolved-expected');
+    // The reason is on the page, not in a hover-only tooltip (phones, keyboards).
+    expect(within(expectedRow).getByText('AZURE_SPEECH_KEY')).toBeInTheDocument();
+    expect(
+      within(expectedRow).getByText('fallback speech provider, not bought')
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('unresolved-unexpected-count')).toHaveTextContent('0');
+    // Not a fault: the card's own status is not Critical.
+    const card = screen.getByRole('heading', { name: 'Pipeline Readiness' }).closest('.rounded-lg');
+    expect(card.querySelector('[data-slot="status"] [data-status]')).toHaveAttribute(
+      'data-status',
+      'healthy'
+    );
+    unmount();
+
+    postJSON.mockImplementation(async (name) =>
+      name === 'getOpsHealthSnapshot'
+        ? readinessWith({
+            functionsConfigured: false,
+            unresolvedSecrets: ['AZURE_SPEECH_KEY', 'RESEND_API_KEY'],
+            expectedUnresolved: [{ name: 'AZURE_SPEECH_KEY', reason: 'fallback' }],
+            unexpectedUnresolved: ['RESEND_API_KEY'],
+          })
+        : {}
+    );
+    renderAt();
+    expect(await screen.findByText('RESEND_API_KEY')).toBeInTheDocument();
+    expect(screen.getByTestId('unresolved-unexpected-count')).toHaveTextContent('1');
+    const redCard = screen
+      .getByRole('heading', { name: 'Pipeline Readiness' })
+      .closest('.rounded-lg');
+    expect(redCard.querySelector('[data-slot="status"] [data-status]')).toHaveAttribute(
+      'data-status',
+      'critical'
+    );
+  });
+
+  it('labels the two staged numbers by what they count (#1512)', async () => {
+    renderAt();
+    expect(await screen.findByText('Oldest Waiting to Go Live')).toBeInTheDocument();
+    expect(screen.getByTestId('staged-waiting-count')).toHaveTextContent(
+      '4 approved or published, not live, not scheduled'
+    );
+    expect(screen.getByText('Published, Not Live (6 h+)')).toBeInTheDocument();
+    expect(screen.queryByText('Oldest Staged Age')).not.toBeInTheDocument();
+    expect(screen.queryByText('Staged Too Long')).not.toBeInTheDocument();
   });
 
   it('does not say nothing was due beside a scheduler run that broke (#1491)', async () => {

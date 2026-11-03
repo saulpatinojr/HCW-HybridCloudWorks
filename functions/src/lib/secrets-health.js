@@ -46,6 +46,7 @@
  * connection probe), and rendered as the
  * red light on the API-keys page.
  */
+import { EXPECTED_UNRESOLVED } from './expected-unresolved.js';
 
 /** The prefix an unresolved Key Vault reference arrives as, verbatim. */
 export const KEY_VAULT_REFERENCE_PREFIX = '@Microsoft.KeyVault(';
@@ -107,4 +108,23 @@ export function unresolvedSecretNames(env = {}) {
  */
 export function unresolvedSecretCount(env = {}) {
   return unresolvedSecretNames(env).length;
+}
+
+/**
+ * Unresolved names split by whether they are unresolved on purpose
+ * (expected-unresolved.js, the list the nightly monitor also reads). Both
+ * halves keep the sorted order of the input. An expected name comes with its
+ * reason, which is prose about the setting and never its value (#1512).
+ *
+ * @param {string[]} names
+ * @returns {{ expected: Array<{ name: string, reason: string }>, unexpected: string[] }}
+ */
+export function splitUnresolved(names = []) {
+  const expected = [];
+  const unexpected = [];
+  for (const name of names ?? []) {
+    if (EXPECTED_UNRESOLVED.has(name)) expected.push({ name, reason: EXPECTED_UNRESOLVED.get(name) });
+    else unexpected.push(name);
+  }
+  return { expected, unexpected };
 }
