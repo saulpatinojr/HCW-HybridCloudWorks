@@ -124,8 +124,8 @@ the list does not hold the key of the most recent SSH login, which on that
 run is root's with this key (#953). The script checks the host is Ubuntu 26.04 LTS (24.04
 LTS is accepted and says it is the fallback; anything else stops), then
 checks the host is empty (below), installs
-`uv` 0.12.19 from its GitHub release after checking the archive's SHA256,
-has uv install CPython 3.14.7, clones
+`uv` 0.13.6 from its GitHub release after checking the archive's SHA256,
+has uv install CPython 3.15.2, clones
 this repository into `/opt/hcw-src` (or fetches, when the clone exists),
 checks out the current `main` commit detached and prints its full sha
 (`HCW_REPO_REF`, below), installs `ansible-core` on that CPython from the
@@ -193,11 +193,11 @@ so the floor is 3.14.5, and Ubuntu 26.04's own `/usr/bin/python3` is 3.14.4
 
 | Runs | Interpreter | Why |
 | --- | --- | --- |
-| `ansible`, `ansible-playbook`, `ansible-galaxy`, `ansible-vault` (the control side) | CPython 3.14.7 from uv, under `/opt/uv/python`, in the venv the link `/opt/uv/ansible-core` (`HCW_ANSIBLE_VENV`) points to, one generation per build under `/opt/uv/ansible-core-generations`, linked into `/usr/local/bin` through that link | The rule. `PYTHON_VERSION` at the top of `bootstrap.sh` is the pin; uv checks the download against the SHA256 it carries for that build, and uv itself is checked against `UV_SHA256`. ansible-core and every wheel it depends on are the `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and `ANSIBLE_CORE_DEPS` lines of `lab-image/versions.env`, the lines the lab image is built from; `bootstrap.sh` keeps no copy, writes them as one `name==version --hash=sha256:<hex>` line each, and installs them with `uv pip install --require-hashes --only-binary :all:`, which refuses a wheel whose SHA256 differs and any dependency the file does not list. PyYAML is the one exception when `PYYAML_WHEEL_SHA256` in that file is set: the wheel then comes from this repository's own `pyyaml-<version>-cp<major><minor>` release, built from PyYAML's source archive by `publish-pyyaml-wheel.yml` because PyYAML publishes none for CPython 3.15, checked against that SHA256 and its attestation with cosign before uv sees it ([docs/runbooks/pyyaml-wheel.md](../docs/runbooks/pyyaml-wheel.md), #1505). One wheel serves one Python line, so while that value is set the host's `PYTHON_VERSION` must be on the same line as the image's `BASE_PYTHON_VERSION`; `bootstrap.sh` refuses to run otherwise and names both |
+| `ansible`, `ansible-playbook`, `ansible-galaxy`, `ansible-vault` (the control side) | CPython 3.15.2 from uv, under `/opt/uv/python`, in the venv the link `/opt/uv/ansible-core` (`HCW_ANSIBLE_VENV`) points to, one generation per build under `/opt/uv/ansible-core-generations`, linked into `/usr/local/bin` through that link | The rule. `PYTHON_VERSION` at the top of `bootstrap.sh` is the pin; uv checks the download against the SHA256 it carries for that build, and uv itself is checked against `UV_SHA256`. ansible-core and every wheel it depends on are the `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and `ANSIBLE_CORE_DEPS` lines of `lab-image/versions.env`, the lines the lab image is built from; `bootstrap.sh` keeps no copy, writes them as one `name==version --hash=sha256:<hex>` line each, and installs them with `uv pip install --require-hashes --only-binary :all:`, which refuses a wheel whose SHA256 differs and any dependency the file does not list |
 | Every module the play runs on the host | `/usr/bin/python3`, the distribution's (3.14.4 on 26.04, 3.12.3 on 24.04) | **The one recorded exception.** `python3-apt`, `python3-debian` and `python3-docker`, which the `apt`, `deb822_repository` and `community.docker` modules import, are Ubuntu packages built for that interpreter and cannot be loaded by another. `ansible_python_interpreter` in `ansible/inventory/localhost.yml` says so |
 
 A successful run prints, before the play starts, `ansible-playbook [core
-<ANSIBLE_CORE_VERSION from versions.env>]` and a `python version = 3.14.7`
+<ANSIBLE_CORE_VERSION from versions.env>]` and a `python version = 3.15.2`
 line; a run that installs says `installing ansible-core <version> and the <n>
 wheels it depends on into /opt/uv/ansible-core-generations/<generation>`
 first, and `switched /opt/uv/ansible-core to <that generation>` once it has
@@ -1775,10 +1775,15 @@ A passing result prints `Passed: 0 failure(s), 0 warning(s) in N files
 processed of M encountered. Profile 'production' was required, and it
 passed.` followed by `playbook: site.yml`. That digest is
 `community-ansible-dev-tools:latest` as of 2026-09-23 (ansible-lint 26.9.0,
-ansible-core 2.21.4, the same pins CI installs with pip); when the pins in
-`ci.yml` move, move this digest with them. CI runs the same two commands in
-the `ansible-lint (lab-host)` job of `.github/workflows/ci.yml`, gated on
-changes under `lab-host/`.
+ansible-core 2.21.4); when the pins in `ci.yml` move, move this digest with
+them. Since 2026-11-02 CI's pins are ahead of it: the `ansible-lint
+(lab-host)` job installs ansible-lint 26.9.0 with ansible-core 2.22.0 on
+Python 3.15, and no dev-tools image carried 2.22.0 that day (the newest
+tag, v26.10.1, locks ansible-core 2.19.13 in its `uv.lock`), so the
+command above lints on an older ansible-core than CI does, and CI is the
+result that counts. Move the digest once a dev-tools release carries
+2.22.0. CI runs the same two commands in the `ansible-lint (lab-host)` job
+of `.github/workflows/ci.yml`, gated on changes under `lab-host/`.
 
 The same job runs the test of `hcw-vault-set`
 (`ansible/roles/vault_tools/README.md`, "Tests"). It runs as root, which

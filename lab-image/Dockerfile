@@ -32,7 +32,7 @@
 # except what later stages COPY out of /out. The base already carries
 # ca-certificates and python3 with pip.
 # ---------------------------------------------------------------------------
-FROM python:3.14.10-slim-trixie@sha256:3cabfd7d7aaf394e6040e79fa1eec6ca1c52b74ed9188650472695d9a9326999 AS fetch
+FROM python:3.15.2-slim-trixie@sha256:8c13a3f37a6a5b71498228e902c4b9f51c1f7900d49fabf71f9a650c6120e0d0 AS fetch
 
 # gcc, libc6-dev and libyaml-dev are for the PyYAML wheel built below and
 # stay in this stage; the runner gets the finished wheel and no compiler.
@@ -331,7 +331,7 @@ RUN set -eu; . /build/versions.env; \
 # ---------------------------------------------------------------------------
 # runner
 # ---------------------------------------------------------------------------
-FROM python:3.14.10-slim-trixie@sha256:3cabfd7d7aaf394e6040e79fa1eec6ca1c52b74ed9188650472695d9a9326999 AS runner
+FROM python:3.15.2-slim-trixie@sha256:8c13a3f37a6a5b71498228e902c4b9f51c1f7900d49fabf71f9a650c6120e0d0 AS runner
 
 # No apt layer: the base already carries python3 (BASE_PYTHON_VERSION, at /usr/local/bin,
 # with ensurepip for the venv below), ca-certificates, bash and coreutils,
