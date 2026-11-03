@@ -24,7 +24,7 @@
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { createAzureCostReader } from './azure.js';
-import { readAiCosts } from './ai.js';
+import { aggregateUsage, readAiCosts } from './ai.js';
 import {
   HISTORY_MONTHS,
   CURRENCY,
@@ -117,7 +117,10 @@ export function presentAzure(azure, period) {
 
 /** The AI section with the Foundry card's figures copied from its Azure scope. */
 export function presentAi(ai, azure, budgetUsd) {
-  const base = ai ?? { monthToDate: null, previousMonth: null, providers: [] };
+  // Before the first reading there is no AI section: answer zeros, so a
+  // reader never meets a missing month (the first visit after a deploy).
+  const base = { previousMonth: null, providers: [], ...(ai ?? {}) };
+  base.monthToDate = ai?.monthToDate ?? aggregateUsage([]);
   const providers = (base.providers || []).map((card) => {
     if (card.kind !== 'azure-budget') return card;
     const scope = (azure?.scopes || []).find((s) => s.id === card.scopeId && !s.error);

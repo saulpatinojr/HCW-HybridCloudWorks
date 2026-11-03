@@ -45,7 +45,45 @@ export async function fetchCostSummary({ refresh = false } = {}) {
   ) {
     throw new Error(SHAPE_ERROR);
   }
-  return body;
+  return withEmptyFigures(body);
+}
+
+/** Zero figures for a month nothing has been read for yet. */
+const EMPTY_MONTH = Object.freeze({
+  costUsd: 0,
+  calls: 0,
+  unpricedCalls: 0,
+  tokens: 0,
+  byProvider: [],
+  bySource: [],
+});
+const EMPTY_TOTALS = Object.freeze({
+  monthToDate: null,
+  forecast: null,
+  budget: null,
+  previousMonth: null,
+});
+
+/**
+ * The snapshot with the figures that exist only after a first reading filled
+ * in as empty: the Azure totals (null when Azure has not been read, or no
+ * subscription answered) and the AI month (absent before the first
+ * reading). Every tab then reads them without checking, and an empty month
+ * shows as zeros and dashes rather than breaking the page, which is what
+ * the first visit after a deploy sees.
+ */
+export function withEmptyFigures(summary) {
+  const { azure, ai } = summary;
+  return {
+    ...summary,
+    azure: { ...azure, scopes: azure.scopes ?? [], totals: azure.totals ?? EMPTY_TOTALS },
+    ai: {
+      ...ai,
+      monthToDate: { ...EMPTY_MONTH, ...(ai.monthToDate ?? {}) },
+      providers: ai.providers ?? [],
+    },
+    history: summary.history ?? [],
+  };
 }
 
 /**

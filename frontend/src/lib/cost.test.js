@@ -150,7 +150,8 @@ describe('the words for each field', () => {
 describe('the API', () => {
   it('reads the summary, with ?refresh=1 when asked, and refuses another shape', async () => {
     getJSON.mockResolvedValue(SUMMARY);
-    await expect(fetchCostSummary()).resolves.toBe(SUMMARY);
+    // A copy with the empty figures filled in (withEmptyFigures); a full answer is unchanged.
+    await expect(fetchCostSummary()).resolves.toEqual(SUMMARY);
     expect(getJSON).toHaveBeenLastCalledWith(COST_SUMMARY_ROUTE);
     await fetchCostSummary({ refresh: true });
     expect(getJSON).toHaveBeenLastCalledWith(`${COST_SUMMARY_ROUTE}?refresh=1`);
