@@ -34,8 +34,10 @@
 # ---------------------------------------------------------------------------
 FROM python:3.15.2-slim-trixie@sha256:8c13a3f37a6a5b71498228e902c4b9f51c1f7900d49fabf71f9a650c6120e0d0 AS fetch
 
+# gcc, libc6-dev and libyaml-dev are for the PyYAML wheel built below and
+# stay in this stage; the runner gets the finished wheel and no compiler.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl unzip git \
+ && apt-get install -y --no-install-recommends curl unzip git gcc libc6-dev libyaml-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -81,21 +83,97 @@ RUN set -eu; . /build/versions.env; \
     chmod 0755 /out/bin/*; \
     rm -rf /build/terraform.zip /build/kubeconform.tgz /build/helm.tgz /build/linux-amd64
 
+# PyYAML from source (#1505; the PYYAML block in versions.env says why and
+# when this step goes away). PyYAML publishes no wheel for the next Python,
+# so this stage builds one from the publisher's source archive, verified by
+# its PyPI SHA256, and nothing else in the image changes: the runner installs
+# the built wheel in the same offline, hash-checked step as every other
+# wheel. Two RUNs: the first downloads, the second builds with no network.
+#
+# The download RUN takes the build tools (Cython, setuptools, wheel) as
+# hash-checked wheels only, installs them from that directory with no
+# index, and then downloads the source archive in hash-checking mode with
+# --no-binary=:all:, the one place in this file that accepts a source
+# archive. The tools are installed here, before the archive is downloaded,
+# because pip reads the archive's metadata to download it, and
+# --no-build-isolation makes it do that with the tools just installed
+# instead of fetching unpinned ones into a throwaway environment;
+# --check-build-dependencies makes pip check that what is installed meets
+# the archive's own pyproject.toml build requirements rather than silently
+# using whatever is there.
+RUN set -eu; . /build/versions.env; \
+    mkdir -p /build/pyyaml; cd /build/pyyaml; \
+    printf '%s\n' "${PYYAML_BUILD_DEPS}" | sed '/^[[:space:]]*$/d' > tools.txt; \
+    python3 -m pip download --disable-pip-version-check --no-cache-dir --no-deps \
+      --only-binary=:all: --require-hashes --dest tools -r tools.txt; \
+    python3 -m pip install --disable-pip-version-check --no-cache-dir --root-user-action=ignore \
+      --no-index --find-links tools --no-deps --require-hashes -r tools.txt; \
+    printf 'pyyaml==%s --hash=sha256:%s\n' "${PYYAML_VERSION}" "${PYYAML_SDIST_SHA256}" > sdist.txt; \
+    python3 -m pip download --disable-pip-version-check --no-cache-dir --no-deps \
+      --no-binary=:all: --require-hashes --no-build-isolation --check-build-dependencies \
+      --dest sdist -r sdist.txt
+
+# The build RUN runs with no network at all (--network=none), so nothing in
+# it can reach an index or anywhere else. libyaml's shared-library link is
+# removed so the extension links Debian's static libyaml.a and needs no
+# libyaml in the runner (the base carries none); `pip wheel` builds from the
+# verified archive with the tools above, checking them against the
+# archive's build requirements again. Then the build stops unless exactly
+# one wheel came out, its name says it is compiled for this CPython (cp3xx,
+# not py3), its extension links no libyaml dynamically (ldd), and, installed
+# into a throwaway venv and imported under `python -I` (no site or
+# environment influence), it has yaml.__with_libyaml__ true and the C loader
+# present. The wheel goes to /out/wheels for the runner and alone to
+# /out/pyyaml-wheel for the pyyaml-wheel stage below, and its SHA256 becomes
+# its requirements line, written to /build/pyyaml-wheel.txt for the next step.
+RUN --network=none set -eu; . /build/versions.env; \
+    mkdir -p /out/wheels /out/pyyaml-wheel; cd /build/pyyaml; \
+    rm "$(dpkg -L libyaml-dev | grep '/libyaml\.so$')"; \
+    python3 -m pip wheel --disable-pip-version-check --no-cache-dir --no-deps \
+      --no-build-isolation --check-build-dependencies --no-index --wheel-dir built "sdist/pyyaml-${PYYAML_VERSION}.tar.gz"; \
+    test "$(find built -name '*.whl' | wc -l)" -eq 1; \
+    whl="$(find built -name '*.whl')"; \
+    case "${whl##*/}" in \
+      "pyyaml-${PYYAML_VERSION}-cp3"[0-9]*"-cp3"[0-9]*"-linux_x86_64.whl") ;; \
+      *) echo "PyYAML build produced ${whl##*/}, not a compiled cp3xx linux_x86_64 wheel of ${PYYAML_VERSION}" >&2; exit 1 ;; \
+    esac; \
+    python3 -m venv check; \
+    check/bin/pip install --disable-pip-version-check --no-cache-dir --no-index --no-deps "${whl}"; \
+    ext="$(find check/lib -name '_yaml*.so')"; test -n "${ext}"; \
+    if ldd "${ext}" | grep -q yaml; then echo "PyYAML's extension links libyaml dynamically; the runner has no libyaml" >&2; ldd "${ext}" >&2; exit 1; fi; \
+    check/bin/python -I -c 'import sys, yaml; sys.exit(0 if yaml.__with_libyaml__ and yaml.CSafeLoader else "the built PyYAML has no libyaml C loader")'; \
+    sum="$(sha256sum "${whl}" | cut -d' ' -f1)"; \
+    echo "built ${whl##*/} ${sum}"; \
+    cp "${whl}" /out/wheels/; cp "${whl}" /out/pyyaml-wheel/; \
+    printf 'pyyaml==%s --hash=sha256:%s\n' "${PYYAML_VERSION}" "${sum}" > /build/pyyaml-wheel.txt; \
+    cd /build && rm -rf /build/pyyaml
+
 # ansible-core and every wheel it depends on, in pip's hash-checking mode:
 # the requirements file is ansible-core's line plus ANSIBLE_CORE_DEPS, each
-# `name==version --hash=sha256:...`. --require-hashes fails on a sum that
-# differs and on any dependency the resolver reaches that is not in the file,
-# and --only-binary=:all: means nothing is built from source. The runner
-# installs from exactly these files, with the same file, offline.
+# `name==version --hash=sha256:...`, with the pyyaml line replaced by the
+# built wheel's line from the step above (its version must match; the build
+# stops if not). --require-hashes fails on a sum that differs, and
+# --only-binary=:all: means nothing is built from source. The download is
+# --no-deps, because PyPI has no PyYAML wheel for the next Python and the
+# resolver would otherwise look for one there; the resolve then runs offline
+# instead, as a dry-run install from the downloaded wheels only, which fails
+# on any dependency the resolver reaches that is not in the file, so a new
+# transitive dependency still fails this stage instead of arriving unpinned.
+# The runner installs from exactly these files, with the same file, offline.
 RUN set -eu; . /build/versions.env; \
-    mkdir -p /out/wheels; \
+    test "$(sed -n 's/^pyyaml==\([^ ]*\) .*$/\1/p' /build/pyyaml-wheel.txt)" = "$(printf '%s\n' "${ANSIBLE_CORE_DEPS}" | sed -n 's/^pyyaml==\([^ ]*\) .*$/\1/p')" \
+      || { echo "versions.env: PYYAML_VERSION and the pyyaml line in ANSIBLE_CORE_DEPS name different releases" >&2; exit 1; }; \
     { \
       printf 'ansible-core==%s --hash=sha256:%s\n' "${ANSIBLE_CORE_VERSION}" "${ANSIBLE_CORE_SHA256}"; \
       printf '%s\n' "${ANSIBLE_CORE_DEPS}" | sed '/^[[:space:]]*$/d'; \
-    } > /out/wheels/requirements.txt; \
-    python3 -m pip download --disable-pip-version-check --no-cache-dir \
-      --only-binary=:all: --require-hashes --dest /out/wheels -r /out/wheels/requirements.txt; \
-    test "$(find /out/wheels -name '*.whl' | wc -l)" -eq "$(wc -l < /out/wheels/requirements.txt)"
+    } | sed '/^pyyaml==/d' > /build/requirements-pypi.txt; \
+    python3 -m pip download --disable-pip-version-check --no-cache-dir --no-deps \
+      --only-binary=:all: --require-hashes --dest /out/wheels -r /build/requirements-pypi.txt; \
+    cat /build/requirements-pypi.txt /build/pyyaml-wheel.txt > /out/wheels/requirements.txt; \
+    python3 -m pip install --disable-pip-version-check --no-cache-dir --dry-run --ignore-installed \
+      --no-index --find-links /out/wheels --only-binary=:all: --require-hashes -r /out/wheels/requirements.txt; \
+    test "$(find /out/wheels -name '*.whl' | wc -l)" -eq "$(wc -l < /out/wheels/requirements.txt)"; \
+    rm -f /build/requirements-pypi.txt /build/pyyaml-wheel.txt
 
 # The Python packages the full target replaces inside the Azure CLI's own
 # Python (AZURE_CLI_PYTHON_OVERRIDES; versions.env says which and why), the
@@ -141,6 +219,17 @@ RUN set -eu; . /build/versions.env; \
       vendor "avm-$(printf '%s' "${key}" | tr 'A-Z_' 'a-z-')" "${version}" "${sum}"; \
     done; \
     ls /out/avm
+
+# ---------------------------------------------------------------------------
+# pyyaml-wheel: only the PyYAML wheel the fetch stage built, and nothing
+# else, so a workflow can take the file out of the build for the lab host
+# (#1505) with
+#   docker build --target pyyaml-wheel --output type=local,dest=<dir> lab-image
+# It is not a parent of the runner or full targets and changes neither.
+# ---------------------------------------------------------------------------
+FROM scratch AS pyyaml-wheel
+
+COPY --from=fetch /out/pyyaml-wheel/ /
 
 # ---------------------------------------------------------------------------
 # vendor: the builder modules' registry children, vendored beside them and
