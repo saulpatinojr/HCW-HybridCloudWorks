@@ -127,6 +127,9 @@ function BudgetFigures({ budget }) {
           ? ` and at ${budget.forecastThresholds.map((t) => `${t}%`).join(', ')} of the forecast`
           : ''}
         .
+        {budget.spendSource === 'query'
+          ? " The bar uses this month's spend from the cost query: Azure's own figure on the budget was lower, because Azure updates it on its own schedule."
+          : ''}
       </p>
     </>
   );
