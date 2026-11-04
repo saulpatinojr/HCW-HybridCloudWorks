@@ -263,6 +263,20 @@ Revisit when:
 - Subscription loss enters the threat model.
 - A week of resurrected deletes causes a visible problem.
 
+## Request-log filter amendment (2026-11-03, #1530)
+
+Item 3 above says the Cosmos `DataPlaneRequests` category is filtered "by an
+Azure Monitor workspace table transformation (`transformKql`)". It was not. The
+Tables API has no `transformKql` property, so the PUT that set the table's
+retention dropped the filter silently, and from PLAT-8's apply until
+[#1530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1530) the
+table carried every request on every container, which is what made the
+workspace hit its daily cap every evening. The filter now lives where Azure
+runs it from: a data collection rule of kind `WorkspaceTransforms`, named as
+the workspace's default rule (`infra/observability.tf` and `infra/main.tf`),
+and it keeps every request on `ambassador`, `doc_vault` and `brain_records`
+plus every write elsewhere, not `ambassador` alone.
+
 ## Second Brain implementation amendment (2026-10-26)
 
 The Second Brain implementation adds `brain_records` to authored exports and

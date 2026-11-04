@@ -1046,7 +1046,11 @@ describe('DECLARED', () => {
     for (const name of ['brain_records', 'brain_search', 'doc_vault']) {
       expect(creates, name).not.toContain(`azurerm_cosmosdb_sql_container.hcw["${name}"]`);
     }
-    expect(deletes).toEqual([]);
+    // #1479's two container deletes are gone; the regex below reads them and
+    // the five CODE_BRAIN_* paths together. Other deletes may be declared
+    // (#1530's azapi_update_resource delete was the first after this), so the
+    // list is not asserted empty.
+    expect(deletes.filter((address) => /code_brain/.test(address))).toEqual([]);
     expect(DECLARED.some((entry) => /code_brain|CODE_BRAIN_/.test(entry.address + (entry.path ?? '')))).toBe(false);
     for (const name of [
       'BRAIN_ENABLED', 'BRAIN_AI_ENABLED', 'BRAIN_OWNER_OID', 'BRAIN_OWNER_TENANT_ID', 'BRAIN_SYNC_CLIENT_ID',

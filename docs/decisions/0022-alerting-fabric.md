@@ -176,7 +176,12 @@ is for planned windows only; it outlives the reason for it otherwise.
   subnet and named operator windows. If the audit trail becomes a requirement,
   the answer is a dedicated table with its own cap or an ingestion-time
   transformation that keeps only writes — not switching the category back on
-  under a 0.25 GB cap.
+  under a 0.25 GB cap. (PLAT-8 switched it back on in October 2026 with a
+  filter that never ran, and the cap tripped nightly for a month;
+  [#1530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1530)
+  put the filter in a workspace transformation rule, keeping every request on
+  the personal-data containers and every write elsewhere, and added
+  `alert-logs-overquota` so a capped day is a named alert.)
 - **Delivery is unproven and cannot be proven before the apply.** Every rule
   routes solely through one action group and none has a second path; for the
   four rules in the application subscription that reference also crosses a

@@ -244,6 +244,7 @@ which is itself a manual deploy.
 | `alert-cosmos-export-daily` | 2 | No `cosmosExportCompleted` event, full or delta, in the last 2 days, evaluated daily. **Stateless**: mails once a day until a run completes. Gated on `cosmos_export_enabled` | The 03:00 UTC exporter is not finishing, and the out-of-account copy is going stale | `AppEvents` for `cosmosExportCompleted`, and `AppExceptions` for the export timer and job; then [Cosmos restore](cosmos-restore.md) |
 | `alert-cosmos-export-full` | 2 | On a Monday, no full export completed in the trailing 2 days, evaluated daily. **Stateless**: one mail per missed Sunday. Gated on `cosmos_export_enabled` | Sunday's full did not land: deltas keep accumulating and deletes stay unreconciled until the next full | The same `AppEvents` rows, filtered to `mode` `full` |
 | `alert-logs-capacity` | 2 | Billable ingestion passes 80% of the daily cap since the 08:00 UTC reset, hourly (stateful: resolves after the reset). In `rg-mgmt-plat-prod-cus`, Management subscription | Telemetry is about to stop for the day, taking the log-based signals with it | The `Usage` table, grouped by `DataType`, over the same window |
+| `alert-logs-overquota` | 1 | `_LogOperation` holds an `Ingestion` row whose detail says `OverQuota` since the 08:00 UTC reset, every 15 min (stateful: resolves after the reset). Management subscription ([#1530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1530)) | The cap has been hit: every billable table is being dropped until 08:00 UTC, so every other log rule on this page is blind, and whatever ran in those hours (the 03:00 UTC Cosmos export included) left no record. It fires from inside a capped workspace because the `Operation` table is not billable | The `Usage` table, grouped by `DataType`, since the last reset, to see which table grew. The Cosmos request log is filtered at ingestion since #1530; if it is the largest table again, check the workspace's default data collection rule (`dcr-logs-transforms-prod-cus`) still exists and is linked |
 | ~~`alert-api-availability`~~ | 1 | **Not created** (`count = 0`, gated on `availability_test_enabled`) | — | See *[Reachability is covered, but not by the Azure test](#reachability-is-covered-but-not-by-the-azure-test)* |
 | `alert-lab-heartbeat` | 1 | No `Heartbeat` row from `arcs-lab-hybrid-prod-cus-01` in 30 min, evaluated every 15 min (stateful). In `rg-mgmt-plat-prod-cus`, Management subscription | The lab host is down, the Azure Monitor Agent is stopped, or the host cannot reach Azure; public lab submission fails closed meanwhile | `ssh hcw-lab 'systemctl status azuremonitoragent himdsd hcw-labs-agent --no-pager'`; the Hostinger panel if ssh fails |
 | `alert-lab-disk` | 2 | Root filesystem past 85% used, hourly (stateful). Management subscription | Docker images, Coder workspaces or pg_dumps filling the disk | `ssh hcw-lab 'df -h /; sudo docker system df; sudo ls -l /var/backups/coder'` |
@@ -521,10 +522,14 @@ host — instance restarts, cold-start failures, package state.
 
 **Cosmos throttling has no throughput dial.** The account is serverless
 (ADR 0003), so there is nothing to turn up. A firing throttle alert points at a
-query or a partition key, not at capacity. Note also that per-request Cosmos
-logs go away with the same change that adds this rule — `CDBDataPlaneRequests`
-is pruned for being most of the daily cap — so from that apply on this is
-answered from metrics, not from logs.
+query or a partition key, not at capacity. The per-request Cosmos log
+(`CDBDataPlaneRequests`) went away with the same change that added this rule,
+came back under PLAT-8 with a filter that never ran, and since
+[#1530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1530) is
+filtered at ingestion to every request on `ambassador`, `doc_vault` and
+`brain_records` and every write elsewhere. A throttled *read* of an ordinary
+container is therefore not in the log; answer it from metrics. A throttled
+write, or anything on the three personal-data containers, is.
 
 **One mail per incident, not one every five minutes.** The workload rules are
 *stateful* (`auto_mitigation_enabled = true`, or a metric rule's own default):
@@ -536,7 +541,12 @@ the hourly rules). Since 2026-10-16 that
 includes `alert-logs-capacity`, `alert-lab-disk` and both
 `alert-lab-backup-missing` rules, which used to mute instead and left an alert
 open for every evaluation over their threshold ([ADR 0022](../decisions/0022-alerting-fabric.md)
-decision 6). The exceptions are deliberate. The three daily rules
+decision 6), and `alert-logs-overquota` was stateful from its creation
+([#1530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1530)):
+a capped day is one event between two 08:00 UTC resets, so one alert, resolved
+after the reset. There is no fire test for it in the table below: the only way
+to make it fire is to hit the cap, which is the outage the rule reports. The
+exceptions are deliberate. The three daily rules
 (`alert-export-window-latency` and the two Cosmos export rules) are stateless
 because Azure refuses auto-resolution on a rule evaluated less often than every
 twelve hours. `alert-lab-unit-failed` mutes for six hours because its condition
