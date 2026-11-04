@@ -6,6 +6,9 @@ On 2026-10-31 its list of standing rules moved into `.claude/CLAUDE.md` ([#1455]
 and [#1346](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1346) left the later list because
 [#1461](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1461) closed it; nothing else in it was refreshed then.
 
+On 2026-11-04 a session that worked only in the CloudCrawler and CloudAssessor App repositories added the section
+"App repositories handoff" below, at the owner's request; nothing else in this file was refreshed then.
+
 Two working sessions wrote this file on the same day: the application work (AI Engine,
 Ambassadors, Blogs and their deployments) and the infrastructure, CI and add-on work
 (the section "Infrastructure, CI and add-on work" below). Read both.
@@ -23,6 +26,88 @@ Ambassadors, Blogs and their deployments) and the infrastructure, CI and add-on 
    the infrastructure section was added afterwards. Standing orders for the
    owner's estate (who does what, how pull requests and reviews are handled, how
    items are linked) are in [`.claude/CLAUDE.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.claude/CLAUDE.md).
+
+## App repositories handoff: CloudCrawler App and CloudAssessor App clean-up (2026-11-04)
+
+Written 2026-11-04 by a Claude Code session that worked only in the two App repositories,
+[`HCW-CloudCrawler_App`](https://github.com/saulpatinojr/HCW-CloudCrawler_App) and
+[`HCW-CloudAssessor_App`](https://github.com/saulpatinojr/HCW-CloudAssessor_App). The owner asked for this note so the
+session working on this repository (the website) knows what changed there. Nothing in this repository was changed apart
+from adding this section. It is a dated note, not a live status: check the links before acting on it.
+
+### In one paragraph
+
+Both App repositories had a queue of pull requests from Dependabot (the GitHub bot that proposes dependency upgrades)
+that could not merge. They were replaced by one pull request per repository, both merged, and the seven Dependabot pull
+requests were closed with a comment saying why. The cause was fixed too, so the queue should not build up again once the
+owner does one setup step (below). Neither App's engine (the package the add-ons consume) changed its public surface, so
+nothing the website calls or shows needs to change.
+
+### What was merged
+
+| Repository | Merged pull request | Replaced and closed | What moved |
+| --- | --- | --- | --- |
+| CloudCrawler App | [#68](https://github.com/saulpatinojr/HCW-CloudCrawler_App/pull/68) | [#62](https://github.com/saulpatinojr/HCW-CloudCrawler_App/pull/62), [#65](https://github.com/saulpatinojr/HCW-CloudCrawler_App/pull/65) | `pydantic` 2.14.1 → 2.14.2 (`pydantic-core` 2.50.1 → 2.50.2), `sse-starlette` 3.5.0 → 3.6.0 |
+| CloudAssessor App | [#84](https://github.com/saulpatinojr/HCW-CloudAssessor_App/pull/84) | [#78](https://github.com/saulpatinojr/HCW-CloudAssessor_App/pull/78), [#79](https://github.com/saulpatinojr/HCW-CloudAssessor_App/pull/79), [#80](https://github.com/saulpatinojr/HCW-CloudAssessor_App/pull/80), [#82](https://github.com/saulpatinojr/HCW-CloudAssessor_App/pull/82), [#83](https://github.com/saulpatinojr/HCW-CloudAssessor_App/pull/83) | `pydantic` 2.14.1 → 2.14.2 (`pydantic-core` 2.50.1 → 2.50.2), `starlette` 1.9.0 → 1.10.0, `opentelemetry-api` 1.45.1 → 1.45.2, CodeQL action pinned to the v4.39.2 release |
+
+Neither repository had any open issues, and after this no pull requests are open in either.
+
+### Why the queue built up, and the permanent fix
+
+1. **Every Dependabot Python update failed the `lint` check.** Each App installs a hash-pinned copy of its lockfile
+   (the file that records the exact versions installed): `requirements.lock.txt`, plus `requirements-azure.lock.txt` in
+   CloudAssessor. Dependabot cannot regenerate those copies, and it also edited them as if they were hand-written files.
+   Some of its pull requests moved a version only in the copy and left the real lockfile behind.
+   - Dependabot is now told to leave those files alone (`exclude-paths` in `.github/dependabot.yml`).
+   - A new workflow, `.github/workflows/dependabot-lockfiles.yml`, regenerates them on Dependabot's own pull requests.
+     It pushes the result with a short-lived token from a small GitHub App that may only write repository contents.
+     That kind of push makes GitHub run the normal required checks on the new commit. (The built-in workflow token
+     cannot do this. Checks started by hand with `workflow_dispatch` never count as a pull request's required checks:
+     [GitHub's documentation](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#checks-from-some-workflow-jobs-are-not-evaluated).
+     CodeRabbit caught that on the first version of the fix.)
+   - The decision is recorded as
+     [ADR 0006 in CloudCrawler](https://github.com/saulpatinojr/HCW-CloudCrawler_App/blob/main/docs/adr/0006-dependabot-pull-requests-regenerate-the-lockfile-export.md).
+2. **CloudAssessor's CodeQL action was pinned to a commit that is not a release.** It was labelled `v4.37.8`, but the
+   real v4.37.8 is a different commit. So Dependabot tracked the branch and proposed another unreleased commit, split
+   across two pull requests that would each have left the two halves of the action on different versions. Both halves
+   are now on the v4.39.2 release, and a test fails if they are ever pinned apart. Every other action pin in both
+   repositories was checked against its release tag, and all of them match.
+
+### Owner step still needed (the fix above is inert until this is done)
+
+Create the small GitHub App once, for both App repositories, and add two Dependabot secrets to each. Tracked in
+[HCW-CloudCrawler_App#70](https://github.com/saulpatinojr/HCW-CloudCrawler_App/issues/70), which has every form value
+and the numbered steps. In short:
+an App named `HCW Lockfile Sync` with only **Contents: Read and write**, installed on the two App repositories. Its Client
+ID goes in the Dependabot secret `LOCKFILES_APP_CLIENT_ID`, and its private key in `LOCKFILES_APP_PRIVATE_KEY`. Until
+then the workflow stops with an error naming the two secrets, and a Dependabot Python pull request still requires a
+manual `make lock` run.
+
+### Differences between the repositories that were found and fixed
+
+- CloudAssessor did not group its GitHub Actions updates into one Dependabot pull request; CloudCrawler did. It does now.
+- CloudAssessor's CI checkouts left the workflow token on disk (zizmor `artipacked`); CloudCrawler's did not. Fixed in
+  `ci.yml` and `security.yml`. **Still open:** the two release workflows (`publish-core.yml`, `publish-images.yml`),
+  which run on a version tag or a manual dry run, so a pull request's CI cannot prove a change to them. Tracked in
+  [HCW-CloudAssessor_App#85](https://github.com/saulpatinojr/HCW-CloudAssessor_App/issues/85).
+
+### What this means for this repository and the add-ons
+
+- **Website:** nothing to change. No engine public surface, tool schema, catalog, detector id or release contract
+  changed, and no release was cut or tagged.
+- **Add-ons:** no `docs/whats-new-upstream.md` entry was written in
+  [`HCW-CloudCrawler_AddOn`](https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn) or
+  [`HCW-CloudAssessor_AddOn`](https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn). The owner asked that only this
+  repository be told, through this note, and both App pull requests say so. Suggested follow-up: if an add-on keeps its
+  own `requirements*.lock.txt` exports and Dependabot `uv` entry, it has the same problem, and the same fix applies.
+- **Not looked at:** the MigrateOrchestrator and NetworkEyes App repositories were not part of this request.
+
+### Not yet proven
+
+The new workflow has not run on GitHub. It only runs on a Dependabot pull request and needs the App above. It will be
+proven when Dependabot's next weekly Python pull request (Mondays) in either App, after the App is set up, shows the
+commit "Regenerate requirements(…).lock.txt from uv.lock (make lock)" and the required checks run and pass on that
+commit by themselves.
 
 ## Completed application work
 
