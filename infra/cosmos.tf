@@ -425,8 +425,9 @@ resource "azapi_update_resource" "cosmos_computed_properties" {
 # applies so that the app never has a moment with no grant at all:
 #
 #   Step 1 (this file today): `func_cosmos_db` adds the database-scoped
-#     grant(s) beside `func_cosmos`. Both cover the `hcw` database, so the
-#     plan is "2 to add" at most (one per database) and nothing else.
+#     grant(s) beside `func_cosmos`. The plan is one create per database
+#     in local.cosmos_database_grants (one today) and nothing else; both
+#     grants cover `hcw` until Step 2.
 #   Step 2 (a later pull request, after the owner has seen the site, the
 #     change-feed functions and the nightly export run on the narrower
 #     grant): delete the `func_cosmos` block below and declare the delete in
