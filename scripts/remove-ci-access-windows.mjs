@@ -236,8 +236,16 @@ export async function runAz(args) {
 /** The first line of an error, which is where `az` puts the code and message. */
 const firstLine = (error) => String(error?.stderr || error?.message || error).split('\n').find((line) => line.trim()) ?? 'unknown error';
 
-/** Worth trying again: anything but a refusal of the identity's authority. */
-const retryable = (error) => !/AuthorizationFailed|Forbidden/i.test(String(error?.stderr || error?.message || ''));
+/** Thrown, never retried, when the window tag names another run than the one being restored. */
+export class WindowTaken extends Error {
+  constructor(step) {
+    super(`stopped before "${step}": the ${WINDOW_TAG} tag changed, so a new deploy run owns the window now and closes it itself`);
+    this.name = 'WindowTaken';
+  }
+}
+
+/** Worth trying again: anything but a refusal of the identity's authority, or a window another run took. */
+const retryable = (error) => !(error instanceof WindowTaken) && !/AuthorizationFailed|Forbidden/i.test(String(error?.stderr || error?.message || ''));
 
 /** One write, tried once more after each pause when it fails for a reason that may pass. */
 async function withRetry(write, { pauses, sleep }) {
@@ -351,8 +359,10 @@ export async function run({ env = {}, az = runAz, fetchImpl = fetch, sleep = (ms
     }
     if (decision.action === 'restore') {
       // The close step's own order: Deny, the address, the tag. The tag is
-      // read again before each write, the first included; a different value
-      // means a new deploy owns the window now, and this stops.
+      // read again inside every try of every write, the first included, so a
+      // retry after a pause cannot act on a stale read either; a different
+      // value means a new deploy owns the window now, and this stops
+      // (CodeRabbit on #1536).
       const steps = [];
       if (decision.setDeny) steps.push({ label: 'default action set to Deny', args: ['storage', 'account', 'update', '-g', resourceGroup, '-n', storage, '--default-action', 'Deny', '--output', 'none'] });
       if (decision.removeAddress) steps.push({ label: "the run's IP rule removed", args: ['storage', 'account', 'network-rule', 'remove', '-g', resourceGroup, '--account-name', storage, '--ip-address', decision.removeAddress, '--output', 'none'] });
@@ -360,24 +370,16 @@ export async function run({ env = {}, az = runAz, fetchImpl = fetch, sleep = (ms
       const done = [];
       let outcome = null;
       for (const step of steps) {
-        if (!dryRun) {
-          let now;
-          try {
-            now = await readStorage();
-          } catch (error) {
-            outcome = { kind: 'failed', text: `"${step.label}" was not tried: the account could not be read again first: ${firstLine(error)}` };
-            break;
-          }
-          if (now.window !== account.window) {
-            outcome = { kind: 'taken', text: `stopped before "${step.label}": the ${WINDOW_TAG} tag changed, so a new deploy run owns the window now and closes it itself` };
-            break;
-          }
-        }
+        const ownedWrite = async () => {
+          const now = await readStorage();
+          if (now.window !== account.window) throw new WindowTaken(step.label);
+          return az(step.args);
+        };
         try {
-          await retry(() => az(step.args));
+          await retry(ownedWrite);
           done.push(step.label);
         } catch (error) {
-          outcome = { kind: 'failed', text: `"${step.label}" failed: ${firstLine(error)}` };
+          outcome = error instanceof WindowTaken ? { kind: 'taken', text: error.message } : { kind: 'failed', text: `"${step.label}" failed: ${firstLine(error)}` };
           break;
         }
       }

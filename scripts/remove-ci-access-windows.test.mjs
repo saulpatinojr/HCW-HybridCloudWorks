@@ -267,6 +267,27 @@ describe('run', () => {
     expect(writes).toEqual([]);
   });
 
+  it('reads the tag again on every RETRY too: a deploy that takes the window during a pause stops the retry, with no second write', async () => {
+    // The Deny is refused once (409); during the pause, run 7 takes the window.
+    const slept = [];
+    let reads = 0;
+    const { az, writes } = fakeAz({ account: storage({ defaultAction: 'Allow', ips: [IP], window: `6 ${IP}` }), failing: { match: /default-action Deny/, times: 1 } });
+    const racing = async (args) => {
+      if (args.join(' ').startsWith('storage account show')) {
+        reads += 1;
+        // Read 1 decides, read 2 is before the first try, read 3 is before the retry.
+        if (reads >= 3) return storage({ defaultAction: 'Allow', ips: ['203.0.113.9', IP], window: '7 203.0.113.9' });
+      }
+      return az(args);
+    };
+    const result = await run({ env: STOR, az: racing, fetchImpl: github({ 6: ended }), sleep: async (ms) => slept.push(ms), pauses: [5000, 20000] });
+    expect(result.code).toBe(0);
+    expect(slept).toEqual([5000]);
+    expect(result.lines[1]).toMatch(/stopped before "default action set to Deny": the ciwindow tag changed.*\(nothing done first\)/);
+    expect(writes.filter((w) => w.includes('--default-action Deny'))).toHaveLength(1);
+    expect(writes.some((w) => w.includes('network-rule remove') || w.includes('--remove tags'))).toBe(false);
+  });
+
   it('stops the restore the moment a new deploy run writes its own tag, and leaves that run its window', async () => {
     // After the Deny lands, a new deploy (run 7) opens its window: tag, rule, Allow.
     const onWrite = (state, n) => {
