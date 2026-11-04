@@ -83,6 +83,10 @@ export const HEALTH_PROBES = Object.freeze({
   // #1491: the content agent's key state and the day's refusals, from the
   // ops snapshot's `agent` block (ops-health.js agentSummary).
   "content-agent": probe("snapshot", "viewer"),
+  // #1409: did last night's Cosmos export complete, and did it cover every
+  // authored container, from the ops snapshot's `backups` block
+  // (backup/backup-status.js).
+  "nightly-export": probe("snapshot", "viewer"),
   qlty: probe("live", "editor"),
   "cloud-pricing": probe("live", "viewer"),
   "identity-token": probe("session", "viewer"),

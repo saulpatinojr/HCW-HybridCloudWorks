@@ -31,6 +31,7 @@ import { describeAge, worstStatus } from '@/lib/status';
 import { AlertTriangle, Bot, CheckCircle2, Workflow } from 'lucide-react';
 import {
   contentAgentVerdict,
+  nightlyExportVerdict,
   scheduledPublishingVerdict,
   unresolvedSplit,
 } from './probeEvaluators';
@@ -604,13 +605,95 @@ export function ContentAgentCard({ agent }) {
   );
 }
 
-export function OperationalSignalsCard({ signals }) {
+/**
+ * Last night's Cosmos export, from the snapshot's `backups` block (#1409):
+ * the newest completed run, when it finished, how many containers it holds,
+ * whether every authored container is in it, and brain_records on its own
+ * with its partition key. The same verdict as the Nightly export probe on
+ * Checks. Names and counts only; a snapshot without the block (one written
+ * before this section existed) gets the verdict sentence and nothing that
+ * would read as a finding.
+ */
+function NightlyExportSection({ backups }) {
+  const verdict = nightlyExportVerdict(backups);
+  const last = backups?.lastCompleted || null;
+  const missing = last?.authored?.missing || [];
+  const watched = last?.watched || null;
+  return (
+    <div className="space-y-2 pt-2 border-t" data-testid="nightly-export">
+      <div className="flex items-center justify-between">
+        <span className="font-medium">Nightly export</span>
+        <StatusBadge system={verdict.status} size="xs" />
+      </div>
+      <p className="text-xs text-muted-foreground" data-testid="nightly-export-summary">
+        {verdict.summary}
+      </p>
+      {last ? (
+        <>
+          <CardRow label="Last completed run">
+            <Badge variant="outline" data-testid="nightly-export-run">
+              {last.mode}/{last.runId}
+            </Badge>
+          </CardRow>
+          <CardRow label="Finished">
+            <Badge variant="outline">{formatTimestamp(last.completedAt)}</Badge>
+          </CardRow>
+          <CardRow label="Containers in the run">
+            <Badge variant="outline">
+              {last.containerCount}
+              {Number.isFinite(last.expectedCount) ? ` of ${last.expectedCount} planned` : ''}
+            </Badge>
+          </CardRow>
+          <CardRow label="Authored containers">
+            <Badge
+              variant={missing.length ? 'destructive' : 'secondary'}
+              data-testid="nightly-export-authored"
+            >
+              {last.authored?.present ?? 0} of {last.authored?.expected ?? 0}
+            </Badge>
+          </CardRow>
+          {missing.length ? (
+            <p className="text-xs text-destructive font-mono" data-testid="nightly-export-missing">
+              Missing: {missing.join(', ')}
+            </p>
+          ) : null}
+          {watched ? (
+            <CardRow label={`${watched.container} (partition key ${watched.partitionKey})`}>
+              <Badge
+                variant={watched.present ? 'secondary' : 'destructive'}
+                data-testid="nightly-export-watched"
+              >
+                {watched.present ? `${watched.docs ?? 0} records` : 'not in the run'}
+              </Badge>
+            </CardRow>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The export's word for the card header. An unreadable block is degraded
+ * there, not unknown, for the reason the jobs read is (signalsStatus): the
+ * header's worstStatus lets unknown count only when nothing else is known,
+ * so it would say Healthy over a section that says the export could not be
+ * read. A snapshot with no block at all (one written before the block
+ * existed) stays unknown, which the header then ignores: that is not a
+ * finding about the export.
+ */
+export function exportHeaderStatus(backups) {
+  if (backups?.unavailable) return 'degraded';
+  return nightlyExportVerdict(backups).status;
+}
+
+export function OperationalSignalsCard({ signals, backups = null }) {
   return (
     <Card className="flex h-full flex-col">
       <SignalCardHeader
         icon={<AlertTriangle className="h-4 w-4 text-amber-500" aria-hidden="true" />}
         title="Operational Signals"
-        status={signalsStatus(signals)}
+        status={worstStatus([signalsStatus(signals), exportHeaderStatus(backups)])}
       />
       <CardContent className="flex flex-1 flex-col gap-3 text-sm">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -658,6 +741,7 @@ export function OperationalSignalsCard({ signals }) {
           <Badge variant="outline">{formatTimestamp(signals.lastSchedulerSuccessAt)}</Badge>
         </div>
         {signals?.jobs24h ? <JobsStrip jobs={signals.jobs24h} /> : null}
+        <NightlyExportSection backups={backups} />
         {signals?.failedJobsUnavailable ? (
           <p
             className="text-xs text-amber-700 dark:text-amber-400"
