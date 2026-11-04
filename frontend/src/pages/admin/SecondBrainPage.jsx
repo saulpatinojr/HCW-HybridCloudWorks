@@ -173,7 +173,7 @@ export default function SecondBrainPage() {
     detailRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   }, [selectedId, editorEpoch]);
   const openSequence = useRef(0);
-  const initialLink = useRef(false);
+  const handledLink = useRef('');
   const dirtyRef = useRef(false);
   // Private in-memory recovery survives a failed capability refresh. The
   // identity-keyed provider unmounts this page when accounts change.
@@ -256,13 +256,25 @@ export default function SecondBrainPage() {
     },
     [canLeave]
   );
+  // Follow the `item` and `capture` links whenever they change, not only on
+  // the first render. A citation in the Ask panel is a link to
+  // `?item=<source id>` on this same page, and until #1408 the page handled
+  // that link once per mount, so clicking a citation changed the address bar
+  // and opened nothing. `handledLink` remembers the last link acted on, so a
+  // re-render with the same address does not reopen the note.
   useEffect(() => {
-    if (!access.enabled || initialLink.current) return;
-    initialLink.current = true;
-    if (params.get('item')) Promise.resolve().then(() => open(params.get('item')));
-    else if (params.get('capture')) {
+    if (!access.enabled) return;
+    const item = params.get('item');
+    const capture = params.get('capture');
+    let link = '';
+    if (item) link = `item:${item}`;
+    else if (capture) link = `capture:${capture}`;
+    if (handledLink.current === link) return;
+    handledLink.current = link;
+    if (item) Promise.resolve().then(() => open(item));
+    else if (capture) {
       brainApi
-        .context(params.get('capture'))
+        .context(capture)
         .then((data) => {
           setSelection(blank('note', { title: 'Content research', links: [data.sourceId] }));
           setBacklinks([]);

@@ -244,4 +244,35 @@ describe('Second Brain owner workspace', () => {
     expect(await screen.findByLabelText('Markdown')).toHaveValue(note.body);
     expect(brainApi.get).toHaveBeenCalledWith('note-1');
   });
+  it('follows a citation link to its source while the page stays mounted (#1408)', async () => {
+    const source = { ...note, id: 'source-1', title: 'A cited source', body: 'Source text.' };
+    brainApi.get.mockImplementation(async (id) => ({
+      item: id === source.id ? source : note,
+      backlinks: [],
+    }));
+    brainApi.ask.mockResolvedValue({
+      insufficientEvidence: false,
+      claims: [{ text: 'A claim.', sourceIds: ['S1'] }],
+      suggestions: [],
+      sources: [
+        {
+          id: source.id,
+          citation: 'S1',
+          title: source.title,
+          href: `/admin/second-brain?item=${source.id}`,
+        },
+      ],
+      usage: [],
+      indexing: { status: 'complete' },
+    });
+    mount();
+    await screen.findByText(note.title);
+    fireEvent.click(screen.getByRole('button', { name: 'Ask', exact: true }));
+    fireEvent.change(screen.getByLabelText('Your question'), { target: { value: 'Outline it' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask my brain' }));
+    fireEvent.click(await screen.findByRole('link', { name: `S1: ${source.title}` }));
+    expect(await screen.findByLabelText('Markdown')).toHaveValue(source.body);
+    expect(brainApi.get).toHaveBeenCalledTimes(1);
+    expect(brainApi.get).toHaveBeenCalledWith(source.id);
+  });
 });

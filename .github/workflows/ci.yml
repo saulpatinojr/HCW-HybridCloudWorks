@@ -426,6 +426,11 @@ jobs:
   # configuration cards, one re-authentication on an expired token, and the
   # Pixel 5 drawer on four admin routes. All three specs together took 100 s
   # on one worker locally; the acceptance is a job under eight minutes.
+  #
+  # The Second Brain journeys (second-brain.spec.js, #1408) run here too.
+  # They had been written with #1395 but never listed, so nothing ran them
+  # after a merge. They stub the brain API the way the admin spec stubs the
+  # identity host; the five of them took 20 s on ten workers locally.
   e2e:
     name: e2e (playwright)
     runs-on: ubuntu-26.04
@@ -496,7 +501,7 @@ jobs:
         env:
           TEST_BASE_URL: http://127.0.0.1:4173
           CI: 'true'
-        run: npx playwright test --project=chromium --project=mobile-chrome hydration.spec.js contentforge.spec.js admin-authenticated.spec.js ai-engine.spec.js ambassador.spec.js blogs.spec.js
+        run: npx playwright test --project=chromium --project=mobile-chrome hydration.spec.js contentforge.spec.js admin-authenticated.spec.js ai-engine.spec.js ambassador.spec.js blogs.spec.js second-brain.spec.js
 
       - name: Upload the report on failure
         if: failure()
