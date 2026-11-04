@@ -275,9 +275,9 @@ describe('lab-supply-chain.yml', () => {
     expect(check).toContain('For an add-on image the fix is a new release of that add-on');
   });
 
-  it('builds the Docker Sandboxes template from main and scans it, and says so when it did not build (#1473)', () => {
+  it('builds the Docker Sandboxes template and scans it, and says so when it did not build (#1473)', () => {
     const check = source.slice(source.indexOf('  check:'));
-    const build = check.slice(check.indexOf('- name: Build the Docker Sandboxes template from main'), check.indexOf('- name: Scan the published lab images the host runs'));
+    const build = check.slice(check.indexOf('- name: Build the Docker Sandboxes template'), check.indexOf('- name: Scan the published lab images the host runs'));
     // The same command the template's README gives a learner, without last week's layers.
     expect(build).toContain('docker build --no-cache --platform linux/amd64 -f lab-image/sandbox-template/Dockerfile -t hcw-lz-sandbox:scan lab-image');
     // A failed build must not skip the scan of the published images.
@@ -287,7 +287,7 @@ describe('lab-supply-chain.yml', () => {
     // A template that did not build is a failed scan, named in the issue, never a quiet pass.
     expect(scan).toContain('if ! docker image inspect --format \'{{.Id}}\' "$sandbox" > /dev/null 2>&1; then');
     expect(scan).toMatch(/if ! docker image inspect[^\n]*\n\s*failed=1\n\s*sandbox=""/);
-    expect(scan).toContain('did not build from main this week, so it was not scanned');
+    expect(scan).toContain('did not build this week, so it was not scanned');
     const issue = check.slice(check.indexOf('- name: Open or update the issue'), check.indexOf('- name: Fail the run when the pin check could not evaluate'));
     expect(issue).toContain('hcw-lz-sandbox:scan\\` is the Docker Sandboxes template');
   });

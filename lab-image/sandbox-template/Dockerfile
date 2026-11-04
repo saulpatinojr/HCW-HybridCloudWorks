@@ -45,8 +45,9 @@ FROM docker/sandbox-templates:claude-code@sha256:30ec2b1bb76e3993aff912c553a5c24
 # binary, the Azure CLI is Microsoft's apt package.
 #
 # The Azure CLI comes from the base's own Ubuntu suite, resolute, which
-# packages.microsoft.com publishes (dists/resolute carries 2.90.0-1~resolute)
-# and Microsoft's install page lists as tested (Ubuntu 26.04). That is not
+# packages.microsoft.com publishes (on 2026-09-25 dists/resolute carried
+# 2.90.0-1~resolute, the newest release that day) and Microsoft's install
+# page lists as tested (Ubuntu 26.04). That is not
 # the lab image's line: lab-image/Dockerfile is Debian 13 and installs the
 # bookworm build (AZURE_CLI_SUITE), which on Ubuntu 26.04 would be a Debian
 # package on the wrong distribution. So the suite here is the base image's
@@ -71,17 +72,25 @@ FROM docker/sandbox-templates:claude-code@sha256:30ec2b1bb76e3993aff912c553a5c24
 # (#1473). That file has a separate fetch stage to download the wheels; this
 # one-stage recipe downloads them here instead, with the CLI's own pip in
 # hash-checking mode (--require-hashes refuses a wheel whose SHA256 differs
-# from the line), so nothing but the CLI's Python is used. Doing it in the
-# RUN that installs the CLI means the old files are deleted before this
-# layer is saved, so no image layer keeps a copy of them for a scanner to
-# find. The order is the full target's: first a guard that stops the build
-# if the CLI already ships a package at or above the version listed (a
-# downgrade that `pip check` would accept), naming the line to remove; then
-# an offline install (`--no-index --find-links`) from the downloaded wheels
-# only; then `pip check`, which fails the build if a new version breaks a
-# range another package in the CLI declares. An empty or absent block
-# downloads and installs nothing. The downloaded wheels are removed with
-# the apt lists.
+# from the line, and --no-deps with it refuses to resolve anything the
+# block does not list), so nothing but the CLI's Python is used. pip runs
+# --isolated, so no PIP_* variable or pip.conf in the base image or the
+# CLI package can point it at another index. Doing it in the RUN that
+# installs the CLI means the old files are deleted before this layer is
+# saved, so no image layer keeps a copy of them for a scanner to find (the
+# COPY of versions.env above is its own layer, but holds versions and
+# public checksums only). The order is the full target's: first a guard
+# that stops the build if the CLI already ships a package at or above the
+# version listed (a downgrade that `pip check` would accept), or no longer
+# ships it at all, naming the line to remove; then the download, checked
+# to have produced one wheel per line; then an offline install (`--no-index
+# --find-links`) from those wheels only; then `pip check`, which fails the
+# build if a new version breaks a range another package in the CLI
+# declares. An empty or absent block downloads and installs nothing. The
+# downloaded wheels are removed with the apt lists. One thing to know for
+# a derived image: dpkg's file list for azure-cli still names the replaced
+# files, so reinstalling the CLI with apt would put the old packages back;
+# nothing here runs apt again, and the agent user cannot.
 USER root
 COPY versions.env /tmp/versions.env
 RUN set -eu; . /tmp/versions.env; . /etc/os-release; \
@@ -109,9 +118,10 @@ RUN set -eu; . /tmp/versions.env; . /etc/os-release; \
       /opt/az/bin/python3 -I -c 'import re, sys; from importlib.metadata import distributions; from pip._vendor.packaging.version import Version; norm = lambda n: re.sub("[-_.]+", "-", n).lower(); cli, (name, want) = sys.argv[1], sys.argv[2].split("=="); have = next((d.version for d in distributions() if norm(d.metadata["Name"] or "") == norm(name)), None); fix = "remove its AZURE_CLI_PYTHON_OVERRIDES line from lab-image/versions.env"; sys.exit(f"Azure CLI {cli} does not ship {name}; {fix}" if have is None else f"Azure CLI {cli} already ships {name} {have}, not older than the {want} listed; {fix}" if Version(have) >= Version(want) else 0)' "${AZURE_CLI_VERSION}" "${spec}"; \
     done < /tmp/az-wheels/requirements.txt; \
     if [ -s /tmp/az-wheels/requirements.txt ]; then \
-      /opt/az/bin/python3 -Im pip download --disable-pip-version-check --no-cache-dir --no-deps \
+      /opt/az/bin/python3 -Im pip download --isolated --disable-pip-version-check --no-cache-dir --no-deps \
         --only-binary=:all: --require-hashes --dest /tmp/az-wheels -r /tmp/az-wheels/requirements.txt; \
-      /opt/az/bin/python3 -Im pip install --disable-pip-version-check --no-cache-dir \
+      test "$(find /tmp/az-wheels -name '*.whl' | wc -l)" -eq "$(wc -l < /tmp/az-wheels/requirements.txt)"; \
+      /opt/az/bin/python3 -Im pip install --isolated --disable-pip-version-check --no-cache-dir \
         --root-user-action=ignore --no-index --find-links /tmp/az-wheels \
         --require-hashes -r /tmp/az-wheels/requirements.txt; \
     fi; \

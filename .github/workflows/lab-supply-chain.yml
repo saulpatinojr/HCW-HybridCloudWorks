@@ -70,8 +70,8 @@
 #      scripts/lab/read-addon-pins.mjs, not from a tag — and the Docker
 #      Sandboxes template (lab-image/sandbox-template), which is never
 #      published: learners build it themselves from the Docker guide, so
-#      this job builds it from main the same way and scans what it built
-#      (#1473) —
+#      this job builds it the same way from the checked-out commit (main on
+#      the schedule) and scans what it built (#1473) —
 #      with Trivy for HIGH and CRITICAL vulnerabilities with a fix available,
 #      and opens one issue (or comments on the open one) when a pin is
 #      behind, an image needs a fix, or a pin could not be bumped. That
@@ -469,13 +469,14 @@ jobs:
       # The Docker Sandboxes template is the one lab image nothing publishes:
       # a learner builds it from the Docker guide with this same command
       # (lab-image/sandbox-template/README.md), so the thing to scan is a
-      # fresh build from main, made here (#1473). No layer cache, so the
+      # fresh build of the checked-out commit (main on the schedule; the
+      # dispatched branch on a manual run), made here (#1473). No layer cache, so the
       # Azure CLI apt layer is this week's. The build fails on the
       # Dockerfile's own downgrade guard or `pip check`. `continue-on-error`,
       # so a failed build does not skip the scan of the published images:
       # the scan step finds no image under the tag, counts that as a failed
       # scan, and the issue says the template did not build.
-      - name: Build the Docker Sandboxes template from main
+      - name: Build the Docker Sandboxes template
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -515,7 +516,7 @@ jobs:
           if ! docker image inspect --format '{{.Id}}' "$sandbox" > /dev/null 2>&1; then
             failed=1
             sandbox=""
-            { echo "### \`hcw-lz-sandbox:scan\` (lab-image/sandbox-template)"; echo; echo "the Docker Sandboxes template did not build from main this week, so it was not scanned; the build step's log in this run says why (its Azure CLI downgrade guard or \`pip check\`, or the build itself)"; echo; } | tee -a "$table" >> "$compact"
+            { echo "### \`hcw-lz-sandbox:scan\` (lab-image/sandbox-template)"; echo; echo "the Docker Sandboxes template did not build this week, so it was not scanned; the build step's log in this run says why (its Azure CLI downgrade guard or \`pip check\`, or the build itself)"; echo; } | tee -a "$table" >> "$compact"
           fi
           for image in "$runner" "$full" $addon_images $sandbox; do
             n=$((n+1))
@@ -588,7 +589,7 @@ jobs:
               echo
             fi
             if [ "${SCAN_FAILED}" = "1" ]; then
-              echo "**Images:** a published lab or add-on image, or the Docker Sandboxes template built from main, carries a HIGH or CRITICAL vulnerability with a fix available, or could not be scanned. For an add-on image the fix is a new release of that add-on, pinned in group_vars/all.yml; for a lab image, a newer base digest arrives as the \`chore/lab-pins-image-base\` pull request, and publish-lab-image.yml's weekly rebuild refreshes the full image's Debian packages; a fix that a tool or a Terraform provider carries arrives as the \`chore/lab-pins-image-tools\` pull request once its publisher has released it, and a finding in one already at its newest release waits on that publisher. Each publish from main opens the \`chore/lab-pins-image-digests\` pull request that pins the new digests where they run. \`hcw-lz-sandbox:scan\` is the Docker Sandboxes template (lab-image/sandbox-template) built from main in this run, the image learners build themselves; a finding inside its Azure CLI is fixed by a line in \`AZURE_CLI_PYTHON_OVERRIDES\` in lab-image/versions.env or by the next CLI release, and a finding in its base by the \`chore/lab-pins-image-base\` pull request."
+              echo "**Images:** a published lab or add-on image, or the Docker Sandboxes template built in this run, carries a HIGH or CRITICAL vulnerability with a fix available, or could not be scanned. For an add-on image the fix is a new release of that add-on, pinned in group_vars/all.yml; for a lab image, a newer base digest arrives as the \`chore/lab-pins-image-base\` pull request, and publish-lab-image.yml's weekly rebuild refreshes the full image's Debian packages; a fix that a tool or a Terraform provider carries arrives as the \`chore/lab-pins-image-tools\` pull request once its publisher has released it, and a finding in one already at its newest release waits on that publisher. Each publish from main opens the \`chore/lab-pins-image-digests\` pull request that pins the new digests where they run. \`hcw-lz-sandbox:scan\` is the Docker Sandboxes template (lab-image/sandbox-template) built in this run from the commit it checked out (main on the schedule), the image learners build themselves; a finding inside its Azure CLI is fixed by a line in \`AZURE_CLI_PYTHON_OVERRIDES\` in lab-image/versions.env or by the next CLI release, and a finding in its base by the \`chore/lab-pins-image-base\` pull request."
             else
               echo "**Images:** no HIGH or CRITICAL vulnerability with a fix available."
             fi

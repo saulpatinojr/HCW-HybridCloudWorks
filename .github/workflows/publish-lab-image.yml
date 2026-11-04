@@ -282,8 +282,13 @@ jobs:
       # command in its README. This builds it the same way, so a pull request
       # that touches lab-image/ proves it still builds, and its Azure CLI
       # Python replacements (AZURE_CLI_PYTHON_OVERRIDES) stop the build on a
-      # downgrade or a broken range as the full target's do (#1473). Its own
-      # cache scope: its layers share nothing with the lab image's.
+      # downgrade or a broken range as the full target's do (#1473). No
+      # Actions layer cache for it: the image is one COPY of versions.env
+      # and one RUN, so any pull request that moves a pin (most of them)
+      # misses the cache anyway, and exporting its ~3.4 GB of layers would
+      # push the repository's cache (11 GB on 2026-11-03, already past
+      # GitHub's 10 GB eviction line) into evicting the hcw-lab scope the
+      # publish job rebuilds from. A cold build is what a learner does.
       # `--platform linux/amd64` as the README says, because the checksums
       # in versions.env are amd64. Not on the publish job: nothing is pushed
       # from it, and the weekly scan in lab-supply-chain.yml builds it again.
@@ -298,8 +303,6 @@ jobs:
           provenance: false
           no-cache: ${{ github.event_name == 'schedule' }}
           tags: hcw-lz-sandbox:ci
-          cache-from: type=gha,scope=hcw-lz-sandbox
-          cache-to: type=gha,scope=hcw-lz-sandbox,mode=max
 
       # What the README says a learner sees inside the sandbox, with no
       # network: terraform and az at the pinned versions, the agent user, and
@@ -315,8 +318,8 @@ jobs:
             . /workspace/versions.env
             test "$(id -un):$(id -u)" = agent:1000
             test -f /home/agent/.claude/CLAUDE.md
-            terraform version | head -1 | grep -Fx "Terraform v${TERRAFORM_VERSION}"
-            az version --output json | grep -F "\"azure-cli\": \"${AZURE_CLI_VERSION}\""
+            tf="$(terraform version)"; printf "%s\n" "$tf" | grep -Fx "Terraform v${TERRAFORM_VERSION}"
+            azv="$(az version --output json)"; printf "%s\n" "$azv" | grep -F "\"azure-cli\": \"${AZURE_CLI_VERSION}\""
             while read -r spec _; do
               [ -n "$spec" ] || continue
               name="${spec%%==*}"; want="${spec#*==}"
@@ -369,6 +372,9 @@ jobs:
             docker image ls --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}' hcw-lab-runner:ci
             docker image ls --format '{{.Repository}}\t{{.Tag}}\t{{.Size}}' hcw-lab:ci
             docker image ls --format '{{.Repository}}\t{{.Tag}}\t{{.Size}}' hcw-lz-sandbox:ci
+            echo
+            echo "Runner disk after the three builds (the sandbox template added ~3.4 GB, #1473):"
+            df -h / | tail -1
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
