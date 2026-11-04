@@ -154,8 +154,9 @@
  *     December 1, 2026. The last day to take the current version of the exam
  *     (DVA-C02) is November 30, 2026." — a registration date the blog gives
  *     as October 27, 2026. The stored `registrationOpens` keeps the blog's
- *     date, by the rule above, and the DVA re-read due before 2026-12-01
- *     should look at it again.
+ *     date, by the rule above; the row's `longDescription` names both dates
+ *     so a visitor is not told one as settled (CodeRabbit on #1529); and the
+ *     DVA re-read due before 2026-12-01 should look at it again.
  *
  * Only these rows were re-read, so `DATA_AS_OF` stays.
  *
@@ -434,7 +435,7 @@ export const certifications = [
     description:
       'The updated Developer – Associate exam, adding generative AI and agentic development to serverless and CI/CD patterns.',
     longDescription:
-      'The next version of the Developer – Associate exam. Registration opens October 27, 2026 and delivery begins December 1, 2026, the day after DVA-C02 retires. AWS has said the update reflects AI-related competencies alongside the existing serverless, CI/CD, and application development domains.',
+      'The next version of the Developer – Associate exam. Delivery begins December 1, 2026, the day after DVA-C02 retires. AWS gives two dates for registration: its September announcement says October 27, 2026, and the DVA-C03 exam guide says December 1, 2026, so check the exam page before booking. AWS has said the update reflects AI-related competencies alongside the existing serverless, CI/CD, and application development domains.',
     topics: ['Lambda & Serverless', 'API Gateway', 'DynamoDB', 'CI/CD', 'Generative AI'],
     hours: 40,
     prepTime: '~3 months',
