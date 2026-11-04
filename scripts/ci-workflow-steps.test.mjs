@@ -59,29 +59,34 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { COMPONENTS } from './lib/ci-filters.mjs';
-// Jobs, steps and matrix rows are cut out of the workflow text by their indentation (shared with iac-workflow-steps.test.mjs).
-import { findBashTools, GIT_TEST_CONFIG, parseJobs, parseMatrixRows } from './lib/workflow-text.mjs';
+import { COMPONENTS, verifyMatrix, verifyRows } from './lib/ci-filters.mjs';
+// Jobs and steps are cut out of the workflow text by their indentation (shared with iac-workflow-steps.test.mjs).
+import { findBashTools, GIT_TEST_CONFIG, parseJobs } from './lib/workflow-text.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CI = readFileSync(join(REPO, '.github', 'workflows', 'ci.yml'), 'utf8').replace(/\r\n/g, '\n');
 
 const GUARD_STEP = 'CI path filters list every file the tests read';
+const BUILD_STEP = 'Build the verify matrix';
 const SCRIPTS_ROW = 'scripts (operations)';
 
 const JOBS = parseJobs(CI);
+const CHANGES = JOBS.find((job) => job.key === 'changes');
 const VERIFY = JOBS.find((job) => job.key === 'verify');
-const ROWS = parseMatrixRows(VERIFY.lines);
+// The verify matrix's rows, as the `changes` job holds them since #1545's
+// third pull request: each with the filter of the detect step its id names.
+const ROWS = verifyRows(CI);
 const scriptsRow = ROWS.find((row) => row.name === SCRIPTS_ROW);
 
 /** The change-detection steps: every step that diffs against the base. */
 const DETECT_STEPS = JOBS.flatMap((job) => job.steps.filter((step) => step.run?.includes('git diff --name-only')).map((step) => ({ job: job.key, step })));
 
 /**
- * Where a path that matches each non-matrix step's real filter lives, by the
- * step's name (the five live in the `changes` job since #1545). The matrix
- * step takes one from the row's folder. A step this table does not know
- * fails the test that needs it, so a new one is noticed.
+ * Where a path that matches each step's real filter lives, by the step's
+ * name (all ten live in the `changes` job since #1545: five for the jobs
+ * with an `if:`, five for the rows of the verify matrix, which take one
+ * from the row's folder). A step this table does not know fails the test
+ * that needs it, so a new one is noticed.
  */
 const MATCHING_PATH = {
   'Detect frontend changes for the browser suites': 'frontend/e2e/zz-probe.spec.js',
@@ -89,6 +94,11 @@ const MATCHING_PATH = {
   'Detect lab-host role changes': 'lab-host/ansible/roles/hardening/tasks/ufw.yml',
   'Detect lab-host/coder changes': 'lab-host/coder/compose.yaml',
   'Detect harness changes': 'hooks/claude_event.py',
+  'Detect changes for the frontend row': 'frontend/zz-probe.txt',
+  'Detect changes for the functions (azure) row': 'functions/zz-probe.txt',
+  'Detect changes for the scripts (operations) row': 'scripts/zz-probe.txt',
+  'Detect changes for the vps-agent row': 'vps-agent/zz-probe.txt',
+  'Detect changes for the edge (availability probe) row': 'edge/availability-probe/zz-probe.txt',
 };
 
 /**
@@ -104,9 +114,10 @@ const MATCHING_PATH = {
  * (#1549 paid the whole lab-host suite for a change that moved no lab-host
  * file). A step missing from this table, or one whose setting differs, fails
  * the test below, so moving a job between the two lists is a deliberate edit
- * here as well as in ci.yml. The matrix step has no setting: every row keeps
- * the self-trigger, because the scripts row reads the workflow files anyway
- * and the others finish in seconds when their files did not change.
+ * here as well as in ci.yml. Every verify row keeps it: a row's install and
+ * run lines are in this file, so a workflow edit that broke them should turn
+ * red on the pull request that made it, and the scripts row reads the
+ * workflow files anyway.
  */
 const SELF_TRIGGER = {
   e2e: 'false',
@@ -114,6 +125,11 @@ const SELF_TRIGGER = {
   roletests: 'false',
   coder: 'false',
   harness: 'true',
+  frontend: 'true',
+  functions: 'true',
+  scripts: 'true',
+  'vps-agent': 'true',
+  edge: 'true',
 };
 
 /**
@@ -139,22 +155,20 @@ const ROLE_TEST_READS = {
   'vault_tools/tests/hcw-vault-set.test.sh': ['lab-host/bootstrap.sh'],
 };
 
-/** One entry per time a detection step runs: the matrix step once per row. */
-const ENTRIES = DETECT_STEPS.flatMap(({ job, step }) => {
-  if (step.env.FILTER === '${{ matrix.filter }}') {
-    return ROWS.map((row) => ({ job, step, row, label: `${job} / ${row.name}`, filter: row.filter, path: `${row.dir}/zz-probe.txt` }));
-  }
-  return [{ job, step, label: `${job} / ${step.name}`, filter: step.env.FILTER, path: MATCHING_PATH[step.name] }];
+/** One entry per detection step; the five that answer for a verify row carry that row. */
+const ENTRIES = DETECT_STEPS.map(({ job, step }) => {
+  const row = ROWS.find((candidate) => candidate.id === step.id);
+  return { job, step, row, label: `${job} / ${step.name}`, filter: step.env.FILTER, path: MATCHING_PATH[step.name] };
 });
-/** The same, with the matrix step once: for what does not depend on the row's filter. */
-const DISTINCT = ENTRIES.filter((entry, i) => ENTRIES.findIndex((other) => other.step === entry.step) === i);
+/** Every step once (each runs once now that no step is shared by the matrix rows). */
+const DISTINCT = ENTRIES;
 const byLabel = (entries) => entries.map((entry) => [`${entry.job}: ${entry.step.name}`, entry]);
 
 /**
  * Evaluates the conditions ci.yml writes in `if:`: `==` and `!=` between a
- * context value (matrix.name, steps.changes.outputs.relevant) and a quoted
- * string, joined with `&&` and `||`. Anything else throws, so a condition
- * this cannot read is noticed rather than guessed.
+ * context value (matrix.name, matrix.relevant) and a quoted string, joined
+ * with `&&` and `||`. Anything else throws, so a condition this cannot read
+ * is noticed rather than guessed.
  */
 function evaluate(condition, context) {
   const value = (token) => {
@@ -174,14 +188,15 @@ function evaluate(condition, context) {
 }
 
 /**
- * The names of the steps of the `verify` job that run for `row` when the
- * change-detection step wrote `relevant=<relevant>`. Every step before them
- * is taken to have passed (GitHub adds `success() &&` to a condition that has
- * no status check of its own). Only the steps this file is about are worked
- * out; the others are left out of the answer.
+ * The names of the steps of the `verify` job that run for `row` when its
+ * detect step in the `changes` job wrote `relevant=<relevant>` (the build
+ * step puts that answer on the row as `matrix.relevant`). Every step before
+ * them is taken to have passed (GitHub adds `success() &&` to a condition
+ * that has no status check of its own). Only the steps this file is about
+ * are worked out; the others are left out of the answer.
  */
 function stepsThatRun(row, relevant) {
-  const context = { matrix: row, steps: { changes: { outputs: { relevant } } } };
+  const context = { matrix: { ...row, relevant } };
   const wanted = new Set(['Install (lockfile-strict)', GUARD_STEP, 'Test']);
   return VERIFY.steps.filter((step) => wanted.has(step.name) && (step.if === undefined || evaluate(step.if.replace(/^\$\{\{\s*|\s*\}\}$/g, ''), context))).map((step) => step.name);
 }
@@ -190,19 +205,25 @@ function stepsThatRun(row, relevant) {
 // 1. What the change-detection steps are made of, read as text.
 // ---------------------------------------------------------------------------
 describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
-  it('finds the matrix rows and the six change-detection steps (a quiet parse would make every test below pass for nothing)', () => {
+  it('finds the matrix rows and the ten change-detection steps (a quiet parse would make every test below pass for nothing)', () => {
     expect(ROWS.map((row) => row.dir)).toEqual(COMPONENTS.map((component) => component.dir));
-    // The matrix row's step stays in the verify job; the other five live in
-    // the `changes` job, whose outputs the jobs with an `if:` read (#1545).
+    // All ten live in the `changes` job (#1545): five whose outputs the jobs
+    // with an `if:` read, then one per verify row, read by the build step.
     expect(DETECT_STEPS.map(({ job, step }) => `${job}: ${step.name}`)).toEqual([
       'changes: Detect frontend changes for the browser suites',
       'changes: Detect lab-host changes',
       'changes: Detect lab-host role changes',
       'changes: Detect lab-host/coder changes',
       'changes: Detect harness changes',
-      'verify: Detect component changes',
+      'changes: Detect changes for the frontend row',
+      'changes: Detect changes for the functions (azure) row',
+      'changes: Detect changes for the scripts (operations) row',
+      'changes: Detect changes for the vps-agent row',
+      'changes: Detect changes for the edge (availability probe) row',
     ]);
     expect(ENTRIES).toHaveLength(ROWS.length + 5);
+    expect(ENTRIES.filter((entry) => entry.row).map((entry) => entry.row.name)).toEqual(ROWS.map((row) => row.name));
+    expect(VERIFY.steps.map((step) => step.name)).not.toContain('Detect component changes');
   });
 
   // The point of the `changes` job: a job that is not needed is skipped
@@ -221,6 +242,16 @@ describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
       expect(readers.map((job) => job.key), `output ${output} must be read by exactly one job`).toHaveLength(1);
       expect(readers[0].lines, `${readers[0].key} must need changes`).toContain('    needs: changes');
     }
+    // The sixth output is the verify matrix itself: the build step's JSON,
+    // which the verify job reads with fromJSON and nothing else reads.
+    expect(CHANGES.lines).toContain('      verify: ${{ steps.verify.outputs.matrix }}');
+    const build = CHANGES.steps.find((step) => step.name === BUILD_STEP);
+    expect(build.id).toBe('verify');
+    expect(build.env.STEPS).toBe('${{ toJSON(steps) }}');
+    expect(build.run).toContain('echo "matrix=$(jq -c \'{include: .}\' <<<"$include")" >> "$GITHUB_OUTPUT"');
+    expect(VERIFY.lines).toContain('    needs: changes');
+    expect(VERIFY.lines).toContain('      matrix: ${{ fromJSON(needs.changes.outputs.verify) }}');
+    expect(JOBS.filter((job) => job.lines.some((line) => line.includes('needs.changes.outputs.verify'))).map((job) => job.key)).toEqual(['verify']);
     const gate = JOBS.find((job) => job.key === 'gate');
     const needs = gate.lines.find((line) => /^ {4}needs:/.test(line));
     const named = needs.replace(/^ {4}needs:\s*\[|\]\s*$/g, '').split(',').map((name) => name.trim()).sort();
@@ -235,12 +266,12 @@ describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
   // jobs with two filters: the lint's is lab-host/ whole, the tests' is the
   // roles, group_vars and inventory plus the files outside lab-host/ansible/
   // that the tests read (#1545, the second pull request).
-  it('every `changes` step says whether a change to ci.yml alone counts, as SELF_TRIGGER pins it, and the matrix step does not', () => {
+  it('every `changes` detect step says whether a change to ci.yml alone counts, as SELF_TRIGGER pins it', () => {
     const changes = JOBS.find((job) => job.key === 'changes');
-    const found = Object.fromEntries(changes.steps.filter((step) => step.id).map((step) => [step.id, step.env.WORKFLOW_SELF_TRIGGER]));
+    const found = Object.fromEntries(DETECT_STEPS.map(({ step }) => [step.id, step.env.WORKFLOW_SELF_TRIGGER]));
     expect(found).toEqual(SELF_TRIGGER);
-    const matrixStep = VERIFY.steps.find((step) => step.name === 'Detect component changes');
-    expect(matrixStep.env.WORKFLOW_SELF_TRIGGER, 'the matrix step keeps the self-trigger for every row').toBeUndefined();
+    // The build step is the only other step with an id, and it decides nothing itself.
+    expect(changes.steps.filter((step) => step.id && !step.run?.includes('git diff --name-only')).map((step) => step.name)).toEqual([BUILD_STEP]);
     for (const { step } of DETECT_STEPS) {
       // The switch is read with a default of true, so an unset value fails toward running.
       if (step.env.WORKFLOW_SELF_TRIGGER !== undefined) expect(step.run).toContain('if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then');
@@ -499,9 +530,9 @@ describe.skipIf(!TOOLS.ready)(`ci.yml change-detection steps: run with bash${SKI
     });
   });
 
-  // 2 (continued). The real change-detection step, then the conditions of the steps after it.
+  // 2 (continued). The real change-detection step of each row, then the conditions of the verify steps.
   describe('a pull request that changes only frontend/src/x.test.jsx', () => {
-    const matrixEntries = ENTRIES.filter((entry) => entry.job === 'verify');
+    const matrixEntries = ENTRIES.filter((entry) => entry.row);
 
     it.each(matrixEntries.map((entry) => [entry.row.name, entry]))('%s: reaches the guard step if and only if it is the scripts row, whatever its filter says', (_name, entry) => {
       const detected = run(entry, { tag: 'frontend-test-only' });
@@ -513,6 +544,140 @@ describe.skipIf(!TOOLS.ready)(`ci.yml change-detection steps: run with bash${SKI
       // The row's own tests run exactly when its filter matched the file.
       expect(ran.includes('Test')).toBe(relevant === 'true');
     });
+  });
+
+  // 2 (continued). The five row steps and the build step, run together: the
+  // matrix the runner would build for a commit, against the one worked out
+  // in JavaScript from the same rows and filters (the describe below this
+  // block). The build step needs jq and yq, which the runner image ships
+  // and a workstation may not; on GitHub Actions both must be there.
+  describe('the verify matrix, built with bash (#1545)', () => {
+    const build = CHANGES.steps.find((step) => step.name === BUILD_STEP);
+    const hasTool = (tool) => spawnSync(tool, ['--version'], { encoding: 'utf8' }).status === 0;
+    const toolsReady = hasTool('jq') && hasTool('yq');
+    const rowEntries = ENTRIES.filter((entry) => entry.row);
+
+    /** Runs each row's detect step on the commit `tag`, then the build step on their answers; returns what it wrote as `matrix=`. */
+    function buildMatrix(tag, event = 'pull_request') {
+      const steps = {};
+      for (const entry of rowEntries) {
+        const detected = run(entry, { tag, event });
+        expect(detected.status, detected.log).toBe(0);
+        steps[entry.step.id] = { outputs: { relevant: detected.written.trim().replace('relevant=', '') } };
+      }
+      const output = `${outputs}/matrix-${(counter += 1)}.txt`;
+      const result = spawnSync('bash', ['-e', '-c', build.run], {
+        cwd: repo,
+        encoding: 'utf8',
+        env: cleanEnv({ GITHUB_OUTPUT: output, STEPS: JSON.stringify(steps), ROWS: build.env.ROWS }),
+      });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      const written = readFileSync(output, 'utf8');
+      const line = written.split('\n').find((candidate) => candidate.startsWith('matrix='));
+      expect(line, `no matrix= line in ${written}`).toBeDefined();
+      return { matrix: JSON.parse(line.slice('matrix='.length)), log: result.stdout };
+    }
+
+    it.skipIf(process.env.GITHUB_ACTIONS !== 'true')('on GitHub Actions jq and yq are present, so the build step runs here', () => {
+      expect(toolsReady).toBe(true);
+    });
+
+    it.skipIf(!toolsReady)('a docs-only change builds a matrix of the scripts row alone, with relevant=false', () => {
+      const { matrix, log } = buildMatrix('unrelated');
+      expect(matrix).toEqual(verifyMatrix(['notes/zz-unrelated.txt'], { rows: ROWS }));
+      expect(matrix.include.map((row) => [row.name, row.relevant])).toEqual([[SCRIPTS_ROW, 'false']]);
+      expect(log).toContain(`${SCRIPTS_ROW}: relevant=false`);
+    });
+
+    it.skipIf(!toolsReady)('a change to one frontend test builds the rows whose filters match it, in their written order, and the scripts row', () => {
+      const { matrix } = buildMatrix('frontend-test-only');
+      expect(matrix).toEqual(verifyMatrix(['frontend/src/x.test.jsx'], { rows: ROWS }));
+      expect(matrix.include[0]).toMatchObject({ name: 'frontend', dir: 'frontend', relevant: 'true', test: 'npm run test:coverage' });
+      expect(matrix.include.at(-1)).toMatchObject({ name: SCRIPTS_ROW, relevant: 'false' });
+      for (const row of matrix.include) expect(Object.keys(row)).not.toContain('id');
+    });
+
+    it.skipIf(!toolsReady)('a push to main builds every row, each relevant, with the functions row on Node.js 24', () => {
+      const { matrix } = buildMatrix('unrelated', 'push');
+      expect(matrix).toEqual(verifyMatrix([], { event: 'push', rows: ROWS }));
+      expect(matrix.include.map((row) => [row.name, row.relevant])).toEqual(ROWS.map((row) => [row.name, 'true']));
+      expect(matrix.include.find((row) => row.name === 'functions (azure)')['node-version']).toBe('24');
+    });
+
+    it.skipIf(!toolsReady)('a row whose detect step wrote no answer fails the build step and names the row', () => {
+      const output = `${outputs}/matrix-${(counter += 1)}.txt`;
+      const steps = Object.fromEntries(rowEntries.map((entry) => [entry.step.id, { outputs: { relevant: 'true' } }]));
+      delete steps.edge;
+      const result = spawnSync('bash', ['-e', '-c', build.run], {
+        cwd: repo,
+        encoding: 'utf8',
+        env: cleanEnv({ GITHUB_OUTPUT: output, STEPS: JSON.stringify(steps), ROWS: build.env.ROWS }),
+      });
+      expect(result.status).not.toBe(0);
+      expect(`${result.stdout}${result.stderr}`).toContain('edge (availability probe)');
+      expect(existsSync(output) ? readFileSync(output, 'utf8') : '').not.toContain('matrix=');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1 (continued). The verify matrix, worked out from the rows and filters.
+// ---------------------------------------------------------------------------
+// What the `changes` job's build step puts in the verify matrix for a pull
+// request, read from ci.yml's own rows and filters (#1545, the third pull
+// request). Until then every row started a runner on every pull request and
+// the ones whose files had not changed exited after a few seconds (five on
+// the docs-only #1555). A row left out of the matrix starts no runner.
+describe('the verify matrix holds only the rows whose files changed (#1545)', () => {
+  const names = (files, options) => verifyMatrix(files, { rows: ROWS, ...options }).include.map((row) => `${row.name}=${row.relevant}`);
+
+  it('a docs-only change: the scripts row alone, relevant=false, for the guards it runs on every pull request', () => {
+    expect(names(['MEMORY.md'])).toEqual([`${SCRIPTS_ROW}=false`]);
+    expect(names(['docs/runbooks/required-checks.md', 'CHANGELOG.md'])).toEqual([`${SCRIPTS_ROW}=true`]); // CHANGELOG.md is read by a scripts test
+  });
+
+  it('a frontend-only change: the frontend row, and the scripts row for its guards', () => {
+    // frontend/e2e/ is the browser suites: no other row's filter names it.
+    expect(names(['frontend/e2e/zz.spec.js'])).toEqual(['frontend=true', `${SCRIPTS_ROW}=false`]);
+    // frontend/src/ also runs the functions row: the Doc Vault no-leak test
+    // in functions/ reads every source file there (#1414), as the functions
+    // filter's comment says. That is the filter being right, not a stray row.
+    expect(names(['frontend/src/x.jsx'])).toEqual(['frontend=true', 'functions (azure)=true', `${SCRIPTS_ROW}=false`]);
+  });
+
+  it('a scripts or workflow change: the scripts row, relevant', () => {
+    expect(names(['.github/workflows/zz-other.yml'])).toEqual([`${SCRIPTS_ROW}=true`]);
+    // scripts/ also runs the functions row, for the same no-leak test.
+    expect(names(['scripts/zz.mjs'])).toEqual(['functions (azure)=true', `${SCRIPTS_ROW}=true`]);
+  });
+
+  it('the other rows: each on its own folder', () => {
+    expect(names(['vps-agent/lib/zz.js'])).toEqual([`${SCRIPTS_ROW}=false`, 'vps-agent=true']);
+    expect(names(['edge/availability-probe/zz.js'])).toEqual([`${SCRIPTS_ROW}=false`, 'edge (availability probe)=true']);
+  });
+
+  it('a change to ci.yml, or a push to main, runs every row', () => {
+    const all = ROWS.map((row) => `${row.name}=true`);
+    expect(names(['.github/workflows/ci.yml'])).toEqual(all);
+    expect(names(['MEMORY.md'], { event: 'push' })).toEqual(all);
+  });
+
+  it('a row carries what the verify steps read and nothing the build step keeps to itself', () => {
+    const { include } = verifyMatrix(['.github/workflows/ci.yml'], { rows: ROWS });
+    for (const row of include) {
+      expect(Object.keys(row)).toEqual(expect.arrayContaining(['name', 'dir', 'relevant']));
+      expect(Object.keys(row)).not.toContain('id');
+      expect(Object.keys(row)).not.toContain('always');
+      expect(Object.keys(row)).not.toContain('filter');
+    }
+    expect(include.find((row) => row.name === 'functions (azure)')['node-version']).toBe('24');
+    expect(include.find((row) => row.name === 'frontend')).toMatchObject({ lint: 'npm run lint', format: 'npm run format:check', validate: 'npm run validate:routes', build: 'npm run build', test: 'npm run test:coverage' });
+  });
+
+  it('the verify steps read matrix.relevant, and no step reads the detect step that is gone', () => {
+    const conditions = VERIFY.steps.map((step) => step.if ?? '');
+    expect(conditions.filter((condition) => condition.includes("matrix.relevant == 'true'")).length).toBeGreaterThanOrEqual(7);
+    expect(conditions.some((condition) => /steps\.changes/.test(condition))).toBe(false);
   });
 });
 
@@ -547,8 +712,15 @@ describe('the path-filter guard runs on every pull request (#1428)', () => {
     }
   });
 
-  it('cannot be switched off from outside: the job has no `if`, and the pull_request trigger has no path, branch or type filter', () => {
+  it('cannot be switched off from outside: the job has no `if`, its matrix always holds the scripts row, and the pull_request trigger has no path, branch or type filter', () => {
     expect(VERIFY.lines.filter((line) => /^ {4}if:/.test(line))).toEqual([]);
+    // Since #1545's third pull request the matrix is built by the `changes`
+    // job from the rows whose files changed. The scripts row says
+    // `always: true`, so the list is never empty and the job needs no `if:`
+    // of its own; a pull request that changes nothing the row's filter
+    // matches still gets the row, with relevant=false (#1428).
+    expect(ROWS.filter((row) => row.always).map((row) => row.name)).toEqual([SCRIPTS_ROW]);
+    expect(verifyMatrix(['notes/zz-unrelated.txt'], { rows: ROWS }).include.map((row) => [row.name, row.relevant])).toEqual([[SCRIPTS_ROW, 'false']]);
     // `pull_request:` stands alone on its line and nothing is nested under it (no `paths:`, `branches:` or
     // `types:`): the line after it is the next trigger. The `push:` trigger beside it may have its own `branches:`.
     const lines = CI.slice(CI.indexOf('\non:\n') + 1, CI.indexOf('\npermissions:')).split('\n');

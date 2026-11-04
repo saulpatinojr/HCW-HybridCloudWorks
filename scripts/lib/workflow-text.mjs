@@ -57,7 +57,17 @@ export function parseStep(raw) {
     if (key === 'env') {
       for (let j = i + 1; j < lines.length && (lines[j].trim() === '' || /^ {10}/.test(lines[j])); j++) {
         const entry = lines[j].match(/^ {10}([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/);
-        if (entry) step.env[entry[1]] = scalar(entry[2]);
+        if (!entry) continue;
+        if (entry[2].trim() === '|') {
+          // A block scalar (`ROWS: |` in ci.yml's changes job): its lines are indented past the key, and are
+          // kept dedented, so a reader sees the text the step sees.
+          const body = [];
+          for (let k = j + 1; k < lines.length && (lines[k].trim() === '' || /^ {12}/.test(lines[k])); k++) body.push(lines[k].slice(12));
+          while (body.length && body.at(-1).trim() === '') body.pop();
+          step.env[entry[1]] = body.join('\n');
+        } else {
+          step.env[entry[1]] = scalar(entry[2]);
+        }
       }
     } else if (key === 'run' && value.trim() === '|') {
       const body = [];
@@ -73,14 +83,21 @@ export function parseStep(raw) {
   return step;
 }
 
-/** The matrix rows of a job, each with its single-line keys (name, dir, filter, test, language ...). */
-export function parseMatrixRows(lines) {
+/**
+ * The rows of a YAML list, each with its single-line keys (name, dir, filter,
+ * test, language ...). `indent` is the column of each row's `- `: 10 for a
+ * job's `matrix: include:` list (the default), 0 for the dedented `ROWS`
+ * block of ci.yml's "Build the verify matrix" step.
+ */
+export function parseMatrixRows(lines, indent = 10) {
   const rows = [];
+  const first = new RegExp(`^ {${indent}}- ([A-Za-z-]+):\\s*(.*)$`);
+  const more = new RegExp(`^ {${indent + 2}}([A-Za-z-]+):\\s*(.*)$`);
   for (const line of lines) {
-    const first = line.match(/^ {10}- ([A-Za-z-]+):\s*(.*)$/);
-    const more = line.match(/^ {12}([A-Za-z-]+):\s*(.*)$/);
-    if (first) rows.push({ [first[1]]: scalar(first[2]) });
-    else if (more && rows.length) rows.at(-1)[more[1]] = scalar(more[2]);
+    const head = line.match(first);
+    const key = line.match(more);
+    if (head) rows.push({ [head[1]]: scalar(head[2]) });
+    else if (key && rows.length) rows.at(-1)[key[1]] = scalar(key[2]);
     else if (/^ {4}(defaults|steps):/.test(line)) break;
   }
   return rows;

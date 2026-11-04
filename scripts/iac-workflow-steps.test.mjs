@@ -144,15 +144,11 @@ describe('iac-validate.yml change-detection steps: what they are made of (#1429)
   it('finds the two IaC steps (a quiet parse would make every test below pass for nothing)', () => {
     expect(ENTRIES.every((entry) => entry.step), 'a detection step was not found').toBe(true);
     expect(ENTRIES.map((entry) => entry.label)).toEqual(['iac-validate.yml / terraform', 'iac-validate.yml / trivy']);
-    // ci.yml has its six (five in its `changes` job since #1545, one in the
-    // verify matrix), so the "one shape" test below really compares eight steps.
+    // ci.yml has its ten, all in its `changes` job since #1545 (five for the
+    // jobs with an `if:`, five for the rows of the verify matrix), so the
+    // "one shape" test below really compares twelve steps.
     expect(ALL_DETECT_STEPS.map(({ file, job }) => `${file}: ${job}`)).toEqual([
-      'ci.yml: changes',
-      'ci.yml: changes',
-      'ci.yml: changes',
-      'ci.yml: changes',
-      'ci.yml: changes',
-      'ci.yml: verify',
+      ...Array(10).fill('ci.yml: changes'),
       'iac-validate.yml: terraform',
       'iac-validate.yml: trivy',
     ]);
