@@ -529,7 +529,7 @@ describe("what the lab routes answer", () => {
 describe("what the lab job read answers: a report, never the job log", () => {
   const log = (name) =>
     readFileSync(new URL(`./labs/fixtures/${name}`, import.meta.url), "utf8");
-  const JOB_ID = "3f2b8c1e-9d4a-4c5b-8e7f-0a1b2c3d4e5f";
+  const JOB_ID = "33333333-9d4a-4c5b-8e7f-0a1b2c3d4e5f";
   const jobRequest = {
     method: "GET",
     headers: headersOf({}),

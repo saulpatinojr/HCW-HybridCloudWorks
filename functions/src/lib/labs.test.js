@@ -269,12 +269,12 @@ describe('getLabsSnapshot', () => {
           return [
             {
               id: 'vps-hostinger-01',
-              oid: '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b',
+              oid: '99999999-5b4a-4938-8271-605f4e3d2c1b',
               active: true,
               registeredAt: '2026-09-27T12:00:00.000Z',
             },
             // Anything but a literal true is not active: the guard reads it so.
-            { id: 'revoked', oid: '12345678-90ab-4cde-8f01-23456789abcd', active: 'true' },
+            { id: 'revoked', oid: '22222222-90ab-4cde-8f01-23456789abcd', active: 'true' },
             { id: 'legacy' },
           ];
         }
@@ -295,13 +295,13 @@ describe('getLabsSnapshot', () => {
       {
         agentId: 'vps-hostinger-01',
         active: true,
-        oid: '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b',
+        oid: '99999999-5b4a-4938-8271-605f4e3d2c1b',
         registeredAt: '2026-09-27T12:00:00.000Z',
       },
       {
         agentId: 'revoked',
         active: false,
-        oid: '12345678-90ab-4cde-8f01-23456789abcd',
+        oid: '22222222-90ab-4cde-8f01-23456789abcd',
         registeredAt: null,
       },
       { agentId: 'legacy', active: false, oid: null, registeredAt: null },

@@ -42,7 +42,7 @@ BeforeAll {
 
     $appSub = 'aaaaaaaa-1111-4222-8333-444444444444'
     $mgmtSub = 'bbbbbbbb-1111-4222-8333-444444444444'
-    $me = '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b'
+    $me = '99999999-5b4a-4938-8271-605f4e3d2c1b'
     $start = [datetime]::new(2026, 10, 10, 12, 0, 0, [System.DateTimeKind]::Utc)
     $mgmtGroupId = "/subscriptions/$mgmtSub/resourceGroups/rg-mgmt-plat-prod-cus"
     $webGroupId = "/subscriptions/$appSub/resourceGroups/rg-web-site-prod-cus"
@@ -851,7 +851,7 @@ Describe 'The tests themselves' {
             $context = New-TestContext -Test 'jobs-poison'
             { Invoke-AlertTestJobsPoison -Context $context } | Should -Throw '*Put a message that expires on its own after 15 minutes failed*'
             $writes = @(Get-AzWrites)
-            $writes[0] -match '^role assignment create --name ([0-9a-f-]{36}) --assignee-object-id 9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b --assignee-principal-type User --role Storage Queue Data Contributor --scope ' | Should -BeTrue -Because $writes[0]
+            $writes[0] -match '^role assignment create --name ([0-9a-f-]{36}) --assignee-object-id 99999999-5b4a-4938-8271-605f4e3d2c1b --assignee-principal-type User --role Storage Queue Data Contributor --scope ' | Should -BeTrue -Because $writes[0]
             $name = $Matches[1]
             $writes | Should -Contain 'storage account network-rule add --account-name stsitefuncprodcus01 -g rg-web-site-prod-cus --ip-address 203.0.113.7 -o none'
             $writes | Should -Contain 'storage account network-rule remove --account-name stsitefuncprodcus01 -g rg-web-site-prod-cus --ip-address 203.0.113.7 -o none'
@@ -1321,7 +1321,7 @@ switch -Regex ($line) {
         Write-Answer ("{""id"":""/subscriptions/$(Get-Subscription (Get-Value '--subscription'))/resourceGroups/$(Get-Value '--resource-group')/providers/$(Get-Value '--resource-type')/$name""}")
     }
     '^keyvault show ' { Write-Answer '{"id":"/subscriptions/aaaaaaaa-1111-4222-8333-444444444444/resourceGroups/rg-sec-site-prod-cus/providers/Microsoft.KeyVault/vaults/kv-site-prod-cus-01","tags":{}}' }
-    '^ad signed-in-user show' { Write-Answer '{"id":"9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b"}' }
+    '^ad signed-in-user show' { Write-Answer '{"id":"99999999-5b4a-4938-8271-605f4e3d2c1b"}' }
     '^group show ' { Write-Answer ("{""id"":""/subscriptions/$(Get-Subscription (Get-Value '--subscription'))/resourceGroups/$(Get-Value '-n')""}") }
     '^role assignment list ' { Write-Answer '[]' }
     '^role definition list ' { Write-Answer '[]' }

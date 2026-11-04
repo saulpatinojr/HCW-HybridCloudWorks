@@ -15,8 +15,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const TENANT = '1a2fce27-b5f6-43c7-a86e-cf0bb74d4672';
-const CLIENT = 'ac696e96-e203-47be-ade8-c35ece8a6c4a';
+const TENANT = '11111111-2222-3333-4444-555555555555';
+const CLIENT = 'cccccccc-0000-4000-8000-000000000a91';
 
 async function loadConfig(env) {
   vi.resetModules();
