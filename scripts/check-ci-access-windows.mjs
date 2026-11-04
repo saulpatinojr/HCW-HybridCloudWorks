@@ -33,9 +33,11 @@
  * exists, and so is a `ci-*` rule that names no run, which no run could ever
  * close on purpose.
  *
- * This only reads. Removing an orphan stays a person's decision, made after
- * reading the rule and the run again: a re-run of a run keeps its id and
- * opens the same window. The monitor's Azure identity (`github_reader`) held a
+ * This only reads. Removing an orphan is `remove-ci-access-windows.mjs`'s
+ * job since #1463: it imports the detection here and removes each window
+ * whose run has ended, every hour. A re-run of a run keeps its id and opens
+ * the same window, and then the run is in progress again, so the remover
+ * leaves it alone. The monitor's Azure identity (`github_reader`) held a
  * write on the site's config until #1098, because `publish-content-manifest.yml`
  * used it to open its own window (`infra/oidc.tf`, T-718). That window has an
  * identity of its own now, and the reader writes nothing. The monitor reads twice, a minute

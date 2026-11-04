@@ -38,6 +38,20 @@
  * CHECK_ATTEMPTS_PER_WINDOW times in CHECK_WINDOW_MS (the lab submission's
  * limit, public-lock.js), and the status read and the stop share
  * VISITOR_READS_PER_WINDOW in the same window.
+ *
+ * WHAT IS SENT TO CODER, AND WHAT IS TRUSTED FROM A RECORD (#1403, the items
+ * found while the timer was built). Every call to Coder refuses to follow a
+ * redirect (`redirect: 'error'`): the broker token travels in a custom header
+ * that `fetch` keeps on a redirect to another site, and the sweep now runs
+ * unattended. A value read from a session record is written into a Coder path
+ * only when it has the shape of what it claims to be: a Coder id is a UUID
+ * (`CODER_ID_SHAPE`), a visitor's user name is `v-` and twelve hex characters
+ * (`VISITOR_USERNAME_SHAPE`), and a workspace name is one of the lab names in
+ * `VALID_LAB_WORKSPACES`. Before a user is deleted it is read back by its id,
+ * and deleted only when Coder's answer is that id and a visitor's name. The
+ * three queries on `lab_jobs` are bounded with `TOP`, and the sweep stops
+ * taking up sessions before the claims it made can run out
+ * (`SWEEP_DEADLINE_MS`).
  */
 
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -76,6 +90,34 @@ export const VISITOR_DOC_TTL_SECONDS = 7200; // 2 hours
 export const VISITOR_READS_PER_WINDOW = 60;
 /** The shape of the Coder user names the broker makes (`generateVisitorCredentials`). */
 export const VISITOR_USERNAME_SHAPE = /^v-[0-9a-f]{12}$/;
+/**
+ * The shape of a Coder id, a UUID: Coder's users and workspaces have one each,
+ * and nothing that is not one is written into a Coder path as an id (#1403).
+ */
+export const CODER_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Is this value plainly a Coder id (a UUID)? Anything else, `me` included, is not. */
+export function isCoderId(value) {
+  return typeof value === 'string' && CODER_ID_SHAPE.test(value);
+}
+
+/** Is this value plainly one of the broker's own user names? */
+export function isVisitorUsername(value) {
+  return typeof value === 'string' && VISITOR_USERNAME_SHAPE.test(value);
+}
+
+/** Is this value one of the workspace names the broker makes (`VALID_LAB_WORKSPACES`)? */
+export function isLabWorkspaceName(value) {
+  return typeof value === 'string' && LAB_WORKSPACE_NAMES.has(value);
+}
+
+/**
+ * How every call to Coder is made: a redirect is a failure, never followed.
+ * `fetch` keeps a custom header such as `Coder-Session-Token` on a redirect
+ * to another site, so a Coder address that answered with one would send the
+ * broker token wherever it pointed (#1403; coder-status.js does the same).
+ */
+export const CODER_FETCH_OPTIONS = Object.freeze({ redirect: 'error' });
 
 export const VALID_LAB_WORKSPACES = Object.freeze({
   'landing-zone-builder-output': 'lab-lzb',
@@ -88,6 +130,7 @@ export const VALID_LAB_WORKSPACES = Object.freeze({
   'vmware-hcx-migration-walkthrough': 'lab-hcx',
   'docker-sandbox-agent-walkthrough': 'lab-dsba',
 });
+const LAB_WORKSPACE_NAMES = new Set(Object.values(VALID_LAB_WORKSPACES));
 
 export const DOOR_CODES = Object.freeze({
   closed: 'VISITOR_SESSIONS_CLOSED',
@@ -179,6 +222,13 @@ export function generateVisitorCredentials() {
 const coderTimeout = (config, fallbackMs = CODER_CALL_TIMEOUT_MS) =>
   AbortSignal.timeout(config?.timeoutMs ?? fallbackMs);
 
+/** The options of one call to Coder: the caller's, no redirect, and the timeout. */
+const coderInit = (config, init, fallbackMs = CODER_CALL_TIMEOUT_MS) => ({
+  ...init,
+  ...CODER_FETCH_OPTIONS,
+  signal: coderTimeout(config, fallbackMs),
+});
+
 /**
  * The error a provisioning call throws when Coder refuses it: the step and the
  * HTTP status, and nothing Coder wrote in its answer (#1403, item 9). Coder's
@@ -191,22 +241,28 @@ function coderRefusal(what, status) {
 }
 
 export async function createVisitorCoderUser(fetchImpl, config, { username, email, password }) {
-  const res = await fetchImpl(`${config.base}/api/v2/users`, {
-    signal: coderTimeout(config, CODER_PROVISION_TIMEOUT_MS),
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      'Coder-Session-Token': config.token,
-    },
-    body: JSON.stringify({
-      username,
-      email,
-      name: username,
-      password,
-      user_login_type: 'password',
-    }),
-  });
+  const res = await fetchImpl(
+    `${config.base}/api/v2/users`,
+    coderInit(
+      config,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'Coder-Session-Token': config.token,
+        },
+        body: JSON.stringify({
+          username,
+          email,
+          name: username,
+          password,
+          user_login_type: 'password',
+        }),
+      },
+      CODER_PROVISION_TIMEOUT_MS
+    )
+  );
   if (!res.ok) {
     await releaseBody(res);
     throw coderRefusal('Failed to create Coder user', res.status);
@@ -215,14 +271,20 @@ export async function createVisitorCoderUser(fetchImpl, config, { username, emai
 }
 
 export async function getTemplateByName(fetchImpl, config, templateName = 'hcw-lab') {
-  const res = await fetchImpl(`${config.base}/api/v2/templates`, {
-    signal: coderTimeout(config, CODER_PROVISION_TIMEOUT_MS),
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      'Coder-Session-Token': config.token,
-    },
-  });
+  const res = await fetchImpl(
+    `${config.base}/api/v2/templates`,
+    coderInit(
+      config,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          'Coder-Session-Token': config.token,
+        },
+      },
+      CODER_PROVISION_TIMEOUT_MS
+    )
+  );
   if (!res.ok) {
     await releaseBody(res);
     throw coderRefusal('Failed to list Coder templates', res.status);
@@ -241,14 +303,20 @@ export async function createVisitorWorkspace(
   { userId, username, workspaceName, labId, templateName = 'hcw-lab' }
 ) {
   const template = await getTemplateByName(fetchImpl, config, templateName);
-  const orgRes = await fetchImpl(`${config.base}/api/v2/organizations`, {
-    signal: coderTimeout(config, CODER_PROVISION_TIMEOUT_MS),
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      'Coder-Session-Token': config.token,
-    },
-  });
+  const orgRes = await fetchImpl(
+    `${config.base}/api/v2/organizations`,
+    coderInit(
+      config,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          'Coder-Session-Token': config.token,
+        },
+      },
+      CODER_PROVISION_TIMEOUT_MS
+    )
+  );
   if (!orgRes.ok) {
     await releaseBody(orgRes);
     throw coderRefusal('Failed to list Coder organizations', orgRes.status);
@@ -261,20 +329,23 @@ export async function createVisitorWorkspace(
 
   const res = await fetchImpl(
     `${config.base}/api/v2/organizations/${encodeURIComponent(defaultOrg.id)}/members/${encodeURIComponent(userId)}/workspaces`,
-    {
-      signal: coderTimeout(config, CODER_PROVISION_TIMEOUT_MS),
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'Coder-Session-Token': config.token,
+    coderInit(
+      config,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'Coder-Session-Token': config.token,
+        },
+        body: JSON.stringify({
+          template_id: template.id,
+          name: workspaceName,
+          autostart: true,
+        }),
       },
-      body: JSON.stringify({
-        template_id: template.id,
-        name: workspaceName,
-        autostart: true,
-      }),
-    }
+      CODER_PROVISION_TIMEOUT_MS
+    )
   );
   if (!res.ok) {
     await releaseBody(res);
@@ -379,17 +450,30 @@ export const PROVISION_LEASE_MS = 5 * 60 * 1000;
 export const CLEANUP_RETRY_BASE_MS = 2 * 60 * 1000;
 /**
  * How long a claim ('ending') holds before another request may take it over.
- * It is measured from the start of the sweep that made the claim, and the
- * slowest sweep is MAX_SWEEP_SESSIONS sessions with up to three Coder calls each
- * (the lookup of a start that failed, the workspace delete, the user delete),
- * each of which may wait out CODER_CALL_TIMEOUT_MS: 10 x 3 x 10 s, which is
- * this much exactly. A test pins that arithmetic. Only a Coder that answers
- * slowly gets there; one that hangs outright stops each session's chain at its
- * first call.
+ * It is measured from the start of the sweep that made the claim, so a sweep
+ * must finish its last session before it runs out, or another sweep could
+ * take that session over while this one is still working on it (a second,
+ * harmless delete that spends one try). The sweep keeps to it by taking up no
+ * new session once SWEEP_DEADLINE_MS has passed since it started (#1403): what
+ * is left waits for the next run.
  */
 export const CLEANUP_LEASE_MS = 5 * 60 * 1000;
 /** The longest one Coder delete may take. A Coder that hangs must not hold a request open. */
 export const CODER_CALL_TIMEOUT_MS = 10 * 1000;
+/**
+ * The most Coder calls one session's clean-up makes in one try: the lookup of
+ * a user by name, the lookup of a workspace by owner and name, the workspace
+ * delete, and the user delete (the read-back before the user delete is skipped
+ * when the name lookup has just read the user).
+ */
+export const CODER_CALLS_PER_SESSION = 4;
+/**
+ * After this much of a sweep has gone by, it takes up no more sessions, so
+ * that the slowest session it could still take (CODER_CALLS_PER_SESSION calls,
+ * each waiting out CODER_CALL_TIMEOUT_MS) ends inside the lease its claim
+ * holds. A test pins that arithmetic.
+ */
+export const SWEEP_DEADLINE_MS = CLEANUP_LEASE_MS - CODER_CALLS_PER_SESSION * CODER_CALL_TIMEOUT_MS;
 /** The longest one Coder call that provisions a session may take (creating a user or a workspace is slower than deleting one). */
 export const CODER_PROVISION_TIMEOUT_MS = 30 * 1000;
 /**
@@ -400,6 +484,15 @@ export const CODER_PROVISION_TIMEOUT_MS = 30 * 1000;
 export const RETRY_SWEEP_EVERY_MS = 60 * 1000;
 /** The most sessions one sweep takes up, so a long list cannot hold a request open; the rest wait for the next sweep. */
 export const MAX_SWEEP_SESSIONS = 10;
+/**
+ * The most records the status and start routes read when they count what may
+ * hold a lab (HOLDING_QUERY's `TOP`, #1403). Far above the concurrent limit
+ * (LABS_VISITOR_MAX_CONCURRENT, 2 by default, at most the host's 5) plus the
+ * waiting clean-ups a day of visitors can leave, so the count is never short
+ * in use; and should it ever be, the limit still holds by the slot documents
+ * (`takeSlot`), which do not depend on this count.
+ */
+export const MAX_HOLDING_RECORDS = 100;
 /**
  * A record waiting for a retry, or being cleaned, outlives the usual two hours
  * so the retry can still find it. The timer retries it every two minutes, but
@@ -429,18 +522,17 @@ export function errorKind(error) {
   return /^\d{3}$|^E[A-Z0-9_]{2,30}$|^[A-Z][A-Za-z]{2,30}$/.test(kind) ? kind : 'error';
 }
 
-/**
- * Whether a stored id or name is safe to write into a Coder URL path as one
- * segment. These come from Coder's own answers and are saved in the session
- * record, which no visitor writes; the unattended sweep still carries an
- * administrator-grade token, so it does not send what is not plainly an id or a
- * name. It refuses `.` and `..` (a path climb), anything with a slash, `?`, `#`,
- * `%` or a space, and `me`, which Coder reads as the caller's own account (a
- * delete of "me" would delete the broker's own user).
+/*
+ * What a stored id or name must look like before it is written into a Coder
+ * URL path (`isCoderId`, `isVisitorUsername`, `isLabWorkspaceName` above).
+ * These values come from Coder's own answers, or from the broker's own
+ * choices, and are saved in the session record, which no visitor writes; the
+ * unattended sweep still carries an administrator-grade token, so it sends
+ * nothing that is not plainly what the record says it is. Until #1403's
+ * follow-up the rule was looser (any one path segment that was not `.`,
+ * `..` or `me`), so a stored value that was another valid name, another
+ * person's for example, would still have been sent.
  */
-export function isSafeSegment(value) {
-  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && value.toLowerCase() !== 'me';
-}
 
 /** Let go of an answer's body without reading it; a failure to is no failure of the call. */
 async function releaseBody(res) {
@@ -460,7 +552,7 @@ async function releaseBody(res) {
  */
 async function coderDelete(fetchImpl, config, url, init) {
   try {
-    const res = await fetchImpl(url, { ...init, signal: coderTimeout(config) });
+    const res = await fetchImpl(url, coderInit(config, init));
     // Only the status matters; let go of the body so the connection is not held for it.
     await releaseBody(res);
     if (res.ok) return { confirmed: true, kind: 'ok' };
@@ -475,7 +567,7 @@ async function coderDelete(fetchImpl, config, url, init) {
 const INVALID_ID = Object.freeze({ confirmed: false, kind: 'invalid id' });
 
 const deleteWorkspaceCall = (fetchImpl, config, workspaceId) =>
-  !isSafeSegment(workspaceId)
+  !isCoderId(workspaceId)
     ? Promise.resolve(INVALID_ID)
     : coderDelete(fetchImpl, config, `${config.base}/api/v2/workspaces/${encodeURIComponent(workspaceId)}/builds`, {
         method: 'POST',
@@ -488,7 +580,7 @@ const deleteWorkspaceCall = (fetchImpl, config, workspaceId) =>
       });
 
 const deleteUserCall = (fetchImpl, config, userId) =>
-  !isSafeSegment(userId)
+  !isCoderId(userId)
     ? Promise.resolve(INVALID_ID)
     : coderDelete(fetchImpl, config, `${config.base}/api/v2/users/${encodeURIComponent(userId)}`, {
         method: 'DELETE',
@@ -498,8 +590,9 @@ const deleteUserCall = (fetchImpl, config, userId) =>
         },
       });
 
-/** Both names the lookup writes into its path are plainly names (see isSafeSegment). */
-const hasSafeLookupNames = (session) => isSafeSegment(session.coderUsername) && isSafeSegment(session.workspaceName);
+/** Both names the lookup writes into its path are the broker's own: a visitor's user name and a lab's workspace name. */
+const hasSafeLookupNames = (session) =>
+  isVisitorUsername(session.coderUsername) && isLabWorkspaceName(session.workspaceName);
 
 /**
  * Look a visitor's workspace up by its owner's name and its own name, for a
@@ -525,11 +618,13 @@ async function lookUpWorkspaceCall(fetchImpl, config, session) {
     `${config.base}/api/v2/users/${encodeURIComponent(session.coderUsername)}` +
     `/workspace/${encodeURIComponent(session.workspaceName)}`;
   try {
-    const res = await fetchImpl(url, {
-      method: 'GET',
-      headers: { Accept: 'application/json', 'Coder-Session-Token': config.token },
-      signal: coderTimeout(config),
-    });
+    const res = await fetchImpl(
+      url,
+      coderInit(config, {
+        method: 'GET',
+        headers: { Accept: 'application/json', 'Coder-Session-Token': config.token },
+      })
+    );
     if (res.status === 404 || res.status === 410) {
       await releaseBody(res);
       return { missing: true, kind: 'not found' };
@@ -540,8 +635,7 @@ async function lookUpWorkspaceCall(fetchImpl, config, session) {
     }
     const workspace = await res.json();
     const ours =
-      typeof workspace?.id === 'string' &&
-      workspace.id !== '' &&
+      isCoderId(workspace?.id) &&
       workspace.name === session.workspaceName &&
       workspace.owner_id === session.coderUserId;
     return ours ? { id: workspace.id, kind: 'found' } : { kind: 'lookup mismatch' };
@@ -552,33 +646,43 @@ async function lookUpWorkspaceCall(fetchImpl, config, session) {
 }
 
 /**
- * Look a visitor's Coder user up by the name the broker chose for it, for a
- * record that has the name and no id: a start whose user create gave no
- * answer (it timed out, say), or whose process died before it saved the id
- * (#1403, item 2). Coder's API takes a user name where it takes an id:
- * `GET /api/v2/users/{user}`, "User ID, username, or me".
- * https://coder.com/docs/reference/api/users (read 2026-10-31)
+ * Read a visitor's Coder user back, by its id or by the name the broker chose
+ * for it. Coder's API takes either where it takes a user: `GET
+ * /api/v2/users/{user}`, "User ID, username, or me".
+ * https://coder.com/docs/reference/api/users (read 2026-10-31 and 2026-11-03)
  *
- * Only a name of the broker's own shape (`v-` and twelve hex characters) is
- * looked up, so a stored value that is another person's name, or `me`, is
- * never sent. It answers one of:
+ * Two callers:
+ *  - A record that has the name and no id: a start whose user create gave no
+ *    answer (it timed out, say), or whose process died before it saved the
+ *    id (#1403, item 2). The name finds the id.
+ *  - A record about to have its user deleted (#1403, the GET before the
+ *    delete): the id is read back first, and the delete is sent only when
+ *    Coder's answer is that id and a visitor's name. A stored id that is
+ *    another person's, or a token that may not see the user, is caught here,
+ *    before anything is deleted.
+ *
+ * Only an id that is plainly an id, or a name of the broker's own shape
+ * (`v-` and twelve hex characters), is sent, so a stored value that is
+ * another person's name, or `me`, never is. It answers one of:
  *  - `{ id, kind: 'user found' }`: the user, and only when Coder's answer
- *    names the same user and carries an id that is plainly an id.
+ *    carries an id that is plainly an id, a name of the broker's shape, and
+ *    the same id or name as was asked for.
  *  - `{ missing: true, kind: 'user not found' }`: Coder has no such user.
  *  - `{ kind }`: Coder did not say (`user lookup HTTP 500`, `user lookup
  *    timeout`, `user lookup network`, `user lookup mismatch`, `user lookup
  *    invalid name`). Never an id or any of Coder's text.
  */
-async function lookUpUserCall(fetchImpl, config, username) {
-  if (typeof username !== 'string' || !VISITOR_USERNAME_SHAPE.test(username)) {
-    return { kind: 'user lookup invalid name' };
-  }
+async function lookUpUserCall(fetchImpl, config, { id = undefined, username = undefined }) {
+  const byId = isCoderId(id);
+  if (!byId && !isVisitorUsername(username)) return { kind: 'user lookup invalid name' };
   try {
-    const res = await fetchImpl(`${config.base}/api/v2/users/${encodeURIComponent(username)}`, {
-      method: 'GET',
-      headers: { Accept: 'application/json', 'Coder-Session-Token': config.token },
-      signal: coderTimeout(config),
-    });
+    const res = await fetchImpl(
+      `${config.base}/api/v2/users/${encodeURIComponent(byId ? id : username)}`,
+      coderInit(config, {
+        method: 'GET',
+        headers: { Accept: 'application/json', 'Coder-Session-Token': config.token },
+      })
+    );
     if (res.status === 404 || res.status === 410) {
       await releaseBody(res);
       return { missing: true, kind: 'user not found' };
@@ -588,7 +692,8 @@ async function lookUpUserCall(fetchImpl, config, username) {
       return { kind: Number.isInteger(res.status) ? `user lookup HTTP ${res.status}` : 'user lookup refused' };
     }
     const user = await res.json();
-    const ours = isSafeSegment(user?.id) && user.username === username;
+    const ours =
+      isCoderId(user?.id) && isVisitorUsername(user.username) && (byId ? user.id === id : user.username === username);
     return ours ? { id: user.id, kind: 'user found' } : { kind: 'user lookup mismatch' };
   } catch (error) {
     const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
@@ -715,6 +820,13 @@ async function claimSession(store, session, endStatus, nowMs) {
  * workspace, is the confirmation, and a workspace that turns up later is found
  * by the next try's lookup.
  *
+ * The user is read back by its id before it is deleted (#1403), unless the
+ * name lookup above has just read it: the delete is sent only when Coder's
+ * answer is that id and a visitor's name (`v-` and twelve hex characters).
+ * Coder having no such user is `gone`, as a delete that found nothing is, and
+ * is said in the log the same way. Any other answer leaves the user for the
+ * next try (`user lookup mismatch`, `user lookup HTTP 500`, and so on).
+ *
  * @returns {Promise<{ workspaceGone: boolean, workspaceGoneSaved: boolean, workspaceId: string | undefined, coderUserId: string | undefined, userGone: boolean, workspace: string, user: string, workspaceBy?: string, userBy?: string }>}
  *   the two halves; `workspaceGoneSaved` is whether `workspaceGone` may be
  *   written to the record; `workspaceId` and `coderUserId` are the ones the
@@ -741,12 +853,16 @@ async function cleanUpCoder(fetchImpl, config, session) {
     user: session.userGone ? 'done' : 'none',
   };
 
+  // Whether this try has already read the user back from Coder, so the read
+  // before the delete below is not made twice.
+  let userSeen = false;
+
   // Only the user's name is known: find its id, or learn that it was never made.
   if (!result.userGone && !result.coderUserId) {
     if (!config) {
       return { ...result, user: 'unconfigured', workspace: result.workspaceGone ? result.workspace : 'skipped' };
     }
-    const found = await lookUpUserCall(fetchImpl, config, session.coderUsername);
+    const found = await lookUpUserCall(fetchImpl, config, { username: session.coderUsername });
     if (found.missing) {
       return {
         ...result,
@@ -763,6 +879,7 @@ async function cleanUpCoder(fetchImpl, config, session) {
       return { ...result, user: found.kind, workspace: result.workspaceGone ? result.workspace : 'skipped' };
     }
     result.coderUserId = found.id;
+    userSeen = true;
   }
 
   if (needsLookup) {
@@ -795,6 +912,16 @@ async function cleanUpCoder(fetchImpl, config, session) {
     } else if (!result.workspaceGone) {
       result.user = 'skipped';
     } else {
+      // Read the user back by its id before it is deleted (#1403): only an
+      // answer that is this id and a visitor's name is deleted. Coder having
+      // no such user is the same as a delete that found nothing (`gone`).
+      if (!userSeen && isCoderId(result.coderUserId)) {
+        const seen = await lookUpUserCall(fetchImpl, config, { id: result.coderUserId });
+        if (seen.missing) {
+          return { ...result, userGone: true, user: 'gone', userBy: 'gone' };
+        }
+        if (!seen.id) return { ...result, user: seen.kind };
+      }
       const call = await deleteUserCall(fetchImpl, config, result.coderUserId);
       result.userGone = call.confirmed;
       result.user = call.kind;
@@ -970,10 +1097,17 @@ const DUE_STATUSES = Object.freeze([
  * @param {object} store
  * @param {Function} fetchImpl
  * @param {{ base: string, token: string } | null} config - null: Coder cannot be called, so sessions that need it stay pending
+ * It takes up no new session once SWEEP_DEADLINE_MS has passed since it
+ * started (#1403): the claims it makes last CLEANUP_LEASE_MS from `nowIso`,
+ * and a session taken up later than that could still be in its Coder calls
+ * when another sweep takes it over. The rest wait for the next run, and the
+ * log says how many.
+ *
  * @param {object} [options]
- * @param {string} [options.nowIso]
+ * @param {string} [options.nowIso] - the moment the sweep is reckoned from (its claims' leases run from it)
  * @param {(line: string) => void} [options.log]
  * @param {number} [options.limit] - the most sessions to take up; the rest wait for the next sweep (default MAX_SWEEP_SESSIONS)
+ * @param {() => number} [options.clock] - epoch ms, read as the sweep goes, for the deadline
  * @returns {Promise<{ reaped: number, finished: number, pending: number, failed: number }>}
  *   `reaped`: sessions past their hour that this call saved as expired.
  *   `finished`: sessions waiting on a clean-up that this call saved as over.
@@ -985,15 +1119,17 @@ export async function reapExpiredVisitorSessions(
   store,
   fetchImpl,
   config,
-  { nowIso = new Date().toISOString(), log = null, limit = MAX_SWEEP_SESSIONS } = {}
+  { nowIso = new Date().toISOString(), log = null, limit = MAX_SWEEP_SESSIONS, clock = () => Date.now() } = {}
 ) {
   const tally = { reaped: 0, finished: 0, pending: 0, failed: 0 };
   if (!store?.queryDocs) return tally;
   const nowMs = Date.parse(nowIso);
+  const startedMs = clock();
 
   let expiredSessions = [];
   try {
     expiredSessions = await store.queryDocs(SESSION_CONTAINER, EXPIRED_QUERY, [
+      { name: '@top', value: limit },
       { name: '@type', value: VISITOR_JOB_TYPE },
       { name: '@status', value: SESSION_STATUS.active },
       { name: '@nowIso', value: nowIso },
@@ -1008,6 +1144,7 @@ export async function reapExpiredVisitorSessions(
   let due = [];
   try {
     due = await store.queryDocs(SESSION_CONTAINER, DUE_QUERY, [
+      { name: '@top', value: limit },
       { name: '@type', value: VISITOR_JOB_TYPE },
       { name: '@statuses', value: [...DUE_STATUSES] },
       { name: '@dueIso', value: nowIso },
@@ -1026,7 +1163,14 @@ export async function reapExpiredVisitorSessions(
       retry: true,
     })),
   ];
-  for (const { session, endStatus, retry } of work.slice(0, limit)) {
+  const taken = work.slice(0, limit);
+  for (const [index, { session, endStatus, retry }] of taken.entries()) {
+    if (clock() - startedMs >= SWEEP_DEADLINE_MS) {
+      // Late enough that this session's Coder calls could outlast the lease
+      // its claim would hold; it and the rest wait for the next run.
+      log?.(`visitor-session: the sweep stopped before its lease ran out, leaving ${taken.length - index} sessions for the next run`);
+      break;
+    }
     try {
       const { outcome } = await endSession(store, fetchImpl, config, session, { endStatus, nowMs, log });
       if (outcome === 'done') tally[retry ? 'finished' : 'reaped'] += 1;
@@ -1049,12 +1193,20 @@ export async function reapExpiredVisitorSessions(
  * very strings against their documents (`runCosmosQuery` in
  * test/cosmos-predicate.js), so a mistake in
  * one fails a test (#1403, item 8).
+ *
+ * Each is bounded with `TOP @top` (#1403): the sweep reads no more than it
+ * will take up (its `limit`), and the routes no more than MAX_HOLDING_RECORDS.
+ * The number of records is small in any case; the bound is what makes that
+ * true by construction, now that the sweep runs 720 times a day. `TOP` takes a
+ * parameter, as a constant would: Microsoft Learn, "Parameterized queries"
+ * (https://learn.microsoft.com/cosmos-db/query/parameterized-queries, read
+ * 2026-11-03).
  */
 export const EXPIRED_QUERY =
-  'SELECT * FROM c WHERE c.type = @type AND c.status = @status AND c.expiresAt <= @nowIso';
+  'SELECT TOP @top * FROM c WHERE c.type = @type AND c.status = @status AND c.expiresAt <= @nowIso';
 export const DUE_QUERY =
-  'SELECT * FROM c WHERE c.type = @type AND ARRAY_CONTAINS(@statuses, c.status) AND c.retryAt <= @dueIso';
-export const HOLDING_QUERY = 'SELECT * FROM c WHERE c.type = @type AND ARRAY_CONTAINS(@statuses, c.status)';
+  'SELECT TOP @top * FROM c WHERE c.type = @type AND ARRAY_CONTAINS(@statuses, c.status) AND c.retryAt <= @dueIso';
+export const HOLDING_QUERY = 'SELECT TOP @top * FROM c WHERE c.type = @type AND ARRAY_CONTAINS(@statuses, c.status)';
 
 /**
  * The records that may hold one of the host's workspace slots: a running
@@ -1357,9 +1509,9 @@ async function noteUnfinishedStart(
     ...record,
     status: SESSION_STATUS.cleanupPending,
     startFailed: true,
-    ...(isSafeSegment(user?.id) ? { coderUserId: user.id } : {}),
+    ...(isCoderId(user?.id) ? { coderUserId: user.id } : {}),
     ...(typeof user?.username === 'string' && user.username ? { coderUsername: user.username } : {}),
-    ...(isSafeSegment(workspaceId) ? { workspaceId } : {}),
+    ...(isCoderId(workspaceId) ? { workspaceId } : {}),
     ...(noWorkspace || noUser ? { workspaceGone: true, workspaceConfirmedBy: 'never asked for' } : {}),
     ...(noUser ? { userGone: true, userConfirmedBy: 'refused at create' } : {}),
     endedAt: nowIso,
@@ -1523,6 +1675,7 @@ export function createVisitorSessionHandlers({
   /** The records that may hold a workspace slot (HOLDING_QUERY), or a throw from the store. */
   const listHolding = () =>
     store.queryDocs(SESSION_CONTAINER, HOLDING_QUERY, [
+      { name: '@top', value: MAX_HOLDING_RECORDS },
       { name: '@type', value: VISITOR_JOB_TYPE },
       { name: '@statuses', value: [...HOLDING_STATUSES] },
     ]);

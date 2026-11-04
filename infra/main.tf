@@ -67,6 +67,17 @@ resource "azurerm_resource_group" "platform_mgmt" {
 # =============================================================================
 # Log Analytics Workspace (required by Application Insights)
 # =============================================================================
+locals {
+  # The workspace's name, spelled once. The workspace transformation rule in
+  # observability.tf (the filter on the Cosmos request log, #1530) has to name
+  # this workspace as its destination, and the workspace names that rule as
+  # its default rule below. Terraform refuses two resources that reference
+  # each other, so the rule builds the workspace's resource id from this name
+  # and the resource group instead of reading it from the resource, and the
+  # postcondition below checks that the id it built is this workspace's.
+  log_analytics_workspace_name = "log-plat-${var.environment}-${var.region_abbreviation}-${var.instance}"
+}
+
 resource "azurerm_log_analytics_workspace" "hcw" {
   # Same subscription as the resource group it lives in. resource_group_name
   # is only a string — the provider's subscription decides where the ARM call
@@ -74,7 +85,7 @@ resource "azurerm_log_analytics_workspace" "hcw" {
   # subscription, where rg-mgmt-plat does not exist.
   provider = azurerm.mgmt
 
-  name                = "log-plat-${var.environment}-${var.region_abbreviation}-${var.instance}"
+  name                = local.log_analytics_workspace_name
   location            = azurerm_resource_group.platform_mgmt.location
   resource_group_name = azurerm_resource_group.platform_mgmt.name
   sku                 = "PerGB2018"
@@ -88,7 +99,32 @@ resource "azurerm_log_analytics_workspace" "hcw" {
   # truncating the number. variables.tf carries the procedure and the reason
   # -1 is refused.
   daily_quota_gb = var.logs_daily_quota_gb
-  tags           = local.tags
+
+  # The workspace's default data collection rule: the one rule Azure applies
+  # to data that arrives without a rule of its own, which is every diagnostic
+  # setting in observability.tf. It carries the ingestion-time filter on the
+  # Cosmos request log (#1530). This is a real attribute of the workspace:
+  # azurerm 5.12.0 reads it back on every refresh (r_flatten.go sets
+  # data_collection_rule_id from defaultDataCollectionRuleResourceId) and
+  # writes it on update, so a link removed in the portal shows in the next
+  # plan as "" -> this id, and the apply puts it back. That is the visible
+  # drift PLAT-8's azapi write never had.
+  #
+  # A fresh estate cannot set this on the workspace's first apply: Azure
+  # refuses a default rule at creation ("not applicable on workspace
+  # creation, please provide it on update", quoted in the provider's
+  # r_create.go), and the rule itself needs the workspace to exist first.
+  # On a rebuild, apply the workspace with -target once, then the rest.
+  data_collection_rule_id = azurerm_monitor_data_collection_rule.workspace_transforms.id
+
+  tags = local.tags
+
+  lifecycle {
+    postcondition {
+      condition     = lower(azurerm_monitor_data_collection_rule.workspace_transforms.destinations[0].log_analytics[0].workspace_resource_id) == lower(self.id)
+      error_message = "The workspace transformation rule names a workspace other than this one as its destination. local.log_analytics_workspace_name and the rule's workspace_resource_id (observability.tf) must spell this workspace's id, or Azure refuses the link and the Cosmos request-log filter never runs (#1530)."
+    }
+  }
 }
 
 # =============================================================================

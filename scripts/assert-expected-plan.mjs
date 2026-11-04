@@ -182,7 +182,10 @@ export const EXPECTED = {
  */
 export const CONDITIONAL_REPLACED = [
   "azapi_update_resource.cosmos_computed_properties",
-  "azapi_update_resource.cosmos_data_plane_table",
+  // azapi_update_resource.cosmos_data_plane_table was listed here from
+  // PLAT-8 (#968) until #1530 replaced it with an azurerm table resource.
+  // Its delete applied in run-fQRFPxBy7CowV6zG on 2026-11-04 and left
+  // DECLARED below with it.
 ];
 
 /** `type.name["key"]` -> `type.name`, the address a for_each instance belongs to. */
@@ -486,6 +489,21 @@ export const DECLARED = [
     reason:
       "#1302: AMBASSADOR_AUDIENCE_MONTHLY added to enabled_timers, arming the daily read",
   },
+  // #1400 and #1403: the visitor sessions' door, declared at last. The code
+  // had read LABS_VISITOR_SESSIONS_ENABLED since #1016 and nothing in infra/
+  // set it, so this is the setting appearing, closed ("false" is what the
+  // variable labs_visitor_sessions_enabled defaults to, and the same door the
+  // absent setting gave). Delete this entry once it has applied; the opening
+  // plan ("false" -> "true") is the owner's workspace edit and is deliberately
+  // not declared, so it shows as UNEXPECTED and is read.
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.LABS_VISITOR_SESSIONS_ENABLED",
+    before: undefined,
+    after: "false",
+    reason:
+      "#1400/#1403: LABS_VISITOR_SESSIONS_ENABLED declared in Terraform, closed by default",
+  },
   // The sweep's flag applied disarmed (deleted below, 2026-11-01). Keep this
   // one (false -> true) until the arming apply has run too: it is the plan the
   // owner sees when they add SWEEP_VISITOR_SESSIONS to enabled_timers, and this
@@ -500,6 +518,13 @@ export const DECLARED = [
     reason:
       "#1403: SWEEP_VISITOR_SESSIONS added to enabled_timers, arming the visitor-session sweep",
   },
+  // #1469 step 1's create, func_cosmos_db["hcw"] (the Function App's Cosmos
+  // Data Contributor role on the hcw database, beside the account-wide
+  // grant), applied in run-vUQrQLSGJh4J5HZ2 on 2026-11-04 (HCP Terraform
+  // commit status Success on 66118ffd at 03:09Z) and was deleted here. The
+  // account-wide grant, azurerm_cosmosdb_sql_role_assignment.func_cosmos,
+  // stays until step 2, which is its own pull request: it deletes that block
+  // and declares the delete here.
   // #1360's create, notes_obsidian_publish, applied on 2026-10-24 (run-bb1XtRGJEbuK1Cec,
   // read as applied by tfc-plan-check with only the known permanent diff besides it) and was
   // deleted here. notes.hybridcloudworks.com then resolved to Cloudflare addresses on 1.1.1.1
@@ -535,6 +560,30 @@ export const DECLARED = [
   // SWEEP_VISITOR_SESSIONS false -> true), #953 stage 3's two entries
   // (lab_ssh_loopback_only) and #1302's Web Analytics site create
   // (cloudflare_account_id). Each is a value the owner sets in the workspace.
+  //
+  //
+  // #1530's four declared changes (the Cosmos request-log filter moved into a
+  // workspace transformation rule) applied in run-fQRFPxBy7CowV6zG on
+  // 2026-11-04 (HCP Terraform commit status Success on d53add0e at 02:57Z)
+  // and were deleted here, as the header asks:
+  // - the delete of azapi_update_resource.cosmos_data_plane_table (no API
+  //   call: destroying an azapi_update_resource leaves the live table as it
+  //   is);
+  // - the create of azurerm_log_analytics_workspace_table.cosmos_data_plane,
+  //   which now owns the table's retention, 90 days as before;
+  // - the create of azurerm_monitor_data_collection_rule.workspace_transforms,
+  //   the rule that carries the filter;
+  // - the create of alert-logs-overquota.
+  // The run's fifth change, azurerm_log_analytics_workspace.hcw's
+  // data_collection_rule_id "" -> (known after apply), was never declared
+  // (the header: an unknown difference cannot be) and was read by hand
+  // against the list in the pull request.
+  {
+    address: "azurerm_role_assignment.github_manifest_window_storage_firewall[0]",
+    action: "create",
+    reason:
+      "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); planned only once the owner has created the role and set storage_firewall_remover_enabled = true (Required-Inputs §4.6b)",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

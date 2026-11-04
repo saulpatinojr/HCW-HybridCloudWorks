@@ -302,8 +302,10 @@ describe('the facts the 2026-09-09 audit asked for (#461 items 5–9)', () => {
     expect(a['MLA-C01']).toMatchObject({ status: 'retired', retiredDate: '2026-09-28' });
     expect(a['MLA-C01'].expiryDate).toBeUndefined();
     expect(a['MLA-C02']).toMatchObject({ status: 'beta', gaDate: '2027-01-14' });
-    expect(a['SAP-C02']).toMatchObject({ status: 'expiring', expiryDate: '2026-11-16' });
-    expect(a['SAP-C03']).toMatchObject({ status: 'upcoming', availableDate: '2026-11-17' });
+    // SAP-C02 and SAP-C03 are stored ahead of their days since the 2026-11-03
+    // re-read (#1497); the describe block for that re-read holds them.
+    expect(a['SAP-C02']).toMatchObject({ status: 'retired', expiryDate: '2026-11-16' });
+    expect(a['SAP-C03']).toMatchObject({ status: 'active', availableDate: '2026-11-17' });
     expect(a['DVA-C02']).toMatchObject({ status: 'expiring', expiryDate: '2026-11-30' });
     expect(a['DVA-C03']).toMatchObject({ status: 'upcoming', availableDate: '2026-12-01' });
     expect(a['ANS-C01']).toMatchObject({ status: 'expiring', expiryDate: '2026-12-31' });
@@ -422,7 +424,9 @@ describe('the 2026-10-05 re-read', () => {
   });
 
   it('AWS: nothing stored moved; the SAP/DVA one-day conflict closed on the stored dates', () => {
-    expect(rowFor(aws, 'SAP-C02')).toMatchObject({ status: 'expiring', expiryDate: '2026-11-16' });
+    // SAP-C02's stored status moved to `retired` on 2026-11-03 (#1497); its
+    // last day did not.
+    expect(rowFor(aws, 'SAP-C02')).toMatchObject({ expiryDate: '2026-11-16' });
     expect(rowFor(aws, 'DVA-C02')).toMatchObject({ status: 'expiring', expiryDate: '2026-11-30' });
     expect(rowFor(aws, 'MLA-C02')).toMatchObject({ status: 'beta', gaDate: '2027-01-14' });
   });
@@ -455,6 +459,52 @@ describe('the 2026-10-12 re-read', () => {
   it('leaves the alarm nothing to name on either day', () => {
     const rows = [rowFor('AB-400'), rowFor('PL-400')];
     for (const day of ['2026-10-16', '2026-10-31']) {
+      expect(findStaleStatuses(rows, day), day).toEqual([]);
+    }
+  });
+});
+
+/**
+ * The 2026-11-03 re-read of SAP-C02 and SAP-C03, the two rows #1497 named.
+ * Both are stored ahead of AWS's day under rule 2 of `deriveStatus`: SAP-C02
+ * shows "Retiring" through its last test day and SAP-C03 "Coming" until its
+ * first, and the alarm above has nothing to fire on 2026-11-17. The vendor
+ * sentences are quoted in the AWS header.
+ */
+describe('the 2026-11-03 re-read', () => {
+  /** The AWS catalogue row with this exam code, as the file stores it. */
+  const rowFor = (code) => aws.certifications.find((c) => c.code === code);
+
+  it('stores SAP-C02 retired and SAP-C03 active, each showing its old badge until its day', () => {
+    const sapC02 = rowFor('SAP-C02');
+    expect(sapC02).toMatchObject({
+      status: 'retired',
+      expiryDate: '2026-11-16',
+      retiredDate: '2026-11-16',
+      statusReadDate: '2026-11-03',
+    });
+    expect(deriveStatus(sapC02, '2026-11-03')).toBe('expiring');
+    expect(deriveStatus(sapC02, '2026-11-16')).toBe('expiring');
+    expect(deriveStatus(sapC02, '2026-11-17')).toBe('retired');
+
+    const sapC03 = rowFor('SAP-C03');
+    expect(sapC03).toMatchObject({
+      status: 'active',
+      availableDate: '2026-11-17',
+      statusReadDate: '2026-11-03',
+    });
+    expect(deriveStatus(sapC03, '2026-11-03')).toBe('upcoming');
+    expect(deriveStatus(sapC03, '2026-11-16')).toBe('upcoming');
+    expect(deriveStatus(sapC03, '2026-11-17')).toBe('active');
+  });
+
+  it('links the SAP-C03 exam guide, which went live when registration opened', () => {
+    expect(rowFor('SAP-C03').studyGuideUrl).toMatch(/solutions-architect-professional-03\.html$/);
+  });
+
+  it('leaves the alarm nothing to name on the day either row turns', () => {
+    const rows = [rowFor('SAP-C02'), rowFor('SAP-C03')];
+    for (const day of ['2026-11-16', '2026-11-17', '2026-11-18']) {
       expect(findStaleStatuses(rows, day), day).toEqual([]);
     }
   });

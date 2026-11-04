@@ -68,18 +68,37 @@ az account show -o json | ConvertFrom-Json | Select-Object name, id, tenantId
 
 HCP Terraform's run identity holds `Contributor` and `Role Based Access Control Administrator`, which intentionally lack permission to create role definitions (`Microsoft.Authorization/roleDefinitions/write`).
 
-Execute the parameterized bootstrap script to create all five required custom roles:
+Run the bootstrap script to create every custom role. It takes no ids: with
+the Application subscription set as the default in step 0.2, it reads that
+subscription from `az account show` and finds the Management subscription in
+`az account list` by its name, `sub-plat-mgmt-prod-cus`. The JSON files under
+`infra/roles/` carry the placeholder `00000000-0000-0000-0000-00000000000N`
+in their scopes on purpose (this repository is public,
+[#1540](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1540));
+the script fills in the real subscription ids at create time, so never
+create a role straight from one of those files.
 
 ```powershell
-pwsh scripts/bootstrap-roles.ps1 `
-  -SubscriptionId "<SUBSCRIPTION_APP_ID>" `
-  -ManagementSubscriptionId "<SUBSCRIPTION_MGMT_ID>"
+pwsh scripts/bootstrap-roles.ps1
 ```
 
 *POSIX alternative:*
 ```bash
-scripts/bootstrap-roles.sh "<SUBSCRIPTION_APP_ID>" "<SUBSCRIPTION_MGMT_ID>"
+scripts/bootstrap-roles.sh
 ```
+
+Success looks like one "Created successfully" line per role and then a
+read-back table listing every `HCW ...` role with real subscription ids in
+its scopes. If the script stops saying a subscription id "is the repository
+placeholder" or that it cannot see exactly one `sub-plat-mgmt-prod-cus`,
+sign in again with an account that holds both subscriptions, or pass the
+ids yourself: in PowerShell with `-SubscriptionId` and
+`-ManagementSubscriptionId`; in bash as two positional arguments to
+`scripts/bootstrap-roles.sh`, the workload (Application) subscription id
+first and the Management subscription id second. Read the workload id from
+step 0.2's `az account show` output, and the Management id from the row named
+`sub-plat-mgmt-prod-cus` in `az account list -o table`, rather than typing
+either id from memory.
 
 **Created roles:**
 1. `HCW Key Vault Secret Writer` (`infra/roles/keyvault-secret-writer.json`)
@@ -87,6 +106,7 @@ scripts/bootstrap-roles.sh "<SUBSCRIPTION_APP_ID>" "<SUBSCRIPTION_MGMT_ID>"
 3. `HCW Function Settings Reader` (`infra/roles/function-settings-reader.json`)
 4. `HCW Static Web App Deployer` (`infra/roles/static-web-app-deployer.json`)
 5. `HCW Alert Rule Reader` (`infra/roles/alert-rule-reader.json`)
+6. `HCW Storage Firewall Writer` (`infra/roles/storage-firewall-writer.json`)
 
 ---
 

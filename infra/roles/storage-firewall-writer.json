@@ -1,0 +1,15 @@
+{
+  "Name": "HCW Storage Firewall Writer",
+  "IsCustom": true,
+  "Description": "Read and write a storage account's own properties, which is where its firewall (networkRuleSet: the default action and the IP rules) lives, and nothing else: no listKeys, no SAS, no data plane, no blob, queue or table service settings. Consumed by infra/oidc.tf for remove-ci-access-windows.yml (#1463), the hourly job that puts the host storage account back to Deny and removes the IP rule a dead deploy run left behind. Storage Account Contributor would do the same and also carries listKeys, which is the reason this role exists. Created once by the owner because the Terraform identity deliberately lacks Microsoft.Authorization/roleDefinitions/write; scripts/bootstrap-roles.sh and .ps1 fill in AssignableScopes.",
+  "Actions": [
+    "Microsoft.Storage/storageAccounts/read",
+    "Microsoft.Storage/storageAccounts/write"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-web-site-prod-cus"
+  ]
+}

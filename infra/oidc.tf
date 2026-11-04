@@ -489,6 +489,53 @@ resource "azurerm_role_assignment" "github_manifest_window_read" {
   principal_type       = "ServicePrincipal"
 }
 
+# A SECOND CONSUMER SINCE #1463: remove-ci-access-windows.yml. Every hour it
+# removes each `ci-*` rule on the Function App or its SCM site whose run has
+# ended (a "window" a dead run never closed; the monitor only names them,
+# #1050) and puts the host storage account's firewall back to Deny. The
+# Function App half needs exactly what this identity already holds, Config
+# Refresh for the remove and Reader for the reads. It runs as this identity
+# and not as github_deploy because github_deploy trusts only the
+# `environment:production` subject, and that environment's required
+# reviewers would hold an hourly job for a person every hour.
+#
+# The storage half is this grant: the account's read and write actions and
+# nothing else (infra/roles/storage-firewall-writer.json). The firewall is a
+# property of the account (networkRuleSet), so `storageAccounts/write` is
+# the action that changes it; Storage Account Contributor, which
+# github_deploy holds for the same window, also carries listKeys, and an
+# identity that runs every hour on a schedule should not. What `write` does
+# reach is every other account property too (TLS floor, public access,
+# allowed copy scope), which is the narrowest Azure can express for the
+# firewall; read-only on the keys and the data plane is the line that
+# matters. Scoped to the one account.
+#
+# GATED on storage_firewall_remover_enabled (variables.tf), with the lookup
+# below, until the owner has created the role: a lookup of a role that does
+# not exist did not fail the plan, it hung it (2026-11-04, the workspace's one
+# plan slot for over twelve minutes with every other run queued behind). The
+# remover's Function App half needs none of this and runs from the merge.
+resource "azurerm_role_assignment" "github_manifest_window_storage_firewall" {
+  count              = var.storage_firewall_remover_enabled ? 1 : 0
+  scope              = azurerm_storage_account.functions.id
+  role_definition_id = data.azurerm_role_definition.storage_firewall_writer[0].id
+  principal_id       = azurerm_user_assigned_identity.github_manifest_window.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+# Owner-created for the same reason as every custom role here (keyvault.tf
+# says why the Terraform identity may assign roles and not invent them), by
+# scripts/bootstrap-roles.sh or .ps1, which fill in the JSON's
+# AssignableScopes with the real subscription before the create (the file
+# carries a placeholder id, as a public file must). Read only once the owner
+# has created it and set storage_firewall_remover_enabled (Required-Inputs
+# §4.6b and §4.1).
+data "azurerm_role_definition" "storage_firewall_writer" {
+  count = var.storage_firewall_remover_enabled ? 1 : 0
+  name  = "HCW Storage Firewall Writer"
+  scope = azurerm_resource_group.app["web"].id
+}
+
 # ---------------------------------------------------------------------------
 # github_alert_reader — verify-alert-state.yml, and nothing else (#1053)
 # ---------------------------------------------------------------------------
@@ -696,7 +743,7 @@ resource "azurerm_role_assignment" "github_copilot_review_reader" {
 # own sign-in, so the grants had no consumer and contradicted ADR 0025's
 # "CI holds no Cosmos data-plane role". They are gone; the Function App's
 # own identity is the only principal with a Cosmos data-plane role
-# (func_cosmos in cosmos.tf).
+# (func_cosmos and func_cosmos_db in cosmos.tf, #1469).
 
 # ---------------------------------------------------------------------------
 # REMOVED 2026-08-24 — the production-import grants, and the gate that held them

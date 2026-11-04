@@ -1046,7 +1046,11 @@ describe('DECLARED', () => {
     for (const name of ['brain_records', 'brain_search', 'doc_vault']) {
       expect(creates, name).not.toContain(`azurerm_cosmosdb_sql_container.hcw["${name}"]`);
     }
-    expect(deletes).toEqual([]);
+    // #1479's two container deletes are gone; the regex below reads them and
+    // the five CODE_BRAIN_* paths together. Other deletes may be declared
+    // (#1530's azapi_update_resource delete was the first after this, applied
+    // and pruned on 2026-11-04), so the list is not asserted empty.
+    expect(deletes.filter((address) => /code_brain/.test(address))).toEqual([]);
     expect(DECLARED.some((entry) => /code_brain|CODE_BRAIN_/.test(entry.address + (entry.path ?? '')))).toBe(false);
     for (const name of [
       'BRAIN_ENABLED', 'BRAIN_AI_ENABLED', 'BRAIN_OWNER_OID', 'BRAIN_OWNER_TENANT_ID', 'BRAIN_SYNC_CLIENT_ID',
@@ -1101,6 +1105,55 @@ describe('DECLARED', () => {
     expect(paths).not.toContain('app_settings.STREAMYARD_API_KEY');
     // Live "false" on 2026-10-17: the arming has not applied, so it stays.
     expect(paths).toContain('app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS');
+  });
+
+  it('prunes the hcw database grant’s create once applied, declares any later key, and keeps the account-wide grant undeleted while its block stands (#1469 step 1, pruned 2026-11-04)', () => {
+    // Step 1 of #1469 added `func_cosmos_db["hcw"]` beside `func_cosmos`. Its
+    // create applied in run-vUQrQLSGJh4J5HZ2 on 2026-11-04 and left DECLARED,
+    // so the `hcw` key is in state and must not be declared again. A key added
+    // to the local later plans a create of its own and must be declared, or
+    // the plan check reads it as UNEXPECTED. A declared delete of
+    // `func_cosmos` before its block is gone would wave through the very gap
+    // the two steps avoid.
+    const applied = ['hcw'];
+    const block = /^\s*cosmos_database_grants\s*=\s*\{\n([\s\S]*?)\n\s*\}\n/m.exec(infraSource);
+    expect(block, 'local.cosmos_database_grants not found in infra/').not.toBeNull();
+    const keys = [...block[1].matchAll(/^\s*(\w+)\s*=/gm)].map((m) => m[1]);
+    // The applied keys must still be in the local (a key removed from it would
+    // plan a destroy); keys may be added beside them, declared below.
+    expect(keys).toEqual(expect.arrayContaining(applied));
+    const creates = DECLARED.filter((entry) => entry.action === 'create').map((entry) => entry.address);
+    const grantAddress = (key) => `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["${key}"]`;
+    for (const key of applied) expect(creates, `${key} applied and is still declared`).not.toContain(grantAddress(key));
+    for (const key of keys.filter((key) => !applied.includes(key))) {
+      expect(creates, `${key} is a new grant with no declaration`).toContain(grantAddress(key));
+    }
+    const accountGrantStands = infraSource.includes('resource "azurerm_cosmosdb_sql_role_assignment" "func_cosmos"');
+    const accountGrantDeleteDeclared = DECLARED.some(
+      (entry) => entry.action === 'delete' && entry.address === 'azurerm_cosmosdb_sql_role_assignment.func_cosmos'
+    );
+    expect(accountGrantStands && accountGrantDeleteDeclared, 'func_cosmos is declared deleted while its block exists').toBe(false);
+  });
+
+  it('prunes the Cosmos request-log filter’s four entries once applied, with their resources still in infra/ and the azapi table gone (#1530, pruned 2026-11-04)', () => {
+    // run-fQRFPxBy7CowV6zG applied the delete and the three creates on
+    // 2026-11-04. The declarations go; the three resources stay in the tree
+    // (a declaration pruned while its resource was also removed would hide a
+    // destroy), and the azapi_update_resource the delete retired is gone.
+    // Only the applied actions are asserted gone: a later update to one of
+    // the three resources (the rule's KQL, say) is declared by path in the
+    // usual way and must not trip this.
+    const byAction = (action) => DECLARED.filter((entry) => entry.action === action).map((entry) => entry.address);
+    expect(byAction('delete')).not.toContain('azapi_update_resource.cosmos_data_plane_table');
+    expect(infraSource).not.toContain('"cosmos_data_plane_table"');
+    for (const [type, name] of [
+      ['azurerm_log_analytics_workspace_table', 'cosmos_data_plane'],
+      ['azurerm_monitor_data_collection_rule', 'workspace_transforms'],
+      ['azurerm_monitor_scheduled_query_rules_alert_v2', 'logs_over_quota'],
+    ]) {
+      expect(byAction('create'), name).not.toContain(`${type}.${name}`);
+      expect(infraSource, `${name} is no longer declared in infra/`).toContain(`resource "${type}" "${name}"`);
+    }
   });
 
   /** alert-lab-ssh-login's resource block in the tree. */

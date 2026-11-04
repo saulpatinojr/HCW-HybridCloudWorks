@@ -1,9 +1,20 @@
-"""Docs publication gate: nothing that should not be public reaches the site.
+"""Redaction gate: nothing that should not be public reaches the repository.
 
 Runs in .github/workflows/docs-pages.yml before `mkdocs build`, over docs/**
 and the three root documents the site pulls in (README, CHANGELOG, TODO).
 Also scans the optional root MEMORY.md continuation handoff, which is not
 published on the docs site.
+
+Since #1540 it also reads the files outside docs/ where a real Azure
+identifier has been found or would be most likely to land: the custom role
+definitions under infra/roles/ (five of them carried a real subscription id
+in their assignableScopes for months, because only docs/ was ever scanned),
+the Terraform under infra/, the GitHub Actions workflows, and the top-level
+operator scripts under scripts/. Each of those locations is scanned when it
+exists; a test fixture root without them still evaluates. The repository is
+public, so an identifier in any tracked file is published, not only one on
+a docs page.
+
 Fails, naming file:line, on:
 
 1. A hard-coded link to the retired GitHub Wiki. The Wiki is being replaced
@@ -35,6 +46,19 @@ SCAN_FILES = [ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "TODO.md"]
 # without a handoff retain the three required documentation files.
 if (ROOT / "MEMORY.md").exists():
     SCAN_FILES.append(ROOT / "MEMORY.md")
+# Code and configuration outside docs/ (#1540), as (directory, glob) pairs.
+# A pair is skipped when its directory is absent so that the fixture roots
+# the tests build (docs/ plus the three root documents) still evaluate; in
+# the real repository every one of these directories exists.
+SCAN_GLOBS: list[tuple[Path, str]] = [
+    (ROOT / "infra" / "roles", "*.json"),
+    (ROOT / "infra", "**/*.tf"),
+    (ROOT / "infra", "**/*.tfvars*"),
+    (ROOT / ".github" / "workflows", "*.yml"),
+    (ROOT / ".github" / "workflows", "*.yaml"),
+    (ROOT / "scripts", "*.ps1"),
+    (ROOT / "scripts", "*.sh"),
+]
 
 WIKI_LINK = re.compile(r"github\.com/[^/\s)]+/[^/\s)]+/wiki(?:/|\b)")
 GUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
@@ -49,10 +73,20 @@ LOCAL_PATH = re.compile(
     r"|/home/[A-Za-z0-9._-]+/"
 )
 
-# Public, first-party constants that are the same in every tenant.
+# Public constants that are the same in every tenant, or values that are
+# already public by construction. Keys are lower case. The Microsoft ones are
+# on learn.microsoft.com (Azure built-in roles; Azure Policy built-in
+# definitions), which is where each was checked before it was added.
 ALLOWED_GUIDS = {
     "797f4846-ba00-4fd7-ba43-dac1f8f63013": "Azure Resource Manager first-party application id (Microsoft constant)",
     "04b07795-8ddb-461a-bbee-02f9e1bf7b46": "Azure CLI first-party application id (Microsoft constant)",
+    "ba92f5b4-2d11-453d-a403-e96b0029c9fe": "Storage Blob Data Contributor built-in role id (Microsoft constant; infra/lab-hybrid-backups.tf)",
+    "e147488a-f6f5-4113-8e2d-b22465e65bf6": "Key Vault Crypto Service Encryption User built-in role id (Microsoft constant; infra/lab-hybrid.tf)",
+    "b64e21ea-ac4e-4cdf-9dc9-5b892992bee7": "Azure Connected Machine Onboarding built-in role id (Microsoft constant; scripts/lab/Register-LabArc.ps1)",
+    "fc9b3da7-8347-4380-8e70-0a0361d8dedd": "Azure Policy built-in definition 'Linux machines should meet requirements for the Azure compute security baseline' (Microsoft constant; infra/lab-hybrid.tf)",
+    "dfee1d68-95f7-4a8f-9c0e-7ebe61112472": "Cloudflare custom-hostname ownership token for go.hybridcloudworks.com: the content of a public DNS TXT record, readable by anyone who queries the name (infra/frontend.tf)",
+    "e2e00000-0000-4000-8000-00000000c11e": "Synthetic Entra client id the browser tests build with; it spells 'e2e' and 'client' and names nothing (frontend/e2e/fixtures/stub-build-env.js, .github/workflows/ci.yml)",
+    "e2e00000-0000-4000-8000-0000000071d0": "Synthetic Entra tenant id the browser tests build with; it spells 'e2e' and 'tenant' and names nothing (frontend/e2e/fixtures/stub-build-env.js, .github/workflows/ci.yml)",
 }
 
 
@@ -68,20 +102,29 @@ def files() -> list[Path]:
             print(f"cannot evaluate: {f} missing", file=sys.stderr)
             sys.exit(2)
         out.append(f)
+    for d, pattern in SCAN_GLOBS:
+        if d.is_dir():
+            out.extend(p for p in sorted(d.glob(pattern)) if p.is_file())
     return out
 
 
-def line_findings(rel: str, n: int, line: str) -> list[str]:
-    """Every finding on one line, each as `file:line: what`."""
+def line_findings(rel: str, n: int, line: str, prose: bool = True) -> list[str]:
+    """Every finding on one line, each as `file:line: what`.
+
+    The Wiki-link and local-path rules are about published prose, so they
+    apply only to the documentation set (`prose=True`). Code and configuration
+    get the GUID rule alone: a workflow legitimately tests `/home/agent/...`
+    inside a container, which the local-path rule would otherwise flag.
+    """
     found: list[str] = []
-    if WIKI_LINK.search(line):
+    if prose and WIKI_LINK.search(line):
         found.append(f"{rel}:{n}: link to the retired GitHub Wiki")
     found.extend(
         f"{rel}:{n}: non-placeholder GUID {guid}"
         for guid in GUID.findall(line)
         if not (PLACEHOLDER.match(guid) or guid.lower() in ALLOWED_GUIDS)
     )
-    if LOCAL_PATH.search(line):
+    if prose and LOCAL_PATH.search(line):
         found.append(f"{rel}:{n}: contributor-local filesystem path")
     return found
 
@@ -91,8 +134,9 @@ def scan() -> list[str]:
     findings: list[str] = []
     for path in files():
         rel = path.relative_to(ROOT).as_posix()
+        prose = path.suffix == ".md"
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            findings.extend(line_findings(rel, n, line))
+            findings.extend(line_findings(rel, n, line, prose))
     return findings
 
 

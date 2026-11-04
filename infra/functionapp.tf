@@ -400,8 +400,10 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # COSMOS_CONNECTION_STRING is deliberately absent (T-315): it carried
     # the account PRIMARY KEY for two empty change-feed handlers. The six
     # current change-feed functions use the IDENTITY-BASED binding —
-    # the app's managed identity already holds Cosmos Data Contributor at account
-    # scope (func_cosmos), which covers the `leases` container too.
+    # the app's managed identity holds Cosmos Data Contributor on the `hcw`
+    # database (func_cosmos_db["hcw"] in cosmos.tf, and at account scope
+    # through func_cosmos until Step 2 of #1469), which covers the `leases`
+    # container too: it lives in `hcw`.
     # See https://learn.microsoft.com/azure/azure-functions/functions-bindings-cosmosdb-v2
     "COSMOS_CONNECTION__accountEndpoint" = azurerm_cosmosdb_account.hcw.endpoint
     "COSMOS_CONNECTION__credential"      = "managedidentity"
@@ -730,12 +732,19 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # resolvedSetting() in lib/auth/client-identity.js reads as "not set", so
     # readBrokerConfig() returns null and the sweep logs one Warning ("Coder
     # is not set up") and calls nothing. The visitor routes check the
-    # LABS_VISITOR_SESSIONS_ENABLED switch and Turnstile first (the switch is
-    # not declared here yet, so they answer "closed"), and only then answer
-    # VISITOR_NOT_CONFIGURED. It is listed in EXPECTED_UNRESOLVED in
+    # LABS_VISITOR_SESSIONS_ENABLED switch below and Turnstile first (the
+    # switch is false by default, so they answer "closed"), and only then
+    # answer VISITOR_NOT_CONFIGURED. It is listed in EXPECTED_UNRESOLVED in
     # scripts/check-unresolved-secrets.mjs meanwhile, reported every run but
     # not as a failure. Remove it from that list in the PR after it is seeded.
     "CODER_BROKER_TOKEN" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/CODER-BROKER-TOKEN)"
+    # The door to the visitor sessions themselves. The switch is
+    # labs_visitor_sessions_enabled (variables.tf, false by default);
+    # lib/labs/visitor-session.js opens nothing unless it is exactly "true".
+    # Declared since #1400 and #1403: until then the code read it and nothing
+    # here declared it, so a copy set by hand would have gone on the next
+    # apply. Running sessions and the sweep timer do not depend on it.
+    "LABS_VISITOR_SESSIONS_ENABLED" = var.labs_visitor_sessions_enabled ? "true" : "false"
 
     # Tool add-ons (ADR 0035 decision 4). The address of each AddOn the
     # status proxy (lib/addons/status.js) reads `/api/health` from, so the
