@@ -418,26 +418,21 @@ resource "azapi_update_resource" "cosmos_computed_properties" {
 # as a replace, so a duplicated name silently REMOVES the Function App's
 # access rather than erroring.
 #
-# TWO GRANTS DURING THE NARROWING (#1469). Cosmos can grant a data-plane role
-# for one database instead of the whole account (scope `<account id>/dbs/<db>`,
+# ONE GRANT PER DATABASE, NOT ONE FOR THE ACCOUNT (#1469). Cosmos can grant a
+# data-plane role for one database instead of the whole account (scope
+# `<account id>/dbs/<db>`,
 # https://learn.microsoft.com/azure/cosmos-db/how-to-connect-role-based-access-control#grant-data-plane-role-based-access).
-# The move from the account grant to a grant per database happens in two
-# applies so that the app never has a moment with no grant at all:
+# Until 2026-11-04 the grant here was account-wide
+# (`azurerm_cosmosdb_sql_role_assignment.func_cosmos`, scope = the account
+# id). The move to a grant per database happened in two applies so that the
+# app never had a moment with no grant at all: step 1 (#1531, applied in
+# run-vUQrQLSGJh4J5HZ2 on 2026-11-04) added `func_cosmos_db["hcw"]` beside
+# the account grant; step 2 (the pull request that deleted the `func_cosmos`
+# block, declared in scripts/assert-expected-plan.mjs) removed the account
+# grant. Do not bring an account-scoped grant back for this identity:
+# infra/tests/guards.tftest.hcl refuses one.
 #
-#   Step 1 (this file today): `func_cosmos_db` adds the database-scoped
-#     grant(s) beside `func_cosmos`. The plan is one create per database
-#     in local.cosmos_database_grants (one today) and nothing else; both
-#     grants cover `hcw` until Step 2.
-#   Step 2 (a later pull request, after the owner has seen the site, the
-#     change-feed functions and the nightly export run on the narrower
-#     grant): delete the `func_cosmos` block below and declare the delete in
-#     scripts/assert-expected-plan.mjs. The address of `func_cosmos` is kept
-#     exactly as it is until then, on purpose: a `count` or `moved` on the one
-#     grant the site runs on would make that grant's address change, which
-#     scripts/assert-expected-plan.mjs reports as UNEXPECTED, and a wrong
-#     move is a destroy-and-create, the very gap this is avoiding.
-#
-# What the narrower scope still covers, per Microsoft's data-plane security
+# What the narrower scope covers, per Microsoft's data-plane security
 # reference (https://learn.microsoft.com/azure/cosmos-db/reference-data-plane-security#required-metadata):
 # `readMetadata` at database scope allows reading the database, listing its
 # containers and every container-level action beneath it, so the SDK's
@@ -448,15 +443,6 @@ resource "azapi_update_resource" "cosmos_computed_properties" {
 # which functions/src/lib/cosmos-client.js never does: it opens
 # COSMOS_DATABASE by name.
 #
-# The account-wide grant. Step 2 of #1469 removes this block.
-resource "azurerm_cosmosdb_sql_role_assignment" "func_cosmos" {
-  resource_group_name = azurerm_resource_group.app["db"].name
-  account_name        = azurerm_cosmosdb_account.hcw.name
-  role_definition_id  = "${azurerm_cosmosdb_account.hcw.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
-  principal_id        = azurerm_function_app_flex_consumption.hcw.identity[0].principal_id
-  scope               = azurerm_cosmosdb_account.hcw.id
-}
-
 # The databases the Function App's identity is granted, one grant each. Keyed
 # by a literal so the resource address (`func_cosmos_db["hcw"]`) is readable
 # in a plan and in scripts/assert-expected-plan.mjs; the value is the database

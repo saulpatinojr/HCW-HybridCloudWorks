@@ -521,10 +521,9 @@ export const DECLARED = [
   // #1469 step 1's create, func_cosmos_db["hcw"] (the Function App's Cosmos
   // Data Contributor role on the hcw database, beside the account-wide
   // grant), applied in run-vUQrQLSGJh4J5HZ2 on 2026-11-04 (HCP Terraform
-  // commit status Success on 66118ffd at 03:09Z) and was deleted here. The
-  // account-wide grant, azurerm_cosmosdb_sql_role_assignment.func_cosmos,
-  // stays until step 2, which is its own pull request: it deletes that block
-  // and declares the delete here.
+  // commit status Success on 66118ffd at 03:09Z) and was deleted here. Step
+  // 2's delete of the account-wide grant is declared at the end of this
+  // list.
   // #1360's create, notes_obsidian_publish, applied on 2026-10-24 (run-bb1XtRGJEbuK1Cec,
   // read as applied by tfc-plan-check with only the known permanent diff besides it) and was
   // deleted here. notes.hybridcloudworks.com then resolved to Cloudflare addresses on 1.1.1.1
@@ -583,6 +582,19 @@ export const DECLARED = [
     action: "create",
     reason:
       "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); planned only once the owner has created the role and set storage_firewall_remover_enabled = true (Required-Inputs §4.6b)",
+  },
+  // #1469 step 2: the account-wide Cosmos grant goes. Its block left
+  // infra/cosmos.tf in the same pull request as this entry, so the plan is
+  // this one destroy beside the permanent diff, and nothing on
+  // func_cosmos_db["hcw"] (the database-scoped grant step 1 applied, which
+  // the site now runs on). Delete this entry once the run has applied, as
+  // the header asks; the rollback is a revert of that pull request, whose
+  // plan is one create of the same address.
+  {
+    address: "azurerm_cosmosdb_sql_role_assignment.func_cosmos",
+    action: "delete",
+    reason:
+      "#1469 step 2: the Function App's account-wide Cosmos Data Contributor grant is removed; the identity keeps func_cosmos_db[\"hcw\"], scoped to the hcw database",
   },
 ];
 
