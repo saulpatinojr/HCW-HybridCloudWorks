@@ -69,13 +69,18 @@ const FUNCTION_APP = 'azurerm_function_app_flex_consumption.hcw';
 /**
  * The names of the `azurerm_cosmosdb_sql_role_assignment` blocks in `source`
  * (Terraform text) whose `scope` is a Cosmos account's id and nothing more:
- * `azurerm_cosmosdb_account.<any name>.id`, any spacing, with or without a
- * trailing `#` or `//` comment. A database grant's scope is an interpolated
- * string that goes on with `/dbs/<name>` and does not match (#1469 step 2).
+ * `azurerm_cosmosdb_account.<any name>.id` bare or as the whole of an
+ * interpolated string (`"${azurerm_cosmosdb_account.<any name>.id}"`), any
+ * spacing, with or without a trailing `#` or `//` comment. Names are any
+ * valid Terraform identifier (letters, digits, `_` and `-`, not starting
+ * with a digit). A database grant's scope goes on with `/dbs/<name>` inside
+ * the string and does not match (#1469 step 2).
  */
 function accountScopedCosmosGrants(source) {
-  const blocks = [...source.matchAll(/^resource "azurerm_cosmosdb_sql_role_assignment" "([a-z0-9_]+)" \{[\s\S]*?^\}/gm)];
-  const accountScope = /^\s*scope\s*=\s*azurerm_cosmosdb_account\.[a-z0-9_]+\.id\s*(?:(?:#|\/\/).*)?$/m;
+  const identifier = '[A-Za-z_][A-Za-z0-9_-]*';
+  const blocks = [...source.matchAll(new RegExp(`^resource "azurerm_cosmosdb_sql_role_assignment" "(${identifier})" \\{[\\s\\S]*?^\\}`, 'gm'))];
+  const accountId = `azurerm_cosmosdb_account\\.${identifier}\\.id`;
+  const accountScope = new RegExp(`^\\s*scope\\s*=\\s*(?:${accountId}|"\\$\\{\\s*${accountId}\\s*\\}")\\s*(?:(?:#|\\/\\/).*)?$`, 'm');
   return blocks.filter((m) => accountScope.test(m[0])).map((m) => m[1]);
 }
 
@@ -1159,19 +1164,33 @@ describe('DECLARED', () => {
 
   it('reads an account-scoped Cosmos grant whatever the account resource is called and whatever trails the scope line (#1469 step 2)', () => {
     // The reader above is only as good as its regex, so it is exercised on
-    // the shapes a block could take: a database grant (ignored), the account
-    // id with a trailing comment, under another account resource name, with
-    // odd spacing, and a scope that only begins with the account id.
+    // the shapes a block could take: database grants (ignored, bare or
+    // interpolated), the account id with a trailing comment, under another
+    // account resource name, with odd spacing, names with hyphens (valid
+    // Terraform identifiers), and the account id as the whole of an
+    // interpolated string, which evaluates to the same scope.
     const block = (name, scope) =>
       `resource "azurerm_cosmosdb_sql_role_assignment" "${name}" {\n  scope = ${scope}\n}\n`;
     const source = [
       block('db_grant', '"${azurerm_cosmosdb_account.hcw.id}/dbs/${each.value}"'),
+      block('db_grant_spaced', '"${ azurerm_cosmosdb_account.hcw.id }/dbs/hcw"'),
       block('commented', 'azurerm_cosmosdb_account.hcw.id # account scope'),
       block('slashes', 'azurerm_cosmosdb_account.hcw.id // account scope'),
       block('other_account', 'azurerm_cosmosdb_account.scratch.id'),
       block('spaced', '   azurerm_cosmosdb_account.hcw.id   '),
+      block('func-cosmos', 'azurerm_cosmosdb_account.hcw-prod.id'),
+      block('interpolated', '"${azurerm_cosmosdb_account.hcw.id}"'),
+      block('interpolated_spaced', '"${ azurerm_cosmosdb_account.hcw.id }" # same scope'),
     ].join('\n');
-    expect(accountScopedCosmosGrants(source)).toEqual(['commented', 'slashes', 'other_account', 'spaced']);
+    expect(accountScopedCosmosGrants(source)).toEqual([
+      'commented',
+      'slashes',
+      'other_account',
+      'spaced',
+      'func-cosmos',
+      'interpolated',
+      'interpolated_spaced',
+    ]);
   });
 
   it('prunes the Cosmos request-log filter’s four entries once applied, with their resources still in infra/ and the azapi table gone (#1530, pruned 2026-11-04)', () => {
