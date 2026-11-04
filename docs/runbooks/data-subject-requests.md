@@ -52,6 +52,19 @@ Operators have two supported operational paths:
    ```
    *(Requires `Cosmos DB Built-in Data Reader` on account `cosmos-site-prod-cus`).*
 
+**Who has read or changed the record.** Every request on the `ambassador`,
+`doc_vault` and `brain_records` containers, reads included, is kept in the Log
+Analytics workspace's `CDBDataPlaneRequests` table for 90 days, with the
+caller's identity (`AadPrincipalId`), address and operation. Requests on the
+other containers are kept only when they write. The filter is an
+ingestion-time rule in `infra/observability.tf`
+(`azurerm_monitor_data_collection_rule.workspace_transforms`,
+[#1530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1530));
+before it was applied the table carried every request until the workspace's
+daily cap stopped collection each evening, so a day before that apply is
+complete only from 08:00 UTC to about 20:30 UTC. Read it with
+`az monitor log-analytics query --workspace cf80dc24-2499-49a0-8c66-9522bcc294ed --subscription sub-plat-mgmt-prod-cus --analytics-query "CDBDataPlaneRequests | where CollectionName == 'ambassador' | project TimeGenerated, OperationName, AadPrincipalId, ClientIpAddress, StatusCode" -o table`.
+
 **Search scope:**
 1. Read every text field across all programs, applications, and evidence records (`title`, `notes`, `statusNote`, `reviewerFeedback`, `responses[].text`, `customValues`, `description`).
 2. Enumerate all file and image references (`files` and `images`, each holding either a private blob path or an external URL).

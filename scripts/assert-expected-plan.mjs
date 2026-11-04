@@ -182,7 +182,9 @@ export const EXPECTED = {
  */
 export const CONDITIONAL_REPLACED = [
   "azapi_update_resource.cosmos_computed_properties",
-  "azapi_update_resource.cosmos_data_plane_table",
+  // azapi_update_resource.cosmos_data_plane_table was listed here from
+  // PLAT-8 (#968) until #1530 replaced it with an azurerm table resource
+  // (its delete is declared in DECLARED below).
 ];
 
 /** `type.name["key"]` -> `type.name`, the address a for_each instance belongs to. */
@@ -535,6 +537,48 @@ export const DECLARED = [
   // SWEEP_VISITOR_SESSIONS false -> true), #953 stage 3's two entries
   // (lab_ssh_loopback_only) and #1302's Web Analytics site create
   // (cloudflare_account_id). Each is a value the owner sets in the workspace.
+  //
+  // #1530: the Cosmos request-log filter, which PLAT-8 (#968) wrote as a
+  // `transformKql` property on the table and Azure never stored (the Tables
+  // API has no such property; an ingestion-time filter is a data collection
+  // rule). One run, five changes. Four are declared here:
+  // - the delete of azapi_update_resource.cosmos_data_plane_table, which
+  //   makes no API call (destroying an azapi_update_resource leaves the
+  //   live resource as it is);
+  // - the create of azurerm_log_analytics_workspace_table.cosmos_data_plane,
+  //   which takes over the table's retention, 90 days as before;
+  // - the create of azurerm_monitor_data_collection_rule.workspace_transforms,
+  //   the rule that carries the filter;
+  // - the create of alert-logs-overquota.
+  // The fifth, azurerm_log_analytics_workspace.hcw's data_collection_rule_id
+  // "" -> (known after apply), links the workspace to the new rule. It cannot
+  // be declared (the header: an unknown difference never matches), so the
+  // plan check prints that one line as UNEXPECTED beside these four, and the
+  // run is read by hand against the list in the pull request. Delete all four
+  // once the run has applied, as the header asks.
+  {
+    address: "azapi_update_resource.cosmos_data_plane_table",
+    action: "delete",
+    reason:
+      "#1530: the table's retention moves to azurerm_log_analytics_workspace_table; destroying an azapi_update_resource changes nothing live",
+  },
+  {
+    address: "azurerm_log_analytics_workspace_table.cosmos_data_plane",
+    action: "create",
+    reason:
+      "#1530: CDBDataPlaneRequests retention (90 days, unchanged) owned by a resource that reads it back",
+  },
+  {
+    address: "azurerm_monitor_data_collection_rule.workspace_transforms",
+    action: "create",
+    reason:
+      "#1530: the workspace transformation rule carrying the Cosmos request-log filter",
+  },
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.logs_over_quota",
+    action: "create",
+    reason: "#1530: alert-logs-overquota, the cap-hit alert on _LogOperation",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
