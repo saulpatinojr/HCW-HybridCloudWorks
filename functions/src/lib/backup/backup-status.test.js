@@ -214,11 +214,14 @@ describe('createBackupStatusReader', () => {
     expect(blobs.readJson.mock.calls.filter(([n]) => n.endsWith('run.json'))).toHaveLength(7);
   });
 
-  it('gives up after timeoutMs with a coded error, so the snapshot never waits on a storage account that drops', async () => {
+  it('gives up after timeoutMs with a coded error, and the reading stops at its next read instead of walking on', async () => {
     vi.useFakeTimers();
     try {
+      // Each read answers "no run" after 40 ms: a slow store, not a dead one.
       const blobs = memBlobs();
-      blobs.readJson.mockImplementation(() => new Promise(() => {}));
+      blobs.readJson.mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve(null), 40))
+      );
       const log = quiet();
       const r = createBackupStatusReader({ blobs, now: () => NOW, timeoutMs: 50, log });
       const pending = r.read();
@@ -226,6 +229,10 @@ describe('createBackupStatusReader', () => {
       await vi.advanceTimersByTimeAsync(51);
       await outcome;
       expect(log.warn).toHaveBeenCalledWith('[backupStatus] read failed: ETIMEDOUT');
+      // Two reads had started (the second right after the first answered at
+      // 40 ms); once the deadline passed, the loop stopped and no third began.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(blobs.readJson).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

@@ -182,10 +182,19 @@ export function createBackupStatusReader({
     return { ...base, complete: false, completedAt: null, markers };
   }
 
-  async function readFresh() {
+  /**
+   * One full reading. `isCancelled` is checked between the sequential reads
+   * so a reading whose deadline has passed stops at the next boundary
+   * instead of walking every remaining date against a storage account that
+   * is already not answering.
+   */
+  async function readFresh(isCancelled = () => false) {
     const at = now();
     const runs = [];
     for (let back = 0; back < lookbackDays; back += 1) {
+      if (isCancelled()) {
+        throw Object.assign(new Error('backup status read cancelled'), { code: 'ECANCELED' });
+      }
       const run = await readRun(new Date(at.getTime() - back * DAY_MS));
       if (run) runs.push(run);
     }
@@ -199,16 +208,25 @@ export function createBackupStatusReader({
     };
   }
 
-  /** `readFresh`, but no longer than `timeoutMs`. */
+  /**
+   * `readFresh`, but no longer than `timeoutMs`. The race alone would leave
+   * the losing read walking on; the flag stops it at its next read.
+   */
   function readBounded() {
     if (!(timeoutMs > 0)) return readFresh();
     let timer;
+    let cancelled = false;
     const deadline = new Promise((_resolve, reject) => {
       timer = setTimeout(() => {
+        cancelled = true;
         reject(Object.assign(new Error('backup status read timed out'), { code: 'ETIMEDOUT' }));
       }, timeoutMs);
     });
-    return Promise.race([readFresh(), deadline]).finally(() => clearTimeout(timer));
+    // The losing read's own rejection (ECANCELED) has nowhere to go once the
+    // race is decided; swallow it there so nothing is reported as unhandled.
+    const reading = readFresh(() => cancelled);
+    reading.catch(() => {});
+    return Promise.race([reading, deadline]).finally(() => clearTimeout(timer));
   }
 
   /**
