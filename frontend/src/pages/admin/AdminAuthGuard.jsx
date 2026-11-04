@@ -44,6 +44,74 @@ import { postJSON } from '@/lib/api';
 import { signIn, signOutUser, reauthenticateForApi } from '@/lib/entraAuth';
 
 /** The gate in front of every /admin page: the portal renders only for an admin the registry verified, that admin's role goes down with it, and each other outcome shows as its own. */
+// Signed in, but the check could not run. NOT a denial, and deliberately
+// says nothing about whether this account is an admin — because nobody
+// knows. The hook has already spent its one automatic re-authentication by
+// the time this renders, so the recovery here is a button. Its own component
+// so the guard above stays readable (qlty complexity finding, #1527).
+function AccessUnknownCard({ unknownReason, onReauthenticate, onRecheck, onSignOut, message }) {
+  const isSession = unknownReason === UNKNOWN_REASON.SESSION;
+  // A configuration problem is the one `unknown` that a retry cannot help:
+  // the token verified and was refused for what it lacks, so re-acquiring it
+  // returns the same token and the same refusal (#517). Offering a button
+  // that cannot work is worse than offering none.
+  const isConfiguration = unknownReason === UNKNOWN_REASON.CONFIGURATION;
+
+  // The three texts and the one button, chosen once here instead of in a
+  // nested ternary inside the markup (qlty complexity finding, #1527).
+  const title = isConfiguration ? 'Admin access is misconfigured' : 'Could not verify your access';
+  let description =
+    'The admin service did not answer, so your access could not be checked. This is not a refusal.';
+  if (isConfiguration) {
+    description =
+      'Your sign-in worked. The API refused the token for what it is missing, so signing in again would produce the same result — this needs a configuration change, not another attempt.';
+  } else if (isSession) {
+    description = 'Your sign-in needs renewing before we can check your admin access.';
+  }
+
+  // A configuration problem gets no button at all (see above). No busy
+  // state on the retry button: the spinner branch above catches
+  // `adminStatusLoading` first, so this whole card is replaced by the
+  // spinner for the duration of the retry. A "Checking..." label here
+  // would never render.
+  let actionButton = null;
+  if (isSession) {
+    actionButton = (
+      <Button onClick={onReauthenticate} className="gap-2">
+        <LogIn className="h-4 w-4" />
+        Sign in again
+      </Button>
+    );
+  } else if (!isConfiguration) {
+    actionButton = (
+      <Button onClick={onRecheck} className="gap-2">
+        <RefreshCw className="h-4 w-4" />
+        Try again
+      </Button>
+    );
+  }
+  return (
+    <div className="flex items-center justify-center min-h-[60vh]">
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
+          <ShieldQuestion className="h-12 w-12 mx-auto text-muted-foreground mb-2" />
+          <CardTitle>{title}</CardTitle>
+          <CardDescription>{description}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            {actionButton}
+            <Button variant="outline" onClick={onSignOut}>
+              Sign out
+            </Button>
+            {message && <p className="text-xs text-muted-foreground">{message}</p>}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function AdminAuthGuard({ children }) {
   const {
     authReady,
@@ -142,60 +210,15 @@ export default function AdminAuthGuard({ children }) {
     );
   }
 
-  // Signed in, but the check could not run. NOT a denial, and deliberately
-  // says nothing about whether this account is an admin — because nobody
-  // knows. The hook has already spent its one automatic re-authentication by
-  // the time this renders, so the recovery here is a button.
   if (accessState === ACCESS_STATE.UNKNOWN) {
-    const isSession = unknownReason === UNKNOWN_REASON.SESSION;
-    // A configuration problem is the one `unknown` that a retry cannot help:
-    // the token verified and was refused for what it lacks, so re-acquiring it
-    // returns the same token and the same refusal (#517). Offering a button
-    // that cannot work is worse than offering none.
-    const isConfiguration = unknownReason === UNKNOWN_REASON.CONFIGURATION;
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <ShieldQuestion className="h-12 w-12 mx-auto text-muted-foreground mb-2" />
-            <CardTitle>
-              {isConfiguration ? 'Admin access is misconfigured' : 'Could not verify your access'}
-            </CardTitle>
-            <CardDescription>
-              {isConfiguration
-                ? 'Your sign-in worked. The API refused the token for what it is missing, so signing in again would produce the same result — this needs a configuration change, not another attempt.'
-                : isSession
-                  ? 'Your sign-in needs renewing before we can check your admin access.'
-                  : 'The admin service did not answer, so your access could not be checked. This is not a refusal.'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3">
-              {isConfiguration ? null : isSession ? (
-                <Button onClick={handleReauthenticate} className="gap-2">
-                  <LogIn className="h-4 w-4" />
-                  Sign in again
-                </Button>
-              ) : (
-                // No busy state on this button: the spinner branch above
-                // catches `adminStatusLoading` first, so this whole card is
-                // replaced by the spinner for the duration of the retry. A
-                // "Checking..." label here would never render.
-                <Button onClick={recheck} className="gap-2">
-                  <RefreshCw className="h-4 w-4" />
-                  Try again
-                </Button>
-              )}
-              <Button variant="outline" onClick={handleSignOut}>
-                Sign out
-              </Button>
-              {(error || accessError) && (
-                <p className="text-xs text-muted-foreground">{error || accessError}</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <AccessUnknownCard
+        unknownReason={unknownReason}
+        onReauthenticate={handleReauthenticate}
+        onRecheck={recheck}
+        onSignOut={handleSignOut}
+        message={error || accessError}
+      />
     );
   }
 
