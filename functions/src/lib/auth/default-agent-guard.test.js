@@ -64,8 +64,8 @@ describe('getDefaultAgentGuard', () => {
     expect(doc).toMatchObject({ kind: 'agent-auth-denial', reason: 'unknown agent', agentId: 'x' });
     expect(doc.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(Number.isNaN(Date.parse(doc.at))).toBe(false);
-    // Through the shared sink since #1476, so the row carries the indexed
-    // twins (`action`, `timestamp`) the Health page's denial count reads.
+    // Through the shared sink since #1476, so the row carries the two names
+    // the container indexes (`action`, `timestamp`; infra/cosmos-containers.json).
     expect(doc.action).toBe('agent-auth-denial');
     expect(doc.timestamp).toBe(doc.at);
   });

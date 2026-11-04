@@ -69,7 +69,7 @@ async function unhandledDuring(work) {
 }
 
 describe('the agent guard denial sink (#1476)', () => {
-  it('writes one agent-auth-denial row with the indexed twins the Health page reads', async () => {
+  it('writes one agent-auth-denial row with the names the container indexes', async () => {
     const { requireAgent } = getDefaultAgentGuard();
     verify.impl = async () => {
       throw Object.assign(new Error('bad token'), { code: 'invalid-signature' });
@@ -82,7 +82,8 @@ describe('the agent guard denial sink (#1476)', () => {
     expect(container).toBe('admin_audit_logs');
     expect(doc).toMatchObject({ kind: 'agent-auth-denial', outcome: 'denied', reason: 'invalid-token' });
     // The same two facts under the names the container indexes (`action`,
-    // `timestamp`), as every other guard's row has them since #1465.
+    // `timestamp`; infra/cosmos-containers.json), as every other guard's row
+    // has them since #1465.
     expect(doc.action).toBe('agent-auth-denial');
     expect(doc.timestamp).toBe(doc.at);
     expect(doc.id).toMatch(/^[0-9a-f-]{36}$/);
