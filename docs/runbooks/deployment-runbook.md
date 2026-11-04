@@ -591,6 +591,146 @@ problem means production is already degraded rather than merely unchanged.
 7. Update Required-Inputs status (`SET` → `VERIFIED`) for
    any input exercised for the first time.
 
+### Narrowing the Function App's Cosmos grant (#1469)
+
+The website's backend (the Function App `func-site-prod-cus-01`) reads and
+writes the Cosmos account `cosmos-site-prod-cus` through one data-plane role
+(a permission Cosmos itself checks on every read and write, separate from
+Azure's own role assignments): the built-in **Cosmos DB Built-in Data
+Contributor**, granted on the whole account. Issue
+[#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469)
+narrows that to one grant per database. Today there is one database, `hcw`.
+
+It takes two applies, so the app never has a moment with no grant. An apply
+that removed the old grant and created the new one in the same run could
+leave the app with neither for a stretch, and the symptom would be every page
+failing at once with 403. The resources are in
+[`infra/cosmos.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos.tf):
+`azurerm_cosmosdb_sql_role_assignment.func_cosmos` is the account-wide grant
+and `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]` is the new
+database-scoped one. Both applies are HCP Terraform runs on the
+[hcw-azure runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs),
+queued by the merge and confirmed by the owner (the confirm button is the
+apply).
+
+Why the narrower grant is enough, from Microsoft's own pages: a data-plane
+role can be granted on one database with the scope
+`<account id>/dbs/<database>`
+([Microsoft Learn: grant data plane role-based access](https://learn.microsoft.com/azure/cosmos-db/how-to-connect-role-based-access-control#grant-data-plane-role-based-access)),
+and at database scope the role's `readMetadata` action still lets the SDK
+read the database, list its containers and do everything inside them
+([Microsoft Learn: required metadata](https://learn.microsoft.com/azure/cosmos-db/reference-data-plane-security#required-metadata)).
+The only thing account scope adds is listing the account's databases, which
+the app never does: it opens `COSMOS_DATABASE` by name
+(`functions/src/lib/cosmos-client.js`). The six change-feed functions, their
+`leases` container and every container the nightly export reads are all in
+`hcw`.
+
+**Step 1: add the database grant (the pull request for #1469).**
+
+1. Merge the pull request. HCP Terraform queues a plan on the
+   [runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
+   Open the newest run.
+2. Read the plan. It must show the permanent diff (the three `azapi`
+   replacements and the `RUNTIME_CONFIG_WRITER` change, section 2 above)
+   plus exactly one create,
+   `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]`, and nothing
+   on `azurerm_cosmosdb_sql_role_assignment.func_cosmos`: no change, no
+   destroy, no "must be replaced". The
+   [plan check](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml)
+   holds the plan to that shape; a run of it that reports anything
+   UNEXPECTED means stop and discard the run. If the plan shows a destroy
+   or a replace of `func_cosmos`, discard the run; do not confirm.
+3. Confirm the apply. Success is `Apply complete! Resources: 4 added, 1
+   changed, 3 destroyed` (the create plus the permanent trio).
+4. Check that both grants exist. PowerShell, from any folder; the identity
+   column is the Function App's managed identity id and the two rows differ
+   only in `scope`, one ending in `/cosmos-site-prod-cus` and one in
+   `/dbs/hcw`:
+
+   ```powershell
+   az cosmosdb sql role assignment list -a cosmos-site-prod-cus -g rg-db-site-prod-cus --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | Select-Object scope, principalId
+   ```
+
+   One row, or a row whose scope ends in something else, is a failed apply:
+   go back to the run page and read its error.
+5. Check the site is unaffected. Open <https://hybridcloudworks.com/> and
+   one article; both load. Then, from the repository root on `main`, run the
+   anonymous smoke tier (health endpoint and the public content reads;
+   bash or PowerShell, either works):
+
+   ```powershell
+   node scripts/smoke-deployed.mjs --base https://api-azure.hybridcloudworks.com/api
+   ```
+
+   Success is every tier-1 line `PASS` and the final summary with `0
+   failed`. A `FAIL` on the health or content-list line is the 403 this
+   procedure guards against; see "If something fails" below.
+6. Nothing more is needed for Step 1: while both grants exist, Cosmos allows
+   a request if either grant covers it, so the site, the change-feed
+   functions and the nightly export run on the account-wide grant exactly
+   as before. Step 1 proves the new grant creates cleanly and the plan shape
+   is right. The narrower grant is tested on its own by Step 2.
+
+**Step 2: remove the account-wide grant (a later pull request).** Do this on
+a quiet morning, after 04:00 UTC, so the previous night's export (03:00 UTC)
+has finished and the next one is a day away.
+
+1. Merge the Step 2 pull request. It deletes the `func_cosmos` block from
+   `infra/cosmos.tf`, declares the delete in
+   `scripts/assert-expected-plan.mjs` and removes the Step 1 declaration.
+2. Read the plan on the
+   [runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
+   It must show the permanent diff plus exactly one destroy,
+   `azurerm_cosmosdb_sql_role_assignment.func_cosmos`, and nothing on
+   `func_cosmos_db["hcw"]`. Any other destroy: discard the run.
+3. Confirm the apply. Success is `Apply complete! Resources: 3 added, 1
+   changed, 4 destroyed`.
+4. Run the role assignment list from Step 1, item 4. Success is exactly one
+   row, with a scope ending in `/dbs/hcw`.
+5. Run the site checks from Step 1, item 5. Then sign in to
+   <https://hybridcloudworks.com/admin> and open the content list, which
+   reads and writes through the same identity.
+6. Check the change-feed functions are still reading. Change-feed functions
+   wake up when a document changes, so save any small edit in the admin
+   content editor, wait two minutes, then count Cosmos requests the account
+   refused in the last hour (the `StatusCode` here is Cosmos's own HTTP
+   answer; `403` is "no grant covers this request"):
+
+   ```powershell
+   $cos = az cosmosdb show -n cosmos-site-prod-cus -g rg-db-site-prod-cus --subscription sub-app-site-prod-cus --query id -o tsv; az monitor metrics list --resource $cos --metric TotalRequests --filter "StatusCode eq '403'" --offset 1h --interval PT1H --aggregation Count --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | ForEach-Object { $_.value.timeseries.data } | Select-Object timeStamp, count
+   ```
+
+   Success is a `count` of `0` or an empty table. Any non-zero count after
+   the apply is a request the narrower grant does not cover: treat it as the
+   failure case below.
+7. The next morning, after 03:45 UTC, check that the nightly export
+   completed on the narrower grant. The query is the one from the
+   [Cosmos restore runbook](cosmos-restore.md#is-the-export-running-read-this-first):
+
+   ```powershell
+   az monitor app-insights query --app appi-site-prod-cus-01 -g rg-web-site-prod-cus --subscription sub-app-site-prod-cus --offset 2d --analytics-query 'customEvents | where name == "cosmosExportCompleted" | project timestamp, mode = tostring(customDimensions.mode), containers = toint(customDimensions.containers) | order by timestamp desc' -o table
+   ```
+
+   Success is a row dated today (UTC) with `mode` `delta` (or `full` on a
+   Monday) and a `containers` count equal to the previous day's. No row for
+   today is the same finding as the `alert-cosmos-export-daily` alert
+   ([Alerting and support](alerting-and-support.md)), which will also fire.
+8. Record the evidence (the two role lists, the smoke output's summary line,
+   the metric count and the export row) on
+   [#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469)
+   and close it. Then delete the Step 2 declaration from
+   `scripts/assert-expected-plan.mjs` in a small pull request, as that
+   file's header asks.
+
+**If something fails after Step 2** (a `FAIL` in the smoke run, 403s in the
+metric, or an admin page that will not load): put the account-wide grant
+back. Revert the Step 2 pull request on GitHub (its **Revert** button opens a
+pull request that restores the `func_cosmos` block), merge it, and confirm
+the run it queues; that plan is one create. Access returns when the apply
+completes, a few minutes after the merge. Nothing in Step 1 needs a
+rollback: an extra grant on the same identity cannot take access away.
+
 ## 5. Rollback
 
 ### 5.1 Infrastructure (Terraform) rollback

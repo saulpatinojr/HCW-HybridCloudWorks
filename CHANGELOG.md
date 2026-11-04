@@ -914,6 +914,28 @@ This project has not cut a tagged release; entries are grouped under
   unauthenticated images from being deployed. Sigstore `cosign` (v3.1.3) is pinned
   and SHA-256 verified in `bootstrap.sh` and `group_vars/all.yml` and tracked upstream
   via `scripts/lab-pins-upstream.mjs`.
+- **The Function App's Cosmos data role gains a grant on the `hcw` database
+  alone, the first of two steps that narrow it from the whole account
+  ([#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469)).**
+  The backend reads Cosmos through one data-plane role (Cosmos DB Built-in
+  Data Contributor) granted on the whole account. Cosmos can grant the same
+  role on one database instead (scope `<account id>/dbs/<database>`), and at
+  that scope the SDK can still read the database, list its containers and
+  work inside them, which is everything the app, the six change-feed
+  functions, their `leases` container and the nightly export do. The move
+  takes two applies so the app never has a moment with no grant: this step
+  adds `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]` in
+  `infra/cosmos.tf` beside the account-wide `func_cosmos`, whose address is
+  deliberately untouched (a `count` or `moved` on the one grant the site
+  runs on would be an address change the plan check reports, and a wrong
+  move is the gap this avoids); a later pull request deletes the account-wide
+  block. Only `hcw` gets a grant: `hcw_code_brain` left with #1480. The plan
+  check declares the one create, `infra/tests/guards.tftest.hcl` holds the
+  new grant to the database scope and the Data Contributor role while the
+  account grant keeps its scope, `scripts/assert-expected-plan.test.mjs`
+  holds the declarations to the database map, the deployment runbook carries
+  the owner's steps and checks for both applies, and ADR 0036 records the
+  narrowing as in progress.
 
 ### Fixed
 

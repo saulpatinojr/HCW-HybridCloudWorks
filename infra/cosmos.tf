@@ -1,6 +1,6 @@
 # =============================================================================
 # cosmos.tf — the Cosmos account, its database, every container, and the
-# data-plane role assignment the Function App reads through.
+# data-plane role assignments the Function App reads through.
 #
 # Split out of main.tf on 2026-08-29 (T-754). Terraform reads every .tf file in
 # this directory as ONE module: same namespace, same state, same plan. Nothing
@@ -417,12 +417,69 @@ resource "azapi_update_resource" "cosmos_computed_properties" {
 # agent) needs an assignment: ARM treats a PUT on an existing assignment name
 # as a replace, so a duplicated name silently REMOVES the Function App's
 # access rather than erroring.
+#
+# TWO GRANTS DURING THE NARROWING (#1469). Cosmos can grant a data-plane role
+# for one database instead of the whole account (scope `<account id>/dbs/<db>`,
+# https://learn.microsoft.com/azure/cosmos-db/how-to-connect-role-based-access-control#grant-data-plane-role-based-access).
+# The move from the account grant to a grant per database happens in two
+# applies so that the app never has a moment with no grant at all:
+#
+#   Step 1 (this file today): `func_cosmos_db` adds the database-scoped
+#     grant(s) beside `func_cosmos`. Both cover the `hcw` database, so the
+#     plan is "2 to add" at most (one per database) and nothing else.
+#   Step 2 (a later pull request, after the owner has seen the site, the
+#     change-feed functions and the nightly export run on the narrower
+#     grant): delete the `func_cosmos` block below and declare the delete in
+#     scripts/assert-expected-plan.mjs. The address of `func_cosmos` is kept
+#     exactly as it is until then, on purpose: a `count` or `moved` on the one
+#     grant the site runs on would make that grant's address change, which
+#     scripts/assert-expected-plan.mjs reports as UNEXPECTED, and a wrong
+#     move is a destroy-and-create, the very gap this is avoiding.
+#
+# What the narrower scope still covers, per Microsoft's data-plane security
+# reference (https://learn.microsoft.com/azure/cosmos-db/reference-data-plane-security#required-metadata):
+# `readMetadata` at database scope allows reading the database, listing its
+# containers and every container-level action beneath it, so the SDK's
+# start-up metadata reads, the six change-feed functions (monitored
+# containers and the `leases` container are all in `hcw`), and the nightly
+# export (every exported container is in `hcw`) all stay inside the grant.
+# The only thing account scope adds is listing the databases of the account,
+# which functions/src/lib/cosmos-client.js never does: it opens
+# COSMOS_DATABASE by name.
+#
+# The account-wide grant. Step 2 of #1469 removes this block.
 resource "azurerm_cosmosdb_sql_role_assignment" "func_cosmos" {
   resource_group_name = azurerm_resource_group.app["db"].name
   account_name        = azurerm_cosmosdb_account.hcw.name
   role_definition_id  = "${azurerm_cosmosdb_account.hcw.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
   principal_id        = azurerm_function_app_flex_consumption.hcw.identity[0].principal_id
   scope               = azurerm_cosmosdb_account.hcw.id
+}
+
+# The databases the Function App's identity is granted, one grant each. Keyed
+# by a literal so the resource address (`func_cosmos_db["hcw"]`) is readable
+# in a plan and in scripts/assert-expected-plan.mjs; the value is the database
+# resource's name so Terraform creates the database before its grant. A second
+# database is one more line here, and nothing else (#1469). `hcw_code_brain`
+# is deliberately absent: it was removed with #1480 and the owner's apply of
+# 2026-10-31, so there is no database for a grant to point at.
+locals {
+  cosmos_database_grants = {
+    hcw = azurerm_cosmosdb_sql_database.hcw.name
+  }
+}
+
+# The database-scoped grant(s). Same role, same identity, narrower scope.
+# `scope` is ForceNew on this resource (azurerm 5.12.0), so a database rename
+# here is a replace of the grant, not an update: do it as its own two-step.
+resource "azurerm_cosmosdb_sql_role_assignment" "func_cosmos_db" {
+  for_each = local.cosmos_database_grants
+
+  resource_group_name = azurerm_resource_group.app["db"].name
+  account_name        = azurerm_cosmosdb_account.hcw.name
+  role_definition_id  = "${azurerm_cosmosdb_account.hcw.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = azurerm_function_app_flex_consumption.hcw.identity[0].principal_id
+  scope               = "${azurerm_cosmosdb_account.hcw.id}/dbs/${each.value}"
 }
 
 # Change feed lease container — explicit so it has a controlled partition key

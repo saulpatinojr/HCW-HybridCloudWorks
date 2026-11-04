@@ -144,6 +144,17 @@ switches.
   the assignment the whole site runs on, and a mistake there is a site-wide
   403, so it belongs in its own reviewed change, not in this one. Tracked in
   [#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469).
+  **Update, 2026-11-03:** the narrowing is in progress, in two applies so
+  the app never has a moment with no grant. Step 1 adds the database-scoped
+  grant `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]` beside
+  the account-wide one ([`infra/cosmos.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos.tf),
+  the pull request for #1469); Step 2, a later pull request after the owner
+  has seen the site run on the narrower grant, deletes the account-wide
+  block. Only `hcw` gets a grant: `hcw_code_brain` was removed with
+  [#1480](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1480)
+  and the owner's apply of 2026-10-31, so there is no second database left
+  to scope to. The owner's steps for both applies are in the
+  [deployment runbook](../runbooks/deployment-runbook.md#narrowing-the-function-apps-cosmos-grant-1469).
 - **Reuse `brain_sync` and the creator's desktop client.** Rejected: one
   token would then open both workspaces.
 

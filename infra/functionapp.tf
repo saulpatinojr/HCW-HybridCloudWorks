@@ -400,8 +400,10 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # COSMOS_CONNECTION_STRING is deliberately absent (T-315): it carried
     # the account PRIMARY KEY for two empty change-feed handlers. The six
     # current change-feed functions use the IDENTITY-BASED binding —
-    # the app's managed identity already holds Cosmos Data Contributor at account
-    # scope (func_cosmos), which covers the `leases` container too.
+    # the app's managed identity holds Cosmos Data Contributor on the `hcw`
+    # database (func_cosmos_db["hcw"] in cosmos.tf, and at account scope
+    # through func_cosmos until Step 2 of #1469), which covers the `leases`
+    # container too: it lives in `hcw`.
     # See https://learn.microsoft.com/azure/azure-functions/functions-bindings-cosmosdb-v2
     "COSMOS_CONNECTION__accountEndpoint" = azurerm_cosmosdb_account.hcw.endpoint
     "COSMOS_CONNECTION__credential"      = "managedidentity"

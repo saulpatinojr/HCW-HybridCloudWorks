@@ -42,7 +42,7 @@ curl -sSf "https://api.resend.com/audiences/<AUDIENCE_ID>/contacts/<USER_EMAIL>"
 ### Step 2: Search the `ambassador` container and referenced files
 The hub's records are the owner's, but an editor can type or attach someone else's details (section 1). The records live in Cosmos account `cosmos-site-prod-cus`, database `hcw`, container `ambassador`.
 
-**Access path.** Local authentication is disabled on `cosmos-site-prod-cus` (`infra/cosmos.tf`), and the only standing managed identity data-plane role is the Function App (`func_cosmos`).
+**Access path.** Local authentication is disabled on `cosmos-site-prod-cus` (`infra/cosmos.tf`), and the only identity with a standing data-plane role is the Function App (`func_cosmos` at account scope and `func_cosmos_db["hcw"]` on the `hcw` database, in `infra/cosmos.tf`; the account-wide grant goes in Step 2 of [#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469)).
 
 Operators have two supported operational paths:
 1. **Admin Ambassador Hub (Web UI):** Sign in with the editor role at <https://hybridcloudworks.com/admin/ambassador>. It reads records through the Function App, and opens attached files from storage account `stsiteprodcus01` (container `speakerevents` unless the entry specifies another).
