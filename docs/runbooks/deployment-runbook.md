@@ -643,17 +643,25 @@ the app never does: it opens `COSMOS_DATABASE` by name
    or a replace of `func_cosmos`, discard the run; do not confirm.
 3. Confirm the apply. Success is `Apply complete! Resources: 4 added, 1
    changed, 3 destroyed` (the create plus the permanent trio).
-4. Check that both grants exist. PowerShell, from any folder; the identity
-   column is the Function App's managed identity id and the two rows differ
-   only in `scope`, one ending in `/cosmos-site-prod-cus` and one in
-   `/dbs/hcw`:
+4. Check that both grants exist. PowerShell, from any folder. The first line
+   reads the Function App's managed identity id; the second lists the
+   account's data-plane grants and keeps only that identity's Data
+   Contributor grants (the role id `...0002` is the built-in Data
+   Contributor in every account), so grants to anyone else, such as an
+   operator's temporary one, do not get counted:
 
    ```powershell
-   az cosmosdb sql role assignment list -a cosmos-site-prod-cus -g rg-db-site-prod-cus --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | Select-Object scope, principalId
+   $fa = az functionapp identity show -n func-site-prod-cus-01 -g rg-web-site-prod-cus --subscription sub-app-site-prod-cus --query principalId -o tsv
    ```
 
-   One row, or a row whose scope ends in something else, is a failed apply:
-   go back to the run page and read its error.
+   ```powershell
+   az cosmosdb sql role assignment list -a cosmos-site-prod-cus -g rg-db-site-prod-cus --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | Where-Object { $_.principalId -eq $fa -and $_.roleDefinitionId -like '*/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002' } | Select-Object scope
+   ```
+
+   Success is two rows that differ only in `scope`, one ending in
+   `/cosmos-site-prod-cus` and one in `/dbs/hcw`. One row, or a row whose
+   scope ends in something else, is a failed apply: go back to the run page
+   and read its error.
 5. Check the site is unaffected. Open <https://hybridcloudworks.com/> and
    one article; both load. Then, from the repository root on `main`, run the
    anonymous smoke tier (health endpoint and the public content reads;
@@ -693,17 +701,33 @@ has finished and the next one is a day away.
    reads and writes through the same identity.
 6. Check the change-feed functions are still reading. Change-feed functions
    wake up when a document changes, so save any small edit in the admin
-   content editor, wait two minutes, then count Cosmos requests the account
-   refused in the last hour (the `StatusCode` here is Cosmos's own HTTP
-   answer; `403` is "no grant covers this request"):
+   content editor. Then wait until **15 minutes after the apply finished**
+   (the run page shows the time) and run the two reads below. The window
+   they read is the last 15 minutes, so run them no earlier, or they count
+   requests from before the apply, which prove nothing either way.
+
+   The first counts requests the account refused, from any caller (the
+   `StatusCode` here is Cosmos's own HTTP answer; `403` is "no grant covers
+   this request"):
 
    ```powershell
-   $cos = az cosmosdb show -n cosmos-site-prod-cus -g rg-db-site-prod-cus --subscription sub-app-site-prod-cus --query id -o tsv; az monitor metrics list --resource $cos --metric TotalRequests --filter "StatusCode eq '403'" --offset 1h --interval PT1H --aggregation Count --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | ForEach-Object { $_.value.timeseries.data } | Select-Object timeStamp, count
+   $cos = az cosmosdb show -n cosmos-site-prod-cus -g rg-db-site-prod-cus --subscription sub-app-site-prod-cus --query id -o tsv; az monitor metrics list --resource $cos --metric TotalRequests --filter "StatusCode eq '403'" --offset 15m --interval PT15M --aggregation Count --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | ForEach-Object { $_.value.timeseries.data } | Select-Object timeStamp, count
    ```
 
-   Success is a `count` of `0` or an empty table. Any non-zero count after
-   the apply is a request the narrower grant does not cover: treat it as the
-   failure case below.
+   The second says whether the Function App itself was refused: it counts
+   the app's own log lines and exceptions in the same window that carry
+   `403` or `Forbidden` (the `application-insights` extension installs
+   itself on first use):
+
+   ```powershell
+   az monitor app-insights query --app appi-site-prod-cus-01 -g rg-web-site-prod-cus --subscription sub-app-site-prod-cus --offset 15m --analytics-query 'union traces, exceptions | where timestamp > ago(15m) | where tostring(message) has "403" or tostring(message) has "Forbidden" or tostring(outerMessage) has "403" or tostring(outerMessage) has "Forbidden" | summarize count()' -o table
+   ```
+
+   Success is `0` (or an empty table) from both. A non-zero count from the
+   first with `0` from the second is another caller being refused (an
+   operator without a grant, for example), not the app: note it and carry
+   on. A non-zero count from the second is the app being refused on the
+   narrower grant: treat it as the failure case below.
 7. The next morning, after 03:45 UTC, check that the nightly export
    completed on the narrower grant. The query is the one from the
    [Cosmos restore runbook](cosmos-restore.md#is-the-export-running-read-this-first):
