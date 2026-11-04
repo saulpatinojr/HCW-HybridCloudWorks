@@ -157,7 +157,7 @@ describe('the pulse run', () => {
       },
     });
     const summary = await pulse(store).run();
-    expect(summary).toMatchObject({ checks: 20, recorded: 20, failures: 0 });
+    expect(summary).toMatchObject({ checks: 21, recorded: 21, failures: 0 });
 
     for (const id of [
       'cosmos',
@@ -195,8 +195,8 @@ describe('the pulse run', () => {
       lastBeatAt: NOW.toISOString(),
       intervalMs: PULSE_INTERVAL_MS,
       lateAfterMs: PULSE_LATE_AFTER_MS,
-      checks: 20,
-      recorded: 20,
+      checks: 21,
+      recorded: 21,
       failures: [],
     });
     expect(store.upsertDoc.mock.calls.at(-1)[1].id).toBe(PULSE_DOC_ID);
