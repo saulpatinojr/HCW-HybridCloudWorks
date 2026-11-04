@@ -1,0 +1,153 @@
+# Remove the firewall windows a dead run left open (#1463).
+#
+# WHAT A WINDOW IS. deploy-functions.yml and publish-content-manifest.yml let
+# their own runner through an Azure firewall for a few minutes: a `ci-*` allow
+# rule on the Function App or its SCM site, and for the deploy, one IP rule on
+# the host storage account with the account's default action flipped to
+# Allow. Each is closed by a later step that runs with `if: always()`. That
+# step does not run when the runner is lost, when GitHub has an
+# infrastructure failure or when the job is force-terminated, so a window can
+# outlive its run.
+#
+# WHO NOTICES AND WHO FIXES. monitor-functions-registered.yml finds a leftover
+# window every hour and emails the owner (#1050); its identity deliberately
+# cannot write anything (#1098). This workflow is the other half: every hour
+# it removes each `ci-*` rule whose run has finished, through
+# scripts/remove-ci-access-windows.mjs, and does for the storage account what
+# a dead deploy run's close step would have done: Deny, that run's address
+# removed, the `ciwindow` tag the deploy's open step wrote cleared. A rule or
+# window whose run is still in progress is left alone; an open storage
+# firewall with no tag (an operator's rule, or the rollback default action in
+# infra/variables.tf) is reported and never touched. The script's header says
+# exactly how it decides; its tests hold the decisions.
+#
+# WHICH IDENTITY, AND WHY NOT THE DEPLOY ONE. The deploy identity
+# (github_deploy, CLIENT_ID) holds the write roles already, but it trusts
+# only the `environment:production` subject, and that environment has two
+# required reviewers (read live 2026-11-03): a job that named it would wait
+# for a person every hour, which is the opposite of automatic. So this runs
+# as github_manifest_window (MANIFEST_WINDOW_CLIENT_ID), the identity
+# publish-content-manifest.yml opens its own window with. It trusts the
+# ref-form subject (no `environment:` here, or the subject changes and
+# azure/login fails with AADSTS700213; infra/oidc.tf explains), and it holds
+# HCW Function Config Refresh on the Function App, which is exactly the
+# write an access-restriction remove needs, plus Reader on the web group for
+# the reads around it. For the storage account it holds HCW Storage Firewall
+# Writer (infra/roles/storage-firewall-writer.json, #1463): the account's
+# read and write actions and nothing else, no listKeys, no data plane. Until
+# the owner has created that role and applied the assignment, the Function
+# App half works and the storage half fails with AuthorizationFailed, named
+# in the summary.
+#
+# NO INPUTS on the manual trigger (checkov CKV_GHA_7): a manual run does
+# exactly what the hourly one does. A dry run is the script's `DRY_RUN=1`,
+# from an operator machine.
+#
+# The schedule is half an hour after the monitor's (`41 * * * *`), so a
+# leftover is usually named in the owner's inbox before it is removed here,
+# and this run's summary says what went.
+
+name: Remove CI Access Windows
+
+on:
+  schedule:
+    - cron: '11 * * * *'
+  workflow_dispatch:
+
+# The workflow-level default. `id-token: write` is granted on the job that uses
+# it rather than here (zizmor excessive-permissions, #588).
+permissions:
+  contents: read # the checkout, nothing more
+
+concurrency:
+  # One at a time, never cancelled: a cancelled run is a window left open an
+  # hour longer, and two at once would race on the same rules. Its OWN group,
+  # not the deploy's function-app-host: GitHub keeps one pending run per
+  # group and cancels the earlier one when another arrives, so an hourly run
+  # in that group could cancel a deploy waiting its turn (the monitor stays
+  # out of it for the same reason). The race with a deploy is closed in the
+  # script instead: before its first storage write it asks the Actions API
+  # whether a deploy is in progress and reads the window tag again.
+  group: remove-ci-access-windows
+  cancel-in-progress: false
+
+jobs:
+  remove:
+    name: Remove the windows dead runs left open
+    # Self-arming, as the monitor is: until the apply lands and the variable
+    # is seeded, this skips rather than failing at azure/login on an empty
+    # client-id.
+    if: ${{ vars.MANIFEST_WINDOW_CLIENT_ID != '' }}
+    permissions:
+      contents: read # the checkout, nothing more
+      actions: read # the run behind each ci-* rule, and whether a deploy is in progress
+      id-token: write # exchanged by azure/login for an Azure access token
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15 # a few reads and at most a handful of writes, each tried up to three times (25 s of pauses, 2 min per try at most)
+    steps:
+      - name: Checkout
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        timeout-minutes: 2
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          cache: 'npm'
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Azure login
+        timeout-minutes: 2
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.MANIFEST_WINDOW_CLIENT_ID }}
+          tenant-id: ${{ vars.TENANT_ID }}
+          subscription-id: ${{ vars.SUBSCRIPTION_ID }}
+
+      # `--ignore-scripts`: nothing in this tree needs a lifecycle script, and
+      # this job holds an Azure credential that can write two firewalls.
+      - name: Install script dependencies
+        timeout-minutes: 3
+        working-directory: scripts
+        run: npm ci --ignore-scripts
+
+      # The script prints a verdict line and then one Markdown line per rule
+      # and per storage decision; both go to the log and the job summary, so
+      # the Actions tab says what was removed without opening the log.
+      - name: Remove the windows whose runs have ended
+        timeout-minutes: 8
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          APP: ${{ vars.FUNCTION_APP_NAME }}
+          RG: ${{ vars.RESOURCE_GROUP }}
+          STOR: ${{ vars.FUNCTIONS_STORAGE_ACCOUNT }}
+        run: |
+          # GitHub runs this with `bash -e`, so the exit code is captured on
+          # the same line, or a non-zero verdict would end the step before
+          # the summary is written.
+          set -uo pipefail
+          status=0
+          out=$(node scripts/remove-ci-access-windows.mjs) || status=$?
+          printf '%s\n' "$out"
+          {
+            echo "## CI access windows"
+            echo
+            echo "**${out%%$'\n'*}**"
+            echo
+            tail -n +2 <<<"$out"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Node exits 1 on its own when it fails before the script runs (a
+          # missing module, a syntax error), with nothing on stdout. That is
+          # "could not be judged", not a failed write: the script always
+          # prints a verdict line first.
+          [ -n "$out" ] || status=2
+          case "$status" in
+            0) ;;
+            1) echo "::error::a window could not be put back; the summary names it" ;;
+            *) echo "::error::the windows could not be judged this run; the summary says why" ;;
+          esac
+          exit "$status"

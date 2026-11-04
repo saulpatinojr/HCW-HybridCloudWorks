@@ -578,6 +578,12 @@ export const DECLARED = [
   // data_collection_rule_id "" -> (known after apply), was never declared
   // (the header: an unknown difference cannot be) and was read by hand
   // against the list in the pull request.
+  {
+    address: "azurerm_role_assignment.github_manifest_window_storage_firewall[0]",
+    action: "create",
+    reason:
+      "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); planned only once the owner has created the role and set storage_firewall_remover_enabled = true (Required-Inputs §4.6b)",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

@@ -32,6 +32,7 @@ roles=(
   "function-settings-reader.json:/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-web-site-prod-cus"
   "static-web-app-deployer.json:/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-web-site-prod-cus"
   "alert-rule-reader.json:/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-web-site-prod-cus,/subscriptions/$MGMT_SUBSCRIPTION_ID/resourceGroups/rg-mgmt-plat-prod-cus"
+  "storage-firewall-writer.json:/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-web-site-prod-cus"
 )
 
 for entry in "${roles[@]}"; do

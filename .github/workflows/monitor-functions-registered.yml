@@ -62,7 +62,8 @@
 # the SCM site to its run by the id in its name, through the same
 # `actions: read`, and names any whose run has ended. It reads twice, a
 # minute apart, so a run closing its window as this reads is not named.
-# Removing an orphan stays a person's decision. This check only reads, and
+# Removing an orphan is remove-ci-access-windows.yml's job since #1463, half
+# an hour after this names it; this check only reads, and
 # so does the identity it runs as: github_reader holds Reader and HCW
 # Function Settings Reader on rg-web-site-prod-cus and nothing else (live
 # 2026-10-15). An earlier version of this paragraph said the identity could

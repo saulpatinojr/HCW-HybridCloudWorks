@@ -173,6 +173,21 @@ jobs:
           set -euo pipefail
           RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org | node scripts/assert-ipv4.mjs)
           echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
+          # The window's name tag, written BEFORE the rule is added (#1463). The
+          # account's IP rules carry no names, so this tag is what says which
+          # run opened the window and for which address. The close step clears
+          # it; if this run dies before that, the hourly
+          # remove-ci-access-windows.yml reads it, sees the run has ended, and
+          # does what the close step would have: Deny, remove this address,
+          # clear the tag. An operator's own rule (functions_storage_admin_ip_rules
+          # in infra/variables.tf) carries no tag and is never touched by it.
+          # `--set` changes this one tag and keeps the rest; Terraform ignores
+          # it (infra/storage.tf), so a window in flight is not drift.
+          az storage account update \
+            --resource-group "${RG}" \
+            --name "${SA}" \
+            --set "tags.ciwindow=${GITHUB_RUN_ID} ${RUNNER_IP}" \
+            --output none
           az storage account network-rule add \
             --resource-group "${RG}" \
             --account-name "${SA}" \
@@ -456,6 +471,21 @@ jobs:
               --name "${SA}" \
               --query "networkRuleSet.defaultAction" -o tsv
           }
+          # The window's name tag the open step wrote (#1463): read, and
+          # removed only when it is there, so a tag the open step never wrote
+          # is not an error here. One function, so one retry budget covers
+          # both calls.
+          clear_tag() {
+            local tag
+            tag=$(az storage account show --resource-group "${RG}" \
+              --name "${SA}" \
+              --query "tags.ciwindow" -o tsv) || return 1
+            [ -n "${tag}" ] || return 0
+            az storage account update \
+              --resource-group "${RG}" \
+              --name "${SA}" \
+              --remove tags.ciwindow --output none
+          }
 
           # Deny first — this is the part that matters if anything below fails.
           window_retry "5 10 20 30 30" deny || echo "::warning::could not set the default action to Deny; the check at the end decides"
@@ -480,6 +510,16 @@ jobs:
           if [ "${left}" != "0" ]; then
             echo "::error::the storage firewall rule for ${RUNNER_IP} is still there after the window closed (or the list could not be read: '${left}')"
             failed=1
+          fi
+          # Last, and only when the checks passed. A tag left behind is read
+          # by the hourly remover as "this run's window", and with the run
+          # ended it redoes the Deny and the removal above, which is harmless.
+          # When a check failed, the tag is what lets the remover finish this
+          # close once the run has ended (CodeRabbit on #1536).
+          if [ "${failed}" = 0 ]; then
+            window_retry "5 10" clear_tag || echo "::warning::could not clear the ciwindow tag; remove-ci-access-windows.yml clears it once this run has ended"
+          else
+            echo "::warning::the window did not close; the ciwindow tag stays so remove-ci-access-windows.yml can finish the close once this run has ended"
           fi
           [ "${failed}" = 0 ] || exit 1
           echo "storage window closed — default action Deny, no rule for ${RUNNER_IP}"
