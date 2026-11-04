@@ -163,6 +163,11 @@ describe('lock 1: nothing outside the Doc Vault names its container or its code'
     'infra/cosmos-containers.json',
     // The reviewed Terraform plan that creates it.
     'scripts/assert-expected-plan.mjs',
+    // The ingestion-time filter on the Cosmos request log (#1530) names the
+    // container so that every read and write on it is kept in the audit
+    // trail, with the caller's identity, for 90 days. It reads nothing of
+    // the vault's code or data: the filter sees request rows, not documents.
+    'infra/observability.tf',
     // Koda's admin access policy names the Doc Vault routes it may call (ADR
     // 0038: read, create, edit, upload, untrash, restore; never the DELETE),
     // as doc-vault-http.js registers them. It reads nothing of the vault's

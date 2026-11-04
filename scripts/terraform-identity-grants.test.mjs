@@ -341,6 +341,10 @@ const IN_A_DECLARED_GROUP = new Set([
   'azurerm_function_app_flex_consumption',
   'azurerm_key_vault',
   'azurerm_log_analytics_workspace',
+  // The Cosmos request-log table's retention (#1530): a child of the
+  // workspace, written in the workspace's declared group, so Contributor
+  // there covers it as it covers the workspace.
+  'azurerm_log_analytics_workspace_table',
   'azurerm_monitor_action_group',
   // The rule is written in its resource_group_name, a declared group. What
   // its `scopes` name is only READ: see WATCH_SCOPES below (PLAT-4, #964).
