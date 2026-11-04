@@ -257,13 +257,11 @@ export default function SecondBrainPage() {
     },
     [canLeave]
   );
-  // Follow the `item` and `capture` links on every navigation. A citation in
-  // the Ask panel links to `?item=<source id>` on this same page; until #1408
-  // the page handled that link once per mount, so the click opened nothing.
-  // `handledLink` holds the router key of the navigation acted on, so a
-  // re-render or StrictMode's second effect does not reopen the note while a
-  // fresh click on a citation already in the address bar still does. Both
-  // branches ask the unsaved-changes guard (`open` does; capture does here).
+  // Follow the `item` and `capture` links on every navigation: a citation in
+  // the Ask panel links to `?item=<source id>` on this page, and until #1408
+  // it was handled once per mount. `handledLink` holds the router key acted
+  // on, so a re-render does not reopen the note but a fresh click still does.
+  // Both branches ask the unsaved-changes guard (`open` does; capture here).
   useEffect(() => {
     if (!access.enabled || handledLink.current === location.key) return;
     handledLink.current = location.key;
@@ -271,10 +269,13 @@ export default function SecondBrainPage() {
     const capture = params.get('capture');
     if (item) Promise.resolve().then(() => open(item));
     else if (capture) {
+      // Shares `open`'s sequence: a later open or capture makes this answer
+      // stale, so it cannot replace a newer selection (CodeRabbit on #1547).
+      const seq = ++openSequence.current;
       canLeave()
         .then((leave) => (leave ? brainApi.context(capture) : null))
         .then((data) => {
-          if (!data) return;
+          if (!data || seq !== openSequence.current) return;
           setEditorSnapshot(null);
           dirtyRef.current = false;
           setSelection(blank('note', { title: 'Content research', links: [data.sourceId] }));

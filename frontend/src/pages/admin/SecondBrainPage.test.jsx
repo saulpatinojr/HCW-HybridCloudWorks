@@ -308,4 +308,28 @@ describe('Second Brain owner workspace', () => {
     expect(screen.getByLabelText('Markdown')).toHaveValue('Typed and unsaved.');
     expect(brainApi.context).toHaveBeenCalledTimes(1);
   });
+  it('ignores a capture answer that arrives after a later capture link (#1547)', async () => {
+    const pending = {};
+    brainApi.context.mockImplementation(
+      (id) =>
+        new Promise((resolve) => {
+          pending[id] = resolve;
+        })
+    );
+    render(
+      <MemoryRouter initialEntries={['/admin/second-brain?capture=content-1']}>
+        <Link to="/admin/second-brain?capture=content-2">Another capture link</Link>
+        <SecondBrainPage />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(brainApi.context).toHaveBeenCalledWith('content-1'));
+    fireEvent.click(screen.getByRole('link', { name: 'Another capture link' }));
+    await waitFor(() => expect(brainApi.context).toHaveBeenCalledWith('content-2'));
+    pending['content-2']({ sourceId: 'ref_second', items: [], provenance: null });
+    expect(await screen.findByText('ref_second')).toBeInTheDocument();
+    pending['content-1']({ sourceId: 'ref_first', items: [], provenance: null });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText('ref_second')).toBeInTheDocument();
+    expect(screen.queryByText('ref_first')).not.toBeInTheDocument();
+  });
 });
