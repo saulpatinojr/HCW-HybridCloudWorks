@@ -62,10 +62,16 @@ Administrator or Global Administrator:
 ./scripts/rollback/restore-admin-signin.ps1
 ```
 
-The script holds the tenant and application identifiers — they are parameter
-defaults there rather than in this page, because the docs redaction gate rejects
-real GUIDs under `docs/` and the working agreement rejects placeholders in a
-line meant to be pasted. Putting them in the script satisfies both.
+The script needs no identifiers from you. It reads the tenant from the `az`
+sign-in and finds the API registration by its name, `HCWSite API`, in that
+tenant (the lookup is `scripts/lib/Resolve-EntraApiAppId.ps1`; it stops if no
+registration or more than one has that name). Neither value is in this page
+or in the script, because the redaction gate rejects a real GUID in any tracked
+file of this public repository, and the working agreement rejects placeholders
+in a line meant to be pasted. Looking them up satisfies both. If you ever need
+to point it at a particular registration or tenant, pass the `-ApiAppId` and
+`-TenantId` parameters (the script's help lists them), or set `HCW_API_APP_ID`
+and `HCW_TENANT_ID` in the shell first.
 
 It reads the registration back after writing, so a PATCH that silently did
 nothing fails here rather than three steps later. **It prints the client id to

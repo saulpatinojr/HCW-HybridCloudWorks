@@ -27,8 +27,8 @@ import { ENTRA_ADMIN_APP_ROLE, ENTRA_API_DELEGATED_SCOPE } from '../auth/roles.j
 import { CLAIM_LEASE_MS, createLabAgentHandlers } from '../lab-agent.js';
 
 const AGENT_ID = 'vps-hostinger-01';
-const AGENT_OID = '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b';
-const OTHER_OID = '12345678-90ab-4cde-8f01-23456789abcd';
+const AGENT_OID = '99999999-5b4a-4938-8271-605f4e3d2c1b';
+const OTHER_OID = '22222222-90ab-4cde-8f01-23456789abcd';
 const NOW = new Date('2026-09-27T12:00:00.000Z');
 const LATER = new Date('2026-09-27T12:05:00.000Z');
 const USER = { oid: 'admin-oid', email: 'owner@hcw.dev', name: 'Owner' };

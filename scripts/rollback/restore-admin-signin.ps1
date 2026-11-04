@@ -10,16 +10,21 @@
     ===========================================================================
     WHY THIS IS A SCRIPT AND NOT A LINE IN THE RUNBOOK
     ===========================================================================
-    Two rules meet here and appear to conflict. The docs redaction gate
-    (`scripts/docs/check_redaction.py`) rejects any real GUID under `docs/`. The
-    working agreement rejects any placeholder in a line meant to be pasted,
-    because a pasted `<your-id>` has cost this project real time.
+    Two rules meet here and appear to conflict. The redaction gate
+    (`scripts/docs/check_redaction.py`) rejects any real GUID in a tracked
+    file: the repository is public, so a real tenant or application id in
+    any file is published. The working agreement rejects any placeholder in
+    a line meant to be pasted, because a pasted `<your-id>` has cost this
+    project real time.
 
-    A rollback runbook full of `00000000-…` placeholders satisfies the first and
-    fails the operator. Putting the identifiers here — `scripts/` is not
-    scanned — satisfies both: the runbook says "run this", and the values it
-    needs are concrete, in one place, next to the other Entra scripts that
-    already hold them.
+    A rollback runbook full of `00000000-…` placeholders satisfies the first
+    and fails the operator. A script that looks the values up satisfies
+    both: the runbook says "run this", and the script reads the tenant from
+    `az account show` and the API's client id from the one registration
+    named HCWSite API (scripts/lib/Resolve-EntraApiAppId.ps1). Until #1540
+    both ids were parameter defaults here, on the reasoning that `scripts/`
+    was not scanned; the gate reads the whole tree now, and the defaults
+    went with the reasoning.
 
     ===========================================================================
     WHY IT IS NOT A WORKFLOW
@@ -37,6 +42,21 @@
     `entra_client_id_override` input, so no repository-variable write is needed
     either.
 
+.PARAMETER TenantId
+    The tenant the rollback must run in. Leave it out and the script takes
+    HCW_TENANT_ID when that is set; otherwise it goes by the signed-in
+    tenant, which it prints, and the API lookup below is the check that it
+    is the right one (no other tenant has an HCWSite API registration).
+
+.PARAMETER ApiAppId
+    The application (client) id of the HCWSite API registration. Leave it
+    out and the script finds it: from HCW_API_APP_ID when that is set,
+    otherwise from the one registration named -ApiDisplayName in the
+    signed-in tenant (scripts/lib/Resolve-EntraApiAppId.ps1).
+
+.PARAMETER ApiDisplayName
+    The display name the lookup above searches for. HCWSite API.
+
 .PARAMETER WhatIf
     Print what would change and exit without writing.
 
@@ -53,11 +73,12 @@
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [string] $TenantId = '1a2fce27-b5f6-43c7-a86e-cf0bb74d4672',
+    [string] $TenantId = $env:HCW_TENANT_ID,
     # The API registration, which before the #522 split also served as the SPA
     # client. Rolling back means pointing the frontend at it again, which only
     # works while it has redirect URIs — restored below.
-    [string] $ApiAppId = 'ac696e96-e203-47be-ade8-c35ece8a6c4a',
+    [string] $ApiAppId,
+    [string] $ApiDisplayName = 'HCWSite API',
     [string[]] $RedirectUris = @(
         'https://hybridcloudworks.com/auth/callback',
         'https://www.hybridcloudworks.com/auth/callback',
@@ -67,15 +88,22 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot '../lib/Resolve-EntraApiAppId.ps1')
+
 function Write-Step { param($Text) Write-Host "`n=== $Text ===" -ForegroundColor Cyan }
 
 Write-Step 'Preflight'
 $account = az account show --query '{user:user.name,tenant:tenantId}' -o json | ConvertFrom-Json
+if (-not $account) { throw 'az is not signed in. Run: az login --allow-no-subscriptions' }
 Write-Host "signed in as : $($account.user)"
 Write-Host "tenant       : $($account.tenant)"
-if ($account.tenant -ne $TenantId) {
+if ($TenantId -and $account.tenant -ne $TenantId) {
     throw "Signed in to tenant $($account.tenant), expected $TenantId. Run: az login --tenant $TenantId --allow-no-subscriptions"
 }
+# Without -TenantId this lookup is the tenant check: it stops when the
+# signed-in tenant has no registration of that name.
+$ApiAppId = Resolve-EntraApiAppId -ApiAppId $ApiAppId -DisplayName $ApiDisplayName
+Write-Host "api client id: $ApiAppId"
 
 $api = az ad app show --id $ApiAppId -o json | ConvertFrom-Json
 if (-not $api) { throw "App registration $ApiAppId not found in this tenant." }

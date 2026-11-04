@@ -6,9 +6,11 @@ import { spawnSync } from "node:child_process";
 
 const roots = [];
 const gate = resolve(import.meta.dirname, "docs/check_redaction.py");
-// A GUID that is neither the placeholder form nor on the allow-list: what a
-// pasted subscription, tenant or client id looks like to the gate.
-const REAL_LOOKING = "11111111-1111-1111-1111-111111111111";
+// A GUID that is neither a placeholder, nor a recognised synthetic shape, nor
+// on the allow-list: what a pasted subscription, tenant or client id looks
+// like to the gate. (It was 11111111-1111-... until the follow-up to #1540
+// made a repeated-digit first group the test fixtures' recognised shape.)
+const REAL_LOOKING = "3b9e1f20-7c4d-4a8e-9b61-5d2f8a7c0e13";
 const PLACEHOLDER = "00000000-0000-0000-0000-000000000001";
 
 /**
@@ -97,13 +99,108 @@ describe("redaction outside docs/ (#1540)", () => {
     expect(result.stdout).toContain(`${where}: non-placeholder GUID`);
   });
 
-  it("reads only the top level of scripts/, where the operator scripts live", () => {
-    // Nested test suites under scripts/ use made-up ids as fixtures; the
-    // gate's scope is the scripts an operator runs, not their tests.
+  // The follow-up to #1540: the gate read only the top level of scripts/, and
+  // the cutover, rollback and lab scripts one level down carried the API's
+  // real application id (and the rollback script the tenant id) as parameter
+  // defaults, with their tests and two frontend tests holding the same values
+  // as fixtures. These pin every folder the gate reads now, each with the id
+  // where it was found or would land.
+  it.each([
+    ["scripts/lab/Register-Fixture.ps1", `[string] $ApiAppId = '${REAL_LOOKING}'\n`, "scripts/lab/Register-Fixture.ps1:1"],
+    ["scripts/lab/Register-Fixture.Tests.ps1", `$apiAppId = '${REAL_LOOKING}'\n`, "scripts/lab/Register-Fixture.Tests.ps1:1"],
+    ["scripts/rollback/restore.ps1", `[string] $TenantId = '${REAL_LOOKING}'\n`, "scripts/rollback/restore.ps1:1"],
+    ["scripts/lab/helper.sh", `APP_ID="${REAL_LOOKING}"\n`, "scripts/lab/helper.sh:1"],
+    ["lab-image/bootloaders/walkthrough.sh", `HostDeviceId : ${REAL_LOOKING}\n`, "lab-image/bootloaders/walkthrough.sh:1"],
+    ["lab-host/ansible/group_vars/all.yml", `tenant_id: ${REAL_LOOKING}\n`, "lab-host/ansible/group_vars/all.yml:1"],
+    ["lab-host/ansible/roles/x/defaults/main.yaml", `tenant_id: ${REAL_LOOKING}\n`, "lab-host/ansible/roles/x/defaults/main.yaml:1"],
+    ["lab-host/bootstrap.sh", `TENANT="${REAL_LOOKING}"\n`, "lab-host/bootstrap.sh:1"],
+    ["lab-host/ansible/roles/x/templates/env.j2", `CLIENT_ID=${REAL_LOOKING}\n`, "lab-host/ansible/roles/x/templates/env.j2:1"],
+    ["functions/src/lib/auth/verify.js", `const TENANT = '${REAL_LOOKING}';\n`, "functions/src/lib/auth/verify.js:1"],
+    ["functions/src/lib/auth/verify.test.js", `const TENANT = '${REAL_LOOKING}';\n`, "functions/src/lib/auth/verify.test.js:1"],
+    ["frontend/src/lib/msalConfig.test.js", `const CLIENT = '${REAL_LOOKING}';\n`, "frontend/src/lib/msalConfig.test.js:1"],
+    ["frontend/src/components/Thing.jsx", `const id = '${REAL_LOOKING}';\n`, "frontend/src/components/Thing.jsx:1"],
+  ])("rejects a real-looking GUID in the nested path %s", (rel, contents, where) => {
+    const result = check({ files: { [rel]: contents } });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(`${where}: non-placeholder GUID`);
+  });
+
+  it("accepts the shapes a fixture is allowed to spell an id in, without an allow-list entry", () => {
+    // The placeholder; the browser tests' e2e family; a first group of one
+    // repeated hex digit, which is how the Pester and vitest fixtures spell an
+    // id that names nothing; and a version-5 UUID, which is a hash of a name
+    // (Entra and Azure ids are version 4), so it cannot be an identity.
     const result = check({
-      files: { "scripts/lab/Fixture.Tests.ps1": `$id = '${REAL_LOOKING}'\n` },
+      files: {
+        "scripts/lab/Fixture.Tests.ps1": [
+          `$a = '${PLACEHOLDER}'`,
+          "$b = 'e2e00000-0000-4000-8000-00000000c11e'",
+          "$c = 'aaaaaaaa-1111-4222-8333-444444444444'",
+          "$d = '99999999-5b4a-4938-8271-605f4e3d2c1b'",
+          "$e = 'CCCCCCCC-0000-4000-8000-000000000A91'",
+          "$f = 'cf2fc369-461c-578f-bb74-4625dfe35260'",
+          "",
+        ].join("\n"),
+      },
     });
     expect(result.status, result.stdout).toBe(0);
+  });
+
+  it("does not take a repeated pair, or a repeated digit anywhere but the first group, for a fixture", () => {
+    // c0c0c0c0-... and ...-1111-... are not the convention; a reader cannot
+    // tell them from a real id at a glance, so they get no free pass.
+    const result = check({
+      files: {
+        "scripts/lab/Fixture.Tests.ps1": [
+          "$a = 'c0c0c0c0-0000-4000-8000-000000000001'",
+          "$b = '3b9e1f20-1111-4111-8111-111111111111'",
+          "",
+        ].join("\n"),
+      },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("scripts/lab/Fixture.Tests.ps1:1: non-placeholder GUID");
+    expect(result.stdout).toContain("scripts/lab/Fixture.Tests.ps1:2: non-placeholder GUID");
+  });
+
+  it("allows an Azure Policy built-in definition id in the functions source, with its reason on the allow-list", () => {
+    // "Azure Key Vaults should use private link", the same id in every tenant.
+    const result = check({
+      files: {
+        "functions/src/lib/labs/estate.js": "  { definition: 'a6abeaec-4d90-4a02-805f-6b26c4d3fbe9' },\n",
+      },
+    });
+    expect(result.status, result.stdout).toBe(0);
+  });
+
+  it("holds the operator scripts to the lookup rather than a copy of the API's client id", () => {
+    // The real scripts, read as committed: no parameter default may be a GUID
+    // of any shape, and each must go through the shared lookup.
+    const here = import.meta.dirname;
+    const operatorScripts = [
+      "cutover/01-entra-api.ps1",
+      "cutover/02-entra-spa-client.ps1",
+      "cutover/03-entra-dev-client.ps1",
+      "rollback/restore-admin-signin.ps1",
+    ];
+    for (const rel of operatorScripts) {
+      const source = readFileSync(resolve(here, rel), "utf8");
+      expect(source, rel).not.toMatch(/\$ApiAppId\s*=\s*'[0-9a-f-]{36}'/i);
+      expect(source, rel).not.toMatch(/\$TenantId\s*=\s*'[0-9a-f-]{36}'/i);
+      expect(source, rel).toContain("Resolve-EntraApiAppId -ApiAppId $ApiAppId -DisplayName $ApiDisplayName");
+      expect(source, rel).toContain("../lib/Resolve-EntraApiAppId.ps1");
+    }
+    const lab = readFileSync(resolve(here, "lab", "Register-LabAgent.ps1"), "utf8");
+    expect(lab).not.toMatch(/\$ApiAppId\s*=\s*'[0-9a-f-]{36}'/i);
+    expect(lab).toContain("Resolve-LabApiAppId -ApiAppId $ApiAppId -DisplayName $ApiDisplayName");
+    // Both lookups read the same sources in the same order, so an operator
+    // learns one contract.
+    for (const source of [readFileSync(resolve(here, "lib", "Resolve-EntraApiAppId.ps1"), "utf8"), lab]) {
+      expect(source).toContain("$env:HCW_API_APP_ID");
+      expect(source).toContain("'HCWSite API'");
+      expect(source).toMatch(/'ad', 'app', 'list', '--display-name'|az ad app list --display-name \$DisplayName/);
+      expect(source).toMatch(/-ceq \$DisplayName/);
+    }
   });
 
   it("allows a Microsoft built-in role id in Terraform, with its reason on the allow-list", () => {

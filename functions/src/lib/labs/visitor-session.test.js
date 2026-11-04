@@ -2564,8 +2564,8 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       const store = cosmosLikeStore([expiredSession('old-1'), expiredSession('old-2')]);
       store.docs.set('lab_jobs/old-1', {
         ...store.get('lab_jobs', 'old-1'),
-        workspaceId: '8826EE2E-7933-4665-AEF2-2393F84A0D05',
-        coderUserId: '8826ee2e-7933-4665-aef2-2393f84a0d05',
+        workspaceId: '88888888-7933-4665-AEF2-2393F84A0D05',
+        coderUserId: '88888888-7933-4665-aef2-2393f84a0d05',
       });
       // A plausible name is not an id: the old rule (any one path segment) let it through.
       store.docs.set('lab_jobs/old-2', { ...store.get('lab_jobs', 'old-2'), workspaceId: 'ws-1_a.b', coderUserId: 'v-0123456789ab' });
@@ -2575,9 +2575,9 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       await sweep(store, fetchImpl, { log });
 
       expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
-        `${CODER.base}/api/v2/workspaces/8826EE2E-7933-4665-AEF2-2393F84A0D05/builds`,
-        `${CODER.base}/api/v2/users/8826ee2e-7933-4665-aef2-2393f84a0d05`,
-        `${CODER.base}/api/v2/users/8826ee2e-7933-4665-aef2-2393f84a0d05`,
+        `${CODER.base}/api/v2/workspaces/88888888-7933-4665-AEF2-2393F84A0D05/builds`,
+        `${CODER.base}/api/v2/users/88888888-7933-4665-aef2-2393f84a0d05`,
+        `${CODER.base}/api/v2/users/88888888-7933-4665-aef2-2393f84a0d05`,
       ]);
       expect(store.get('lab_jobs', 'old-1').status).toBe('expired');
       expect(store.get('lab_jobs', 'old-2').status).toBe('cleanup_pending');
@@ -2634,10 +2634,10 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
   describe('what a stored record is trusted to say', () => {
     it('tells an id from something else: a UUID and nothing else, and the two names by their own shapes (#1403)', () => {
-      for (const ok of ['8826ee2e-7933-4665-aef2-2393f84a0d05', '8826EE2E-7933-4665-AEF2-2393F84A0D05', coderId('anything')]) {
+      for (const ok of ['88888888-7933-4665-aef2-2393f84a0d05', '88888888-7933-4665-AEF2-2393F84A0D05', coderId('anything')]) {
         expect(isCoderId(ok), ok).toBe(true);
       }
-      for (const bad of ['', '.', '..', 'ws-1', 'u-old-1', 'lab-lzb', 'v-aaaaaaaaaaaa', 'a.b_c', 'a/b', 'a b', 'me', '8826ee2e-7933-4665-aef2-2393f84a0d0', '8826ee2e-7933-4665-aef2-2393f84a0d05\n', '8826ee2e793346650aef22393f84a0d05', null, undefined, 7, {}]) {
+      for (const bad of ['', '.', '..', 'ws-1', 'u-old-1', 'lab-lzb', 'v-aaaaaaaaaaaa', 'a.b_c', 'a/b', 'a b', 'me', '88888888-7933-4665-aef2-2393f84a0d0', '88888888-7933-4665-aef2-2393f84a0d05\n', '88888888793346650aef22393f84a0d05', null, undefined, 7, {}]) {
         expect(isCoderId(bad), String(bad)).toBe(false);
       }
       expect(isVisitorUsername('v-0123456789ab')).toBe(true);
@@ -2682,7 +2682,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       expect(errorKind(new TypeError('x'))).toBe('TypeError');
       for (const leaky of [
         'myaccount.documents.azure.com',
-        '8826ee2e-7933-4665-aef2-2393f84a0d05',
+        '88888888-7933-4665-aef2-2393f84a0d05',
         'sess-secretid-1',
         'the key is abc123 !',
         'ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH',

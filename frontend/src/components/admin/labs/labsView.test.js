@@ -89,7 +89,7 @@ describe('formatTime', () => {
 });
 
 describe('validateAgentRegistration (#740)', () => {
-  const OID = '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b';
+  const OID = '99999999-5b4a-4938-8271-605f4e3d2c1b';
   const ok = { agentId: 'vps-hostinger-01', oid: OID, jobTypes: ['shell-echo'] };
 
   it('passes what the API accepts, including an upper-case GUID it lower-cases', () => {
@@ -122,7 +122,7 @@ describe('validateAgentRegistration (#740)', () => {
 });
 
 describe('registrationToast (#740)', () => {
-  const agent = { agentId: 'vps-hostinger-01', oid: '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b' };
+  const agent = { agentId: 'vps-hostinger-01', oid: '99999999-5b4a-4938-8271-605f4e3d2c1b' };
 
   it('names what happened: registered, updated, or nothing to change', () => {
     expect(

@@ -63,21 +63,21 @@ BeforeAll {
 
     $fixture = New-TestCertificate
     $other = New-TestCertificate
-    $apiAppId = 'ac696e96-e203-47be-ade8-c35ece8a6c4a'
-    $agentAppId = '0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9'
-    $agentSpId = '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b'
-    $apiSpId = '12345678-90ab-4cde-8f01-23456789abcd'
+    $apiAppId = 'cccccccc-0000-4000-8000-000000000a91'
+    $agentAppId = 'bbbbbbbb-4f50-4617-8293-a4b5c6d7e8f9'
+    $agentSpId = '99999999-5b4a-4938-8271-605f4e3d2c1b'
+    $apiSpId = '22222222-90ab-4cde-8f01-23456789abcd'
     $labAgentRoleId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
 }
 
 Describe 'Test-LabGuid, Test-LabApiBase and Test-LabAgentId' {
     It 'accepts a GUID and refuses <Label>' -ForEach @(
         @{ Label = 'an empty string'; Value = '' },
-        @{ Label = 'a GUID with a trailing newline'; Value = "ac696e96-e203-47be-ade8-c35ece8a6c4a`n" },
-        @{ Label = 'a GUID in braces'; Value = '{ac696e96-e203-47be-ade8-c35ece8a6c4a}' },
-        @{ Label = 'a quote'; Value = "ac696e96-e203-47be-ade8-c35ece8a6c4a'" }
+        @{ Label = 'a GUID with a trailing newline'; Value = "cccccccc-0000-4000-8000-000000000a91`n" },
+        @{ Label = 'a GUID in braces'; Value = '{cccccccc-0000-4000-8000-000000000a91}' },
+        @{ Label = 'a quote'; Value = "cccccccc-0000-4000-8000-000000000a91'" }
     ) {
-        Test-LabGuid -Value 'ac696e96-e203-47be-ade8-c35ece8a6c4a' | Should -BeTrue
+        Test-LabGuid -Value 'cccccccc-0000-4000-8000-000000000a91' | Should -BeTrue
         Test-LabGuid -Value $Value | Should -BeFalse
     }
 
@@ -105,7 +105,7 @@ Describe 'Test-LabGuid, Test-LabApiBase and Test-LabAgentId' {
 
 Describe 'Get-LabApiScope and Get-LabTenantIdFromIssuer' {
     It 'names the API by its api:// identifier with .default' {
-        Get-LabApiScope -ApiAppId 'AC696E96-E203-47BE-ADE8-C35ECE8A6C4A' | Should -BeExactly 'api://ac696e96-e203-47be-ade8-c35ece8a6c4a/.default'
+        Get-LabApiScope -ApiAppId 'CCCCCCCC-0000-4000-8000-000000000A91' | Should -BeExactly 'api://cccccccc-0000-4000-8000-000000000a91/.default'
     }
 
     It 'reads the tenant id out of a v2 issuer' {
@@ -277,7 +277,7 @@ Describe 'Get-LabRegistrationPrompt' {
     }
 
     It 'refuses <Label>' -ForEach @(
-        @{ Label = 'an agent id that is not the CN shape'; AgentId = 'VPS-01'; ObjectId = '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b' },
+        @{ Label = 'an agent id that is not the CN shape'; AgentId = 'VPS-01'; ObjectId = '99999999-5b4a-4938-8271-605f4e3d2c1b' },
         @{ Label = 'an object id that is not a GUID'; AgentId = 'vps-hostinger-01'; ObjectId = 'not-a-guid' }
     ) {
         { Get-LabRegistrationPrompt -Url $labsUrl -AgentId $AgentId -ObjectId $ObjectId -JobTypes (Get-LabJobTypes) } | Should -Throw
@@ -335,15 +335,15 @@ Describe 'Wait-LabRegistration' {
 
 Describe 'Get-LabVaultValues' {
     It 'returns the four keys in order, identifiers in lower case' {
-        $values = Get-LabVaultValues -ApiBase 'https://api-azure.hybridcloudworks.com/api' -TenantId '11111111-2222-3333-4444-55555555555A' -ClientId $agentAppId -ApiScope 'api://ac696e96-e203-47be-ade8-c35ece8a6c4a/.default'
+        $values = Get-LabVaultValues -ApiBase 'https://api-azure.hybridcloudworks.com/api' -TenantId '11111111-2222-3333-4444-55555555555A' -ClientId $agentAppId -ApiScope 'api://cccccccc-0000-4000-8000-000000000a91/.default'
         (@($values.Keys) -join ',') | Should -BeExactly 'vault_labs_agent_api_base,vault_labs_agent_tenant_id,vault_labs_agent_client_id,vault_labs_agent_api_scope'
         $values['vault_labs_agent_tenant_id'] | Should -BeExactly '11111111-2222-3333-4444-55555555555a'
     }
 
     It 'refuses <Label>' -ForEach @(
-        @{ Label = 'the azurewebsites host without /api'; Base = 'https://func-site-prod-cus-01.azurewebsites.net'; Tenant = '11111111-2222-3333-4444-555555555555'; Scope = 'api://ac696e96-e203-47be-ade8-c35ece8a6c4a/.default' },
-        @{ Label = 'a tenant that is not a GUID'; Base = 'https://api-azure.hybridcloudworks.com/api'; Tenant = 'saulpatinojrhotmail.onmicrosoft.com'; Scope = 'api://ac696e96-e203-47be-ade8-c35ece8a6c4a/.default' },
-        @{ Label = 'a scope without .default'; Base = 'https://api-azure.hybridcloudworks.com/api'; Tenant = '11111111-2222-3333-4444-555555555555'; Scope = 'api://ac696e96-e203-47be-ade8-c35ece8a6c4a/access_as_admin' }
+        @{ Label = 'the azurewebsites host without /api'; Base = 'https://func-site-prod-cus-01.azurewebsites.net'; Tenant = '11111111-2222-3333-4444-555555555555'; Scope = 'api://cccccccc-0000-4000-8000-000000000a91/.default' },
+        @{ Label = 'a tenant that is not a GUID'; Base = 'https://api-azure.hybridcloudworks.com/api'; Tenant = 'saulpatinojrhotmail.onmicrosoft.com'; Scope = 'api://cccccccc-0000-4000-8000-000000000a91/.default' },
+        @{ Label = 'a scope without .default'; Base = 'https://api-azure.hybridcloudworks.com/api'; Tenant = '11111111-2222-3333-4444-555555555555'; Scope = 'api://cccccccc-0000-4000-8000-000000000a91/access_as_admin' }
     ) {
         { Get-LabVaultValues -ApiBase $Base -TenantId $Tenant -ClientId $agentAppId -ApiScope $Scope } | Should -Throw
     }
@@ -351,7 +351,7 @@ Describe 'Get-LabVaultValues' {
 
 Describe 'Get-LabVaultScript' {
     BeforeAll {
-        $values = Get-LabVaultValues -ApiBase 'https://api-azure.hybridcloudworks.com/api' -TenantId '11111111-2222-3333-4444-555555555555' -ClientId $agentAppId -ApiScope 'api://ac696e96-e203-47be-ade8-c35ece8a6c4a/.default'
+        $values = Get-LabVaultValues -ApiBase 'https://api-azure.hybridcloudworks.com/api' -TenantId '11111111-2222-3333-4444-555555555555' -ClientId $agentAppId -ApiScope 'api://cccccccc-0000-4000-8000-000000000a91/.default'
     }
 
     It 'fills every placeholder, quotes each value, and is LF only' {
@@ -590,6 +590,60 @@ Describe 'Get-LabApiApplication' {
     }
 }
 
+# The API's client id used to be a parameter default; the repository is public
+# and a real application id does not go in a tracked file (#1540), so the
+# script finds it. Each source is tried in order, and a name that is only a
+# prefix match is not the registration.
+Describe 'Resolve-LabApiAppId' {
+    BeforeEach {
+        Mock Write-Host { }
+        Mock Invoke-LabAz { throw "unexpected az call: $($Arguments -join ' ')" }
+        $script:savedApiAppId = $env:HCW_API_APP_ID
+        $env:HCW_API_APP_ID = $null
+    }
+
+    AfterEach {
+        $env:HCW_API_APP_ID = $script:savedApiAppId
+    }
+
+    It 'takes -ApiAppId as given, lower-cased, and asks az nothing' {
+        Resolve-LabApiAppId -ApiAppId $apiAppId.ToUpperInvariant() | Should -BeExactly $apiAppId
+        Should -Invoke Invoke-LabAz -Times 0 -Exactly
+    }
+
+    It 'takes HCW_API_APP_ID next, and refuses one that is not a client id' {
+        $env:HCW_API_APP_ID = $apiAppId.ToUpperInvariant()
+        Resolve-LabApiAppId -ApiAppId '' | Should -BeExactly $apiAppId
+        Should -Invoke Invoke-LabAz -Times 0 -Exactly
+        $env:HCW_API_APP_ID = 'not-a-guid'
+        { Resolve-LabApiAppId -ApiAppId '' } | Should -Throw '*HCW_API_APP_ID*not a client id*'
+    }
+
+    It 'otherwise finds the one registration named exactly HCWSite API' {
+        Mock Invoke-LabAz -ParameterFilter { ($Arguments[0..2] -join ' ') -eq 'ad app list' } {
+            [pscustomobject]@{ ExitCode = 0; Stdout = "[{""appId"":""$($apiAppId.ToUpperInvariant())"",""displayName"":""HCWSite API""},{""appId"":""$agentAppId"",""displayName"":""HCWSite API (old)""}]"; Stderr = '' }
+        }
+        Resolve-LabApiAppId -ApiAppId '' | Should -BeExactly $apiAppId
+        Should -Invoke Invoke-LabAz -Times 1 -Exactly -ParameterFilter { ($Arguments -join ' ') -eq 'ad app list --display-name HCWSite API -o json' }
+    }
+
+    It 'stops when <Label>' -ForEach @(
+        @{ Label = 'no registration has the name'; Json = '[]'; Expected = '*No app registration named*HCW_API_APP_ID*' },
+        @{ Label = 'only a prefix match exists'; Json = '[{"appId":"bbbbbbbb-4f50-4617-8293-a4b5c6d7e8f9","displayName":"HCWSite API (old)"}]'; Expected = '*No app registration named*' },
+        @{ Label = 'two registrations have the name'; Json = '[{"appId":"bbbbbbbb-4f50-4617-8293-a4b5c6d7e8f9","displayName":"HCWSite API"},{"appId":"bbbbbbbb-4f50-4617-8293-a4b5c6d7e800","displayName":"HCWSite API"}]'; Expected = '*More than one app registration*bbbbbbbb-4f50-4617-8293-a4b5c6d7e8f9, bbbbbbbb-4f50-4617-8293-a4b5c6d7e800*' },
+        @{ Label = 'az returns something that is not a client id'; Json = '[{"appId":"nope","displayName":"HCWSite API"}]'; Expected = '*not a client id*' }
+    ) {
+        $script:listJson = $Json
+        Mock Invoke-LabAz -ParameterFilter { ($Arguments[0..2] -join ' ') -eq 'ad app list' } { [pscustomobject]@{ ExitCode = 0; Stdout = $script:listJson; Stderr = '' } }
+        { Resolve-LabApiAppId -ApiAppId '' } | Should -Throw $Expected
+    }
+
+    It 'passes on az''s own failure' {
+        Mock Invoke-LabAz -ParameterFilter { ($Arguments[0..2] -join ' ') -eq 'ad app list' } { [pscustomobject]@{ ExitCode = 1; Stdout = ''; Stderr = 'ERROR: Please run ''az login'' to setup account.' } }
+        { Resolve-LabApiAppId -ApiAppId '' } | Should -Throw '*Finding the app registration HCWSite API failed: az exited 1*az login*'
+    }
+}
+
 Describe 'Confirm-LabAgentApplication' {
     BeforeEach {
         Mock Write-Host { }
@@ -776,8 +830,8 @@ esac
         & chmod +x $fakeVault
 
         $secret = 'SECRET-TOKEN-VALUE-0123456789'
-        $clientA = '0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9'
-        $clientB = '0b1c2d3e-4f50-4617-8293-a4b5c6d7e800'
+        $clientA = 'bbbbbbbb-4f50-4617-8293-a4b5c6d7e8f9'
+        $clientB = 'bbbbbbbb-4f50-4617-8293-a4b5c6d7e800'
 
         function New-VaultDirectory {
             param([switch] $WithPassword)
@@ -805,7 +859,7 @@ esac
 
         function Invoke-VaultScript {
             param([string] $Directory, [string] $ClientId, [string] $Mode = 'apply')
-            $values = Get-LabVaultValues -ApiBase 'https://api-azure.hybridcloudworks.com/api' -TenantId '11111111-2222-3333-4444-555555555555' -ClientId $ClientId -ApiScope 'api://ac696e96-e203-47be-ade8-c35ece8a6c4a/.default'
+            $values = Get-LabVaultValues -ApiBase 'https://api-azure.hybridcloudworks.com/api' -TenantId '11111111-2222-3333-4444-555555555555' -ClientId $ClientId -ApiScope 'api://cccccccc-0000-4000-8000-000000000a91/.default'
             $text = Get-LabVaultScript -Values $values -Mode $Mode -ProbeUrl 'http://127.0.0.1:9/api/agent/heartbeat' -VaultDirectory $Directory -AnsibleVault $fakeVault -Python 'python3'
             $file = Join-Path $TestDrive ([guid]::NewGuid().ToString('n') + '.sh')
             [System.IO.File]::WriteAllText($file, $text)

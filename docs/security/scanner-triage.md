@@ -389,10 +389,10 @@ the line itself.
 | generic-api-key | `frontend/data/content-manifest.json:831` | False positive | As above. | `.gitleaksignore`, this PR |
 | generic-api-key | `frontend/src/pages/NewsletterConfirmPage.test.jsx:16` | False positive | Test fixture. Its two base64url parts decode to `{"v":1}` and `signature`. | `.gitleaksignore`, this PR |
 | generic-api-key | `functions/local.settings.json.example:7` | False positive | `COSMOS_KEY` is the Azure Cosmos DB emulator's published well-known key, byte for byte, next to `COSMOS_ENDPOINT` `https://localhost:8081/`. | `.gitleaksignore`, this PR |
-| generic-api-key | `scripts/cutover/01-entra-api.ps1:51` | False positive | `$ApiAppId` default: the Entra API application (client) id. It is an identifier, not a credential. | `.gitleaksignore`, this PR |
-| generic-api-key | `scripts/cutover/02-entra-spa-client.ps1:75` | False positive | As above. | `.gitleaksignore`, this PR |
-| generic-api-key | `scripts/cutover/03-entra-dev-client.ps1:61` | False positive | As above. | `.gitleaksignore`, this PR |
-| generic-api-key | `scripts/rollback/restore-admin-signin.ps1:60` | False positive | As above. | `.gitleaksignore`, this PR |
+| generic-api-key | `scripts/cutover/01-entra-api.ps1:51` | False positive, since removed | `$ApiAppId` default: the Entra API application (client) id. It is an identifier, not a credential. The default went in the follow-up to [#1540](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1540): the scripts look the id up by the registration's name (`scripts/lib/Resolve-EntraApiAppId.ps1`), so there is no line to fingerprint and the four entries left `.gitleaksignore`. | Removed from `.gitleaksignore`, #1540 follow-up |
+| generic-api-key | `scripts/cutover/02-entra-spa-client.ps1:75` | False positive, since removed | As above. | As above |
+| generic-api-key | `scripts/cutover/03-entra-dev-client.ps1:61` | False positive, since removed | As above. | As above |
+| generic-api-key | `scripts/rollback/restore-admin-signin.ps1:60` | False positive, since removed | As above. | As above |
 | generic-api-key | `lab-host/ansible/roles/vault/defaults/main.yml`, `vault_seal_azurekeyvault_vault_name` | False positive | The name of the lab-only Key Vault that `infra/lab-hybrid.tf` creates, an identifier and not a credential. The rule reads "key" inside `azurekeyvault` in the variable's name. | Inline `# gitleaks:allow` on that line, 2026-09-29 (#726): it moves with the line, where a fingerprint would not |
 
 A filesystem fingerprint is `path:rule:line`. `publish-content-manifest.yml`

@@ -5,27 +5,39 @@ and the three root documents the site pulls in (README, CHANGELOG, TODO).
 Also scans the optional root MEMORY.md continuation handoff, which is not
 published on the docs site.
 
-Since #1540 it also reads the files outside docs/ where a real Azure
-identifier has been found or would be most likely to land: the custom role
-definitions under infra/roles/ (five of them carried a real subscription id
-in their assignableScopes for months, because only docs/ was ever scanned),
-the Terraform under infra/, the GitHub Actions workflows, and the top-level
-operator scripts under scripts/. Each of those locations is scanned when it
-exists; a test fixture root without them still evaluates. The repository is
-public, so an identifier in any tracked file is published, not only one on
-a docs page.
+Since #1540 it also reads the code and configuration outside docs/ where a
+real Azure identifier has been found or would be most likely to land: the
+custom role definitions under infra/roles/ (five of them carried a real
+subscription id in their assignableScopes for months, because only docs/
+was ever scanned), the Terraform under infra/, the GitHub Actions
+workflows, every PowerShell and shell script under scripts/ (the cutover,
+rollback and lab scripts carried the API's real application id and the
+tenant id as parameter defaults until the follow-up to #1540, and their
+tests carried them as fixtures), the lab image's shell scripts, the lab
+host's Ansible (yml, sh and j2) and the application source under
+functions/src/ and frontend/src/, tests included (two frontend tests held
+the real tenant and client ids). Each location is scanned when it exists;
+a test fixture root without them still evaluates. The repository is public,
+so an identifier in any tracked file is published, not only one on a docs
+page.
 
 Fails, naming file:line, on:
 
 1. A hard-coded link to the retired GitHub Wiki. The Wiki is being replaced
    by this site (issue #360); a link back to it would 404 or loop once the
    pointer stubs are in place.
-2. A GUID that is not a placeholder. Tenant, subscription, client and
+2. A GUID that is not recognisably made up. Tenant, subscription, client and
    resource identifiers are not secrets, but the repository keeps real values
    out of tracked files (see .gitignore's reports note and
    docs/standards/variables-and-secrets.md, which prescribes the all-zero
-   form). Placeholders are 00000000-0000-0000-0000-0000000000NN; anything
-   else must be in ALLOWED_GUIDS with a reason.
+   form). Recognised shapes, in SYNTHETIC: the placeholder
+   00000000-0000-0000-0000-0000000000NN; the browser tests' family
+   e2e00000-0000-4000-8000-NNNNNNNNNNNN; a first group that is one hex digit
+   repeated eight times (11111111-..., aaaaaaaa-...), which is how the test
+   fixtures spell an id that names nothing; and a version-5 UUID (third
+   group 5xxx), which is a hash of a name, never an Entra or Azure identity
+   (those are version 4). Anything else must be in ALLOWED_GUIDS with a
+   reason.
 3. A contributor's local filesystem path (a Windows user profile), which is
    noise to every other reader and names a person.
 
@@ -56,13 +68,35 @@ SCAN_GLOBS: list[tuple[Path, str]] = [
     (ROOT / "infra", "**/*.tfvars*"),
     (ROOT / ".github" / "workflows", "*.yml"),
     (ROOT / ".github" / "workflows", "*.yaml"),
-    (ROOT / "scripts", "*.ps1"),
-    (ROOT / "scripts", "*.sh"),
+    # Every script under scripts/, tests included: the nested cutover, lab
+    # and rollback scripts are where the real application id lived.
+    (ROOT / "scripts", "**/*.ps1"),
+    (ROOT / "scripts", "**/*.sh"),
+    (ROOT / "lab-image", "**/*.sh"),
+    (ROOT / "lab-host", "**/*.yml"),
+    (ROOT / "lab-host", "**/*.yaml"),
+    (ROOT / "lab-host", "**/*.sh"),
+    (ROOT / "lab-host", "**/*.j2"),
+    (ROOT / "functions" / "src", "**/*.js"),
+    (ROOT / "frontend" / "src", "**/*.js"),
+    (ROOT / "frontend" / "src", "**/*.jsx"),
 ]
 
 WIKI_LINK = re.compile(r"github\.com/[^/\s)]+/[^/\s)]+/wiki(?:/|\b)")
 GUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 PLACEHOLDER = re.compile(r"^00000000-0000-0000-0000-0000000000[0-9a-fA-F]{2}$")
+# GUIDs that are recognisably made up or cannot be an identity, so they need
+# no allow-list entry (the docstring lists each shape and why). The
+# repeated-digit rule accepts a real id with a one-in-268-million first group;
+# that is the price of a fixture convention a reader can see at a glance.
+SYNTHETIC = re.compile(
+    r"^(?:"
+    r"e2e00000-0000-4000-8000-[0-9a-f]{12}"
+    r"|([0-9a-f])\1{7}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"|[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r")$",
+    re.IGNORECASE,
+)
 # A user-profile path on any of the three desktop platforms: a drive-letter
 # Windows profile, a macOS /Users/<name>/, or a Linux /home/<name>/. The
 # username is required to be followed by a separator so that prose such as
@@ -85,8 +119,26 @@ ALLOWED_GUIDS = {
     "b64e21ea-ac4e-4cdf-9dc9-5b892992bee7": "Azure Connected Machine Onboarding built-in role id (Microsoft constant; scripts/lab/Register-LabArc.ps1)",
     "fc9b3da7-8347-4380-8e70-0a0361d8dedd": "Azure Policy built-in definition 'Linux machines should meet requirements for the Azure compute security baseline' (Microsoft constant; infra/lab-hybrid.tf)",
     "dfee1d68-95f7-4a8f-9c0e-7ebe61112472": "Cloudflare custom-hostname ownership token for go.hybridcloudworks.com: the content of a public DNS TXT record, readable by anyone who queries the name (infra/frontend.tf)",
-    "e2e00000-0000-4000-8000-00000000c11e": "Synthetic Entra client id the browser tests build with; it spells 'e2e' and 'client' and names nothing (frontend/e2e/fixtures/stub-build-env.js, .github/workflows/ci.yml)",
-    "e2e00000-0000-4000-8000-0000000071d0": "Synthetic Entra tenant id the browser tests build with; it spells 'e2e' and 'tenant' and names nothing (frontend/e2e/fixtures/stub-build-env.js, .github/workflows/ci.yml)",
+    # The browser tests' e2e00000-0000-4000-8000-... ids (client ...c11e,
+    # tenant ...71d0; frontend/e2e/fixtures/stub-build-env.js, ci.yml) were
+    # listed here until the follow-up to #1540 made the family a SYNTHETIC shape.
+    # Azure Policy built-in definitions functions/src/lib/labs/estate.js
+    # excludes from the lab estate's compliance read, each checked on
+    # learn.microsoft.com (built-in policy definitions, Key Vault policy
+    # reference, Defender for Cloud policy reference) on 2026-11-04.
+    "f85bf3e0-d513-442e-89c3-1784ad63382b": "Azure Policy built-in definition 'System updates should be installed on your machines (powered by Update Center)' (Microsoft constant; functions/src/lib/labs/estate.js)",
+    "6ba6d016-e7c3-4842-b8f2-4992ebc0d72d": "Azure Policy built-in definition 'SQL servers on machines should have vulnerability findings resolved' (Microsoft constant; functions/src/lib/labs/estate.js)",
+    "a6abeaec-4d90-4a02-805f-6b26c4d3fbe9": "Azure Policy built-in definition 'Azure Key Vaults should use private link' (Microsoft constant; functions/src/lib/labs/estate.js)",
+    "55615ac9-af46-4a59-874e-391cc3dfb490": "Azure Policy built-in definition 'Azure Key Vault should have firewall enabled or public network access disabled' (Microsoft constant; functions/src/lib/labs/estate.js)",
+    # UUID version-5 namespaces this repository chose at random. A namespace
+    # names nothing; it is the salt every markdown-draft and repository-draft
+    # id is hashed with, and changing one would re-key every stored draft.
+    "5d0a3a1e-6f0b-4c52-9f1e-0e2b7c3d8a41": "MARKDOWN_DRAFT_ID_NAMESPACE, the UUIDv5 namespace markdown draft ids are hashed under (functions/src/lib/cms/drafts-markdown.js)",
+    "8bccdb11-a980-4071-bc3a-805c389b371b": "REPO_DRAFT_ID_NAMESPACE, the UUIDv5 namespace repository draft ids are hashed under (functions/src/lib/cms/repo-draft.js)",
+    # Public by construction: names anyone can read off a public page or bucket.
+    "d139c50a-8163-425c-8315-4e19cc9370ee": "Amazon Music's public listing id for the Hybrid Cloud Works podcast, part of the public URL the site links to (frontend/src/context/ProviderContext.jsx)",
+    "405766b8-1f4e-4d3c-aba1-6f25333823ec": "An object name in ElevenLabs's public premade-voice preview bucket, quoted from its API reference as a test of the preview allow-list (functions/src/lib/listen-and-learn/speech/elevenlabs-voices.test.js)",
+    "55e71aac-5cb7-4b3d-8241-429388160509": "An object name in ElevenLabs's public voice preview bucket, quoted from its API reference as a test of the preview allow-list (functions/src/lib/listen-and-learn/speech/elevenlabs-voices.test.js)",
 }
 
 
@@ -122,7 +174,7 @@ def line_findings(rel: str, n: int, line: str, prose: bool = True) -> list[str]:
     found.extend(
         f"{rel}:{n}: non-placeholder GUID {guid}"
         for guid in GUID.findall(line)
-        if not (PLACEHOLDER.match(guid) or guid.lower() in ALLOWED_GUIDS)
+        if not (PLACEHOLDER.match(guid) or SYNTHETIC.match(guid) or guid.lower() in ALLOWED_GUIDS)
     )
     if prose and LOCAL_PATH.search(line):
         found.append(f"{rel}:{n}: contributor-local filesystem path")
@@ -147,9 +199,10 @@ def main() -> int:
         for f in findings:
             print(f"  {f}")
         print(
-            "\nReplace identifiers with 00000000-0000-0000-0000-0000000000NN, link to the "
-            "docs page instead of the Wiki, and drop local paths. A genuinely public "
-            "constant goes in ALLOWED_GUIDS with its reason."
+            "\nReplace identifiers with 00000000-0000-0000-0000-0000000000NN (a test "
+            "fixture may use a first group of one repeated digit, 11111111-...), link "
+            "to the docs page instead of the Wiki, and drop local paths. A genuinely "
+            "public constant goes in ALLOWED_GUIDS with its reason."
         )
         return 1
     print(f"Docs redaction gate passed ({len(files())} files).")
