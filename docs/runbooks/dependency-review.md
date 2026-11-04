@@ -147,7 +147,8 @@ which the weekly
 run moves. Each add-on keeps a copy in
 `infrastructure/docker/versions.env` and repeats it on both `FROM` lines of its
 Dockerfile, and its `security` workflow's `base-follows-website` job goes red on
-`main` while the copy differs from the website's lines.
+`main` while the copy's `BASE_IMAGE` or `BASE_DIGEST` differs from the
+website's (it does not compare `BASE_PYTHON_VERSION`).
 
 **Where the add-on pull request comes from.** Not from this repository. Since
 2026-10-27 each add-on carries a `base-update` workflow that runs once a day at
