@@ -73,12 +73,15 @@ for the configured production owner through private workspace variables.
 
 The following acceptance gates remain open: live verification of the improved
 interactive map and focused assistant retrieval, explicit draft creation, and
-a Cosmos backup export/restore drill covering the new authored records.
+the read of the first nightly export manifest that lists `brain_records`
+(the restore drill itself ran on 2026-11-04; see the last section).
 The restore reader now includes containers introduced by subsequent daily
 exports (#1399); its regression passed, while a live restore is still pending.
 The live AI result was reviewed from owner-supplied text; its contents were not
 copied into this public evidence record. The owner supplied an empty unsaved-note
-screen, which does not prove draft creation. No Cosmos restore is claimed above.
+screen, which does not prove draft creation. No Cosmos restore is claimed in
+the rollout evidence above; the drill of 2026-11-04 has its own section at
+the end.
 Publish's empty site shells can return HTTP 200; the content endpoint checks,
 not the HTML shell's status, establish that no note text was returned.
 Complete the remaining gates in the
@@ -105,24 +108,66 @@ The first concurrent local coverage attempt had Windows worker-start failures;
 sequential runs with four workers completed successfully. Required CI and
 the coverage job also passed for the merged follow-up.
 
-### Remaining restore drill
+### Restore drill, 2026-11-04 (isolated point-in-time restore)
 
-The first scheduled export containing `brain_records` had not run at the time
-of rollout. The next daily export is scheduled for 03:00 UTC on 2026-10-27
-(22:00 America/Chicago on 2026-10-26). A repeated invocation on the same UTC
-date skips the existing immutable run; it does not add new containers to its
-completed manifest. Confirm that the next run's
-complete manifest includes `brain_records` before proceeding; the schedule
-alone is not proof of a successful backup. The operator's Azure session also
-requires renewed authentication, and an isolated restore target has not been
-provisioned. Local vault backup verification does not replace this cloud drill.
+The drill for [#1409](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1409)
+ran on 2026-11-04 from the shared operator sign-in, with the owner's written
+go-ahead of the same day. It restored `brain_records` into a new, isolated
+account with Azure Cosmos DB continuous backup (point-in-time restore) rather
+than from the nightly export, because reading the export from a workstation
+needs a storage firewall rule and a role on `stsiteprodcus01`, and neither was
+allowed for this run. Continuous backup is the account's other recovery path
+(`infra/cosmos.tf`, `Continuous30Days`). The isolation, identity and network
+controls of the
+[Cosmos restore runbook](../runbooks/cosmos-restore.md) were kept: a scratch
+resource group tagged with its expiry, no account keys read, a data-plane role
+for the signed-in user only, a firewall admitting only the operator's address,
+and teardown by deleting the resource group. No production resource was
+changed; the production account was only read (control plane and metrics).
+Nothing ran against the restored copy but the checks below: no Function App,
+sync, publishing or indexing timer was attached to it.
 
-Follow the existing [Cosmos restore procedure](../runbooks/cosmos-restore.md)
-using its supported identity and network controls. Restore `brain_records`
-to an isolated target with `/ownerId` partitioning. Verify a selected note's
-body, version, revisions, links, and collection membership against its backup
-baseline. Rebuild `brain_search` using the restored records and isolated source
-fixtures; verify search and backlinks. Disable outbound sync, indexing timers,
-and publishing against production during the drill. Record the export manifests,
-counts, elapsed time, and checks here before declaring this gate complete, then
-perform the restore runbook's target and temporary-access cleanup.
+Microsoft Learn pages used:
+[restore with the CLI](https://learn.microsoft.com/azure/cosmos-db/restore-account-continuous-backup#restore-an-account-using-azure-cli),
+[latest restorable timestamp](https://learn.microsoft.com/azure/cosmos-db/get-latest-restore-timestamp),
+[what is restored](https://learn.microsoft.com/azure/cosmos-db/continuous-backup-restore-introduction#what-is-restored-into-a-new-account)
+and [pricing](https://learn.microsoft.com/azure/cosmos-db/continuous-backup-restore-introduction#pricing).
+
+| Step | Evidence |
+| --- | --- |
+| Baseline (production, read-only) | Azure Monitor hourly maximum for 20:00 to 21:00 UTC: `brain_records` 84 documents, 448 KiB; `brain_search` 2,913 documents, 3.2 MiB. Container events show `brain_records` and `brain_search` created 2026-10-26 08:33 UTC, both on `/ownerId` |
+| Restore point | Latest restorable timestamp for `brain_records` read at 20:57 UTC: 2026-11-04T20:58:05Z; the restore used that timestamp |
+| Target | `cosmos-site-sbx-cus` in `rg-db-site-sbx-cus` (Central US, serverless, local authentication disabled, `createMode: Restore`, `restoreMode: PointInTime`, databases to restore `hcw` / `brain_records` only, TTL disabled) |
+| Restore duration | Issued 20:58:05 UTC, `provisioningState: Succeeded` at 21:09:02 UTC (about 11 minutes); the firewall update that followed took about 20 minutes |
+| Restored container | `brain_records` on `/ownerId`, 84 documents in one owner partition: 6 notes, 3 conflict records, 24 revisions, 24 events, 24 receipts, 1 state, 1 sync-status, 1 indexing job. 84 equals the production baseline |
+| Selected record | A note with a link, at version 5 with 5 stored revisions. Revision sequence numbers descend without gaps; the newest revision's sequence, version, title and body hash (70 bytes) equal the record's; the event for its latest sequence exists; its one link resolves to an existing record. It carries no collections, and no authored record in the backup does (0 of 9), so collection membership was verified as empty rather than skipped. The note is archived, so the site's backlink query (which excludes archived notes) returns 0 for it while the raw link count is 1, as designed |
+| `brain_search` rebuild | An empty `brain_search` (`/ownerId`) and the seven source containers were created in the drill account, with three made-up fixture documents (one article, one recording, one social post about "zebra backups"). The indexer from `functions/src/lib/brain/indexing.js` ran from the restored notes plus those fixtures: 8 steps, 17 documents visited, status `complete`, 4.0 s. Result: 5 search items (2 live notes, 3 references) |
+| Search and backlinks | "zebra backups" returned the 3 fixture references and nothing else; a term from a live note's title found that note; the archived selected note was excluded; a nonsense term returned 0. Backlinks of the selected note's link target: 0 through the site query (all three linkers are archived), 3 by raw count; the target record exists |
+| Elapsed | Clock started 20:57:56 UTC; verification finished 21:34:12 UTC: 36 min 16 s to a verified restore and rebuilt index. Teardown followed |
+| Cost | About USD 0.0001 restore charge (0.00045 GB at the Learn rate of USD 0.15/GB) plus a few hundred serverless request units; estimated, not yet visible in billing |
+| Cleanup | `az group delete -n rg-db-site-sbx-cus --yes`; afterwards `az group exists` is `false` and `az cosmosdb show -n cosmos-site-sbx-cus` answers not found (the pull request for this record links the run output) |
+
+Checked, with the result: lines 2 to 6 of #1409 (isolated target, restore and
+record verification, isolated `brain_search` rebuild with search and
+backlinks, this record, cleanup).
+
+Not verified, and why: line 1, the nightly export manifest that lists
+`brain_records` with `/ownerId` and a record count. The `cosmos-export`
+container refuses every workstation by design; the Health page reader from
+[#1546](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1546) was
+merged on 2026-11-04 but the newest functions deployment (a manual
+`deploy-functions.yml` run) predates it, so the tile is not live yet; and
+Application Insights holds no `cosmosExportCompleted` event after
+2026-10-26 because the workspace's daily cap drops the 03:00 UTC window
+([#1530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1530)).
+The counts above come from the restore target, not from a manifest. The
+manifest read stays open until the functions deployment lands and the
+Nightly export tile shows `brain_records: N records, partition key /ownerId`.
+
+What the drill did not rehearse: the runbook's export-based restore (its
+Drills table is unchanged, since this run did not follow that procedure), the
+site's public reads against the restored account, and a side-by-side
+comparison with production documents (the operator sign-in holds no data-plane
+role on the production account, and granting one would change production; the
+comparison above is against the record's own revision chain inside the
+restore).
