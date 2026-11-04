@@ -975,6 +975,30 @@ This project has not cut a tagged release; entries are grouped under
   holds the declarations to the database map, the deployment runbook carries
   the owner's steps and checks for both apply runs, and ADR 0036 records the
   narrowing as in progress.
+- **The custom role definitions no longer carry the owner's subscription id,
+  and the redaction gate now reads `infra/`, the workflows and the operator
+  scripts ([#1540](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1540)).**
+  Five of the role files under `infra/roles/` named a real subscription in
+  their `assignableScopes`, in a public repository whose rule is that a real
+  tenant, subscription or application id never goes in a tracked file. The
+  files now carry the placeholder form the sixth file already used
+  (`...0001` for the workload subscription, `...0002` for the management
+  one), and `scripts/bootstrap-roles.sh` and `.ps1`, which always replaced
+  that field at create time, now also find both real ids themselves: the
+  workload subscription from `az account show` and the management one from
+  `az account list` by its name, instead of carrying the management id as a
+  default in the script. Both scripts refuse a placeholder or a non-GUID and
+  end with a read-back table of every `HCW` role and its real scopes, which
+  is the evidence for the owner's re-run.
+  `scripts/docs/check_redaction.py` only ever read `docs/` and the root
+  documents, which is how this went unnoticed; it now also scans
+  `infra/roles/*.json`, `infra/**/*.tf`, `infra/**/*.tfvars*`,
+  `.github/workflows/*.yml` and the top-level `scripts/*.ps1` and `*.sh`
+  for non-placeholder GUIDs, with the public constants those files
+  legitimately hold (four Microsoft built-in role and policy ids, one
+  Cloudflare DNS ownership token, the two synthetic browser-test ids) on
+  its allow-list with their reasons. `scripts/docs-redaction.test.mjs`
+  fails on a role file with a real-looking id and on each new scan path.
 
 ### Fixed
 

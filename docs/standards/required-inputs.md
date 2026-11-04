@@ -347,20 +347,45 @@ roles; it may not invent them, and that split is deliberate.
 So Terraform reads each definition back with `data "azurerm_role_definition"`.
 Until the owner has created them, the **plan** fails with "role definition not
 found" — which reads like a permissions problem and is actually a missing step
-here. Run the parameterized bootstrap script once, from an account with Owner or User Access Administrator on
-the subscription:
+here. Run the bootstrap script once, from an account with Owner or User
+Access Administrator on both subscriptions, signed in with `az login` so that
+the workload subscription is the default one:
 
 ```powershell
-# Defaults to active subscription from `az account show` if -SubscriptionId is omitted:
-pwsh scripts/bootstrap-roles.ps1 -SubscriptionId "<workload-subscription-id>" -ManagementSubscriptionId "<mgmt-subscription-id>"
+pwsh scripts/bootstrap-roles.ps1
 ```
 
 Or on POSIX shells:
 
 ```bash
 # bash
-scripts/bootstrap-roles.sh "<workload-subscription-id>" "<mgmt-subscription-id>"
+scripts/bootstrap-roles.sh
 ```
+
+The script needs no ids typed in. It reads the workload subscription from
+`az account show` (the subscription `az` is signed in to) and the management
+subscription from `az account list`, by its name `sub-plat-mgmt-prod-cus`;
+`-SubscriptionId` and `-ManagementSubscriptionId` (the two positional
+arguments in bash) override either. It stops, saying which, if an id is not a
+GUID or is the repository placeholder. Success looks like one "Created" or
+"Updated" line per role and then a read-back table of every `HCW ...` role
+with its real scopes.
+
+**The JSON files carry placeholders, not the real subscription.** Each
+`assignableScopes` entry under `infra/roles/` names the subscription as
+`00000000-0000-0000-0000-000000000001` (workload) or
+`...000000000002` (management), because this repository is public and a real
+subscription id never goes in a tracked file
+([#1540](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1540)).
+The bootstrap script replaces that field with the real scopes at create time
+and the files never change; creating a role with `az role definition create
+--role-definition @infra/roles/<name>.json` directly would register it with
+the placeholder scope and every assignment would fail, so always go through
+the script. The redaction gate
+([`scripts/docs/check_redaction.py`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/docs/check_redaction.py))
+reads `infra/roles/*.json`, the Terraform under `infra/`, the workflows and
+the top-level `scripts/*.ps1` and `*.sh`, and fails CI on any GUID that is
+not a placeholder or an allow-listed public constant.
 
 | Role | Grants | Consumer |
 | --- | --- | --- |
