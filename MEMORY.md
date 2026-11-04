@@ -66,8 +66,7 @@ Neither repository had any open issues, and after this no pull requests are open
      [GitHub's documentation](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#checks-from-some-workflow-jobs-are-not-evaluated).
      CodeRabbit caught that on the first version of the fix.)
    - The decision is recorded as
-     [ADR 0006 in CloudCrawler](https://github.com/saulpatinojr/HCW-CloudCrawler_App/blob/main/docs/adr/0006-dependabot-pull-requests-regenerate-the-lockfile-export.md)
-     and in [CloudAssessor's TODO.md, item T-009](https://github.com/saulpatinojr/HCW-CloudAssessor_App/blob/main/TODO.md).
+     [ADR 0006 in CloudCrawler](https://github.com/saulpatinojr/HCW-CloudCrawler_App/blob/main/docs/adr/0006-dependabot-pull-requests-regenerate-the-lockfile-export.md).
 2. **CloudAssessor's CodeQL action was pinned to a commit that is not a release.** It was labelled `v4.37.8`, but the
    real v4.37.8 is a different commit. So Dependabot tracked the branch and proposed another unreleased commit, split
    across two pull requests that would each have left the two halves of the action on different versions. Both halves
@@ -76,21 +75,21 @@ Neither repository had any open issues, and after this no pull requests are open
 
 ### Owner step still needed (the fix above is inert until this is done)
 
-Create the small GitHub App once, for both App repositories, and add two Dependabot secrets to each. The exact form
-values are in [ADR 0006, "Validation"](https://github.com/saulpatinojr/HCW-CloudCrawler_App/blob/main/docs/adr/0006-dependabot-pull-requests-regenerate-the-lockfile-export.md)
-and in [CloudAssessor TODO T-009](https://github.com/saulpatinojr/HCW-CloudAssessor_App/blob/main/TODO.md). In short:
+Create the small GitHub App once, for both App repositories, and add two Dependabot secrets to each. Tracked in
+[HCW-CloudCrawler_App#70](https://github.com/saulpatinojr/HCW-CloudCrawler_App/issues/70), which has every form value
+and the numbered steps. In short:
 an App named `HCW Lockfile Sync` with only **Contents: Read and write**, installed on the two App repositories. Its Client
 ID goes in the Dependabot secret `LOCKFILES_APP_CLIENT_ID`, and its private key in `LOCKFILES_APP_PRIVATE_KEY`. Until
-then the workflow stops with an error naming the two secrets, and a Dependabot Python pull request still needs
-`make lock` run on it by hand.
+then the workflow stops with an error naming the two secrets, and a Dependabot Python pull request still requires a
+manual `make lock` run.
 
 ### Differences between the repositories that were found and fixed
 
 - CloudAssessor did not group its GitHub Actions updates into one Dependabot pull request; CloudCrawler did. It does now.
 - CloudAssessor's CI checkouts left the workflow token on disk (zizmor `artipacked`); CloudCrawler's did not. Fixed in
   `ci.yml` and `security.yml`. **Still open:** the two release workflows (`publish-core.yml`, `publish-images.yml`),
-  which only run on a version tag, so a pull request cannot prove a change to them. Recorded in CloudAssessor TODO
-  T-009 as a P3 item.
+  which only run on a version tag, so a pull request cannot prove a change to them. Tracked in
+  [HCW-CloudAssessor_App#85](https://github.com/saulpatinojr/HCW-CloudAssessor_App/issues/85).
 
 ### What this means for this repository and the add-ons
 
