@@ -174,12 +174,14 @@ describe('codeql.yml and iac-validate.yml change-detection steps: what they are 
       'iac-validate.yml / terraform',
       'iac-validate.yml / trivy',
     ]);
-    // ci.yml has its four, so the "one shape" test below really compares seven steps.
+    // ci.yml has its five (four in its `changes` job since #1545, one in the
+    // verify matrix), so the "one shape" test below really compares eight steps.
     expect(ALL_DETECT_STEPS.map(({ file, job }) => `${file}: ${job}`)).toEqual([
+      'ci.yml: changes',
+      'ci.yml: changes',
+      'ci.yml: changes',
+      'ci.yml: changes',
       'ci.yml: verify',
-      'ci.yml: ansible-lint',
-      'ci.yml: coder-template',
-      'ci.yml: harness',
       'codeql.yml: analyze',
       'iac-validate.yml: terraform',
       'iac-validate.yml: trivy',
