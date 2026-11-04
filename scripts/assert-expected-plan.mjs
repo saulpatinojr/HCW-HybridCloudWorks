@@ -517,6 +517,19 @@ export const DECLARED = [
     reason:
       "#1403: SWEEP_VISITOR_SESSIONS added to enabled_timers, arming the visitor-session sweep",
   },
+  // #1469 step 1: the Function App's Cosmos Data Contributor role granted on
+  // the `hcw` database (`<account id>/dbs/hcw`) beside the account-wide
+  // grant, which stays until step 2. The plan after this merge is this one
+  // create and the permanent diff, nothing else: no change and no destroy
+  // on `azurerm_cosmosdb_sql_role_assignment.func_cosmos`. Step 2 is its own
+  // pull request, which deletes that block and declares the delete here.
+  // Delete this entry once the create has applied, as the header asks.
+  {
+    address: 'azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]',
+    action: "create",
+    reason:
+      "#1469 step 1: Data Contributor on the hcw database, beside the account-wide grant",
+  },
   // #1360's create, notes_obsidian_publish, applied on 2026-10-24 (run-bb1XtRGJEbuK1Cec,
   // read as applied by tfc-plan-check with only the known permanent diff besides it) and was
   // deleted here. notes.hybridcloudworks.com then resolved to Cloudflare addresses on 1.1.1.1

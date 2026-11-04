@@ -1,6 +1,6 @@
 # ADR 0036: The Code Conductor brain is a second private workspace with its own Cosmos database in the existing account, its own switches, owner, desktop client and `code_brain_sync` scope
 
-**Status:** Withdrawn 2026-10-31 by the owner, on [#1479](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1479): the engineering brain belongs to Code Conductor ([Proj-Code_Conductor](https://github.com/saulpatinojr/Proj-Code_Conductor)), its own product, and the site's Second Brain is for content, ideas and publications only. The code this record describes was merged switched off in [#1465](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1465), never deployed, and removed again by the pull request for #1479; the Terraform it added is decided separately there (Phase 2). Kept for the record; nothing below is current. The files it names no longer exist on `main`: the two links point at the tree as #1465 merged it ([`dfac635`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/dfac635a56a4f7f4a4dd7d972a336d1d86e615dd)), and every other path in this record is read against that same commit.
+**Status:** Withdrawn 2026-10-31 by the owner, on [#1479](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1479): the engineering brain belongs to Code Conductor ([Proj-Code_Conductor](https://github.com/saulpatinojr/Proj-Code_Conductor)), its own product, and the site's Second Brain is for content, ideas and publications only. The code this record describes was merged switched off in [#1465](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1465), never deployed, and removed again by the pull request for #1479; the Terraform it added is decided separately there (Phase 2). Kept for the record; nothing below is current, with one exception: the dated update under "Alternatives considered" on narrowing the Function App's Cosmos role ([#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469)) describes live work on the `hcw` database, which outlived this record. The files it names no longer exist on `main`: the two links point at the tree as #1465 merged it ([`dfac635`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/dfac635a56a4f7f4a4dd7d972a336d1d86e615dd)), and every other path in this record is read against that same commit.
 **Decision date:** 2026-10-31
 **Owners:** Workload owner and architecture owner
 
@@ -144,6 +144,17 @@ switches.
   the assignment the whole site runs on, and a mistake there is a site-wide
   403, so it belongs in its own reviewed change, not in this one. Tracked in
   [#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469).
+  **Update, 2026-11-03:** the narrowing is in progress, in two apply runs so
+  the app never has a moment with no grant. Step 1 adds the database-scoped
+  grant `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]` beside
+  the account-wide one ([`infra/cosmos.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos.tf),
+  the pull request for #1469); Step 2, a later pull request after the owner
+  has seen the site run on the narrower grant, deletes the account-wide
+  block. Only `hcw` gets a grant: `hcw_code_brain` was removed with
+  [#1480](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1480)
+  and the owner's apply of 2026-10-31, so there is no second database left
+  to scope to. The owner's steps for both apply runs are in the
+  [deployment runbook](../runbooks/deployment-runbook.md#narrowing-the-function-apps-cosmos-grant-1469).
 - **Reuse `brain_sync` and the creator's desktop client.** Rejected: one
   token would then open both workspaces.
 
