@@ -162,7 +162,7 @@ says so.
 | `COPILOT_REVIEW_APP_ID` | **SET 2026-09-06** | App ID of *HCW Copilot Review Reader*, the read-only GitHub App from which `copilot-setup-steps.yml` mints a one-hour installation token for the GitHub MCP server Copilot code review uses. An identifier, like `MANIFEST_APP_ID`; the key is the Agents secret in §4.3. Set by hand from the App page (runbook step 4) |
 | `READER_CLIENT_ID` | **SET 2026-09-06** | OIDC login for the workflows that only read — `monitor-functions-registered.yml` and `monitor-unresolved-secrets.yml` (T-728). `verify-alert-state.yml` used it until #1053, and `publish-content-manifest.yml` until #1098. Both are gated on it and **skip silently while it is unset**, so a rebuilt repository seeds it in the same pass as the apply: an unset value looks like workflows not running, not like a failure |
 | `ALERT_READER_CLIENT_ID` | **SET 2026-10-11** | OIDC login for `verify-alert-state.yml` alone (#1053): `github_alert_reader`, which holds *HCW Alert Rule Reader* (`infra/roles/alert-rule-reader.json`) in `rg-web-site-prod-cus` and `rg-mgmt-plat-prod-cus` and nothing else. The `alert_reader_client_id` output of `infra/`. The job is gated on it and **skips silently while it is unset** |
-| `MANIFEST_WINDOW_CLIENT_ID` | **SET 2026-10-13** (from `id-site-github-manifest-prod-cus-01`'s client id, after run-KqX5v889iJZBFn3x created it, #1098) | OIDC login for `publish-content-manifest.yml`'s build job alone (#1098): `github_manifest_window`, which holds *HCW Function Config Refresh* (`infra/roles/function-config-refresh.json`) on `func-site-prod-cus-01` and Reader on `rg-web-site-prod-cus` and nothing else, so it can open and close the job's origin window and cannot read app settings. The job is gated on it and **skips silently while it is unset**: the content manifest stays at its last committed version until it is set |
+| `MANIFEST_WINDOW_CLIENT_ID` | **SET 2026-10-13** (from `id-site-github-manifest-prod-cus-01`'s client id, after run-KqX5v889iJZBFn3x created it, #1098) | OIDC login for `publish-content-manifest.yml`'s build job (#1098) and, since #1463, for `remove-ci-access-windows.yml`, the hourly job that removes the `ci-*` firewall rules a dead run left open and puts the host storage account back to Deny: `github_manifest_window`, which holds *HCW Function Config Refresh* (`infra/roles/function-config-refresh.json`) on `func-site-prod-cus-01`, Reader on `rg-web-site-prod-cus` and *HCW Storage Firewall Writer* (`infra/roles/storage-firewall-writer.json`, #1463) on `stsiteprodcus01` and nothing else, so it can open, close and remove those windows and cannot read app settings or storage keys. It runs as this identity and not as `CLIENT_ID` because the deploy identity trusts only the `production` environment's subject, whose required reviewers would hold an hourly job every hour. Both jobs are gated on it and **skip silently while it is unset**: the content manifest stays at its last committed version, and a leftover window stays until a person removes it |
 | `TENANT_ID` | **VERIFIED** | OIDC login |
 | `SUBSCRIPTION_ID` | **VERIFIED** | OIDC login, `az rest` calls, and the application half of `verify-alert-state.yml`'s `ALERT_SUBSCRIPTION_IDS` |
 | `SUBSCRIPTION_MGMT_ID` | **SET 2026-10-11** | The Management subscription's id (`sub-plat-mgmt-prod-cus`), read only by `verify-alert-state.yml` (#1053). It and `SUBSCRIPTION_ID` become `ALERT_SUBSCRIPTION_IDS`, which the check uses for any subscription its identity's subscription list leaves out, since that identity's one role is at resource-group scope. Not secret: it is already an assignable scope in `infra/roles/*.json`. Unset, the check stops with exit 2 naming the empty entry, rather than skipping the Management rules |
@@ -335,7 +335,7 @@ problem. The two cost very different amounts to diagnose. Generated secrets (`CL
 
 ## 4.6b Custom role definitions — owner-created, once
 
-Five custom roles are referenced by `infra/` and **not created by it**.
+Six custom roles are referenced by `infra/` and **not created by it**.
 `azurerm_role_definition` needs `Microsoft.Authorization/roleDefinitions/write`,
 and the HCP Terraform run identity is Contributor + Role Based Access Control
 Administrator. Neither carries it: Contributor excludes
@@ -368,10 +368,12 @@ scripts/bootstrap-roles.sh "<workload-subscription-id>" "<mgmt-subscription-id>"
 | `HCW Function Settings Reader` | `Microsoft.Web/sites/config/list/action` and nothing else | `monitor-functions-registered.yml`, the one thing the `Reader` role cannot express — listing app settings is an action, not a read |
 | `HCW Static Web App Deployer` | `Microsoft.Web/staticSites/listSecrets/action` and nothing else | `deploy-azure-frontend.yml` via OIDC to retrieve just-in-time deployment token |
 | `HCW Alert Rule Reader` | Read alert rules (scheduled query rules, metric alerts, activity log alerts), action groups, and Resource Health availability statuses in `rg-web-site-prod-cus` and `rg-mgmt-plat-prod-cus` | `verify-alert-state.yml` to verify alerting fabric rules |
+| `HCW Storage Firewall Writer` | `Microsoft.Storage/storageAccounts/read` and `Microsoft.Storage/storageAccounts/write`, the actions that read and change an account's own properties, where its firewall lives; no `listKeys`, no data plane | `remove-ci-access-windows.yml` (#1463), so the hourly remover can put the host storage account back to Deny and remove a dead deploy run's IP rule without holding the account's keys. **Not yet created (2026-11-03)**: until the owner runs the bootstrap script below, the plan fails on its lookup and the remover's storage half fails with `AuthorizationFailed`, while its Function App half works |
 
 The first two were declared as Terraform `resource` blocks when the API Keys
 page landed, which would have failed the very apply that turns the page on.
-The third arrived with the identity split (T-728). Until each exists, the
+The third arrived with the identity split (T-728), and the sixth with the
+window remover (#1463). Until each exists, the
 Terraform plan errors with "role definition not found" — which reads like a
 permissions problem and is actually this step.
 

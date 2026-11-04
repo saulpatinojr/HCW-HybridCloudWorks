@@ -307,12 +307,20 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
     ]);
   });
 
-  it('github_manifest_window holds the config write on the one site and Reader on the web group, and nothing else', () => {
+  it('github_manifest_window holds the config write on the one site, the firewall write on the one storage account and Reader on the web group, and nothing else', () => {
     // Reader at the group rather than the site so the subscription is
     // discoverable at sign-in, as for github_reader (infra/oidc.tf).
+    // The storage grant arrived with #1463: remove-ci-access-windows.yml runs
+    // as this identity every hour and puts the host storage account's
+    // firewall back to Deny. HCW Storage Firewall Writer is the account's
+    // read and write actions and nothing else (no listKeys, no data plane),
+    // scoped to that one account; infra/oidc.tf says why not the deploy
+    // identity. A Storage Account Contributor grant here would be the widening
+    // this list exists to put in front of a reviewer.
     expect(grantsTo('github_manifest_window')).toEqual([
       'Reader @ azurerm_resource_group.app["web"].id',
       'data.func_config_refresh @ azurerm_function_app_flex_consumption.hcw.id',
+      'data.storage_firewall_writer @ azurerm_storage_account.functions.id',
     ]);
   });
 

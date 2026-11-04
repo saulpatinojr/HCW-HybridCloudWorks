@@ -489,6 +489,46 @@ resource "azurerm_role_assignment" "github_manifest_window_read" {
   principal_type       = "ServicePrincipal"
 }
 
+# A SECOND CONSUMER SINCE #1463: remove-ci-access-windows.yml. Every hour it
+# removes each `ci-*` rule on the Function App or its SCM site whose run has
+# ended (a "window" a dead run never closed; the monitor only names them,
+# #1050) and puts the host storage account's firewall back to Deny. The
+# Function App half needs exactly what this identity already holds, Config
+# Refresh for the remove and Reader for the reads. It runs as this identity
+# and not as github_deploy because github_deploy trusts only the
+# `environment:production` subject, and that environment's required
+# reviewers would hold an hourly job for a person every hour.
+#
+# The storage half is this grant: the account's read and write actions and
+# nothing else (infra/roles/storage-firewall-writer.json). The firewall is a
+# property of the account (networkRuleSet), so `storageAccounts/write` is
+# the action that changes it; Storage Account Contributor, which
+# github_deploy holds for the same window, also carries listKeys, and an
+# identity that runs every hour on a schedule should not. What `write` does
+# reach is every other account property too (TLS floor, public access,
+# allowed copy scope), which is the narrowest Azure can express for the
+# firewall; read-only on the keys and the data plane is the line that
+# matters. Scoped to the one account.
+resource "azurerm_role_assignment" "github_manifest_window_storage_firewall" {
+  scope              = azurerm_storage_account.functions.id
+  role_definition_id = data.azurerm_role_definition.storage_firewall_writer.id
+  principal_id       = azurerm_user_assigned_identity.github_manifest_window.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+# Owner-created for the same reason as every custom role here (keyvault.tf
+# says why the Terraform identity may assign roles and not invent them):
+#
+#   scripts/bootstrap-roles.sh or .ps1, or
+#   az role definition create --role-definition @infra/roles/storage-firewall-writer.json
+#
+# Until it exists, the plan fails with "role definition not found"
+# (Required-Inputs §4.6b).
+data "azurerm_role_definition" "storage_firewall_writer" {
+  name  = "HCW Storage Firewall Writer"
+  scope = azurerm_resource_group.app["web"].id
+}
+
 # ---------------------------------------------------------------------------
 # github_alert_reader — verify-alert-state.yml, and nothing else (#1053)
 # ---------------------------------------------------------------------------

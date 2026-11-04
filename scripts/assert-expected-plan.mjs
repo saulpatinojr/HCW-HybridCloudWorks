@@ -535,6 +535,12 @@ export const DECLARED = [
   // SWEEP_VISITOR_SESSIONS false -> true), #953 stage 3's two entries
   // (lab_ssh_loopback_only) and #1302's Web Analytics site create
   // (cloudflare_account_id). Each is a value the owner sets in the workspace.
+  {
+    address: "azurerm_role_assignment.github_manifest_window_storage_firewall",
+    action: "create",
+    reason:
+      "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); the role is created by the owner first (Required-Inputs §4.6b)",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
