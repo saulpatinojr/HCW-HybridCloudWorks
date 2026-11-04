@@ -430,7 +430,7 @@ jobs:
   # The Second Brain journeys (second-brain.spec.js, #1408) run here too.
   # They had been written with #1395 but never listed, so nothing ran them
   # after a merge. They stub the brain API the way the admin spec stubs the
-  # identity host; the five of them took 20 s on ten workers locally.
+  # identity host; the five of them took 44 s on one worker locally (both profiles).
   e2e:
     name: e2e (playwright)
     runs-on: ubuntu-26.04

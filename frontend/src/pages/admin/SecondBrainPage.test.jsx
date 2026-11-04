@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { Link, MemoryRouter } from 'react-router';
 import SecondBrainPage from './SecondBrainPage';
 import { brainApi } from '@/lib/brainApi';
 import { useBrainAccess } from '@/hooks/useBrainAccess';
@@ -248,7 +248,7 @@ describe('Second Brain owner workspace', () => {
     const source = { ...note, id: 'source-1', title: 'A cited source', body: 'Source text.' };
     brainApi.get.mockImplementation(async (id) => ({
       item: id === source.id ? source : note,
-      backlinks: [],
+      backlinks: id === source.id ? [note] : [],
     }));
     brainApi.ask.mockResolvedValue({
       insufficientEvidence: false,
@@ -274,5 +274,38 @@ describe('Second Brain owner workspace', () => {
     expect(await screen.findByLabelText('Markdown')).toHaveValue(source.body);
     expect(brainApi.get).toHaveBeenCalledTimes(1);
     expect(brainApi.get).toHaveBeenCalledWith(source.id);
+    // Open another note from the source's "Linked from" list (which leaves the
+    // address at ?item=source-1), then follow the same citation again: the
+    // address does not change, but the click is a new navigation and opens it.
+    fireEvent.click(screen.getByRole('button', { name: note.title, exact: true }));
+    await waitFor(() => expect(screen.getByLabelText('Markdown')).toHaveValue(note.body));
+    fireEvent.click(screen.getByRole('link', { name: `S1: ${source.title}` }));
+    await waitFor(() => expect(screen.getByLabelText('Markdown')).toHaveValue(source.body));
+    expect(brainApi.get).toHaveBeenCalledTimes(3);
+    expect(brainApi.get).toHaveBeenLastCalledWith(source.id);
+  });
+  it('starts a linked research note from a capture link and keeps unsaved text on a second one', async () => {
+    brainApi.context.mockResolvedValue({ sourceId: 'ref_abc', items: [], provenance: null });
+    render(
+      <MemoryRouter initialEntries={['/admin/second-brain?capture=content-1']}>
+        <Link to="/admin/second-brain?capture=content-2">Another capture link</Link>
+        <SecondBrainPage />
+      </MemoryRouter>
+    );
+    expect(await screen.findByLabelText('Markdown')).toHaveValue('');
+    expect(brainApi.context).toHaveBeenCalledWith('content-1');
+    expect(screen.getByText('ref_abc')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Markdown'), {
+      target: { value: 'Typed and unsaved.' },
+    });
+    // A second capture link while the editor is dirty is held by the editor's
+    // click guard (useUnsavedGuard); the page's own guard covers Back/Forward,
+    // which a click cannot reproduce here. Cancelling keeps the typed text
+    // and makes no context request.
+    fireEvent.click(screen.getByRole('link', { name: 'Another capture link' }));
+    expect(await screen.findByText('Leave this note?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel', exact: true }));
+    expect(screen.getByLabelText('Markdown')).toHaveValue('Typed and unsaved.');
+    expect(brainApi.context).toHaveBeenCalledTimes(1);
   });
 });

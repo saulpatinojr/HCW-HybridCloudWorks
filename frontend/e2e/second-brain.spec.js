@@ -346,7 +346,9 @@ test('an outline for the selected idea cites its sources, becomes a reviewed not
   identity.answerApi(draftRoute, { ok: false, error: 'Draft store unavailable.' }, { status: 500 });
   const createDraft = main.getByRole('button', { name: 'Create draft', exact: true });
   await createDraft.click();
-  await expect(main.getByRole('alert')).toContainText('Draft store unavailable.');
+  await expect(main.locator('details').getByRole('alert')).toContainText(
+    'Draft store unavailable.'
+  );
   identity.answerApi(draftRoute, { id: 'brain_fixture_draft', href: '/admin/drafts' });
   await createDraft.click();
   await expect(main.getByRole('link', { name: 'Open Drafts', exact: true })).toHaveAttribute(
@@ -364,6 +366,7 @@ test('an outline for the selected idea cites its sources, becomes a reviewed not
     ideaOrigin: 'manual',
   });
   expect(draftCalls[0].body.requestId).toMatch(/^[0-9a-f-]{36}$/);
+  expect(draftCalls[1].body.requestId).toBe(draftCalls[0].body.requestId);
   expect(draftCalls[1].body).toEqual(draftCalls[0].body);
   await page.screenshot({ path: testInfo.outputPath('outline-to-draft.png'), fullPage: true });
 });

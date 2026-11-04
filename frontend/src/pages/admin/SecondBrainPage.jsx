@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useLocation, useSearchParams } from 'react-router';
 import { Brain, Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ConfirmModal from '@/components/admin/ConfirmModal';
@@ -149,6 +149,7 @@ function WorkspaceUnavailable({ access }) {
 export default function SecondBrainPage() {
   const access = useBrainAccess();
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
   const [view, setView] = useState('Home');
   const [notes, setNotes] = useState([]);
   const [after, setAfter] = useState(null);
@@ -256,32 +257,35 @@ export default function SecondBrainPage() {
     },
     [canLeave]
   );
-  // Follow the `item` and `capture` links whenever they change, not only on
+  // Follow the `item` and `capture` links on every navigation, not only on
   // the first render. A citation in the Ask panel is a link to
   // `?item=<source id>` on this same page, and until #1408 the page handled
   // that link once per mount, so clicking a citation changed the address bar
-  // and opened nothing. `handledLink` remembers the last link acted on, so a
-  // re-render with the same address does not reopen the note.
+  // and opened nothing. `handledLink` remembers the navigation acted on (the
+  // router gives each one its own key), so a re-render, a capability
+  // refresh, or StrictMode's second effect does not reopen the note, while a
+  // fresh click on a citation already in the address bar still opens it.
+  // Both branches go through the unsaved-changes guard: `open` asks it, and
+  // the capture branch asks it here before replacing the editor.
   useEffect(() => {
-    if (!access.enabled) return;
+    if (!access.enabled || handledLink.current === location.key) return;
+    handledLink.current = location.key;
     const item = params.get('item');
     const capture = params.get('capture');
-    let link = '';
-    if (item) link = `item:${item}`;
-    else if (capture) link = `capture:${capture}`;
-    if (handledLink.current === link) return;
-    handledLink.current = link;
     if (item) Promise.resolve().then(() => open(item));
     else if (capture) {
-      brainApi
-        .context(capture)
+      canLeave()
+        .then((leave) => (leave ? brainApi.context(capture) : null))
         .then((data) => {
+          if (!data) return;
+          setEditorSnapshot(null);
+          dirtyRef.current = false;
           setSelection(blank('note', { title: 'Content research', links: [data.sourceId] }));
           setBacklinks([]);
         })
         .catch((err) => setError(err.message));
     }
-  }, [access.enabled, params, open]);
+  }, [access.enabled, location.key, params, open, canLeave]);
   async function search(next = null) {
     setBusy(true);
     setError('');
