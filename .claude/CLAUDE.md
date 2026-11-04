@@ -458,7 +458,12 @@ so it is recorded here, where every session reads it.
     2026-11-04 CodeQL runs on pushes to `main` and weekly, not on pull
     requests ([#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545)),
     so the line is run once the merge's push run has finished (about four
-    minutes), and a new alert is the merging session's follow-up. Until
+    minutes) with all three `Analyze` jobs green: a failed or cancelled
+    analysis uploads nothing, and the workflow cancels an in-progress run
+    when the next push lands, so a run that did not succeed is not "no new
+    alerts". Rerun it, or wait for a later `main` run that contains the
+    merge, before reading the list. A new alert is the merging session's
+    follow-up. Until
     then the line read `refs/pull/<n>/merge`, the ref the PR threads came
     from. The query goes in the URL: `-f state=open` beside `--paginate`
     silently returned nothing for Dependabot alerts on 2026-09-29, while

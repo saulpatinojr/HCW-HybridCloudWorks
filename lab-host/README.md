@@ -327,8 +327,12 @@ playbook from it, and the agent runs the same commit, because
 `labs_agent_repo_ref` in `ansible/group_vars/all.yml` reads the playbook's
 own checkout. `main` is protected by the repository ruleset — every change
 arrives by pull request, nobody can bypass it, and the required checks
-required one check, `gate`, which waits for every CI job (since 2026-11-04; before that, `ansible-lint (lab-host)` and `coder (lab-host)` by name) — so a commit on
-`main` has passed the same checks a pinned sha had to. A pin could not do
+include `gate`, which waits for every CI job, the lab-host ones among them
+(since 2026-11-04; before that, `ansible-lint (lab-host)` and
+`coder (lab-host)` were required by name); repository policy, dependency
+review and the IaC checks stay required on their own, as listed in
+[`docs/runbooks/required-checks.md`](../docs/runbooks/required-checks.md).
+So a commit on `main` has passed the same checks a pinned sha had to. A pin could not do
 better: a pull request cannot name its own merge commit, so a pin always
 lagged one merge behind and every lab-host change needed a second pull
 request to take effect.
