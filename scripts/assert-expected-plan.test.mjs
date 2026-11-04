@@ -1119,7 +1119,9 @@ describe('DECLARED', () => {
     const block = /^\s*cosmos_database_grants\s*=\s*\{\n([\s\S]*?)\n\s*\}\n/m.exec(infraSource);
     expect(block, 'local.cosmos_database_grants not found in infra/').not.toBeNull();
     const keys = [...block[1].matchAll(/^\s*(\w+)\s*=/gm)].map((m) => m[1]);
-    expect(keys).toEqual(applied);
+    // The applied keys must still be in the local (a key removed from it would
+    // plan a destroy); keys may be added beside them, declared below.
+    expect(keys).toEqual(expect.arrayContaining(applied));
     const creates = DECLARED.filter((entry) => entry.action === 'create').map((entry) => entry.address);
     const grantAddress = (key) => `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["${key}"]`;
     for (const key of applied) expect(creates, `${key} applied and is still declared`).not.toContain(grantAddress(key));
@@ -1138,15 +1140,18 @@ describe('DECLARED', () => {
     // 2026-11-04. The declarations go; the three resources stay in the tree
     // (a declaration pruned while its resource was also removed would hide a
     // destroy), and the azapi_update_resource the delete retired is gone.
-    const addresses = DECLARED.map((entry) => entry.address);
-    expect(addresses).not.toContain('azapi_update_resource.cosmos_data_plane_table');
+    // Only the applied actions are asserted gone: a later update to one of
+    // the three resources (the rule's KQL, say) is declared by path in the
+    // usual way and must not trip this.
+    const byAction = (action) => DECLARED.filter((entry) => entry.action === action).map((entry) => entry.address);
+    expect(byAction('delete')).not.toContain('azapi_update_resource.cosmos_data_plane_table');
     expect(infraSource).not.toContain('"cosmos_data_plane_table"');
     for (const [type, name] of [
       ['azurerm_log_analytics_workspace_table', 'cosmos_data_plane'],
       ['azurerm_monitor_data_collection_rule', 'workspace_transforms'],
       ['azurerm_monitor_scheduled_query_rules_alert_v2', 'logs_over_quota'],
     ]) {
-      expect(addresses, name).not.toContain(`${type}.${name}`);
+      expect(byAction('create'), name).not.toContain(`${type}.${name}`);
       expect(infraSource, `${name} is no longer declared in infra/`).toContain(`resource "${type}" "${name}"`);
     }
   });
