@@ -76,59 +76,31 @@ skipped counts as passing.
    [ci.yml on main](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/workflows/ci.yml)
    ends with a job whose `name:` is `gate`. If it does not, stop: the pull
    request for #1545 has not merged.
-2. Write the payload below to a file (the lines are bash, for Git Bash, as a
-   session runs them). It is the whole ruleset, because the API replaces the
-   ruleset with what it is sent: the three unchanged rules are repeated
-   exactly as read from the API on 2026-11-04, and only the
-   `required_status_checks` list differs.
+2. Build the payload from the ruleset as it is **now**, not from a copy in
+   this page: the API replaces the whole ruleset with what it is sent, so a
+   rule added since this page was written (a new merge protection, say)
+   would be lost if a saved copy were sent. The line below reads the live
+   ruleset, keeps every rule as it is, and swaps only the
+   `required_status_checks` list for the five above. These are session
+   commands (the cut-over is a session's step, not the owner's), so they are
+   bash, for Git Bash, one line each.
+
+   The line below is bash:
 
    ```bash
-   cat > "$HOME/ruleset-1545.json" <<'JSON'
-   {
-     "name": "Default",
-     "target": "branch",
-     "enforcement": "active",
-     "bypass_actors": [],
-     "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
-     "rules": [
-       { "type": "deletion" },
-       { "type": "non_fast_forward" },
-       {
-         "type": "pull_request",
-         "parameters": {
-           "allowed_merge_methods": ["merge", "squash", "rebase"],
-           "dismiss_stale_reviews_on_push": true,
-           "require_code_owner_review": false,
-           "require_extra_approval_for_unattributed_changes": false,
-           "require_last_push_approval": false,
-           "required_approving_review_count": 0,
-           "required_review_thread_resolution": true,
-           "required_reviewers": []
-         }
-       },
-       {
-         "type": "required_status_checks",
-         "parameters": {
-           "do_not_enforce_on_create": false,
-           "strict_required_status_checks_policy": true,
-           "required_status_checks": [
-             { "context": "gate", "integration_id": 15368 },
-             { "context": "Validate root and documentation policy", "integration_id": 15368 },
-             { "context": "dependency-review", "integration_id": 15368 },
-             { "context": "fmt, validate, tflint", "integration_id": 15368 },
-             { "context": "Trivy IaC misconfiguration scan", "integration_id": 15368 }
-           ]
-         }
-       }
-     ]
-   }
-   JSON
+   gh api repos/saulpatinojr/HCW-HybridCloudWorks/rulesets/20680114 --jq '{name, target, enforcement, bypass_actors, conditions, rules: [.rules[] | if .type == "required_status_checks" then .parameters.required_status_checks = [{context: "gate", integration_id: 15368}, {context: "Validate root and documentation policy", integration_id: 15368}, {context: "dependency-review", integration_id: 15368}, {context: "fmt, validate, tflint", integration_id: 15368}, {context: "Trivy IaC misconfiguration scan", integration_id: 15368}] else . end]}' > "$HOME/ruleset-1545.json"
    ```
 
    `integration_id` 15368 is GitHub Actions, the app that posts every one of
    these checks; it is the value the API returned for every context in the
-   old list.
-3. Apply it (bash):
+   old list. Then read the file once before sending it: it should hold the
+   four rules read on 2026-11-04 (`deletion`, `non_fast_forward`,
+   `pull_request` with `required_review_thread_resolution: true` and
+   `required_approving_review_count: 0`, and `required_status_checks` with
+   `strict_required_status_checks_policy: true`), plus any rule added since,
+   and the five contexts. If a rule you did not expect is there, stop and
+   find out why before going on; the payload keeps it either way.
+3. Apply it. The line below is bash:
 
    ```bash
    gh api -X PUT repos/saulpatinojr/HCW-HybridCloudWorks/rulesets/20680114 --input "$HOME/ruleset-1545.json" --jq '.updated_at'
@@ -136,8 +108,11 @@ skipped counts as passing.
 
    A successful call prints the new `updated_at` time. An HTTP 422 names the
    field it did not accept; an HTTP 404 means the token cannot administer the
-   repository (the owner's own `gh auth login` can).
-4. Read it back and compare with the table above (bash):
+   repository (the owner's own `gh auth login` can). The endpoint is
+   documented on
+   [REST API endpoints for rules](https://docs.github.com/en/rest/repos/rules?apiVersion=2022-11-28)
+   ("Update a repository ruleset").
+4. Read it back and compare with the table above. The line below is bash:
 
    ```bash
    gh api repos/saulpatinojr/HCW-HybridCloudWorks/rulesets/20680114 --jq '.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context'
@@ -149,10 +124,11 @@ skipped counts as passing.
    checks. Then edit `.claude/CLAUDE.md`'s ruleset bullet to drop the "takes
    effect when the ruleset is updated" wording, and record the date here.
 
-**Rollback:** send the same `PUT` with the old fifteen contexts
-(`PRE_1545_REQUIRED_CONTEXTS` in `scripts/ruleset-contexts.test.mjs`) in
-place of the five. Every one of them is still a job name, so the old list
-works unchanged.
+**Rollback:** build the payload the same way (step 2, from the live ruleset)
+with the old fifteen contexts (`PRE_1545_REQUIRED_CONTEXTS` in
+`scripts/ruleset-contexts.test.mjs`) in place of the five, and send the same
+`PUT`. Every one of them is still a job name, so the old list works
+unchanged.
 
 ## Renaming a CI job after the cut-over
 

@@ -108,7 +108,7 @@ jobs:
           # condition, so a failed diff (an unfetchable base sha) would read
           # as "no changes" and silently skip required work. A diff that
           # cannot be computed fails toward running everything.
-          changed="$(git diff --name-only "${BASE_SHA}" HEAD)" || {
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
@@ -147,7 +147,7 @@ jobs:
           fi
           # Capture the diff first — same reasoning as the step above: a
           # failed diff must fail toward running, not skipping.
-          changed="$(git diff --name-only "${BASE_SHA}" HEAD)" || {
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
@@ -179,7 +179,7 @@ jobs:
             echo "non-pull_request event — running all checks"
             exit 0
           fi
-          changed="$(git diff --name-only "${BASE_SHA}" HEAD)" || {
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
@@ -213,7 +213,7 @@ jobs:
           fi
           # Capture the diff first — same reasoning as the steps above: a
           # failed diff must fail toward running, not skipping.
-          changed="$(git diff --name-only "${BASE_SHA}" HEAD)" || {
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
@@ -484,7 +484,7 @@ jobs:
           # condition, so a failed diff (an unfetchable base sha) would read
           # as "no changes" and silently skip required work. A diff that
           # cannot be computed fails toward running everything.
-          changed="$(git diff --name-only "${BASE_SHA}" HEAD)" || {
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
@@ -1396,6 +1396,11 @@ jobs:
         with:
           oidc: true
           format: lcov
+          # The action's default is to log a failed upload and pass the step.
+          # Off, so a report Qlty did not take fails this job and `gate` with
+          # it (CodeRabbit on #1549): a merge without a coverage upload is a
+          # problem to see, not to skip.
+          skip-errors: false
           files: |
             ${{ runner.temp }}/coverage/coverage-frontend/lcov.info
             ${{ runner.temp }}/coverage/coverage-functions/lcov.info
