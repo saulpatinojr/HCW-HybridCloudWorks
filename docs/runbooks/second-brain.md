@@ -89,7 +89,7 @@ client registration in the environment's identity inventory.
 
 The Playwright journeys in
 [`frontend/e2e/second-brain.spec.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/e2e/second-brain.spec.js)
-run on every pull request in the `e2e (playwright)` check, on a desktop and a
+run on every pull request that touches `frontend/`, in the two `e2e (playwright, shard N/2)` jobs under the `gate` check, on a desktop and a
 phone profile, against the real frontend bundle with the identity host and the
 brain API answered by fixtures (made-up notes, no model). They prove the
 plumbing; they cannot judge an answer's quality. Against the acceptance lines

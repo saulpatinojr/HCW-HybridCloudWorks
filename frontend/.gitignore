@@ -17,6 +17,8 @@ public/data/
 
 # Test coverage reports
 coverage
+# Vitest blob reports (`npm run test:shard`, #1545): 16 MB per shard
+.vitest/
 
 # Editor directories and files
 .vscode/*

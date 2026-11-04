@@ -21,10 +21,16 @@
 # base, in two places:
 # - The `changes` job runs first and answers, once per filter, whether the
 #   browser suites, the lab-host lint, the lab-host role tests, the Coder
-#   template checks and the Python harness checks are needed. The `e2e`,
-#   `ansible-lint`, `role-tests`, `coder-template` and `harness` jobs read its
-#   answers in their `if:` and are skipped outright when the answer is no (no
-#   runner is started).
+#   template checks, the Python harness checks and the frontend unit suite
+#   are needed. The `e2e`, `ansible-lint`, `role-tests`, `coder-template`,
+#   `harness` and `frontend-unit` jobs read its answers in their `if:` and
+#   are skipped outright when the answer is no (no runner is started).
+#   The two suites that set a frontend pull request's time, the frontend
+#   unit suite (`frontend-unit`) and the browser suites (`e2e`), each run as
+#   two shards (two runners, each taking half of the test files) since the
+#   fourth pull request of #1545, so that the slowest job ends near two
+#   minutes; `frontend-unit-merge` joins the unit shards' results for the
+#   coverage ratchet.
 #   Each of those filters also says whether a change to this file alone
 #   (`WORKFLOW_SELF_TRIGGER`) counts: yes for the cheap lint-class jobs, so a
 #   workflow edit still proves they run; no for the expensive ones (the
@@ -107,6 +113,9 @@ jobs:
       roletests: ${{ steps.roletests.outputs.relevant }}
       coder: ${{ steps.coder.outputs.relevant }}
       harness: ${{ steps.harness.outputs.relevant }}
+      # The frontend row's answer, read by the `frontend-unit` job too: the
+      # unit suite's shards run on the same files the row does (#1545).
+      frontend: ${{ steps.frontend.outputs.relevant }}
       # The verify job's matrix: its rows whose files changed, as JSON.
       verify: ${{ steps.verify.outputs.matrix }}
     steps:
@@ -761,12 +770,12 @@ jobs:
               format: npm run format:check
               validate: npm run validate:routes
               build: npm run build
-              # With coverage (#1545): the thresholds in frontend/vitest.config.js
-              # are a ratchet, so a pull request that lowers coverage fails here,
-              # and the report this writes is what the `coverage` job uploads
-              # after a merge. The separate Coverage workflow that ran the suite
-              # a second time is gone.
-              test: npm run test:coverage
+              # No `test:` line: the unit suite runs as the two shards of the
+              # `frontend-unit` job below, on the same answer as this row, and
+              # `frontend-unit-merge` enforces the coverage ratchet on their
+              # joined result (#1545). Until the fourth pull request of #1545 the
+              # suite ran here, with coverage, and its 192 s set the time of a
+              # frontend pull request.
             # Node.js 24, not 26: Azure Functions Flex Consumption runs 22 and
             # 24 only, so the tests run on the line production runs. Every other
             # row takes the step's default, the newest line. Both are held there
@@ -816,7 +825,7 @@ jobs:
     # update-version-floors.yml moves that ceiling when GitHub makes the next
     # LTS generally available.
     runs-on: ubuntu-26.04
-    timeout-minutes: 20 # slowest row 3.4 min (frontend), Oct 2026 (#1441)
+    timeout-minutes: 20 # slowest row 4.7 min (frontend, with its tests), Nov 2026 (#1441); the tests moved to frontend-unit
     needs: changes
     strategy:
       # One package failing should not mask the state of the others.
@@ -930,17 +939,133 @@ jobs:
           COMMAND: ${{ matrix.test }}
         run: bash -eo pipefail -c "$COMMAND"
 
-      # After a merge only: the frontend and functions rows hand their
-      # coverage report to the `coverage` job below, which uploads both in one
-      # go. On a pull request nothing is kept, because a pull request runs
-      # only the rows its files touch, and a report with one package missing
-      # would read at Qlty as a drop in coverage (#1545).
+      # After a merge only: the functions row hands its coverage report to
+      # the `coverage` job below, which uploads it with the frontend's (that
+      # one comes from `frontend-unit-merge`, under the same name pattern) in
+      # one go. On a pull request nothing is kept, because a pull request
+      # runs only the rows its files touch, and a report with one package
+      # missing would read at Qlty as a drop in coverage (#1545).
       - name: Keep the coverage report for the Qlty upload
-        if: github.event_name == 'push' && (matrix.name == 'frontend' || matrix.name == 'functions (azure)')
+        if: github.event_name == 'push' && matrix.name == 'functions (azure)'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.dir }}
           path: ${{ matrix.dir }}/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: error
+
+  # The frontend unit suite (vitest), as two shards (#1545, the fourth pull
+  # request). On the frontend-only #1557 the suite took 192 s inside the
+  # `frontend` row and that row, at 280 s, set the pull request's time.
+  # Vitest splits the test files between the shards (`--shard=1/2` and
+  # `--shard=2/2`), each shard collects coverage for its half and writes a
+  # blob report (one file holding its results and its coverage) instead of
+  # the usual summary, and the `frontend-unit-merge` job below joins the two
+  # blobs into one run, where the coverage thresholds are checked once, on
+  # the whole suite. A shard alone must not check them: half a suite is
+  # always under the ratchet (shard 1 of 2 measured 48% of lines against the
+  # 75.5% threshold, and vitest 5.0.5 checks a shard's coverage like any
+  # other run's), so `npm run test:shard` (frontend/package.json) sets every
+  # threshold to 0 and autoUpdate off for the shard, and `test:merge` leaves
+  # the config's thresholds in force. Sharding and the blob reporter are described on
+  # https://vitest.dev/guide/improving-performance.html#sharding and
+  # https://vitest.dev/guide/reporters.html#blob-reporter.
+  frontend-unit:
+    name: frontend unit (shard ${{ matrix.shard }}/2)
+    # On the frontend row's own answer (the `changes` job's `frontend`
+    # output); in parallel with the verify matrix, not after it.
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15 # the whole suite took 192 s with coverage on one runner, Nov 2026 (#1441)
+    strategy:
+      # One shard failing should not hide the other's result.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install (lockfile-strict)
+        run: npm ci
+
+      - name: Test (this shard, with coverage, as a blob report)
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: npm run test:shard -- --shard="${SHARD}/2"
+
+      # The blob is what the merge job joins; a shard that wrote none is a
+      # failure here, not an empty merge later.
+      - name: Keep the blob report for the merge
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vitest-blob-${{ matrix.shard }}
+          path: frontend/.vitest/blob/
+          retention-days: 1
+          if-no-files-found: error
+
+  # The two shards' results, joined (#1545). `vitest run --merge-reports`
+  # reads every blob in frontend/.vitest/blob/ and reports as if the suite had
+  # run once; with `--coverage` it joins the shards' coverage too, writes the
+  # reports frontend/vitest.config.js names (the summary and
+  # coverage/lcov.info) and checks the thresholds there, which is the ratchet
+  # #1549 added. After a merge to `main` the lcov.info is kept for the
+  # `coverage` job, under the name it downloads. No `if:`: when the shards
+  # were skipped (no frontend change) GitHub skips this job with them, and
+  # when a shard failed it is skipped too and `gate` sees the shard's failure.
+  frontend-unit-merge:
+    name: frontend unit (merged coverage)
+    needs: frontend-unit
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10 # an install and a merge
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install (lockfile-strict)
+        run: npm ci
+
+      - name: Download the shards' blob reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: vitest-blob-*
+          merge-multiple: true
+          path: frontend/.vitest/blob
+
+      - name: Merge the shards and check the coverage thresholds
+        run: npm run test:merge
+
+      - name: Keep the coverage report for the Qlty upload
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-frontend
+          path: frontend/coverage/lcov.info
           retention-days: 1
           if-no-files-found: error
 
@@ -973,8 +1098,15 @@ jobs:
   # They had been written with #1395 but never listed, so nothing ran them
   # after a merge. They stub the brain API the way the admin spec stubs the
   # identity host; the five of them took 44 s on one worker locally (both profiles).
+  #
+  # Two shards (#1545, the fourth pull request): on the frontend-only #1557
+  # the suites took 195 s of this job's 247 s. Playwright splits the tests
+  # between the shards (`--shard=1/2` and `--shard=2/2`), each on its own
+  # runner with its own build and preview server, and each keeps its own
+  # report when it fails. No merged report: a failed shard's report says
+  # which test failed, which is all the review needs.
   e2e:
-    name: e2e (playwright)
+    name: e2e (playwright, shard ${{ matrix.shard }}/2)
     # Only when frontend/ changed (#1545); in parallel with the verify matrix,
     # not after it, because waiting for the frontend row would put the two
     # slowest jobs end to end.
@@ -984,6 +1116,11 @@ jobs:
     timeout-minutes: 60 # slowest 19 min, 16 of them installing Chromium, Oct 2026 (#1441)
     permissions:
       contents: read
+    strategy:
+      # One shard failing should not hide the other's result.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1048,13 +1185,14 @@ jobs:
         env:
           TEST_BASE_URL: http://127.0.0.1:4173
           CI: 'true'
-        run: npx playwright test --project=chromium --project=mobile-chrome hydration.spec.js contentforge.spec.js admin-authenticated.spec.js ai-engine.spec.js ambassador.spec.js blogs.spec.js second-brain.spec.js
+          SHARD: ${{ matrix.shard }}
+        run: npx playwright test --shard="${SHARD}/2" --project=chromium --project=mobile-chrome hydration.spec.js contentforge.spec.js admin-authenticated.spec.js ai-engine.spec.js ambassador.spec.js blogs.spec.js second-brain.spec.js
 
       - name: Upload the report on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-report
+          name: playwright-report-shard-${{ matrix.shard }}
           path: |
             frontend/playwright-report
             frontend/test-results
@@ -1734,9 +1872,10 @@ jobs:
             ${MODE}
 
   # The coverage upload to Qlty (#568), after a merge to `main` only (#1545).
-  # The frontend and functions rows of the verify matrix ran their suites with
-  # coverage and kept the two lcov files; this downloads both and uploads them
-  # in one go. Both name files relative to the repository root
+  # The functions row of the verify matrix ran its suite with coverage, and
+  # `frontend-unit-merge` joined the frontend shards' coverage; each kept its
+  # lcov file, and this downloads both and uploads them in one go. Both name
+  # files relative to the repository root
   # (`frontend/src/...`, `functions/src/...`), so one upload carries both.
   #
   # NO STORED TOKEN. The upload authenticates to Qlty with GitHub OIDC
@@ -1747,7 +1886,9 @@ jobs:
   # code: the checkout is for the repository metadata the upload records.
   coverage:
     name: coverage (qlty)
-    needs: verify
+    # The functions report comes from the verify matrix, the frontend one
+    # from the merge of the unit shards (#1545).
+    needs: [verify, frontend-unit-merge]
     if: github.event_name == 'push'
     runs-on: ubuntu-26.04
     timeout-minutes: 10
@@ -1791,7 +1932,7 @@ jobs:
   # context, which lists every job named below with its result.
   gate:
     name: gate
-    needs: [changes, verify, e2e, ansible-lint, role-tests, coder-template, harness, complexity, coverage]
+    needs: [changes, verify, frontend-unit, frontend-unit-merge, e2e, ansible-lint, role-tests, coder-template, harness, complexity, coverage]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
