@@ -32,7 +32,7 @@ import {
   isSeedableSecret,
   settingToSecret,
 } from './secret-catalog.js';
-import { CODER_BROKER_TOKEN_SETTING } from './labs/visitor-session.js';
+import { CODER_BROKER_TOKEN_SETTING, VISITOR_SESSION_SWITCH } from './labs/visitor-session.js';
 import { TURNSTILE_SECRET_SETTING } from './labs/public-lock.js';
 
 const INFRA = join(fileURLToPath(new URL('../../..', import.meta.url)), 'infra');
@@ -92,6 +92,23 @@ describe('secret catalogue ↔ Terraform', () => {
       expect(settingToSecret(setting)).toBe(secret);
     }
   );
+
+  it(`declares ${VISITOR_SESSION_SWITCH}, the switch the visitor routes read by name, from a variable that defaults to closed (#1400, #1403)`, () => {
+    // Not a secret, so not in the catalogue, but the same hole: the code read
+    // this switch since #1016 and nothing in infra/ declared it, so a copy set
+    // by hand would have gone on the next apply. The constant is the one the
+    // code reads process.env with (visitorSessionsEnabled), so a rename in the
+    // code fails here. The default is read from the variable block itself:
+    // "false" is the closed door, and the owner opens it in the workspace.
+    const source = terraformSource(INFRA);
+    expect(source).toMatch(
+      new RegExp(`^\\s*"${VISITOR_SESSION_SWITCH}"\\s*=\\s*var\\.labs_visitor_sessions_enabled \\? "true" : "false"$`, 'm')
+    );
+    const block = /variable "labs_visitor_sessions_enabled" \{[\s\S]*?\n\}/.exec(source);
+    expect(block, 'variable block not found').not.toBeNull();
+    expect(block[0]).toMatch(/^\s*type\s*=\s*bool$/m);
+    expect(block[0]).toMatch(/^\s*default\s*=\s*false$/m);
+  });
 
   it('names a real section for every entry', () => {
     const sections = new Set(SECRET_SECTIONS.map((s) => s.id));

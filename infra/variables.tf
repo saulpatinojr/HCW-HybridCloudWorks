@@ -1314,6 +1314,35 @@ variable "labs_public_submission_enabled" {
   default     = true
 }
 
+variable "labs_visitor_sessions_enabled" {
+  description = <<-EOT
+    Opens the visitor lab sessions (LABS_VISITOR_SESSIONS_ENABLED): the
+    60-minute Coder labs the site brokers for people outside the GitHub
+    organisation (#1016, ADR 0032 amendment of 2026-10-17). The code reads
+    nothing but the exact string "true" as open (lib/labs/visitor-session.js,
+    visitorSessionsEnabled), and every other value, a missing setting
+    included, as closed.
+
+    False, the default, is the closed door and the kill switch: the status
+    route answers VISITOR_SESSIONS_CLOSED and the start route 503 before
+    either reads the caller or the store. Sessions already running are not
+    cut off by it, and the sweepVisitorSessions timer keeps cleaning up
+    existing sessions whatever this says, so turning it off strands nothing.
+
+    Even true, nothing opens until TURNSTILE-SECRET-KEY and
+    CODER-BROKER-TOKEN resolve from Key Vault (the routes then answer
+    TURNSTILE_NOT_CONFIGURED or VISITOR_NOT_CONFIGURED). The owner flips this
+    in the workspace once the functions are deployed and item 5 of #1400 has
+    been checked on the live app (the origin lock refusing a request that
+    did not come through Cloudflare); until then it stays false. Declared
+    here since #1400 and #1403: before, the code read the setting and nothing
+    in infra/ declared it, so a copy set by hand in the portal would have
+    been removed by the next apply.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "enabled_timers" {
   description = <<-EOT
     Timers to arm, by flag suffix — e.g. ["SYNC_RSS_FEEDS"] sets
