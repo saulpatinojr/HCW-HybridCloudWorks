@@ -536,10 +536,10 @@ export const DECLARED = [
   // (lab_ssh_loopback_only) and #1302's Web Analytics site create
   // (cloudflare_account_id). Each is a value the owner sets in the workspace.
   {
-    address: "azurerm_role_assignment.github_manifest_window_storage_firewall",
+    address: "azurerm_role_assignment.github_manifest_window_storage_firewall[0]",
     action: "create",
     reason:
-      "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); the role is created by the owner first (Required-Inputs §4.6b)",
+      "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); planned only once the owner has created the role and set storage_firewall_remover_enabled = true (Required-Inputs §4.6b)",
   },
 ];
 

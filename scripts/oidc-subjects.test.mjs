@@ -277,7 +277,8 @@ function grantsTo(identity) {
     ])
     .map(([, body]) => {
       const named = body.match(/^\s*role_definition_name\s*=\s*"([^"]+)"/m)?.[1];
-      const custom = body.match(/^\s*role_definition_id\s*=\s*data\.azurerm_role_definition\.(\w+)\.id/m)?.[1];
+      // `[0]` is a count-gated lookup (storage_firewall_writer, #1463): the same role.
+      const custom = body.match(/^\s*role_definition_id\s*=\s*data\.azurerm_role_definition\.(\w+)(?:\[0\])?\.id/m)?.[1];
       return {
         principal: body.match(/^\s*principal_id\s*=\s*azurerm_user_assigned_identity\.(\w+)\.principal_id/m)?.[1],
         role: named ?? (custom ? `data.${custom}` : undefined),

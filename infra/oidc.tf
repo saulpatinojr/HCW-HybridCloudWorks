@@ -509,9 +509,16 @@ resource "azurerm_role_assignment" "github_manifest_window_read" {
 # allowed copy scope), which is the narrowest Azure can express for the
 # firewall; read-only on the keys and the data plane is the line that
 # matters. Scoped to the one account.
+#
+# GATED on storage_firewall_remover_enabled (variables.tf), with the lookup
+# below, until the owner has created the role: a lookup of a role that does
+# not exist did not fail the plan, it hung it (2026-11-04, the workspace's one
+# plan slot for over twelve minutes with every other run queued behind). The
+# remover's Function App half needs none of this and runs from the merge.
 resource "azurerm_role_assignment" "github_manifest_window_storage_firewall" {
+  count              = var.storage_firewall_remover_enabled ? 1 : 0
   scope              = azurerm_storage_account.functions.id
-  role_definition_id = data.azurerm_role_definition.storage_firewall_writer.id
+  role_definition_id = data.azurerm_role_definition.storage_firewall_writer[0].id
   principal_id       = azurerm_user_assigned_identity.github_manifest_window.principal_id
   principal_type     = "ServicePrincipal"
 }
@@ -520,10 +527,11 @@ resource "azurerm_role_assignment" "github_manifest_window_storage_firewall" {
 # says why the Terraform identity may assign roles and not invent them), by
 # scripts/bootstrap-roles.sh or .ps1, which fill in the JSON's
 # AssignableScopes with the real subscription before the create (the file
-# carries a placeholder id, as a public file must). Until it exists, the plan
-# fails with "role definition not found" (Required-Inputs §4.6b), so the
-# owner creates it BEFORE this merges.
+# carries a placeholder id, as a public file must). Read only once the owner
+# has created it and set storage_firewall_remover_enabled (Required-Inputs
+# §4.6b and §4.1).
 data "azurerm_role_definition" "storage_firewall_writer" {
+  count = var.storage_firewall_remover_enabled ? 1 : 0
   name  = "HCW Storage Firewall Writer"
   scope = azurerm_resource_group.app["web"].id
 }
