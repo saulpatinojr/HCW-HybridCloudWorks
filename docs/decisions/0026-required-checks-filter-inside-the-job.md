@@ -251,8 +251,14 @@ reasoning does not.
   `cancelled`. The jobs that used to run as placeholders (`e2e (playwright)`,
   `ansible-lint (lab-host)`, `coder (lab-host)`, `harness (python)`) now carry
   a job-level `if:` fed by a first `changes` job, and are skipped outright when
-  their files did not change. The matrix rows keep their in-job detect step,
-  because a matrix row cannot carry an `if:` of its own.
+  their files did not change. The matrix rows kept their in-job detect step
+  at first, because a matrix row cannot carry an `if:` of its own; the third
+  pull request of #1545 then had the `changes` job build the verify matrix
+  itself, from one detect step per row (`matrix: ${{ fromJSON(...) }}`), so a
+  row whose files did not change is never created. The `scripts (operations)`
+  row is always created, because three of its steps run on every pull
+  request whatever changed; how it works is in the
+  [required checks runbook](../runbooks/required-checks.md#the-verify-matrix-is-built-from-the-path-filter-2026-11-04).
 - **The doctrine still holds, for `gate`.** The `pull_request` trigger stays
   unfiltered, for the same reason as before: a required context whose
   workflow never ran is never satisfied. What changed is the fact that made

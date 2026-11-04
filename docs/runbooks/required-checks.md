@@ -23,7 +23,7 @@ jobs of workflows that are still separate.
 
 | Check | Workflow | What it covers |
 |---|---|---|
-| `gate` | `ci.yml` | Every CI job: the verify matrix (frontend, functions, scripts, vps-agent, edge), the browser suites, the lab-host lint, the lab-host role tests, the Coder template checks, the Python harness, the complexity delta and (after a merge) the coverage upload. `gate` waits for all of them and fails if any failed or was cancelled; a job skipped because the change did not touch its files is fine. |
+| `gate` | `ci.yml` | Every CI job: the verify matrix (frontend, functions, scripts, vps-agent, edge; only the rows whose files changed exist, see "The verify matrix is built from the path filter" below), the browser suites, the lab-host lint, the lab-host role tests, the Coder template checks, the Python harness, the complexity delta and (after a merge) the coverage upload. `gate` waits for all of them and fails if any failed or was cancelled; a job skipped because the change did not touch its files is fine. |
 | `Validate root and documentation policy` | `repository-policy.yml` | Repository layout, the redaction gate, PowerShell syntax and the Pester tests. |
 | `dependency-review` | `dependency-review.yml` | New dependencies with known vulnerabilities or disallowed licences. |
 | `fmt, validate, tflint` | `iac-validate.yml` | Terraform formatting, validation and TFLint for `infra/` and `infra-lab/`. |
@@ -187,6 +187,50 @@ checks that `gate` needs every other job. Renaming one of the other four
 required jobs, or `gate` itself, still needs the ruleset edited in the same
 change, as before.
 
+## The verify matrix is built from the path filter (2026-11-04)
+
+The `verify` job is a matrix (one job run per row) of five rows: `frontend`,
+`functions (azure)`, `scripts (operations)`, `vps-agent` and
+`edge (availability probe)`. Until the third pull request of #1545 every row
+started a runner on every pull request and, when its files had not changed,
+exited after 8 to 13 seconds, because a matrix row cannot carry an `if:` of
+its own (measured on the docs-only
+[#1555](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1555),
+[run 41889186903](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/41889186903)).
+
+Now the `changes` job decides each row's filter, in one detect step per row
+(the comments above each step are the reasons for the paths in its filter),
+and its last step, "Build the verify matrix", writes the matrix as JSON: the
+rows whose files changed, in the matrix's own shape. The `verify` job reads
+it with `matrix: ${{ fromJSON(needs.changes.outputs.verify) }}`, so a row
+whose files did not change is never created and starts no runner. How that
+works is on
+[Running variations of jobs in a workflow, "Using an output to define two matrices"](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations#using-an-output-to-define-two-matrices)
+(GitHub Docs, read 2026-11-04). The rows themselves (folder, Node line, commands) are the
+`ROWS` list in that step, written as YAML so that
+`scripts/version-floors.json` can still hold the functions row to Node.js 24;
+`yq` (on the runner image) turns the list into JSON and `jq` picks the rows.
+
+Two things to know when editing it:
+
+- **The `scripts (operations)` row is always in the matrix** (`always: true`
+  in `ROWS`). Three of its steps run on every pull request whatever changed
+  (the OIDC subjects check, the former-owner URL check and the path-filter
+  guard, #1001, #1009, #1428), so the row exists even on a docs-only change,
+  with `relevant=false`, and runs only those guards. Because of it the
+  matrix is never empty, which is why `verify` has no `if:` of its own.
+- **The row's answer travels as `matrix.relevant`.** The row's lint, build
+  and test steps run when it is `'true'`; a row other than scripts is only
+  ever created with `'true'`. On a push to `main` every row is created and
+  relevant, as before.
+
+`scripts/ci-workflow-steps.test.mjs` runs the five detect steps and the build
+step with bash (where `jq` and `yq` exist; always on GitHub Actions) and
+checks the matrix for a docs-only change (the scripts row alone), a frontend
+change and a push, against the same answer worked out in JavaScript
+(`verifyMatrix` in `scripts/lib/ci-filters.mjs`). `scripts/ci-filters.test.mjs`
+still checks that every row's filter lists every file its tests read.
+
 ## Merge queue: evaluated, not adopted (2026-11-04)
 
 The strict rule means every merge to `main` makes every other open pull
@@ -212,7 +256,8 @@ Recommendation: **not yet**, for three reasons, each from that page.
    queues; that was not verified for this public repository on its plan.
 
 What #1545 does instead removes most of the cost the queue would address: a
-docs-only re-run after "Update branch" is now the `changes` job, five
-seconds-long matrix rows, the policy and dependency checks, and `gate`. If
+docs-only re-run after "Update branch" is now the `changes` job, the
+scripts row of the verify matrix (the other four rows are not created, see
+the section above), the policy and dependency checks, and `gate`. If
 the re-run storm is still a problem after the measurements the issue asks
 for, the queue is the next step, and this section is where to record it.

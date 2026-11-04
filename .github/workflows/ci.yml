@@ -75,11 +75,22 @@ jobs:
   # What changed, for the jobs below that have an `if:` of their own. One
   # checkout with history, then one detect step per filter; each writes
   # `relevant=true` or `relevant=false`, and the job's outputs carry the
-  # answers to the jobs that `needs` it. The detect shell is the same in every
-  # step (and in the verify matrix's own step): scripts/ci-workflow-steps.test.mjs
+  # answers to the jobs that `needs` it. Five more steps answer for the rows
+  # of the verify job, and the last step builds that job's matrix from them.
+  # The detect shell is the same in every step: scripts/ci-workflow-steps.test.mjs
   # runs each one with bash and checks that a filter grep cannot read fails
   # the step instead of switching the job off (#1428). On a push to `main`,
   # or when the diff cannot be computed, every answer is yes.
+  #
+  # In each step, grep's answer is kept, not tested in an `if`. grep -E
+  # answers 0 when a changed file matches the filter, 1 when none does, and
+  # 2 or more when it could not read the filter at all (an unclosed
+  # parenthesis, say). `if grep …` takes every answer other than 0 as "no",
+  # so a filter grep cannot read would switch the job off as "no relevant
+  # change" while the pull request looked green (#1428). The answer is kept
+  # instead, and anything other than 0 or 1 fails the step and names the
+  # filter. The filter goes in brackets so that a stray backslash at its end
+  # cannot join onto the `|` that adds ci.yml and so hide the mistake.
   #
   # WORKFLOW_SELF_TRIGGER, on each step: 'true' means a change to this file
   # alone is a reason to run the job; 'false' means it is not, and the step
@@ -89,13 +100,15 @@ jobs:
   changes:
     name: changes
     runs-on: ubuntu-26.04
-    timeout-minutes: 5 # a checkout and five git diffs
+    timeout-minutes: 5 # a checkout, ten git diffs and the matrix
     outputs:
       e2e: ${{ steps.e2e.outputs.relevant }}
       ansible: ${{ steps.ansible.outputs.relevant }}
       roletests: ${{ steps.roletests.outputs.relevant }}
       coder: ${{ steps.coder.outputs.relevant }}
       harness: ${{ steps.harness.outputs.relevant }}
+      # The verify job's matrix: its rows whose files changed, as JSON.
+      verify: ${{ steps.verify.outputs.matrix }}
     steps:
       # fetch-depth: 0 so the diffs below can reach the base commit — a
       # shallow clone fails the diff rather than returning "no changes".
@@ -135,8 +148,8 @@ jobs:
           if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
             changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
           fi
-          # grep's answer is kept, not tested in an `if`: see the matrix job's
-          # detect step for why (#1428).
+          # grep's answer is kept, not tested in an `if`: see the job comment for why
+          # (#1428).
           status=0
           grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
           if [ "${status}" -eq 0 ]; then
@@ -179,8 +192,8 @@ jobs:
           if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
             changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
           fi
-          # grep's answer is kept, not tested in an `if`: see the matrix job's
-          # detect step for why (#1428).
+          # grep's answer is kept, not tested in an `if`: see the job comment for why
+          # (#1428).
           status=0
           grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
           if [ "${status}" -eq 0 ]; then
@@ -233,8 +246,8 @@ jobs:
           if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
             changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
           fi
-          # grep's answer is kept, not tested in an `if`: see the matrix job's
-          # detect step for why (#1428).
+          # grep's answer is kept, not tested in an `if`: see the job comment for why
+          # (#1428).
           status=0
           grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
           if [ "${status}" -eq 0 ]; then
@@ -272,8 +285,8 @@ jobs:
           if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
             changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
           fi
-          # grep's answer is kept, not tested in an `if`: see the matrix job's
-          # detect step for why (#1428).
+          # grep's answer is kept, not tested in an `if`: see the job comment for why
+          # (#1428).
           status=0
           grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
           if [ "${status}" -eq 0 ]; then
@@ -313,8 +326,8 @@ jobs:
           if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
             changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
           fi
-          # grep's answer is kept, not tested in an `if`: see the matrix job's
-          # detect step for why (#1428).
+          # grep's answer is kept, not tested in an `if`: see the job comment for why
+          # (#1428).
           status=0
           grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
           if [ "${status}" -eq 0 ]; then
@@ -328,249 +341,88 @@ jobs:
             exit 1
           fi
 
-  verify:
-    name: ${{ matrix.name }}
-    # All CI runs use GitHub-hosted runners. No alternate runner infrastructure
-    # is provisioned or selected. Every job in every workflow names the
-    # Ubuntu release, never ubuntu-latest, which GitHub moves on its own
-    # schedule: scripts/version-floors.test.mjs holds each runs-on to the
-    # runners ceiling in scripts/version-floors.json, and the weekly
-    # update-version-floors.yml moves that ceiling when GitHub makes the next
-    # LTS generally available.
-    runs-on: ubuntu-26.04
-    timeout-minutes: 20 # slowest row 3.4 min (frontend), Oct 2026 (#1441)
-    strategy:
-      # One package failing should not mask the state of the others.
-      fail-fast: false
-      matrix:
-        include:
-          # The lab-image and vps-agent paths are what the Landing Zone
-          # Builder's lab tests read (#672): labImage.test.js holds the
-          # builder's vendored-module list to lab-image's Dockerfile and
-          # versions.env, and labPayload.test.js unpacks the payload with the
-          # agent's own tar parser. The two functions paths are the visitor
-          # report: LzLabValidate.test.jsx renders what the server's own
-          # builder makes of the owner's real job logs. The two lab-host
-          # files are what the lab pane's tests read: catalogue.test.js holds
-          # the sign-in path and the launcher's path to the coder route and
-          # the workspace names to the launcher's map, and
-          # LabPanePage.test.jsx holds its states to the launcher's. The rss
-          # path is the news feed list the server reads: providerFeeds.test.js
-          # holds the frontend's copy to it, and HomePage.hubs.test.jsx holds
-          # each home page hub's feed count to it. The decision-center and
-          # content-status paths are the Decision Center's links and the review
-          # statuses: itemLinks.test.js holds lib/itemLinks.js, every deep link
-          # and the Frameworks hub's review set to them, and
-          # decisionCenterModel.test.js holds the tabs to the API's categories.
-          # The two integrations paths are the Linkie proxy's allow-list and
-          # the matcher it uses: linkie.test.js sends every path the Linkie Hub
-          # builds through them, so a rename on Linkie's side that moves one
-          # and not the other fails the frontend suite.
-          # Added with #1414: functions/src/lib/labs.js is the server's rule
-          # that labsPolling.test.js holds the lab hub's down statuses to. The
-          # deploy-azure-frontend.yml workflow is read by
-          # deploy-source-maps.test.js and prerender.test.js (the mount-point
-          # check); publish-lab-image.yml and lab-image/smoke.sh are read by
-          # DockerGuides.test.jsx.
-          # Added with #1428. A test that imports a functions module depends on
-          # every file that module imports in turn, and on every file it reads
-          # when it loads, so the guard follows the chain to its end. Six tests
-          # start the chains:
-          # - aiEngine.test.js imports ai/router.js, ai/model-catalog.js,
-          #   ai/usage.js and ai/mcp-policy.js, which load the rest of ai/, the
-          #   Cosmos client (cosmos-client.js, cosmos-call-shape.js,
-          #   job-context.js), the secrets code (admin-secrets.js,
-          #   secret-catalog.js, secret-vault.js, secrets-health.js and the
-          #   expected-unresolved.js it loads (#1512), key-verdict.js) and
-          #   http/error-response.js.
-          # - statusParity.test.js imports health/pulse-checks.js, which loads
-          #   labs.js and so the lab checks in labs/, lab-agent.js,
-          #   timers/agent-health.js, the publishing code in cms/,
-          #   blob-paths.js, triggers/fetch-image.js, cloud-tools/history.js
-          #   with its two pricing files, and the http/ helpers (error-response,
-          #   fetch-with-timeout, guarded-fetch, read-setting).
-          # - linkie.test.js imports integrations/rest-proxy.js, which loads
-          #   connection-probe.js and upstream-error.js.
-          # - useLivePageArchive.test.jsx and itemLinks.test.js import
-          #   cms/content-update-validation.js and content-status.js, which load
-          #   cms/publish-targets.js and public-reads.js.
-          # - ambassadorModel.test.js imports ambassador/readiness.js, which
-          #   loads ambassador/model.js.
-          # ai/, cms/ and labs/ are whole folders because the tests load eight
-          # or more of their code files: 20 of the 25 non-test code files
-          # directly in ai/, 10 of the 23 in cms/ (31 with its image-prompts/
-          # folder) and 8 of the 19 in labs/. So a new import inside them needs
-          # no edit here.
-          # A folder also matches the test files in it, which nothing here
-          # loads: the new entries match 66 test files (26 in ai/, 21 in cms/,
-          # 19 in labs/), and a pull request that changes only one of them runs
-          # this row for nothing. The other entries are listed file by file.
-          - name: frontend
-            dir: frontend
-            filter: '^(frontend/|\.azure/api-surface\.json|lab-image/(versions\.env|Dockerfile|smoke\.sh)$|vps-agent/lib/docker-runner\.js$|\.github/workflows/(deploy-azure-frontend|publish-lab-image)\.yml$|functions/src/lib/((ai|cms|labs)/|(labs|rss/feeds|addons/registry|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|key-verdict|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|expected-unresolved|decision-center/(links|items)|health/(status-model|probe-catalogue|pulse-checks)|integrations/(linkie-allowlist|rest-proxy|connection-probe|upstream-error)|cloud-tools/(history|pricing/(baseline|regions))|http/(error-response|fetch-with-timeout|guarded-fetch|read-setting)|timers/agent-health|triggers/fetch-image|ambassador/(readiness|model))\.js$)|lab-host/(coder/launcher/launcher\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
-            lint: npm run lint
-            format: npm run format:check
-            validate: npm run validate:routes
-            build: npm run build
-            # With coverage (#1545): the thresholds in frontend/vitest.config.js
-            # are a ratchet, so a pull request that lowers coverage fails here,
-            # and the report this writes is what the `coverage` job uploads
-            # after a merge. The separate Coverage workflow that ran the suite
-            # a second time is gone.
-            test: npm run test:coverage
-          # Node.js 24, not 26: Azure Functions Flex Consumption runs 22 and
-          # 24 only, so the tests run on the line production runs. Every other
-          # row takes the step's default, the newest line. Both are held there
-          # by scripts/version-floors.json (#715). docs/content/ is here because
-          # tests read it: content-modules.test.js reads blog-machine.md, and
-          # test/docs-content-guard.test.js fails when a draft article
-          # (blog-*.md) is added there, which is why a pull request that only
-          # adds such a file must still run this row (pre-publish drafts do
-          # not live in this public repository). The first three frontend
-          # files are the pages that word the public routes' codes themselves:
-          # public-visitor-copy.test.js and public-lock.test.js read them, so a
-          # code the server answers can never go unmapped on the page. The next
-          # two are the admin copies of server allowlists (the default-cover
-          # providers and the image-prompt pages): docker-cms.test.js holds
-          # them to the server's lists (#775). api.js is the browser's timeout
-          # table: sync-budgets.test.js holds the server's AI time budgets
-          # under it, so a shorter client timeout cannot land unchecked. The
-          # last three are the admin provider list and the provider registry
-          # it is built from, which docker-cms.test.js holds to
-          # normalizeProviderName, and the submission pages, whose provider
-          # lists submissions.test.js holds the API's contract to. The
-          # dashboard's decisionCenterModel.js is where each Decision Center
-          # source's list lives: decision-center.test.js holds every source to it.
-          # sourceUrl.js is what source-episode.test.js imports, and onboard.yml
-          # is what estate.test.js reads for the guest configuration toggle.
-          # scripts/ideas/idea-notes.mjs is what idea-promotion.test.js
-          # imports, to hold the drafts it writes to the markdown upload's parser.
-          # frontend/src/, frontend/scripts/, frontend/public/ and scripts/ are
-          # listed whole (#1414) because doc-vault/no-leak.test.js reads every
-          # source file in them to prove nothing outside the Doc Vault names its
-          # container, so a pull request that only changes one of those files
-          # runs this row. That makes the single frontend files and
-          # scripts/ideas/idea-notes.mjs named above redundant; they stay so
-          # each one keeps its reason beside it. The other entries (onboard.yml,
-          # the .azure files and the docs/content/ folder) are not redundant.
-          - name: functions (azure)
-            dir: functions
-            node-version: '24'
-            filter: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|docs/content/|scripts/ideas/idea-notes\.mjs$|scripts/|frontend/(src|scripts|public)/|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
-            lint: npm run lint
-            # With coverage, for the same reasons as the frontend row (#1545).
-            test: npm run test:coverage
-          # The out-of-tree entries after infra/ are what
-          # version-floors.test.mjs reads (#715): every package.json and
-          # Dockerfile, the lab host's and the lab image's pins, and every
-          # Terraform root's required_version. The three landing zone files
-          # are what lab-image-avm-vendoring.test.mjs imports: the builder's
-          # pins, and its port of the image's rewrite rule. The vps-agent
-          # files are what lab-job-types.test.mjs imports (capabilities.js)
-          # and lab-job-limits.test.mjs reads (index.js, .env.example) or
-          # imports for the stop budget (shutdown.js, which imports
-          # docker-runner.js; LAB-13) and for the maintenance hold
-          # (maintenance-hold.js; LAB-13), and what lab-host-docker-proxy.test.mjs
-          # imports to hold the agent's Docker proxy to the argv a job really
-          # sends (docker-runner.js, capabilities.js; LAB-5).
-          # LabPanePage.jsx is what lab-host-visitor-copy.test.mjs reads: the
-          # lab host's "Coder stopped" answer, and the lab launcher's, is the
-          # pane's own sentence. catalogue.js is what
-          # lab-host-launcher.test.mjs reads: the launcher's workspace names
-          # are the catalogue's. function-inventory.json is what
-          # check-registered-functions.test.mjs parses with the script the
-          # deploy and the registration monitor run (PLAT-2). addons/registry.js
-          # is what assert-expected-plan.test.mjs reads to hold every ADDON_*_URL
-          # setting in infra/functionapp.tf to a name the registry reads (#1357).
-          # BuildingImagesPage.jsx and AddOnPanePage.jsx are read by supply-chain
-          # and visitor-copy tests. docs/runbooks/labs-host.md is read by
-          # lab-host-coder-first-user.test.mjs (#954).
-          # Added with #1414, each read by a test in scripts/: five more
-          # runbooks (alerting-and-support by verify-alert-state.test.mjs and
-          # lab-host-backups.test.mjs, admin-signin-rollback by
-          # entra-cutover-scripts.test.mjs, cosmos-restore by
-          # check-drill-age.test.mjs, data-subject-requests by
-          # data-subject-runbook.test.mjs, deployment-runbook by
-          # terraform-identity-grants.test.mjs); the pull request template
-          # (update-version-floors.test.mjs) and actionlint.yaml
-          # (version-floors.test.mjs); labsView.js (lab-job-types.test.mjs),
-          # ProviderContext.jsx and public-section-counts.js
-          # (build-content-manifest.test.mjs). package-lock.json and the
-          # .nvmrc, .node-version and .python-version files join package.json
-          # because the version-floors tests read every tracked one (they ask
-          # git for the list, so a test cannot name them; only .nvmrc files
-          # exist today); ci-filters.test.mjs checks that every tracked file a
-          # version pin reader owns matches this filter. A pull request that
-          # changes only one of these now runs this row. (TODO|CHANGELOG)\.md
-          # is older than this note: the only test that reads them today is
-          # no-wiki-pointers.test.mjs, which reads every tracked text file.
-          # ci-filters.test.mjs, the test that checks every filter in this
-          # list, is not left to this filter: it also runs in its own step on
-          # every pull request (the step "CI path filters list every file the
-          # tests read", further down; #1428).
-          # Added with #1428, files that a functions module loads for a test
-          # in scripts/: lab-job-types.test.mjs imports functions/src/lib/labs.js,
-          # which loads the lab checks in labs/ and, through them, the
-          # publishing code in cms/, the helpers in http/, cloud-tools/,
-          # timers/agent-health.js, triggers/fetch-image.js and ten single files
-          # in lib/ (cosmos-client.js, secret-vault.js, lab-agent.js ...);
-          # roll-cloud-credentials.test.mjs reaches secret-vault.js and
-          # http/error-response.js through the credential rollers;
-          # check-unresolved-secrets.mjs imports expected-unresolved.js, the
-          # list the Health page also reads (#1512). cms/,
-          # labs/, http/ and cloud-tools/ are whole folders. They also match
-          # the 60 test files in them, which nothing here loads, but that adds
-          # no runs: the row already runs for about nine pull requests in
-          # ten (141 of the last 150 merged commits, before and after). The
-          # rest are listed file by file.
-          # vps-agent/bin/report-host-check.js (#1545): ci-workflow-steps.test.mjs
-          # checks that every file the lab-host role tests read outside
-          # lab-host/ansible/ exists and matches the role tests job's filter.
-          - name: scripts (operations)
-            dir: scripts
-            filter: '^(scripts/|\.github/workflows/|\.github/(actionlint\.yaml|pull_request_template\.md)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|bin/report-host-check\.js|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/lib/(cms|labs|http|cloud-tools)/|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll)|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|expected-unresolved|timers/agent-health|triggers/fetch-image)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
-            lint: npm run lint
-            test: npm test
-          # vps-agent shells out to `docker run` with a payload that reached
-          # the host from the platform API, and its sandbox flag list is the
-          # entire security boundary. Until T-743 this row ran `npm ci` and
-          # nothing else, so an edit dropping `--network none` shipped green.
-          # The suite uses node:test — no dependency, which keeps this
-          # package's single-dependency lockfile intact.
-          # group_vars/all.yml and hcw-labs-agent.service.j2 are read by
-          # applied-commit.test.js and log.test.js; .azure/agent-protocol.json
-          # is the shared agent protocol contract fixture (QA-3 #978).
-          - name: vps-agent
-            dir: vps-agent
-            filter: '^(vps-agent/|\.azure/agent-protocol\.json$|lab-host/ansible/(group_vars/all\.yml|roles/labs_agent/templates/hcw-labs-agent\.service\.j2)$)'
-            test: npm test
-          - name: edge (availability probe)
-            dir: edge/availability-probe
-            filter: '^edge/'
-            test: npm test
+      # The rows of the verify job, one detect step each (#1545, the third
+      # pull request). Until then every row started a runner on every pull
+      # request and the rows whose files had not changed exited after a few
+      # seconds, because a matrix row cannot carry an `if:` of its own. Now
+      # the filter of each row is decided here, and the "Build the verify
+      # matrix" step at the end puts only the rows whose files changed into
+      # the matrix, so no runner starts for the others. The scripts row is
+      # the exception: it is always in the matrix, because three of its steps
+      # run on every pull request whatever changed (the verify job says
+      # which), and its answer here only decides whether its lint and tests
+      # run. The comments above each step are the reasons for the paths in
+      # its filter; scripts/ci-filters.test.mjs checks that every filter
+      # lists every file the row's tests read.
 
-    defaults:
-      run:
-        working-directory: ${{ matrix.dir }}
-
-    steps:
-      # fetch-depth: 0 so the change detection below can diff against the base
-      # commit — same reasoning as iac-validate.yml: a shallow clone fails the
-      # diff rather than returning "no changes".
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-
-      # Non-pull_request events (the push to main) run everything: a merge is
-      # exactly when the full matrix should confirm the combined result.
-      - name: Detect component changes
-        id: changes
-        working-directory: ${{ github.workspace }}
+      # The lab-image and vps-agent paths are what the Landing Zone
+      # Builder's lab tests read (#672): labImage.test.js holds the
+      # builder's vendored-module list to lab-image's Dockerfile and
+      # versions.env, and labPayload.test.js unpacks the payload with the
+      # agent's own tar parser. The two functions paths are the visitor
+      # report: LzLabValidate.test.jsx renders what the server's own
+      # builder makes of the owner's real job logs. The two lab-host
+      # files are what the lab pane's tests read: catalogue.test.js holds
+      # the sign-in path and the launcher's path to the coder route and
+      # the workspace names to the launcher's map, and
+      # LabPanePage.test.jsx holds its states to the launcher's. The rss
+      # path is the news feed list the server reads: providerFeeds.test.js
+      # holds the frontend's copy to it, and HomePage.hubs.test.jsx holds
+      # each home page hub's feed count to it. The decision-center and
+      # content-status paths are the Decision Center's links and the review
+      # statuses: itemLinks.test.js holds lib/itemLinks.js, every deep link
+      # and the Frameworks hub's review set to them, and
+      # decisionCenterModel.test.js holds the tabs to the API's categories.
+      # The two integrations paths are the Linkie proxy's allow-list and
+      # the matcher it uses: linkie.test.js sends every path the Linkie Hub
+      # builds through them, so a rename on Linkie's side that moves one
+      # and not the other fails the frontend suite.
+      # Added with #1414: functions/src/lib/labs.js is the server's rule
+      # that labsPolling.test.js holds the lab hub's down statuses to. The
+      # deploy-azure-frontend.yml workflow is read by
+      # deploy-source-maps.test.js and prerender.test.js (the mount-point
+      # check); publish-lab-image.yml and lab-image/smoke.sh are read by
+      # DockerGuides.test.jsx.
+      # Added with #1428. A test that imports a functions module depends on
+      # every file that module imports in turn, and on every file it reads
+      # when it loads, so the guard follows the chain to its end. Six tests
+      # start the chains:
+      # - aiEngine.test.js imports ai/router.js, ai/model-catalog.js,
+      #   ai/usage.js and ai/mcp-policy.js, which load the rest of ai/, the
+      #   Cosmos client (cosmos-client.js, cosmos-call-shape.js,
+      #   job-context.js), the secrets code (admin-secrets.js,
+      #   secret-catalog.js, secret-vault.js, secrets-health.js and the
+      #   expected-unresolved.js it loads (#1512), key-verdict.js) and
+      #   http/error-response.js.
+      # - statusParity.test.js imports health/pulse-checks.js, which loads
+      #   labs.js and so the lab checks in labs/, lab-agent.js,
+      #   timers/agent-health.js, the publishing code in cms/,
+      #   blob-paths.js, triggers/fetch-image.js, cloud-tools/history.js
+      #   with its two pricing files, and the http/ helpers (error-response,
+      #   fetch-with-timeout, guarded-fetch, read-setting).
+      # - linkie.test.js imports integrations/rest-proxy.js, which loads
+      #   connection-probe.js and upstream-error.js.
+      # - useLivePageArchive.test.jsx and itemLinks.test.js import
+      #   cms/content-update-validation.js and content-status.js, which load
+      #   cms/publish-targets.js and public-reads.js.
+      # - ambassadorModel.test.js imports ambassador/readiness.js, which
+      #   loads ambassador/model.js.
+      # ai/, cms/ and labs/ are whole folders because the tests load eight
+      # or more of their code files: 20 of the 25 non-test code files
+      # directly in ai/, 10 of the 23 in cms/ (31 with its image-prompts/
+      # folder) and 8 of the 19 in labs/. So a new import inside them needs
+      # no edit here.
+      # A folder also matches the test files in it, which nothing here
+      # loads: the new entries match 66 test files (26 in ai/, 21 in cms/,
+      # 19 in labs/), and a pull request that changes only one of them runs
+      # this row for nothing. The other entries are listed file by file.
+      - name: Detect changes for the frontend row
+        id: frontend
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: ${{ matrix.filter }}
+          FILTER: '^(frontend/|\.azure/api-surface\.json|lab-image/(versions\.env|Dockerfile|smoke\.sh)$|vps-agent/lib/docker-runner\.js$|\.github/workflows/(deploy-azure-frontend|publish-lab-image)\.yml$|functions/src/lib/((ai|cms|labs)/|(labs|rss/feeds|addons/registry|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|key-verdict|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|expected-unresolved|decision-center/(links|items)|health/(status-model|probe-catalogue|pulse-checks)|integrations/(linkie-allowlist|rest-proxy|connection-probe|upstream-error)|cloud-tools/(history|pricing/(baseline|regions))|http/(error-response|fetch-with-timeout|guarded-fetch|read-setting)|timers/agent-health|triggers/fetch-image|ambassador/(readiness|model))\.js$)|lab-host/(coder/launcher/launcher\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
+          # The row's install and run lines are in this file, so an edit to it runs the row.
+          WORKFLOW_SELF_TRIGGER: 'true'
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
@@ -587,34 +439,413 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
-          # grep -E answers 0 when a changed file matches the filter, 1 when
-          # none does, and 2 or more when it could not read the filter at all
-          # (an unclosed parenthesis, say). `if grep …` takes every answer
-          # other than 0 as "no", so a filter grep cannot read would switch
-          # the job off as "no relevant change" while the pull request looked
-          # green (#1428). The answer is kept instead, and anything other than
-          # 0 or 1 fails this step and names the filter. The filter goes in
-          # brackets so that a stray backslash at its end cannot join onto the
-          # `|` that adds ci.yml and so hide the mistake. The same few lines
-          # are in the other change-detection steps below; the test in
-          # scripts/ci-workflow-steps.test.mjs runs each of them.
+          # Unless this job wants a workflow-only change, this file is taken
+          # out of the list before the filter reads it (see the job comment).
+          if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
+            changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
+          fi
+          # grep's answer is kept, not tested in an `if`: see the job comment for why
+          # (#1428).
           status=0
           grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
           if [ "${status}" -eq 0 ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "component files changed — running all checks"
+            echo "frontend files changed — the row runs"
           elif [ "${status}" -eq 1 ]; then
             echo "relevant=false" >> "$GITHUB_OUTPUT"
-            echo "no relevant change — skipping checks, still reporting this context"
+            echo "no relevant change — the frontend row is left out of the matrix"
           else
             echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
             exit 1
           fi
 
+      # docs/content/ is here because tests read it: content-modules.test.js
+      # reads blog-machine.md, and test/docs-content-guard.test.js fails
+      # when a draft article (blog-*.md) is added there, which is why a pull
+      # request that only adds such a file must still run this row
+      # (pre-publish drafts do not live in this public repository). The
+      # first three frontend files are the pages that word the public
+      # routes' codes themselves: public-visitor-copy.test.js and
+      # public-lock.test.js read them, so a code the server answers can
+      # never go unmapped on the page. The next two are the admin copies of
+      # server allowlists (the default-cover providers and the image-prompt
+      # pages): docker-cms.test.js holds them to the server's lists (#775).
+      # api.js is the browser's timeout table: sync-budgets.test.js holds
+      # the server's AI time budgets under it, so a shorter client timeout
+      # cannot land unchecked. The last three are the admin provider list
+      # and the provider registry it is built from, which docker-cms.test.js
+      # holds to normalizeProviderName, and the submission pages, whose
+      # provider lists submissions.test.js holds the API's contract to. The
+      # dashboard's decisionCenterModel.js is where each Decision Center
+      # source's list lives: decision-center.test.js holds every source to
+      # it. sourceUrl.js is what source-episode.test.js imports, and
+      # onboard.yml is what estate.test.js reads for the guest configuration
+      # toggle. scripts/ideas/idea-notes.mjs is what idea-promotion.test.js
+      # imports, to hold the drafts it writes to the markdown upload's
+      # parser. frontend/src/, frontend/scripts/, frontend/public/ and
+      # scripts/ are listed whole (#1414) because doc-vault/no-leak.test.js
+      # reads every source file in them to prove nothing outside the Doc
+      # Vault names its container, so a pull request that only changes one
+      # of those files runs this row. That makes the single frontend files
+      # and scripts/ideas/idea-notes.mjs named above redundant; they stay so
+      # each one keeps its reason beside it. The other entries (onboard.yml,
+      # the .azure files and the docs/content/ folder) are not redundant.
+      - name: Detect changes for the functions (azure) row
+        id: functions
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|docs/content/|scripts/ideas/idea-notes\.mjs$|scripts/|frontend/(src|scripts|public)/|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
+          # As for the frontend row.
+          WORKFLOW_SELF_TRIGGER: 'true'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "non-pull_request event — running all checks"
+            exit 0
+          fi
+          # Capture the diff first: `set -e` is inert inside an `if`
+          # condition, so a failed diff (an unfetchable base sha) would read
+          # as "no changes" and silently skip required work. A diff that
+          # cannot be computed fails toward running everything.
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "could not compute the diff — running all checks rather than guessing"
+            exit 0
+          }
+          # Unless this job wants a workflow-only change, this file is taken
+          # out of the list before the filter reads it (see the job comment).
+          if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
+            changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
+          fi
+          # grep's answer is kept, not tested in an `if`: see the job comment for why
+          # (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "functions (azure) files changed — the row runs"
+          elif [ "${status}" -eq 1 ]; then
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "no relevant change — the functions row is left out of the matrix"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
+          fi
+
+      # The out-of-tree entries after infra/ are what
+      # version-floors.test.mjs reads (#715): every package.json and
+      # Dockerfile, the lab host's and the lab image's pins, and every
+      # Terraform root's required_version. The three landing zone files
+      # are what lab-image-avm-vendoring.test.mjs imports: the builder's
+      # pins, and its port of the image's rewrite rule. The vps-agent
+      # files are what lab-job-types.test.mjs imports (capabilities.js)
+      # and lab-job-limits.test.mjs reads (index.js, .env.example) or
+      # imports for the stop budget (shutdown.js, which imports
+      # docker-runner.js; LAB-13) and for the maintenance hold
+      # (maintenance-hold.js; LAB-13), and what lab-host-docker-proxy.test.mjs
+      # imports to hold the agent's Docker proxy to the argv a job really
+      # sends (docker-runner.js, capabilities.js; LAB-5).
+      # LabPanePage.jsx is what lab-host-visitor-copy.test.mjs reads: the
+      # lab host's "Coder stopped" answer, and the lab launcher's, is the
+      # pane's own sentence. catalogue.js is what
+      # lab-host-launcher.test.mjs reads: the launcher's workspace names
+      # are the catalogue's. function-inventory.json is what
+      # check-registered-functions.test.mjs parses with the script the
+      # deploy and the registration monitor run (PLAT-2). addons/registry.js
+      # is what assert-expected-plan.test.mjs reads to hold every ADDON_*_URL
+      # setting in infra/functionapp.tf to a name the registry reads (#1357).
+      # BuildingImagesPage.jsx and AddOnPanePage.jsx are read by supply-chain
+      # and visitor-copy tests. docs/runbooks/labs-host.md is read by
+      # lab-host-coder-first-user.test.mjs (#954).
+      # Added with #1414, each read by a test in scripts/: five more
+      # runbooks (alerting-and-support by verify-alert-state.test.mjs and
+      # lab-host-backups.test.mjs, admin-signin-rollback by
+      # entra-cutover-scripts.test.mjs, cosmos-restore by
+      # check-drill-age.test.mjs, data-subject-requests by
+      # data-subject-runbook.test.mjs, deployment-runbook by
+      # terraform-identity-grants.test.mjs); the pull request template
+      # (update-version-floors.test.mjs) and actionlint.yaml
+      # (version-floors.test.mjs); labsView.js (lab-job-types.test.mjs),
+      # ProviderContext.jsx and public-section-counts.js
+      # (build-content-manifest.test.mjs). package-lock.json and the
+      # .nvmrc, .node-version and .python-version files join package.json
+      # because the version-floors tests read every tracked one (they ask
+      # git for the list, so a test cannot name them; only .nvmrc files
+      # exist today); ci-filters.test.mjs checks that every tracked file a
+      # version pin reader owns matches this filter. A pull request that
+      # changes only one of these now runs this row. (TODO|CHANGELOG)\.md
+      # is older than this note: the only test that reads them today is
+      # no-wiki-pointers.test.mjs, which reads every tracked text file.
+      # ci-filters.test.mjs, the test that checks every filter in this
+      # list, is not left to this filter: it also runs in its own step on
+      # every pull request (the step "CI path filters list every file the
+      # tests read", further down; #1428).
+      # Added with #1428, files that a functions module loads for a test
+      # in scripts/: lab-job-types.test.mjs imports functions/src/lib/labs.js,
+      # which loads the lab checks in labs/ and, through them, the
+      # publishing code in cms/, the helpers in http/, cloud-tools/,
+      # timers/agent-health.js, triggers/fetch-image.js and ten single files
+      # in lib/ (cosmos-client.js, secret-vault.js, lab-agent.js ...);
+      # roll-cloud-credentials.test.mjs reaches secret-vault.js and
+      # http/error-response.js through the credential rollers;
+      # check-unresolved-secrets.mjs imports expected-unresolved.js, the
+      # list the Health page also reads (#1512). cms/,
+      # labs/, http/ and cloud-tools/ are whole folders. They also match
+      # the 60 test files in them, which nothing here loads, but that adds
+      # no runs: the row already runs for about nine pull requests in
+      # ten (141 of the last 150 merged commits, before and after). The
+      # rest are listed file by file.
+      # vps-agent/bin/report-host-check.js (#1545): ci-workflow-steps.test.mjs
+      # checks that every file the lab-host role tests read outside
+      # lab-host/ansible/ exists and matches the role tests job's filter.
+      - name: Detect changes for the scripts (operations) row
+        id: scripts
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^(scripts/|\.github/workflows/|\.github/(actionlint\.yaml|pull_request_template\.md)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|bin/report-host-check\.js|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/lib/(cms|labs|http|cloud-tools)/|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll)|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|expected-unresolved|timers/agent-health|triggers/fetch-image)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
+          # The scripts tests read the workflow files anyway.
+          WORKFLOW_SELF_TRIGGER: 'true'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "non-pull_request event — running all checks"
+            exit 0
+          fi
+          # Capture the diff first: `set -e` is inert inside an `if`
+          # condition, so a failed diff (an unfetchable base sha) would read
+          # as "no changes" and silently skip required work. A diff that
+          # cannot be computed fails toward running everything.
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "could not compute the diff — running all checks rather than guessing"
+            exit 0
+          }
+          # Unless this job wants a workflow-only change, this file is taken
+          # out of the list before the filter reads it (see the job comment).
+          if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
+            changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
+          fi
+          # grep's answer is kept, not tested in an `if`: see the job comment for why
+          # (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "scripts (operations) files changed — the row runs"
+          elif [ "${status}" -eq 1 ]; then
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "no relevant change — the scripts row runs only the guards it runs on every pull request"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
+          fi
+
+      # vps-agent shells out to `docker run` with a payload that reached
+      # the host from the platform API, and its sandbox flag list is the
+      # entire security boundary. Until T-743 this row ran `npm ci` and
+      # nothing else, so an edit dropping `--network none` shipped green.
+      # The suite uses node:test — no dependency, which keeps this
+      # package's single-dependency lockfile intact.
+      # group_vars/all.yml and hcw-labs-agent.service.j2 are read by
+      # applied-commit.test.js and log.test.js; .azure/agent-protocol.json
+      # is the shared agent protocol contract fixture (QA-3 #978).
+      - name: Detect changes for the vps-agent row
+        id: vps-agent
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^(vps-agent/|\.azure/agent-protocol\.json$|lab-host/ansible/(group_vars/all\.yml|roles/labs_agent/templates/hcw-labs-agent\.service\.j2)$)'
+          # As for the frontend row.
+          WORKFLOW_SELF_TRIGGER: 'true'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "non-pull_request event — running all checks"
+            exit 0
+          fi
+          # Capture the diff first: `set -e` is inert inside an `if`
+          # condition, so a failed diff (an unfetchable base sha) would read
+          # as "no changes" and silently skip required work. A diff that
+          # cannot be computed fails toward running everything.
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "could not compute the diff — running all checks rather than guessing"
+            exit 0
+          }
+          # Unless this job wants a workflow-only change, this file is taken
+          # out of the list before the filter reads it (see the job comment).
+          if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
+            changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
+          fi
+          # grep's answer is kept, not tested in an `if`: see the job comment for why
+          # (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "vps-agent files changed — the row runs"
+          elif [ "${status}" -eq 1 ]; then
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "no relevant change — the vps-agent row is left out of the matrix"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
+          fi
+
+      - name: Detect changes for the edge (availability probe) row
+        id: edge
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^edge/'
+          # As for the frontend row.
+          WORKFLOW_SELF_TRIGGER: 'true'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "non-pull_request event — running all checks"
+            exit 0
+          fi
+          # Capture the diff first: `set -e` is inert inside an `if`
+          # condition, so a failed diff (an unfetchable base sha) would read
+          # as "no changes" and silently skip required work. A diff that
+          # cannot be computed fails toward running everything.
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "could not compute the diff — running all checks rather than guessing"
+            exit 0
+          }
+          # Unless this job wants a workflow-only change, this file is taken
+          # out of the list before the filter reads it (see the job comment).
+          if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
+            changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
+          fi
+          # grep's answer is kept, not tested in an `if`: see the job comment for why
+          # (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "edge (availability probe) files changed — the row runs"
+          elif [ "${status}" -eq 1 ]; then
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "no relevant change — the edge row is left out of the matrix"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
+          fi
+
+      # The verify job's matrix, built from the five answers above. ROWS is the
+      # row list, written as YAML so that it reads like the matrix it replaces
+      # and so that scripts/version-floors.json can still hold the functions
+      # row's Node line to 24 (the floors check reads `node-version:` lines).
+      # Each row's `id` names the step above that answers for it. A row is
+      # put in the matrix when that answer is yes, or always when the row says
+      # `always: true`, and the answer travels with the row as `relevant`,
+      # which the row's lint and test steps read. yq, on the runner image,
+      # turns the YAML into JSON; jq picks the rows. A row whose step wrote
+      # no answer is a mistake in this file and fails the job, so a row
+      # cannot drop out of the matrix quietly. The result is the matrix's own
+      # shape, {"include": [...]}, which the verify job reads with fromJSON.
+      - name: Build the verify matrix
+        id: verify
+        env:
+          STEPS: ${{ toJSON(steps) }}
+          ROWS: |
+            - name: frontend
+              id: frontend
+              dir: frontend
+              lint: npm run lint
+              format: npm run format:check
+              validate: npm run validate:routes
+              build: npm run build
+              # With coverage (#1545): the thresholds in frontend/vitest.config.js
+              # are a ratchet, so a pull request that lowers coverage fails here,
+              # and the report this writes is what the `coverage` job uploads
+              # after a merge. The separate Coverage workflow that ran the suite
+              # a second time is gone.
+              test: npm run test:coverage
+            # Node.js 24, not 26: Azure Functions Flex Consumption runs 22 and
+            # 24 only, so the tests run on the line production runs. Every other
+            # row takes the step's default, the newest line. Both are held there
+            # by scripts/version-floors.json (#715).
+            - name: functions (azure)
+              id: functions
+              dir: functions
+              node-version: '24'
+              lint: npm run lint
+              # With coverage, for the same reasons as the frontend row (#1545).
+              test: npm run test:coverage
+            - name: scripts (operations)
+              id: scripts
+              dir: scripts
+              # Always in the matrix: three of its steps run on every pull request
+              # (the verify job says which); its answer only decides lint and test.
+              always: true
+              lint: npm run lint
+              test: npm test
+            - name: vps-agent
+              id: vps-agent
+              dir: vps-agent
+              test: npm test
+            - name: edge (availability probe)
+              id: edge
+              dir: edge/availability-probe
+              test: npm test
+        run: |
+          set -euo pipefail
+          rows="$(printf '%s' "$ROWS" | yq -o=json '.')"
+          unanswered="$(jq -r --argjson steps "$STEPS" '.[] | select((($steps[.id].outputs.relevant) // "") | IN("true", "false") | not) | .name' <<<"$rows")"
+          if [ -n "$unanswered" ]; then
+            echo "::error file=.github/workflows/ci.yml,title=Verify matrix could not be built::No detect step wrote relevant=true or relevant=false for these verify rows: $(echo "$unanswered" | tr '\n' ' ')"
+            exit 1
+          fi
+          include="$(jq -c --argjson steps "$STEPS" '[.[] | .relevant = $steps[.id].outputs.relevant | select(.relevant == "true" or .always == true) | del(.id, .always)]' <<<"$rows")"
+          jq -r '.[] | "\(.name): relevant=\(.relevant)"' <<<"$include"
+          echo "matrix=$(jq -c '{include: .}' <<<"$include")" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: ${{ matrix.name }}
+    # All CI runs use GitHub-hosted runners. No alternate runner infrastructure
+    # is provisioned or selected. Every job in every workflow names the
+    # Ubuntu release, never ubuntu-latest, which GitHub moves on its own
+    # schedule: scripts/version-floors.test.mjs holds each runs-on to the
+    # runners ceiling in scripts/version-floors.json, and the weekly
+    # update-version-floors.yml moves that ceiling when GitHub makes the next
+    # LTS generally available.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20 # slowest row 3.4 min (frontend), Oct 2026 (#1441)
+    needs: changes
+    strategy:
+      # One package failing should not mask the state of the others.
+      fail-fast: false
+      # The rows whose files changed, built by the `changes` job: its "Build
+      # the verify matrix" step holds the rows, and the five steps before it
+      # hold each row's filter. A row left out starts no runner. The scripts
+      # row is always here, so the list is never empty and the job has no
+      # `if:` of its own: the path-filter guard in that row must run on every
+      # pull request (#1428), and scripts/ci-workflow-steps.test.mjs holds
+      # the job to that.
+      matrix: ${{ fromJSON(needs.changes.outputs.verify) }}
+
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+
+    steps:
+      # A shallow checkout: the change detection that needed the history
+      # moved to the `changes` job, and nothing a row runs reads it.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
       # A row's own node-version wins; a row without one gets the newest
       # line, so a new row cannot fall back to whatever the runner ships.
       - name: Set up Node.js
-        if: steps.changes.outputs.relevant == 'true' || matrix.name == 'scripts (operations)'
+        if: matrix.relevant == 'true' || matrix.name == 'scripts (operations)'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ matrix.node-version || '26' }}
@@ -645,12 +876,12 @@ jobs:
       # how a bad dependency bump shows up. The scripts row installs on every
       # pull request, because the step after it needs the packages.
       - name: Install (lockfile-strict)
-        if: steps.changes.outputs.relevant == 'true' || matrix.name == 'scripts (operations)'
+        if: matrix.relevant == 'true' || matrix.name == 'scripts (operations)'
         run: npm ci
 
       # On every pull request, whatever it touches, so outside the filter. This
-      # is the guard that checks every row's filter above lists the files its
-      # tests read (#979, #1414). It lives in the scripts package, so a pull
+      # is the guard that checks every row's filter (in the `changes` job)
+      # lists the files its tests read (#979, #1414). It lives in the scripts package, so a pull
       # request that changed only a frontend or functions test, and so did not
       # run this row's tests, used to meet it for the first time after the
       # merge, on main (#1428). Only this one test file runs here; the Test
@@ -665,13 +896,13 @@ jobs:
       # `npm run lint` exits non-zero only on errors, not warnings, so the 19
       # pre-existing warnings do not fail the job.
       - name: Lint
-        if: steps.changes.outputs.relevant == 'true' && matrix.lint != ''
+        if: matrix.relevant == 'true' && matrix.lint != ''
         env:
           COMMAND: ${{ matrix.lint }}
         run: bash -eo pipefail -c "$COMMAND"
 
       - name: Format check
-        if: steps.changes.outputs.relevant == 'true' && matrix.format != ''
+        if: matrix.relevant == 'true' && matrix.format != ''
         env:
           COMMAND: ${{ matrix.format }}
         run: bash -eo pipefail -c "$COMMAND"
@@ -682,19 +913,19 @@ jobs:
       # `npm run validate:routes` is cheap (no build) and was not run by CI at
       # all until #1345; #1337 merged two such paths and a hand run found them.
       - name: Route validation
-        if: steps.changes.outputs.relevant == 'true' && matrix.validate != ''
+        if: matrix.relevant == 'true' && matrix.validate != ''
         env:
           COMMAND: ${{ matrix.validate }}
         run: bash -eo pipefail -c "$COMMAND"
 
       - name: Build
-        if: steps.changes.outputs.relevant == 'true' && matrix.build != ''
+        if: matrix.relevant == 'true' && matrix.build != ''
         env:
           COMMAND: ${{ matrix.build }}
         run: bash -eo pipefail -c "$COMMAND"
 
       - name: Test
-        if: steps.changes.outputs.relevant == 'true' && matrix.test != ''
+        if: matrix.relevant == 'true' && matrix.test != ''
         env:
           COMMAND: ${{ matrix.test }}
         run: bash -eo pipefail -c "$COMMAND"

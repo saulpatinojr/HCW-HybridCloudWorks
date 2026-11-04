@@ -3,8 +3,9 @@
  *
  * ## What this protects
  *
- * `.github/workflows/ci.yml` runs verify jobs across packages on pull requests
- * using `matrix.filter` regex change detection. When a pull request touches a
+ * `.github/workflows/ci.yml` runs verify jobs across packages on pull requests,
+ * one per row whose filter (a regex over the changed paths, decided in the
+ * `changes` job since #1545) matched. When a pull request touches a
  * file outside a package's directory (for example, `frontend/` tests importing
  * `functions/src/lib/addons/registry.js`, or `functions/` tests importing
  * `frontend/src/lib/sourceUrl.js`), the package's verify job must run if that
