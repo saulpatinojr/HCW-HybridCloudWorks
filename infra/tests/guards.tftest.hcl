@@ -3,7 +3,7 @@
 # Asserts plan-level guarantees:
 # 1. No keyless AzureWebJobsStorage connection string on the Function App.
 # 2. Deploy identity trusts environment-only subjects (SEC-2).
-# 3. Cosmos DB built-in data role is scoped to the Function App.
+# 3. Cosmos DB built-in data role is granted to the Function App per database, never account-wide (#1469).
 # 4. Cosmos DB account enforces virtual network filtering and disables local keys (T-504).
 
 mock_provider "azurerm" {}
@@ -70,22 +70,22 @@ run "infrastructure_security_guards" {
     error_message = "Deploy identity immutable credential must trust environment-gated subjects only."
   }
 
-  # 3. Cosmos data role definition check
+  # 3. The Function App's Cosmos data-plane grants (#1469): one per database
+  # the app reads, the built-in Data Contributor role, scoped to
+  # `<account id>/dbs/<database>`. The account-wide grant (`func_cosmos`)
+  # was deleted by step 2 of #1469; no grant for this identity may be scoped
+  # to the account again. A Terraform test can only read the resources the
+  # configuration declares, so this holds every declared grant off the
+  # account scope; scripts/assert-expected-plan.test.mjs reads infra/ as text
+  # and refuses a role-assignment block scoped to the account id as well.
   assert {
-    condition     = can(regex("00000000-0000-0000-0000-000000000002$", azurerm_cosmosdb_sql_role_assignment.func_cosmos.role_definition_id))
-    error_message = "Cosmos DB built-in Data Contributor role definition must be assigned to the Function App."
+    condition = alltrue([
+      for grant in values(azurerm_cosmosdb_sql_role_assignment.func_cosmos_db) :
+      grant.scope != azurerm_cosmosdb_account.hcw.id
+    ])
+    error_message = "No Cosmos DB role assignment for the Function App's identity may be scoped to the whole account (#1469 narrowed it to `<account id>/dbs/<database>`)."
   }
 
-  # The account-wide grant stays exactly as it is until Step 2 of #1469
-  # deletes the block: no narrower scope, no count, no moved address. When
-  # the block is gone, delete these two asserts with it.
-  assert {
-    condition     = azurerm_cosmosdb_sql_role_assignment.func_cosmos.scope == azurerm_cosmosdb_account.hcw.id
-    error_message = "Cosmos DB account-wide role assignment must keep the account scope until Step 2 of #1469 removes the block (any other scope is a replace, and a gap in access)."
-  }
-
-  # 3b. The per-database grants (#1469): one per database the app reads, the
-  # same Data Contributor role, scoped to `<account id>/dbs/<database>`.
   assert {
     condition     = keys(azurerm_cosmosdb_sql_role_assignment.func_cosmos_db) == ["hcw"]
     error_message = "Cosmos DB per-database role assignments must cover exactly the databases infra/ declares (today: hcw). A second database is a new key in local.cosmos_database_grants, and a declared create in scripts/assert-expected-plan.mjs."

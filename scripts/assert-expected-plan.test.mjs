@@ -65,6 +65,27 @@ const FUNCTION_APP = 'azurerm_function_app_flex_consumption.hcw';
  * `[false]` where nothing is marked, `true` where something is, and unknown
  * values omitted from `after`.
  */
+
+/**
+ * The names of the `azurerm_cosmosdb_sql_role_assignment` blocks in `source`
+ * (Terraform text) whose `scope` is a Cosmos account's id and nothing more:
+ * `azurerm_cosmosdb_account.<any name>.id` bare or as the whole of an
+ * interpolated string (`"${azurerm_cosmosdb_account.<any name>.id}"`), any
+ * spacing, a trailing `/` inside the string allowed, with or without a
+ * trailing `#` or `//` comment. Names are any
+ * valid Terraform identifier (letters, digits, `_` and `-`, not starting
+ * with a digit). A database grant's scope goes on with `/dbs/<name>` inside
+ * the string and does not match (#1469 step 2).
+ */
+function accountScopedCosmosGrants(source) {
+  const identifier = '[A-Za-z_][A-Za-z0-9_-]*';
+  const blocks = [...source.matchAll(new RegExp(`^resource "azurerm_cosmosdb_sql_role_assignment" "(${identifier})" \\{[\\s\\S]*?^\\}`, 'gm'))];
+  const accountId = `azurerm_cosmosdb_account\\.${identifier}\\.id`;
+  // A trailing slash after the interpolated id is still the account scope.
+  const accountScope = new RegExp(`^\\s*scope\\s*=\\s*(?:${accountId}|"\\$\\{\\s*${accountId}\\s*\\}/?")\\s*(?:(?:#|\\/\\/).*)?$`, 'm');
+  return blocks.filter((m) => accountScope.test(m[0])).map((m) => m[1]);
+}
+
 function fixture() {
   const plan = JSON.parse(readFileSync(join(HERE, 'fixtures', 'plan-permanent-diff.json'), 'utf8'));
   const app = plan.resource_changes.find((c) => c.address === FUNCTION_APP).change;
@@ -1107,14 +1128,18 @@ describe('DECLARED', () => {
     expect(paths).toContain('app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS');
   });
 
-  it('prunes the hcw database grant’s create once applied, declares any later key, and keeps the account-wide grant undeleted while its block stands (#1469 step 1, pruned 2026-11-04)', () => {
+  it('prunes the hcw database grant’s create once applied, declares any later key, and declares the account-wide grant’s delete now that its block is gone (#1469 steps 1 and 2)', () => {
     // Step 1 of #1469 added `func_cosmos_db["hcw"]` beside `func_cosmos`. Its
     // create applied in run-vUQrQLSGJh4J5HZ2 on 2026-11-04 and left DECLARED,
     // so the `hcw` key is in state and must not be declared again. A key added
     // to the local later plans a create of its own and must be declared, or
-    // the plan check reads it as UNEXPECTED. A declared delete of
-    // `func_cosmos` before its block is gone would wave through the very gap
-    // the two steps avoid.
+    // the plan check reads it as UNEXPECTED. Step 2 deleted the `func_cosmos`
+    // block and declared the delete: the two must travel together. A block
+    // still in infra/ with the delete declared would wave through the gap the
+    // two steps avoid; a block gone with no declaration leaves the destroy
+    // UNEXPECTED, which is the plan check doing its job but not what the
+    // pull request promised. Once the delete has applied and the declaration
+    // is pruned, the second half of this case goes with it.
     const applied = ['hcw'];
     const block = /^\s*cosmos_database_grants\s*=\s*\{\n([\s\S]*?)\n\s*\}\n/m.exec(infraSource);
     expect(block, 'local.cosmos_database_grants not found in infra/').not.toBeNull();
@@ -1128,11 +1153,48 @@ describe('DECLARED', () => {
     for (const key of keys.filter((key) => !applied.includes(key))) {
       expect(creates, `${key} is a new grant with no declaration`).toContain(grantAddress(key));
     }
-    const accountGrantStands = infraSource.includes('resource "azurerm_cosmosdb_sql_role_assignment" "func_cosmos"');
+    const accountGrantStands = /^resource "azurerm_cosmosdb_sql_role_assignment" "func_cosmos" \{/m.test(infraSource);
     const accountGrantDeleteDeclared = DECLARED.some(
       (entry) => entry.action === 'delete' && entry.address === 'azurerm_cosmosdb_sql_role_assignment.func_cosmos'
     );
-    expect(accountGrantStands && accountGrantDeleteDeclared, 'func_cosmos is declared deleted while its block exists').toBe(false);
+    expect(accountGrantStands, 'the account-wide grant func_cosmos is back in infra/ (step 2 of #1469 removed it)').toBe(false);
+    expect(accountGrantDeleteDeclared, 'func_cosmos is gone from infra/ but its delete is not declared').toBe(true);
+    // No Cosmos data-plane role assignment in infra/ may be scoped to the
+    // whole account again.
+    expect(accountScopedCosmosGrants(infraSource), 'a Cosmos role assignment is scoped to the whole account').toEqual([]);
+  });
+
+  it('reads an account-scoped Cosmos grant whatever the account resource is called and whatever trails the scope line (#1469 step 2)', () => {
+    // The reader above is only as good as its regex, so it is exercised on
+    // the shapes a block could take: database grants (ignored, bare or
+    // interpolated), the account id with a trailing comment, under another
+    // account resource name, with odd spacing, names with hyphens (valid
+    // Terraform identifiers), and the account id as the whole of an
+    // interpolated string, which evaluates to the same scope.
+    const block = (name, scope) =>
+      `resource "azurerm_cosmosdb_sql_role_assignment" "${name}" {\n  scope = ${scope}\n}\n`;
+    const source = [
+      block('db_grant', '"${azurerm_cosmosdb_account.hcw.id}/dbs/${each.value}"'),
+      block('db_grant_spaced', '"${ azurerm_cosmosdb_account.hcw.id }/dbs/hcw"'),
+      block('commented', 'azurerm_cosmosdb_account.hcw.id # account scope'),
+      block('slashes', 'azurerm_cosmosdb_account.hcw.id // account scope'),
+      block('other_account', 'azurerm_cosmosdb_account.scratch.id'),
+      block('spaced', '   azurerm_cosmosdb_account.hcw.id   '),
+      block('func-cosmos', 'azurerm_cosmosdb_account.hcw-prod.id'),
+      block('interpolated', '"${azurerm_cosmosdb_account.hcw.id}"'),
+      block('interpolated_spaced', '"${ azurerm_cosmosdb_account.hcw.id }" # same scope'),
+      block('trailing_slash', '"${azurerm_cosmosdb_account.hcw.id}/"'),
+    ].join('\n');
+    expect(accountScopedCosmosGrants(source)).toEqual([
+      'commented',
+      'slashes',
+      'other_account',
+      'spaced',
+      'func-cosmos',
+      'interpolated',
+      'interpolated_spaced',
+      'trailing_slash',
+    ]);
   });
 
   it('prunes the Cosmos request-log filter’s four entries once applied, with their resources still in infra/ and the azapi table gone (#1530, pruned 2026-11-04)', () => {

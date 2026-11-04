@@ -1036,6 +1036,30 @@ This project has not cut a tagged release; entries are grouped under
   went on the allow-list with their reasons. The four gitleaks fingerprints
   for the removed defaults left `.gitleaksignore`, and the rollback runbook,
   the lab-host runbook and ADR 0006 say where the id comes from now.
+- **The Function App's account-wide Cosmos grant is removed; the identity
+  keeps the `hcw` database grant alone, the second of the two steps
+  ([#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469)).**
+  Step 1 ([#1531](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1531))
+  added `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]` beside
+  the account-wide `func_cosmos` and applied on 2026-11-04, after which both
+  grants were listed on the identity and the site answered as before. This
+  step deletes the `func_cosmos` block from `infra/cosmos.tf` and declares
+  the one destroy in `scripts/assert-expected-plan.mjs`, so the plan is that
+  destroy beside the permanent diff and nothing else. Before the block went,
+  the code was read for anything that needs the account scope: nothing
+  lists the account's databases (`functions/src/lib/cosmos-client.js` opens
+  `COSMOS_DATABASE` by name, the six change-feed functions and their
+  `leases` container bind to that same database, and the nightly export
+  reads containers through the same client), which is the only thing the
+  account scope adds per Microsoft's data-plane security reference.
+  `infra/tests/guards.tftest.hcl` now refuses an account-scoped grant for the
+  identity instead of requiring one, `scripts/assert-expected-plan.test.mjs`
+  holds that the block is gone and its delete declared, and that no Cosmos
+  role assignment in `infra/` is scoped to the account id, the deployment
+  runbook marks Step 2 as the current step with the owner's checks and the
+  rollback (revert the pull request with the restored grant's create
+  declared, so its plan is one create the plan check accepts), and ADR 0036
+  records the narrowing as complete once that apply runs.
 
 ### Fixed
 
