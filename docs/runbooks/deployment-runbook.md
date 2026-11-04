@@ -616,9 +616,14 @@ that removed the old grant and created the new one in the same run could
 leave the app with neither for a stretch, and the symptom would be every page
 failing at once with 403. The resources are in
 [`infra/cosmos.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos.tf):
-`azurerm_cosmosdb_sql_role_assignment.func_cosmos` is the account-wide grant
-and `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]` is the new
-database-scoped one. Both apply runs are HCP Terraform runs on the
+`azurerm_cosmosdb_sql_role_assignment.func_cosmos` was the account-wide grant
+(its block is deleted by the Step 2 pull request) and
+`azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]` is the
+database-scoped one that stays. **Where this stands:** Step 1 is done
+([#1531](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1531),
+applied in run `run-vUQrQLSGJh4J5HZ2` on 2026-11-04; both grants were then
+listed on the identity and the site answered as before). Step 2 is the
+current step. Both apply runs are HCP Terraform runs on the
 [hcw-azure runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs),
 queued by the merge and confirmed by the owner (the confirm button is the
 apply).
@@ -636,7 +641,9 @@ the app never does: it opens `COSMOS_DATABASE` by name
 `leases` container and every container the nightly export reads are all in
 `hcw`.
 
-**Step 1: add the database grant (the pull request for #1469).**
+**Step 1: add the database grant (done 2026-11-04,
+[#1531](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1531)).**
+Kept in full because Step 2 reuses its checks (items 4 and 5).
 
 1. Merge the pull request. HCP Terraform queues a plan on the
    [runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
@@ -692,18 +699,23 @@ the app never does: it opens `COSMOS_DATABASE` by name
    as before. Step 1 proves the new grant creates cleanly and the plan shape
    is right. The narrower grant is tested on its own by Step 2.
 
-**Step 2: remove the account-wide grant (a later pull request).** Do this on
-a quiet morning, after 04:00 UTC, so the previous night's export (03:00 UTC)
-has finished and the next one is a day away.
+**Step 2: remove the account-wide grant (the current step).** Confirm the
+run on a quiet morning, after 04:00 UTC, so the previous night's export
+(03:00 UTC) has finished and the next one is a day away.
 
 1. Merge the Step 2 pull request. It deletes the `func_cosmos` block from
-   `infra/cosmos.tf`, declares the delete in
-   `scripts/assert-expected-plan.mjs` and removes the Step 1 declaration.
+   `infra/cosmos.tf` and declares the delete in
+   `scripts/assert-expected-plan.mjs` (the Step 1 declaration was already
+   removed in [#1539](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1539)
+   after its apply).
 2. Read the plan on the
    [runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
    It must show the permanent diff plus exactly one destroy,
    `azurerm_cosmosdb_sql_role_assignment.func_cosmos`, and nothing on
-   `func_cosmos_db["hcw"]`. Any other destroy: discard the run.
+   `func_cosmos_db["hcw"]`. The
+   [plan check](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml)
+   declares that one destroy and reports anything else as UNEXPECTED. Any
+   other destroy, or any change to `func_cosmos_db["hcw"]`: discard the run.
 3. Confirm the apply. Success is `Apply complete! Resources: 3 added, 1
    changed, 4 destroyed`.
 4. Run the role assignment list from Step 1, item 4. Success is exactly one
@@ -776,10 +788,26 @@ has finished and the next one is a day away.
 **If something fails after Step 2** (a `FAIL` in the smoke run, 403s in the
 metric, or an admin page that will not load): put the account-wide grant
 back. Revert the Step 2 pull request on GitHub (its **Revert** button opens a
-pull request that restores the `func_cosmos` block), merge it, and confirm
-the run it queues; that plan is one create. Access returns when the apply
-completes, a few minutes after the merge. Nothing in Step 1 needs a
-rollback: an extra grant on the same identity cannot take access away.
+pull request that restores the `func_cosmos` block and puts back the Step 1
+versions of the two tests). Before merging that revert, add one entry to
+`DECLARED` in `scripts/assert-expected-plan.mjs` on the revert branch,
+because the revert only takes the Step 2 delete declaration away and
+declares nothing for the create its plan carries; without it the
+[plan check](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml)
+reports the create as UNEXPECTED:
+
+```javascript
+  {
+    address: "azurerm_cosmosdb_sql_role_assignment.func_cosmos",
+    action: "create",
+    reason: "#1469 rollback: the account-wide grant is restored after step 2 failed its checks",
+  },
+```
+
+Then merge the revert and confirm the run it queues; that plan is the
+permanent diff plus exactly one create, `func_cosmos`. Access returns when
+the apply completes, a few minutes after the merge. Nothing in Step 1 needs
+a rollback: an extra grant on the same identity cannot take access away.
 
 ## 5. Rollback
 

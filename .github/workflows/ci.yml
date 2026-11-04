@@ -1,29 +1,53 @@
 # Build-and-test gate for pull requests.
 #
-# This is deliberately NOT a delivery workflow: it uses no secrets, no cloud
-# credentials, and no OIDC. It only installs, builds, and runs unit tests, so
-# it is safe to run on every pull request.
+# This is deliberately NOT a delivery workflow: it uses no secrets and no
+# cloud credentials. The one job that asks GitHub for an OIDC token (a
+# short-lived proof of which workflow is running) is `coverage`, which runs
+# only after a merge to `main` and uses the token to upload the coverage
+# report to Qlty; nothing else here can mint one.
 #
 # It exists because dependency pull requests previously had nothing validating
 # them — `npm ci` alone catches the most common failure mode, a package.json
 # and package-lock.json that disagree.
 #
-# WHY THE pull_request TRIGGER IS NOT PATH-FILTERED — the T-523 doctrine,
-# stated in full in iac-validate.yml: every job here is a required context on
-# the `main` ruleset, and a required context whose workflow was filtered out
-# is never auto-satisfied — the pull request waits on "Expected" forever. So
-# the trigger fires on every pull request and THE FILTERING LIVES INSIDE each
-# job: it diffs against the base, and when the component's own tree (and the
-# out-of-tree files its tests actually read) did not change, the expensive
-# steps skip while the job still completes and posts its context. Each
-# matrix row's `filter` regex names that dependency set — the out-of-tree
-# entries are real test-time reads (functions tests assert against infra/
-# Terraform source and .azure/api-surface.json; scripts tests pin
-# .github/workflows contracts and scan infra/ Terraform source, roles
-# included), not caution.
+# HOW THE JOBS ARE ARRANGED (#1545). One job, `gate`, at the end of this file
+# is the check the `main` ruleset (the repository's merge rules) requires from
+# this workflow. It waits for every other job and fails when any of them
+# failed or was cancelled. A job that was skipped is fine: the change did not
+# touch what that job tests. So each job runs only when it is needed, and the
+# pull request still ends with one green `gate`.
 #
-# Do not re-add `paths:` to `pull_request` without first removing these
-# contexts from the ruleset, in that order.
+# Which jobs are needed is decided by diffing the pull request against its
+# base, in two places:
+# - The `changes` job runs first and answers, once per filter, whether the
+#   browser suites, the lab-host Ansible checks, the Coder template checks and
+#   the Python harness checks are needed. The `e2e`, `ansible-lint`,
+#   `coder-template` and `harness` jobs read its answers in their `if:` and
+#   are skipped outright when the answer is no (no runner is started).
+# - The `verify` matrix (frontend, functions, scripts, vps-agent, edge) keeps
+#   its own detect step per row, because a matrix row cannot carry an `if:`
+#   of its own: a row whose files did not change skips its install, build and
+#   test steps and finishes in a few seconds.
+# Each filter names the files the job's tests really read, not only the
+# component's own folder: functions tests assert against infra/ Terraform
+# source and .azure/api-surface.json, and scripts tests pin
+# .github/workflows contracts. scripts/ci-filters.test.mjs checks that the
+# matrix filters list every such file.
+#
+# WHY THE pull_request TRIGGER IS NOT PATH-FILTERED. `gate` is a required
+# check, and a required check whose workflow never ran is never satisfied:
+# the pull request waits on "Expected" forever (the T-523 doctrine, stated in
+# full in iac-validate.yml, and ADR 0026). So the trigger fires on every pull
+# request, and the filtering lives inside, as described above. A job skipped
+# by its `if:` is different: GitHub still posts it, as "skipped", and counts
+# it as passing (Troubleshooting required status checks on GitHub Docs,
+# linked from docs/runbooks/required-checks.md).
+#
+# Do not add `paths:` to `pull_request`; `gate` would then be missing from
+# every pull request the paths exclude.
+#
+# A push to `main` runs everything: every filter answers yes, the Qlty
+# coverage upload runs, and `gate` confirms the combined result.
 
 name: CI
 
@@ -40,6 +64,175 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # What changed, for the jobs below that have an `if:` of their own. One
+  # checkout with history, then one detect step per filter; each writes
+  # `relevant=true` or `relevant=false`, and the job's outputs carry the
+  # answers to the jobs that `needs` it. The detect shell is the same in every
+  # step (and in the verify matrix's own step): scripts/ci-workflow-steps.test.mjs
+  # runs each one with bash and checks that a filter grep cannot read fails
+  # the step instead of switching the job off (#1428). On a push to `main`,
+  # or when the diff cannot be computed, every answer is yes.
+  changes:
+    name: changes
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5 # a checkout and four git diffs
+    outputs:
+      e2e: ${{ steps.e2e.outputs.relevant }}
+      ansible: ${{ steps.ansible.outputs.relevant }}
+      coder: ${{ steps.coder.outputs.relevant }}
+      harness: ${{ steps.harness.outputs.relevant }}
+    steps:
+      # fetch-depth: 0 so the diffs below can reach the base commit — a
+      # shallow clone fails the diff rather than returning "no changes".
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # The browser suites (frontend/e2e is inside frontend/, so one prefix
+      # covers the pages and the specs).
+      - name: Detect frontend changes for the browser suites
+        id: e2e
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^frontend/'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "non-pull_request event — running all checks"
+            exit 0
+          fi
+          # Capture the diff first: `set -e` is inert inside an `if`
+          # condition, so a failed diff (an unfetchable base sha) would read
+          # as "no changes" and silently skip required work. A diff that
+          # cannot be computed fails toward running everything.
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "could not compute the diff — running all checks rather than guessing"
+            exit 0
+          }
+          # grep's answer is kept, not tested in an `if`: see the matrix job's
+          # detect step for why (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "frontend files changed — running the browser suites"
+          elif [ "${status}" -eq 1 ]; then
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "no relevant change — the browser suites are skipped"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
+          fi
+
+      # docker-runner.js too: hcw-labjob-sweep.test.sh checks the sweep's
+      # label against the JOB_LABEL it exports, and a PR that renamed only the
+      # label would otherwise skip that check. docs/runbooks/labs-host.md too:
+      # coder-signin.test.sh and hcw-coder-automation.test.py check its Coder
+      # lines (#954). (The shell adds ci.yml itself to every filter.)
+      - name: Detect lab-host changes
+        id: ansible
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^lab-host/|^docs/runbooks/labs-host\.md$|^vps-agent/lib/docker-runner\.js$|^vps-agent/bin/report-host-check\.js$'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "non-pull_request event — running all checks"
+            exit 0
+          fi
+          # Capture the diff first — same reasoning as the step above: a
+          # failed diff must fail toward running, not skipping.
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "could not compute the diff — running all checks rather than guessing"
+            exit 0
+          }
+          # grep's answer is kept, not tested in an `if`: see the matrix job's
+          # detect step for why (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "lab-host files changed — running the Ansible checks"
+          elif [ "${status}" -eq 1 ]; then
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "no relevant change — the Ansible checks are skipped"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
+          fi
+
+      - name: Detect lab-host/coder changes
+        id: coder
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^lab-host/coder/'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "non-pull_request event — running all checks"
+            exit 0
+          fi
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "could not compute the diff — running all checks rather than guessing"
+            exit 0
+          }
+          # grep's answer is kept, not tested in an `if`: see the matrix job's
+          # detect step for why (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "lab-host/coder files changed — running the Coder template checks"
+          elif [ "${status}" -eq 1 ]; then
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "no relevant change — the Coder template checks are skipped"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
+          fi
+
+      - name: Detect harness changes
+        id: harness
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^(hooks/|tooling/)'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "non-pull_request event — running all checks"
+            exit 0
+          fi
+          # Capture the diff first — same reasoning as the steps above: a
+          # failed diff must fail toward running, not skipping.
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "could not compute the diff — running all checks rather than guessing"
+            exit 0
+          }
+          # grep's answer is kept, not tested in an `if`: see the matrix job's
+          # detect step for why (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "harness files changed — running the harness checks"
+          elif [ "${status}" -eq 1 ]; then
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "no relevant change — the harness checks are skipped"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
+          fi
+
   verify:
     name: ${{ matrix.name }}
     # All CI runs use GitHub-hosted runners. No alternate runner infrastructure
@@ -124,7 +317,12 @@ jobs:
             format: npm run format:check
             validate: npm run validate:routes
             build: npm run build
-            test: npm test
+            # With coverage (#1545): the thresholds in frontend/vitest.config.js
+            # are a ratchet, so a pull request that lowers coverage fails here,
+            # and the report this writes is what the `coverage` job uploads
+            # after a merge. The separate Coverage workflow that ran the suite
+            # a second time is gone.
+            test: npm run test:coverage
           # Node.js 24, not 26: Azure Functions Flex Consumption runs 22 and
           # 24 only, so the tests run on the line production runs. Every other
           # row takes the step's default, the newest line. Both are held there
@@ -165,7 +363,8 @@ jobs:
             node-version: '24'
             filter: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|docs/content/|scripts/ideas/idea-notes\.mjs$|scripts/|frontend/(src|scripts|public)/|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
             lint: npm run lint
-            test: npm test
+            # With coverage, for the same reasons as the frontend row (#1545).
+            test: npm run test:coverage
           # The out-of-tree entries after infra/ are what
           # version-floors.test.mjs reads (#715): every package.json and
           # Dockerfile, the lab host's and the lab image's pins, and every
@@ -285,7 +484,7 @@ jobs:
           # condition, so a failed diff (an unfetchable base sha) would read
           # as "no changes" and silently skip required work. A diff that
           # cannot be computed fails toward running everything.
-          changed="$(git diff --name-only "${BASE_SHA}" HEAD)" || {
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
@@ -402,6 +601,20 @@ jobs:
           COMMAND: ${{ matrix.test }}
         run: bash -eo pipefail -c "$COMMAND"
 
+      # After a merge only: the frontend and functions rows hand their
+      # coverage report to the `coverage` job below, which uploads both in one
+      # go. On a pull request nothing is kept, because a pull request runs
+      # only the rows its files touch, and a report with one package missing
+      # would read at Qlty as a drop in coverage (#1545).
+      - name: Keep the coverage report for the Qlty upload
+        if: github.event_name == 'push' && (matrix.name == 'frontend' || matrix.name == 'functions (azure)')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-${{ matrix.dir }}
+          path: ${{ matrix.dir }}/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: error
+
   # The browser suites (frontend/e2e). Until 2026-10-06 nothing ran them: the
   # hydration, console-error and smoke specs had real assertions and executed
   # only when someone remembered, and the admin spec could not fail (estate
@@ -426,8 +639,18 @@ jobs:
   # configuration cards, one re-authentication on an expired token, and the
   # Pixel 5 drawer on four admin routes. All three specs together took 100 s
   # on one worker locally; the acceptance is a job under eight minutes.
+  #
+  # The Second Brain journeys (second-brain.spec.js, #1408) run here too.
+  # They had been written with #1395 but never listed, so nothing ran them
+  # after a merge. They stub the brain API the way the admin spec stubs the
+  # identity host; the five of them took 44 s on one worker locally (both profiles).
   e2e:
     name: e2e (playwright)
+    # Only when frontend/ changed (#1545); in parallel with the verify matrix,
+    # not after it, because waiting for the frontend row would put the two
+    # slowest jobs end to end.
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 60 # slowest 19 min, 16 of them installing Chromium, Oct 2026 (#1441)
     permissions:
@@ -496,7 +719,7 @@ jobs:
         env:
           TEST_BASE_URL: http://127.0.0.1:4173
           CI: 'true'
-        run: npx playwright test --project=chromium --project=mobile-chrome hydration.spec.js contentforge.spec.js admin-authenticated.spec.js ai-engine.spec.js ambassador.spec.js blogs.spec.js
+        run: npx playwright test --project=chromium --project=mobile-chrome hydration.spec.js contentforge.spec.js admin-authenticated.spec.js ai-engine.spec.js ambassador.spec.js blogs.spec.js second-brain.spec.js
 
       - name: Upload the report on failure
         if: failure()
@@ -513,10 +736,13 @@ jobs:
   # host (#662). ansible-lint's production profile is the gate, and the
   # playbook syntax check runs beside it because they fail on different
   # things: lint reads files, syntax-check loads the play with its roles and
-  # collections. Same in-job change detection as the matrix above; the tool
-  # versions are pinned to what lab-host/bootstrap.sh installs on the host.
+  # collections. Runs only when the `changes` job saw a lab-host change
+  # (#1545); the tool versions are pinned to what lab-host/bootstrap.sh
+  # installs on the host.
   ansible-lint:
     name: ansible-lint (lab-host)
+    needs: changes
+    if: needs.changes.outputs.ansible == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 35 # slowest 10.8 min, Oct 2026 (#1441)
     defaults:
@@ -527,69 +753,22 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          fetch-depth: 0
-
-      - name: Detect lab-host changes
-        id: changes
-        working-directory: ${{ github.workspace }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          # docker-runner.js too: hcw-labjob-sweep.test.sh checks the
-          # sweep's label against the JOB_LABEL it exports, and a PR that
-          # renamed only the label would otherwise skip that check.
-          # docs/runbooks/labs-host.md too: coder-signin.test.sh and
-          # hcw-coder-automation.test.py check its Coder lines (#954).
-          # (The script adds ci.yml itself to every job's filter.)
-          FILTER: '^lab-host/|^docs/runbooks/labs-host\.md$|^vps-agent/lib/docker-runner\.js$|^vps-agent/bin/report-host-check\.js$'
-        run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "non-pull_request event — running all checks"
-            exit 0
-          fi
-          # Capture the diff first — same reasoning as the matrix job's
-          # detect step: a failed diff must fail toward running, not skipping.
-          changed="$(git diff --name-only "${BASE_SHA}" HEAD)" || {
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "could not compute the diff — running all checks rather than guessing"
-            exit 0
-          }
-          # grep's answer is kept, not tested in an `if`: see the matrix job's
-          # detect step for why (#1428).
-          status=0
-          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
-          if [ "${status}" -eq 0 ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "lab-host files changed — running all checks"
-          elif [ "${status}" -eq 1 ]; then
-            echo "relevant=false" >> "$GITHUB_OUTPUT"
-            echo "no relevant change — skipping checks, still reporting this context"
-          else
-            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
-            exit 1
-          fi
 
       - name: Set up Python
-        if: steps.changes.outputs.relevant == 'true'
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.15'
 
       - name: Install ansible-lint and ansible-core
-        if: steps.changes.outputs.relevant == 'true'
         run: python -m pip install --disable-pip-version-check 'ansible-lint==26.9.0' 'ansible-core==2.22.0'
 
       - name: Install the pinned collections
-        if: steps.changes.outputs.relevant == 'true'
         run: ansible-galaxy collection install -r requirements.yml
 
       - name: ansible-lint (production profile)
-        if: steps.changes.outputs.relevant == 'true'
         run: ansible-lint --profile production
 
       - name: Playbook syntax check
-        if: steps.changes.outputs.relevant == 'true'
         run: ansible-playbook --syntax-check -i inventory/localhost.yml site.yml
 
       # Ansible never applies a default written only in a role's
@@ -598,7 +777,6 @@ jobs:
       # This fails on any option like that, or one whose defaults/main.yml
       # value disagrees with the spec.
       - name: Argument spec defaults are set
-        if: steps.changes.outputs.relevant == 'true'
         run: python check-argument-spec-defaults.py
 
       # /usr/local/sbin/hcw-vault-set rewrites the host's Ansible vault, so
@@ -608,7 +786,6 @@ jobs:
       # because the helper installs the vault root:root; env keeps this job's
       # Python on PATH past sudo's secure_path.
       - name: hcw-vault-set test
-        if: steps.changes.outputs.relevant == 'true'
         run: sudo env "PATH=$PATH" bash roles/vault_tools/tests/hcw-vault-set.test.sh
 
       # /usr/local/sbin/hcw-coder-template-push is handed a token that can
@@ -618,7 +795,6 @@ jobs:
       # lock file and the README copied, the copy removed, every failure
       # non-zero. Needs neither root nor Docker.
       - name: hcw-coder-template-push test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/coder/tests/hcw-coder-template-push.test.sh
 
       # /usr/local/libexec/hcw-coder-automation holds a Coder token that can
@@ -629,7 +805,6 @@ jobs:
       # and newest-two rules, a token never in any output, state or report.
       # Needs neither root nor Docker.
       - name: hcw-coder-automation test
-        if: steps.changes.outputs.relevant == 'true'
         run: python roles/coder/tests/hcw-coder-automation.test.py
 
       # /usr/local/libexec/hcw-portainer-check reads Portainer with the
@@ -642,7 +817,6 @@ jobs:
       # delivery, the token in no argument, output, environment or report.
       # Needs neither root nor Docker.
       - name: hcw-portainer-check test
-        if: steps.changes.outputs.relevant == 'true'
         run: python roles/portainer/tests/hcw-portainer-check.test.py
 
       # Portainer holds the daemon's socket as a bind-mounted file, so a Docker
@@ -655,7 +829,6 @@ jobs:
       # runs the helper against stand-ins for systemctl and docker. Needs
       # neither root, Docker nor Ansible.
       - name: portainer stale-socket test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/portainer/tests/portainer-stale-socket.test.sh
 
       # Who may sign in to Coder (#954): coder.env rendered by this job's
@@ -664,7 +837,6 @@ jobs:
       # refuse an empty team list or a team outside an allowed organisation.
       # Needs neither root nor Docker.
       - name: coder-signin test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/coder/tests/coder-signin.test.sh
 
       # The daily held-package report the hardening role installs (LAB-3,
@@ -673,7 +845,6 @@ jobs:
       # with an upgrade, the notice line when none, a failed run when apt
       # fails. Needs neither root nor Docker.
       - name: hcw-held-upgradable test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/hcw-held-upgradable.test.sh
 
       # The nightly playbook drift detection timer (LAB-4, #950), rendered with
@@ -682,12 +853,10 @@ jobs:
       # detects task changes or errors, logs to syslog (warning on drift or error,
       # notice on clean), and exits non-zero on drift or failure.
       - name: hcw-playbook-drift test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/hcw-playbook-drift.test.sh
 
       # The lab_images role and workspace image retention on skipped Coder template publication (#1134).
       - name: lab-images-role test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/lab_images/tests/lab-images-role.test.sh
 
 
@@ -695,7 +864,6 @@ jobs:
       # role's defaults: the allowed origins are cleared and named by the
       # role, and the reboot is left to hcw-reboot-when-idle.timer.
       - name: unattended-upgrades test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/unattended-upgrades.test.sh
 
       # The administrative user's keys (#953): the hardening role's key
@@ -708,7 +876,6 @@ jobs:
       # exactly, and a second run changes nothing. Needs neither root nor
       # Docker.
       - name: admin-keys test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/admin-keys.test.sh
 
       # Listeners beyond the loopback (#958, LAB-12): the privilege_checks
@@ -717,7 +884,6 @@ jobs:
       # It refuses anything beyond the loopback but TCP 22, 80 and 443, and
       # names each one. Needs neither root nor Docker.
       - name: listeners test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/privilege_checks/tests/listeners.test.sh
 
       # sshd's settings and root's keys (#953): the hardening role's sshd
@@ -729,7 +895,6 @@ jobs:
       # root, because the tasks make root the owner of what they write; env
       # keeps this job's Python on PATH past sudo's secure_path.
       - name: sshd-apply test
-        if: steps.changes.outputs.relevant == 'true'
         run: sudo env "PATH=$PATH" bash roles/hardening/tests/sshd-apply.test.sh
 
       # Port 22 closed to the internet (#953 stage 3): the hardening role's
@@ -747,7 +912,6 @@ jobs:
       # job's Python on PATH past sudo, and points ansible-playbook at the
       # collections installed above, which are in the runner's home.
       - name: ufw closed-ports test
-        if: steps.changes.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           sudo apt-get install -y -qq ufw >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ufw >/dev/null; }
@@ -772,7 +936,6 @@ jobs:
       # the hold and acknowledgement paths, the agent's unit, the sandbox
       # socket and both labels their owners'. Needs neither root nor Docker.
       - name: hcw-reboot-when-idle test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/hcw-reboot-when-idle.test.sh
 
       # /usr/local/libexec/hcw-docker-volume-carry copies Coder's PostgreSQL
@@ -782,7 +945,6 @@ jobs:
       # owners shifted, modes and hard links kept, the source untouched, a
       # non-empty destination refused. As root, because it chowns.
       - name: hcw-docker-volume-carry test
-        if: steps.changes.outputs.relevant == 'true'
         run: sudo bash roles/docker/tests/hcw-docker-volume-carry.test.sh
 
       # /usr/local/libexec/hcw-docker-stale-bridges deletes the bridges a
@@ -793,7 +955,6 @@ jobs:
       # ones, a just-created network, docker0, another program's bridge
       # named like Docker's and one with a port attached stay. No root needed.
       - name: hcw-docker-stale-bridges test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/docker/tests/hcw-docker-stale-bridges.test.sh
 
       # /usr/local/libexec/hcw-workspace-reach starts a container shaped like
@@ -804,7 +965,6 @@ jobs:
       # the default bridge, then moved), which decides its nameservers, each
       # failure's words, the retries and the clean-up. No root needed.
       - name: hcw-workspace-reach test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/workspace_reach/tests/hcw-workspace-reach.test.sh
 
       # /usr/local/libexec/hcw-addons-egress-clear removes the addons role's
@@ -816,7 +976,6 @@ jobs:
       # iptables prints, so it runs here against real iptables, in a scratch
       # chain of its own, never Docker's. As root, because it writes iptables.
       - name: hcw-addons-egress-clear test
-        if: steps.changes.outputs.relevant == 'true'
         run: sudo bash roles/addons/tests/hcw-addons-egress-clear.test.sh
 
       # /usr/local/libexec/hcw-host-firewall loads the host_firewall role's
@@ -833,7 +992,6 @@ jobs:
       # proof fail rather than skip. As root, for the namespace; env keeps
       # this job's Python (Jinja2) on PATH past sudo.
       - name: hcw-host-firewall test
-        if: steps.changes.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           sudo apt-get install -y -qq ufw >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ufw >/dev/null; }
@@ -848,7 +1006,6 @@ jobs:
       # and the global options: the admin API on its Unix socket and h1/h2
       # only (#958). Needs neither root nor Docker.
       - name: Rendered Caddy configuration adapts, with the vars before the redir
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/caddy/tests/caddy-adapt.test.sh
 
       # /usr/local/libexec/hcw-docker-proxy-stale says whether the agent's
@@ -858,7 +1015,6 @@ jobs:
       # that answer, so the answer is tested here against stand-ins for
       # systemctl and docker and the real GNU date. No root needed.
       - name: hcw-docker-proxy-stale test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/labs_agent/tests/hcw-docker-proxy-stale.test.sh
 
       # The agent's unit and env file (LAB-13, #959), rendered with the
@@ -868,7 +1024,6 @@ jobs:
       # and OnFailure and Requires=docker.service stay. Needs neither root
       # nor Docker.
       - name: hcw-labs-agent unit test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/labs_agent/tests/hcw-labs-agent.service.test.sh
 
       # /usr/local/libexec/hcw-labjob-sweep, which the agent's unit runs as
@@ -877,7 +1032,6 @@ jobs:
       # socket, and fails when Docker refuses (CodeRabbit on #1188). Run
       # against a stand-in for docker; needs neither root nor Docker.
       - name: hcw-labjob-sweep test
-        if: steps.changes.outputs.relevant == 'true'
         run: bash roles/labs_agent/tests/hcw-labjob-sweep.test.sh
 
       # The lab agent's Docker socket proxy is HAProxy with a configuration
@@ -887,7 +1041,6 @@ jobs:
       # line HAProxy would refuse fails here rather than leaving the agent
       # without Docker on the host.
       - name: Agent Docker proxy configuration parses
-        if: steps.changes.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/hcw-labs-agent-docker-proxy.cfg"
@@ -902,7 +1055,6 @@ jobs:
             haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
 
       - name: Set up Node.js for the agent proxy run
-        if: steps.changes.outputs.relevant == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '26'
@@ -916,7 +1068,6 @@ jobs:
       # privileged `docker run`, which must be refused. The parse above
       # cannot see whether the real docker CLI's calls pass; this does.
       - name: Agent Docker proxy passes a job and refuses the rest
-        if: steps.changes.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           gid="$(id -g)"
@@ -956,6 +1107,8 @@ jobs:
   # and module. No npm install: the test uses node:test and nothing else.
   coder-template:
     name: coder (lab-host)
+    needs: changes
+    if: needs.changes.outputs.coder == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 10 # slowest 2.1 min, Oct 2026 (#1441)
     defaults:
@@ -966,73 +1119,32 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          fetch-depth: 0
-
-      - name: Detect lab-host/coder changes
-        id: changes
-        working-directory: ${{ github.workspace }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^lab-host/coder/'
-        run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "non-pull_request event — running all checks"
-            exit 0
-          fi
-          changed="$(git diff --name-only "${BASE_SHA}" HEAD)" || {
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "could not compute the diff — running all checks rather than guessing"
-            exit 0
-          }
-          # grep's answer is kept, not tested in an `if`: see the matrix job's
-          # detect step for why (#1428).
-          status=0
-          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
-          if [ "${status}" -eq 0 ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "lab-host/coder files changed — running all checks"
-          elif [ "${status}" -eq 1 ]; then
-            echo "relevant=false" >> "$GITHUB_OUTPUT"
-            echo "no relevant change — skipping checks, still reporting this context"
-          else
-            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
-            exit 1
-          fi
 
       - name: Set up Node.js
-        if: steps.changes.outputs.relevant == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '26'
 
       - name: Template hardening test
-        if: steps.changes.outputs.relevant == 'true'
         run: node --test
 
       - name: Compose file parses
-        if: steps.changes.outputs.relevant == 'true'
         run: bash compose-config-check.sh
 
       - name: Setup Terraform
-        if: steps.changes.outputs.relevant == 'true'
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
 
       # Every template, not hcw-lab alone: the guided labs carry the same
       # sign-in tmpfs and running-workspace check (#954).
       - name: Terraform fmt
-        if: steps.changes.outputs.relevant == 'true'
         working-directory: lab-host/coder/templates
         run: terraform fmt -recursive -check -diff
 
       - name: Terraform init (no backend)
-        if: steps.changes.outputs.relevant == 'true'
         working-directory: lab-host/coder/templates
         run: for t in */; do terraform -chdir="$t" init -backend=false -input=false || exit 1; done
 
       - name: Terraform validate
-        if: steps.changes.outputs.relevant == 'true'
         working-directory: lab-host/coder/templates
         run: for t in */; do terraform -chdir="$t" validate -no-color || exit 1; done
 
@@ -1042,6 +1154,8 @@ jobs:
   # purpose: the failure that matters is the round trip breaking, not style.
   harness:
     name: harness (python)
+    needs: changes
+    if: needs.changes.outputs.harness == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 15 # slowest 0.9 min, Oct 2026 (#1441)
     defaults:
@@ -1052,50 +1166,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          fetch-depth: 0
-
-      - name: Detect harness changes
-        id: changes
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^(hooks/|tooling/)'
-        run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "non-pull_request event — running all checks"
-            exit 0
-          fi
-          # Capture the diff first — same reasoning as the matrix job's
-          # detect step: a failed diff must fail toward running, not skipping.
-          changed="$(git diff --name-only "${BASE_SHA}" HEAD)" || {
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "could not compute the diff — running all checks rather than guessing"
-            exit 0
-          }
-          # grep's answer is kept, not tested in an `if`: see the matrix job's
-          # detect step for why (#1428).
-          status=0
-          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
-          if [ "${status}" -eq 0 ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "harness files changed — running all checks"
-          elif [ "${status}" -eq 1 ]; then
-            echo "relevant=false" >> "$GITHUB_OUTPUT"
-            echo "no relevant change — skipping checks, still reporting this context"
-          else
-            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
-            exit 1
-          fi
 
       - name: Set up Python
-        if: steps.changes.outputs.relevant == 'true'
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.15'
 
       - name: Compile
-        if: steps.changes.outputs.relevant == 'true'
         run: python -m compileall -q hooks tooling
 
       # The Stop guard's BLOCKING path. Everything below this step drives the
@@ -1105,11 +1182,9 @@ jobs:
       # mode the guard exists to prevent. Runs against throwaway roots, so it
       # is safe here, before the steps that write and delete .agentic/.
       - name: Stop guard unit tests
-        if: steps.changes.outputs.relevant == 'true'
         run: python -m unittest discover -s hooks -p 'test_*.py' -v
 
       - name: Workflow round trip
-        if: steps.changes.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           python tooling/workflow.py init --mode selected --agents ci-probe \
@@ -1125,7 +1200,6 @@ jobs:
           test "$(python -c 'import json;print(json.load(open(".agentic/workflows/wf-ci-smoke/WORKFLOW.json"))["status"])')" = empty
 
       - name: Close refuses to fake a completed workflow
-        if: steps.changes.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           python tooling/workflow.py init --mode selected --agents ci-required \
@@ -1150,7 +1224,6 @@ jobs:
       # the registry entry is what `discover` matches it against. Both are
       # throwaway edits to an ephemeral checkout.
       - name: Handoff validator accepts real work and rejects fabricated work
-        if: steps.changes.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           mkdir -p .claude/agents
@@ -1222,8 +1295,146 @@ jobs:
           fi
 
       - name: Stop hook stays fail-open without state
-        if: steps.changes.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           rm -rf .agentic .claude/agents
           echo '{}' | python hooks/claude_event.py --event Stop
+
+  # The cyclomatic complexity a pull request ADDS, and nothing about what was
+  # already here. Folded in from complexity-delta.yml (#1545): under a minute,
+  # and under the one gate.
+  #
+  # WHY A DELTA AND NOT `lizard . -C 8 -W`. Measured at the head of `main` on
+  # 2026-09-16, 479 functions were over CCN 8 and 43 over CCN 20. A whole-tree
+  # run is red on its first pull request and on every one after it, including
+  # pull requests that remove complexity, and a check that cannot go green is
+  # a check nobody reads. So this asks "did this pull request make it worse",
+  # which has a green answer available every time.
+  # scripts/complexity/check_complexity_delta.py carries the rest, including
+  # how functions are matched across a diff. (`lizard -W` is `--whitelist`
+  # and takes a file name; lowercase `-w` prints warnings and lizard already
+  # exits 1 when it finds any.)
+  #
+  # REPORT FIRST, ENFORCE WHEN READY. Report-only by default: findings appear
+  # as annotations on the changed lines and in the job summary, and the job
+  # stays green. Arm it with the `COMPLEXITY_ENFORCE` repository variable set
+  # to `true` (https://github.com/saulpatinojr/HCW-HybridCloudWorks/settings/variables/actions);
+  # `COMPLEXITY_THRESHOLD` raises the threshold the same way.
+  complexity:
+    name: complexity delta
+    # A pull request has a base to compare with; a push to main does not.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.8 min, Oct 2026 (#1441)
+    steps:
+      # fetch-depth: 0 so the merge base is reachable. A shallow clone makes
+      # `git merge-base` fail, and the script exits 2 for that rather than
+      # reporting a pass it never measured.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.15'
+
+      # Pinned, not floating. A tokenizer change between lizard releases moves
+      # every number this check compares, which would read as a pull request
+      # that added complexity on the day the release landed.
+      - name: Install lizard
+        run: pip install --disable-pip-version-check lizard==1.24.0
+
+      # The gate's own comparison logic, before it is used to judge anything.
+      - name: Self-test
+        run: python3 -m unittest discover -s scripts/complexity -p 'test_*.py'
+
+      - name: Complexity delta against the merge base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          THRESHOLD: ${{ vars.COMPLEXITY_THRESHOLD || '8' }}
+          ENFORCE: ${{ vars.COMPLEXITY_ENFORCE }}
+        run: |
+          if [ "${ENFORCE}" = "true" ]; then MODE=""; else MODE="--report-only"; fi
+          python3 scripts/complexity/check_complexity_delta.py \
+            --base "origin/${BASE_REF}" \
+            --threshold "${THRESHOLD}" \
+            ${MODE}
+
+  # The coverage upload to Qlty (#568), after a merge to `main` only (#1545).
+  # The frontend and functions rows of the verify matrix ran their suites with
+  # coverage and kept the two lcov files; this downloads both and uploads them
+  # in one go. Both name files relative to the repository root
+  # (`frontend/src/...`, `functions/src/...`), so one upload carries both.
+  #
+  # NO STORED TOKEN. The upload authenticates to Qlty with GitHub OIDC
+  # (`oidc: true`, `id-token: write` on this job only), so there is no
+  # QLTY_COVERAGE_TOKEN to store, rotate or leak — the same federated-first
+  # rule as every Azure login in this repository
+  # (docs/standards/variables-and-secrets.md). Nothing here runs repository
+  # code: the checkout is for the repository metadata the upload records.
+  coverage:
+    name: coverage (qlty)
+    needs: verify
+    if: github.event_name == 'push'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # the checkout, nothing more
+      id-token: write # the Qlty OIDC upload; nothing else here requests a token
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download the coverage reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*
+          path: ${{ runner.temp }}/coverage
+
+      - name: Upload coverage to Qlty
+        uses: qltysh/qlty-action/coverage@ebcd284bf32e36a030afe15f1e136c7be08b9506 # v2.5.0
+        with:
+          oidc: true
+          format: lcov
+          # The action's default is to log a failed upload and pass the step.
+          # Off, so a report Qlty did not take fails this job and `gate` with
+          # it (CodeRabbit on #1549): a merge without a coverage upload is a
+          # problem to see, not to skip.
+          skip-errors: false
+          files: |
+            ${{ runner.temp }}/coverage/coverage-frontend/lcov.info
+            ${{ runner.temp }}/coverage/coverage-functions/lcov.info
+
+  # THE ONE REQUIRED CHECK (#1545). The `main` ruleset requires `gate`, and
+  # `gate` waits for every job above. `!cancelled()` keeps it running when a
+  # needed job was skipped (its `if:` said the change did not touch its
+  # files), because without it GitHub skips a job whose dependency was
+  # skipped, and a skipped required check is counted as passing, which is the
+  # one outcome this job must never let through by accident. So it looks at
+  # each result itself: a failure or a cancellation anywhere above fails the
+  # gate; success and skipped pass it. The result list comes from the `needs`
+  # context, which lists every job named below with its result.
+  gate:
+    name: gate
+    needs: [changes, verify, e2e, ansible-lint, coder-template, harness, complexity, coverage]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Every needed job succeeded or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad="$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key')"
+          if [ -n "$bad" ]; then
+            echo "::error title=CI gate::These jobs failed or were cancelled: $(echo "$bad" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "gate: every job succeeded or was skipped"

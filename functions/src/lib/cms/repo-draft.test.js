@@ -400,7 +400,7 @@ describe('sha256Hex', () => {
 // (quadratic: 270 000 is about 20 s). They are scans now.
 //
 // HOW IT IS TESTED. Not by an absolute time: CI also runs this file under V8
-// coverage (`npm run test:coverage`, the "coverage (qlty)" job), which makes
+// coverage (`npm run test:coverage`, the `functions (azure)` job), which makes
 // the same code about 30 times slower, and a shared runner's speed varies, so
 // a fixed budget either fails on a healthy parser or passes a slow one. The
 // assertion is the growth rate, which neither changes: run the parser on an

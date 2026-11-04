@@ -78,14 +78,16 @@ const scriptsRow = ROWS.find((row) => row.name === SCRIPTS_ROW);
 const DETECT_STEPS = JOBS.flatMap((job) => job.steps.filter((step) => step.run?.includes('git diff --name-only')).map((step) => ({ job: job.key, step })));
 
 /**
- * Where a path that matches each non-matrix step's real filter lives. The
- * matrix step takes one from the row's folder. A step this table does not
- * know fails the test that needs it, so a new one is noticed.
+ * Where a path that matches each non-matrix step's real filter lives, by the
+ * step's name (the four live in the `changes` job since #1545). The matrix
+ * step takes one from the row's folder. A step this table does not know
+ * fails the test that needs it, so a new one is noticed.
  */
 const MATCHING_PATH = {
-  'ansible-lint': 'lab-host/ansible/site.yml',
-  'coder-template': 'lab-host/coder/compose.yaml',
-  harness: 'hooks/claude_event.py',
+  'Detect frontend changes for the browser suites': 'frontend/e2e/zz-probe.spec.js',
+  'Detect lab-host changes': 'lab-host/ansible/site.yml',
+  'Detect lab-host/coder changes': 'lab-host/coder/compose.yaml',
+  'Detect harness changes': 'hooks/claude_event.py',
 };
 
 /** One entry per time a detection step runs: the matrix step once per row. */
@@ -93,7 +95,7 @@ const ENTRIES = DETECT_STEPS.flatMap(({ job, step }) => {
   if (step.env.FILTER === '${{ matrix.filter }}') {
     return ROWS.map((row) => ({ job, step, row, label: `${job} / ${row.name}`, filter: row.filter, path: `${row.dir}/zz-probe.txt` }));
   }
-  return [{ job, step, label: `${job} / ${step.name}`, filter: step.env.FILTER, path: MATCHING_PATH[job] }];
+  return [{ job, step, label: `${job} / ${step.name}`, filter: step.env.FILTER, path: MATCHING_PATH[step.name] }];
 });
 /** The same, with the matrix step once: for what does not depend on the row's filter. */
 const DISTINCT = ENTRIES.filter((entry, i) => ENTRIES.findIndex((other) => other.step === entry.step) === i);
@@ -139,15 +141,43 @@ function stepsThatRun(row, relevant) {
 // 1. What the change-detection steps are made of, read as text.
 // ---------------------------------------------------------------------------
 describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
-  it('finds the matrix rows and the four change-detection steps (a quiet parse would make every test below pass for nothing)', () => {
+  it('finds the matrix rows and the five change-detection steps (a quiet parse would make every test below pass for nothing)', () => {
     expect(ROWS.map((row) => row.dir)).toEqual(COMPONENTS.map((component) => component.dir));
+    // The matrix row's step stays in the verify job; the other four moved to
+    // the `changes` job, whose outputs the jobs with an `if:` read (#1545).
     expect(DETECT_STEPS.map(({ job, step }) => `${job}: ${step.name}`)).toEqual([
+      'changes: Detect frontend changes for the browser suites',
+      'changes: Detect lab-host changes',
+      'changes: Detect lab-host/coder changes',
+      'changes: Detect harness changes',
       'verify: Detect component changes',
-      'ansible-lint: Detect lab-host changes',
-      'coder-template: Detect lab-host/coder changes',
-      'harness: Detect harness changes',
     ]);
-    expect(ENTRIES).toHaveLength(ROWS.length + 3);
+    expect(ENTRIES).toHaveLength(ROWS.length + 4);
+  });
+
+  // The point of the `changes` job: a job that is not needed is skipped
+  // outright (no runner), and the gate counts a skipped job as fine. Each
+  // answer must reach the job that reads it, and the gate must wait for
+  // every job, or a failure could go unreported.
+  it('each `changes` answer is a job output that exactly one job reads in its `if:`, and the gate needs every other job (#1545)', () => {
+    const changes = JOBS.find((job) => job.key === 'changes');
+    const outputs = changes.lines.filter((line) => /^ {6}[a-z0-9]+: \$\{\{ steps\.[a-z0-9]+\.outputs\.relevant \}\}$/.test(line)).map((line) => line.trim().split(':')[0]);
+    expect(outputs).toEqual(['e2e', 'ansible', 'coder', 'harness']);
+    for (const output of outputs) {
+      const ids = changes.steps.filter((step) => step.id === output);
+      expect(ids, `output ${output} has no step with that id`).toHaveLength(1);
+      expect(ids[0].run).toContain('git diff --name-only');
+      const readers = JOBS.filter((job) => job.lines.some((line) => line === `    if: needs.changes.outputs.${output} == 'true'`));
+      expect(readers.map((job) => job.key), `output ${output} must be read by exactly one job`).toHaveLength(1);
+      expect(readers[0].lines, `${readers[0].key} must need changes`).toContain('    needs: changes');
+    }
+    const gate = JOBS.find((job) => job.key === 'gate');
+    const needs = gate.lines.find((line) => /^ {4}needs:/.test(line));
+    const named = needs.replace(/^ {4}needs:\s*\[|\]\s*$/g, '').split(',').map((name) => name.trim()).sort();
+    expect(named).toEqual(JOBS.map((job) => job.key).filter((key) => key !== 'gate').sort());
+    expect(gate.lines).toContain('    if: ${{ !cancelled() }}');
+    expect(gate.steps[0].env.RESULTS).toBe('${{ toJSON(needs) }}');
+    expect(gate.steps[0].run).toMatch(/"failure" or \.value\.result == "cancelled"/);
   });
 
   it('no step in ci.yml decides with `if grep`, because grep answering 2 would read as "no"', () => {
@@ -457,6 +487,8 @@ export function timeoutMinutes(job) {
  */
 const LEFT_OUT = new Map([
   ['addon-image-scout.yml / scout', 'Never checks out this repository: it only reads the published images. It has its own limit anyway (15 minutes).'],
+  ['ci.yml / coverage', 'Checks out for the repository metadata the upload records, then only downloads artifacts and runs the Qlty action; no shell step runs code from this repository. It has its own limit anyway (10 minutes).'],
+  ['ci.yml / gate', 'Never checks out: it only reads the results of the jobs it needs from the `needs` context. It has its own limit anyway (5 minutes).'],
   ['dependency-review.yml / dependency-review', 'Its only step after the checkout is the dependency-review action; there is no shell step that runs code from this repository.'],
   ['docs-pages.yml / deploy', 'Never checks out the repository: it hands the site the build job made to the Pages deploy action, with no shell step.'],
 ]);

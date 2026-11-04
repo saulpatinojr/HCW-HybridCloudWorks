@@ -160,6 +160,7 @@ nav:
       - AI Engine models and costs: runbooks/ai-engine-model-review.md
       - Cost page: runbooks/cost.md
       - PyYAML wheel for the lab host: runbooks/pyyaml-wheel.md
+      - Required checks and the main ruleset: runbooks/required-checks.md
   - Standards:
       - IaC repository standard: standards/iac-repository-standard.md
       - Naming convention: standards/naming-convention.md

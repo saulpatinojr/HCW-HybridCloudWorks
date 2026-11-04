@@ -233,3 +233,45 @@ repository keeps them, in the "Accepted risks" table of
 [`TODO.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/TODO.md)
 (linked by its GitHub address, because the docs site build rejects a relative
 link to a file outside `docs/`).
+
+## Addendum, 2026-11-04: one `gate` context stands for CI ([#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545))
+
+The decision above kept every CI job a required context so that none could
+be filtered out at the trigger. Its cost had grown: fifteen required contexts,
+five of them jobs that ran for a few seconds only to post their name, and a
+"strict" ruleset (the head must be up to date with `main`) that re-ran all of
+them on every open pull request after every merge. The shape changes; the
+reasoning does not.
+
+- **`ci.yml` ends in one job, `gate`, and the ruleset requires that one.**
+  `gate` waits for every other job (`needs`), runs even when some were skipped
+  (`if: ${{ !cancelled() }}`) and fails when any result is `failure` or
+  `cancelled`. The jobs that used to run as placeholders (`e2e (playwright)`,
+  `ansible-lint (lab-host)`, `coder (lab-host)`, `harness (python)`) now carry
+  a job-level `if:` fed by a first `changes` job, and are skipped outright when
+  their files did not change. The matrix rows keep their in-job detect step,
+  because a matrix row cannot carry an `if:` of its own.
+- **The doctrine still holds, for `gate`.** The `pull_request` trigger stays
+  unfiltered, for the same reason as before: a required context whose
+  workflow never ran is never satisfied. What changed is the fact that made
+  job-level skipping safe: GitHub counts a job skipped by its `if:` as a
+  passing check ("A job is skipped by a conditional: the job reports
+  Success", on
+  [Troubleshooting required status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/troubleshooting-required-status-checks),
+  read 2026-11-04). That is also why `gate` cannot rely on GitHub's default
+  behaviour for a skipped dependency: a required job skipped because its
+  dependency failed would be counted as passing, so `gate` reads each result
+  itself.
+- **The required list, and how it is applied,** are in the
+  [required checks runbook](../runbooks/required-checks.md). The old
+  fifteen job names stay declared until the ruleset is updated, so a pull
+  request is mergeable under either list.
+- **Coverage and the complexity delta are jobs of CI**, so one run shows one
+  result. The coverage upload to Qlty runs after a merge only; a pull request
+  runs only the rows its files touch, and a report with one package missing
+  would read as a drop.
+
+CodeQL is unchanged by this addendum: its three analyses still run on pull
+requests with the in-job language filter above. Moving them to `main` only
+(the issue's stage 3) waits for the ruleset update, because the three
+`Analyze …` contexts are required until then.

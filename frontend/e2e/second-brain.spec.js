@@ -204,3 +204,169 @@ test('map appearance, two-line headings, double expansion and full-screen close 
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
+
+// The reviewed note-to-draft handoff (#1408). Everything the browser sends is
+// asserted on, and every answer is a made-up fixture: the assistant's answer
+// never comes from a model here, so what this proves is the plumbing around
+// it (which idea the request names, how citations and missing evidence are
+// shown, what the editor and the draft route receive), not answer quality.
+const idea = {
+  ...note,
+  id: 'idea-rollback-plan',
+  title: 'Rollback plan for a state restore',
+  body: 'Synthetic idea: when a restore goes wrong, roll back in a fixed order.',
+  tags: ['terraform', 'recovery'],
+  version: 3,
+};
+const sourceA = {
+  ...note,
+  id: 'source-state-locks',
+  title: 'State locks research',
+  body: 'Synthetic source A: locks are released before the restore begins.',
+  version: 2,
+};
+const sourceB = {
+  ...note,
+  id: 'source-backup-order',
+  title: 'Backup order research',
+  body: 'Synthetic source B: back up the newest state file first.',
+  version: 2,
+};
+const outlineAnswer = {
+  insufficientEvidence: false,
+  partialRetrieval: false,
+  needsContext: false,
+  claims: [
+    { text: 'Release the locks before restoring.', sourceIds: ['S1'] },
+    { text: 'Back up the newest state file first.', sourceIds: ['S2'] },
+  ],
+  suggestions: [
+    {
+      text: 'Missing evidence: no indexed note covers how long a rollback takes.',
+      sourceIds: [],
+    },
+  ],
+  sources: [sourceA, sourceB].map((source, index) => ({
+    id: source.id,
+    citation: `S${index + 1}`,
+    title: source.title,
+    href: `/admin/second-brain?item=${encodeURIComponent(source.id)}`,
+  })),
+  usage: [],
+  indexing: { status: 'complete' },
+};
+const question = 'Outline the next article on rolling back a restore';
+
+test('an outline for the selected idea cites its sources, becomes a reviewed note and one draft', async ({
+  page,
+  identity,
+}, testInfo) => {
+  identity.answerApi('cms/brain/status', {
+    enabled: true,
+    aiEnabled: true,
+    indexing: { status: 'complete', count: 3 },
+  });
+  identity.answerApi('cms/brain/items', { items: [idea, sourceA, sourceB], after: null });
+  for (const item of [idea, sourceA, sourceB])
+    identity.answerApi(`cms/brain/items/${item.id}`, { item, backlinks: [] });
+  identity.answerApi('cms/brain/ask', outlineAnswer);
+  const draftCalls = [];
+  page.on('request', (request) => {
+    if (/\/api\/cms\/brain\/draft\//.test(request.url()) && request.method() === 'POST')
+      draftCalls.push({ url: request.url(), body: request.postDataJSON() });
+  });
+  await identity.signIn('/admin/second-brain');
+  const main = page.locator('#admin-main');
+
+  // (1) With the idea selected, the outline request names that idea and no other.
+  await main.getByRole('button', { name: idea.title }).click();
+  await expect(main.getByRole('textbox', { name: 'Markdown', exact: true })).toHaveValue(idea.body);
+  await main.getByRole('button', { name: 'Ask', exact: true }).click();
+  await expect(main.getByText(`Starting with: ${idea.title}`)).toBeVisible();
+  await main.getByLabel('Action').selectOption('outline');
+  await main.getByLabel('Your question').fill(question);
+  const asked = page.waitForRequest(
+    (r) => r.url().endsWith('/api/cms/brain/ask') && r.method() === 'POST'
+  );
+  await main.getByRole('button', { name: 'Ask my brain' }).click();
+  expect((await asked).postDataJSON()).toEqual({ question, mode: 'outline', contextId: idea.id });
+
+  // (2) Two citations, each a link to its own protected source, and the
+  // missing-evidence item shown as a suggestion, not as a sourced claim.
+  await expect(main.getByText('Release the locks before restoring.')).toBeVisible();
+  await expect(main.getByText('Missing evidence: no indexed note covers')).toBeVisible();
+  const citationA = main.getByRole('link', { name: `S1: ${sourceA.title}`, exact: true });
+  const citationB = main.getByRole('link', { name: `S2: ${sourceB.title}`, exact: true });
+  await expect(citationA).toHaveAttribute('href', `/admin/second-brain?item=${sourceA.id}`);
+  await expect(citationB).toHaveAttribute('href', `/admin/second-brain?item=${sourceB.id}`);
+  await citationA.click();
+  await expect(main.getByRole('textbox', { name: 'Markdown', exact: true })).toHaveValue(
+    sourceA.body
+  );
+  await expect(page).toHaveURL(/item=source-state-locks$/);
+
+  // (3) "Review as a new note" fills the editor with the outline, and saving
+  // sends that body with the two sources as the note's links.
+  await main.getByRole('button', { name: 'Review as a new note' }).click();
+  const editor = main.getByRole('textbox', { name: 'Markdown', exact: true });
+  const outline = await editor.inputValue();
+  expect(outline).toContain('## Source-backed answer');
+  expect(outline).toContain('Release the locks before restoring. (S1)');
+  expect(outline).toContain('Missing evidence: no indexed note covers');
+  expect(outline).toContain(`[S1: ${sourceA.title}](/admin/second-brain?item=${sourceA.id})`);
+  await expect(main.getByText('note · Version 0', { exact: true })).toBeVisible();
+  // The same route answers the save (POST) and the list refresh (GET) that
+  // follows it; the saved item is the one the browser sent, one version up.
+  identity.answerApi('cms/brain/items', (request) =>
+    request.method() === 'POST'
+      ? { item: { ...request.postDataJSON().item, version: 1 } }
+      : { items: [idea, sourceA, sourceB], after: null }
+  );
+  const saved = page.waitForRequest(
+    (r) => r.url().endsWith('/api/cms/brain/items') && r.method() === 'POST'
+  );
+  await main.getByRole('button', { name: 'Save note', exact: true }).click();
+  const saveBody = (await saved).postDataJSON();
+  expect(saveBody.version).toBe(0);
+  expect(saveBody.item.title).toBe(question);
+  expect(saveBody.item.body).toBe(outline);
+  expect(saveBody.item.links).toEqual([sourceA.id, sourceB.id]);
+  const noteId = saveBody.item.id;
+  await expect(main.getByText('note · Version 1', { exact: true })).toBeVisible();
+
+  // (4) "Create draft" sends the reviewed title and text to the draft route
+  // of that note (whose saved links are the provenance the API records). A
+  // failed attempt and its retry carry the same requestId, so the API can
+  // return the one draft instead of making a second; after success the
+  // button is disabled, so a second click cannot send anything.
+  await main.getByText('Create an article draft from this note').click();
+  await expect(main.getByLabel('Draft title')).toHaveValue(question);
+  await expect(main.getByLabel('Draft text')).toHaveValue(outline);
+  const draftRoute = `cms/brain/draft/${noteId}`;
+  identity.answerApi(draftRoute, { ok: false, error: 'Draft store unavailable.' }, { status: 500 });
+  const createDraft = main.getByRole('button', { name: 'Create draft', exact: true });
+  await createDraft.click();
+  await expect(main.locator('details').getByRole('alert')).toContainText(
+    'Draft store unavailable.'
+  );
+  identity.answerApi(draftRoute, { id: 'brain_fixture_draft', href: '/admin/drafts' });
+  await createDraft.click();
+  await expect(main.getByRole('link', { name: 'Open Drafts', exact: true })).toHaveAttribute(
+    'href',
+    '/admin/drafts'
+  );
+  await expect(createDraft).toBeDisabled();
+  expect(draftCalls).toHaveLength(2);
+  expect(draftCalls[0].url).toMatch(new RegExp(`/api/cms/brain/draft/${noteId}$`));
+  expect(draftCalls[0].body.fields).toEqual({
+    title: question,
+    body: outline,
+    tags: [],
+    kind: 'article',
+    ideaOrigin: 'manual',
+  });
+  expect(draftCalls[0].body.requestId).toMatch(/^[0-9a-f-]{36}$/);
+  expect(draftCalls[1].body.requestId).toBe(draftCalls[0].body.requestId);
+  expect(draftCalls[1].body).toEqual(draftCalls[0].body);
+  await page.screenshot({ path: testInfo.outputPath('outline-to-draft.png'), fullPage: true });
+});

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useLocation, useSearchParams } from 'react-router';
 import { Brain, Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ConfirmModal from '@/components/admin/ConfirmModal';
@@ -149,6 +149,7 @@ function WorkspaceUnavailable({ access }) {
 export default function SecondBrainPage() {
   const access = useBrainAccess();
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
   const [view, setView] = useState('Home');
   const [notes, setNotes] = useState([]);
   const [after, setAfter] = useState(null);
@@ -173,7 +174,7 @@ export default function SecondBrainPage() {
     detailRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   }, [selectedId, editorEpoch]);
   const openSequence = useRef(0);
-  const initialLink = useRef(false);
+  const handledLink = useRef('');
   const dirtyRef = useRef(false);
   // Private in-memory recovery survives a failed capability refresh. The
   // identity-keyed provider unmounts this page when accounts change.
@@ -256,20 +257,33 @@ export default function SecondBrainPage() {
     },
     [canLeave]
   );
+  // Follow `?item=` and `?capture=` on every navigation, not only on mount
+  // (#1408); `handledLink` is the router key acted on. Stale capture answers
+  // and errors are dropped once `openSequence` has moved on (#1547).
   useEffect(() => {
-    if (!access.enabled || initialLink.current) return;
-    initialLink.current = true;
-    if (params.get('item')) Promise.resolve().then(() => open(params.get('item')));
-    else if (params.get('capture')) {
-      brainApi
-        .context(params.get('capture'))
+    if (!access.enabled || handledLink.current === location.key) return;
+    handledLink.current = location.key;
+    const item = params.get('item');
+    const capture = params.get('capture');
+    if (item) Promise.resolve().then(() => open(item));
+    else if (capture) {
+      const seq = ++openSequence.current;
+      canLeave()
+        .then((leave) => {
+          if (!leave) return null;
+          setError('');
+          return brainApi.context(capture);
+        })
         .then((data) => {
+          if (!data || seq !== openSequence.current) return;
+          setEditorSnapshot(null);
+          dirtyRef.current = false;
           setSelection(blank('note', { title: 'Content research', links: [data.sourceId] }));
           setBacklinks([]);
         })
-        .catch((err) => setError(err.message));
+        .catch((err) => (seq === openSequence.current ? setError(err.message) : undefined));
     }
-  }, [access.enabled, params, open]);
+  }, [access.enabled, location.key, params, open, canLeave]);
   async function search(next = null) {
     setBusy(true);
     setError('');
