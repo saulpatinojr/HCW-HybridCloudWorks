@@ -88,7 +88,7 @@ manual `make lock` run.
 - CloudAssessor did not group its GitHub Actions updates into one Dependabot pull request; CloudCrawler did. It does now.
 - CloudAssessor's CI checkouts left the workflow token on disk (zizmor `artipacked`); CloudCrawler's did not. Fixed in
   `ci.yml` and `security.yml`. **Still open:** the two release workflows (`publish-core.yml`, `publish-images.yml`),
-  which only run on a version tag, so a pull request cannot prove a change to them. Tracked in
+  which run on a version tag or a manual dry run, so a pull request's CI cannot prove a change to them. Tracked in
   [HCW-CloudAssessor_App#85](https://github.com/saulpatinojr/HCW-CloudAssessor_App/issues/85).
 
 ### What this means for this repository and the add-ons
@@ -104,9 +104,10 @@ manual `make lock` run.
 
 ### Not yet proven
 
-The new workflow has not run on GitHub. It only runs on a Dependabot pull request and needs the App above. It worked
-when Dependabot's next weekly Python pull request (Mondays) in either App shows the commit "Regenerate
-requirements(…).lock.txt from uv.lock (make lock)", and the required checks ran on that commit by themselves.
+The new workflow has not run on GitHub. It only runs on a Dependabot pull request and needs the App above. It will be
+proven when Dependabot's next weekly Python pull request (Mondays) in either App, after the App is set up, shows the
+commit "Regenerate requirements(…).lock.txt from uv.lock (make lock)" and the required checks run and pass on that
+commit by themselves.
 
 ## Completed application work
 
