@@ -196,19 +196,25 @@ jobs:
 
       # The role tests (the `role-tests` job): the roles, with their tasks,
       # templates, defaults and tests, the group_vars the tests render with,
-      # and the inventory the syntax check and tests load. The last four are
-      # files the tests read outside lab-host/ansible/: docker-runner.js
-      # (hcw-labjob-sweep.test.sh checks the sweep's label against the
-      # JOB_LABEL it exports), capabilities.js (the proxy run pulls the image
-      # it names), report-host-check.js (hcw-portainer-check.test.py checks
-      # it exists) and docs/runbooks/labs-host.md (coder-signin.test.sh and
-      # hcw-coder-automation.test.py check its Coder lines, #954).
+      # and the inventory the syntax check and tests load. The rest are the
+      # files the tests assert on outside lab-host/ansible/, each named in
+      # ROLE_TEST_READS in scripts/ci-workflow-steps.test.mjs with the test
+      # that reads it: lab-host/coder/ (the templates' workspace label and
+      # image digest, the Compose file), lab-host/bootstrap.sh and
+      # lab-host/README.md (the install paths and the owner's lines),
+      # infra/lab-hybrid.tf and infra-lab/variables.tf (the data collection
+      # rule's facilities and the lab zone), docs/runbooks/labs-host.md (the
+      # Coder lines, #954), docker-runner.js (the sweep's JOB_LABEL),
+      # capabilities.js (the image the proxy run pulls) and
+      # report-host-check.js (the CLI the portainer helper is configured with).
       - name: Detect lab-host role changes
         id: roletests
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^lab-host/ansible/(roles|group_vars|inventory)/|^docs/runbooks/labs-host\.md$|^vps-agent/lib/(docker-runner|capabilities)\.js$|^vps-agent/bin/report-host-check\.js$'
-          # Nine minutes of runner, and none of it reads this file.
+          FILTER: '^lab-host/(ansible/(roles|group_vars|inventory)/|coder/|bootstrap\.sh$|README\.md$)|^infra/lab-hybrid\.tf$|^infra-lab/variables\.tf$|^docs/runbooks/labs-host\.md$|^vps-agent/lib/(docker-runner|capabilities)\.js$|^vps-agent/bin/report-host-check\.js$'
+          # Nine minutes of runner, and no test reads this file (the one that
+          # did, hcw-portainer-check.test.py, hands that check to
+          # scripts/ci-workflow-steps.test.mjs since 2026-11-04).
           WORKFLOW_SELF_TRIGGER: 'false'
         run: |
           set -euo pipefail
@@ -517,9 +523,12 @@ jobs:
           # no runs: the row already runs for about nine pull requests in
           # ten (141 of the last 150 merged commits, before and after). The
           # rest are listed file by file.
+          # vps-agent/bin/report-host-check.js (#1545): ci-workflow-steps.test.mjs
+          # checks that every file the lab-host role tests read outside
+          # lab-host/ansible/ exists and matches the role tests job's filter.
           - name: scripts (operations)
             dir: scripts
-            filter: '^(scripts/|\.github/workflows/|\.github/(actionlint\.yaml|pull_request_template\.md)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/lib/(cms|labs|http|cloud-tools)/|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll)|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|expected-unresolved|timers/agent-health|triggers/fetch-image)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
+            filter: '^(scripts/|\.github/workflows/|\.github/(actionlint\.yaml|pull_request_template\.md)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|bin/report-host-check\.js|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/lib/(cms|labs|http|cloud-tools)/|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll)|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|expected-unresolved|timers/agent-health|triggers/fetch-image)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
             lint: npm run lint
             test: npm test
           # vps-agent shells out to `docker run` with a payload that reached

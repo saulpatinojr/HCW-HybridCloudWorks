@@ -143,12 +143,11 @@ check("the helper names GET and no other HTTP method",
 check("the helper reads the token from $CREDENTIALS_DIRECTORY and takes no token argument",
       'os.environ.get("CREDENTIALS_DIRECTORY")' in helper_text and 'add_argument("--token' not in helper_text
       and 'add_argument("--config"' in helper_text)
-workflow = REPO / ".github" / "workflows" / "ci.yml"
-if workflow.is_file():
-    check("CI runs this test in the lab-host role tests job",
-          "run: python roles/portainer/tests/hcw-portainer-check.test.py" in workflow.read_text(encoding="utf-8"))
-else:
-    skip("CI runs this test", "no .github/ beside lab-host/")
+# That CI runs this test is checked by scripts/ci-workflow-steps.test.mjs
+# ("every role test file is a step of the role tests job"), not here: the
+# `lab-host role tests` job runs only when a file it reads changes, and a
+# check on .github/workflows/ci.yml from inside it would be the one read the
+# job's filter leaves out (#1545).
 cli_source = REPO / "vps-agent" / "bin" / "report-host-check.js"
 if (REPO / "vps-agent" / "bin").is_dir():
     check("the CLI the helper is configured with exists in vps-agent/bin", cli_source.is_file(), str(cli_source))

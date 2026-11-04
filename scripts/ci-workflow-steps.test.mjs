@@ -116,6 +116,29 @@ const SELF_TRIGGER = {
   harness: 'true',
 };
 
+/**
+ * The files outside lab-host/ansible/ that the role tests assert on (not
+ * merely skip without), by the test that reads them, read from the tests on
+ * 2026-11-04 (the review of #1545's second pull request). The `roletests`
+ * filter must match every one, or a pull request that changes only that
+ * file merges with `gate` green and the test goes red on the push to
+ * `main`. A new read outside lab-host/ansible/ is added here and to the
+ * filter together.
+ */
+const ROLE_TEST_READS = {
+  'caddy/tests/caddy-adapt.test.sh': ['infra-lab/variables.tf'],
+  'coder/tests/coder-signin.test.sh': ['docs/runbooks/labs-host.md', 'lab-host/README.md'],
+  'coder/tests/hcw-coder-automation.test.py': ['lab-host/bootstrap.sh', 'docs/runbooks/labs-host.md'],
+  'coder/tests/hcw-coder-template-push.test.sh': ['lab-host/coder/docker-compose.yml', 'lab-host/bootstrap.sh', 'lab-host/README.md'],
+  'hardening/tests/hcw-held-upgradable.test.sh': ['infra/lab-hybrid.tf'],
+  'hardening/tests/hcw-playbook-drift.test.sh': ['infra/lab-hybrid.tf'],
+  'hardening/tests/hcw-reboot-when-idle.test.sh': ['lab-host/coder/templates/hcw-lab/main.tf', 'vps-agent/lib/docker-runner.js'],
+  'lab_images/tests/lab-images-role.test.sh': ['lab-host/coder/templates/hcw-lab/main.tf'],
+  'labs_agent/tests/hcw-labjob-sweep.test.sh': ['vps-agent/lib/docker-runner.js'],
+  'portainer/tests/hcw-portainer-check.test.py': ['vps-agent/bin/report-host-check.js'],
+  'vault_tools/tests/hcw-vault-set.test.sh': ['lab-host/bootstrap.sh'],
+};
+
 /** One entry per time a detection step runs: the matrix step once per row. */
 const ENTRIES = DETECT_STEPS.flatMap(({ job, step }) => {
   if (step.env.FILTER === '${{ matrix.filter }}') {
@@ -225,7 +248,7 @@ describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
     const lint = changes.steps.find((step) => step.id === 'ansible');
     const tests = changes.steps.find((step) => step.id === 'roletests');
     expect(lint.env.FILTER).toBe('^lab-host/');
-    expect(tests.env.FILTER).toMatch(/^\^lab-host\/ansible\/\(roles\|group_vars\|inventory\)\//);
+    expect(tests.env.FILTER).toMatch(/^\^lab-host\/\(ansible\/\(roles\|group_vars\|inventory\)\/\|/);
     expect(JOBS.find((job) => job.key === 'ansible-lint').steps.map((step) => step.name)).toEqual([
       'Checkout',
       'Set up Python',
@@ -239,6 +262,33 @@ describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
     expect(roleTests.lines).toContain('    name: lab-host role tests');
     expect(roleTests.steps.filter((step) => /roles\/[a-z_]+\/tests\//.test(step.run ?? '')).length).toBeGreaterThan(20);
     expect(JOBS.find((job) => job.key === 'ansible-lint').steps.some((step) => /roles\/[a-z_]+\/tests\//.test(step.run ?? ''))).toBe(false);
+  });
+
+  // The split's own risk: a test that reads a file the filter does not name
+  // runs only after the merge. Every role test file is a step of the job,
+  // every file a test asserts on outside lab-host/ansible/ matches the
+  // filter, and every file the table names is still read by that test.
+  it('every role test file is a step of the role tests job, and every file a role test reads outside lab-host/ansible/ matches its filter', () => {
+    const roles = join(REPO, 'lab-host', 'ansible', 'roles');
+    const testFiles = readdirSync(roles)
+      .flatMap((role) => (existsSync(join(roles, role, 'tests')) ? readdirSync(join(roles, role, 'tests')).filter((name) => /\.test\.(sh|py)$/.test(name)).map((name) => `${role}/tests/${name}`) : []))
+      .sort();
+    expect(testFiles.length).toBeGreaterThan(20);
+    const runs = JOBS.find((job) => job.key === 'role-tests').steps.map((step) => step.run ?? '');
+    for (const file of testFiles) expect(runs.some((run) => run.includes(`roles/${file}`)), `${file} is not run by any step of the role tests job`).toBe(true);
+
+    const filter = new RegExp(JOBS.find((job) => job.key === 'changes').steps.find((step) => step.id === 'roletests').env.FILTER);
+    for (const [file, reads] of Object.entries(ROLE_TEST_READS)) {
+      expect(testFiles, `${file} in ROLE_TEST_READS is not a role test file`).toContain(file);
+      const text = readFileSync(join(roles, file), 'utf8');
+      for (const read of reads) {
+        expect(filter.test(read), `${read} is read by ${file} but the role tests filter does not match it`).toBe(true);
+        expect(existsSync(join(REPO, read)), `${read} (read by ${file}) does not exist`).toBe(true);
+        // The test names the file somewhere: by its last path part at least (the tests build the path from their own folder).
+        expect(text.includes(read.split('/').at(-1)), `${file} no longer names ${read}; drop it from ROLE_TEST_READS`).toBe(true);
+      }
+    }
+    expect(filter.test('.github/workflows/ci.yml'), 'the role tests filter must not name ci.yml: the switch takes it out').toBe(false);
   });
 
   it('no step in ci.yml decides with `if grep`, because grep answering 2 would read as "no"', () => {
