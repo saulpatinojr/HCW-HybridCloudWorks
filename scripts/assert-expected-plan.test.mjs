@@ -65,6 +65,20 @@ const FUNCTION_APP = 'azurerm_function_app_flex_consumption.hcw';
  * `[false]` where nothing is marked, `true` where something is, and unknown
  * values omitted from `after`.
  */
+
+/**
+ * The names of the `azurerm_cosmosdb_sql_role_assignment` blocks in `source`
+ * (Terraform text) whose `scope` is a Cosmos account's id and nothing more:
+ * `azurerm_cosmosdb_account.<any name>.id`, any spacing, with or without a
+ * trailing `#` or `//` comment. A database grant's scope is an interpolated
+ * string that goes on with `/dbs/<name>` and does not match (#1469 step 2).
+ */
+function accountScopedCosmosGrants(source) {
+  const blocks = [...source.matchAll(/^resource "azurerm_cosmosdb_sql_role_assignment" "([a-z0-9_]+)" \{[\s\S]*?^\}/gm)];
+  const accountScope = /^\s*scope\s*=\s*azurerm_cosmosdb_account\.[a-z0-9_]+\.id\s*(?:(?:#|\/\/).*)?$/m;
+  return blocks.filter((m) => accountScope.test(m[0])).map((m) => m[1]);
+}
+
 function fixture() {
   const plan = JSON.parse(readFileSync(join(HERE, 'fixtures', 'plan-permanent-diff.json'), 'utf8'));
   const app = plan.resource_changes.find((c) => c.address === FUNCTION_APP).change;
@@ -1139,13 +1153,25 @@ describe('DECLARED', () => {
     expect(accountGrantStands, 'the account-wide grant func_cosmos is back in infra/ (step 2 of #1469 removed it)').toBe(false);
     expect(accountGrantDeleteDeclared, 'func_cosmos is gone from infra/ but its delete is not declared').toBe(true);
     // No Cosmos data-plane role assignment in infra/ may be scoped to the
-    // whole account again. The scope line of such a block is the account's
-    // id with nothing after it; a database grant appends `/dbs/<name>`.
-    const roleBlocks = [...infraSource.matchAll(/^resource "azurerm_cosmosdb_sql_role_assignment" "([a-z0-9_]+)" \{[\s\S]*?^\}/gm)];
-    const accountScoped = roleBlocks
-      .filter((m) => /^\s*scope\s*=\s*azurerm_cosmosdb_account\.hcw\.id\s*$/m.test(m[0]))
-      .map((m) => m[1]);
-    expect(accountScoped, 'a Cosmos role assignment is scoped to the whole account').toEqual([]);
+    // whole account again.
+    expect(accountScopedCosmosGrants(infraSource), 'a Cosmos role assignment is scoped to the whole account').toEqual([]);
+  });
+
+  it('reads an account-scoped Cosmos grant whatever the account resource is called and whatever trails the scope line (#1469 step 2)', () => {
+    // The reader above is only as good as its regex, so it is exercised on
+    // the shapes a block could take: a database grant (ignored), the account
+    // id with a trailing comment, under another account resource name, with
+    // odd spacing, and a scope that only begins with the account id.
+    const block = (name, scope) =>
+      `resource "azurerm_cosmosdb_sql_role_assignment" "${name}" {\n  scope = ${scope}\n}\n`;
+    const source = [
+      block('db_grant', '"${azurerm_cosmosdb_account.hcw.id}/dbs/${each.value}"'),
+      block('commented', 'azurerm_cosmosdb_account.hcw.id # account scope'),
+      block('slashes', 'azurerm_cosmosdb_account.hcw.id // account scope'),
+      block('other_account', 'azurerm_cosmosdb_account.scratch.id'),
+      block('spaced', '   azurerm_cosmosdb_account.hcw.id   '),
+    ].join('\n');
+    expect(accountScopedCosmosGrants(source)).toEqual(['commented', 'slashes', 'other_account', 'spaced']);
   });
 
   it('prunes the Cosmos request-log filter’s four entries once applied, with their resources still in infra/ and the azapi table gone (#1530, pruned 2026-11-04)', () => {
