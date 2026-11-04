@@ -107,8 +107,7 @@ export default function LivePagesPage() {
         <p className="mt-3 text-xs text-muted-foreground">{renderStatusMessage()}</p>
         {!includeLegacyPages && (
           <p className="mt-1 text-xs text-muted-foreground">
-            Showing `content` only by default. Enable legacy pages to include older `blogs`
-            records.
+            Showing `content` only by default. Enable legacy pages to include older `blogs` records.
           </p>
         )}
         {archiveError && (
@@ -122,9 +121,7 @@ export default function LivePagesPage() {
 
   const renderLoadingCard = () => (
     <Card>
-      <CardContent className="p-8 text-sm text-muted-foreground">
-        Loading live pages...
-      </CardContent>
+      <CardContent className="p-8 text-sm text-muted-foreground">Loading live pages...</CardContent>
     </Card>
   );
 
@@ -191,5 +188,3 @@ export default function LivePagesPage() {
     </div>
   );
 }
-
-

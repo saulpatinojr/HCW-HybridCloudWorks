@@ -59,12 +59,14 @@ export default function AdminAuthGuard({ children }) {
   const [error, setError] = useState(null);
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const [bootstrapMessage, setBootstrapMessage] = useState('');
+  // Once the server rejects a bootstrap attempt (admins already exist / not
+  // on the allowlist), hide the button — it cannot succeed for this user.
   const [bootstrapDenied, setBootstrapDenied] = useState(false);
 
   const handleSignIn = async () => {
     try {
       setError(null);
-      await signIn();
+      await signIn(); // popup, falling back to redirect internally
     } catch (err) {
       setError(err?.message || 'Unable to sign in.');
     }
@@ -73,7 +75,7 @@ export default function AdminAuthGuard({ children }) {
   const handleReauthenticate = async () => {
     try {
       setError(null);
-      await reauthenticateForApi();
+      await reauthenticateForApi(); // redirect; the page navigates away
     } catch (err) {
       setError(err?.message || 'Unable to renew your session.');
     }
@@ -98,6 +100,7 @@ export default function AdminAuthGuard({ children }) {
           ? 'Initial admin bootstrap completed. Refreshing session...'
           : 'Role updated successfully. Refreshing session...'
       );
+      // The backend cleared its role cache; a reload re-runs the status check.
       setTimeout(() => {
         window.location.reload();
       }, 600);
@@ -109,10 +112,13 @@ export default function AdminAuthGuard({ children }) {
     }
   };
 
+  // A status role and a label (AP-F12, #936): the bare ring this was left a
+  // screen reader on an empty page with nothing to announce.
   if (!authReady || (user && adminStatusLoading)) {
     return <Spinner size="lg" label="Checking your access" className="min-h-[60vh]" />;
   }
 
+  // Not signed in
   if (!user) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -136,30 +142,53 @@ export default function AdminAuthGuard({ children }) {
     );
   }
 
+  // Signed in, but the check could not run. NOT a denial, and deliberately
+  // says nothing about whether this account is an admin — because nobody
+  // knows. The hook has already spent its one automatic re-authentication by
+  // the time this renders, so the recovery here is a button.
   if (accessState === ACCESS_STATE.UNKNOWN) {
     const isSession = unknownReason === UNKNOWN_REASON.SESSION;
+    // A configuration problem is the one `unknown` that a retry cannot help:
+    // the token verified and was refused for what it lacks, so re-acquiring it
+    // returns the same token and the same refusal (#517). Offering a button
+    // that cannot work is worse than offering none.
     const isConfiguration = unknownReason === UNKNOWN_REASON.CONFIGURATION;
-    const title = isConfiguration ? 'Admin access is misconfigured' : 'Could not verify your access';
-    let description = 'The admin service did not answer, so your access could not be checked. This is not a refusal.';
 
+    // The three texts and the one button, chosen once here instead of in a
+    // nested ternary inside the markup (qlty complexity finding, #1527).
+    const title = isConfiguration
+      ? 'Admin access is misconfigured'
+      : 'Could not verify your access';
+    let description =
+      'The admin service did not answer, so your access could not be checked. This is not a refusal.';
     if (isConfiguration) {
-      description = 'Your sign-in worked. The API refused the token for what it is missing, so signing in again would produce the same result — this needs a configuration change, not another attempt.';
+      description =
+        'Your sign-in worked. The API refused the token for what it is missing, so signing in again would produce the same result — this needs a configuration change, not another attempt.';
     } else if (isSession) {
       description = 'Your sign-in needs renewing before we can check your admin access.';
     }
 
-    const actionButton = isSession ? (
-      <Button onClick={handleReauthenticate} className="gap-2">
-        <LogIn className="h-4 w-4" />
-        Sign in again
-      </Button>
-    ) : (
-      <Button onClick={recheck} className="gap-2">
-        <RefreshCw className="h-4 w-4" />
-        Try again
-      </Button>
-    );
-
+    // A configuration problem gets no button at all (see above). No busy
+    // state on the retry button: the spinner branch above catches
+    // `adminStatusLoading` first, so this whole card is replaced by the
+    // spinner for the duration of the retry. A "Checking..." label here
+    // would never render.
+    let actionButton = null;
+    if (isSession) {
+      actionButton = (
+        <Button onClick={handleReauthenticate} className="gap-2">
+          <LogIn className="h-4 w-4" />
+          Sign in again
+        </Button>
+      );
+    } else if (!isConfiguration) {
+      actionButton = (
+        <Button onClick={recheck} className="gap-2">
+          <RefreshCw className="h-4 w-4" />
+          Try again
+        </Button>
+      );
+    }
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <Card className="w-full max-w-md">
@@ -184,7 +213,11 @@ export default function AdminAuthGuard({ children }) {
     );
   }
 
+  // Signed in, checked, and genuinely not an admin.
   if (!isAdmin) {
+    // Only the server knows whether bootstrapping would work, and it says so
+    // on the status answer. Guessing "offer it and let the POST decide" is
+    // what put the button in front of an owner who already held the record.
     const canBootstrap = adminStatus?.canBootstrap === true && !bootstrapDenied;
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -220,6 +253,10 @@ export default function AdminAuthGuard({ children }) {
     );
   }
 
+  // Authorized admin. The role the registry answered with goes down with the
+  // portal (AP-F4, #928): the menu, the Explore strip and every RoleGate read
+  // this one verified value rather than mounting their own status check.
+  // `adminStatus` is set here by construction: `isAdmin` is its own field.
   return (
     <AdminRoleProvider value={adminStatus.role}>
       <BrainAccessProvider key={user.uid} accountLabel={user.email}>
@@ -228,5 +265,3 @@ export default function AdminAuthGuard({ children }) {
     </AdminRoleProvider>
   );
 }
-
-
