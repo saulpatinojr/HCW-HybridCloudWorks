@@ -16,9 +16,3 @@ frontend/src/pages/NewsletterConfirmPage.test.jsx:generic-api-key:16
 
 # The Azure Cosmos DB emulator's published well-known key, against localhost.
 functions/local.settings.json.example:generic-api-key:7
-
-# Entra API application (client) id: an identifier, not a credential.
-scripts/cutover/01-entra-api.ps1:generic-api-key:51
-scripts/cutover/02-entra-spa-client.ps1:generic-api-key:75
-scripts/cutover/03-entra-dev-client.ps1:generic-api-key:61
-scripts/rollback/restore-admin-signin.ps1:generic-api-key:60

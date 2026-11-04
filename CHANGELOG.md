@@ -1006,6 +1006,34 @@ This project has not cut a tagged release; entries are grouped under
   changes). `scripts/docs-redaction.test.mjs` fails on a role file with a
   real-looking id, on each new scan path, and if that step leaves the
   policy workflow.
+- **The Entra scripts look the API's client id up instead of carrying it,
+  and the redaction gate reads the rest of the tree
+  ([#1540](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1540)).**
+  `scripts/cutover/01-entra-api.ps1`, `02-entra-spa-client.ps1`,
+  `03-entra-dev-client.ps1`, `scripts/rollback/restore-admin-signin.ps1`
+  and `scripts/lab/Register-LabAgent.ps1` carried the HCWSite API's real
+  application id as a parameter default, the rollback script the tenant id
+  too, and their tests and two frontend tests held the same values as
+  fixtures, one folder below where the gate read. Each script now takes
+  `-ApiAppId`, then `HCW_API_APP_ID`, then the one registration named
+  `HCWSite API` in the signed-in tenant (`scripts/lib/Resolve-EntraApiAppId.ps1`;
+  the lab script's own `Resolve-LabApiAppId`, tested with Pester), stopping
+  when none or several match; the rollback script compares `-TenantId` or
+  `HCW_TENANT_ID` only when one is given, and otherwise the lookup is the
+  tenant check. The gate now reads every `.ps1` and `.sh` under `scripts/`,
+  `lab-image/**/*.sh`, `lab-host/**` (yml, yaml, sh, j2), `functions/src/**/*.js`
+  and `frontend/src/**/*.{js,jsx}`. Every GUID those paths held was
+  classified: the real ids went; the made-up fixture ids were rewritten to a
+  first group of one repeated digit (`99999999-...`), which the gate now
+  recognises along with the placeholder and the browser tests' `e2e00000-...`
+  family; the Defender WSL walkthrough's and simulator's sample device ids
+  became obviously fake; and the four Azure Policy built-in definition ids
+  `estate.js` excludes, the two UUIDv5 namespaces the draft ids are hashed
+  under, the three UUIDv5 values their tests assert, and three public URL
+  names (Amazon Music's podcast listing, two ElevenLabs preview objects)
+  went on the allow-list with their reasons. The four gitleaks fingerprints
+  for the removed defaults left `.gitleaksignore`, and the rollback runbook,
+  the lab-host runbook and ADR 0006 say where the id comes from now.
 - **The Function App's account-wide Cosmos grant is removed; the identity
   keeps the `hcw` database grant alone, the second of the two steps
   ([#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469)).**

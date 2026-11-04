@@ -28,9 +28,9 @@ PluginState            : Running
 SensorHealth           : Healthy
 TelemetryChannel       : Connected (Sense.exe Host Proxy)
 HostDeviceName         : LAB-HOST
-HostDeviceId           : 8f3b2e10-4c9a-4d7e-9b1a-7c6d5e4f3a21
+HostDeviceId           : aaaaaaaa-1111-4111-8111-111111111111
 WslDeviceName          : LAB-HOST-wslc
-WslDeviceId            : c41a9d02-7e31-4b88-a52f-19d0e8b74c11
+WslDeviceId            : bbbbbbbb-2222-4222-8222-222222222222
 OnboardingState        : Onboarded (Inherited from Windows Host)
 DistributionsMonitored : Ubuntu-24.04, wslc-session-vm
 eBPFCollector          : Active (kernel 6.6.87.2-microsoft-standard-WSL2)
@@ -53,9 +53,9 @@ cat > "$EVENT_FILE" <<JSON
 {
   "Simulated": true,
   "Timestamp": "$TIMESTAMP",
-  "DeviceId": "c41a9d02-7e31-4b88-a52f-19d0e8b74c11",
+  "DeviceId": "bbbbbbbb-2222-4222-8222-222222222222",
   "DeviceName": "LAB-HOST-wslc",
-  "HostDeviceId": "8f3b2e10-4c9a-4d7e-9b1a-7c6d5e4f3a21",
+  "HostDeviceId": "aaaaaaaa-1111-4111-8111-111111111111",
   "DeviceTag": "WSL2",
   "AlertId": "da638957824190812451_1083",
   "Title": "Simulated Linux EDR DIY Test Alert (MDE WSL2 Plug-in)",

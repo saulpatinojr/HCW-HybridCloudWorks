@@ -52,8 +52,10 @@ Entra ids are not GUIDs (#516). The rationale is kept, struck through, in
 
 - **API (resource):** exposes `access_as_admin`, defines the `Admin` and `LabAgent` app roles, holds
   the role assignments, and is what `ENTRA_API_AUDIENCE` names. **Unchanged by the split** — its app
-  id is the `$ApiAppId` default in `scripts/cutover/01-entra-api.ps1`, which is where identifiers
-  live; the docs redaction gate keeps them out of here.
+  id is not written anywhere in the repository: `scripts/cutover/01-entra-api.ps1` and the other
+  Entra scripts look it up by the registration's name, `HCWSite API`, in the signed-in tenant
+  (`scripts/lib/Resolve-EntraApiAppId.ps1`), and the redaction gate keeps a real id out of every
+  tracked file ([#1540](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1540)).
 - **SPA (client):** a separate registration, public client only, whose app id is the
   `VITE_ENTRA_CLIENT_ID` repository variable. It exposes nothing and holds no credentials.
 - **Dev client:** a third registration carrying `http://localhost` redirect URIs, so the production

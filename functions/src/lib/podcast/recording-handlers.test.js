@@ -49,7 +49,7 @@ const handlers = ({ store = makeStore(), storage = makeStorage(), guard = allowG
     storage,
     env,
     now: () => NOW,
-    uuid: () => '0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70',
+    uuid: () => 'dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70',
   });
 
 const audioBody = (over = {}) => ({
@@ -90,14 +90,14 @@ describe('generateFromRecording', () => {
     expect(res.status).toBe(202);
     expect(JSON.parse(res.body)).toEqual({
       ok: true,
-      jobId: '0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70',
+      jobId: 'dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70',
       type: RECORDING_JOB_TYPE,
       status: 'queued',
-      poll: 'getJob?jobId=0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70',
+      poll: 'getJob?jobId=dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70',
       transcriptId: 'plaud_rec-1',
     });
     expect(store.upsertDoc).toHaveBeenCalledWith(JOBS_CONTAINER, {
-      id: '0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70',
+      id: 'dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70',
       type: RECORDING_JOB_TYPE,
       payload: { recordingId: 'rec-1' },
       status: 'queued',
@@ -110,7 +110,7 @@ describe('generateFromRecording', () => {
       error: null,
     });
     expect(enqueue).toHaveBeenCalledWith({
-      jobId: '0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70',
+      jobId: 'dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70',
       type: RECORDING_JOB_TYPE,
     });
   });
@@ -192,17 +192,17 @@ describe('uploadRecording', () => {
     const body = JSON.parse(res.body);
     expect(body).toEqual({
       ok: true,
-      jobId: '0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70',
+      jobId: 'dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70',
       type: UPLOAD_JOB_TYPE,
       status: 'queued',
-      poll: 'getJob?jobId=0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70',
-      uploadPath: 'uploads/0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3',
-      audioUrl: '/api/public/media/podcast/uploads/0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3',
+      poll: 'getJob?jobId=dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70',
+      uploadPath: 'uploads/dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3',
+      audioUrl: '/api/public/media/podcast/uploads/dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3',
       bytes: 16,
     });
     expect(storage.uploadBlob).toHaveBeenCalledWith(
       'podcast',
-      'uploads/0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3',
+      'uploads/dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3',
       expect.any(Buffer),
       'audio/mpeg',
       { source: 'recording-upload', uploadedBy: 'oid-1' },
@@ -210,9 +210,9 @@ describe('uploadRecording', () => {
     );
     expect(store.upsertDoc.mock.calls[0][1]).toMatchObject({
       type: UPLOAD_JOB_TYPE,
-      payload: { uploadPath: 'uploads/0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3', title: 'Stand-up' },
+      payload: { uploadPath: 'uploads/dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3', title: 'Stand-up' },
     });
-    expect(enqueue).toHaveBeenCalledWith({ jobId: '0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70', type: UPLOAD_JOB_TYPE });
+    expect(enqueue).toHaveBeenCalledWith({ jobId: 'dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70', type: UPLOAD_JOB_TYPE });
   });
 
   it('503s with the configuration sentence before reading the body when Plaud Embedded is unset', async () => {
@@ -283,7 +283,7 @@ describe('uploadRecording', () => {
   });
 
   describe('an upload whose job cannot be queued is deleted again', () => {
-    const expectedPath = 'uploads/0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3';
+    const expectedPath = 'uploads/dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3';
 
     it('when the job document write throws: the blob is deleted and the 500 stands', async () => {
       const store = makeStore();

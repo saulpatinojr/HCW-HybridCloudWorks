@@ -59,7 +59,15 @@
 .PARAMETER ApiAppId
     The client id of the API app registration (HCWSite API), whose LabAgent
     app role the agent is assigned and whose api:// identifier is the scope.
-    The same default as scripts/cutover/01-entra-api.ps1.
+    Leave it out and the script finds it: from the HCW_API_APP_ID
+    environment variable when that is set, otherwise from the one
+    registration named -ApiDisplayName in the tenant (Resolve-LabApiAppId).
+    It used to be a parameter default, the same one
+    scripts/cutover/01-entra-api.ps1 carried; the repository is public and a
+    real application id does not go in a tracked file (#1540).
+
+.PARAMETER ApiDisplayName
+    The display name the lookup above searches for. HCWSite API.
 
 .PARAMETER ApiBase
     LABS_AGENT_API_BASE: the Functions API base, including /api, as the host
@@ -96,7 +104,10 @@ param(
     [string] $TenantDomain = 'saulpatinojrhotmail.onmicrosoft.com',
 
     [ValidatePattern('\A[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\z')]
-    [string] $ApiAppId = 'ac696e96-e203-47be-ade8-c35ece8a6c4a',
+    [string] $ApiAppId,
+
+    [ValidatePattern('\A[A-Za-z0-9][A-Za-z0-9 ()._-]{0,118}[A-Za-z0-9)]\z')]
+    [string] $ApiDisplayName = 'HCWSite API',
 
     [ValidatePattern('\Ahttps://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?/api\z')]
     [string] $ApiBase = 'https://api-azure.hybridcloudworks.com/api',
@@ -1244,6 +1255,50 @@ function Invoke-LabSsh {
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Lines = [string[]]$lines.ToArray() }
 }
 
+function Resolve-LabApiAppId {
+    <#
+    .SYNOPSIS
+        The API registration's client id, without a copy of it in the
+        repository: -ApiAppId as given, else HCW_API_APP_ID, else the one
+        registration in the tenant whose display name is exactly
+        -DisplayName. Stops rather than guessing when none or several match.
+        scripts/lib/Resolve-EntraApiAppId.ps1 is the same logic for the
+        cutover and rollback scripts (#1540).
+    #>
+    [OutputType([string])]
+    param(
+        [AllowEmptyString()] [string] $ApiAppId,
+        [string] $DisplayName = 'HCWSite API'
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ApiAppId)) {
+        return $ApiAppId.ToLowerInvariant()
+    }
+    $fromEnvironment = [string]$env:HCW_API_APP_ID
+    if (-not [string]::IsNullOrWhiteSpace($fromEnvironment)) {
+        if (-not (Test-LabGuid -Value $fromEnvironment)) {
+            throw "HCW_API_APP_ID is '$fromEnvironment', which is not a client id."
+        }
+        return $fromEnvironment.ToLowerInvariant()
+    }
+    $apps = @(Invoke-LabAzJson -Arguments @('ad', 'app', 'list', '--display-name', $DisplayName, '-o', 'json') -What "Finding the app registration $DisplayName")
+    # az filters on the name; the exact comparison keeps a registration named
+    # 'HCWSite API (old)' from being taken for the real one.
+    $matching = @($apps | Where-Object { [string](Get-LabProperty -Object $_ -Name 'displayName') -ceq $DisplayName })
+    if ($matching.Count -eq 1) {
+        $id = [string](Get-LabProperty -Object $matching[0] -Name 'appId')
+        if (-not (Test-LabGuid -Value $id)) {
+            throw "az returned '$id' as the client id of $DisplayName, which is not a client id."
+        }
+        return $id.ToLowerInvariant()
+    }
+    if ($matching.Count -eq 0) {
+        throw "No app registration named '$DisplayName' in this tenant. Pass -ApiAppId with its application (client) id (Entra admin center: App registrations, $DisplayName, Overview), or set HCW_API_APP_ID to it."
+    }
+    $ids = @($matching | ForEach-Object { [string](Get-LabProperty -Object $_ -Name 'appId') }) -join ', '
+    throw "More than one app registration is named '$DisplayName' ($ids). Pass -ApiAppId with the right one, or rename the others."
+}
+
 function Get-LabApiApplication {
     <#
     .SYNOPSIS
@@ -1563,6 +1618,7 @@ $certificateFile = Join-Path ([System.IO.Path]::GetTempPath()) ("hcw-$certificat
 
 # 3. Entra: the registration, its certificate, and the one grant.
 try {
+    $ApiAppId = Resolve-LabApiAppId -ApiAppId $ApiAppId -DisplayName $ApiDisplayName
     $api = Get-LabApiApplication -ApiAppId $ApiAppId
     Write-Host "Entra: the API is $($api.DisplayName) ($ApiAppId); the agent's scope is $($api.Scope)."
 
