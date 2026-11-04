@@ -64,6 +64,24 @@ describe('getDefaultAgentGuard', () => {
     expect(doc).toMatchObject({ kind: 'agent-auth-denial', reason: 'unknown agent', agentId: 'x' });
     expect(doc.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(Number.isNaN(Date.parse(doc.at))).toBe(false);
+    // Through the shared sink since #1476, so the row carries the two names
+    // the container indexes (`action`, `timestamp`; infra/cosmos-containers.json).
+    expect(doc.action).toBe('agent-auth-denial');
+    expect(doc.timestamp).toBe(doc.at);
+  });
+
+  // The write's failure is held by the sink, never by this wiring: the
+  // unhandled-rejection proof lives in default-agent-guard-denial-audit.test.js
+  // with a plain-function Cosmos double (a vi.fn() would hide it).
+  it('resolves when the audit write fails', async () => {
+    upsertDoc.mockRejectedValueOnce(Object.assign(new Error('throttled'), { code: 429 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { deps } = getDefaultAgentGuard();
+
+    await expect(deps.auditDenial({ reason: 'inactive', agentId: 'x' })).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('429');
+    warn.mockRestore();
   });
 
   it('builds again after a reset, so a settings change takes effect', () => {
