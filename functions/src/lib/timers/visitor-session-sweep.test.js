@@ -10,6 +10,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { coderId, coderUserAnswer, isUserRead } from '../../../test/coder-ids.js';
 import { memoryStore } from '../../../test/memory-store.js';
 import { runCosmosQuery } from '../../../test/cosmos-predicate.js';
 import { CLEANUP_RETRY_BASE_MS } from '../labs/visitor-session.js';
@@ -33,9 +34,9 @@ const expired = (id, overrides = {}) => ({
   status: 'active',
   clientHash: 'hash',
   labId: 'landing-zone-builder-output',
-  coderUserId: `u-${id}`,
-  coderUsername: `v-${id}`,
-  workspaceId: `ws-${id}`,
+  coderUserId: coderId(`u-${id}`),
+  coderUsername: 'v-0123456789ab',
+  workspaceId: coderId(`ws-${id}`),
   workspaceName: 'lab-lzb',
   expiresAt: iso(NOW - 60_000),
   ttl: 7200,
@@ -44,7 +45,7 @@ const expired = (id, overrides = {}) => ({
 
 /** A Coder that accepts every delete, and remembers what it was asked. */
 function acceptingCoder() {
-  return vi.fn(async () => ({ ok: true, status: 200 }));
+  return vi.fn(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url) : { ok: true, status: 200 }));
 }
 
 const callsOf = (fetchImpl) => fetchImpl.mock.calls.map(([url, init]) => `${init?.method} ${new URL(url).pathname}`);
@@ -75,7 +76,7 @@ describe('one run of the sweep', () => {
     const result = await sweepWith(store, fetchImpl).run(context);
 
     expect(result).toEqual({ swept: true, reaped: 1, finished: 0, pending: 0, failed: 0 });
-    expect(callsOf(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-s-1/builds', 'DELETE /api/v2/users/u-s-1']);
+    expect(callsOf(fetchImpl)).toEqual([`POST /api/v2/workspaces/${coderId('ws-s-1')}/builds`, `GET /api/v2/users/${coderId('u-s-1')}`, `DELETE /api/v2/users/${coderId('u-s-1')}`]);
     expect(store.get('lab_jobs', 's-1').status).toBe('expired');
     // Something happened, so the summary is a Warning (it ships); it holds four numbers.
     expect(lines.warn).toEqual([`[${SWEEP_NAME}] reaped=1 finished=0 pending=0 failed=0`]);
@@ -97,7 +98,7 @@ describe('one run of the sweep', () => {
     const result = await sweepWith(store, fetchImpl).run(recordingContext().context);
 
     expect(result).toMatchObject({ swept: true, finished: 1 });
-    expect(callsOf(fetchImpl)).toEqual(['DELETE /api/v2/users/u-w-1']);
+    expect(callsOf(fetchImpl)).toEqual([`GET /api/v2/users/${coderId('u-w-1')}`, `DELETE /api/v2/users/${coderId('u-w-1')}`]);
     expect(store.get('lab_jobs', 'w-1').status).toBe('ended');
   });
 
@@ -162,8 +163,8 @@ describe('one run of the sweep', () => {
 
 describe('when Coder is not configured', () => {
   it('does nothing at all: no query, no Coder call, and no try spent on a session that has something in Coder', async () => {
-    const waiting = expired('u-1', { status: 'cleanup_pending', endStatus: 'ended', cleanupAttempts: 2, retryAt: iso(NOW - 1000) });
-    const store = sweepStore([waiting, expired('u-2')]);
+    const waiting = expired(coderId('u-1'), { status: 'cleanup_pending', endStatus: 'ended', cleanupAttempts: 2, retryAt: iso(NOW - 1000) });
+    const store = sweepStore([waiting, expired(coderId('u-2'))]);
     const fetchImpl = acceptingCoder();
 
     for (let tick = 0; tick < 6; tick += 1) {
@@ -177,8 +178,8 @@ describe('when Coder is not configured', () => {
     expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
     // Six ticks, and the tries are exactly where they were: five would have ended it as cleanup_failed.
-    expect(store.get('lab_jobs', 'u-1')).toMatchObject({ status: 'cleanup_pending', cleanupAttempts: 2 });
-    expect(store.get('lab_jobs', 'u-2').status).toBe('active');
+    expect(store.get('lab_jobs', coderId('u-1'))).toMatchObject({ status: 'cleanup_pending', cleanupAttempts: 2 });
+    expect(store.get('lab_jobs', coderId('u-2')).status).toBe('active');
   });
 
   it('treats an unresolved Key Vault reference as no setting', async () => {
@@ -258,7 +259,7 @@ describe('what it logs, and what it never throws', () => {
       expired('sess-secretid-2', { status: 'cleanup_pending', endStatus: 'ended', cleanupAttempts: 4, retryAt: iso(NOW - 1000), workspaceGone: true }),
     ]);
     // Coder answers with text that names things; the Cosmos write fails with a message that names a session.
-    const chatty = vi.fn(async () => ({
+    const chatty = vi.fn(async (url, init) => isUserRead(url, init) ? coderUserAnswer(url) : ({
       ok: false,
       status: 417,
       text: async () => 'You cannot delete a user that has workspaces: u-sess-secretid-1 coder-token-leak',
