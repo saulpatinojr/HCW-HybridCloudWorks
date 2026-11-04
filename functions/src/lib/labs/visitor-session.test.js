@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { coderId, coderUserAnswer, isUserRead } from '../../../test/coder-ids.js';
 import { runCosmosQuery } from '../../../test/cosmos-predicate.js';
 import { memoryStore } from '../../../test/memory-store.js';
 import { createClientIdentity } from '../auth/client-identity.js';
@@ -18,6 +19,7 @@ import {
   VISITOR_FAILED_DOC_TTL_SECONDS,
   VISITOR_PENDING_DOC_TTL_SECONDS,
   VISITOR_SESSION_SWITCH,
+  VALID_LAB_WORKSPACES,
   VISITOR_USERNAME_SHAPE,
   createVisitorCoderUser,
   createVisitorSessionHandlers,
@@ -27,7 +29,9 @@ import {
   errorKind,
   generateVisitorCredentials,
   getTemplateByName,
-  isSafeSegment,
+  isCoderId,
+  isLabWorkspaceName,
+  isVisitorUsername,
   readBrokerConfig,
   readVisitorMaxConcurrent,
   reapExpiredVisitorSessions,
@@ -169,14 +173,14 @@ describe('Coder API helpers', () => {
   it('creates visitor user via Coder API', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ id: 'u-1', username: 'v-123456' }),
+      json: async () => ({ id: coderId('u-1'), username: 'v-123456' }),
     }));
     const res = await createVisitorCoderUser(fetchImpl, { base: 'https://coder.example.com', token: 'tok' }, {
       username: 'v-123456',
       email: 'v-123456@visitor.lab.hybridcloudworks.com',
       password: 'pass',
     });
-    expect(res.id).toBe('u-1');
+    expect(res.id).toBe(coderId('u-1'));
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://coder.example.com/api/v2/users',
       expect.objectContaining({ method: 'POST' })
@@ -267,25 +271,25 @@ describe('Coder API helpers', () => {
       }
       return {
         ok: true,
-        json: async () => ({ id: 'ws-1', name: 'lab-lzb' }),
+        json: async () => ({ id: coderId('ws-1'), name: 'lab-lzb' }),
       };
     });
 
     const res = await createVisitorWorkspace(
       fetchImpl,
       { base: 'https://coder.example.com', token: 'tok' },
-      { userId: 'u-1', username: 'v-123', workspaceName: 'lab-lzb', labId: 'landing-zone-builder-output' }
+      { userId: coderId('u-1'), username: 'v-123', workspaceName: 'lab-lzb', labId: 'landing-zone-builder-output' }
     );
-    expect(res.workspace.id).toBe('ws-1');
+    expect(res.workspace.id).toBe(coderId('ws-1'));
     expect(res.accessUrl).toBe(
       'https://code-server--lab-lzb--v-123.coder.lab.hybridcloudworks.com/?folder=/tmp/home/lab'
     );
   });
 
   it('deletes workspace and user', async () => {
-    const fetchImpl = vi.fn(async () => ({ ok: true }));
-    const wsDeleted = await deleteVisitorWorkspace(fetchImpl, { base: 'https://coder.example.com', token: 'tok' }, 'ws-1');
-    const userDeleted = await deleteVisitorUser(fetchImpl, { base: 'https://coder.example.com', token: 'tok' }, 'u-1');
+    const fetchImpl = vi.fn(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url) : { ok: true }));
+    const wsDeleted = await deleteVisitorWorkspace(fetchImpl, { base: 'https://coder.example.com', token: 'tok' }, coderId('ws-1'));
+    const userDeleted = await deleteVisitorUser(fetchImpl, { base: 'https://coder.example.com', token: 'tok' }, coderId('u-1'));
     expect(wsDeleted).toBe(true);
     expect(userDeleted).toBe(true);
   });
@@ -294,8 +298,8 @@ describe('Coder API helpers', () => {
     const throwFetch = vi.fn(async () => {
       throw new Error('network down');
     });
-    const wsDeleted = await deleteVisitorWorkspace(throwFetch, { base: 'https://c.com' }, 'ws-1');
-    const userDeleted = await deleteVisitorUser(throwFetch, { base: 'https://c.com' }, 'u-1');
+    const wsDeleted = await deleteVisitorWorkspace(throwFetch, { base: 'https://c.com' }, coderId('ws-1'));
+    const userDeleted = await deleteVisitorUser(throwFetch, { base: 'https://c.com' }, coderId('u-1'));
     expect(wsDeleted).toBe(false);
     expect(userDeleted).toBe(false);
   });
@@ -431,7 +435,7 @@ describe('createVisitorSessionHandlers: getStatus', () => {
       expiresAt: new Date(NOW - 5000).toISOString(),
     };
     const store = mockStore([expiredDoc]);
-    const fetchImpl = vi.fn(async () => ({ ok: true }));
+    const fetchImpl = vi.fn(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url) : { ok: true }));
     const handlers = makeHandlers({
       store,
       fetchImpl,
@@ -470,9 +474,9 @@ describe('createVisitorSessionHandlers: startSession', () => {
       return { ok: true, json: async () => [{ id: 'org-1' }] };
     }
     if (url.endsWith('/api/v2/users')) {
-      return { ok: true, json: async () => ({ id: 'u-1', username: 'v-test' }) };
+      return { ok: true, json: async () => ({ id: coderId('u-1'), username: 'v-test' }) };
     }
-    return { ok: true, json: async () => ({ id: 'ws-1', name: 'lab-lzb' }) };
+    return { ok: true, json: async () => ({ id: coderId('ws-1'), name: 'lab-lzb' }) };
   });
 
   it('refuses non-site origins', async () => {
@@ -809,12 +813,12 @@ describe('createVisitorSessionHandlers: stopSession and reaper', () => {
       type: 'visitor-session',
       status: 'active',
       clientHash: ALICE_KEY,
-      coderUserId: 'u-stop',
-      workspaceId: 'ws-stop',
+      coderUserId: coderId('u-stop'),
+      workspaceId: coderId('ws-stop'),
       expiresAt: new Date(NOW + 3600000).toISOString(),
     };
     const store = mockStore([doc]);
-    const fetchImpl = vi.fn(async () => ({ ok: true }));
+    const fetchImpl = vi.fn(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url) : { ok: true }));
     const handlers = makeHandlers({
       store,
       fetchImpl,
@@ -872,12 +876,12 @@ describe('createVisitorSessionHandlers: stopSession and reaper', () => {
       id: 'sess-expired',
       type: 'visitor-session',
       status: 'active',
-      coderUserId: 'u-exp',
-      workspaceId: 'ws-exp',
+      coderUserId: coderId('u-exp'),
+      workspaceId: coderId('ws-exp'),
       expiresAt: new Date(NOW - 1000).toISOString(),
     };
     const store = mockStore([expiredDoc]);
-    const fetchImpl = vi.fn(async () => ({ ok: true }));
+    const fetchImpl = vi.fn(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url) : { ok: true }));
     const result = await reapExpiredVisitorSessions(
       store,
       fetchImpl,
@@ -932,8 +936,8 @@ const activeSession = (id, overrides = {}) => ({
   status: 'active',
   clientHash: ALICE_KEY,
   labId: 'landing-zone-builder-output',
-  coderUserId: `u-${id}`,
-  workspaceId: `ws-${id}`,
+  coderUserId: coderId(`u-${id}`),
+  workspaceId: coderId(`ws-${id}`),
   expiresAt: new Date(NOW + 30 * 60 * 1000).toISOString(),
   ttl: 7200,
   ...overrides,
@@ -948,9 +952,9 @@ const stopRequest = (id, ip = ALICE) => ({
 
 const precondition = () => Object.assign(new Error('precondition'), { code: 412 });
 
-/** A Coder that accepts every delete. */
+/** A Coder that accepts every delete, and answers the read of a user that comes before the user delete. */
 function acceptingCoder() {
-  return vi.fn(async () => ({ ok: true }));
+  return vi.fn(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url) : { ok: true }));
 }
 
 /** The calls a fetch mock was sent, as "METHOD path" strings. */
@@ -964,6 +968,7 @@ const coderCalls = (fetchImpl) =>
  */
 function coderThatLetsAnotherWriterIn(store, id, change) {
   return vi.fn(async (url, init) => {
+    if (isUserRead(url, init)) return coderUserAnswer(url);
     if (init?.method === 'DELETE') {
       const current = await store.readDoc('lab_jobs', id);
       await store.replaceDocIfMatch('lab_jobs', { ...current, ...change }, { partitionKey: id });
@@ -998,13 +1003,13 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({
         status: 'ended',
         endedAt: new Date(NOW).toISOString(),
-        coderUserId: 'u-sess-1',
-        workspaceId: 'ws-sess-1',
+        coderUserId: coderId('u-sess-1'),
+        workspaceId: coderId('ws-sess-1'),
         ttl: 7200,
       });
       expect(coderCalls(fetchImpl)).toEqual([
-        'POST /api/v2/workspaces/ws-sess-1/builds',
-        'DELETE /api/v2/users/u-sess-1',
+        `POST /api/v2/workspaces/${coderId('ws-sess-1')}/builds`,
+        `GET /api/v2/users/${coderId('u-sess-1')}`, `DELETE /api/v2/users/${coderId('u-sess-1')}`,
       ]);
     });
 
@@ -1128,8 +1133,8 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3);
       // One set of Coder calls, not two (#1388).
       expect(coderCalls(fetchImpl)).toEqual([
-        'POST /api/v2/workspaces/ws-sess-1/builds',
-        'DELETE /api/v2/users/u-sess-1',
+        `POST /api/v2/workspaces/${coderId('ws-sess-1')}/builds`,
+        `GET /api/v2/users/${coderId('u-sess-1')}`, `DELETE /api/v2/users/${coderId('u-sess-1')}`,
       ]);
     });
 
@@ -1194,10 +1199,10 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       expect(store.get('lab_jobs', 'old-2')).toMatchObject({ status: 'expired', endedAt: nowIso });
       expect(store.get('lab_jobs', 'live-1').status).toBe('active');
       expect(coderCalls(fetchImpl)).toEqual([
-        'POST /api/v2/workspaces/ws-old-1/builds',
-        'DELETE /api/v2/users/u-old-1',
-        'POST /api/v2/workspaces/ws-old-2/builds',
-        'DELETE /api/v2/users/u-old-2',
+        `POST /api/v2/workspaces/${coderId('ws-old-1')}/builds`,
+        `GET /api/v2/users/${coderId('u-old-1')}`, `DELETE /api/v2/users/${coderId('u-old-1')}`,
+        `POST /api/v2/workspaces/${coderId('ws-old-2')}/builds`,
+        `GET /api/v2/users/${coderId('u-old-2')}`, `DELETE /api/v2/users/${coderId('u-old-2')}`,
       ]);
     });
 
@@ -1232,8 +1237,8 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3);
       // One set of Coder calls, not two (#1388).
       expect(coderCalls(fetchImpl)).toEqual([
-        'POST /api/v2/workspaces/ws-old-1/builds',
-        'DELETE /api/v2/users/u-old-1',
+        `POST /api/v2/workspaces/${coderId('ws-old-1')}/builds`,
+        `GET /api/v2/users/${coderId('u-old-1')}`, `DELETE /api/v2/users/${coderId('u-old-1')}`,
       ]);
     });
 
@@ -1360,11 +1365,12 @@ describe('visitor sessions know who is calling (#1387)', () => {
       if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
       if (target.endsWith('/api/v2/users')) {
         users += 1;
-        return { ok: true, json: async () => ({ id: `u-${users}`, username: `v-user${users}` }) };
+        return { ok: true, json: async () => ({ id: coderId(`u-${users}`), username: `v-00000000000${users}` }) };
       }
       if (/\/members\/[^/]+\/workspaces$/.test(target)) {
-        return { ok: true, json: async () => ({ id: `ws-${users}`, name: 'lab-lzb' }) };
+        return { ok: true, json: async () => ({ id: coderId(`ws-${users}`), name: 'lab-lzb' }) };
       }
+      if (isUserRead(url, init)) return coderUserAnswer(url, `v-00000000000${users}`);
       return { ok: true };
     });
     return Object.assign(fetchImpl, { siteverify });
@@ -1895,9 +1901,10 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
    */
   function scriptedCoder({ workspace = [202], user = [204] } = {}) {
     const queues = { workspace: [...workspace], user: [...user] };
-    return vi.fn(async (url) => {
+    return vi.fn(async (url, init) => {
       const target = String(url);
-      const which = target.includes('/builds') ? 'workspace' : target.includes('/api/v2/users/') ? 'user' : null;
+      if (isUserRead(url, init)) return coderUserAnswer(url);
+      const which = target.includes('/builds') ? 'workspace' : init?.method === 'DELETE' && target.includes('/api/v2/users/') ? 'user' : null;
       if (!which) return { ok: true };
       const answer = queues[which].length > 1 ? queues[which].shift() : queues[which][0];
       if (answer === 'network') throw new TypeError('fetch failed');
@@ -1959,10 +1966,10 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
         retryAt: iso(NOW + CLEANUP_RETRY_BASE_MS),
         ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
         // The ids stay: the retry needs them.
-        coderUserId: 'u-sess-1',
-        workspaceId: 'ws-sess-1',
+        coderUserId: coderId('u-sess-1'),
+        workspaceId: coderId('ws-sess-1'),
       });
-      expect(coderCalls(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-sess-1/builds', 'DELETE /api/v2/users/u-sess-1']);
+      expect(coderCalls(fetchImpl)).toEqual([`POST /api/v2/workspaces/${coderId('ws-sess-1')}/builds`, `GET /api/v2/users/${coderId('u-sess-1')}`, `DELETE /api/v2/users/${coderId('u-sess-1')}`]);
       // Logged by kind: the status Coder answered, and nothing that names the session.
       expect(context.warn).toHaveBeenCalledTimes(1);
       expect(context.warn.mock.calls[0][0]).toContain('user HTTP 417');
@@ -1997,7 +2004,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       expect(later.status).toBe(200);
       // The workspace delete is not asked for twice: Coder already has one building.
-      expect(coderCalls(fetchImpl)).toEqual(['DELETE /api/v2/users/u-sess-1']);
+      expect(coderCalls(fetchImpl)).toEqual([`GET /api/v2/users/${coderId('u-sess-1')}`, `DELETE /api/v2/users/${coderId('u-sess-1')}`]);
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({
         status: 'ended',
         endedAt: iso(NOW), // when the visitor ended it, not when Coder finished
@@ -2035,7 +2042,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       expect(res.status).toBe(200);
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'cleanup_pending', workspaceGone: false, userGone: false });
-      expect(coderCalls(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-sess-1/builds']);
+      expect(coderCalls(fetchImpl)).toEqual([`POST /api/v2/workspaces/${coderId('ws-sess-1')}/builds`]);
       expect(context.warn.mock.calls[0][0]).toContain(logged);
     });
 
@@ -2074,7 +2081,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       ]);
 
       expect([first.status, second.status]).toEqual([200, 200]);
-      expect(coderCalls(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-sess-1/builds', 'DELETE /api/v2/users/u-sess-1']);
+      expect(coderCalls(fetchImpl)).toEqual([`POST /api/v2/workspaces/${coderId('ws-sess-1')}/builds`, `GET /api/v2/users/${coderId('u-sess-1')}`, `DELETE /api/v2/users/${coderId('u-sess-1')}`]);
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'cleanup_pending', cleanupAttempts: 1 });
     });
 
@@ -2093,9 +2100,9 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
         if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
         if (target.endsWith('/api/v2/users')) {
           users += 1;
-          return { ok: true, json: async () => ({ id: `u-${users}`, username: `v-user${users}` }) };
+          return { ok: true, json: async () => ({ id: coderId(`u-${users}`), username: `v-00000000000${users}` }) };
         }
-        if (/\/members\/[^/]+\/workspaces$/.test(target)) return { ok: true, json: async () => ({ id: `ws-${users}` }) };
+        if (/\/members\/[^/]+\/workspaces$/.test(target)) return { ok: true, json: async () => ({ id: coderId(`ws-${users}`) }) };
         return coder(url, init);
       });
       const handlers = makeHandlers({ store, fetchImpl, clock });
@@ -2128,7 +2135,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       now = NOW + CLEANUP_RETRY_BASE_MS;
       expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
-      expect(coderCalls(fetchImpl)).toEqual(['DELETE /api/v2/users/u-sess-1']);
+      expect(coderCalls(fetchImpl)).toEqual([`GET /api/v2/users/${coderId('u-sess-1')}`, `DELETE /api/v2/users/${coderId('u-sess-1')}`]);
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'expired', userGone: true });
     });
 
@@ -2160,7 +2167,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
         userGone: false,
         ttl: VISITOR_FAILED_DOC_TTL_SECONDS,
         // The ids stay, so a person can finish the clean-up by hand.
-        coderUserId: 'u-old-1',
+        coderUserId: coderId('u-old-1'),
         // Another round, an hour on (#1403, item 3).
         retryAt: iso(now + CLEANUP_REARM_MS),
       });
@@ -2189,7 +2196,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       now = NOW + CLEANUP_RETRY_BASE_MS;
 
       expect(await sweep(store, fetchImpl, { log })).toEqual(tally({ pending: 1 }));
-      expect(coderCalls(fetchImpl)).toEqual(['DELETE /api/v2/users/u-w-1']);
+      expect(coderCalls(fetchImpl)).toEqual([`GET /api/v2/users/${coderId('u-w-1')}`, `DELETE /api/v2/users/${coderId('u-w-1')}`]);
       expect(store.get('lab_jobs', 'w-1')).toMatchObject({ status: 'cleanup_pending', workspaceGone: false, userRefusals: 0 });
       expect(store.get('lab_jobs', 'w-1').workspaceConfirmedBy).toBeUndefined();
       expect(log.mock.calls.at(-1)[0]).toContain('the workspace delete will be asked for again');
@@ -2197,7 +2204,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       fetchImpl.mockClear();
       now = Date.parse(store.get('lab_jobs', 'w-1').retryAt);
       expect(await sweep(store, fetchImpl, { log })).toEqual(tally({ finished: 1 }));
-      expect(coderCalls(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-w-1/builds', 'DELETE /api/v2/users/u-w-1']);
+      expect(coderCalls(fetchImpl)).toEqual([`POST /api/v2/workspaces/${coderId('ws-w-1')}/builds`, `GET /api/v2/users/${coderId('u-w-1')}`, `DELETE /api/v2/users/${coderId('u-w-1')}`]);
       expect(store.get('lab_jobs', 'w-1')).toMatchObject({ status: 'ended', workspaceConfirmedBy: 'ok', userConfirmedBy: 'ok' });
     });
 
@@ -2221,7 +2228,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       expect(await sweep(store, fetchImpl)).toEqual(tally({ pending: 1 }));
       expect(store.get('lab_jobs', 'f-1')).toMatchObject({ status: 'cleanup_pending', cleanupAttempts: 1, cleanupRounds: 1 });
 
-      fetchImpl.mockImplementation(async () => ({ ok: true, status: 204 }));
+      fetchImpl.mockImplementation(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url) : { ok: true, status: 204 }));
       now = Date.parse(store.get('lab_jobs', 'f-1').retryAt);
       expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
       expect(store.get('lab_jobs', 'f-1').status).toBe('ended');
@@ -2276,7 +2283,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       expect(first.finished + second.finished).toBe(1);
       expect(first.failed + second.failed).toBe(0);
-      expect(coderCalls(fetchImpl)).toEqual(['DELETE /api/v2/users/u-sess-1']);
+      expect(coderCalls(fetchImpl)).toEqual([`GET /api/v2/users/${coderId('u-sess-1')}`, `DELETE /api/v2/users/${coderId('u-sess-1')}`]);
       expect(store.get('lab_jobs', 'sess-1').status).toBe('ended');
     });
 
@@ -2290,7 +2297,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       now += CLEANUP_RETRY_BASE_MS;
       expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
-      expect(coderCalls(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-old-1/builds', 'DELETE /api/v2/users/u-old-1']);
+      expect(coderCalls(fetchImpl)).toEqual([`POST /api/v2/workspaces/${coderId('ws-old-1')}/builds`, `GET /api/v2/users/${coderId('u-old-1')}`, `DELETE /api/v2/users/${coderId('u-old-1')}`]);
       expect(store.get('lab_jobs', 'old-1').status).toBe('expired');
     });
 
@@ -2346,13 +2353,13 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
         const target = String(url);
         if (target.endsWith('/api/v2/templates')) return { ok: true, json: async () => [{ id: 't1', name: 'hcw-lab' }] };
         if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
-        if (target.endsWith('/api/v2/users')) return { ok: true, json: async () => ({ id: 'u-1', username: 'v-user1' }) };
-        return { ok: true, json: async () => ({ id: 'ws-1' }), status: 202 };
+        if (target.endsWith('/api/v2/users')) return { ok: true, json: async () => ({ id: coderId('u-1'), username: 'v-user1' }) };
+        return { ok: true, json: async () => ({ id: coderId('ws-1') }), status: 202 };
       });
       await createVisitorCoderUser(recording, CODER, { username: 'v-a', email: 'a@x', password: 'p' });
-      await createVisitorWorkspace(recording, CODER, { userId: 'u-1', username: 'v-a', workspaceName: 'lab-lzb', labId: 'x' });
-      await deleteVisitorWorkspace(recording, CODER, 'ws-1');
-      await deleteVisitorUser(recording, CODER, 'u-1');
+      await createVisitorWorkspace(recording, CODER, { userId: coderId('u-1'), username: 'v-a', workspaceName: 'lab-lzb', labId: 'x' });
+      await deleteVisitorWorkspace(recording, CODER, coderId('ws-1'));
+      await deleteVisitorUser(recording, CODER, coderId('u-1'));
 
       // user, templates, organizations, workspace, workspace delete, user delete
       expect(signals).toHaveLength(6);
@@ -2363,8 +2370,8 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       const timeout = vi.spyOn(AbortSignal, 'timeout');
       expect(CODER_CALL_TIMEOUT_MS).toBe(10_000);
 
-      await deleteVisitorUser(acceptingCoder(), CODER, 'u-1');
-      await deleteVisitorUser(acceptingCoder(), { ...CODER, timeoutMs: 25 }, 'u-1');
+      await deleteVisitorUser(acceptingCoder(), CODER, coderId('u-1'));
+      await deleteVisitorUser(acceptingCoder(), { ...CODER, timeoutMs: 25 }, coderId('u-1'));
 
       expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([CODER_CALL_TIMEOUT_MS, 25]);
     });
@@ -2511,14 +2518,14 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       const timeout = vi.spyOn(AbortSignal, 'timeout');
       const answering = vi.fn(async (url) =>
         String(url).endsWith('/api/v2/users')
-          ? { ok: true, json: async () => ({ id: 'u-1', username: 'v-a' }) }
+          ? { ok: true, json: async () => ({ id: coderId('u-1'), username: 'v-a' }) }
           : { ok: true }
       );
       expect(CODER_PROVISION_TIMEOUT_MS).toBe(30_000);
 
       await createVisitorCoderUser(answering, CODER, { username: 'v-a', email: 'a@x', password: 'p' });
       await createVisitorCoderUser(answering, { ...CODER, timeoutMs: 25 }, { username: 'v-a', email: 'a@x', password: 'p' });
-      await deleteVisitorUser(answering, CODER, 'u-1');
+      await deleteVisitorUser(answering, CODER, coderId('u-1'));
 
       expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([CODER_PROVISION_TIMEOUT_MS, 25, CODER_CALL_TIMEOUT_MS]);
     });
@@ -2545,7 +2552,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       expect(result).toEqual(tally({ pending: 2 }));
       // The only calls are the good half of the second record: its workspace delete, never its user delete.
-      expect(fetchImpl.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/api/v2/workspaces/ws-bad-u/builds']);
+      expect(fetchImpl.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([`/api/v2/workspaces/${coderId('ws-bad-u')}/builds`]);
       expect(store.get('lab_jobs', 'bad-w')).toMatchObject({ status: 'cleanup_pending' });
       expect(store.get('lab_jobs', 'bad-u')).toMatchObject({ status: 'cleanup_pending', workspaceGone: true, userGone: false });
       const lines = log.mock.calls.map(([line]) => line).join('\n');
@@ -2553,32 +2560,92 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       expect(lines).toContain('workspace ok, user invalid id');
     });
 
-    it('writes an id that is plainly an id into the path as it is, dots and underscores inside it included', async () => {
-      const store = cosmosLikeStore([expiredSession('old-1')]);
+    it('writes a UUID into the path as it is, in either case, and refuses an id that merely looks like one (#1403)', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1'), expiredSession('old-2')]);
       store.docs.set('lab_jobs/old-1', {
         ...store.get('lab_jobs', 'old-1'),
-        workspaceId: 'ws-1_a.b',
+        workspaceId: '8826EE2E-7933-4665-AEF2-2393F84A0D05',
         coderUserId: '8826ee2e-7933-4665-aef2-2393f84a0d05',
       });
+      // A plausible name is not an id: the old rule (any one path segment) let it through.
+      store.docs.set('lab_jobs/old-2', { ...store.get('lab_jobs', 'old-2'), workspaceId: 'ws-1_a.b', coderUserId: 'v-0123456789ab' });
       const fetchImpl = scriptedCoder();
+      const log = vi.fn();
 
-      await sweep(store, fetchImpl);
+      await sweep(store, fetchImpl, { log });
 
       expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
-        `${CODER.base}/api/v2/workspaces/ws-1_a.b/builds`,
+        `${CODER.base}/api/v2/workspaces/8826EE2E-7933-4665-AEF2-2393F84A0D05/builds`,
+        `${CODER.base}/api/v2/users/8826ee2e-7933-4665-aef2-2393f84a0d05`,
         `${CODER.base}/api/v2/users/8826ee2e-7933-4665-aef2-2393f84a0d05`,
       ]);
+      expect(store.get('lab_jobs', 'old-1').status).toBe('expired');
+      expect(store.get('lab_jobs', 'old-2').status).toBe('cleanup_pending');
+      expect(log.mock.calls.map(([line]) => line).join('\n')).toContain('workspace invalid id, user skipped');
+    });
+
+    it('reads the user back by its id before the delete, and deletes only the user Coder answers with (#1403)', async () => {
+      const answers = [
+        ['the id asked for under a visitor name', { id: coderId('u-rb-1'), username: 'v-0123456789ab' }, 'ok', 'expired'],
+        ['another id', { id: coderId('u-other'), username: 'v-0123456789ab' }, 'user lookup mismatch', 'cleanup_pending'],
+        ['the id under a name that is not a visitor\'s', { id: coderId('u-rb-1'), username: 'admin' }, 'user lookup mismatch', 'cleanup_pending'],
+        ['no user at all (404)', 404, 'gone', 'expired'],
+        ['a refusal (500)', 500, 'user lookup HTTP 500', 'cleanup_pending'],
+      ];
+      for (const [name, answer, word, status] of answers) {
+        const store = cosmosLikeStore([expiredSession('rb-1')]);
+        const fetchImpl = vi.fn(async (url, init) => {
+          if (!isUserRead(url, init)) return { ok: true, status: 200 };
+          return typeof answer === 'number' ? { ok: false, status: answer } : { ok: true, status: 200, json: async () => answer };
+        });
+        const log = vi.fn();
+
+        await sweep(store, fetchImpl, { log });
+
+        const deletes = fetchImpl.mock.calls.filter(([, init]) => init?.method === 'DELETE').length;
+        expect(deletes, name).toBe(word === 'ok' ? 1 : 0);
+        expect(store.get('lab_jobs', 'rb-1').status, name).toBe(status);
+        // A clean-up that finished on accepted deletes writes no line; every other outcome names the user's word.
+        if (word !== 'ok') expect(log.mock.calls.map(([line]) => line).join('\n'), name).toContain(`user ${word}`);
+        else expect(log, name).not.toHaveBeenCalled();
+      }
+    });
+
+    it('never follows a redirect: every call to Coder is made with redirect "error" (#1403)', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      const fetchImpl = acceptingCoder();
+      await sweep(store, fetchImpl);
+      const recording = vi.fn(async (url, init) => {
+        const target = String(url);
+        if (target.endsWith('/api/v2/templates')) return { ok: true, json: async () => [{ id: 't1', name: 'hcw-lab' }] };
+        if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
+        if (target.endsWith('/api/v2/users')) return { ok: true, json: async () => ({ id: coderId('u-1'), username: 'v-0123456789ab' }) };
+        return { ok: true, json: async () => ({ id: coderId('ws-1') }), status: 202 };
+      });
+      await createVisitorCoderUser(recording, CODER, { username: 'v-0123456789ab', email: 'a@x', password: 'p' });
+      await createVisitorWorkspace(recording, CODER, { userId: coderId('u-1'), username: 'v-0123456789ab', workspaceName: 'lab-lzb', labId: 'x' });
+
+      const inits = [...fetchImpl.mock.calls, ...recording.mock.calls].map(([, init]) => init);
+      // The sweep's three calls (workspace delete, user read, user delete) and the four that provision.
+      expect(inits).toHaveLength(7);
+      for (const init of inits) expect(init.redirect).toBe('error');
     });
   });
 
   describe('what a stored record is trusted to say', () => {
-    it('tells an id from something else: the same rule the Coder paths use', () => {
-      for (const ok of ['ws-1', 'u-old-1', '8826ee2e-7933-4665-aef2-2393f84a0d05', 'lab-lzb', 'v-aaaaaaaaaaaa', 'a.b_c']) {
-        expect(isSafeSegment(ok), ok).toBe(true);
+    it('tells an id from something else: a UUID and nothing else, and the two names by their own shapes (#1403)', () => {
+      for (const ok of ['8826ee2e-7933-4665-aef2-2393f84a0d05', '8826EE2E-7933-4665-AEF2-2393F84A0D05', coderId('anything')]) {
+        expect(isCoderId(ok), ok).toBe(true);
       }
-      for (const bad of ['', '.', '..', '...', '-x', 'a/b', 'a\\b', 'a b', 'a?b', 'a#b', 'a%20b', 'me', 'Me', 'x'.repeat(129), 'ws-1\n', '\uff4d\uff45', 'm\u0435', 'a\u0000b', null, undefined, 7, {}]) {
-        expect(isSafeSegment(bad), String(bad)).toBe(false);
+      for (const bad of ['', '.', '..', 'ws-1', 'u-old-1', 'lab-lzb', 'v-aaaaaaaaaaaa', 'a.b_c', 'a/b', 'a b', 'me', '8826ee2e-7933-4665-aef2-2393f84a0d0', '8826ee2e-7933-4665-aef2-2393f84a0d05\n', '8826ee2e793346650aef22393f84a0d05', null, undefined, 7, {}]) {
+        expect(isCoderId(bad), String(bad)).toBe(false);
       }
+      expect(isVisitorUsername('v-0123456789ab')).toBe(true);
+      for (const bad of ['v-0123456789a', 'v-0123456789abc', 'V-0123456789AB', 'admin', 'me', 'v-0123456789ab/x', 7, null]) {
+        expect(isVisitorUsername(bad), String(bad)).toBe(false);
+      }
+      for (const ok of Object.values(VALID_LAB_WORKSPACES)) expect(isLabWorkspaceName(ok), ok).toBe(true);
+      for (const bad of ['lab-other', 'lab-lzb/x', '..', 'me', '', 7, null]) expect(isLabWorkspaceName(bad), String(bad)).toBe(false);
     });
 
     it('takes only ended or expired for what a session becomes, whatever the record says', async () => {
@@ -2637,7 +2704,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
     // Coder can finish a create the client has stopped waiting for, so a start
     // whose workspace call timed out may have left a workspace as well as the
     // user, and the answer that would have named it never came.
-    const NEW_USER = { id: 'u-new', username: 'v-newuser1' };
+    const NEW_USER = { id: coderId('u-new'), username: 'v-newuser1' };
 
     /** Turnstile, and a Coder that makes the user and then does what the test says to the workspace call. */
     function startFetch({ workspace = 'timeout', user = 'ok' } = {}) {
@@ -2657,7 +2724,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
           if (workspace === 'timeout') throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
           if (workspace === 'refused') return { ok: false, status: 400, text: async () => 'workspace limit reached' };
         }
-        return { ok: true, json: async () => ({ id: 'ws-new' }) };
+        return { ok: true, json: async () => ({ id: coderId('ws-new') }) };
       });
     }
 
@@ -2829,7 +2896,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
         status: 'cleanup_pending',
         startFailed: true,
         coderUserId: NEW_USER.id,
-        workspaceId: 'ws-new',
+        workspaceId: coderId('ws-new'),
         workspaceGone: false,
       });
       expect(note.accessUrl).toBeUndefined();
@@ -2897,10 +2964,10 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
   });
 
   describe('the sweep finds the workspace of a start that failed, by its owner and name', () => {
-    const OWNER = { id: 'u-fail-1', name: 'v-aaaaaaaaaaaa' };
+    const OWNER = { id: coderId('u-fail-1'), name: 'v-aaaaaaaaaaaa' };
     const LOOKUP_PATH = `GET /api/v2/users/${OWNER.name}/workspace/lab-lzb`;
     const foundWorkspace = (overrides = {}) => ({
-      id: 'ws-found',
+      id: coderId('ws-found'),
       name: 'lab-lzb',
       owner_id: OWNER.id,
       owner_name: OWNER.name,
@@ -2948,6 +3015,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
         }
         if (target.includes('/builds')) return statusAnswer(next('workspace'));
         if (init?.method === 'DELETE' && /\/api\/v2\/users\/[^/]+$/.test(target)) return statusAnswer(next('user'));
+        if (isUserRead(url, init)) return coderUserAnswer(url, OWNER.name);
         return { ok: true, status: 200 };
       });
     }
@@ -2964,10 +3032,10 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
 
-      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH, 'POST /api/v2/workspaces/ws-found/builds', `DELETE /api/v2/users/${OWNER.id}`]);
+      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH, `POST /api/v2/workspaces/${coderId('ws-found')}/builds`, `GET /api/v2/users/${OWNER.id}`, `DELETE /api/v2/users/${OWNER.id}`]);
       expect(store.get('lab_jobs', 'fail-1')).toMatchObject({
         status: 'ended',
-        workspaceId: 'ws-found',
+        workspaceId: coderId('ws-found'),
         workspaceGone: true,
         userGone: true,
       });
@@ -2979,12 +3047,12 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       now = dueAt;
 
       expect(await sweep(store, fetchImpl)).toEqual(tally({ pending: 1 }));
-      expect(store.get('lab_jobs', 'fail-1')).toMatchObject({ status: 'cleanup_pending', workspaceId: 'ws-found', workspaceGone: true });
+      expect(store.get('lab_jobs', 'fail-1')).toMatchObject({ status: 'cleanup_pending', workspaceId: coderId('ws-found'), workspaceGone: true });
       fetchImpl.mockClear();
 
       now = dueAt + CLEANUP_RETRY_BASE_MS;
       expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
-      expect(allCalls(fetchImpl)).toEqual([`DELETE /api/v2/users/${OWNER.id}`]);
+      expect(allCalls(fetchImpl)).toEqual([`GET /api/v2/users/${OWNER.id}`, `DELETE /api/v2/users/${OWNER.id}`]);
       expect(store.get('lab_jobs', 'fail-1').status).toBe('ended');
     });
 
@@ -2995,7 +3063,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
 
-      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH, `DELETE /api/v2/users/${OWNER.id}`]);
+      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH, `GET /api/v2/users/${OWNER.id}`, `DELETE /api/v2/users/${OWNER.id}`]);
       expect(store.get('lab_jobs', 'fail-1')).toMatchObject({ status: 'ended', workspaceGone: true, userGone: true });
     });
 
@@ -3013,12 +3081,12 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       now = dueAt + CLEANUP_RETRY_BASE_MS;
       expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
-      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH, 'POST /api/v2/workspaces/ws-found/builds', `DELETE /api/v2/users/${OWNER.id}`]);
+      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH, `POST /api/v2/workspaces/${coderId('ws-found')}/builds`, `GET /api/v2/users/${OWNER.id}`, `DELETE /api/v2/users/${OWNER.id}`]);
       expect(store.get('lab_jobs', 'fail-1').status).toBe('ended');
     });
 
     it.each([
-      ['a workspace owned by someone else', { owner_id: 'u-someone-else' }],
+      ['a workspace owned by someone else', { owner_id: coderId('u-someone-else') }],
       ['a workspace with another name', { name: 'lab-tfv' }],
       ['an answer with no id', { id: undefined }],
       ['an answer whose id is not text', { id: 42 }],
@@ -3081,17 +3149,17 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
     it('looks nothing up for a session that has a workspace id, or has no workspace name to look for', async () => {
       const store = cosmosLikeStore([
         expiredSession('old-1'), // a running session's record: it has the id (and no name)
-        unfinishedStart('has-id', { workspaceId: 'ws-known', coderUserId: 'u-known' }),
-        unfinishedStart('no-name', { workspaceName: undefined, coderUserId: 'u-noname' }),
+        unfinishedStart('has-id', { workspaceId: coderId('ws-known'), coderUserId: coderId('u-known') }),
+        unfinishedStart('no-name', { workspaceName: undefined, coderUserId: coderId('u-noname') }),
       ]);
       const fetchImpl = coderWithLookup();
       now = dueAt;
 
       await sweep(store, fetchImpl);
 
-      expect(allCalls(fetchImpl).filter((call) => call.startsWith('GET'))).toEqual([]);
+      expect(allCalls(fetchImpl).filter((call) => call.includes('/workspace/'))).toEqual([]);
       expect(allCalls(fetchImpl)).toEqual(
-        expect.arrayContaining(['POST /api/v2/workspaces/ws-known/builds', 'DELETE /api/v2/users/u-noname'])
+        expect.arrayContaining([`POST /api/v2/workspaces/${coderId('ws-known')}/builds`, `GET /api/v2/users/${coderId('u-noname')}`, `DELETE /api/v2/users/${coderId('u-noname')}`])
       );
       expect(store.get('lab_jobs', 'no-name')).toMatchObject({ status: 'ended', workspaceGone: true });
     });
@@ -3101,6 +3169,9 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       ['a user name that is "me"', { coderUsername: 'me' }],
       ['a workspace name with a space in it', { workspaceName: 'lab x' }],
       ['a workspace name that is two dots', { workspaceName: '..' }],
+      // Plainly a name, and not one of the labs' (#1403): another person's workspace, say.
+      ['a workspace name that is not one of the labs', { workspaceName: 'lab-other' }],
+      ['a user name of another shape than the broker makes', { coderUsername: 'v-0123456789' }],
     ])('does not look a workspace up by %s, and does not delete anything', async (_name, overrides) => {
       const store = cosmosLikeStore([unfinishedStart('odd', overrides)]);
       const fetchImpl = coderWithLookup({ lookup: [foundWorkspace()] });

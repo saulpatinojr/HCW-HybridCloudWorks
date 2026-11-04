@@ -110,11 +110,19 @@ export function evaluatePredicate(predicate, doc, parameters = []) {
 /**
  * Run a whole `SELECT * FROM c WHERE ...` against a container's documents,
  * with its parameters, as the `query` option of test/memory-store.js takes it:
- * `({ query, parameters, docs }) => rows`. Any other shape of query throws, so
- * a query that grows a form this does not read fails its test.
+ * `({ query, parameters, docs }) => rows`. `SELECT TOP n * ...` and
+ * `SELECT TOP @name * ...` are read too (the visitor sessions' queries,
+ * #1403): the first n matching documents, in the order given, and a TOP that
+ * is not a whole number above zero throws, as Cosmos refuses it. Any other
+ * shape of query throws, so a query that grows a form this does not read
+ * fails its test.
  */
 export function runCosmosQuery({ query, parameters = [], docs }) {
-  const m = /^SELECT \* FROM c WHERE (.+)$/s.exec(String(query).trim());
+  const m = /^SELECT (?:TOP (@\w+|\d+) )?\* FROM c WHERE (.+)$/s.exec(String(query).trim());
   if (!m) throw new Error(`unreadable query ${query}`);
-  return docs.filter((doc) => evaluatePredicate(m[1], doc, parameters));
+  const rows = docs.filter((doc) => evaluatePredicate(m[2], doc, parameters));
+  if (m[1] === undefined) return rows;
+  const top = m[1].startsWith('@') ? parameterValue(parameters, m[1]) : Number(m[1]);
+  if (!Number.isInteger(top) || top <= 0) throw new Error(`TOP must be a whole number above zero, not ${top}`);
+  return rows.slice(0, top);
 }
