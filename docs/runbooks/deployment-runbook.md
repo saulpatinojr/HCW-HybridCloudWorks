@@ -788,10 +788,26 @@ run on a quiet morning, after 04:00 UTC, so the previous night's export
 **If something fails after Step 2** (a `FAIL` in the smoke run, 403s in the
 metric, or an admin page that will not load): put the account-wide grant
 back. Revert the Step 2 pull request on GitHub (its **Revert** button opens a
-pull request that restores the `func_cosmos` block), merge it, and confirm
-the run it queues; that plan is one create. Access returns when the apply
-completes, a few minutes after the merge. Nothing in Step 1 needs a
-rollback: an extra grant on the same identity cannot take access away.
+pull request that restores the `func_cosmos` block and puts back the Step 1
+versions of the two tests). Before merging that revert, add one entry to
+`DECLARED` in `scripts/assert-expected-plan.mjs` on the revert branch,
+because the revert only takes the Step 2 delete declaration away and
+declares nothing for the create its plan carries; without it the
+[plan check](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml)
+reports the create as UNEXPECTED:
+
+```javascript
+  {
+    address: "azurerm_cosmosdb_sql_role_assignment.func_cosmos",
+    action: "create",
+    reason: "#1469 rollback: the account-wide grant is restored after step 2 failed its checks",
+  },
+```
+
+Then merge the revert and confirm the run it queues; that plan is the
+permanent diff plus exactly one create, `func_cosmos`. Access returns when
+the apply completes, a few minutes after the merge. Nothing in Step 1 needs
+a rollback: an extra grant on the same identity cannot take access away.
 
 ## 5. Rollback
 

@@ -1025,8 +1025,9 @@ This project has not cut a tagged release; entries are grouped under
   holds that the block is gone and its delete declared, and that no Cosmos
   role assignment in `infra/` is scoped to the account id, the deployment
   runbook marks Step 2 as the current step with the owner's checks and the
-  rollback (revert the pull request, one create), and ADR 0036 records the
-  narrowing as complete once that apply runs.
+  rollback (revert the pull request with the restored grant's create
+  declared, so its plan is one create the plan check accepts), and ADR 0036
+  records the narrowing as complete once that apply runs.
 
 ### Fixed
 

@@ -71,7 +71,8 @@ const FUNCTION_APP = 'azurerm_function_app_flex_consumption.hcw';
  * (Terraform text) whose `scope` is a Cosmos account's id and nothing more:
  * `azurerm_cosmosdb_account.<any name>.id` bare or as the whole of an
  * interpolated string (`"${azurerm_cosmosdb_account.<any name>.id}"`), any
- * spacing, with or without a trailing `#` or `//` comment. Names are any
+ * spacing, a trailing `/` inside the string allowed, with or without a
+ * trailing `#` or `//` comment. Names are any
  * valid Terraform identifier (letters, digits, `_` and `-`, not starting
  * with a digit). A database grant's scope goes on with `/dbs/<name>` inside
  * the string and does not match (#1469 step 2).
@@ -80,7 +81,8 @@ function accountScopedCosmosGrants(source) {
   const identifier = '[A-Za-z_][A-Za-z0-9_-]*';
   const blocks = [...source.matchAll(new RegExp(`^resource "azurerm_cosmosdb_sql_role_assignment" "(${identifier})" \\{[\\s\\S]*?^\\}`, 'gm'))];
   const accountId = `azurerm_cosmosdb_account\\.${identifier}\\.id`;
-  const accountScope = new RegExp(`^\\s*scope\\s*=\\s*(?:${accountId}|"\\$\\{\\s*${accountId}\\s*\\}")\\s*(?:(?:#|\\/\\/).*)?$`, 'm');
+  // A trailing slash after the interpolated id is still the account scope.
+  const accountScope = new RegExp(`^\\s*scope\\s*=\\s*(?:${accountId}|"\\$\\{\\s*${accountId}\\s*\\}/?")\\s*(?:(?:#|\\/\\/).*)?$`, 'm');
   return blocks.filter((m) => accountScope.test(m[0])).map((m) => m[1]);
 }
 
@@ -1181,6 +1183,7 @@ describe('DECLARED', () => {
       block('func-cosmos', 'azurerm_cosmosdb_account.hcw-prod.id'),
       block('interpolated', '"${azurerm_cosmosdb_account.hcw.id}"'),
       block('interpolated_spaced', '"${ azurerm_cosmosdb_account.hcw.id }" # same scope'),
+      block('trailing_slash', '"${azurerm_cosmosdb_account.hcw.id}/"'),
     ].join('\n');
     expect(accountScopedCosmosGrants(source)).toEqual([
       'commented',
@@ -1190,6 +1193,7 @@ describe('DECLARED', () => {
       'func-cosmos',
       'interpolated',
       'interpolated_spaced',
+      'trailing_slash',
     ]);
   });
 
