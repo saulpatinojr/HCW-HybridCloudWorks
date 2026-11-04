@@ -48,6 +48,7 @@ vi.mock('../lib/cosmos-client.js', () => ({
   ...forbidden,
 }));
 
+import { coderId, coderUserAnswer, isUserRead } from '../../test/coder-ids.js';
 import { memoryStore } from '../../test/memory-store.js';
 import { runCosmosQuery } from '../../test/cosmos-predicate.js';
 import { reapExpiredVisitorSessions } from '../lib/labs/visitor-session.js';
@@ -73,9 +74,9 @@ const session = (id, overrides = {}) => ({
   status: 'active',
   clientHash: 'hash',
   labId: 'landing-zone-builder-output',
-  coderUserId: `u-${id}`,
-  coderUsername: `v-${id}`,
-  workspaceId: `ws-${id}`,
+  coderUserId: coderId(`u-${id}`),
+  coderUsername: 'v-0123456789ab',
+  workspaceId: coderId(`ws-${id}`),
   workspaceName: 'lab-lzb',
   expiresAt: iso(Date.now() - 60_000),
   ttl: 7200,
@@ -96,8 +97,9 @@ const waiting = (id) =>
 
 /** A Coder that accepts every call, after a pause long enough for a second run to start meanwhile. */
 function slowCoder() {
-  return vi.fn(async () => {
+  return vi.fn(async (url, init) => {
     await new Promise((resolve) => setTimeout(resolve, 5));
+    if (isUserRead(url, init)) return coderUserAnswer(url);
     return { ok: true, status: 200 };
   });
 }
@@ -306,7 +308,8 @@ describe('an armed timer', () => {
     const calls = callsOf(fetchImpl);
     expect(calls.length).toBeGreaterThan(0);
     for (const call of calls) {
-      expect(call).toMatch(/^(DELETE \/api\/v2\/users\/[^/]+|POST \/api\/v2\/workspaces\/[^/]+\/builds|GET \/api\/v2\/users\/[^/]+\/workspace\/[^/]+)$/);
+      // A delete, a workspace delete build, a lookup by owner and name, or the read of one user before its delete (#1403).
+      expect(call).toMatch(/^(DELETE \/api\/v2\/users\/[^/]+|POST \/api\/v2\/workspaces\/[^/]+\/builds|GET \/api\/v2\/users\/[^/]+(\/workspace\/[^/]+)?)$/);
     }
     expect(calls.some((call) => call === 'POST /api/v2/users' || call.includes('/members/'))).toBe(false);
     // The one POST it makes asks Coder to delete a workspace, not to build or start one.
@@ -364,7 +367,7 @@ describe('an armed timer', () => {
 });
 
 describe('overlap: a second run, or another sweep, cannot make a second set of Coder calls', () => {
-  const oneSet = ['POST /api/v2/workspaces/ws-o-1/builds', 'DELETE /api/v2/users/u-o-1'];
+  const oneSet = [`POST /api/v2/workspaces/${coderId('ws-o-1')}/builds`, `GET /api/v2/users/${coderId('u-o-1')}`, `DELETE /api/v2/users/${coderId('u-o-1')}`];
 
   /** How many times a run tried to take a session (the conditional write that marks it `ending`). */
   const claimsTried = (store) => store.replaceDocIfMatch.mock.calls.filter(([, doc]) => doc.status === 'ending').length;
@@ -410,7 +413,7 @@ describe('overlap: a second run, or another sweep, cannot make a second set of C
 
     await Promise.all([run(recordingContext().context), run(recordingContext().context), run(recordingContext().context)]);
 
-    expect(callsOf(fetchImpl)).toEqual(['DELETE /api/v2/users/u-o-1']);
+    expect(callsOf(fetchImpl)).toEqual([`GET /api/v2/users/${coderId('u-o-1')}`, `DELETE /api/v2/users/${coderId('u-o-1')}`]);
     expect(backing.store.get('lab_jobs', 'o-1').status).toBe('ended');
     expect(claimsTried(backing.store)).toBeGreaterThanOrEqual(2);
   });
