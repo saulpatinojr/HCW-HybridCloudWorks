@@ -126,10 +126,9 @@ describe("redaction outside docs/ (#1540)", () => {
   });
 
   it("accepts the shapes a fixture is allowed to spell an id in, without an allow-list entry", () => {
-    // The placeholder; the browser tests' e2e family; a first group of one
+    // The placeholder; the browser tests' e2e family; and a first group of one
     // repeated hex digit, which is how the Pester and vitest fixtures spell an
-    // id that names nothing; and a version-5 UUID, which is a hash of a name
-    // (Entra and Azure ids are version 4), so it cannot be an identity.
+    // id that names nothing.
     const result = check({
       files: {
         "scripts/lab/Fixture.Tests.ps1": [
@@ -138,7 +137,6 @@ describe("redaction outside docs/ (#1540)", () => {
           "$c = 'aaaaaaaa-1111-4222-8333-444444444444'",
           "$d = '99999999-5b4a-4938-8271-605f4e3d2c1b'",
           "$e = 'CCCCCCCC-0000-4000-8000-000000000A91'",
-          "$f = 'cf2fc369-461c-578f-bb74-4625dfe35260'",
           "",
         ].join("\n"),
       },
@@ -146,14 +144,18 @@ describe("redaction outside docs/ (#1540)", () => {
     expect(result.status, result.stdout).toBe(0);
   });
 
-  it("does not take a repeated pair, or a repeated digit anywhere but the first group, for a fixture", () => {
-    // c0c0c0c0-... and ...-1111-... are not the convention; a reader cannot
-    // tell them from a real id at a glance, so they get no free pass.
+  it("does not take a repeated pair, a repeated digit anywhere but the first group, or a UUID version for a fixture", () => {
+    // c0c0c0c0-... and ...-1111-... are not the convention, and a version-5
+    // UUID (third group 5xxx) looks no more made up than any other: a reader
+    // cannot tell them from a real id at a glance, so they get no free pass.
+    // The three v5 values the tests assert are listed one by one instead
+    // (CodeRabbit on #1548).
     const result = check({
       files: {
         "scripts/lab/Fixture.Tests.ps1": [
           "$a = 'c0c0c0c0-0000-4000-8000-000000000001'",
           "$b = '3b9e1f20-1111-4111-8111-111111111111'",
+          "$c = '3b9e1f20-7c4d-5a8e-9b61-5d2f8a7c0e13'",
           "",
         ].join("\n"),
       },
@@ -161,6 +163,20 @@ describe("redaction outside docs/ (#1540)", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("scripts/lab/Fixture.Tests.ps1:1: non-placeholder GUID");
     expect(result.stdout).toContain("scripts/lab/Fixture.Tests.ps1:2: non-placeholder GUID");
+    expect(result.stdout).toContain("scripts/lab/Fixture.Tests.ps1:3: non-placeholder GUID");
+  });
+
+  it("allows a UUIDv5 a test asserts only because it is on the allow-list by value", () => {
+    // The markdown-draft id test's expected hash; the same shape with one
+    // digit changed is a finding.
+    const listed = check({
+      files: { "functions/src/lib/cms/drafts-markdown.test.js": "'cf2fc369-461c-578f-bb74-4625dfe35260',\n" },
+    });
+    expect(listed.status, listed.stdout).toBe(0);
+    const unlisted = check({
+      files: { "functions/src/lib/cms/drafts-markdown.test.js": "'cf2fc369-461c-578f-bb74-4625dfe35261',\n" },
+    });
+    expect(unlisted.status).toBe(1);
   });
 
   it("allows an Azure Policy built-in definition id in the functions source, with its reason on the allow-list", () => {

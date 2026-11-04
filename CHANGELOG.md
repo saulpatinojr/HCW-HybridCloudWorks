@@ -1025,11 +1025,11 @@ This project has not cut a tagged release; entries are grouped under
   and `frontend/src/**/*.{js,jsx}`. Every GUID those paths held was
   classified: the real ids went; the made-up fixture ids were rewritten to a
   first group of one repeated digit (`99999999-...`), which the gate now
-  recognises along with the placeholder, the browser tests' `e2e00000-...`
-  family and version-5 UUIDs (name hashes, never an identity); the Defender
-  WSL walkthrough's and simulator's sample device ids became obviously fake;
-  and the four Azure Policy built-in definition ids `estate.js` excludes, the
-  two UUIDv5 namespaces the draft ids are hashed under, and three public URL
+  recognises along with the placeholder and the browser tests' `e2e00000-...`
+  family; the Defender WSL walkthrough's and simulator's sample device ids
+  became obviously fake; and the four Azure Policy built-in definition ids
+  `estate.js` excludes, the two UUIDv5 namespaces the draft ids are hashed
+  under, the three UUIDv5 values their tests assert, and three public URL
   names (Amazon Music's podcast listing, two ElevenLabs preview objects)
   went on the allow-list with their reasons. The four gitleaks fingerprints
   for the removed defaults left `.gitleaksignore`, and the rollback runbook,

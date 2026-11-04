@@ -32,12 +32,13 @@ Fails, naming file:line, on:
    docs/standards/variables-and-secrets.md, which prescribes the all-zero
    form). Recognised shapes, in SYNTHETIC: the placeholder
    00000000-0000-0000-0000-0000000000NN; the browser tests' family
-   e2e00000-0000-4000-8000-NNNNNNNNNNNN; a first group that is one hex digit
-   repeated eight times (11111111-..., aaaaaaaa-...), which is how the test
-   fixtures spell an id that names nothing; and a version-5 UUID (third
-   group 5xxx), which is a hash of a name, never an Entra or Azure identity
-   (those are version 4). Anything else must be in ALLOWED_GUIDS with a
-   reason.
+   e2e00000-0000-4000-8000-NNNNNNNNNNNN; and a first group that is one hex
+   digit repeated eight times (11111111-..., aaaaaaaa-...), which is how the
+   test fixtures spell an id that names nothing. Anything else must be in
+   ALLOWED_GUIDS with a reason. (A version-5 UUID, a hash of a name, was a
+   recognised shape for one review round; CodeRabbit's point on #1548 held:
+   the version digit does not make a value visibly made up, and a reviewer
+   cannot tell a v5 fixture from a pasted id, so each one is listed.)
 3. A contributor's local filesystem path (a Windows user profile), which is
    noise to every other reader and names a person.
 
@@ -93,7 +94,6 @@ SYNTHETIC = re.compile(
     r"^(?:"
     r"e2e00000-0000-4000-8000-[0-9a-f]{12}"
     r"|([0-9a-f])\1{7}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-    r"|[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}"
     r")$",
     re.IGNORECASE,
 )
@@ -135,6 +135,12 @@ ALLOWED_GUIDS = {
     # id is hashed with, and changing one would re-key every stored draft.
     "5d0a3a1e-6f0b-4c52-9f1e-0e2b7c3d8a41": "MARKDOWN_DRAFT_ID_NAMESPACE, the UUIDv5 namespace markdown draft ids are hashed under (functions/src/lib/cms/drafts-markdown.js)",
     "8bccdb11-a980-4071-bc3a-805c389b371b": "REPO_DRAFT_ID_NAMESPACE, the UUIDv5 namespace repository draft ids are hashed under (functions/src/lib/cms/repo-draft.js)",
+    # Values the tests expect from those hashes: each is the UUIDv5 of a fixed
+    # fixture name under one of the namespaces above (or the doc-vault salt),
+    # recomputed by the test, so it names nothing and cannot be rewritten.
+    "cf2fc369-461c-578f-bb74-4625dfe35260": "UUIDv5 of a fixture path under MARKDOWN_DRAFT_ID_NAMESPACE, asserted by functions/src/lib/cms/drafts-markdown.test.js",
+    "2ccb2ae7-1eb7-5e70-9817-00d7c3a8019a": "UUIDv5 of a fixture path under REPO_DRAFT_ID_NAMESPACE, asserted by functions/src/lib/cms/repo-draft.test.js",
+    "65366fec-6676-500f-a584-aedcce98b4ad": "UUIDv5 of a fixture document key under the test salt, asserted by functions/src/lib/doc-vault/model.test.js",
     # Public by construction: names anyone can read off a public page or bucket.
     "d139c50a-8163-425c-8315-4e19cc9370ee": "Amazon Music's public listing id for the Hybrid Cloud Works podcast, part of the public URL the site links to (frontend/src/context/ProviderContext.jsx)",
     "405766b8-1f4e-4d3c-aba1-6f25333823ec": "An object name in ElevenLabs's public premade-voice preview bucket, quoted from its API reference as a test of the preview allow-list (functions/src/lib/listen-and-learn/speech/elevenlabs-voices.test.js)",
