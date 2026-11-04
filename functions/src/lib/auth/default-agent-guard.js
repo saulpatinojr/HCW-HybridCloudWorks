@@ -10,10 +10,10 @@
  * the App Role in the token and the registry it is checked against — see
  * require-agent.js.
  */
-import { randomUUID } from 'node:crypto';
 import { createTokenVerifier } from './verify-token.js';
 import { createAgentGuard } from './require-agent.js';
-import { readDoc, upsertDoc } from '../cosmos-client.js';
+import { readDoc } from '../cosmos-client.js';
+import { writeDenialAudit } from './denial-audit.js';
 
 let guard = null;
 
@@ -27,13 +27,14 @@ export function getDefaultAgentGuard() {
     // lab_agents is partitioned on /id, and /agentId is identical to /id by
     // construction (infra/main.tf partition-key rationale).
     lookupAgent: (agentId) => readDoc('lab_agents', agentId, agentId),
-    auditDenial: (entry) =>
-      upsertDoc('admin_audit_logs', {
-        id: randomUUID(),
-        kind: 'agent-auth-denial',
-        at: new Date().toISOString(),
-        ...entry,
-      }),
+    // The shared sink the admin and workspace guards write through (#1465).
+    // The guard calls it without awaiting it, so the sink must never reject:
+    // writeDenialAudit awaits the Cosmos write inside its own try/catch and
+    // logs one content-free line (the error's code, never its message) when
+    // the write fails. Until #1476 this was a bare upsertDoc call, and a write
+    // refused under throttling became an unhandled rejection in the Functions
+    // host instead of the clean 401 or 403 the guard had already answered.
+    auditDenial: (entry) => writeDenialAudit({ kind: 'agent-auth-denial', ...entry }),
   });
   return guard;
 }

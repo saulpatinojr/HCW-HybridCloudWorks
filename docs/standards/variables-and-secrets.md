@@ -440,7 +440,7 @@ dictated by HashiCorp and Microsoft and are contractual.
 | `admin_ip_rules`, `cosmos_admin_ip_rules`, `functions_storage_admin_ip_rules` | Populated only for a seeding or inspection window; empty is the steady state | no |
 
 Most of the rest of `infra/variables.tf` has a default and needs no workspace
-entry. Nine are the exception, and they are the ones an operator actually
+entry. Ten are the exception, and they are the ones an operator actually
 reaches for. Each but one carries the *safe* value as its default, so the
 unsafe or armed value is a deliberate workspace edit and the default is the
 rollback. The one is `labs_public_submission_enabled`, which carries the
@@ -452,6 +452,7 @@ rollback is `false` in the workspace:
 | `schedulers_master_enabled` | `false` | Master kill switch for every catalogued timer — it is what `FEATURE_FLAG_SCHEDULERS` is set from. A hardcoded literal until 2026-08-24, which meant no timer could be armed without a code change and nothing said so |
 | `newsletter_sending_enabled` | `false` | Whether approving a weekly newsletter issue sends it through Resend — it is what `NEWSLETTER_SENDING_ENABLED` is set from. Off, approval is refused before Resend is called ([ADR 0030](../decisions/0030-newsletter-provider.md) §2a) |
 | `labs_public_submission_enabled` | `true` | Whether the Landing Zone Builder's "Validate on the lab" may queue a public job — it is what `LABS_PUBLIC_SUBMISSION_ENABLED` is set from ([ADR 0032](../decisions/0032-learner-labs-platform.md) decision 6, revised 2026-09-28). Even on, nothing is taken until `TURNSTILE-SECRET-KEY` resolves, and only from the site's pane. `false` is the kill switch |
+| `labs_visitor_sessions_enabled` | `false` | Whether visitors outside the GitHub organisation may start a 60-minute Coder lab from the site — it is what `LABS_VISITOR_SESSIONS_ENABLED` is set from ([ADR 0032](../decisions/0032-learner-labs-platform.md) amendment of 2026-10-17; declared since [#1400](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1400) and [#1403](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1403), before which a copy set by hand would have gone on the next apply). `false` is the closed door and the kill switch for new sessions; running ones finish and the sweep timer keeps cleaning up. Even `true`, nothing opens until `TURNSTILE-SECRET-KEY` and `CODER-BROKER-TOKEN` resolve. The owner opens it only after the functions are deployed and item 5 of #1400 is checked live |
 | `enabled_timers` | `[]` | Which timers are armed, by flag suffix. Arming one needs **both** this and the master switch. An unrecognised name fails the plan rather than silently arming nothing |
 | `availability_test_enabled` | `false` | Runs the `/api/health` availability test. Off until the Cloudflare side is settled: Bot Fight Mode serves datacenter clients a 403, so arming it first would create a permanently-firing alert |
 | `availability_probe_alert_enabled` | `false` | The alert on the Cloudflare Worker reachability probe ([ADR 0024](../decisions/0024-edge-availability-probe.md)). It fires on *missing* probe successes, so flipping it before the Worker is deployed and observed writing `success == 1` rows creates a rule that fires immediately and permanently |
