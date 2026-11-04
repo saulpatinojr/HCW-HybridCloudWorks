@@ -662,10 +662,12 @@ the app never does: it opens `COSMOS_DATABASE` by name
    `/cosmos-site-prod-cus` and one in `/dbs/hcw`. One row, or a row whose
    scope ends in something else, is a failed apply: go back to the run page
    and read its error.
-5. Check the site is unaffected. Open <https://hybridcloudworks.com/> and
-   one article; both load. Then, from the repository root on `main`, run the
-   anonymous smoke tier (health endpoint and the public content reads;
-   bash or PowerShell, either works):
+5. Check the site is unaffected. Open <https://hybridcloudworks.com/>, then
+   the article list at <https://hybridcloudworks.com/azure/blog/> (a Cosmos
+   read through the API), and open the first article it lists; all three
+   load. Then, from the repository root on `main`, run the anonymous smoke
+   tier (health endpoint and the public content reads; bash or PowerShell,
+   either works):
 
    ```powershell
    node scripts/smoke-deployed.mjs --base https://api-azure.hybridcloudworks.com/api
@@ -714,20 +716,34 @@ has finished and the next one is a day away.
    $cos = az cosmosdb show -n cosmos-site-prod-cus -g rg-db-site-prod-cus --subscription sub-app-site-prod-cus --query id -o tsv; az monitor metrics list --resource $cos --metric TotalRequests --filter "StatusCode eq '403'" --offset 15m --interval PT15M --aggregation Count --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | ForEach-Object { $_.value.timeseries.data } | Select-Object timeStamp, count
    ```
 
-   The second says whether the Function App itself was refused: it counts
-   the app's own log lines and exceptions in the same window that carry
-   `403` or `Forbidden` (the `application-insights` extension installs
-   itself on first use):
+   The second says whether the Function App itself was refused. The app
+   does not rephrase a Cosmos refusal: the SDK throws Cosmos's own error,
+   whose message reads `Request blocked by Auth ... does not have required
+   RBAC permissions to perform action ...`
+   ([the message as Microsoft Q&A quotes it](https://learn.microsoft.com/answers/a/12337541)),
+   and the Functions host writes that message to Application Insights as
+   the exception and the trace of the failed invocation. So the read counts
+   entries in the same window that carry that wording, not any `403` (the
+   `application-insights` extension installs itself on first use):
 
    ```powershell
-   az monitor app-insights query --app appi-site-prod-cus-01 -g rg-web-site-prod-cus --subscription sub-app-site-prod-cus --offset 15m --analytics-query 'union traces, exceptions | where timestamp > ago(15m) | where tostring(message) has "403" or tostring(message) has "Forbidden" or tostring(outerMessage) has "403" or tostring(outerMessage) has "Forbidden" | summarize count()' -o table
+   az monitor app-insights query --app appi-site-prod-cus-01 -g rg-web-site-prod-cus --subscription sub-app-site-prod-cus --offset 15m --analytics-query 'union traces, exceptions | where timestamp > ago(15m) | where tostring(message) has "RBAC permissions" or tostring(outerMessage) has "RBAC permissions" or tostring(message) has "Request blocked by Auth" or tostring(outerMessage) has "Request blocked by Auth" | summarize count()' -o table
    ```
 
    Success is `0` (or an empty table) from both. A non-zero count from the
-   first with `0` from the second is another caller being refused (an
-   operator without a grant, for example), not the app: note it and carry
-   on. A non-zero count from the second is the app being refused on the
-   narrower grant: treat it as the failure case below.
+   second is the app being refused on the narrower grant: treat it as the
+   failure case below. A non-zero count from the first with `0` from the
+   second is **inconclusive**, not a pass: the host samples its traces and
+   exceptions (`functions/host.json`, `samplingSettings`), so the app's
+   refusal can be missing from the second read while the account metric,
+   which is not sampled, counts it. Do not put it down to another caller.
+   Repeat both reads 15 minutes later after saving another small edit; if
+   the first still counts refusals and the second still shows `0`, open the
+   admin content list and the article list from Step 1 item 5 and watch for
+   an error, and only record the check as passed when the first read
+   returns `0` or the refused caller has been identified as something other
+   than the app (for example an operator's own command answering 403 at the
+   same time).
 7. The next morning, after 03:45 UTC, check that the nightly export
    completed on the narrower grant. The query is the one from the
    [Cosmos restore runbook](cosmos-restore.md#is-the-export-running-read-this-first):
