@@ -636,9 +636,9 @@ describe('newsletter settings', () => {
 
     it('keeps a Resend template id, trimmed, and an explicit empty string', () => {
       expect(
-        normalizeNewsletterSettings({ templateId: ' 34a080c9-b17d-4187-ad80-5af20266e535 ' })
+        normalizeNewsletterSettings({ templateId: ' 44444444-b17d-4187-ad80-5af20266e535 ' })
           .templateId
-      ).toBe('34a080c9-b17d-4187-ad80-5af20266e535');
+      ).toBe('44444444-b17d-4187-ad80-5af20266e535');
       expect(normalizeNewsletterSettings({ templateId: 'x'.repeat(64) }).templateId).toBe(
         'x'.repeat(64)
       );

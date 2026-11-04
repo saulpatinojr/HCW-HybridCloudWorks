@@ -13,8 +13,8 @@
 
     What this script assumes already exists, and asserts rather than creates:
 
-        app registration  HCWSite API  ac696e96-e203-47be-ade8-c35ece8a6c4a
-        identifier URI    api://ac696e96-e203-47be-ade8-c35ece8a6c4a
+        app registration  HCWSite API  (its client id is looked up, below)
+        identifier URI    api://<the API's client id>
         exposed scope     access_as_admin
         app roles         Admin, LabAgent (both enabled)
         token version     requestedAccessTokenVersion = 2
@@ -32,6 +32,17 @@
     user. This is guard gate 1; gate 2 is the `admins/{oid}` registry, seeded
     separately with CMS_BOOTSTRAP_ALLOWED_UIDS / _EMAILS.
 
+.PARAMETER ApiAppId
+    The application (client) id of the HCWSite API registration. Leave it
+    out and the script finds it: from the HCW_API_APP_ID environment
+    variable when that is set, otherwise from the one registration named
+    -ApiDisplayName in the signed-in tenant (scripts/lib/Resolve-EntraApiAppId.ps1).
+    It used to be a parameter default here; the repository is public and a
+    real application id does not go in a tracked file (#1540).
+
+.PARAMETER ApiDisplayName
+    The display name the lookup above searches for. HCWSite API.
+
 .PARAMETER WhatIf
     Print what would change and exit without writing.
 
@@ -48,10 +59,13 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
     [string] $AdminUpn,
-    [string] $ApiAppId = 'ac696e96-e203-47be-ade8-c35ece8a6c4a'
+    [string] $ApiAppId,
+    [string] $ApiDisplayName = 'HCWSite API'
 )
 
 $ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot '../lib/Resolve-EntraApiAppId.ps1')
 
 function Write-Step { param($Text) Write-Host "`n=== $Text ===" -ForegroundColor Cyan }
 
@@ -59,6 +73,8 @@ Write-Step 'Preflight'
 $account = az account show --query '{user:user.name,tenant:tenantId}' -o json | ConvertFrom-Json
 Write-Host "signed in as : $($account.user)"
 Write-Host "tenant       : $($account.tenant)"
+$ApiAppId = Resolve-EntraApiAppId -ApiAppId $ApiAppId -DisplayName $ApiDisplayName
+Write-Host "api client id: $ApiAppId"
 
 $app = az ad app show --id $ApiAppId -o json | ConvertFrom-Json
 if (-not $app) { throw "App registration $ApiAppId not found in this tenant." }

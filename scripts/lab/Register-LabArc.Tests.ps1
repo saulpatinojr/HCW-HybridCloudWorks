@@ -44,11 +44,11 @@ BeforeAll {
     $target = Get-LabArcTarget
     $tenantId = '11111111-2222-4333-8444-555555555555'
     $subscriptionId = 'aaaaaaaa-1111-4222-8333-444444444444'
-    $appId = '0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9'
-    $spId = '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b'
-    $tfId = '12345678-90ab-4cde-8f01-23456789abcd'
-    $keyA = 'c0c0c0c0-0000-4000-8000-000000000001'
-    $keyB = 'c0c0c0c0-0000-4000-8000-000000000002'
+    $appId = 'bbbbbbbb-4f50-4617-8293-a4b5c6d7e8f9'
+    $spId = '99999999-5b4a-4938-8271-605f4e3d2c1b'
+    $tfId = '22222222-90ab-4cde-8f01-23456789abcd'
+    $keyA = 'cccccccc-0000-4000-8000-000000000001'
+    $keyB = 'cccccccc-0000-4000-8000-000000000002'
     $groupId = "/subscriptions/$subscriptionId/resourceGroups/rg-lab-hybrid-prod-cus"
     $now = [datetime]::new(2026, 9, 28, 12, 0, 0, [System.DateTimeKind]::Utc)
     # Deliberately not shaped like an Entra client secret, and low in entropy,
@@ -127,8 +127,8 @@ Describe 'Get-LabArcTarget and Get-LabArcVaultKeys agree with the files they mir
 Describe 'Test-LabGuid and Get-LabTenantIdFromIssuer' {
     It 'accepts a GUID and refuses <Label>' -ForEach @(
         @{ Label = 'an empty string'; Value = '' },
-        @{ Label = 'a trailing newline'; Value = "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9`n" },
-        @{ Label = 'braces'; Value = '{0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9}' }
+        @{ Label = 'a trailing newline'; Value = "bbbbbbbb-4f50-4617-8293-a4b5c6d7e8f9`n" },
+        @{ Label = 'braces'; Value = '{bbbbbbbb-4f50-4617-8293-a4b5c6d7e8f9}' }
     ) {
         Test-LabGuid -Value $appId | Should -BeTrue
         Test-LabGuid -Value $Value | Should -BeFalse
@@ -221,7 +221,7 @@ Describe 'Get-LabArcSecretPlan' {
         @{ Label = 'the only one expires within the hour'; Hours = @(0.5); State = @{}; Reason = '*expire within*' },
         @{ Label = 'two are live'; Hours = @(20, 10); State = @{}; Reason = '*2 live client secrets*' },
         @{ Label = 'the live one lasts a year, so this script did not make it'; Hours = @(8760); State = @{}; Reason = '*longer than 24 hours*' },
-        @{ Label = 'the vault holds another application id'; Hours = @(20); State = @{ AppDetail = '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b' }; Reason = "*vault_arc_service_principal_id is not this onboarding's*" },
+        @{ Label = 'the vault holds another application id'; Hours = @(20); State = @{ AppDetail = '99999999-5b4a-4938-8271-605f4e3d2c1b' }; Reason = "*vault_arc_service_principal_id is not this onboarding's*" },
         @{ Label = 'the vault holds another tenant'; Hours = @(20); State = @{ TenantDetail = 'not-a-guid' }; Reason = "*vault_arc_tenant_id is not*" },
         @{ Label = 'the vault has no secret'; Hours = @(20); State = @{ SecretState = 'absent'; SecretDetail = '-' }; Reason = '*secret is absent*' },
         @{ Label = 'the vault holds a different secret'; Hours = @(20); State = @{ SecretDetail = 'hint-mismatch' }; Reason = "*not the registration's live one*" },
@@ -231,7 +231,7 @@ Describe 'Get-LabArcSecretPlan' {
         $i = 0
         foreach ($h in $Hours) {
             $i++
-            $registered += New-Credential -KeyId ("c0c0c0c0-0000-4000-8000-00000000000$i") -End $now.AddHours($h)
+            $registered += New-Credential -KeyId ("cccccccc-0000-4000-8000-00000000000$i") -End $now.AddHours($h)
         }
         $plan = Get-LabArcSecretPlan -Registered $registered -HostState (New-HostState @State) -AppId $appId -TenantId $tenantId -SubscriptionId $subscriptionId -NowUtc $now -LifetimeHours 24
         $plan.Action | Should -Be 'Mint'
@@ -258,7 +258,7 @@ Describe 'Get-LabArcCandidateHint' {
     ) {
         $registered = @()
         for ($i = 0; $i -lt $Hints.Count; $i++) {
-            $registered += New-Credential -KeyId ("c0c0c0c0-0000-4000-8000-00000000000$i") -End $now.AddHours($Hours[$i]) -Hint $Hints[$i]
+            $registered += New-Credential -KeyId ("cccccccc-0000-4000-8000-00000000000$i") -End $now.AddHours($Hours[$i]) -Hint $Hints[$i]
         }
         Get-LabArcCandidateHint -Registered $registered -NowUtc $now | Should -BeExactly ''
     }
@@ -430,7 +430,7 @@ Describe 'Resolve-LabArcSubscription and Get-LabArcResourceGroup' {
 
     It 'stops when <Label>' -ForEach @(
         @{ Label = 'there is none of that name'; Json = '[]'; Expected = '*no subscription named*' },
-        @{ Label = 'there are two'; Json = '[{"name":"sub-app-site-prod-cus","id":"c0c0c0c0-0000-4000-8000-000000000001","tenantId":"11111111-2222-4333-8444-555555555555"},{"name":"sub-app-site-prod-cus","id":"c0c0c0c0-0000-4000-8000-000000000002","tenantId":"11111111-2222-4333-8444-555555555555"}]'; Expected = '*2 subscriptions*' }
+        @{ Label = 'there are two'; Json = '[{"name":"sub-app-site-prod-cus","id":"cccccccc-0000-4000-8000-000000000001","tenantId":"11111111-2222-4333-8444-555555555555"},{"name":"sub-app-site-prod-cus","id":"cccccccc-0000-4000-8000-000000000002","tenantId":"11111111-2222-4333-8444-555555555555"}]'; Expected = '*2 subscriptions*' }
     ) {
         $script:json = $Json
         Mock Invoke-LabAz { [pscustomobject]@{ ExitCode = 0; Stderr = ''; Stdout = $script:json } }
@@ -756,9 +756,9 @@ Describe 'Test-LabArcRoleAssignment, Confirm-LabArcPolicyWriter and Get-LabArcPo
     }
 
     It 'does not count <Label>' -ForEach @(
-        @{ Label = 'another principal'; Principal = '9f8e7d6c-0000-4938-8271-605f4e3d2c1b'; Role = 'Azure Connected Machine Onboarding' },
-        @{ Label = 'a grant at another scope'; Principal = '12345678-90ab-4cde-8f01-23456789abcd'; Role = 'Resource Policy Contributor' },
-        @{ Label = 'another role'; Principal = 'c0c0c0c0-0000-4000-8000-000000000001'; Role = 'Contributor' }
+        @{ Label = 'another principal'; Principal = '99999999-0000-4938-8271-605f4e3d2c1b'; Role = 'Azure Connected Machine Onboarding' },
+        @{ Label = 'a grant at another scope'; Principal = '22222222-90ab-4cde-8f01-23456789abcd'; Role = 'Resource Policy Contributor' },
+        @{ Label = 'another role'; Principal = 'cccccccc-0000-4000-8000-000000000001'; Role = 'Contributor' }
     ) {
         Test-LabArcRoleAssignment -Scope $groupId -PrincipalId $Principal -RoleName $Role | Should -BeFalse
     }

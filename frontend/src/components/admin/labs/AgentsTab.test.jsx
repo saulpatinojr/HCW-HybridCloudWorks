@@ -26,7 +26,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 const AGENT_ID = 'vps-hostinger-01';
-const OID = '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b';
+const OID = '99999999-5b4a-4938-8271-605f4e3d2c1b';
 const JOB_TYPES = [
   'shell-echo',
   'terraform-validate',

@@ -61,13 +61,13 @@ describe('checkAudioUpload', () => {
 
 describe('upload paths and payloads', () => {
   it('mints uploads/<uuid>.<ext>, which the blob path rule accepts', () => {
-    const path = uploadPathFor('0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70', 'mp3');
-    expect(path).toBe('uploads/0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3');
+    const path = uploadPathFor('dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70', 'mp3');
+    expect(path).toBe('uploads/dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3');
     expect(isValidBlobPath(path)).toBe(true);
   });
 
   it('accepts only a minted path and a bounded title', () => {
-    const good = { uploadPath: uploadPathFor('0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70', 'm4a'), title: ' Stand-up ' };
+    const good = { uploadPath: uploadPathFor('dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70', 'm4a'), title: ' Stand-up ' };
     expect(parseUploadPayload(good)).toEqual({
       value: { uploadPath: good.uploadPath, title: 'Stand-up' },
     });
@@ -139,7 +139,7 @@ describe('toRecordingDoc', () => {
 });
 
 describe('transcribeUpload', () => {
-  const uploadPath = uploadPathFor('0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70', 'mp3');
+  const uploadPath = uploadPathFor('dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70', 'mp3');
   const makeStore = () => {
     const docs = {};
     return { docs, upsertDoc: vi.fn(async (_c, doc) => (docs[doc.id] = doc)) };

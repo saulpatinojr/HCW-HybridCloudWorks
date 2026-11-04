@@ -105,18 +105,24 @@ describe('the break-glass rollback', () => {
   const runbook = readRoot('..', 'docs', 'runbooks', 'admin-signin-rollback.md');
   const workflow = readRoot('..', '.github', 'workflows', 'deploy-azure-frontend.yml');
 
-  // The runbook lives under docs/, where check_redaction.py rejects real GUIDs,
-  // and the working agreement rejects placeholders in a line meant to be
-  // pasted. The identifiers live in the script for that reason — so the runbook
-  // must not grow a copy of them, in either form.
+  // check_redaction.py rejects a real GUID in any tracked file (the whole tree
+  // since the follow-up to #1540; docs/ before it), and the working agreement
+  // rejects placeholders in a line meant to be pasted. So the runbook must not
+  // grow a copy of the identifiers in either form, and the script does not hold
+  // them either: it looks them up (scripts/lib/Resolve-EntraApiAppId.ps1).
   it('keeps identifiers out of the runbook, in both directions', () => {
     expect(runbook).not.toMatch(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i);
     expect(runbook).not.toMatch(/REPLACE_ME|<your-|<the-|THEACCOUNTNAME/i);
   });
 
-  it('points at the script that does hold them', () => {
+  it('points at the script, which looks the identifiers up rather than holding them', () => {
     expect(runbook).toContain('scripts/rollback/restore-admin-signin.ps1');
-    expect(script).toMatch(/\$ApiAppId\s*=\s*'[0-9a-f-]{36}'/i);
+    expect(script).not.toMatch(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i);
+    expect(script).toContain('Resolve-EntraApiAppId -ApiAppId $ApiAppId -DisplayName $ApiDisplayName');
+    // Without -TenantId the lookup is the tenant check; with it the signed-in
+    // tenant is still compared.
+    expect(script).toMatch(/\$TenantId = \$env:HCW_TENANT_ID/);
+    expect(script).toMatch(/if \(\$TenantId -and \$account\.tenant -ne \$TenantId\)/);
   });
 
   // A rollback that reports success and wrote nothing is worse than one that

@@ -50,6 +50,16 @@
     script prints at the end. App-role assignments also stay put — they live on
     the API's service principal (see 01-entra-api.ps1).
 
+.PARAMETER ApiAppId
+    The application (client) id of the HCWSite API registration the SPA asks
+    a scope on. Leave it out and the script finds it: from HCW_API_APP_ID
+    when that is set, otherwise from the one registration named
+    -ApiDisplayName in the signed-in tenant (scripts/lib/Resolve-EntraApiAppId.ps1).
+    A real application id does not go in a tracked file (#1540).
+
+.PARAMETER ApiDisplayName
+    The display name the lookup above searches for. HCWSite API.
+
 .PARAMETER Prune
     Replace the SPA redirect URIs with exactly the list below, removing any
     others. Without it the list is unioned, which is the safer default for an
@@ -72,7 +82,8 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
     [string] $DisplayName = 'HCWSite SPA',
-    [string] $ApiAppId = 'ac696e96-e203-47be-ade8-c35ece8a6c4a',
+    [string] $ApiAppId,
+    [string] $ApiDisplayName = 'HCWSite API',
     [switch] $Prune,
     # Every origin the admin UI is served from, each ending in the redirect path
     # the SPA actually uses (#520). No trailing slash, no bare origin: MSAL sends
@@ -93,6 +104,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot '../lib/Resolve-EntraApiAppId.ps1')
 
 function Write-Step { param($Text) Write-Host "`n=== $Text ===" -ForegroundColor Cyan }
 
@@ -116,6 +129,8 @@ Write-Step 'Preflight'
 $account = az account show --query '{user:user.name,tenant:tenantId}' -o json | ConvertFrom-Json
 Write-Host "signed in as : $($account.user)"
 Write-Host "tenant       : $($account.tenant)"
+$ApiAppId = Resolve-EntraApiAppId -ApiAppId $ApiAppId -DisplayName $ApiDisplayName
+Write-Host "api client id: $ApiAppId"
 
 $api = az ad app show --id $ApiAppId -o json | ConvertFrom-Json
 if (-not $api) { throw "API registration $ApiAppId not found. Run 01-entra-api.ps1 first." }
