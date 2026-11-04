@@ -576,7 +576,17 @@ problem means production is already degraded rather than merely unchanged.
    accepts any one-host `ci-*` window, because a concurrent run may hold one;
    a window whose run died before closing it is named by the hourly
    `monitor-functions-registered.yml`, with the command that removes it
-   (#1050). The operator path is
+   (#1050), and removed by the hourly `remove-ci-access-windows.yml` half an
+   hour later (#1463): each `ci-deploy-scm-`, `ci-smoke-` or `ci-manifest-`
+   rule whose run has ended goes, a rule whose run is still in progress
+   stays, and any other `ci-*` rule is left for a person. For the host
+   storage account it reads the `ciwindow` tag the deploy's open step writes
+   (the run id and the runner's address) and, when that run has ended, does
+   what the run's close step would have: Deny, that one address removed, the
+   tag cleared. An open storage firewall with no tag is an operator's own
+   rule (`functions_storage_admin_ip_rules`) or the rollback default action,
+   and is reported, never touched. Its run summary (the Actions tab, under
+   the run) lists each rule by name and what was done with it. The operator path is
    [Edge and DNS verification](edge-dns-verification.md). Making the smoke job
    pass from CI needs the same Cloudflare change that blocked the standard
    availability test (T-519 itself closed 2026-09-01 by routing around it with

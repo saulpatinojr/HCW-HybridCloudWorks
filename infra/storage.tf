@@ -508,8 +508,17 @@ resource "azurerm_storage_account" "functions" {
   # Lifted for the centralus rebuild on 2026-08-19 and restored the same day.
   # The cost of replacement was a redeploy rather than an outage only because
   # Migration-Plan §6 cutover had not run.
+  #
+  # `ciwindow` is the tag deploy-functions.yml writes on this account for the
+  # few minutes its firewall window is open (the run id and the runner's
+  # address) and clears when it closes it; the hourly
+  # remove-ci-access-windows.yml reads it to put back a window a dead run left
+  # (#1463). Ignored here so a plan taken while a window is open, or before
+  # the remover has cleared a dead run's tag, shows no drift on it. Every
+  # other tag stays managed.
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [tags["ciwindow"]]
   }
 }
 

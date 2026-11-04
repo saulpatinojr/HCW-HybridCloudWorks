@@ -879,7 +879,8 @@ describe.skipIf(!TOOLS.ready)(`a close step does not give up at the first error 
     expect(result.left.sa).toEqual([]);
     expect(result.sleeps).toEqual([5, 10, 20]);
     expect(result.output).toMatch(/storage account provisioning state: Succeeded/);
-    const updates = result.calls.map((call, i) => [call, i]).filter(([call]) => call.startsWith('storage account update'));
+    // The Deny updates only: the tag clear at the end is a `storage account update` too (#1463).
+    const updates = result.calls.map((call, i) => [call, i]).filter(([call]) => call.startsWith('storage account update') && call.includes('--default-action Deny'));
     expect(updates).toHaveLength(4);
     const firstRemove = result.calls.findIndex((call) => call.startsWith('storage account network-rule remove'));
     expect(updates.at(-1)[1], 'the Deny must come before the rule is removed').toBeLessThan(firstRemove);
@@ -890,7 +891,38 @@ describe.skipIf(!TOOLS.ready)(`a close step does not give up at the first error 
     expect(result.status).toBe(1);
     expect(result.left.sa).toEqual([]);
     expect(result.output).toMatch(/::error::default action is 'Allow' after the window closed, expected Deny/);
-    expect(result.calls.filter((call) => call.startsWith('storage account update'))).toHaveLength(6);
+    expect(result.calls.filter((call) => call.startsWith('storage account update') && call.includes('--default-action Deny'))).toHaveLength(6);
+  });
+
+  // #1463: the open step names the window with a tag on the account, and the close step clears it last.
+  it('storage: the tag the open step wrote is cleared after the checks, and a tag that was never written is not an error', () => {
+    const tagged = close('Close storage firewall window', { state: { 'sa-rules': IP, 'sa-default': 'Allow', 'sa-tag': `4242 ${IP}` } });
+    expect(tagged.status, tagged.output).toBe(0);
+    expect(readFileSync(`${work}/run-${runs}/sa-tag`, 'utf8')).toBe('');
+    const clear = tagged.calls.findIndex((call) => call.includes('--remove tags.ciwindow'));
+    const lastCheck = tagged.calls.map((call, i) => [call, i]).filter(([call]) => call.startsWith('storage account network-rule list') || call.includes('networkRuleSet.defaultAction')).at(-1)[1];
+    expect(clear, 'the tag must be cleared after the Deny and rule checks').toBeGreaterThan(lastCheck);
+    expect(tagged.calls.filter((call) => call.includes('tags.ciwindow') && call.startsWith('storage account update'))).toHaveLength(1);
+
+    const untagged = close('Close storage firewall window', { state: { 'sa-rules': IP, 'sa-default': 'Allow' } });
+    expect(untagged.status, untagged.output).toBe(0);
+    expect(untagged.calls.some((call) => call.includes('--remove tags.ciwindow'))).toBe(false);
+    expect(untagged.output).not.toMatch(/::warning::could not clear/);
+  });
+
+  // CodeRabbit on #1536: a close that failed must leave the tag, or the remover reads the open window as an operator's and never finishes the close.
+  it('storage: when the window did not close, the tag stays for the remover', () => {
+    const result = close('Close storage firewall window', { state: { 'sa-rules': IP, 'sa-default': 'Allow', 'sa-tag': `4242 ${IP}` }, fail: { 'sa-update': 99 } });
+    expect(result.status).toBe(1);
+    expect(result.calls.some((call) => call.includes('--remove tags.ciwindow'))).toBe(false);
+    expect(readFileSync(`${work}/run-${runs}/sa-tag`, 'utf8')).toBe(`4242 ${IP}\n`);
+    expect(result.output).toMatch(/::warning::the window did not close; the ciwindow tag stays/);
+  });
+
+  it('storage: a tag clear that keeps failing warns and leaves the step green, since the window itself is closed', () => {
+    const result = close('Close storage firewall window', { state: { 'sa-rules': IP, 'sa-default': 'Allow', 'sa-tag': `4242 ${IP}` }, fail: { 'sa-tag-clear': 99 } });
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toMatch(/::warning::could not clear the ciwindow tag/);
   });
 
   it('storage: a default action that cannot be read at the end fails the step rather than passing it', () => {

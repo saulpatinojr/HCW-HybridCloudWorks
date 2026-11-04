@@ -1546,3 +1546,21 @@ variable "lab_ssh_loopback_only" {
   type        = bool
   default     = true
 }
+
+variable "storage_firewall_remover_enabled" {
+  description = <<-EOT
+    Grant the hourly window remover (remove-ci-access-windows.yml, #1463) its
+    write on the host storage account's firewall: the HCW Storage Firewall
+    Writer assignment in oidc.tf, and the lookup of that custom role.
+
+    False until the owner has created the role (Required-Inputs §4.6b,
+    scripts/bootstrap-roles.ps1), because the lookup of a role that does not
+    exist does not fail the plan: on 2026-11-04 it hung HCP Terraform's one
+    plan slot for over twelve minutes ("Still refreshing..."), with every
+    other run queued behind it, until the owner cancelled it. So the data
+    source is not in the plan at all until this is true. Flip it in the
+    workspace after the bootstrap; the next run plans exactly one create.
+  EOT
+  type        = bool
+  default     = false
+}
