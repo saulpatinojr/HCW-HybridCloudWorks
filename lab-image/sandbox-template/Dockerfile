@@ -64,6 +64,24 @@ FROM docker/sandbox-templates:claude-code@sha256:30ec2b1bb76e3993aff912c553a5c24
 # and uv the base image ships (Ubuntu's 3.14.4 and uv 0.9.26 on 2026-09-25)
 # are Docker's, used by nothing here, and a 3.14.7 beside them would change
 # no command the recipe or AGENTS.md runs.
+#
+# The same RUN also replaces the Azure CLI's outdated Python packages inside
+# its own Python under /opt/az (AZURE_CLI_PYTHON_OVERRIDES in versions.env
+# lists them and says why), the way lab-image/Dockerfile's full target does
+# (#1473). That file has a separate fetch stage to download the wheels; this
+# one-stage recipe downloads them here instead, with the CLI's own pip in
+# hash-checking mode (--require-hashes refuses a wheel whose SHA256 differs
+# from the line), so nothing but the CLI's Python is used. Doing it in the
+# RUN that installs the CLI means the old files are deleted before this
+# layer is saved, so no image layer keeps a copy of them for a scanner to
+# find. The order is the full target's: first a guard that stops the build
+# if the CLI already ships a package at or above the version listed (a
+# downgrade that `pip check` would accept), naming the line to remove; then
+# an offline install (`--no-index --find-links`) from the downloaded wheels
+# only; then `pip check`, which fails the build if a new version breaks a
+# range another package in the CLI declares. An empty or absent block
+# downloads and installs nothing. The downloaded wheels are removed with
+# the apt lists.
 USER root
 COPY versions.env /tmp/versions.env
 RUN set -eu; . /tmp/versions.env; . /etc/os-release; \
@@ -84,7 +102,21 @@ RUN set -eu; . /tmp/versions.env; . /etc/os-release; \
       'Signed-By: /etc/apt/keyrings/microsoft.asc' > /etc/apt/sources.list.d/azure-cli.sources; \
     apt-get update; \
     apt-get install -y --no-install-recommends "azure-cli=${AZURE_CLI_VERSION}-1~${VERSION_CODENAME}"; \
-    rm -rf /var/lib/apt/lists/* /tmp/terraform.zip /tmp/versions.env
+    mkdir -p /tmp/az-wheels; \
+    printf '%s\n' "${AZURE_CLI_PYTHON_OVERRIDES-}" | sed '/^[[:space:]]*$/d' > /tmp/az-wheels/requirements.txt; \
+    while read -r spec _; do \
+      [ -n "${spec}" ] || continue; \
+      /opt/az/bin/python3 -I -c 'import re, sys; from importlib.metadata import distributions; from pip._vendor.packaging.version import Version; norm = lambda n: re.sub("[-_.]+", "-", n).lower(); cli, (name, want) = sys.argv[1], sys.argv[2].split("=="); have = next((d.version for d in distributions() if norm(d.metadata["Name"] or "") == norm(name)), None); fix = "remove its AZURE_CLI_PYTHON_OVERRIDES line from lab-image/versions.env"; sys.exit(f"Azure CLI {cli} does not ship {name}; {fix}" if have is None else f"Azure CLI {cli} already ships {name} {have}, not older than the {want} listed; {fix}" if Version(have) >= Version(want) else 0)' "${AZURE_CLI_VERSION}" "${spec}"; \
+    done < /tmp/az-wheels/requirements.txt; \
+    if [ -s /tmp/az-wheels/requirements.txt ]; then \
+      /opt/az/bin/python3 -Im pip download --disable-pip-version-check --no-cache-dir --no-deps \
+        --only-binary=:all: --require-hashes --dest /tmp/az-wheels -r /tmp/az-wheels/requirements.txt; \
+      /opt/az/bin/python3 -Im pip install --disable-pip-version-check --no-cache-dir \
+        --root-user-action=ignore --no-index --find-links /tmp/az-wheels \
+        --require-hashes -r /tmp/az-wheels/requirements.txt; \
+    fi; \
+    /opt/az/bin/python3 -Im pip check; \
+    rm -rf /var/lib/apt/lists/* /tmp/terraform.zip /tmp/versions.env /tmp/az-wheels
 
 # The agent's briefing. Claude Code reads ~/.claude/CLAUDE.md in every
 # session, whichever host path the workspace is mounted at, so the same

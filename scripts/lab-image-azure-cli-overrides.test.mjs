@@ -23,7 +23,9 @@ import { describe, expect, it } from 'vitest';
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const VERSIONS_ENV = readFileSync(join(REPO, 'lab-image', 'versions.env'), 'utf8');
 const DOCKERFILE = readFileSync(join(REPO, 'lab-image', 'Dockerfile'), 'utf8');
+const SANDBOX_DOCKERFILE = readFileSync(join(REPO, 'lab-image', 'sandbox-template', 'Dockerfile'), 'utf8');
 const SMOKE = readFileSync(join(REPO, 'lab-image', 'smoke.sh'), 'utf8');
+const PUBLISH_WORKFLOW = readFileSync(join(REPO, '.github', 'workflows', 'publish-lab-image.yml'), 'utf8');
 
 const block = VERSIONS_ENV.match(/^AZURE_CLI_PYTHON_OVERRIDES='([^']*)'$/m);
 const lines = (block?.[1] ?? '')
@@ -90,5 +92,60 @@ describe('the Dockerfile and smoke.sh around the block', () => {
     expect(SMOKE).toContain('<<<"${AZURE_CLI_PYTHON_OVERRIDES-}"');
     expect(DOCKERFILE).not.toMatch(/\$\{AZURE_CLI_PYTHON_OVERRIDES\}/);
     expect(SMOKE).not.toMatch(/\$AZURE_CLI_PYTHON_OVERRIDES\b|\$\{AZURE_CLI_PYTHON_OVERRIDES\}/);
+  });
+});
+
+// The Docker Sandboxes template installs the same Azure CLI release from
+// Microsoft's apt repository, so it replaces the same packages, in the same
+// order, in the one RUN that installs the CLI (#1473). It has no fetch stage:
+// the CLI's own pip downloads the wheels in hash-checking mode in that RUN.
+describe('the sandbox template around the block', () => {
+  const at = (text) => SANDBOX_DOCKERFILE.indexOf(text);
+
+  it('uses the same guard text as the full target, so the two cannot drift apart', () => {
+    const guard = DOCKERFILE.match(/\/opt\/az\/bin\/python3 -I -c '[^']*already ships \{name\} \{have\}[^']*'/)?.[0];
+    expect(guard).toBeDefined();
+    expect(SANDBOX_DOCKERFILE).toContain(guard);
+  });
+
+  it('checks for a downgrade, downloads with hashes, installs offline and runs pip check, in the RUN that installs the CLI', () => {
+    const apt = at('apt-get install -y --no-install-recommends "azure-cli=');
+    const guard = at('already ships {name} {have}, not older than the {want} listed');
+    const download = at('-Im pip download');
+    const install = at('-Im pip install');
+    const check = at('-Im pip check');
+    const end = at('rm -rf /var/lib/apt/lists/* /tmp/terraform.zip /tmp/versions.env /tmp/az-wheels');
+    expect(apt).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(apt);
+    expect(download).toBeGreaterThan(guard);
+    expect(install).toBeGreaterThan(download);
+    expect(check).toBeGreaterThan(install);
+    expect(end).toBeGreaterThan(check);
+    // One RUN: no instruction starts between the CLI's install and the cleanup.
+    expect(SANDBOX_DOCKERFILE.slice(apt, end)).not.toMatch(/^[A-Z]+ /m);
+    expect(SANDBOX_DOCKERFILE).toContain('--only-binary=:all: --require-hashes --dest /tmp/az-wheels');
+    expect(SANDBOX_DOCKERFILE).toContain('--no-index --find-links /tmp/az-wheels');
+    expect(SANDBOX_DOCKERFILE).toContain('--require-hashes -r /tmp/az-wheels/requirements.txt');
+  });
+
+  it('builds with the block empty or removed', () => {
+    expect(SANDBOX_DOCKERFILE).toContain('"${AZURE_CLI_PYTHON_OVERRIDES-}"');
+    expect(SANDBOX_DOCKERFILE).toContain('if [ -s /tmp/az-wheels/requirements.txt ]; then');
+    expect(SANDBOX_DOCKERFILE).not.toMatch(/\$\{AZURE_CLI_PYTHON_OVERRIDES\}/);
+  });
+
+  it('is built and smoke-tested by the publish workflow on every pull request that touches lab-image/', () => {
+    const build = PUBLISH_WORKFLOW.slice(PUBLISH_WORKFLOW.indexOf('\n  build:\n'), PUBLISH_WORKFLOW.indexOf('\n  publish:\n'));
+    const step = build.slice(build.indexOf('- name: Build the Docker Sandboxes template'), build.indexOf('- name: Smoke the Docker Sandboxes template'));
+    expect(step).toContain('file: lab-image/sandbox-template/Dockerfile');
+    expect(step).toContain('context: lab-image');
+    expect(step).toContain('platforms: linux/amd64');
+    expect(step).toContain('push: false');
+    const smoke = build.slice(build.indexOf('- name: Smoke the Docker Sandboxes template'));
+    // Each replaced package is read back at the version its line names, and the CLI's own consistency check runs.
+    expect(smoke).toContain('<<<"${AZURE_CLI_PYTHON_OVERRIDES-}"');
+    expect(smoke).toContain('/opt/az/bin/python3 -Im pip check');
+    expect(smoke).toContain('--network none');
+    expect(PUBLISH_WORKFLOW).toMatch(/pull_request:\n\s+paths:\n\s+- 'lab-image\/\*\*'/);
   });
 });

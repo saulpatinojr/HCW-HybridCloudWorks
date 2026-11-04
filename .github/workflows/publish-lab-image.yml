@@ -32,6 +32,14 @@
 #            fails here (ADR 0032 decision 5). It is not in the push filter,
 #            because a builder change alone changes nothing in the image and
 #            should not republish it.
+#            It also builds lab-image/sandbox-template/Dockerfile, the Docker
+#            Sandboxes recipe learners build themselves from the Docker
+#            guide (#1473). Nothing publishes that image, so this build is
+#            the only place its Azure CLI Python replacements are proved:
+#            the build fails on the downgrade guard or `pip check` inside
+#            the Dockerfile, and a smoke step then checks the replaced
+#            versions and that `az` runs. The weekly scan in
+#            lab-supply-chain.yml builds it again and scans it.
 #            `contents: read` and nothing else,
 #            because a same-repository pull request can edit this file and run
 #            any shell step here; with only a read token that edit can prove
@@ -269,6 +277,57 @@ jobs:
       - name: Sandbox check
         run: node lab-image/sandbox-check.mjs hcw-lab-runner:ci
 
+      # The Docker Sandboxes template (lab-image/sandbox-template, #676) is
+      # never published: a learner builds it from the Docker guide with the
+      # command in its README. This builds it the same way, so a pull request
+      # that touches lab-image/ proves it still builds, and its Azure CLI
+      # Python replacements (AZURE_CLI_PYTHON_OVERRIDES) stop the build on a
+      # downgrade or a broken range as the full target's do (#1473). Its own
+      # cache scope: its layers share nothing with the lab image's.
+      # `--platform linux/amd64` as the README says, because the checksums
+      # in versions.env are amd64. Not on the publish job: nothing is pushed
+      # from it, and the weekly scan in lab-supply-chain.yml builds it again.
+      - name: Build the Docker Sandboxes template
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: lab-image
+          file: lab-image/sandbox-template/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          no-cache: ${{ github.event_name == 'schedule' }}
+          tags: hcw-lz-sandbox:ci
+          cache-from: type=gha,scope=hcw-lz-sandbox
+          cache-to: type=gha,scope=hcw-lz-sandbox,mode=max
+
+      # What the README says a learner sees inside the sandbox, with no
+      # network: terraform and az at the pinned versions, the agent user, and
+      # each replaced package at the version its versions.env line names
+      # (the build installed it; this reads it back from the image as
+      # smoke.sh does for the full image). The checks are in shell here
+      # rather than in smoke.sh, because that script is the lab image's
+      # (its paths, user and tools are not this image's).
+      - name: Smoke the Docker Sandboxes template
+        run: |
+          set -euo pipefail
+          docker run --rm --network none -v "${GITHUB_WORKSPACE}/lab-image:/workspace:ro" hcw-lz-sandbox:ci bash -euo pipefail -c '
+            . /workspace/versions.env
+            test "$(id -un):$(id -u)" = agent:1000
+            test -f /home/agent/.claude/CLAUDE.md
+            terraform version | head -1 | grep -Fx "Terraform v${TERRAFORM_VERSION}"
+            az version --output json | grep -F "\"azure-cli\": \"${AZURE_CLI_VERSION}\""
+            while read -r spec _; do
+              [ -n "$spec" ] || continue
+              name="${spec%%==*}"; want="${spec#*==}"
+              have="$(/opt/az/bin/python3 -I -c "import importlib.metadata,sys; print(importlib.metadata.version(sys.argv[1]))" "$name")"
+              if [ "$have" = "$want" ]; then echo "ok    Azure CLI Python has $name $have"; else echo "::error::Azure CLI Python has $name $have, expected $want"; exit 1; fi
+            done <<<"${AZURE_CLI_PYTHON_OVERRIDES-}"
+            /opt/az/bin/python3 -I -c "import certifi, jwt, msal, requests, urllib3, azure.core, azure.cli.core"
+            /opt/az/bin/python3 -Im pip check
+            echo "ok    terraform ${TERRAFORM_VERSION}, azure-cli ${AZURE_CLI_VERSION}, user agent"
+          '
+
       # The weekly rebuild publishes only when it changes something a learner
       # runs: the Debian packages of the `full` image the Coder template pins,
       # against those of the one just built. Package and version, sorted; a
@@ -309,6 +368,7 @@ jobs:
             echo '```'
             docker image ls --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}' hcw-lab-runner:ci
             docker image ls --format '{{.Repository}}\t{{.Tag}}\t{{.Size}}' hcw-lab:ci
+            docker image ls --format '{{.Repository}}\t{{.Tag}}\t{{.Size}}' hcw-lz-sandbox:ci
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 

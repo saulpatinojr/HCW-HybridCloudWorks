@@ -914,6 +914,26 @@ This project has not cut a tagged release; entries are grouped under
   unauthenticated images from being deployed. Sigstore `cosign` (v3.1.3) is pinned
   and SHA-256 verified in `bootstrap.sh` and `group_vars/all.yml` and tracked upstream
   via `scripts/lab-pins-upstream.mjs`.
+- **The Docker Sandboxes template gets the same Azure CLI Python fixes as the lab image, and is now built and scanned ([#1473](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1473)).**
+  [`lab-image/sandbox-template/Dockerfile`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-image/sandbox-template/Dockerfile)
+  is the recipe the Docker guide page tells a learner to build for "Run an
+  agent against your landing zone"; it installs the same Azure CLI release
+  as the lab image's `full` target, but until now without the package
+  replacements in `AZURE_CLI_PYTHON_OVERRIDES`
+  ([`lab-image/versions.env`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-image/versions.env)),
+  so a learner's build still carried the certifi, PyJWT and urllib3 versions
+  the weekly scan flagged, and nothing built or scanned it. The recipe now
+  does what the `full` target does, in the one `RUN` that installs the CLI:
+  the downgrade guard, the wheels downloaded with the CLI's own pip in
+  hash-checking mode (it has no fetch stage), an offline install and `pip
+  check`. `publish-lab-image.yml` builds it on every pull request that
+  touches `lab-image/` and smoke-tests it offline (the replaced versions
+  read back, `az` and `terraform` at their pins, the `agent` user), and
+  `lab-supply-chain.yml` builds it from `main` each week and scans it with
+  Trivy beside the published images, saying in its issue when the build
+  itself failed. `scripts/lab-image-azure-cli-overrides.test.mjs` holds the
+  recipe to the same order and the workflow to the build, and
+  `lab-pin-pr-workflows.test.mjs` holds the scan.
 
 ### Fixed
 
