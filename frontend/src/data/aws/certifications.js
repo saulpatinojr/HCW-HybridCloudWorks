@@ -114,6 +114,51 @@
  * coming-soon/ is stale (its only content is the 2025 SOA change) and is not
  * a source. All sixteen rows were re-read, so `DATA_AS_OF` moves.
  *
+ * RE-READ 2026-11-03 of SAP-C02 and SAP-C03, the two rows #1497 named (due to
+ * fire on 2026-11-17), stored ahead of their days under rule 2 of
+ * `deriveStatus` (src/lib/certStatus.js) with `statusReadDate` 2026-11-03:
+ * each badge keeps its current status until AWS's day, so the alarm in
+ * education-catalogues.test.js has nothing to fire on. Three pages read:
+ *
+ *   The September blog (/blogs/training-and-certification/september-2026-
+ *     new-offerings/, dated 01 SEP 2026) is unchanged. Its SAP Key dates
+ *     still read "October 27, 2026 – Registration opens (all languages) /
+ *     November 16, 2026 – Last day to take SAP-C02 / November 17, 2026 –
+ *     SAP-C03 GA delivery begins", and its body "The last day to take the
+ *     current version of the exam (SAP-C02) will be November 16, 2026."
+ *   The SAP exam page (/certification/certified-solutions-architect-
+ *     professional/) no longer mentions SAP-C02 or a last test day at all.
+ *     It now links the SAP-C03 exam prep plan on Skill Builder and the SAP-C03
+ *     exam guide, and lists 75 questions in 180 minutes for USD 300 in
+ *     English, Japanese, Korean, Portuguese (Brazil), Simplified Chinese and
+ *     Spanish (Latin America). The page says nothing that contradicts the
+ *     blog, so the blog's dates stay (the rule above).
+ *   The SAP-C03 exam guide (docs.aws.amazon.com/aws-certification/latest/
+ *     solutions-architect-professional-03/solutions-architect-professional-
+ *     03.html) resolves now, registration having opened on 2026-10-27. Its
+ *     H1 is "AWS Certified Solutions Architect - Professional (SAP-C03)" and
+ *     it carries a "Comparison of SAP-C02 and SAP-C03" appendix; 65 scored
+ *     and 10 unscored questions, passing score 720. The hub
+ *     (/certification/) renders its five Professional cards from script, so
+ *     a plain fetch shows them as "Loading"; it names no SAP date and still
+ *     prints "(retires December 31, 2026)" on Advanced Networking.
+ *
+ *   SAP-C02 — `retired`, `expiryDate` 2026-11-16 kept, `retiredDate`
+ *     2026-11-16; shows "Retiring" through 2026-11-16.
+ *   SAP-C03 — `active`, `availableDate` 2026-11-17 kept; shows "Coming" until
+ *     then. `studyGuideUrl` filled with the exam guide above.
+ *   DVA-C03 — its exam guide (/aws-certification/latest/developer-associate-
+ *     03/developer-associate-03.html) resolves too, so `studyGuideUrl` is
+ *     filled; nothing else on the DVA rows was re-read. That guide's own note
+ *     reads "Registration for the updated version of the exam (DVA-C03) opens
+ *     December 1, 2026. The last day to take the current version of the exam
+ *     (DVA-C02) is November 30, 2026." — a registration date the blog gives
+ *     as October 27, 2026. The stored `registrationOpens` keeps the blog's
+ *     date, by the rule above, and the DVA re-read due before 2026-12-01
+ *     should look at it again.
+ *
+ * Only these rows were re-read, so `DATA_AS_OF` stays.
+ *
  * Field notes: `expiryDate` is the last day the exam can be taken;
  * `availableDate` the first GA day of a new version; `previousSlugs` keeps
  * old detail-page links resolving after a version bump.
@@ -396,7 +441,8 @@ export const certifications = [
     successRate: null,
     featured: false,
     learnUrl: 'https://aws.amazon.com/certification/certified-developer-associate/',
-    studyGuideUrl: null,
+    studyGuideUrl:
+      'https://docs.aws.amazon.com/aws-certification/latest/developer-associate-03/developer-associate-03.html',
     practiceUrl: 'https://skillbuilder.aws/search?searchText=developer+associate+practice',
     microcredentialUrl: 'https://skillbuilder.aws/category/type/microcredentials',
     modules: [],
@@ -572,8 +618,10 @@ export const certifications = [
     code: 'SAP-C02',
     title: 'AWS Certified Solutions Architect – Professional',
     level: 'Professional',
-    status: 'expiring',
+    status: 'retired',
     expiryDate: '2026-11-16',
+    retiredDate: '2026-11-16',
+    statusReadDate: '2026-11-03',
     replacement: { code: 'SAP-C03', slug: 'sap-c03' },
     description:
       'Advanced design of complex, multi-region, hybrid, and cost-optimized AWS architectures.',
@@ -623,9 +671,10 @@ export const certifications = [
     code: 'SAP-C03',
     title: 'AWS Certified Solutions Architect – Professional',
     level: 'Professional',
-    status: 'upcoming',
+    status: 'active',
     availableDate: '2026-11-17',
     registrationOpens: '2026-10-27',
+    statusReadDate: '2026-11-03',
     description:
       'The updated Solutions Architect – Professional exam, adding generative AI and agent architectures to enterprise-scale design.',
     longDescription:
@@ -642,7 +691,8 @@ export const certifications = [
     successRate: null,
     featured: false,
     learnUrl: 'https://aws.amazon.com/certification/certified-solutions-architect-professional/',
-    studyGuideUrl: null,
+    studyGuideUrl:
+      'https://docs.aws.amazon.com/aws-certification/latest/solutions-architect-professional-03/solutions-architect-professional-03.html',
     practiceUrl:
       'https://skillbuilder.aws/search?searchText=solutions+architect+professional+practice',
     microcredentialUrl: null,
