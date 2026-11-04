@@ -6,7 +6,7 @@ on <https://hybridcloudworks.com/education/labs> (issue #676, Phase 3 of
 
 | File         | What it is                                                                                                                                                                                                                                             |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Dockerfile` | `docker/sandbox-templates:claude-code` (Docker's Claude Code template, pinned by digest) plus terraform and the Azure CLI at the versions in [`../versions.env`](../versions.env), and `AGENTS.md` installed as the agent's briefing. linux/amd64 only. |
+| `Dockerfile` | `docker/sandbox-templates:claude-code` (Docker's Claude Code template, pinned by digest) plus terraform and the Azure CLI at the versions in [`../versions.env`](../versions.env), with the CLI's outdated Python packages replaced as the lab image replaces them (`AZURE_CLI_PYTHON_OVERRIDES` there), and `AGENTS.md` installed as the agent's briefing. linux/amd64 only. |
 | `AGENTS.md`  | Tells the agent the folder is a landing zone generated for learning: run `terraform init -backend=false`, `fmt -check` and `validate`, explain the files, and never `plan`, `apply` or reach a tenant. Installed as `/home/agent/.claude/CLAUDE.md` too. |
 | `README.md`  | This file: every command, PowerShell first, then bash.                                                                                                                                                                                                 |
 
@@ -51,6 +51,19 @@ docker build --platform linux/amd64 -f lab-image/sandbox-template/Dockerfile -t 
 A successful build ends with `naming to docker.io/library/hcw-lz-sandbox:v1`
 and `docker image ls hcw-lz-sandbox` shows one row (3.38 GB on disk when
 measured on 2026-09-25 with Docker 29.8.0; the base image is 2.4 GB of it).
+A build that stops with `Azure CLI <version> already ships <package> ...` is
+the recipe refusing to downgrade a package inside the CLI: a newer CLI now
+carries that version itself, and the fix is to remove that package's line
+from `AZURE_CLI_PYTHON_OVERRIDES` in [`../versions.env`](../versions.env).
+
+Nobody publishes this image, so the repository builds it the same way to
+keep the recipe honest: the publish workflow
+([`publish-lab-image.yml`](../../.github/workflows/publish-lab-image.yml))
+builds and smoke-tests it on every pull request that touches `lab-image/`,
+and the weekly supply-chain run
+([`lab-supply-chain.yml`](../../.github/workflows/lab-supply-chain.yml))
+builds it from `main` and scans it with Trivy beside the published lab
+images (#1473).
 
 The sandbox runtime keeps its own image store, so a locally built image is
 handed to it as a tar

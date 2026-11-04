@@ -270,9 +270,26 @@ describe('lab-supply-chain.yml', () => {
     // The reader stops on a pin it cannot read and the step refuses an empty list, so a broken read is a failure and not a quiet pass.
     expect(scan).toContain('addon_images="$(node scripts/lab/read-addon-pins.mjs | jq -r \'.include[].image\')"');
     expect(scan).toContain('test -n "$addon_images"');
-    expect(scan).toContain('for image in "$runner" "$full" $addon_images; do');
+    expect(scan).toContain('for image in "$runner" "$full" $addon_images $sandbox; do');
     // The issue says what an add-on finding needs, because the lab images' fix path does not apply to it.
     expect(check).toContain('For an add-on image the fix is a new release of that add-on');
+  });
+
+  it('builds the Docker Sandboxes template and scans it, and says so when it did not build (#1473)', () => {
+    const check = source.slice(source.indexOf('  check:'));
+    const build = check.slice(check.indexOf('- name: Build the Docker Sandboxes template'), check.indexOf('- name: Scan the published lab images the host runs'));
+    // The same command the template's README gives a learner, without last week's layers.
+    expect(build).toContain('docker build --no-cache --platform linux/amd64 -f lab-image/sandbox-template/Dockerfile -t hcw-lz-sandbox:scan lab-image');
+    // A failed build must not skip the scan of the published images.
+    expect(build).toContain('continue-on-error: true');
+    const scan = check.slice(check.indexOf('- name: Scan the published lab images the host runs'), check.indexOf('- name: Open or update the issue'));
+    expect(scan).toContain('sandbox="hcw-lz-sandbox:scan"');
+    // A template that did not build is a failed scan, named in the issue, never a quiet pass.
+    expect(scan).toContain('if ! docker image inspect --format \'{{.Id}}\' "$sandbox" > /dev/null 2>&1; then');
+    expect(scan).toMatch(/if ! docker image inspect[^\n]*\n\s*failed=1\n\s*sandbox=""/);
+    expect(scan).toContain('did not build this week, so it was not scanned');
+    const issue = check.slice(check.indexOf('- name: Open or update the issue'), check.indexOf('- name: Fail the run when the pin check could not evaluate'));
+    expect(issue).toContain('hcw-lz-sandbox:scan\\` is the Docker Sandboxes template');
   });
 
   it('records the sets\' paths before the downloaded CLI runs, refuses any change outside them, and judges the patch before the token job applies it', () => {
@@ -413,9 +430,10 @@ describe('publish-lab-image.yml', () => {
   it('publishes a scheduled rebuild only when the full image\'s packages moved, under a tag of its own', () => {
     expect(build).toContain("if: github.event_name == 'schedule'");
     expect(build).toContain('dpkg-query');
-    // Every build skips the layer cache on the schedule, or the apt layer is last week's.
+    // Every build skips the layer cache on the schedule, or the apt layer is last week's:
+    // runner and full in each of the two jobs, and the Docker Sandboxes template in `build` (#1473).
     const builds = source.split('uses: docker/build-push-action@').slice(1);
-    expect(builds).toHaveLength(4);
+    expect(builds).toHaveLength(5);
     for (const b of builds) expect(b.slice(0, b.indexOf('\n      - name:'))).toContain("no-cache: ${{ github.event_name == 'schedule' }}");
     expect(build).toContain('rebuild: ${{ steps.rebuild.outputs.rebuild }}');
     expect(publish).toContain("(github.event_name == 'schedule' && needs.build.outputs.rebuild == 'true')");
