@@ -135,16 +135,16 @@ nothing the website calls or shows needs to change.
 
 After this, no pull requests or issues are open in either repository.
 
-### Still open, written down in the repositories
+### Still open, and where it is tracked
 
-- **NetworkEyes, `TODO.md` T-740**
-  ([on `main`](https://github.com/saulpatinojr/HCW-NetworkEyes_App/blob/main/TODO.md)):
+- **NetworkEyes, [HCW-NetworkEyes_App#346](https://github.com/saulpatinojr/HCW-NetworkEyes_App/issues/346)**
+  (written up in full as T-740 in that repository's `TODO.md`):
   1. `npm audit` still reports one old `minimatch` 3.1.5 copy that three eslint plugins need (they use a part of it
      that version 11 removed). It is used only when linting, and no image ships it. GitHub's advisory
      ([GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)) lists ">= 7.0.0, < 11.0.1", which
      leaves 3.x out, but npm's copy of the same advisory says "< 11.0.1". So the
      [Dependabot alert](https://github.com/saulpatinojr/HCW-NetworkEyes_App/security/dependabot/121) should close
-     by itself after the merge; if it stays open, T-740 says what to do.
+     by itself after the merge; if it stays open, #346 says what to do.
   2. The `build-images` and `build-web` jobs of `200-build-images.yml` still keep the token on disk. A pull request
      cannot prove a change there, and neither can the workflow's rehearsal, which skips both jobs. Only a real
      image build on `main` can, so it was left for a change the owner times.
