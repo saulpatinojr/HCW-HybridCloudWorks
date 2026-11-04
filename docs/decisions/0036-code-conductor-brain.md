@@ -155,6 +155,15 @@ switches.
   and the owner's apply of 2026-10-31, so there is no second database left
   to scope to. The owner's steps for both apply runs are in the
   [deployment runbook](../runbooks/deployment-runbook.md#narrowing-the-function-apps-cosmos-grant-1469).
+  **Update, 2026-11-04:** Step 1 applied (run `run-vUQrQLSGJh4J5HZ2`, the
+  pull request [#1531](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1531)),
+  and the site, its health check and the public content reads answered as
+  before with both grants in place. Step 2, the pull request that deletes
+  the account-wide block, is the one this update rides in. Once the owner
+  confirms its apply, the narrowing is complete: the Function App's identity
+  holds the Data Contributor role on `/dbs/hcw` and nowhere wider, and
+  `infra/tests/guards.tftest.hcl` refuses an account-scoped grant for it.
+  The live evidence after the apply is recorded on #1469.
 - **Reuse `brain_sync` and the creator's desktop client.** Rejected: one
   token would then open both workspaces.
 
