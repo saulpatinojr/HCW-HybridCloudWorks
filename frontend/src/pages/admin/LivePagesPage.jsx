@@ -36,6 +36,8 @@ export default function LivePagesPage() {
   const { authReady } = useAuthReady();
   const [includeLegacyPages, setIncludeLegacyPages] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [query, setQuery] = useState('');
+
   const {
     data: contentItems,
     loading: contentLoading,
@@ -44,15 +46,17 @@ export default function LivePagesPage() {
     () => getJSON(LIVE_PAGES_QUERY).then((res) => res.items || []),
     authReady ? `live-pages:content:${attempt}` : ''
   );
+
   // Legacy blogs via the public list — this page only renders live records,
   // which is exactly the server-side public filter.
   const { data: blogItems, loading: blogsLoading } = usePublicData(
     () => fetchPublicContentList({ limit: 250, source: 'blogs' }),
     authReady && includeLegacyPages ? 'live-pages:legacy' : ''
   );
-  const [query, setQuery] = useState('');
+
   const { archivingId, archiveError, locallyArchivedKeys, archiveLivePage, archiveBlockedReason } =
     useLivePageArchive();
+
   const loading = contentLoading || (includeLegacyPages && blogsLoading);
 
   const liveItems = useMemo(
@@ -67,6 +71,91 @@ export default function LivePagesPage() {
     [blogItems, contentItems, includeLegacyPages, locallyArchivedKeys, query]
   );
 
+  const renderStatusMessage = () => {
+    if (loading) {
+      return 'Loading live pages...';
+    }
+
+    return `${liveItems.length} live pages found`;
+  };
+
+  const renderSearchCard = () => (
+    <Card>
+      <CardContent className="p-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <label htmlFor="live-pages-search" className="sr-only">
+            Search live pages
+          </label>
+          <Input
+            id="live-pages-search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search by title, provider, type, or live URL"
+            className="pl-9"
+          />
+        </div>
+        <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={includeLegacyPages}
+            onChange={(event) => setIncludeLegacyPages(event.target.checked)}
+            className="h-4 w-4 rounded border-border"
+          />
+          Include legacy `blogs` pages
+        </label>
+        <p className="mt-3 text-xs text-muted-foreground">{renderStatusMessage()}</p>
+        {!includeLegacyPages && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Showing `content` only by default. Enable legacy pages to include older `blogs`
+            records.
+          </p>
+        )}
+        {archiveError && (
+          <p role="alert" className="mt-2 text-xs text-red-500">
+            {archiveError}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+
+  const renderLoadingCard = () => (
+    <Card>
+      <CardContent className="p-8 text-sm text-muted-foreground">
+        Loading live pages...
+      </CardContent>
+    </Card>
+  );
+
+  const renderContentErrorState = () => (
+    <EmptyState
+      variant="error"
+      title="Live pages could not be loaded"
+      description={contentError.message || 'The request failed.'}
+      onRetry={() => setAttempt((n) => n + 1)}
+    />
+  );
+
+  const renderLiveItemsCard = () => (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Published URLs</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {liveItems.map((item) => (
+          <LivePageRow
+            key={item.id}
+            item={item}
+            archiving={archivingId === item.id}
+            archiveBlockedReason={archiveBlockedReason(item)}
+            onArchive={archiveLivePage}
+          />
+        ))}
+      </CardContent>
+    </Card>
+  );
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -79,62 +168,10 @@ export default function LivePagesPage() {
         }
       />
 
-      <Card>
-        <CardContent className="p-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <label htmlFor="live-pages-search" className="sr-only">
-              Search live pages
-            </label>
-            <Input
-              id="live-pages-search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by title, provider, type, or live URL"
-              className="pl-9"
-            />
-          </div>
-          <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={includeLegacyPages}
-              onChange={(event) => setIncludeLegacyPages(event.target.checked)}
-              className="h-4 w-4 rounded border-border"
-            />
-            Include legacy `blogs` pages
-          </label>
-          <p className="mt-3 text-xs text-muted-foreground">
-            {loading ? 'Loading live pages...' : `${liveItems.length} live pages found`}
-          </p>
-          {!includeLegacyPages && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Showing `content` only by default. Enable legacy pages to include older `blogs`
-              records.
-            </p>
-          )}
-          {archiveError && (
-            <p role="alert" className="mt-2 text-xs text-red-500">
-              {archiveError}
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      {renderSearchCard()}
 
-      {loading && (
-        <Card>
-          <CardContent className="p-8 text-sm text-muted-foreground">
-            Loading live pages...
-          </CardContent>
-        </Card>
-      )}
-      {!loading && contentError && (
-        <EmptyState
-          variant="error"
-          title="Live pages could not be loaded"
-          description={contentError.message || 'The request failed.'}
-          onRetry={() => setAttempt((n) => n + 1)}
-        />
-      )}
+      {loading && renderLoadingCard()}
+      {!loading && contentError && renderContentErrorState()}
       {!loading && !contentError && (contentItems ?? []).length >= 500 && (
         <p
           role="status"
@@ -150,24 +187,9 @@ export default function LivePagesPage() {
           description="Pages published from the Publish page appear here with their public URL."
         />
       )}
-      {!loading && liveItems.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Published URLs</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {liveItems.map((item) => (
-              <LivePageRow
-                key={item.id}
-                item={item}
-                archiving={archivingId === item.id}
-                archiveBlockedReason={archiveBlockedReason(item)}
-                onArchive={archiveLivePage}
-              />
-            ))}
-          </CardContent>
-        </Card>
-      )}
+      {!loading && liveItems.length > 0 && renderLiveItemsCard()}
     </div>
   );
 }
+
+
