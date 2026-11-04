@@ -257,16 +257,13 @@ export default function SecondBrainPage() {
     },
     [canLeave]
   );
-  // Follow the `item` and `capture` links on every navigation, not only on
-  // the first render. A citation in the Ask panel is a link to
-  // `?item=<source id>` on this same page, and until #1408 the page handled
-  // that link once per mount, so clicking a citation changed the address bar
-  // and opened nothing. `handledLink` remembers the navigation acted on (the
-  // router gives each one its own key), so a re-render, a capability
-  // refresh, or StrictMode's second effect does not reopen the note, while a
-  // fresh click on a citation already in the address bar still opens it.
-  // Both branches go through the unsaved-changes guard: `open` asks it, and
-  // the capture branch asks it here before replacing the editor.
+  // Follow the `item` and `capture` links on every navigation. A citation in
+  // the Ask panel links to `?item=<source id>` on this same page; until #1408
+  // the page handled that link once per mount, so the click opened nothing.
+  // `handledLink` holds the router key of the navigation acted on, so a
+  // re-render or StrictMode's second effect does not reopen the note while a
+  // fresh click on a citation already in the address bar still does. Both
+  // branches ask the unsaved-changes guard (`open` does; capture does here).
   useEffect(() => {
     if (!access.enabled || handledLink.current === location.key) return;
     handledLink.current = location.key;
