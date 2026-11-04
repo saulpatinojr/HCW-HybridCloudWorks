@@ -917,6 +917,26 @@ This project has not cut a tagged release; entries are grouped under
   and SHA-256 verified in `bootstrap.sh` and `group_vars/all.yml` and tracked upstream
   via `scripts/lab-pins-upstream.mjs`.
 - **Visitor lab sessions: the broker sends Coder nothing it cannot vouch for, and follows no redirect ([#1403](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1403), the items found while the sweep timer was built).** Every call `functions/src/lib/labs/visitor-session.js` makes to Coder is made with `redirect: 'error'`: the broker token travels in a `Coder-Session-Token` header that `fetch` keeps on a redirect to another site, so a Coder address that answered with one would have sent the token wherever it pointed, and the sweep now runs unattended with it. A value read from a session record is written into a Coder path only when it has the shape of what it claims to be: a Coder id must be a UUID (`isCoderId`), a visitor's user name `v-` and twelve hex characters (`isVisitorUsername`), and a workspace name one of the labs' (`isLabWorkspaceName`); the old rule, any one path segment that was not `.`, `..` or `me`, would have sent a stored value that was another person's name. Before a user is deleted it is read back by its id (`GET /api/v2/users/{id}`, the page read 2026-11-03), and the delete is sent only when Coder's answer is that id under a visitor's name; Coder having no such user counts as `gone`, like a delete that found nothing, and is said in the log the same way, and any other answer leaves the user for the next try. The test fixtures' Coder ids are UUIDs now (`functions/test/coder-ids.js` makes the same one from a label every time), and tests break each rule on purpose: a plausible name as an id, another user answered for the read-back, a name that is not a visitor's, a redirect, a workspace name that is not a lab's.
+- **The Docker Sandboxes template gets the same Azure CLI Python fixes as the lab image, and is now built and scanned ([#1473](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1473)).**
+  [`lab-image/sandbox-template/Dockerfile`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-image/sandbox-template/Dockerfile)
+  is the recipe the Docker guide page tells a learner to build for "Run an
+  agent against your landing zone"; it installs the same Azure CLI release
+  as the lab image's `full` target, but until now without the package
+  replacements in `AZURE_CLI_PYTHON_OVERRIDES`
+  ([`lab-image/versions.env`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-image/versions.env)),
+  so a learner's build still carried the certifi, PyJWT and urllib3 versions
+  the weekly scan flagged, and nothing built or scanned it. The recipe now
+  does what the `full` target does, in the one `RUN` that installs the CLI:
+  the downgrade guard, the wheels downloaded with the CLI's own pip in
+  hash-checking mode (it has no fetch stage), an offline install and `pip
+  check`. `publish-lab-image.yml` builds it on every pull request that
+  touches `lab-image/` and smoke-tests it offline (the replaced versions
+  read back, `az` and `terraform` at their pins, the `agent` user), and
+  `lab-supply-chain.yml` builds it from `main` each week and scans it with
+  Trivy beside the published images, saying in its issue when the build
+  itself failed. `scripts/lab-image-azure-cli-overrides.test.mjs` holds the
+  recipe to the same order and the workflow to the build, and
+  `lab-pin-pr-workflows.test.mjs` holds the scan.
 
 ### Fixed
 
