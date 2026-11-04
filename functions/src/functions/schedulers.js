@@ -302,6 +302,9 @@ timer('checkAgentHealth', 'CHECK_AGENT_HEALTH', '0 */5 * * * *', (context) =>
 // past each five-minute mark: after checkAgentHealth has marked stale agents,
 // and never in the same second as the publisher or the watchdog. Reads and
 // small writes only; it calls no third party (lib/health/pulse.js).
+/** The nightly export's status reader (#1409), built on the pulse's first run and kept. */
+let backupStatusReader = null;
+
 timer('healthPulse', 'HEALTH_PULSE', '0 2-59/5 * * * *', async (context) => {
   const [{ createHealthPulse }, { createOpsHealthHandlers }, { createBackupStatusReader }, edges] =
     await Promise.all([
@@ -313,12 +316,14 @@ timer('healthPulse', 'HEALTH_PULSE', '0 2-59/5 * * * *', async (context) => {
   // buildSnapshot is the unguarded builder the Telegram bot already uses: the
   // pulse is not a user, so it has no token for the HTTP face's role check.
   // The nightly export's reader (#1409) rides along so the pulse records the
-  // Nightly export probe; one per run is fine, the pulse is every five
-  // minutes and the reader's own cache is ten.
+  // Nightly export probe. One reader for the module's life, like the HTTP
+  // face's (ops-health-http.js): its ten-minute cache lives in the reader,
+  // so a reader per run would read the blobs every five minutes for nothing.
+  backupStatusReader ??= createBackupStatusReader({ blobs: edges.createExportBlobStore() });
   const { buildSnapshot } = createOpsHealthHandlers({
     guard: null,
     store,
-    backups: createBackupStatusReader({ blobs: edges.createExportBlobStore() }),
+    backups: backupStatusReader,
   });
   return createHealthPulse({ store, buildSnapshot, log: context }).run();
 });

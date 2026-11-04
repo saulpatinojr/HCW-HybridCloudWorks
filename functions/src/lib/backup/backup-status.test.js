@@ -66,8 +66,10 @@ function completedRun({ mode, runId, completedAt, except = [], docs = 3 }) {
   };
 }
 
+const quiet = () => ({ warn: vi.fn() });
+
 const reader = (blobs, overrides = {}) =>
-  createBackupStatusReader({ blobs, now: () => NOW, ttlMs: 0, ...overrides });
+  createBackupStatusReader({ blobs, now: () => NOW, ttlMs: 0, log: quiet(), ...overrides });
 
 describe('createBackupStatusReader', () => {
   it('reports the newest completed run with every authored container, and brain_records on /ownerId', async () => {
@@ -173,12 +175,12 @@ describe('createBackupStatusReader', () => {
     expect(block.lastCompleted.runId).toBe('2026-11-03');
   });
 
-  it('reuses one reading for the TTL and reads again after it; a failed read is not cached', async () => {
+  it('reuses one reading for the TTL and reads again after it; a failed read is not cached and is logged by its code only', async () => {
     const blobs = memBlobs(
       completedRun({ mode: 'delta', runId: '2026-11-04', completedAt: '2026-11-04T03:41:00.000Z' })
     );
     let clock = NOW.getTime();
-    const r = createBackupStatusReader({ blobs, now: () => new Date(clock) });
+    const r = createBackupStatusReader({ blobs, now: () => new Date(clock), log: quiet() });
     await r.read();
     const reads = blobs.readJson.mock.calls.length;
     clock += BACKUP_STATUS_TTL_MS - 1;
@@ -189,11 +191,96 @@ describe('createBackupStatusReader', () => {
     expect(blobs.readJson.mock.calls.length).toBe(reads * 2);
 
     const failing = memBlobs();
-    failing.readJson.mockRejectedValueOnce(new Error('403 from the storage firewall'));
-    const r2 = createBackupStatusReader({ blobs: failing, now: () => NOW });
-    await expect(r2.read()).rejects.toThrow(/403/);
+    const error = Object.assign(new Error('Server failed to authenticate the request at https://stsiteprodcus01.blob.core.windows.net/cosmos-export'), {
+      statusCode: 403,
+    });
+    failing.readJson.mockRejectedValueOnce(error);
+    const log = quiet();
+    const r2 = createBackupStatusReader({ blobs: failing, now: () => NOW, log });
+    await expect(r2.read()).rejects.toThrow(/authenticate/);
+    expect(log.warn).toHaveBeenCalledWith('[backupStatus] read failed: 403');
+    expect(JSON.stringify(log.warn.mock.calls)).not.toMatch(/blob\.core|stsite/);
     await r2.read();
     expect(failing.readJson.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('shares one reading between callers that arrive while it is in flight', async () => {
+    const blobs = memBlobs(
+      completedRun({ mode: 'delta', runId: '2026-11-04', completedAt: '2026-11-04T03:41:00.000Z' })
+    );
+    const r = createBackupStatusReader({ blobs, now: () => NOW, log: quiet() });
+    const [a, b] = await Promise.all([r.read(), r.read()]);
+    expect(a).toBe(b);
+    expect(blobs.readJson.mock.calls.filter(([n]) => n.endsWith('run.json'))).toHaveLength(7);
+  });
+
+  it('gives up after timeoutMs with a coded error, so the snapshot never waits on a storage account that drops', async () => {
+    vi.useFakeTimers();
+    try {
+      const blobs = memBlobs();
+      blobs.readJson.mockImplementation(() => new Promise(() => {}));
+      const log = quiet();
+      const r = createBackupStatusReader({ blobs, now: () => NOW, timeoutMs: 50, log });
+      const pending = r.read();
+      const outcome = expect(pending).rejects.toMatchObject({ code: 'ETIMEDOUT' });
+      await vi.advanceTimersByTimeAsync(51);
+      await outcome;
+      expect(log.warn).toHaveBeenCalledWith('[backupStatus] read failed: ETIMEDOUT');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves an incomplete run’s marker count unknown when its listing fails, and keeps the reading', async () => {
+    const names = blobNames({ mode: 'delta', runId: '2026-11-04', container: '' });
+    const blobs = memBlobs({
+      ...completedRun({ mode: 'delta', runId: '2026-11-03', completedAt: '2026-11-03T03:40:00.000Z' }),
+      [names.run]: JSON.stringify({ containers: ['blogs'], enqueuedAt: '2026-11-04T03:00:01.000Z' }),
+    });
+    blobs.listNames.mockRejectedValueOnce(Object.assign(new Error('boom'), { code: 'ECONNRESET' }));
+    const log = quiet();
+    const block = await reader(blobs, { log }).read();
+    expect(block.runs[0]).toMatchObject({ runId: '2026-11-04', complete: false, markers: null });
+    expect(block.lastCompleted.runId).toBe('2026-11-03');
+    expect(log.warn).toHaveBeenCalledWith('[backupStatus] listing delta/2026-11-04 failed: ECONNRESET');
+  });
+
+  it('reads the blobs as data: odd shapes are dropped, counts clamped, times bounded', async () => {
+    const names = blobNames({ mode: 'delta', runId: '2026-11-04', container: '' });
+    const blobs = memBlobs({
+      [names.run]: JSON.stringify({ containers: 'not-a-list', enqueuedAt: 'x'.repeat(41) }),
+      [names.manifest]: JSON.stringify({
+        completedAt: 12345,
+        containers: [
+          { container: 'brain_records', docs: 1e300 },
+          { container: 'blogs', docs: -4 },
+          { container: 'content', docs: '7' },
+          { container: '', docs: 1 },
+          { docs: 2 },
+          'content_versions',
+          null,
+        ],
+      }),
+    });
+    const { lastCompleted } = await reader(blobs).read();
+    expect(lastCompleted).toMatchObject({
+      startedAt: null,
+      expectedCount: null,
+      completedAt: null,
+      containerCount: 3,
+      containers: [
+        { container: 'brain_records', docs: 0 },
+        { container: 'blogs', docs: 0 },
+        { container: 'content', docs: 7 },
+      ],
+      watched: { container: 'brain_records', present: true, docs: 0, partitionKey: '/ownerId' },
+    });
+    expect(lastCompleted.authored.missing).not.toContain('content');
+    expect(lastCompleted.authored.missing).toContain('content_versions');
+
+    // A run record or manifest that is not an object is no run / no manifest.
+    const odd = memBlobs({ [names.run]: '"a string"' });
+    expect((await reader(odd).read()).runs).toEqual([]);
   });
 
   it('backupsUnavailable is the block when nothing could be read', () => {

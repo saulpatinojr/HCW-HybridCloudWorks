@@ -472,6 +472,17 @@ describe('the hub', () => {
       name === 'getOpsHealthSnapshot'
         ? {
             ...SNAPSHOT,
+            // Every other tile on the card healthy, so the header's word below is the export's.
+            operationalSignals: {
+              ...SNAPSHOT.operationalSignals,
+              queueBreachCount: 0,
+              oldestStagedHours: 3,
+              openAlertAgeHours: 0,
+              publishFailureCount: 0,
+              orphanedGeneratedImages: 0,
+              failedJobs: [],
+              jobs24h: { ...SNAPSHOT.operationalSignals.jobs24h, failed: 0 },
+            },
             backups: { unavailable: true, lookbackDays: null, runs: [], lastCompleted: null },
           }
         : {}
@@ -482,6 +493,15 @@ describe('the hub', () => {
       /could not be read, so last night's export is not known/
     );
     expect(within(section).queryByTestId('nightly-export-run')).not.toBeInTheDocument();
+    // The card's own status is not Healthy over a section that could not look:
+    // every other tile on the card is fine, so this is the export's doing.
+    const card = screen
+      .getByRole('heading', { name: 'Operational Signals' })
+      .closest('.rounded-lg');
+    expect(card.querySelector('[data-slot="status"] [data-status]')).toHaveAttribute(
+      'data-status',
+      'degraded'
+    );
   });
 
   it('says when the jobs or the denial reads could not be made, and explains a quiet scheduler (#1491)', async () => {

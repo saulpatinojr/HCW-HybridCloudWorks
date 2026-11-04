@@ -673,13 +673,27 @@ function NightlyExportSection({ backups }) {
   );
 }
 
+/**
+ * The export's word for the card header. An unreadable block is degraded
+ * there, not unknown, for the reason the jobs read is (signalsStatus): the
+ * header's worstStatus lets unknown count only when nothing else is known,
+ * so it would say Healthy over a section that says the export could not be
+ * read. A snapshot with no block at all (one written before the block
+ * existed) stays unknown, which the header then ignores: that is not a
+ * finding about the export.
+ */
+export function exportHeaderStatus(backups) {
+  if (backups?.unavailable) return 'degraded';
+  return nightlyExportVerdict(backups).status;
+}
+
 export function OperationalSignalsCard({ signals, backups = null }) {
   return (
     <Card className="flex h-full flex-col">
       <SignalCardHeader
         icon={<AlertTriangle className="h-4 w-4 text-amber-500" aria-hidden="true" />}
         title="Operational Signals"
-        status={worstStatus([signalsStatus(signals), nightlyExportVerdict(backups).status])}
+        status={worstStatus([signalsStatus(signals), exportHeaderStatus(backups)])}
       />
       <CardContent className="flex flex-1 flex-col gap-3 text-sm">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
