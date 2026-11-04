@@ -122,7 +122,10 @@ $adding = @($target | Where-Object { $current -notcontains $_ })
 if (-not $adding) {
     Write-Host 'already present — nothing to restore' -ForegroundColor Green
 }
-elseif ($PSCmdlet.ShouldProcess($api.displayName, "add redirect URIs: $($adding -join ', ')")) {
+# The tenant is in the confirmation on purpose. Without -TenantId the lookup
+# takes the registration of that name in whatever tenant az is signed in to,
+# so the operator confirms the tenant, not only the name (CodeRabbit, #1548).
+elseif ($PSCmdlet.ShouldProcess("$($api.displayName) in tenant $($account.tenant)", "add redirect URIs: $($adding -join ', ')")) {
     $body = @{ spa = @{ redirectUris = [string[]]$target } } | ConvertTo-Json -Depth 6 -Compress
     Write-Host "  $body"
     $tmp = New-TemporaryFile

@@ -58,6 +58,14 @@ Administrator or Global Administrator:
 ./scripts/rollback/restore-admin-signin.ps1 -WhatIf
 ```
 
+Read its Preflight before going on: the `tenant       :` line is the tenant
+`az` is signed in to, and the script works in that tenant. If it is not the
+site's own tenant, stop and sign in to the right one (`az login --tenant`
+with the tenant's domain name, then `--allow-no-subscriptions`), because the
+script finds the API registration by name and a same-named registration in
+another directory would satisfy it. The real run asks you to confirm the
+registration *and* the tenant together; say no if either is wrong.
+
 ```powershell
 ./scripts/rollback/restore-admin-signin.ps1
 ```
