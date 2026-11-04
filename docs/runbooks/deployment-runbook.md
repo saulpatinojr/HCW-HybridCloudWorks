@@ -601,14 +601,14 @@ Contributor**, granted on the whole account. Issue
 [#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469)
 narrows that to one grant per database. Today there is one database, `hcw`.
 
-It takes two applies, so the app never has a moment with no grant. An apply
+It takes two apply runs, so the app never has a moment with no grant. An apply
 that removed the old grant and created the new one in the same run could
 leave the app with neither for a stretch, and the symptom would be every page
 failing at once with 403. The resources are in
 [`infra/cosmos.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos.tf):
 `azurerm_cosmosdb_sql_role_assignment.func_cosmos` is the account-wide grant
 and `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]` is the new
-database-scoped one. Both applies are HCP Terraform runs on the
+database-scoped one. Both apply runs are HCP Terraform runs on the
 [hcw-azure runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs),
 queued by the merge and confirmed by the owner (the confirm button is the
 apply).

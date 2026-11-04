@@ -923,7 +923,7 @@ This project has not cut a tagged release; entries are grouped under
   that scope the SDK can still read the database, list its containers and
   work inside them, which is everything the app, the six change-feed
   functions, their `leases` container and the nightly export do. The move
-  takes two applies so the app never has a moment with no grant: this step
+  takes two apply runs so the app never has a moment with no grant: this step
   adds `azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]` in
   `infra/cosmos.tf` beside the account-wide `func_cosmos`, whose address is
   deliberately untouched (a `count` or `moved` on the one grant the site
@@ -934,7 +934,7 @@ This project has not cut a tagged release; entries are grouped under
   new grant to the database scope and the Data Contributor role while the
   account grant keeps its scope, `scripts/assert-expected-plan.test.mjs`
   holds the declarations to the database map, the deployment runbook carries
-  the owner's steps and checks for both applies, and ADR 0036 records the
+  the owner's steps and checks for both apply runs, and ADR 0036 records the
   narrowing as in progress.
 
 ### Fixed
