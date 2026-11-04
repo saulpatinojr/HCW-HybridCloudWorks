@@ -119,7 +119,9 @@ skipped counts as passing.
    ```
 
    Expected: the five names, one per line, and nothing else.
-5. Open any pull request's checks list: it should show `gate` among the
+5. Open a pull request's checks list, for example
+   <https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1549/checks> (the
+   pull request that made this change): it should show `gate` among the
    required checks and the old single job names as plain (not required)
    checks. Then edit `.claude/CLAUDE.md`'s ruleset bullet to drop the "takes
    effect when the ruleset is updated" wording, and record the date here.
