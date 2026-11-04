@@ -1128,18 +1128,18 @@ describe('DECLARED', () => {
     expect(paths).toContain('app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS');
   });
 
-  it('prunes the hcw database grant’s create once applied, declares any later key, and declares the account-wide grant’s delete now that its block is gone (#1469 steps 1 and 2)', () => {
+  it('prunes the hcw database grant’s create once applied, declares any later key, and keeps the account-wide grant gone from infra/ with no declaration left (#1469 steps 1 and 2, both pruned 2026-11-04)', () => {
     // Step 1 of #1469 added `func_cosmos_db["hcw"]` beside `func_cosmos`. Its
     // create applied in run-vUQrQLSGJh4J5HZ2 on 2026-11-04 and left DECLARED,
     // so the `hcw` key is in state and must not be declared again. A key added
     // to the local later plans a create of its own and must be declared, or
     // the plan check reads it as UNEXPECTED. Step 2 deleted the `func_cosmos`
-    // block and declared the delete: the two must travel together. A block
-    // still in infra/ with the delete declared would wave through the gap the
-    // two steps avoid; a block gone with no declaration leaves the destroy
-    // UNEXPECTED, which is the plan check doing its job but not what the
-    // pull request promised. Once the delete has applied and the declaration
-    // is pruned, the second half of this case goes with it.
+    // block (#1544) and declared the delete; that delete applied in
+    // run-DvAMt2zE3XU4es4h on 2026-11-04 and the declaration was pruned. So
+    // now neither the block nor a declaration of it may exist: the block back
+    // in infra/ would plan an undeclared create of the account-wide grant the
+    // two steps removed, and a declaration left behind would wave through a
+    // later destroy of something that is no longer in state.
     const applied = ['hcw'];
     const block = /^\s*cosmos_database_grants\s*=\s*\{\n([\s\S]*?)\n\s*\}\n/m.exec(infraSource);
     expect(block, 'local.cosmos_database_grants not found in infra/').not.toBeNull();
@@ -1158,7 +1158,7 @@ describe('DECLARED', () => {
       (entry) => entry.action === 'delete' && entry.address === 'azurerm_cosmosdb_sql_role_assignment.func_cosmos'
     );
     expect(accountGrantStands, 'the account-wide grant func_cosmos is back in infra/ (step 2 of #1469 removed it)').toBe(false);
-    expect(accountGrantDeleteDeclared, 'func_cosmos is gone from infra/ but its delete is not declared').toBe(true);
+    expect(accountGrantDeleteDeclared, 'func_cosmos’s delete applied in run-DvAMt2zE3XU4es4h and is still declared').toBe(false);
     // No Cosmos data-plane role assignment in infra/ may be scoped to the
     // whole account again.
     expect(accountScopedCosmosGrants(infraSource), 'a Cosmos role assignment is scoped to the whole account').toEqual([]);
