@@ -95,8 +95,10 @@ sign in again with an account that holds both subscriptions, or pass the
 ids yourself: in PowerShell with `-SubscriptionId` and
 `-ManagementSubscriptionId`; in bash as two positional arguments to
 `scripts/bootstrap-roles.sh`, the workload (Application) subscription id
-first and the Management subscription id second. Read both from step 0.2's
-`az account show` output rather than typing them from memory.
+first and the Management subscription id second. Read the workload id from
+step 0.2's `az account show` output, and the Management id from the row named
+`sub-plat-mgmt-prod-cus` in `az account list -o table`, rather than typing
+either id from memory.
 
 **Created roles:**
 1. `HCW Key Vault Secret Writer` (`infra/roles/keyvault-secret-writer.json`)
