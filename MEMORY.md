@@ -6,8 +6,9 @@ On 2026-10-31 its list of standing rules moved into `.claude/CLAUDE.md` ([#1455]
 and [#1346](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1346) left the later list because
 [#1461](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1461) closed it; nothing else in it was refreshed then.
 
-On 2026-11-04 a session that worked only in the CloudCrawler and CloudAssessor App repositories added the section
-"App repositories handoff" below, at the owner's request; nothing else in this file was refreshed then.
+On 2026-11-04 a session that worked only in the App repositories added the two "App repositories handoff" sections
+below (CloudCrawler and CloudAssessor first, then NetworkEyes and MigrateOrchestrator), at the owner's request; nothing
+else in this file was refreshed then.
 
 Two working sessions wrote this file on the same day: the application work (AI Engine,
 Ambassadors, Blogs and their deployments) and the infrastructure, CI and add-on work
@@ -100,7 +101,7 @@ manual `make lock` run.
   [`HCW-CloudAssessor_AddOn`](https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn). The owner asked that only this
   repository be told, through this note, and both App pull requests say so. Suggested follow-up: if an add-on keeps its
   own `requirements*.lock.txt` exports and Dependabot `uv` entry, it has the same problem, and the same fix applies.
-- **Not looked at:** the MigrateOrchestrator and NetworkEyes App repositories were not part of this request.
+- **MigrateOrchestrator and NetworkEyes:** not part of this request; see the next section, written later the same day.
 
 ### Not yet proven
 
@@ -108,6 +109,72 @@ The new workflow has not run on GitHub. It only runs on a Dependabot pull reques
 proven when Dependabot's next weekly Python pull request (Mondays) in either App, after the App is set up, shows the
 commit "Regenerate requirements(…).lock.txt from uv.lock (make lock)" and the required checks run and pass on that
 commit by themselves.
+
+## App repositories handoff: NetworkEyes App and MigrateOrchestrator App clean-up (2026-11-04)
+
+Written 2026-11-04 by the same Claude Code session as the section above, at the owner's request ("do the same for
+MigrateOrchestrator and NetworkEyes App"). It covers
+[`HCW-NetworkEyes_App`](https://github.com/saulpatinojr/HCW-NetworkEyes_App) and
+[`HCW-MigrateOrchestrator_App`](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App). As before, nothing in
+this repository was changed apart from this note. It is dated, not live: check the links before acting on it.
+
+### In one paragraph
+
+Neither repository had a queue of pull requests: each had none open. NetworkEyes had one open issue (an out-of-date
+pin for the draw.io diagram editor) and one Dependabot security update that kept failing. Both are fixed in one pull
+request. Both repositories also had CI checkouts that left the workflow's GitHub token on disk, where every later step
+could read it; that is fixed and pinned by a test in each. No engine, package, rule or release contract changed, so
+nothing the website calls or shows needs to change.
+
+### What was merged
+
+| Repository | Merged pull request | Closed | What changed |
+| --- | --- | --- | --- |
+| NetworkEyes App | [#345](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/345) (merged as [`dcf3880`](https://github.com/saulpatinojr/HCW-NetworkEyes_App/commit/dcf38809f80d4a3e0c8f3e4c8e1b16ae58d74211)) | issue [#340](https://github.com/saulpatinojr/HCW-NetworkEyes_App/issues/340) | draw.io editor in the web image 32.6.1 → 32.6.9 (advisory GHSA-55cm-f4p8-xq88); `minimatch` for the lint tools 10.2.5 → 11.0.4 through an npm override, because Dependabot's own security update could only downgrade eslint; every checkout in `300-test-codebase.yml` sets `persist-credentials: false` |
+| MigrateOrchestrator App | [#107](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/pull/107) (merged as [`0ad8c2f`](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/commit/0ad8c2f39f7c33fc5ec754b121ca29db64e79e4b)) | none | every checkout in `ci.yml` and `security.yml` sets `persist-credentials: false`; a test reads each checkout's settings and fails if one does not, and also fails if a checkout line is written in a shape it cannot read |
+
+After this, no pull requests or issues are open in either repository.
+
+### Still open, and where it is tracked
+
+- **NetworkEyes, [HCW-NetworkEyes_App#346](https://github.com/saulpatinojr/HCW-NetworkEyes_App/issues/346)**
+  (written up in full as T-740 in that repository's `TODO.md`):
+  1. `npm audit` still reports one old `minimatch` 3.1.5 copy that three eslint plugins need (they use a part of it
+     that version 11 removed). It is used only when linting, and no image ships it. GitHub's advisory
+     ([GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)) lists ">= 7.0.0, < 11.0.1", which
+     leaves 3.x out, but npm's copy of the same advisory says "< 11.0.1". So the
+     [Dependabot alert](https://github.com/saulpatinojr/HCW-NetworkEyes_App/security/dependabot/121) should close
+     by itself after the merge; if it stays open, #346 says what to do.
+  2. The `build-images` and `build-web` jobs of `200-build-images.yml` still keep the token on disk. A pull request
+     cannot prove a change there, and neither can the workflow's rehearsal, which skips both jobs. Only a real
+     image build on `main` can, so it was left for a change the owner times.
+- **MigrateOrchestrator:** `copilot-setup-steps.yml` was left as it is on purpose. It prepares the Copilot coding
+  agent's environment, which handles its own git access.
+
+### Differences found
+
+- **The MigrateOrchestrator App repository's rename still trips some tools.** The rename from
+  `HCW-AzMigrateOrchestrator_App` to `HCW-MigrateOrchestrator_App` is already recorded in this repository (the
+  [field application standard](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/standards/hcw-field-application-standard.md),
+  ID-1), and the old name appears here only in dated history (ADR 0035, the App-to-AddOn final package), not in any
+  live setting. But a Claude Code session whose GitHub access lists the old name is refused some actions on the
+  repository, for example resolving a review thread, until the new name is added to the session. A git remote that
+  uses the old name still works, though each push prints "This repository moved". Use the new name when starting
+  a session for that repository.
+- NetworkEyes and MigrateOrchestrator have no lockfile export like CloudCrawler and CloudAssessor do. Their
+  Dependabot pull requests do not need the "HCW Lockfile Sync" App from the section above, so it is not installed
+  there.
+
+### What this means for this repository and the add-ons
+
+- **Website:** nothing to change.
+- **Add-ons:** no `docs/whats-new-upstream.md` entry was written in
+  [`HCW-NetworkEyes_AddOn`](https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn) or
+  [`HCW-MigrateOrchestrator_AddOn`](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn), because nothing
+  they adopt changed: no engine package, rule, published package or release. Both pull requests say so.
+- **Images:** merging #345 starts NetworkEyes' normal image build on `main` (`200-build-images.yml`), because it
+  changes the web Dockerfile. That publishes new `-sha-` images and moves the `*-latest` tags, as every such merge
+  does. No version tag was pushed and no release was cut in either repository.
 
 ## Completed application work
 
