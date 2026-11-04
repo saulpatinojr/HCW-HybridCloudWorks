@@ -5,7 +5,8 @@
  * 1. Time-based WORM immutability policy on the cosmos-export container (35 days).
  * 2. Dedicated cosmos-export-state container for continuation tokens.
  * 3. Log Analytics workspace retention at or above 90 days.
- * 4. Cosmos DB diagnostic setting carrying DataPlaneRequests with PII container filtering.
+ * 4. Cosmos DB diagnostic setting carrying DataPlaneRequests, filtered at ingestion
+ *    by the workspace transformation rule (#1530).
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -72,10 +73,38 @@ describe('PLAT-8 backup immutability & log retention audit checks (#968)', () =>
       );
     });
 
-    it('configures table ingestion transformation on CDBDataPlaneRequests filtering to ambassador container', () => {
-      expect(observabilityTf).toMatch(
-        /resource\s+"azapi_update_resource"\s+"cosmos_data_plane_table"[\s\S]*?tables\/CDBDataPlaneRequests[\s\S]*?transformKql[\s\S]*?ambassador/
+    // Until #1530 this asserted a `transformKql` property on the table, which
+    // is what PLAT-8 wrote and what Azure never stored: the Tables API has no
+    // such property, so the filter never ran. The filter is a data collection
+    // rule of kind WorkspaceTransforms, linked as the workspace's default
+    // rule, and the three assertions below hold the three parts together.
+    it('filters CDBDataPlaneRequests in a WorkspaceTransforms data collection rule that keeps the personal-data containers (#1530)', () => {
+      const rule = /resource\s+"azurerm_monitor_data_collection_rule"\s+"workspace_transforms"[\s\S]*?\n}/.exec(observabilityTf);
+      expect(rule, 'azurerm_monitor_data_collection_rule.workspace_transforms not found').not.toBeNull();
+      expect(rule[0]).toMatch(/kind\s*=\s*"WorkspaceTransforms"/);
+      expect(rule[0]).toMatch(/streams\s*=\s*\["Microsoft-Table-CDBDataPlaneRequests"\]/);
+      expect(rule[0]).toMatch(/transform_kql\s*=\s*local\.cosmos_request_log_transform_kql/);
+      const kql = /cosmos_request_log_transform_kql\s*=\s*"([^"]+)"/.exec(observabilityTf);
+      expect(kql, 'local.cosmos_request_log_transform_kql not found').not.toBeNull();
+      expect(kql[1]).toMatch(/^source \| where /);
+      for (const container of ['ambassador', 'doc_vault', 'brain_records']) {
+        expect(kql[1], `${container} must be kept in full`).toContain(`'${container}'`);
+      }
+    });
+
+    it('links the rule as the workspace default, through an attribute azurerm reads back (#1530)', () => {
+      expect(mainTf).toMatch(
+        /resource\s+"azurerm_log_analytics_workspace"\s+"hcw"[\s\S]*?data_collection_rule_id\s*=\s*azurerm_monitor_data_collection_rule\.workspace_transforms\.id/
       );
+    });
+
+    it('keeps the table retention at var.logs_retention_in_days on an azurerm table resource, not an azapi write (#1530)', () => {
+      expect(observabilityTf).toMatch(
+        /resource\s+"azurerm_log_analytics_workspace_table"\s+"cosmos_data_plane"[\s\S]*?name\s*=\s*"CDBDataPlaneRequests"[\s\S]*?retention_in_days\s*=\s*var\.logs_retention_in_days[\s\S]*?total_retention_in_days\s*=\s*var\.logs_retention_in_days/
+      );
+      expect(observabilityTf).not.toMatch(/resource\s+"azapi_update_resource"\s+"cosmos_data_plane_table"/);
+      // The comments may tell the history; no attribute may set it again.
+      expect(observabilityTf).not.toMatch(/^\s*transformKql\s*=/m);
     });
   });
 });

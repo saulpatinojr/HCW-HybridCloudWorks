@@ -80,50 +80,58 @@ resource "azurerm_monitor_diagnostic_setting" "key_vault" {
   }
 }
 
-# Cosmos — ControlPlaneRequests ONLY, down from the four categories the
-# approved plan named. The other three were pruned on 2026-08-24 because they
-# were the reason the workspace stopped ingesting anything at all.
+# Cosmos — two categories: ControlPlaneRequests, and DataPlaneRequests behind
+# the ingestion-time filter in the data collection rule below.
 #
-# The workspace was found in dataIngestionStatus OverQuota against a 0.25
-# GB/day cap. Three days of `Usage` show where the volume goes:
+# HISTORY, because the comment above this resource has been wrong twice. On
+# 2026-08-24 the workspace was found OverQuota against its 0.25 GB/day cap,
+# with CDBDataPlaneRequests (every read and write on every container, one row
+# each) the largest table, and the category was turned off. PLAT-8 (#968)
+# turned it back on for the personal-data audit trail, with a filter meant to
+# keep the `ambassador` container only. That filter never ran: it was written
+# as a `transformKql` property on the table itself, and the Tables API has no
+# such property, so Azure stored the retention it was sent beside and
+# silently dropped the rest. From then until #1530 the table carried every
+# request again, the cap tripped between 20:30 and 21:50 UTC every evening
+# and nothing was logged until the 08:00 UTC reset, the 03:00 UTC Cosmos
+# export's completion event among the things lost, so
+# alert-cosmos-export-daily fired every night from 2026-10-29 on a run that
+# may well have succeeded.
 #
-#   AppTraces                      0.284 GB
-#   CDBDataPlaneRequests           0.268 GB
-#   CDBPartitionKeyRUConsumption   0.076 GB
-#   AppRequests                    0.002 GB
-#   AppExceptions                  0.002 GB
+# WHERE THE FILTER LIVES NOW. An ingestion-time transformation for a table
+# that diagnostic settings feed is a data collection rule of kind
+# WorkspaceTransforms, one per workspace, named as the workspace's default
+# rule (main.tf, data_collection_rule_id). Both halves are azurerm resources
+# that read their state back on every refresh, so a rule changed in the
+# portal, or a link removed, shows in the next plan. Microsoft's walkthrough
+# of the three steps (table, rule, link):
+# https://learn.microsoft.com/azure/azure-monitor/logs/tutorial-workspace-transformations-api
 #
-# READ THOSE AS A FLOOR, NOT A MEASUREMENT. They were sampled while the cap was
-# already tripping, so every one of them is what survived the cap rather than
-# what the source produced, and the shortfall is not distributed evenly — the
-# cap stops collection mid-day, so a high-rate table loses proportionally more
-# than a low-rate one. The list is also partial: it excludes AzureMetrics and
-# the StorageRead/StorageWrite/StorageDelete categories the content_blob
-# setting below ships, both of which land in the same workspace. An independent
-# reading of the same period put the real figures roughly 20% away from these.
+# WHAT THE FILTER KEEPS, measured on 2026-11-03 over seven days of what the
+# cap let in (9.5 MB an hour of this table in the hours before the cap):
 #
-# What the numbers are good enough to establish is the ORDERING, which is the
-# whole basis of the change: two Cosmos data-plane categories dominate, and the
-# two tables an incident is actually read from are a rounding error that was
-# being dropped anyway. Removing DataPlaneRequests, PartitionKeyRUConsumption
-# and QueryRuntimeStatistics is therefore a large reduction — it is NOT a
-# reduction to a number anyone can state in advance.
+#   every request on ambassador, doc_vault and brain_records, the three
+#     containers that hold personal or private data: 0.36 MB/h, kept;
+#   every write (Create, Upsert, Replace, Delete, Update, Patch, Batch) on
+#     any other container, the authored data's change record: 0.12 MB/h,
+#     kept;
+#   reads (Read, Query, QueryPlan, ReadFeed) on every other container:
+#     3.17 MB/h, dropped;
+#   everything on `leases`, the change-feed bookkeeping the exporter and the
+#     brain indexer write to and read back several times a second: 2.3 MB/h,
+#     dropped;
+#   everything on `brain_search`, the derived search index the hourly brain
+#     indexer rebuilds with about 140,000 Create rows a day: 3.5 MB/h,
+#     dropped. Its source, brain_records, is kept in full, so nothing about
+#     a person is lost with it.
 #
-# CONFIRM AFTER APPLY, do not assume. Once ingestion has run uncapped for a
-# full day, re-run the daily-cap usage query (the one in the logs_daily_cap
-# rule below reports the same figure) and check the result against the cap. If
-# it is not comfortably under, the next lever is AppTraces via host.json
-# logLevel — see the sampling note on azurerm_application_insights.hcw in
-# main.tf — and not another diagnostic category.
+# That is 0.48 MB/h kept of 9.48: 95% of the table's volume gone, and the
+# share this table takes of the cap down from about half to about 5%.
 #
-# WHAT THIS COSTS, stated plainly rather than buried: DataPlaneRequests was the
-# per-request audit record of who read what. Losing it means a data-access
-# question can no longer be answered from logs. The trade was made because a
-# capped workspace answers no questions at all, and because the firewall
-# (main.tf) already restricts callers to the Functions subnet and named
-# operator windows. If the audit trail becomes a requirement, the answer is a
-# dedicated table with a longer cap or an ingestion-time transformation that
-# keeps only writes — not switching this category back on under a 0.25 GB cap.
+# WHAT IT STILL COSTS, plainly: a read of blogs, content or speakerevents is
+# not recorded. A data-access question ("who read this person's record") can
+# be answered from logs for the three sensitive containers and for nothing
+# else, which is what docs/runbooks/data-subject-requests.md relies on.
 #
 # ControlPlaneRequests stays: it records firewall, key and configuration
 # changes to the account, it is near-zero volume, and it is the category that
@@ -138,33 +146,95 @@ resource "azurerm_monitor_diagnostic_setting" "cosmos" {
     category = "ControlPlaneRequests"
   }
 
-  # DataPlaneRequests enabled with ingestion-time table transformation below
-  # (PLAT-8, #968). By filtering to PII containers only, data access auditing is
-  # preserved for personal data records without blowing past the workspace cap.
+  # Filtered at ingestion by azurerm_monitor_data_collection_rule
+  # .workspace_transforms below (#1530; PLAT-8, #968, is where the category
+  # came back).
   enabled_log {
     category = "DataPlaneRequests"
   }
 }
 
-# Ingestion-time transformation for Cosmos DB data-plane requests (PLAT-8, #968).
-# Ingests only operations on PII containers ('ambassador'), dropping the
-# high-volume telemetry from non-sensitive collections that previously exhausted the daily cap.
-resource "azapi_update_resource" "cosmos_data_plane_table" {
-  type        = "Microsoft.OperationalInsights/workspaces/tables@2022-10-01"
-  resource_id = "${azurerm_log_analytics_workspace.hcw.id}/tables/CDBDataPlaneRequests"
+# The request log's table: its retention, and the one PUT on the table that
+# Microsoft's walkthrough asks for before a workspace transformation is
+# attached ("calling the API enables the table for workspace transformations,
+# whether or not you define custom columns"). azurerm's table resource
+# creates with CreateOrUpdate, a PUT, so this apply makes that call again,
+# and it reads retention back on every refresh, which the azapi_update_resource
+# it replaces (#1530) did not: that resource sent its body once and compared
+# nothing afterwards, which is how a filter that never existed went unnoticed
+# for a month. Destroying it made no API call, so nothing on the live table
+# changed when it left the state. Destroying this one does not delete the
+# table either (Azure tables cannot be deleted); the retention reverts to the
+# workspace's.
+resource "azurerm_log_analytics_workspace_table" "cosmos_data_plane" {
+  provider = azurerm.mgmt
 
-  body = {
-    properties = {
-      plan                 = "Analytics"
-      retentionInDays      = var.logs_retention_in_days
-      totalRetentionInDays = var.logs_retention_in_days
-      transformKql         = "source | where CollectionName in ('ambassador') or ContainerName in ('ambassador')"
+  name                    = "CDBDataPlaneRequests"
+  workspace_id            = azurerm_log_analytics_workspace.hcw.id
+  plan                    = "Analytics"
+  retention_in_days       = var.logs_retention_in_days
+  total_retention_in_days = var.logs_retention_in_days
+
+  depends_on = [azurerm_monitor_diagnostic_setting.cosmos]
+}
+
+# The filter, as the data collection rule Azure runs it from. One rule of this
+# kind per workspace; a transformation for a second table is another data_flow
+# in this same rule, never a second rule. The stream name is Microsoft's
+# convention for a workspace transformation, `Microsoft-Table-<table>`.
+#
+# WHY THE DESTINATION IS SPELLED OUT. The workspace names this rule as its
+# default (main.tf), so the rule cannot read the workspace's id back, or
+# Terraform reports a cycle. The id is built from the resource group and
+# local.log_analytics_workspace_name, the same parts the workspace is named
+# from, and the workspace's postcondition fails the plan if the two ever
+# disagree. The location is the resource group's, which is the workspace's:
+# Azure requires the rule and the workspace in one region.
+#
+# The KQL is a single `where`, the one operator a transformation needs here.
+# Every operator and function a transformation may use is listed at
+# https://learn.microsoft.com/azure/azure-monitor/data-collection/data-collection-transformations-kql
+# (`in`, `!in`, `and`, `or` are all on it). OperationName's values were read
+# from the live table on 2026-11-03: Create, Delete, Invalid, Query,
+# QueryPlan, Read, ReadFeed, Replace, Update. Upsert, Patch and Batch were not
+# seen in seven days and are listed so a code path that starts using them is
+# recorded rather than dropped. Changing the list changes this rule in place,
+# with no effect on rows already stored.
+locals {
+  cosmos_request_log_transform_kql = "source | where CollectionName in ('ambassador', 'doc_vault', 'brain_records') or (CollectionName !in ('leases', 'brain_search') and OperationName in ('Create', 'Upsert', 'Replace', 'Delete', 'Update', 'Patch', 'Batch'))"
+}
+
+resource "azurerm_monitor_data_collection_rule" "workspace_transforms" {
+  provider = azurerm.mgmt
+
+  name                = "dcr-logs-transforms-${var.environment}-${var.region_abbreviation}"
+  resource_group_name = azurerm_resource_group.platform_mgmt.name
+  location            = azurerm_resource_group.platform_mgmt.location
+  kind                = "WorkspaceTransforms"
+  description         = "Ingestion-time filters for the Log Analytics workspace's own tables. CDBDataPlaneRequests: every request on the personal-data containers, every write elsewhere, no reads of ordinary content and nothing from the change-feed bookkeeping (#1530)."
+
+  destinations {
+    log_analytics {
+      name                  = "log-plat"
+      workspace_resource_id = "${azurerm_resource_group.platform_mgmt.id}/providers/Microsoft.OperationalInsights/workspaces/${local.log_analytics_workspace_name}"
     }
   }
 
-  depends_on = [
-    azurerm_monitor_diagnostic_setting.cosmos,
-  ]
+  data_flow {
+    streams       = ["Microsoft-Table-CDBDataPlaneRequests"]
+    destinations  = ["log-plat"]
+    transform_kql = local.cosmos_request_log_transform_kql
+  }
+
+  tags = local.tags
+
+  # No depends_on on the table resource above, although Microsoft's
+  # walkthrough does the table's PUT before the rule: the table reads the
+  # workspace's id, the workspace reads this rule's id, and a dependency from
+  # here back to the table closes a cycle Terraform refuses. On the live
+  # estate the table's PUT was made by PLAT-8 in October 2026 and is made
+  # again by this apply; on a rebuild the rule is created first and the
+  # table's PUT follows in the same run, before any row reaches the table.
 }
 
 # Content storage, blob service — read/write/delete against the media the
@@ -997,6 +1067,83 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "logs_daily_cap" {
     metric_measure_column   = "IngestedGb"
     operator                = "GreaterThan"
     threshold               = azurerm_log_analytics_workspace.hcw.daily_quota_gb * 0.8
+
+    failing_periods {
+      number_of_evaluation_periods             = 1
+      minimum_failing_periods_to_trigger_alert = 1
+    }
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.alerts_mgmt.id]
+  }
+
+  tags = local.tags
+
+  depends_on = [azurerm_role_assignment.alerts_mgmt_workspace]
+}
+
+# ---------------------------------------------------------------------------
+# Log Analytics — the daily cap has been hit and collection has stopped
+# ---------------------------------------------------------------------------
+#
+# The rule above says "approaching"; this one says "stopped", and the two are
+# not the same mail. From 2026-10-27 to 2026-11-03 alert-logs-capacity fired
+# every afternoon at about 18:50 UTC and resolved the next morning, and the
+# cap was hit every evening regardless (#1530): an alert that fires every day
+# is read as weather, and nothing in it says that from 20:33 until 08:00 the
+# workspace recorded nothing. This rule reads the line Azure writes at that
+# moment, so a capped day is a named event with its own alert, not a
+# footnote to a warning that went out hours earlier.
+#
+# It can fire from inside a capped workspace, like the rule above: the
+# Operation table that _LogOperation reads is not billable, so the daily cap
+# does not stop it. The 20:33 rows of every capped evening in that week were
+# ingested while the workspace was OverQuota, which is the proof.
+#
+# The query is Microsoft's own, from the daily-cap page
+# (https://learn.microsoft.com/azure/azure-monitor/logs/daily-cap, "Alert when
+# daily cap is reached"): Category Ingestion, Detail containing OverQuota.
+# The Operation column is not used, because on this workspace it holds a
+# GUID, not the "Data collection" text the monitoring page describes (read
+# 2026-11-03). The window starts at the last 08:00 UTC reset, the same
+# arithmetic as the rule above and for the same reason: a capped day is one
+# event between two resets, so the rule is stateful (ADR 0022 decision 6)
+# and resolves two clear evaluations after the reset moves the window past
+# the line. Severity 1 where the rule above is 2: once this fires, every log
+# rule in this file is blind until 08:00.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "logs_over_quota" {
+  provider = azurerm.mgmt
+
+  name                = "alert-logs-overquota-${var.environment}-${var.region_abbreviation}"
+  resource_group_name = azurerm_resource_group.platform_mgmt.name
+  location            = azurerm_resource_group.platform_mgmt.location
+  scopes              = [azurerm_log_analytics_workspace.hcw.id]
+  description         = "Log Analytics has hit its daily cap since the last 08:00 UTC reset and is dropping every billable table until the next one. Every log-based alert is blind until then. #1530."
+  severity            = 1
+
+  evaluation_frequency = "PT15M"
+  window_duration      = "P1D"
+
+  auto_mitigation_enabled = true
+
+  criteria {
+    query                   = <<-KQL
+      let DailyCapResetHour = 8h;
+      let WindowStart = startofday(now() - DailyCapResetHour) + DailyCapResetHour;
+      _LogOperation
+      | where TimeGenerated >= WindowStart
+      | where Category =~ "Ingestion"
+      | where Detail has "OverQuota"
+    KQL
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
 
     failing_periods {
       number_of_evaluation_periods             = 1

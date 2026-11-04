@@ -408,6 +408,9 @@ describe('the query/Terraform boundary', () => {
     expect(byName.cosmos_export_full_missing).toEqual(['fulls', 'missing_full']);
     expect(byName.function_response_time).toEqual(['P95DurationMs']);
     expect(byName.logs_daily_cap).toEqual(['IngestedGb']);
+    // alert-logs-overquota (#1530) counts rows and projects nothing: its two
+    // `let` lines are constants, not columns, and must stay unread here.
+    expect(byName.logs_over_quota).toEqual([]);
     // From lab-hybrid.tf, which this file did not read before PLAT-4.
     expect(byName.lab_hybrid_disk_used).toEqual(['UsedPct']);
     expect(byName.lab_hybrid_ssh_burst).toEqual(['Recent', 'Earlier', 'Burst']);
