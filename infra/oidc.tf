@@ -517,13 +517,12 @@ resource "azurerm_role_assignment" "github_manifest_window_storage_firewall" {
 }
 
 # Owner-created for the same reason as every custom role here (keyvault.tf
-# says why the Terraform identity may assign roles and not invent them):
-#
-#   scripts/bootstrap-roles.sh or .ps1, or
-#   az role definition create --role-definition @infra/roles/storage-firewall-writer.json
-#
-# Until it exists, the plan fails with "role definition not found"
-# (Required-Inputs §4.6b).
+# says why the Terraform identity may assign roles and not invent them), by
+# scripts/bootstrap-roles.sh or .ps1, which fill in the JSON's
+# AssignableScopes with the real subscription before the create (the file
+# carries a placeholder id, as a public file must). Until it exists, the plan
+# fails with "role definition not found" (Required-Inputs §4.6b), so the
+# owner creates it BEFORE this merges.
 data "azurerm_role_definition" "storage_firewall_writer" {
   name  = "HCW Storage Firewall Writer"
   scope = azurerm_resource_group.app["web"].id

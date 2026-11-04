@@ -12,11 +12,14 @@
 # WHO NOTICES AND WHO FIXES. monitor-functions-registered.yml finds a leftover
 # window every hour and emails the owner (#1050); its identity deliberately
 # cannot write anything (#1098). This workflow is the other half: every hour
-# it removes each `ci-*` rule whose run has finished and puts the storage
-# account back to Deny, through scripts/remove-ci-access-windows.mjs. A rule
-# whose run is still in progress is left alone, and so is the storage account
-# while a functions deploy is in progress. The script's header says exactly
-# how it decides; its tests hold the decisions.
+# it removes each `ci-*` rule whose run has finished, through
+# scripts/remove-ci-access-windows.mjs, and does for the storage account what
+# a dead deploy run's close step would have done: Deny, that run's address
+# removed, the `ciwindow` tag the deploy's open step wrote cleared. A rule or
+# window whose run is still in progress is left alone; an open storage
+# firewall with no tag (an operator's rule, or the rollback default action in
+# infra/variables.tf) is reported and never touched. The script's header says
+# exactly how it decides; its tests hold the decisions.
 #
 # WHICH IDENTITY, AND WHY NOT THE DEPLOY ONE. The deploy identity
 # (github_deploy, CLIENT_ID) holds the write roles already, but it trusts
@@ -74,7 +77,7 @@ jobs:
       actions: read # the run behind each ci-* rule, and whether a deploy is in progress
       id-token: write # exchanged by azure/login for an Azure access token
     runs-on: ubuntu-26.04
-    timeout-minutes: 15 # one read of each list and a few writes; the retries add at most a minute each
+    timeout-minutes: 15 # a few reads and at most a handful of writes, each tried up to three times (25 s of pauses, 2 min per try at most)
     steps:
       - name: Checkout
         timeout-minutes: 2
@@ -131,6 +134,11 @@ jobs:
             echo
             tail -n +2 <<<"$out"
           } >> "$GITHUB_STEP_SUMMARY"
+          # Node exits 1 on its own when it fails before the script runs (a
+          # missing module, a syntax error), with nothing on stdout. That is
+          # "could not be judged", not a failed write: the script always
+          # prints a verdict line first.
+          [ -n "$out" ] || status=2
           case "$status" in
             0) ;;
             1) echo "::error::a window could not be put back; the summary names it" ;;

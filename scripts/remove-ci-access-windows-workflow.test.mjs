@@ -99,6 +99,36 @@ describe('remove-ci-access-windows.yml', () => {
   });
 });
 
+/**
+ * The remover restores only a storage window it can attribute to a run, and
+ * the attribution is the `ciwindow` tag deploy-functions.yml writes. So the
+ * deploy's open step must write the tag before it adds the rule (a run that
+ * dies between the two leaves a tag and no rule, which the remover reads as
+ * "nothing to remove"; the other order would leave a rule nothing names), and
+ * its close step must clear it.
+ */
+describe('deploy-functions.yml names its storage window for the remover', () => {
+  const deploy = parseJobs(readFileSync(join(REPO, '.github', 'workflows', 'deploy-functions.yml'), 'utf8').replace(/\r\n/g, '\n')).find((j) => j.key === 'deploy');
+  const open = deploy.steps.find((step) => step.name === 'Open storage firewall window for this runner');
+  const close = deploy.steps.find((step) => step.name === 'Close storage firewall window');
+
+  it('writes the ciwindow tag (run id and runner address) before adding the rule, and clears it in the close step', () => {
+    const lines = open.run.split('\n');
+    const tagAt = lines.findIndex((line) => line.includes('--set "tags.ciwindow=${GITHUB_RUN_ID} ${RUNNER_IP}"'));
+    const addAt = lines.findIndex((line) => /az storage account network-rule add/.test(line));
+    expect(tagAt, 'the open step does not write the tag').toBeGreaterThan(-1);
+    expect(addAt).toBeGreaterThan(tagAt);
+    expect(close.run).toContain('--remove tags.ciwindow');
+  });
+
+  it('writes the same tag name the remover reads', async () => {
+    const { WINDOW_TAG } = await import('./remove-ci-access-windows.mjs');
+    expect(WINDOW_TAG).toBe('ciwindow');
+    const storageTf = readFileSync(join(REPO, 'infra', 'storage.tf'), 'utf8');
+    expect(storageTf, 'infra/storage.tf must ignore the tag, or every window in flight is drift').toContain('ignore_changes  = [tags["ciwindow"]]');
+  });
+});
+
 const TOOLS = findBashTools();
 const SKIPPED = TOOLS.ready ? '' : ` (SKIPPED here: ${TOOLS.why}; they run on GitHub Actions)`;
 const forward = (path) => path.replace(/\\/g, '/');
