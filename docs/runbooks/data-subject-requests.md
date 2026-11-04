@@ -62,8 +62,17 @@ ingestion-time rule in `infra/observability.tf`
 [#1530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1530));
 before it was applied the table carried every request until the workspace's
 daily cap stopped collection each evening, so a day before that apply is
-complete only from 08:00 UTC to about 20:30 UTC. Read it with
-`az monitor log-analytics query --workspace cf80dc24-2499-49a0-8c66-9522bcc294ed --subscription sub-plat-mgmt-prod-cus --analytics-query "CDBDataPlaneRequests | where CollectionName == 'ambassador' | project TimeGenerated, OperationName, AadPrincipalId, ClientIpAddress, StatusCode" -o table`.
+complete only from 08:00 UTC to about 20:30 UTC. Read it from PowerShell,
+first the workspace's id (the query command takes that, not the name), then
+the query:
+
+```powershell
+$w = (az monitor log-analytics workspace show -g rg-mgmt-plat-prod-cus -n log-plat-prod-cus-01 --subscription sub-plat-mgmt-prod-cus -o json | ConvertFrom-Json).customerId
+```
+
+```powershell
+az monitor log-analytics query --workspace $w --subscription sub-plat-mgmt-prod-cus --analytics-query "CDBDataPlaneRequests | where CollectionName == 'ambassador' | project TimeGenerated, OperationName, AadPrincipalId, ClientIpAddress, StatusCode" -o table
+```
 
 **Search scope:**
 1. Read every text field across all programs, applications, and evidence records (`title`, `notes`, `statusNote`, `reviewerFeedback`, `responses[].text`, `customValues`, `description`).
