@@ -85,6 +85,24 @@ client registration in the environment's identity inventory.
    isolated environment using the existing Cosmos backup process. Rebuild the
    index there. Do not replay restored production notes into the live workspace.
 
+## What the browser journeys prove, and what still needs the owner
+
+The Playwright journeys in
+[`frontend/e2e/second-brain.spec.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/e2e/second-brain.spec.js)
+run on every pull request in the `e2e (playwright)` check, on a desktop and a
+phone profile, against the real frontend bundle with the identity host and the
+brain API answered by fixtures (made-up notes, no model). They prove the
+plumbing; they cannot judge an answer's quality. Against the acceptance lines
+of [#1408](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1408):
+
+| Line | Covered by the journeys | Still the owner's, in production |
+| --- | --- | --- |
+| 1. Outline stays on the selected idea | The request carries the selected idea's id and the `outline` mode; the panel names the idea it starts from. | Whether the model's outline is about that idea and not an unrelated recording. |
+| 2. Citations resolve; missing evidence is honest | Both citations link to their own source, and following one opens that source in the editor (defect found and fixed here); a missing-evidence item is shown as a suggestion, not a sourced claim. | Whether the citations the model chose are the right ones, and whether its gaps are real gaps. |
+| 3. **Review as a new note** fills the editor and saves | The editor holds the outline with its citation links; the save sends that text with the sources as the note's links and the note shows as saved. | Nothing. |
+| 4. **Create draft** with provenance; a retry makes no duplicate | The draft route of the saved note receives the reviewed title and text; a failed attempt and its retry carry the same request id, and the button is disabled once a draft exists. That request id lives in the open editor: after a reload, a reopen of the note or **Start another draft**, a new id is minted and the API will make a second draft. The API side (the same request id returns the same draft id) is unit-tested in [`functions/src/lib/brain/brain.test.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/brain/brain.test.js). | Open **Drafts** once in production and confirm the draft is there with its provenance. |
+| 5. Appearance controls, two-line headings, doubled canvas, full-screen X and Escape | All of it, in the `map appearance` journey. | A look in the owner's own browser, if wanted; nothing here depends on the model. |
+
 ## Enroll the real notes and retire private Publish
 
 Back up the original vault. After the sample pilot passes, install the tested

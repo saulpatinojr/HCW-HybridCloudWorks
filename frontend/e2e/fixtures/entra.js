@@ -141,9 +141,16 @@ export class IdentityStub {
     this.statusAnswer = answer;
   }
 
-  /** Answer one API route (by its name after `/api/`) with a fixed body. */
-  answerApi(name, body) {
-    this.apiOverrides.set(name, () => json(body));
+  /**
+   * Answer one API route (by its name after `/api/`) with a fixed body, or
+   * with a function of the request when the answer has to echo what the
+   * browser sent (a save that returns the item the client named, say).
+   * `status` makes the route fail, so a test can see the retry path.
+   */
+  answerApi(name, body, { status = 200 } = {}) {
+    this.apiOverrides.set(name, (request) =>
+      json(typeof body === 'function' ? body(request) : body, { status })
+    );
   }
 
   async install() {
@@ -320,7 +327,7 @@ export class IdentityStub {
     // empty state. The fixture fails the test on an uncaught page error, so a
     // page that cannot survive an empty answer shows up rather than hides.
     const answer = this.apiOverrides.get(name);
-    return route.fulfill(answer ? answer() : json({}));
+    return route.fulfill(answer ? answer(request) : json({}));
   }
 
   /**
