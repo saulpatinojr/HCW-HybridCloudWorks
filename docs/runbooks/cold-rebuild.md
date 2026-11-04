@@ -93,8 +93,10 @@ its scopes. If the script stops saying a subscription id "is the repository
 placeholder" or that it cannot see exactly one `sub-plat-mgmt-prod-cus`,
 sign in again with an account that holds both subscriptions, or pass the
 ids yourself: in PowerShell with `-SubscriptionId` and
-`-ManagementSubscriptionId`; in bash as the first and second arguments,
-`scripts/bootstrap-roles.sh "<workload id>" "<management id>"`.
+`-ManagementSubscriptionId`; in bash as two positional arguments to
+`scripts/bootstrap-roles.sh`, the workload (Application) subscription id
+first and the Management subscription id second. Read both from step 0.2's
+`az account show` output rather than typing them from memory.
 
 **Created roles:**
 1. `HCW Key Vault Secret Writer` (`infra/roles/keyvault-secret-writer.json`)
