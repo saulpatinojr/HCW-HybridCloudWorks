@@ -224,7 +224,7 @@ verdict for each destination class read from the counters with real
 packets, the internal network refused to the host's own connections while
 the host's answers still go, `remove`, and ufw's start, reload and restart
 (failed rather than skipped when `HCW_REQUIRE_UFW=1`, which CI sets). CI
-runs it in the `ansible-lint (lab-host)` job; on a Linux machine, bash:
+runs it in the `lab-host role tests` job; on a Linux machine, bash:
 
 ```bash
 sudo env "PATH=$PATH" bash lab-host/ansible/roles/host_firewall/tests/hcw-host-firewall.test.sh

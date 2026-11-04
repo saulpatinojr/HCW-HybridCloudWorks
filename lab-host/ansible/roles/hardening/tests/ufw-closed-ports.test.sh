@@ -29,7 +29,10 @@
 # - a port in both lists stops the run before any rule changes.
 #
 # As root, for the namespaces and iptables. CI runs it in the
-# `ansible-lint (lab-host)` job with sudo, after installing ufw; no Docker.
+# `lab-host role tests` job with sudo, after installing ufw; no Docker. About
+# 195 s there: some thirty-five ansible-playbook runs, one after the other,
+# each changing the one scratch ufw the next one reads, so they cannot run
+# side by side without a namespace and a bound /etc/ufw per run (#1545).
 set -euo pipefail
 
 if [ -z "${HCW_UFW_TEST_NS:-}" ]; then

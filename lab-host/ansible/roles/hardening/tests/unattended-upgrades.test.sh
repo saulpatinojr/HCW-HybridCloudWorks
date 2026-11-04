@@ -4,7 +4,7 @@
 # clearing the list 50unattended-upgrades fills) and leaves the reboot to
 # hcw-reboot-when-idle.timer: Automatic-Reboot off, and neither of the two
 # settings unattended-upgrade reads only while it is on. No root, no Docker;
-# CI runs it in the `ansible-lint (lab-host)` job with the job's Python, which
+# CI runs it in the `lab-host role tests` job with the job's Python, which
 # has Jinja2 and PyYAML from ansible-core.
 set -euo pipefail
 

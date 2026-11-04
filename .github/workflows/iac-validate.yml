@@ -116,9 +116,10 @@ jobs:
           # instead, and anything other than 0 or 1 fails this step and names
           # the filter. The filter goes in brackets so that a stray backslash
           # at its end cannot join onto the `|` that adds this workflow and so
-          # hide the mistake. These lines are the same as in ci.yml and
-          # codeql.yml; the test in scripts/codeql-iac-workflow-steps.test.mjs
-          # runs this step. If the second filter is the broken one, the first
+          # hide the mistake. These lines are the same as in ci.yml; the test
+          # in scripts/iac-workflow-steps.test.mjs runs this step (codeql.yml
+          # had them too until it left the pull-request path on 2026-11-04,
+          # #1545). If the second filter is the broken one, the first
           # answer has been written already; the step still fails, so no later
           # step runs and nothing is skipped.
           status=0

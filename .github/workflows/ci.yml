@@ -20,10 +20,18 @@
 # Which jobs are needed is decided by diffing the pull request against its
 # base, in two places:
 # - The `changes` job runs first and answers, once per filter, whether the
-#   browser suites, the lab-host Ansible checks, the Coder template checks and
-#   the Python harness checks are needed. The `e2e`, `ansible-lint`,
-#   `coder-template` and `harness` jobs read its answers in their `if:` and
-#   are skipped outright when the answer is no (no runner is started).
+#   browser suites, the lab-host lint, the lab-host role tests, the Coder
+#   template checks and the Python harness checks are needed. The `e2e`,
+#   `ansible-lint`, `role-tests`, `coder-template` and `harness` jobs read its
+#   answers in their `if:` and are skipped outright when the answer is no (no
+#   runner is started).
+#   Each of those filters also says whether a change to this file alone
+#   (`WORKFLOW_SELF_TRIGGER`) counts: yes for the cheap lint-class jobs, so a
+#   workflow edit still proves they run; no for the expensive ones (the
+#   browser suites, the role tests, the Coder template checks), which read no
+#   line of this file that a workflow edit could break and cost nine minutes
+#   of runner each time it was tried (the owner's question on #1545,
+#   2026-11-04). scripts/ci-workflow-steps.test.mjs pins which is which.
 # - The `verify` matrix (frontend, functions, scripts, vps-agent, edge) keeps
 #   its own detect step per row, because a matrix row cannot carry an `if:`
 #   of its own: a row whose files did not change skips its install, build and
@@ -72,13 +80,20 @@ jobs:
   # runs each one with bash and checks that a filter grep cannot read fails
   # the step instead of switching the job off (#1428). On a push to `main`,
   # or when the diff cannot be computed, every answer is yes.
+  #
+  # WORKFLOW_SELF_TRIGGER, on each step: 'true' means a change to this file
+  # alone is a reason to run the job; 'false' means it is not, and the step
+  # takes this file out of the changed list before the filter sees it. The
+  # grep line itself is the same in every step (the shape tests hold it so);
+  # only the list it reads differs.
   changes:
     name: changes
     runs-on: ubuntu-26.04
-    timeout-minutes: 5 # a checkout and four git diffs
+    timeout-minutes: 5 # a checkout and five git diffs
     outputs:
       e2e: ${{ steps.e2e.outputs.relevant }}
       ansible: ${{ steps.ansible.outputs.relevant }}
+      roletests: ${{ steps.roletests.outputs.relevant }}
       coder: ${{ steps.coder.outputs.relevant }}
       harness: ${{ steps.harness.outputs.relevant }}
     steps:
@@ -97,6 +112,8 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           FILTER: '^frontend/'
+          # The browser suites read nothing in this file; 19 minutes of runner for a workflow edit.
+          WORKFLOW_SELF_TRIGGER: 'false'
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
@@ -113,6 +130,11 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
+          # Unless this job wants a workflow-only change, this file is taken
+          # out of the list before the filter reads it (see the job comment).
+          if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
+            changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
+          fi
           # grep's answer is kept, not tested in an `if`: see the matrix job's
           # detect step for why (#1428).
           status=0
@@ -128,16 +150,16 @@ jobs:
             exit 1
           fi
 
-      # docker-runner.js too: hcw-labjob-sweep.test.sh checks the sweep's
-      # label against the JOB_LABEL it exports, and a PR that renamed only the
-      # label would otherwise skip that check. docs/runbooks/labs-host.md too:
-      # coder-signin.test.sh and hcw-coder-automation.test.py check its Coder
-      # lines (#954). (The shell adds ci.yml itself to every filter.)
+      # The lint, the playbook syntax check and the argument-spec check read
+      # lab-host/ansible/ and nothing else, so the filter is lab-host/ alone
+      # (the paths the role tests read moved to the next step with them).
       - name: Detect lab-host changes
         id: ansible
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^lab-host/|^docs/runbooks/labs-host\.md$|^vps-agent/lib/docker-runner\.js$|^vps-agent/bin/report-host-check\.js$'
+          FILTER: '^lab-host/'
+          # About a minute; a workflow edit that broke the lint's install lines should show here.
+          WORKFLOW_SELF_TRIGGER: 'true'
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
@@ -152,26 +174,48 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
+          # Unless this job wants a workflow-only change, this file is taken
+          # out of the list before the filter reads it (see the job comment).
+          if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
+            changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
+          fi
           # grep's answer is kept, not tested in an `if`: see the matrix job's
           # detect step for why (#1428).
           status=0
           grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
           if [ "${status}" -eq 0 ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "lab-host files changed — running the Ansible checks"
+            echo "lab-host files changed — running the Ansible lint"
           elif [ "${status}" -eq 1 ]; then
             echo "relevant=false" >> "$GITHUB_OUTPUT"
-            echo "no relevant change — the Ansible checks are skipped"
+            echo "no relevant change — the Ansible lint is skipped"
           else
             echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
             exit 1
           fi
 
-      - name: Detect lab-host/coder changes
-        id: coder
+      # The role tests (the `role-tests` job): the roles, with their tasks,
+      # templates, defaults and tests, the group_vars the tests render with,
+      # and the inventory the syntax check and tests load. The rest are the
+      # files the tests assert on outside lab-host/ansible/, each named in
+      # ROLE_TEST_READS in scripts/ci-workflow-steps.test.mjs with the test
+      # that reads it: lab-host/coder/ (the templates' workspace label and
+      # image digest, the Compose file), lab-host/bootstrap.sh and
+      # lab-host/README.md (the install paths and the owner's lines),
+      # infra/lab-hybrid.tf and infra-lab/variables.tf (the data collection
+      # rule's facilities and the lab zone), docs/runbooks/labs-host.md (the
+      # Coder lines, #954), docker-runner.js (the sweep's JOB_LABEL),
+      # capabilities.js (the image the proxy run pulls) and
+      # report-host-check.js (the CLI the portainer helper is configured with).
+      - name: Detect lab-host role changes
+        id: roletests
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^lab-host/coder/'
+          FILTER: '^lab-host/(ansible/(roles|group_vars|inventory)/|coder/|bootstrap\.sh$|README\.md$)|^infra/lab-hybrid\.tf$|^infra-lab/variables\.tf$|^docs/runbooks/labs-host\.md$|^vps-agent/lib/(docker-runner|capabilities)\.js$|^vps-agent/bin/report-host-check\.js$'
+          # Nine minutes of runner, and no test reads this file (the one that
+          # did, hcw-portainer-check.test.py, hands that check to
+          # scripts/ci-workflow-steps.test.mjs since 2026-11-04).
+          WORKFLOW_SELF_TRIGGER: 'false'
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
@@ -184,6 +228,50 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
+          # Unless this job wants a workflow-only change, this file is taken
+          # out of the list before the filter reads it (see the job comment).
+          if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
+            changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
+          fi
+          # grep's answer is kept, not tested in an `if`: see the matrix job's
+          # detect step for why (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "lab-host role files changed — running the role tests"
+          elif [ "${status}" -eq 1 ]; then
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "no relevant change — the role tests are skipped"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
+          fi
+
+      - name: Detect lab-host/coder changes
+        id: coder
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^lab-host/coder/'
+          # Two minutes of Terraform init and validate that read nothing here.
+          WORKFLOW_SELF_TRIGGER: 'false'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "non-pull_request event — running all checks"
+            exit 0
+          fi
+          changed="$(git diff --name-only --no-renames "${BASE_SHA}" HEAD)" || {
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "could not compute the diff — running all checks rather than guessing"
+            exit 0
+          }
+          # Unless this job wants a workflow-only change, this file is taken
+          # out of the list before the filter reads it (see the job comment).
+          if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
+            changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
+          fi
           # grep's answer is kept, not tested in an `if`: see the matrix job's
           # detect step for why (#1428).
           status=0
@@ -204,6 +292,8 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           FILTER: '^(hooks/|tooling/)'
+          # Under a minute, and its steps are written in this file.
+          WORKFLOW_SELF_TRIGGER: 'true'
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
@@ -218,6 +308,11 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
+          # Unless this job wants a workflow-only change, this file is taken
+          # out of the list before the filter reads it (see the job comment).
+          if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then
+            changed="$(sed '\#^\.github/workflows/ci\.yml$#d' <<<"$changed")"
+          fi
           # grep's answer is kept, not tested in an `if`: see the matrix job's
           # detect step for why (#1428).
           status=0
@@ -428,9 +523,12 @@ jobs:
           # no runs: the row already runs for about nine pull requests in
           # ten (141 of the last 150 merged commits, before and after). The
           # rest are listed file by file.
+          # vps-agent/bin/report-host-check.js (#1545): ci-workflow-steps.test.mjs
+          # checks that every file the lab-host role tests read outside
+          # lab-host/ansible/ exists and matches the role tests job's filter.
           - name: scripts (operations)
             dir: scripts
-            filter: '^(scripts/|\.github/workflows/|\.github/(actionlint\.yaml|pull_request_template\.md)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/lib/(cms|labs|http|cloud-tools)/|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll)|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|expected-unresolved|timers/agent-health|triggers/fetch-image)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
+            filter: '^(scripts/|\.github/workflows/|\.github/(actionlint\.yaml|pull_request_template\.md)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|bin/report-host-check\.js|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/lib/(cms|labs|http|cloud-tools)/|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll)|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|expected-unresolved|timers/agent-health|triggers/fetch-image)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
             lint: npm run lint
             test: npm test
           # vps-agent shells out to `docker run` with a payload that reached
@@ -738,13 +836,19 @@ jobs:
   # things: lint reads files, syntax-check loads the play with its roles and
   # collections. Runs only when the `changes` job saw a lab-host change
   # (#1545); the tool versions are pinned to what lab-host/bootstrap.sh
-  # installs on the host.
+  # installs on the host, and the `role-tests` job below pins the same
+  # ansible-core: move both together.
+  #
+  # Lint only, about a minute. Until 2026-11-04 this job also ran every role
+  # test, one after the other on the same runner, which made it nine minutes
+  # and the slowest job of a workflow-only pull request; the tests are now
+  # the `role-tests` job, with its own, narrower filter (#1545).
   ansible-lint:
     name: ansible-lint (lab-host)
     needs: changes
     if: needs.changes.outputs.ansible == 'true'
     runs-on: ubuntu-26.04
-    timeout-minutes: 35 # slowest 10.8 min, Oct 2026 (#1441)
+    timeout-minutes: 10 # lint 24 s, syntax check and installs under a minute, Nov 2026 (#1545)
     defaults:
       run:
         working-directory: lab-host/ansible
@@ -778,6 +882,41 @@ jobs:
       # value disagrees with the spec.
       - name: Argument spec defaults are set
         run: python check-argument-spec-defaults.py
+
+  # The lab-host role tests: every roles/*/tests/ script, run as it ships
+  # against stubs, scratch namespaces or this runner's Docker. Split out of
+  # `ansible-lint (lab-host)` on 2026-11-04 (#1545): together they take about
+  # nine minutes (the ufw closed-ports test alone runs ansible-playbook some
+  # thirty-five times against a scratch ufw, 195 s), and they read the roles,
+  # group_vars and inventory, not the workflow, so they run only when the
+  # `changes` job saw one of those move, and on every push to `main`. No
+  # ansible-lint here: no test calls it. ansible-core is the same pin as the
+  # lint job's, and the collections are the host's pinned set.
+  role-tests:
+    name: lab-host role tests
+    needs: changes
+    if: needs.changes.outputs.roletests == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 35 # slowest 10.8 min as part of the lint job, Oct 2026 (#1441)
+    defaults:
+      run:
+        working-directory: lab-host/ansible
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.15'
+
+      - name: Install ansible-core
+        run: python -m pip install --disable-pip-version-check 'ansible-core==2.22.0'
+
+      - name: Install the pinned collections
+        run: ansible-galaxy collection install -r requirements.yml
 
       # /usr/local/sbin/hcw-vault-set rewrites the host's Ansible vault, so
       # the file the vault_tools role installs is run here against a scratch
@@ -1421,7 +1560,7 @@ jobs:
   # context, which lists every job named below with its result.
   gate:
     name: gate
-    needs: [changes, verify, e2e, ansible-lint, coder-template, harness, complexity, coverage]
+    needs: [changes, verify, e2e, ansible-lint, role-tests, coder-template, harness, complexity, coverage]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5

@@ -16,7 +16,7 @@
 # refuses fails the run, and no journal line carries an id.
 #
 # Needs no root and no Docker: bash only. CI runs it in the
-# `ansible-lint (lab-host)` job; on a workstation, bash:
+# `lab-host role tests` job; on a workstation, bash:
 #   bash lab-host/ansible/roles/labs_agent/tests/hcw-labjob-sweep.test.sh
 set -euo pipefail
 

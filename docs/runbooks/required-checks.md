@@ -23,7 +23,7 @@ jobs of workflows that are still separate.
 
 | Check | Workflow | What it covers |
 |---|---|---|
-| `gate` | `ci.yml` | Every CI job: the verify matrix (frontend, functions, scripts, vps-agent, edge), the browser suites, the lab-host Ansible and Coder checks, the Python harness, the complexity delta and (after a merge) the coverage upload. `gate` waits for all of them and fails if any failed or was cancelled; a job skipped because the change did not touch its files is fine. |
+| `gate` | `ci.yml` | Every CI job: the verify matrix (frontend, functions, scripts, vps-agent, edge), the browser suites, the lab-host lint, the lab-host role tests, the Coder template checks, the Python harness, the complexity delta and (after a merge) the coverage upload. `gate` waits for all of them and fails if any failed or was cancelled; a job skipped because the change did not touch its files is fine. |
 | `Validate root and documentation policy` | `repository-policy.yml` | Repository layout, the redaction gate, PowerShell syntax and the Pester tests. |
 | `dependency-review` | `dependency-review.yml` | New dependencies with known vulnerabilities or disallowed licences. |
 | `fmt, validate, tflint` | `iac-validate.yml` | Terraform formatting, validation and TFLint for `infra/` and `infra-lab/`. |
@@ -34,9 +34,45 @@ What left the list with #1545: the ten single CI job names (`frontend`,
 `ansible-lint (lab-host)`, `coder (lab-host)`, `e2e (playwright)` and the
 former Coverage and Complexity Delta workflows' jobs, which are now CI jobs
 under `gate`), and the three CodeQL contexts (`Analyze javascript-typescript`,
-`Analyze actions`, `Analyze python`). CodeQL keeps running on pull requests for
-now; a follow-up moves it to pushes to `main` and the weekly schedule once the
-ruleset no longer requires its contexts.
+`Analyze actions`, `Analyze python`). The owner applied the list on
+2026-11-04 (14:11 UTC, read back from the API), and the second pull request of
+#1545 then moved CodeQL off pull requests; see "CodeQL runs after the merge"
+below.
+
+## CodeQL runs after the merge, not before it (2026-11-04)
+
+`codeql.yml` runs on every push to `main` and every Monday, and no longer on
+pull requests. While its three `Analyze …` contexts were required, the
+workflow had to run on every pull request (a required check whose workflow
+never ran is never satisfied, ADR 0026) and carried a detect step per
+language so that a pull request with no file of that language skipped the
+analysis. With `gate` the only CI context the ruleset names, that run, its
+detect step and its shape test went.
+
+What this trades away, in plain words:
+
+- **An alert lands after the merge.** A change that introduces a CodeQL
+  finding is merged first and flagged a few minutes later, by the push run
+  on `main` (about four minutes for the three languages). Before, the
+  finding was on the pull request. So the session that merges looks at
+  [code scanning](https://github.com/saulpatinojr/HCW-HybridCloudWorks/security/code-scanning)
+  after the merge and fixes a new alert in a follow-up pull request; the
+  alert's own page says which commit introduced it.
+- **Code scanning's review comments on pull requests go away.** They were
+  the one thread type a session could not resolve itself when the alert was
+  intended (the owner dismissed the alert instead, `.claude/CLAUDE.md`,
+  "A code scanning alert is fixed in code, or dismissed by the owner"). That
+  dismissal step now happens on the alert's page after the merge, with no
+  pull request thread to close.
+- **What does not change:** every language is analysed in full on every
+  merge and every Monday, as before; the weekly run is what finds a newly
+  published query's matches in code nobody touched.
+
+To put CodeQL back on pull requests: add `pull_request: { branches: [main] }`
+to the `on:` block of `codeql.yml` (the ruleset does not need to change, since
+its contexts are not required), and consider bringing back the per-language
+detect step from the version before #1545's second pull request, or every
+pull request pays the full four minutes.
 
 ## Why `gate` is safe, and why it reads each result itself
 
@@ -126,11 +162,22 @@ skipped counts as passing.
    checks. Then edit `.claude/CLAUDE.md`'s ruleset bullet to drop the "takes
    effect when the ruleset is updated" wording, and record the date here.
 
+   **Done 2026-11-04.** A session's `PUT` was refused by its safety check as
+   a CI bypass, so the owner applied the payload; the read-back at 14:11 UTC
+   showed the five contexts and `strict_required_status_checks_policy:
+   true`, and the CLAUDE.md wording was dropped in the second pull request
+   of #1545.
+
 **Rollback:** build the payload the same way (step 2, from the live ruleset)
-with the old fifteen contexts (`PRE_1545_REQUIRED_CONTEXTS` in
-`scripts/ruleset-contexts.test.mjs`) in place of the five, and send the same
-`PUT`. Every one of them is still a job name, so the old list works
-unchanged.
+with the twelve old contexts that are still job names on pull requests (the
+ten single CI job names `frontend`, `functions (azure)`, `scripts
+(operations)`, `vps-agent`, `harness (python)`, `ansible-lint (lab-host)`,
+`coder (lab-host)`, `e2e (playwright)`, plus `Validate root and documentation
+policy`, `dependency-review`, `fmt, validate, tflint` and `Trivy IaC
+misconfiguration scan`) in place of the five, and send the same `PUT`. The
+three CodeQL `Analyze …` contexts cannot go back on the list until
+`codeql.yml` runs on pull requests again (the section above says how); a
+required context no workflow posts blocks every merge.
 
 ## Renaming a CI job after the cut-over
 

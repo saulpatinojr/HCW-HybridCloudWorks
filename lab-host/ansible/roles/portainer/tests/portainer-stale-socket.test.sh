@@ -22,7 +22,7 @@
 # a Portainer older than the daemon.
 #
 # Needs no root, no Docker and no Ansible: bash, awk and GNU date. CI runs it in
-# the `ansible-lint (lab-host)` job; on a workstation, bash:
+# the `lab-host role tests` job; on a workstation, bash:
 #   bash lab-host/ansible/roles/portainer/tests/portainer-stale-socket.test.sh
 #
 # Each check is a single-quoted or escaped string that `check` evaluates, and

@@ -127,9 +127,11 @@ required check names never change, is unchanged.
   broken filter. `codeql.yml` and `iac-validate.yml` had the same `if grep`
   shape and were fixed the same way in
   [#1429](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1429):
-  `scripts/codeql-iac-workflow-steps.test.mjs` runs their detect steps too, and
-  fails if an `if grep` returns to any workflow (the few that remain are listed
-  there, each with its reason).
+  `scripts/iac-workflow-steps.test.mjs` (named
+  `codeql-iac-workflow-steps.test.mjs` until CodeQL left the pull-request path
+  on 2026-11-04, [#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545))
+  runs the IaC detect steps too, and fails if an `if grep` returns to any
+  workflow (the few that remain are listed there, each with its reason).
 - **The test that checks the filters now runs before the merge.** The
   "Negative" consequence above says a missing filter entry is found at the
   merge, after the fact. `scripts/ci-filters.test.mjs` (the check that every

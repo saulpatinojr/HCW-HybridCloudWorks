@@ -22,7 +22,7 @@
 # defer the reboot (or end the run) and remove the hold; only the reboot
 # path keeps it.
 #
-# No root and no Docker needed. CI runs it in the `ansible-lint (lab-host)`
+# No root and no Docker needed. CI runs it in the `lab-host role tests`
 # job with the job's Python, which has Jinja2 and PyYAML from ansible-core;
 # lab-host/README.md ("Validating without a host") has the container line.
 set -euo pipefail

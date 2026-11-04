@@ -180,7 +180,8 @@ Optional, and the compliance checklist a reviewer ticks before a row becomes
   `vars` override, which depends on directive ordering. [VERIFY] was answered
   on 2026-10-10: `lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh` has
   the pinned Caddy (v2.11.4) adapt the rendered configuration in the
-  `ansible-lint (lab-host)` job and fails unless the snippet's `vars` comes
+  `lab-host role tests` job (the `ansible-lint (lab-host)` job until
+  2026-11-04) and fails unless the snippet's `vars` comes
   first, the route's after it and the `redir` after both; the fallback (the
   global redirect to the labs page) was not needed.
 - Negative: a visitor's upload leaves the site's trust boundary for the lab

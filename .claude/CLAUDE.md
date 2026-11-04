@@ -382,6 +382,14 @@ so it is recorded here, where every session reads it.
 
 - **Create the PR ready for review.** Copilot reviews either state, CI runs
   on either state, and nothing in this repository keys on draft.
+- **The PR title is one line, at most about 72 characters, in the shape
+  `<area>: <what changed> (#<issue>)`.** Owner instruction 2026-11-04. The
+  title is what the squash merge writes as the commit's subject (the body
+  is dropped), and it is the name HCP Terraform gives the run that commit
+  starts, so a long or multi-line title reaches `git log` and the Terraform
+  run list as it is. `CI: one gate check, path-skipped jobs, coverage folded
+  in (#1545)` is the shape; a sentence that explains the change belongs in
+  the description.
 - **Draft is the exception, and it is stated.** If a PR is opened before its
   own checks have been run locally, or it exists to hold a question rather
   than a change, say so in the first line of the description and open it as
@@ -415,7 +423,7 @@ so it is recorded here, where every session reads it.
   gh api repos/saulpatinojr/HCW-HybridCloudWorks/pulls/"$PR"/reviews --paginate --jq '.[] | select(.user.login=="copilot-pull-request-reviewer[bot]") | "\(.commit_id[0:8]) \(.state) \((.body // "") | split("\n")[0])"'
   gh api repos/saulpatinojr/HCW-HybridCloudWorks/pulls/"$PR"/comments --paginate --jq '.[] | "\(.path):line \(.line // .original_line // "unknown")\n\(.body)\n"'
   gh api "repos/saulpatinojr/HCW-HybridCloudWorks/issues/$PR/comments?per_page=100" --paginate --jq '.[] | select(.user.login=="coderabbitai[bot]") | .body' | grep -E 'up to `|Actionable comments posted|Retained concerns|_proposed_|Failed checks|^- \*\*(Critical|High|Medium|Low) ·'
-  gh api "repos/saulpatinojr/HCW-HybridCloudWorks/code-scanning/alerts?ref=refs/pull/$PR/merge&state=open&per_page=100" --paginate --jq '.[] | "#\(.number) \(.rule.id) \(.rule.severity) \(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)"'
+  gh api "repos/saulpatinojr/HCW-HybridCloudWorks/code-scanning/alerts?ref=refs/heads/main&state=open&per_page=100" --paginate --jq '.[] | "#\(.number) \(.rule.id) \(.rule.severity) \(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)"'
   ```
 
   Every detail in those lines is a mistake someone has already made. Stated
@@ -446,10 +454,20 @@ so it is recorded here, where every session reads it.
     lines that name work. Its `up to` line names the commit that round
     judged, the same question the reviews line answers for Copilot. While
     it reads `Currently processing new changes`, the next round is coming.
-  - **Code scanning's alerts are read on the PR's merge ref**
-    (`refs/pull/<n>/merge`), the ref its PR threads come from, with the
-    query in the URL: `-f state=open` beside `--paginate` silently returned
-    nothing for Dependabot alerts on 2026-09-29, while three were open.
+  - **Code scanning's alerts are read on `main`, after the merge.** Since
+    2026-11-04 CodeQL runs on pushes to `main` and weekly, not on pull
+    requests ([#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545)),
+    so the line is run once the merge's push run has finished (about four
+    minutes) with all three `Analyze` jobs green: a failed or cancelled
+    analysis uploads nothing, and the workflow cancels an in-progress run
+    when the next push lands, so a run that did not succeed is not "no new
+    alerts". Rerun it, or wait for a later `main` run that contains the
+    merge, before reading the list. A new alert is the merging session's
+    follow-up. Until
+    then the line read `refs/pull/<n>/merge`, the ref the PR threads came
+    from. The query goes in the URL: `-f state=open` beside `--paginate`
+    silently returned nothing for Dependabot alerts on 2026-09-29, while
+    three were open.
 
   Then work the loop: fix every recommendation, push, reply on each thread
   naming the commit, resolve it, and ask for another review of the new head.
@@ -515,21 +533,18 @@ so it is recorded here, where every session reads it.
   settings on
   [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
 
-  **The required checks are five, and this takes effect when the ruleset is
-  updated** for
-  [#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545):
-  `gate` (the last job of `ci.yml`, which waits for every other CI job and
-  fails if any failed), `Validate root and documentation policy`,
-  `dependency-review`, `fmt, validate, tflint` and `Trivy IaC
-  misconfiguration scan`. The three CodeQL `Analyze …` contexts and the ten
-  single CI job names leave the list. Until the ruleset is updated it still
-  names the old fifteen, every one of which is still a job name in `ci.yml`
-  (a job skipped by its `if:` is posted as "skipped", which counts as
-  passing), so pull requests merge under either list. The exact payload, the
-  `gh api` line that applies it and the read-back that confirms it are in the
+  **The required checks are five**, since the owner applied the ruleset on
+  2026-11-04 for
+  [#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545)
+  (read back from the API that day, `updated_at` 14:11 UTC): `gate` (the
+  last job of `ci.yml`, which waits for every other CI job and fails if any
+  failed), `Validate root and documentation policy`, `dependency-review`,
+  `fmt, validate, tflint` and `Trivy IaC misconfiguration scan`. The three
+  CodeQL `Analyze …` contexts and the ten single CI job names left the list,
+  and CodeQL now runs on pushes to `main` and weekly, not on pull requests.
+  The payload, the `gh api` line that applied it and the read-back are in the
   [required checks runbook](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/required-checks.md);
-  `scripts/ruleset-contexts.test.mjs` holds the list. A session that applies
-  the ruleset removes the "takes effect when" wording here.
+  `scripts/ruleset-contexts.test.mjs` holds the list.
 
   So no approval is needed, but **a review that asks for changes still blocks
   the merge** until a newer review from the same reviewer replaces it, even
@@ -586,15 +601,24 @@ so it is recorded here, where every session reads it.
   checklist with each review. It replaces the 2026-10-03 bullet that turned
   Copilot review off and capped it at two rounds once it returned.
 
-  - **Three reviewers, none optional.** Copilot
-    (`copilot-pull-request-reviewer`), CodeRabbit (`coderabbitai`) and code
-    scanning (`github-advanced-security`, posting CodeQL's alerts) all
-    review a PR. Every finding from each is fixed, or answered on its thread
-    with the reason, and the thread resolved, as the bullets above and below
-    say. A finding is not optional because its bot is not a required check.
+  - **Two reviewers on the pull request, none optional, and code scanning
+    after the merge.** Copilot (`copilot-pull-request-reviewer`) and
+    CodeRabbit (`coderabbitai`) review a PR. Every finding from each is
+    fixed, or answered on its thread with the reason, and the thread
+    resolved, as the bullets above and below say. A finding is not optional
+    because its bot is not a required check. Code scanning
+    (`github-advanced-security`, posting CodeQL's alerts) reviewed pull
+    requests too until 2026-11-04; since then CodeQL runs on each push to
+    `main` and weekly
+    ([#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545),
+    trade-off in the required checks runbook), so an alert a change
+    introduces appears on
+    [code scanning](https://github.com/saulpatinojr/HCW-HybridCloudWorks/security/code-scanning)
+    a few minutes after the merge, and the session that merged looks there
+    and fixes it in a follow-up.
   - **Each bot's first review is waited for, and CodeRabbit's is asked
     for.** A PR is not merge-ready until Copilot and CodeRabbit have each
-    reviewed it once and the `CodeQL` check has finished on its head.
+    reviewed it once.
     Copilot reviews on its own. CodeRabbit does not, since the owner's
     decision of 2026-11-01
     ([#1487](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1487)):
@@ -650,14 +674,15 @@ so it is recorded here, where every session reads it.
     `https://github.com/saulpatinojr/HCW-HybridCloudWorks/security/code-scanning/`,
     and the reason to choose (**Used in tests**, **False positive** or
     **Won't fix**); their dismissal closes the thread. What GitHub enforces
-    and what this file adds differ here. The `CodeQL` check is not one of
-    the ruleset's required checks (the `Analyze …` jobs are), so an open
-    alert alone leaves the merge button enabled. Code scanning also posts
-    each alert as a review comment, though, and the ruleset's conversation
-    resolution blocks on that thread until it is resolved, as alert 398's
-    did on #1035 until the dismissal closed it. Beyond both, a session does
-    not merge with an alert open on the head, even when its thread is
-    resolved.
+    and what this file adds differ here. Neither the `CodeQL` check nor the
+    `Analyze …` jobs are required checks since 2026-11-04, and CodeQL no
+    longer runs on pull requests, so no alert blocks the merge button and
+    no alert thread appears on the PR (until then code scanning posted each
+    alert as a review comment, and the ruleset's conversation resolution
+    blocked on it, as alert 398's did on #1035 until the dismissal closed
+    it). What this file adds: an alert found on `main` after a merge is the
+    merging session's to fix in a follow-up pull request, or to hand to the
+    owner with its page and the reason to choose.
 
   The `copilot_code_review` rule is still absent from the `Default` ruleset
   (20680114). Its parameters were `review_on_push: true` and

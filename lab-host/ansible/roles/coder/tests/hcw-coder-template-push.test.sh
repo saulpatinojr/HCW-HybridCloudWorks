@@ -7,7 +7,7 @@
 # in-container script with a fake `coder` that records what it was asked and
 # with which token.
 #
-# No root and no Docker needed. CI runs it in the `ansible-lint (lab-host)`
+# No root and no Docker needed. CI runs it in the `lab-host role tests`
 # job with the job's Python, which has Jinja2 and PyYAML from ansible-core;
 # lab-host/README.md ("Validating without a host") has the container line.
 set -euo pipefail

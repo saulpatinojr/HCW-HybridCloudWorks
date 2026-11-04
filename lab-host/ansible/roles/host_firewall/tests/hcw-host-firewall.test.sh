@@ -33,7 +33,7 @@
 # nsenter) and a Python with Jinja2 and PyYAML. As root it runs in
 # `unshare -n`; otherwise in `unshare -rn`, where it is root of a user
 # namespace of its own, wherever the kernel allows that. CI runs it in the
-# `ansible-lint (lab-host)` job; on a Linux workstation, bash:
+# `lab-host role tests` job; on a Linux workstation, bash:
 #   sudo env "PATH=$PATH" bash lab-host/ansible/roles/host_firewall/tests/hcw-host-firewall.test.sh
 #
 # Each check's condition is a single-quoted string that check() evaluates

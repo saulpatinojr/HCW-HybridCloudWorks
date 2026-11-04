@@ -18,7 +18,7 @@
 #     that comes back among them), and the clean-up.
 #
 # Needs no root and no Docker: bash, flock and mktemp. CI runs it in the
-# `ansible-lint (lab-host)` job; on a workstation, bash:
+# `lab-host role tests` job; on a workstation, bash:
 #   bash lab-host/ansible/roles/workspace_reach/tests/hcw-workspace-reach.test.sh
 #
 # Each check's condition is single-quoted on purpose: check() evaluates it

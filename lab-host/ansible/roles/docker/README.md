@@ -100,7 +100,7 @@ A carry happens once per volume (a marker under
 volume before the carry (a run interrupted after the restart), the helper
 refuses, changes nothing, and says how to start again.
 `tests/hcw-docker-volume-carry.test.sh` runs the helper as it ships against
-a tree shaped like PostgreSQL's (CI, `ansible-lint (lab-host)`).
+a tree shaped like PostgreSQL's (CI, `lab-host role tests`).
 
 The old root's networks are not deleted by the switch: their bridge
 interfaces stay in the kernel, down, with their addresses and routes. On
@@ -122,7 +122,7 @@ rules (`POSTROUTING` masquerades and `DOCKER` returns/DNATs) whose `br-*`
 interface no longer exists in the kernel, ensuring removed networks cannot
 masquerade inter-container traffic (#1228).
 `tests/hcw-docker-stale-bridges.test.sh` runs it against stand-ins for
-`docker`, `ip`, and `iptables` and a scratch data root (CI, `ansible-lint (lab-host)`).
+`docker`, `ip`, and `iptables` and a scratch data root (CI, `lab-host role tests`).
 
 ## Variables
 

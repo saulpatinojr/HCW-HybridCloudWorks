@@ -415,8 +415,8 @@ and attests. Where each sum comes from:
   dependency's line only when the new release pins it exactly. A new line,
   a changed requirement or Requires-Python, or a hash PyPI does not serve is
   a note in the weekly issue instead, and a hand bump by this section. The
-  `ansible-lint (lab-host)` job in `.github/workflows/ci.yml` pins its own
-  ansible-core and moves by hand.
+  `ansible-lint (lab-host)` and `lab-host role tests` jobs in `.github/workflows/ci.yml` pin their own
+  ansible-core (the same line in both) and move by hand.
 - PyYAML is the one exception to "wheels only", for now
   ([#1505](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1505)).
   PyYAML 6.0.3 publishes no wheel for CPython 3.15, and PyPI no longer

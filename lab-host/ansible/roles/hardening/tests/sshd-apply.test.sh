@@ -16,7 +16,7 @@
 # - check mode with a marker left behind reports it and changes nothing.
 #
 # As root, because the tasks set root as the owner of what they write. CI
-# runs it in the `ansible-lint (lab-host)` job with sudo; no Docker.
+# runs it in the `lab-host role tests` job with sudo; no Docker.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
