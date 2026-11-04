@@ -7,11 +7,18 @@ import { httpRoute } from '../lib/auth/http-route.js';
 import { getDefaultGuard } from '../lib/auth/default-guard.js';
 import { queryDocs, readDoc, upsertDoc, patchDoc } from '../lib/cosmos-client.js';
 import { createOpsHealthHandlers } from '../lib/ops-health.js';
+import { createBackupStatusReader } from '../lib/backup/backup-status.js';
+import { createExportBlobStore } from '../lib/backup/cosmos-export-edges.js';
 
 // One store object for the module's life, not a literal per request: the
 // snapshot cache in lib/ops-health.js is keyed on it, and a new object on
 // every request would be a new key, and so an empty cache, every time (#946).
 const store = Object.freeze({ queryDocs, readDoc, upsertDoc, patchDoc });
+
+// The nightly export's status reader (#1409), also one for the module's
+// life: it caches its reading of the cosmos-export container for ten
+// minutes, and a reader per request would read the blobs every time.
+const backups = createBackupStatusReader({ blobs: createExportBlobStore() });
 
 /**
  * A handler set for one request. Built per request so the guard is composed
@@ -21,6 +28,7 @@ const handlers = () =>
   createOpsHealthHandlers({
     guard: getDefaultGuard(),
     store,
+    backups,
   });
 
 httpRoute('getOpsHealthSnapshot', {
