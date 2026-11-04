@@ -322,6 +322,35 @@ export const EXPORT_STALE_AFTER_MS = 26 * 60 * 60 * 1000;
 const runLabel = (run) => `${run.mode}/${run.runId}`;
 
 /**
+ * The watched container's sentence: its record count and partition key when
+ * the export has it, that it is missing when not, nothing when the manifest
+ * names no watched container.
+ */
+const watchedWords = (watched) => {
+  if (!watched) return '';
+  if (!watched.present) return ` ${watched.container} is not in it.`;
+  return ` ${watched.container}: ${plural(watched.docs ?? 0, 'record')}, partition key ${watched.partitionKey}.`;
+};
+
+/** "2 authored containers are missing: a, b" — the containers the export should have had. */
+const missingWords = (missing) =>
+  `${plural(missing.length, 'authored container')} ${missing.length === 1 ? 'is' : 'are'} missing: ${missing.join(', ')}`;
+
+/** No manifest completed in the window; name the newest run's progress when there is one. */
+const noCompletedRun = (backups, extra) => {
+  const days = backups.lookbackDays ?? 7;
+  const newest = Array.isArray(backups.runs) ? backups.runs[0] : null;
+  const progress = newest
+    ? ` The newest run, ${runLabel(newest)}, has ${plural(newest.markers ?? 0, 'container marker')}${newest.expectedCount ? ` of ${newest.expectedCount}` : ''} and no manifest.`
+    : '';
+  return result(
+    'critical',
+    `No completed export manifest in the last ${plural(days, 'day')}.${progress}`,
+    extra
+  );
+};
+
+/**
  * Did last night's Cosmos export run, and did it cover every authored
  * container (#1409)? From the snapshot's `backups` block, which the
  * functions worker reads from the private cosmos-export container. The same
@@ -341,44 +370,29 @@ export function nightlyExportVerdict(backups, now = Date.now()) {
     );
   }
   const last = backups.lastCompleted;
-  const days = backups.lookbackDays ?? 7;
-  if (!last) {
-    const newest = Array.isArray(backups.runs) ? backups.runs[0] : null;
-    const progress = newest
-      ? ` The newest run, ${runLabel(newest)}, has ${plural(newest.markers ?? 0, 'container marker')}${newest.expectedCount ? ` of ${newest.expectedCount}` : ''} and no manifest.`
-      : '';
-    return result(
-      'critical',
-      `No completed export manifest in the last ${plural(days, 'day')}.${progress}`,
-      extra
-    );
-  }
+  if (!last) return noCompletedRun(backups, extra);
   const finished = ago(last.completedAt, now) ?? 'at an unknown time';
   const ageMs = now - Date.parse(last.completedAt ?? '');
   const missing = Array.isArray(last.authored?.missing) ? last.authored.missing : [];
-  const watched = last.watched;
-  const watchedWords = watched
-    ? watched.present
-      ? ` ${watched.container}: ${plural(watched.docs ?? 0, 'record')}, partition key ${watched.partitionKey}.`
-      : ` ${watched.container} is not in it.`
-    : '';
+  const { watched } = last;
+  const tail = watchedWords(watched);
   if (!Number.isFinite(ageMs) || ageMs > EXPORT_STALE_AFTER_MS) {
     return result(
       'critical',
-      `The newest completed export, ${runLabel(last)}, finished ${finished}; a run is due every 24 h.${watchedWords}`,
+      `The newest completed export, ${runLabel(last)}, finished ${finished}; a run is due every 24 h.${tail}`,
       extra
     );
   }
   if (missing.length > 0) {
     return result(
       'critical',
-      `Export ${runLabel(last)} completed ${finished} with ${plural(last.containerCount ?? 0, 'container')}, but ${plural(missing.length, 'authored container')} ${missing.length === 1 ? 'is' : 'are'} missing: ${missing.join(', ')}.${watchedWords}`,
+      `Export ${runLabel(last)} completed ${finished} with ${plural(last.containerCount ?? 0, 'container')}, but ${missingWords(missing)}.${tail}`,
       extra
     );
   }
   return result(
     'healthy',
-    `Export ${runLabel(last)} completed ${finished}: ${plural(last.containerCount ?? 0, 'container')}, every authored container present (${last.authored?.present ?? 0} of ${last.authored?.expected ?? 0}).${watchedWords}`,
+    `Export ${runLabel(last)} completed ${finished}: ${plural(last.containerCount ?? 0, 'container')}, every authored container present (${last.authored?.present ?? 0} of ${last.authored?.expected ?? 0}).${tail}`,
     extra
   );
 }
