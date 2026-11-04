@@ -144,3 +144,22 @@ describe('runCosmosQuery runs the text of a query, with its parameters', () => {
     expect(() => runCosmosQuery({ query: 'SELECT * FROM c WHERE c.type = @t', docs })).toThrow(/no parameter/);
   });
 });
+
+describe('runCosmosQuery reads TOP, as the visitor sessions’ queries carry it (#1403)', () => {
+  const docs = Array.from({ length: 5 }, (_, i) => ({ id: String(i), type: 'v' }));
+  const ids = (query, parameters = []) => runCosmosQuery({ query, parameters, docs }).map((d) => d.id);
+
+  it('returns the first n matching documents for a constant TOP and for a parameter', () => {
+    expect(ids('SELECT TOP 2 * FROM c WHERE c.type = "v"')).toEqual(['0', '1']);
+    expect(ids('SELECT TOP @top * FROM c WHERE c.type = @type', [{ name: '@top', value: 3 }, { name: '@type', value: 'v' }])).toEqual(['0', '1', '2']);
+    // A TOP above the count is no cut at all.
+    expect(ids('SELECT TOP 10 * FROM c WHERE c.type = "v"')).toHaveLength(5);
+  });
+
+  it('throws on a TOP that is not a whole number above zero, or a parameter nobody gives', () => {
+    expect(() => ids('SELECT TOP 0 * FROM c WHERE c.type = "v"')).toThrow(/whole number above zero/);
+    expect(() => ids('SELECT TOP @top * FROM c WHERE c.type = "v"', [{ name: '@top', value: '3' }])).toThrow(/whole number/);
+    expect(() => ids('SELECT TOP @top * FROM c WHERE c.type = "v"', [{ name: '@top', value: 2.5 }])).toThrow(/whole number/);
+    expect(() => ids('SELECT TOP @top * FROM c WHERE c.type = "v"')).toThrow(/no parameter/);
+  });
+});

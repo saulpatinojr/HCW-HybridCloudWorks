@@ -486,6 +486,21 @@ export const DECLARED = [
     reason:
       "#1302: AMBASSADOR_AUDIENCE_MONTHLY added to enabled_timers, arming the daily read",
   },
+  // #1400 and #1403: the visitor sessions' door, declared at last. The code
+  // had read LABS_VISITOR_SESSIONS_ENABLED since #1016 and nothing in infra/
+  // set it, so this is the setting appearing, closed ("false" is what the
+  // variable labs_visitor_sessions_enabled defaults to, and the same door the
+  // absent setting gave). Delete this entry once it has applied; the opening
+  // plan ("false" -> "true") is the owner's workspace edit and is deliberately
+  // not declared, so it shows as UNEXPECTED and is read.
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.LABS_VISITOR_SESSIONS_ENABLED",
+    before: undefined,
+    after: "false",
+    reason:
+      "#1400/#1403: LABS_VISITOR_SESSIONS_ENABLED declared in Terraform, closed by default",
+  },
   // The sweep's flag applied disarmed (deleted below, 2026-11-01). Keep this
   // one (false -> true) until the arming apply has run too: it is the plan the
   // owner sees when they add SWEEP_VISITOR_SESSIONS to enabled_timers, and this
