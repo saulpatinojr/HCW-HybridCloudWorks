@@ -24,7 +24,25 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const workflowsDir = join(here, '..', '.github', 'workflows');
 
+/**
+ * The list the ruleset requires once it is updated for #1545 (the payload
+ * and the cut-over steps are in docs/runbooks/required-checks.md). `gate`
+ * stands for every job in ci.yml; the other four are jobs of workflows that
+ * are still separate. Until the ruleset is updated it still names the old
+ * fifteen contexts, every one of which is still a job name in ci.yml (a job
+ * skipped by its `if:` is posted as "skipped", which the ruleset counts as
+ * passing), so a pull request stays mergeable under either list.
+ */
 export const RULESET_REQUIRED_CONTEXTS = [
+  'gate',
+  'Validate root and documentation policy',
+  'dependency-review',
+  'fmt, validate, tflint',
+  'Trivy IaC misconfiguration scan',
+];
+
+/** The fifteen contexts the ruleset required before #1545. Each stays a declared job name until the ruleset is updated. */
+export const PRE_1545_REQUIRED_CONTEXTS = [
   'frontend',
   'functions (azure)',
   'scripts (operations)',
@@ -43,9 +61,10 @@ export const RULESET_REQUIRED_CONTEXTS = [
 ];
 
 describe('Ruleset required status checks contract (T-982)', () => {
-  it('defines exactly the 15 canonical required checks from ruleset 20680114', () => {
-    expect(RULESET_REQUIRED_CONTEXTS).toHaveLength(15);
-    expect(new Set(RULESET_REQUIRED_CONTEXTS).size).toBe(15);
+  it('defines exactly the 5 canonical required checks for ruleset 20680114 (#1545)', () => {
+    expect(RULESET_REQUIRED_CONTEXTS).toHaveLength(5);
+    expect(new Set(RULESET_REQUIRED_CONTEXTS).size).toBe(5);
+    expect(PRE_1545_REQUIRED_CONTEXTS).toHaveLength(15);
   });
 
   it('proves every required context is declared by a pull_request workflow job', () => {
@@ -114,7 +133,7 @@ describe('Ruleset required status checks contract (T-982)', () => {
       }
     }
 
-    for (const requiredContext of RULESET_REQUIRED_CONTEXTS) {
+    for (const requiredContext of [...RULESET_REQUIRED_CONTEXTS, ...PRE_1545_REQUIRED_CONTEXTS]) {
       const found = jobNames.has(requiredContext);
       expect(found, `Required check "${requiredContext}" must be declared as a job name in a PR workflow`).toBe(true);
     }

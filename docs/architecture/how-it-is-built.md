@@ -184,7 +184,14 @@ Every pull request runs these workflows, all on GitHub-hosted runners:
 - **Repository Policy**: the layout and documentation rules in
   `scripts/validate-repository-structure.ps1`, and the Pester tests for the
   PowerShell scripts.
-- **Dependency review**, **Coverage** and **Complexity Delta**.
+- **Dependency review**. The former Coverage and Complexity Delta workflows
+  are jobs of CI since
+  [#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545):
+  the frontend and functions jobs run their suites with coverage, the
+  `coverage (qlty)` job uploads the report after a merge, and `complexity
+  delta` runs on every pull request. One job, `gate`, stands for all of CI
+  in the merge rules; see the
+  [required checks runbook](../runbooks/required-checks.md).
 - **Docs site**, when documentation changes: the redaction gate and
   `mkdocs build --strict`.
 - **Publish lab image**, when the lab image or what it depends on changes: a

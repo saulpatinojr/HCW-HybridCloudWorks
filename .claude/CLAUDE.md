@@ -509,11 +509,27 @@ so it is recorded here, where every session reads it.
   false`. What it does require is every review conversation resolved
   (`required_review_thread_resolution: true`), the required status checks
   green on a head that is up to date with `main` (`required_status_checks`,
-  strict, 15 checks), and no deleting or force-pushing `main` (`deletion`,
+  strict), and no deleting or force-pushing `main` (`deletion`,
   `non_fast_forward`); it also dismisses an old approval when new commits are
   pushed, and no one is on its bypass list. GitHub explains each of these
   settings on
   [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
+
+  **The required checks are five, and this takes effect when the ruleset is
+  updated** for
+  [#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545):
+  `gate` (the last job of `ci.yml`, which waits for every other CI job and
+  fails if any failed), `Validate root and documentation policy`,
+  `dependency-review`, `fmt, validate, tflint` and `Trivy IaC
+  misconfiguration scan`. The three CodeQL `Analyze …` contexts and the ten
+  single CI job names leave the list. Until the ruleset is updated it still
+  names the old fifteen, every one of which is still a job name in `ci.yml`
+  (a job skipped by its `if:` is posted as "skipped", which counts as
+  passing), so pull requests merge under either list. The exact payload, the
+  `gh api` line that applies it and the read-back that confirms it are in the
+  [required checks runbook](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/required-checks.md);
+  `scripts/ruleset-contexts.test.mjs` holds the list. A session that applies
+  the ruleset removes the "takes effect when" wording here.
 
   So no approval is needed, but **a review that asks for changes still blocks
   the merge** until a newer review from the same reviewer replaces it, even

@@ -3,9 +3,10 @@ import { defineConfig } from "vitest/config";
 
 // Test discovery is Vitest's default, exactly as it was before this file
 // existed. The only setting here is coverage, which is collected only when
-// asked for (`npm run test:coverage`), so `npm test` in the required
-// `functions (azure)` CI job is unchanged. coverage.yml uploads
-// coverage/lcov.info to Qlty (#568).
+// asked for (`npm run test:coverage`), which is what the `functions (azure)`
+// job in .github/workflows/ci.yml runs since #1545; `npm test` stays plain
+// for local runs. After a merge the `coverage (qlty)` job in the same
+// workflow uploads coverage/lcov.info to Qlty (#568).
 //
 // `projectRoot` is the repository root, so lcov.info names files as
 // `functions/src/...`. Qlty matches coverage to repository paths, and with
