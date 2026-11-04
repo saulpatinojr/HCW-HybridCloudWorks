@@ -155,7 +155,7 @@ Recommendation: **not yet**, for three reasons, each from that page.
 
 1. Every workflow that posts a required check must also listen for the
    `merge_group` event, or "the required check is never reported and the
-   merge fails". That is five workflows to change in one step, with the
+   merge fails". That is five required checks across four workflow files to change in one step, with the
    ruleset.
 2. A merge is then an "add to queue", not a merge. The repository's review
    loop (CodeRabbit's approval of the current head, the three-round cap,
