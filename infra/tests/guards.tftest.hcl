@@ -76,9 +76,32 @@ run "infrastructure_security_guards" {
     error_message = "Cosmos DB built-in Data Contributor role definition must be assigned to the Function App."
   }
 
+  # The account-wide grant stays exactly as it is until Step 2 of #1469
+  # deletes the block: no narrower scope, no count, no moved address. When
+  # the block is gone, delete these two asserts with it.
   assert {
     condition     = azurerm_cosmosdb_sql_role_assignment.func_cosmos.scope == azurerm_cosmosdb_account.hcw.id
-    error_message = "Cosmos DB role assignment must be scoped strictly to the Cosmos DB account."
+    error_message = "Cosmos DB account-wide role assignment must keep the account scope until Step 2 of #1469 removes the block (any other scope is a replace, and a gap in access)."
+  }
+
+  # 3b. The per-database grants (#1469): one per database the app reads, the
+  # same Data Contributor role, scoped to `<account id>/dbs/<database>`.
+  assert {
+    condition     = keys(azurerm_cosmosdb_sql_role_assignment.func_cosmos_db) == ["hcw"]
+    error_message = "Cosmos DB per-database role assignments must cover exactly the databases infra/ declares (today: hcw). A second database is a new key in local.cosmos_database_grants, and a declared create in scripts/assert-expected-plan.mjs."
+  }
+
+  assert {
+    condition     = azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"].scope == "${azurerm_cosmosdb_account.hcw.id}/dbs/${azurerm_cosmosdb_sql_database.hcw.name}"
+    error_message = "Cosmos DB per-database role assignment for hcw must be scoped to the hcw database (`<account id>/dbs/hcw`), not the account."
+  }
+
+  assert {
+    condition = alltrue([
+      for grant in values(azurerm_cosmosdb_sql_role_assignment.func_cosmos_db) :
+      can(regex("00000000-0000-0000-0000-000000000002$", grant.role_definition_id))
+    ])
+    error_message = "Every Cosmos DB per-database role assignment must be the built-in Data Contributor role."
   }
 
   # 4. Cosmos network isolation and keyless authentication (T-504)
