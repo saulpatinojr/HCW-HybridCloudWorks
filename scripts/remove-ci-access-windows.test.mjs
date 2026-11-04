@@ -21,9 +21,18 @@ const restrictions = ({ site = [], scm = [] } = {}) =>
 const storage = ({ defaultAction = 'Deny', ips = [], window = null } = {}) =>
   JSON.stringify({ defaultAction, ipRules: ips.map((ip) => ({ action: 'Allow', ipAddressOrRange: ip })), window });
 
-/** A fake Actions API: each run id answers with its run, or 404 when absent. */
-function github(runs) {
+const DEPLOY_RUNS = '/actions/workflows/deploy-functions.yml/runs';
+
+/**
+ * A fake Actions API: each run id answers with its run, or 404 when absent;
+ * the deploy-runs listing answers with `deploys` (`'boom'` to fail it).
+ */
+function github(runs, deploys = []) {
   return async (url) => {
+    if (url.includes(DEPLOY_RUNS)) {
+      if (deploys === 'boom') return { ok: false, status: 503, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ workflow_runs: deploys }) };
+    }
     const id = /\/actions\/runs\/(\d+)$/.exec(url)?.[1];
     const body = id ? runs[id] : undefined;
     if (body === 'boom') return { ok: false, status: 502, json: async () => ({}) };
@@ -220,6 +229,41 @@ describe('run', () => {
     const result = await run({ env: STOR, az, fetchImpl: github({ 6: { status: 'in_progress', conclusion: null } }), ...noSleep });
     expect(result.code).toBe(0);
     expect(result.lines[0]).toBe('1 left alone (run in progress)');
+    expect(writes).toEqual([]);
+  });
+
+  it('waits an hour rather than restore while any deploy run is in progress (it may be about to open its own window)', async () => {
+    const { az, writes } = fakeAz({ account: storage({ defaultAction: 'Allow', ips: [IP], window: `6 ${IP}` }) });
+    const deploys = [{ id: 9, run_number: 312, status: 'in_progress', html_url: 'https://github.com/o/r/actions/runs/9' }];
+    const result = await run({ env: STOR, az, fetchImpl: github({ 6: ended }, deploys), ...noSleep });
+    expect(result.code).toBe(0);
+    expect(result.lines[0]).toBe('1 left alone (run in progress)');
+    expect(result.lines[1]).toMatch(/left alone this hour, deploy run #312 is in progress and may be opening its own window; its window is run 6's and run 6 has ended/);
+    expect(writes).toEqual([]);
+  });
+
+  it('leaves the window as it is when the deploy history cannot be read, and says so', async () => {
+    const { az, writes } = fakeAz({ account: storage({ defaultAction: 'Allow', ips: [IP], window: `6 ${IP}` }) });
+    const result = await run({ env: STOR, az, fetchImpl: github({ 6: ended }, 'boom'), ...noSleep });
+    expect(result.code).toBe(2);
+    expect(result.lines[1]).toMatch(/whether a functions deploy is in progress could not be read, so the storage window was left as it is/);
+    expect(writes).toEqual([]);
+  });
+
+  it('reads the tag again before the FIRST write too, so a deploy that took the window in the meantime is not touched at all', async () => {
+    const { az, writes } = fakeAz({ account: storage({ defaultAction: 'Allow', ips: [IP], window: `6 ${IP}` }) });
+    // The first read decides; the re-read before the Deny already sees run 7's tag.
+    let reads = 0;
+    const racing = async (args) => {
+      if (args.join(' ').startsWith('storage account show')) {
+        reads += 1;
+        if (reads >= 2) return storage({ defaultAction: 'Allow', ips: ['203.0.113.9', IP], window: '7 203.0.113.9' });
+      }
+      return az(args);
+    };
+    const result = await run({ env: STOR, az: racing, fetchImpl: github({ 6: ended }), ...noSleep });
+    expect(result.code).toBe(0);
+    expect(result.lines[1]).toMatch(/stopped before "default action set to Deny": the ciwindow tag changed.*\(nothing done first\)/);
     expect(writes).toEqual([]);
   });
 

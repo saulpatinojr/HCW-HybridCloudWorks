@@ -910,6 +910,15 @@ describe.skipIf(!TOOLS.ready)(`a close step does not give up at the first error 
     expect(untagged.output).not.toMatch(/::warning::could not clear/);
   });
 
+  // CodeRabbit on #1536: a close that failed must leave the tag, or the remover reads the open window as an operator's and never finishes the close.
+  it('storage: when the window did not close, the tag stays for the remover', () => {
+    const result = close('Close storage firewall window', { state: { 'sa-rules': IP, 'sa-default': 'Allow', 'sa-tag': `4242 ${IP}` }, fail: { 'sa-update': 99 } });
+    expect(result.status).toBe(1);
+    expect(result.calls.some((call) => call.includes('--remove tags.ciwindow'))).toBe(false);
+    expect(readFileSync(`${work}/run-${runs}/sa-tag`, 'utf8')).toBe(`4242 ${IP}\n`);
+    expect(result.output).toMatch(/::warning::the window did not close; the ciwindow tag stays/);
+  });
+
   it('storage: a tag clear that keeps failing warns and leaves the step green, since the window itself is closed', () => {
     const result = close('Close storage firewall window', { state: { 'sa-rules': IP, 'sa-default': 'Allow', 'sa-tag': `4242 ${IP}` }, fail: { 'sa-tag-clear': 99 } });
     expect(result.status, result.output).toBe(0);

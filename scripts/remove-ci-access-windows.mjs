@@ -60,8 +60,17 @@
  *     then the tag cleared. Nothing else on the account is read or written.
  *
  * A deploy that starts while this runs writes its own tag first, so the tag
- * is read again immediately before every write and the restore stops the
- * moment it names a different run: that run owns the window now. The reads
+ * is read again immediately before every write, the first included, and the
+ * restore stops the moment it names a different run: that run owns the
+ * window now. Before the first write the Actions API is also asked whether
+ * any `deploy-functions.yml` run is in progress, and a restore waits for the
+ * next hour if one is: a deploy reaches its open step only after its
+ * checkout, Node setup and Azure login, so it has been in progress for well
+ * over the seconds between that read and the write. The remover does not
+ * share the deploy's concurrency group for this: GitHub keeps one pending
+ * run per group and cancels the earlier one when another arrives, so an
+ * hourly run in that group could cancel a deploy waiting its turn
+ * (monitor-functions-registered.yml records the same reasoning). The reads
  * and writes go to Resource Manager, which serialises updates to one
  * account, so a stopped restore leaves the new run's window as that run
  * wrote it.
@@ -98,6 +107,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { LIVE_STATUSES, orphanReason, parseWindows, readRun } from './check-ci-access-windows.mjs';
+import { findDeploysInProgress } from './check-functions-deploy-in-progress.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -231,17 +241,15 @@ const retryable = (error) => !/AuthorizationFailed|Forbidden/i.test(String(error
 
 /** One write, tried once more after each pause when it fails for a reason that may pass. */
 async function withRetry(write, { pauses, sleep }) {
-  let last;
-  for (let attempt = 0; attempt <= pauses.length; attempt += 1) {
+  for (const pause of [...pauses, null]) {
     try {
       return await write();
     } catch (error) {
-      last = error;
-      if (!retryable(error) || attempt >= pauses.length) break;
-      await sleep(pauses[attempt]);
+      if (pause === null || !retryable(error)) throw error;
+      await sleep(pause);
     }
   }
-  throw last;
+  throw new Error('unreachable: the last try either returned or threw');
 }
 
 const STORAGE_QUERY = `{defaultAction: networkRuleSet.defaultAction, ipRules: networkRuleSet.ipRules, window: tags.${WINDOW_TAG}}`;
@@ -325,9 +333,26 @@ export async function run({ env = {}, az = runAz, fetchImpl = fetch, sleep = (ms
       if (decision.action === 'report' || (decision.action === 'keep' && tag)) counts[decision.action === 'keep' ? 'kept' : 'reported'] += 1;
       lines.push(`- ${where}: ${decision.action === 'keep' && !tag ? '' : 'left alone, '}${decision.reason}${link}.`);
     } else {
+      // A deploy in progress right now may be about to open its own window
+      // (or already has, and its tag is seconds away); the restore waits for
+      // the next hour rather than race it.
+      let deploys;
+      try {
+        deploys = await findDeploysInProgress({ token, owner, repo, fetchImpl });
+      } catch (error) {
+        return formatUnreadable(`whether a functions deploy is in progress could not be read, so the storage window was left as it is: ${error.message}`);
+      }
+      if (deploys.length > 0) {
+        const label = deploys[0].run_number ? `deploy run #${deploys[0].run_number}` : `deploy run ${deploys[0].id}`;
+        counts.kept += 1;
+        lines.push(`- ${where}: left alone this hour, ${label} is in progress${deploys.length > 1 ? ` (and ${deploys.length - 1} more)` : ''} and may be opening its own window; ${decision.reason}${link}.`);
+        decision.action = 'waited';
+      }
+    }
+    if (decision.action === 'restore') {
       // The close step's own order: Deny, the address, the tag. The tag is
-      // read again before each write; a different value means a new deploy
-      // owns the window now, and this stops.
+      // read again before each write, the first included; a different value
+      // means a new deploy owns the window now, and this stops.
       const steps = [];
       if (decision.setDeny) steps.push({ label: 'default action set to Deny', args: ['storage', 'account', 'update', '-g', resourceGroup, '-n', storage, '--default-action', 'Deny', '--output', 'none'] });
       if (decision.removeAddress) steps.push({ label: "the run's IP rule removed", args: ['storage', 'account', 'network-rule', 'remove', '-g', resourceGroup, '--account-name', storage, '--ip-address', decision.removeAddress, '--output', 'none'] });
@@ -335,7 +360,7 @@ export async function run({ env = {}, az = runAz, fetchImpl = fetch, sleep = (ms
       const done = [];
       let outcome = null;
       for (const step of steps) {
-        if (!dryRun && done.length > 0) {
+        if (!dryRun) {
           let now;
           try {
             now = await readStorage();

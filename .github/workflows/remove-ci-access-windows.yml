@@ -61,7 +61,13 @@ permissions:
 
 concurrency:
   # One at a time, never cancelled: a cancelled run is a window left open an
-  # hour longer, and two at once would race on the same rules.
+  # hour longer, and two at once would race on the same rules. Its OWN group,
+  # not the deploy's function-app-host: GitHub keeps one pending run per
+  # group and cancels the earlier one when another arrives, so an hourly run
+  # in that group could cancel a deploy waiting its turn (the monitor stays
+  # out of it for the same reason). The race with a deploy is closed in the
+  # script instead: before its first storage write it asks the Actions API
+  # whether a deploy is in progress and reads the window tag again.
   group: remove-ci-access-windows
   cancel-in-progress: false
 

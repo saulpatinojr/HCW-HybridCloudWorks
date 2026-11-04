@@ -511,10 +511,16 @@ jobs:
             echo "::error::the storage firewall rule for ${RUNNER_IP} is still there after the window closed (or the list could not be read: '${left}')"
             failed=1
           fi
-          # Last, after the checks: a tag left behind is read by the hourly
-          # remover as "this run's window", and with the run ended it would
-          # redo the Deny and the removal above, which is harmless.
-          window_retry "5 10" clear_tag || echo "::warning::could not clear the ciwindow tag; remove-ci-access-windows.yml clears it once this run has ended"
+          # Last, and only when the checks passed. A tag left behind is read
+          # by the hourly remover as "this run's window", and with the run
+          # ended it redoes the Deny and the removal above, which is harmless.
+          # When a check failed, the tag is what lets the remover finish this
+          # close once the run has ended (CodeRabbit on #1536).
+          if [ "${failed}" = 0 ]; then
+            window_retry "5 10" clear_tag || echo "::warning::could not clear the ciwindow tag; remove-ci-access-windows.yml clears it once this run has ended"
+          else
+            echo "::warning::the window did not close; the ciwindow tag stays so remove-ci-access-windows.yml can finish the close once this run has ended"
+          fi
           [ "${failed}" = 0 ] || exit 1
           echo "storage window closed — default action Deny, no rule for ${RUNNER_IP}"
 
