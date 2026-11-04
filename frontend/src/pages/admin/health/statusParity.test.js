@@ -31,6 +31,7 @@ import {
   evaluateCosmos,
   evaluateForge,
   evaluateLinkRot,
+  evaluateNightlyExport,
   evaluateOrphanedImages,
   evaluatePublishingFailures,
   evaluateQueueSla,
@@ -42,7 +43,7 @@ import {
   mcpServersVerdict,
   runUnresolvedSecrets,
 } from './probeRegistry';
-import { PUBLISHER_LATE_AFTER_MS } from './probeEvaluators';
+import { EXPORT_STALE_AFTER_MS, PUBLISHER_LATE_AFTER_MS } from './probeEvaluators';
 import * as server from '../../../../../functions/src/lib/health/status-model.js';
 import { HEALTH_PROBES } from '../../../../../functions/src/lib/health/probe-catalogue.js';
 import * as pulse from '../../../../../functions/src/lib/health/pulse-checks.js';
@@ -65,6 +66,7 @@ describe('the model', () => {
     expect(page.MISSED_BEATS).toBe(server.MISSED_BEATS);
     expect(page.PULSE_LATE_AFTER_MS).toBe(server.PULSE_LATE_AFTER_MS);
     expect(PUBLISHER_LATE_AFTER_MS).toBe(pulse.PUBLISHER_LATE_AFTER_MS);
+    expect(EXPORT_STALE_AFTER_MS).toBe(pulse.EXPORT_STALE_AFTER_MS);
   });
 
   it('calls the same failures critical and the same ones offline', () => {
@@ -178,8 +180,34 @@ const snapshot = (overrides = {}) => ({
     forge_ready: { lastNotifiedAt: minutesAgo(30) },
     lab_agent_offline: { lastNotifiedAt: minutesAgo(400) },
   },
+  backups: {
+    unavailable: false,
+    lookbackDays: 7,
+    runs: [{ runId: '2026-10-08', mode: 'delta', complete: true }],
+    lastCompleted: {
+      runId: '2026-10-08',
+      mode: 'delta',
+      complete: true,
+      startedAt: minutesAgo(542),
+      completedAt: minutesAgo(540),
+      containerCount: 57,
+      expectedCount: 57,
+      authored: { expected: 46, present: 46, missing: [] },
+      watched: { container: 'brain_records', present: true, docs: 12, partitionKey: '/ownerId' },
+    },
+    checkedAt: minutesAgo(3),
+    lastCheckedAt: minutesAgo(0),
+  },
   ...overrides,
 });
+
+const withLastRun = (lastCompleted) =>
+  snapshot({
+    backups: {
+      ...snapshot().backups,
+      lastCompleted: { ...snapshot().backups.lastCompleted, ...lastCompleted },
+    },
+  });
 
 const withDigest = (digest) => snapshot({ digest: { ...snapshot().digest, ...digest } });
 
@@ -255,6 +283,7 @@ const SNAPSHOTS = {
     telegramNotifyState: undefined,
     operationalSignals: undefined,
     agent: undefined,
+    backups: undefined,
     digest: null,
   }),
   'agent key revoked and still called': snapshot({
@@ -293,6 +322,29 @@ const SNAPSHOTS = {
     forge: { updatedAt: null },
     telegramNotifyState: { id: 'notify_state' },
   }),
+  // The nightly export (#1409): covered, missing brain_records, late, never, unread.
+  'export missing brain_records': withLastRun({
+    containerCount: 56,
+    authored: { expected: 46, present: 45, missing: ['brain_records'] },
+    watched: { container: 'brain_records', present: false, docs: null, partitionKey: '/ownerId' },
+  }),
+  'export older than 26 hours': withLastRun({ completedAt: minutesAgo(27 * 60) }),
+  'export finished at an unreadable time': withLastRun({ completedAt: 'not-a-date' }),
+  'export with no completed run and an incomplete newest one': snapshot({
+    backups: {
+      ...snapshot().backups,
+      runs: [
+        { runId: '2026-10-08', mode: 'delta', complete: false, markers: 40, expectedCount: 57 },
+      ],
+      lastCompleted: null,
+    },
+  }),
+  'export with no run at all': snapshot({
+    backups: { ...snapshot().backups, runs: [], lastCompleted: null },
+  }),
+  'export manifests unread': snapshot({
+    backups: { unavailable: true, lookbackDays: null, runs: [], lastCompleted: null },
+  }),
 };
 
 const PAIRS = {
@@ -307,6 +359,7 @@ const PAIRS = {
   forge: [evaluateForge, pulse.checkForge],
   'telegram-notify': [evaluateTelegramNotify, pulse.checkTelegramNotify],
   'content-agent': [evaluateContentAgent, pulse.checkContentAgent],
+  'nightly-export': [evaluateNightlyExport, pulse.checkNightlyExport],
 };
 
 const verdict = (r) => ({ status: r.status, summary: r.summary, detail: r.detail ?? null });

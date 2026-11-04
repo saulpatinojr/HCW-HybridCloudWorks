@@ -28,6 +28,7 @@ import { splitUnresolved, unresolvedSecretNames } from './secrets-health.js';
 import { CAPABILITIES, KEY_RECORD_ID, enabledCapabilities, isUsable } from './agent-content/keys.js';
 import { errorResponse } from './http/error-response.js';
 import { recordMutationAudit } from './audit.js';
+import { backupsUnavailable } from './backup/backup-status.js';
 
 export const OPS_HEALTH_CACHE_TTL_MS = 30_000;
 
@@ -400,6 +401,9 @@ function forgeSummary(forgeStats, lastCheckedAt) {
  * @param {Record<string, unknown>} [deps.env] the worker's environment, read
  *   for the runtime configuration stamp and the unresolved Key Vault
  *   references (ADR 0033 §1 Platform); the snapshot cache's second key
+ * @param {{ read: () => Promise<object> }|null} [deps.backups] the nightly
+ *   export's status reader (backup/backup-status.js, #1409); null gives a
+ *   `backups` block that says the export's state is not known
  * @returns {{ buildSnapshot: Function, getCachedSnapshot: Function, invalidateCache: Function, getOpsHealthSnapshot: Function, updateWorkflowAlert: Function }}
  */
 export function createOpsHealthHandlers({
@@ -408,6 +412,7 @@ export function createOpsHealthHandlers({
   now = () => new Date(),
   uuid = randomUUID,
   env = process.env,
+  backups = null,
 }) {
   const count = async (where, params = []) => {
     const rows = await store.queryDocs(
@@ -454,6 +459,7 @@ export function createOpsHealthHandlers({
       agentKeyRead,
       agentDenialRows,
       jobStatusRows,
+      backupReading,
     ] = await Promise.all([
       count("c.contentStatus = 'published'"),
       store.queryDocs(
@@ -552,6 +558,13 @@ export function createOpsHealthHandlers({
           [{ name: '@since', value: agentSinceIso }]
         )
         .catch(() => null),
+      // The nightly export's newest run manifests, read from the private
+      // cosmos-export container by the worker's own identity (#1409). The
+      // reader keeps its own ten-minute cache, so this costs the blob reads
+      // once per ten minutes, not once per snapshot. A failed read is null,
+      // so the block says the export's state is not known rather than
+      // "no export".
+      backups ? backups.read().catch(() => null) : Promise.resolve(null),
     ]);
     const lastCheckedAt = nowDate.toISOString();
 
@@ -667,6 +680,10 @@ export function createOpsHealthHandlers({
         sinceIso: agentSinceIso,
         lastCheckedAt,
       }),
+      // `checkedAt` inside the block is when the blobs were read, which can
+      // be up to ten minutes before this snapshot; `lastCheckedAt` is this
+      // snapshot's, like every other block.
+      backups: { ...(backupReading || backupsUnavailable(lastCheckedAt)), lastCheckedAt },
       telegramNotifyState: { ...(notifyState || {}), lastCheckedAt },
     };
   }

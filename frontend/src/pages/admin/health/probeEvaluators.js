@@ -311,6 +311,84 @@ export function evaluateContentAgent(ctx, now = Date.now()) {
   return contentAgentVerdict(agent, now);
 }
 
+/**
+ * The nightly export is due every 24 hours at 03:00 UTC; two hours of grace
+ * for a slow run, then the newest completed run is late (#1409). The pulse
+ * keeps the same number (pulse-checks.js EXPORT_STALE_AFTER_MS).
+ */
+export const EXPORT_STALE_AFTER_MS = 26 * 60 * 60 * 1000;
+
+/** "delta/2026-11-03" — the run as its blob prefix names it. */
+const runLabel = (run) => `${run.mode}/${run.runId}`;
+
+/**
+ * Did last night's Cosmos export run, and did it cover every authored
+ * container (#1409)? From the snapshot's `backups` block, which the
+ * functions worker reads from the private cosmos-export container. The same
+ * verdict and sentence as the pulse's checkNightlyExport: not known when the
+ * manifests could not be read; critical when no run completed in the window,
+ * the newest one is older than 26 h, or an authored container is missing;
+ * healthy otherwise, naming `brain_records` and its partition key.
+ */
+export function nightlyExportVerdict(backups, now = Date.now()) {
+  if (!backups) return result('unknown', 'This snapshot carries no backups block.');
+  const extra = { checkedAt: backups.lastCheckedAt ?? backups.checkedAt ?? stamp() };
+  if (backups.unavailable) {
+    return result(
+      'unknown',
+      "The export's run manifests could not be read, so last night's export is not known.",
+      extra
+    );
+  }
+  const last = backups.lastCompleted;
+  const days = backups.lookbackDays ?? 7;
+  if (!last) {
+    const newest = Array.isArray(backups.runs) ? backups.runs[0] : null;
+    const progress = newest
+      ? ` The newest run, ${runLabel(newest)}, has ${plural(newest.markers ?? 0, 'container marker')}${newest.expectedCount ? ` of ${newest.expectedCount}` : ''} and no manifest.`
+      : '';
+    return result(
+      'critical',
+      `No completed export manifest in the last ${plural(days, 'day')}.${progress}`,
+      extra
+    );
+  }
+  const finished = ago(last.completedAt, now) ?? 'at an unknown time';
+  const ageMs = now - Date.parse(last.completedAt ?? '');
+  const missing = Array.isArray(last.authored?.missing) ? last.authored.missing : [];
+  const watched = last.watched;
+  const watchedWords = watched
+    ? watched.present
+      ? ` ${watched.container}: ${plural(watched.docs ?? 0, 'record')}, partition key ${watched.partitionKey}.`
+      : ` ${watched.container} is not in it.`
+    : '';
+  if (!Number.isFinite(ageMs) || ageMs > EXPORT_STALE_AFTER_MS) {
+    return result(
+      'critical',
+      `The newest completed export, ${runLabel(last)}, finished ${finished}; a run is due every 24 h.${watchedWords}`,
+      extra
+    );
+  }
+  if (missing.length > 0) {
+    return result(
+      'critical',
+      `Export ${runLabel(last)} completed ${finished} with ${plural(last.containerCount ?? 0, 'container')}, but ${plural(missing.length, 'authored container')} ${missing.length === 1 ? 'is' : 'are'} missing: ${missing.join(', ')}.${watchedWords}`,
+      extra
+    );
+  }
+  return result(
+    'healthy',
+    `Export ${runLabel(last)} completed ${finished}: ${plural(last.containerCount ?? 0, 'container')}, every authored container present (${last.authored?.present ?? 0} of ${last.authored?.expected ?? 0}).${watchedWords}`,
+    extra
+  );
+}
+
+export function evaluateNightlyExport(ctx, now = Date.now()) {
+  const backups = ctx?.snapshot?.backups;
+  if (!backups) return blockMissing(ctx, 'This snapshot carries no backups block.');
+  return nightlyExportVerdict(backups, now);
+}
+
 export function evaluateTelegramNotify(ctx, now = Date.now()) {
   const state = ctx?.snapshot?.telegramNotifyState;
   if (!state) return blockMissing(ctx, 'This snapshot carries no Telegram notify state.');
