@@ -451,6 +451,40 @@ describe('getOpsHealthSnapshot', () => {
     expect(body.agent.denials).toMatchObject({ total: 4, unavailable: false });
   });
 
+  it('carries the nightly export reader’s block, and says "not known" without one or when it fails (#1409)', async () => {
+    const reading = {
+      unavailable: false,
+      lookbackDays: 7,
+      runs: [{ runId: '2026-08-06', mode: 'delta', complete: true }],
+      lastCompleted: { runId: '2026-08-06', mode: 'delta', complete: true },
+      checkedAt: '2026-08-07T03:50:00.000Z',
+    };
+    const backups = { read: vi.fn(async () => reading) };
+    const h = createOpsHealthHandlers({ guard: allowGuard(), store: opsStore(), ...fixed, backups });
+    const body = JSON.parse((await h.getOpsHealthSnapshot(makeRequest({}), context)).body);
+    expect(body.backups).toEqual({ ...reading, lastCheckedAt: NOW.toISOString() });
+    expect(backups.read).toHaveBeenCalledTimes(1);
+
+    const noReader = createOpsHealthHandlers({ guard: allowGuard(), store: opsStore(), ...fixed });
+    const without = JSON.parse((await noReader.getOpsHealthSnapshot(makeRequest({}), context)).body);
+    expect(without.backups).toEqual({
+      unavailable: true,
+      lookbackDays: null,
+      runs: [],
+      lastCompleted: null,
+      checkedAt: NOW.toISOString(),
+      lastCheckedAt: NOW.toISOString(),
+    });
+
+    // A reader that throws (the storage firewall, a missing role) is the same
+    // "not known" block, and the rest of the snapshot still answers.
+    const failing = { read: vi.fn(async () => { throw new Error('403'); }) };
+    const h2 = createOpsHealthHandlers({ guard: allowGuard(), store: opsStore(), ...fixed, backups: failing });
+    const failed = JSON.parse((await h2.getOpsHealthSnapshot(makeRequest({}), context)).body);
+    expect(failed.backups.unavailable).toBe(true);
+    expect(failed.readiness.publishedItems).toBe(12);
+  });
+
   it('marks the denial count as a floor at the read bound and still names the newest row (#1491)', async () => {
     const store = opsStore();
     const inner = store.queryDocs.getMockImplementation();
