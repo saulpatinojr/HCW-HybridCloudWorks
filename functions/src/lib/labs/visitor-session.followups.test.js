@@ -10,14 +10,24 @@
  * records out by their `ttl` the way Cosmos does (test/memory-store.js).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { coderId, coderUserAnswer, isUserRead } from '../../../test/coder-ids.js';
 import { runCosmosQuery } from '../../../test/cosmos-predicate.js';
 import { memoryStore } from '../../../test/memory-store.js';
 import { createClientIdentity } from '../auth/client-identity.js';
 import { CHECK_ATTEMPTS_PER_WINDOW, CHECK_WINDOW_MS, LOCK_CODES, LOCK_REASONS } from './public-lock.js';
 import {
+  CLEANUP_LEASE_MS,
+  CODER_CALLS_PER_SESSION,
+  CODER_CALL_TIMEOUT_MS,
   CODER_PROVISION_TIMEOUT_MS,
   DOOR_CODES,
+  DUE_QUERY,
+  EXPIRED_QUERY,
+  HOLDING_QUERY,
+  MAX_HOLDING_RECORDS,
+  MAX_SWEEP_SESSIONS,
   PROVISION_LEASE_MS,
+  SWEEP_DEADLINE_MS,
   VISITOR_DOC_TTL_SECONDS,
   VISITOR_PENDING_DOC_TTL_SECONDS,
   VISITOR_CHECK_REASONS,
@@ -72,16 +82,17 @@ const refundDocs = (s) => [...s.docs.keys()].filter((key) => key.startsWith('sub
 /** Turnstile, answering what the test says, and a Coder that accepts everything. */
 function visitorFetch({ siteverify = { success: true, hostname: 'hybridcloudworks.com', action: 'visitor-session' } } = {}) {
   let users = 0;
-  return vi.fn(async (url) => {
+  return vi.fn(async (url, init) => {
     const target = String(url);
     if (target.startsWith('https://challenges.cloudflare.com/')) return { ok: true, json: async () => siteverify };
+    if (isUserRead(url, init)) return coderUserAnswer(url, `v-00000000000${users}`);
     if (target.endsWith('/api/v2/templates')) return { ok: true, json: async () => [{ id: 'tmpl-1', name: 'hcw-lab' }] };
     if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
     if (target.endsWith('/api/v2/users')) {
       users += 1;
-      return { ok: true, json: async () => ({ id: `u-${users}`, username: `v-00000000000${users}` }) };
+      return { ok: true, json: async () => ({ id: coderId(`u-${users}`), username: `v-00000000000${users}` }) };
     }
-    if (/\/members\/[^/]+\/workspaces$/.test(target)) return { ok: true, json: async () => ({ id: `ws-${users}` }) };
+    if (/\/members\/[^/]+\/workspaces$/.test(target)) return { ok: true, json: async () => ({ id: coderId(`ws-${users}`) }) };
     return { ok: true, status: 200 };
   });
 }
@@ -115,9 +126,9 @@ const session = (id, overrides = {}) => ({
   status: 'active',
   clientHash: 'someone-else',
   labId: 'landing-zone-builder-output',
-  coderUserId: `u-${id}`,
+  coderUserId: coderId(`u-${id}`),
   coderUsername: 'v-aaaaaaaaaaaa',
-  workspaceId: `ws-${id}`,
+  workspaceId: coderId(`ws-${id}`),
   workspaceName: 'lab-lzb',
   accessUrl: `https://code-server--lab-lzb--v-${id}.coder.lab.hybridcloudworks.com/`,
   expiresAt: iso(NOW + 30 * 60 * 1000),
@@ -268,11 +279,11 @@ describe('#1403 item 2: a start whose process died is cleaned up from the record
     return vi.fn(async (url, init) => {
       const path = new URL(String(url)).pathname;
       if (path === '/api/v2/users/v-0123456789ab' && (init?.method ?? 'GET') === 'GET') {
-        return user ? { ok: true, status: 200, json: async () => ({ id: 'u-made', username: 'v-0123456789ab' }) } : { ok: false, status: 404 };
+        return user ? { ok: true, status: 200, json: async () => ({ id: coderId('u-made'), username: 'v-0123456789ab' }) } : { ok: false, status: 404 };
       }
       if (path === '/api/v2/users/v-0123456789ab/workspace/lab-lzb') {
         return workspace
-          ? { ok: true, status: 200, json: async () => ({ id: 'ws-made', name: 'lab-lzb', owner_id: 'u-made' }) }
+          ? { ok: true, status: 200, json: async () => ({ id: coderId('ws-made'), name: 'lab-lzb', owner_id: coderId('u-made') }) }
           : { ok: false, status: 404 };
       }
       return { ok: true, status: 200 };
@@ -302,13 +313,13 @@ describe('#1403 item 2: a start whose process died is cleaned up from the record
     expect(coderCalls(fetchImpl)).toEqual([
       'GET /api/v2/users/v-0123456789ab',
       'GET /api/v2/users/v-0123456789ab/workspace/lab-lzb',
-      'POST /api/v2/workspaces/ws-made/builds',
-      'DELETE /api/v2/users/u-made',
+      `POST /api/v2/workspaces/${coderId('ws-made')}/builds`,
+      `DELETE /api/v2/users/${coderId('u-made')}`,
     ]);
     expect(s.get('lab_jobs', 'p-1')).toMatchObject({
       status: 'ended',
-      coderUserId: 'u-made',
-      workspaceId: 'ws-made',
+      coderUserId: coderId('u-made'),
+      workspaceId: coderId('ws-made'),
       workspaceConfirmedBy: 'ok',
       userConfirmedBy: 'ok',
     });
@@ -344,8 +355,8 @@ describe('#1403 item 2: a start whose process died is cleaned up from the record
 
     expect(await sweep(s, fetchImpl)).toMatchObject({ finished: 1 });
 
-    expect(coderCalls(fetchImpl)).toEqual(['GET /api/v2/users/v-0123456789ab', 'DELETE /api/v2/users/u-made']);
-    expect(s.get('lab_jobs', 'p-1')).toMatchObject({ status: 'ended', coderUserId: 'u-made', userConfirmedBy: 'ok' });
+    expect(coderCalls(fetchImpl)).toEqual(['GET /api/v2/users/v-0123456789ab', `DELETE /api/v2/users/${coderId('u-made')}`]);
+    expect(s.get('lab_jobs', 'p-1')).toMatchObject({ status: 'ended', coderUserId: coderId('u-made'), userConfirmedBy: 'ok' });
   });
 
   it('gives the lease room for the four provisioning calls at their timeouts', () => {
@@ -356,7 +367,7 @@ describe('#1403 item 2: a start whose process died is cleaned up from the record
 describe('#1403 item 4: what confirmed each half is kept, and a 404 is said in the log', () => {
   it("records 'gone' for a half Coder answered 404, and 'ok' for one it accepted, and logs the 404", async () => {
     const s = store([session('s-1', { clientHash: ALICE_KEY })]);
-    const fetchImpl = vi.fn(async (url) => (String(url).includes('/builds') ? { ok: false, status: 404 } : { ok: true, status: 200 }));
+    const fetchImpl = vi.fn(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url) : String(url).includes('/builds') ? { ok: false, status: 404 } : { ok: true, status: 200 }));
     const context = { warn: vi.fn() };
     const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
 
@@ -413,14 +424,14 @@ describe('#1403 item 5: a session whose workspace Coder has not confirmed as del
 describe('#1403 item 6: a session that leaves active drops the lab address', () => {
   it('keeps no accessUrl once a stop has claimed it, whether Coder finished or not', async () => {
     const s = store([session('s-1', { clientHash: ALICE_KEY }), session('s-2', { clientHash: keyOf(BOB) })]);
-    const fetchImpl = vi.fn(async (url) => (String(url).includes('/users/') ? { ok: false, status: 417 } : { ok: true, status: 200 }));
+    const fetchImpl = vi.fn(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url, 'v-aaaaaaaaaaaa') : String(url).includes('/users/') ? { ok: false, status: 417 } : { ok: true, status: 200 }));
     const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
 
     await stopAs(handlers, ALICE, 's-1');
     expect(s.get('lab_jobs', 's-1').status).toBe('cleanup_pending');
     expect(s.get('lab_jobs', 's-1').accessUrl).toBeUndefined();
 
-    fetchImpl.mockImplementation(async () => ({ ok: true, status: 200 }));
+    fetchImpl.mockImplementation(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url) : { ok: true, status: 200 }));
     await stopAs(handlers, BOB, 's-2');
     expect(s.get('lab_jobs', 's-2').status).toBe('ended');
     expect(s.get('lab_jobs', 's-2').accessUrl).toBeUndefined();
@@ -429,8 +440,8 @@ describe('#1403 item 6: a session that leaves active drops the lab address', () 
 
 describe('#1403 item 7: the stop says whether the clean-up is done', () => {
   it.each([
-    ['Coder confirmed both deletes', async () => ({ ok: true, status: 200 }), 'done'],
-    ['Coder refused the user (it still has the workspace)', async (url) => (String(url).includes('/users/') ? { ok: false, status: 417 } : { ok: true, status: 200 }), 'pending'],
+    ['Coder confirmed both deletes', async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url) : { ok: true, status: 200 }), 'done'],
+    ['Coder refused the user (it still has the workspace)', async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url, 'v-aaaaaaaaaaaa') : String(url).includes('/users/') ? { ok: false, status: 417 } : { ok: true, status: 200 }), 'pending'],
   ])('answers cleanup %s', async (_name, answer, cleanup) => {
     const s = store([session('s-1', { clientHash: ALICE_KEY })]);
     const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: vi.fn(answer), clock });
@@ -451,7 +462,7 @@ describe('#1403 item 8: records age out when Cosmos would delete them', () => {
     const refusing = createVisitorSessionHandlers({
       store: s,
       identity: identity(),
-      fetchImpl: vi.fn(async (url) => (String(url).includes('/users/') ? { ok: false, status: 417 } : { ok: true, status: 200 })),
+      fetchImpl: vi.fn(async (url, init) => (isUserRead(url, init) ? coderUserAnswer(url, 'v-aaaaaaaaaaaa') : String(url).includes('/users/') ? { ok: false, status: 417 } : { ok: true, status: 200 })),
       clock,
     });
     await stopAs(refusing, BOB, bob);
@@ -679,7 +690,7 @@ describe('#1464 review, finding F: a user is looked up by name only when its cre
     ]);
     const fetchImpl = vi.fn(async (url) =>
       new URL(String(url)).pathname === '/api/v2/users/v-0123456789ab'
-        ? { ok: true, status: 200, json: async () => ({ id: 'u-someone', username: 'v-ffffffffffff' }) }
+        ? { ok: true, status: 200, json: async () => ({ id: coderId('u-someone'), username: 'v-ffffffffffff' }) }
         : { ok: true, status: 200 }
     );
     const log = vi.fn();
@@ -988,5 +999,65 @@ describe('#1464 review, round 3: every holder owns one of the slots, and slots n
     expect(new Set(named).size).toBe(3);
     expect(named).toContain('legacy-1');
     expect(named).toContain('s-1');
+  });
+});
+
+describe('#1403, found while the timer was built: bounded queries, a deadline inside the lease', () => {
+  const expiredAt = (id, overrides = {}) => session(id, { expiresAt: iso(NOW - 60_000), ...overrides });
+
+  it('bounds each of the three queries with TOP: the sweep reads no more than it takes up, the routes no more than MAX_HOLDING_RECORDS', async () => {
+    for (const query of [EXPIRED_QUERY, DUE_QUERY, HOLDING_QUERY]) expect(query).toMatch(/^SELECT TOP @top \* FROM c WHERE /);
+    const s = store([expiredAt('e-1')]);
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: visitorFetch(), clock });
+
+    await statusAs(handlers, ALICE);
+    await reapExpiredVisitorSessions(s, visitorFetch(), CODER, { nowIso: iso(now), limit: 3 });
+
+    const tops = s.queryDocs.mock.calls
+      .filter(([container]) => container === 'lab_jobs')
+      .map(([, sql, parameters]) => [sql, parameters.find((p) => p.name === '@top')?.value]);
+    expect(tops).toContainEqual([HOLDING_QUERY, MAX_HOLDING_RECORDS]);
+    expect(tops).toContainEqual([EXPIRED_QUERY, 3]);
+    expect(tops).toContainEqual([DUE_QUERY, 3]);
+    expect(tops.every(([, top]) => Number.isInteger(top) && top > 0)).toBe(true);
+  });
+
+  it('returns no more rows than the TOP asks for, as Cosmos would, so a list past the bound is not read', async () => {
+    const s = store(Array.from({ length: 5 }, (_, i) => expiredAt(`e-${i}`)));
+
+    const tally = await reapExpiredVisitorSessions(s, visitorFetch(), CODER, { nowIso: iso(now), limit: 2 });
+
+    expect(tally).toMatchObject({ reaped: 2 });
+    await expect(s.queryDocs.mock.results[0].value).resolves.toHaveLength(2);
+  });
+
+  it('takes up no new session once the deadline has passed, so its claims end inside their lease, and says how many wait', async () => {
+    const s = store(Array.from({ length: MAX_SWEEP_SESSIONS }, (_, i) => expiredAt(`e-${i}`)));
+    // Every Coder call takes its whole timeout: three calls a session, so the deadline falls before the last session.
+    const slow = vi.fn(async (url, init) => {
+      now += CODER_CALL_TIMEOUT_MS;
+      return isUserRead(url, init) ? coderUserAnswer(url) : { ok: true, status: 200 };
+    });
+    const log = vi.fn();
+    const perSession = 3 * CODER_CALL_TIMEOUT_MS;
+    const expected = Math.ceil(SWEEP_DEADLINE_MS / perSession);
+    expect(expected).toBeLessThan(MAX_SWEEP_SESSIONS);
+
+    const tally = await reapExpiredVisitorSessions(s, slow, CODER, { nowIso: iso(NOW), log, clock });
+
+    expect(tally).toMatchObject({ reaped: expected });
+    expect(log).toHaveBeenCalledWith(
+      `visitor-session: the sweep stopped before its lease ran out, leaving ${MAX_SWEEP_SESSIONS - expected} sessions for the next run`
+    );
+    // The ones left were not claimed: no lease, still active, for the next run.
+    expect([...s.docs.values()].filter((d) => d.status === 'active')).toHaveLength(MAX_SWEEP_SESSIONS - expected);
+    // And the last session it did take finished before the lease would have run out.
+    expect(now - NOW).toBeLessThanOrEqual(CLEANUP_LEASE_MS);
+  });
+
+  it('pins the arithmetic: the deadline leaves room for the slowest session, and still leaves most of the lease for work', () => {
+    expect(SWEEP_DEADLINE_MS + CODER_CALLS_PER_SESSION * CODER_CALL_TIMEOUT_MS).toBeLessThanOrEqual(CLEANUP_LEASE_MS);
+    expect(SWEEP_DEADLINE_MS).toBeGreaterThan(CLEANUP_LEASE_MS / 2);
+    expect(CODER_CALLS_PER_SESSION).toBe(4);
   });
 });
