@@ -397,7 +397,7 @@ describe('the Agents tab (new in #577)', () => {
           {
             agentId: 'vps-1',
             active: true,
-            oid: '9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b',
+            oid: '99999999-5b4a-4938-8271-605f4e3d2c1b',
             lastSeenAt: RECENT,
           },
         ],

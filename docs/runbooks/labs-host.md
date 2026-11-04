@@ -877,8 +877,9 @@ merge runs in check mode on the host, and `bootstrap.sh` does not run.
    ending one second before the certificate does, unless a credential with
    its thumbprint is already there; every other credential is left alone.
    Assigns the service principal the `LabAgent` app role on the HCWSite API
-   (the script's `-ApiAppId`, whose default is the same client id
-   `scripts/cutover/01-entra-api.ps1` names), which is gate 1 of the agent
+   (the script finds its client id from the one registration of that name
+   in the tenant, the same lookup `scripts/cutover/01-entra-api.ps1` does;
+   `-ApiAppId` or `HCW_API_APP_ID` names it explicitly), which is gate 1 of the agent
    guard (`functions/src/lib/auth/require-agent.js`) and, for an
    application permission, the admin consent. Nothing else is granted: no
    Azure role, no Microsoft Graph permission, no client secret.

@@ -8,7 +8,7 @@ const HEALTHCHECK_FIELDS = [
   { key: 'PluginVersion', value: '1.0.2604.1' },
   { key: 'EngineVersion', value: '101.24082.0004' },
   { key: 'OrgId', value: '00000000-0000-0000-0000-000000000000' },
-  { key: 'HostDeviceId', value: '8f3b2e10-4c9a-4d7e-9b1a-7c6d5e4f3a21' },
+  { key: 'HostDeviceId', value: 'aaaaaaaa-1111-4111-8111-111111111111' },
   { key: 'HostDeviceName', value: 'LAB-HOST' },
   { key: 'WslDeviceName', value: 'LAB-HOST-wslc' },
   { key: 'ActiveDistributions', value: 'Ubuntu-24.04 (WSL2)' },
@@ -19,7 +19,7 @@ const HEALTHCHECK_FIELDS = [
 const INVENTORY_DEVICES = [
   {
     deviceName: 'LAB-HOST',
-    deviceId: '8f3b2e10-4c9a-4d7e-9b1a-7c6d5e4f3a21',
+    deviceId: 'aaaaaaaa-1111-4111-8111-111111111111',
     osPlatform: 'Windows11',
     onboardingStatus: 'Onboarded',
     healthState: 'Active',
@@ -27,7 +27,7 @@ const INVENTORY_DEVICES = [
   },
   {
     deviceName: 'LAB-HOST-wslc',
-    deviceId: 'c41d9a72-8b3e-4f10-a52c-1e9b8d7c6f54',
+    deviceId: 'bbbbbbbb-2222-4222-8222-222222222222',
     osPlatform: 'Linux',
     onboardingStatus: 'Can be onboarded (WSL2 Plug-in)',
     healthState: 'Active',
@@ -49,8 +49,8 @@ const KQL_PRESETS = [
       {
         Timestamp: '2026-10-11T06:00:12Z',
         DeviceName: 'LAB-HOST-wslc',
-        DeviceId: 'c41d9a72-8b3e-4f10-a52c-1e9b8d7c6f54',
-        HostDeviceId: '8f3b2e10-4c9a-4d7e-9b1a-7c6d5e4f3a21',
+        DeviceId: 'bbbbbbbb-2222-4222-8222-222222222222',
+        HostDeviceId: 'aaaaaaaa-1111-4111-8111-111111111111',
         OSPlatform: 'Linux',
         OSDistribution: 'Ubuntu 24.04 LTS',
         OnboardingStatus: 'Onboarded via WSL2 Plug-in',
@@ -74,9 +74,9 @@ const KQL_PRESETS = [
     rows: [
       {
         WslDeviceName: 'LAB-HOST-wslc',
-        WslDeviceId: 'c41d9a72-8b3e-4f10-a52c-1e9b8d7c6f54',
+        WslDeviceId: 'bbbbbbbb-2222-4222-8222-222222222222',
         HostDeviceName: 'LAB-HOST',
-        HostDeviceId: '8f3b2e10-4c9a-4d7e-9b1a-7c6d5e4f3a21',
+        HostDeviceId: 'aaaaaaaa-1111-4111-8111-111111111111',
         HostOS: 'Windows11',
       },
     ],
