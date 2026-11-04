@@ -257,11 +257,9 @@ export default function SecondBrainPage() {
     },
     [canLeave]
   );
-  // Follow the `item` and `capture` links on every navigation: a citation in
-  // the Ask panel links to `?item=<source id>` on this page, and until #1408
-  // it was handled once per mount. `handledLink` holds the router key acted
-  // on, so a re-render does not reopen the note but a fresh click still does.
-  // Both branches ask the unsaved-changes guard (`open` does; capture here).
+  // Follow `?item=` and `?capture=` on every navigation, not only on mount
+  // (#1408); `handledLink` is the router key acted on. Stale capture answers
+  // and errors are dropped once `openSequence` has moved on (#1547).
   useEffect(() => {
     if (!access.enabled || handledLink.current === location.key) return;
     handledLink.current = location.key;
@@ -269,11 +267,13 @@ export default function SecondBrainPage() {
     const capture = params.get('capture');
     if (item) Promise.resolve().then(() => open(item));
     else if (capture) {
-      // Shares `open`'s sequence: a later open or capture makes this answer
-      // stale, so it cannot replace a newer selection (CodeRabbit on #1547).
       const seq = ++openSequence.current;
       canLeave()
-        .then((leave) => (leave ? brainApi.context(capture) : null))
+        .then((leave) => {
+          if (!leave) return null;
+          setError('');
+          return brainApi.context(capture);
+        })
         .then((data) => {
           if (!data || seq !== openSequence.current) return;
           setEditorSnapshot(null);
@@ -281,7 +281,7 @@ export default function SecondBrainPage() {
           setSelection(blank('note', { title: 'Content research', links: [data.sourceId] }));
           setBacklinks([]);
         })
-        .catch((err) => setError(err.message));
+        .catch((err) => (seq === openSequence.current ? setError(err.message) : undefined));
     }
   }, [access.enabled, location.key, params, open, canLeave]);
   async function search(next = null) {

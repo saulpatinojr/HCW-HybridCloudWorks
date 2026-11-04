@@ -332,4 +332,28 @@ describe('Second Brain owner workspace', () => {
     expect(screen.getByText('ref_second')).toBeInTheDocument();
     expect(screen.queryByText('ref_first')).not.toBeInTheDocument();
   });
+  it('does not show the error of a capture that a later capture replaced (#1547)', async () => {
+    const pending = {};
+    brainApi.context.mockImplementation(
+      (id) =>
+        new Promise((resolve, reject) => {
+          pending[id] = { resolve, reject };
+        })
+    );
+    render(
+      <MemoryRouter initialEntries={['/admin/second-brain?capture=content-1']}>
+        <Link to="/admin/second-brain?capture=content-2">Another capture link</Link>
+        <SecondBrainPage />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(brainApi.context).toHaveBeenCalledWith('content-1'));
+    fireEvent.click(screen.getByRole('link', { name: 'Another capture link' }));
+    await waitFor(() => expect(brainApi.context).toHaveBeenCalledWith('content-2'));
+    pending['content-1'].reject(new Error('First capture failed.'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    pending['content-2'].resolve({ sourceId: 'ref_second', items: [], provenance: null });
+    expect(await screen.findByText('ref_second')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
 });
