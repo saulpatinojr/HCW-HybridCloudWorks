@@ -68,7 +68,11 @@ export const ENTRA_LAB_AGENT_APP_ROLE = 'LabAgent';
  * @param {{ verify(token: string): Promise<object> }} deps.verifier
  * @param {(agentId: string) => Promise<{oid: string, active: boolean, capabilities?: string[]}|null>} deps.lookupAgent
  *        Point-read of `lab_agents/{agentId}`. Must resolve null when absent.
- * @param {(entry: object) => void} [deps.auditDenial] Called on every denial.
+ * @param {(entry: object) => unknown} [deps.auditDenial] Called on every
+ *        denial, never awaited, so it must not reject: a promise it returns
+ *        is not watched, and a rejected one would be an unhandled rejection
+ *        in the Functions host (#1476). The production sink
+ *        (default-agent-guard.js) is writeDenialAudit, which never rejects.
  * @returns {{ requireAgent: Function }}
  */
 export function createAgentGuard({ verifier, lookupAgent, auditDenial }) {
@@ -79,7 +83,9 @@ export function createAgentGuard({ verifier, lookupAgent, auditDenial }) {
     try {
       auditDenial?.(entry);
     } catch {
-      // An audit sink failure must never turn a clean 403 into a 500.
+      // An audit sink failure must never turn a clean 403 into a 500. This
+      // only sees a synchronous throw; the sink itself contains its
+      // asynchronous failures (see the deps.auditDenial note above).
     }
   };
 
