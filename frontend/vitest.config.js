@@ -84,10 +84,15 @@ export default defineConfig({
       '**/ToDelete/**',
     ],
     // Only collected when asked for (`npm run test:coverage`, or
-    // `vitest run --coverage`), which is what the `frontend` job in
-    // .github/workflows/ci.yml runs since #1545; `npm test` stays plain for
-    // local runs. After a merge the `coverage (qlty)` job in the same
-    // workflow uploads coverage/lcov.info to Qlty (#568).
+    // `vitest run --coverage`); `npm test` stays plain for local runs. In
+    // .github/workflows/ci.yml the suite runs as two shards (#1545): each
+    // `frontend-unit` shard runs `npm run test:shard`, which keeps its half's
+    // coverage in a blob report under .vitest/blob/ and sets every threshold
+    // below to 0 for that run (a shard alone is always under them), and
+    // `frontend-unit-merge` runs `npm run test:merge`, which joins the blobs
+    // and checks the thresholds here on the whole suite. After a merge the
+    // `coverage (qlty)` job in the same workflow uploads coverage/lcov.info
+    // to Qlty (#568).
     // `projectRoot` is the repository root, so lcov.info names files as
     // `frontend/src/...` and one Qlty upload can carry frontend and functions
     // together without per-package prefix fixing.

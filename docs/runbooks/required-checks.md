@@ -23,7 +23,7 @@ jobs of workflows that are still separate.
 
 | Check | Workflow | What it covers |
 |---|---|---|
-| `gate` | `ci.yml` | Every CI job: the verify matrix (frontend, functions, scripts, vps-agent, edge; only the rows whose files changed exist, see "The verify matrix is built from the path filter" below), the browser suites, the lab-host lint, the lab-host role tests, the Coder template checks, the Python harness, the complexity delta and (after a merge) the coverage upload. `gate` waits for all of them and fails if any failed or was cancelled; a job skipped because the change did not touch its files is fine. |
+| `gate` | `ci.yml` | Every CI job: the verify matrix (frontend, functions, scripts, vps-agent, edge; only the rows whose files changed exist, see "The verify matrix is built from the path filter" below), the frontend unit suite's two shards (`frontend-unit`) and their merge (`frontend-unit-merge`), the browser suites' two shards (`e2e`), the lab-host lint, the lab-host role tests, the Coder template checks, the Python harness, the complexity delta and (after a merge) the coverage upload. `gate` waits for all of them and fails if any failed or was cancelled; a job skipped because the change did not touch its files is fine (a shard of a skipped suite, and the merge after skipped shards, count as skipped too). See "The two slow suites run as shards" below. |
 | `Validate root and documentation policy` | `repository-policy.yml` | Repository layout, the redaction gate, PowerShell syntax and the Pester tests. |
 | `dependency-review` | `dependency-review.yml` | New dependencies with known vulnerabilities or disallowed licences. |
 | `fmt, validate, tflint` | `iac-validate.yml` | Terraform formatting, validation and TFLint for `infra/` and `infra-lab/`. |
@@ -230,6 +230,51 @@ checks the matrix for a docs-only change (the scripts row alone), a frontend
 change and a push, against the same answer worked out in JavaScript
 (`verifyMatrix` in `scripts/lib/ci-filters.mjs`). `scripts/ci-filters.test.mjs`
 still checks that every row's filter lists every file its tests read.
+
+## The two slow suites run as shards (2026-11-04)
+
+A shard is one part of a test suite, run on its own runner at the same time
+as the other parts, so the suite finishes in a fraction of the time. The
+measurement that asked for it is on
+[#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545#issuecomment-6640623195):
+on the frontend-only
+[#1557](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1557)
+([run 41900589838](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/41900589838))
+the `frontend` row took 280 s, 192 s of it the vitest run with coverage and
+43 s the lint, and `e2e (playwright)` took 247 s, 195 s of it the browser
+suites, so the pull request reached all-green 302 s after the push against a
+target of under 240 s. No placeholder job was left; the two real suites set
+the time. Since the fourth pull request of #1545 each runs as two shards:
+
+- **The frontend unit suite** left the `frontend` row (which keeps lint,
+  format, route validation and the build) for the `frontend-unit` job, a
+  matrix of two shards. Each shard runs `npm run test:shard -- --shard=N/2`
+  (`frontend/package.json`): vitest splits the test files in two, the shard
+  collects coverage for its half and writes a blob report (one file holding
+  its results and its coverage) under `frontend/.vitest/blob/`, which the
+  job keeps as an artifact. The shard checks no coverage threshold: half a
+  suite is always under the ratchet (shard 1 of 2 measured 48% of lines
+  against the 75.5% threshold), and vitest checks a shard's coverage like
+  any other run's, so the script sets every threshold to 0 for that run.
+  The `frontend-unit-merge` job then downloads both blobs and runs
+  `npm run test:merge` (`vitest run --merge-reports --coverage`), which
+  reports as if the suite had run once and checks the thresholds in
+  `frontend/vitest.config.js` on the whole suite; after a merge to `main`
+  its `coverage/lcov.info` is what `coverage (qlty)` uploads. The merge job
+  has no `if:` of its own: when the shards were skipped it is skipped with
+  them, and when a shard failed it is skipped and `gate` fails on the shard.
+  Vitest's own description is on
+  [Improving Performance, "Sharding"](https://vitest.dev/guide/improving-performance.html#sharding)
+  and [Reporters, "Blob Reporter"](https://vitest.dev/guide/reporters.html#blob-reporter)
+  (read 2026-11-04).
+- **The browser suites** run as two Playwright shards of the `e2e` job
+  (`--shard=N/2`), each with its own build and preview server and its own
+  report kept on failure (`playwright-report-shard-N`). Nothing merges the
+  two reports: a failed shard's report names the test that failed.
+
+`scripts/ci-workflow-steps.test.mjs` holds the shape: two shards each, the
+shard and merge commands, the frontend row without a `test:` line, the
+artifact names and `gate` needing every job.
 
 ## Merge queue: evaluated, not adopted (2026-11-04)
 

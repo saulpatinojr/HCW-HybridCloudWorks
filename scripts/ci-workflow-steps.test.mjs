@@ -233,7 +233,9 @@ describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
   it('each `changes` answer is a job output that exactly one job reads in its `if:`, and the gate needs every other job (#1545)', () => {
     const changes = JOBS.find((job) => job.key === 'changes');
     const outputs = changes.lines.filter((line) => /^ {6}[a-z0-9]+: \$\{\{ steps\.[a-z0-9]+\.outputs\.relevant \}\}$/.test(line)).map((line) => line.trim().split(':')[0]);
-    expect(outputs).toEqual(['e2e', 'ansible', 'roletests', 'coder', 'harness']);
+    // `frontend` is the frontend row's own answer, read a second time by the
+    // `frontend-unit` job (the unit suite's shards, #1545's fourth pull request).
+    expect(outputs).toEqual(['e2e', 'ansible', 'roletests', 'coder', 'harness', 'frontend']);
     for (const output of outputs) {
       const ids = changes.steps.filter((step) => step.id === output);
       expect(ids, `output ${output} has no step with that id`).toHaveLength(1);
@@ -541,8 +543,10 @@ describe.skipIf(!TOOLS.ready)(`ci.yml change-detection steps: run with bash${SKI
       expect(['true', 'false']).toContain(relevant);
       const ran = stepsThatRun(entry.row, relevant);
       expect(ran.includes(GUARD_STEP)).toBe(entry.row.name === SCRIPTS_ROW);
-      // The row's own tests run exactly when its filter matched the file.
-      expect(ran.includes('Test')).toBe(relevant === 'true');
+      // The row's own tests run exactly when its filter matched the file and
+      // the row has a test line (the frontend row has none: its suite is the
+      // `frontend-unit` shards, #1545).
+      expect(ran.includes('Test')).toBe(relevant === 'true' && entry.row.test !== undefined);
     });
   });
 
@@ -592,7 +596,8 @@ describe.skipIf(!TOOLS.ready)(`ci.yml change-detection steps: run with bash${SKI
     it.skipIf(!toolsReady)('a change to one frontend test builds the rows whose filters match it, in their written order, and the scripts row', () => {
       const { matrix } = buildMatrix('frontend-test-only');
       expect(matrix).toEqual(verifyMatrix(['frontend/src/x.test.jsx'], { rows: ROWS }));
-      expect(matrix.include[0]).toMatchObject({ name: 'frontend', dir: 'frontend', relevant: 'true', test: 'npm run test:coverage' });
+      expect(matrix.include[0]).toMatchObject({ name: 'frontend', dir: 'frontend', relevant: 'true', build: 'npm run build' });
+      expect(matrix.include[0].test, 'the frontend unit suite runs in the frontend-unit shards, not in the row').toBeUndefined();
       expect(matrix.include.at(-1)).toMatchObject({ name: SCRIPTS_ROW, relevant: 'false' });
       for (const row of matrix.include) expect(Object.keys(row)).not.toContain('id');
     });
@@ -671,13 +676,108 @@ describe('the verify matrix holds only the rows whose files changed (#1545)', ()
       expect(Object.keys(row)).not.toContain('filter');
     }
     expect(include.find((row) => row.name === 'functions (azure)')['node-version']).toBe('24');
-    expect(include.find((row) => row.name === 'frontend')).toMatchObject({ lint: 'npm run lint', format: 'npm run format:check', validate: 'npm run validate:routes', build: 'npm run build', test: 'npm run test:coverage' });
+    const frontend = include.find((row) => row.name === 'frontend');
+    expect(frontend).toMatchObject({ lint: 'npm run lint', format: 'npm run format:check', validate: 'npm run validate:routes', build: 'npm run build' });
+    // Since #1545's fourth pull request the unit suite is the two shards of
+    // the `frontend-unit` job (tested below), so the row has no test line and
+    // its Test step is skipped; a `test:` here would run the suite a third time.
+    expect(frontend.test).toBeUndefined();
+    expect(include.find((row) => row.name === 'functions (azure)').test).toBe('npm run test:coverage');
   });
 
   it('the verify steps read matrix.relevant, and no step reads the detect step that is gone', () => {
     const conditions = VERIFY.steps.map((step) => step.if ?? '');
     expect(conditions.filter((condition) => condition.includes("matrix.relevant == 'true'")).length).toBeGreaterThanOrEqual(7);
     expect(conditions.some((condition) => /steps\.changes/.test(condition))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1 (continued). The two suites that set a frontend pull request's time run
+// as two shards each (#1545, the fourth pull request).
+// ---------------------------------------------------------------------------
+// On the frontend-only #1557 the `frontend` row took 280 s (its vitest run
+// 192 s) and `e2e (playwright)` 247 s (the browser suites 195 s), 302 s from
+// push to green against a target of 240 s. Each suite now runs as two shards
+// on two runners. The unit shards write blob reports, which one merge job
+// joins so the coverage thresholds (the ratchet of #1549) are checked once,
+// on the whole suite: a shard alone would always be under them. The shape
+// is held here so a later edit cannot quietly put the suite back in the row,
+// drop a shard, or lose the merge the ratchet depends on.
+describe('the frontend unit suite and the browser suites run as two shards each (#1545)', () => {
+  const unit = JOBS.find((job) => job.key === 'frontend-unit');
+  const merge = JOBS.find((job) => job.key === 'frontend-unit-merge');
+  const e2e = JOBS.find((job) => job.key === 'e2e');
+  const coverage = JOBS.find((job) => job.key === 'coverage');
+  const gateNeeds = JOBS.find((job) => job.key === 'gate').lines.find((line) => /^ {4}needs:/.test(line));
+  /** The job's matrix `shard:` line, as written. */
+  const shards = (job) => job.lines.find((line) => /^ {8}shard:/.test(line))?.trim();
+
+  it('the unit shards run on the frontend row answer, two of them, each writing a blob with coverage and keeping it', () => {
+    expect(unit, 'ci.yml has no frontend-unit job').toBeDefined();
+    expect(unit.lines).toContain('    needs: changes');
+    expect(unit.lines).toContain("    if: needs.changes.outputs.frontend == 'true'");
+    expect(shards(unit)).toBe('shard: [1, 2]');
+    expect(unit.lines).toContain('      fail-fast: false');
+    const test = unit.steps.find((step) => step.run?.includes('test:shard'));
+    expect(test.env.SHARD).toBe('${{ matrix.shard }}');
+    expect(test.run).toBe('npm run test:shard -- --shard="${SHARD}/2"');
+    // The script holds the flags: coverage into a blob, and every threshold
+    // off for the shard, because vitest checks a shard's coverage like any
+    // other run's and half a suite is always under the ratchet.
+    const scripts = JSON.parse(readFileSync(join(REPO, 'frontend', 'package.json'), 'utf8')).scripts;
+    expect(scripts['test:shard']).toBe(
+      'vitest run --coverage --reporter=blob --coverage.thresholds.autoUpdate=false --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0 --testTimeout=30000 --hookTimeout=60000'
+    );
+    expect(scripts['test:merge']).toBe('vitest run --merge-reports --coverage');
+    const keep = unit.steps.find((step) => step.name === 'Keep the blob report for the merge');
+    expect(keep.lines).toContain('          name: vitest-blob-${{ matrix.shard }}');
+    expect(keep.lines).toContain('          path: frontend/.vitest/blob/');
+    expect(keep.lines).toContain('          if-no-files-found: error');
+    // The row itself no longer runs the suite: the frontend-only rule above
+    // holds the row's `test:` line to undefined.
+    expect(ROWS.find((row) => row.name === 'frontend').test).toBeUndefined();
+  });
+
+  it('one merge job joins the blobs with coverage, after the shards and with no `if:` of its own, and keeps the merged lcov after a merge to main', () => {
+    expect(merge, 'ci.yml has no frontend-unit-merge job').toBeDefined();
+    expect(merge.lines).toContain('    needs: frontend-unit');
+    // No `if:`: GitHub skips the job when the shards were skipped (no
+    // frontend change) or failed, and `gate` reads the shards' own result.
+    expect(merge.lines.filter((line) => /^ {4}if:/.test(line))).toEqual([]);
+    const download = merge.steps.find((step) => /^actions\/download-artifact@/.test(step.uses ?? ''));
+    expect(download.lines).toContain('          pattern: vitest-blob-*');
+    expect(download.lines).toContain('          merge-multiple: true');
+    expect(download.lines).toContain('          path: frontend/.vitest/blob');
+    const run = merge.steps.find((step) => step.run?.includes('test:merge'));
+    expect(run.run).toBe('npm run test:merge');
+    expect(merge.steps.indexOf(download)).toBeLessThan(merge.steps.indexOf(run));
+    const keep = merge.steps.find((step) => step.name === 'Keep the coverage report for the Qlty upload');
+    expect(keep.if).toBe("github.event_name == 'push'");
+    expect(keep.lines).toContain('          name: coverage-frontend');
+    expect(keep.lines).toContain('          path: frontend/coverage/lcov.info');
+    // The verify matrix keeps only the functions report now; the coverage
+    // job downloads both by the same `coverage-*` pattern and needs the merge.
+    const verifyKeep = VERIFY.steps.find((step) => step.name === 'Keep the coverage report for the Qlty upload');
+    expect(verifyKeep.if).toBe("github.event_name == 'push' && matrix.name == 'functions (azure)'");
+    expect(coverage.lines).toContain('    needs: [verify, frontend-unit-merge]');
+    expect(coverage.steps.find((step) => /^actions\/download-artifact@/.test(step.uses ?? '')).lines).toContain('          pattern: coverage-*');
+  });
+
+  it('the browser suites run as two Playwright shards on the same `e2e` answer, each keeping its own report on failure', () => {
+    expect(e2e.lines).toContain("    if: needs.changes.outputs.e2e == 'true'");
+    expect(shards(e2e)).toBe('shard: [1, 2]');
+    expect(e2e.lines).toContain('      fail-fast: false');
+    const run = e2e.steps.find((step) => step.name === 'Run the browser suites');
+    expect(run.env.SHARD).toBe('${{ matrix.shard }}');
+    expect(run.run).toMatch(/^npx playwright test --shard="\$\{SHARD\}\/2" --project=chromium --project=mobile-chrome /);
+    const report = e2e.steps.find((step) => step.name === 'Upload the report on failure');
+    expect(report.if).toBe('failure()');
+    expect(report.lines).toContain('          name: playwright-report-shard-${{ matrix.shard }}');
+  });
+
+  it('the gate needs both unit jobs (a skipped shard counts as skipped, a failed one fails the gate)', () => {
+    for (const key of ['frontend-unit', 'frontend-unit-merge', 'e2e']) expect(gateNeeds).toMatch(new RegExp(`[\\[, ]${key}[,\\]]`));
   });
 });
 
