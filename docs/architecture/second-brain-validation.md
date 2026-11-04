@@ -136,7 +136,7 @@ and [pricing](https://learn.microsoft.com/azure/cosmos-db/continuous-backup-rest
 | Step | Evidence |
 | --- | --- |
 | Baseline (production, read-only) | Azure Monitor hourly maximum for 20:00 to 21:00 UTC: `brain_records` 84 documents, 448 KiB; `brain_search` 2,913 documents, 3.2 MiB. Container events show `brain_records` and `brain_search` created 2026-10-26 08:33 UTC, both on `/ownerId` |
-| Restore point | Latest restorable timestamp for `brain_records` read at 20:57 UTC: 2026-11-04T20:58:05Z; the restore used that timestamp |
+| Restore point | Latest restorable timestamp for `brain_records`, read with `az cosmosdb sql retrieve-latest-backup-time` immediately before the restore command (the read and the command both fell in the 20:58 UTC minute): 2026-11-04T20:58:05Z; the restore used that timestamp |
 | Target | `cosmos-site-sbx-cus` in `rg-db-site-sbx-cus` (Central US, serverless, local authentication disabled, `createMode: Restore`, `restoreMode: PointInTime`, databases to restore `hcw` / `brain_records` only, TTL disabled) |
 | Restore duration | Issued 20:58:05 UTC, `provisioningState: Succeeded` at 21:09:02 UTC (about 11 minutes); the firewall update that followed took about 20 minutes |
 | Restored container | `brain_records` on `/ownerId`, 84 documents in one owner partition: 6 notes, 3 conflict records, 24 revisions, 24 events, 24 receipts, 1 state, 1 sync-status, 1 indexing job. 84 equals the production baseline |
