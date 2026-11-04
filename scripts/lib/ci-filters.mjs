@@ -9,6 +9,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findFileReads, listImports } from './js-file-reads.mjs';
+import { parseJobs, parseMatrixRows } from './workflow-text.mjs';
 
 const DEFAULT_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -366,18 +367,56 @@ export function deriveCrossRootReads(compDir, repoRoot = DEFAULT_REPO_ROOT, { re
   return { files, dirs, unresolved, unusedReviewed: reviewed.filter((entry) => insideHere(entry) && !usedReviewed.has(entry)), usedReviewed, origins };
 }
 
-/** Parse matrix filters from .github/workflows/ci.yml */
-export function parseCiFilters(
-  ciYmlContent = readFileSync(join(DEFAULT_REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8')
-) {
-  const filterRegex = /- name:\s*([^\n]+)\s+dir:\s*([^\n]+)(?:[\s\S]*?)filter:\s*'([^']+)'/g;
+const readCiYml = () => readFileSync(join(DEFAULT_REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8').replace(/\r\n/g, '\n');
+
+/**
+ * The rows of the verify job's matrix, as the `changes` job holds them
+ * (#1545, the third pull request): the `ROWS` list of its "Build the verify
+ * matrix" step (name, id, dir, node-version, the commands, `always`), each
+ * joined to the filter of the detect step its `id` names. A row whose step
+ * is missing, or a step with no FILTER, throws: a quiet read would let a row
+ * fall out of every check that reads this.
+ */
+export function verifyRows(ciYmlContent = readCiYml()) {
+  const changes = parseJobs(ciYmlContent).find((job) => job.key === 'changes');
+  if (!changes) throw new Error('ci.yml has no changes job');
+  const build = changes.steps.find((step) => step.name === 'Build the verify matrix');
+  if (!build?.env.ROWS) throw new Error('the changes job has no "Build the verify matrix" step with a ROWS block');
+  const rows = parseMatrixRows(build.env.ROWS.split('\n'), 0);
+  if (rows.length === 0) throw new Error('the ROWS block holds no rows');
+  return rows.map((row) => {
+    const step = changes.steps.find((candidate) => candidate.id === row.id);
+    if (!step?.env.FILTER) throw new Error(`verify row ${row.name}: no detect step with id ${row.id} and a FILTER`);
+    return { ...row, always: row.always === 'true', filter: step.env.FILTER, regex: new RegExp(step.env.FILTER), step };
+  });
+}
+
+/** The verify rows' filters by package folder: { name, filter, regex }, as the guard test reads them. */
+export function parseCiFilters(ciYmlContent = readCiYml()) {
   const filters = new Map();
-  let m;
-  while ((m = filterRegex.exec(ciYmlContent)) !== null) {
-    const name = m[1].trim();
-    const dir = m[2].trim();
-    const filter = m[3].trim();
-    filters.set(dir, { name, filter, regex: new RegExp(filter) });
-  }
+  for (const { name, dir, filter, regex } of verifyRows(ciYmlContent)) filters.set(dir, { name, filter, regex });
   return filters;
+}
+
+/** The file every detect step adds to its filter: a change to ci.yml runs every verify row. */
+const CI_YML = '.github/workflows/ci.yml';
+
+/**
+ * What the "Build the verify matrix" step produces for a pull request that
+ * changed `changedFiles` (or for any other event, where every row runs),
+ * worked out in JavaScript from the same rows and filters: the matrix the
+ * verify job reads, `{ include: [...] }`, with the rows in their written
+ * order, each carrying `relevant` as a string the way a step output is. The
+ * `id` and `always` keys are the build step's own and are left out, as it
+ * leaves them out.
+ */
+export function verifyMatrix(changedFiles, { event = 'pull_request', rows = verifyRows() } = {}) {
+  const include = [];
+  const buildStepOwn = new Set(['id', 'always', 'filter', 'regex', 'step']);
+  for (const row of rows) {
+    const matrixRow = Object.fromEntries(Object.entries(row).filter(([key]) => !buildStepOwn.has(key)));
+    const relevant = event !== 'pull_request' || changedFiles.some((file) => file === CI_YML || row.regex.test(file));
+    if (relevant || row.always) include.push({ ...matrixRow, relevant: String(relevant) });
+  }
+  return { include };
 }
