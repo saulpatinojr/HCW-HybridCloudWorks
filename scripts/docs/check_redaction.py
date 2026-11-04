@@ -55,6 +55,7 @@ SCAN_GLOBS: list[tuple[Path, str]] = [
     (ROOT / "infra", "**/*.tf"),
     (ROOT / "infra", "**/*.tfvars*"),
     (ROOT / ".github" / "workflows", "*.yml"),
+    (ROOT / ".github" / "workflows", "*.yaml"),
     (ROOT / "scripts", "*.ps1"),
     (ROOT / "scripts", "*.sh"),
 ]

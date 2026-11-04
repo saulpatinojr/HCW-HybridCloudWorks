@@ -90,9 +90,11 @@ scripts/bootstrap-roles.sh
 Success looks like one "Created successfully" line per role and then a
 read-back table listing every `HCW ...` role with real subscription ids in
 its scopes. If the script stops saying a subscription id "is the repository
-placeholder" or that it cannot see `sub-plat-mgmt-prod-cus`, sign in again
-with an account that holds both subscriptions, or pass the ids with
-`-SubscriptionId` and `-ManagementSubscriptionId`.
+placeholder" or that it cannot see exactly one `sub-plat-mgmt-prod-cus`,
+sign in again with an account that holds both subscriptions, or pass the
+ids yourself: in PowerShell with `-SubscriptionId` and
+`-ManagementSubscriptionId`; in bash as the first and second arguments,
+`scripts/bootstrap-roles.sh "<workload id>" "<management id>"`.
 
 **Created roles:**
 1. `HCW Key Vault Secret Writer` (`infra/roles/keyvault-secret-writer.json`)

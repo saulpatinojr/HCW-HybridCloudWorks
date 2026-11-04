@@ -24,9 +24,11 @@
   and the management subscription from -ManagementSubscriptionId or
   `az account list`, by its name sub-plat-mgmt-prod-cus.
 
-  Success looks like one "Created" or "Updated" line per role and a final
-  read-back table listing every HCW role with the real scopes; that table is
-  the evidence for a ticket's "roles unchanged afterwards" line.
+  Success looks like one "Created" or "Updated" line per role, each followed
+  by a read-back of the role from Azure at its first assignable scope showing
+  the real scopes, and a final table of all of them; the script fails if a
+  read-back does not match what it sent. That table is the evidence for a
+  ticket's "roles unchanged afterwards" line.
 
 .PARAMETER SubscriptionId
   The workload (site) subscription id. Defaults to the subscription az is
@@ -126,6 +128,8 @@ $roleConfigs = @(
   }
 )
 
+$readBack = [System.Collections.Generic.List[object]]::new()
+
 foreach ($config in $roleConfigs) {
   if (-not (Test-Path $config.File)) {
     Write-Error "Role definition template not found: $($config.File)"
@@ -145,7 +149,10 @@ foreach ($config in $roleConfigs) {
     Write-Host "`nProcessing role '$roleName'..."
     Write-Host "  AssignableScopes: $($config.Scopes -join ', ')"
 
-    $existingRoleId = (az role definition list --name "$roleName" --scope "/subscriptions/$SubscriptionId" --query "[0].id" -o tsv 2>$null)
+    # Looked up at the role's own first scope: a custom role assignable only at
+    # a resource group is not reliably returned by a listing at the subscription.
+    $firstScope = $config.Scopes[0]
+    $existingRoleId = (az role definition list --name "$roleName" --scope "$firstScope" --query "[0].id" -o tsv 2>$null)
 
     if ($existingRoleId) {
       Write-Host "  Updating existing role definition..."
@@ -167,12 +174,25 @@ foreach ($config in $roleConfigs) {
       Remove-Item -Force $tempFile
     }
   }
+
+  # Read the role back from Azure at its first scope and check that the
+  # scopes Azure holds are exactly the ones sent. az is a native command, so
+  # its exit code is checked by hand; a role that cannot be read back is
+  # never reported as bootstrapped.
+  $actualJson = az role definition list --name "$roleName" --scope "$firstScope" --query "[0].assignableScopes" -o json
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to read role definition '$roleName' back from Azure (exit code $LASTEXITCODE)."
+  }
+  $actual = @(($actualJson | ConvertFrom-Json) | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object)
+  $expected = @($config.Scopes | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object)
+  if (($actual -join "`n") -ne ($expected -join "`n")) {
+    throw "Read-back of '$roleName' differs from what was sent.`n  sent:  $($expected -join ', ')`n  Azure: $($actual -join ', ')"
+  }
+  Write-Host "  Read back from Azure: $roleName -> $($config.Scopes -join ', ')"
+  $readBack.Add([pscustomobject]@{ Role = $roleName; Scopes = ($config.Scopes -join ', ') })
 }
 
-Write-Host "`nRead-back of every HCW custom role at /subscriptions/$SubscriptionId (this table is the evidence):"
-$readBack = az role definition list --custom-role-only true --scope "/subscriptions/$SubscriptionId" -o json | ConvertFrom-Json
-$readBack | Where-Object { $_.roleName -like 'HCW *' } | ForEach-Object {
-  [pscustomobject]@{ Role = $_.roleName; Scopes = ($_.assignableScopes -join ', ') }
-} | Format-Table -AutoSize -Wrap | Out-String | Write-Host
+Write-Host "`nRead-back of every role, as Azure holds it (this table is the evidence):"
+$readBack | Format-Table -AutoSize -Wrap | Out-String | Write-Host
 
-Write-Host "All $($roleConfigs.Count) custom role definitions bootstrapped."
+Write-Host "All $($readBack.Count) custom role definitions bootstrapped and read back."

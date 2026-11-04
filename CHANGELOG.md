@@ -997,8 +997,11 @@ This project has not cut a tagged release; entries are grouped under
   for non-placeholder GUIDs, with the public constants those files
   legitimately hold (four Microsoft built-in role and policy ids, one
   Cloudflare DNS ownership token, the two synthetic browser-test ids) on
-  its allow-list with their reasons. `scripts/docs-redaction.test.mjs`
-  fails on a role file with a real-looking id and on each new scan path.
+  its allow-list with their reasons, and `repository-policy.yml` runs it on
+  every pull request (the docs workflow only runs when a docs path
+  changes). `scripts/docs-redaction.test.mjs` fails on a role file with a
+  real-looking id, on each new scan path, and if that step leaves the
+  policy workflow.
 
 ### Fixed
 

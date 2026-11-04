@@ -32,6 +32,16 @@ jobs:
         shell: pwsh
         run: ./scripts/validate-repository-structure.ps1
 
+      # The redaction gate (no real tenant, subscription or application id in
+      # a tracked file) reads docs/, infra/, the workflows and the operator
+      # scripts (#1540). docs-pages.yml runs it too, but only when a docs path
+      # changes; this run is on every pull request, so a real id pasted into
+      # infra/ or a workflow is caught on the pull request that adds it. The
+      # gate is Python standard library only, so the runner's python3 is
+      # enough. docs-redaction.test.mjs keeps this step here.
+      - name: Redaction gate over the whole tree
+        run: python3 -I scripts/docs/check_redaction.py
+
       # TODO.md's handling rule — "completed items are removed from this file
       # after the corresponding regular entry is present in CHANGELOG.md" —
       # was prose until 2026-09-02, which means it held exactly as long as

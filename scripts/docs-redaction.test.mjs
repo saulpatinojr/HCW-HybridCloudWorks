@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -88,6 +88,7 @@ describe("redaction outside docs/ (#1540)", () => {
     ["infra/prod.tfvars", `tenant_id = "${REAL_LOOKING}"\n`, "infra/prod.tfvars:1"],
     ["infra/terraform.tfvars.example", `tenant_id = "${REAL_LOOKING}"\n`, "infra/terraform.tfvars.example:1"],
     [".github/workflows/deploy.yml", `env:\n  AZURE_CLIENT_ID: ${REAL_LOOKING}\n`, ".github/workflows/deploy.yml:2"],
+    [".github/workflows/deploy.yaml", `env:\n  AZURE_CLIENT_ID: ${REAL_LOOKING}\n`, ".github/workflows/deploy.yaml:2"],
     ["scripts/bootstrap.ps1", `$SubscriptionId = '${REAL_LOOKING}'\n`, "scripts/bootstrap.ps1:1"],
     ["scripts/bootstrap.sh", `SUBSCRIPTION_ID="${REAL_LOOKING}"\n`, "scripts/bootstrap.sh:1"],
   ])("rejects a real-looking GUID in %s", (rel, contents, where) => {
@@ -122,6 +123,23 @@ describe("redaction outside docs/ (#1540)", () => {
       },
     });
     expect(result.status, result.stdout).toBe(0);
+  });
+
+  it("runs on every pull request from repository-policy.yml, not only when a docs path changes", () => {
+    // docs-pages.yml is path-filtered to docs/, so a real id pasted into
+    // infra/ or a workflow would never meet the gate there. The policy
+    // workflow has no path filter; the step must stay in it, unconditional.
+    const workflow = readFileSync(
+      resolve(import.meta.dirname, "..", ".github", "workflows", "repository-policy.yml"),
+      "utf8",
+    );
+    expect(workflow).toMatch(/^on:\n  pull_request:\n/m);
+    const step = workflow.match(
+      /- name: Redaction gate over the whole tree\n((?: {8}.*\n)+)/,
+    );
+    expect(step, "the step is gone from repository-policy.yml").not.toBeNull();
+    expect(step[1]).toContain("run: python3 -I scripts/docs/check_redaction.py");
+    expect(step[1]).not.toContain("if:");
   });
 
   it("still applies the local-path rule to documentation", () => {
