@@ -137,6 +137,17 @@ describe('a 401 that says why (#517)', () => {
     expect(screen.queryByText('Access Denied')).toBeNull();
   });
 
+  // A retry cannot help either: the same token comes back with the same
+  // refusal, so the card offers no button at all (#517), only sign out.
+  it('offers no retry button either: the same token would be refused again', async () => {
+    fails(401, 'Authentication required', { error: 'insufficient_scope' });
+    renderGuard();
+
+    await screen.findByText('Admin access is misconfigured');
+    expect(screen.queryByRole('button', { name: /try again/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeTruthy();
+  });
+
   it('shows what the API said, because someone has to go and change it', async () => {
     fails(401, 'Authentication required', {
       error: 'insufficient_scope',
