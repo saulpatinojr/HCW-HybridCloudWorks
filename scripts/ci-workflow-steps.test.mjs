@@ -60,7 +60,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COMPONENTS } from './lib/ci-filters.mjs';
-// Jobs, steps and matrix rows are cut out of the workflow text by their indentation (shared with codeql-iac-workflow-steps.test.mjs).
+// Jobs, steps and matrix rows are cut out of the workflow text by their indentation (shared with iac-workflow-steps.test.mjs).
 import { findBashTools, GIT_TEST_CONFIG, parseJobs, parseMatrixRows } from './lib/workflow-text.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -79,15 +79,41 @@ const DETECT_STEPS = JOBS.flatMap((job) => job.steps.filter((step) => step.run?.
 
 /**
  * Where a path that matches each non-matrix step's real filter lives, by the
- * step's name (the four live in the `changes` job since #1545). The matrix
+ * step's name (the five live in the `changes` job since #1545). The matrix
  * step takes one from the row's folder. A step this table does not know
  * fails the test that needs it, so a new one is noticed.
  */
 const MATCHING_PATH = {
   'Detect frontend changes for the browser suites': 'frontend/e2e/zz-probe.spec.js',
   'Detect lab-host changes': 'lab-host/ansible/site.yml',
+  'Detect lab-host role changes': 'lab-host/ansible/roles/hardening/tasks/ufw.yml',
   'Detect lab-host/coder changes': 'lab-host/coder/compose.yaml',
   'Detect harness changes': 'hooks/claude_event.py',
+};
+
+/**
+ * Which `changes` steps count a change to ci.yml alone as a reason to run
+ * their job, by step id (the step's WORKFLOW_SELF_TRIGGER setting; #1545,
+ * the owner's question of 2026-11-04). The cheap, lint-class jobs keep it:
+ * a workflow edit that broke their install or run lines should turn red on
+ * the pull request that made it, and they cost about a minute. The expensive
+ * jobs drop it: the browser suites (19 minutes, mostly installing Chromium),
+ * the role tests (nine minutes, 195 s of them one ufw test) and the Coder
+ * template checks (two minutes of Terraform) read no line of ci.yml that an
+ * edit could break, and ran in full on every workflow-only pull request
+ * (#1549 paid the whole lab-host suite for a change that moved no lab-host
+ * file). A step missing from this table, or one whose setting differs, fails
+ * the test below, so moving a job between the two lists is a deliberate edit
+ * here as well as in ci.yml. The matrix step has no setting: every row keeps
+ * the self-trigger, because the scripts row reads the workflow files anyway
+ * and the others finish in seconds when their files did not change.
+ */
+const SELF_TRIGGER = {
+  e2e: 'false',
+  ansible: 'true',
+  roletests: 'false',
+  coder: 'false',
+  harness: 'true',
 };
 
 /** One entry per time a detection step runs: the matrix step once per row. */
@@ -141,18 +167,19 @@ function stepsThatRun(row, relevant) {
 // 1. What the change-detection steps are made of, read as text.
 // ---------------------------------------------------------------------------
 describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
-  it('finds the matrix rows and the five change-detection steps (a quiet parse would make every test below pass for nothing)', () => {
+  it('finds the matrix rows and the six change-detection steps (a quiet parse would make every test below pass for nothing)', () => {
     expect(ROWS.map((row) => row.dir)).toEqual(COMPONENTS.map((component) => component.dir));
-    // The matrix row's step stays in the verify job; the other four moved to
+    // The matrix row's step stays in the verify job; the other five live in
     // the `changes` job, whose outputs the jobs with an `if:` read (#1545).
     expect(DETECT_STEPS.map(({ job, step }) => `${job}: ${step.name}`)).toEqual([
       'changes: Detect frontend changes for the browser suites',
       'changes: Detect lab-host changes',
+      'changes: Detect lab-host role changes',
       'changes: Detect lab-host/coder changes',
       'changes: Detect harness changes',
       'verify: Detect component changes',
     ]);
-    expect(ENTRIES).toHaveLength(ROWS.length + 4);
+    expect(ENTRIES).toHaveLength(ROWS.length + 5);
   });
 
   // The point of the `changes` job: a job that is not needed is skipped
@@ -162,7 +189,7 @@ describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
   it('each `changes` answer is a job output that exactly one job reads in its `if:`, and the gate needs every other job (#1545)', () => {
     const changes = JOBS.find((job) => job.key === 'changes');
     const outputs = changes.lines.filter((line) => /^ {6}[a-z0-9]+: \$\{\{ steps\.[a-z0-9]+\.outputs\.relevant \}\}$/.test(line)).map((line) => line.trim().split(':')[0]);
-    expect(outputs).toEqual(['e2e', 'ansible', 'coder', 'harness']);
+    expect(outputs).toEqual(['e2e', 'ansible', 'roletests', 'coder', 'harness']);
     for (const output of outputs) {
       const ids = changes.steps.filter((step) => step.id === output);
       expect(ids, `output ${output} has no step with that id`).toHaveLength(1);
@@ -178,6 +205,40 @@ describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
     expect(gate.lines).toContain('    if: ${{ !cancelled() }}');
     expect(gate.steps[0].env.RESULTS).toBe('${{ toJSON(needs) }}');
     expect(gate.steps[0].run).toMatch(/"failure" or \.value\.result == "cancelled"/);
+  });
+
+  // Which jobs a workflow-only pull request runs is a decision, pinned here
+  // (see SELF_TRIGGER), and the lint job and the role tests job are two
+  // jobs with two filters: the lint's is lab-host/ whole, the tests' is the
+  // roles, group_vars and inventory plus the files outside lab-host/ansible/
+  // that the tests read (#1545, the second pull request).
+  it('every `changes` step says whether a change to ci.yml alone counts, as SELF_TRIGGER pins it, and the matrix step does not', () => {
+    const changes = JOBS.find((job) => job.key === 'changes');
+    const found = Object.fromEntries(changes.steps.filter((step) => step.id).map((step) => [step.id, step.env.WORKFLOW_SELF_TRIGGER]));
+    expect(found).toEqual(SELF_TRIGGER);
+    const matrixStep = VERIFY.steps.find((step) => step.name === 'Detect component changes');
+    expect(matrixStep.env.WORKFLOW_SELF_TRIGGER, 'the matrix step keeps the self-trigger for every row').toBeUndefined();
+    for (const { step } of DETECT_STEPS) {
+      // The switch is read with a default of true, so an unset value fails toward running.
+      if (step.env.WORKFLOW_SELF_TRIGGER !== undefined) expect(step.run).toContain('if [ "${WORKFLOW_SELF_TRIGGER:-true}" != "true" ]; then');
+    }
+    const lint = changes.steps.find((step) => step.id === 'ansible');
+    const tests = changes.steps.find((step) => step.id === 'roletests');
+    expect(lint.env.FILTER).toBe('^lab-host/');
+    expect(tests.env.FILTER).toMatch(/^\^lab-host\/ansible\/\(roles\|group_vars\|inventory\)\//);
+    expect(JOBS.find((job) => job.key === 'ansible-lint').steps.map((step) => step.name)).toEqual([
+      'Checkout',
+      'Set up Python',
+      'Install ansible-lint and ansible-core',
+      'Install the pinned collections',
+      'ansible-lint (production profile)',
+      'Playbook syntax check',
+      'Argument spec defaults are set',
+    ]);
+    const roleTests = JOBS.find((job) => job.key === 'role-tests');
+    expect(roleTests.lines).toContain('    name: lab-host role tests');
+    expect(roleTests.steps.filter((step) => /roles\/[a-z_]+\/tests\//.test(step.run ?? '')).length).toBeGreaterThan(20);
+    expect(JOBS.find((job) => job.key === 'ansible-lint').steps.some((step) => /roles\/[a-z_]+\/tests\//.test(step.run ?? ''))).toBe(false);
   });
 
   it('no step in ci.yml decides with `if grep`, because grep answering 2 would read as "no"', () => {
@@ -292,6 +353,8 @@ describe.skipIf(!TOOLS.ready)(`ci.yml change-detection steps: run with bash${SKI
     // One commit per path, so a test learns whether the step's OWN filter matched its OWN path.
     ENTRIES.forEach((entry, i) => {
       if (entry.path) commit(`probe-${i}`, [entry.path]);
+      // ci.yml beside the matching file: the self-trigger switch must take out ci.yml alone, never the file.
+      if (entry.path) commit(`workflow-plus-${i}`, ['.github/workflows/ci.yml', entry.path]);
     });
     commit('unrelated', ['notes/zz-unrelated.txt']);
     commit('workflow', ['.github/workflows/ci.yml']);
@@ -306,10 +369,12 @@ describe.skipIf(!TOOLS.ready)(`ci.yml change-detection steps: run with bash${SKI
   function run(entry, { tag, filter = entry.filter, base = baseSha, event = 'pull_request' }) {
     git('checkout', '-q', '--detach', tag);
     const output = `${outputs}/out-${(counter += 1)}.txt`;
+    // The step's own WORKFLOW_SELF_TRIGGER, when it has one (the matrix step has none and the shell defaults to true).
+    const selfTrigger = entry.step.env.WORKFLOW_SELF_TRIGGER === undefined ? {} : { WORKFLOW_SELF_TRIGGER: entry.step.env.WORKFLOW_SELF_TRIGGER };
     const result = spawnSync('bash', ['-e', '-c', entry.step.run], {
       cwd: repo,
       encoding: 'utf8',
-      env: cleanEnv({ GITHUB_EVENT_NAME: event, GITHUB_JOB: entry.job, GITHUB_OUTPUT: output, BASE_SHA: base, FILTER: filter }),
+      env: cleanEnv({ GITHUB_EVENT_NAME: event, GITHUB_JOB: entry.job, GITHUB_OUTPUT: output, BASE_SHA: base, FILTER: filter, ...selfTrigger }),
     });
     return { status: result.status, log: `${result.stdout}${result.stderr}`, written: existsSync(output) ? readFileSync(output, 'utf8') : '' };
   }
@@ -351,8 +416,20 @@ describe.skipIf(!TOOLS.ready)(`ci.yml change-detection steps: run with bash${SKI
   });
 
   describe('everything else the steps did before is unchanged', () => {
-    it.each(byLabel(DISTINCT))('%s: ci.yml itself is always relevant, whatever the filter says', (_label, entry) => {
+    // A change to ci.yml alone: relevant for the steps that keep the
+    // self-trigger (and for the matrix step, which has no switch), not for
+    // the ones that drop it. The pinned list is SELF_TRIGGER above.
+    it.each(byLabel(DISTINCT))('%s: ci.yml alone is relevant exactly when the step keeps the self-trigger, whatever the filter says', (_label, entry) => {
+      const keeps = (entry.step.env.WORKFLOW_SELF_TRIGGER ?? 'true') === 'true';
       const result = run(entry, { tag: 'workflow', filter: '^zz-nothing-matches-this$' });
+      expect(result.status, result.log).toBe(0);
+      expect(result.written).toBe(`relevant=${keeps}\n`);
+    });
+
+    // The switch takes ci.yml out of the list and nothing else: ci.yml beside
+    // a file the filter matches is still relevant for every step.
+    it.each(ENTRIES.filter((entry) => entry.path).map((entry) => [entry.label, entry]))('%s: ci.yml beside a matching file is relevant, switch or no switch', (_label, entry) => {
+      const result = run(entry, { tag: `workflow-plus-${ENTRIES.indexOf(entry)}` });
       expect(result.status, result.log).toBe(0);
       expect(result.written).toBe('relevant=true\n');
     });
@@ -489,6 +566,7 @@ const LEFT_OUT = new Map([
   ['addon-image-scout.yml / scout', 'Never checks out this repository: it only reads the published images. It has its own limit anyway (15 minutes).'],
   ['ci.yml / coverage', 'Checks out for the repository metadata the upload records, then only downloads artifacts and runs the Qlty action; no shell step runs code from this repository. It has its own limit anyway (10 minutes).'],
   ['ci.yml / gate', 'Never checks out: it only reads the results of the jobs it needs from the `needs` context. It has its own limit anyway (5 minutes).'],
+  ['codeql.yml / analyze', 'Checks out, then runs only the CodeQL init and analyze actions (no detect step since it left the pull-request path, #1545); no shell step runs code from this repository. It has its own limit anyway (20 minutes).'],
   ['dependency-review.yml / dependency-review', 'Its only step after the checkout is the dependency-review action; there is no shell step that runs code from this repository.'],
   ['docs-pages.yml / deploy', 'Never checks out the repository: it hands the site the build job made to the Pages deploy action, with no shell step.'],
 ]);

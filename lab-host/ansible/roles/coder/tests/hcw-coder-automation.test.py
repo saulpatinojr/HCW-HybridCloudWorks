@@ -22,7 +22,7 @@ undefined names fail) and held to what the rest of the repository says: the
 agent's user, environment file and checkout, Coder's port, the checkout the
 push helper reads, the failure notifier, and the owner's line in the runbook.
 
-No root, no Docker and no network. CI runs it in the `ansible-lint (lab-host)`
+No root, no Docker and no network. CI runs it in the `lab-host role tests`
 job with the job's Python, which has Jinja2 and PyYAML from ansible-core; on a
 workstation, bash, with Docker, from the repository root:
   MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd):/repo:ro" -w /repo python:3.14-slim bash -c "pip install -q jinja2 pyyaml && python3 lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py"

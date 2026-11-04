@@ -6,7 +6,7 @@
 # The stubs record each invocation and the logger stub records each line it is
 # asked to send, with its tag and priority.
 #
-# No root and no Docker needed. CI runs it in the `ansible-lint (lab-host)`
+# No root and no Docker needed. CI runs it in the `lab-host role tests`
 # job with the job's Python, which has Jinja2 and PyYAML from ansible-core.
 set -euo pipefail
 

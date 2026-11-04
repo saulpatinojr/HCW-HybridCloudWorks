@@ -14,7 +14,7 @@
 # ssh-keygen makes here, and the journal lines are sshd's INFO format with
 # TEST-NET addresses. The administrative user is the account running the
 # test, so no root is needed; ansible-core and ssh-keygen on PATH, no
-# Docker. CI runs it in the `ansible-lint (lab-host)` job.
+# Docker. CI runs it in the `lab-host role tests` job.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

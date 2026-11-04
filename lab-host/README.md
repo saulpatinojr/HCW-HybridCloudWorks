@@ -327,7 +327,7 @@ playbook from it, and the agent runs the same commit, because
 `labs_agent_repo_ref` in `ansible/group_vars/all.yml` reads the playbook's
 own checkout. `main` is protected by the repository ruleset — every change
 arrives by pull request, nobody can bypass it, and the required checks
-include `ansible-lint (lab-host)` and `coder (lab-host)` — so a commit on
+required one check, `gate`, which waits for every CI job (since 2026-11-04; before that, `ansible-lint (lab-host)` and `coder (lab-host)` by name) — so a commit on
 `main` has passed the same checks a pinned sha had to. A pin could not do
 better: a pull request cannot name its own merge commit, so a pin always
 lagged one merge behind and every lab-host change needed a second pull
@@ -1785,7 +1785,7 @@ result that counts. Move the digest once a dev-tools release carries
 2.22.0. CI runs the same two commands in the `ansible-lint (lab-host)` job
 of `.github/workflows/ci.yml`, gated on changes under `lab-host/`.
 
-The same job runs the test of `hcw-vault-set`
+The `lab-host role tests` job runs the test of `hcw-vault-set`
 (`ansible/roles/vault_tools/README.md`, "Tests"). It runs as root, which
 the image is, against a scratch vault. PowerShell, from the repository root:
 
@@ -1903,7 +1903,7 @@ A passing result has no `not ok` line and ends with
 `hcw-docker-volume-carry.test.sh:` and the number passed, then `0 failed`.
 The agent's Docker proxy configuration is checked by
 `scripts/lab-host-docker-proxy.test.mjs` (the `scripts (operations)` row)
-and parsed by `haproxy -c` in the same `ansible-lint (lab-host)` job.
+and parsed by `haproxy -c` in the `lab-host role tests` job.
 
 The Coder files have their own checks — the hardening test, the Compose
 parse and `terraform validate` — listed in

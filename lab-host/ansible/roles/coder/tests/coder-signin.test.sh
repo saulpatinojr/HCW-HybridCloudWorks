@@ -20,7 +20,7 @@
 #    learner are there.
 #
 # No root and no Docker; ansible-core on PATH. CI runs it in the
-# `ansible-lint (lab-host)` job; lab-host/README.md ("Validating without a
+# `lab-host role tests` job; lab-host/README.md ("Validating without a
 # host") has the container line.
 set -euo pipefail
 

@@ -486,7 +486,7 @@ read stops it too. The override lets a refused list through, a list that
 passes writes `hcwadmin`'s file to exactly the list, and a second run
 changes nothing. No root needed: the administrative user is the account
 running the test, so it owns what the test writes. CI runs it in the
-`ansible-lint (lab-host)` job.
+`lab-host role tests` job.
 `tests/sshd-apply.test.sh` runs `tasks/sshd.yml` against a stub `sshd`
 and scratch paths, with the role's handlers as written except that the
 reload of `ssh.service` becomes a log line recording the size of root's
@@ -498,7 +498,7 @@ emptied; a drop-in that `sshd -T` does not confirm is put back with its
 backup removed, root's keys untouched, and the forced reload clears the
 marker; check mode with a marker left reports it and changes nothing. As
 root, because the tasks make root the owner of what they write; CI runs it
-with `sudo` in the `ansible-lint (lab-host)` job.
+with `sudo` in the `lab-host role tests` job.
 `tests/ufw-closed-ports.test.sh` runs `tasks/ufw.yml` with the lab host's
 `group_vars` against the real ufw, in a network and mount namespace of its
 own so the machine's firewall is untouched, with a stub `azcmagent`.
@@ -521,7 +521,7 @@ A run turning Arc SSH off opens 22 though Arc is ready. The arc role's
 
 It passes with no ufw at all, and once 22 is open. A port in both lists stops the run
 before any rule changes. As root, for the
-namespaces; CI runs it with `sudo` in the `ansible-lint (lab-host)` job,
+namespaces; CI runs it with `sudo` in the `lab-host role tests` job,
 after installing ufw.
 `scripts/lab-host-ssh-hardening.test.mjs` (vitest) holds the drop-in's
 directives, the pinned key and its fingerprint, the order of the checks
@@ -533,7 +533,7 @@ two units with the role's defaults and runs the script against stub
 changed=0), a warning line and exit 2 on detected drift (changed>0), a warning
 line and exit 1 on playbook execution failure, and `--vault-password-file` and
 `-e` passed when vault files exist. Needs neither root nor Docker; CI runs it in
-the `ansible-lint (lab-host)` job.
+the `lab-host role tests` job.
 
 `tests/unattended-upgrades.test.sh` renders `52hcw-unattended-upgrades.j2`
 with the role's defaults and asserts the override clears and names the
@@ -548,7 +548,7 @@ none for a package that is not held, the notice line when nothing is
 upgradable, the pending-reboot line aged from item 8's first-seen record
 when the marker has been rewritten, and a non-zero exit when apt fails. It
 needs neither root nor
-Docker; CI runs it in the `ansible-lint (lab-host)` job, and
+Docker; CI runs it in the `lab-host role tests` job, and
 `lab-host/README.md` ("Validating without a host") has the container line.
 
 `tests/hcw-reboot-when-idle.test.sh` renders the idle-reboot script and its

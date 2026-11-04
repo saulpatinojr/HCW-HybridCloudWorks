@@ -7,7 +7,7 @@
 # setgid directory, hard links.
 #
 # Run as root, because the helper chowns. CI runs it in the
-# `ansible-lint (lab-host)` job with sudo; on a workstation, bash, with Docker:
+# `lab-host role tests` job with sudo; on a workstation, bash, with Docker:
 #   docker run --rm -v "$PWD/lab-host/ansible/roles/docker:/r:ro" python:3.14-slim bash /r/tests/hcw-docker-volume-carry.test.sh
 set -euo pipefail
 

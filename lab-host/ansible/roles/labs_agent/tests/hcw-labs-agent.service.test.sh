@@ -20,7 +20,7 @@
 # test rendered the unit at all.
 #
 # Needs no root and no Docker: bash and a Python with Jinja2 and PyYAML. CI
-# runs it in the `ansible-lint (lab-host)` job with the job's Python, which
+# runs it in the `lab-host role tests` job with the job's Python, which
 # has both from ansible-core; on a workstation, bash:
 #   bash lab-host/ansible/roles/labs_agent/tests/hcw-labs-agent.service.test.sh
 set -euo pipefail

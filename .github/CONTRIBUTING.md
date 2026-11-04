@@ -36,7 +36,7 @@ not to extend the allowlist.
    (`git log --grep T-nnn`).
 3. Open a PR using the template; fill the verification section with what you
    actually ran.
-4. CI must be green: build/test, CodeQL, repository policy, and — for
+4. CI must be green: the `gate` check (build/test), repository policy, dependency review, and — for
    `infra/**` — IaC validation (fmt, validate, tflint, Trivy).
 
 ## Infrastructure changes (`infra/`)

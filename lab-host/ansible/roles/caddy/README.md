@@ -225,7 +225,7 @@ placeholder, and nothing handles a request before the `vars`. It also fails
 unless the adapted admin listener is `unix//run/caddy/admin.sock` and every
 server's protocols are exactly `h1` and `h2`. No root, no
 Docker; `CADDY_BIN=<path>` skips the download. CI runs it in the
-`ansible-lint (lab-host)` job.
+`lab-host role tests` job.
 
 `scripts/lab-host-caddy-admin.test.mjs` (vitest, the `scripts (operations)`
 row) holds the unit's `RuntimeDirectory=` and `ExecReload` to the socket

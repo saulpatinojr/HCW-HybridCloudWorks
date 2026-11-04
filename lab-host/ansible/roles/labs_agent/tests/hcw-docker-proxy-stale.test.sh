@@ -8,7 +8,7 @@
 # docker, with the real GNU date, which is what parses both timestamps.
 #
 # Needs no root and no Docker: bash and GNU date. CI runs it in the
-# `ansible-lint (lab-host)` job; on a workstation, bash:
+# `lab-host role tests` job; on a workstation, bash:
 #   bash lab-host/ansible/roles/labs_agent/tests/hcw-docker-proxy-stale.test.sh
 set -euo pipefail
 

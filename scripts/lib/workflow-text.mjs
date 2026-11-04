@@ -5,7 +5,7 @@
  * A real YAML parser is not a dependency of this package, and the workflow
  * files here are written in a regular shape, so jobs, steps and matrix rows are
  * cut out by their indentation. This is shared by
- * `ci-workflow-steps.test.mjs` and `codeql-iac-workflow-steps.test.mjs`, which
+ * `ci-workflow-steps.test.mjs` and `iac-workflow-steps.test.mjs`, which
  * both take a change-detection step's shell out of a workflow and run it.
  *
  * It reads only what those tests ask of it. A shape it does not know is simply

@@ -699,7 +699,7 @@ Docker; ansible-core on `PATH`. It checks:
   lines that create and suspend a learner's account are there. A copy of
   `lab-host/` without `docs/` beside it skips these.
 
-The `ansible-lint (lab-host)` job runs it with the job's ansible-core.
+The `lab-host role tests` job runs it with the job's ansible-core.
 
 `tests/hcw-coder-template-push.test.sh` renders
 `templates/hcw-coder-template-push.j2` with this role's `defaults/main.yml`
@@ -728,7 +728,7 @@ that answers as v2.37.3's CLI does. No root, no Docker. It checks:
 - every `*.tf` is copied and nothing else is, and no `*.tf`, a symbolic
   link, no checkout or an autostop that is not whole hours is refused.
 
-The `ansible-lint (lab-host)` job in `.github/workflows/ci.yml` runs it with
+The `lab-host role tests` job in `.github/workflows/ci.yml` runs it with
 the job's Python, which has Jinja2 and PyYAML from ansible-core. To run it
 without a host, see `lab-host/README.md`, "Validating without a host".
 

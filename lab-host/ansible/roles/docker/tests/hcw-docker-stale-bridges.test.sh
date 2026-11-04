@@ -8,7 +8,7 @@
 # running daemon uses, recording the live ones. Every delete is recorded.
 #
 # Needs no root and no Docker: bash and python3. CI runs it in the
-# `ansible-lint (lab-host)` job; on a workstation, bash:
+# `lab-host role tests` job; on a workstation, bash:
 #   bash lab-host/ansible/roles/docker/tests/hcw-docker-stale-bridges.test.sh
 set -euo pipefail
 

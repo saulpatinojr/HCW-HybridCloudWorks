@@ -4,7 +4,7 @@
 # scratch HCW_VAULT_DIR and a real ansible-vault.
 #
 # Run as root, because the helper installs the vault root:root 0600. CI runs
-# it in the `ansible-lint (lab-host)` job (sudo, with the job's ansible-core);
+# it in the `lab-host role tests` job (sudo, with the job's ansible-core);
 # lab-host/README.md ("Validating without a host") has the container line.
 #
 # The helper names its tools by absolute path, where bootstrap.sh puts them:

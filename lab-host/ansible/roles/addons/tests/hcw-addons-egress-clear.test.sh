@@ -15,7 +15,7 @@
 # subnet is rejected from the moment the old rules go until the new ones are
 # in, including when a run stops in between.
 #
-# Needs root and iptables. CI runs it in the `ansible-lint (lab-host)` job;
+# Needs root and iptables. CI runs it in the `lab-host role tests` job;
 # on a Linux workstation, bash:
 #   sudo bash lab-host/ansible/roles/addons/tests/hcw-addons-egress-clear.test.sh
 #

@@ -28,7 +28,7 @@ Fixtures hold no real name: RFC 5737 addresses, made-up ids, container and
 image names that must appear in no output and no report, and a token made
 at run time.
 
-No root, no Docker and no network. CI runs it in the `ansible-lint (lab-host)`
+No root, no Docker and no network. CI runs it in the `lab-host role tests`
 job with the job's Python, which has Jinja2 and PyYAML from ansible-core; on a
 workstation, bash or PowerShell, from the repository root:
   python -I lab-host/ansible/roles/portainer/tests/hcw-portainer-check.test.py
@@ -145,7 +145,7 @@ check("the helper reads the token from $CREDENTIALS_DIRECTORY and takes no token
       and 'add_argument("--config"' in helper_text)
 workflow = REPO / ".github" / "workflows" / "ci.yml"
 if workflow.is_file():
-    check("CI runs this test in the ansible-lint (lab-host) job",
+    check("CI runs this test in the lab-host role tests job",
           "run: python roles/portainer/tests/hcw-portainer-check.test.py" in workflow.read_text(encoding="utf-8"))
 else:
     skip("CI runs this test", "no .github/ beside lab-host/")

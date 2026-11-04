@@ -14,17 +14,29 @@
 # landing on main. Both run on every Claude Code session, which makes them the
 # first first-party Python here worth analysing. The config's paths-ignore keeps
 # the vendored harness demonstration code out of the results.
+#
+# WHEN IT RUNS (#1545, 2026-11-04). On every push to `main` and every Monday,
+# not on pull requests. Until the `main` ruleset was updated on 2026-11-04 the
+# three `Analyze …` contexts were required checks, so the workflow had to run
+# on every pull request (the T-523 doctrine in iac-validate.yml: a required
+# check whose workflow never ran is never satisfied) and carried a detect step
+# per language to skip the analysis when the pull request changed no file of
+# that language. The ruleset now requires `gate` from ci.yml and nothing from
+# here, so the pull-request run, its detect step and its shape test went. The
+# trade-off, recorded in docs/runbooks/required-checks.md: an alert a pull
+# request introduces is found on `main` after the merge (the push run, about
+# four minutes), not before it, and code scanning no longer posts its alerts
+# as review comments on the pull request. The weekly run is what finds a newly
+# published query's matches in code nobody touched.
 
 name: CodeQL
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
   schedule:
     # Weekly, so a newly published query finds existing code rather than
-    # waiting for the next pull request to touch the affected file.
+    # waiting for the next push to touch the affected file.
     - cron: '31 4 * * 1'
 
 permissions:
@@ -46,105 +58,17 @@ jobs:
       contents: read # the checkout, nothing more
       actions: read # reads this workflow's own run metadata
     strategy:
-      # One language failing should not mask the state of the other.
+      # One language failing should not mask the state of the others.
       fail-fast: false
-      # Each language carries the file pattern that makes analysing it worth
-      # a run. Filtering happens INSIDE the job (the T-523 doctrine, stated in
-      # full in iac-validate.yml): these contexts are required on the `main`
-      # ruleset, and a trigger-level `paths:` filter would leave every
-      # non-matching pull request waiting on "Expected" forever. The weekly
-      # schedule and the push to main still analyse everything, so a newly
-      # published query never waits on a pull request to touch the language.
       matrix:
-        include:
-          - language: javascript-typescript
-            filter: '\.(js|jsx|ts|tsx|mjs|cjs)$'
-          - language: actions
-            filter: '^\.github/(workflows|actions)/'
-          - language: python
-            filter: '\.py$'
+        language: [javascript-typescript, actions, python]
     steps:
-      # fetch-depth: 0 so the change detection below can diff against the base
-      # commit — a shallow clone fails the diff rather than returning "no
-      # changes".
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          fetch-depth: 0
-
-      # WHAT THE SKIP LOOKS LIKE ON THE PULL REQUEST. The job itself never
-      # skips: this step always runs and writes relevant=false when the pull
-      # request changed no file of its language, and it is the two CodeQL
-      # steps below (init and analyze) that then skip, so nothing is uploaded
-      # for that language. GitHub posts its own "CodeQL" status (the roll-up
-      # code scanning posts, not one of the ruleset's required checks) as soon
-      # as the first language uploads results, listing every /language:*
-      # category that ran on main but has not uploaded for this pull request
-      # yet: a Warning reading "Code scanning cannot determine the alerts
-      # introduced by this pull request, because N configurations present on
-      # refs/heads/main were not found", with the status neutral. Two things
-      # keep a category on that list. A language whose analysis is still
-      # running: once every language that will run has uploaded, the same
-      # status is updated in place to "No new alerts", so that case clears
-      # itself (seen on #1485, where all three ran: neutral after the first
-      # upload, success about two minutes later). A language whose analysis
-      # steps skipped: nothing will ever upload, so the warning stays, and
-      # that is this skip, not a broken scan. A pull request that changes no
-      # file of a language cannot add an alert in that language, and main is
-      # still analysed in full on every merge and every Monday (seen on #1484,
-      # two of three skipped). When every language skips, no "CodeQL" status
-      # is posted at all and the three Analyze contexts still report green
-      # (seen on #1458, a JSON-only change). The history is in ADR 0026.
-      - name: Detect language changes
-        id: changes
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: ${{ matrix.filter }}
-          LANGUAGE: ${{ matrix.language }}
-        run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "non-pull_request event — analysing everything"
-            exit 0
-          fi
-          # Capture the diff first: `set -e` is inert inside an `if`
-          # condition, so a failed diff (an unfetchable base sha) would read
-          # as "no changes" and silently skip the analysis. A diff that
-          # cannot be computed fails toward analysing.
-          changed="$(git diff --name-only "${BASE_SHA}" HEAD)" || {
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "could not compute the diff — analysing rather than guessing"
-            exit 0
-          }
-          # grep -E answers 0 when a changed file matches the filter, 1 when
-          # none does, and 2 or more when it could not read the filter at all
-          # (an unclosed parenthesis, say). `if grep …` takes every answer
-          # other than 0 as "no", so a filter grep cannot read would skip the
-          # analysis as "no relevant change" while this required check stayed
-          # green (#1429, the same weakness as #1428 in ci.yml). The answer is
-          # kept instead, and anything other than 0 or 1 fails this step and
-          # names the filter. The filter goes in brackets so that a stray
-          # backslash at its end cannot join onto the `|` that adds this
-          # workflow and the CodeQL config, and so hide the mistake. These
-          # lines are the same as in ci.yml and iac-validate.yml; the test in
-          # scripts/codeql-iac-workflow-steps.test.mjs runs this step.
-          status=0
-          grep -qE "(${FILTER})"'|^\.github/workflows/codeql\.yml$|^\.github/codeql/' <<<"$changed" || status=$?
-          if [ "${status}" -eq 0 ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "${LANGUAGE} files changed — analysing"
-          elif [ "${status}" -eq 1 ]; then
-            echo "relevant=false" >> "$GITHUB_OUTPUT"
-            echo "no ${LANGUAGE} change — skipping analysis, still reporting this context"
-          else
-            echo "::error file=.github/workflows/codeql.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
-            exit 1
-          fi
 
       - name: Initialize CodeQL
-        if: steps.changes.outputs.relevant == 'true'
         uses: github/codeql-action/init@4c0873ef8656cb3c50b3f42fb63bc1ade0cfa827 # v4
         with:
           languages: ${{ matrix.language }}
@@ -154,7 +78,6 @@ jobs:
       # No build step: both languages are analysed by interpretation, which is
       # why the config's paths-ignore applies to them.
       - name: Perform CodeQL analysis
-        if: steps.changes.outputs.relevant == 'true'
         uses: github/codeql-action/analyze@4c0873ef8656cb3c50b3f42fb63bc1ade0cfa827 # v4
         with:
           category: /language:${{ matrix.language }}

@@ -143,7 +143,7 @@ checks:
 - every refused run leaves `vault.yml` byte for byte as it was;
 - no temporary file is left behind.
 
-The `ansible-lint (lab-host)` job in `.github/workflows/ci.yml` runs it with
+The `lab-host role tests` job in `.github/workflows/ci.yml` runs it with
 `sudo` and the job's own ansible-core. Where `/usr/local/bin/ansible-vault`
 or `/opt/uv/ansible-core/bin/python` (through the link `bootstrap.sh` moves
 to each environment it builds from `lab-image/versions.env` once that

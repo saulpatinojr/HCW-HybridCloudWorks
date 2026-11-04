@@ -1067,7 +1067,7 @@ async function planAnsibleCore(env, text, http) {
       label: 'ansible-core release line',
       from: pinned,
       to: latest,
-      reason: `ansible-core ${latest} starts the ${lineOf(latest)} line, which is moved by hand: check its controller and module-side Python ranges (lab-image/README.md, "Updating a version", and the comment in lab-host/bootstrap.sh), and move the \`ansible-lint (lab-host)\` job's pin in .github/workflows/ci.yml with it`,
+      reason: `ansible-core ${latest} starts the ${lineOf(latest)} line, which is moved by hand: check its controller and module-side Python ranges (lab-image/README.md, "Updating a version", and the comment in lab-host/bootstrap.sh), and move the \`ansible-lint (lab-host)\` and \`lab-host role tests\` jobs' pins in .github/workflows/ci.yml with it (the same line in both)`,
     });
   }
   // The pinned line's newest stable release with a wheel; `releases` is the

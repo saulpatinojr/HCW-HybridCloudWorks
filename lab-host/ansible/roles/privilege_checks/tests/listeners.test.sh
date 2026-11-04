@@ -14,7 +14,7 @@
 # - no listener at all passed, and check mode refuses nothing.
 #
 # No root and no Docker; ansible-core on PATH. CI runs it in the
-# `ansible-lint (lab-host)` job.
+# `lab-host role tests` job.
 #
 # Each check's condition is a single-quoted string that check() evaluates
 # when it runs, so its expansions are meant to wait.

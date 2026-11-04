@@ -302,7 +302,7 @@ role's files with its defaults and holds them to the coder role, the
 not-configured sentence, where PyYAML and Jinja2 are importable (CI's are;
 under `python -I` on a workstation that has them as user-site installs,
 those checks are skipped and say so). CI runs it in the
-`ansible-lint (lab-host)` job. Needs neither root nor Docker.
+`lab-host role tests` job. Needs neither root nor Docker.
 
 `tests/portainer-stale-socket.test.sh` holds the restart above to its wiring:
 the role installs the helper from the `labs_agent` role's files to the path
