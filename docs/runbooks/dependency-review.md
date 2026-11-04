@@ -58,7 +58,9 @@ Three things in that table are deliberate, not gaps:
 
 - **The Python add-ons have no `docker` entry in Dependabot.** Their base image
   follows the website's pin (their `dependabot.yml` says so): a Dependabot bump of
-  either half of that pair would fail CI by design.
+  either half of that pair would fail CI by design. Each add-on's own
+  `base-update` workflow opens the move instead ("The Python add-ons' base
+  image", below).
 - **The add-ons' dependency review and CodeQL live inside their `security.yml`**,
   not in files of their own, which is why file names do not show them.
 - **The site has no Gitleaks job**; it relies on GitHub's secret scanning and push
@@ -127,9 +129,83 @@ the lockfile diff, then test.
 Fixed on 2026-10-25: the migration add-on's five `vite` alerts (release 0.3.2
 preparation, `HCW-MigrateOrchestrator_AddOn` pull request 40).
 
+## The Python add-ons' base image
+
+Written 2026-11-03 for
+[#1386](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1386), the
+issue that found the add-ons drifting from the website's base image with
+nothing to move them. The facts below were read from the add-on repositories
+that day.
+
+The three Python add-ons (Cloud Assessor, Network Eyes and Cloud Crawler;
+MigrateOrchestrator builds on a Node image and is not one of them) are built on
+the same base image as the lab image: the `BASE_IMAGE`, `BASE_DIGEST` and
+`BASE_PYTHON_VERSION` lines of this repository's
+[`lab-image/versions.env`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-image/versions.env),
+which the weekly
+[`lab-supply-chain.yml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/workflows/lab-supply-chain.yml)
+run moves. Each add-on keeps a copy in
+`infrastructure/docker/versions.env` and repeats it on both `FROM` lines of its
+Dockerfile, and its `security` workflow's `base-follows-website` job goes red on
+`main` while the copy differs from the website's lines.
+
+**Where the add-on pull request comes from.** Not from this repository. Since
+2026-10-27 each add-on carries a `base-update` workflow that runs once a day at
+07:37 UTC, reads the website's `versions.env` at the commit `main` points to
+that day (and names that commit in what it opens), and when the two differ
+opens one pull request on the branch `base-update/website-base`
+that moves `versions.env` and every `FROM` line together
+([Cloud Assessor's `base-update.yml`](https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/blob/main/.github/workflows/base-update.yml),
+[Network Eyes'](https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn/blob/main/.github/workflows/base-update.yml),
+[Cloud Crawler's](https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/blob/main/.github/workflows/base-update.yml)).
+It opens the pull request with the add-on's own GitHub App token (the HCW Main
+Admin App, which commits as `hcw-main-admin[bot]`; the add-on's `core-update`
+workflow, the one that follows this repository's shared files, already uses
+it), so the add-on's required checks run on it; a person reviews and merges.
+It has done this for real: Cloud Assessor
+[#55](https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/pull/55) and
+[#57](https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/pull/57) were
+opened by it and merged by a person on 2026-10-27. What to do when it is red
+is in each add-on's own runbook, section "Keeping the base image on the
+website's pin"
+([Cloud Assessor's](https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/blob/main/docs/operations/runbook.md),
+[Network Eyes'](https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn/blob/main/docs/operations/runbook.md),
+[Cloud Crawler's](https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/blob/main/docs/operations/runbook.md)).
+So the website's weekly run does not open add-on pull requests, and the
+`hcw-manifest` App (the GitHub App this repository's own bot workflows commit
+as, the one the issue proposed installing on the three add-ons) does not need
+to be installed there for this.
+
+**The one move it refuses.** The workflow moves the base within a Python minor
+line (3.14.8 to 3.14.10, say) on its own. A move to another minor line it
+refuses, naming the two lines, and the run ends red with no pull request:
+the add-on's Dockerfile names `python3.14` paths and its `pyproject.toml` pins
+`requires-python` to the line, so a person has to move those with it. That
+is the state on 2026-11-03: the website moved to `python:3.15.2-slim-trixie`
+on 2026-10-31
+([#1468](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1468)),
+and every daily run since then has ended with "the website moved Python from
+3.14 to 3.15 ... a person must decide" (for example Cloud Assessor
+[run 41597788687](https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/actions/runs/41597788687)),
+while `base-follows-website` is red on `main` in all three. The fix is a
+pull request in each add-on, by the add-on's own workstream, that moves the
+Python line in the Dockerfile and `pyproject.toml` together with the base
+lines; the next daily run after that merge should then go green again.
+
+To see the drift at a glance, this prints the base digest each repository
+carries (PowerShell, read only). When nothing is drifting all four digests are
+identical; on 2026-11-03 the three add-ons still printed the 3.14 digest, which
+is the drift described above:
+
+```powershell
+foreach ($r in 'HCW-HybridCloudWorks:lab-image', 'HCW-CloudAssessor_AddOn:infrastructure/docker', 'HCW-NetworkEyes_AddOn:infrastructure/docker', 'HCW-CloudCrawler_AddOn:infrastructure/docker') { $n, $d = $r -split ':'; $t = gh api "repos/saulpatinojr/$n/contents/$d/versions.env" -H "Accept: application/vnd.github.raw"; "{0,-26} {1}" -f $n, (($t | Select-String '^BASE_DIGEST=').Line) }
+```
+
 ## What this does not cover
 
 - It does not read the apps' dependencies for you; it tells you where to look.
-- It does not update a pinned base image by itself: the Python add-ons follow the
-  website's pin, and the lab images are bumped by `lab-supply-chain.yml`.
+- It does not update a pinned base image by itself: the lab images are bumped by
+  [`lab-supply-chain.yml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/workflows/lab-supply-chain.yml),
+  and the Python add-ons' base by each add-on's own
+  `base-update` workflow (the section above).
 - A finding in Azure itself (a resource, not a package) is out of scope here.
