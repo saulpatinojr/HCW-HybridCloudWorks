@@ -1046,7 +1046,11 @@ describe('DECLARED', () => {
     for (const name of ['brain_records', 'brain_search', 'doc_vault']) {
       expect(creates, name).not.toContain(`azurerm_cosmosdb_sql_container.hcw["${name}"]`);
     }
-    expect(deletes).toEqual([]);
+    // #1479's two container deletes are gone; the regex below reads them and
+    // the five CODE_BRAIN_* paths together. Other deletes may be declared
+    // (#1530's azapi_update_resource delete was the first after this), so the
+    // list is not asserted empty.
+    expect(deletes.filter((address) => /code_brain/.test(address))).toEqual([]);
     expect(DECLARED.some((entry) => /code_brain|CODE_BRAIN_/.test(entry.address + (entry.path ?? '')))).toBe(false);
     for (const name of [
       'BRAIN_ENABLED', 'BRAIN_AI_ENABLED', 'BRAIN_OWNER_OID', 'BRAIN_OWNER_TENANT_ID', 'BRAIN_SYNC_CLIENT_ID',
@@ -1101,6 +1105,26 @@ describe('DECLARED', () => {
     expect(paths).not.toContain('app_settings.STREAMYARD_API_KEY');
     // Live "false" on 2026-10-17: the arming has not applied, so it stays.
     expect(paths).toContain('app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS');
+  });
+
+  it('declares one create per database in local.cosmos_database_grants while the account-wide grant block still stands (#1469 step 1)', () => {
+    // Step 1 of #1469 adds `func_cosmos_db[<key>]` beside `func_cosmos`. A key
+    // added to the local without its declaration would plan an undeclared
+    // create; a declared delete of `func_cosmos` before its block is gone
+    // would wave through the very gap the two steps avoid. Once the creates
+    // have applied and the entries are deleted, this passes trivially.
+    const block = /^\s*cosmos_database_grants\s*=\s*\{\n([\s\S]*?)\n\s*\}\n/m.exec(infraSource);
+    expect(block, 'local.cosmos_database_grants not found in infra/').not.toBeNull();
+    const keys = [...block[1].matchAll(/^\s*(\w+)\s*=/gm)].map((m) => m[1]);
+    expect(keys).toEqual(['hcw']);
+    const creates = DECLARED.filter((entry) => entry.action === 'create').map((entry) => entry.address);
+    const declared = keys.filter((key) => creates.includes(`azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["${key}"]`));
+    expect(declared.length === 0 || declared.length === keys.length, 'declare every key or none').toBe(true);
+    const accountGrantStands = infraSource.includes('resource "azurerm_cosmosdb_sql_role_assignment" "func_cosmos"');
+    const accountGrantDeleteDeclared = DECLARED.some(
+      (entry) => entry.action === 'delete' && entry.address === 'azurerm_cosmosdb_sql_role_assignment.func_cosmos'
+    );
+    expect(accountGrantStands && accountGrantDeleteDeclared, 'func_cosmos is declared deleted while its block exists').toBe(false);
   });
 
   /** alert-lab-ssh-login's resource block in the tree. */

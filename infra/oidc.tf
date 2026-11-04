@@ -743,7 +743,7 @@ resource "azurerm_role_assignment" "github_copilot_review_reader" {
 # own sign-in, so the grants had no consumer and contradicted ADR 0025's
 # "CI holds no Cosmos data-plane role". They are gone; the Function App's
 # own identity is the only principal with a Cosmos data-plane role
-# (func_cosmos in cosmos.tf).
+# (func_cosmos and func_cosmos_db in cosmos.tf, #1469).
 
 # ---------------------------------------------------------------------------
 # REMOVED 2026-08-24 — the production-import grants, and the gate that held them

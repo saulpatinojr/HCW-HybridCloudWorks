@@ -42,7 +42,7 @@ curl -sSf "https://api.resend.com/audiences/<AUDIENCE_ID>/contacts/<USER_EMAIL>"
 ### Step 2: Search the `ambassador` container and referenced files
 The hub's records are the owner's, but an editor can type or attach someone else's details (section 1). The records live in Cosmos account `cosmos-site-prod-cus`, database `hcw`, container `ambassador`.
 
-**Access path.** Local authentication is disabled on `cosmos-site-prod-cus` (`infra/cosmos.tf`), and the only standing managed identity data-plane role is the Function App (`func_cosmos`).
+**Access path.** Local authentication is disabled on `cosmos-site-prod-cus` (`infra/cosmos.tf`), and the only identity with a standing data-plane role is the Function App (`func_cosmos` at account scope and `func_cosmos_db["hcw"]` on the `hcw` database, in `infra/cosmos.tf`; the account-wide grant goes in Step 2 of [#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469)).
 
 Operators have two supported operational paths:
 1. **Admin Ambassador Hub (Web UI):** Sign in with the editor role at <https://hybridcloudworks.com/admin/ambassador>. It reads records through the Function App, and opens attached files from storage account `stsiteprodcus01` (container `speakerevents` unless the entry specifies another).
@@ -51,6 +51,28 @@ Operators have two supported operational paths:
    node scripts/data-subject-search.mjs --email "<USER_EMAIL>" --account cosmos-site-prod-cus --database hcw
    ```
    *(Requires `Cosmos DB Built-in Data Reader` on account `cosmos-site-prod-cus`).*
+
+**Who has read or changed the record.** Every request on the `ambassador`,
+`doc_vault` and `brain_records` containers, reads included, is kept in the Log
+Analytics workspace's `CDBDataPlaneRequests` table for 90 days, with the
+caller's identity (`AadPrincipalId`), address and operation. Requests on the
+other containers are kept only when they write. The filter is an
+ingestion-time rule in `infra/observability.tf`
+(`azurerm_monitor_data_collection_rule.workspace_transforms`,
+[#1530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1530));
+before it was applied the table carried every request until the workspace's
+daily cap stopped collection each evening, so a day before that apply is
+complete only from 08:00 UTC to about 20:30 UTC. Read it from PowerShell,
+first the workspace's id (the query command takes that, not the name), then
+the query:
+
+```powershell
+$w = (az monitor log-analytics workspace show -g rg-mgmt-plat-prod-cus -n log-plat-prod-cus-01 --subscription sub-plat-mgmt-prod-cus -o json | ConvertFrom-Json).customerId
+```
+
+```powershell
+az monitor log-analytics query --workspace $w --subscription sub-plat-mgmt-prod-cus --analytics-query "CDBDataPlaneRequests | where CollectionName == 'ambassador' | project TimeGenerated, OperationName, AadPrincipalId, ClientIpAddress, StatusCode" -o table
+```
 
 **Search scope:**
 1. Read every text field across all programs, applications, and evidence records (`title`, `notes`, `statusNote`, `reviewerFeedback`, `responses[].text`, `customValues`, `description`).
