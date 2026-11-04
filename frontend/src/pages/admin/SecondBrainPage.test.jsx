@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { Link, MemoryRouter } from 'react-router';
 import SecondBrainPage from './SecondBrainPage';
 import { brainApi } from '@/lib/brainApi';
 import { useBrainAccess } from '@/hooks/useBrainAccess';
@@ -243,5 +243,117 @@ describe('Second Brain owner workspace', () => {
     mount('/admin/second-brain?item=note-1');
     expect(await screen.findByLabelText('Markdown')).toHaveValue(note.body);
     expect(brainApi.get).toHaveBeenCalledWith('note-1');
+  });
+  it('follows a citation link to its source while the page stays mounted (#1408)', async () => {
+    const source = { ...note, id: 'source-1', title: 'A cited source', body: 'Source text.' };
+    brainApi.get.mockImplementation(async (id) => ({
+      item: id === source.id ? source : note,
+      backlinks: id === source.id ? [note] : [],
+    }));
+    brainApi.ask.mockResolvedValue({
+      insufficientEvidence: false,
+      claims: [{ text: 'A claim.', sourceIds: ['S1'] }],
+      suggestions: [],
+      sources: [
+        {
+          id: source.id,
+          citation: 'S1',
+          title: source.title,
+          href: `/admin/second-brain?item=${source.id}`,
+        },
+      ],
+      usage: [],
+      indexing: { status: 'complete' },
+    });
+    mount();
+    await screen.findByText(note.title);
+    fireEvent.click(screen.getByRole('button', { name: 'Ask', exact: true }));
+    fireEvent.change(screen.getByLabelText('Your question'), { target: { value: 'Outline it' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask my brain' }));
+    fireEvent.click(await screen.findByRole('link', { name: `S1: ${source.title}` }));
+    expect(await screen.findByLabelText('Markdown')).toHaveValue(source.body);
+    expect(brainApi.get).toHaveBeenCalledTimes(1);
+    expect(brainApi.get).toHaveBeenCalledWith(source.id);
+    // Open another note from the source's "Linked from" list (which leaves the
+    // address at ?item=source-1), then follow the same citation again: the
+    // address does not change, but the click is a new navigation and opens it.
+    fireEvent.click(screen.getByRole('button', { name: note.title, exact: true }));
+    await waitFor(() => expect(screen.getByLabelText('Markdown')).toHaveValue(note.body));
+    fireEvent.click(screen.getByRole('link', { name: `S1: ${source.title}` }));
+    await waitFor(() => expect(screen.getByLabelText('Markdown')).toHaveValue(source.body));
+    expect(brainApi.get).toHaveBeenCalledTimes(3);
+    expect(brainApi.get).toHaveBeenLastCalledWith(source.id);
+  });
+  it('starts a linked research note from a capture link and keeps unsaved text on a second one', async () => {
+    brainApi.context.mockResolvedValue({ sourceId: 'ref_abc', items: [], provenance: null });
+    render(
+      <MemoryRouter initialEntries={['/admin/second-brain?capture=content-1']}>
+        <Link to="/admin/second-brain?capture=content-2">Another capture link</Link>
+        <SecondBrainPage />
+      </MemoryRouter>
+    );
+    expect(await screen.findByLabelText('Markdown')).toHaveValue('');
+    expect(brainApi.context).toHaveBeenCalledWith('content-1');
+    expect(screen.getByText('ref_abc')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Markdown'), {
+      target: { value: 'Typed and unsaved.' },
+    });
+    // A second capture link while the editor is dirty is held by the editor's
+    // click guard (useUnsavedGuard); the page's own guard covers Back/Forward,
+    // which a click cannot reproduce here. Cancelling keeps the typed text
+    // and makes no context request.
+    fireEvent.click(screen.getByRole('link', { name: 'Another capture link' }));
+    expect(await screen.findByText('Leave this note?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel', exact: true }));
+    expect(screen.getByLabelText('Markdown')).toHaveValue('Typed and unsaved.');
+    expect(brainApi.context).toHaveBeenCalledTimes(1);
+  });
+  it('ignores a capture answer that arrives after a later capture link (#1547)', async () => {
+    const pending = {};
+    brainApi.context.mockImplementation(
+      (id) =>
+        new Promise((resolve) => {
+          pending[id] = resolve;
+        })
+    );
+    render(
+      <MemoryRouter initialEntries={['/admin/second-brain?capture=content-1']}>
+        <Link to="/admin/second-brain?capture=content-2">Another capture link</Link>
+        <SecondBrainPage />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(brainApi.context).toHaveBeenCalledWith('content-1'));
+    fireEvent.click(screen.getByRole('link', { name: 'Another capture link' }));
+    await waitFor(() => expect(brainApi.context).toHaveBeenCalledWith('content-2'));
+    pending['content-2']({ sourceId: 'ref_second', items: [], provenance: null });
+    expect(await screen.findByText('ref_second')).toBeInTheDocument();
+    pending['content-1']({ sourceId: 'ref_first', items: [], provenance: null });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText('ref_second')).toBeInTheDocument();
+    expect(screen.queryByText('ref_first')).not.toBeInTheDocument();
+  });
+  it('does not show the error of a capture that a later capture replaced (#1547)', async () => {
+    const pending = {};
+    brainApi.context.mockImplementation(
+      (id) =>
+        new Promise((resolve, reject) => {
+          pending[id] = { resolve, reject };
+        })
+    );
+    render(
+      <MemoryRouter initialEntries={['/admin/second-brain?capture=content-1']}>
+        <Link to="/admin/second-brain?capture=content-2">Another capture link</Link>
+        <SecondBrainPage />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(brainApi.context).toHaveBeenCalledWith('content-1'));
+    fireEvent.click(screen.getByRole('link', { name: 'Another capture link' }));
+    await waitFor(() => expect(brainApi.context).toHaveBeenCalledWith('content-2'));
+    pending['content-1'].reject(new Error('First capture failed.'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    pending['content-2'].resolve({ sourceId: 'ref_second', items: [], provenance: null });
+    expect(await screen.findByText('ref_second')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
