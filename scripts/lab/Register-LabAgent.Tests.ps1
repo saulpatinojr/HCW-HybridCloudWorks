@@ -620,9 +620,11 @@ Describe 'Resolve-LabApiAppId' {
     }
 
     It 'otherwise finds the one registration named exactly HCWSite API' {
-        Mock Invoke-LabAz -ParameterFilter { ($Arguments[0..2] -join ' ') -eq 'ad app list' } {
-            [pscustomobject]@{ ExitCode = 0; Stdout = "[{""appId"":""$($apiAppId.ToUpperInvariant())"",""displayName"":""HCWSite API""},{""appId"":""$agentAppId"",""displayName"":""HCWSite API (old)""}]"; Stderr = '' }
-        }
+        # Built here, not inside the mock body: on the CI runner the
+        # subexpression in the mock's string came out empty, so the list is
+        # handed to the mock through $script: as the -ForEach cases do.
+        $script:listJson = '[{"appId":"' + $apiAppId.ToUpperInvariant() + '","displayName":"HCWSite API"},{"appId":"' + $agentAppId + '","displayName":"HCWSite API (old)"}]'
+        Mock Invoke-LabAz -ParameterFilter { ($Arguments[0..2] -join ' ') -eq 'ad app list' } { [pscustomobject]@{ ExitCode = 0; Stdout = $script:listJson; Stderr = '' } }
         Resolve-LabApiAppId -ApiAppId '' | Should -BeExactly $apiAppId
         Should -Invoke Invoke-LabAz -Times 1 -Exactly -ParameterFilter { ($Arguments -join ' ') -eq 'ad app list --display-name HCWSite API -o json' }
     }
