@@ -183,8 +183,9 @@ export const EXPECTED = {
 export const CONDITIONAL_REPLACED = [
   "azapi_update_resource.cosmos_computed_properties",
   // azapi_update_resource.cosmos_data_plane_table was listed here from
-  // PLAT-8 (#968) until #1530 replaced it with an azurerm table resource
-  // (its delete is declared in DECLARED below).
+  // PLAT-8 (#968) until #1530 replaced it with an azurerm table resource.
+  // Its delete applied in run-fQRFPxBy7CowV6zG on 2026-11-04 and left
+  // DECLARED below with it.
 ];
 
 /** `type.name["key"]` -> `type.name`, the address a for_each instance belongs to. */
@@ -517,19 +518,13 @@ export const DECLARED = [
     reason:
       "#1403: SWEEP_VISITOR_SESSIONS added to enabled_timers, arming the visitor-session sweep",
   },
-  // #1469 step 1: the Function App's Cosmos Data Contributor role granted on
-  // the `hcw` database (`<account id>/dbs/hcw`) beside the account-wide
-  // grant, which stays until step 2. The plan after this merge is this one
-  // create and the permanent diff, nothing else: no change and no destroy
-  // on `azurerm_cosmosdb_sql_role_assignment.func_cosmos`. Step 2 is its own
-  // pull request, which deletes that block and declares the delete here.
-  // Delete this entry once the create has applied, as the header asks.
-  {
-    address: 'azurerm_cosmosdb_sql_role_assignment.func_cosmos_db["hcw"]',
-    action: "create",
-    reason:
-      "#1469 step 1: Data Contributor on the hcw database, beside the account-wide grant",
-  },
+  // #1469 step 1's create, func_cosmos_db["hcw"] (the Function App's Cosmos
+  // Data Contributor role on the hcw database, beside the account-wide
+  // grant), applied in run-vUQrQLSGJh4J5HZ2 on 2026-11-04 (HCP Terraform
+  // commit status Success on 66118ffd at 03:09Z) and was deleted here. The
+  // account-wide grant, azurerm_cosmosdb_sql_role_assignment.func_cosmos,
+  // stays until step 2, which is its own pull request: it deletes that block
+  // and declares the delete here.
   // #1360's create, notes_obsidian_publish, applied on 2026-10-24 (run-bb1XtRGJEbuK1Cec,
   // read as applied by tfc-plan-check with only the known permanent diff besides it) and was
   // deleted here. notes.hybridcloudworks.com then resolved to Cloudflare addresses on 1.1.1.1
@@ -566,47 +561,23 @@ export const DECLARED = [
   // (lab_ssh_loopback_only) and #1302's Web Analytics site create
   // (cloudflare_account_id). Each is a value the owner sets in the workspace.
   //
-  // #1530: the Cosmos request-log filter, which PLAT-8 (#968) wrote as a
-  // `transformKql` property on the table and Azure never stored (the Tables
-  // API has no such property; an ingestion-time filter is a data collection
-  // rule). One run, five changes. Four are declared here:
-  // - the delete of azapi_update_resource.cosmos_data_plane_table, which
-  //   makes no API call (destroying an azapi_update_resource leaves the
-  //   live resource as it is);
+  //
+  // #1530's four declared changes (the Cosmos request-log filter moved into a
+  // workspace transformation rule) applied in run-fQRFPxBy7CowV6zG on
+  // 2026-11-04 (HCP Terraform commit status Success on d53add0e at 02:57Z)
+  // and were deleted here, as the header asks:
+  // - the delete of azapi_update_resource.cosmos_data_plane_table (no API
+  //   call: destroying an azapi_update_resource leaves the live table as it
+  //   is);
   // - the create of azurerm_log_analytics_workspace_table.cosmos_data_plane,
-  //   which takes over the table's retention, 90 days as before;
+  //   which now owns the table's retention, 90 days as before;
   // - the create of azurerm_monitor_data_collection_rule.workspace_transforms,
   //   the rule that carries the filter;
   // - the create of alert-logs-overquota.
-  // The fifth, azurerm_log_analytics_workspace.hcw's data_collection_rule_id
-  // "" -> (known after apply), links the workspace to the new rule. It cannot
-  // be declared (the header: an unknown difference never matches), so the
-  // plan check prints that one line as UNEXPECTED beside these four, and the
-  // run is read by hand against the list in the pull request. Delete all four
-  // once the run has applied, as the header asks.
-  {
-    address: "azapi_update_resource.cosmos_data_plane_table",
-    action: "delete",
-    reason:
-      "#1530: the table's retention moves to azurerm_log_analytics_workspace_table; destroying an azapi_update_resource changes nothing live",
-  },
-  {
-    address: "azurerm_log_analytics_workspace_table.cosmos_data_plane",
-    action: "create",
-    reason:
-      "#1530: CDBDataPlaneRequests retention (90 days, unchanged) owned by a resource that reads it back",
-  },
-  {
-    address: "azurerm_monitor_data_collection_rule.workspace_transforms",
-    action: "create",
-    reason:
-      "#1530: the workspace transformation rule carrying the Cosmos request-log filter",
-  },
-  {
-    address: "azurerm_monitor_scheduled_query_rules_alert_v2.logs_over_quota",
-    action: "create",
-    reason: "#1530: alert-logs-overquota, the cap-hit alert on _LogOperation",
-  },
+  // The run's fifth change, azurerm_log_analytics_workspace.hcw's
+  // data_collection_rule_id "" -> (known after apply), was never declared
+  // (the header: an unknown difference cannot be) and was read by hand
+  // against the list in the pull request.
   {
     address: "azurerm_role_assignment.github_manifest_window_storage_firewall[0]",
     action: "create",
