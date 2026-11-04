@@ -14,6 +14,7 @@ import {
   evaluateContentAgent,
   evaluateCosmos,
   evaluateIdentitySession,
+  evaluateNightlyExport,
   evaluateRegistrySession,
   evaluateRuntimeConfig,
   evaluateStorage,
@@ -89,6 +90,19 @@ export const PLATFORM_PROBES = [
     action: 'Open the Koda tab: rotate or revoke the key, or turn a switch back on.',
     href: KODA,
     evaluate: evaluateContentAgent,
+  }),
+  snapshotProbe({
+    id: 'nightly-export',
+    label: 'Nightly export',
+    hub: 'platform',
+    covers:
+      "Whether last night's Cosmos export wrote its run manifest, how old the newest completed run is, and whether every authored container (brain_records among them) is in it. Read by the worker from the private cosmos-export blob container; names and counts only.",
+    impact:
+      'A missing or late run means the out-of-account backup is behind: a restore would lose what was written since the last manifest. A missing authored container is a container with no backup at all.',
+    action:
+      'Check the failed platform jobs below and the cosmosExportCompleted events; the Cosmos restore runbook (docs/runbooks/cosmos-restore.md) says how to read a run.',
+    href: { to: '/admin/health?tab=overview', label: 'Overview' },
+    evaluate: evaluateNightlyExport,
   }),
   liveProbe({
     id: 'unresolved-secrets',

@@ -166,6 +166,8 @@ export default function HealthPage() {
     publishingWatchdog: digestForDisplay?.publishingWatchdog || null,
     // The content agent's block (#1491); null until a snapshot that carries it lands.
     agent: snapshot.agent || null,
+    // The nightly export's block (#1409); the same rule.
+    backups: snapshot.backups || null,
   };
 
   // Every probe's last recorded result and the pulse's heartbeat, re-read

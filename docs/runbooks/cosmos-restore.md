@@ -68,6 +68,52 @@ Say this before the drill, so nothing in it is a surprise:
 
 ## Is the export running? Read this first
 
+### The quick answer: the Nightly export tile on the Health page
+
+Since [#1409](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1409)
+the site reads its own export. The `cosmos-export` blob container refuses every
+workstation by design, and the log workspace has dropped the 03:00 UTC window
+before ([#1530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1530)),
+but the Function App has both the identity and the network path. So the ops
+snapshot (the block of facts behind the admin Health page) carries a
+`backups` block, read by
+[`functions/src/lib/backup/backup-status.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/backup-status.js)
+from the run records and manifests of the last seven UTC dates. It holds names
+and counts only, never a document.
+
+Two places show it, with one verdict between them:
+
+- **Overview → Operational Signals → Nightly export**
+  (`https://hybridcloudworks.com/admin/health?tab=overview`): the newest
+  completed run (`delta/2026-11-03` style), when it finished, how many
+  containers it holds of the number planned, how many of the authored
+  containers (class A in
+  [`export-classification.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/export-classification.js))
+  are in it with the names of any that are not, and `brain_records` on its own
+  with its partition key `/ownerId` and record count.
+- **Checks → Platform → Nightly export**
+  (`https://hybridcloudworks.com/admin/health?tab=checks`): the same sentence
+  as a probe, recorded every five minutes by the health pulse, so the Report
+  tab and the stored history carry it too.
+
+How to read the verdict:
+
+| Verdict | Meaning | What to do |
+|---|---|---|
+| Healthy | A run completed within the last 26 hours and every authored container is in it. The sentence ends with `brain_records: N records, partition key /ownerId`. | Nothing. |
+| Critical, "finished N h ago; a run is due every 24 h" | The newest manifest is older than 26 hours: last night's run did not finish. | Look at Failed Platform Jobs on the same card, then the `traces` query below for the container that failed. |
+| Critical, "N authored container(s) missing: …" | The run completed, but a container the classification calls authored is not in it. A container added to the classification after that run's record was claimed shows up here until the next night. | If it is still missing the next morning, the scheduler's plan and the classification disagree: file it. |
+| Critical, "No completed export manifest in the last 7 days" | Nothing completed in a week. The sentence names how far the newest run got (markers written of the number planned) when there is one. | Same as the alert: `az functionapp config appsettings list` for `FEATURE_FLAG_COSMOS_EXPORT`, then the queries below. |
+| Unknown, "could not be read" | The worker could not read the blob container (role, firewall, outage). This is not "no export". | Check the Function App identity's Storage Blob Data role and the storage firewall's resource rule. |
+
+The block is reread at most every ten minutes, so a run that finishes while
+you watch shows within ten minutes of the next pulse. The partition key shown
+is the one the code holds for the container
+([`cosmos-client.js` `PARTITION_KEY_PATHS`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/cosmos-client.js));
+the manifest itself does not carry it.
+
+### The long answer: the logs
+
 Containers added after the most recent weekly full are included from the
 selected daily manifests. Their first delta reads the change feed from its
 beginning, so it provides the initial authored records. The restore selects

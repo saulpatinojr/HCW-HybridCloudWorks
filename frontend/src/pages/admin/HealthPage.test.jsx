@@ -190,6 +190,24 @@ const SNAPSHOT = {
     },
     lastCheckedAt: '2026-04-12T09:00:00Z',
   },
+  backups: {
+    unavailable: false,
+    lookbackDays: 7,
+    runs: [{ runId: '2026-04-12', mode: 'delta', complete: true }],
+    lastCompleted: {
+      runId: '2026-04-12',
+      mode: 'delta',
+      complete: true,
+      startedAt: '2026-04-12T03:00:01.000Z',
+      completedAt: '2026-04-12T03:41:00.000Z',
+      containerCount: 56,
+      expectedCount: 57,
+      authored: { expected: 46, present: 45, missing: ['brain_records'] },
+      watched: { container: 'brain_records', present: false, docs: null, partitionKey: '/ownerId' },
+    },
+    checkedAt: '2026-04-12T08:55:00.000Z',
+    lastCheckedAt: '2026-04-12T09:00:00Z',
+  },
 };
 
 const jsonResponse = (status, body) => ({ status, ok: status < 400, json: async () => body });
@@ -427,6 +445,43 @@ describe('the hub', () => {
     expect(within(card).queryByText(/Created, never rotated/)).not.toBeInTheDocument();
     expect(screen.getByTestId('jobs-24h')).toHaveTextContent('11 total');
     expect(screen.getByTestId('publishing-run')).toHaveTextContent('degraded');
+  });
+
+  it('shows last night’s export on Overview, naming the authored container it is missing (#1409)', async () => {
+    renderAt();
+    const section = await screen.findByTestId('nightly-export');
+    expect(within(section).getByTestId('nightly-export-run')).toHaveTextContent('delta/2026-04-12');
+    expect(within(section).getByTestId('nightly-export-authored')).toHaveTextContent('45 of 46');
+    expect(within(section).getByTestId('nightly-export-missing')).toHaveTextContent(
+      'Missing: brain_records'
+    );
+    expect(
+      within(section).getByText(/brain_records \(partition key \/ownerId\)/)
+    ).toBeInTheDocument();
+    expect(within(section).getByTestId('nightly-export-watched')).toHaveTextContent(
+      'not in the run'
+    );
+    expect(within(section).getByTestId('nightly-export-summary')).toHaveTextContent(
+      /brain_records is not in it\./
+    );
+    expectNoSecrets(section.textContent);
+  });
+
+  it('says the export is not known, never fine, when its manifests could not be read (#1409)', async () => {
+    postJSON.mockImplementation(async (name) =>
+      name === 'getOpsHealthSnapshot'
+        ? {
+            ...SNAPSHOT,
+            backups: { unavailable: true, lookbackDays: null, runs: [], lastCompleted: null },
+          }
+        : {}
+    );
+    renderAt();
+    const section = await screen.findByTestId('nightly-export');
+    expect(within(section).getByTestId('nightly-export-summary')).toHaveTextContent(
+      /could not be read, so last night's export is not known/
+    );
+    expect(within(section).queryByTestId('nightly-export-run')).not.toBeInTheDocument();
   });
 
   it('says when the jobs or the denial reads could not be made, and explains a quiet scheduler (#1491)', async () => {

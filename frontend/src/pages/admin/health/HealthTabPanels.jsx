@@ -163,7 +163,10 @@ export function OverviewTab({ ops, derived, identity, labs }) {
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <ContentAgentCard agent={derived.agent} />
-            <OperationalSignalsCard signals={derived.operationalSignals} />
+            <OperationalSignalsCard
+              signals={derived.operationalSignals}
+              backups={derived.backups}
+            />
           </div>
         </>
       ) : (

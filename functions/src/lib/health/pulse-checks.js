@@ -297,6 +297,68 @@ export function checkContentAgent(snapshot, now) {
   );
 }
 
+/**
+ * The nightly export is due every 24 hours at 03:00 UTC; two hours of grace
+ * for a slow run, then the newest completed run is late (#1409).
+ */
+export const EXPORT_STALE_AFTER_MS = 26 * 60 * MINUTE_MS;
+
+/** "delta/2026-11-03" — the run as its blob prefix names it. */
+const runLabel = (run) => `${run.mode}/${run.runId}`;
+
+/**
+ * Did last night's export run, and did it cover every authored container
+ * (#1409)? From the snapshot's `backups` block (backup/backup-status.js):
+ * not known when the manifests could not be read; critical when no completed
+ * run is in the window, the newest one is older than EXPORT_STALE_AFTER_MS,
+ * or an authored container is missing from it; healthy otherwise, naming
+ * `brain_records` and its partition key, which is what the ticket asks.
+ */
+export function checkNightlyExport(snapshot, now) {
+  const backups = snapshot?.backups;
+  if (!backups) return result('unknown', 'This snapshot carries no backups block.');
+  if (backups.unavailable) {
+    return result(
+      'unknown',
+      "The export's run manifests could not be read, so last night's export is not known."
+    );
+  }
+  const last = backups.lastCompleted;
+  const days = backups.lookbackDays ?? 7;
+  if (!last) {
+    const newest = Array.isArray(backups.runs) ? backups.runs[0] : null;
+    const progress = newest
+      ? ` The newest run, ${runLabel(newest)}, has ${plural(newest.markers ?? 0, 'container marker')}${newest.expectedCount ? ` of ${newest.expectedCount}` : ''} and no manifest.`
+      : '';
+    return result('critical', `No completed export manifest in the last ${plural(days, 'day')}.${progress}`);
+  }
+  const finished = ago(last.completedAt, now) ?? 'at an unknown time';
+  const ageMs = now - toMillis(last.completedAt);
+  const missing = Array.isArray(last.authored?.missing) ? last.authored.missing : [];
+  const watched = last.watched;
+  const watchedWords = watched
+    ? watched.present
+      ? ` ${watched.container}: ${plural(watched.docs ?? 0, 'record')}, partition key ${watched.partitionKey}.`
+      : ` ${watched.container} is not in it.`
+    : '';
+  if (!Number.isFinite(ageMs) || ageMs > EXPORT_STALE_AFTER_MS) {
+    return result(
+      'critical',
+      `The newest completed export, ${runLabel(last)}, finished ${finished}; a run is due every 24 h.${watchedWords}`
+    );
+  }
+  if (missing.length > 0) {
+    return result(
+      'critical',
+      `Export ${runLabel(last)} completed ${finished} with ${plural(last.containerCount ?? 0, 'container')}, but ${plural(missing.length, 'authored container')} ${missing.length === 1 ? 'is' : 'are'} missing: ${missing.join(', ')}.${watchedWords}`
+    );
+  }
+  return result(
+    'healthy',
+    `Export ${runLabel(last)} completed ${finished}: ${plural(last.containerCount ?? 0, 'container')}, every authored container present (${last.authored?.present ?? 0} of ${last.authored?.expected ?? 0}).${watchedWords}`
+  );
+}
+
 /** Every check the snapshot answers, by the probe id it records. */
 export const SNAPSHOT_CHECKS = Object.freeze({
   cosmos: checkCosmos,
@@ -311,6 +373,7 @@ export const SNAPSHOT_CHECKS = Object.freeze({
   forge: checkForge,
   'telegram-notify': checkTelegramNotify,
   'content-agent': checkContentAgent,
+  'nightly-export': checkNightlyExport,
 });
 
 // ── From the registries ──────────────────────────────────────────────────────
