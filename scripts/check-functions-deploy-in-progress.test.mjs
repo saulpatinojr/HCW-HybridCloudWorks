@@ -41,40 +41,104 @@ const LIVE = {
 };
 
 /**
- * A fake GitHub API answering the runs listing with `runs`. `answers` is the
+ * A fake GitHub API. The unfiltered runs listing answers with `runs`; a
+ * listing asked with `status=in_progress` answers with `filtered` (empty
+ * unless given, as on 2026-11-05); a run read by id answers with `byId[id]`,
+ * or with its entry in `runs` when `byId` has none. `answers` is the
  * sequence of HTTP statuses, one per call, the last repeating; `'drop'`
  * throws as a dropped connection does.
  */
-function github({ runs = [], answers = [200], body } = {}) {
+function github({ runs = [], filtered = [], byId = {}, answers = [200], body } = {}) {
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, init });
     const status = answers[Math.min(calls.length, answers.length) - 1];
     if (status === 'drop') throw new TypeError('fetch failed');
-    return { ok: status >= 200 && status < 300, status, json: async () => body ?? { workflow_runs: runs } };
+    const ok = status >= 200 && status < 300;
+    const id = /\/actions\/runs\/(\d+)$/.exec(url)?.[1];
+    const json = async () => {
+      if (body) return body;
+      if (id) return byId[id] ?? runs.find((run) => String(run.id) === id) ?? { message: 'Not Found' };
+      return { workflow_runs: url.includes('status=in_progress') ? filtered : runs };
+    };
+    return { ok, status, json };
   };
   return { fetchImpl, calls };
 }
+/** The calls that read a run by id, as their ids. */
+const readsById = (calls) => calls.map((c) => /\/actions\/runs\/(\d+)$/.exec(c.url)?.[1]).filter(Boolean);
 /** findDeploysInProgress with no pause before its retry. */
 const find = (fetchImpl) => findDeploysInProgress({ token: 't0ken', owner: 'o', repo: 'r', fetchImpl, retryDelayMs: 0 });
 
 describe('findDeploysInProgress', () => {
-  it('asks for the in-progress runs of the deploy workflow, with the token and a timeout', async () => {
+  it('lists the newest runs of the deploy workflow with no status filter, then reads the live one by id, with the token and a timeout', async () => {
     const { fetchImpl, calls } = github({ runs: [LIVE] });
     await find(fetchImpl);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe(
-      `https://api.github.com/repos/o/r/actions/workflows/${DEPLOY_WORKFLOW}/runs?status=in_progress&per_page=${MAX_RUNS}`
-    );
-    expect(calls[0].init.headers.Authorization).toBe('Bearer t0ken');
-    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].url).toBe(`https://api.github.com/repos/o/r/actions/workflows/${DEPLOY_WORKFLOW}/runs?per_page=${MAX_RUNS}`);
+    expect(calls[1].url).toBe(`https://api.github.com/repos/o/r/actions/runs/${LIVE.id}`);
+    for (const call of calls) {
+      expect(call.init.headers.Authorization).toBe('Bearer t0ken');
+      expect(call.init.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it('2026-11-05: the status=in_progress listing answers empty while run 42096627372 is in progress, and the run is still found', async () => {
+    // Deploy run #213 was in progress from 19:43:48Z to 19:47:42Z. Monitor run
+    // 42096833406 asked the filtered listing at 19:45:51Z and 19:46:53Z and
+    // was told `none` both times; the unfiltered listing and the run's own
+    // record said `in_progress`. The check must answer from those.
+    const run213 = {
+      id: 42096627372,
+      run_number: 213,
+      status: 'in_progress',
+      conclusion: null,
+      run_started_at: '2026-11-05T19:43:37Z',
+      html_url: 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/42096627372',
+    };
+    const finished = (id, run_number) => ({ ...run213, id, run_number, status: 'completed', conclusion: 'success' });
+    const { fetchImpl, calls } = github({ runs: [run213, finished(42070388649, 212), finished(41735292895, 211)], filtered: [] });
+    const got = await run({ env: ENV, fetchImpl });
+    expect(got.code).toBe(1);
+    expect(got.lines[0]).toBe('deploy run #213 in progress');
+    expect(got.lines[1]).toContain(run213.html_url);
+    expect(calls.some((c) => c.url.includes('status=in_progress'))).toBe(false);
+    expect(readsById(calls)).toEqual(['42096627372']);
+  });
+
+  it('reads by id every listed run that is not completed, and believes the record, not the listing', async () => {
+    // The listing can lag the run: one it shows as queued or waiting may be
+    // in progress by now, and one it shows as in progress may have ended.
+    const { fetchImpl, calls } = github({
+      runs: [
+        { ...LIVE, id: 1, status: 'queued' },
+        { ...LIVE, id: 2, status: 'in_progress' },
+        { ...LIVE, id: 3, status: 'waiting' },
+        { ...LIVE, id: 4, status: 'completed' },
+      ],
+      byId: {
+        1: { ...LIVE, id: 1, run_number: 401, status: 'in_progress' },
+        2: { ...LIVE, id: 2, run_number: 402, status: 'completed', conclusion: 'success' },
+        3: { ...LIVE, id: 3, run_number: 403, status: 'waiting' },
+      },
+    });
+    const got = await find(fetchImpl);
+    expect(got.map((r) => r.id)).toEqual([1]);
+    expect(got[0].run_number).toBe(401);
+    expect(readsById(calls)).toEqual(['1', '2', '3']);
+  });
+
+  it('a listed run whose record cannot be read is unreadable, not none', async () => {
+    const { fetchImpl } = github({ runs: [LIVE], answers: [200, 404] });
+    await expect(find(fetchImpl)).rejects.toThrow(/404/);
   });
 
   it('asks once more after a 5xx, a 429 or a dropped connection, and takes that answer', async () => {
     for (const first of [502, 429, 'drop']) {
       const { fetchImpl, calls } = github({ runs: [LIVE], answers: [first, 200] });
       expect((await find(fetchImpl)).map((r) => r.id)).toEqual([LIVE.id]);
-      expect(calls).toHaveLength(2);
+      // The listing twice, then the run by id.
+      expect(calls).toHaveLength(3);
     }
   });
 
@@ -91,9 +155,17 @@ describe('findDeploysInProgress', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('keeps only runs that are in progress, whatever the filter returned', async () => {
-    const { fetchImpl } = github({ runs: [{ ...LIVE, id: 1, status: 'completed' }, LIVE, { ...LIVE, id: 2, status: 'waiting' }] });
+  it('keeps only runs that are in progress, whatever the listing returned', async () => {
+    const { fetchImpl, calls } = github({ runs: [{ ...LIVE, id: 1, status: 'completed' }, LIVE, { ...LIVE, id: 2, status: 'waiting' }] });
     expect((await find(fetchImpl)).map((r) => r.id)).toEqual([LIVE.id]);
+    // A completed run is not read again: a status only moves forward.
+    expect(readsById(calls)).toEqual([String(LIVE.id), '2']);
+  });
+
+  it('skips a listed run without a usable id rather than asking GitHub for it', async () => {
+    const { fetchImpl, calls } = github({ runs: [{ ...LIVE, id: undefined }, { ...LIVE, id: 'abc' }] });
+    expect(await find(fetchImpl)).toEqual([]);
+    expect(calls).toHaveLength(1);
   });
 
   it('refuses a payload without a workflow_runs array rather than reading it as none', async () => {
