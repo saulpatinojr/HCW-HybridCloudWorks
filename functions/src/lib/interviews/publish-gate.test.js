@@ -83,6 +83,21 @@ describe('interviewPublishRefusal', () => {
     expect(refusal.error).not.toContain('secret internals');
   });
 
+  it('carries a schema answer of { ok: false, error }, the shape schema.js uses, as the refusal', async () => {
+    stubSiblingModulesForTests({
+      schema: { validateQa: () => ({ ok: false, error: 'qa must have at least one item.' }) },
+    });
+    const refusal = await interviewPublishRefusal({ ...consented, qa: [] }, clock);
+    expect(refusal).toMatchObject({ status: 422, code: INVALID_INTERVIEW });
+    expect(refusal.error).toContain('qa must have at least one item.');
+  });
+
+  it('takes the value out of a schema answer of { ok: true, value }', async () => {
+    const validateQa = vi.fn((qa) => ({ ok: true, value: qa }));
+    stubSiblingModulesForTests({ schema: { validateQa } });
+    expect(await interviewPublishRefusal({ ...consented, qa: [{ q: 'q', a: 'a' }] }, clock)).toBeNull();
+  });
+
   it('is null when the consent is in order and the schema accepts the list', async () => {
     const validateQa = vi.fn((qa) => qa);
     stubSiblingModulesForTests({ schema: { validateQa } });

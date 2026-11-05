@@ -13,10 +13,11 @@
  *
  * The wrappers below also fix the one shape this slice relies on: a check
  * either returns `{ ok: true, value }` or `{ ok: false, error }`, where
- * `error` is a sentence for the editor. The schema's own functions throw an
- * authored error (lib/http/error-response.js) on a bad field and return the
- * checked value otherwise; only an authored sentence passes the door, so a
- * thrown value that is anything else answers the fixed fallback.
+ * `error` is a sentence for the editor. The schema's own functions answer
+ * that same shape, with `error` already passed through `authoredMessage`
+ * on their side (schema.js `fail`), so it is carried as is; a function that
+ * throws instead is caught here and only an authored sentence passes the
+ * door, anything else answering the fixed fallback.
  */
 import { authoredMessage } from '../http/error-response.js';
 
@@ -57,7 +58,11 @@ export async function interviewStorage() {
  */
 async function runCheck(check, input, fallback) {
   try {
-    return { ok: true, value: await check(input) };
+    const result = await check(input);
+    if (result && typeof result === 'object' && typeof result.ok === 'boolean') {
+      return result.ok ? { ok: true, value: result.value } : { ok: false, error: result.error };
+    }
+    return { ok: true, value: result };
   } catch (error) {
     return { ok: false, error: authoredMessage(error, fallback) };
   }
