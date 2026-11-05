@@ -19,7 +19,7 @@ release, the same way the network and cloud assessment rows were.
 | AddOn origin | `https://cloud-crawler.lab.hybridcloudworks.com` (the wildcard `*.lab` name resolves to the lab host's address; read from a public resolver on 2026-10-26) |
 | Image | `docker.io/hybridcloudworks/img-cc-lab-addon:v0.3.0`, index digest `sha256:7660672a10b2196630f2a97edc804f8013ab1c70e0d7b8091f9430ae3ef01f4c` (linux/amd64), published by the AddOn's `publish-images.yml` on its `v0.3.0` tag ([run 42070419839](https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/actions/runs/42070419839), 2026-11-05); the build attestation verifies against `HCW-CloudCrawler_AddOn` (`gh attestation verify` exited 0 on 2026-11-05) and the signer is that workflow at `refs/tags/v0.3.0`. Before that, `v0.2.0` (digest `sha256:5a43c90bda9bed1d3472847f492b7c05405e6a6ce2d4aa7f4d9b519bb72daf28`, [run 40318349978](https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/actions/runs/40318349978)) from 2026-10-26 |
 | Lab host port | `18084` on `127.0.0.1` (the website's call, per the AddOn's ADR 0003; the next after the Cloud Assessor's 18083) |
-| Lab host row | in `lab-host/ansible/group_vars/all.yml` since [#1411](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1411); the host runs it: the owner reported running the playbook on 2026-10-26 and a session read the container's health through the status route afterwards (below). The steps are [the runbook's](../../runbooks/labs-host.md#cloud-crawler-the-host-steps) |
+| Lab host row | in `lab-host/ansible/group_vars/all.yml` since [#1411](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1411); the host has run the `v0.2.0` image since the owner's playbook run of 2026-10-26 (a session read the container's health through the status route afterwards, below), and runs the `v0.3.0` image the row pins since 2026-11-05 only after the owner's next playbook run. The steps are [the runbook's](../../runbooks/labs-host.md#cloud-crawler-the-host-steps) |
 | Row status | `available`; the pane is granted `downloads` and `clipboard-write`, not `navigate` (why, below the table) |
 | Status proxy | `GET /api/public/addons/cloud-crawler/status`, reading `ADDON_CLOUD_CRAWLER_URL` (a plain app setting in `infra/functionapp.tf`, applied by the owner's HCP Terraform run). On 2026-10-26 (its `asOf` was 16:06Z) it answered `configured: true, reachable: true`, version 0.2.0, edition `lab`, with the upload capabilities listed in the AddOn's guide |
 | Settings prefix | `CC_` (the AddOn's `.env.example`) |
@@ -37,7 +37,7 @@ and it has no code that sends a `navigate` message, opens a window or changes th
 page's address. It sends the site only its own state (`loading`, `ready`,
 `working`, `unavailable`).
 
-## Where it stands, read on 2026-10-26
+## Where it stands, read on 2026-10-26 and updated on 2026-11-05
 
 - **The App has released.** [`v0.1.0`](https://github.com/saulpatinojr/HCW-CloudCrawler_App/releases/tag/v0.1.0)
   was released on 2026-10-26 and the AddOn adopted its engine unchanged.

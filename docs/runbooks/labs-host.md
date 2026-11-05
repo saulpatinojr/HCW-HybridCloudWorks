@@ -3562,7 +3562,7 @@ sentence.
 **4. Check it from three places.** Each is read-only.
 
    1. From the host (PowerShell). You should see JSON containing `"ok":true`,
-      `"id":"cloud-crawler"`, `"version":"0.2.0"`, `"edition":"lab"` and
+      `"id":"cloud-crawler"`, `"version":"0.3.0"` (the version in the row's `image_tag`; `0.2.0` before 2026-11-05), `"edition":"lab"` and
       `"azureConnectivity":"disabled-by-design"`:
 
       ```powershell
@@ -3596,7 +3596,7 @@ sentence.
       curl.exe -s https://api-azure.hybridcloudworks.com/api/public/addons/cloud-crawler/status
       ```
 
-      Success is `{"configured":true,"reachable":true,"version":"0.2.0",
+      Success is `{"configured":true,"reachable":true,"version":"0.3.0",
       "edition":"lab",…}` with a list of capabilities that includes
       `upload-evidence`. If you still see `{"configured":false}`, the
       Terraform run (the first step) has not applied, or the Function App has
