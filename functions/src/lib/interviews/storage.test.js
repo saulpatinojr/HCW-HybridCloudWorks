@@ -35,6 +35,23 @@ describe('interviews storage layout', () => {
     expect(STORAGE_TF).not.toContain(`${INTERVIEWS_AUDIO_CONTAINER}/transcripts/`);
   });
 
+  it('no lifecycle rule without a prefix deletes base blobs, so transcripts are never expired by a rule that reaches them', () => {
+    // Each `rule { ... }` block of the management policy, read as text: one
+    // that is enabled, names no prefix_match and carries a base_blob delete
+    // would reach transcripts/ (and everything else on the account). The
+    // account-wide rule that expires previous versions only is allowed.
+    const policy = STORAGE_TF.slice(STORAGE_TF.indexOf('resource "azurerm_storage_management_policy" "cleanup"'));
+    const rules = policy.split(/\n  rule \{/).slice(1);
+    expect(rules.length).toBeGreaterThanOrEqual(5);
+    const offenders = rules.filter(
+      (rule) =>
+        /enabled\s*=\s*true/.test(rule) &&
+        !/prefix_match\s*=/.test(rule) &&
+        /base_blob\s*\{[^}]*delete_after/s.test(rule)
+    );
+    expect(offenders.map((r) => (r.match(/name\s*=\s*"([^"]+)"/) ?? [])[1])).toEqual([]);
+  });
+
   it('is neither publicly served nor reachable from the generic upload route', () => {
     expect(PUBLIC_MEDIA_CONTAINERS.has(INTERVIEWS_AUDIO_CONTAINER)).toBe(false);
     expect(UPLOAD_CONTAINERS.has(INTERVIEWS_AUDIO_CONTAINER)).toBe(false);

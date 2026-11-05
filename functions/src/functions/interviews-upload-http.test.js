@@ -32,20 +32,41 @@ vi.mock('../lib/blob-storage.js', () => ({
 vi.mock('../lib/cosmos-client.js', () => ({ readDoc: vi.fn(), queryDocs: vi.fn(), patchDoc: vi.fn() }));
 
 const created = [];
+const createdHandlers = [];
 vi.mock('../lib/interviews/upload.js', () => ({
   createInterviewUploadHandlers: (deps) => {
     created.push(deps);
-    return {
+    const handlers = {
       openUpload: vi.fn(async () => ({ status: 201 })),
       putBlock: vi.fn(async () => ({ status: 200 })),
       completeUpload: vi.fn(async () => ({ status: 200 })),
     };
+    createdHandlers.push(handlers);
+    return handlers;
   },
 }));
 
 await import('./interviews-upload-http.js');
 
 describe('interviews-upload-http registrations', () => {
+  it('dispatches each route to its matching operation with the request and context', async () => {
+    for (const [name, operation] of [
+      ['cmsInterviewUploads', 'openUpload'],
+      ['cmsInterviewUploadBlock', 'putBlock'],
+      ['cmsInterviewUploadComplete', 'completeUpload'],
+    ]) {
+      const request = { method: 'X' };
+      const context = {};
+      await registrations.get(name).handler(request, context);
+      const handlers = createdHandlers.at(-1);
+      expect(handlers[operation], name).toHaveBeenCalledTimes(1);
+      expect(handlers[operation]).toHaveBeenCalledWith(request, context);
+      for (const other of Object.keys(handlers).filter((k) => k !== operation)) {
+        expect(handlers[other], `${name} must not reach ${other}`).not.toHaveBeenCalled();
+      }
+    }
+  });
+
   it('registers the three routes with their verbs and no queue output', () => {
     const open = registrations.get('cmsInterviewUploads');
     const block = registrations.get('cmsInterviewUploadBlock');

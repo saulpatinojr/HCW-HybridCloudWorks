@@ -609,8 +609,8 @@ resource "azurerm_role_assignment" "func_blob" {
 # previous versions; deleting a version is the data action
 # Microsoft.Storage/storageAccounts/blobServices/containers/blobs/deleteBlobVersion/action,
 # which Storage Blob Data Contributor (func_blob above: delete, read, write,
-# move, add) does not carry and Storage Blob Data Owner
-# (b7e6dc6d-f1e8-4753-8033-0f276bb0955b, every blob data action) does.
+# move, add) does not carry and Storage Blob Data Owner (every blob data
+# action, blobs/*) does.
 # Read 2026-11-05 at
 # https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/storage
 # Container scope, like lab_hybrid_backups_writer in lab-hybrid-backups.tf,

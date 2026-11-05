@@ -16,7 +16,7 @@ Personal data is collected across three functional areas:
 | **Ambassador hub** | Cosmos DB container `ambassador` (`cosmos-site-prod-cus` / `hcw`) | The owner's own Ambassador hub: programs, the owner's applications to them, and their evidence (`functions/src/lib/ambassador/validate.js`). No field is dedicated to third-party personal data, but editor-gated free-text fields (`notes`, `responses`, `customValues`, `reviewerFeedback`, `statusNote`, `description`) hold whatever an editor types, and `files` and `images` reference attachments: an external URL, or a private blob path in storage account `stsiteprodcus01` (container `speakerevents` by default) | Kept until the owner deletes them. No container TTL (#1234 set one in error; it was removed by #1238 before any apply). A request searches the text fields and opens every referenced file and image (Step 2 of sections 3 and 4). |
 | **Public submissions** | Cosmos DB container `content` (`storageCollection == 'content'`) | Title, summary, content, cloudProvider, tags, language | Codebase audit (#1237) confirms public submissions (`functions/src/lib/submissions.js`) are completely anonymous. No submitter or author email address is accepted, ingested, or stored (`submitterEmail` and `authorEmail` do not exist). |
 | **Disaster recovery backups** | Azure Blob Storage container `cosmos-export` on account `stsiteprodcus01` (`rg-stor-site-prod-cus`) | Point-in-time snapshot gzip NDJSON of Cosmos containers | Retained for exactly 35 days under immutable storage lifecycle management policy `expire-cosmos-export` (ADR 0028). Purged automatically upon lifecycle expiry. |
-| **Interview recordings** | Azure Blob Storage container `interviews-audio` on account `stsiteprodcus01` (`rg-stor-site-prod-cus`), prefix `audio/`; transcripts beside it under `transcripts/` | A guest's voice recording (`audio/<interviewId>.<ext>`) and the transcripts made from it (`transcripts/<interviewId>/v<n>.json`); the interview document in Cosmos `content` holds the guest's name, role, bio, consent record and the recording's path, size and hash, never the audio | Recordings and their previous versions are deleted by lifecycle rule `expire-interview-audio` after `interview_audio_retention_days` (365 by default, set in the HCP Terraform workspace; ADR 0040, [#1565](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1565)), then restorable for 7 more days by the account's soft delete. Transcripts are kept until the interview is deleted from the admin. Private container: no public URL, no player, written and read only by the Function App identity. A request deletes the recording with the admin page's "Delete recording" button, or the whole interview (document, recording and transcripts) with the delete route. |
+| **Interview recordings** | Azure Blob Storage container `interviews-audio` on account `stsiteprodcus01` (`rg-stor-site-prod-cus`), prefix `audio/`; transcripts beside it under `transcripts/` | A guest's voice recording (`audio/<interviewId>.<ext>`) and the transcripts made from it (`transcripts/<interviewId>/v<n>.json`); the interview document in Cosmos `content` holds the guest's name, role, bio, consent record and the recording's path, size and hash, never the audio | Recordings and their previous versions are deleted by lifecycle rule `expire-interview-audio` after `interview_audio_retention_days` (365 by default, set in the HCP Terraform workspace; ADR 0040, [#1565](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1565)), then restorable for 7 more days by the account's soft delete. Transcripts are kept until the interview is deleted from the admin. Private container: no public URL, no player, written and read by the Function App identity only. A request deletes the recording with the admin page's "Delete recording" button, or the whole interview (document, recording and transcripts) with the delete route. |
 
 ---
 
@@ -123,6 +123,35 @@ Public submissions contain no submitter or author email addresses. No redaction 
 ### Step 4: Immutable backup lifecycle disclosure
 Under GDPR Article 17(3)(b) and EDPB guidelines, data in immutable disaster-recovery backups cannot and should not be modified in place.
 - Inform the data subject: "Your live database records and mailing list subscriptions have been permanently erased. Data in disaster-recovery backups is held in write-once encrypted snapshots in Azure Blob Storage (`stsiteprodcus01/cosmos-export`) and will be automatically purged upon expiration of the 35-day backup retention window."
+
+### Step 5: Interview recordings (`interviews-audio`)
+
+A guest's recording is a blob in the private `interviews-audio` container; the interview document in Cosmos `content` points at it (`provenance.audio.path`, and any earlier paths under `provenance.audio.superseded`). The admin page's "Delete recording" button and the interview-aware delete route arrive with the content-type slice of [#1565](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1565); until they do, erase by hand:
+
+1. Read the paths from the document (`GET /api/cms/content/{id}` as an editor, with the interview's id): `provenance.audio.path` and every entry of `provenance.audio.superseded`. Note the interview id.
+2. The storage account refuses requests from outside the Function App's subnet, so the delete is run from a workstation added to its firewall for the minutes it takes. Add the workstation (PowerShell; `$ip` is the workstation's public IPv4 address, read from `https://api.ipify.org`):
+
+   ```powershell
+   $ip = (Invoke-RestMethod https://api.ipify.org).Trim()
+   az storage account network-rule add --account-name stsiteprodcus01 -g rg-stor-site-prod-cus --ip-address $ip -o none
+   ```
+
+3. Delete each path read in step 1, including its versions (`--delete-snapshots include` removes snapshots; versions are removed by deleting the current blob when versioning keeps them only until the `expire-interview-audio` rule's days have passed, so delete them by name as well when the listing shows any):
+
+   ```powershell
+   az storage blob delete --account-name stsiteprodcus01 --auth-mode login -c interviews-audio -n "audio/<interviewId>/<uploadId>.mp3" --delete-snapshots include -o none
+   az storage blob list --account-name stsiteprodcus01 --auth-mode login -c interviews-audio --prefix "audio/<interviewId>/" --include v -o table
+   ```
+
+   The listing should show no current blob under the interview's folder; versions it still lists are deleted with `az storage blob delete ... --version-id <id>` for each, which the Function App identity's Storage Blob Data Owner grant also allows the delete helper to do once it exists.
+4. Remove the workstation again (same `$ip`):
+
+   ```powershell
+   az storage account network-rule remove --account-name stsiteprodcus01 -g rg-stor-site-prod-cus --ip-address $ip -o none
+   ```
+
+5. Clear the pointer on the document so nothing references a deleted blob: `POST /api/updateContentItem` as an editor with the body `{ "contentId": "<interviewId>", "updates": { "provenance": { "source": "upload", "audio": {} } } }` (the recording's path, size, hash and `superseded` list all go; `provenance` is written whole, so repeat any other `provenance` fields the document carried).
+6. Tell the data subject: the recording is removed from live storage; the account's soft delete keeps a deleted blob restorable for 7 days, after which it is unrecoverable, and the transcripts (`transcripts/<interviewId>/`) are deleted the same way when the request covers them.
 
 ---
 

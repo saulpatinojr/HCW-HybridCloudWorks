@@ -157,13 +157,15 @@ export function parseOpenBody(body) {
   if (!INTERVIEW_ID_PATTERN.test(interviewId)) return { error: 'interviewId is required' };
 
   // Alias spellings (audio/mp3, audio/x-m4a, ...) fold to the canonical type
-  // before the type and extension checks (ADR 0040 D1).
-  const contentType = canonicalAudioType(raw.contentType);
+  // before the type and extension checks (ADR 0040 D1). Strings only: an
+  // object whose toString is null would throw inside String() and turn a bad
+  // body into a 500.
+  const contentType = typeof raw.contentType === 'string' ? canonicalAudioType(raw.contentType) : null;
   if (!contentType) {
     return { error: `Unsupported audio type; send an ${Object.values(AUDIO_TYPES).join(', ')} file` };
   }
   const ext = AUDIO_TYPES[contentType];
-  if (extensionOf(raw.fileName) !== ext) {
+  if (typeof raw.fileName !== 'string' || extensionOf(raw.fileName) !== ext) {
     return { error: 'File extension does not match the declared audio type' };
   }
 
@@ -225,6 +227,28 @@ export function isSoundSession(doc, session) {
   if (blockSize !== BLOCK_SIZE || blockCount !== Math.ceil(bytes / BLOCK_SIZE)) return false;
   if (path !== audioBlobPath(doc.id, uploadId, ext) || !isValidBlobPath(path)) return false;
   return SHA256_PATTERN.test(String(session.sha256 || ''));
+}
+
+/**
+ * Whether a blob path is one this module could have minted for this
+ * interview: `audio/<interviewId>/<uploadId>.<ext>` with a UUID and one of
+ * the three extensions. Used before a path read back from the document is
+ * carried into `superseded`. Exported for its test.
+ *
+ * @param {string} interviewId
+ * @param {unknown} path
+ * @returns {boolean}
+ */
+export function ownsAudioPath(interviewId, path) {
+  if (typeof path !== 'string' || !INTERVIEW_ID_PATTERN.test(String(interviewId || ''))) return false;
+  const prefix = `audio/${interviewId}/`;
+  if (!path.startsWith(prefix) || !isValidBlobPath(path)) return false;
+  const rest = path.slice(prefix.length);
+  const dot = rest.lastIndexOf('.');
+  if (dot <= 0) return false;
+  const uploadId = rest.slice(0, dot);
+  const ext = rest.slice(dot + 1);
+  return UPLOAD_ID_PATTERN.test(uploadId) && Object.values(AUDIO_TYPES).includes(ext);
 }
 
 function readContentLength(request) {
@@ -450,7 +474,7 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         };
 
         if (committed.contentLength !== session.bytes) {
-          return refuse(
+          return await refuse(
             'The uploaded size does not match the declared size; upload the file again',
             `interviewUploadComplete: ${uploadId} size mismatch (${committed.contentLength} B stored, ${session.bytes} B declared)`
           );
@@ -458,7 +482,7 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
 
         const digest = await storage.hashBlobSha256(INTERVIEWS_AUDIO_CONTAINER, session.path);
         if (digest !== session.sha256) {
-          return refuse(
+          return await refuse(
             'The uploaded file does not match its declared SHA-256; upload the file again',
             `interviewUploadComplete: ${uploadId} hash mismatch (${session.bytes} B)`
           );
@@ -470,9 +494,20 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         // holds Storage Blob Data Owner on this container, infra/storage.tf)
         // sweeps that list when the interview or its recording is deleted,
         // and the lifecycle rule expires every blob under audio/ regardless.
+        // Only a path this module could have minted for this interview is
+        // carried forward: the document is editable through the generic
+        // content update route by the same role, and a planted path would
+        // otherwise reach slice C's sweeper as something to delete.
         const before = doc.provenance?.audio ?? {};
-        const superseded = [...(Array.isArray(before.superseded) ? before.superseded : [])];
-        if (before.path && before.path !== session.path && !superseded.includes(before.path)) {
+        const superseded = (Array.isArray(before.superseded) ? before.superseded : []).filter((p) =>
+          ownsAudioPath(doc.id, p)
+        );
+        if (
+          before.path &&
+          before.path !== session.path &&
+          ownsAudioPath(doc.id, before.path) &&
+          !superseded.includes(before.path)
+        ) {
           superseded.push(before.path);
         }
         const uploads = sessionsOf(doc).filter((s) => s && s.uploadId !== uploadId);

@@ -15,6 +15,7 @@ import {
   blockLengthFor,
   createInterviewUploadHandlers,
   isSoundSession,
+  ownsAudioPath,
   parseOpenBody,
 } from './upload.js';
 import { INTERVIEWS_AUDIO_CONTAINER, MAX_AUDIO_BYTES, MAX_AUDIO_SECONDS, audioBlobPath } from './storage.js';
@@ -183,6 +184,24 @@ describe('isSoundSession (a session is re-derived at use, never trusted from the
   });
 });
 
+describe('ownsAudioPath (only a path this module could have minted for the interview is carried forward)', () => {
+  it('accepts the three session path shapes for this interview', () => {
+    for (const ext of ['mp3', 'm4a', 'wav']) expect(ownsAudioPath('int-1', audioBlobPath('int-1', UPLOAD_ID, ext))).toBe(true);
+  });
+
+  it.each([
+    ['another interview', audioBlobPath('int-2', UPLOAD_ID, 'mp3')],
+    ['a transcript', 'transcripts/int-1/v1.json'],
+    ['a flat name', 'audio/int-1.mp3'],
+    ['a non-UUID session', 'audio/int-1/latest.mp3'],
+    ['an extension not in the table', `audio/int-1/${UPLOAD_ID}.exe`],
+    ['a traversal', `audio/int-1/../int-2/${UPLOAD_ID}.mp3`],
+    ['a non-string', 42],
+  ])('refuses %s', (_label, path) => {
+    expect(ownsAudioPath('int-1', path)).toBe(false);
+  });
+});
+
 describe('parseOpenBody', () => {
   it.each([
     ['audio/mpeg', 'audio/mpeg', 'mp3'],
@@ -221,6 +240,13 @@ describe('parseOpenBody', () => {
     expect(parseOpenBody(openBody({ sha256: 'xyz' })).error).toMatch(/sha256/);
     expect(parseOpenBody(openBody({ interviewId: '../x' })).error).toMatch(/interviewId/);
     expect(parseOpenBody(null).error).toMatch(/JSON object/);
+  });
+
+  it('refuses a type or file name that is not a string without throwing (an object whose toString is null would 500)', () => {
+    for (const value of [{ toString: null }, { toString: null, valueOf: null }, 42, null, ['audio/mpeg']]) {
+      expect(parseOpenBody(openBody({ contentType: value })).error).toMatch(/Unsupported audio type/);
+      expect(parseOpenBody(openBody({ fileName: value })).error).toMatch(/extension does not match/);
+    }
   });
 
   it('accepts exactly the size cap and exactly 34,200 seconds', () => {
@@ -578,12 +604,23 @@ describe('completeUpload', () => {
     expect(storage.deleteBlob).not.toHaveBeenCalled();
   });
 
-  it('keeps every earlier superseded path, once each', async () => {
+  it('keeps every earlier superseded path of this interview, once each', async () => {
+    const older = audioBlobPath('int-1', '33333333-2222-4333-8444-555555555555', 'mp3');
     store.content['int-1'].provenance.audio.path = OLD_PATH;
-    store.content['int-1'].provenance.audio.superseded = ['audio/int-1/older.mp3', OLD_PATH];
+    store.content['int-1'].provenance.audio.superseded = [older, OLD_PATH];
     await handlers().completeUpload(completeRequest(), ctx);
-    expect(store.content['int-1'].provenance.audio.superseded).toEqual(['audio/int-1/older.mp3', OLD_PATH]);
+    expect(store.content['int-1'].provenance.audio.superseded).toEqual([older, OLD_PATH]);
     expect(store.content['int-1'].provenance.audio.path).toBe(PATH);
+  });
+
+  it('never carries a planted path into superseded (another interview, a transcript, a flat name)', async () => {
+    // provenance is editable through the generic content update route by the
+    // same role; a path planted there must not reach slice C's sweeper.
+    store.content['int-1'].provenance.audio.path = audioBlobPath('int-2', UPLOAD_ID_2, 'mp3');
+    store.content['int-1'].provenance.audio.superseded = ['transcripts/int-1/v1.json', 'audio/int-1.mp3', OLD_PATH];
+    await handlers().completeUpload(completeRequest(), ctx);
+    expect(store.content['int-1'].provenance.audio.superseded).toEqual([OLD_PATH]);
+    expect(storage.deleteBlob).not.toHaveBeenCalled();
   });
 
   it('409s a second completion and commits nothing again', async () => {
