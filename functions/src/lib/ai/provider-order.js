@@ -56,11 +56,14 @@ export const KNOWN_PROVIDERS = Object.freeze([...DEFAULT_PROVIDER_ORDER, ...MEDI
  * Gemini's TTS models read through the Interactions API the speech side
  * already uses (listen-and-learn/speech/gemini.js); ElevenLabs is the
  * podcast voice (ADR 0029 §2b); Replicate makes the cover and manual images
- * (triggers/ai-cover.js). No provider carries `stt`, `ocr` or `embedding`
- * yet, so those tasks show "no eligible model" rather than being absent.
+ * (triggers/ai-cover.js). Gemini carries `stt` since ADR 0040 (#1565):
+ * the interview transcription reads a recording through its Files API and
+ * generateContent (lib/interviews/gemini-files.js). No provider carries
+ * `ocr` or `embedding` yet, so those tasks show "no eligible model"
+ * rather than being absent.
  */
 export const PROVIDER_CAPABILITIES = Object.freeze({
-  gemini: Object.freeze(['text', 'json', 'vision', 'grounding', 'tts']),
+  gemini: Object.freeze(['text', 'json', 'vision', 'grounding', 'tts', 'stt']),
   openai: Object.freeze(['text', 'json', 'vision']),
   anthropic: Object.freeze(['text', 'json', 'vision']),
   nvidia: Object.freeze(['text', 'json']),
