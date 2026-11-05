@@ -228,13 +228,24 @@ time windows, resumable, capped in cost.**
      with `X-Goog-Upload-Protocol: resumable`, then the bytes to the
      returned upload URL), keeps the returned `file.uri` for the job's
      lifetime, and deletes the file from Gemini when the job ends, success
-     or failure; Gemini would delete it after 48 hours anyway. The audio
-     bytes never touch Cosmos or a log.
-   - *Chunking.* One `generateContent` call per **20-minute window**:
+     or failure; Gemini would delete it after 48 hours anyway. The read
+     from the container is a stream (`downloadBlobStream`, a new helper in
+     `blob-storage.js`; the existing `downloadBlob` buffers the whole blob,
+     which for 500 MiB would be about a gigabyte of memory on the way to
+     Gemini). The audio bytes never touch Cosmos or a log.
+   - *Chunking.* One `generateContent` call per **60-minute window**:
      "Transcribe from MM:SS to MM:SS with speaker labels; return JSON
      `{ segments: [{ start, end, speaker, text }], endOfAudio }`", with
      `responseMimeType: application/json`. The loop stops when
-     `endOfAudio` is true or after 29 windows (9.5 hours, Gemini's own cap).
+     `endOfAudio` is true or after 10 windows (9.5 hours, Gemini's own cap).
+     Every call carries the same `fileUri`, and Gemini charges the whole
+     file's audio tokens on every call (32 tokens per second of audio,
+     whatever range the prompt asks for), so the windows are as few and as
+     long as the output allows: an hour of speech is about 15,000 output
+     tokens, well inside the model's output cap, and a one-hour recording
+     costs one call rather than three. A time-sliced upload would need the
+     audio cut on our side, which Flex Consumption cannot do without
+     ffmpeg; the multiplied estimate below is the price of not cutting it.
      Each window's result is written to
      `interviews-audio/<id>/transcript-v<n>.parts/<k>.json` as it arrives, so
      a job that is re-queued by the sweeper or re-run by the owner skips the
@@ -255,11 +266,18 @@ time windows, resumable, capped in cost.**
      read the image budget makes in `triggers/ai-cover.js`) with
      `INTERVIEW_TRANSCRIPTION_MONTHLY_USD` (default 10) and stops with
      `BUDGET_EXCEEDED` if the estimate for this file would cross it. The
-     estimate is 32 tokens per second of audio at the model's audio input
-     rate; `model-tables.js` gains an audio-input rate for the chosen model,
-     read from Gemini's pricing page with the date [VERIFY in slice B]. A
-     usage row per window is recorded with `recordAiUsage` so the Cost page
-     sees it.
+     estimate is **32 tokens per second of audio, times the number of
+     windows (duration divided by 60 minutes, rounded up), times a retry
+     allowance of 1.5**, at the model's audio input rate, plus the output
+     tokens; the duration comes from the file's bytes at a conservative
+     64 kbit/s until the first window's `end` timestamp gives the real
+     figure (the first window always runs; the check repeats before the
+     second). `model-tables.js` gains an audio-input rate for the chosen
+     model, read from Gemini's pricing page with the date [VERIFY in slice
+     B]. A usage row per window records the full file's audio tokens, so
+     the Cost page shows what Gemini charged, not what the window covered.
+     The monthly ceiling is the hard stop; the estimate only decides
+     whether to start.
    - *What is logged.* The interview id, the transcript version, the window
      index, token counts, bytes and the elapsed time. Never a segment, a
      name, the URL or the file name. The test asserts it, as
@@ -327,7 +345,7 @@ page.**
      'Azure'`, `contentStatus` (the shared machine), `slug`, `Title/title`,
      `subtitle`, `date`, `guest: { name, role }`, `bio`, `image: { src, alt
      }`, `tags`, `qa`, `related`, plus three blocks the public never sees:
-     `consent` (D8), `provenance` (`source: 'upload' | 'url' |
+     `consent` (D9), `provenance` (`source: 'upload' | 'url' |
      'transcript'`, `audio: { container, path, bytes, sha256, contentType,
      uploadedAt, sourceUrl? }`, `transcription: { version, model, provider,
      transcribedAt, windows }`, `drafting` as in D4) and `interview: {
@@ -348,7 +366,7 @@ page.**
      unpublishes with `unpublishContentToInspected`. The contract gives
      `section: 'interviews'`, so `curatedSubpagePath` becomes
      `/azure/interviews/<slug>`, which is the route the frontend already
-     declares. Publishing refuses without a confirmed consent (D8) and a
+     declares. Publishing refuses without a confirmed consent (D9) and a
      `qa` list that passes the schema; the quality gate uses a small rubric
      over a `bodyText` field the server derives from `qa` (the contract
      body reader only reads strings), and the image rubric is `NO_IMAGERY`,
@@ -425,7 +443,7 @@ engines follow the manifest as they do for blog posts.**
 
 **D7. The admin form** at `/admin/interviews/new` takes: guest name
 (required), role, bio, photo (optional), title, subtitle, date (default
-today), tags, the consent checkbox with its date (D8), and exactly one of:
+today), tags, the consent checkbox with its date (D9), and exactly one of:
 an audio file (D1), an audio URL (D2) or a transcript text (D3's last
 bullet). It creates the document first (`POST /api/cms/interviews`, editor,
 returns id and ETag), then runs the chosen input, then shows the stage
@@ -433,8 +451,10 @@ returns id and ETag), then runs the chosen input, then shows the stage
 `GET /api/cms/interviews/{id}` every 5 seconds while a stage is in flight.
 The form never writes a transcript or a Q&A itself. The browser upload
 helper is a new `frontend/src/lib/interviewUpload.js` (file slicing, three
-blocks in flight, per-block retry, SHA-256 of the whole file with the
-existing `sha256HexOf`); `api.js` gains a `putBytes` call that sends a raw
+blocks in flight, per-block retry, and a SHA-256 of the whole file computed
+incrementally over the same 4 MiB slices, never by reading the file into
+memory at once; a hash that cannot be computed fails the upload rather than
+sending an empty hash); `api.js` gains a `putBytes` call that sends a raw
 body with the bearer token and no JSON content type.
 
 **D8. The guest photo reuses the image upload path.** The form calls the
@@ -518,7 +538,7 @@ pull request:
    - AI output is untrusted: fenced input, shape-validated output, the
      honesty guard, `safeLink` on every link, and no HTML in any field (the
      page renders text).
-   - Cost: the monthly ceiling, the 500 MiB cap, the 29-window cap, the
+   - Cost: the monthly ceiling, the 500 MiB cap, the 10-window cap, the
      25-minute job timeout, one job per transcript version.
 
 **D12. Tests at each boundary** (named in the slice plan): Terraform `fmt`,
@@ -537,13 +557,18 @@ contract and type registrations (every pinned list); the publish refusals
 Playwright journey of the form against the stubbed API (`frontend/e2e/interviews.spec.js`,
 added to the explicit list in `ci.yml`).
 
-**D13. Rollback.** Each slice is one pull request and reverts alone: the
-Terraform slice leaves an empty container (reverting it after audio exists
-is the owner's delete, not a revert); the functions slices register routes
-and job types that nothing calls until the form lands; the CMS and pages
-slice is the only one that removes something (the static sample), and its
-revert restores the JSON path; the form slice is pure frontend. A published
-interview is unpublished from the admin, not by a revert.
+**D13. Rollback.** Each slice is one pull request, and they revert in the
+reverse of their merge order, D, then C, then B, then A, because C imports
+B's `schema.js` and B imports A's `storage.js` and `blob-storage.js`
+helpers. Reverting a slice while a later one is still on `main` is not
+done; if only the later behaviour must go, revert that later slice. Within
+that order: the form slice is pure frontend; the CMS and pages slice is the
+only one that removes something (the static sample), and its revert
+restores the JSON path; the jobs slice registers routes and job types that
+nothing calls once the form is gone; the Terraform slice leaves an empty
+container (reverting it after audio exists is the owner's delete, not a
+revert). A published interview is unpublished from the admin, not by a
+revert.
 
 ## Consequences and accepted risks
 
@@ -591,7 +616,7 @@ interview is unpublished from the admin, not by a revert.
   Functions plan, and about 2.5× the file in memory below it.
 - **Send the audio inline to Gemini.** Capped at 20 MB per request; the
   Files API is the documented path above that.
-- **Split the audio on our side (ffmpeg) into 20-minute files.** The Flex
+- **Split the audio on our side (ffmpeg) into one-hour files.** The Flex
   Consumption image has no ffmpeg and the repository builds no native
   tooling; time-window prompts over one uploaded file give the same
   chunking with no binary dependency.

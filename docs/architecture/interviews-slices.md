@@ -5,8 +5,9 @@ The build plan for [ADR 0040](../decisions/0040-interviews-from-the-admin.md)
 Four pull requests. Three of them (A, B, C) are written at the same time by
 three agents in their own worktrees (separate working folders of the same
 clone); the fourth (D) starts when the first three have merged, because it
-calls their routes. Each slice is reviewable on its own, reverts on its own,
-and touches nothing another slice owns.
+calls their routes. Each slice is reviewable on its own and touches nothing
+another slice owns; they revert in reverse merge order (D, C, B, A), as the
+ADR's D13 says, because C imports B's `schema.js` and B imports A's helpers.
 
 Read the ADR first; this page says *where* and *in what order*, the ADR says
 *what* and *why*. The letters D1 to D13 below point at the ADR's decisions.
@@ -40,11 +41,12 @@ Read the ADR first; this page says *where* and *in what order*, the ADR says
 |---|---|---|
 | `functions/src/functions/index.js` | A, B, C | one `import "./<file>.js"` each; append at the end of the list, one import per slice |
 | `functions/function-inventory.json` | A, B, C | the new function names, sorted where the test says |
-| `.azure/api-surface.json` | A, B, C | A: `adminWrites` for the upload routes; B: `adminWrites` for the three job-enqueue routes; C: `publicReads` for the two public routes and `adminReads`/`adminWrites` for the interview CRUD |
+| `.azure/api-surface.json` | A, B, C | A: `adminWrites` for the three upload routes; B: `adminWrites` for its four routes (`audio-from-url`, `transcribe`, `draft` and `transcript`; `api-contract.test.js` fails on any route the file does not claim); C: `publicReads` for the two public routes and `adminReads`/`adminWrites` for the interview CRUD |
 | `functions/src/functions/route-inventory.test.js` | C only (A and B's routes are guarded, so they need no entry) | the two public routes in `PUBLIC_ROUTES` with their reason |
 | `functions/src/functions/registration-shims.test.js` | A, B, C | the new file names in its list |
 | `functions/src/lib/jobs.roles.test.js` | B only | the new job module in its import list |
 | `functions/src/lib/interviews/storage.js` | A owns it; **B writes an identical copy** | see below |
+| `functions/src/lib/blob-storage.js` | A adds `stageBlock` and `commitBlockList`; B adds one export, `downloadBlobStream` (a `Readable` of the blob's body, 8 MiB reads), placed after `downloadBlob` so the two additions do not share lines | A's agent is told B adds that one function; neither touches the other's |
 
 `functions/src/lib/interviews/storage.js` is needed by A (the upload) and B
 (the jobs) at once. A owns it. B's agent creates the same file with exactly
@@ -70,6 +72,25 @@ export const AUDIO_TYPES = Object.freeze({
   'audio/wav': 'wav',
 });
 
+// Browsers and recorders spell the same three types several ways. The
+// canonical type is what is stored and checked against the extension.
+const AUDIO_TYPE_ALIASES = Object.freeze({
+  'audio/mp3': 'audio/mpeg',
+  'audio/x-mp3': 'audio/mpeg',
+  'audio/mpeg3': 'audio/mpeg',
+  'audio/x-m4a': 'audio/mp4',
+  'audio/m4a': 'audio/mp4',
+  'audio/x-wav': 'audio/wav',
+  'audio/wave': 'audio/wav',
+  'audio/vnd.wave': 'audio/wav',
+});
+
+export function canonicalAudioType(contentType) {
+  const base = String(contentType || '').split(';')[0].trim().toLowerCase();
+  const type = AUDIO_TYPE_ALIASES[base] || base;
+  return Object.hasOwn(AUDIO_TYPES, type) ? type : null;
+}
+
 export const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
 
 export function audioBlobPath(interviewId, ext) {
@@ -85,8 +106,9 @@ export function transcriptPartPath(interviewId, version, windowIndex) {
 }
 ```
 
-A adds its test for these helpers in `storage.test.js`; B does not write a
-test for this file.
+A adds its test for these helpers in `storage.test.js` (including that
+every alias above maps to its canonical type and an unknown type gives
+`null`); B does not write a test for this file.
 
 ## Slice A: the private container, and the block upload
 
@@ -118,7 +140,8 @@ the pull request: `infrastructure-pr-reviewer` (the Terraform) and
   like `uploadBlob`; `blob-storage.test.js` gains their cases.
 - `functions/src/lib/interviews/upload.js`: the three handlers.
   `openUpload` (editor; body `{ interviewId, fileName, contentType, bytes,
-  sha256 }`; checks the type is in `AUDIO_TYPES`, the extension matches,
+  sha256 }`; normalises the type with `canonicalAudioType` (`null` is
+  refused), checks the extension matches the canonical type,
   `bytes` is 1 to `MAX_AUDIO_BYTES`; writes an `uploads/<uploadId>` sub-document
   on the interview's content document, or a small `interview_uploads`
   record if the CMS slice's document is not merged yet: **use the content
@@ -158,11 +181,20 @@ the pull request: `infrastructure-pr-reviewer` (the Terraform) and
 - `functions/src/lib/blob-storage.test.js`: the two helpers refuse after a
   job abort.
 
-**Commands to run** (bash, from the repository root of your worktree)
+**Commands to run.** Each line stands alone and names its folder, so it
+works from any working directory; `$W` is your worktree's root, set once
+with `W=$(git rev-parse --show-toplevel)`. The lines below are bash (Git
+Bash), the shell every agent runs; a PowerShell reader writes the worktree
+path in place of `"$W"`.
 
 ```bash
-cd infra && terraform fmt -check -recursive && terraform init -backend=false -input=false && terraform validate && tflint --recursive
-cd functions && npm ci --engine-strict=false && npm run lint && npm test -- src/lib/interviews src/lib/blob-storage src/functions/route-inventory src/functions/function-inventory src/functions/registration-shims src/functions/api-contract
+terraform -chdir="$W/infra" fmt -check -recursive
+terraform -chdir="$W/infra" init -backend=false -input=false
+terraform -chdir="$W/infra" validate
+tflint --chdir "$W/infra" --recursive
+npm --prefix "$W/functions" ci --engine-strict=false
+npm --prefix "$W/functions" run lint
+npm --prefix "$W/functions" test -- src/lib/interviews src/lib/blob-storage src/functions/route-inventory src/functions/function-inventory src/functions/registration-shims src/functions/api-contract
 ```
 
 **Must not touch:** `functions/src/lib/ai/*`, `functions/src/lib/cms/*`,
@@ -208,6 +240,11 @@ fence, the logs) and `typescript-test-engineer` (the stubbed Gemini client).
   row in `sync-budgets.test.js` only if a file with `httpRoute` imports a
   `generate*` function (the jobs module does not; the enqueue routes do not).
 - `functions/src/lib/interviews/storage.js`: the identical copy (above).
+- `functions/src/lib/blob-storage.js`: one export, `downloadBlobStream(container,
+  path)` returning a `Readable` of the blob's body, placed after
+  `downloadBlob`, with its case in `blob-storage.test.js`; A is told
+  (shared files table). The recording is read with it and never with
+  `downloadBlob`, which buffers the whole blob.
 - `functions/src/lib/interviews/gemini-files.js`: `uploadToGemini({ stream,
   bytes, mimeType, apiKey, fetch })` (the two-step resumable protocol),
   `deleteFromGemini`, `transcribeWindow({ fileUri, model, startSec, endSec,
@@ -219,7 +256,9 @@ fence, the logs) and `typescript-test-engineer` (the stubbed Gemini client).
   check, upload, window loop, parts on blob, assemble, delete parts, delete
   the Gemini file in `finally`, usage rows, the document patch).
   `transcribe.test.js`: windowing stops on `endOfAudio`; resumes from
-  existing parts; 29-window cap; budget refusal with `BUDGET_EXCEEDED`;
+  existing parts; 10-window cap; the estimate multiplies the whole file's
+  audio tokens by the window count and a 1.5 retry allowance and is
+  re-checked before the second window; budget refusal with `BUDGET_EXCEEDED`;
   429 retried, 403 not; the Gemini file deleted on failure; log lines
   content-free (assert no segment text, name or URL appears in any
   `context.log` call).
@@ -256,16 +295,20 @@ fence, the logs) and `typescript-test-engineer` (the stubbed Gemini client).
   already queued or running).
 - The shared registries (table above) and `jobs.roles.test.js`.
 
-**Commands to run** (bash)
+**Commands to run** (bash; `$W` is your worktree's root as in slice A;
+each line stands alone)
 
 ```bash
-cd functions && npm ci --engine-strict=false && npm run lint && npm test -- src/lib/interviews src/lib/http/guarded-fetch src/lib/ai src/lib/jobs src/functions/route-inventory src/functions/function-inventory src/functions/registration-shims src/functions/api-contract src/functions/job-poison-hooks src/functions/job-write-after-abort src/lib/no-raw-error-leaks
+npm --prefix "$W/functions" ci --engine-strict=false
+npm --prefix "$W/functions" run lint
+npm --prefix "$W/functions" test -- src/lib/interviews src/lib/http/guarded-fetch src/lib/ai src/lib/jobs src/lib/blob-storage src/functions/route-inventory src/functions/function-inventory src/functions/registration-shims src/functions/api-contract src/functions/job-poison-hooks src/functions/job-write-after-abort src/lib/no-raw-error-leaks
 ```
 
 **Must not touch:** `infra/`, `functions/src/lib/cms/*`,
 `functions/src/lib/public-reads.js`, `functions/src/lib/blob-storage.js`
-(A adds the helpers; B uses `uploadBlobFromStream`, `downloadBlob`,
-`uploadBlob`, `deleteBlob`, which exist), anything under `frontend/`,
+beyond its one `downloadBlobStream` export (A adds the block helpers; B
+otherwise uses `uploadBlobFromStream`, `uploadBlob` and `deleteBlob`, which
+exist), anything under `frontend/`,
 `CHANGELOG.md`, `docs/`.
 
 **Not verified by this slice:** any call to the real Gemini API (every test
@@ -344,14 +387,23 @@ interviews); the forge timer query excludes interviews; the frontend pages
 with a stubbed `publicApi` (list, detail, not-found marker, landing card
 present only with items, server render through `renderToString`).
 
-**Commands to run** (bash)
+**Commands to run** (bash; `$W` is your worktree's root as in slice A;
+each line stands alone)
 
 ```bash
-cd functions && npm ci --engine-strict=false && npm run lint && npm test -- src/lib/cms src/lib/interviews src/lib/public-reads src/lib/public-content-manifest src/lib/timers src/functions/route-inventory src/functions/function-inventory src/functions/registration-shims src/functions/api-contract
-cd scripts && npm ci --engine-strict=false && npm test
-cd frontend && npm ci --engine-strict=false && npm run lint && npm run format:check && npm run validate:routes && npm test -- src/pages/azure src/lib/interviews src/hooks src/components/interviews src/lib/csp
-cd frontend && npm run build
-python scripts/docs/check_redaction.py && mkdocs build --strict
+npm --prefix "$W/functions" ci --engine-strict=false
+npm --prefix "$W/functions" run lint
+npm --prefix "$W/functions" test -- src/lib/cms src/lib/interviews src/lib/public-reads src/lib/public-content-manifest src/lib/timers src/functions/route-inventory src/functions/function-inventory src/functions/registration-shims src/functions/api-contract
+npm --prefix "$W/scripts" ci --engine-strict=false
+npm --prefix "$W/scripts" test
+npm --prefix "$W/frontend" ci --engine-strict=false
+npm --prefix "$W/frontend" run lint
+npm --prefix "$W/frontend" run format:check
+npm --prefix "$W/frontend" run validate:routes
+npm --prefix "$W/frontend" test -- src/pages/azure src/lib/interviews src/hooks src/components/interviews src/lib/csp
+npm --prefix "$W/frontend" run build
+python -I "$W/scripts/docs/check_redaction.py" "$W"
+python -m mkdocs build --strict -f "$W/mkdocs.yml" -d "$TMP/1565-c-site"
 ```
 
 **Must not touch:** `infra/`, `functions/src/lib/ai/*`,
@@ -381,7 +433,13 @@ Starts after A, B and C have merged.
   (bearer token, `Content-Type: application/octet-stream`, `Content-Length`,
   a 60-second timeout, no retry). `frontend/src/lib/interviewUpload.js`:
   slice, three in flight, per-block retry (3 attempts), progress callback,
-  `sha256HexOf` reused from `imageUpload.js`; `interviewUpload.test.js`.
+  and the whole-file SHA-256 computed incrementally over the same 4 MiB
+  slices (`imageUpload.js`'s `sha256HexOf` reads the file into memory with
+  `arrayBuffer()` and returns an empty string on failure; neither is
+  acceptable for 500 MiB, so this helper hashes slice by slice and fails
+  the upload when hashing is unavailable); `interviewUpload.test.js`
+  covers the hash of a multi-slice file against a known digest and the
+  refusal path.
 - `frontend/src/pages/admin/InterviewsPage.jsx` (list),
   `InterviewNewPage.jsx` (the form), `InterviewEditPage.jsx` (the Q&A
   editor and stage panel), each at most 600 lines with a sibling
@@ -406,11 +464,16 @@ Starts after A, B and C have merged.
   and D's own, each ending with what was not verified. This is the only
   slice that edits the file.
 
-**Commands to run** (bash)
+**Commands to run** (bash; `$W` is your worktree's root as in slice A;
+each line stands alone)
 
 ```bash
-cd frontend && npm ci --engine-strict=false && npm run lint && npm run format:check && npm run validate:routes && npm test -- src/pages/admin src/lib/interviewUpload src/lib/api src/config
-cd frontend && npx playwright test e2e/interviews.spec.js --project=chromium
+npm --prefix "$W/frontend" ci --engine-strict=false
+npm --prefix "$W/frontend" run lint
+npm --prefix "$W/frontend" run format:check
+npm --prefix "$W/frontend" run validate:routes
+npm --prefix "$W/frontend" test -- src/pages/admin src/lib/interviewUpload src/lib/api src/config
+npx --prefix "$W/frontend" playwright test --config "$W/frontend/playwright.config.js" e2e/interviews.spec.js --project=chromium
 ```
 
 **Must not touch:** `infra/`, `functions/` (if a route needs a change, open
