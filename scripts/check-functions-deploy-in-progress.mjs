@@ -41,7 +41,12 @@
  * the repository completed, the repository-wide `status=in_progress` listing
  * still reported `total_count: 1` with an empty page, and `status=completed`
  * counted 2,500 runs against 28,926 unfiltered. A listing that can say both
- * of those cannot be trusted to name a live run.
+ * of those cannot be trusted to name a live run. Watched again at 20:04:42Z
+ * against a CI run that had started five seconds earlier: the workflow's
+ * `status=in_progress` listing said `total_count: 0`, the unfiltered listing
+ * and the run by id said `in_progress`; at 20:06:18Z the filtered listing
+ * said `total_count: 1` with an empty page, and the unfiltered listing showed
+ * the same run as `queued` while its record said `in_progress`.
  *
  * So the filter is no longer used. This lists the workflow's newest runs
  * with no status filter (the listing the drift and health checks also read),
