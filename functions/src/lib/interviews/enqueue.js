@@ -7,6 +7,12 @@
  *   POST cms/interviews/{id}/draft           {}        → interview-draft (the current version)
  *   POST cms/interviews/{id}/transcript      { text }  → transcripts/<id>/v1.json, no job
  *
+ * The transcribe route also reads the recording's length from its headers
+ * the first time (duration.js), stores it as `provenance.audio.durationSec`,
+ * and refuses a recording over Gemini's 9.5-hour cap with TOO_LONG
+ * (422) before any job is queued, since every window request would attach
+ * the whole file and the first would fail after a full upload.
+ *
  * All four are `editor`, the role of the job types they queue
  * (jobs.roles.test.js pairs them). Each reads the interview document first
  * and refuses with 404 when it is not an interview, so a job is never queued
@@ -28,6 +34,7 @@ import { checkAudioUrl, FETCH_JOB_TYPE } from './fetch-audio.js';
 import { TRANSCRIBE_JOB_TYPE } from './transcribe.js';
 import { DRAFT_JOB_TYPE } from './draft.js';
 import { checkTranscriptText, storeProvidedTranscript } from './transcript-text.js';
+import { MAX_AUDIO_SECONDS, probeAudioDuration, tooLong } from './duration.js';
 
 export const CONTENT_CONTAINER = 'content';
 
@@ -44,7 +51,7 @@ export function readInterviewId(request) {
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
  * @param {{ readDoc: Function, upsertDoc: Function, patchDoc: Function }} deps.store
- * @param {{ uploadBlob: Function }} deps.storage
+ * @param {{ uploadBlob: Function, readBlobRangeForDelivery: Function }} deps.storage
  * @param {() => string} [deps.uuid]
  * @param {() => Date} [deps.now]
  */
@@ -129,6 +136,26 @@ export function createInterviewJobHandlers({ guard, store, storage, uuid = rando
       const current = isObject(read.doc.transcription) ? read.doc.transcription : {};
       if (await jobInFlight(current.jobId)) {
         return json(409, { ok: false, error: `Transcript version ${current.version} is already being made.` });
+      }
+      // The length, read once from the headers and kept on the document.
+      let durationSec = Number.isFinite(audio.durationSec) ? audio.durationSec : null;
+      if (durationSec === null && typeof storage.readBlobRangeForDelivery === 'function') {
+        durationSec = await probeAudioDuration(storage, {
+          container: audio.container || 'interviews-audio',
+          path: audio.path,
+          contentType: audio.contentType,
+          bytes: audio.bytes,
+        });
+        await store.patchDoc(CONTENT_CONTAINER, read.id, {
+          provenance: { ...read.doc.provenance, audio: { ...audio, durationSec } },
+        });
+      }
+      if (tooLong(durationSec)) {
+        return json(422, {
+          ok: false,
+          error: `The recording is ${Math.round(durationSec / 60)} minutes long; Gemini takes at most ${MAX_AUDIO_SECONDS / 3600} hours in one prompt. Split it and upload the parts as separate interviews.`,
+          code: 'TOO_LONG',
+        });
       }
       const version = (Number.isInteger(current.version) && current.version > 0 ? current.version : 0) + 1;
       const { jobId, body: answer } = await queue({

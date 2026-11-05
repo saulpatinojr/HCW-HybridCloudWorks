@@ -24,6 +24,7 @@ vi.mock('../lib/blob-storage.js', () => ({
   deleteBlob: vi.fn(),
   downloadBlobStream: vi.fn(),
   readBlobForDelivery: vi.fn(),
+  readBlobRangeForDelivery: vi.fn(),
   uploadBlob: vi.fn(),
   uploadBlobFromStream: vi.fn(),
 }));
@@ -82,8 +83,8 @@ describe('the workers', () => {
 
   it('hand the parsed payload, the context as the log and the signal to their pipelines', async () => {
     const signal = new AbortController().signal;
-    await expect(runFetchAudio({ interviewId: 'int-1', sourceUrl: 'https://x.example/a.mp3' }, { context, signal })).resolves.toEqual({ bytes: 1 });
-    expect(fetchAudioToContainer.mock.calls[0][0]).toMatchObject({ interviewId: 'int-1', sourceUrl: 'https://x.example/a.mp3', log: context, signal });
+    await expect(runFetchAudio({ interviewId: 'int-1', sourceUrl: 'https://x.example/a.mp3' }, { context, signal, job: { id: 'job-7' } })).resolves.toEqual({ bytes: 1 });
+    expect(fetchAudioToContainer.mock.calls[0][0]).toMatchObject({ interviewId: 'int-1', sourceUrl: 'https://x.example/a.mp3', log: context, signal, uploadId: 'job-7' });
     await expect(runTranscribe({ interviewId: 'int-1', transcriptVersion: '2' }, { context, signal, job: { id: 'job-9' } })).resolves.toEqual({ windows: 1 });
     expect(transcribeInterview.mock.calls[0][0]).toMatchObject({ interviewId: 'int-1', transcriptVersion: 2, log: context, signal, jobId: 'job-9' });
     expect(Object.keys(transcribeInterview.mock.calls[0][0].storage).sort()).toEqual(['deleteBlob', 'downloadBlobStream', 'readBlobForDelivery', 'uploadBlob']);

@@ -29,6 +29,7 @@ import {
   deleteBlob,
   downloadBlobStream,
   readBlobForDelivery,
+  readBlobRangeForDelivery,
   uploadBlob,
   uploadBlobFromStream,
 } from '../lib/blob-storage.js';
@@ -53,7 +54,7 @@ import { DRAFT_JOB_MAX_PAYLOAD_BYTES, DRAFT_JOB_TYPE, draftInterview, parseDraft
 // ── workers ─────────────────────────────────────────────────────────────────
 
 /** One URL fetch against production dependencies. */
-export async function runFetchAudio(payload, { context, signal } = {}) {
+export async function runFetchAudio(payload, { context, job, signal } = {}) {
   if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseFetchPayload(payload);
   if (parsed.error) throw new JobFailedError(parsed.error);
@@ -63,6 +64,7 @@ export async function runFetchAudio(payload, { context, signal } = {}) {
     storage: { uploadBlobFromStream, deleteBlob },
     log: context,
     signal,
+    ...(job?.id ? { uploadId: job.id } : {}),
   });
 }
 
@@ -112,7 +114,7 @@ export async function runDraft(payload, { context, signal } = {}) {
   if (parsed.error) throw new JobFailedError(parsed.error);
   return draftInterview({
     ...parsed.value,
-    store: { readDoc, patchDoc },
+    store: { readDoc, patchDoc, queryDocs },
     storage: { readBlobForDelivery },
     log: context,
     signal,
@@ -141,7 +143,7 @@ const handlers = () =>
   createInterviewJobHandlers({
     guard: getDefaultGuard(),
     store: { readDoc, upsertDoc, patchDoc },
-    storage: { uploadBlob },
+    storage: { uploadBlob, readBlobRangeForDelivery },
   });
 
 /** The queue output as the enqueue handlers take it. */

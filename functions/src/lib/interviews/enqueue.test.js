@@ -22,7 +22,7 @@ function makeDeps({ doc, jobs = {} } = {}) {
     upsertDoc: vi.fn(async (container, document) => document),
     patchDoc: vi.fn(async () => ({})),
   };
-  const storage = { uploadBlob: vi.fn(async () => 'url') };
+  const storage = { uploadBlob: vi.fn(async () => 'url'), readBlobRangeForDelivery: vi.fn(async () => null) };
   const io = { enqueue: vi.fn() };
   const handlers = createInterviewJobHandlers({ guard, store, storage, uuid: () => 'job-new', now: () => new Date('2026-11-05T10:00:00Z') });
   return { store, storage, io, handlers };
@@ -115,6 +115,40 @@ describe('POST cms/interviews/{id}/transcribe', () => {
     });
   });
 
+  it('reads the recording’s length once from its headers, stores it, and refuses one over 9.5 hours with TOO_LONG before queuing', async () => {
+    // A wav header: 16 kHz mono 16-bit (32,000 bytes a second) and a data chunk of 9.5 hours plus one second.
+    const wav = (seconds) => {
+      const head = Buffer.alloc(44);
+      head.write('RIFF', 0, 'latin1');
+      head.write('WAVE', 8, 'latin1');
+      head.write('fmt ', 12, 'latin1');
+      head.writeUInt32LE(16, 16);
+      head.writeUInt32LE(32000, 28);
+      head.write('data', 36, 'latin1');
+      head.writeUInt32LE(seconds * 32000, 40);
+      return head;
+    };
+    const tooLong = makeDeps({ doc: { id: 'int-1', type: 'interview', provenance: { audio: { container: 'interviews-audio', path: 'audio/int-1.wav', contentType: 'audio/wav', bytes: 1 } } } });
+    tooLong.storage.readBlobRangeForDelivery = vi.fn(async () => ({ body: wav(9.5 * 3600 + 1) }));
+    const refused = parse(await tooLong.handlers.transcribe(request('int-1'), context, tooLong.io));
+    expect(refused).toMatchObject({ status: 422, body: { code: 'TOO_LONG', error: expect.stringMatching(/570 minutes long; Gemini takes at most 9.5 hours/) } });
+    expect(tooLong.io.enqueue).not.toHaveBeenCalled();
+    expect(tooLong.store.patchDoc).toHaveBeenCalledWith('content', 'int-1', { provenance: { audio: expect.objectContaining({ durationSec: 9.5 * 3600 + 1 }) } });
+    // Exactly 9.5 hours is taken.
+    const exact = makeDeps({ doc: { id: 'int-1', type: 'interview', provenance: { audio: { container: 'interviews-audio', path: 'audio/int-1.wav', contentType: 'audio/wav', bytes: 1 } } } });
+    exact.storage.readBlobRangeForDelivery = vi.fn(async () => ({ body: wav(9.5 * 3600) }));
+    expect(parse(await exact.handlers.transcribe(request('int-1'), context, exact.io)).status).toBe(202);
+    // A stored length is not read again; a stored length over the cap is refused without a read.
+    const stored = makeDeps({ doc: { id: 'int-1', type: 'interview', provenance: { audio: { path: 'audio/int-1.mp3', contentType: 'audio/mpeg', bytes: 1, durationSec: 40_000 } } } });
+    expect(parse(await stored.handlers.transcribe(request('int-1'), context, stored.io)).status).toBe(422);
+    expect(stored.storage.readBlobRangeForDelivery).not.toHaveBeenCalled();
+    // Headers that cannot be read store null and let the job's estimate decide.
+    const unknown = makeDeps({ doc: { id: 'int-1', type: 'interview', provenance: { audio: { path: 'audio/int-1.mp3', contentType: 'audio/mpeg', bytes: 10 } } } });
+    unknown.storage.readBlobRangeForDelivery = vi.fn(async () => ({ body: Buffer.from('not audio') }));
+    expect(parse(await unknown.handlers.transcribe(request('int-1'), context, unknown.io)).status).toBe(202);
+    expect(unknown.store.patchDoc.mock.calls[0][2].provenance.audio.durationSec).toBeNull();
+  });
+
   it('starts at version 1, refuses 422 without a recording and 409 while the current version is being made', async () => {
     const first = makeDeps();
     expect(parse(await first.handlers.transcribe(request('int-1'), context, first.io)).body.transcriptVersion).toBe(1);
@@ -172,5 +206,15 @@ describe('POST cms/interviews/{id}/transcript', () => {
       jobs: { 'job-old': { id: 'job-old', status: 'running' } },
     });
     expect(parse(await busy.handlers.transcript(request('int-1', { text: 'Speaker 1: hi' }), context, busy.io)).status).toBe(409);
+  });
+});
+
+describe('POST cms/interviews/{id}/transcribe without a range reader', () => {
+  it('queues without probing the length when the storage seam cannot read a range', async () => {
+    const { handlers, io, store } = makeDeps();
+    const bare = createInterviewJobHandlers({ guard, store, storage: { uploadBlob: vi.fn() }, uuid: () => 'job-new', now: () => new Date('2026-11-05T10:00:00Z') });
+    expect(parse(await bare.transcribe(request('int-1'), context, io)).status).toBe(202);
+    expect(store.patchDoc.mock.calls.every(([, , patch]) => !patch.provenance)).toBe(true);
+    expect(handlers).toBeDefined();
   });
 });

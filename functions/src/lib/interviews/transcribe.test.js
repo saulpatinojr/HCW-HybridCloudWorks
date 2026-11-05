@@ -139,7 +139,8 @@ describe('the settings and the arithmetic', () => {
     const store = { queryDocs: vi.fn(async () => [{ estimatedCostUsd: 1.5 }, { estimatedCostUsd: 0.25 }]) };
     await expect(monthTranscriptionSpend({ store, now: () => new Date('2026-11-17T12:00:00Z') })).resolves.toEqual({ since: '2026-11-01T00:00:00.000Z', costUsd: 1.75 });
     expect(store.queryDocs.mock.calls[0][2]).toEqual([
-      { name: '@source', value: 'ai:recordingTranscript' },
+      { name: '@transcribe', value: 'ai:recordingTranscript' },
+      { name: '@draft', value: 'ai:interviewDrafting' },
       { name: '@since', value: '2026-11-01T00:00:00.000Z' },
     ]);
   });
@@ -236,15 +237,25 @@ describe('transcribeInterview', () => {
     expect(complete.usage).toHaveLength(0);
   });
 
-  it('stops at the window cap when the model never says endOfAudio: ten windows of an hour, five of two hours', async () => {
+  it('stops with TOO_LONG when the tenth window ends without endOfAudio (a URL fetch with no declared length), never asking an eleventh', async () => {
     const world = makeWorld();
     const gemini = makeGemini(Array.from({ length: 40 }, (_, k) => ({ segments: [segment(k)], endOfAudio: false })));
-    const report = await run(world, gemini, { env: { GEMINI_API_KEY: 'k', INTERVIEW_TRANSCRIPTION_MONTHLY_USD: '100' } });
-    expect(report.windows).toBe(10);
+    const error = await run(world, gemini, { env: { GEMINI_API_KEY: 'k', INTERVIEW_TRANSCRIPTION_MONTHLY_USD: '100' } }).catch((e) => e);
+    expect(error).toMatchObject({ code: 'TOO_LONG', status: 422 });
+    expect(error.message).toMatch(/still going after 10 windows of 60 minutes/);
     expect(gemini.transcribeWindow).toHaveBeenCalledTimes(10);
+    expect(gemini.deleteFromGemini).toHaveBeenCalledTimes(1);
+    // The parts stay for the record; no transcript was assembled.
+    expect(Object.keys(world.blobs)).toHaveLength(10);
+    expect(world.store.patchDoc.mock.calls.at(-1)[2].interview.stage).toBe('failed');
+    // Two-hour windows: five, the same stop.
     const wide = makeWorld();
     const long = makeGemini(Array.from({ length: 40 }, (_, k) => ({ segments: [segment(k)], endOfAudio: false })));
-    await expect(run(wide, long, { env: { GEMINI_API_KEY: 'k', INTERVIEW_TRANSCRIPTION_WINDOW_MINUTES: '120', INTERVIEW_TRANSCRIPTION_MONTHLY_USD: '100' } })).resolves.toMatchObject({ windows: 5 });
+    await expect(run(wide, long, { env: { GEMINI_API_KEY: 'k', INTERVIEW_TRANSCRIPTION_WINDOW_MINUTES: '120', INTERVIEW_TRANSCRIPTION_MONTHLY_USD: '100' } })).rejects.toMatchObject({ code: 'TOO_LONG' });
+    expect(long.transcribeWindow).toHaveBeenCalledTimes(5);
+    // A tenth window that IS the end is a success.
+    const ends = makeWorld();
+    await expect(run(ends, makeGemini(Array.from({ length: 10 }, (_, k) => ({ segments: [segment(k)], endOfAudio: k === 9 }))), { env: { GEMINI_API_KEY: 'k', INTERVIEW_TRANSCRIPTION_MONTHLY_USD: '100' } })).resolves.toMatchObject({ windows: 10 });
   });
 
   it('re-reads the month’s spend before each window, so a job running beside this one is counted', async () => {
@@ -295,7 +306,7 @@ describe('transcribeInterview', () => {
     const gemini = makeGemini([{ segments: [], endOfAudio: true }]);
     const error = await run(world, gemini).catch((e) => e);
     expect(error).toMatchObject({ code: 'BUDGET_EXCEEDED', status: 429 });
-    expect(error.message).toMatch(/\$9\.90 of the \$10 monthly transcription ceiling is used since 2026-11-01/);
+    expect(error.message).toMatch(/\$9\.90 of the \$10 monthly interview ceiling is used since 2026-11-01/);
     expect(world.storage.downloadBlobStream).not.toHaveBeenCalled();
     expect(gemini.uploadToGemini).not.toHaveBeenCalled();
     expect(gemini.transcribeWindow).not.toHaveBeenCalled();
@@ -374,6 +385,21 @@ describe('transcribeInterview', () => {
     unpriced.ai.modelForTask = vi.fn(async () => ({ provider: 'gemini', model: 'gemini-9-future' }));
     await expect(run(unpriced, gemini)).rejects.toMatchObject({ code: 'MODEL_UNPRICED', status: 422 });
     expect(gemini.uploadToGemini).not.toHaveBeenCalled();
+  });
+
+  it('uses the recording’s known length for the estimate, and refuses a known length over 9.5 hours before anything is sent', async () => {
+    // Ten minutes known: 19,200 tokens, about $0.014 plus the output allowance; the bitrate guess would say an hour.
+    const known = makeWorld({ doc: { ...baseDoc(), provenance: { source: 'url', audio: { ...audio, durationSec: 600 } } }, monthRows: [{ estimatedCostUsd: 9.85 }] });
+    const gemini = makeGemini([{ segments: [], endOfAudio: true }]);
+    await expect(run(known, gemini)).resolves.toMatchObject({ windows: 1 });
+    const guessed = makeWorld({ monthRows: [{ estimatedCostUsd: 9.85 }] });
+    await expect(run(guessed, makeGemini([{ segments: [], endOfAudio: true }]))).rejects.toMatchObject({ code: 'BUDGET_EXCEEDED' });
+    const long = makeWorld({ doc: { ...baseDoc(), provenance: { source: 'url', audio: { ...audio, durationSec: MAX_AUDIO_SECONDS + 1 } } } });
+    const idle = makeGemini([]);
+    await expect(run(long, idle)).rejects.toMatchObject({ code: 'TOO_LONG', status: 422 });
+    expect(idle.uploadToGemini).not.toHaveBeenCalled();
+    const exact = makeWorld({ doc: { ...baseDoc(), provenance: { source: 'url', audio: { ...audio, durationSec: MAX_AUDIO_SECONDS } } } });
+    await expect(run(exact, makeGemini([{ segments: [], endOfAudio: true }]), { env: { GEMINI_API_KEY: 'k', INTERVIEW_TRANSCRIPTION_MONTHLY_USD: '100' } })).resolves.toMatchObject({ windows: 1 });
   });
 
   it('refuses an unseeded key before the upload, with the fixed sentence', async () => {

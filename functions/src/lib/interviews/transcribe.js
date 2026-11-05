@@ -11,6 +11,11 @@
  *     → the parts assembled into transcripts/<id>/v<n>.json, the parts
  *       deleted, the Gemini file deleted, the document patched
  *
+ * A recording whose length is known is refused over 9.5 hours before the
+ * job is queued (enqueue.js, TOO_LONG); one whose length is not known (a
+ * URL fetch whose headers gave none) is stopped by this job with the same
+ * code when the tenth window ends without `endOfAudio`.
+ *
  * RESUME. A job the sweeper re-queues, or one the owner runs again for the
  * same version, reads the parts already in the container and skips those
  * windows; the upload to Gemini happens only when a window is still to do.
@@ -31,7 +36,8 @@
  *     brings the window down.]
  *   - The monthly ceiling INTERVIEW_TRANSCRIPTION_MONTHLY_USD (default 10)
  *     is checked BEFORE EVERY ATTEMPT, retries included, against the
- *     month's spend on `ai:recordingTranscript` in `ai_usage` (re-read
+ *     month's spend on the interview tasks in `ai_usage`
+ *     (`ai:recordingTranscript` and `ai:interviewDrafting`, budget.js; re-read
  *     before every window, so two jobs running at once see each other's
  *     rows) plus what this job has spent so far plus this request's
  *     estimate: the whole
@@ -52,8 +58,10 @@
  */
 import { modelForTask as routerModelForTask, getCostEstimate as routerCostEstimate } from '../ai/router.js';
 import { audioInputRateFor, modelRatesFor } from '../ai/model-tables.js';
-import { USAGE_CONTAINER, featureSource, recordAiUsage, totalCostUsd } from '../ai/usage.js';
+import { featureSource, recordAiUsage } from '../ai/usage.js';
 import { readSetting } from '../http/read-setting.js';
+import { CEILING_DEFAULT_USD, CEILING_SETTING, budgetExceeded, monthInterviewSpend, monthlyCeilingUsd } from './budget.js';
+import { MAX_AUDIO_SECONDS, tooLong } from './duration.js';
 import { storedFailure } from '../http/error-response.js';
 import { JOBS_CONTAINER, JobFailedError, TERMINAL_JOB_STATUSES } from '../jobs.js';
 import {
@@ -71,15 +79,15 @@ export const TRANSCRIBE_JOB_MAX_PAYLOAD_BYTES = 1024;
 export const TRANSCRIBE_JOB_TIMEOUT_MS = 25 * 60 * 1000;
 export const CONTENT_CONTAINER = 'content';
 
-export const CEILING_SETTING = 'INTERVIEW_TRANSCRIPTION_MONTHLY_USD';
-export const CEILING_DEFAULT_USD = 10;
+// The ceiling and the length cap live in budget.js and duration.js, shared
+// with the drafting job and the enqueue route; re-exported for the callers
+// that read them here.
+export { CEILING_DEFAULT_USD, CEILING_SETTING, MAX_AUDIO_SECONDS, monthlyCeilingUsd };
 export const WINDOW_SETTING = 'INTERVIEW_TRANSCRIPTION_WINDOW_MINUTES';
 export const WINDOW_DEFAULT_MINUTES = 60;
 export const WINDOW_MIN_MINUTES = 5;
 export const WINDOW_MAX_MINUTES = 120;
 
-/** Gemini's cap on audio in one prompt: 9.5 hours (aistudio.google.com/docs/audio, read 2026-11-05). */
-export const MAX_AUDIO_SECONDS = 9.5 * 3600;
 /** Tokens per second of audio input (the same page). */
 export const AUDIO_TOKENS_PER_SECOND = 32;
 /** Output tokens allowed for in a request's estimate: a window's JSON. */
@@ -117,12 +125,6 @@ export function estimateAudioSeconds({ bytes, contentType }) {
   return Math.min(Math.max(seconds, 1), MAX_AUDIO_SECONDS);
 }
 
-/** The monthly ceiling in USD: the setting when it is a positive number, else the default. */
-export function monthlyCeilingUsd(env = process.env) {
-  const value = Number(readSetting(env, CEILING_SETTING));
-  return Number.isFinite(value) && value > 0 ? value : CEILING_DEFAULT_USD;
-}
-
 /** The window length in seconds: the setting within its bounds, else the default. */
 export function windowSeconds(env = process.env) {
   const value = Number(readSetting(env, WINDOW_SETTING));
@@ -145,22 +147,8 @@ export function requestCostUsd({ provider, model, promptTokens, completionTokens
   return (promptTokens * audioRate + completionTokens * rates[1]) / 1_000_000;
 }
 
-/** The month's spend on the transcription task, from `ai_usage`, since the first of the month (UTC). */
-export async function monthTranscriptionSpend({ store, now = () => new Date() }) {
-  const start = new Date(now());
-  start.setUTCDate(1);
-  start.setUTCHours(0, 0, 0, 0);
-  const since = start.toISOString();
-  const rows = await store.queryDocs(
-    USAGE_CONTAINER,
-    'SELECT c.estimatedCostUsd FROM c WHERE c.source = @source AND c.timestamp >= @since',
-    [
-      { name: '@source', value: featureSource(TRANSCRIBE_TASK) },
-      { name: '@since', value: since },
-    ]
-  );
-  return { since, costUsd: totalCostUsd(rows) };
-}
+/** The month's spend on the interview tasks (budget.js), under the name this job's callers use. */
+export const monthTranscriptionSpend = monthInterviewSpend;
 
 /** A part the container holds, or null. The parts are JSON this job wrote. */
 async function readPart(storage, path) {
@@ -223,6 +211,15 @@ export async function transcribeInterview({
       status: 422,
     });
   }
+  // A known length over Gemini's cap would fail on the first request after
+  // the whole upload; the enqueue route refuses it first, and so does the
+  // worker for a job queued through the generic door.
+  if (tooLong(audio.durationSec)) {
+    throw new JobFailedError(
+      `The recording is ${Math.round(audio.durationSec / 60)} minutes long; Gemini takes at most 9.5 hours in one prompt. Split it and upload the parts as separate interviews.`,
+      { code: 'TOO_LONG', status: 422 }
+    );
+  }
   const interview = isObject(doc.interview) ? doc.interview : {};
   const provenance = isObject(doc.provenance) ? doc.provenance : {};
   const patchStage = (stage, extra = {}) =>
@@ -270,17 +267,19 @@ export async function transcribeInterview({
   let completionTokensTotal = 0;
   let requests = 0;
   let knownPromptTokens = null;
-  const estimatedTokens = estimateAudioSeconds({ bytes: audio.bytes, contentType: audio.contentType }) * AUDIO_TOKENS_PER_SECOND;
+  // The real length when the headers gave one (duration.js, read at
+  // enqueue), else the bitrate guess that errs long.
+  const seconds = Number.isFinite(audio.durationSec) && audio.durationSec > 0
+    ? Math.min(audio.durationSec, MAX_AUDIO_SECONDS)
+    : estimateAudioSeconds({ bytes: audio.bytes, contentType: audio.contentType });
+  const estimatedTokens = Math.ceil(seconds * AUDIO_TOKENS_PER_SECOND);
 
   /** Before every attempt: this request's estimate against the ceiling. */
   const assertBudget = () => {
     const promptTokens = knownPromptTokens ?? estimatedTokens;
     const cost = requestCostUsd({ provider, model, promptTokens, at: now() });
     if (month.costUsd + jobSpentUsd + cost > ceiling) {
-      throw new JobFailedError(
-        `Transcription paused: $${(month.costUsd + jobSpentUsd).toFixed(2)} of the $${ceiling} monthly transcription ceiling is used since ${month.since.slice(0, 10)}, and this request would cost about $${cost.toFixed(2)}. Raise ${CEILING_SETTING} or wait for the first of the month.`,
-        { code: 'BUDGET_EXCEEDED', status: 429 }
-      );
+      throw budgetExceeded({ what: 'Transcription', usedUsd: month.costUsd + jobSpentUsd, ceiling, since: month.since, costUsd: cost });
     }
   };
 
@@ -373,6 +372,15 @@ export async function transcribeInterview({
       if (result.endOfAudio) break;
     }
 
+    // A recording with no declared length (a URL fetch whose headers gave
+    // none) that is still going when the last allowed window ends is over
+    // Gemini's cap: the parts stay for the record, the job stops here.
+    if (parts.length >= limit && !parts[parts.length - 1]?.endOfAudio) {
+      throw new JobFailedError(
+        `The recording is still going after ${parts.length} windows of ${Math.round(window / 60)} minutes; Gemini takes at most 9.5 hours in one prompt. Split it and upload the parts as separate interviews.`,
+        { code: 'TOO_LONG', status: 422 }
+      );
+    }
     const segments = parts.flatMap((p) => p.segments);
     const stamp = now().toISOString();
     const transcript = transcriptDocument({

@@ -37,9 +37,11 @@ export function canonicalAudioType(contentType) {
 
 export const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
 
-export function audioBlobPath(interviewId, ext) {
-  return `audio/${interviewId}.${ext}`;
+export function audioBlobPath(interviewId, uploadId, ext) {
+  return `audio/${interviewId}/${uploadId}.${ext}`;
 }
+
+export const MAX_AUDIO_SECONDS = 34_200; // Gemini's 9.5 hours per prompt
 
 export function transcriptBlobPath(interviewId, version) {
   return `transcripts/${interviewId}/v${version}.json`;

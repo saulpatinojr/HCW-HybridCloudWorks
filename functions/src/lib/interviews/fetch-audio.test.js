@@ -121,9 +121,10 @@ describe('fetchAudioToContainer', () => {
       env: {},
       log,
       now: () => new Date('2026-11-05T10:00:00Z'),
+      uploadId: 'job-7',
     });
-    expect(report).toEqual({ interviewId: 'int-1', bytes: 6, contentType: 'audio/mp4', path: 'audio/int-1.m4a' });
-    expect(storage.uploaded['interviews-audio/audio/int-1.m4a'].toString()).toBe('abcdef');
+    expect(report).toEqual({ interviewId: 'int-1', bytes: 6, contentType: 'audio/mp4', path: 'audio/int-1/job-7.m4a' });
+    expect(storage.uploaded['interviews-audio/audio/int-1/job-7.m4a'].toString()).toBe('abcdef');
     expect(storage.uploadBlobFromStream.mock.calls[0].slice(3)).toEqual([4 * 1024 * 1024, 'audio/mp4']);
     expect(fetchStream).toHaveBeenCalledWith(URL_OK, {
       httpsOnly: true,
@@ -142,12 +143,14 @@ describe('fetchAudioToContainer', () => {
         source: 'url',
         audio: {
           container: 'interviews-audio',
-          path: 'audio/int-1.m4a',
+          path: 'audio/int-1/job-7.m4a',
           bytes: 6,
           sha256: createHash('sha256').update('abcdef').digest('hex'),
           contentType: 'audio/mp4',
+          durationSec: null,
           uploadedAt: '2026-11-05T10:00:00.000Z',
           sourceUrl: URL_OK,
+          superseded: [],
         },
       },
       interview: { stage: 'fetched', error: null, fetchJobId: 'j1' },
@@ -159,11 +162,25 @@ describe('fetchAudioToContainer', () => {
     expect(line).not.toContain('guest-voice');
   });
 
+  it('writes each fetch to its own blob and lists the recording it replaces under superseded', async () => {
+    const previous = { container: 'interviews-audio', path: 'audio/int-1/job-1.mp3', bytes: 9, uploadedAt: '2026-11-01T00:00:00.000Z', superseded: [{ container: 'interviews-audio', path: 'audio/int-1/job-0.mp3', uploadedAt: null }] };
+    const store = makeStore({ id: 'int-1', type: 'interview', provenance: { source: 'upload', audio: previous }, interview: {} });
+    const storage = makeStorage();
+    await fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store, storage, fetchStream: vi.fn(async () => fetched(['x'])), env: {}, uploadId: 'job-7' });
+    const audio = store.patchDoc.mock.calls[1][2].provenance.audio;
+    expect(audio.path).toBe('audio/int-1/job-7.mp3');
+    expect(audio.superseded).toEqual([
+      { container: 'interviews-audio', path: 'audio/int-1/job-1.mp3', uploadedAt: '2026-11-01T00:00:00.000Z' },
+      { container: 'interviews-audio', path: 'audio/int-1/job-0.mp3', uploadedAt: null },
+    ]);
+    expect(storage.deleteBlob).not.toHaveBeenCalled();
+  });
+
   it('takes octet-stream by the final URL’s extension, after redirects', async () => {
     const storage = makeStorage();
     const fetchStream = vi.fn(async () => fetched(['x'], { type: 'application/octet-stream', url: 'https://cdn.example/dl/file.wav' }));
-    const report = await fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage, fetchStream, env: {} });
-    expect(report).toMatchObject({ contentType: 'audio/wav', path: 'audio/int-1.wav' });
+    const report = await fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage, fetchStream, env: {}, uploadId: 'job-7' });
+    expect(report).toMatchObject({ contentType: 'audio/wav', path: 'audio/int-1/job-7.wav' });
   });
 
   it('refuses a document that is not an interview, and a host outside the allow-list, before fetching', async () => {
@@ -188,7 +205,7 @@ describe('fetchAudioToContainer', () => {
       const fetchStream = vi.fn(async () => {
         throw Object.assign(new Error(thrown.message), thrown);
       });
-      const error = await fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage: makeStorage(), fetchStream, env: {} }).catch((e) => e);
+      const error = await fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage: makeStorage(), fetchStream, env: {}, uploadId: 'job-7' }).catch((e) => e);
       expect(error, code).toMatchObject({ code, status });
       expect(error.message, code).toMatch(sentence);
       expect(error.message, code).not.toContain('10.0.0.5');
@@ -200,7 +217,7 @@ describe('fetchAudioToContainer', () => {
     const destroy = vi.spyOn(stream, 'destroy');
     const fetchStream = vi.fn(async () => ({ ...fetched(['x'], { type: 'text/html' }), stream }));
     const storage = makeStorage();
-    await expect(fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage, fetchStream, env: {} })).rejects.toMatchObject({ code: 'UNSUPPORTED_TYPE', status: 415 });
+    await expect(fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage, fetchStream, env: {}, uploadId: 'job-7' })).rejects.toMatchObject({ code: 'UNSUPPORTED_TYPE', status: 415 });
     expect(destroy).toHaveBeenCalled();
     expect(storage.uploadBlobFromStream).not.toHaveBeenCalled();
   });
@@ -214,8 +231,8 @@ describe('fetchAudioToContainer', () => {
     });
     const storage = makeStorage();
     const fetchStream = vi.fn(async () => ({ ...fetched([]), stream: broken }));
-    await expect(fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage, fetchStream, env: {} })).rejects.toMatchObject({ code: 'BODY_TOO_LARGE' });
-    expect(storage.deleteBlob).toHaveBeenCalledWith('interviews-audio', 'audio/int-1.mp3');
+    await expect(fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage, fetchStream, env: {}, uploadId: 'job-7' })).rejects.toMatchObject({ code: 'BODY_TOO_LARGE' });
+    expect(storage.deleteBlob).toHaveBeenCalledWith('interviews-audio', 'audio/int-1/job-7.mp3');
   });
 
   it('an upload the blob client refuses is reported with its partial blob deleted, and an empty body is refused', async () => {
@@ -223,13 +240,13 @@ describe('fetchAudioToContainer', () => {
     storage.uploadBlobFromStream = vi.fn(async () => {
       throw Object.assign(new Error('Server busy; secret-path'), { statusCode: 503 });
     });
-    await expect(fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage, fetchStream: vi.fn(async () => fetched(['x'])), env: {} })).rejects.toMatchObject({
+    await expect(fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage, fetchStream: vi.fn(async () => fetched(['x'])), env: {}, uploadId: 'job-7' })).rejects.toMatchObject({
       code: 'FETCH_FAILED',
       message: 'The download failed.',
     });
     expect(storage.deleteBlob).toHaveBeenCalledTimes(1);
     const empty = makeStorage();
-    await expect(fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage: empty, fetchStream: vi.fn(async () => fetched([])), env: {} })).rejects.toMatchObject({ code: 'AUDIO_EMPTY' });
+    await expect(fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store: makeStore(), storage: empty, fetchStream: vi.fn(async () => fetched([])), env: {}, uploadId: 'job-7' })).rejects.toMatchObject({ code: 'AUDIO_EMPTY' });
     expect(empty.deleteBlob).toHaveBeenCalledTimes(1);
   });
 });

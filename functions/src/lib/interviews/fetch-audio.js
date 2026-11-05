@@ -28,7 +28,7 @@
  * is kept): it is stored in the provenance block and never logged. Log
  * lines carry the interview id, the byte count, the type and the time.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Transform, pipeline } from 'node:stream';
 import { storedFailure } from '../http/error-response.js';
 import { readSetting } from '../http/read-setting.js';
@@ -147,6 +147,7 @@ export function resolveAudioType(response, finalUrl) {
  * @param {() => Date} [args.now]
  * @param {{ log?: Function, warn?: Function }} [args.log]
  * @param {AbortSignal} [args.signal]
+ * @param {string} [args.uploadId] - names the blob; the job id in production
  * @returns {Promise<{ interviewId: string, bytes: number, contentType: string, path: string }>}
  */
 export async function fetchAudioToContainer({
@@ -160,6 +161,7 @@ export async function fetchAudioToContainer({
   log = null,
   signal = null,
   container = CONTENT_CONTAINER,
+  uploadId = randomUUID(),
 }) {
   const doc = await store.readDoc(container, interviewId, interviewId);
   if (!doc || doc.type !== 'interview') {
@@ -214,7 +216,11 @@ export async function fetchAudioToContainer({
       })
     );
   }
-  const path = audioBlobPath(interviewId, AUDIO_TYPES[contentType]);
+  // Its own blob per fetch (the job id names it), so a second fetch never
+  // writes over the recording the document still points at; the one it
+  // replaces is listed under `superseded` for slice C's delete helper, and
+  // expires under the lifecycle rule in any case.
+  const path = audioBlobPath(interviewId, uploadId, AUDIO_TYPES[contentType]);
 
   // Hash and count as the bytes are pulled through, so nothing flows until
   // the uploader reads; the stream's own error (the cap, the deadline) ends
@@ -248,6 +254,11 @@ export async function fetchAudioToContainer({
     throw await recordFailure(new JobFailedError('The URL answered with an empty file.', { code: 'AUDIO_EMPTY', status: 422 }));
   }
   const uploadedAt = now().toISOString();
+  const previous = isObject(provenance.audio) && provenance.audio.path ? provenance.audio : null;
+  const superseded = [
+    ...(previous ? [{ container: previous.container || INTERVIEWS_AUDIO_CONTAINER, path: previous.path, uploadedAt: previous.uploadedAt ?? null }] : []),
+    ...(Array.isArray(previous?.superseded) ? previous.superseded : []),
+  ];
   await store.patchDoc(container, interviewId, {
     provenance: {
       ...provenance,
@@ -258,8 +269,10 @@ export async function fetchAudioToContainer({
         bytes,
         sha256: hash.digest('hex'),
         contentType,
+        durationSec: null,
         uploadedAt,
         sourceUrl,
+        superseded,
       },
     },
     interview: { ...interview, stage: 'fetched', error: null },

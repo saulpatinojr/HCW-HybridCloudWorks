@@ -18,8 +18,19 @@
  * the same way. The prompt text itself is fixed.
  *
  * A transcript over 120 kB (MAX_TRANSCRIPT_INPUT_BYTES, the cap the
- * recording script uses) is sent in passes split on turn boundaries, and
- * the lists are joined; the whole list is still capped at 40 items.
+ * recording script uses) is sent in as many passes as it needs, split on
+ * turn boundaries — a 400,000-character transcript, the most the route
+ * accepts, is four — and the lists are joined. Each pass asks for its share
+ * of the 40 items the page allows, so every part of the transcript is
+ * represented in the draft rather than the first part filling the list,
+ * and each later pass is given the questions already drafted, as data, so
+ * it does not ask them again. The combined list is validated once at the
+ * end: over 40 items, the first 40 are kept and `truncated` is set for the
+ * editor.
+ * Each pass is counted against the monthly interview ceiling before it is
+ * sent (budget.js): the pass's text at the drafting task's recommended
+ * rates, plus the month's spend and this job's, must stay under
+ * INTERVIEW_TRANSCRIPTION_MONTHLY_USD.
  *
  * THE SHAPE IS CHECKED AT RUNTIME, twice. The router's own round trip
  * repairs malformed JSON; an answer that parses but is not the interview
@@ -33,7 +44,9 @@
  * never a question, an answer, a name or the transcript.
  */
 import { ARTICLE_CLOSE, ARTICLE_OPEN, fenceArticleText } from '../ai/prompt-fence.js';
-import { generateJsonResponse as routerGenerateJson } from '../ai/router.js';
+import { generateJsonResponse as routerGenerateJson, getCostEstimate as routerCostEstimate } from '../ai/router.js';
+import { AI_TASKS } from '../ai/tasks.js';
+import { budgetExceeded, monthInterviewSpend, monthlyCeilingUsd } from './budget.js';
 import { MAX_TRANSCRIPT_INPUT_BYTES } from '../listen-and-learn/recording-script.js';
 import { JobFailedError } from '../jobs.js';
 import { storedFailure } from '../http/error-response.js';
@@ -71,16 +84,39 @@ export const SYSTEM_PROMPT = [
   `One item per topic turn, from 1 to ${LIMITS.MAX_QA} items. A pullQuote must be copied exactly from the guest's words or left empty.`,
 ].join('\n');
 
+/** Each pass's share of the page's 40 items, so every part of a long transcript is drafted. */
+export const itemsPerPass = (passes) => Math.max(1, Math.floor(LIMITS.MAX_QA / Math.max(1, passes)));
+
+/** Output tokens allowed for in a pass's cost estimate: a list of up to 40 items. */
+export const PASS_OUTPUT_TOKENS = 6000;
+
+/** What one pass costs at the drafting task's recommended rates: its text in, a list out. */
+export function passCostUsd(text, getCostEstimate = routerCostEstimate) {
+  const { provider, model } = AI_TASKS.interviewDrafting.recommended;
+  const promptTokens = Math.ceil(Buffer.byteLength(text, 'utf8') / 4) + 600;
+  return getCostEstimate(provider, model, promptTokens, PASS_OUTPUT_TOKENS);
+}
+
 /** The user prompt for one pass: the guest as data, then the fenced transcript. */
-export function draftPrompt({ guestName, guestRole, transcript, pass, passes }) {
+export function draftPrompt({ guestName, guestRole, transcript, pass, passes, alreadyAsked = [] }) {
   const who = [
     `Guest name (data): ${fenceArticleText(guestName || 'unknown')}`,
     `Guest role (data): ${fenceArticleText(guestRole || 'not given')}`,
   ];
-  const part = passes > 1 ? `This is part ${pass} of ${passes} of the transcript; cover this part only.` : '';
+  const part =
+    passes > 1
+      ? `This is part ${pass} of ${passes} of the transcript; cover this part only, with at most ${itemsPerPass(passes)} items.`
+      : '';
+  // The questions earlier passes drafted, as data, so a later pass does not
+  // ask them again. Fenced like the transcript: they came from the model.
+  const asked =
+    alreadyAsked.length > 0
+      ? `Questions already drafted from earlier parts (data; do not repeat them):\n${alreadyAsked.map((q) => `- ${fenceArticleText(q)}`).join('\n')}`
+      : '';
   return [
     ...who,
     part,
+    asked,
     'The transcript, as speaker turns:',
     ARTICLE_OPEN,
     fenceArticleText(transcript),
@@ -180,9 +216,10 @@ async function draftPass(ai, args) {
  * @param {object} args
  * @param {string} args.interviewId
  * @param {number} args.transcriptVersion
- * @param {{ readDoc: Function, patchDoc: Function }} args.store
+ * @param {{ readDoc: Function, patchDoc: Function, queryDocs: Function }} args.store
  * @param {{ readBlobForDelivery: Function }} args.storage
- * @param {{ generateJsonResponse: Function }} [args.ai] - the router by default
+ * @param {{ generateJsonResponse: Function, getCostEstimate?: Function }} [args.ai] - the router by default
+ * @param {object} [args.env]
  * @param {() => Date} [args.now]
  * @param {{ log?: Function, warn?: Function }} [args.log]
  * @param {AbortSignal} [args.signal]
@@ -193,7 +230,8 @@ export async function draftInterview({
   transcriptVersion,
   store,
   storage,
-  ai = { generateJsonResponse: routerGenerateJson },
+  ai = { generateJsonResponse: routerGenerateJson, getCostEstimate: routerCostEstimate },
+  env = process.env,
   now = () => new Date(),
   log = null,
   signal = null,
@@ -225,7 +263,7 @@ export async function draftInterview({
   const provenance = isObject(doc.provenance) ? doc.provenance : {};
   await store.patchDoc(container, interviewId, { interview: { ...interview, stage: 'drafting', error: null } });
   try {
-    return await draftFromSegments({ interviewId, transcriptVersion, doc, segments, interview, provenance, store, ai, now, log, signal, container });
+    return await draftFromSegments({ interviewId, transcriptVersion, doc, segments, interview, provenance, store, ai, env, now, log, signal, container });
   } catch (error) {
     // The document records the failure in the job's own words or a code,
     // never the model's, so the admin page can show why the stage is failed.
@@ -239,25 +277,50 @@ export async function draftInterview({
   }
 }
 
-async function draftFromSegments({ interviewId, transcriptVersion, doc, segments, interview, provenance, store, ai, now, log, signal, container }) {
+async function draftFromSegments({ interviewId, transcriptVersion, doc, segments, interview, provenance, store, ai, env, now, log, signal, container }) {
   const lines = segments.map((s) => `${String(s.speaker || 'Speaker 1')}: ${s.text}`);
   const passes = splitTranscript(lines);
   const usageOut = [];
   const guestName = isObject(doc.guest) ? doc.guest.name : '';
   const guestRole = isObject(doc.guest) ? doc.guest.role : '';
+  const ceiling = monthlyCeilingUsd(env);
+  const getCostEstimate = typeof ai.getCostEstimate === 'function' ? ai.getCostEstimate : routerCostEstimate;
   let speakers = { interviewer: null, guest: null };
   let qa = [];
   for (let pass = 0; pass < passes.length; pass += 1) {
     if (signal?.aborted) throw signal.reason || new Error('aborted');
+    // Every pass is counted before it is sent: the month's rows (the router
+    // writes this job's own as it goes) plus this pass's estimate.
+    const month = await monthInterviewSpend({ store, now });
+    const passUsd = passCostUsd(passes[pass], getCostEstimate);
+    if (month.costUsd + passUsd > ceiling) {
+      throw budgetExceeded({ what: 'Drafting', usedUsd: month.costUsd, ceiling, since: month.since, costUsd: passUsd });
+    }
     const result = await draftPass(ai, {
-      prompt: draftPrompt({ guestName, guestRole, transcript: passes[pass], pass: pass + 1, passes: passes.length }),
+      prompt: draftPrompt({
+        guestName,
+        guestRole,
+        transcript: passes[pass],
+        pass: pass + 1,
+        passes: passes.length,
+        alreadyAsked: qa.map((item) => item.q),
+      }),
       signal,
       usageOut,
     });
     if (pass === 0) speakers = result.speakers;
     qa = qa.concat(result.qa);
   }
-  qa = qa.slice(0, LIMITS.MAX_QA);
+  // The combined list, validated once: over 40 items the first 40 are kept
+  // and the editor is told (`truncated`); a list that fails the shape here
+  // cannot happen, since each pass's items passed it, but the check is the
+  // one the page makes and it is cheap.
+  const truncated = qa.length > LIMITS.MAX_QA;
+  const combined = validateQa(qa.slice(0, LIMITS.MAX_QA));
+  if (!combined.ok) {
+    throw new JobFailedError(`The combined question-and-answer list was refused: ${combined.error}`, { code: 'INVALID_DRAFT', status: 422 });
+  }
+  qa = combined.value;
 
   // Speaker to guest mapping: the model's word, checked against the count.
   const interviewerByCount = guessInterviewer(segments);
@@ -288,6 +351,7 @@ async function draftFromSegments({ interviewId, transcriptVersion, doc, segments
     passes: passes.length,
     droppedQuotes: guarded.droppedQuotes,
     flagged: guarded.flagged,
+    truncated,
   };
   await store.patchDoc(container, interviewId, {
     qa: guarded.qa,
@@ -313,5 +377,6 @@ async function draftFromSegments({ interviewId, transcriptVersion, doc, segments
     model: drafting.model,
     provider: drafting.provider,
     unsure,
+    truncated,
   };
 }
