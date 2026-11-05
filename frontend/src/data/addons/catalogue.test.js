@@ -86,13 +86,12 @@ describe('addon catalogue', () => {
     expect(availableAddons.map((addon) => addon.id)).toContain('cloud-crawler');
   });
 
-  it('promises Cloud Crawler visitors only what the lab does: Azure exports, and no Terraform until the engine reads it (#1357)', () => {
-    // The engine the lab runs (cloud-crawler-core 0.1.0) cannot read Terraform yet, so neither the summary nor the
-    // technology list may name it. Restore both when the add-on ships an engine that does.
+  it('promises Cloud Crawler visitors what the lab does: Azure exports and Terraform, since the engine reads both (#1357, HCW-CloudCrawler_AddOn#29)', () => {
+    // The engine the lab runs (cloud-crawler-core 0.1.1, add-on v0.3.0) reads a Terraform state or plan, so the summary
+    // and the technology list name it again. From 2026-10-26 to 2026-11-05 both left it out, because engine 0.1.0 did not.
     const crawler = addonById('cloud-crawler');
-    expect(crawler.summary).not.toMatch(/terraform/i);
-    expect(crawler.technology).not.toContain('terraform');
-    expect(crawler.technology).toEqual(['resource-graph', 'architecture-decisions']);
+    expect(crawler.summary).toMatch(/or your Terraform/);
+    expect(crawler.technology).toEqual(['resource-graph', 'terraform', 'architecture-decisions']);
   });
 
   it.each(addons.map((addon) => [addon.id, addon]))('%s carries every field', (id, addon) => {
