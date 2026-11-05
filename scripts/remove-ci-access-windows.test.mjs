@@ -234,8 +234,10 @@ describe('run', () => {
 
   it('waits an hour rather than restore while any deploy run is in progress (it may be about to open its own window)', async () => {
     const { az, writes } = fakeAz({ account: storage({ defaultAction: 'Allow', ips: [IP], window: `6 ${IP}` }) });
+    // The deploy check lists the workflow's runs and then reads each live one
+    // by id, so run 9 answers both reads.
     const deploys = [{ id: 9, run_number: 312, status: 'in_progress', html_url: 'https://github.com/o/r/actions/runs/9' }];
-    const result = await run({ env: STOR, az, fetchImpl: github({ 6: ended }, deploys), ...noSleep });
+    const result = await run({ env: STOR, az, fetchImpl: github({ 6: ended, 9: deploys[0] }, deploys), ...noSleep });
     expect(result.code).toBe(0);
     expect(result.lines[0]).toBe('1 left alone (run in progress)');
     expect(result.lines[1]).toMatch(/left alone this hour, deploy run #312 is in progress and may be opening its own window; its window is run 6's and run 6 has ended/);

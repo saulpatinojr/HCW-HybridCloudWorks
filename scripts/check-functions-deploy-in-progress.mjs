@@ -21,6 +21,47 @@
  * ends. A window still open after its run has ended is the orphan the check
  * exists to find.
  *
+ * ## How it finds a live run (changed after 2026-11-05)
+ *
+ * Until 2026-11-05 this asked the Actions API for the workflow's runs with
+ * `status=in_progress` and believed an empty answer. That evening it
+ * collided again. Deploy run 42096627372 (#213) started at 19:43:37Z, its
+ * job ran from 19:43:48Z to 19:47:42Z and held the window from its step 8 to
+ * its step 13;
+ * monitor run 42096833406 started at 19:44:57Z, asked this at 19:45:51Z and
+ * again a minute later, was told `none` both times, and failed the run on a
+ * window that closed on time. In the same monitor run the access-windows
+ * check, which reads each run by id, saw the same run as live.
+ *
+ * GitHub's reference for "List workflow runs for a workflow" says the
+ * `status` parameter "Returns workflow runs with the check run status or
+ * conclusion that you specify" and that the endpoint "will return up to
+ * 1,000 results for each search": the filtered listing is a search over the
+ * check-run status, not a read of the run, and it answers from a different
+ * place than the run itself. Read on 2026-11-05 at 19:54Z, with every run in
+ * the repository completed, the repository-wide `status=in_progress` listing
+ * still reported `total_count: 1` with an empty page, and `status=completed`
+ * counted 2,500 runs against 28,926 unfiltered. A listing that can say both
+ * of those cannot be trusted to name a live run. Watched again at 20:04:42Z
+ * against a CI run that had started five seconds earlier: the workflow's
+ * `status=in_progress` listing said `total_count: 0`, the unfiltered listing
+ * and the run by id said `in_progress`; at 20:06:18Z the filtered listing
+ * said `total_count: 1` with an empty page, and the unfiltered listing showed
+ * the same run as `queued` while its record said `in_progress`.
+ *
+ * So the filter is no longer used. This lists the workflow's newest runs
+ * with no status filter (the listing the workflow health check also reads)
+ * and reads every run it names by id (`GET /actions/runs/:id`, the read the
+ * access-windows check trusts; that check reads a 404 as a missing run,
+ * while here a run the listing named seconds ago and GitHub then cannot find
+ * is unreadable, which says nothing either way). A run is in progress only
+ * when its own record says so. The listing's statuses are not read at all:
+ * the listing can lag the run, and a status does not only move forward,
+ * because "Re-run jobs" takes a `completed` run back to `in_progress` under
+ * the same id, so even a run the listing shows as `completed` is read. The
+ * reads by id go out together, so a stalled API costs one timeout, not one
+ * per run.
+ *
  * ## Why a run, not a step
  *
  * The window exists only while a run of `deploy-functions.yml` is
@@ -65,11 +106,17 @@ import { DEPLOY_WORKFLOW } from './check-registered-functions.mjs';
 const API = 'https://api.github.com';
 
 /**
- * How many in-progress runs are asked for. `deploy-functions.yml` runs in
- * one concurrency group, so there is never more than one; the margin is for
- * a re-run attempt racing its predecessor's teardown.
+ * How many of the workflow's newest runs are listed, newest first by the
+ * time each was created, and so how many are read by id on every poll.
+ * `deploy-functions.yml` runs in one concurrency group, so at most one is
+ * live at a time, and a new run is always first. The margin is for a re-run:
+ * "Re-run jobs" on an older run keeps that run's id and place in the
+ * listing, so a re-run of a run older than the newest `MAX_RUNS` is not
+ * seen. Ten is one call plus ten reads a poll, well inside the token's hourly
+ * allowance across the monitor's forty polls, and deploys are hours apart,
+ * so an unseen re-run is of a run days old.
  */
-export const MAX_RUNS = 5;
+export const MAX_RUNS = 10;
 
 /** The verdict when the run history could not be read. */
 export function formatUnreadable(reason) {
@@ -99,7 +146,8 @@ export function formatRuns(runs) {
 /**
  * How long one request may take. The monitor polls every thirty seconds, and
  * an answer that has not come in fifteen is not coming; without this, a
- * stalled connection waits on undici's five-minute defaults.
+ * stalled connection waits on undici's five-minute defaults. The listing and
+ * then the reads by id, each with one retry, bound a poll at about a minute.
  */
 export const TIMEOUT_MS = 15000;
 
@@ -109,8 +157,8 @@ export const RETRY_DELAY_MS = 2000;
 /** Worth asking once more: the server's error or its rate limit, not a refusal. */
 const retryable = (status) => status >= 500 || status === 429;
 
-/** The runs payload, after at most one retry, or an error naming why not. */
-async function getRuns({ url, token, fetchImpl, retryDelayMs }) {
+/** The JSON of one Actions API read, after at most one retry, or an error naming why not. */
+async function getJson({ url, token, fetchImpl, retryDelayMs }) {
   for (let attempt = 1; ; attempt += 1) {
     const last = attempt === 2;
     let res;
@@ -137,20 +185,27 @@ async function getRuns({ url, token, fetchImpl, retryDelayMs }) {
 /**
  * The runs of `DEPLOY_WORKFLOW` that are in progress, newest first.
  *
- * The API's `status=in_progress` filter is asked for and then checked again
- * on each run, so a payload that ignored the filter cannot make a finished
- * run look live, or hide a live one behind a finished one.
+ * The workflow's newest runs are listed with no status filter (the header
+ * says why the `status=in_progress` filter is not asked), every run the
+ * listing names is read by id, and a run counts only when its own record
+ * says `in_progress`. A listing that ignored `per_page`, or that mixed
+ * finished runs in, cannot make a finished run look live: the run's record
+ * decides.
  */
 export async function findDeploysInProgress({ token, owner, repo, fetchImpl = fetch, retryDelayMs = RETRY_DELAY_MS }) {
-  const url = `${API}/repos/${owner}/${repo}/actions/workflows/${DEPLOY_WORKFLOW}/runs?status=in_progress&per_page=${MAX_RUNS}`;
-  const body = await getRuns({ url, token, fetchImpl, retryDelayMs });
+  const url = `${API}/repos/${owner}/${repo}/actions/workflows/${DEPLOY_WORKFLOW}/runs?per_page=${MAX_RUNS}`;
+  const body = await getJson({ url, token, fetchImpl, retryDelayMs });
   if (!Array.isArray(body?.workflow_runs)) {
     throw new Error(
       'GitHub returned a workflow-runs payload without a `workflow_runs` array. Expected the ' +
         `response of GET /repos/:owner/:repo/actions/workflows/${DEPLOY_WORKFLOW}/runs.`
     );
   }
-  return body.workflow_runs.filter((run) => run?.status === 'in_progress');
+  const ids = body.workflow_runs.map((listed) => Number(listed?.id)).filter((id) => Number.isInteger(id) && id > 0);
+  const runs = await Promise.all(
+    ids.map((id) => getJson({ url: `${API}/repos/${owner}/${repo}/actions/runs/${id}`, token, fetchImpl, retryDelayMs }))
+  );
+  return runs.filter((run) => run?.status === 'in_progress');
 }
 
 /**
