@@ -108,24 +108,39 @@ describe('findDeploysInProgress', () => {
 
   it('reads by id every listed run that is not completed, and believes the record, not the listing', async () => {
     // The listing can lag the run: one it shows as queued or waiting may be
-    // in progress by now, and one it shows as in progress may have ended.
+    // in progress by now, and one it shows as in progress may have ended. A
+    // status it does not show at all, or one this script has never heard
+    // of, is read too: only `completed` is final.
     const { fetchImpl, calls } = github({
       runs: [
         { ...LIVE, id: 1, status: 'queued' },
         { ...LIVE, id: 2, status: 'in_progress' },
         { ...LIVE, id: 3, status: 'waiting' },
         { ...LIVE, id: 4, status: 'completed' },
+        { ...LIVE, id: 5, status: null },
+        { ...LIVE, id: 6, status: 'some_new_status' },
       ],
       byId: {
         1: { ...LIVE, id: 1, run_number: 401, status: 'in_progress' },
         2: { ...LIVE, id: 2, run_number: 402, status: 'completed', conclusion: 'success' },
         3: { ...LIVE, id: 3, run_number: 403, status: 'waiting' },
+        5: { ...LIVE, id: 5, run_number: 405, status: 'in_progress' },
+        6: { ...LIVE, id: 6, run_number: 406, status: 'completed', conclusion: 'cancelled' },
       },
     });
     const got = await find(fetchImpl);
-    expect(got.map((r) => r.id)).toEqual([1]);
+    expect(got.map((r) => r.id)).toEqual([1, 5]);
     expect(got[0].run_number).toBe(401);
-    expect(readsById(calls)).toEqual(['1', '2', '3']);
+    expect(readsById(calls)).toEqual(['1', '2', '3', '5', '6']);
+  });
+
+  it('a re-run of an older run is seen while it is within the newest MAX_RUNS', async () => {
+    // "Re-run jobs" keeps a run's id and place in the listing.
+    const older = Array.from({ length: MAX_RUNS - 1 }, (_, i) => ({ ...LIVE, id: 900 - i, run_number: 900 - i, status: 'completed' }));
+    const rerun = { ...LIVE, id: 100, run_number: 100, status: 'in_progress' };
+    const { fetchImpl, calls } = github({ runs: [...older, rerun] });
+    expect((await find(fetchImpl)).map((r) => r.run_number)).toEqual([100]);
+    expect(calls[0].url).toContain(`per_page=${MAX_RUNS}`);
   });
 
   it('a listed run whose record cannot be read is unreadable, not none', async () => {
@@ -140,6 +155,15 @@ describe('findDeploysInProgress', () => {
       // The listing twice, then the run by id.
       expect(calls).toHaveLength(3);
     }
+  });
+
+  it('the read by id gets the same one retry', async () => {
+    const { fetchImpl, calls } = github({ runs: [LIVE], answers: [200, 502, 200] });
+    expect((await find(fetchImpl)).map((r) => r.id)).toEqual([LIVE.id]);
+    expect(calls).toHaveLength(3);
+    const failing = github({ runs: [LIVE], answers: [200, 503] });
+    await expect(find(failing.fetchImpl)).rejects.toThrow(/503/);
+    expect(failing.calls).toHaveLength(3);
   });
 
   it('gives up after the second failure, naming it', async () => {

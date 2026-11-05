@@ -25,8 +25,9 @@
  *
  * Until 2026-11-05 this asked the Actions API for the workflow's runs with
  * `status=in_progress` and believed an empty answer. That evening it
- * collided again. Deploy run 42096627372 (#213) was in progress from
- * 19:43:48Z to 19:47:42Z and held the window from its step 8 to its step 13;
+ * collided again. Deploy run 42096627372 (#213) started at 19:43:37Z, its
+ * job ran from 19:43:48Z to 19:47:42Z and held the window from its step 8 to
+ * its step 13;
  * monitor run 42096833406 started at 19:44:57Z, asked this at 19:45:51Z and
  * again a minute later, was told `none` both times, and failed the run on a
  * window that closed on time. In the same monitor run the access-windows
@@ -49,13 +50,17 @@
  * the same run as `queued` while its record said `in_progress`.
  *
  * So the filter is no longer used. This lists the workflow's newest runs
- * with no status filter (the listing the drift and health checks also read),
+ * with no status filter (the listing the workflow health check also reads),
  * takes every run that listing does not show as `completed`, and reads each
  * of those by id (`GET /actions/runs/:id`, the read the access-windows check
- * trusts). A run is in progress only when its own record says so. The
- * listing's statuses are checked, not believed: a run it shows as `queued`
- * or `waiting` is still read by id, because the listing can lag the run.
- * A run it shows as `completed` is not, because a status only moves forward.
+ * trusts; that check reads a 404 as a missing run, while here a run the
+ * listing named seconds ago and GitHub then cannot find is unreadable, which
+ * says nothing either way). A run is in progress only when its own record
+ * says so. The listing's statuses are checked, not believed: a run it shows
+ * as `queued`, `waiting`, or anything else, is still read by id, because the
+ * listing can lag the run. A run it shows as `completed` is not, because a
+ * status only moves forward. The reads by id go out together, so a stalled
+ * API costs one timeout, not one per run.
  *
  * ## Why a run, not a step
  *
@@ -96,19 +101,20 @@
  */
 import { pathToFileURL } from 'node:url';
 
-import { LIVE_STATUSES } from './check-ci-access-windows.mjs';
 import { DEPLOY_WORKFLOW } from './check-registered-functions.mjs';
 
 const API = 'https://api.github.com';
 
 /**
- * How many of the workflow's newest runs are listed. `deploy-functions.yml`
- * runs in one concurrency group, so at most one is live at a time, and its
- * runs are hours apart, so a live one is always among the newest few; the
- * margin is for a re-run attempt racing its predecessor's teardown and for a
- * run or two waiting on the `production` approval ahead of it.
+ * How many of the workflow's newest runs are listed, newest first by the
+ * time each was created. `deploy-functions.yml` runs in one concurrency
+ * group, so at most one is live at a time, and a new run is always first.
+ * The margin is for a re-run: "Re-run jobs" on an older run keeps that run's
+ * id and place in the listing, so a re-run of a run older than the newest
+ * `MAX_RUNS` is not seen. Twenty is one page and one call, and deploys are
+ * hours apart, so that is a re-run of a run days old.
  */
-export const MAX_RUNS = 5;
+export const MAX_RUNS = 20;
 
 /** The verdict when the run history could not be read. */
 export function formatUnreadable(reason) {
@@ -138,7 +144,8 @@ export function formatRuns(runs) {
 /**
  * How long one request may take. The monitor polls every thirty seconds, and
  * an answer that has not come in fifteen is not coming; without this, a
- * stalled connection waits on undici's five-minute defaults.
+ * stalled connection waits on undici's five-minute defaults. The listing and
+ * then the reads by id, each with one retry, bound a poll at about a minute.
  */
 export const TIMEOUT_MS = 15000;
 
@@ -192,15 +199,13 @@ export async function findDeploysInProgress({ token, owner, repo, fetchImpl = fe
         `response of GET /repos/:owner/:repo/actions/workflows/${DEPLOY_WORKFLOW}/runs.`
     );
   }
-  const live = [];
-  for (const listed of body.workflow_runs) {
-    const id = Number(listed?.id);
-    if (!Number.isInteger(id) || id <= 0) continue;
-    if (!LIVE_STATUSES.includes(listed?.status)) continue;
-    const run = await getJson({ url: `${API}/repos/${owner}/${repo}/actions/runs/${id}`, token, fetchImpl, retryDelayMs });
-    if (run?.status === 'in_progress') live.push(run);
-  }
-  return live;
+  const candidates = body.workflow_runs
+    .map((listed) => ({ id: Number(listed?.id), status: listed?.status }))
+    .filter(({ id, status }) => Number.isInteger(id) && id > 0 && status !== 'completed');
+  const runs = await Promise.all(
+    candidates.map(({ id }) => getJson({ url: `${API}/repos/${owner}/${repo}/actions/runs/${id}`, token, fetchImpl, retryDelayMs }))
+  );
+  return runs.filter((run) => run?.status === 'in_progress');
 }
 
 /**
