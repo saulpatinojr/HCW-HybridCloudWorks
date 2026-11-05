@@ -77,6 +77,7 @@ describe('pure helpers', () => {
     expect(toPublicUrl('azure/blog/x')).toBe('https://hybridcloudworks.com/azure/blog/x');
     expect(getPublicSectionForPublishTarget('framework')).toBe('frameworks');
     expect(getPublicSectionForPublishTarget('coder_corner')).toBe('code');
+    expect(getPublicSectionForPublishTarget('interview')).toBe('interviews');
     expect(getPublicSectionForPublishTarget('nonsense')).toBe('blog');
   });
 
@@ -1280,5 +1281,97 @@ describe('reason: set-slug — the #400 URL correction', () => {
       reason: 'Content changed while setting the slug; not retried',
     });
     expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+});
+
+describe('publishing an interview (ADR 0040, D5 and D9)', async () => {
+  const { stubSiblingModulesForTests } = await import('../interviews/sibling-modules.js');
+  const { CONSENT_REQUIRED } = await import('../interviews/consent.js');
+  const { INVALID_INTERVIEW } = await import('../interviews/publish-gate.js');
+  const { AuthoredError } = await import('../http/error-response.js');
+
+  const answer = (n) =>
+    Array.from({ length: n }, (_, i) => `Answer sentence ${i} with concrete landing zone detail.`).join(' ');
+  const interviewDoc = (over = {}) => ({
+    id: 'i1',
+    type: 'interview',
+    publishTarget: 'interview',
+    contentStatus: 'approved',
+    Title: 'A conversation about landing zones',
+    title: 'A conversation about landing zones',
+    cloudProvider: 'Azure',
+    date: '2026-08-01',
+    guest: { name: 'Test Guest', role: 'Test Role' },
+    qa: [
+      { q: 'What is the first question?', a: answer(10) },
+      { q: 'What is the second question?', a: answer(10) },
+    ],
+    // The fixed clock is 2026-08-07; the consent date must not be after it.
+    consent: { confirmed: true, date: '2026-08-01', wording: 'v1', confirmedBy: { oid: 'u1' } },
+    ...over,
+  });
+  const publish = async (doc, schema = { validateQa: (qa) => qa }, params = {}) => {
+    stubSiblingModulesForTests({ schema });
+    const store = makeStore(doc);
+    const h = createPublishHandlers({ guard: guardAs('publisher'), store, ...fixed });
+    const res = await h.publishContent(makeRequest({ contentIds: [doc.id], ...params }), context);
+    stubSiblingModulesForTests(null);
+    return { body: JSON.parse(res.body), store };
+  };
+
+  it('publishes a consented interview to /azure/interviews/<slug>, under the one status machine', async () => {
+    const { body, store } = await publish(interviewDoc());
+    expect(body.errors).toEqual([]);
+    expect(body.published).toBe(1);
+    expect(body.mappings[0]).toMatchObject({
+      slug: 'a-conversation-about-landing-zones',
+      curatedSubpagePath: '/azure/interviews/a-conversation-about-landing-zones',
+      expectedPublicUrl: 'https://hybridcloudworks.com/azure/interviews/a-conversation-about-landing-zones',
+    });
+    const patch = store.patchDoc.mock.calls.find(([, , u]) => u.contentStatus === 'published')[2];
+    expect(patch).toMatchObject({ contentStatus: 'published', Live: true, publishTarget: 'interview' });
+    expect(patch.contentQuality.ready).toBe(true);
+    // No AI cover is armed: the interview has no hero.
+    expect(patch.altCoverImageTrigger).toBeUndefined();
+    // The flattened bodyText was for the gate only; it is not written.
+    expect(patch).not.toHaveProperty('bodyText');
+  });
+
+  it('refuses a missing consent with CONSENT_REQUIRED, before the quality gate and past every bypass flag', async () => {
+    const { body, store } = await publish(interviewDoc({ consent: undefined }), { validateQa: vi.fn() }, {
+      forceQualityBypass: true,
+      forceImageBypass: true,
+    });
+    expect(body.published).toBe(0);
+    expect(body.errors).toEqual([
+      { contentId: 'i1', code: CONSENT_REQUIRED, error: expect.stringMatching(/consent/i) },
+    ]);
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('refuses a consent dated in the future', async () => {
+    const { body } = await publish(
+      interviewDoc({ consent: { confirmed: true, date: '2026-09-01', wording: 'v1' } })
+    );
+    // The fixed clock is 2026-08-07.
+    expect(body.errors[0].code).toBe(CONSENT_REQUIRED);
+  });
+
+  it('refuses a Q&A the schema refuses, with INVALID_INTERVIEW and the schema’s sentence', async () => {
+    const { body, store } = await publish(interviewDoc({ qa: [{ q: 'only a question' }] }), {
+      validateQa: () => {
+        throw new AuthoredError('qa[1] a is missing.');
+      },
+    });
+    expect(body.errors).toEqual([
+      { contentId: 'i1', code: INVALID_INTERVIEW, error: 'The interview cannot be published: qa[1] a is missing.' },
+    ]);
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('still runs the quality gate on the flattened Q&A: a one-line interview is too thin', async () => {
+    const { body } = await publish(interviewDoc({ qa: [{ q: 'Q?', a: 'Short.' }] }));
+    expect(body.errors[0].error).toMatch(/quality gate failed/);
+    expect(body.errors[0].error).toMatch(/Interview is too thin/);
   });
 });

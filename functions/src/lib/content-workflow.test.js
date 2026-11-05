@@ -377,6 +377,39 @@ describe('deleteContentItem / softDeleteLivePage', () => {
     });
   });
 
+  it('hands an interview to the recording-delete hook and a blog post to nothing (ADR 0040, D10)', async () => {
+    const onInterviewDeleted = vi.fn(async () => {});
+    const interview = makeStore({
+      readDoc: vi.fn(async () => stored({ type: 'interview', provenance: { audio: { path: 'audio/c1.mp3' } } })),
+    });
+    expect((await deleteWith(interview, { contentId: 'c1' }, { onInterviewDeleted })).status).toBe(200);
+    expect(onInterviewDeleted).toHaveBeenCalledTimes(1);
+    expect(onInterviewDeleted.mock.calls[0][0]).toMatchObject({ id: 'c1', type: 'interview' });
+    // The context goes with it, so the hook's counts are logged.
+    expect(onInterviewDeleted.mock.calls[0][1]).toBe(context);
+
+    const blog = makeStore({ readDoc: vi.fn(async () => stored({ type: 'blog' })) });
+    expect((await deleteWith(blog, { contentId: 'c1' }, { onInterviewDeleted })).status).toBe(200);
+    expect(onInterviewDeleted).toHaveBeenCalledTimes(1);
+
+    // The document is gone either way: a failed hook is logged by code, not answered.
+    const failing = vi.fn(async () => {
+      throw coded(503);
+    });
+    const again = makeStore({ readDoc: vi.fn(async () => stored({ type: 'interview' })) });
+    const warning = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const res = await createContentWorkflowHandlers({
+      guard: guardAs('publisher'),
+      store: again,
+      ...fixed,
+      onInterviewDeleted: failing,
+    }).deleteContentItem(makeRequest({ contentId: 'c1' }), warning);
+    expect(res.status).toBe(200);
+    expect(warning.warn).toHaveBeenCalledWith(
+      "deleteContentItem: the interview's recording was not deleted (503)"
+    );
+  });
+
   it('refuses with 409 and keeps an item another session moved out of the status the caller read', async () => {
     const onContentDeleted = vi.fn(async () => {});
     // Restored to live from another tab after the Archive board loaded.

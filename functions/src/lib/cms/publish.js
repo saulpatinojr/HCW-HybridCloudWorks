@@ -64,6 +64,11 @@ import { buildContentQualityReport, buildImageReadinessReport } from './content-
 import { normalizePublishTarget, SUPPORTED_PUBLISH_TARGETS } from './publish-targets.js';
 import { buildInlineImageUpdate, findInlineImageUrls, resolveBodyFields } from './inline-images.js';
 import {
+  interviewBodyText,
+  interviewPublishRefusal,
+  isInterviewTarget,
+} from '../interviews/publish-gate.js';
+import {
   canPublishFromStatus,
   PUBLISHABLE_NORMALIZED_STATUSES,
   resolvePreferredPublishedDate,
@@ -421,6 +426,8 @@ export function getPublicSectionForPublishTarget(publishTarget) {
       return 'architecture-designs';
     case 'coder_corner':
       return 'code';
+    case 'interview':
+      return 'interviews';
     case 'blog':
     default:
       return 'blog';
@@ -516,7 +523,9 @@ function buildPublishMappingEntry(contentId, r, reused) {
 
 export function accumulatePublishResult(results, contentId, r) {
   if (r.error) {
-    results.errors.push({ contentId, error: r.error });
+    // `code` rides along when the refusal has a name the page keys on
+    // (CONSENT_REQUIRED, INVALID_INTERVIEW: lib/interviews/publish-gate.js).
+    results.errors.push({ contentId, error: r.error, ...(r.code ? { code: r.code } : {}) });
     return;
   }
   // Distinct from `reused`: nothing was written and there is no mapping to
@@ -874,16 +883,33 @@ export function createPublishHandlers({
         return await republishWithSlug(contentId, contentData, currentStatus, nowIso, params);
       }
 
+      // An interview publishes as an interview whatever target the request
+      // named: the route's body defaults to `blog`, and a document whose
+      // type is `interview` must not be judged by the blog rubric or land
+      // under /azure/blog. Decided from the document, not the request.
+      const isInterview =
+        isInterviewTarget(contentData.type) || isInterviewTarget(contentData.publishTarget);
+      if (isInterview) params = { ...params, publishTarget: 'interview' };
       const resolvedTarget = normalizePublishTarget(
         params.publishTarget || contentData.publishTarget,
         contentData.type || contentData.contentType
       );
+      // An interview is refused before the ordinary gates when its consent
+      // record is missing or its Q&A fails the schema (ADR 0040, D5 and D9);
+      // no bypass flag reaches past these two. The gates then read a copy
+      // carrying the Q&A as one text, which is what the rubric counts.
+      let gateData = contentData;
+      if (isInterview) {
+        const refusal = await interviewPublishRefusal(contentData, { now });
+        if (refusal) return refusal;
+        gateData = { ...contentData, bodyText: interviewBodyText(contentData) };
+      }
       const contentQuality = buildContentQualityReport(
-        contentData,
+        gateData,
         contentData.contentQuality?.critique,
         resolvedTarget
       );
-      const imageReadiness = buildImageReadinessReport(contentData, resolvedTarget);
+      const imageReadiness = buildImageReadinessReport(gateData, resolvedTarget);
       if (!params.forceQualityBypass && !contentQuality.ready) {
         await store.patchDoc('content', contentId, { contentQuality, updatedAt: nowIso });
         return {
@@ -960,7 +986,9 @@ export function createPublishHandlers({
           'scrapedImages not re-hosted (asset-migration phase); published with original refs.';
       }
 
-      applyPublishTimeCoverTrigger(contentUpdate, contentData);
+      // No AI cover for an interview (ADR 0040, D5): the guest photo is the
+      // form's, optional, and nothing is generated in the guest's name.
+      if (!isInterview) applyPublishTimeCoverTrigger(contentUpdate, contentData);
 
       // Inline body images (issue #374). Runs after the gates, so it never
       // spends a fetch on an article that will not publish, and before the

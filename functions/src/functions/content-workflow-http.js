@@ -15,6 +15,8 @@ import {
 } from '../lib/cosmos-client.js';
 import { createContentWorkflowHandlers } from '../lib/content-workflow.js';
 import { createDashboardStatsMaintainer } from '../lib/triggers/dashboard-stats.js';
+import { deleteBlob, getContainerClient, listBlobs } from '../lib/blob-storage.js';
+import { deleteInterviewAssets } from '../lib/interviews/admin.js';
 
 /**
  * The workflow RPCs over the live store and the default guard, built on each
@@ -31,6 +33,9 @@ const handlers = () =>
       createDashboardStatsMaintainer({
         store: { readDoc, upsertDoc, replaceDocIfMatch, deleteDoc, patchDoc },
       }).applyTransition({ contentId, afterData: null }),
+    // ADR 0040, D10: an interview's recording and transcripts go with it.
+    onInterviewDeleted: (doc, context) =>
+      deleteInterviewAssets({ blobs: { deleteBlob, listBlobs, getContainerClient }, log: context }, doc),
   });
 
 for (const name of [

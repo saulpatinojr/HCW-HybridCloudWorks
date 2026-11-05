@@ -35,6 +35,8 @@ import { normalizeContentBodyFields } from "./content-quality.js";
 import { normalizePublishTarget } from "./publish-targets.js";
 import {
   validateAndNormalizeUpdateContentItemUpdates,
+  validateTypedUpdates,
+  ContentValidationError,
   normalizeContentUpdatesForBlogOnly,
   normalizeStatusForBlogOnly,
   normalizeCurrentStatusForBlogOnly,
@@ -135,7 +137,24 @@ async function readUpdateTarget(store, contentId, normalizedUpdates) {
     return { error: json(404, { error: `Content ${contentId} not found` }) };
   }
   const refused = await taxonomyRefusal(store, normalizedUpdates, currentData);
-  return refused ? { error: refused } : { currentData };
+  if (refused) return { error: refused };
+  // The type-aware check (ADR 0040): an interview's fields against its schema.
+  try {
+    Object.assign(
+      normalizedUpdates,
+      await validateTypedUpdates(currentData.type, normalizedUpdates),
+    );
+  } catch (error) {
+    if (error instanceof ContentValidationError) {
+      return {
+        error: json(400, {
+          error: authoredMessage(error, "The updates could not be read."),
+        }),
+      };
+    }
+    throw error;
+  }
+  return { currentData };
 }
 
 /**

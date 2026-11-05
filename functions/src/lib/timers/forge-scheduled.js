@@ -51,6 +51,16 @@ export function scoreCandidate(candidate = {}, interestAreas = []) {
   return score;
 }
 
+/**
+ * The candidate query. An interview is never a forge candidate (ADR 0040,
+ * D5): its body is a guest's words, and the blog pipeline must not rewrite
+ * them. A document with no `type` is a blog post and stays in.
+ */
+export const CANDIDATE_QUERY =
+  'SELECT TOP 25 c.id, c.forgeMeta, c.Title, c.keyTopics, c.cloudProvider, c["Cloud Provider"] AS cloudProviderLegacy FROM c ' +
+  `WHERE c.contentStatus IN (${CANDIDATE_STATUSES.map((s) => `'${s}'`).join(', ')}) ` +
+  "AND (NOT IS_STRING(c.type) OR LOWER(c.type) != 'interview')";
+
 /** Unforged candidates, highest interest score first; ties keep query order. */
 export function rankCandidates(rows = [], interestAreas = []) {
   return (rows || [])
@@ -90,11 +100,7 @@ export function createForgeScheduled({ store, config, forge, now = () => new Dat
     }
 
     const profile = await config.loadForgeProfile();
-    const rows = await store.queryDocs(
-      'content',
-      `SELECT TOP 25 c.id, c.forgeMeta, c.Title, c.keyTopics, c.cloudProvider, c["Cloud Provider"] AS cloudProviderLegacy FROM c WHERE c.contentStatus IN (${CANDIDATE_STATUSES.map((s) => `'${s}'`).join(', ')})`,
-      []
-    );
+    const rows = await store.queryDocs('content', CANDIDATE_QUERY, []);
     const candidates = rankCandidates(rows, profile?.interestAreas).slice(0, remaining);
 
     const summary = {

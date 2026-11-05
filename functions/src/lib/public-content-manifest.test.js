@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   ARTICLE_FIELDS,
+  INTERVIEW_FIELDS,
+  PUBLISHED_INTERVIEW_QUERY,
+  projectInterview,
   OFF_SITE_STATUSES,
   PUBLISHED_PREDICATE,
   PUBLISHED_QUERY,
@@ -92,8 +95,25 @@ describe('getManifest', () => {
     // as the single source — a field added to ARTICLE_FIELDS updates both
     // sides — while still failing on any edit to the predicate or the shape.
     const projection = ARTICLE_FIELDS.map((f) => `c["${f}"]`).join(', ');
+    // The articles leave interviews out (ADR 0040, D6): they have their own
+    // page and their own query below. A document with no `type` stays in.
     expect(PUBLISHED_QUERY).toBe(
-      `SELECT ${projection} FROM c WHERE ${PUBLISHED_PREDICATE}`
+      `SELECT ${projection} FROM c WHERE ${PUBLISHED_PREDICATE} AND (NOT IS_STRING(c.type) OR LOWER(c.type) != "interview")`
+    );
+    // The visibility fields ride along so isPublicDocument re-checks every
+    // row in code, as the public route does; projectInterview drops them.
+    const interviewProjection = [
+      ...INTERVIEW_FIELDS,
+      'Live',
+      'Status',
+      'contentStatus',
+      'softDeletedAt',
+      'softDeleteExpiresAt',
+    ]
+      .map((f) => `c["${f}"]`)
+      .join(', ');
+    expect(PUBLISHED_INTERVIEW_QUERY).toBe(
+      `SELECT ${interviewProjection} FROM c WHERE ${PUBLISHED_PREDICATE} AND LOWER(c.type) = "interview"`
     );
     // Written out whole, not rebuilt from public-reads.js: a permissive edit
     // to the public clause has to fail here too, not ride in by import.
@@ -300,5 +320,88 @@ describe('the section counts it carries (issue #373)', () => {
     );
     expect(res.status).toBe(500);
     expect(JSON.stringify(res.jsonBody)).not.toContain('cosmos exploded');
+  });
+});
+
+describe('the published interviews it carries (ADR 0040, D6)', () => {
+  const published = (fields) => ({ Live: true, contentStatus: 'published', ...fields });
+
+  it('answers interviews beside the articles, each projected to INTERVIEW_FIELDS', async () => {
+    const queryDocs = vi.fn(async (container, query) => {
+      if (container !== 'content') return [];
+      if (query === PUBLISHED_INTERVIEW_QUERY) {
+        return [
+          published({
+            id: 'i1',
+            type: 'interview',
+            slug: 'first-one',
+            title: 'First',
+            date: '2026-10-01',
+            guest: { name: 'Test Guest' },
+            qa: [{ q: 'Q?', a: 'A.' }],
+            consent: { confirmed: true },
+            provenance: { audio: { path: 'audio/i1.mp3' } },
+          }),
+        ];
+      }
+      if (query === PUBLISHED_QUERY) return [published({ id: 'a1', slug: 'post', type: 'blog' })];
+      return [];
+    });
+    const res = await createPublicContentManifestHandlers({ store: { queryDocs } }).getManifest({}, {});
+    expect(res.status).toBe(200);
+    expect(res.jsonBody.count).toBe(1);
+    expect(res.jsonBody.interviews).toEqual([
+      {
+        slug: 'first-one',
+        title: 'First',
+        date: '2026-10-01',
+        guest: { name: 'Test Guest', role: '' },
+        qa: [{ q: 'Q?', a: 'A.' }],
+      },
+    ]);
+    expect(JSON.stringify(res.jsonBody.interviews)).not.toContain('consent');
+    expect(JSON.stringify(res.jsonBody.interviews)).not.toContain('audio/');
+  });
+
+  it('projectInterview keeps the detail allowlist and nothing else, visibility fields included', () => {
+    expect(
+      projectInterview({ slug: 's', qa: [], consent: {}, provenance: {}, interview: {}, Live: true, contentStatus: 'published' })
+    ).toEqual({ slug: 's', qa: [] });
+    expect(projectInterview(null)).toEqual({});
+  });
+
+  it('re-checks every interview row in code and drops one the SQL let through', async () => {
+    const queryDocs = vi.fn(async (_container, query) =>
+      query === PUBLISHED_INTERVIEW_QUERY
+        ? [
+            { slug: 'live', type: 'interview', Live: true, contentStatus: 'published' },
+            { slug: 'drafting', type: 'interview', Live: true, contentStatus: 'drafting' },
+          ]
+        : []
+    );
+    const res = await createPublicContentManifestHandlers({ store: { queryDocs } }).getManifest({}, {});
+    expect(res.jsonBody.interviews.map((i) => i.slug)).toEqual(['live']);
+  });
+
+  it('is exactly the list scripts/ projects interviews with, in the same order', () => {
+    const source = readFileSync(join(REPO, 'scripts', 'build-content-manifest.mjs'), 'utf8');
+    const block = source.match(/INTERVIEW_FIELDS = Object\.freeze\(\[([\s\S]*?)\]\)/);
+    if (!block) throw new Error('INTERVIEW_FIELDS not found in scripts/build-content-manifest.mjs');
+    const scripted = [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect(scripted.length).toBeGreaterThan(5);
+    expect([...INTERVIEW_FIELDS]).toEqual(scripted);
+  });
+
+  it('leaves interviews out of the article corpus by type, and keeps a document with no type in', () => {
+    const live = { Live: true, contentStatus: 'published' };
+    const articles = PUBLISHED_QUERY.slice(PUBLISHED_QUERY.indexOf('WHERE ') + 6);
+    const interviews = PUBLISHED_INTERVIEW_QUERY.slice(PUBLISHED_INTERVIEW_QUERY.indexOf('WHERE ') + 6);
+    expect(evaluatePredicate(articles, { ...live, type: 'interview' })).toBe(false);
+    expect(evaluatePredicate(articles, { ...live, type: 'Interview' })).toBe(false);
+    expect(evaluatePredicate(articles, { ...live, type: 'blog' })).toBe(true);
+    expect(evaluatePredicate(articles, { ...live })).toBe(true);
+    expect(evaluatePredicate(interviews, { ...live, type: 'interview' })).toBe(true);
+    expect(evaluatePredicate(interviews, { ...live, type: 'blog' })).toBe(false);
+    expect(evaluatePredicate(interviews, { type: 'interview', contentStatus: 'draft' })).toBe(false);
   });
 });

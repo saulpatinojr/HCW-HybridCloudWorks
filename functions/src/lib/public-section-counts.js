@@ -161,13 +161,17 @@ export const SECTIONS = Object.freeze({
   audio: { providerInferred: false },
   'audio-architecture': { providerInferred: false },
   'architecture-designs': { providerInferred: true },
+  // Azure's interviews (ADR 0040, D6): /azure/interviews reads the public
+  // interview list, which is filed under Azure on every document the admin
+  // creates, so no inference. The route exists only once there is one.
+  interviews: { providerInferred: false },
 });
 
 /** Sections whose items come from `content` and `blogs`, keyed by type test. */
 const CONTENT_SECTION_TYPES = Object.freeze({
   // Everything the blog listing does NOT exclude — including a document with
   // no type at all, which useBlogData renders (EXCLUDED_TYPES is a denylist).
-  blog: (type) => type !== 'architecture' && type !== 'framework',
+  blog: (type) => type !== 'architecture' && type !== 'framework' && type !== 'interview',
   frameworks: (type) => type === 'framework',
   'coder-corner': (type) => type === 'coder_corner',
   code: (type) => type === 'coder_corner',
@@ -178,6 +182,7 @@ const CONTENT_SECTION_TYPES = Object.freeze({
   // count would have dropped — the safe direction. Measured 2026-09-07: `blogs`
   // holds no architecture document at all, so today the two agree exactly.
   'architecture-designs': (type) => type === 'architecture',
+  interviews: (type) => type === 'interview',
 });
 
 /** Sections served by the two audio containers. */

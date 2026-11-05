@@ -141,6 +141,37 @@ export async function fetchPublicContentItem(slugOrId) {
 }
 
 /**
+ * GET public/interviews — every published interview, newest first, each
+ * projected by the server to PUBLIC_INTERVIEW_LIST_FIELDS (slug, title,
+ * subtitle, date, guest, tags, publishedAt), never the consent record or the
+ * recording (ADR 0040, D6). Read by /azure/interviews and the Azure landing
+ * page's Interviews card under the `interviews:list` key; an empty list means
+ * there is none yet. Through the shared GET cache, so the two ask once.
+ *
+ * @returns {Promise<object[]>}
+ */
+export async function fetchPublicInterviews() {
+  const body = await publicGet('public/interviews');
+  return Array.isArray(body?.items) ? body.items : [];
+}
+
+/**
+ * GET public/interviews/{slug} — one published interview, projected to
+ * PUBLIC_INTERVIEW_DETAIL_FIELDS (the list fields plus bio, image, qa,
+ * related, updatedAt). Null when there is none or it is not public: the
+ * server answers the same 404 for both. The page runs the item through
+ * `normalizeInterview` (lib/interviews.js) before rendering it.
+ *
+ * @param {string} slug
+ * @returns {Promise<object|null>}
+ */
+export async function fetchPublicInterview(slug) {
+  if (!slug) return null;
+  const body = await publicGet(`public/interviews/${encodeURIComponent(slug)}`);
+  return body?.item || null;
+}
+
+/**
  * GET public/preview/{contentId}?t={token} — the signed staging preview
  * (T-606). The HMAC token is the whole authorization; the server answers an
  * identical 404 for anything invalid, so null covers bad token, expiry and

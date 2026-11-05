@@ -1,5 +1,8 @@
 import { PROVIDER_ALIASES } from '../public-reads.js';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { AuthoredError } from '../http/error-response.js';
+import { stubSiblingModulesForTests } from '../interviews/sibling-modules.js';
+import { INTERVIEW_UPDATE_FIELDS, validateTypedUpdates } from './content-update-validation.js';
 import {
   FORBIDDEN_CONTENT_UPDATE_KEYS,
   validateAndNormalizeUpdateContentItemUpdates,
@@ -232,5 +235,80 @@ describe('normalizeProviderName', () => {
       expect(stored.toLowerCase(), key).toBe(key);
       expect(normalizeProviderName(stored), key).toBe(stored);
     }
+  });
+});
+
+describe("validateTypedUpdates, the interview hook (ADR 0040, D5)", () => {
+  it("passes any other type through untouched, without loading the schema", async () => {
+    stubSiblingModulesForTests({ schema: {} });
+    const updates = { title: "x", qa: "not a list" };
+    expect(await validateTypedUpdates("blog", updates)).toBe(updates);
+    expect(await validateTypedUpdates(undefined, updates)).toBe(updates);
+    stubSiblingModulesForTests(null);
+  });
+
+  it("passes an interview update naming none of the interview fields through untouched", async () => {
+    stubSiblingModulesForTests({ schema: {} });
+    const updates = { summary: "a summary" };
+    expect(await validateTypedUpdates("interview", updates)).toBe(updates);
+    stubSiblingModulesForTests(null);
+  });
+
+  it("runs the interview fields through the schema and keeps the checked form, both title spellings", async () => {
+    const validateInterviewFields = vi.fn((fields) => ({ ...fields, title: fields.title.trim(), tags: ["a-b"] }));
+    stubSiblingModulesForTests({ schema: { validateInterviewFields } });
+    const out = await validateTypedUpdates("interview", { title: "  Spaced  ", tags: ["A-B"], summary: "s" });
+    expect(validateInterviewFields).toHaveBeenCalledWith({ title: "  Spaced  ", tags: ["A-B"] });
+    expect(out).toEqual({ title: "Spaced", Title: "Spaced", tags: ["a-b"], summary: "s" });
+    stubSiblingModulesForTests(null);
+  });
+
+  it("refuses with the schema's own sentence as a ContentValidationError", async () => {
+    stubSiblingModulesForTests({
+      schema: {
+        validateInterviewFields: () => {
+          throw new AuthoredError("qa[2] a is missing.");
+        },
+      },
+    });
+    await expect(validateTypedUpdates("interview", { qa: [{ q: "q" }] })).rejects.toMatchObject({
+      name: "ContentValidationError",
+      message: "qa[2] a is missing.",
+    });
+    stubSiblingModulesForTests(null);
+  });
+
+  it("names every field the admin page edits", () => {
+    expect([...INTERVIEW_UPDATE_FIELDS].sort()).toEqual(
+      ["bio", "date", "guest", "image", "qa", "related", "subtitle", "tags", "title"]
+    );
+  });
+});
+
+describe("an interview's private blocks and its type through updateContentItem (ADR 0040, D9)", () => {
+  it("refuses consent, provenance, interview and transcription like every other protected field", () => {
+    for (const key of ["consent", "provenance", "interview", "transcription"]) {
+      expect(() => validateAndNormalizeUpdateContentItemUpdates({ [key]: { planted: true } })).toThrow(
+        `updates cannot modify protected field: ${key}`
+      );
+    }
+  });
+
+  it("refuses turning a document into an interview, or an interview into anything else", async () => {
+    stubSiblingModulesForTests({ schema: { validateInterviewFields: (f) => f } });
+    for (const key of ["type", "publishTarget", "contentType"]) {
+      await expect(validateTypedUpdates("blog", { [key]: "Interview" })).rejects.toMatchObject({
+        name: "ContentValidationError",
+        message: expect.stringContaining("POST cms/interviews"),
+      });
+      await expect(validateTypedUpdates("interview", { [key]: "blog" })).rejects.toMatchObject({
+        name: "ContentValidationError",
+        message: expect.stringContaining("stays an interview"),
+      });
+    }
+    // Saying what it already is, or clearing nothing, is fine either way.
+    expect(await validateTypedUpdates("interview", { publishTarget: "interview" })).toEqual({ publishTarget: "interview" });
+    expect(await validateTypedUpdates("blog", { publishTarget: "framework" })).toEqual({ publishTarget: "framework" });
+    stubSiblingModulesForTests(null);
   });
 });

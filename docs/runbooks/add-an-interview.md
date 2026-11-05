@@ -1,170 +1,246 @@
 # Add an interview
 
-> **Status: in use.** The Interviews pages went in on 2026-10-24 (the
-> changelog has the entry). **The only interview is a sample.**
-> `frontend/src/data/interviews/example-interview.json` has a made-up guest and
-> says so on the page; it is there so the pages show up and so you have a real
-> file to copy. Copy it to a new name, write the real interview, and **delete
-> the sample** when the first real one goes live. With no interview file at all,
-> the Azure landing page has no Interviews card and the sitemap has no
-> Interviews page, on purpose.
+> **Status: being built (ADR 0040, proposed 2026-11-05).** An interview is
+> made on the admin site, reviewed there, and published there; nothing is
+> written to this repository and nothing is deployed. Of the four parts of the
+> plan, the content type, the public pages and the admin routes on this page
+> exist; the upload, the fetching, the transcription and the drafting (slices
+> A and B of the plan) and the admin form itself (slice D) are still to merge,
+> and until slice D merges there is no page to do these steps on. Before this
+> an interview was a JSON file in the repository and the only one was a
+> made-up sample; both are gone. With no published interview the Azure landing
+> page has no Interviews card and the sitemap has no Interviews page, on
+> purpose.
 
-**Scope:** how to publish one interview on the Azure section, at
-`/azure/interviews/<name>`. An interview is one text file. You do not edit any
-code or any list.
+**Scope:** how to get one interview from a recording (or a transcript) to its
+page at `/azure/interviews/<name>`, and how to take it down again. The design
+and the reasons are in
+[ADR 0040](../decisions/0040-interviews-from-the-admin.md); the pieces and
+who built them are in the
+[slice plan](../architecture/interviews-slices.md).
 
-**Authority:** this page does not change anything by itself. The steps that do
-(merging a change, deploying the site) are the owner's.
+**Authority:** publishing is yours and is done by a button; nothing publishes
+by itself. The one thing this page does not change is the retention of the
+recording (how long the site keeps it), which is a Terraform variable the
+owner sets (see "Where the retention is set").
 
 ## What you get
 
-For each interview file the site builds:
+For each interview the site serves, live from its database, with no deploy:
 
-- **An article page** that holds the whole interview as plain text. This is the
-  version search engines read, what a phone shows, and what a screen reader
-  reads. It also gets a title, a description and an *Article* record for search
-  results.
+- **An article page** at `/azure/interviews/<name>` that holds the whole
+  interview as plain text. This is the version search engines read, what a
+  phone shows, and what a screen reader reads. It also gets a title, a
+  description and an *Article* record for search results.
 - **A "Book view"** for visitors on a wide screen who have not asked their
   device for less motion. It lays the same words out as pages that turn. It is
-  an extra: the article is always there, and nothing is lost if the book is not
-  offered.
-- **A card on the list page** at `/azure/interviews`, newest first.
+  an extra: the article is always there.
+- **A card on the list page** at `/azure/interviews`, newest first, and an
+  **Interviews** section on the Azure landing page once at least one is
+  published.
 
-## The file
+What the site never shows: the recording, the transcript, the guest's
+consent record, and who made the page. Those are the owner's records and
+stay in the admin and in a private storage container.
 
-Put one file in `frontend/src/data/interviews/`. Its name is the web address, so
-it must be lower-case words joined by hyphens, for example
-`azure-landing-zones-2026.json` gives `/azure/interviews/azure-landing-zones-2026`.
+## Before you start
 
-A name that starts with an underscore, such as `_azure-landing-zones-2026.json`,
-is a **draft**: the site ignores it, so you can keep unfinished work in the
-folder. Remove the underscore to publish.
+You need, for the guest:
 
-This is the format. The guest, the words and the links below are **made up** to
-show the shape; they are not a real interview:
+- their **name**, and if you like their **role** and two or three sentences
+  about them (the bio);
+- **their agreement to be published.** The form has one sentence and a
+  checkbox: "The guest has agreed that this interview may be published on
+  hybridcloudworks.com, and knows the recording is kept privately for the
+  site’s records." Tick it only when that is true, and give the date they
+  agreed. The site refuses to publish an interview without it, and records
+  who ticked it (you, from your sign-in) and when;
+- **one of three inputs:** the recording as a file (`.mp3`, `.m4a` or
+  `.wav`, up to 500 MB; strictly 500 MiB, a little over), a link to the
+  recording on a public site, or the
+  transcript as text (a Plaud export works: its `Speaker 1:` lines are kept
+  as speakers). A transcript skips the transcription step;
+- an optional **photo** of the guest (PNG, JPEG or WebP, up to 15 MB) with a
+  short description of what it shows, which a screen reader says.
 
-```json
-{
-  "title": "Landing zones in the real world",
-  "subtitle": "A conversation about running them for years, not weeks",
-  "date": "2026-10-01",
-  "guest": { "name": "Example Guest", "role": "Principal Cloud Architect" },
-  "bio": "Two or three sentences about the guest.",
-  "image": { "src": "/images/interviews/example-guest.jpg", "alt": "Example Guest smiling at a desk" },
-  "tags": ["landing-zones", "governance"],
-  "qa": [
-    {
-      "q": "What is the most common landing zone mistake?",
-      "a": "The answer, as long as it needs to be. A blank line starts a new paragraph.",
-      "pullQuote": "A short line from this answer to show large (optional)."
-    },
-    { "q": "The next question?", "a": "Its answer." }
-  ],
-  "related": {
-    "labs": [{ "title": "A lab on this site", "url": "/azure/education/labs" }],
-    "learn": [{ "title": "A Microsoft Learn page", "url": "https://learn.microsoft.com/azure/cloud-adoption-framework/" }]
-  }
-}
-```
+## Make the interview
 
-### What each part needs
+1. **Open the form.** Sign in to the admin and go to
+   `https://hybridcloudworks.com/admin/interviews/new`. You should see the
+   guest fields, the consent sentence with its checkbox and date, and the
+   three inputs with "choose one". (The admin pages are slice D of the plan;
+   until it has merged the routes below exist and the page does not.)
+2. **Fill in the guest, the title and the consent, then choose one input and
+   save.** The form creates the interview first (you get its page at
+   `/admin/interviews/<id>`), then runs the input you chose. A file is sent
+   in pieces of 4 MB; a closed tab stops it, and reopening the interview's
+   page lets you send the file again.
+3. **Watch the stage.** The page shows where the interview is:
 
-| Part | Rule |
-| --- | --- |
-| `title` | Required. Up to 160 characters. |
-| `date` | Required. Written `YYYY-MM-DD`, and a real date. |
-| `guest.name` | Required. `guest.role` is optional. |
-| `qa` | Required: 1 to 40 questions. Each has `q` and `a`; `pullQuote` is optional. An answer can be up to 6000 characters. |
-| `subtitle`, `bio` | Optional. |
-| `image` | Optional. If you give a picture you **must** give `alt`, a short description of what it shows, so a screen reader can say it. |
-| `tags` | Optional. Lower-case words joined by hyphens. |
-| `related.labs`, `related.learn` | Optional lists of up to 12 links, each with a `title` and a `url`. |
+   | Stage | Meaning | How long |
+   | --- | --- | --- |
+   | `created` | saved, but no input has started yet | until you choose an input |
+   | `uploading` | the file is still being sent from your browser | minutes, for a large file |
+   | `fetching` | the site is downloading the recording from the link you gave | up to 10 minutes |
+   | `transcribing` | the recording is being written down, an hour of audio at a time | up to 25 minutes, then the step stops as `failed` |
+   | `drafting` | the transcript is being turned into questions and answers | a few minutes |
+   | `ready` | the draft is on the page for you to read | |
+   | `failed` | something stopped; the page says what (see below) | |
 
-Two rules about links and pictures, and the build refuses a file that breaks them:
+   A pasted transcript goes from saving straight to `drafting`.
+4. **Read every answer before you go on.** The draft is a machine's reading of
+   a conversation. Three things are yours to check on the interview's page:
+   - the **speakers**: the draft says which voice is the guest; if the page
+     shows "unsure", pick the right one;
+   - any item marked **needs review**: the answer uses words the guest did
+     not say in the transcript. Fix the words or drop the item, then clear
+     the mark;
+   - the **pull quotes**: each is a sentence the guest said word for word, or
+     it was dropped. You can add one by copying a sentence, word for word,
+     from the transcript on the same page.
 
-- A link is either an address on this site (it starts with a single `/`) or an
-  `https://` address. `http://`, `javascript:` and other forms are refused.
-- Put the picture in `frontend/public/images/interviews/` and point `src` at it,
-  as in the example. A picture from another website can fail the build's image
-  check, which only allows hosts the site's security policy names
-  (`frontend/scripts/check-image-hosts.mjs`).
-
-Everything you type is shown as plain text, so a `<` in an answer appears as a
-`<`. There is no bold or italic; a blank line makes a paragraph and nothing
-else is formatted.
-
-## Publish it
-
-1. **Write the file** in `frontend/src/data/interviews/` as above, with a name
-   that starts with an underscore while you work on it.
-2. **Check it** from the repository root, in PowerShell:
-
-   ```powershell
-   cd frontend; npm test -- src/data/interviews
-   ```
-
-   You should see `passed` and no `failed`. If a file is wrong, the message names
-   the file and the field, for example
-   `azure-landing-zones-2026.json: date must be a date written YYYY-MM-DD.`
-   Fix that and run it again. (A file starting with an underscore is not checked
-   until you remove the underscore.)
-3. **Remove the underscore** from the file name, run step 2 again, and open a
-   pull request. The pull request's checks run the same test and a full build.
-4. **After it is merged, deploy the site.** The website is deployed by hand, so
-   nothing is live until this runs. Start it with:
-
-   ```powershell
-   gh workflow run deploy-azure-frontend.yml --repo saulpatinojr/HCW-HybridCloudWorks --ref main
-   ```
-
-   You should see `Created workflow_dispatch event for deploy-azure-frontend.yml at main`.
-   Watch it at
-   [the Deploy Frontend runs](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml);
-   it should finish green. Merging a change under `frontend/` also starts a
-   clock on the delivery monitor, which goes red if the deploy has not run
-   within about 8 hours.
-5. **Look at it.** Open `https://hybridcloudworks.com/azure/interviews`. You
-   should see your interview's card and, on its page, the article. On a wide
+   The transcript is on the same page, so you can check an answer against
+   it. "Transcribe again" writes a new transcript and keeps the old ones.
+   "Draft again" replaces the questions and answers on the page; copy
+   anything you want to keep first.
+5. **Send it to review, then approve it.** The interview moves through the
+   same statuses as a blog post: `draft` → `in_review` → `approved` →
+   `published`. The buttons are the ones on every content page.
+6. **Publish.** The Publish button checks three things and refuses with a
+   sentence if one fails: the consent is ticked with a date that is not in
+   the future (`CONSENT_REQUIRED`); the questions and answers fit the limits,
+   one to forty, a question up to 240 characters, an answer up to 6000
+   (`INVALID_INTERVIEW`); and the questions and answers together are at
+   least 60 words. When it succeeds you should see the page's
+   address, `/azure/interviews/<name>`, and the page is live within five
+   minutes (the site caches the public read for that long).
+7. **Look at it.** Open `https://hybridcloudworks.com/azure/interviews`. You
+   should see the interview's card and, on its page, the article. On a wide
    screen a **Book view** button appears above it. The Azure landing page,
-   `https://hybridcloudworks.com/azure`, now has an **Interviews** section with
-   an **All interviews** link.
+   `https://hybridcloudworks.com/azure`, has an **Interviews** section with an
+   **All interviews** link.
+
+## Take it down, or delete things
+
+- **Unpublish.** The Unpublish button puts the interview back to `inspected`
+  and the page answers "not found" within five minutes. Nothing is deleted:
+  the recording, the transcripts and the draft stay, and you can publish
+  again.
+- **Delete the recording** (the "Delete recording" button; needs the
+  publisher role). The audio file leaves the private container, and the
+  site then deletes every earlier version of it the storage account kept
+  (see "How it works" for the one permission that still needs granting);
+  the transcripts stay, so the page still has its source. The interview's
+  page then shows no recording, and the only way to bring one back within
+  seven days is the account's soft delete, which keeps a deleted file for
+  that long. The account keeps file versions, so undeleting takes two steps
+  ([Microsoft Learn: restore soft-deleted blobs when versioning is enabled](https://learn.microsoft.com/azure/storage/blobs/soft-delete-blob-manage#restore-soft-deleted-blobs-when-versioning-is-enabled)):
+
+  1. In the Azure portal open the storage account `stsiteprodcus01`
+     (resource group `rg-stor-site-prod-cus`), then **Containers**, then
+     `interviews-audio`, and turn on **Show deleted blobs**. You should see
+     the file greyed out. If it is not there, the seven days have passed and
+     the recording is gone.
+  2. Open the file and press **Undelete** on its **Overview** tab. This
+     brings back its versions, not the file itself.
+  3. Open the **Versions** tab, pick the newest version and press **Make
+     current version**. You should now see the file listed normally. The
+     interview's page still shows no recording, because the delete cleared
+     the document's pointer to it; ask whoever changes the code to re-attach
+     it.
+
+- **Delete the interview** ("Delete permanently" on the Archive board, after
+  archiving it). The document, the recording and the transcripts all go, the
+  same way. An interview that was never published has no Archive entry; how
+  a draft is removed from the Editor list is not written down here, so ask
+  whoever changes the code rather than guess.
+
+## Where the retention is set
+
+The recording is kept for **365 days** from its upload, then deleted by a
+rule on the storage account (the transcripts are kept). The number is the
+Terraform variable `interview_audio_retention_days` in
+[`infra/variables.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/variables.tf)
+(1 to 3650; the variable arrives with slice A of the plan, so it is on
+`main` only once that has merged). To change it the owner sets the variable in HCP Terraform's
+variables for the workspace and confirms the run; a session never applies
+it. The deletion the rule does is not reversible after the seven-day soft
+delete.
+
+## When a stage says `failed`
+
+The page shows a short code. What each means and what to do:
+
+| Code | What happened | What to do |
+| --- | --- | --- |
+| `BUDGET_EXCEEDED` | this month's transcription spend would pass the ceiling (10 USD unless the owner raised `INTERVIEW_TRANSCRIPTION_MONTHLY_USD`, a setting on the site's Function App that only the owner changes) | wait for next month, paste a transcript instead, or ask the owner to raise the ceiling |
+| a fetch error | the link was not `https://`, pointed at a private address, redirected too often, was larger than 500 MB, or was not an audio file | check the link in a browser; upload the file instead |
+| `INVALID_DRAFT` | the draft did not come back in the expected shape twice | press "Draft again"; if it fails again, the transcript may be too short or garbled |
+| a provider error (`408`, `429`, `5xx`, or `400`, `401`, `403`) | the transcription service refused or was down | `408`, `429` and `5xx` are retried three times already; press "Transcribe again" later. `400`, `401` or `403` is for the owner (a key or request problem). The exact code the page shows is set by the transcription step (slice B) |
+
+A failed step never touches what came before it: the recording and any
+earlier transcript are still there.
 
 ## What to expect, and what to check if it is wrong
 
-- **The first interview adds three things at once:** the Interviews section on
-  the Azure landing page, the list page, and the interview's own page. All three
-  appear on the next deploy. With no interview file none of them exist.
+- **The card and the search listing lag the page.** The page is live within
+  five minutes. The Azure landing card and the sitemap entry follow the next
+  run of the daily content manifest and a frontend deploy, exactly as a blog
+  post does.
 - **There is no Interviews link in the top menu, on purpose.** The menu is a
-  fixed row of nine slots with a divider whose position must be the same on
-  every provider, and a tenth link overflowed it on a normal laptop screen. The
-  pages still keep the Azure menu while you read them.
+  fixed row of nine slots, and a tenth link overflowed it
+  ([#1337](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1337)).
+  The pages still keep the Azure menu while you read them.
 - **The Book view button is missing on your laptop.** That is by design if the
   window is narrower than 768 pixels, or if the device is set to reduce motion.
-  The article is the page either way.
-- **A build fails with a sentence about a file.** The sentence names the file
-  and the field. It is always a fix in the interview file.
-- **Search engines.** The article pages are in the sitemap on the next deploy.
-  How soon they appear in search results is up to the search engine and cannot
-  be checked here.
+- **The page says "not found" for an interview you published.** Either it was
+  unpublished, or the document fails the page's checks (a link that is not
+  `https://`, a picture without its description). The admin page shows the
+  same checks when you save, so fix the field there.
+- **Logs.** Nothing the guest said reaches a log: the logs carry ids, counts,
+  bytes and durations. If you are asked for evidence, that is the sentence
+  to give.
 
 ## How it works, for whoever changes the code
 
-- `frontend/src/lib/interviews.js` holds the format, its checks and how an
-  interview becomes the book's pages. `normalizeInterview` is what both the
-  build and the tests call, so they cannot disagree about what is valid.
-- `frontend/src/data/interviews/index.js` reads the files at build time.
-  `available.js` reads only the file *names*, so the Azure landing page can decide
-  whether to show its Interviews card without putting every interview's text in
-  its bundle.
-- `frontend/src/pages/azure/InterviewsPage.jsx` is the page. The article is
-  rendered first and is what is pre-rendered; the book is chosen by the visitor
-  after the page has loaded, and its code is fetched only then.
-- `frontend/scripts/prerender-entry.jsx` lists the interview routes **only when
-  there is at least one**: an empty list page in the sitemap would be thin
-  content.
+- **The content type.** An interview is a `content` document with
+  `type: 'interview'` on the one status machine
+  (`functions/src/lib/cms/content-status.js`); its contract
+  (`publish-contracts.js`) gives it the section `interviews`, so the
+  published address is `/azure/interviews/<slug>`. The publish pipeline
+  (`cms/publish.js`) refuses it without consent or with a bad Q&A before the
+  ordinary gates (`functions/src/lib/interviews/publish-gate.js`,
+  `consent.js`), and the daily forge never picks one up
+  (`timers/forge-scheduled.js`).
+- **The admin routes.** `POST/GET cms/interviews`, `GET cms/interviews/{id}`
+  (the document and its transcript) and `DELETE cms/interviews/{id}/audio`
+  are `functions/src/lib/interviews/admin.js`; edits go through
+  `updateContentItem`, which checks interview fields against the schema
+  (`content-update-validation.js`). The upload, fetch, transcribe and draft
+  routes are the other slices'.
+- **The public routes.** `GET public/interviews` and
+  `GET public/interviews/{slug}` in `functions/src/lib/public-reads.js`
+  answer allow-listed fields only; the test pins the lists against the
+  page's own validator, `frontend/src/lib/interviews.js`.
+- **The pages.** `frontend/src/pages/azure/InterviewsPage.jsx` reads the two
+  routes live; the pre-render seeds the same keys from the content manifest
+  (`scripts/build-content-manifest.mjs`, `frontend/scripts/prerender.mjs`),
+  so a built page carries the whole interview and the list page exists only
+  once there is one.
+- **Deleting.** `deleteBlobWithVersions` in `interviews/admin.js` deletes a
+  blob and then every version of it, because the account keeps versions and
+  a plain delete would leave the recording as a previous version for up to
+  30 days. Deleting a version needs the `deleteBlobVersion/action` data
+  action, which Storage Blob Data Owner holds and the Function App's role on
+  the content account (Storage Blob Data Contributor, `infra/storage.tf`)
+  does not ([Microsoft Learn: blob versioning, authorize operations](https://learn.microsoft.com/azure/storage/blobs/versioning-overview#authorize-operations-on-blob-versions)).
+  Until the owner grants it, each version delete answers 403, is counted and
+  logged by code, and the account's `expire-noncurrent-versions` rule removes
+  the version within 30 days; the base delete still happens, so the
+  recording stops being current at once.
 - The book is built with CSS in this repository, with no library. The usual
   flip-book package was last released in April 2021 (owner decision,
   2026-10-24).
 - The book's pages use a fixed paper colour and fixed text and link colours,
-  not the site's theme classes, because the theme rewrites `bg-white` inside a
-  provider page and the dark theme made the pages unreadable.
+  not the site's theme classes, because the theme rewrites `bg-white` inside
+  a provider page and the dark theme made the pages unreadable.

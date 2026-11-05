@@ -219,7 +219,11 @@ async function deleteAsRead(store, doc) {
  * and a failure to write it is logged rather than reported as a failed
  * delete: the document is gone either way.
  */
-async function deleteContentItem({ guard, store, onContentDeleted, now, uuid }, request, context) {
+async function deleteContentItem(
+  { guard, store, onContentDeleted, onInterviewDeleted, now, uuid },
+  request,
+  context
+) {
   const auth = await guard.requireRole(request, 'publisher');
   if (auth.error) return auth.error;
   const { user } = auth;
@@ -255,6 +259,17 @@ async function deleteContentItem({ guard, store, onContentDeleted, now, uuid }, 
       .catch((err) =>
         context.error(`deleteContentItem: the audit row was not written (${err?.code ?? 'error'})`)
       );
+    // An interview owns a recording and transcripts in the private container
+    // (ADR 0040, D10); they go with the document. Best-effort and logged by
+    // count: the document is gone either way, and a blob that stays is
+    // expired by the container's lifecycle rule.
+    if (onInterviewDeleted && String(doc.type || '').toLowerCase() === 'interview') {
+      await onInterviewDeleted(doc, context).catch((err) =>
+        context.warn?.(
+          `deleteContentItem: the interview's recording was not deleted (${err?.code ?? 'error'})`
+        )
+      );
+    }
     // The change feed never delivers a delete (T-324): move the dashboard
     // counters here, best-effort.
     if (onContentDeleted) {
@@ -408,10 +423,11 @@ export function createContentWorkflowHandlers({
   guard,
   store,
   onContentDeleted = null,
+  onInterviewDeleted = null,
   now = () => new Date(),
   uuid = randomUUID,
 }) {
-  const ctx = { guard, store, onContentDeleted, now, uuid };
+  const ctx = { guard, store, onContentDeleted, onInterviewDeleted, now, uuid };
   return Object.fromEntries(
     Object.entries(HANDLERS).map(([name, handler]) => [
       name,

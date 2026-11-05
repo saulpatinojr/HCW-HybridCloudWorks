@@ -15,7 +15,7 @@
 import React from 'react';
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const AZURE_HUB = [
   'Home',
@@ -29,9 +29,8 @@ const AZURE_HUB = [
   'Labs',
 ];
 
-async function labelsAt(pathname, { hasInterviews = false } = {}) {
+async function labelsAt(pathname) {
   vi.resetModules();
-  vi.doMock('@/data/interviews/available', () => ({ hasInterviews }));
   const { default: Header } = await import('./Header');
   render(
     <MemoryRouter initialEntries={[pathname]}>
@@ -44,13 +43,11 @@ async function labelsAt(pathname, { hasInterviews = false } = {}) {
     .map((link) => link.textContent.trim());
 }
 
-afterEach(() => {
-  vi.doUnmock('@/data/interviews/available');
-});
-
 describe('Header: Azure keeps its nine links', () => {
-  it.each([false, true])('with interviews = %s', async (hasInterviews) => {
-    expect(await labelsAt('/azure', { hasInterviews })).toEqual(AZURE_HUB);
+  // Since ADR 0040 the interviews are read live and the header reads nothing
+  // about them: it has nine links whatever is published.
+  it('on the Azure landing page', async () => {
+    expect(await labelsAt('/azure')).toEqual(AZURE_HUB);
   });
 });
 
@@ -58,7 +55,7 @@ describe('Header: the interview pages are Azure pages', () => {
   it.each(['/azure/interviews', '/azure/interviews/a-conversation-about-landing-zones'])(
     'keeps the Azure menu on %s, not the generic provider list',
     async (pathname) => {
-      expect(await labelsAt(pathname, { hasInterviews: true })).toEqual(AZURE_HUB);
+      expect(await labelsAt(pathname)).toEqual(AZURE_HUB);
     }
   );
 });

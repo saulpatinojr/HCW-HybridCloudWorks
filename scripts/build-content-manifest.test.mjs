@@ -23,6 +23,9 @@ import {
   describeFetchFailure,
   describeSectionCounts,
   sectionCounts,
+  INTERVIEW_FIELDS,
+  INTERVIEW_LIST_FIELDS,
+  INTERVIEWS_ROUTE,
 } from './build-content-manifest.mjs';
 
 // `dirname(fileURLToPath(...))` rather than `new URL('..', import.meta.url)`:
@@ -333,5 +336,87 @@ describe('describeSectionCounts', () => {
     expect(line).toContain('no item carries a type');
     // And it says what follows from that, which is the part a reader acts on.
     expect(line).toContain('no section page leaves the sitemap');
+  });
+});
+
+describe('interviews on the manifest (ADR 0040, D6)', () => {
+  const interview = (slug, over = {}) => ({
+    id: `i-${slug}`,
+    slug,
+    title: `Interview ${slug}`,
+    date: '2026-10-01',
+    guest: { name: 'Test Guest' },
+    tags: ['landing-zones'],
+    qa: [{ q: 'Q?', a: 'A.' }],
+    bio: 'A bio.',
+    ...over,
+  });
+
+  it('lists the list page and one page per interview, newest first, with seeds keyed as usePublicData keys them', () => {
+    const manifest = buildManifest(
+      [],
+      null,
+      [interview('older-one', { date: '2026-03-01' }), interview('newest-one'), interview('also-newest')]
+    );
+    expect(manifest.routes).toEqual([
+      INTERVIEWS_ROUTE,
+      '/azure/interviews/also-newest',
+      '/azure/interviews/newest-one',
+      '/azure/interviews/older-one',
+    ]);
+    expect(manifest.data['interviews:list'].map((item) => item.slug)).toEqual([
+      'also-newest',
+      'newest-one',
+      'older-one',
+    ]);
+    // The list carries the card fields only; the page seed carries the article.
+    expect(Object.keys(manifest.data['interviews:list'][0]).sort()).toEqual(
+      [...INTERVIEW_LIST_FIELDS].filter((f) => f !== 'subtitle' && f !== 'publishedAt').sort()
+    );
+    expect(manifest.data['interview:newest-one']).toEqual({
+      slug: 'newest-one',
+      title: 'Interview newest-one',
+      date: '2026-10-01',
+      guest: { name: 'Test Guest' },
+      tags: ['landing-zones'],
+      qa: [{ q: 'Q?', a: 'A.' }],
+      bio: 'A bio.',
+    });
+  });
+
+  it('lists no interview route while there is no interview: an empty list page would be thin content', () => {
+    const manifest = buildManifest([], null, []);
+    expect(manifest.routes.filter((route) => route.includes('interviews'))).toEqual([]);
+    expect(manifest.data).not.toHaveProperty('interviews:list');
+    expect(buildManifest([], null).routes).toEqual([]);
+  });
+
+  it('skips a bad or repeated slug and says so', () => {
+    const manifest = buildManifest(
+      [],
+      null,
+      [interview('first-one'), interview('first-one'), interview('Not A Slug'), { id: 'no-slug' }]
+    );
+    expect(manifest.routes).toEqual([INTERVIEWS_ROUTE, '/azure/interviews/first-one']);
+    expect(manifest.skipped).toEqual([
+      'interview first-one: duplicate slug; first occurrence kept',
+      'interview i-Not A Slug: no usable slug',
+      'interview no-slug: no usable slug',
+    ]);
+  });
+
+  it('never pre-renders an interview as an article, however it arrived', () => {
+    const manifest = buildManifest([
+      { id: 'i1', slug: 'a-conversation', cloudProvider: 'azure', type: 'interview' },
+      { id: 'a1', slug: 'a-post', cloudProvider: 'azure', type: 'blog' },
+    ]);
+    expect(manifest.routes).toEqual(['/azure/blog/a-post']);
+    expect(manifest.skipped).toEqual(['a-conversation: an interview, not an article']);
+  });
+
+  it('keeps the list fields as the first of the detail fields, so the two projections agree', () => {
+    expect([...INTERVIEW_FIELDS].slice(0, INTERVIEW_LIST_FIELDS.length)).toEqual([...INTERVIEW_LIST_FIELDS]);
+    expect(INTERVIEW_FIELDS).toContain('qa');
+    expect(INTERVIEW_FIELDS).not.toContain('consent');
   });
 });

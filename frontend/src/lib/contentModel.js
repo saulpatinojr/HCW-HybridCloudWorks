@@ -1,6 +1,13 @@
 import { canonicalizeProvider } from './providers.js';
 
-export const CONTENT_TYPES = new Set(['blog', 'framework', 'architecture', 'coder_corner', 'news']);
+export const CONTENT_TYPES = new Set([
+  'blog',
+  'framework',
+  'architecture',
+  'coder_corner',
+  'interview',
+  'news',
+]);
 
 export function normalizeContentType(value) {
   const normalized = String(value || '')
@@ -23,6 +30,9 @@ export function getPublicSectionForTarget(value) {
       return 'architecture-designs';
     case 'coder_corner':
       return 'code';
+    // ADR 0040, D5: an interview lives at /azure/interviews/<slug>.
+    case 'interview':
+      return 'interviews';
     case 'news':
       return 'news';
     case 'blog':
@@ -39,7 +49,12 @@ export function getCanonicalContentType(item = {}) {
     .trim()
     .toLowerCase();
 
-  if (target === 'framework' || target === 'architecture' || target === 'coder_corner') {
+  if (
+    target === 'framework' ||
+    target === 'architecture' ||
+    target === 'coder_corner' ||
+    target === 'interview'
+  ) {
     return target;
   }
   if (target === 'news' || target === 'rss') {
