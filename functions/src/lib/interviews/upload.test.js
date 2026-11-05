@@ -12,6 +12,7 @@ import {
   blockIdFor,
   blockLengthFor,
   createInterviewUploadHandlers,
+  isSoundSession,
   parseOpenBody,
 } from './upload.js';
 import { INTERVIEWS_AUDIO_CONTAINER, MAX_AUDIO_BYTES } from './storage.js';
@@ -133,6 +134,35 @@ describe('block arithmetic', () => {
   });
 });
 
+describe('isSoundSession (a session is re-derived at use, never trusted from the document)', () => {
+  const doc = { id: 'int-1' };
+  const sound = sessionDoc().provenance.audio.upload;
+
+  it('accepts exactly what openUpload mints', () => {
+    expect(isSoundSession(doc, sound)).toBe(true);
+  });
+
+  it.each([
+    ['another path', { path: 'transcripts/int-1/v1.json' }],
+    ['a path for another interview', { path: 'audio/int-2.mp3' }],
+    ['a type not canonical', { contentType: 'audio/mp3' }],
+    ['a type the extension does not match', { contentType: 'audio/wav' }],
+    ['an extension not in the table', { ext: 'exe', path: 'audio/int-1.exe' }],
+    ['a size past the cap', { bytes: MAX_AUDIO_BYTES + 1, blockCount: 126 }],
+    ['a size that is not a whole number', { bytes: 1.5, blockCount: 1 }],
+    ['a block size that is not 4 MiB', { blockSize: 1 }],
+    ['a block count that does not follow from the size', { blockCount: 9999 }],
+    ['a hash that is not a digest', { sha256: 'x' }],
+  ])('refuses a session with %s', (_label, overrides) => {
+    expect(isSoundSession(doc, { ...sound, ...overrides })).toBe(false);
+  });
+
+  it('refuses a document whose id could not be a path segment, and a missing session', () => {
+    expect(isSoundSession({ id: '../x' }, sound)).toBe(false);
+    expect(isSoundSession(doc, null)).toBe(false);
+  });
+});
+
 describe('parseOpenBody', () => {
   it('accepts the three types with their alias spellings and canonicalises them', () => {
     expect(parseOpenBody(openBody({ contentType: 'audio/mp3' })).value.contentType).toBe('audio/mpeg');
@@ -149,10 +179,11 @@ describe('parseOpenBody', () => {
   it.each([
     ['audio/mpeg', 'audio/mpeg', 'mp3'],
     ['audio/mp3', 'audio/mpeg', 'mp3'],
+    ['audio/x-mp3', 'audio/mpeg', 'mp3'],
+    ['audio/mpeg3', 'audio/mpeg', 'mp3'],
     ['audio/mp4', 'audio/mp4', 'm4a'],
     ['audio/x-m4a', 'audio/mp4', 'm4a'],
     ['audio/m4a', 'audio/mp4', 'm4a'],
-    ['audio/aac', 'audio/mp4', 'm4a'],
     ['audio/wav', 'audio/wav', 'wav'],
     ['audio/x-wav', 'audio/wav', 'wav'],
     ['audio/wave', 'audio/wav', 'wav'],
@@ -285,7 +316,9 @@ describe('openUpload', () => {
     expect(res.status).toBe(500);
     expect(JSON.parse(res.body)).toEqual({ error: 'Failed to open the upload' });
     expect(ctx.error).toHaveBeenCalledTimes(1);
-    expect(ctx.error.mock.calls[0][0]).toMatch(/failed \(503\)/);
+    // Code only: a Cosmos or Storage message carries the request URL.
+    expect(ctx.error.mock.calls[0][0]).toBe('interviewUploadOpen failed (503)');
+    expect(allLogText(ctx)).not.toContain('secret-guest-name');
   });
 });
 
@@ -339,6 +372,25 @@ describe('putBlock', () => {
     expect((await handlers().putBlock(blockRequest(), ctx)).status).toBe(404);
   });
 
+  it('404s a session the document carries but this module did not mint (a forged path, type or plan)', async () => {
+    // The generic content update route can write provenance on the same role,
+    // so a session is re-derived at use: nothing reaches Storage for one that
+    // points outside audio/<id>.<ext>, past the cap, or at another type.
+    for (const forged of [
+      { path: 'transcripts/int-1/v1.json' },
+      { path: 'audio/int-2.mp3' },
+      { contentType: 'application/octet-stream' },
+      { bytes: MAX_AUDIO_BYTES * 10, blockCount: 1250 },
+      { blockCount: 9999 },
+    ]) {
+      store.content['int-1'] = sessionDoc(forged);
+      const request = blockRequest();
+      expect((await handlers().putBlock(request, ctx)).status).toBe(404);
+      expect(request.arrayBuffer).not.toHaveBeenCalled();
+    }
+    expect(storage.stageBlock).not.toHaveBeenCalled();
+  });
+
   it('400s an index out of range or malformed', async () => {
     expect((await handlers().putBlock(blockRequest({ index: '2', length: 10 }), ctx)).status).toBe(400);
     expect((await handlers().putBlock(blockRequest({ index: '-1' }), ctx)).status).toBe(400);
@@ -384,6 +436,8 @@ describe('putBlock', () => {
     const res = await handlers().putBlock(blockRequest(), ctx);
     expect(res.status).toBe(500);
     expect(JSON.parse(res.body)).toEqual({ error: 'Failed to store the block' });
+    expect(ctx.error.mock.calls[0][0]).toBe('interviewUploadBlock failed (503)');
+    expect(allLogText(ctx)).not.toContain('audio/int-1');
   });
 });
 
@@ -503,6 +557,59 @@ describe('completeUpload', () => {
     expect(warned).not.toContain('audio/int-1');
   });
 
+  it('404s a forged session and commits nothing', async () => {
+    store.content['int-1'] = sessionDoc({ sha256: digest, path: 'transcripts/int-1/v1.json' });
+    expect((await handlers().completeUpload(completeRequest(), ctx)).status).toBe(404);
+    expect(storage.commitBlockList).not.toHaveBeenCalled();
+  });
+
+  it('a mismatch that replaced an earlier verified recording clears provenance.audio under the ETag and says so', async () => {
+    // Same interview, same type: the blob name is fixed, so the commit
+    // overwrote the good recording before the hash was checked.
+    store.content['int-1'].provenance = {
+      source: 'upload',
+      audio: {
+        container: INTERVIEWS_AUDIO_CONTAINER,
+        path: 'audio/int-1.mp3',
+        bytes: 5,
+        sha256: 'c'.repeat(64),
+        uploadedAt: '2026-11-01T00:00:00.000Z',
+        uploadedBy: OWNER,
+        uploadId: '00000000-0000-4000-8000-000000000099',
+        upload: store.content['int-1'].provenance.audio.upload,
+      },
+    };
+    storage.hashBlobSha256.mockResolvedValueOnce('b'.repeat(64));
+    const res = await handlers().completeUpload(completeRequest(), ctx);
+    expect(res.status).toBe(422);
+    expect(JSON.parse(res.body).error).toMatch(/replaced and must be uploaded again/);
+    expect(storage.deleteBlob).toHaveBeenCalledWith(INTERVIEWS_AUDIO_CONTAINER, 'audio/int-1.mp3');
+    expect(store.patchDoc).toHaveBeenCalledWith(
+      'content',
+      'int-1',
+      { provenance: { source: 'upload', audio: { upload: expect.objectContaining({ uploadId: UPLOAD_ID, status: 'open' }) } } },
+      { ifMatch: '"1"' }
+    );
+    expect(store.content['int-1'].provenance.audio.path).toBeUndefined();
+    expect(allLogText(ctx)).toContain('provenance.audio cleared');
+    expect(allLogText(ctx)).not.toContain('audio/int-1');
+  });
+
+  it('a mismatch with no earlier recording under that name leaves provenance alone', async () => {
+    storage.hashBlobSha256.mockResolvedValueOnce('b'.repeat(64));
+    const res = await handlers().completeUpload(completeRequest(), ctx);
+    expect(res.status).toBe(422);
+    expect(JSON.parse(res.body).error).not.toMatch(/replaced/);
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('a Storage 400 that is not InvalidBlockList is not reported as missing blocks', async () => {
+    storage.commitBlockList.mockRejectedValueOnce(Object.assign(new Error('InvalidBlockId'), { statusCode: 400, code: 'InvalidBlockId' }));
+    const res = await handlers().completeUpload(completeRequest(), ctx);
+    expect(res.status).toBe(500);
+    expect(JSON.parse(res.body)).toEqual({ error: 'Failed to complete the upload' });
+  });
+
   it('removes a previous recording of another type after the new one is committed', async () => {
     store.content['int-1'].provenance.audio.path = 'audio/int-1.wav';
     const res = await handlers().completeUpload(completeRequest(), ctx);
@@ -520,6 +627,7 @@ describe('completeUpload', () => {
     const res = await handlers().completeUpload(completeRequest(), ctx);
     expect(res.status).toBe(500);
     expect(JSON.parse(res.body)).toEqual({ error: 'Failed to complete the upload' });
-    expect(ctx.error.mock.calls[0][0]).toMatch(/failed \(503\)/);
+    expect(ctx.error.mock.calls[0][0]).toBe('interviewUploadComplete failed (503)');
+    expect(allLogText(ctx)).not.toContain('audio/int-1');
   });
 });

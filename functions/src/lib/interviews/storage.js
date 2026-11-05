@@ -16,6 +16,25 @@ export const AUDIO_TYPES = Object.freeze({
   'audio/wav': 'wav',
 });
 
+// Browsers and recorders spell the same three types several ways. The
+// canonical type is what is stored and checked against the extension.
+const AUDIO_TYPE_ALIASES = Object.freeze({
+  'audio/mp3': 'audio/mpeg',
+  'audio/x-mp3': 'audio/mpeg',
+  'audio/mpeg3': 'audio/mpeg',
+  'audio/x-m4a': 'audio/mp4',
+  'audio/m4a': 'audio/mp4',
+  'audio/x-wav': 'audio/wav',
+  'audio/wave': 'audio/wav',
+  'audio/vnd.wave': 'audio/wav',
+});
+
+export function canonicalAudioType(contentType) {
+  const base = String(contentType || '').split(';')[0].trim().toLowerCase();
+  const type = AUDIO_TYPE_ALIASES[base] || base;
+  return Object.hasOwn(AUDIO_TYPES, type) ? type : null;
+}
+
 export const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
 
 export function audioBlobPath(interviewId, ext) {

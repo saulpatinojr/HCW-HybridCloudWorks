@@ -449,6 +449,12 @@ resource "azurerm_storage_management_policy" "cleanup" {
   # Uncommitted blocks (a browser upload that was never completed) are not
   # this rule's concern: Storage drops them a week after the last Put Block
   # on its own (https://learn.microsoft.com/rest/api/storageservices/put-block#remarks).
+  #
+  # The account keeps blob versions, so a recording that is re-uploaded or
+  # deleted leaves a previous version behind; the `version` action expires
+  # those on the same clock, so no copy of a guest's voice outlives the
+  # retention. (The expire-noncurrent-versions rule above would clear them
+  # at 30 days anyway; this one says so where the retention is decided.)
   rule {
     name    = "expire-interview-audio"
     enabled = true
@@ -461,6 +467,9 @@ resource "azurerm_storage_management_policy" "cleanup" {
     actions {
       base_blob {
         delete_after_days_since_creation_greater_than = var.interview_audio_retention_days
+      }
+      version {
+        delete_after_days_since_creation = var.interview_audio_retention_days
       }
     }
   }

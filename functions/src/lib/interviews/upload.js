@@ -44,7 +44,13 @@
  * on `/provenance/audio/upload` fails when `provenance` does not exist yet.
  */
 import { randomUUID } from 'node:crypto';
-import { AUDIO_TYPES, INTERVIEWS_AUDIO_CONTAINER, MAX_AUDIO_BYTES, audioBlobPath } from './storage.js';
+import {
+  AUDIO_TYPES,
+  INTERVIEWS_AUDIO_CONTAINER,
+  MAX_AUDIO_BYTES,
+  audioBlobPath,
+  canonicalAudioType,
+} from './storage.js';
 import { isValidBlobPath } from '../blob-paths.js';
 
 /** Bytes per block: the browser slices at this, and no request is larger. */
@@ -63,25 +69,6 @@ export const UPLOAD_SOURCE = 'interview-upload';
 const INTERVIEW_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-
-/**
- * The spellings browsers send for each of the three types, folded to the
- * canonical type that is stored. The same list as the podcast upload
- * (lib/podcast/recording-upload.js), kept here so this module needs nothing
- * from the podcast's.
- */
-const AUDIO_ALIASES = Object.freeze({
-  'audio/mpeg': 'audio/mpeg',
-  'audio/mp3': 'audio/mpeg',
-  'audio/mp4': 'audio/mp4',
-  'audio/x-m4a': 'audio/mp4',
-  'audio/m4a': 'audio/mp4',
-  'audio/aac': 'audio/mp4',
-  'audio/wav': 'audio/wav',
-  'audio/x-wav': 'audio/wav',
-  'audio/wave': 'audio/wav',
-  'audio/vnd.wave': 'audio/wav',
-});
 
 const json = (status, body) => ({
   status,
@@ -116,13 +103,6 @@ export function blockLengthFor(bytes, index, blockSize = BLOCK_SIZE) {
   return index < count - 1 ? blockSize : bytes - (count - 1) * blockSize;
 }
 
-function normalizeMediaType(value) {
-  return String(value ?? '')
-    .split(';')[0]
-    .trim()
-    .toLowerCase();
-}
-
 function extensionOf(fileName) {
   const segment = String(fileName || '')
     .split(/[\\/]/)
@@ -146,7 +126,9 @@ export function parseOpenBody(body) {
   const interviewId = typeof raw.interviewId === 'string' ? raw.interviewId.trim() : '';
   if (!INTERVIEW_ID_PATTERN.test(interviewId)) return { error: 'interviewId is required' };
 
-  const contentType = AUDIO_ALIASES[normalizeMediaType(raw.contentType)];
+  // Alias spellings (audio/mp3, audio/x-m4a, ...) fold to the canonical type
+  // before the type and extension checks (ADR 0040 D1).
+  const contentType = canonicalAudioType(raw.contentType);
   if (!contentType) {
     return { error: `Unsupported audio type; send an ${Object.values(AUDIO_TYPES).join(', ')} file` };
   }
@@ -181,6 +163,31 @@ function readContentLength(request) {
   if (raw === null || raw === undefined || String(raw).trim() === '') return null;
   const parsed = Number.parseInt(String(raw), 10);
   return Number.isInteger(parsed) && parsed >= 0 && String(parsed) === String(raw).trim() ? parsed : NaN;
+}
+
+/**
+ * Whether a session read back from the document is one this module wrote.
+ *
+ * The session is trusted at use, and the document it sits on can be edited
+ * through the generic content update route by the same role, so every field
+ * the block and complete paths rely on is re-derived here from the document
+ * id and the three constants rather than taken on faith: a session whose
+ * path, type, extension, size or block plan is not exactly what `openUpload`
+ * would have minted is treated as absent (404). Exported for its test.
+ *
+ * @param {{ id: string }} doc
+ * @param {object} session
+ * @returns {boolean}
+ */
+export function isSoundSession(doc, session) {
+  if (!session || typeof session !== 'object') return false;
+  const { contentType, ext, bytes, blockSize, blockCount, path } = session;
+  if (!INTERVIEW_ID_PATTERN.test(String(doc?.id || ''))) return false;
+  if (canonicalAudioType(contentType) !== contentType || AUDIO_TYPES[contentType] !== ext) return false;
+  if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_AUDIO_BYTES) return false;
+  if (blockSize !== BLOCK_SIZE || blockCount !== Math.ceil(bytes / BLOCK_SIZE)) return false;
+  if (path !== audioBlobPath(doc.id, ext) || !isValidBlobPath(path)) return false;
+  return SHA256_PATTERN.test(String(session.sha256 || ''));
 }
 
 /**
@@ -219,7 +226,9 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
     const audio = doc.provenance?.audio ?? {};
     const session = audio.upload && audio.upload.uploadId === uploadId ? audio.upload : null;
     if (session) {
-      if (session.ownerOid !== oid || session.status !== 'open') return { doc: null, session: null, completed: false };
+      if (session.ownerOid !== oid || session.status !== 'open' || !isSoundSession(doc, session)) {
+        return { doc: null, session: null, completed: false };
+      }
       return { doc, session, completed: false };
     }
     return { doc, session: null, completed: audio.uploadId === uploadId && audio.uploadedBy === oid };
@@ -283,7 +292,8 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         return json(201, { uploadId: session.uploadId, blockSize: BLOCK_SIZE, blockCount });
       } catch (error) {
         if (error?.code === 412) return json(409, { error: 'The interview changed while the upload was opened; try again' });
-        context.error(`interviewUploadOpen failed (${error?.code ?? error?.statusCode ?? 'n/a'}): ${error?.message || error}`);
+        // Code or status only: a Storage or Cosmos message carries the request URL, which names the blob.
+        context.error(`interviewUploadOpen failed (${error?.code ?? error?.statusCode ?? 'n/a'})`);
         return json(500, { error: 'Failed to open the upload' });
       }
     },
@@ -333,7 +343,8 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         context.log?.(`interviewUploadBlock: ${uploadId} block ${index} staged (${bytes.length} B)`);
         return json(200, { ok: true, index, bytes: bytes.length });
       } catch (error) {
-        context.error(`interviewUploadBlock failed (${error?.code ?? error?.statusCode ?? 'n/a'}): ${error?.message || error}`);
+        // Code or status only: a Storage or Cosmos message carries the request URL, which names the blob.
+        context.error(`interviewUploadBlock failed (${error?.code ?? error?.statusCode ?? 'n/a'})`);
         return json(500, { error: 'Failed to store the block' });
       }
     },
@@ -364,26 +375,46 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
             metadata: { source: UPLOAD_SOURCE, uploadedBy: oid, interviewId: doc.id },
           });
         } catch (error) {
-          if (error?.code === 'InvalidBlockList' || error?.statusCode === 400) {
+          if (error?.code === 'InvalidBlockList') {
             context.warn?.(`interviewUploadComplete: ${uploadId} has missing blocks (${session.blockCount} expected)`);
             return json(422, { error: 'Not every block was uploaded; send the missing blocks and complete again' });
           }
           throw error;
         }
 
-        if (committed.contentLength !== session.bytes) {
+        /**
+         * A mismatch: the blob is deleted. The name is fixed per interview and
+         * type, so when a recording verified earlier sat under the same name
+         * the commit above has already replaced its bytes (the account keeps
+         * the previous version), and `provenance.audio` would now point at a
+         * deleted blob. It is cleared in the same ETag write, with the session
+         * kept open for the retry, so the document never names a recording
+         * that is not there.
+         */
+        const refuse = async (sentence, line) => {
           await discardBlob(session.path, context, 'interviewUploadComplete');
-          context.warn?.(
+          context.warn?.(line);
+          if (doc.provenance?.audio?.path === session.path) {
+            await writeProvenance(doc, { upload: session });
+            context.warn?.(`interviewUploadComplete: ${uploadId} replaced the recording on ${doc.id}; provenance.audio cleared`);
+            return json(422, { error: `${sentence} The recording stored before was replaced and must be uploaded again too.` });
+          }
+          return json(422, { error: sentence });
+        };
+
+        if (committed.contentLength !== session.bytes) {
+          return refuse(
+            'The uploaded size does not match the declared size; upload the file again.',
             `interviewUploadComplete: ${uploadId} size mismatch (${committed.contentLength} B stored, ${session.bytes} B declared)`
           );
-          return json(422, { error: 'The uploaded size does not match the declared size; upload the file again' });
         }
 
         const digest = await storage.hashBlobSha256(INTERVIEWS_AUDIO_CONTAINER, session.path);
         if (digest !== session.sha256) {
-          await discardBlob(session.path, context, 'interviewUploadComplete');
-          context.warn?.(`interviewUploadComplete: ${uploadId} hash mismatch (${session.bytes} B)`);
-          return json(422, { error: 'The uploaded file does not match its declared SHA-256; upload the file again' });
+          return refuse(
+            'The uploaded file does not match its declared SHA-256; upload the file again.',
+            `interviewUploadComplete: ${uploadId} hash mismatch (${session.bytes} B)`
+          );
         }
 
         const previous = doc.provenance?.audio?.path;
@@ -410,7 +441,8 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         return json(200, { ok: true, bytes: session.bytes, sha256: session.sha256, contentType: session.contentType });
       } catch (error) {
         if (error?.code === 412) return json(409, { error: 'The interview changed while the upload was completed; try again' });
-        context.error(`interviewUploadComplete failed (${error?.code ?? error?.statusCode ?? 'n/a'}): ${error?.message || error}`);
+        // Code or status only: a Storage or Cosmos message carries the request URL, which names the blob.
+        context.error(`interviewUploadComplete failed (${error?.code ?? error?.statusCode ?? 'n/a'})`);
         return json(500, { error: 'Failed to complete the upload' });
       }
     },

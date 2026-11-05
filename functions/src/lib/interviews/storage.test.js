@@ -16,6 +16,7 @@ import {
   INTERVIEWS_AUDIO_CONTAINER,
   MAX_AUDIO_BYTES,
   audioBlobPath,
+  canonicalAudioType,
   transcriptBlobPath,
   transcriptPartPath,
 } from './storage.js';
@@ -51,6 +52,29 @@ describe('interviews storage layout', () => {
   it('accepts the three audio types the podcast upload accepts, each with one extension', () => {
     expect(AUDIO_TYPES).toEqual({ 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/wav': 'wav' });
     expect(Object.isFrozen(AUDIO_TYPES)).toBe(true);
+  });
+
+  it.each([
+    ['audio/mpeg', 'audio/mpeg'],
+    ['audio/mp3', 'audio/mpeg'],
+    ['audio/x-mp3', 'audio/mpeg'],
+    ['audio/mpeg3', 'audio/mpeg'],
+    ['audio/mp4', 'audio/mp4'],
+    ['audio/x-m4a', 'audio/mp4'],
+    ['audio/m4a', 'audio/mp4'],
+    ['audio/wav', 'audio/wav'],
+    ['audio/x-wav', 'audio/wav'],
+    ['audio/wave', 'audio/wav'],
+    ['audio/vnd.wave', 'audio/wav'],
+  ])('canonicalAudioType folds %s to %s, whatever the case or parameters', (alias, canonical) => {
+    expect(canonicalAudioType(alias)).toBe(canonical);
+    expect(canonicalAudioType(`${alias.toUpperCase()}; codecs=x`)).toBe(canonical);
+  });
+
+  it('canonicalAudioType is null for anything that is not one of the three', () => {
+    for (const value of ['audio/aac', 'audio/ogg', 'video/mp4', 'text/html', '', null, undefined, 42]) {
+      expect(canonicalAudioType(value)).toBeNull();
+    }
   });
 
   it('caps a recording at 500 MiB', () => {
