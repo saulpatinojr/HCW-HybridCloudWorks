@@ -127,9 +127,13 @@ the pull request: `infrastructure-pr-reviewer` (the Terraform) and
   (copy the `podcast` block, name `interviews-audio`, private, the
   `CKV2_AZURE_21` skip comment); a `rule { name = "expire-interview-audio" }`
   inside `azurerm_storage_management_policy.cleanup` with
-  `prefix_match = ["interviews-audio/audio/"]` and
-  `delete_after_days_since_creation_greater_than = var.interview_audio_retention_days`.
-  No new role assignment (the ADR says why).
+  `prefix_match = ["interviews-audio/audio/"]`, a `base_blob {
+  delete_after_days_since_creation_greater_than =
+  var.interview_audio_retention_days }` action and a `version {
+  delete_after_days_since_creation = var.interview_audio_retention_days }`
+  action, so an expired recording's previous versions go with it (the
+  account keeps blob versions; ADR 0040 D10). No new role assignment (the
+  ADR says why).
 - `infra/variables.tf`: `variable "interview_audio_retention_days"`
   (number, default 365, a validation of 1 to 3650, a description a junior
   administrator can read).
@@ -339,7 +343,13 @@ hook, D12's page tests.
   (accept `interview`), `functions/src/lib/admin-snapshots.js` type lists,
   `functions/src/lib/timers/forge-scheduled.js` (exclude `type = 'interview'`),
   `functions/src/lib/content-workflow.js` (delete hook removes the audio and
-  transcripts), `scripts/ideas/idea-notes.mjs` (`IDEA_TYPES`). Update each
+  transcripts, listing each blob's versions with `includeVersions` and
+  deleting every `versionId` as well as the current blob, since the account
+  keeps versions and a plain delete would leave the recording as a previous
+  version for up to 30 days; `delete-audio` in `lib/interviews/admin.js`
+  shares the helper, `deleteBlobWithVersions`, which C adds to
+  `lib/interviews/admin.js`, not to `blob-storage.js`), `scripts/ideas/idea-notes.mjs`
+  (`IDEA_TYPES`). Update each
   pinned test (`publish-targets.test.js`, `publish-contracts` cases in
   `content-quality.test.js`, `taxonomy-fields.test.js`,
   `idea-promotion.test.js`, `publish.test.js`).
@@ -382,6 +392,8 @@ hook, D12's page tests.
 
 **Tests to add:** the publish refusals (no consent, future date, bad `qa`);
 the public routes (allow-list, unpublished gives 404, `Cache-Control`);
+the version-aware delete (a stubbed blob client lists two versions and the
+test asserts three deletes: each version and the current blob);
 the manifest builder (interview routes present, blog routes exclude
 interviews); the forge timer query excludes interviews; the frontend pages
 with a stubbed `publicApi` (list, detail, not-found marker, landing card

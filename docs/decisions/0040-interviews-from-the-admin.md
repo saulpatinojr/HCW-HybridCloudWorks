@@ -503,9 +503,21 @@ date and the admin's oid, nothing else.
      HCP Terraform's variables and confirms the run.
    - Deletion: "Delete recording" on the admin page (`DELETE
      /api/cms/interviews/{id}/audio`, publisher) deletes the blob and clears
-     `provenance.audio`; soft delete keeps it 7 days. Deleting the interview
-     (`deleteContentItem`, existing) also deletes its audio and transcripts
-     through an interview-aware hook. Unpublishing deletes nothing.
+     `provenance.audio`. The account keeps blob versions, and deleting a
+     versioned blob without naming a version turns the current blob into a
+     previous version rather than a soft-deleted blob, which the account's
+     `expire-noncurrent-versions` rule would keep for up to 30 days
+     ([blob versioning](https://learn.microsoft.com/azure/storage/blobs/versioning-overview),
+     read 2026-11-05). So the delete handler lists the blob's versions
+     (`includeVersions`) and deletes each by its `versionId` as well as the
+     current blob; blob soft delete (7 days on this account) then holds the
+     deleted versions for that window, which is the only recovery path and
+     the one the runbook names. The lifecycle rule carries the same
+     `version { delete_after_days_since_creation }` action as the base
+     blob, so an expired recording's versions go with it. Deleting the
+     interview (`deleteContentItem`, existing) deletes its audio and
+     transcripts the same way through an interview-aware hook. Unpublishing
+     deletes nothing.
    - Kept out of `PUBLIC_MEDIA_CONTAINERS` (a disclosure decision, says its
      comment) and out of `UPLOAD_CONTAINERS` (the generic upload route is
      15 MB and image-only). Nothing in `connect-src` or the storage CORS
