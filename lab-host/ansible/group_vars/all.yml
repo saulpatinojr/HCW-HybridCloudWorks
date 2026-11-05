@@ -502,14 +502,19 @@ addons:
   # Cloud Crawler (#1357). The row is here before the site's catalogue row says
   # `available`: the host runs the container first, and the site flips the row
   # (and its frame-src entry) once the status route answers configured and
-  # reachable. image_digest is the v0.2.0 image INDEX, read on 2026-10-26 from
-  # Docker Hub's public tag API and from `docker buildx imagetools inspect
-  # docker.io/hybridcloudworks/img-cc-lab-addon:v0.2.0`, which agreed.
-  # `gh attestation verify` against HCW-CloudCrawler_AddOn passed on it
-  # (exit 0); the signer is the publish-images workflow at refs/tags/v0.2.0
-  # (https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/actions/runs/40318349978).
-  # v0.2.0 is the first image with the upload route; v0.1.0 has none, so it is
-  # not pinned. The widget is the owner's `HCW-CloudCrawler_AddOn`, for
+  # reachable. image_digest is the v0.3.0 image INDEX, read on 2026-11-05 from
+  # `docker buildx imagetools inspect
+  # docker.io/hybridcloudworks/img-cc-lab-addon:v0.3.0`, which agreed with the
+  # tag run's summary. `gh attestation verify` against HCW-CloudCrawler_AddOn
+  # passed on it (exit 0); the signer is the publish-images workflow at
+  # refs/tags/v0.3.0
+  # (https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/actions/runs/42070419839).
+  # v0.3.0 carries engine cloud-crawler-core 0.1.1, the first that reads a
+  # Terraform state or plan as well as an Azure Resource Graph export
+  # (HCW-CloudCrawler_AddOn#29). v0.2.0 (the first image with the upload route,
+  # digest sha256:5a43c90bda9bed1d3472847f492b7c05405e6a6ce2d4aa7f4d9b519bb72daf28)
+  # was pinned from 2026-10-26 to 2026-11-05; v0.1.0 has no upload route, so it
+  # was never pinned. The widget is the owner's `HCW-CloudCrawler_AddOn`, for
   # cloud-crawler.lab.hybridcloudworks.com; its site key is public. The env is
   # the add-on's own .env.example: the same frame-ancestors, site-origins,
   # proxy and limit settings as the other rows, with the add-on's own prefix.
@@ -523,8 +528,8 @@ addons:
   - id: cloud-crawler
     enabled: true
     image: docker.io/hybridcloudworks/img-cc-lab-addon
-    image_tag: "v0.2.0"
-    image_digest: "sha256:5a43c90bda9bed1d3472847f492b7c05405e6a6ce2d4aa7f4d9b519bb72daf28"
+    image_tag: "v0.3.0"
+    image_digest: "sha256:7660672a10b2196630f2a97edc804f8013ab1c70e0d7b8091f9430ae3ef01f4c"
     attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-CloudCrawler_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18084
     memory: 512m

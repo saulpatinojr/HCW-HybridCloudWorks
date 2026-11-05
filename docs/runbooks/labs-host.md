@@ -3368,10 +3368,13 @@ design.
 ### Cloud Crawler: the host steps
 
 Cloud Crawler is the fourth tool add-on: a visitor uploads an export of their
-Azure resources and gets a drift check. The first pull request of
+Azure resources, or a Terraform state or plan (read since the add-on's `v0.3.0`,
+[HCW-CloudCrawler_AddOn#29](https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/issues/29)),
+and gets a drift check. The first pull request of
 [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357) put
 everything the host needs into this repository: its row in
-`lab-host/ansible/group_vars/all.yml` (the `v0.2.0` image, pinned by its
+`lab-host/ansible/group_vars/all.yml` (the `v0.2.0` image then, `v0.3.0` since
+2026-11-05, pinned by its
 digest, on port 18084), the vault key `vault_addon_cloud_crawler_turnstile_secret`
 in the documents, and the Function App setting `ADDON_CLOUD_CRAWLER_URL` (the
 address the site's backend reads to find the tool). **Nothing ran until the
@@ -3559,7 +3562,7 @@ sentence.
 **4. Check it from three places.** Each is read-only.
 
    1. From the host (PowerShell). You should see JSON containing `"ok":true`,
-      `"id":"cloud-crawler"`, `"version":"0.2.0"`, `"edition":"lab"` and
+      `"id":"cloud-crawler"`, `"version":"0.3.0"` (the version in the row's `image_tag`; `0.2.0` before 2026-11-05), `"edition":"lab"` and
       `"azureConnectivity":"disabled-by-design"`:
 
       ```powershell
@@ -3593,7 +3596,7 @@ sentence.
       curl.exe -s https://api-azure.hybridcloudworks.com/api/public/addons/cloud-crawler/status
       ```
 
-      Success is `{"configured":true,"reachable":true,"version":"0.2.0",
+      Success is `{"configured":true,"reachable":true,"version":"0.3.0",
       "edition":"lab",…}` with a list of capabilities that includes
       `upload-evidence`. If you still see `{"configured":false}`, the
       Terraform run (the first step) has not applied, or the Function App has

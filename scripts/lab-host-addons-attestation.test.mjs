@@ -71,7 +71,7 @@ describe('group_vars/all.yml add-on attestation configuration', () => {
       },
       'cloud-crawler': {
         repo: 'saulpatinojr/HCW-CloudCrawler_AddOn',
-        tag: 'v0.2.0',
+        tag: 'v0.3.0',
       },
     };
 

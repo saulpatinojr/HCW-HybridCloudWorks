@@ -157,17 +157,14 @@ export const addons = Object.freeze([
   Object.freeze({
     id: 'cloud-crawler',
     title: 'Cloud architecture drift check',
-    // Terraform is left out of the summary and the technology list on purpose: the engine the lab runs (cloud-crawler-core
-    // 0.1.0) does not read Terraform yet, so the row promises only what the lab does. Restore both when the add-on ships
-    // an engine that reads it (HCW-CloudCrawler_App#54 is closed; the add-on has not taken a new engine). Tracked in
-    // HCW-CloudCrawler_AddOn#29; website issue #1357.
+    // "or your Terraform" and the `terraform` entry: the engine the lab runs (cloud-crawler-core 0.1.1, add-on v0.3.0) reads a Terraform state or plan (HCW-CloudCrawler_AddOn#29).
     summary:
-      'Upload an export of your Azure resources and see where what is built has drifted from your architecture decisions, with draft decision records and review notes. Nothing you upload is kept beyond two hours.',
+      'Upload an export of your Azure resources or your Terraform and see where what is built has drifted from your architecture decisions, with draft decision records and review notes. Nothing you upload is kept beyond two hours.',
     origin: 'https://cloud-crawler.lab.hybridcloudworks.com',
     panePath: '/',
     healthPath: '/api/health',
     providers: Object.freeze(['azure']),
-    technology: Object.freeze(['resource-graph', 'architecture-decisions']),
+    technology: Object.freeze(['resource-graph', 'terraform', 'architecture-decisions']),
     status: 'available',
     // What the pane uses, read from the add-on's web/app.js on 2026-10-26 (website issue #1354, #1357): it saves the report
     // and the sample files (`downloads`) and copies the report (`clipboard-write`), and never posts a `navigate` message.
