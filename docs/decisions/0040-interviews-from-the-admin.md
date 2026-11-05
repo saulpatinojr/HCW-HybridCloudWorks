@@ -163,13 +163,23 @@ into 4 MiB pieces and sends each as a raw `application/octet-stream` body to
 App stages each piece as an uncommitted block on the blob (`Put Block`), and
 `POST .../complete` commits the block list in order (`Put Block List`). The
 upload session is opened by `POST /api/cms/interviews/uploads` with the file
-name, type, size and SHA-256; the cap is **500 MiB**, three audio types
+name, type, size, SHA-256 and the duration the browser read from the file's
+metadata; each session stages its blocks under its own blob path,
+`audio/<interviewId>/<uploadId>.<ext>`, so two uploads for the same
+interview can never share block ids or interleave, the hash is checked on
+that blob, and only then does the document's recording pointer move to it;
+the recording it replaces is listed under `provenance.audio.superseded` for
+the delete helper (D10) and expires under the lifecycle rule in any case.
+The cap is **500 MiB**, three audio types
 (`audio/mpeg` `.mp3`, `audio/mp4` `.m4a`, `audio/wav` `.wav`, the same list
 and alias spellings as the podcast upload), and the extension must match the
 type. A block is idempotent (re-sending index 7 overwrites block 7), so the
 browser retries a failed block alone, three blocks in flight at a time; the
 whole file is never in the Function App's memory and no request exceeds
-4 MiB. Storage removes uncommitted blocks that are never committed after a
+4 MiB. A declared duration over **9.5 hours (34,200 seconds)**, Gemini's
+limit per prompt, is refused at the session open with `TOO_LONG` (422),
+because every transcription request attaches the whole file (D3). Storage
+removes uncommitted blocks that are never committed after a
 week ([Put Block](https://learn.microsoft.com/rest/api/storageservices/put-block#remarks)).
 The blob is written under the Function App's managed identity, as every blob
 is today.
@@ -236,8 +246,13 @@ time windows, resumable, capped in cost.**
    - *Chunking.* One `generateContent` call per **60-minute window**:
      "Transcribe from MM:SS to MM:SS with speaker labels; return JSON
      `{ segments: [{ start, end, speaker, text }], endOfAudio }`", with
-     `responseMimeType: application/json`. The loop stops when
-     `endOfAudio` is true or after 10 windows (9.5 hours, Gemini's own cap).
+     `responseMimeType: application/json`. Before the job is enqueued the
+     route refuses a recording whose declared duration exceeds 34,200
+     seconds (9.5 hours, Gemini's limit per prompt) with `TOO_LONG`; the
+     duration is the one the browser declared at upload, or, for a URL
+     fetch, none, in which case the job itself stops with `TOO_LONG` when
+     the tenth window ends without `endOfAudio`. The loop stops when
+     `endOfAudio` is true or after 10 windows, never more.
      Every call carries the same `fileUri`, and Gemini charges the whole
      file's audio tokens on every call (32 tokens per second of audio,
      whatever range the prompt asks for), so the windows are as few and as
@@ -304,9 +319,16 @@ guard.**
      and facts that appear between the markers; if the guest did not say
      it, leave it out; never add a fact, a number, a name or a title". The
      transcript goes between the `<<<BEGIN ARTICLE>>>` / `<<<END ARTICLE>>>`
-     markers of `prompt-fence.js`, neutralised with `fenceArticleText`, cut
-     to 120 kB (the cap `recording-script.js` uses; a longer transcript is
-     sent in two passes and the Q&A lists joined). The guest's name and role
+     markers of `prompt-fence.js`, neutralised with `fenceArticleText`, in
+     **passes of at most 120 kB** (the cap `recording-script.js` uses),
+     split on speaker-turn boundaries, as many passes as the transcript
+     needs (a 400,000-character pasted transcript is four); each pass is
+     given the questions already drafted as data so it does not repeat
+     them, each pass is one router call recorded under
+     `ai:interviewDrafting` and checked against the same monthly ceiling
+     as transcription before it runs, and the combined list is validated
+     once at the end (over 40 items: the first 40 kept, the rest dropped
+     with a `truncated` flag for the editor). The guest's name and role
      from the form are given as data; the prompt asks for the JSON shape
      `{ speakers: { interviewer, guest }, qa: [{ q, a, pullQuote? }] }`,
      one question per topic turn, 1 to 40 items, each `q` up to 240
@@ -482,11 +504,23 @@ date and the admin's oid, nothing else.
      name `interviews-audio`, on the content account `stsiteprodcus01`,
      `container_access_type = "private"`, with the same `checkov` skip
      comment as `podcast`; `prevent_destroy` is not set (the podcast
-     container does not set it either; soft delete covers 7 days). **No new
-     role assignment:** the Function App identity already holds Storage
-     Blob Data Contributor on the whole account (`func_blob`), which is how
-     `cosmos-export` was added; a container-scoped grant would be a second
-     path to the same right. The network rule (subnet only), `shared_access_key_enabled
+     container does not set it either; soft delete covers 7 days). **One
+     new role assignment, on this container only:** the Function App
+     identity holds Storage Blob Data Contributor on the whole account
+     (`func_blob`), and that role cannot delete a blob *version*
+     (`Microsoft.Storage/storageAccounts/blobServices/containers/blobs/deleteBlobVersion/action`
+     is outside it), which the version-aware delete below needs. So
+     `azurerm_role_assignment.func_interviews_audio_owner` grants the
+     built-in **Storage Blob Data Owner** at the scope of
+     `azurerm_storage_container.interviews_audio` alone, the way
+     `infra/lab-hybrid-backups.tf` grants a role on one container. Why the
+     built-in role and not a custom one: the repository's custom roles
+     (`infra/roles/*.json`) exist because the Terraform identity cannot
+     create role definitions, so each one is a step the owner runs by hand
+     (`az role definition create`) before the apply; a built-in role at
+     container scope needs no owner step, and the container holds nothing
+     but this feature's recordings and transcripts, so Data Owner there
+     widens nothing else. The network rule (subnet only), `shared_access_key_enabled
      = false`, `allow_nested_items_to_be_public = false` and the CORS rule
      are untouched, so nothing outside the Function App can read or write
      the container.

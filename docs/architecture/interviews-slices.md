@@ -93,9 +93,11 @@ export function canonicalAudioType(contentType) {
 
 export const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
 
-export function audioBlobPath(interviewId, ext) {
-  return `audio/${interviewId}.${ext}`;
+export function audioBlobPath(interviewId, uploadId, ext) {
+  return `audio/${interviewId}/${uploadId}.${ext}`;
 }
+
+export const MAX_AUDIO_SECONDS = 34_200; // Gemini's 9.5 hours per prompt
 
 export function transcriptBlobPath(interviewId, version) {
   return `transcripts/${interviewId}/v${version}.json`;
@@ -132,8 +134,16 @@ the pull request: `infrastructure-pr-reviewer` (the Terraform) and
   var.interview_audio_retention_days }` action and a `version {
   delete_after_days_since_creation = var.interview_audio_retention_days }`
   action, so an expired recording's previous versions go with it (the
-  account keeps blob versions; ADR 0040 D10). No new role assignment (the
-  ADR says why).
+  account keeps blob versions; ADR 0040 D10); and
+  `azurerm_role_assignment.func_interviews_audio_owner`: the built-in
+  `Storage Blob Data Owner` for the Function App identity at
+  `azurerm_storage_container.interviews_audio.id` only (copy the
+  container-scoped assignment in `infra/lab-hybrid-backups.tf`), because
+  `func_blob`'s Contributor role cannot delete a blob version and slice C's
+  delete needs to; a custom role would cost an owner `az role definition
+  create` step, which is why the built-in one is chosen (ADR D10). Add the
+  assignment to `scripts/terraform-identity-grants.test.mjs` if that test
+  enumerates role assignments.
 - `infra/variables.tf`: `variable "interview_audio_retention_days"`
   (number, default 365, a validation of 1 to 3650, a description a junior
   administrator can read).
@@ -144,9 +154,14 @@ the pull request: `infrastructure-pr-reviewer` (the Terraform) and
   like `uploadBlob`; `blob-storage.test.js` gains their cases.
 - `functions/src/lib/interviews/upload.js`: the three handlers.
   `openUpload` (editor; body `{ interviewId, fileName, contentType, bytes,
-  sha256 }`; normalises the type with `canonicalAudioType` (`null` is
-  refused), checks the extension matches the canonical type,
-  `bytes` is 1 to `MAX_AUDIO_BYTES`; writes an `uploads/<uploadId>` sub-document
+  sha256, durationSec }`; normalises the type with `canonicalAudioType`
+  (`null` is refused), checks the extension matches the canonical type,
+  `bytes` is 1 to `MAX_AUDIO_BYTES`, `durationSec` is a positive number at
+  most `MAX_AUDIO_SECONDS` (over it: 422 `TOO_LONG`; the browser reads it
+  from the file's metadata, and a file whose duration cannot be read is
+  refused with `DURATION_REQUIRED`); the blob path is
+  `audioBlobPath(interviewId, uploadId, ext)`, unique per session, so two
+  sessions for one interview never share a blob or its block ids; writes an `uploads/<uploadId>` sub-document
   on the interview's content document, or a small `interview_uploads`
   record if the CMS slice's document is not merged yet: **use the content
   document's `provenance.audio.upload` field, created with a `patchDoc` that
@@ -157,10 +172,14 @@ the pull request: `infrastructure-pr-reviewer` (the Terraform) and
   the last block's length checked against the declared size, block id =
   base64 of the zero-padded index, 404 when the upload id does not belong
   to the caller's oid). `completeUpload` (editor; commits the blocks in
-  order, reads the committed blob's size, refuses a size or SHA-256 mismatch
-  with 422 and deletes the blob, sets `provenance.audio = { container, path,
-  bytes, sha256, contentType, uploadedAt }` and clears the session; 409 if
-  already complete).
+  order on the session's own blob, reads the committed blob's size, refuses
+  a size or SHA-256 mismatch with 422 and deletes that blob, then moves the
+  pointer: the previous `provenance.audio.path`, if any, is appended to
+  `provenance.audio.superseded` (slice C's `deleteBlobWithVersions` sweeps
+  that list on delete, and the lifecycle rule expires it regardless), and
+  `provenance.audio = { container, path, bytes, sha256, contentType,
+  durationSec, uploadedAt, superseded }` is written under the document's
+  ETag; the session is cleared; 409 if already complete).
 - `functions/src/functions/interviews-upload-http.js`: the registrations
   with `httpRouteByMethod` (`POST cms/interviews/uploads`, `PUT
   cms/interviews/uploads/{uploadId}/blocks/{index}`, `POST
@@ -177,7 +196,10 @@ the pull request: `infrastructure-pr-reviewer` (the Terraform) and
   only if that test enumerates containers (read it first; it may not).
 - `functions/src/lib/interviews/upload.test.js`: open with a bad type,
   oversize, mismatched extension; a block out of range; a block that is too
-  long; a block from another admin's oid; complete with the wrong hash
+  long; a block from another admin's oid; a duration of 34,200 accepted
+  and 34,201 refused with `TOO_LONG`; two sessions for one interview stage
+  on different blobs and the second completion lists the first path under
+  `superseded`; complete with the wrong hash
   (blob deleted, 422); complete twice (409); the happy path with a stubbed
   blob client asserting `stageBlock` is called with the padded ids and
   `commitBlockList` with them in order; log lines carry the upload id and
@@ -208,7 +230,7 @@ npm --prefix "$W/functions" test -- src/lib/interviews src/lib/blob-storage src/
 `frontend/staticwebapp.config.json`.
 
 **Not verified by this slice:** the Terraform apply (the owner confirms the
-HCP Terraform run; expected: 1 container to add, 1 policy to change in
+HCP Terraform run; expected: 1 container and 1 role assignment to add, 1 policy to change in
 place, 0 to destroy); the block upload against real storage (the first
 real upload in slice D proves it).
 
@@ -287,7 +309,21 @@ fence, the logs) and `typescript-test-engineer` (the stubbed Gemini client).
   the speaker disagreement sets `unsure`.
 - `functions/src/lib/interviews/transcript-text.js`: the pasted-transcript
   handler (400,000-character cap, `Speaker N:` lines kept, written to
-  `transcripts/<id>/v1.json`, `transcription.status = 'provided'`).
+  `transcripts/<id>/v1.json`, `transcription.status = 'provided'`). The
+  drafting worker (`draft.js`) splits any transcript into passes of at most
+  120 kB on speaker-turn boundaries, as many as needed (four for the
+  400,000-character cap), gives each pass the questions already drafted,
+  checks the monthly ceiling before each pass, records each pass under
+  `ai:interviewDrafting`, and validates the combined list once (over 40:
+  first 40 kept, `truncated` flag). `draft.test.js` covers a three-pass
+  transcript, the no-repeat input, the ceiling refusal between passes and
+  the truncation flag.
+- The `transcribe` enqueue route refuses `provenance.audio.durationSec >
+  MAX_AUDIO_SECONDS` (from A's `storage.js`) with 422 `TOO_LONG` before
+  writing a job, and the worker stops with `TOO_LONG` when the tenth window
+  ends without `endOfAudio` (a URL fetch has no declared duration).
+  `transcribe.test.js` covers 34,200 accepted, 34,201 refused, and the
+  tenth-window stop.
 - `functions/src/functions/interviews-jobs.js`: `registerJobType` for the
   three types (`interview-fetch-audio`, `interview-transcribe`,
   `interview-draft`; role `editor`; `maxPayloadBytes` 1024; `timeoutMs`
