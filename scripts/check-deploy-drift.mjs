@@ -133,17 +133,53 @@ export const COMMITS_PER_PAGE = 100;
 export const MAX_COMMIT_PAGES = 10;
 
 /**
- * The last run of a workflow that actually deployed.
- *
- * Throws on a shape it cannot read rather than returning null, following
- * check-unresolved-secrets.mjs: "this service has never deployed" and "I could
- * not read the answer" are different facts, and reporting the second as the
- * first would announce drift against a baseline that does not exist.
- *
- * A workflow with no successful run at all returns null, which IS the first
- * fact and is reported as its own case.
+ * How many of a deploy workflow's runs one listing page names, newest first,
+ * and so how many are read by id per page (#1564). The same ten
+ * `check-functions-deploy-in-progress.mjs` reads: a deploy succeeds far more
+ * often than not, so the newest success is nearly always on the first page,
+ * and ten reads a page keeps a monitor that runs every four hours well
+ * inside the token's hourly allowance.
  */
-export function parseLastSuccessfulRun(body) {
+export const RUNS_PER_PAGE = 10;
+
+/**
+ * How many listing pages are read before this stops looking for a success.
+ * Ten pages is a hundred runs with no success among them; past that, "never
+ * deployed" and "a long failure streak" cannot be told apart from here, and
+ * `lastSuccessfulRun` says so rather than guessing either.
+ */
+export const MAX_RUN_PAGES = 10;
+
+/**
+ * How long one GitHub request may take, and the pause before the one retry a
+ * 5xx, a 429 or a dropped connection gets. The two values
+ * `check-functions-deploy-in-progress.mjs` uses, for the same reason: without
+ * a bound a stalled connection waits on undici's five-minute defaults, and
+ * the monitor's job has a ten-minute timeout.
+ */
+export const TIMEOUT_MS = 15000;
+export const RETRY_DELAY_MS = 2000;
+
+/**
+ * The run ids one page of a workflow's run listing names, newest first.
+ *
+ * Only the ids are read from the listing (#1564). Its `status` and
+ * `conclusion` are not: GitHub's reference for "List workflow runs for a
+ * workflow" says the `status` filter answers from a search over the check-run
+ * status, not from the run, and on 2026-11-05 that search answered empty for
+ * a run that was in progress (`check-functions-deploy-in-progress.mjs`
+ * records the readings). Until then this row asked that filter for the one
+ * newest success, so a lagging search could have named the deploy before the
+ * one that had just finished, and measured drift against it. A listing that
+ * lags the run is still a complete list of the run ids, and each id is then
+ * read for itself.
+ *
+ * Throws on a shape it cannot read rather than returning nothing, following
+ * check-unresolved-secrets.mjs: "no runs" and "I could not read the answer"
+ * are different facts, and reporting the second as the first would announce
+ * drift against a baseline that does not exist.
+ */
+export function parseRunIds(body) {
   const runs = body?.workflow_runs;
   if (!Array.isArray(runs)) {
     throw new Error(
@@ -151,13 +187,80 @@ export function parseLastSuccessfulRun(body) {
         'response of GET /repos/:owner/:repo/actions/workflows/:file/runs.'
     );
   }
-  if (runs.length === 0) return null;
+  const ids = [];
+  for (const run of runs) {
+    const id = Number(run?.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new Error('A listed workflow run came back with no numeric `id`, so it cannot be read.');
+    }
+    ids.push(id);
+  }
+  return ids;
+}
 
-  const [run] = runs;
+/**
+ * The deployed baseline a run's own record gives, or null when that run did
+ * not deploy.
+ *
+ * A run deployed only when its record says `status: completed` and
+ * `conclusion: success`, both read from `GET /actions/runs/:id`, the read the
+ * other monitors trust. Both fields, not the conclusion alone: "Re-run jobs"
+ * takes a completed run back to `in_progress` under the same id, and GitHub
+ * documents `conclusion` as null until the run completes, so a run that is
+ * running again is not a deploy that has happened. Anything else (a failure,
+ * a cancellation, a run still going) is null, and the caller moves to the
+ * next older run.
+ *
+ * A successful run with no `head_sha` throws: it IS the newest deploy, and
+ * nothing on `main` can be compared with it, which is an answer this row
+ * cannot give rather than zero drift.
+ */
+export function baselineOf(run) {
+  if (run?.status !== 'completed' || run?.conclusion !== 'success') return null;
   if (typeof run.head_sha !== 'string' || !run.head_sha) {
-    throw new Error('A workflow run came back with no `head_sha`, so nothing can be compared.');
+    throw new Error(
+      `Successful run ${run.id ?? '(unidentified run)'} came back with no \`head_sha\`, so nothing can be compared.`
+    );
   }
   return { sha: run.head_sha, runNumber: run.run_number ?? null, at: run.created_at ?? null };
+}
+
+/**
+ * The newest run of `workflow` whose own record says it succeeded, or null
+ * when the workflow has never had one (#1564).
+ *
+ * Pages of `RUNS_PER_PAGE` ids are listed with no status filter (see
+ * `parseRunIds` for why), each page's runs are read by id together, and the
+ * first page with a success answers with its newest. A short page is the end
+ * of the history, so reaching it with no success is "never deployed", a fact
+ * reported as its own row. Running out of pages first is not that fact: a
+ * hundred runs with no success could be a workflow that never worked or one
+ * that has failed a hundred times since it last did, and this throws rather
+ * than choosing, so the row renders ⚠️ with the reason.
+ *
+ * `read` takes a URL path under the API root and answers its JSON; it is a
+ * parameter so the tests can replay a listing that lags the runs.
+ */
+export async function lastSuccessfulRun(workflow, read) {
+  for (let page = 1; page <= MAX_RUN_PAGES; page += 1) {
+    const ids = parseRunIds(
+      await read(`/actions/workflows/${workflow}/runs?per_page=${RUNS_PER_PAGE}&page=${page}`)
+    );
+    const runs = await Promise.all(ids.map((id) => read(`/actions/runs/${id}`)));
+    // Newest by when the run last started, not by its place in the listing:
+    // "Re-run jobs" keeps a run's id, place and `created_at` and moves its
+    // `run_started_at`, so a re-run of an older run can be the newest deploy.
+    const started = (run) => String(run?.run_started_at ?? run?.created_at ?? '');
+    const found = runs
+      .filter((run) => baselineOf(run) !== null)
+      .sort((a, b) => started(b).localeCompare(started(a)));
+    if (found.length > 0) return baselineOf(found[0]);
+    if (ids.length < RUNS_PER_PAGE) return null;
+  }
+  throw new Error(
+    `None of the newest ${MAX_RUN_PAGES * RUNS_PER_PAGE} runs of ${workflow} succeeded, and older runs ` +
+      'were not read, so whether it has ever deployed cannot be told from here.'
+  );
 }
 
 /**
@@ -182,7 +285,7 @@ export function missingTfcTokenMessage() {
  * `GET /workspaces/:id/runs?filter[status]=applied&page[size]=1` with
  * `include=configuration_version.ingress_attributes`, and answers the commit
  * the run was planned from plus when it applied. Same contract as
- * `parseLastSuccessfulRun`: null is "this workspace has never applied", a
+ * `lastSuccessfulRun`: null is "this workspace has never applied", a
  * fact reported as its own row, and every shape that cannot be read THROWS,
  * so `driftFor` renders ⚠️ rather than a baseline that does not exist.
  *
@@ -377,26 +480,47 @@ export function formatReport(results, thresholdHours) {
   };
 }
 
-async function ghJson(fetchImpl, url, token) {
-  const res = await fetchImpl(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
-  });
-  if (!res.ok) throw new Error(`GitHub answered ${res.status} for ${url}`);
-  return res.json();
+/**
+ * The JSON of one GitHub read, after at most one retry, or an error naming
+ * why not. A request that takes longer than `TIMEOUT_MS` is abandoned, and a
+ * 5xx, a 429 or a dropped connection is asked once more after
+ * `retryDelayMs`; a 4xx other than 429 is a refusal and is not. The same
+ * shape as `check-functions-deploy-in-progress.mjs`'s reader (#1564).
+ */
+async function ghJson(fetchImpl, url, token, { retryDelayMs = RETRY_DELAY_MS } = {}) {
+  const retryable = (status) => status >= 500 || status === 429;
+  for (let attempt = 1; ; attempt += 1) {
+    const last = attempt === 2;
+    let res;
+    try {
+      res = await fetchImpl(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (last) throw new Error(`GitHub did not answer ${url}: ${error?.message || String(error)}`);
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      continue;
+    }
+    if (res.ok) return res.json();
+    if (last || !retryable(res.status)) throw new Error(`GitHub answered ${res.status} for ${url}`);
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+  }
 }
 
-/** The head of a workflow's last successful run, or null when it has none. */
-async function workflowBaseline(service, { token, owner, repo, fetchImpl }) {
-  const runs = await ghJson(
-    fetchImpl,
-    `${API}/repos/${owner}/${repo}/actions/workflows/${service.workflow}/runs?status=success&per_page=1`,
-    token
+/**
+ * The head of a workflow's last successful run, or null when it has none.
+ * `lastSuccessfulRun` does the reading and says why the listing's
+ * `status=success` filter is no longer asked (#1564).
+ */
+async function workflowBaseline(service, { token, owner, repo, fetchImpl, retryDelayMs }) {
+  return lastSuccessfulRun(service.workflow, (path) =>
+    ghJson(fetchImpl, `${API}/repos/${owner}/${repo}${path}`, token, { retryDelayMs })
   );
-  return parseLastSuccessfulRun(runs);
 }
 
 /**
@@ -436,8 +560,10 @@ async function appliedBaseline(service, { tfcToken, fetchImpl }) {
  * `behind` or `diverged` means main does not contain it. A status this does
  * not recognise is thrown on, in the direction the rest of the file takes.
  */
-async function compareWithMain(sha, { token, owner, repo, fetchImpl }) {
-  const body = await ghJson(fetchImpl, `${API}/repos/${owner}/${repo}/compare/${sha}...main`, token);
+async function compareWithMain(sha, { token, owner, repo, fetchImpl, retryDelayMs }) {
+  const body = await ghJson(fetchImpl, `${API}/repos/${owner}/${repo}/compare/${sha}...main`, token, {
+    retryDelayMs,
+  });
   const status = body?.status;
   if (status === 'ahead' || status === 'identical') return { onMain: true, status };
   if (status === 'behind' || status === 'diverged') return { onMain: false, status };
@@ -450,16 +576,22 @@ async function compareWithMain(sha, { token, owner, repo, fetchImpl }) {
 /** Drift for one service. Never throws: a failure is reported as its own row. */
 export async function driftFor(
   service,
-  { token, tfcToken, owner, repo, nowMs, fetchImpl = fetch }
+  { token, tfcToken, owner, repo, nowMs, fetchImpl = fetch, retryDelayMs = RETRY_DELAY_MS }
 ) {
   try {
     const last = service.terraform
       ? await appliedBaseline(service, { tfcToken, fetchImpl })
-      : await workflowBaseline(service, { token, owner, repo, fetchImpl });
+      : await workflowBaseline(service, { token, owner, repo, fetchImpl, retryDelayMs });
     if (!last) return { name: service.name, neverDeployed: true };
 
     if (service.terraform) {
-      const { onMain, status } = await compareWithMain(last.sha, { token, owner, repo, fetchImpl });
+      const { onMain, status } = await compareWithMain(last.sha, {
+        token,
+        owner,
+        repo,
+        fetchImpl,
+        retryDelayMs,
+      });
       if (!onMain) {
         return { name: service.name, notOnMain: { sha: last.sha, status, runId: last.runId } };
       }
@@ -468,7 +600,8 @@ export async function driftFor(
     const deployed = await ghJson(
       fetchImpl,
       `${API}/repos/${owner}/${repo}/commits/${last.sha}`,
-      token
+      token,
+      { retryDelayMs }
     );
     const since = parseCommitDate(deployed);
 
@@ -487,14 +620,15 @@ export async function driftFor(
           fetchImpl,
           `${API}/repos/${owner}/${repo}/commits?sha=main&path=${encodeURIComponent(path)}` +
             `&since=${encodeURIComponent(since)}&per_page=${COMMITS_PER_PAGE}&page=${page}`,
-          token
+          token,
+          { retryDelayMs }
         );
         // THROWN, not defaulted to []. Silently treating an unreadable payload
         // as an empty page reports the service as up to date — the same
         // healthier-than-reality direction as every other defect found in this
         // file, and the one the whole check exists to avoid. driftFor's catch
         // turns this into a ⚠️ row, which says "could not read" rather than
-        // "nothing to deploy". parseLastSuccessfulRun and parseCommitDate above
+        // "nothing to deploy". parseRunIds and parseCommitDate above
         // already work this way; this line did not, which was the
         // inconsistency review caught.
         if (!Array.isArray(batch)) {

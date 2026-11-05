@@ -25,6 +25,8 @@ import {
   listingRefusal,
   runsRefusal,
   readTuning,
+  treeRefusal,
+  partitionByPresence,
 } from './check-workflow-health.mjs';
 
 const NOW = new Date('2026-09-08T05:00:00Z');
@@ -541,5 +543,95 @@ describe('listingRefusal', () => {
     expect(got).not.toMatch(/raise per_page/i);
     expect(got).toContain(String(MAX_PER_PAGE));
     expect(got).toContain('Following pages');
+  });
+});
+
+/**
+ * A workflow whose file is not on the default branch is named, not judged
+ * (#1564).
+ *
+ * The listing is the shape the live API gave on 2026-11-05: GitHub listed
+ * `zz-probe-guide-drift.yml` as `active` on the strength of its one run on
+ * `probe/guide-drift-1356`, and every health run since 2026-10-25 called it
+ * broken. The file was never on `main`.
+ */
+describe('a workflow whose file is not on the default branch', () => {
+  /** As the workflow listing names them, both `active`, only one in the tree. */
+  const LISTED = [
+    { id: 1, path: '.github/workflows/deploy-azure-frontend.yml', state: 'active' },
+    { id: 2, path: '.github/workflows/zz-probe-guide-drift.yml', state: 'active' },
+  ];
+  /** As `GET /contents/.github/workflows?ref=main` names them. */
+  const TREE = [
+    { path: '.github/workflows/deploy-azure-frontend.yml', type: 'file' },
+    { path: '.github/workflows/ci.yml', type: 'file' },
+  ];
+  /** The probe's real history: one deliberate failure, 11 days before NOW. */
+  const PROBE = {
+    path: '.github/workflows/zz-probe-guide-drift.yml',
+    runs: [{ conclusion: 'failure', created_at: '2026-08-28T05:00:00Z' }],
+  };
+
+  it('is split out by path, and the one on the branch is kept', () => {
+    const { present, absent } = partitionByPresence(LISTED, TREE);
+    expect(present.map((w) => w.path)).toEqual(['.github/workflows/deploy-azure-frontend.yml']);
+    expect(absent.map((w) => w.path)).toEqual(['.github/workflows/zz-probe-guide-drift.yml']);
+  });
+
+  it('does not count `state`, which GitHub leaves active for a branch-only workflow', () => {
+    const { absent } = partitionByPresence(LISTED, TREE);
+    expect(absent[0].state).toBe('active');
+  });
+
+  it('would have been called broken had it been assessed, which is the row this removes', () => {
+    expect(assessWorkflow(PROBE, OPTS).verdict).toBe('broken');
+  });
+
+  it('is named on its own line, after the verdicts, and does not make the report a finding', () => {
+    const { present, absent } = partitionByPresence(LISTED, TREE);
+    const results = assessAll(
+      present.map((w) => (w.path === DEPLOY_FRONTEND.path ? DEPLOY_FRONTEND : PROBE)),
+      OPTS
+    );
+    const text = renderReport(results, { staleDays: DEFAULT_STALE_DAYS, absent, defaultBranch: 'main' });
+    expect(text).toContain('No workflow is failing-and-abandoned');
+    expect(text).toContain('Not on `main`, run history only, not assessed: `.github/workflows/zz-probe-guide-drift.yml`');
+    expect(text).not.toContain('- `.github/workflows/zz-probe-guide-drift.yml`');
+    expect(results.some((r) => r.verdict === 'broken')).toBe(false);
+  });
+
+  it('names the default branch it read, not an assumed one', () => {
+    const text = renderReport([], { staleDays: DEFAULT_STALE_DAYS, absent: [PROBE], defaultBranch: 'trunk' });
+    expect(text).toContain('Not on `trunk`');
+  });
+
+  it('prints no such line when every listed workflow is on the branch', () => {
+    const text = renderReport(assessAll([DEPLOY_FRONTEND], OPTS), { staleDays: DEFAULT_STALE_DAYS, absent: [] });
+    expect(text).not.toContain('run history only');
+  });
+});
+
+describe('treeRefusal', () => {
+  it('accepts a directory listing', () => {
+    expect(treeRefusal([{ path: '.github/workflows/ci.yml' }], 'main')).toBe(null);
+    expect(treeRefusal([], 'main')).toBe(null);
+  });
+
+  it('refuses a payload that is not an array, rather than reading it as an empty directory', () => {
+    // The contents API answers an object for a file and an error body for a
+    // missing path. Treating either as "no files" would name every workflow
+    // absent and assess nothing.
+    expect(treeRefusal({ path: '.github/workflows', type: 'file' }, 'main')).toMatch(/not an array/);
+    expect(treeRefusal(null, 'main')).toMatch(/not an array/);
+    expect(treeRefusal({ message: 'Not Found' }, 'main')).toMatch(/not an array/);
+  });
+
+  it('refuses an entry with no usable path, and says which', () => {
+    expect(treeRefusal([{ path: '.github/workflows/ci.yml' }, { name: 'x.yml' }], 'main')).toMatch(/Entry 1 /);
+    expect(treeRefusal([{ path: '' }], 'main')).toMatch(/Entry 0 /);
+  });
+
+  it('names the branch it was asked for', () => {
+    expect(treeRefusal(null, 'trunk')).toContain('on trunk');
   });
 });
