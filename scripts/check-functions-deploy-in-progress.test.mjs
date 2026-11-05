@@ -103,14 +103,15 @@ describe('findDeploysInProgress', () => {
     expect(got.lines[0]).toBe('deploy run #213 in progress');
     expect(got.lines[1]).toContain(run213.html_url);
     expect(calls.some((c) => c.url.includes('status=in_progress'))).toBe(false);
-    expect(readsById(calls)).toEqual(['42096627372']);
+    expect(readsById(calls)).toEqual(['42096627372', '42070388649', '41735292895']);
   });
 
-  it('reads by id every listed run that is not completed, and believes the record, not the listing', async () => {
+  it('reads every listed run by id, and believes the record, not the listing', async () => {
     // The listing can lag the run: one it shows as queued or waiting may be
-    // in progress by now, and one it shows as in progress may have ended. A
+    // in progress by now, one it shows as in progress may have ended, and
+    // one it shows as completed may have been re-run under the same id. A
     // status it does not show at all, or one this script has never heard
-    // of, is read too: only `completed` is final.
+    // of, is read the same way.
     const { fetchImpl, calls } = github({
       runs: [
         { ...LIVE, id: 1, status: 'queued' },
@@ -124,14 +125,15 @@ describe('findDeploysInProgress', () => {
         1: { ...LIVE, id: 1, run_number: 401, status: 'in_progress' },
         2: { ...LIVE, id: 2, run_number: 402, status: 'completed', conclusion: 'success' },
         3: { ...LIVE, id: 3, run_number: 403, status: 'waiting' },
+        4: { ...LIVE, id: 4, run_number: 404, status: 'in_progress', run_attempt: 2 },
         5: { ...LIVE, id: 5, run_number: 405, status: 'in_progress' },
         6: { ...LIVE, id: 6, run_number: 406, status: 'completed', conclusion: 'cancelled' },
       },
     });
     const got = await find(fetchImpl);
-    expect(got.map((r) => r.id)).toEqual([1, 5]);
+    expect(got.map((r) => r.id)).toEqual([1, 4, 5]);
     expect(got[0].run_number).toBe(401);
-    expect(readsById(calls)).toEqual(['1', '2', '3', '5', '6']);
+    expect(readsById(calls)).toEqual(['1', '2', '3', '4', '5', '6']);
   });
 
   it('a re-run of an older run is seen while it is within the newest MAX_RUNS', async () => {
@@ -182,8 +184,7 @@ describe('findDeploysInProgress', () => {
   it('keeps only runs that are in progress, whatever the listing returned', async () => {
     const { fetchImpl, calls } = github({ runs: [{ ...LIVE, id: 1, status: 'completed' }, LIVE, { ...LIVE, id: 2, status: 'waiting' }] });
     expect((await find(fetchImpl)).map((r) => r.id)).toEqual([LIVE.id]);
-    // A completed run is not read again: a status only moves forward.
-    expect(readsById(calls)).toEqual([String(LIVE.id), '2']);
+    expect(readsById(calls)).toEqual(['1', String(LIVE.id), '2']);
   });
 
   it('skips a listed run without a usable id rather than asking GitHub for it', async () => {

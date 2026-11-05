@@ -50,17 +50,17 @@
  * the same run as `queued` while its record said `in_progress`.
  *
  * So the filter is no longer used. This lists the workflow's newest runs
- * with no status filter (the listing the workflow health check also reads),
- * takes every run that listing does not show as `completed`, and reads each
- * of those by id (`GET /actions/runs/:id`, the read the access-windows check
- * trusts; that check reads a 404 as a missing run, while here a run the
- * listing named seconds ago and GitHub then cannot find is unreadable, which
- * says nothing either way). A run is in progress only when its own record
- * says so. The listing's statuses are checked, not believed: a run it shows
- * as `queued`, `waiting`, or anything else, is still read by id, because the
- * listing can lag the run. A run it shows as `completed` is not, because a
- * status only moves forward. The reads by id go out together, so a stalled
- * API costs one timeout, not one per run.
+ * with no status filter (the listing the workflow health check also reads)
+ * and reads every run it names by id (`GET /actions/runs/:id`, the read the
+ * access-windows check trusts; that check reads a 404 as a missing run,
+ * while here a run the listing named seconds ago and GitHub then cannot find
+ * is unreadable, which says nothing either way). A run is in progress only
+ * when its own record says so. The listing's statuses are not read at all:
+ * the listing can lag the run, and a status does not only move forward,
+ * because "Re-run jobs" takes a `completed` run back to `in_progress` under
+ * the same id, so even a run the listing shows as `completed` is read. The
+ * reads by id go out together, so a stalled API costs one timeout, not one
+ * per run.
  *
  * ## Why a run, not a step
  *
@@ -107,14 +107,16 @@ const API = 'https://api.github.com';
 
 /**
  * How many of the workflow's newest runs are listed, newest first by the
- * time each was created. `deploy-functions.yml` runs in one concurrency
- * group, so at most one is live at a time, and a new run is always first.
- * The margin is for a re-run: "Re-run jobs" on an older run keeps that run's
- * id and place in the listing, so a re-run of a run older than the newest
- * `MAX_RUNS` is not seen. Twenty is one page and one call, and deploys are
- * hours apart, so that is a re-run of a run days old.
+ * time each was created, and so how many are read by id on every poll.
+ * `deploy-functions.yml` runs in one concurrency group, so at most one is
+ * live at a time, and a new run is always first. The margin is for a re-run:
+ * "Re-run jobs" on an older run keeps that run's id and place in the
+ * listing, so a re-run of a run older than the newest `MAX_RUNS` is not
+ * seen. Ten is one call plus ten reads a poll, well inside the token's hourly
+ * allowance across the monitor's forty polls, and deploys are hours apart,
+ * so an unseen re-run is of a run days old.
  */
-export const MAX_RUNS = 20;
+export const MAX_RUNS = 10;
 
 /** The verdict when the run history could not be read. */
 export function formatUnreadable(reason) {
@@ -184,11 +186,11 @@ async function getJson({ url, token, fetchImpl, retryDelayMs }) {
  * The runs of `DEPLOY_WORKFLOW` that are in progress, newest first.
  *
  * The workflow's newest runs are listed with no status filter (the header
- * says why the `status=in_progress` filter is not asked), every run that
- * listing does not show as `completed` is read by id, and a run counts only
- * when its own record says `in_progress`. A listing that ignored
- * `per_page`, or that mixed finished runs in, cannot make a finished run
- * look live: the run's record decides.
+ * says why the `status=in_progress` filter is not asked), every run the
+ * listing names is read by id, and a run counts only when its own record
+ * says `in_progress`. A listing that ignored `per_page`, or that mixed
+ * finished runs in, cannot make a finished run look live: the run's record
+ * decides.
  */
 export async function findDeploysInProgress({ token, owner, repo, fetchImpl = fetch, retryDelayMs = RETRY_DELAY_MS }) {
   const url = `${API}/repos/${owner}/${repo}/actions/workflows/${DEPLOY_WORKFLOW}/runs?per_page=${MAX_RUNS}`;
@@ -199,11 +201,9 @@ export async function findDeploysInProgress({ token, owner, repo, fetchImpl = fe
         `response of GET /repos/:owner/:repo/actions/workflows/${DEPLOY_WORKFLOW}/runs.`
     );
   }
-  const candidates = body.workflow_runs
-    .map((listed) => ({ id: Number(listed?.id), status: listed?.status }))
-    .filter(({ id, status }) => Number.isInteger(id) && id > 0 && status !== 'completed');
+  const ids = body.workflow_runs.map((listed) => Number(listed?.id)).filter((id) => Number.isInteger(id) && id > 0);
   const runs = await Promise.all(
-    candidates.map(({ id }) => getJson({ url: `${API}/repos/${owner}/${repo}/actions/runs/${id}`, token, fetchImpl, retryDelayMs }))
+    ids.map((id) => getJson({ url: `${API}/repos/${owner}/${repo}/actions/runs/${id}`, token, fetchImpl, retryDelayMs }))
   );
   return runs.filter((run) => run?.status === 'in_progress');
 }
