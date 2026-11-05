@@ -2,32 +2,48 @@
  * upload.js — a guest's recording reaches the private container in blocks
  * through the Function App (ADR 0040 D1, #1565).
  *
- *   browser → POST cms/interviews/uploads { interviewId, fileName, contentType, bytes, sha256 }
+ *   browser → POST cms/interviews/uploads { interviewId, fileName, contentType, bytes, sha256, durationSec }
  *           → 201 { uploadId, blockSize, blockCount }; the session is written on the
- *             interview's content document at provenance.audio.upload
+ *             interview's content document in the provenance.audio.uploads list
  *   browser → PUT cms/interviews/uploads/{uploadId}/blocks/{index}, one raw 4 MiB body each
- *           → Put Block on audio/<interviewId>.<ext>; re-sending an index overwrites it
+ *           → Put Block on audio/<interviewId>/<uploadId>.<ext>; re-sending an index overwrites it
  *   browser → POST cms/interviews/uploads/{uploadId}/complete
  *           → Put Block List in index order, size and SHA-256 checked against the
- *             declaration, provenance.audio written, the session cleared
+ *             declaration, provenance.audio pointed at the new blob, the session dropped,
+ *             the path it pointed at before kept under provenance.audio.superseded
  *
  * Why blocks and not one request: a request to the Function App cannot carry
  * more than about 210 MB on any plan, and base64 JSON costs about 2.5 times
  * the file in memory. Why not a direct browser write to Storage: the account
  * is closed to the internet (ADR 0031) and stays so. The ADR records both.
  *
+ * Every session has its own blob (`audioBlobPath`: `audio/<interviewId>/<uploadId>.<ext>`),
+ * so two uploads for the same interview never share a blob or its block ids:
+ * their blocks cannot interleave, and a completion checks and keeps or
+ * deletes only its own blob. The document points at one verified recording
+ * at a time; the ones it pointed at before are listed under `superseded` for
+ * slice C's delete helper to sweep, and the lifecycle rule expires every
+ * blob under `audio/` regardless.
+ *
  * What is checked, and where (ADR 0040 D11):
  *   - the type is one of three audio types, with the same alias spellings the
  *     podcast upload accepts, and the file's extension must agree with it;
- *   - the declared size is 1 to MAX_AUDIO_BYTES, and `Content-Length` is
- *     required on every block and must be exactly the block's expected length
- *     (a full block, or the remainder for the last one) before the body is read;
+ *   - the declared size is 1 to MAX_AUDIO_BYTES, the declared duration is
+ *     at most MAX_AUDIO_SECONDS (422 TOO_LONG; a missing one is 422
+ *     DURATION_REQUIRED), and `Content-Length` is required on every block and
+ *     must be exactly the block's expected length (a full block, or the
+ *     remainder for the last one) before the body is read;
  *   - the block index is an integer within the session's block count;
  *   - a session belongs to the admin who opened it: a block or a completion
  *     from another oid answers 404, the same as an unknown id, so the route
  *     never says whether an upload exists;
+ *   - a session read back from the document is re-derived at use and treated
+ *     as absent unless every field is what `openUpload` would have minted,
+ *     because the generic content update route can write `provenance` on the
+ *     same role;
  *   - at completion the committed size and the SHA-256 of what Storage holds
- *     must equal the declaration, or the blob is deleted and the answer is 422;
+ *     must equal the declaration, or the session's blob is deleted and the
+ *     answer is 422; the recording the document already points at is untouched;
  *   - a second completion of the same upload answers 409 and changes nothing;
  *   - the content type is taken from the declaration the server validated,
  *     never from the body.
@@ -36,18 +52,19 @@
  * Never a file name, a path with a name in it, or a hash. upload.test.js
  * asserts it.
  *
- * The session lives on the interview's own content document (the CMS slice's
+ * The sessions live on the interview's own content document (the CMS slice's
  * document; a bare `{ type: 'interview' }` is enough for this module) so there
  * is no second container to keep in step. Every write to it is under the
  * document's ETag through `patchDoc`'s `ifMatch`, and `provenance` is written
  * as one merged object rather than a nested path, because a JSON-pointer `set`
- * on `/provenance/audio/upload` fails when `provenance` does not exist yet.
+ * on `/provenance/audio/uploads` fails when `provenance` does not exist yet.
  */
 import { randomUUID } from 'node:crypto';
 import {
   AUDIO_TYPES,
   INTERVIEWS_AUDIO_CONTAINER,
   MAX_AUDIO_BYTES,
+  MAX_AUDIO_SECONDS,
   audioBlobPath,
   canonicalAudioType,
 } from './storage.js';
@@ -65,10 +82,23 @@ export const CONTENT_CONTAINER = 'content';
 /** Metadata `source` on the committed blob, so a listing says who wrote it. */
 export const UPLOAD_SOURCE = 'interview-upload';
 
+/**
+ * Open sessions a document keeps at once. A browser that lost its tab opens
+ * a new one and the oldest falls off; the blocks it staged are dropped by
+ * Storage a week after the last Put Block.
+ */
+export const MAX_OPEN_SESSIONS = 4;
+
 /** Interview ids become a blob path segment; one character class, bounded. */
 const INTERVIEW_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+/** The upload id the route carries: a v4 UUID this module minted, nothing else. */
+const UPLOAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** One or more digits, no sign, no decimals; the range check comes after. */
+const INDEX_PATTERN = /^\d{1,4}$/;
 
 const json = (status, body) => ({
   status,
@@ -146,17 +176,56 @@ export function parseOpenBody(body) {
   const sha256 = typeof raw.sha256 === 'string' ? raw.sha256.trim().toLowerCase() : '';
   if (!SHA256_PATTERN.test(sha256)) return { error: 'sha256 must be the 64-character hex digest of the file' };
 
-  const path = audioBlobPath(interviewId, ext);
-  if (!isValidBlobPath(path)) return { error: 'interviewId is required' };
+  // The browser reads the duration from the file's metadata; a file whose
+  // duration cannot be read is refused, and one longer than Gemini takes in
+  // one prompt (MAX_AUDIO_SECONDS) is refused with TOO_LONG before a byte is
+  // stored. Both are 422: the request is well formed, the file is not fit.
+  const durationSec = raw.durationSec;
+  if (typeof durationSec !== 'number' || !Number.isFinite(durationSec) || durationSec <= 0) {
+    return {
+      error: 'durationSec is required: the length of the recording in seconds',
+      code: 'DURATION_REQUIRED',
+      status: 422,
+    };
+  }
+  if (durationSec > MAX_AUDIO_SECONDS) {
+    return {
+      error: `The recording is longer than ${MAX_AUDIO_SECONDS} seconds (9.5 hours), the most one transcription can take`,
+      code: 'TOO_LONG',
+      status: 422,
+    };
+  }
 
-  return { value: { interviewId, contentType, ext, bytes, sha256 } };
+  return { value: { interviewId, contentType, ext, bytes, sha256, durationSec } };
 }
 
-/** The upload id the route carries: a v4 UUID this module minted, nothing else. */
-const UPLOAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** One or more digits, no sign, no decimals; the range check comes after. */
-const INDEX_PATTERN = /^\d{1,4}$/;
+/**
+ * Whether a session read back from the document is one this module wrote.
+ *
+ * The session is trusted at use, and the document it sits on can be edited
+ * through the generic content update route by the same role, so every field
+ * the block and complete paths rely on is re-derived here from the document
+ * id, the session's own id and the three constants rather than taken on
+ * faith: a session whose path, type, extension, size or block plan is not
+ * exactly what `openUpload` would have minted is treated as absent (404).
+ * Exported for its test.
+ *
+ * @param {{ id: string }} doc
+ * @param {object} session
+ * @returns {boolean}
+ */
+export function isSoundSession(doc, session) {
+  if (!session || typeof session !== 'object') return false;
+  const { uploadId, contentType, ext, bytes, blockSize, blockCount, path, durationSec } = session;
+  if (!INTERVIEW_ID_PATTERN.test(String(doc?.id || ''))) return false;
+  if (!UPLOAD_ID_PATTERN.test(String(uploadId || ''))) return false;
+  if (canonicalAudioType(contentType) !== contentType || AUDIO_TYPES[contentType] !== ext) return false;
+  if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_AUDIO_BYTES) return false;
+  if (typeof durationSec !== 'number' || !(durationSec > 0) || durationSec > MAX_AUDIO_SECONDS) return false;
+  if (blockSize !== BLOCK_SIZE || blockCount !== Math.ceil(bytes / BLOCK_SIZE)) return false;
+  if (path !== audioBlobPath(doc.id, uploadId, ext) || !isValidBlobPath(path)) return false;
+  return SHA256_PATTERN.test(String(session.sha256 || ''));
+}
 
 function readContentLength(request) {
   const raw = request?.headers?.get?.('content-length');
@@ -166,39 +235,20 @@ function readContentLength(request) {
 }
 
 /**
- * Whether a session read back from the document is one this module wrote.
- *
- * The session is trusted at use, and the document it sits on can be edited
- * through the generic content update route by the same role, so every field
- * the block and complete paths rely on is re-derived here from the document
- * id and the three constants rather than taken on faith: a session whose
- * path, type, extension, size or block plan is not exactly what `openUpload`
- * would have minted is treated as absent (404). Exported for its test.
- *
- * @param {{ id: string }} doc
- * @param {object} session
- * @returns {boolean}
- */
-export function isSoundSession(doc, session) {
-  if (!session || typeof session !== 'object') return false;
-  const { contentType, ext, bytes, blockSize, blockCount, path } = session;
-  if (!INTERVIEW_ID_PATTERN.test(String(doc?.id || ''))) return false;
-  if (canonicalAudioType(contentType) !== contentType || AUDIO_TYPES[contentType] !== ext) return false;
-  if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_AUDIO_BYTES) return false;
-  if (blockSize !== BLOCK_SIZE || blockCount !== Math.ceil(bytes / BLOCK_SIZE)) return false;
-  if (path !== audioBlobPath(doc.id, ext) || !isValidBlobPath(path)) return false;
-  return SHA256_PATTERN.test(String(session.sha256 || ''));
-}
-
-/**
  * The document an open session, or a completed upload, with this id is on.
- * One indexed equality per call; the route carries no interview id, and a
+ * One indexed query per call; the route carries no interview id, and a
  * caller-supplied interview id would be one more thing to check against the
- * session anyway.
+ * session anyway. `ARRAY_CONTAINS` with a partial match finds the session in
+ * the list by its id.
  */
 const FIND_QUERY =
   'SELECT TOP 1 * FROM c WHERE c.type = @type AND ' +
-  '(c.provenance.audio.upload.uploadId = @uploadId OR c.provenance.audio.uploadId = @uploadId)';
+  '(ARRAY_CONTAINS(c.provenance.audio.uploads, { "uploadId": @uploadId }, true) OR c.provenance.audio.uploadId = @uploadId)';
+
+const sessionsOf = (doc) => {
+  const list = doc?.provenance?.audio?.uploads;
+  return Array.isArray(list) ? list : [];
+};
 
 /**
  * @param {object} deps
@@ -211,9 +261,10 @@ const FIND_QUERY =
 export function createInterviewUploadHandlers({ guard, store, storage, now = () => new Date(), uuid = randomUUID }) {
   /**
    * Find the session for an upload id that the caller owns and that is still
-   * open. Anything else — unknown id, another admin's session, a session
-   * already completed — is `null` to the caller, except that a completed one
-   * is reported so `completeUpload` can answer 409 rather than 404.
+   * open. Anything else — unknown id, another admin's session, a forged
+   * session, an upload already completed — is `null` to the caller, except
+   * that a completed one is reported so `completeUpload` can answer 409
+   * rather than 404.
    */
   async function findSession(uploadId, oid) {
     if (!UPLOAD_ID_PATTERN.test(String(uploadId || ''))) return { doc: null, session: null, completed: false };
@@ -224,7 +275,7 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
     const doc = Array.isArray(rows) ? rows[0] : null;
     if (!doc) return { doc: null, session: null, completed: false };
     const audio = doc.provenance?.audio ?? {};
-    const session = audio.upload && audio.upload.uploadId === uploadId ? audio.upload : null;
+    const session = sessionsOf(doc).find((s) => s && s.uploadId === uploadId) ?? null;
     if (session) {
       if (session.ownerOid !== oid || session.status !== 'open' || !isSoundSession(doc, session)) {
         return { doc: null, session: null, completed: false };
@@ -240,21 +291,21 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
     return store.patchDoc(CONTENT_CONTAINER, doc.id, { provenance }, { ifMatch: doc._etag });
   }
 
-  /** Best effort: the caller is already answering a refusal. Status code only in the log. */
-  async function discardBlob(path, context, label) {
+  /** Best effort: the caller is already answering. Status code only in the log. */
+  async function discardBlob(path, context, label, why) {
     try {
       await storage.deleteBlob(INTERVIEWS_AUDIO_CONTAINER, path);
     } catch (err) {
-      context.warn?.(`${label}: blob not deleted after a refused completion (${err?.code || err?.statusCode || 'error'})`);
+      context.warn?.(`${label}: blob not deleted ${why} (${err?.code || err?.statusCode || 'error'})`);
     }
   }
 
   return {
     /**
      * POST /api/cms/interviews/uploads — open a session on an interview the
-     * caller may edit. 201 { uploadId, blockSize, blockCount }. A session
-     * already open on the document is replaced: the browser resumes by
-     * re-sending the file (ADR 0040, consequences).
+     * caller may edit. 201 { uploadId, blockSize, blockCount }. Up to
+     * MAX_OPEN_SESSIONS sessions stay open on a document; the oldest is
+     * dropped when a new one would exceed that.
      */
     async openUpload(request, context) {
       const auth = await guard.requireRole(request, 'editor');
@@ -263,33 +314,39 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
 
       try {
         const parsed = parseOpenBody(await request.json().catch(() => null));
-        if (parsed.error) return json(400, { error: parsed.error });
-        const { interviewId, contentType, ext, bytes, sha256 } = parsed.value;
+        if (parsed.error) {
+          return json(parsed.status ?? 400, { error: parsed.error, ...(parsed.code ? { code: parsed.code } : {}) });
+        }
+        const { interviewId, contentType, ext, bytes, sha256, durationSec } = parsed.value;
 
         const doc = await store.readDoc(CONTENT_CONTAINER, interviewId, interviewId);
         if (!doc || doc.type !== 'interview') return json(404, { error: 'Interview not found' });
 
+        const uploadId = uuid();
         const blockCount = Math.ceil(bytes / BLOCK_SIZE);
         const session = {
-          uploadId: uuid(),
+          uploadId,
           ownerOid: oid,
           status: 'open',
           contentType,
           ext,
           bytes,
           sha256,
+          durationSec,
           blockSize: BLOCK_SIZE,
           blockCount,
-          path: audioBlobPath(interviewId, ext),
+          path: audioBlobPath(interviewId, uploadId, ext),
           openedAt: now().toISOString(),
         };
-        const audio = { ...(doc.provenance?.audio ?? {}), upload: session };
+        const kept = sessionsOf(doc)
+          .filter((s) => s && s.uploadId !== uploadId)
+          .sort((a, b) => String(a.openedAt).localeCompare(String(b.openedAt)))
+          .slice(-(MAX_OPEN_SESSIONS - 1));
+        const audio = { ...(doc.provenance?.audio ?? {}), uploads: [...kept, session] };
         await writeProvenance(doc, audio);
 
-        context.log?.(
-          `interviewUploadOpen: ${session.uploadId} opened for ${interviewId} (${bytes} B, ${blockCount} blocks)`
-        );
-        return json(201, { uploadId: session.uploadId, blockSize: BLOCK_SIZE, blockCount });
+        context.log?.(`interviewUploadOpen: ${uploadId} opened for ${interviewId} (${bytes} B, ${blockCount} blocks)`);
+        return json(201, { uploadId, blockSize: BLOCK_SIZE, blockCount });
       } catch (error) {
         if (error?.code === 412) return json(409, { error: 'The interview changed while the upload was opened; try again' });
         // Code or status only: a Storage or Cosmos message carries the request URL, which names the blob.
@@ -351,10 +408,11 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
 
     /**
      * POST /api/cms/interviews/uploads/{uploadId}/complete — commit the blocks
-     * in order, check size and SHA-256 against the declaration, write
-     * provenance.audio and clear the session. 200 { ok, bytes, sha256,
-     * contentType }; 422 with the blob deleted on a mismatch; 409 when the
-     * upload was already completed.
+     * in order, check size and SHA-256 against the declaration, point
+     * provenance.audio at the new blob, drop the session and remove the
+     * recording the document pointed at before. 200 { ok, bytes, sha256,
+     * contentType }; 422 with the session's blob deleted on a mismatch; 409
+     * when the upload was already completed.
      */
     async completeUpload(request, context) {
       const auth = await guard.requireRole(request, 'editor');
@@ -382,29 +440,18 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
           throw error;
         }
 
-        /**
-         * A mismatch: the blob is deleted. The name is fixed per interview and
-         * type, so when a recording verified earlier sat under the same name
-         * the commit above has already replaced its bytes (the account keeps
-         * the previous version), and `provenance.audio` would now point at a
-         * deleted blob. It is cleared in the same ETag write, with the session
-         * kept open for the retry, so the document never names a recording
-         * that is not there.
-         */
+        // A mismatch deletes this session's blob and nothing else: the
+        // recording the document already points at has its own name and is
+        // untouched. The session stays open for the retry.
         const refuse = async (sentence, line) => {
-          await discardBlob(session.path, context, 'interviewUploadComplete');
+          await discardBlob(session.path, context, 'interviewUploadComplete', 'after a refused completion');
           context.warn?.(line);
-          if (doc.provenance?.audio?.path === session.path) {
-            await writeProvenance(doc, { upload: session });
-            context.warn?.(`interviewUploadComplete: ${uploadId} replaced the recording on ${doc.id}; provenance.audio cleared`);
-            return json(422, { error: `${sentence} The recording stored before was replaced and must be uploaded again too.` });
-          }
           return json(422, { error: sentence });
         };
 
         if (committed.contentLength !== session.bytes) {
           return refuse(
-            'The uploaded size does not match the declared size; upload the file again.',
+            'The uploaded size does not match the declared size; upload the file again',
             `interviewUploadComplete: ${uploadId} size mismatch (${committed.contentLength} B stored, ${session.bytes} B declared)`
           );
         }
@@ -412,28 +459,37 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         const digest = await storage.hashBlobSha256(INTERVIEWS_AUDIO_CONTAINER, session.path);
         if (digest !== session.sha256) {
           return refuse(
-            'The uploaded file does not match its declared SHA-256; upload the file again.',
+            'The uploaded file does not match its declared SHA-256; upload the file again',
             `interviewUploadComplete: ${uploadId} hash mismatch (${session.bytes} B)`
           );
         }
 
-        const previous = doc.provenance?.audio?.path;
+        // The pointer moves. The recording the document pointed at until now
+        // is recorded under `superseded` rather than deleted here: slice C's
+        // delete helper (deleteBlobWithVersions, which is why the identity
+        // holds Storage Blob Data Owner on this container, infra/storage.tf)
+        // sweeps that list when the interview or its recording is deleted,
+        // and the lifecycle rule expires every blob under audio/ regardless.
+        const before = doc.provenance?.audio ?? {};
+        const superseded = [...(Array.isArray(before.superseded) ? before.superseded : [])];
+        if (before.path && before.path !== session.path && !superseded.includes(before.path)) {
+          superseded.push(before.path);
+        }
+        const uploads = sessionsOf(doc).filter((s) => s && s.uploadId !== uploadId);
         const audio = {
           container: INTERVIEWS_AUDIO_CONTAINER,
           path: session.path,
           bytes: session.bytes,
           sha256: session.sha256,
           contentType: session.contentType,
+          durationSec: session.durationSec,
           uploadedAt: now().toISOString(),
           uploadedBy: oid,
           uploadId,
+          superseded,
+          ...(uploads.length > 0 ? { uploads } : {}),
         };
         await writeProvenance(doc, audio, { source: 'upload' });
-
-        // A recording of another type that was there before is now orphaned
-        // under its own name; removed best-effort, the lifecycle rule is the
-        // backstop.
-        if (previous && previous !== session.path) await discardBlob(previous, context, 'interviewUploadComplete');
 
         context.log?.(
           `interviewUploadComplete: ${uploadId} committed for ${doc.id} (${session.bytes} B, ${session.blockCount} blocks)`

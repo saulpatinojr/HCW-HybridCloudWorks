@@ -15,6 +15,7 @@ import {
   AUDIO_TYPES,
   INTERVIEWS_AUDIO_CONTAINER,
   MAX_AUDIO_BYTES,
+  MAX_AUDIO_SECONDS,
   audioBlobPath,
   canonicalAudioType,
   transcriptBlobPath,
@@ -39,14 +40,20 @@ describe('interviews storage layout', () => {
     expect(UPLOAD_CONTAINERS.has(INTERVIEWS_AUDIO_CONTAINER)).toBe(false);
   });
 
-  it('keeps recordings under audio/ and transcripts under transcripts/', () => {
-    expect(audioBlobPath('abc', 'mp3')).toBe('audio/abc.mp3');
+  it('keeps recordings under audio/, one blob per upload session, and transcripts under transcripts/', () => {
+    const upload = '11111111-2222-4333-8444-555555555555';
+    expect(audioBlobPath('abc', upload, 'mp3')).toBe(`audio/abc/${upload}.mp3`);
+    expect(audioBlobPath('abc', upload, 'mp3')).not.toBe(audioBlobPath('abc', '22222222-2222-4333-8444-555555555555', 'mp3'));
     expect(transcriptBlobPath('abc', 1)).toBe('transcripts/abc/v1.json');
     expect(transcriptPartPath('abc', 2, 7)).toBe('transcripts/abc/v2.parts/007.json');
-    for (const path of [audioBlobPath('abc', 'wav'), transcriptBlobPath('abc', 3), transcriptPartPath('abc', 1, 0)]) {
+    for (const path of [audioBlobPath('abc', upload, 'wav'), transcriptBlobPath('abc', 3), transcriptPartPath('abc', 1, 0)]) {
       expect(path.startsWith('audio/') || path.startsWith('transcripts/')).toBe(true);
       expect(isValidBlobPath(path)).toBe(true);
     }
+  });
+
+  it('caps a recording at 9.5 hours, the most Gemini takes in one prompt', () => {
+    expect(MAX_AUDIO_SECONDS).toBe(34_200);
   });
 
   it('accepts the three audio types the podcast upload accepts, each with one extension', () => {

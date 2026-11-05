@@ -654,6 +654,11 @@ export const DECLARED = [
       },
     reason: "#1565 ADR 0040 D10: expire-interview-audio deletes interviews-audio/audio/ and its previous versions after var.interview_audio_retention_days",
   },
+  {
+    address: "azurerm_role_assignment.func_interviews_audio_owner",
+    action: "create",
+    reason: "#1565 ADR 0040 D10: Storage Blob Data Owner for the Function App identity on the interviews-audio container only, for deleteBlobVersion (the account keeps versions)",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

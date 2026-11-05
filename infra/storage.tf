@@ -603,6 +603,29 @@ resource "azurerm_role_assignment" "func_blob" {
   principal_id         = azurerm_function_app_flex_consumption.hcw.identity[0].principal_id
 }
 
+# One more grant for the Function App identity, on the interviews-audio
+# container only (ADR 0040 D10, #1565). The account keeps blob versions, and
+# "Delete recording" has to remove a guest's recording together with its
+# previous versions; deleting a version is the data action
+# Microsoft.Storage/storageAccounts/blobServices/containers/blobs/deleteBlobVersion/action,
+# which Storage Blob Data Contributor (func_blob above: delete, read, write,
+# move, add) does not carry and Storage Blob Data Owner
+# (b7e6dc6d-f1e8-4753-8033-0f276bb0955b, every blob data action) does.
+# Read 2026-11-05 at
+# https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/storage
+# Container scope, like lab_hybrid_backups_writer in lab-hybrid-backups.tf,
+# so the wider right reaches this container and nothing else on the account.
+# A built-in role rather than a custom one in infra/roles/, because a custom
+# role is created by the owner by hand before the apply that references it;
+# this one needs no such step, and the deployer's RBAC condition
+# (scripts/Set-TerraformRbacCondition.ps1) does not refuse it.
+resource "azurerm_role_assignment" "func_interviews_audio_owner" {
+  scope                = azurerm_storage_container.interviews_audio.id
+  role_definition_name = "Storage Blob Data Owner"
+  principal_id         = azurerm_function_app_flex_consumption.hcw.identity[0].principal_id
+  principal_type       = "ServicePrincipal"
+}
+
 resource "azurerm_role_assignment" "func_queue" {
   scope                = azurerm_storage_account.hcw.id
   role_definition_name = "Storage Queue Data Contributor"
