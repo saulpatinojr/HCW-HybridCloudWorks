@@ -250,6 +250,10 @@ export async function lastSuccessfulRun(workflow, read) {
     // Newest by when the run last started, not by its place in the listing:
     // "Re-run jobs" keeps a run's id, place and `created_at` and moves its
     // `run_started_at`, so a re-run of an older run can be the newest deploy.
+    // Within this page only: a re-run of a run older than the page is not
+    // seen, the bound `check-functions-deploy-in-progress.mjs` accepts for
+    // its MAX_RUNS, and the deploys are hours apart, so an unseen one is of a
+    // run days old.
     const started = (run) => String(run?.run_started_at ?? run?.created_at ?? '');
     const found = runs
       .filter((run) => baselineOf(run) !== null)

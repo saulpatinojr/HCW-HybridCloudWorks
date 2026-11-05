@@ -618,9 +618,10 @@ describe('treeRefusal', () => {
   });
 
   it('refuses a payload that is not an array, rather than reading it as an empty directory', () => {
-    // The contents API answers an object for a file and an error body for a
-    // missing path. Treating either as "no files" would name every workflow
-    // absent and assess nothing.
+    // The contents API answers an object for a file; a missing path is a
+    // 404 that `api()` already throws on, and this guard is the second line.
+    // Treating any of them as "no files" would name every workflow absent
+    // and assess nothing.
     expect(treeRefusal({ path: '.github/workflows', type: 'file' }, 'main')).toMatch(/not an array/);
     expect(treeRefusal(null, 'main')).toMatch(/not an array/);
     expect(treeRefusal({ message: 'Not Found' }, 'main')).toMatch(/not an array/);

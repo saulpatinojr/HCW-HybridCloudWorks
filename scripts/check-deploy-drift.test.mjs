@@ -480,6 +480,9 @@ describe('formatReport', () => {
 describe('driftFor', () => {
   /** The record `GET /actions/runs/41` answers for the run that deployed. */
   const DEPLOYED_RUN = { id: 41, status: 'completed', conclusion: 'success', head_sha: 'deployed', run_number: 1 };
+  // A URL with no stub throws, and `ghJson` retries a thrown fetch once
+  // after RETRY_DELAY_MS, so a test that leans on that throw passes
+  // `retryDelayMs: 0` or waits two seconds for it.
   const stub = (map) => async (url) => {
     const key = Object.keys(map).find((k) => url.includes(k));
     if (!key) throw new Error(`unstubbed: ${url}`);
