@@ -97,7 +97,10 @@ export function nextStep(doc) {
   const transcription = doc.transcription || {};
   const hasTranscript = Number.isInteger(transcription.version) && transcription.version > 0;
   const audio = doc.provenance?.audio;
-  if (!hasTranscript && audio?.path && (stage === 'fetched' || stage === 'created')) {
+  // A recording marked deleted (`deletedAt`, written before the delete
+  // finishes) still has its path for a moment; it is never transcribed.
+  const usableAudio = Boolean(audio?.path) && !audio?.deletedAt;
+  if (!hasTranscript && usableAudio && (stage === 'fetched' || stage === 'created')) {
     return 'transcribe';
   }
   if (

@@ -15,7 +15,7 @@
  * only the blocks the server has not acknowledged (`createAudioUpload`). The
  * form never writes a transcript or a Q&A itself; the jobs do.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getJSON, postJSON } from '@/lib/api';
 import { createAudioUpload } from '@/lib/interviewUpload';
 
@@ -121,6 +121,19 @@ export function useSourceRunner() {
   // request, which a Stop cannot call back; from then on there is no Stop.
   const finishing = running && ['completing', 'done'].includes(progress?.phase);
   const canStop = running && !finishing;
+
+  // Leaving the page stops a running upload, as closing the tab does (the
+  // runbook says so), except once the server is committing it.
+  const finishingNow = useRef(false);
+  useEffect(() => {
+    finishingNow.current = finishing;
+  }, [finishing]);
+  useEffect(
+    () => () => {
+      if (!finishingNow.current) controller.current?.abort();
+    },
+    []
+  );
 
   return { run, stop, progress, running, error, canResume, canStop, finishing };
 }

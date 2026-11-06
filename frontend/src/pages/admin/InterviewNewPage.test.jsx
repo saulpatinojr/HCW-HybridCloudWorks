@@ -185,6 +185,37 @@ describe('InterviewNewPage', () => {
     await screen.findByRole('heading', { name: 'Interview page' });
   });
 
+  it('ties a consent problem to the date the guest agreed, for a screen reader', async () => {
+    answerRoutes();
+    renderPage();
+    submit();
+    const date = screen.getByLabelText('Date the guest agreed');
+    await waitFor(() => expect(date).toHaveAttribute('aria-invalid', 'true'));
+    const problem = document.getElementById(date.getAttribute('aria-describedby'));
+    expect(problem?.textContent).toBeTruthy();
+  });
+
+  it('stops a running upload when the owner leaves the page', async () => {
+    answerRoutes();
+    let signal;
+    putBytes.mockImplementation((_route, _body, options) => {
+      signal = options?.signal;
+      return new Promise(() => {});
+    });
+    const page = renderPage();
+    fillGuest();
+    fireEvent.click(screen.getByLabelText('Upload a recording'));
+    fireEvent.change(screen.getByLabelText('Recording file'), {
+      target: { files: [new File([new Uint8Array([1, 2])], 'talk.mp3', { type: 'audio/mpeg' })] },
+    });
+    await screen.findByText(/Length: 1 min 00 s/);
+    submit();
+    await waitFor(() => expect(signal).toBeDefined());
+    expect(signal.aborted).toBe(false);
+    page.unmount();
+    expect(signal.aborted).toBe(true);
+  });
+
   it('ties a photo problem to the photo picker for a screen reader', async () => {
     answerRoutes();
     renderPage();

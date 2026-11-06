@@ -124,6 +124,8 @@ export function ConsentField({ form, onChange, problem }) {
           type="date"
           max={todayUtc()}
           value={form.consentDate || ''}
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={problem ? `${id}-problem` : undefined}
           onChange={(event) => onChange({ consentDate: event.target.value })}
         />
       </div>

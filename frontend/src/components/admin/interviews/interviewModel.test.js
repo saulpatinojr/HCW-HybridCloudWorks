@@ -92,6 +92,14 @@ describe('nextStep: what the page starts by itself', () => {
     expect(nextStep({ ...audio })).toBe('transcribe');
   });
 
+  it('never transcribes a recording marked deleted, while its path is still there', () => {
+    const tombstoned = {
+      provenance: { audio: { path: 'audio/i/u.mp3', deletedAt: '2026-11-06T09:00:00.000Z' } },
+    };
+    expect(nextStep({ ...tombstoned, interview: { stage: 'fetched' } })).toBeNull();
+    expect(nextStep({ ...tombstoned })).toBeNull();
+  });
+
   it('drafts a finished transcript that has no questions yet', () => {
     for (const status of ['done', 'provided']) {
       expect(
