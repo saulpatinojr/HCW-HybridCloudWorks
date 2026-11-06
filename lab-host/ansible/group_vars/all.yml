@@ -448,11 +448,25 @@ addons:
       AMO_WORKSPACE_PROVIDER: disabled
     secret_env:
       TURNSTILE_SECRET: vault_addon_migration_turnstile_secret
+  # NetworkEyes (#1562). image_digest is the v0.1.2 image INDEX, read on
+  # 2026-11-05 from `docker buildx imagetools inspect
+  # docker.io/hybridcloudworks/img-ne-lab-addon:v0.1.2`, which agreed with the
+  # tag run's summary. `gh attestation verify` against HCW-NetworkEyes_AddOn
+  # passed on it (exit 0); the signer is the publish-images workflow at
+  # refs/tags/v0.1.2
+  # (https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn/actions/runs/42129301768,
+  # tag on commit bc6d21b2). v0.1.2 is the release that clears the apt
+  # CVE-2026-109518 finding in the base image (Trivy clean in the dry run).
+  # Before it the row pinned v0.1.0
+  # (digest sha256:202bc43bba9b8842bc9594c1dbe203ff636fddf3514d4255b8a60aabcb60aa77)
+  # from 2026-10-12 to 2026-11-05; v0.1.1 (2026-10-27, the version bump that
+  # put the licence label on the image) was never pinned here, so the row
+  # skips it.
   - id: network-assessment
     enabled: true
     image: docker.io/hybridcloudworks/img-ne-lab-addon
-    image_tag: "v0.1.0"
-    image_digest: "sha256:202bc43bba9b8842bc9594c1dbe203ff636fddf3514d4255b8a60aabcb60aa77"
+    image_tag: "v0.1.2"
+    image_digest: "sha256:b8818f7a25610da372d0744f2b0584ccbea5d91a60518d02b68a48fbda99f381"
     attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-NetworkEyes_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18082
     memory: 512m
@@ -476,11 +490,25 @@ addons:
       NA_MAX_ITEMS: "200"
     secret_env:
       TURNSTILE_SECRET: vault_addon_network_assessment_turnstile_secret
+  # Cloud Assessor (#1562). image_digest is the v0.1.2 image INDEX, read on
+  # 2026-11-05 from `docker buildx imagetools inspect
+  # docker.io/hybridcloudworks/img-ca-lab-addon:v0.1.2`, which agreed with the
+  # tag run's summary. `gh attestation verify` against HCW-CloudAssessor_AddOn
+  # passed on it (exit 0); the signer is the publish-images workflow at
+  # refs/tags/v0.1.2
+  # (https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/actions/runs/42129319030,
+  # tag on commit d9fa0603). v0.1.2 is the release that clears the apt
+  # CVE-2026-109518 finding in the base image (Trivy clean in the dry run).
+  # Before it the row pinned v0.1.0
+  # (digest sha256:d51be5be6496588d84bc56f843aa45971fab576bf4ee0d14968fd496888d551b)
+  # from 2026-10-12 to 2026-11-05; v0.1.1 (2026-10-27, the version bump that
+  # put the licence label on the image) was never pinned here, so the row
+  # skips it.
   - id: cloud-assessment
     enabled: true
     image: docker.io/hybridcloudworks/img-ca-lab-addon
-    image_tag: "v0.1.0"
-    image_digest: "sha256:d51be5be6496588d84bc56f843aa45971fab576bf4ee0d14968fd496888d551b"
+    image_tag: "v0.1.2"
+    image_digest: "sha256:8865ecf3115bbdeb8581ef2597290bee5e162b9dc23d5c34f5c1d3c5b1cd404c"
     attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-CloudAssessor_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18083
     memory: 512m
