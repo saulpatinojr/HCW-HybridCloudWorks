@@ -58,6 +58,7 @@ import {
   Link2,
   ListChecks,
   Mail,
+  MessageSquareQuote,
   Mic,
   Newspaper,
   PenLine,
@@ -159,6 +160,11 @@ export function roleLabel(role) {
  *   New Content        editor     generateArticleDraft (content/draft-from-url.js), createContentItem
  *                                 (cms/content-create.js), generatePreviewImages (manual-images/preview.js)
  *   Drafts             editor     cms/drafts (cms/drafts-handlers.js)
+ *   Interviews         editor     cms/interviews and its upload, transcribe, draft and transcript routes
+ *                                 (interviews/admin.js, upload.js, enqueue.js), updateContentItem and
+ *                                 transitionContentStatus (cms/content-update.js); publishContent,
+ *                                 unpublishContentToInspected and DELETE cms/interviews/{id}/audio are
+ *                                 publisher, gated (ADR 0040)
  *   Review Queue       editor     transitionContentStatus (cms/content-update.js) for approve and reject; the
  *                                 snapshot (getQueueSnapshot) is a viewer read; deleteRejectedContent
  *                                 (gallery-images.js) and deleteContentItem (content-workflow.js) are publisher, gated
@@ -238,6 +244,14 @@ const ITEMS = [
     FilePen,
     'Drafts',
     'Your writing desk. Articles you are still writing, before anyone reviews them.',
+    { minRole: 'editor' },
+  ],
+  [
+    'pipeline',
+    '/admin/interviews',
+    MessageSquareQuote,
+    'Interviews',
+    'Make an interview from a recording or a transcript: the site transcribes it, drafts the questions and answers, and you review and publish.',
     { minRole: 'editor' },
   ],
   [
