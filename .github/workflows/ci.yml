@@ -1924,7 +1924,8 @@ jobs:
   # Workflow and Dockerfile linters (#1575). CodeRabbit used to run these on
   # its reviews; it was removed on 2026-11-06 (#1574), and Qlty's actionlint
   # and zizmor plugins only report, they never fail a pull request. This job
-  # runs on every pull request and push (no `changes` filter: three linters
+  # runs on every pull request and every push to `main`, as the rest of this
+  # workflow does (no `changes` filter: three linters
   # over 30-odd files take seconds) and the gate waits for it:
   #   actionlint  every workflow, with .github/actionlint.yaml
   #   zizmor      every workflow, offline (no token, no network audits)
