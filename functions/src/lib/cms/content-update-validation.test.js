@@ -286,8 +286,8 @@ describe("validateTypedUpdates, the interview hook (ADR 0040, D5)", () => {
 });
 
 describe("an interview's private blocks and its type through updateContentItem (ADR 0040, D9)", () => {
-  it("refuses consent, provenance, interview and transcription like every other protected field", () => {
-    for (const key of ["consent", "provenance", "interview", "transcription"]) {
+  it("refuses consent, provenance, interview, transcription and type like every other protected field", () => {
+    for (const key of ["consent", "provenance", "interview", "transcription", "type"]) {
       expect(() => validateAndNormalizeUpdateContentItemUpdates({ [key]: { planted: true } })).toThrow(
         `updates cannot modify protected field: ${key}`
       );
@@ -296,6 +296,8 @@ describe("an interview's private blocks and its type through updateContentItem (
 
   it("refuses turning a document into an interview, or an interview into anything else", async () => {
     stubSiblingModulesForTests({ schema: { validateInterviewFields: (f) => f } });
+    // `type` is refused earlier, as a protected field; this check is the
+    // second line for the two keys pages may send and any direct caller.
     for (const key of ["type", "publishTarget", "contentType"]) {
       await expect(validateTypedUpdates("blog", { [key]: "Interview" })).rejects.toMatchObject({
         name: "ContentValidationError",

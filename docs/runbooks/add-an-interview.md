@@ -127,9 +127,9 @@ You need, for the guest:
   the recording, the transcripts and the draft stay, and you can publish
   again.
 - **Delete the recording** (the "Delete recording" button; needs the
-  publisher role). The audio file leaves the private container, and the
-  site then deletes every earlier version of it the storage account kept
-  (see "How it works" for the one permission that still needs granting);
+  publisher role). Each upload of a recording is its own file, so this
+  deletes the one the interview uses now and every earlier one it replaced,
+  and then every earlier version of each that the storage account kept;
   the transcripts stay, so the page still has its source. The interview's
   page then shows no recording, and the only way to bring one back within
   seven days is the account's soft delete, which keeps a deleted file for
@@ -150,8 +150,10 @@ You need, for the guest:
      it.
 
 - **Delete the interview** ("Delete permanently" on the Archive board, after
-  archiving it). The document, the recording and the transcripts all go, the
-  same way. An interview that was never published has no Archive entry; how
+  archiving it). The document, every recording and every transcript go, the
+  same way; the site first marks the interview as being deleted, so an
+  upload finishing at that moment is refused or swept up too. An interview
+  that was never published has no Archive entry; how
   a draft is removed from the Editor list is not written down here, so ask
   whoever changes the code rather than guess.
 
@@ -161,8 +163,7 @@ The recording is kept for **365 days** from its upload, then deleted by a
 rule on the storage account (the transcripts are kept). The number is the
 Terraform variable `interview_audio_retention_days` in
 [`infra/variables.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/variables.tf)
-(1 to 3650; the variable arrives with slice A of the plan, so it is on
-`main` only once that has merged). To change it the owner sets the variable in HCP Terraform's
+(1 to 3650). To change it the owner sets the variable in HCP Terraform's
 variables for the workspace and confirms the run; a session never applies
 it. The deletion the rule does is not reversible after the seven-day soft
 delete.
@@ -227,17 +228,33 @@ earlier transcript are still there.
   (`scripts/build-content-manifest.mjs`, `frontend/scripts/prerender.mjs`),
   so a built page carries the whole interview and the list page exists only
   once there is one.
+- **Where the files are.** Each upload is its own blob,
+  `audio/<interview id>/<upload id>.<ext>`; the document points at the
+  current one (`provenance.audio.path`) and lists the ones it replaced
+  (`provenance.audio.superseded`). Transcripts are
+  `transcripts/<interview id>/v<n>.json`.
 - **Deleting.** `deleteBlobWithVersions` in `interviews/admin.js` deletes a
   blob and then every version of it, because the account keeps versions and
   a plain delete would leave the recording as a previous version for up to
-  30 days. Deleting a version needs the `deleteBlobVersion/action` data
-  action, which Storage Blob Data Owner holds and the Function App's role on
-  the content account (Storage Blob Data Contributor, `infra/storage.tf`)
-  does not ([Microsoft Learn: blob versioning, authorize operations](https://learn.microsoft.com/azure/storage/blobs/versioning-overview#authorize-operations-on-blob-versions)).
-  Until the owner grants it, each version delete answers 403, is counted and
-  logged by code, and the account's `expire-noncurrent-versions` rule removes
-  the version within 30 days; the base delete still happens, so the
-  recording stops being current at once.
+  30 days. "Delete recording" deletes the current recording and every
+  superseded one, and only paths shaped like this interview's own. Deleting
+  the interview (`deleteContentItem`) first writes a tombstone,
+  `provenance.audio.deletedAt`, under the document's ETag (the version stamp
+  that makes a write fail if someone else wrote first), deletes the document
+  under the tombstone's ETag, and then sweeps the whole `audio/<id>/` and
+  `transcripts/<id>/` folders, so a recording an upload committed in the
+  moment between is removed too (`lib/interviews/tombstone.js`).
+- **The permission behind the version deletes.** Deleting a version needs
+  the `deleteBlobVersion/action` data action, which Storage Blob Data Owner
+  holds ([Microsoft Learn: blob versioning, authorize operations](https://learn.microsoft.com/azure/storage/blobs/versioning-overview#authorize-operations-on-blob-versions)).
+  The upload slice grants the Function App that role on the
+  `interviews-audio` container alone (`func_interviews_audio_owner` in
+  [`infra/storage.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/storage.tf)),
+  and it takes effect when the owner confirms that HCP Terraform run. Before
+  then each version delete answers 403, is counted and logged by code, and
+  the account's `expire-noncurrent-versions` rule removes the version within
+  30 days; the base delete still happens, so the recording stops being
+  current at once.
 - The book is built with CSS in this repository, with no library. The usual
   flip-book package was last released in April 2021 (owner decision,
   2026-10-24).

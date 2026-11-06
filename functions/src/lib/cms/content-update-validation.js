@@ -259,6 +259,12 @@ export const FORBIDDEN_CONTENT_UPDATE_KEYS = new Set([
   "provenance",
   "interview",
   "transcription",
+  // What a document IS has no writer on this route either: no admin page
+  // sends `type` through updateContentItem (the review boards, the editor
+  // and the taxonomy editor each send their own fields), and a retype would
+  // move a document past the interview publish gate or onto one. The
+  // publish target, which pages do send, is checked in validateTypedUpdates.
+  "type",
 ]);
 
 // Per-field-type normalizers used by validateAndNormalizeUpdateContentItemUpdates.

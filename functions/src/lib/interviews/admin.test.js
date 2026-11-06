@@ -17,7 +17,7 @@ import {
   createInterviewAdminHandlers,
   deleteBlobWithVersions,
   deleteInterviewAssets,
-  ownedAudioPath,
+  ownedRecordingPaths,
   toListRow,
 } from './admin.js';
 import { stubSiblingModulesForTests } from './sibling-modules.js';
@@ -71,19 +71,22 @@ function makeStore(docs = []) {
 /**
  * A fake blob client over a list of names. `versions` maps a name to the
  * version ids the container lists for it; every version delete is recorded
- * in `versionDeletes` as `name@versionId`.
+ * in `versionDeletes` as `name@versionId`. A listing with versions returns
+ * the current blobs too, as the service does, and a version outlives its
+ * base blob's delete.
  */
-function makeBlobs(names = [], { failing = [], versions = {} } = {}) {
+function makeBlobs(names = [], { failing = [], versions = {}, versionForbidden = false } = {}) {
   const present = new Set(names);
   const versionDeletes = [];
   const getContainerClient = vi.fn(() => ({
     listBlobsFlat: ({ prefix, includeVersions }) => {
-      // Versions outlive the base blob's delete, as they do in the account.
-      const items = includeVersions
+      const current = [...present].filter((name) => name.startsWith(prefix)).map((name) => ({ name }));
+      const previous = includeVersions
         ? Object.keys(versions)
             .filter((name) => name.startsWith(prefix))
             .flatMap((name) => versions[name].map((versionId) => ({ name, versionId })))
         : [];
+      const items = [...current, ...previous];
       return (async function* list() {
         for (const item of items) yield item;
       })();
@@ -91,6 +94,7 @@ function makeBlobs(names = [], { failing = [], versions = {} } = {}) {
     getBlobClient: (name) => ({
       withVersion: (versionId) => ({
         delete: async () => {
+          if (versionForbidden) throw Object.assign(new Error('forbidden'), { code: 403 });
           if (failing.includes(name)) throw Object.assign(new Error('storage said no'), { code: 503 });
           versionDeletes.push(`${name}@${versionId}`);
         },
@@ -101,9 +105,6 @@ function makeBlobs(names = [], { failing = [], versions = {} } = {}) {
     present,
     versionDeletes,
     getContainerClient,
-    listBlobs: vi.fn(async (_container, prefix) =>
-      [...present].filter((name) => name.startsWith(prefix)).map((name) => ({ name }))
-    ),
     deleteBlob: vi.fn(async (_container, name) => {
       if (failing.includes(name)) throw Object.assign(new Error('storage said no'), { code: 503 });
       present.delete(name);
@@ -114,6 +115,19 @@ function makeBlobs(names = [], { failing = [], versions = {} } = {}) {
     }),
   };
 }
+
+/**
+ * Upload ids are UUIDs (the upload route mints them); these are made-up
+ * ones. A recording lives at audio/<interview id>/<upload id>.<ext>.
+ */
+const U_CURRENT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+const U_OLDER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+const U_OLDEST = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
+const U_STRAY = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4';
+const U_GONE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5';
+const CURRENT = `audio/i1/${U_CURRENT}.mp3`;
+const OLDER = `audio/i1/${U_OLDER}.m4a`;
+const OLDEST = `audio/i1/${U_OLDEST}.wav`;
 
 const interviewDoc = (over = {}) => ({
   id: 'i1',
@@ -126,7 +140,10 @@ const interviewDoc = (over = {}) => ({
   contentStatus: 'draft',
   interview: { stage: 'ready' },
   transcription: { version: 2, status: 'done' },
-  provenance: { source: 'upload', audio: { container: 'interviews-audio', path: 'audio/i1.mp3' } },
+  provenance: {
+    source: 'upload',
+    audio: { container: 'interviews-audio', path: CURRENT, superseded: [OLDER] },
+  },
   updatedAt: '2026-11-02T00:00:00.000Z',
   _etag: '"e9"',
   ...over,
@@ -416,28 +433,45 @@ describe('deleteAudio', () => {
     expect(store.patchDoc).not.toHaveBeenCalled();
   });
 
-  it('deletes the recording, keeps the transcripts, clears provenance.audio under the etag', async () => {
-    const store = makeStore([interviewDoc()]);
-    const blobs = makeBlobs(['audio/i1.mp3', 'transcripts/i1/v1.json', 'transcripts/i1/v2.json']);
+  it('deletes the recording and every recording it superseded, keeps the transcripts, clears provenance.audio under the etag', async () => {
+    const doc = interviewDoc({
+      provenance: {
+        source: 'upload',
+        audio: { container: 'interviews-audio', path: CURRENT, superseded: [OLDER, OLDEST] },
+      },
+    });
+    const store = makeStore([doc]);
+    const blobs = makeBlobs([CURRENT, OLDER, OLDEST, 'transcripts/i1/v1.json', 'transcripts/i1/v2.json'], {
+      versions: { [CURRENT]: ['v-1'] },
+    });
     const res = await handlersWith(store, blobs, 'publisher').deleteAudio(
       makeRequest({ params: { id: 'i1' } }),
       context
     );
     expect(res.status).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ ok: true, id: 'i1', deleted: 1 });
-    expect([...blobs.present]).toEqual(['transcripts/i1/v1.json', 'transcripts/i1/v2.json']);
+    expect(JSON.parse(res.body)).toEqual({ ok: true, id: 'i1', deleted: 3 });
+    expect([...blobs.present].sort()).toEqual(['transcripts/i1/v1.json', 'transcripts/i1/v2.json']);
+    expect(blobs.versionDeletes).toEqual([`${CURRENT}@v-1`]);
     expect(store.patchDoc).toHaveBeenCalledWith(
       'content',
       'i1',
       { provenance: { source: 'upload', audio: null }, updatedAt: NOW.toISOString() },
       { ifMatch: '"e9"' }
     );
-    expect(logged()).not.toContain('audio/i1.mp3');
+    expect(logged()).not.toContain(CURRENT);
+  });
+
+  it('leaves alone a blob under the interview’s prefix that the document does not name: only the interview delete sweeps', async () => {
+    const stray = `audio/i1/${U_STRAY}.mp3`;
+    const store = makeStore([interviewDoc()]);
+    const blobs = makeBlobs([CURRENT, stray]);
+    await handlersWith(store, blobs, 'publisher').deleteAudio(makeRequest({ params: { id: 'i1' } }), context);
+    expect([...blobs.present]).toEqual([stray]);
   });
 
   it('answers 502 and leaves the document alone when the blob could not be deleted', async () => {
     const store = makeStore([interviewDoc()]);
-    const blobs = makeBlobs(['audio/i1.mp3'], { failing: ['audio/i1.mp3'] });
+    const blobs = makeBlobs([CURRENT], { failing: [CURRENT] });
     const res = await handlersWith(store, blobs, 'publisher').deleteAudio(
       makeRequest({ params: { id: 'i1' } }),
       context
@@ -451,7 +485,7 @@ describe('deleteAudio', () => {
   it('answers 409 when the document changed since it was read', async () => {
     const store = makeStore([interviewDoc()]);
     store.patchDoc.mockRejectedValueOnce(Object.assign(new Error('precondition'), { code: 412 }));
-    const res = await handlersWith(store, makeBlobs(['audio/i1.mp3']), 'publisher').deleteAudio(
+    const res = await handlersWith(store, makeBlobs([CURRENT]), 'publisher').deleteAudio(
       makeRequest({ params: { id: 'i1' } }),
       context
     );
@@ -463,111 +497,224 @@ describe('deleteAudio', () => {
 describe('deleteBlobWithVersions (ADR 0040, D10)', () => {
   it('deletes the base blob first, then every listed version by id: two versions, three deletes', async () => {
     const order = [];
-    const blobs = makeBlobs(['audio/i1.mp3', 'audio/i1.mp3.other'], {
-      versions: { 'audio/i1.mp3': ['v-older', 'v-current'], 'audio/i1.mp3.other': ['v-x'] },
+    const sibling = `${CURRENT}.other`;
+    const blobs = makeBlobs([CURRENT, sibling], {
+      versions: { [CURRENT]: ['v-older', 'v-current'], [sibling]: ['v-x'] },
     });
     blobs.deleteBlob.mockImplementation(async (_c, name) => {
       order.push(`base:${name}`);
       blobs.present.delete(name);
     });
-    const outcome = await deleteBlobWithVersions({ blobs, log: context }, 'interviews-audio', 'audio/i1.mp3');
+    const outcome = await deleteBlobWithVersions({ blobs, log: context }, 'interviews-audio', CURRENT);
     expect(outcome).toEqual({ versions: 2, versionFailures: 0 });
-    expect(blobs.versionDeletes).toEqual(['audio/i1.mp3@v-older', 'audio/i1.mp3@v-current']);
-    expect(order).toEqual(['base:audio/i1.mp3']);
+    expect(blobs.versionDeletes).toEqual([`${CURRENT}@v-older`, `${CURRENT}@v-current`]);
+    expect(order).toEqual([`base:${CURRENT}`]);
     expect(blobs.deleteBlob).toHaveBeenCalledTimes(1);
     expect(blobs.getContainerClient).toHaveBeenCalledWith('interviews-audio');
-    // A blob whose name merely starts with the prefix is left alone.
-    expect(blobs.present.has('audio/i1.mp3.other')).toBe(true);
+    // A blob whose name merely starts with the same characters is left alone.
+    expect(blobs.present.has(sibling)).toBe(true);
   });
 
   it('still deletes the base blob when the container lists no versions', async () => {
-    const blobs = makeBlobs(['audio/i1.mp3']);
-    expect(await deleteBlobWithVersions({ blobs }, 'interviews-audio', 'audio/i1.mp3')).toEqual({
+    const blobs = makeBlobs([CURRENT]);
+    expect(await deleteBlobWithVersions({ blobs }, 'interviews-audio', CURRENT)).toEqual({
       versions: 0,
       versionFailures: 0,
     });
-    expect(blobs.present.has('audio/i1.mp3')).toBe(false);
+    expect(blobs.present.has(CURRENT)).toBe(false);
   });
 
   it('counts a version the identity may not delete and keeps going: the base blob is gone either way', async () => {
-    // Storage Blob Data Contributor lacks deleteBlobVersion/action; a 403
-    // on a version must not leave the recording current or fail the caller.
-    const blobs = makeBlobs(['audio/i1.mp3'], { versions: { 'audio/i1.mp3': ['v-1', 'v-2'] } });
-    const client = blobs.getContainerClient();
-    blobs.getContainerClient.mockReturnValue({
-      ...client,
-      getBlobClient: () => ({
-        withVersion: () => ({
-          delete: async () => {
-            throw Object.assign(new Error('forbidden'), { code: 403 });
-          },
-        }),
-      }),
-    });
-    const outcome = await deleteBlobWithVersions({ blobs, log: context }, 'interviews-audio', 'audio/i1.mp3');
+    // Before the owner applies the container-scoped Storage Blob Data Owner
+    // grant, a version delete answers 403; it must not leave the recording
+    // current or fail the caller.
+    const blobs = makeBlobs([CURRENT], { versions: { [CURRENT]: ['v-1', 'v-2'] }, versionForbidden: true });
+    const outcome = await deleteBlobWithVersions({ blobs, log: context }, 'interviews-audio', CURRENT);
     expect(outcome).toEqual({ versions: 0, versionFailures: 2 });
-    expect(blobs.present.has('audio/i1.mp3')).toBe(false);
+    expect(blobs.present.has(CURRENT)).toBe(false);
     expect(logged()).toMatch(/a blob version was not deleted \(403\)/);
     expect(logged()).not.toContain('forbidden');
   });
 });
 
-describe('ownedAudioPath (ADR 0040, D10 layout)', () => {
-  it('accepts only audio/<own id>.<ext>, never another interview’s recording or a transcript', () => {
-    expect(ownedAudioPath({ id: 'i1', provenance: { audio: { path: 'audio/i1.mp3' } } })).toBe('audio/i1.mp3');
-    for (const path of [
-      'audio/i2.mp3',
-      'transcripts/i1/v1.json',
-      'audio/i1.mp3/../i2.mp3',
-      'audio/i1.',
-      'audio/i1.MP3',
-      '',
-      null,
-    ]) {
-      expect(ownedAudioPath({ id: 'i1', provenance: { audio: { path } } }), String(path)).toBeNull();
-    }
-    expect(ownedAudioPath({ provenance: { audio: { path: 'audio/undefined.mp3' } } })).toBeNull();
+describe('ownedRecordingPaths (ADR 0040, D1 and D10 layout)', () => {
+  it('names the current recording and every superseded one under audio/<this id>/<upload id>.<ext>', () => {
+    const doc = interviewDoc({
+      provenance: { audio: { path: CURRENT, superseded: [OLDER, CURRENT, OLDEST] } },
+    });
+    expect(ownedRecordingPaths(doc, context)).toEqual([CURRENT, OLDER, OLDEST]);
   });
 
-  it('is what the delete hook deletes by: a foreign path is ignored and logged by code, not by name', async () => {
-    const blobs = makeBlobs(['audio/i2.mp3', 'transcripts/i1/v1.json']);
-    const doc = interviewDoc({ provenance: { audio: { path: 'audio/i2.mp3' } } });
-    const outcome = await deleteInterviewAssets({ blobs, log: context }, doc);
-    expect(outcome).toEqual({ deleted: 1, failed: 0, versionFailures: 0 });
-    expect(blobs.present.has('audio/i2.mp3')).toBe(true);
-    expect(logged()).toMatch(/i1 names a recording path it does not own/);
-    expect(logged()).not.toContain('audio/i2.mp3');
+  it('refuses every path outside the layout, and logs how many, never which', () => {
+    const planted = [
+      `audio/i2/${U_CURRENT}.mp3`,
+      `transcripts/i1/v1.json`,
+      'audio/i1.mp3',
+      `audio/i1/../i2/${U_CURRENT}.mp3`,
+      `audio/i1/${U_CURRENT}.exe`,
+      `audio/i1/not-an-upload-id.mp3`,
+      `audio/i1/${U_CURRENT}.mp3/x`,
+      '',
+      null,
+      42,
+    ];
+    const doc = interviewDoc({ provenance: { audio: { path: planted[0], superseded: planted.slice(1) } } });
+    expect(ownedRecordingPaths(doc, context)).toEqual([]);
+    expect(logged()).toMatch(/i1 names 8 recording path\(s\) it does not own/);
+    expect(logged()).not.toContain('audio/i2');
+  });
+
+  it('is empty for a document with no recording', () => {
+    expect(ownedRecordingPaths(interviewDoc({ provenance: { source: 'transcript' } }))).toEqual([]);
+    expect(ownedRecordingPaths({})).toEqual([]);
   });
 });
 
-describe('deleteInterviewAssets, the delete hook', () => {
-  it('removes the recording and every transcript of an interview, versions included, and counts what it did', async () => {
+describe('deleteInterviewAssets, the interview delete hook', () => {
+  it('sweeps the whole audio/<id>/ and transcripts/<id>/ prefixes, versions included, and nothing of another interview', async () => {
+    const stray = `audio/i1/${U_STRAY}.wav`;
     const blobs = makeBlobs(
-      ['audio/i1.mp3', 'transcripts/i1/v1.json', 'transcripts/i1/v2.parts/000.json', 'transcripts/other/v1.json'],
-      { versions: { 'audio/i1.mp3': ['v-1', 'v-2'], 'transcripts/i1/v1.json': ['v-1'] } }
+      [
+        CURRENT,
+        OLDER,
+        stray,
+        'transcripts/i1/v1.json',
+        'transcripts/i1/v2.parts/000.json',
+        `audio/i10/${U_CURRENT}.mp3`,
+        'transcripts/i10/v1.json',
+        'transcripts/other/v1.json',
+      ],
+      { versions: { [CURRENT]: ['v-1', 'v-2'], 'transcripts/i1/v1.json': ['v-1'], [`audio/i1/${U_GONE}.mp3`]: ['v-9'] } }
     );
     const outcome = await deleteInterviewAssets({ blobs, log: context }, interviewDoc());
-    expect(outcome).toEqual({ deleted: 3, failed: 0, versionFailures: 0 });
-    expect(blobs.versionDeletes).toEqual(['audio/i1.mp3@v-1', 'audio/i1.mp3@v-2', 'transcripts/i1/v1.json@v-1']);
-    expect([...blobs.present]).toEqual(['transcripts/other/v1.json']);
-    expect(blobs.listBlobs).toHaveBeenCalledWith('interviews-audio', 'transcripts/i1/');
-    expect(logged()).toContain('i1: 3 blob(s) deleted, 0 failed, 0 version(s) kept');
+    // CURRENT, OLDER, the stray, two transcripts, and a recording whose base
+    // is already gone but whose version remains.
+    expect(outcome).toEqual({ deleted: 6, failed: 0, versionFailures: 0 });
+    expect([...blobs.present].sort()).toEqual(
+      [`audio/i10/${U_CURRENT}.mp3`, 'transcripts/i10/v1.json', 'transcripts/other/v1.json'].sort()
+    );
+    expect(blobs.versionDeletes.sort()).toEqual(
+      [`${CURRENT}@v-1`, `${CURRENT}@v-2`, 'transcripts/i1/v1.json@v-1', `audio/i1/${U_GONE}.mp3@v-9`].sort()
+    );
+    expect(logged()).toContain('i1: 6 blob(s) deleted, 0 failed, 0 version(s) kept');
     expect(logged()).not.toContain('.mp3');
   });
 
+  it('refuses an id that is not shaped like one before listing anything: an empty id would sweep every recording', async () => {
+    const blobs = makeBlobs([CURRENT]);
+    for (const id of ['', 'a/b', '../i1', undefined]) {
+      expect(await deleteInterviewAssets({ blobs, log: context }, interviewDoc({ id }))).toEqual({
+        deleted: 0,
+        failed: 0,
+        versionFailures: 0,
+      });
+    }
+    expect(blobs.getContainerClient).not.toHaveBeenCalled();
+    expect(blobs.present.has(CURRENT)).toBe(true);
+  });
+
   it('does nothing for a document that is not an interview', async () => {
-    const blobs = makeBlobs(['audio/b1.mp3']);
+    const blobs = makeBlobs([`audio/b1/${U_CURRENT}.mp3`]);
     expect(await deleteInterviewAssets({ blobs }, { id: 'b1', type: 'blog' })).toEqual({
       deleted: 0,
       failed: 0,
       versionFailures: 0,
     });
-    expect(blobs.listBlobs).not.toHaveBeenCalled();
+    expect(blobs.getContainerClient).not.toHaveBeenCalled();
   });
 
   it('keeps going past one failed blob and reports it', async () => {
-    const blobs = makeBlobs(['audio/i1.mp3', 'transcripts/i1/v1.json'], { failing: ['audio/i1.mp3'] });
-    const outcome = await deleteInterviewAssets({ blobs, log: context }, interviewDoc());
+    const blobs = makeBlobs([CURRENT, 'transcripts/i1/v1.json'], { failing: [CURRENT] });
+    const doc = interviewDoc({ provenance: { source: 'upload', audio: { path: CURRENT } } });
+    const outcome = await deleteInterviewAssets({ blobs, log: context }, doc);
     expect(outcome).toEqual({ deleted: 1, failed: 1, versionFailures: 0 });
+    expect(blobs.present.has('transcripts/i1/v1.json')).toBe(false);
+  });
+});
+
+describe('deleting an interview through deleteContentItem: tombstone, delete, sweep (ADR 0040, D10)', () => {
+  /** A store whose document is the interview; patch answers a new ETag. */
+  function workflowStore(doc, { onTombstone = () => {}, patchError = null } = {}) {
+    const calls = [];
+    return {
+      calls,
+      readDoc: vi.fn(async () => doc),
+      patchDoc: vi.fn(async (_c, id, updates, options) => {
+        calls.push(['patch', options?.ifMatch, updates.provenance?.audio?.deletedAt ?? null]);
+        if (patchError) throw patchError;
+        onTombstone();
+        return { ...doc, ...updates, _etag: '"tomb"' };
+      }),
+      deleteDocIfMatch: vi.fn(async (_c, id, etag) => {
+        calls.push(['delete', etag]);
+      }),
+      upsertDoc: vi.fn(async (_c, d) => d),
+    };
+  }
+  const run = async (store, blobs) => {
+    const { createContentWorkflowHandlers } = await import('../content-workflow.js');
+    const handlers = createContentWorkflowHandlers({
+      guard: guardAs('publisher'),
+      store,
+      onInterviewDeleted: (doc, ctx) => deleteInterviewAssets({ blobs, log: ctx }, doc),
+      ...fixed,
+    });
+    return handlers.deleteContentItem(
+      { headers: { get: () => 'vitest' }, json: async () => ({ contentId: 'i1' }) },
+      context
+    );
+  };
+
+  it('writes the tombstone under the read ETag, deletes under the tombstone’s ETag, then sweeps', async () => {
+    const blobs = makeBlobs([CURRENT, 'transcripts/i1/v1.json']);
+    const listedBefore = [];
+    const client = blobs.getContainerClient.getMockImplementation();
+    blobs.getContainerClient.mockImplementation((...args) => {
+      listedBefore.push(store.calls.length);
+      return client(...args);
+    });
+    const store = workflowStore(interviewDoc());
+    const res = await run(store, blobs);
+    expect(res.status).toBe(200);
+    expect(store.calls).toEqual([
+      ['patch', '"e9"', NOW.toISOString()],
+      ['delete', '"tomb"'],
+    ]);
+    // Every listing happened after both writes.
+    expect(listedBefore.length).toBeGreaterThan(0);
+    expect(new Set(listedBefore)).toEqual(new Set([2]));
+    expect([...blobs.present]).toEqual([]);
+  });
+
+  it('removes a recording an upload committed between the tombstone and the sweep, which the document never named', async () => {
+    const late = `audio/i1/${U_STRAY}.m4a`;
+    const blobs = makeBlobs([CURRENT]);
+    // The completion that read the document before the tombstone commits its
+    // blob now; its own pointer write then fails on the ETag, so the
+    // document never names it.
+    const store = workflowStore(interviewDoc(), { onTombstone: () => blobs.present.add(late) });
+    const res = await run(store, blobs);
+    expect(res.status).toBe(200);
+    expect(blobs.present.has(late)).toBe(false);
+    expect(blobs.present.has(CURRENT)).toBe(false);
+  });
+
+  it('answers 409 and deletes nothing when the document changed before the tombstone', async () => {
+    const blobs = makeBlobs([CURRENT]);
+    const store = workflowStore(interviewDoc(), {
+      patchError: Object.assign(new Error('precondition'), { code: 412 }),
+    });
+    const res = await run(store, blobs);
+    expect(res.status).toBe(409);
+    expect(store.deleteDocIfMatch).not.toHaveBeenCalled();
+    expect(blobs.present.has(CURRENT)).toBe(true);
+    expect(blobs.getContainerClient).not.toHaveBeenCalled();
+  });
+
+  it('writes no tombstone for a document that is not an interview', async () => {
+    const store = workflowStore({ id: 'i1', type: 'blog', Title: 'A post', _etag: '"e9"' });
+    const res = await run(store, makeBlobs());
+    expect(res.status).toBe(200);
+    expect(store.calls).toEqual([['delete', '"e9"']]);
   });
 });

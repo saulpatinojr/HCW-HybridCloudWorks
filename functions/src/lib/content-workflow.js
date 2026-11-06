@@ -31,6 +31,7 @@
 import { randomUUID } from 'node:crypto';
 import { normalizeCurrentStatusForBlogOnly } from './cms/content-update-validation.js';
 import { actor, auditRow, json, readBody, workflowFailure } from './content-workflow/shared.js';
+import { isInterviewDoc, writeInterviewTombstone } from './interviews/tombstone.js';
 import { saveEditorDraft } from './content-workflow/editor.js';
 import { saveContentSchedule, unscheduleContent } from './content-workflow/schedule.js';
 
@@ -239,11 +240,21 @@ async function deleteContentItem(
 
     let deleted;
     try {
-      deleted = await deleteAsRead(store, doc);
+      // An interview is tombstoned first, under the ETag read above, and
+      // deleted under the tombstone's ETag (ADR 0040, D10): an upload that
+      // read the document before the mark fails its own write, and the
+      // sweep in the hook below removes anything committed in between.
+      let target = doc;
+      if (isInterviewDoc(doc)) {
+        target = await writeInterviewTombstone(store, doc, now().toISOString());
+        if (!target) return json(200, { success: true, contentId });
+      }
+      deleted = await deleteAsRead(store, target);
     } catch (err) {
       if (err?.code === 412) {
         return json(409, { error: DELETE_CHANGED_SINCE_READ, code: 'CONFLICT' });
       }
+      if (err?.code === 404) return json(200, { success: true, contentId });
       throw err;
     }
     if (!deleted) return json(200, { success: true, contentId });
@@ -263,7 +274,7 @@ async function deleteContentItem(
     // (ADR 0040, D10); they go with the document. Best-effort and logged by
     // count: the document is gone either way, and a blob that stays is
     // expired by the container's lifecycle rule.
-    if (onInterviewDeleted && String(doc.type || '').toLowerCase() === 'interview') {
+    if (onInterviewDeleted && isInterviewDoc(doc)) {
       await onInterviewDeleted(doc, context).catch((err) =>
         context.warn?.(
           `deleteContentItem: the interview's recording was not deleted (${err?.code ?? 'error'})`

@@ -26,6 +26,8 @@ import { createContentDocument } from '../cms/content-create.js';
 import { SQL_NOT_SOFT_DELETED } from '../public-reads.js';
 import { CONSENT_WORDING_V1, ConsentError, attributeConsent, validateConsent } from './consent.js';
 import { checkInterviewFields, interviewStorage } from './sibling-modules.js';
+import { INTERVIEW_ID_PATTERN } from './tombstone.js';
+import { ownsAudioPath } from './upload.js';
 
 /** A create body is a form's worth of text; a transcript never comes this way. */
 const MAX_CREATE_BYTES = 64 * 1024;
@@ -132,33 +134,44 @@ function createAuditRow(uuid, { user, request, contentId, consent, nowIso }) {
 }
 
 /**
- * The recording path an interview may own: `audio/<its own id>.<ext>`, the
- * D10 layout. A document naming any other path (another interview's
- * recording, a transcript) is ignored here and logged by code, so a delete
- * never reaches a blob the document does not own.
+ * The recordings the document names and owns: `provenance.audio.path` and
+ * every path under `provenance.audio.superseded` (the recordings earlier
+ * uploads replaced, ADR 0040 D1). A path counts only when it is one the
+ * upload route could have minted for this interview,
+ * `audio/<this id>/<upload id>.<ext>` (`ownsAudioPath`, ./upload.js), so a
+ * planted path (another interview's recording, a transcript) is never
+ * deleted; how many were refused is logged, never which.
+ *
+ * @param {object} doc
+ * @param {object} [log]
+ * @returns {string[]}
  */
-export function ownedAudioPath(doc = {}) {
-  const audioPath = doc?.provenance?.audio?.path;
-  if (typeof audioPath !== 'string' || !doc?.id) return null;
-  const prefix = `audio/${doc.id}.`;
-  if (!audioPath.startsWith(prefix)) return null;
-  return /^[a-z0-9]{1,8}$/.test(audioPath.slice(prefix.length)) ? audioPath : null;
+export function ownedRecordingPaths(doc = {}, log = {}) {
+  const audio = doc?.provenance?.audio;
+  if (!audio || typeof audio !== 'object') return [];
+  const named = [audio.path, ...(Array.isArray(audio.superseded) ? audio.superseded : [])].filter(
+    (path) => path !== undefined && path !== null && path !== ''
+  );
+  const owned = [...new Set(named.filter((path) => ownsAudioPath(doc.id, path)))];
+  const refused = named.length - named.filter((path) => ownsAudioPath(doc.id, path)).length;
+  if (refused > 0) {
+    log.warn?.(`[interviews] ${doc.id} names ${refused} recording path(s) it does not own; not deleted`);
+  }
+  return owned;
 }
 
-/** Every blob the interview owns: its recording and all its transcripts. */
-async function ownedBlobs({ blobs, log = {} }, doc) {
-  const storage = await interviewStorage();
-  const container = storage.INTERVIEWS_AUDIO_CONTAINER;
+/**
+ * Every blob name under a prefix, current or only a previous version: the
+ * listing includes versions, so a recording whose base blob is already gone
+ * but whose versions remain is still found and swept.
+ */
+async function blobNamesUnder({ blobs }, container, prefix) {
+  const client = blobs.getContainerClient(container);
   const names = new Set();
-  const audioPath = ownedAudioPath(doc);
-  if (audioPath) names.add(audioPath);
-  else if (doc?.provenance?.audio?.path) {
-    log.warn?.(`[interviews] ${doc.id} names a recording path it does not own; not deleted`);
+  for await (const item of client.listBlobsFlat({ prefix, includeVersions: true })) {
+    if (typeof item?.name === 'string' && item.name.startsWith(prefix)) names.add(item.name);
   }
-  const prefix = `transcripts/${doc.id}/`;
-  const listed = await blobs.listBlobs(container, prefix);
-  for (const blob of listed) if (blob?.name?.startsWith(prefix)) names.add(blob.name);
-  return { container, names: [...names] };
+  return [...names];
 }
 
 /**
@@ -172,14 +185,14 @@ async function ownedBlobs({ blobs, log = {} }, doc) {
  * its `versionId`. Blob soft delete (seven days on this account) then holds
  * the deleted versions, which is the only recovery path.
  *
- * The version deletes are best effort and counted, never fatal: deleting a
- * previous version needs the `deleteBlobVersion/action` data action, which
- * Storage Blob Data Owner holds and Storage Blob Data Contributor (the
- * Function App's role on the content account, infra/storage.tf) does not,
- * per Microsoft Learn's blob versioning page (read 2026-11-05). Until the
- * owner grants it, a version delete answers 403, is logged by code, and the
- * lifecycle rule expires the version within 30 days; the base delete above
- * is what the caller's success depends on.
+ * Deleting a previous version needs the `deleteBlobVersion/action` data
+ * action, which Storage Blob Data Owner holds; the upload slice granted the
+ * Function App that role on the `interviews-audio` container alone
+ * (`func_interviews_audio_owner`, infra/storage.tf), live once the owner
+ * confirms that HCP Terraform run. The version deletes stay best effort and
+ * counted: before the grant is applied a version delete answers 403, is
+ * logged by code, and the lifecycle rule removes the version within 30 days;
+ * the base delete above is what the caller's success depends on.
  *
  * @param {{ blobs: { getContainerClient: Function, deleteBlob: Function }, log?: object }} deps
  * @param {string} container
@@ -205,27 +218,49 @@ export async function deleteBlobWithVersions({ blobs, log = {} }, container, nam
 }
 
 /**
- * Delete the recording and the transcripts of one interview from the private
- * container, each with every version it has (`deleteBlobWithVersions`). Best effort, one blob at a time, so one failure does not keep
- * the others; the count of what was and was not deleted is returned and
- * logged, never a name.
+ * Delete an interview's blobs from the private container, each with every
+ * version it has (`deleteBlobWithVersions`). Best effort, one blob at a
+ * time, so one failure does not keep the others; the counts are returned
+ * and logged, never a name.
  *
- * Used by DELETE cms/interviews/{id}/audio for the recording alone, and by
- * `deleteContentItem`'s hook for both (ADR 0040, D10).
+ * Two scopes (ADR 0040, D10):
+ *   - `interview` (the default; `deleteContentItem`'s hook, after the
+ *     tombstone, ./tombstone.js): the WHOLE `audio/<id>/` and
+ *     `transcripts/<id>/` prefixes, not only the paths the document names,
+ *     so a recording an upload committed while the delete was starting goes
+ *     too.
+ *   - `recording` (DELETE cms/interviews/{id}/audio): the recording the
+ *     document points at and every recording it superseded; transcripts
+ *     stay.
  *
- * @param {{ blobs: { listBlobs: Function, deleteBlob: Function, getContainerClient: Function }, log?: object }} deps
+ * An id that is not shaped like one is refused before any listing: an empty
+ * or slash-bearing id would turn `audio/<id>/` into a prefix that reaches
+ * other interviews.
+ *
+ * @param {{ blobs: { deleteBlob: Function, getContainerClient: Function }, log?: object }} deps
  * @param {object} doc - the content document
- * @param {{ transcripts?: boolean }} [options] - false keeps the transcripts
- * @returns {Promise<{ deleted: number, failed: number }>}
+ * @param {{ scope?: 'interview' | 'recording' }} [options]
+ * @returns {Promise<{ deleted: number, failed: number, versionFailures: number }>}
  */
-export async function deleteInterviewAssets({ blobs, log = {} }, doc, { transcripts = true } = {}) {
-  if (!doc || !isInterview(doc)) return { deleted: 0, failed: 0, versionFailures: 0 };
-  const { container, names } = await ownedBlobs({ blobs, log }, doc);
-  const wanted = transcripts ? names : names.filter((name) => !name.startsWith('transcripts/'));
+export async function deleteInterviewAssets({ blobs, log = {} }, doc, { scope = 'interview' } = {}) {
+  const none = { deleted: 0, failed: 0, versionFailures: 0 };
+  if (!doc || !isInterview(doc)) return none;
+  if (!INTERVIEW_ID_PATTERN.test(String(doc.id || ''))) {
+    log.warn?.('[interviews] an interview id is not shaped like one; nothing deleted');
+    return none;
+  }
+  const storage = await interviewStorage();
+  const container = storage.INTERVIEWS_AUDIO_CONTAINER;
+  const names = new Set(ownedRecordingPaths(doc, log));
+  if (scope === 'interview') {
+    for (const prefix of [`audio/${doc.id}/`, `transcripts/${doc.id}/`]) {
+      for (const name of await blobNamesUnder({ blobs }, container, prefix)) names.add(name);
+    }
+  }
   let deleted = 0;
   let failed = 0;
   let versionFailures = 0;
-  for (const name of wanted) {
+  for (const name of names) {
     try {
       const outcome = await deleteBlobWithVersions({ blobs, log }, container, name);
       deleted += 1;
@@ -270,7 +305,7 @@ async function readTranscript({ blobs, log }, doc) {
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
  * @param {{ queryDocs: Function, readDoc: Function, upsertDoc: Function, patchDoc: Function }} deps.store
- * @param {{ downloadBlob: Function, deleteBlob: Function, listBlobs: Function, getContainerClient: Function }} deps.blobs
+ * @param {{ downloadBlob: Function, deleteBlob: Function, getContainerClient: Function }} deps.blobs
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
  * @param {object} [deps.log]
@@ -410,7 +445,7 @@ export function createInterviewAdminHandlers({
         if (!id) return refused(400, 'INVALID_ID', 'The interview id is not valid.');
         const doc = await store.readDoc('content', id, id);
         if (!doc || !isInterview(doc)) return refused(404, 'NOT_FOUND', 'No interview has that id.');
-        const outcome = await deleteInterviewAssets({ blobs, log: context }, doc, { transcripts: false });
+        const outcome = await deleteInterviewAssets({ blobs, log: context }, doc, { scope: 'recording' });
         if (outcome.failed > 0) {
           return refused(502, 'DELETE_FAILED', 'The recording could not be deleted; try again.');
         }

@@ -15,7 +15,7 @@ import {
 } from '../lib/cosmos-client.js';
 import { createContentWorkflowHandlers } from '../lib/content-workflow.js';
 import { createDashboardStatsMaintainer } from '../lib/triggers/dashboard-stats.js';
-import { deleteBlob, getContainerClient, listBlobs } from '../lib/blob-storage.js';
+import { deleteBlob, getContainerClient } from '../lib/blob-storage.js';
 import { deleteInterviewAssets } from '../lib/interviews/admin.js';
 
 /**
@@ -35,7 +35,7 @@ const handlers = () =>
       }).applyTransition({ contentId, afterData: null }),
     // ADR 0040, D10: an interview's recording and transcripts go with it.
     onInterviewDeleted: (doc, context) =>
-      deleteInterviewAssets({ blobs: { deleteBlob, listBlobs, getContainerClient }, log: context }, doc),
+      deleteInterviewAssets({ blobs: { deleteBlob, getContainerClient }, log: context }, doc),
   });
 
 for (const name of [

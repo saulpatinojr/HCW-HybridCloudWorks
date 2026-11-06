@@ -12,14 +12,14 @@
 import { httpRouteByMethod } from '../lib/auth/http-route.js';
 import { getDefaultGuard } from '../lib/auth/default-guard.js';
 import { patchDoc, queryDocs, readDoc, upsertDoc } from '../lib/cosmos-client.js';
-import { deleteBlob, downloadBlob, getContainerClient, listBlobs } from '../lib/blob-storage.js';
+import { deleteBlob, downloadBlob, getContainerClient } from '../lib/blob-storage.js';
 import { createInterviewAdminHandlers } from '../lib/interviews/admin.js';
 
 const handlers = (context) =>
   createInterviewAdminHandlers({
     guard: getDefaultGuard(),
     store: { queryDocs, readDoc, upsertDoc, patchDoc },
-    blobs: { downloadBlob, deleteBlob, listBlobs, getContainerClient },
+    blobs: { downloadBlob, deleteBlob, getContainerClient },
     log: context,
   });
 
