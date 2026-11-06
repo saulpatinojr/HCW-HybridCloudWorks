@@ -165,7 +165,9 @@ never does on its own.
   ("CodeRabbit's summary is a checklist to work, not to tick", below); and two
   pull requests that touch the same lines, above all `CHANGELOG.md`, go one at a
   time ("Several PRs at once, but conflicts are resolved one at a time", at the
-  end).
+  end). CodeRabbit is removed until further notice, so the CodeRabbit parts of
+  those bullets (its approval and its boxes) are paused; the merge signal that
+  replaces them is the first bullet of "Pull requests open ready for review" below.
 
 ## Everything named to the owner carries its link
 
@@ -380,6 +382,32 @@ draft, and the owner had to flip each one to ready for review before merging
 repository setting that forces this; it is chosen by whoever creates the PR,
 so it is recorded here, where every session reads it.
 
+- **CodeRabbit is removed until further notice (owner instruction
+  2026-11-06).** CodeRabbit is the review bot that used to read every pull
+  request. Do not comment `@coderabbitai`, do not wait for a CodeRabbit
+  review, and do not treat its approval as the merge signal.
+  `.coderabbit.yaml` (its settings file) is deleted in every HCW repository
+  that had one, and suspending the CodeRabbit GitHub App is the owner's step
+  ([installed apps](https://github.com/settings/installations)). The merge
+  signal is now: every required status check green on a head that is up to
+  date with `main`, every review conversation answered and resolved, and the
+  pre-PR specialist agent review (see "Use the specialist agents") done and
+  its findings worked. Where a bullet below names CodeRabbit, only the
+  CodeRabbit parts are paused until the owner restores it; the rest of each
+  bullet still applies, including the pull request template, Copilot's
+  findings worked on their threads within three rounds, and the code scanning
+  check on `main` after a merge. Dependabot's pull requests still go to the
+  owner: when one is green, tell the owner with its link, and do not merge it
+  on a session's own judgement. A CodeRabbit request for changes left
+  standing on an open pull request still blocks its merge and no new
+  CodeRabbit review will replace it, so the owner dismisses it (the review's
+  **⋯** menu, **Dismiss review**); a session gives the owner the link and does
+  not dismiss it. Restoring means bringing back `.coderabbit.yaml` from git
+  history (the
+  [last version](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/0951d574373fcfe0be973a7e51c0d71e0eb585b9/.coderabbit.yaml)),
+  its line in the allowed root files of
+  [`scripts/validate-repository-structure.ps1`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/validate-repository-structure.ps1),
+  and the App installation.
 - **Create the PR ready for review.** Copilot reviews either state, CI runs
   on either state, and nothing in this repository keys on draft.
 - **The PR title is one line, at most about 72 characters, in the shape

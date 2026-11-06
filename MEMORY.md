@@ -273,7 +273,7 @@ merging your own pull requests, the review bots and their three-round cap, CodeR
 reviews. Its section "Lines a session does not cross" gathers the ones that used to be written only here ([#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455)). Follow that file, not a copy here.
 A few notes that are about this handoff rather than standing rules:
 
-- Ask CodeRabbit for a review with a comment containing `@coderabbitai review`. Copilot was out of credits until 2026-10-31; check whether its reviews are arriving again before waiting for one.
+- CodeRabbit is removed until further notice (owner instruction 2026-11-06): do not ask it for a review or wait for one; the merge signal is the first bullet of "Pull requests open ready for review" in `.claude/CLAUDE.md`. Copilot was out of credits until 2026-10-31; check whether its reviews are arriving again before waiting for one.
 - The Docker-Sponsored Open Source application is tracked only by the admin calendar alert for 2026-10-30. Do not list it as waiting.
 - Obsidian and the Second Brain work are not part of this workstream.
 

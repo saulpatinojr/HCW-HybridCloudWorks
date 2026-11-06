@@ -294,7 +294,7 @@ Recommendation: **not yet**, for three reasons, each from that page.
    merge fails". That is five required checks across four workflow files to change in one step, with the
    ruleset.
 2. A merge is then an "add to queue", not a merge. The repository's review
-   loop (CodeRabbit's approval of the current head, the three-round cap,
+   loop (a reviewer's verdict on the current head, the three-round cap,
    sessions merging their own pull requests) is written around the merge
    button; it would need rewriting for a queue.
 3. The page does not say which plans or repository visibilities offer merge
