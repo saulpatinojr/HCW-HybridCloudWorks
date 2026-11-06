@@ -542,7 +542,8 @@ describe('guardedFetchStream, the host rule and the unread body', () => {
       .fn()
       .mockResolvedValueOnce(res(302, { location: 'https://cdn.example/a.mp3' }))
       .mockResolvedValueOnce(streamRes(['x'], { 'content-type': 'audio/mpeg' }));
-    const allowHost = vi.fn((host) => host.endsWith('dropbox.com'));
+    // The same rule as fetch-audio.js's hostAllowed: the domain itself or a real subdomain.
+    const allowHost = vi.fn((host) => host === 'dropbox.com' || host.endsWith('.dropbox.com'));
     await expect(
       guardedFetchStream('https://www.dropbox.com/s/a.mp3', { fetch, resolve: publicAddr, dispatcherFor: pin, allowHost })
     ).rejects.toMatchObject({ refused: true, code: 'HOST_NOT_ALLOWED' });
