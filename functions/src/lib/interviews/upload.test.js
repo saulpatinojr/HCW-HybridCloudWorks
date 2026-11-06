@@ -632,7 +632,7 @@ describe('completeUpload', () => {
     expect(store.patchDoc).toHaveBeenCalledTimes(1);
   });
 
-  it('422s a size mismatch, deletes only this session’s blob and keeps the session and the current recording', async () => {
+  it('422s a size mismatch, fences the session under the ETag, deletes only this session’s blob and keeps the session and the current recording', async () => {
     store.content['int-1'].provenance.audio.path = OLD_PATH;
     storage.commitBlockList.mockResolvedValueOnce({ url: 'u', contentLength: content.length - 1 });
     const res = await handlers().completeUpload(completeRequest(), ctx);
@@ -641,8 +641,47 @@ describe('completeUpload', () => {
     expect(storage.deleteBlob).toHaveBeenCalledTimes(1);
     expect(storage.deleteBlob).toHaveBeenCalledWith(INTERVIEWS_AUDIO_CONTAINER, PATH);
     expect(storage.hashBlobSha256).not.toHaveBeenCalled();
-    expect(store.patchDoc).not.toHaveBeenCalled();
-    expect(store.content['int-1'].provenance.audio.path).toBe(OLD_PATH);
+    // The fence: one write under the ETag the completion read, before the delete.
+    expect(store.patchDoc).toHaveBeenCalledTimes(1);
+    expect(store.patchDoc.mock.calls[0][3]).toEqual({ ifMatch: '"1"' });
+    expect(store.patchDoc.mock.invocationCallOrder[0]).toBeLessThan(storage.deleteBlob.mock.invocationCallOrder[0]);
+    const audio = store.content['int-1'].provenance.audio;
+    expect(audio.path).toBe(OLD_PATH);
+    expect(audio.uploads[0]).toMatchObject({ status: 'open', refusals: 1, lastRefusedAt: '2026-11-05T11:00:00.000Z' });
+  });
+
+  it('a second refusal of the same session counts up and the session still passes the use-time check', async () => {
+    storage.hashBlobSha256.mockResolvedValue('b'.repeat(64));
+    expect((await handlers().completeUpload(completeRequest(), ctx)).status).toBe(422);
+    expect((await handlers().completeUpload(completeRequest(), ctx)).status).toBe(422);
+    expect(store.content['int-1'].provenance.audio.uploads[0].refusals).toBe(2);
+    expect(storage.deleteBlob).toHaveBeenCalledTimes(2);
+  });
+
+  it('a stale completion whose fence write meets a 412 answers 409 and deletes nothing (the other completion published)', async () => {
+    // Two completions read the same open session. The first (elsewhere)
+    // re-staged, committed, verified and published the blob, moving the ETag.
+    // This one saw a mismatch on its own earlier commit; its fence write
+    // fails, so the published blob is never deleted.
+    storage.hashBlobSha256.mockResolvedValueOnce('b'.repeat(64));
+    store.patchDoc.mockRejectedValueOnce(Object.assign(new Error('changed'), { code: 412 }));
+    const res = await handlers().completeUpload(completeRequest(), ctx);
+    expect(res.status).toBe(409);
+    expect(storage.deleteBlob).not.toHaveBeenCalled();
+  });
+
+  it('two completions of one session: the one that fences first wins, the other cannot publish', async () => {
+    // Sequential stand-in for the race: completion A refuses (fence lands,
+    // ETag moves, blob deleted); completion B, holding the stale document,
+    // verifies and tries to publish, and its ETag write is refused.
+    const stale = structuredClone(store.content['int-1']);
+    storage.hashBlobSha256.mockResolvedValueOnce('b'.repeat(64));
+    expect((await handlers().completeUpload(completeRequest(), ctx)).status).toBe(422);
+    expect(storage.deleteBlob).toHaveBeenCalledTimes(1);
+    store.queryDocs.mockResolvedValueOnce([stale]);
+    const res = await handlers().completeUpload(completeRequest(), ctx);
+    expect(res.status).toBe(409);
+    expect(store.content['int-1'].provenance.audio.path).toBeUndefined();
     expect(store.content['int-1'].provenance.audio.uploads[0].status).toBe('open');
   });
 
@@ -652,7 +691,7 @@ describe('completeUpload', () => {
     expect(res.status).toBe(422);
     expect(JSON.parse(res.body).error).toMatch(/SHA-256/);
     expect(storage.deleteBlob).toHaveBeenCalledWith(INTERVIEWS_AUDIO_CONTAINER, PATH);
-    expect(store.patchDoc).not.toHaveBeenCalled();
+    expect(store.patchDoc).toHaveBeenCalledTimes(1);
     expect(allLogText(ctx)).toContain('hash mismatch');
     expect(allLogText(ctx)).not.toContain('b'.repeat(64));
     expect(allLogText(ctx)).not.toContain(digest);

@@ -16,7 +16,7 @@ Personal data is collected across three functional areas:
 | **Ambassador hub** | Cosmos DB container `ambassador` (`cosmos-site-prod-cus` / `hcw`) | The owner's own Ambassador hub: programs, the owner's applications to them, and their evidence (`functions/src/lib/ambassador/validate.js`). No field is dedicated to third-party personal data, but editor-gated free-text fields (`notes`, `responses`, `customValues`, `reviewerFeedback`, `statusNote`, `description`) hold whatever an editor types, and `files` and `images` reference attachments: an external URL, or a private blob path in storage account `stsiteprodcus01` (container `speakerevents` by default) | Kept until the owner deletes them. No container TTL (#1234 set one in error; it was removed by #1238 before any apply). A request searches the text fields and opens every referenced file and image (Step 2 of sections 3 and 4). |
 | **Public submissions** | Cosmos DB container `content` (`storageCollection == 'content'`) | Title, summary, content, cloudProvider, tags, language | Codebase audit (#1237) confirms public submissions (`functions/src/lib/submissions.js`) are completely anonymous. No submitter or author email address is accepted, ingested, or stored (`submitterEmail` and `authorEmail` do not exist). |
 | **Disaster recovery backups** | Azure Blob Storage container `cosmos-export` on account `stsiteprodcus01` (`rg-stor-site-prod-cus`) | Point-in-time snapshot gzip NDJSON of Cosmos containers | Retained for exactly 35 days under immutable storage lifecycle management policy `expire-cosmos-export` (ADR 0028). Purged automatically upon lifecycle expiry. |
-| **Interview recordings** | Azure Blob Storage container `interviews-audio` on account `stsiteprodcus01` (`rg-stor-site-prod-cus`), prefix `audio/`; transcripts beside it under `transcripts/` | A guest's voice recording (`audio/<interviewId>.<ext>`) and the transcripts made from it (`transcripts/<interviewId>/v<n>.json`); the interview document in Cosmos `content` holds the guest's name, role, bio, consent record and the recording's path, size and hash, never the audio | Recordings and their previous versions are deleted by lifecycle rule `expire-interview-audio` after `interview_audio_retention_days` (365 by default, set in the HCP Terraform workspace; ADR 0040, [#1565](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1565)), then restorable for 7 more days by the account's soft delete. Transcripts are kept until the interview is deleted from the admin. Private container: no public URL, no player, written and read by the Function App identity only. A request deletes the recording with the admin page's "Delete recording" button, or the whole interview (document, recording and transcripts) with the delete route. |
+| **Interview recordings** | Azure Blob Storage container `interviews-audio` on account `stsiteprodcus01` (`rg-stor-site-prod-cus`), prefix `audio/`; transcripts beside it under `transcripts/` | A guest's voice recording (`audio/<interviewId>/<uploadId>.<ext>`, one blob per upload session) and the transcripts made from it (`transcripts/<interviewId>/v<n>.json`); the interview document in Cosmos `content` holds the guest's name, role, bio, consent record and the recording's path, size and hash, never the audio | Recordings and their previous versions are deleted by lifecycle rule `expire-interview-audio` after `interview_audio_retention_days` (365 by default, set in the HCP Terraform workspace; ADR 0040, [#1565](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1565)), then restorable for 7 more days by the account's soft delete. Transcripts are kept until the interview is deleted from the admin. Private container: no public URL, no player, written and read by the Function App identity only. A request deletes the recording with the admin page's "Delete recording" button, or the whole interview (document, recording and transcripts) with the delete route. |
 
 ---
 
@@ -126,32 +126,45 @@ Under GDPR Article 17(3)(b) and EDPB guidelines, data in immutable disaster-reco
 
 ### Step 5: Interview recordings (`interviews-audio`)
 
-A guest's recording is a blob in the private `interviews-audio` container; the interview document in Cosmos `content` points at it (`provenance.audio.path`, and any earlier paths under `provenance.audio.superseded`). The admin page's "Delete recording" button and the interview-aware delete route arrive with the content-type slice of [#1565](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1565); until they do, erase by hand:
+A guest's recording is a blob in the private `interviews-audio` container, one blob per upload session under the interview's own folder (`audio/<interviewId>/<uploadId>.<ext>`); the interview document in Cosmos `content` points at the current one (`provenance.audio.path`), lists the ones it replaced (`provenance.audio.superseded`) and keeps any open upload sessions (`provenance.audio.uploads`). The admin page's "Delete recording" button and the interview-aware delete route arrive with the content-type slice of [#1565](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1565); until they do, erase by hand. The order matters: the document is cleared first, which stops any upload still in flight (its blocks and completion answer 404 or 409 from then on), and only then are the blobs deleted, so a late completion can neither publish a new blob nor leave one untracked.
 
-1. Read the paths from the document (`GET /api/cms/content/{id}` as an editor, with the interview's id): `provenance.audio.path` and every entry of `provenance.audio.superseded`. Note the interview id.
-2. The storage account refuses requests from outside the Function App's subnet, so the delete is run from a workstation added to its firewall for the minutes it takes. Add the workstation (PowerShell; `$ip` is the workstation's public IPv4 address, read from `https://api.ipify.org`):
+All lines are PowerShell. The interview's id is the document id shown in the admin Content list (and in the request); set it once and the other values are read from the estate:
+
+```powershell
+$interviewId = Read-Host "Interview id"
+```
+
+1. Stop uploads for this interview: do not open the interview form for it while the procedure runs (the site has one editor, the owner), and check that no session is open. Read the document as an editor with `GET /api/cms/content/item?contentId=<the id>` (the admin bearer token in the `Authorization` header, as every `cms` route) and note `provenance.audio.path`, every entry of `provenance.audio.superseded`, and that `provenance.audio.uploads` is absent or empty. If a session is open, wait for the upload to finish or fail (an abandoned one is harmless: step 2 ends it).
+2. Clear the document first, so nothing can publish or reference a blob after this point: `POST /api/updateContentItem` as an editor with the body `{ "contentId": "<the id>", "updates": { "provenance": { "source": "upload", "audio": {} } } }` (`provenance` is written whole, so repeat any other `provenance` fields the document carried). From now on a block or completion for any session of this interview answers 404 or 409.
+3. Give the workstation reach and the right to delete versions. The storage account refuses requests from outside the Function App's subnet, and deleting a blob *version* needs `deleteBlobVersion/action`, which the Storage Blob Data Contributor role lacks ([Blob versioning: authorize operations](https://learn.microsoft.com/azure/storage/blobs/versioning-overview#authorize-operations-on-blob-versions)); the Function App identity's Owner grant does not apply to a signed-in person. Both are temporary, scoped to this container, and removed in step 6:
 
    ```powershell
    $ip = (Invoke-RestMethod https://api.ipify.org).Trim()
    az storage account network-rule add --account-name stsiteprodcus01 -g rg-stor-site-prod-cus --ip-address $ip -o none
+   $me = (az ad signed-in-user show -o json | ConvertFrom-Json).id
+   $scope = (az storage container-rm show --storage-account stsiteprodcus01 -g rg-stor-site-prod-cus -n interviews-audio -o json | ConvertFrom-Json).id
+   az role assignment create --assignee-object-id $me --assignee-principal-type User --role "Storage Blob Data Owner" --scope $scope -o none
    ```
 
-3. Delete each path read in step 1, including its versions (`--delete-snapshots include` removes snapshots; versions are removed by deleting the current blob when versioning keeps them only until the `expire-interview-audio` rule's days have passed, so delete them by name as well when the listing shows any):
+   A role assignment takes a few minutes to apply; a `403` on the next step means wait and retry, not that the grant failed.
+4. Delete every blob under the interview's folder, then every version of each. With versioning on, deleting the current blob only turns it into a previous version, and `--delete-snapshots include` removes snapshots, not versions, so each listed version is deleted by its id:
 
    ```powershell
-   az storage blob delete --account-name stsiteprodcus01 --auth-mode login -c interviews-audio -n "audio/<interviewId>/<uploadId>.mp3" --delete-snapshots include -o none
-   az storage blob list --account-name stsiteprodcus01 --auth-mode login -c interviews-audio --prefix "audio/<interviewId>/" --include v -o table
+   az storage blob list --account-name stsiteprodcus01 --auth-mode login -c interviews-audio --prefix "audio/$interviewId/" -o json | ConvertFrom-Json | ForEach-Object { az storage blob delete --account-name stsiteprodcus01 --auth-mode login -c interviews-audio -n $_.name --delete-snapshots include -o none }
+   az storage blob list --account-name stsiteprodcus01 --auth-mode login -c interviews-audio --prefix "audio/$interviewId/" --include v -o json | ConvertFrom-Json | ForEach-Object { az storage blob delete --account-name stsiteprodcus01 --auth-mode login -c interviews-audio -n $_.name --version-id $_.versionId -o none }
+   az storage blob list --account-name stsiteprodcus01 --auth-mode login -c interviews-audio --prefix "audio/$interviewId/" --include v -o table
    ```
 
-   The listing should show no current blob under the interview's folder; versions it still lists are deleted with `az storage blob delete ... --version-id <id>` for each, which the Function App identity's Storage Blob Data Owner grant also allows the delete helper to do once it exists.
-4. Remove the workstation again (same `$ip`):
+   The last line should print nothing under the interview's folder. Any row it still prints is a version the second line missed (a listing can lag a delete by a moment): run the second line again. When the request covers the transcripts too, repeat the three lines with `transcripts/$interviewId/` in place of `audio/$interviewId/`.
+5. Confirm the document is clear (step 2's read again) and that `provenance.audio` is `{}`; a completion that slipped in between steps 1 and 2 would have put a `path` back, in which case repeat steps 2 and 4.
+6. Remove the grant and the firewall allowance (same `$me`, `$scope` and `$ip`):
 
    ```powershell
+   az role assignment delete --assignee $me --role "Storage Blob Data Owner" --scope $scope -o none
    az storage account network-rule remove --account-name stsiteprodcus01 -g rg-stor-site-prod-cus --ip-address $ip -o none
    ```
 
-5. Clear the pointer on the document so nothing references a deleted blob: `POST /api/updateContentItem` as an editor with the body `{ "contentId": "<interviewId>", "updates": { "provenance": { "source": "upload", "audio": {} } } }` (the recording's path, size, hash and `superseded` list all go; `provenance` is written whole, so repeat any other `provenance` fields the document carried).
-6. Tell the data subject: the recording is removed from live storage; the account's soft delete keeps a deleted blob restorable for 7 days, after which it is unrecoverable, and the transcripts (`transcripts/<interviewId>/`) are deleted the same way when the request covers them.
+7. Tell the data subject: the recording and its versions are removed from live storage; the account's soft delete keeps each deleted blob and version restorable for 7 days, after which it is unrecoverable.
 
 ---
 

@@ -467,7 +467,22 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         // A mismatch deletes this session's blob and nothing else: the
         // recording the document already points at has its own name and is
         // untouched. The session stays open for the retry.
+        //
+        // Fenced against a second completion of the same session: before the
+        // blob is deleted, the session's refusal count is written under the
+        // document ETag this completion read. If another completion wrote
+        // the document in between (it published this very blob after a
+        // retry re-staged the blocks), that write answers 412, the outer
+        // catch maps it to 409, and nothing is deleted; and once this write
+        // has landed, the other completion's publish fails the same way, so
+        // a blob is never deleted after it was published.
         const refuse = async (sentence, line) => {
+          const fenced = sessionsOf(doc).map((s) =>
+            s && s.uploadId === uploadId
+              ? { ...s, refusals: (Number.isInteger(s.refusals) ? s.refusals : 0) + 1, lastRefusedAt: now().toISOString() }
+              : s
+          );
+          await writeProvenance(doc, { ...(doc.provenance?.audio ?? {}), uploads: fenced });
           await discardBlob(session.path, context, 'interviewUploadComplete', 'after a refused completion');
           context.warn?.(line);
           return json(422, { error: sentence });

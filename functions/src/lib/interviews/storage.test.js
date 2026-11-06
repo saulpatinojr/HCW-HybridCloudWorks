@@ -35,21 +35,54 @@ describe('interviews storage layout', () => {
     expect(STORAGE_TF).not.toContain(`${INTERVIEWS_AUDIO_CONTAINER}/transcripts/`);
   });
 
+  /**
+   * The names of the lifecycle rules in a policy text that are enabled, name
+   * no prefix_match and carry a base_blob delete: such a rule reaches
+   * transcripts/ (and everything else on the account). Comments are dropped
+   * first, so a prefix that is only commented out does not count as one. The
+   * account-wide rule that expires previous versions only is not an offender.
+   */
+  const unfilteredBaseBlobDeleteRules = (text) => {
+    const code = text.replace(/^\s*#.*$/gm, '').replace(/\/\/.*$/gm, '');
+    const policy = code.slice(code.indexOf('resource "azurerm_storage_management_policy" "cleanup"'));
+    return policy
+      .split(/\n\s*rule \{/)
+      .slice(1)
+      .filter(
+        (rule) =>
+          /enabled\s*=\s*true/.test(rule) &&
+          !/prefix_match\s*=/.test(rule) &&
+          /base_blob\s*\{[^}]*delete_after/s.test(rule)
+      )
+      .map((rule) => (rule.match(/name\s*=\s*"([^"]+)"/) ?? [])[1]);
+  };
+
   it('no lifecycle rule without a prefix deletes base blobs, so transcripts are never expired by a rule that reaches them', () => {
-    // Each `rule { ... }` block of the management policy, read as text: one
-    // that is enabled, names no prefix_match and carries a base_blob delete
-    // would reach transcripts/ (and everything else on the account). The
-    // account-wide rule that expires previous versions only is allowed.
-    const policy = STORAGE_TF.slice(STORAGE_TF.indexOf('resource "azurerm_storage_management_policy" "cleanup"'));
-    const rules = policy.split(/\n  rule \{/).slice(1);
-    expect(rules.length).toBeGreaterThanOrEqual(5);
-    const offenders = rules.filter(
-      (rule) =>
-        /enabled\s*=\s*true/.test(rule) &&
-        !/prefix_match\s*=/.test(rule) &&
-        /base_blob\s*\{[^}]*delete_after/s.test(rule)
-    );
-    expect(offenders.map((r) => (r.match(/name\s*=\s*"([^"]+)"/) ?? [])[1])).toEqual([]);
+    expect(STORAGE_TF.split(/\n\s*rule \{/).length - 1).toBeGreaterThanOrEqual(5);
+    expect(unfilteredBaseBlobDeleteRules(STORAGE_TF)).toEqual([]);
+  });
+
+  it('the guard reads code, not comments: a prefix that is commented out does not exempt a rule', () => {
+    const withPrefix = `resource "azurerm_storage_management_policy" "cleanup" {
+  rule {
+    name    = "expire-interview-audio"
+    enabled = true
+    filters {
+      prefix_match = ["interviews-audio/audio/"]
+      blob_types   = ["blockBlob"]
+    }
+    actions {
+      base_blob {
+        delete_after_days_since_creation_greater_than = 365
+      }
+    }
+  }
+}`;
+    expect(unfilteredBaseBlobDeleteRules(withPrefix)).toEqual([]);
+    const commentedOut = withPrefix.replace('      prefix_match', '      # prefix_match');
+    expect(unfilteredBaseBlobDeleteRules(commentedOut)).toEqual(['expire-interview-audio']);
+    const versionsOnly = withPrefix.replace('base_blob', 'version').replace('delete_after_days_since_creation_greater_than', 'delete_after_days_since_creation');
+    expect(unfilteredBaseBlobDeleteRules(versionsOnly.replace('      prefix_match', '      # prefix_match'))).toEqual([]);
   });
 
   it('is neither publicly served nor reachable from the generic upload route', () => {
