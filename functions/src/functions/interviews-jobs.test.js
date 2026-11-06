@@ -67,7 +67,7 @@ describe('registrations', () => {
     }
     expect(specs['interview-fetch-audio'].timeoutMs).toBe(10 * 60 * 1000);
     expect(specs['interview-transcribe'].timeoutMs).toBe(25 * 60 * 1000);
-    expect(specs['interview-draft'].timeoutMs).toBe(5 * 60 * 1000);
+    expect(specs['interview-draft'].timeoutMs).toBe(25 * 60 * 1000);
   });
 });
 

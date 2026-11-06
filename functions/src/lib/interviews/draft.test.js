@@ -10,10 +10,14 @@ import {
   SYSTEM_PROMPT,
   draftInterview,
   draftPrompt,
+  PASS_TIMEOUT_MS,
   guessInterviewer,
   itemsPerPass,
   parseDraftOutput,
   passCostUsd,
+  savedPasses,
+  splitText,
+  splitTurn,
   parseDraftPayload,
   splitTranscript,
 } from './draft.js';
@@ -78,11 +82,47 @@ describe('the prompt', () => {
     expect(SYSTEM_PROMPT).toContain('If the guest did not say it, leave it out.');
   });
 
-  it('splits turn lines into passes under the byte cap on turn boundaries, and cuts one turn longer than a pass', () => {
+  it('splits turn lines into passes under the byte cap on turn boundaries, and splits a turn longer than a pass into labelled pieces, dropping nothing', () => {
     expect(splitTranscript(['a: one', 'b: two', 'c: three'], 14)).toEqual(['a: one\nb: two', 'c: three']);
     expect(splitTranscript([], 10)).toEqual([]);
     const long = `a: ${'x'.repeat(50)}`;
-    expect(splitTranscript([long, 'b: y'], 20)).toEqual([long.slice(0, 20), 'b: y']);
+    // 20 bytes a pass, 1 for the newline, 3 for the label: 16 characters a piece.
+    const passes = splitTranscript([long, 'b: y'], 20);
+    expect(passes).toEqual(['a: ' + 'x'.repeat(16), 'a: ' + 'x'.repeat(16), 'a: ' + 'x'.repeat(16), 'a: xx\nb: y']);
+    for (const pass of passes) expect(Buffer.byteLength(pass, 'utf8')).toBeLessThanOrEqual(20);
+  });
+
+  it('splits a 300 kB guest turn into three labelled pieces at sentence ends, every character kept', () => {
+    const sentence = 'We moved the estate to landing zones because the policies could not keep up. ';
+    const body = sentence.repeat(Math.ceil(300_000 / sentence.length)).slice(0, 300_000);
+    const passes = splitTranscript([`Speaker 2: ${body}`]);
+    expect(passes).toHaveLength(3);
+    for (const pass of passes) {
+      expect(pass.startsWith('Speaker 2: ')).toBe(true);
+      expect(Buffer.byteLength(pass, 'utf8')).toBeLessThanOrEqual(120_000);
+    }
+    // Every cut is just after a sentence end, and the pieces rejoin to the turn exactly.
+    expect(passes[0].endsWith('follow. ') || passes[0].endsWith('up. ')).toBe(true);
+    expect(passes.map((p) => p.slice('Speaker 2: '.length)).join('')).toBe(body);
+  });
+
+  it('never cuts inside a multi-byte character, whatever the limit', () => {
+    // No sentence ends: the cut falls on the byte limit, inside a three-byte (€) or four-byte (𝄞) character.
+    for (const ch of ['€', '𝄞', 'é']) {
+      const body = `ab${ch.repeat(40)}`;
+      for (const limit of [10, 11, 12, 13]) {
+        const pieces = splitText(body, limit);
+        expect(pieces.join(''), `${ch} at ${limit}`).toBe(body);
+        for (const piece of pieces) {
+          expect(Buffer.byteLength(piece, 'utf8')).toBeLessThanOrEqual(limit);
+          expect(piece).not.toMatch(/�/);
+        }
+      }
+    }
+    expect(splitText('short', 100)).toEqual(['short']);
+    expect(splitText('', 100)).toEqual(['']);
+    // A label too long to be one is not kept as one: the line is split as text.
+    expect(splitTurn(`${'n'.repeat(70)}: ${'x'.repeat(20)}`, 30).join('')).toBe(`${'n'.repeat(70)}: ${'x'.repeat(20)}`);
   });
 });
 
@@ -120,6 +160,7 @@ describe('draftInterview', () => {
       flagged: 0,
       droppedQuotes: 1,
       passes: 1,
+      resumedFrom: 0,
       model: 'gpt-5-mini',
       provider: 'foundry',
       unsure: false,
@@ -129,14 +170,14 @@ describe('draftInterview', () => {
     expect(ai.generateJsonResponse.mock.calls[0][0]).toMatchObject({ feature: 'interviewDrafting', purpose: 'draft', systemPrompt: SYSTEM_PROMPT });
     expect(ai.generateJsonResponse.mock.calls[0][0].prompt).toContain('Guest name (data): Alex Example');
     expect(store.patchDoc).toHaveBeenNthCalledWith(1, 'content', 'int-1', { interview: { stage: 'drafting', error: null } });
-    const final = store.patchDoc.mock.calls[1][2];
+    const final = store.patchDoc.mock.calls.at(-1)[2];
     expect(final.qa).toEqual([
       { q: 'Why landing zones?', a: 'The subscriptions were growing faster than the policies could follow them.', pullQuote: 'growing faster than the policies' },
       { q: 'The hardest part?', a: 'Convincing people that management groups were not just folders.', pullQuote: '' },
     ]);
     expect(final.provenance).toEqual({
       keep: 1,
-      drafting: { model: 'gpt-5-mini', provider: 'foundry', draftedAt: '2026-11-05T10:00:00.000Z', transcriptVersion: 1, passes: 1, droppedQuotes: 1, flagged: 0, truncated: false },
+      drafting: { model: 'gpt-5-mini', provider: 'foundry', draftedAt: '2026-11-05T10:00:00.000Z', transcriptVersion: 1, passCount: 1, resumedFrom: 0, droppedQuotes: 1, flagged: 0, truncated: false },
     });
     expect(final.interview).toEqual({ stage: 'ready', error: null, speakers: { interviewer: 'Speaker 1', guest: 'Speaker 2', unsure: false } });
     const line = log.log.mock.calls[0][0];
@@ -150,7 +191,7 @@ describe('draftInterview', () => {
     const store = makeStore();
     const report = await draftInterview({ interviewId: 'int-1', transcriptVersion: 1, store, storage: makeStorage(), ai: makeAi(invented) });
     expect(report).toMatchObject({ items: 1, flagged: 1 });
-    expect(store.patchDoc.mock.calls[1][2].qa[0]).toMatchObject({ needsReview: true, a: expect.stringMatching(/Kubernetes/) });
+    expect(store.patchDoc.mock.calls.at(-1)[2].qa[0]).toMatchObject({ needsReview: true, a: expect.stringMatching(/Kubernetes/) });
   });
 
   it('re-asks once when the answer is not the shape, then fails with INVALID_DRAFT', async () => {
@@ -186,7 +227,7 @@ describe('draftInterview', () => {
     const store = makeStore();
     const report = await draftInterview({ interviewId: 'int-1', transcriptVersion: 1, store, storage: makeStorage(), ai: makeAi({ ...goodAnswer, speakers: { interviewer: 'Host', guest: 'Guest' } }) });
     expect(report.unsure).toBe(true);
-    expect(store.patchDoc.mock.calls[1][2].interview.speakers).toEqual({ interviewer: 'Speaker 1', guest: 'Speaker 2', unsure: true });
+    expect(store.patchDoc.mock.calls.at(-1)[2].interview.speakers).toEqual({ interviewer: 'Speaker 1', guest: 'Speaker 2', unsure: true });
   });
 
   it('stops between passes when the job’s signal fires during the first, leaving the stage failed', async () => {
@@ -207,7 +248,7 @@ describe('draftInterview', () => {
     const store = makeStore();
     const report = await draftInterview({ interviewId: 'int-1', transcriptVersion: 1, store, storage: makeStorage(), ai: makeAi(swapped) });
     expect(report.unsure).toBe(true);
-    expect(store.patchDoc.mock.calls[1][2].interview.speakers).toEqual({ interviewer: 'Speaker 1', guest: 'Speaker 2', unsure: true });
+    expect(store.patchDoc.mock.calls.at(-1)[2].interview.speakers).toEqual({ interviewer: 'Speaker 1', guest: 'Speaker 2', unsure: true });
     // The guard still judged the answers against the count's guest, so nothing was flagged.
     expect(report.flagged).toBe(0);
 
@@ -237,7 +278,7 @@ describe('draftInterview', () => {
     expect(prompts[0]).not.toContain('399');
     // The ceiling was read before every pass, and the stored list carries items from every pass.
     expect(store.queryDocs).toHaveBeenCalledTimes(4);
-    const stored = store.patchDoc.mock.calls[1][2].qa;
+    const stored = store.patchDoc.mock.calls.at(-1)[2].qa;
     expect(stored.some((item) => item.q.startsWith('P3 '))).toBe(true);
   });
 
@@ -264,10 +305,10 @@ describe('draftInterview', () => {
     expect(prompts[0]).not.toContain('Questions already drafted');
     expect(prompts[1]).toContain('Questions already drafted from earlier parts (data; do not repeat them):\n- First Q0?');
     expect(prompts[1]).toContain('- First Q29?');
-    const stored = store.patchDoc.mock.calls[1][2];
+    const stored = store.patchDoc.mock.calls.at(-1)[2];
     expect(stored.qa).toHaveLength(40);
     expect(stored.qa[39].q).toBe('Second Q9?');
-    expect(stored.provenance.drafting).toMatchObject({ passes: 2, truncated: true });
+    expect(stored.provenance.drafting).toMatchObject({ passCount: 2, truncated: true });
     // Under forty: not truncated.
     const short = await draftInterview({ interviewId: 'int-1', transcriptVersion: 1, store: makeStore(), storage: makeStorage(), ai: makeAi(goodAnswer), env: {} });
     expect(short.truncated).toBe(false);
@@ -286,5 +327,91 @@ describe('draftInterview', () => {
     const controller = new AbortController();
     controller.abort(new Error('job timed out'));
     await expect(draftInterview({ interviewId: 'int-1', transcriptVersion: 1, store: makeStore(), storage: makeStorage(), ai: makeAi(goodAnswer), signal: controller.signal })).rejects.toThrow('job timed out');
+  });
+});
+
+describe('checkpoints and resume', () => {
+  // Four passes: 400 turns of about a kilobyte each.
+  const many = Array.from({ length: 400 }, (_, i) => ({ speaker: i % 2 ? 'Speaker 2' : 'Speaker 1', text: `${i % 2 ? 'Answer' : 'Question?'} ${'word '.repeat(198)}${i}` }));
+  const passAnswer = (p) => () => ({ speakers: { interviewer: 'Speaker 1', guest: 'Speaker 2' }, qa: [{ q: `P${p} question?`, a: `Answer word ${p}` }] });
+
+  /** A store whose document keeps every patch, as Cosmos would. */
+  function liveStore() {
+    const doc = { id: 'int-1', type: 'interview', guest: { name: 'Alex Example' }, provenance: { keep: 1 }, interview: { stage: 'transcribed' } };
+    return {
+      doc,
+      readDoc: vi.fn(async () => structuredClone(doc)),
+      patchDoc: vi.fn(async (container, id, patch) => {
+        Object.assign(doc, structuredClone(patch));
+        return doc;
+      }),
+      queryDocs: vi.fn(async () => []),
+    };
+  }
+
+  it('saves each pass as provenance.drafting.passes[k] with the version, and a run that stops after pass two resumes at pass three', async () => {
+    const store = liveStore();
+    const failing = makeAi(passAnswer(0), passAnswer(1), () => {
+      throw Object.assign(new Error('provider down'), { status: 503 });
+    });
+    await expect(draftInterview({ interviewId: 'int-1', transcriptVersion: 1, store, storage: makeStorage(transcriptBlob({ segments: many })), ai: failing, env: {} })).rejects.toThrow('provider down');
+    expect(failing.generateJsonResponse).toHaveBeenCalledTimes(3);
+    const drafting = store.doc.provenance.drafting;
+    expect(drafting).toMatchObject({ transcriptVersion: 1, passCount: 4 });
+    expect(drafting.passes).toEqual([
+      { transcriptVersion: 1, qa: [{ q: 'P0 question?', a: 'Answer word 0', pullQuote: '' }], speakers: { interviewer: 'Speaker 1', guest: 'Speaker 2' } },
+      { transcriptVersion: 1, qa: [{ q: 'P1 question?', a: 'Answer word 1', pullQuote: '' }], speakers: { interviewer: 'Speaker 1', guest: 'Speaker 2' } },
+    ]);
+    expect(store.doc.provenance.keep).toBe(1);
+    expect(store.doc.interview.stage).toBe('failed');
+
+    // The re-run asks only parts three and four, with the earlier questions as already drafted.
+    const resume = makeAi(passAnswer(2), passAnswer(3));
+    const log = { log: vi.fn() };
+    const report = await draftInterview({ interviewId: 'int-1', transcriptVersion: 1, store, storage: makeStorage(transcriptBlob({ segments: many })), ai: resume, env: {}, log });
+    expect(report).toMatchObject({ passes: 4, resumedFrom: 2, items: 4 });
+    expect(resume.generateJsonResponse).toHaveBeenCalledTimes(2);
+    const firstPrompt = resume.generateJsonResponse.mock.calls[0][0].prompt;
+    expect(firstPrompt).toContain('part 3 of 4');
+    expect(firstPrompt).toContain('- P0 question?');
+    expect(firstPrompt).toContain('- P1 question?');
+    expect(store.queryDocs).toHaveBeenCalledTimes(3 + 2);
+    expect(store.doc.qa.map((item) => item.q)).toEqual(['P0 question?', 'P1 question?', 'P2 question?', 'P3 question?']);
+    // A finished draft keeps the count and clears the checkpoints, so Draft again starts over.
+    expect(store.doc.provenance.drafting).toMatchObject({ passCount: 4, resumedFrom: 2 });
+    expect(store.doc.provenance.drafting.passes).toBeUndefined();
+    expect(log.log.mock.calls[0][0]).toContain('4 pass(es), resumed after 2');
+    const again = makeAi(passAnswer(0), passAnswer(1), passAnswer(2), passAnswer(3));
+    await expect(draftInterview({ interviewId: 'int-1', transcriptVersion: 1, store, storage: makeStorage(transcriptBlob({ segments: many })), ai: again, env: {} })).resolves.toMatchObject({ resumedFrom: 0 });
+    expect(again.generateJsonResponse).toHaveBeenCalledTimes(4);
+  });
+
+  it('starts over when the saved passes are another version’s, another split’s, or not a checked list', () => {
+    const entry = { transcriptVersion: 2, qa: [{ q: 'Q?', a: 'A.' }], speakers: { guest: 'Speaker 2' } };
+    expect(savedPasses({ transcriptVersion: 2, passCount: 3, passes: [entry, entry] }, { transcriptVersion: 2, passCount: 3 })).toHaveLength(2);
+    expect(savedPasses({ transcriptVersion: 1, passCount: 3, passes: [entry] }, { transcriptVersion: 2, passCount: 3 })).toEqual([]);
+    expect(savedPasses({ transcriptVersion: 2, passCount: 4, passes: [entry] }, { transcriptVersion: 2, passCount: 3 })).toEqual([]);
+    expect(savedPasses({ transcriptVersion: 2, passCount: 3, passes: [entry, { ...entry, qa: [] }, entry] }, { transcriptVersion: 2, passCount: 3 })).toHaveLength(1);
+    expect(savedPasses({ transcriptVersion: 2, passCount: 3, passes: [{ ...entry, transcriptVersion: 1 }] }, { transcriptVersion: 2, passCount: 3 })).toEqual([]);
+    expect(savedPasses(null, { transcriptVersion: 2, passCount: 3 })).toEqual([]);
+    expect(savedPasses({ transcriptVersion: 2, passCount: 3, passes: 'x' }, { transcriptVersion: 2, passCount: 3 })).toEqual([]);
+  });
+
+  it('gives each pass its own deadline: a pass that hangs fails with PASS_TIMEOUT after the earlier ones are saved', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = liveStore();
+      const hanging = makeAi(passAnswer(0), () => new Promise(() => {}));
+      const settled = draftInterview({ interviewId: 'int-1', transcriptVersion: 1, store, storage: makeStorage(transcriptBlob({ segments: many })), ai: hanging, env: {} }).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(PASS_TIMEOUT_MS + 1);
+      const error = await settled;
+      expect(error).toMatchObject({ code: 'PASS_TIMEOUT', status: 504 });
+      expect(error.message).toMatch(/Part 2 of the transcript did not draft within 3 minutes/);
+      expect(store.doc.provenance.drafting.passes).toHaveLength(1);
+      // The router was handed a signal that fired at the deadline.
+      expect(hanging.generateJsonResponse.mock.calls[1][0].signal.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

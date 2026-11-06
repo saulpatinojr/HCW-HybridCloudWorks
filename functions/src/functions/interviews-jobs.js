@@ -127,8 +127,11 @@ registerJobType(DRAFT_JOB_TYPE, {
   description:
     'Turn an interview transcript into a question-and-answer draft through the interviewDrafting task, check every quote and answer against the transcript, and store the list on the interview for review.',
   maxPayloadBytes: DRAFT_JOB_MAX_PAYLOAD_BYTES,
-  // One or two model calls, each inside the router's own attempt timeouts.
-  timeoutMs: 5 * 60 * 1000,
+  // Up to ten passes of 120 kB, each under its own 3-minute deadline and
+  // saved as it finishes (lib/interviews/draft.js), so a transcript that
+  // needs more than this budget finishes on a re-run, resuming at the first
+  // pass with no saved output.
+  timeoutMs: 25 * 60 * 1000,
   worker: runDraft,
 });
 

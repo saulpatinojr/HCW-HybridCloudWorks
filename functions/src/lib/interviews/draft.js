@@ -20,7 +20,19 @@
  * A transcript over 120 kB (MAX_TRANSCRIPT_INPUT_BYTES, the cap the
  * recording script uses) is sent in as many passes as it needs, split on
  * turn boundaries — a 400,000-character transcript, the most the route
- * accepts, is four — and the lists are joined. Each pass asks for its share
+ * accepts, is at most about 1.2 MB of UTF-8 and so up to ten passes — and
+ * the lists are joined. A single turn longer than a pass is split, never
+ * cut short: at a UTF-8 character boundary, at the last sentence end
+ * before the limit when there is one, each piece keeping the turn's
+ * `Speaker N:` label, so every word the guest said reaches a prompt.
+ *
+ * EACH PASS IS A CHECKPOINT. Its checked items are saved on the document
+ * as `provenance.drafting.passes[k]` with the transcript version, each
+ * pass runs under its own 3-minute deadline, and a re-run or a sweeper
+ * re-queue for the same transcript version resumes at the first pass with
+ * no saved output, so a long transcript survives the job's 25-minute
+ * budget across runs. A finished draft clears the checkpoints, so "Draft
+ * again" starts over. Each pass asks for its share
  * of the 40 items the page allows, so every part of the transcript is
  * represented in the draft rather than the first part filling the list,
  * and each later pass is given the questions already drafted, as data, so
@@ -126,24 +138,99 @@ export function draftPrompt({ guestName, guestRole, transcript, pass, passes, al
     .join('\n');
 }
 
-/** Turn lines, split into passes under `maxBytes` each on turn boundaries. */
+/** The `Speaker N: ` label at the start of a turn line, or '' when it has none. */
+const LABEL = /^([^\n:]{1,60}): /;
+
+/** A sentence end followed by space: where a long turn is best cut. */
+const SENTENCE_END = /[.!?\u2026]["'\u201d\u2019)\]]*\s+/g;
+
+/**
+ * Split one text into pieces of at most `maxBytes` of UTF-8 each, losing
+ * nothing: every cut is on a character boundary (never inside a multi-byte
+ * character), at the last sentence end in the piece when one falls in its
+ * second half, and the pieces joined back give the text exactly.
+ *
+ * @param {string} text
+ * @param {number} maxBytes - at least 4, so any one character fits
+ * @returns {string[]}
+ */
+export function splitText(text, maxBytes) {
+  const limit = Math.max(4, Math.floor(maxBytes));
+  const pieces = [];
+  let rest = String(text);
+  while (Buffer.byteLength(rest, 'utf8') > limit) {
+    const bytes = Buffer.from(rest, 'utf8');
+    // Back off from the limit to the first byte of a character.
+    let cut = limit;
+    while (cut > 0 && (bytes[cut] & 0xc0) === 0x80) cut -= 1;
+    let piece = bytes.subarray(0, cut).toString('utf8');
+    // Prefer the last sentence end, when it leaves a piece at least half full.
+    let best = -1;
+    for (const match of piece.matchAll(SENTENCE_END)) best = match.index + match[0].length;
+    if (best > piece.length / 2 && best < piece.length) piece = piece.slice(0, best);
+    pieces.push(piece);
+    rest = rest.slice(piece.length);
+  }
+  if (rest.length > 0 || pieces.length === 0) pieces.push(rest);
+  return pieces;
+}
+
+/**
+ * One turn line as lines of at most `maxBytes` each: the line itself when
+ * it fits, else its text split by `splitText` with the turn's label on
+ * every piece.
+ */
+export function splitTurn(line, maxBytes) {
+  if (Buffer.byteLength(line, 'utf8') <= maxBytes) return [line];
+  const label = LABEL.exec(line)?.[0] ?? '';
+  const room = maxBytes - Buffer.byteLength(label, 'utf8');
+  return splitText(line.slice(label.length), room).map((piece) => `${label}${piece}`);
+}
+
+/**
+ * Turn lines, split into passes under `maxBytes` each on turn boundaries;
+ * a turn longer than a pass becomes several labelled turns (splitTurn),
+ * so nothing is dropped and no pass is over the limit.
+ */
 export function splitTranscript(lines, maxBytes = MAX_TRANSCRIPT_INPUT_BYTES) {
   const passes = [];
   let current = [];
   let size = 0;
-  for (const line of lines) {
+  // Each line costs its bytes plus the newline that joins it.
+  for (const line of lines.flatMap((l) => splitTurn(l, maxBytes - 1))) {
     const bytes = Buffer.byteLength(line, 'utf8') + 1;
     if (size + bytes > maxBytes && current.length > 0) {
       passes.push(current.join('\n'));
       current = [];
       size = 0;
     }
-    // One turn longer than a whole pass is cut, so a pass is never empty.
-    current.push(bytes > maxBytes ? line.slice(0, maxBytes) : line);
-    size += Math.min(bytes, maxBytes);
+    current.push(line);
+    size += bytes;
   }
   if (current.length > 0) passes.push(current.join('\n'));
   return passes;
+}
+
+/** Each pass's deadline: one router call, its repair round included. */
+export const PASS_TIMEOUT_MS = 3 * 60 * 1000;
+
+/**
+ * The checkpoints a run may resume from: the saved passes of the same
+ * transcript version and the same split, in order from the first, each a
+ * checked list. Anything else starts over.
+ */
+export function savedPasses(drafting, { transcriptVersion, passCount }) {
+  if (!isObject(drafting) || drafting.transcriptVersion !== transcriptVersion || drafting.passCount !== passCount) return [];
+  const saved = Array.isArray(drafting.passes) ? drafting.passes : [];
+  const usable = [];
+  for (const entry of saved) {
+    if (!isObject(entry) || entry.transcriptVersion !== transcriptVersion) break;
+    const qa = validateQa(entry.qa);
+    if (!qa.ok) break;
+    const speakers = isObject(entry.speakers) ? entry.speakers : { interviewer: null, guest: null };
+    usable.push({ transcriptVersion, qa: qa.value, speakers });
+  }
+  return usable;
 }
 
 /**
@@ -198,7 +285,7 @@ async function askOnce(ai, { prompt, signal, usageOut }) {
 }
 
 /** One pass: ask, check the shape, and ask once more with the shape restated. */
-async function draftPass(ai, args) {
+async function draftPassOnce(ai, args) {
   const first = parseDraftOutput(await askOnce(ai, args));
   if (first) return first;
   const repair = `${args.prompt}\n\nYour previous answer was not in the required shape. Answer again with JSON in exactly the shape described, and nothing else.`;
@@ -208,6 +295,41 @@ async function draftPass(ai, args) {
     code: 'INVALID_DRAFT',
     status: 422,
   });
+}
+
+/**
+ * One pass under its own deadline. The router is handed a signal that
+ * fires at the deadline or with the job's, and the pass is raced against
+ * it too, so a call that ignores its signal still ends. A pass past its
+ * deadline fails with PASS_TIMEOUT; the passes before it are saved, so a
+ * re-run resumes here.
+ */
+async function draftPass(ai, { signal, timeoutMs = PASS_TIMEOUT_MS, pass, ...args }) {
+  const deadline = new AbortController();
+  const timer = setTimeout(
+    () => deadline.abort(Object.assign(new Error('pass timed out'), { code: 'PASS_TIMEOUT' })),
+    timeoutMs
+  );
+  const passSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+  const stopped = new Promise((_resolve, reject) => {
+    const fail = () => reject(passSignal.reason || new Error('aborted'));
+    if (passSignal.aborted) fail();
+    else passSignal.addEventListener('abort', fail, { once: true });
+  });
+  stopped.catch(() => {});
+  try {
+    return await Promise.race([draftPassOnce(ai, { ...args, signal: passSignal }), stopped]);
+  } catch (error) {
+    if (deadline.signal.aborted && !signal?.aborted) {
+      throw new JobFailedError(
+        `Part ${pass} of the transcript did not draft within ${Math.round(timeoutMs / 60000)} minutes; run Draft again to resume from this part.`,
+        { code: 'PASS_TIMEOUT', status: 504 }
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -223,7 +345,8 @@ async function draftPass(ai, args) {
  * @param {() => Date} [args.now]
  * @param {{ log?: Function, warn?: Function }} [args.log]
  * @param {AbortSignal} [args.signal]
- * @returns {Promise<{ interviewId: string, transcriptVersion: number, items: number, flagged: number, droppedQuotes: number, passes: number, model: string|null, provider: string|null, unsure: boolean }>}
+ * @param {number} [args.passTimeoutMs] - each pass's deadline; PASS_TIMEOUT_MS by default
+ * @returns {Promise<{ interviewId: string, transcriptVersion: number, items: number, flagged: number, droppedQuotes: number, passes: number, resumedFrom: number, model: string|null, provider: string|null, unsure: boolean, truncated: boolean }>}
  */
 export async function draftInterview({
   interviewId,
@@ -236,6 +359,7 @@ export async function draftInterview({
   log = null,
   signal = null,
   container = CONTENT_CONTAINER,
+  passTimeoutMs = PASS_TIMEOUT_MS,
 }) {
   const doc = await store.readDoc(container, interviewId, interviewId);
   if (!doc || doc.type !== 'interview') {
@@ -263,7 +387,7 @@ export async function draftInterview({
   const provenance = isObject(doc.provenance) ? doc.provenance : {};
   await store.patchDoc(container, interviewId, { interview: { ...interview, stage: 'drafting', error: null } });
   try {
-    return await draftFromSegments({ interviewId, transcriptVersion, doc, segments, interview, provenance, store, ai, env, now, log, signal, container });
+    return await draftFromSegments({ interviewId, transcriptVersion, doc, segments, interview, provenance, store, ai, env, now, log, signal, container, passTimeoutMs });
   } catch (error) {
     // The document records the failure in the job's own words or a code,
     // never the model's, so the admin page can show why the stage is failed.
@@ -277,7 +401,7 @@ export async function draftInterview({
   }
 }
 
-async function draftFromSegments({ interviewId, transcriptVersion, doc, segments, interview, provenance, store, ai, env, now, log, signal, container }) {
+async function draftFromSegments({ interviewId, transcriptVersion, doc, segments, interview, provenance, store, ai, env, now, log, signal, container, passTimeoutMs }) {
   const lines = segments.map((s) => `${String(s.speaker || 'Speaker 1')}: ${s.text}`);
   const passes = splitTranscript(lines);
   const usageOut = [];
@@ -285,9 +409,14 @@ async function draftFromSegments({ interviewId, transcriptVersion, doc, segments
   const guestRole = isObject(doc.guest) ? doc.guest.role : '';
   const ceiling = monthlyCeilingUsd(env);
   const getCostEstimate = typeof ai.getCostEstimate === 'function' ? ai.getCostEstimate : routerCostEstimate;
-  let speakers = { interviewer: null, guest: null };
-  let qa = [];
-  for (let pass = 0; pass < passes.length; pass += 1) {
+
+  // Resume: the passes an earlier run of this version already saved.
+  const saved = savedPasses(provenance.drafting, { transcriptVersion, passCount: passes.length });
+  const checkpoints = saved.map((entry) => ({ transcriptVersion, qa: entry.qa, speakers: entry.speakers }));
+  let speakers = saved[0]?.speakers ?? { interviewer: null, guest: null };
+  let qa = saved.flatMap((entry) => entry.qa);
+  const resumedFrom = saved.length;
+  for (let pass = resumedFrom; pass < passes.length; pass += 1) {
     if (signal?.aborted) throw signal.reason || new Error('aborted');
     // Every pass is counted before it is sent: the month's rows (the router
     // writes this job's own as it goes) plus this pass's estimate.
@@ -307,9 +436,20 @@ async function draftFromSegments({ interviewId, transcriptVersion, doc, segments
       }),
       signal,
       usageOut,
+      pass: pass + 1,
+      timeoutMs: passTimeoutMs,
     });
     if (pass === 0) speakers = result.speakers;
     qa = qa.concat(result.qa);
+    // The checkpoint: this pass's checked items, saved before the next pass
+    // is asked, so a run that stops later resumes after it.
+    checkpoints.push({ transcriptVersion, qa: result.qa, speakers: result.speakers });
+    await store.patchDoc(container, interviewId, {
+      provenance: {
+        ...provenance,
+        drafting: { transcriptVersion, passCount: passes.length, passes: checkpoints, updatedAt: now().toISOString() },
+      },
+    });
   }
   // The combined list, validated once: over 40 items the first 40 are kept
   // and the editor is told (`truncated`); a list that fails the shape here
@@ -348,7 +488,11 @@ async function draftFromSegments({ interviewId, transcriptVersion, doc, segments
     provider: last.provider || null,
     draftedAt: stamp,
     transcriptVersion,
-    passes: passes.length,
+    // The count, under its own name: `passes` held the checkpoints while
+    // the job ran, and a finished draft clears them so "Draft again"
+    // starts over rather than resuming.
+    passCount: passes.length,
+    resumedFrom,
     droppedQuotes: guarded.droppedQuotes,
     flagged: guarded.flagged,
     truncated,
@@ -365,7 +509,7 @@ async function draftFromSegments({ interviewId, transcriptVersion, doc, segments
   });
   log?.log?.(
     `${DRAFT_JOB_TYPE}: ${interviewId} v${transcriptVersion} ${guarded.qa.length} items, ${guarded.flagged} flagged, ` +
-      `${guarded.droppedQuotes} quotes dropped, ${passes.length} pass(es), ${drafting.provider || 'no provider'}/${drafting.model || 'no model'}${unsure ? ', speaker unsure' : ''}`
+      `${guarded.droppedQuotes} quotes dropped, ${passes.length} pass(es)${resumedFrom ? `, resumed after ${resumedFrom}` : ''}, ${drafting.provider || 'no provider'}/${drafting.model || 'no model'}${unsure ? ', speaker unsure' : ''}`
   );
   return {
     interviewId,
@@ -374,6 +518,7 @@ async function draftFromSegments({ interviewId, transcriptVersion, doc, segments
     flagged: guarded.flagged,
     droppedQuotes: guarded.droppedQuotes,
     passes: passes.length,
+    resumedFrom,
     model: drafting.model,
     provider: drafting.provider,
     unsure,
