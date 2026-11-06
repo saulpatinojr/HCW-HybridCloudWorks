@@ -25,6 +25,7 @@ import '../functions/cloud-tools-jobs.js';
 import '../functions/cosmos-export.js';
 import '../functions/forge-jobs.js';
 import '../functions/inspect-jobs.js';
+import '../functions/interviews-jobs.js';
 import '../functions/listen-and-learn-jobs.js';
 import '../functions/podcast-jobs.js';
 import '../functions/publish-jobs.js';
@@ -64,6 +65,18 @@ describe('registered job types', () => {
         roleLevel('editor')
       );
     }
+  });
+
+  it('gates the three interview jobs at editor, matching the cms/interviews routes that queue them (ADR 0040)', () => {
+    for (const type of ['interview-fetch-audio', 'interview-transcribe', 'interview-draft']) {
+      const spec = types.find((t) => t.type === type);
+      expect(spec, type).toBeDefined();
+      expect(spec.role, type).toBe('editor');
+      // Two short ids, or an id and a URL under 800 characters: never a transcript.
+      expect(spec.maxPayloadBytes, type).toBeLessThanOrEqual(1024);
+    }
+    // Under the 30-minute Flex Consumption function timeout, with the sweeper's grace in mind.
+    expect(types.find((t) => t.type === 'interview-transcribe').timeoutMs).toBe(25 * 60 * 1000);
   });
 
   it('gates publish-content at publisher, matching POST /api/publishContent', () => {
