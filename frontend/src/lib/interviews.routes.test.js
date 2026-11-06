@@ -1,51 +1,28 @@
 /**
  * Which interview routes the build pre-renders (scripts/prerender-entry.jsx):
- * the list and one page per interview, for Azure only, and none at all while
- * there is no interview file.
- *
- * The data module is replaced with a list this test controls, so what is
- * checked is the route derivation, not the contents of the folder.
+ * since ADR 0040 they come from the content manifest, like the article
+ * pages, so the entry lists exactly what the manifest says and nothing of
+ * its own. The derivation (the list page only once there is an interview,
+ * one page per published interview, Azure only) lives in
+ * scripts/build-content-manifest.mjs and is tested there.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { makeInterview } from '@/test-utils/interviews';
+import { describe, expect, it } from 'vitest';
+import { routes } from '../../scripts/prerender-entry.jsx';
 
-async function routesFor(list) {
-  vi.resetModules();
-  vi.doMock('@/data/interviews', () => ({ interviews: list, findInterview: () => undefined }));
-  const entry = await import('../../scripts/prerender-entry.jsx');
-  return entry.routes();
-}
-
-afterEach(() => {
-  vi.doUnmock('@/data/interviews');
-});
+const interviewRoutes = (list) => list.filter((route) => route.includes('interviews'));
 
 describe('pre-rendered interview routes', () => {
-  it('lists none while there are no interviews: the empty list would be a thin page in the sitemap', async () => {
-    const routes = await routesFor([]);
-    expect(routes.filter((route) => route.includes('interviews'))).toEqual([]);
+  it('lists none without a manifest, or with a manifest that carries none: the entry invents no interview', () => {
+    expect(interviewRoutes(routes())).toEqual([]);
+    expect(interviewRoutes(routes({ routes: ['/azure/blog/a-post'] }))).toEqual([]);
   });
 
-  it('lists the list and every interview once there are some', async () => {
-    const routes = await routesFor([makeInterview('first-one'), makeInterview('second-one')]);
-    expect(routes.filter((route) => route.includes('interviews'))).toEqual([
-      '/azure/interviews',
-      '/azure/interviews/first-one',
-      '/azure/interviews/second-one',
-    ]);
-  });
-
-  it('is Azure only: no other provider gets an interviews route', async () => {
-    const routes = await routesFor([makeInterview('first-one')]);
-    const elsewhere = routes.filter(
-      (route) => route.includes('interviews') && !route.startsWith('/azure/')
-    );
-    expect(elsewhere).toEqual([]);
-  });
-
-  it('never repeats a route, since one render and one sitemap entry per route is the rule', async () => {
-    const routes = await routesFor([makeInterview('first-one')]);
-    const interviewRoutes = routes.filter((route) => route.includes('interviews'));
-    expect(new Set(interviewRoutes).size).toBe(interviewRoutes.length);
+  it('lists exactly the manifest’s interview routes, once each', () => {
+    const manifest = {
+      routes: ['/azure/interviews', '/azure/interviews/first-one', '/azure/interviews/second-one'],
+    };
+    expect(interviewRoutes(routes(manifest))).toEqual(manifest.routes);
+    const all = routes(manifest);
+    expect(new Set(all).size).toBe(all.length);
   });
 });

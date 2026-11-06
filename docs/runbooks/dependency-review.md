@@ -17,8 +17,8 @@ other agent's workstream: for them it lists findings and does not fix them.
 
 1. **Dependabot, version updates.** Every repository has a `.github/dependabot.yml`
    that opens grouped pull requests for the ecosystems it holds (below). They are
-   ordinary pull requests: they run CI, CodeRabbit reviews them, and a session
-   merges them on green.
+   ordinary pull requests: they run CI, and once it is green a session tells the
+   owner, who decides on the merge (the Dependabot exception in `.claude/CLAUDE.md`).
 2. **Dependabot alerts and security updates.** On in all nine repositories (read
    through the API on 2026-10-25). An alert is GitHub saying *a package in your
    lockfile has a known vulnerability*; a security update is the pull request

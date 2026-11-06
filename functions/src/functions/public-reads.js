@@ -29,6 +29,23 @@ httpRoute('publicGetContent', {
   handler: (request, context) => handlers().getContent(request, context),
 });
 
+// Published interviews (ADR 0040, D6): the list and one by slug, allow-listed
+// fields only, never the consent record, the recording's path or the jobs
+// that made the page. Read live by /azure/interviews.
+httpRoute('publicListInterviews', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'public/interviews',
+  handler: (request, context) => handlers().listInterviews(request, context),
+});
+
+httpRoute('publicGetInterview', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'public/interviews/{slug}',
+  handler: (request, context) => handlers().getInterview(request, context),
+});
+
 httpRoute('publicGetSnapshot', {
   methods: ['GET'],
   authLevel: 'anonymous',

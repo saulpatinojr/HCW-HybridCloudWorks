@@ -58,6 +58,7 @@ export const DEFAULT_KINDS = entries({
   'speaker-content': ['Speaker content', 'An abstract, slides or notes for a talk.'],
   'ambassador-evidence': ['Ambassador evidence', 'Proof of community contribution for a program.'],
   'image-set': ['Image set', 'A coordinated set of images on one theme.'],
+  interview: ['Interview', 'A conversation with a guest, written up as questions and answers.'],
 });
 
 /** How an item became an idea. */
@@ -110,6 +111,7 @@ const TYPE_TO_KIND = Object.freeze({
   framework: 'reference-guide',
   architecture: 'reference-guide',
   coder_corner: 'tutorial',
+  interview: 'interview',
 });
 
 /**
@@ -145,7 +147,23 @@ const fail = (message) => {
   throw new TaxonomyError(message);
 };
 
-function normalizeList(list, { field, requiredIds }) {
+/**
+ * A built-in entry the stored list predates, appended enabled at the end in
+ * default order. A record classified under it still resolves to a label, and
+ * a taxonomy saved before the entry existed keeps validating on read and on
+ * save (the `interview` kind arrived on 2026-11-05, ADR 0040, after the
+ * owner's lists were first saved). Removing a built-in on purpose is still
+ * not possible: it comes back, enabled, and the page shows it.
+ */
+function withNewBuiltIns(list, defaults) {
+  if (!Array.isArray(list)) return list;
+  const present = new Set(list.map((raw) => String(raw?.id ?? '').trim()));
+  const missing = defaults.filter((entry) => !present.has(entry.id));
+  return missing.length ? [...list, ...missing.map((entry) => ({ ...entry, enabled: true }))] : list;
+}
+
+function normalizeList(list, { field, requiredIds, defaults }) {
+  list = withNewBuiltIns(list, defaults);
   if (!Array.isArray(list)) fail(`${field} must be an array`);
   if (list.length > MAX_ENTRIES) fail(`${field} may hold at most ${MAX_ENTRIES} entries`);
   const seen = new Set();
@@ -189,10 +207,15 @@ export function normalizeContentTaxonomy(body) {
   const unknown = Object.keys(body).filter((key) => key !== 'kinds' && key !== 'ideaOrigins');
   if (unknown.length) fail(`unknown keys: ${unknown.join(', ')}`);
   return {
-    kinds: normalizeList(body.kinds, { field: 'kinds', requiredIds: DEFAULT_KIND_IDS }),
+    kinds: normalizeList(body.kinds, {
+      field: 'kinds',
+      requiredIds: DEFAULT_KIND_IDS,
+      defaults: DEFAULT_KINDS,
+    }),
     ideaOrigins: normalizeList(body.ideaOrigins, {
       field: 'ideaOrigins',
       requiredIds: DEFAULT_ORIGIN_IDS,
+      defaults: DEFAULT_IDEA_ORIGINS,
     }),
   };
 }

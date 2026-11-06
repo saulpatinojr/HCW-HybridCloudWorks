@@ -128,6 +128,22 @@ export const CONTRACTS = {
     ],
     imagery: NO_IMAGERY,
   },
+
+  // An interview is a list of questions and answers, not a prose body
+  // (ADR 0040, D5). The publish pipeline flattens the list into `bodyText`
+  // for this rubric (lib/interviews/publish-gate.js), and the consent and
+  // schema refusals run before it. The guest photo is optional, so no hero.
+  interview: {
+    target: 'interview',
+    label: 'Interview',
+    section: 'interviews',
+    bodyFields: ['bodyText', 'bio'],
+    rubric: { minWords: 60, minHeadings: 0, minModules: 0 },
+    requiredFields: [
+      { key: 'qa', label: 'at least one question and answer', aliases: ['qa'], minLength: 1 },
+    ],
+    imagery: NO_IMAGERY,
+  },
 };
 
 const DEFAULT_TARGET = 'blog';

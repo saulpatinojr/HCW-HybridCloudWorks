@@ -110,6 +110,7 @@ describe("the inverse of the read-time derivation, for the list filters", () => 
       "architecture",
     ]);
     expect(derivedKindTypes("tutorial")).toEqual(["coder_corner"]);
+    expect(derivedKindTypes("interview")).toEqual(["interview"]);
     expect(derivedKindTypes("newsletter")).toEqual([]);
   });
 

@@ -38,6 +38,7 @@ import {
   SASProtocol,
 } from '@azure/storage-blob';
 import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
+import { createHash } from 'node:crypto';
 import { refuseWriteAfterJobAbort } from './job-context.js';
 
 let blobServiceClient = null;
@@ -217,6 +218,32 @@ export async function downloadBlob(containerName, blobName) {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
+}
+
+/**
+ * Download a blob as a STREAM, with its size and type, for a body too large
+ * to hold: an interview recording of up to 500 MiB (ADR 0040 D3), which the
+ * transcription job pipes into Gemini's resumable upload without ever
+ * holding the file. `downloadBlob` above buffers the whole blob, which for
+ * a recording would be the blob again in memory on a 2048 MB instance.
+ *
+ * A read, so it is never refused after a job's abort. A missing blob is a
+ * throw here (the caller's document named it, so its absence is a fault,
+ * not an ordinary outcome as it is for the delivery route).
+ *
+ * @param {string} containerName
+ * @param {string} blobName
+ * @returns {Promise<{ stream: NodeJS.ReadableStream, contentLength: number, contentType: string }>}
+ */
+export async function downloadBlobStream(containerName, blobName) {
+  const containerClient = getContainerClient(containerName);
+  const blobClient = containerClient.getBlobClient(blobName);
+  const response = await blobClient.download(0);
+  return {
+    stream: response.readableStreamBody,
+    contentLength: Number(response.contentLength) || 0,
+    contentType: response.contentType || 'application/octet-stream',
+  };
 }
 
 /**
@@ -471,4 +498,86 @@ export async function listBlobs(containerName, prefix = '') {
   }
 
   return blobs;
+}
+
+// --- Block staging for the interview upload (ADR 0040 D1, #1565) ---------
+// Kept together at the end of the file, apart from the delivery reads above.
+
+/**
+ * Stage one block of a block blob without committing it (Put Block).
+ *
+ * The interview upload (ADR 0040 D1, lib/interviews/upload.js) sends a
+ * recording in 4 MiB pieces so no request carries more than one piece and
+ * the whole file is never in memory. A staged block is invisible until
+ * `commitBlockList` names it; re-staging the same id overwrites the earlier
+ * block, which is what makes a retried piece safe. Storage drops staged
+ * blocks that are never committed after a week
+ * (https://learn.microsoft.com/rest/api/storageservices/put-block#remarks).
+ *
+ * `blockId` must be base64 and the same length for every block of one blob;
+ * the caller mints it from the zero-padded block index.
+ *
+ * @param {string} containerName
+ * @param {string} blobName
+ * @param {string} blockId - base64
+ * @param {Buffer} bytes
+ * @returns {Promise<void>}
+ */
+export async function stageBlock(containerName, blobName, blockId, bytes) {
+  refuseWriteAfterJobAbort();
+  const blockBlobClient = getContainerClient(containerName).getBlockBlobClient(blobName);
+  await blockBlobClient.stageBlock(blockId, bytes, bytes.length);
+}
+
+/**
+ * Commit staged blocks, in the order given, as the blob's content (Put Block
+ * List), and read back the committed size.
+ *
+ * The size comes from the blob's properties after the commit, not from the
+ * caller's arithmetic: it is what the caller compares with the size the
+ * browser declared, so it has to be what Storage holds.
+ *
+ * @param {string} containerName
+ * @param {string} blobName
+ * @param {string[]} blockIds - base64 ids, in content order
+ * @param {object} [options]
+ * @param {string} [options.contentType]
+ * @param {Record<string, string>} [options.metadata]
+ * @returns {Promise<{url: string, contentLength: number}>}
+ */
+export async function commitBlockList(containerName, blobName, blockIds, options = {}) {
+  refuseWriteAfterJobAbort();
+  const blockBlobClient = getContainerClient(containerName).getBlockBlobClient(blobName);
+  await blockBlobClient.commitBlockList(blockIds, {
+    ...(options.contentType ? { blobHTTPHeaders: { blobContentType: options.contentType } } : {}),
+    ...(options.metadata ? { metadata: options.metadata } : {}),
+  });
+  const properties = await blockBlobClient.getProperties();
+  return { url: blockBlobClient.url, contentLength: Number(properties.contentLength) || 0 };
+}
+
+/**
+ * SHA-256 of a blob's content, read as a stream so a 500 MiB recording is
+ * hashed without being held in memory. `null` for a missing blob.
+ *
+ * The interview upload compares this with the hash the browser declared
+ * before it accepts the recording (ADR 0040 D11): a block that was staged
+ * out of order, truncated or replaced shows here and nowhere else.
+ *
+ * @param {string} containerName
+ * @param {string} blobName
+ * @returns {Promise<string|null>} lower-case hex
+ */
+export async function hashBlobSha256(containerName, blobName) {
+  const blobClient = getContainerClient(containerName).getBlobClient(blobName);
+  let response;
+  try {
+    response = await blobClient.download(0);
+  } catch (error) {
+    if (isNotFound(error)) return null;
+    throw error;
+  }
+  const hash = createHash('sha256');
+  for await (const chunk of response.readableStreamBody) hash.update(chunk);
+  return hash.digest('hex');
 }

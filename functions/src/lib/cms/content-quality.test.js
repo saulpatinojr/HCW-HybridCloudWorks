@@ -89,10 +89,20 @@ describe('getPublishContract', () => {
   it('keeps the blog rubric strictest — other types must not be held to it', () => {
     const blog = CONTRACTS.blog.rubric;
     expect(blog).toEqual({ minWords: 650, minHeadings: 3, minModules: 2 });
-    for (const key of ['framework', 'architecture', 'coder_corner']) {
+    for (const key of ['framework', 'architecture', 'coder_corner', 'interview']) {
       expect(CONTRACTS[key].rubric.minWords).toBeLessThan(blog.minWords);
       expect(CONTRACTS[key].rubric.minModules).toBe(0);
     }
+  });
+
+  it('holds an interview to its Q&A, flattened to bodyText by the publish gate, with no hero (ADR 0040)', () => {
+    const contract = getPublishContract('interview');
+    expect(contract).toMatchObject({ section: 'interviews', bodyFields: ['bodyText', 'bio'] });
+    expect(contract.imagery).toEqual({ requireHero: false, requirePromptLineage: false });
+    expect(getMissingContractFields({ qa: [] }, contract)).toEqual(['at least one question and answer']);
+    expect(getMissingContractFields({ qa: [{ q: 'q', a: 'a' }] }, contract)).toEqual([]);
+    expect(getContractBody({ bodyText: 'Q\n\nA', bio: 'bio' }, contract)).toBe('Q\n\nA');
+    expect(getContractBody({ bio: 'bio only' }, contract)).toBe('bio only');
   });
 });
 

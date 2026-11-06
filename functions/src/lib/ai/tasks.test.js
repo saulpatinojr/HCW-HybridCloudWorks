@@ -23,6 +23,7 @@ import { PROVIDERS, isPriced } from './router.js';
 import { KNOWN_PROVIDERS, MEDIA_PROVIDERS, PROVIDER_CAPABILITIES, providerCarries } from './provider-order.js';
 import { RECOMMENDED_BY_MODALITY, recommendedModelFor } from './provider-recommendations.js';
 import { pricingFor } from './model-catalog-doc.js';
+import { audioInputRateFor } from './model-tables.js';
 
 describe('the registry and the feature catalogue are one list', () => {
   it('has exactly the feature names, in the same order, less the planned tasks', () => {
@@ -40,7 +41,8 @@ describe('the registry and the feature catalogue are one list', () => {
   });
 
   it('a planned task has no feature switch: a toggle for nothing would read as a working one', () => {
-    expect(PLANNED_TASKS).toEqual(['recordingTranscript', 'pageOcr', 'embeddings']);
+    // recordingTranscript left this list with ADR 0040 (#1565): Gemini carries stt now.
+    expect(PLANNED_TASKS).toEqual(['pageOcr', 'embeddings']);
     for (const id of PLANNED_TASKS) expect(AI_FEATURES[id], id).toBeUndefined();
   });
 
@@ -93,7 +95,7 @@ describe('every task says what it needs', () => {
       expect(AI_TASKS[id].needs, id).toEqual([AI_TASKS[id].modality]);
       expect(AI_TASKS[id].public, id).toBe(false);
     }
-    for (const id of ['listenAndLearnSpeech', 'podcastVoice', 'coverArt', 'manualImages']) {
+    for (const id of ['listenAndLearnSpeech', 'podcastVoice', 'coverArt', 'manualImages', 'recordingTranscript']) {
       expect(defaultModeFor(AI_TASKS[id]), id).toBe('recommended');
     }
     for (const id of PLANNED_TASKS) expect(defaultModeFor(AI_TASKS[id]), id).toBe('global');
@@ -152,6 +154,21 @@ describe('recommendations are claims with a date, naming a priced model', () => 
     expect(AI_TASKS.podcastVoice.recommended).toMatchObject({ provider: 'elevenlabs', model: 'eleven_v3' });
     expect(AI_TASKS.coverArt.recommended).toMatchObject({ provider: 'replicate', model: 'google/imagen-4-fast' });
     expect(AI_TASKS.manualImages.recommended).toMatchObject({ provider: 'replicate', model: 'google/imagen-4-fast' });
+  });
+
+  it('the interview transcription is Gemini-only, recommends a model priced for audio, and drafts on the global order (ADR 0040)', () => {
+    const transcript = AI_TASKS.recordingTranscript;
+    expect(transcript.planned).toBeUndefined();
+    expect(transcript.only).toEqual(['gemini']);
+    expect(transcript.recommended).toMatchObject({ provider: 'gemini', model: 'gemini-3.6-flash', asOf: '2026-11-05' });
+    expect(audioInputRateFor('gemini', transcript.recommended.model)).toBeGreaterThan(0);
+    expect(PROVIDER_CAPABILITIES.gemini).toContain('stt');
+    expect(KNOWN_PROVIDERS.filter((p) => providerCarries(p, ['stt']))).toEqual(['gemini']);
+    expect(recommendedModelFor('gemini', 'stt').model).toBe(transcript.recommended.model);
+    const drafting = AI_TASKS.interviewDrafting;
+    expect(drafting).toMatchObject({ modality: 'json', needs: ['text', 'json'], public: false });
+    expect(drafting.only).toBeUndefined();
+    expect(defaultModeFor(drafting)).toBe('global');
   });
 
   it('no public task recommends a trial-tier provider', () => {

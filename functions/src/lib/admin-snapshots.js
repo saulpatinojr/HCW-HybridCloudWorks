@@ -78,6 +78,7 @@ const SUPPORTED_ADMIN_TYPES = new Set([
   "framework",
   "architecture",
   "coder_corner",
+  "interview",
 ]);
 
 export function getCanonicalContentTypeForAdmin(data = {}) {
@@ -159,6 +160,7 @@ export const DASHBOARD_STATS_TYPES = [
   "framework",
   "architecture",
   "coder_corner",
+  "interview",
   "news",
 ];
 export const DASHBOARD_STATS_DOC_ID = "dashboard_stats_v1"; // in the `system` container
@@ -177,6 +179,7 @@ export function summarizeDashboardItems(items = []) {
     framework: { needsReview: 0, inProgress: 0, published: 0, total: 0 },
     architecture: { needsReview: 0, inProgress: 0, published: 0, total: 0 },
     coder_corner: { needsReview: 0, inProgress: 0, published: 0, total: 0 },
+    interview: { needsReview: 0, inProgress: 0, published: 0, total: 0 },
     news: { needsReview: 0, inProgress: 0, published: 0, total: 0 },
     rejected: 0,
   };

@@ -26,6 +26,7 @@
 import { AuthoredError } from "../http/error-response.js";
 import { PROVIDER_ALIASES } from "../public-reads.js";
 import { normalizePublishTarget } from "./publish-targets.js";
+import { checkInterviewFields } from "../interviews/sibling-modules.js";
 
 /**
  * A refusal written here for the editor: every sentence this module throws.
@@ -246,6 +247,24 @@ export const FORBIDDEN_CONTENT_UPDATE_KEYS = new Set([
   // unaffected — it never passes through this validator.
   "slug",
   "Slug",
+  // An interview's private blocks (ADR 0040, D9 and D10) have one writer
+  // each on the server: the consent record is written by POST cms/interviews
+  // from the token, the recording's provenance by the upload and fetch
+  // routes, the stage and the transcription state by the jobs. None of them
+  // passes through this validator (they patch the document directly), so an
+  // editor reaching this route cannot plant a consent nobody confirmed, a
+  // forged upload session or another interview's recording path. Added with
+  // slice C of #1565 after the slice A review found the gap.
+  "consent",
+  "provenance",
+  "interview",
+  "transcription",
+  // What a document IS has no writer on this route either: no admin page
+  // sends `type` through updateContentItem (the review boards, the editor
+  // and the taxonomy editor each send their own fields), and a retype would
+  // move a document past the interview publish gate or onto one. The
+  // publish target, which pages do send, is checked in validateTypedUpdates.
+  "type",
 ]);
 
 // Per-field-type normalizers used by validateAndNormalizeUpdateContentItemUpdates.
@@ -503,6 +522,70 @@ function normalizeEntry(normalized, field, value) {
   }
   if (tryNormalizeKnownField(normalized, field, value)) return;
   normalizeGenericField(normalized, field, value);
+}
+
+/** The interview fields an editor may change through updateContentItem. */
+export const INTERVIEW_UPDATE_FIELDS = Object.freeze([
+  "title",
+  "subtitle",
+  "date",
+  "guest",
+  "bio",
+  "image",
+  "tags",
+  "qa",
+  "related",
+]);
+
+/**
+ * The type-aware check (ADR 0040, D5): on a document of type `interview`,
+ * every interview field the update names is run through the interview
+ * schema (lib/interviews/schema.js, the jobs slice's) and replaced by its
+ * checked form. Any other type, or an update naming none of those fields,
+ * passes through untouched. The generic rules above have already run.
+ *
+ * @param {string} type - the stored document's `type`
+ * @param {object} updates - the validated updates
+ * @returns {Promise<object>} the updates, with the checked interview fields
+ * @throws {ContentValidationError} with the schema's own sentence
+ */
+export async function validateTypedUpdates(type, updates = {}) {
+  const current = String(type || "").toLowerCase();
+  // A document becomes an interview through POST cms/interviews only, which
+  // writes the consent record from the token; and an interview never stops
+  // being one through this route, because the publish gate decides from the
+  // document's type whether to demand consent (ADR 0040, D9).
+  for (const key of ["type", "publishTarget", "contentType"]) {
+    if (!Object.hasOwn(updates, key) || updates[key] === null) continue;
+    const next = String(updates[key] || "").trim().toLowerCase();
+    if (next === "interview" && current !== "interview") {
+      throw new ContentValidationError(
+        `${key} cannot be set to interview here; an interview is created through POST cms/interviews`,
+      );
+    }
+    if (current === "interview" && next !== "interview") {
+      throw new ContentValidationError(
+        `${key} cannot be changed on an interview; it stays an interview`,
+      );
+    }
+  }
+  if (current !== "interview") return updates;
+  const fields = {};
+  for (const key of INTERVIEW_UPDATE_FIELDS) {
+    if (Object.hasOwn(updates, key) && updates[key] !== null) fields[key] = updates[key];
+  }
+  if (Object.keys(fields).length === 0) return updates;
+  const checked = await checkInterviewFields(fields);
+  if (!checked.ok) throw new ContentValidationError(checked.error);
+  const out = { ...updates };
+  if (checked.value && typeof checked.value === "object") {
+    for (const key of Object.keys(fields)) {
+      if (checked.value[key] !== undefined) out[key] = checked.value[key];
+    }
+    // The dual-cased title the legacy readers look at.
+    if (out.title !== undefined) out.Title = out.title;
+  }
+  return out;
 }
 
 /**

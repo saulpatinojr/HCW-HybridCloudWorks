@@ -20,8 +20,6 @@ import { PrerenderDataContext } from '@/hooks/prerenderData';
 import { certifications as azureCertifications } from '@/data/azure/certifications';
 import { availableLabs, labPanePath, labsPath, providersWithLabs } from '@/data/labs/catalogue';
 import { addonPanePath, addons } from '@/data/addons/catalogue';
-import { interviews } from '@/data/interviews';
-import { INTERVIEWS_PATH, interviewPath } from '@/lib/interviews';
 
 /**
  * Sections that exist under every provider, as declared by App.jsx's
@@ -147,23 +145,16 @@ const LAB_ROUTES = [
 const ADDON_ROUTES = addons.map(addonPanePath);
 
 /**
- * Azure's interviews: the list and one page per interview file in
- * `src/data/interviews/` (docs/runbooks/add-an-interview.md). The page is the
+ * Azure's interviews come from the manifest too (ADR 0040, D6): the list
+ * `/azure/interviews` and one page per published interview, with their seeds
+ * under `interviews:list` and `interview:<slug>`, written by
+ * scripts/build-content-manifest.mjs from the public API. The page is the
  * interview as an article, every word of it, so a search engine reads the
  * transcript itself; the book view is added in the browser and is not part of
- * this output. Like the certification pages these come from a repository file,
- * so every build knows them and the render needs no seed.
- *
- * NONE WHILE THERE ARE NONE. With no interview file the list would be a page
- * that says "no interviews yet" in the sitemap, which is thin content and a
- * soft 404 to a crawler, so neither it nor any detail route is listed until
- * the first interview is added. The Azure landing page's Interviews card is
- * held back the same way (`data/interviews/available.js`).
+ * this output. NONE WHILE THERE ARE NONE: the builder lists the list page
+ * only once there is an interview, because an empty list page would be thin
+ * content and a soft 404 to a crawler.
  */
-const AZURE_INTERVIEW_ROUTES =
-  interviews.length > 0
-    ? [INTERVIEWS_PATH, ...interviews.map((interview) => interviewPath(interview.slug))]
-    : [];
 
 /** Every path the site pre-renders: the static routes, the provider routes, the catalogue-driven add-on pages and the content routes from the manifest. */
 export function routes(manifest = null) {
@@ -179,7 +170,6 @@ export function routes(manifest = null) {
     ...AZURE_CERT_ROUTES,
     ...LAB_ROUTES,
     ...ADDON_ROUTES,
-    ...AZURE_INTERVIEW_ROUTES,
     ...(manifest?.routes || []),
   ];
 }

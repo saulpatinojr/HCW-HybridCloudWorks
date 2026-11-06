@@ -3,7 +3,6 @@
 [![CI](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/codeql.yml)
 [![Docs site](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/docs-pages.yml/badge.svg?branch=main)](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/docs-pages.yml)
-[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/saulpatinojr/HCW-HybridCloudWorks?utm_source=oss&utm_medium=github&utm_campaign=saulpatinojr%2FHCW-HybridCloudWorks&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
 [![Maintainability](https://qlty.sh/gh/saulpatinojr/projects/HCW-HybridCloudWorks/maintainability.svg)](https://qlty.sh/gh/saulpatinojr/projects/HCW-HybridCloudWorks)
 [![Code Coverage](https://qlty.sh/gh/saulpatinojr/projects/HCW-HybridCloudWorks/coverage.svg)](https://qlty.sh/gh/saulpatinojr/projects/HCW-HybridCloudWorks)
 

@@ -9,6 +9,9 @@ describe('normalizeContentType', () => {
   it('accepts supported types case-insensitively and falls back to blog', () => {
     expect(normalizeContentType('Framework')).toBe('framework');
     expect(normalizeContentType(' coder_corner ')).toBe('coder_corner');
+    // ADR 0040, D5: the interview is a publish target of its own.
+    expect(normalizeContentType('interview')).toBe('interview');
+    expect(normalizePublishTarget('INTERVIEW')).toBe('interview');
     expect(normalizeContentType('news')).toBe('blog');
     expect(normalizeContentType(undefined)).toBe('blog');
   });

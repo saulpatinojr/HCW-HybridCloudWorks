@@ -93,6 +93,26 @@ describe("updateContentItem", () => {
     expect(store.patchDoc).not.toHaveBeenCalled();
   });
 
+  it("400s a PATCH carrying provenance or type, the way it refuses every protected field (ADR 0040)", async () => {
+    // Slice A's security finding: an editor could plant a forged upload
+    // session under provenance, or retype a document past the interview
+    // publish gate. Both are protected now; nothing is read or written.
+    const store = makeStore();
+    const h = createContentUpdateHandler({ guard: guardAs("editor"), store, ...fixed });
+    for (const updates of [
+      { provenance: { audio: { uploads: [{ uploadId: "planted" }] } } },
+      { type: "interview" },
+      { type: "blog" },
+      { Title: "fine", provenance: null },
+    ]) {
+      const res = await h(makeRequest({ contentId: "c1", updates }), context);
+      expect(res.status, JSON.stringify(updates)).toBe(400);
+      expect(JSON.parse(res.body).error).toMatch(/protected field: (provenance|type)/);
+    }
+    expect(store.readDoc).not.toHaveBeenCalled();
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
   it("404s when the document does not exist", async () => {
     const store = makeStore({ readDoc: vi.fn(async () => null) });
     const h = createContentUpdateHandler({
