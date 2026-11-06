@@ -1921,6 +1921,80 @@ jobs:
             ${{ runner.temp }}/coverage/coverage-frontend/lcov.info
             ${{ runner.temp }}/coverage/coverage-functions/lcov.info
 
+  # Workflow and Dockerfile linters (#1575). CodeRabbit used to run these on
+  # its reviews; it was removed on 2026-11-06 (#1574), and Qlty's actionlint
+  # and zizmor plugins only report, they never fail a pull request. This job
+  # runs on every pull request and push (no `changes` filter: three linters
+  # over 30-odd files take seconds) and the gate waits for it:
+  #   actionlint  every workflow, with .github/actionlint.yaml
+  #   zizmor      every workflow, offline (no token, no network audits)
+  #   hadolint    every tracked Dockerfile, failing at warning or worse
+  # Each tool is a pinned release whose SHA-256 is written here, not fetched
+  # from the release it checks (the Trivy rule in iac-validate.yml, T-755);
+  # move a version and its digest together. The same job, with the same
+  # pins, runs in the four add-on repositories.
+  lint-actions-docker:
+    name: actionlint, zizmor, hadolint
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      HADOLINT_VERSION: 2.14.0
+      HADOLINT_SHA256: 6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47
+      ZIZMOR_VERSION: 1.31.1
+      ZIZMOR_SHA256: 58e878eb2dbd2c6183c105e1ac28c14f7dd1eca44a783f1fe2a69647d012c410
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.15'
+
+      - name: Install actionlint, hadolint and zizmor (pinned, digests checked)
+        run: |
+          set -euo pipefail
+          tools="${RUNNER_TEMP}/lint-tools"
+          mkdir -p "$tools"
+          cd "$tools"
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o "$tarball" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
+          echo "${ACTIONLINT_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "$tarball" actionlint
+          curl -sSfL -o hadolint "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          echo "${HADOLINT_SHA256}  hadolint" | sha256sum -c -
+          chmod 0755 actionlint hadolint
+          # One wheel, one hash: pip refuses any other file.
+          echo "zizmor==${ZIZMOR_VERSION} --hash=sha256:${ZIZMOR_SHA256}" > zizmor-requirements.txt
+          python -m pip install --disable-pip-version-check --no-deps --only-binary=:all: --require-hashes -r zizmor-requirements.txt
+          echo "$tools" >> "$GITHUB_PATH"
+
+      - name: actionlint
+        run: |
+          actionlint -version
+          actionlint -color
+
+      - name: zizmor
+        run: |
+          zizmor --version
+          zizmor --offline --format=github .github/workflows
+
+      - name: hadolint
+        run: |
+          set -euo pipefail
+          hadolint --version
+          mapfile -d '' files < <(git ls-files -z -- '*Dockerfile*')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no Dockerfile is tracked; nothing to lint"
+            exit 0
+          fi
+          printf 'linting %s\n' "${files[@]}"
+          hadolint --failure-threshold warning --format tty "${files[@]}"
+
   # THE ONE REQUIRED CHECK (#1545). The `main` ruleset requires `gate`, and
   # `gate` waits for every job above. `!cancelled()` keeps it running when a
   # needed job was skipped (its `if:` said the change did not touch its
@@ -1932,7 +2006,7 @@ jobs:
   # context, which lists every job named below with its result.
   gate:
     name: gate
-    needs: [changes, verify, frontend-unit, frontend-unit-merge, e2e, ansible-lint, role-tests, coder-template, harness, complexity, coverage]
+    needs: [changes, verify, frontend-unit, frontend-unit-merge, e2e, ansible-lint, role-tests, coder-template, harness, complexity, coverage, lint-actions-docker]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5

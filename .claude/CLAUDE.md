@@ -232,6 +232,37 @@ much as they should be.
     workflow's security. The agent that reviews a branch before the pull request
     is opened is the one for its main area, plus `infrastructure-pr-reviewer`
     when the change is workflow or deployment code.
+- **The per-folder points a pre-PR review must check** (#1575). They were
+  CodeRabbit's review notes until it was removed on 2026-11-06 (#1574). Where
+  a test or CI check already fails on a violation, it is named and the
+  reviewer need not repeat it; the rest no test can read, so the reviewer
+  agent is told to check them by name in its briefing, for every changed
+  file under that folder:
+  - `functions/**` (reviewer): log lines are content-free (no document ids,
+    tokens, file paths, route values or payloads); a write decided from an
+    earlier read is guarded with `ifMatch` and handles the 412; an update
+    built from request input carries no `undefined` value (`patchDoc` deletes
+    the field) and no dotted key (a nested Cosmos patch). Raw errors in
+    responses are a test: `no-raw-error-leaks.test.js`.
+  - `infra/**` (test and reviewer): replacing or destroying a stateful
+    resource is stopped by `prevent_destroy` on Cosmos, Storage, Key Vault and
+    the core resources, and the plan is read by `assert-expected-plan` in
+    `tfc-plan-check.yml`; the reviewer checks that no change puts a secret
+    value into state.
+  - `lab-host/ansible/**` (CI and reviewer): repeatable tasks are
+    `ansible-lint --profile production` in `ci.yml`; the reviewer checks that
+    `ansible_managed` appears only in a template, never in a copy task's
+    content, and that a task that is not repeatable says why in a comment.
+  - `frontend/src/pages/**` (test): public pages naming a vendor, tool, model
+    or admin-side state fail `frontend/src/public-copy.test.js`; admin pages
+    are exempt.
+  - `docs/**` (reviewer): a command for the owner follows "Owner-facing
+    instructions must be runnable" below (PowerShell unless the line above
+    says bash, one line, no placeholder, exact URLs). The redaction gate
+    covers ids and secrets, not this.
+  Workflows and Dockerfiles are linted in CI by actionlint, zizmor and
+  hadolint (the `actionlint, zizmor, hadolint` job, which `gate` waits for),
+  in this repository and the four add-ons, with the same pinned versions.
 - **For Microsoft and Azure facts, look them up with the Microsoft Learn
   documentation tools (`microsoft_docs_search`, `microsoft_docs_fetch`) before
   answering from memory, and link the page used.** If those tools are not
