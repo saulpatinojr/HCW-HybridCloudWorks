@@ -166,6 +166,39 @@ describe('InterviewNewPage', () => {
     });
   });
 
+  it('takes "a download is already running" as the link accepted', async () => {
+    // The first send landed but its answer was lost; the retry is told so.
+    answerRoutes({
+      'cms/interviews/int-1/audio-from-url': () => {
+        throw Object.assign(new Error('A download for this interview is already running.'), {
+          status: 409,
+        });
+      },
+    });
+    renderPage();
+    fillGuest();
+    fireEvent.click(screen.getByLabelText('Link to a recording'));
+    fireEvent.change(screen.getByLabelText('Recording link'), {
+      target: { value: 'https://media.example.test/talk.mp3' },
+    });
+    submit();
+    await screen.findByRole('heading', { name: 'Interview page' });
+  });
+
+  it('ties a photo problem to the photo picker for a screen reader', async () => {
+    answerRoutes();
+    renderPage();
+    fireEvent.change(screen.getByLabelText('Photo file'), {
+      target: { files: [new File(['x'], 'notes.txt', { type: 'text/plain' })] },
+    });
+    submit();
+    const picker = screen.getByLabelText('Photo file');
+    await waitFor(() => expect(picker).toHaveAttribute('aria-invalid', 'true'));
+    const problem = document.getElementById(picker.getAttribute('aria-describedby'));
+    expect(problem).not.toBeNull();
+    expect(problem.textContent).not.toBe('');
+  });
+
   it('uploads a recording in blocks, completes it and queues the transcription', async () => {
     answerRoutes();
     readDuration.mockImplementation(async () => 95);

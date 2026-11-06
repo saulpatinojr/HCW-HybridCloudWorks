@@ -34,6 +34,19 @@ async function sendTranscriptOnce(interviewId, text, sent) {
   await postJSON(`${base}/transcript`, { text });
 }
 
+/**
+ * Queue the server's download of an audio link. A 409 is "a download for
+ * this interview is already running": an earlier send landed and only its
+ * answer was lost, which is what was wanted. A deleted interview is not.
+ */
+async function queueDownload(path, url) {
+  try {
+    await postJSON(path, { url: String(url).trim() });
+  } catch (error) {
+    if (error?.status !== 409 || error?.code === 'INTERVIEW_DELETED') throw error;
+  }
+}
+
 export function useSourceRunner() {
   const [progress, setProgress] = useState(null);
   const [running, setRunning] = useState(false);
@@ -60,7 +73,7 @@ export function useSourceRunner() {
       if (input.source === 'transcript') {
         await sendTranscriptOnce(interviewId, input.transcript, transcriptSent.current);
       } else if (input.source === 'url') {
-        await postJSON(route('audio-from-url'), { url: String(input.url).trim() });
+        await queueDownload(route('audio-from-url'), input.url);
       } else {
         const same =
           upload.current &&

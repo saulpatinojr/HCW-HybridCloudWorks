@@ -503,6 +503,13 @@ describe('review and publish', () => {
     expect(sendJSON).not.toHaveBeenCalled();
   });
 
+  it('holds Delete recording while a job is reading the recording', async () => {
+    install({ doc: baseDoc({ qa: QA, interview: { stage: 'transcribing' } }) });
+    renderPage({ role: 'publisher' });
+    expect(await screen.findByRole('button', { name: 'Delete recording' })).toBeDisabled();
+    expect(screen.getByText(/once the step working on it has finished/)).toBeInTheDocument();
+  });
+
   it('tells an editor that publishing needs the Publisher role, and sends nothing', async () => {
     install({ doc: baseDoc({ qa: QA, contentStatus: 'approved' }) });
     renderPage({ role: 'editor' });

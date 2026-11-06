@@ -10,7 +10,26 @@ import { ExternalLink } from 'lucide-react';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import RoleGate from '@/components/admin/RoleGate';
 import { Button } from '@/components/ui/button';
-import { STATUS_LABELS, livePagePath, statusActions } from './interviewModel';
+import { STATUS_LABELS, isInFlight, livePagePath, statusActions } from './interviewModel';
+
+/**
+ * Delete recording, for publishers. Held while a job is working, because the
+ * transcription reads the recording and deleting it mid-read loses the run.
+ */
+function DeleteRecordingButton({ busy, working, onClick }) {
+  return (
+    <RoleGate minRole="publisher">
+      <Button size="sm" variant="destructive" disabled={Boolean(busy) || working} onClick={onClick}>
+        Delete recording
+      </Button>
+      {working && (
+        <p className="text-xs text-muted-foreground">
+          The recording can be deleted once the step working on it has finished.
+        </p>
+      )}
+    </RoleGate>
+  );
+}
 
 /**
  * @param {object} props
@@ -99,16 +118,11 @@ export default function StatusPanel({
               is deleted automatically after the retention period. Deleting it now keeps the
               transcript.
             </p>
-            <RoleGate minRole="publisher">
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={Boolean(busy)}
-                onClick={() => setConfirmDelete(true)}
-              >
-                Delete recording
-              </Button>
-            </RoleGate>
+            <DeleteRecordingButton
+              busy={busy}
+              working={isInFlight(doc)}
+              onClick={() => setConfirmDelete(true)}
+            />
           </>
         ) : (
           <p className="text-sm text-muted-foreground">

@@ -154,10 +154,14 @@ export function PhotoField({ form, onChange, photo, onPhoto, problems = {} }) {
           type="file"
           accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
           className="block w-full text-sm"
+          aria-invalid={problems.photo ? true : undefined}
+          aria-describedby={problems.photo ? `${id}-photo-problem` : undefined}
           onChange={(event) => onPhoto(event.target.files?.[0] || null)}
         />
         {problems.photo && (
-          <p className="text-sm text-red-700 dark:text-red-400">{problems.photo}</p>
+          <p id={`${id}-photo-problem`} className="text-sm text-red-700 dark:text-red-400">
+            {problems.photo}
+          </p>
         )}
       </div>
       {photo && (
