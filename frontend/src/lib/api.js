@@ -386,6 +386,11 @@ export const PUT_BYTES_TIMEOUT_MS = 60000;
  * @returns {Promise<object>}
  */
 export async function putBytes(fnName, body, { headers, signal } = {}) {
+  const stoppedError = () =>
+    Object.assign(new Error('The upload was stopped.'), { code: 'ABORTED' });
+  // An abort that happened before this call fires no event later, so it is
+  // checked here and again just before the request, as well as listened for.
+  if (signal?.aborted) throw stoppedError();
   const { acquireApiToken } = await import('@/lib/entraAuth');
   const token = await acquireApiToken({ forceRefresh: false });
   const url = getEndpoint(fnName);
@@ -398,6 +403,7 @@ export async function putBytes(fnName, body, { headers, signal } = {}) {
   const timer = setTimeout(() => controller.abort(), PUT_BYTES_TIMEOUT_MS);
   const stop = () => controller.abort();
   signal?.addEventListener?.('abort', stop, { once: true });
+  if (signal?.aborted) controller.abort();
   let res;
   try {
     res = await fetch(url, {
@@ -412,8 +418,7 @@ export async function putBytes(fnName, body, { headers, signal } = {}) {
     });
   } catch (err) {
     if (err?.name === 'AbortError') {
-      if (signal?.aborted)
-        throw Object.assign(new Error('The upload was stopped.'), { code: 'ABORTED' });
+      if (signal?.aborted) throw stoppedError();
       throw new Error(
         `${fnName} timed out after ${Math.round(PUT_BYTES_TIMEOUT_MS / 1000)}s. Check the connection and try again.`
       );

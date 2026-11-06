@@ -55,6 +55,9 @@ function fakeFile(bytes, { name = 'talk.mp3', type = 'audio/mpeg', failSlice = -
   };
 }
 
+/** An upload id shaped like the server's (a UUID); made up. */
+const UP = '0e2e0000-0000-4000-8000-0000000000a2';
+
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 /** The pairs of a `{ 'a': 'b', ... }` block that follows `name` in a source file. */
@@ -236,7 +239,7 @@ function fakeApi({ blockSize = BLOCK_SIZE, putFails = () => null } = {}) {
   let peak = 0;
   const postJSON = vi.fn(async (route, body) => {
     if (route === 'cms/interviews/uploads') {
-      return { uploadId: 'up-1', blockSize, blockCount: Math.ceil(body.bytes / BLOCK_SIZE) };
+      return { uploadId: UP, blockSize, blockCount: Math.ceil(body.bytes / BLOCK_SIZE) };
     }
     return { ok: true, bytes: 1 };
   });
@@ -286,7 +289,7 @@ describe('createAudioUpload', () => {
     expect(api.puts.find((p) => p.index === 0).bytes).toBe(BLOCK_SIZE);
     expect(api.peak()).toBeLessThanOrEqual(3);
     expect(api.peak()).toBeGreaterThan(1);
-    expect(api.postJSON.mock.calls[1]).toEqual(['cms/interviews/uploads/up-1/complete', {}]);
+    expect(api.postJSON.mock.calls[1]).toEqual([`cms/interviews/uploads/${UP}/complete`, {}]);
     const phases = progress.mock.calls.map(([p]) => p.phase);
     expect(phases[0]).toBe('hashing');
     expect(phases).toContain('uploading');
@@ -373,7 +376,7 @@ describe('createAudioUpload', () => {
     });
     await expect(job.run()).rejects.toMatchObject({ status: 502 });
     expect(api.puts.filter((p) => p.index === 3)).toHaveLength(3);
-    expect(job.state.session.uploadId).toBe('up-1');
+    expect(job.state.session.uploadId).toBe(UP);
     const before = api.puts.length;
     broken = false;
     await job.run();
@@ -382,7 +385,7 @@ describe('createAudioUpload', () => {
     // One open, one completion: the session was kept.
     expect(api.postJSON.mock.calls.map(([route]) => route)).toEqual([
       'cms/interviews/uploads',
-      'cms/interviews/uploads/up-1/complete',
+      `cms/interviews/uploads/${UP}/complete`,
     ]);
   });
 
@@ -392,7 +395,7 @@ describe('createAudioUpload', () => {
     api.postJSON.mockImplementation(async (route, body) => {
       if (route === 'cms/interviews/uploads') {
         return {
-          uploadId: 'up-1',
+          uploadId: UP,
           blockSize: BLOCK_SIZE,
           blockCount: Math.ceil(body.bytes / BLOCK_SIZE),
         };
@@ -423,6 +426,130 @@ describe('createAudioUpload', () => {
       deps: api,
     });
     await expect(job.run()).rejects.toMatchObject({ code: 'BAD_SESSION' });
+    expect(api.putBytes).not.toHaveBeenCalled();
+  });
+});
+
+describe('createAudioUpload, the edges the reviews named', () => {
+  const bytes = randomBytes(BLOCK_SIZE + 99);
+
+  it('fails with HASH_FAILED and sends nothing when the file cannot be read', async () => {
+    const api = fakeApi();
+    const job = createAudioUpload({
+      interviewId: 'int-1',
+      file: fakeFile(bytes, { failSlice: BLOCK_SIZE }),
+      durationSec: 60,
+      deps: api,
+    });
+    await expect(job.run()).rejects.toMatchObject({ code: 'HASH_FAILED' });
+    expect(api.postJSON).not.toHaveBeenCalled();
+    expect(api.putBytes).not.toHaveBeenCalled();
+  });
+
+  it('refuses an upload id that is not shaped like the server’s', async () => {
+    const api = fakeApi();
+    api.postJSON.mockImplementation(async () => ({
+      uploadId: '../../cms/secrets',
+      blockSize: BLOCK_SIZE,
+      blockCount: 2,
+    }));
+    const job = createAudioUpload({
+      interviewId: 'int-1',
+      file: fakeFile(bytes),
+      durationSec: 60,
+      deps: api,
+    });
+    await expect(job.run()).rejects.toMatchObject({ code: 'BAD_SESSION' });
+    expect(api.putBytes).not.toHaveBeenCalled();
+  });
+
+  it('sends no block once stopped, even one whose slice was being read', async () => {
+    const api = fakeApi();
+    const controller = new AbortController();
+    const file = fakeFile(bytes);
+    const slice = file.slice.bind(file);
+    let reads = 0;
+    file.slice = (start, end) => {
+      const part = slice(start, end);
+      return {
+        arrayBuffer: async () => {
+          reads += 1;
+          // The second read of the upload phase (after the two hash reads) stops it.
+          if (reads === 3) controller.abort();
+          return part.arrayBuffer();
+        },
+      };
+    };
+    const job = createAudioUpload({ interviewId: 'int-1', file, durationSec: 60, deps: api });
+    await expect(job.run({ signal: controller.signal })).rejects.toMatchObject({
+      code: 'ABORTED',
+    });
+    expect(api.putBytes).not.toHaveBeenCalled();
+  });
+
+  it('treats a lost completion answer as done when the interview points at this upload', async () => {
+    const api = fakeApi();
+    let completions = 0;
+    api.postJSON.mockImplementation(async (route, body) => {
+      if (route === 'cms/interviews/uploads') {
+        return { uploadId: UP, blockSize: BLOCK_SIZE, blockCount: 2 };
+      }
+      completions += 1;
+      if (completions === 1) throw new Error('timed out after 200s');
+      throw Object.assign(new Error('This upload was already completed'), { status: 409 });
+    });
+    const getJSON = vi.fn(async () => ({
+      interview: { provenance: { audio: { uploadId: UP, bytes: bytes.length, sha256: 'x' } } },
+    }));
+    const job = createAudioUpload({
+      interviewId: 'int-1',
+      file: fakeFile(bytes),
+      durationSec: 60,
+      deps: { ...api, getJSON },
+    });
+    await expect(job.run()).rejects.toThrow(/timed out/);
+    await expect(job.run()).resolves.toMatchObject({ ok: true, bytes: bytes.length });
+    expect(getJSON).toHaveBeenCalledWith('cms/interviews/int-1');
+    expect(api.putBytes).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a 409 a failure when the interview does not point at this upload', async () => {
+    const api = fakeApi();
+    api.postJSON.mockImplementation(async (route) => {
+      if (route === 'cms/interviews/uploads') {
+        return { uploadId: UP, blockSize: BLOCK_SIZE, blockCount: 2 };
+      }
+      throw Object.assign(new Error('The interview changed while the upload was completed'), {
+        status: 409,
+      });
+    });
+    const getJSON = vi.fn(async () => ({ interview: { provenance: { audio: null } } }));
+    const job = createAudioUpload({
+      interviewId: 'int-1',
+      file: fakeFile(bytes),
+      durationSec: 60,
+      deps: { ...api, getJSON },
+    });
+    await expect(job.run()).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('stops for good on INTERVIEW_DELETED at the open, and a second run sends nothing', async () => {
+    const api = fakeApi();
+    api.postJSON.mockImplementation(async () => {
+      throw Object.assign(new Error('This interview is being deleted'), {
+        status: 409,
+        code: 'INTERVIEW_DELETED',
+      });
+    });
+    const job = createAudioUpload({
+      interviewId: 'int-1',
+      file: fakeFile(bytes),
+      durationSec: 60,
+      deps: api,
+    });
+    await expect(job.run()).rejects.toMatchObject({ code: 'INTERVIEW_DELETED' });
+    await expect(job.run()).rejects.toMatchObject({ code: 'INTERVIEW_DELETED' });
+    expect(api.postJSON).toHaveBeenCalledTimes(1);
     expect(api.putBytes).not.toHaveBeenCalled();
   });
 });

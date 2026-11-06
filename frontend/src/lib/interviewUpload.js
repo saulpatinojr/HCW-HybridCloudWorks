@@ -42,7 +42,7 @@
  * Nothing here logs. The file name goes to the server once, in the open body,
  * because the server checks its extension.
  */
-import { postJSON, putBytes } from '@/lib/api';
+import { getJSON, postJSON, putBytes } from '@/lib/api';
 import { Sha256 } from '@/lib/sha256';
 
 /** Bytes per block; the server's BLOCK_SIZE. */
@@ -53,6 +53,8 @@ export const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
 export const MAX_AUDIO_SECONDS = 34_200;
 /** Blocks in flight at once. */
 export const PARALLEL_BLOCKS = 3;
+/** The upload id the server mints: a v4-shaped UUID (upload.js UPLOAD_ID_PATTERN). */
+const UPLOAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Attempts per block, the first included. */
 export const BLOCK_ATTEMPTS = 3;
 
@@ -304,13 +306,20 @@ function stopped(error) {
  * @param {File} args.file
  * @param {number} args.durationSec - read with `readAudioDuration`
  * @param {(progress: { phase: 'hashing'|'uploading'|'completing'|'done', done: number, total: number }) => void} [args.onProgress]
- * @param {{ postJSON?: Function, putBytes?: Function, wait?: (ms: number) => Promise<void> }} [args.deps]
+ * @param {{ postJSON?: Function, getJSON?: Function, putBytes?: Function, wait?: (ms: number) => Promise<void> }} [args.deps]
  */
 export function createAudioUpload({ interviewId, file, durationSec, onProgress, deps = {} }) {
   const post = deps.postJSON || postJSON;
+  const get = (route) => (deps.getJSON || getJSON)(route);
   const put = deps.putBytes || putBytes;
   const wait = deps.wait || pause;
-  const state = { sha256: '', session: null, acknowledged: new Set(), completed: null };
+  const state = {
+    sha256: '',
+    session: null,
+    acknowledged: new Set(),
+    completed: null,
+    stopped: null,
+  };
   const report = (phase, done, total) => onProgress?.({ phase, done, total });
 
   async function sendBlock(index, signal) {
@@ -319,6 +328,9 @@ export function createAudioUpload({ interviewId, file, durationSec, onProgress, 
       if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
       try {
         const body = await readSlice(file.slice(start, end));
+        // Checked again after the read: Stop pressed while a slice was being
+        // read must not let that block go.
+        if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
         await put(`cms/interviews/uploads/${state.session.uploadId}/blocks/${index}`, body, {
           signal,
         });
@@ -357,6 +369,56 @@ export function createAudioUpload({ interviewId, file, durationSec, onProgress, 
     if (failure) throw failure;
   }
 
+  /** Open the session, and check the plan the server answers with. */
+  async function openSession() {
+    const opened = await post('cms/interviews/uploads', {
+      interviewId,
+      fileName: file.name,
+      contentType: audioTypeOf(file),
+      bytes: file.size,
+      sha256: state.sha256,
+      durationSec,
+    });
+    const expected = Math.ceil(file.size / BLOCK_SIZE);
+    if (
+      typeof opened?.uploadId !== 'string' ||
+      !UPLOAD_ID_PATTERN.test(opened.uploadId) ||
+      opened.blockSize !== BLOCK_SIZE ||
+      opened.blockCount !== expected
+    ) {
+      throw new UploadError(
+        'The server answered the upload with a plan this page does not understand. Reload the page and try again.',
+        'BAD_SESSION'
+      );
+    }
+    return {
+      uploadId: opened.uploadId,
+      blockSize: opened.blockSize,
+      blockCount: opened.blockCount,
+    };
+  }
+
+  /** Commit the blocks; the server checks the size and the hash. */
+  async function complete() {
+    try {
+      return await post(`cms/interviews/uploads/${state.session.uploadId}/complete`, {});
+    } catch (error) {
+      // A 422 at completion is a missing block, or a size or hash mismatch
+      // after which the server deleted the session's blob (and its staged
+      // blocks) but kept the session open. Either way the next run sends
+      // every block again on the same session.
+      if (error?.status === 422) state.acknowledged.clear();
+      // A 409 is either "already completed" (an earlier completion landed
+      // but its answer was lost, a timeout say) or "the interview changed,
+      // try again"; the server gives neither a code. The interview itself
+      // says which: if it points at this upload, the recording is stored.
+      if (error?.status === 409 && error?.code !== 'INTERVIEW_DELETED') {
+        return completedEarlier(error);
+      }
+      throw error;
+    }
+  }
+
   return {
     state,
     /**
@@ -367,11 +429,16 @@ export function createAudioUpload({ interviewId, file, durationSec, onProgress, 
      */
     async run({ signal } = {}) {
       if (state.completed) return state.completed;
+      // A refusal that ends the upload for good is remembered, so a second
+      // run sends nothing more.
+      if (state.stopped) throw state.stopped;
       try {
         const problem = audioFileProblem(file) || durationProblem(durationSec);
         if (problem) {
-          const code = durationSec > MAX_AUDIO_SECONDS ? 'TOO_LONG' : 'INVALID_FILE';
-          throw new UploadError(problem, code);
+          throw new UploadError(
+            problem,
+            durationSec > MAX_AUDIO_SECONDS ? 'TOO_LONG' : 'INVALID_FILE'
+          );
         }
         if (!state.sha256) {
           state.sha256 = await hashFile(file, {
@@ -379,51 +446,28 @@ export function createAudioUpload({ interviewId, file, durationSec, onProgress, 
             onProgress: (done, total) => report('hashing', done, total),
           });
         }
-        if (!state.session) {
-          const opened = await post('cms/interviews/uploads', {
-            interviewId,
-            fileName: file.name,
-            contentType: audioTypeOf(file),
-            bytes: file.size,
-            sha256: state.sha256,
-            durationSec,
-          });
-          const expected = Math.ceil(file.size / BLOCK_SIZE);
-          if (
-            typeof opened?.uploadId !== 'string' ||
-            opened.blockSize !== BLOCK_SIZE ||
-            opened.blockCount !== expected
-          ) {
-            throw new UploadError(
-              'The server answered the upload with a plan this page does not understand. Reload the page and try again.',
-              'BAD_SESSION'
-            );
-          }
-          state.session = {
-            uploadId: opened.uploadId,
-            blockSize: opened.blockSize,
-            blockCount: opened.blockCount,
-          };
-        }
+        if (!state.session) state.session = await openSession();
         await sendMissingBlocks(signal);
         report('completing', file.size, file.size);
-        let answer;
-        try {
-          answer = await post(`cms/interviews/uploads/${state.session.uploadId}/complete`, {});
-        } catch (error) {
-          // A 422 at completion is a missing block, or a size or hash
-          // mismatch after which the server deleted the session's blob (and
-          // its staged blocks) but kept the session open. Either way the
-          // next run sends every block again on the same session.
-          if (error?.status === 422) state.acknowledged.clear();
-          throw error;
-        }
+        const answer = await complete();
         state.completed = answer;
         report('done', file.size, file.size);
         return answer;
       } catch (error) {
-        throw stopped(error);
+        const final = stopped(error);
+        if (final.code === 'INTERVIEW_DELETED') state.stopped = final;
+        throw final;
       }
     },
   };
+
+  /** The completion an earlier attempt made, read back from the interview, or the 409 again. */
+  async function completedEarlier(conflict) {
+    const read = await get(`cms/interviews/${encodeURIComponent(interviewId)}`).catch(() => null);
+    const audio = read?.interview?.provenance?.audio;
+    if (audio && audio.uploadId === state.session.uploadId) {
+      return { ok: true, bytes: audio.bytes, sha256: audio.sha256, contentType: audio.contentType };
+    }
+    throw conflict;
+  }
 }

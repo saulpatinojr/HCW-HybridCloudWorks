@@ -111,24 +111,41 @@ export function nextStep(doc) {
 }
 
 /**
- * The drafting checkpoints as `{ done, total }`, or null when the document
- * carries none. Each pass of a long transcript is saved on the document as it
- * finishes (`provenance.drafting.passes[k]`), so a retried draft resumes, and
- * the page can say "pass 2 of 4".
+ * The drafting checkpoints as `{ done, total }`, or null when there are none
+ * for the current transcript. While a draft runs, the job saves each pass's
+ * items as it finishes (functions/src/lib/interviews/draft.js):
+ * `provenance.drafting = { transcriptVersion, passCount, passes: [...] }`, so
+ * a retried draft resumes and the page can say "pass 2 of 4". A finished
+ * draft clears `passes` and keeps `passCount`; checkpoints of an older
+ * transcript version are not this draft's progress.
  */
 export function draftingProgress(doc) {
   const drafting = doc?.provenance?.drafting;
-  if (!drafting || typeof drafting !== 'object') return null;
-  const { passes } = drafting;
-  const total = [drafting.passCount, drafting.totalPasses, drafting.passesTotal].find(
-    (value) => Number.isInteger(value) && value > 0
-  );
-  if (Array.isArray(passes)) {
-    const done = passes.filter(Boolean).length;
-    return { done, total: total || Math.max(done, passes.length) || null };
-  }
-  if (Number.isInteger(passes) && passes > 0) return { done: passes, total: total || passes };
-  return null;
+  if (!drafting || typeof drafting !== 'object' || !Array.isArray(drafting.passes)) return null;
+  const current = doc?.transcription?.version;
+  if (Number.isInteger(current) && drafting.transcriptVersion !== current) return null;
+  const total =
+    Number.isInteger(drafting.passCount) && drafting.passCount > 0 ? drafting.passCount : null;
+  if (!total) return null;
+  return { done: Math.min(drafting.passes.length, total), total };
+}
+
+/**
+ * The live page's address for the link on the status panel, or null. Only a
+ * path on this site under /azure/interviews/ is linked: the stored value can
+ * be edited through the generic content route, and the admin must never be
+ * sent to another site from here.
+ */
+export function livePagePath(value) {
+  return typeof value === 'string' && /^\/azure\/interviews\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
+    ? value
+    : null;
+}
+
+/** An interview id as the routes accept it (functions/src/lib/interviews/admin.js), else ''. */
+export function interviewIdOf(value) {
+  const id = String(value || '').trim();
+  return /^[A-Za-z0-9_-]{1,128}$/.test(id) ? id : '';
 }
 
 /** One line of detail under the stage: the window or the pass being worked on. */

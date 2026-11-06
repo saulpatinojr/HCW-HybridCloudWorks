@@ -18,8 +18,11 @@ import {
   emptyForm,
   formFromDoc,
   formProblems,
+  interviewIdOf,
   isInFlight,
   isRealDate,
+  LIMITS,
+  livePagePath,
   moveQa,
   nextStep,
   parseTags,
@@ -31,6 +34,9 @@ import {
   todayUtc,
 } from './interviewModel';
 
+/** One saved pass, as draft.js writes it. */
+const CHECKPOINT = { transcriptVersion: 2, qa: [{ q: 'q', a: 'a', pullQuote: '' }], speakers: {} };
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const consentFile = path.resolve(here, '../../../../../functions/src/lib/interviews/consent.js');
 
@@ -41,6 +47,39 @@ describe('the consent sentence', () => {
     const literal = block.slice(0, block.indexOf(';'));
     const server = [...literal.matchAll(/'([^']*)'/g)].map((m) => m[1]).join('');
     expect(server).toBe(CONSENT_WORDING_V1);
+  });
+});
+
+describe('the interview limits', () => {
+  it('are the server schema’s', () => {
+    const schema = fs.readFileSync(path.resolve(path.dirname(consentFile), 'schema.js'), 'utf8');
+    for (const [name, value] of Object.entries({
+      MAX_TITLE: LIMITS.MAX_TITLE,
+      MAX_SHORT: LIMITS.MAX_SHORT,
+      MAX_ANSWER: LIMITS.MAX_ANSWER,
+      MAX_QA: LIMITS.MAX_QA,
+      MAX_TAGS: LIMITS.MAX_TAGS,
+    })) {
+      expect(schema, name).toMatch(new RegExp(`${name}: ${value},`));
+    }
+  });
+});
+
+describe('addresses the page builds from stored values', () => {
+  it('links only a live page path on this site', () => {
+    expect(livePagePath('/azure/interviews/landing-zones')).toBe('/azure/interviews/landing-zones');
+    expect(livePagePath('https://phish.example/azure/interviews/x')).toBeNull();
+    expect(livePagePath('//phish.example/x')).toBeNull();
+    expect(livePagePath('javascript:alert(1)')).toBeNull();
+    expect(livePagePath('/azure/interviews/../admin')).toBeNull();
+    expect(livePagePath(null)).toBeNull();
+  });
+
+  it('accepts an interview id only in the shape the routes take', () => {
+    expect(interviewIdOf(' 3f2a-b_c ')).toBe('3f2a-b_c');
+    expect(interviewIdOf('..')).toBe('');
+    expect(interviewIdOf('a/b')).toBe('');
+    expect(interviewIdOf('')).toBe('');
   });
 });
 
@@ -99,24 +138,40 @@ describe('stages', () => {
     expect(
       stageDetail({
         interview: { stage: 'drafting' },
-        provenance: { drafting: { passes: [{ items: 3 }, null, null], passCount: 3 } },
+        transcription: { version: 2, status: 'done' },
+        provenance: { drafting: { transcriptVersion: 2, passCount: 3, passes: [CHECKPOINT] } },
       })
     ).toBe('Pass 2 of 3 over the transcript.');
     expect(stageDetail({ interview: { stage: 'drafting' } })).toMatch(/Reading the transcript/);
     expect(stageDetail({ interview: { stage: 'ready' } })).toBe('');
   });
 
-  it('reads the drafting checkpoints in either shape', () => {
+  it('reads the checkpoints in the shape draft.js writes, for the current transcript only', () => {
+    const running = (over = {}) => ({
+      transcription: { version: 2, status: 'done' },
+      provenance: {
+        drafting: {
+          transcriptVersion: 2,
+          passCount: 4,
+          passes: [CHECKPOINT, CHECKPOINT],
+          updatedAt: '2026-11-05T10:00:00Z',
+          ...over,
+        },
+      },
+    });
     expect(draftingProgress({})).toBeNull();
-    expect(draftingProgress({ provenance: { drafting: { passes: [{}, {}] } } })).toEqual({
-      done: 2,
-      total: 2,
-    });
-    expect(draftingProgress({ provenance: { drafting: { passes: 4 } } })).toEqual({
-      done: 4,
-      total: 4,
-    });
-    expect(draftingProgress({ provenance: { drafting: { model: 'm' } } })).toBeNull();
+    expect(draftingProgress(running())).toEqual({ done: 2, total: 4 });
+    // Checkpoints left from an older transcript are not this draft's progress.
+    expect(draftingProgress(running({ transcriptVersion: 1 }))).toBeNull();
+    // A finished draft clears the checkpoints and keeps the count.
+    const finished = {
+      transcription: { version: 2, status: 'done' },
+      provenance: { drafting: { passCount: 4, transcriptVersion: 2, draftedAt: 'x' } },
+    };
+    expect(draftingProgress(finished)).toBeNull();
+    expect(stageDetail({ ...finished, interview: { stage: 'drafting' } })).toMatch(
+      /Reading the transcript/
+    );
   });
 });
 

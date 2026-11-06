@@ -140,3 +140,18 @@ describe('putBytes', () => {
     expect((await completion).message).toMatch(/timed out after 200s/);
   });
 });
+
+describe('putBytes and an abort that came first', () => {
+  it('sends nothing when the signal was aborted before the call', async () => {
+    const { putBytes } = await import('@/lib/api');
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      putBytes('cms/interviews/uploads/u1/blocks/0', new ArrayBuffer(1), {
+        signal: controller.signal,
+      })
+    ).rejects.toMatchObject({ code: 'ABORTED' });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(acquireApiToken).not.toHaveBeenCalled();
+  });
+});

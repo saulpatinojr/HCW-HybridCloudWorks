@@ -113,7 +113,9 @@ export default function QaEditor({ doc, saving, onSave, onDirty }) {
               {item.needsReview && (
                 <div className="flex flex-wrap items-center gap-2 rounded bg-amber-50 p-2 text-sm text-amber-950 dark:bg-amber-950/40 dark:text-amber-100">
                   <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
-                  <span>Check this answer: some of its words are not in what the guest said.</span>
+                  <span id={`qa-flag-${index}`}>
+                    Check this answer: some of its words are not in what the guest said.
+                  </span>
                   <Button
                     size="sm"
                     variant="outline"
@@ -137,6 +139,7 @@ export default function QaEditor({ doc, saving, onSave, onDirty }) {
               </label>
               <Textarea
                 id={`qa-a-${index}`}
+                aria-describedby={item.needsReview ? `qa-flag-${index}` : undefined}
                 rows={5}
                 value={item.a || ''}
                 maxLength={LIMITS.MAX_ANSWER}

@@ -10,7 +10,7 @@ import { ExternalLink } from 'lucide-react';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import RoleGate from '@/components/admin/RoleGate';
 import { Button } from '@/components/ui/button';
-import { STATUS_LABELS, statusActions } from './interviewModel';
+import { STATUS_LABELS, livePagePath, statusActions } from './interviewModel';
 
 /**
  * @param {object} props
@@ -37,7 +37,7 @@ export default function StatusPanel({
   const hasQa = Array.isArray(doc?.qa) && doc.qa.length > 0;
   const actions = statusActions(status, { live, hasQa });
   const audio = doc?.provenance?.audio;
-  const path = doc?.curatedSubpagePath;
+  const path = livePagePath(doc?.curatedSubpagePath);
 
   const runAction = (action) => {
     if (action.id === 'publish') return onPublish();

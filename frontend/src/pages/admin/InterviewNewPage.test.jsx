@@ -25,6 +25,8 @@ vi.mock('@/lib/api', () => ({
 }));
 
 const readDuration = vi.fn();
+/** A made-up upload id in the server's UUID shape. */
+const UP = '0e2e0000-0000-4000-8000-0000000000a3';
 
 function renderPage() {
   return render(
@@ -46,7 +48,7 @@ function answerRoutes(overrides = {}) {
     if (overrides[route]) return overrides[route](body);
     if (route === 'cms/interviews') return { ok: true, id: 'int-1', etag: '"e1"' };
     if (route === 'cms/interviews/uploads') {
-      return { uploadId: 'up-1', blockSize: 4 * 1024 * 1024, blockCount: 1 };
+      return { uploadId: UP, blockSize: 4 * 1024 * 1024, blockCount: 1 };
     }
     if (route === 'cms/uploads/covers') return { url: '/api/public/media/covers/x.png' };
     return { ok: true };
@@ -107,6 +109,27 @@ describe('InterviewNewPage', () => {
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Interview created' }));
   });
 
+  it('shows the server’s refusal of the create, sends nothing else, and lets the owner fix it', async () => {
+    answerRoutes({
+      'cms/interviews': () => {
+        throw Object.assign(new Error('The consent date cannot be in the future.'), {
+          status: 422,
+          code: 'CONSENT_REQUIRED',
+        });
+      },
+    });
+    renderPage();
+    fillGuest();
+    fireEvent.change(screen.getByLabelText('Transcript'), { target: { value: 'Speaker 1: Hi' } });
+    submit();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The consent date cannot be in the future.'
+    );
+    expect(routesCalled()).toEqual(['cms/interviews']);
+    expect(screen.getByRole('button', { name: 'Create interview' })).toBeEnabled();
+    expect(screen.getByLabelText('Guest’s name')).toBeEnabled();
+  });
+
   it('sends a link to the server to download', async () => {
     answerRoutes();
     renderPage();
@@ -136,7 +159,7 @@ describe('InterviewNewPage', () => {
     expect(routesCalled()).toEqual([
       'cms/interviews',
       'cms/interviews/uploads',
-      'cms/interviews/uploads/up-1/complete',
+      `cms/interviews/uploads/${UP}/complete`,
       'cms/interviews/int-1/transcribe',
     ]);
     expect(postJSON.mock.calls[1][1]).toMatchObject({
@@ -149,7 +172,7 @@ describe('InterviewNewPage', () => {
       sha256: '74f81fe167d99b4cb41d6d0ccda82278caee9f3e2f25d5e5a3936ff3dcec60d0',
     });
     expect(putBytes).toHaveBeenCalledTimes(1);
-    expect(putBytes.mock.calls[0][0]).toBe('cms/interviews/uploads/up-1/blocks/0');
+    expect(putBytes.mock.calls[0][0]).toBe(`cms/interviews/uploads/${UP}/blocks/0`);
   });
 
   it('refuses a recording over 9.5 hours before anything is created', async () => {
@@ -162,9 +185,9 @@ describe('InterviewNewPage', () => {
     fireEvent.change(screen.getByLabelText('Recording file'), { target: { files: [file] } });
     expect(await screen.findByText(/most one transcription can take/)).toBeInTheDocument();
     submit();
-    await waitFor(() =>
-      expect(screen.getAllByText(/most one transcription can take/).length).toBeGreaterThan(0)
-    );
+    expect(
+      await screen.findByText('Some fields need attention; each says what is missing.')
+    ).toBeInTheDocument();
     expect(postJSON).not.toHaveBeenCalled();
   });
 

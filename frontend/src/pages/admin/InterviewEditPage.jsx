@@ -39,6 +39,7 @@ import TranscriptPanel from '@/components/admin/interviews/TranscriptPanel';
 import {
   audioProblemFor,
   detailsProblems,
+  interviewIdOf,
   detailsUpdates,
   formFromDoc,
   isInFlight,
@@ -209,7 +210,10 @@ function ConsentSummary({ consent }) {
 }
 
 export default function InterviewEditPage({ readDuration, pollMs }) {
-  const { interviewId = '' } = useParams();
+  const { interviewId: routeId = '' } = useParams();
+  // Only an id shaped like one reaches the API: `..` in the address would
+  // otherwise turn the route into another path on the same API.
+  const interviewId = interviewIdOf(routeId);
   const { authReady } = useAuthReady();
   const { toast } = useToast();
   const view = useInterview(interviewId, { authReady, toast, pollMs });

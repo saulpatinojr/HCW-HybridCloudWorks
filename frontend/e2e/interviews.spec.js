@@ -9,9 +9,12 @@ import { test, expect } from './fixtures/entra.js';
  * 1. A pasted transcript: sign in, fill the guest, tick the consent with its
  *    date, paste, create; the interview's page drafts the transcript by
  *    itself and shows the drafted questions with the honesty flag.
- * 2. A recording: a real WAV file whose length Chromium reads from its
- *    header, uploaded as raw blocks with the declared SHA-256, completed,
- *    and queued for transcription.
+ * 2. A recording: a real WAV file of 4 MiB and 44 bytes whose length
+ *    Chromium reads from its header, uploaded as two raw blocks (a full one
+ *    and a short last one) with the declared SHA-256, completed, and queued
+ *    for transcription.
+ * 3. A recording that says it lasts more than 9.5 hours is refused before
+ *    anything is created.
  *
  * Nothing here reaches a real API or storage: every `/api/` route is the
  * fixture's, and the fixture fails the test on any other host.
@@ -58,10 +61,9 @@ function interviewAt(stage, extra = {}) {
   };
 }
 
-/** A valid one-second, 8 kHz, 16-bit mono WAV file of silence. */
-function silentWav(seconds = 1) {
+/** A valid 8 kHz, 16-bit mono WAV file of silence with `data` bytes of samples. */
+function silentWav(data) {
   const rate = 8000;
-  const data = rate * 2 * seconds;
   const buffer = Buffer.alloc(44 + data);
   buffer.write('RIFF', 0);
   buffer.writeUInt32LE(36 + data, 4);
@@ -133,19 +135,20 @@ test('a pasted transcript becomes a drafted interview to review', async ({ page,
     drafted = true;
     return { ok: true, jobId: 'job-draft', status: 'queued', transcriptVersion: 1 };
   });
-  let reads = 0;
+  // Ready on the first read after the draft was asked for: the page reads
+  // the interview again straight after queueing a step, so no five-second
+  // poll is waited out here.
   identity.answerApi(`cms/interviews/${INTERVIEW_ID}`, () => {
-    reads += 1;
     if (!drafted) {
       return interviewAt('transcribed', {
         transcription: { version: 1, status: 'provided' },
         provenance: { source: 'transcript' },
       });
     }
-    return interviewAt(reads < 4 ? 'drafting' : 'ready', {
+    return interviewAt('ready', {
       transcription: { version: 1, status: 'provided' },
-      provenance: { source: 'transcript', drafting: { droppedQuotes: 0 } },
-      qa: reads < 4 ? [] : DRAFTED_QA,
+      provenance: { source: 'transcript', drafting: { droppedQuotes: 0, passCount: 1 } },
+      qa: DRAFTED_QA,
     });
   });
 
@@ -175,11 +178,13 @@ test('a pasted transcript becomes a drafted interview to review', async ({ page,
   expect((await pasted).postDataJSON().text).toContain('Speaker 2: Because every workload');
 
   await page.waitForURL((url) => url.pathname === `/admin/interviews/${INTERVIEW_ID}`);
-  await expect(page.getByTestId('qa-item')).toHaveCount(2, { timeout: 20_000 });
+  await expect(page.getByTestId('qa-item')).toHaveCount(2);
   expect(drafted).toBe(true);
   await expect(page.getByTestId('interview-stage')).toHaveText('Draft ready for your review');
   await expect(page.getByRole('textbox', { name: 'Question 1' })).toHaveValue(DRAFTED_QA[0].q);
-  await expect(page.getByText(/Check this answer: some of its words are not/)).toBeVisible();
+  const flag = /Check this answer: some of its words are not/;
+  await expect(page.getByTestId('qa-item').nth(1).getByText(flag)).toBeVisible();
+  await expect(page.getByTestId('qa-item').nth(0).getByText(flag)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Send to review' })).toBeVisible();
   await expectNoSideways(page);
 });
@@ -188,7 +193,8 @@ test('a recording is uploaded in blocks with its hash, then queued for transcrip
   page,
   identity,
 }) => {
-  const wav = silentWav(1);
+  // 4 MiB of samples plus the 44-byte header: two blocks, the second short.
+  const wav = silentWav(4 * 1024 * 1024);
   const blocks = [];
   let completed = false;
   identity.answerApi('cms/interviews/uploads', (request) => {
@@ -199,13 +205,21 @@ test('a recording is uploaded in blocks with its hash, then queued for transcrip
       blockCount: Math.ceil(body.bytes / 4194304),
     };
   });
-  identity.answerApi(`cms/interviews/uploads/${UPLOAD_ID}/blocks/0`, (request) => {
-    blocks.push({
-      method: request.method(),
-      type: request.headers()['content-type'],
-      bytes: request.postDataBuffer()?.length ?? 0,
+  for (const index of [0, 1]) {
+    identity.answerApi(`cms/interviews/uploads/${UPLOAD_ID}/blocks/${index}`, (request) => {
+      blocks.push({
+        index,
+        method: request.method(),
+        type: request.headers()['content-type'],
+        bytes: request.postDataBuffer()?.length ?? 0,
+      });
+      return { ok: true, index };
     });
-    return { ok: true, index: 0, bytes: wav.length };
+  }
+  // Every block request, answered or not, so an unexpected extra one shows.
+  const blockRequests = [];
+  page.on('request', (request) => {
+    if (/\/blocks\/\d+$/.test(new URL(request.url()).pathname)) blockRequests.push(request.url());
   });
   identity.answerApi(`cms/interviews/uploads/${UPLOAD_ID}/complete`, () => {
     completed = true;
@@ -232,7 +246,7 @@ test('a recording is uploaded in blocks with its hash, then queued for transcrip
     mimeType: 'audio/wav',
     buffer: wav,
   });
-  await expect(page.getByText('Length: 1 s.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Length: 4 min 22 s.', { exact: false })).toBeVisible();
 
   const opened = page.waitForRequest((request) =>
     request.url().endsWith('/api/cms/interviews/uploads')
@@ -240,16 +254,21 @@ test('a recording is uploaded in blocks with its hash, then queued for transcrip
   const queued = page.waitForRequest((request) => request.url().endsWith('/transcribe'));
   await page.getByRole('button', { name: 'Create interview' }).click();
 
-  expect((await opened).postDataJSON()).toEqual({
+  const openBody = (await opened).postDataJSON();
+  expect(openBody).toMatchObject({
     interviewId: INTERVIEW_ID,
     fileName: 'talk.wav',
     contentType: 'audio/wav',
     bytes: wav.length,
     sha256: createHash('sha256').update(wav).digest('hex'),
-    durationSec: 1,
   });
+  expect(openBody.durationSec).toBeCloseTo((4 * 1024 * 1024) / 16000, 1);
   await queued;
-  expect(blocks).toEqual([{ method: 'PUT', type: 'application/octet-stream', bytes: wav.length }]);
+  expect(blocks.sort((a, b) => a.index - b.index)).toEqual([
+    { index: 0, method: 'PUT', type: 'application/octet-stream', bytes: 4 * 1024 * 1024 },
+    { index: 1, method: 'PUT', type: 'application/octet-stream', bytes: 44 },
+  ]);
+  expect(blockRequests).toHaveLength(2);
   expect(completed).toBe(true);
   await page.waitForURL((url) => url.pathname === `/admin/interviews/${INTERVIEW_ID}`);
   await expect(page.getByTestId('interview-stage')).toHaveText('Transcribing the recording');

@@ -48,6 +48,11 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
   }, []);
 
   const load = useCallback(async () => {
+    if (!id) {
+      setLoadError('No interview has that address.');
+      setLoading(false);
+      return null;
+    }
     try {
       const answer = await getJSON(`cms/interviews/${encodeURIComponent(id)}`);
       if (!alive.current) return null;

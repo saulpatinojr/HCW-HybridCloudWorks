@@ -110,6 +110,9 @@ function renderPage({ role = null } = {}) {
   );
 }
 
+/** A wider wait for the polling journey: under the coverage run the five reads take longer than the default second. */
+const SLOW = { timeout: 5000 };
+
 const routes = () => postJSON.mock.calls.map(([route]) => route);
 const stage = () => screen.getByTestId('interview-stage');
 
@@ -131,7 +134,12 @@ describe('following the jobs', () => {
             interview: { stage: 'drafting' },
             provenance: {
               ...state.doc.provenance,
-              drafting: { passes: [{}, null, null], passCount: 3 },
+              // The shape draft.js writes while it runs: one pass saved of three.
+              drafting: {
+                transcriptVersion: 1,
+                passCount: 3,
+                passes: [{ transcriptVersion: 1, qa: [QA[0]], speakers: {} }],
+              },
             },
           };
           return { ok: true };
@@ -139,14 +147,18 @@ describe('following the jobs', () => {
       },
     });
     renderPage();
-    expect(await screen.findByText('Working on hour 2 of the recording.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Working on hour 2 of the recording.', {}, SLOW)
+    ).toBeInTheDocument();
     expect(stage()).toHaveTextContent('Transcribing the recording');
     state.doc = {
       ...state.doc,
       interview: { stage: 'transcribed' },
       transcription: { version: 1, status: 'done' },
     };
-    expect(await screen.findByText('Pass 2 of 3 over the transcript.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Pass 2 of 3 over the transcript.', {}, SLOW)
+    ).toBeInTheDocument();
     expect(routes().filter((r) => r === 'cms/interviews/int-1/draft')).toHaveLength(1);
     state.doc = {
       ...state.doc,
@@ -154,9 +166,14 @@ describe('following the jobs', () => {
       interview: { stage: 'ready', speakers: { guest: 'Speaker 2', unsure: true } },
       provenance: { ...state.doc.provenance, drafting: { droppedQuotes: 2, truncated: true } },
     };
-    await waitFor(() => expect(screen.getAllByTestId('qa-item')).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByTestId('qa-item')).toHaveLength(2), SLOW);
     expect(stage()).toHaveTextContent('Draft ready for your review');
-    expect(screen.getByText(/Check this answer/)).toBeInTheDocument();
+    const [first, second] = screen.getAllByTestId('qa-item');
+    expect(within(second).getByText(/Check this answer/)).toBeInTheDocument();
+    expect(within(first).queryByText(/Check this answer/)).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Answer 2' })).toHaveAccessibleDescription(
+      /Check this answer/
+    );
     expect(screen.getByText('1 answer(s) to check')).toBeInTheDocument();
     expect(screen.getByText(/2 pull quote\(s\) were left out/)).toBeInTheDocument();
     expect(screen.getByText(/first 40 are kept/)).toBeInTheDocument();
@@ -170,8 +187,9 @@ describe('following the jobs', () => {
     install({
       doc: baseDoc({ interview: { stage: 'fetched' }, transcription: undefined, qa: [] }),
     });
-    renderPage();
+    const first = renderPage();
     await waitFor(() => expect(routes()).toContain('cms/interviews/int-1/transcribe'));
+    first.unmount();
 
     postJSON.mockClear();
     install({ doc: baseDoc({ interview: { stage: 'transcribed' }, qa: QA }) });
@@ -192,6 +210,39 @@ describe('following the jobs', () => {
     await waitFor(() => expect(routes()).toContain('cms/interviews/int-1/transcribe'));
     fireEvent.click(await screen.findByRole('button', { name: /Draft again/ }));
     await waitFor(() => expect(routes()).toContain('cms/interviews/int-1/draft'));
+  });
+
+  it('treats a 409 on a step it starts as already running, not as an error', async () => {
+    install({
+      doc: baseDoc({ interview: { stage: 'transcribed' }, qa: [] }),
+      onPost: {
+        'cms/interviews/int-1/draft': () => {
+          throw Object.assign(new Error('A draft for this interview is already being made.'), {
+            status: 409,
+          });
+        },
+      },
+    });
+    renderPage();
+    await waitFor(() => expect(routes()).toContain('cms/interviews/int-1/draft'));
+    await waitFor(() => expect(getJSON.mock.calls.length).toBeGreaterThan(1));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('asks the API nothing for an address that is not an interview id', async () => {
+    install();
+    render(
+      <MemoryRouter initialEntries={['/admin/interviews/..']}>
+        <Routes>
+          <Route
+            path="/admin/interviews/:interviewId"
+            element={<InterviewEditPage pollMs={10} />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('No interview has that address.');
+    expect(getJSON).not.toHaveBeenCalled();
   });
 
   it('shows the API’s sentence when a step it starts is refused', async () => {
@@ -339,6 +390,48 @@ describe('review and publish', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('links the live page only when its address is a page of this site', async () => {
+    install({
+      doc: baseDoc({
+        qa: QA,
+        contentStatus: 'published',
+        Live: true,
+        curatedSubpagePath: 'https://phish.example/azure/interviews/x',
+      }),
+    });
+    renderPage({ role: 'publisher' });
+    await screen.findByRole('button', { name: 'Unpublish' });
+    expect(screen.queryByRole('link', { name: /Open the live page/ })).not.toBeInTheDocument();
+  });
+
+  it('says so when the recording could not be deleted, and gates the button for an editor', async () => {
+    install({ doc: baseDoc({ qa: QA }) });
+    sendJSON.mockImplementation(async () => {
+      throw Object.assign(new Error('The recording could not be deleted; try again.'), {
+        status: 502,
+        code: 'DELETE_FAILED',
+      });
+    });
+    const publisher = renderPage({ role: 'publisher' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete recording' }));
+    fireEvent.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Delete recording' })
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be deleted');
+    expect(
+      screen.queryByText('No recording is stored for this interview.')
+    ).not.toBeInTheDocument();
+    publisher.unmount();
+
+    sendJSON.mockClear();
+    renderPage({ role: 'editor' });
+    const button = await screen.findByRole('button', { name: 'Delete recording' });
+    expect(button.closest('[data-role-gate="publisher"]')).not.toBeNull();
+    fireEvent.click(button);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(sendJSON).not.toHaveBeenCalled();
+  });
+
   it('tells an editor that publishing needs the Publisher role, and sends nothing', async () => {
     install({ doc: baseDoc({ qa: QA, contentStatus: 'approved' }) });
     renderPage({ role: 'editor' });
@@ -414,8 +507,9 @@ describe('the rest of the page', () => {
     getJSON.mockImplementation(async () => {
       throw new Error('No interview has that id.');
     });
-    renderPage();
+    const first = renderPage();
     expect(await screen.findByRole('alert')).toHaveTextContent('No interview has that id.');
+    first.unmount();
 
     install({ doc: baseDoc({ consent: null }) });
     renderPage();
