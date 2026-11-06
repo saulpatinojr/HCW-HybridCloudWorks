@@ -50,7 +50,7 @@ describe('validateConsent', () => {
 
   it('keeps the wording in code, under a version, so a later change is a new version', () => {
     expect(CONSENT_WORDING_VERSION).toBe('v1');
-    expect(CONSENT_WORDING_V1).toMatch(/hybridcloudworks\.com/);
+    expect(CONSENT_WORDING_V1).toContain('hybridcloudworks.com');
     expect(CONSENT_WORDING_V1).toMatch(/recording is kept privately/);
   });
 });
