@@ -34,10 +34,10 @@ export default defineConfig({
         ],
       ],
       thresholds: {
-        lines: 94.95,
+        lines: 94.96,
         statements: 93.44,
-        functions: 91.83,
-        branches: 84.65,
+        functions: 91.84,
+        branches: 84.66,
         autoUpdate: true,
       },
       reportsDirectory: "coverage",
