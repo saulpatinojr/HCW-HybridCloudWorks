@@ -28,7 +28,8 @@ vi.mock('../lib/blob-storage.js', () => ({
   uploadBlob: vi.fn(),
   uploadBlobFromStream: vi.fn(),
 }));
-vi.mock('../lib/auth/default-guard.js', () => ({ getDefaultGuard: () => ({ requireRole: vi.fn() }) }));
+const guardAnswer = vi.hoisted(() => ({ requireRole: async () => ({ user: { oid: '00000000-0000-0000-0000-000000000001' }, role: 'editor', error: null }) }));
+vi.mock('../lib/auth/default-guard.js', () => ({ getDefaultGuard: () => guardAnswer }));
 vi.mock('@azure/functions', () => ({
   app: { http: vi.fn() },
   output: { storageQueue: (options) => ({ type: 'queue', ...options }) },
@@ -118,5 +119,24 @@ describe('the routes', () => {
       expect(options.methods).toEqual(['POST', 'OPTIONS']);
       expect(options.authLevel).toBe('anonymous');
     }
+  });
+});
+
+describe('the routes, end to end through the registration', () => {
+  it('a queued route sends its message through the jobs queue output on the invocation context', async () => {
+    const cosmos = await import('../lib/cosmos-client.js');
+    cosmos.readDoc.mockImplementation(async (container, id) =>
+      container === 'content' ? { id, type: 'interview', provenance: { audio: { path: 'audio/int-1/u.mp3', contentType: 'audio/mpeg', bytes: 1, durationSec: 60 } } } : null
+    );
+    cosmos.upsertDoc.mockImplementation(async (container, doc) => doc);
+    cosmos.patchDoc.mockImplementation(async () => ({}));
+    const route = httpRegistrations.find(([, options]) => options.route === 'cms/interviews/{id}/transcribe')[1];
+    const set = vi.fn();
+    const response = await route.handler(
+      { method: 'POST', params: { id: 'int-1' }, json: async () => ({}), headers: { get: () => null } },
+      { log: vi.fn(), warn: vi.fn(), error: vi.fn(), extraOutputs: { set } }
+    );
+    expect(response.status).toBe(202);
+    expect(set).toHaveBeenCalledWith(route.extraOutputs[0], { jobId: expect.any(String), type: 'interview-transcribe' });
   });
 });

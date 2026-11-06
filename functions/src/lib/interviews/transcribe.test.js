@@ -426,3 +426,22 @@ describe('transcribeInterview', () => {
     await expect(run(makeWorld(), makeGemini([]), { signal: already.signal })).rejects.toThrow('job timed out');
   });
 });
+
+describe('the real clock and wait', () => {
+  it('uses its own clock and sleeper when none is given, and reads the month with the real date', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-11-20T12:00:00Z'));
+      const world = makeWorld();
+      const gemini = makeGemini([{ segments: [], endOfAudio: true }]);
+      const report = await transcribeInterview({ interviewId: 'int-1', transcriptVersion: 1, store: world.store, storage: world.storage, ai: world.ai, gemini, env: { GEMINI_API_KEY: 'k' }, jobId: 'job-1' });
+      expect(report.windows).toBe(1);
+      expect(world.store.queryDocs.mock.calls[0][2].at(-1)).toEqual({ name: '@since', value: '2026-11-01T00:00:00.000Z' });
+      // monthInterviewSpend with its own clock.
+      const spend = await monthTranscriptionSpend({ store: { queryDocs: async () => [] } });
+      expect(spend.since).toBe('2026-11-01T00:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

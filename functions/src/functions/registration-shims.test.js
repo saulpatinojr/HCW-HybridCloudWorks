@@ -92,6 +92,7 @@ const EXPECTED_SHIM_FILES = [
   "inspect-jobs.js",
   "integrations-http.js",
   "interviews-jobs.js",
+  "interviews-upload-http.js",
   "jobs-http.js",
   "jobs-sweeper.js",
   "jobs-worker.js",

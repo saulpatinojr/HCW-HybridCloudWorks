@@ -75,6 +75,7 @@ import "./doc-vault-http.js";
 import "./calendar-alerts-http.js";
 import "./cost-http.js";
 import "./interviews-jobs.js";
+import "./interviews-upload-http.js";
 
 const BUILD_TIME = new Date().toISOString();
 

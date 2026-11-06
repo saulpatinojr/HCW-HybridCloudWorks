@@ -283,3 +283,24 @@ describe('fetchAudioToContainer, after the review', () => {
     expect(refused.patchDoc.mock.calls.at(-1)[2].interview.stage).toBe('failed');
   });
 });
+
+describe('cleanup that fails', () => {
+  it('a partial blob whose delete also fails still reports the download’s own failure', async () => {
+    const store = { readDoc: vi.fn(async () => ({ id: 'int-1', type: 'interview' })), patchDoc: vi.fn(async () => ({})) };
+    const storage = {
+      uploadBlobFromStream: vi.fn(async () => {
+        throw Object.assign(new Error('busy'), { statusCode: 503 });
+      }),
+      deleteBlob: vi.fn(async () => {
+        throw new Error('also busy');
+      }),
+    };
+    const fetchStream = vi.fn(async () => ({
+      response: { status: 200, headers: { get: () => 'audio/mpeg' } },
+      stream: (await import('node:stream')).Readable.from([Buffer.from('x')]),
+      url: 'https://files.example/a.mp3',
+    }));
+    await expect(fetchAudioToContainer({ interviewId: 'int-1', sourceUrl: URL_OK, store, storage, fetchStream, env: {} })).rejects.toMatchObject({ code: 'FETCH_FAILED' });
+    expect(storage.deleteBlob).toHaveBeenCalledTimes(1);
+  });
+});

@@ -350,3 +350,25 @@ describe('the per-request deadline', () => {
     }
   });
 });
+
+describe('the real waits', () => {
+  it('uploadToGemini and transcribeWindow wait with their own timers when no sleeper is given', async () => {
+    vi.useFakeTimers();
+    try {
+      const upload = vi
+        .fn()
+        .mockResolvedValueOnce(reply(200, {}, { 'x-goog-upload-url': 'https://generativelanguage.googleapis.com/upload/s' }))
+        .mockResolvedValueOnce(reply(200, { file: { name: 'files/abc', uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc', state: 'PROCESSING' } }))
+        .mockResolvedValueOnce(reply(200, { state: 'ACTIVE' }));
+      const uploaded = uploadToGemini({ stream: Readable.from(['x']), bytes: 1, mimeType: 'audio/mpeg', apiKey: KEY, fetch: upload });
+      await vi.advanceTimersByTimeAsync(2001);
+      await expect(uploaded).resolves.toMatchObject({ name: 'files/abc' });
+      const window = vi.fn().mockResolvedValueOnce(reply(503)).mockResolvedValueOnce(answer({ segments: [], endOfAudio: true }));
+      const done = transcribeWindow({ fileUri: 'https://generativelanguage.googleapis.com/v1beta/files/abc', mimeType: 'audio/mpeg', model: 'm', startSec: 0, endSec: 60, apiKey: KEY, fetch: window });
+      await vi.advanceTimersByTimeAsync(RETRY_WAITS_MS[0] + 1);
+      await expect(done).resolves.toMatchObject({ attempts: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

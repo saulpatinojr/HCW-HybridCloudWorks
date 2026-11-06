@@ -588,6 +588,77 @@ export const DECLARED = [
     reason:
       "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); planned only once the owner has created the role and set storage_firewall_remover_enabled = true (Required-Inputs §4.6b)",
   },
+
+  // #1565 (ADR 0040 D10): the interviews-audio container and its retention
+  // rule, slice A of the interviews feature. The rule is the policy's fifth
+  // (index 4, after expire-recording-uploads); the -1 values are what the
+  // azurerm 5.12.0 provider writes for every day setting the rule does not
+  // name, read from a local plan of the same block, not guessed. 365 is
+  // var.interview_audio_retention_days at its default; a different workspace
+  // value changes both 365s. Delete both entries once the run has applied.
+  {
+    address: "azurerm_storage_container.interviews_audio",
+    action: "create",
+    reason: "#1565 ADR 0040 D10: the private interviews-audio container for guest recordings and transcripts",
+  },
+  {
+    address: "azurerm_storage_management_policy.cleanup",
+    path: "rule[4]",
+    before: undefined,
+    after: {
+        actions: [
+          {
+            base_blob: [
+              {
+                auto_tier_to_hot_from_cool_enabled: null,
+                delete_after_days_since_creation_greater_than: 365,
+                delete_after_days_since_last_access_time_greater_than: -1,
+                delete_after_days_since_modification_greater_than: -1,
+                tier_to_archive_after_days_since_creation_greater_than: -1,
+                tier_to_archive_after_days_since_last_access_time_greater_than: -1,
+                tier_to_archive_after_days_since_last_tier_change_greater_than: -1,
+                tier_to_archive_after_days_since_modification_greater_than: -1,
+                tier_to_cold_after_days_since_creation_greater_than: -1,
+                tier_to_cold_after_days_since_last_access_time_greater_than: -1,
+                tier_to_cold_after_days_since_modification_greater_than: -1,
+                tier_to_cool_after_days_since_creation_greater_than: -1,
+                tier_to_cool_after_days_since_last_access_time_greater_than: -1,
+                tier_to_cool_after_days_since_modification_greater_than: -1
+              }
+            ],
+            snapshot: [],
+            version: [
+              {
+                change_tier_to_archive_after_days_since_creation: -1,
+                change_tier_to_cool_after_days_since_creation: -1,
+                delete_after_days_since_creation: 365,
+                tier_to_archive_after_days_since_last_tier_change_greater_than: -1,
+                tier_to_cold_after_days_since_creation_greater_than: -1
+              }
+            ]
+          }
+        ],
+        enabled: true,
+        filters: [
+          {
+            blob_types: [
+              "blockBlob"
+            ],
+            match_blob_index_tag: [],
+            prefix_match: [
+              "interviews-audio/audio/"
+            ]
+          }
+        ],
+        name: "expire-interview-audio"
+      },
+    reason: "#1565 ADR 0040 D10: expire-interview-audio deletes interviews-audio/audio/ and its previous versions after var.interview_audio_retention_days",
+  },
+  {
+    address: "azurerm_role_assignment.func_interviews_audio_owner",
+    action: "create",
+    reason: "#1565 ADR 0040 D10: Storage Blob Data Owner for the Function App identity on the interviews-audio container only, for deleteBlobVersion (the account keeps versions)",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

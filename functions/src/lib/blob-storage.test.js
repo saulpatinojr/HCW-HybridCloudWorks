@@ -19,11 +19,14 @@ import {
   resolveBlobEndpoint,
   resolveAccountName,
   getBlobUrl,
+  commitBlockList,
   deleteBlob,
+  hashBlobSha256,
   headBlobForDelivery,
   parseContentRangeTotal,
   readBlobRangeForDelivery,
   resetBlobServiceForTests,
+  stageBlock,
   uploadBlob,
   uploadBlobFromStream,
 } from './blob-storage.js';
@@ -31,6 +34,9 @@ import { runAsJob } from './job-context.js';
 
 const uploadSpy = vi.hoisted(() => vi.fn());
 const uploadStreamSpy = vi.hoisted(() => vi.fn());
+const stageBlockSpy = vi.hoisted(() => vi.fn());
+const commitBlockListSpy = vi.hoisted(() => vi.fn());
+const blockPropertiesSpy = vi.hoisted(() => vi.fn());
 const deleteSpy = vi.hoisted(() => vi.fn());
 const downloadSpy = vi.hoisted(() => vi.fn());
 const propertiesSpy = vi.hoisted(() => vi.fn());
@@ -48,6 +54,9 @@ vi.mock('@azure/storage-blob', async (importOriginal) => {
             url: `https://hcwmedia.blob.core.windows.net/c/${blobName}`,
             upload: uploadSpy,
             uploadStream: uploadStreamSpy,
+            stageBlock: stageBlockSpy,
+            commitBlockList: commitBlockListSpy,
+            getProperties: blockPropertiesSpy,
           }),
           getBlobClient: () => ({
             download: downloadSpy,
@@ -217,8 +226,17 @@ describe('a write a timed-out job starts is refused (#942 follow-up)', () => {
         uploadBlobFromStream('cosmos-export', 'a.gz', null, 4, 'application/gzip')
       ).rejects.toMatchObject({ code: 'JOB_TIMEOUT' });
       await expect(deleteBlob('podcast', 'a.mp3')).rejects.toMatchObject({ code: 'JOB_TIMEOUT' });
+      // The interview upload's two writes (ADR 0040 D1) refuse the same way.
+      await expect(
+        stageBlock('interviews-audio', 'audio/a.mp3', 'MDAwMDAw', Buffer.from('x'))
+      ).rejects.toMatchObject({ code: 'JOB_TIMEOUT' });
+      await expect(
+        commitBlockList('interviews-audio', 'audio/a.mp3', ['MDAwMDAw'], { contentType: 'audio/mpeg' })
+      ).rejects.toMatchObject({ code: 'JOB_TIMEOUT' });
     });
     expect(uploadSpy).not.toHaveBeenCalled();
+    expect(stageBlockSpy).not.toHaveBeenCalled();
+    expect(commitBlockListSpy).not.toHaveBeenCalled();
   });
 
   it('lets a job upload while its signal has not fired, and anything outside a job as before', async () => {
@@ -274,6 +292,61 @@ describe('a write a timed-out job starts is refused (#942 follow-up)', () => {
     });
     expect(stored).toEqual(['x']);
     expect(uploadSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('block staging and commit for the interview upload (ADR 0040 D1, #1565)', () => {
+  const original = { ...process.env };
+
+  beforeEach(() => {
+    stageBlockSpy.mockReset();
+    commitBlockListSpy.mockReset();
+    blockPropertiesSpy.mockReset();
+    downloadSpy.mockReset();
+    resetBlobServiceForTests();
+    process.env.STORAGE_BLOB_ENDPOINT = 'https://hcwmedia.blob.core.windows.net';
+  });
+
+  afterEach(() => {
+    process.env = { ...original };
+    resetBlobServiceForTests();
+  });
+
+  it('stages one block by id with its exact length and no signal', async () => {
+    const bytes = Buffer.from('abcdef');
+    await stageBlock('interviews-audio', 'audio/a.mp3', 'MDAwMDAx', bytes);
+    expect(stageBlockSpy).toHaveBeenCalledWith('MDAwMDAx', bytes, 6);
+  });
+
+  it('commits the ids in the order given, sets the type, and reads the size back from Storage', async () => {
+    blockPropertiesSpy.mockResolvedValue({ contentLength: 12 });
+    const result = await commitBlockList('interviews-audio', 'audio/a.mp3', ['MDAwMDAw', 'MDAwMDAx'], {
+      contentType: 'audio/mpeg',
+      metadata: { source: 'interview-upload' },
+    });
+    expect(commitBlockListSpy).toHaveBeenCalledWith(['MDAwMDAw', 'MDAwMDAx'], {
+      blobHTTPHeaders: { blobContentType: 'audio/mpeg' },
+      metadata: { source: 'interview-upload' },
+    });
+    expect(commitBlockListSpy.mock.calls[0][1]).not.toHaveProperty('abortSignal');
+    expect(result).toEqual({
+      url: 'https://hcwmedia.blob.core.windows.net/c/audio/a.mp3',
+      contentLength: 12,
+    });
+  });
+
+  it('hashes a blob as a stream and is null for a missing one', async () => {
+    downloadSpy.mockResolvedValueOnce({
+      readableStreamBody: (async function* () {
+        yield Buffer.from('hello ');
+        yield Buffer.from('world');
+      })(),
+    });
+    expect(await hashBlobSha256('interviews-audio', 'audio/a.mp3')).toBe(
+      'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9'
+    );
+    downloadSpy.mockRejectedValueOnce({ statusCode: 404 });
+    expect(await hashBlobSha256('interviews-audio', 'audio/missing.mp3')).toBeNull();
   });
 });
 

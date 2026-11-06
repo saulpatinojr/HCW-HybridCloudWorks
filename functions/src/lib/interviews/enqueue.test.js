@@ -218,3 +218,16 @@ describe('POST cms/interviews/{id}/transcribe without a range reader', () => {
     expect(handlers).toBeDefined();
   });
 });
+
+describe('defaults and unreadable bodies', () => {
+  it('mints its own job id and clock, and reads a body that is not JSON as empty', async () => {
+    const { store, storage, io } = makeDeps({ doc: { id: 'int-1', type: 'interview' } });
+    const handlers = createInterviewJobHandlers({ guard, store, storage });
+    const notJson = { ...request('int-1'), json: async () => { throw new SyntaxError('Unexpected token'); } };
+    expect(parse(await handlers.audioFromUrl(notJson, context, io))).toEqual({ status: 400, body: { ok: false, error: 'url is required.' } });
+    expect(parse(await handlers.transcript(notJson, context, io)).status).toBe(400);
+    const queued = parse(await handlers.audioFromUrl(request('int-1', { url: 'https://files.example/a.mp3' }), context, io));
+    expect(queued.body.jobId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(store.upsertDoc.mock.calls[0][1].createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+});
