@@ -269,6 +269,51 @@ export const MODEL_PRICE_PROMOTIONS = Object.freeze({
   }),
 });
 
+/**
+ * USD per 1M AUDIO INPUT tokens, by model, for the interview transcription
+ * (ADR 0040 D3, #1565): the job estimates a recording's cost before the
+ * first window (32 tokens a second of audio, the Gemini audio page's figure)
+ * and prices each window's usage row from it, so the Cost page and the
+ * monthly ceiling see what audio costs rather than the text rate.
+ *
+ * Read from https://aistudio.google.com/docs/pricing on 2026-11-05 (the
+ * Standard paid tier, USD per 1M input tokens). [VERIFY] against the owner's
+ * first real run on the Cost page: this is a read of that page on that day,
+ * not a billed figure. What the page said:
+ *   - gemini-3.6-flash and gemini-3.8-flash: "$0.75 through December 31,
+ *     2026", "$1.50 starting January 1, 2027", with NO separate audio input
+ *     price listed, so audio is taken at the input rate (the same promotion
+ *     MODEL_PRICE_PROMOTIONS carries for 3.8 Flash; 3.6 Flash gets its
+ *     audio promotion here because its text row is the regular rate).
+ *   - gemini-3.5-flash-lite: "$0.30 (text / image / video / audio)", one rate.
+ *   - gemini-2.5-flash: "$1.00 (audio)" beside "$0.30 (text / image /
+ *     video)"; the page says requests route to 3.5 Flash-Lite from
+ *     2026-12-01. gemini-2.5-flash-lite: "$0.30 (audio)" beside "$0.10".
+ * A model with no row here is unpriced for audio: the transcription refuses
+ * it (lib/interviews/transcribe.js) rather than guess, which is the
+ * `isPriced` rule for text.
+ */
+export const AUDIO_INPUT_RATES = Object.freeze({
+  gemini: Object.freeze({
+    'gemini-3.6-flash': { usdPer1M: 1.5, promotion: { until: '2027-01-01T00:00:00Z', usdPer1M: 0.75 } },
+    'gemini-3.8-flash': { usdPer1M: 1.5, promotion: { until: '2027-01-01T00:00:00Z', usdPer1M: 0.75 } },
+    'gemini-3.5-flash-lite': { usdPer1M: 0.3 },
+    'gemini-2.5-flash': { usdPer1M: 1.0 },
+    'gemini-2.5-flash-lite': { usdPer1M: 0.3 },
+  }),
+});
+
+/** USD per 1M audio input tokens for a model at `at`, or null when the table has no row. */
+export function audioInputRateFor(provider, model, at = Date.now()) {
+  const rows = AUDIO_INPUT_RATES[provider];
+  const row = rows && Object.hasOwn(rows, model) ? rows[model] : null;
+  if (!row) return null;
+  if (row.promotion && Number(new Date(at)) < Date.parse(row.promotion.until)) {
+    return row.promotion.usdPer1M;
+  }
+  return row.usdPer1M;
+}
+
 /** Current token rates, shared by catalogue display and usage recording. Never re-prices stored rows. */
 export function modelRatesFor(provider, model, at = Date.now()) {
   const promotion = MODEL_PRICE_PROMOTIONS[provider]?.[model];

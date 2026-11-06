@@ -33,9 +33,9 @@ import { AI_TASKS } from './tasks.js';
  * Derived from the task registry (tasks.js, ADR 0034 slice 1): a feature is a
  * task's label, description and route, under the same id. One list, kept in
  * one place; the modality, needs and recommendation live on the task. A
- * `planned` task (slice 5: speech-to-text, OCR, embeddings, registered
- * ahead of any provider that serves them) is NOT a feature: a switch for
- * something that cannot happen reads as a working switch and does nothing.
+ * `planned` task (slice 5: OCR and embeddings, registered ahead of any
+ * provider that serves them) is NOT a feature: a switch for something that
+ * cannot happen reads as a working switch and does nothing.
  */
 export const AI_FEATURES = Object.freeze(
   Object.fromEntries(
@@ -122,6 +122,9 @@ const placements = ({ content, altText, brain = 'off' }) =>
     critique: content,
     forgeDrafting: content,
     forgeGrading: content,
+    // The interview Q&A draft (ADR 0040): a text task on the owner's global
+    // order, placed like the other drafting work.
+    interviewDrafting: content,
     voiceCalibration: content,
     socialCaption: content,
     listenAndLearn: content,
@@ -139,6 +142,8 @@ const placements = ({ content, altText, brain = 'off' }) =>
     podcastVoice: 'off',
     coverArt: 'off',
     manualImages: 'off',
+    // The interview transcription (ADR 0040): Gemini-only by product rule.
+    recordingTranscript: 'off',
   });
 
 export const PROVIDER_PLACEMENT_DEFAULTS = Object.freeze({

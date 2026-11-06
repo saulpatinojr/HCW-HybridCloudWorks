@@ -25,6 +25,14 @@ export const RECOMMENDED_BY_MODALITY = Object.freeze({
     json: rec('gemini-3.6-flash', 'Structured output that holds on long inputs; $1.50 / $7.50.'),
     vision: rec('gemini-3.6-flash', 'Reads images; the same model the inspector used for alt text before 2026-10-04.'),
     grounding: rec('gemini-3.6-flash', 'The only model the Interactions API grounds on pages and YouTube (router.js header).'),
+    // Speech to text (ADR 0040, #1565): the interview transcription's
+    // model; a custom step naming Gemini and no model resolves here.
+    stt: Object.freeze({
+      model: 'gemini-3.6-flash',
+      asOf: '2026-11-05',
+      reason:
+        'Reads audio from the Files API with speaker labels; no separate audio input rate on the pricing page, so $0.75 per 1M input tokens through 2026-12-31, then $1.50 (read 2026-11-05).',
+    }),
     tts: Object.freeze({ model: 'gemini-3.8-flash-tts', asOf: '2026-10-27', reason: 'Google recommends Flash TTS for long-form multi-speaker fidelity. Introductory text/audio rates are $0.50 / $9 per 1M through 2026-12-31, then $1 / $18. Flash-Lite TTS is the lower-cost custom option ($0.50 / $6, then $1 / $12).' }),
   }),
   elevenlabs: Object.freeze({
