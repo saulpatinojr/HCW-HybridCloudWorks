@@ -226,6 +226,9 @@ jobs:
         run: |
           set -euo pipefail
           git apply "${RUNNER_TEMP}/version-floors/floors.patch"
+          # The script is JavaScript in single quotes on purpose: its ${...}
+          # are JavaScript template strings, not shell expansions.
+          # shellcheck disable=SC2016
           node --input-type=commonjs -e '
             const { execFileSync } = require("node:child_process");
             const { readFileSync } = require("node:fs");

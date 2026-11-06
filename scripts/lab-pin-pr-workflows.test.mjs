@@ -251,7 +251,7 @@ describe('lab-supply-chain.yml', () => {
     const check = source.slice(source.indexOf('  check:'));
     const scan = check.slice(check.indexOf('- name: Scan the published lab images the host runs'), check.indexOf('- name: Open or update the issue'));
     expect(scan).toContain('--format json -o "$report"');
-    expect(scan).toContain('trivy convert --quiet --format table "$report" >> "$table"');
+    expect(scan).toContain('{ echo \'```\'; trivy convert --quiet --format table "$report" 2>&1; echo \'```\'; } >> "$table"');
     expect(scan).toContain('cat "$table" >> "$GITHUB_STEP_SUMMARY"');
     expect(scan).toContain('| Found in | Package | Installed | Fixed in | Severity | Vulnerabilities |');
     // One row per installation, never one per package name (CodeRabbit on #1132).

@@ -1956,6 +1956,7 @@ jobs:
           python-version: '3.15'
 
       - name: Install actionlint, hadolint and zizmor (pinned, digests checked)
+        id: install
         run: |
           set -euo pipefail
           tools="${RUNNER_TEMP}/lint-tools"
@@ -1973,17 +1974,22 @@ jobs:
           python -m pip install --disable-pip-version-check --no-deps --only-binary=:all: --require-hashes -r zizmor-requirements.txt
           echo "$tools" >> "$GITHUB_PATH"
 
+      # Each linter runs even when the one before it failed, so one run
+      # shows every finding.
       - name: actionlint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           actionlint -version
           actionlint -color
 
       - name: zizmor
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           zizmor --version
           zizmor --offline --format=github .github/workflows
 
       - name: hadolint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           set -euo pipefail
           hadolint --version

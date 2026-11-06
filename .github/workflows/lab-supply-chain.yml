@@ -530,9 +530,7 @@ jobs:
               { echo "the scan did not complete:"; echo '```'; cat "${RUNNER_TEMP}/scan-${n}.err"; echo '```'; } | tee -a "$table" >> "$compact"
             else
               failed=1
-              echo '```' >> "$table"
-              trivy convert --quiet --format table "$report" >> "$table" 2>&1
-              echo '```' >> "$table"
+              { echo '```'; trivy convert --quiet --format table "$report" 2>&1; echo '```'; } >> "$table"
               totals=$(jq -r '[.Results[]?.Vulnerabilities[]?] | group_by(.Severity) | map("\(length) \(.[0].Severity)") | join(", ")' "$report")
               # One row per installation: the same package name under two
               # result targets (a Debian package and a Python one, say) or at

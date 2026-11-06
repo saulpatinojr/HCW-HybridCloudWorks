@@ -15,3 +15,15 @@
 self-hosted-runner:
   labels:
     - ubuntu-26.04
+
+# actionlint 1.7.12 does not know `job.workflow_sha`, which GitHub documents
+# for a reusable workflow checking out its own source ("Example usage of `job`
+# context workflow identity" on
+# https://docs.github.com/en/actions/reference/workflows-and-actions/contexts).
+# addon-guide-check.yml uses it, and checks the value is a 40-hex commit
+# before relying on it. Drop this once an actionlint release knows the
+# property (#1575).
+paths:
+  .github/workflows/addon-guide-check.yml:
+    ignore:
+      - 'property "workflow_sha" is not defined in object type'
