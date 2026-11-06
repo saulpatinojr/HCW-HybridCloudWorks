@@ -26,6 +26,7 @@ import {
 } from './agent-health.js';
 import { createTempStorageCleanup, parsePrefixes } from './temp-storage.js';
 import {
+  CANDIDATE_QUERY,
   createForgeScheduled,
   FORGE_SCHEDULER_ACTOR,
   forgedTodayCount,
@@ -1198,6 +1199,11 @@ describe('forge scheduled', () => {
     expect(forge.runForgePipeline).not.toHaveBeenCalledWith(
       expect.objectContaining({ contentId: 'overflow' })
     );
+    // The candidates are asked for with the one query that leaves interviews
+    // out (ADR 0040, D5): a guest's words are never rewritten by the forge.
+    expect(store.queryDocs).toHaveBeenCalledWith('content', CANDIDATE_QUERY, []);
+    expect(CANDIDATE_QUERY).toContain("(NOT IS_STRING(c.type) OR LOWER(c.type) != 'interview')");
+    expect(CANDIDATE_QUERY).toMatch(/WHERE c\.contentStatus IN \('/);
   });
 
   it("spends only the day's REMAINING budget and skips entirely at the limit (T-607)", async () => {

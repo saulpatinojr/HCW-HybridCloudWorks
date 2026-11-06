@@ -60,6 +60,7 @@ describe('the shape the pre-render reads', () => {
         'architecture-designs',
         'audio',
         'audio-architecture',
+        'interviews',
         'blog',
         'code',
         'coder-corner',
@@ -414,5 +415,23 @@ describe('countSections', () => {
     const store = { queryDocs: vi.fn(async () => null) };
     const sections = await countSections({ store });
     expect(sections.azure.blog).toBe(0);
+  });
+});
+
+describe('interviews (ADR 0040, D6)', () => {
+  const published = (fields) => ({ contentStatus: 'published', ...fields });
+
+  it('counts an interview under interviews and never under blog', () => {
+    const sections = countContentDocs(emptySections(), [
+      published({ type: 'interview', cloudProvider: 'Azure' }),
+      published({ type: 'blog', cloudProvider: 'Azure' }),
+    ]);
+    expect(sections.azure.interviews).toBe(1);
+    expect(sections.azure.blog).toBe(1);
+    expect(sections._unattributed.interviews).toBe(0);
+  });
+
+  it('does not infer a provider for an interview', () => {
+    expect(SECTIONS.interviews.providerInferred).toBe(false);
   });
 });

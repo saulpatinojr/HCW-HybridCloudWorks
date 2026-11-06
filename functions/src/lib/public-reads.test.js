@@ -21,6 +21,7 @@ import {
   CURATED_IMAGE_BATCH_MAX,
 } from './public-reads.js';
 import { buildStatusUpdateData } from './cms/content-status.js';
+import { SQL_NOT_SOFT_DELETED, SQL_PUBLIC_CLAUSE } from './public-reads.js';
 
 const context = { log: vi.fn(), error: vi.fn() };
 
@@ -1785,5 +1786,101 @@ describe('podcast media that is gone (#372)', () => {
     const body = JSON.parse((await h.listPodcasts(makeRequest(), context)).body);
     expect(body.items.map((i) => i.id)).toEqual(['live']);
     expect(body.total).toBe(1);
+  });
+});
+
+describe('the public interview routes (ADR 0040, D6)', () => {
+  const interview = (over = {}) => ({
+    id: 'i1',
+    type: 'interview',
+    slug: 'first-one',
+    title: 'First',
+    date: '2026-10-01',
+    guest: { name: 'Test Guest' },
+    qa: [{ q: 'Q?', a: 'A.' }],
+    Live: true,
+    contentStatus: 'published',
+    ...over,
+  });
+  const storeOf = (docs) => ({ readDoc: vi.fn(async () => null), queryDocs: vi.fn(async () => docs) });
+
+  it('lists published interviews newest first by their own date, then slug, cached five minutes', async () => {
+    const store = storeOf([
+      interview({ id: 'a', slug: 'older-one', date: '2026-03-01' }),
+      interview({ id: 'b', slug: 'newest-one', date: '2026-10-01' }),
+      interview({ id: 'c', slug: 'also-newest', date: '2026-10-01' }),
+      interview({ id: 'd', slug: 'draft-one', Live: false, contentStatus: 'in_review' }),
+      interview({ id: 'e', slug: 'gone-one', softDeletedAt: '2026-01-01' }),
+      interview({ id: 'f', slug: 'Not A Slug' }),
+    ]);
+    const res = await createPublicReadHandlers({ store }).listInterviews(makeRequest(), context);
+    expect(res.status).toBe(200);
+    expect(res.headers['Cache-Control']).toBe('public, max-age=300');
+    const body = JSON.parse(res.body);
+    expect(body.items.map((item) => item.slug)).toEqual(['also-newest', 'newest-one', 'older-one']);
+    expect(body.total).toBe(3);
+    const [container, query, params] = store.queryDocs.mock.calls[0];
+    expect(container).toBe('content');
+    expect(query).toContain('LOWER(c.type) = @type');
+    expect(query).toContain(SQL_PUBLIC_CLAUSE);
+    expect(query).toContain(SQL_NOT_SOFT_DELETED);
+    expect(params).toEqual([{ name: '@type', value: 'interview' }]);
+  });
+
+  it('answers one published interview by slug, and the identical 404 for unpublished, missing and malformed', async () => {
+    const published = storeOf([interview()]);
+    const ok = await createPublicReadHandlers({ store: published }).getInterview(
+      makeRequest({ params: { slug: 'first-one' } }),
+      context
+    );
+    expect(ok.status).toBe(200);
+    expect(ok.headers['Cache-Control']).toBe('public, max-age=300');
+    expect(JSON.parse(ok.body).item.slug).toBe('first-one');
+    const [, query, params] = published.queryDocs.mock.calls[0];
+    expect(query).toContain('c.slug = @slug');
+    // In SQL too, so newer drafts sharing the slug cannot fill the window.
+    expect(query).toContain(SQL_PUBLIC_CLAUSE);
+    expect(query).toContain(SQL_NOT_SOFT_DELETED);
+    expect(params).toEqual([
+      { name: '@type', value: 'interview' },
+      { name: '@slug', value: 'first-one' },
+    ]);
+
+    const answers = [];
+    for (const [docs, slug] of [
+      [[interview({ Live: false, contentStatus: 'approved' })], 'first-one'],
+      [[], 'first-one'],
+      [[interview()], '../first-one'],
+      [[interview()], 'First-One'],
+    ]) {
+      const store = storeOf(docs);
+      const res = await createPublicReadHandlers({ store }).getInterview(makeRequest({ params: { slug } }), context);
+      answers.push([res.status, res.body, store.queryDocs.mock.calls.length]);
+    }
+    expect(answers.map(([status, body]) => [status, body])).toEqual(
+      Array(4).fill([404, JSON.stringify({ error: 'Interview not found' })])
+    );
+    // A malformed slug never reaches the store.
+    expect(answers[2][2]).toBe(0);
+    expect(answers[3][2]).toBe(0);
+  });
+
+  it('picks the newest public document when more than one holds the slug', async () => {
+    const store = storeOf([interview({ id: 'draft', Live: false, contentStatus: 'draft' }), interview({ id: 'live' })]);
+    const res = await createPublicReadHandlers({ store }).getInterview(
+      makeRequest({ params: { slug: 'first-one' } }),
+      context
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('answers 500 with a fixed sentence when the store fails, and logs it', async () => {
+    const store = { queryDocs: vi.fn(async () => { throw new Error('cosmos exploded'); }) };
+    const h = createPublicReadHandlers({ store });
+    const list = await h.listInterviews(makeRequest(), context);
+    const one = await h.getInterview(makeRequest({ params: { slug: 'x' } }), context);
+    expect([list.status, one.status]).toEqual([500, 500]);
+    expect(list.body).not.toContain('exploded');
+    expect(one.body).not.toContain('exploded');
   });
 });

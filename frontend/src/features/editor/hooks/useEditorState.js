@@ -68,6 +68,7 @@ export function getDestinationUrl(docData = {}) {
     framework: 'frameworks',
     architecture: 'architecture-designs',
     coder_corner: 'code',
+    interview: 'interviews',
     news: 'news',
     rss: 'news',
   };

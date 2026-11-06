@@ -4,7 +4,7 @@ import { routes } from '@/lib/routeFactory';
 import ProviderLandingTemplate from '@/components/shared/ProviderLandingTemplate';
 import HeroImageCarousel from '@/components/landing/HeroImageCarousel';
 import useAudioEpisodes from '@/hooks/useAudioEpisodes';
-import { hasInterviews } from '@/data/interviews/available';
+import { useInterviewList } from '@/pages/azure/InterviewsPage';
 
 const AZURE_HERO_IMAGES = [
   '/images/azure-hero/1.png',
@@ -155,7 +155,9 @@ function FrameworkCards() {
 
 // Azure's interviews, linked from here and not from the header: the header's
 // toolbar is a fixed grid of nine slots and a tenth link overflowed it.
-// Carries no interview text, so this page's bundle stays as it was.
+// Carries no interview text: the card is the same sentence whatever is
+// published, and whether it shows at all is read live from the public list
+// (ADR 0040, D6; the pre-render seeds the same key from the manifest).
 //
 // The book view is promised only where it is offered: a wide screen, and a
 // visitor who has not asked for less motion (pages/azure/InterviewsPage.jsx).
@@ -258,6 +260,8 @@ function CertList() {
 }
 
 export default function LandingPage() {
+  const { interviews } = useInterviewList();
+  const hasInterviews = interviews.length > 0;
   return (
     <ProviderLandingTemplate
       provider="azure"
@@ -304,7 +308,7 @@ export default function LandingPage() {
           action: { label: 'All episodes', to: routes.audio('azure') },
           content: <PodcastList />,
         },
-        // Only once there is an interview file (data/interviews/available.js).
+        // Only once there is a published interview (the live list above).
         ...(hasInterviews
           ? [
               {

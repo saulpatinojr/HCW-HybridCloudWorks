@@ -13,6 +13,8 @@
  *   - `c.X = literal` (true, false, a number or a quoted string);
  *   - `c.X IN (literal, ...)` and `NOT (c.X IN (literal, ...))`;
  *   - `NOT IS_DEFINED(c.X)`, `IS_NULL(c.X)` and `NOT IS_STRING(c.X)`;
+ *   - `LOWER(c.X) = literal` and `LOWER(c.X) != literal`, undefined (so
+ *     false) when the field is not a string, as LOWER of a non-string is;
  *   - with `parameters` given (the `[{ name, value }]` list queryDocs takes):
  *     `c.X <op> @name` for `=`, `!=`, `<`, `<=`, `>` and `>=`, and
  *     `ARRAY_CONTAINS(@name, c.X)`. A name with no value throws. Comparing
@@ -85,6 +87,11 @@ function term(text, doc, parameters) {
   if (m) return listOf(m[2]).includes(doc[m[1]]);
   m = /^c\.(\w+) = (.+)$/.exec(t);
   if (m) return doc[m[1]] === literal(m[2]);
+  m = /^LOWER\(c\.(\w+)\) (=|!=) (.+)$/.exec(t);
+  if (m) {
+    if (typeof doc[m[1]] !== 'string') return false;
+    return COMPARE[m[2]](doc[m[1]].toLowerCase(), literal(m[3]));
+  }
   m = /^NOT IS_DEFINED\(c\.(\w+)\)$/.exec(t);
   if (m) return doc[m[1]] === undefined;
   m = /^IS_NULL\(c\.(\w+)\)$/.exec(t);

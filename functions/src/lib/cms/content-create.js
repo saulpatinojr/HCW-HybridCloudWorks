@@ -62,6 +62,14 @@ export const QUALITY_ENFORCED_STATUSES = [
 
 const nullCritique = async () => null;
 
+/** The blocks only the interview routes write (ADR 0040); see `interviewAllowed`. */
+const INTERVIEW_PRIVATE_BLOCKS = Object.freeze([
+  "consent",
+  "provenance",
+  "interview",
+  "transcription",
+]);
+
 /**
  * The write path itself, separated from the HTTP shape so a second caller
  * (createContentFromRecording, #180) persists through the same dedup, quality
@@ -76,6 +84,11 @@ const nullCritique = async () => null;
  * @param {object} args.data       The content fields, as the request's `data`.
  * @param {boolean} [args.runEditorialCritique=true]
  * @param {boolean} [args.forceQualityBypass=false]
+ * @param {boolean} [args.interviewAllowed=false]  Only POST cms/interviews
+ *   (lib/interviews/admin.js) may create an interview: it writes the consent
+ *   record from the token (ADR 0040, D9). Any other caller asking for
+ *   `type: 'interview'` is answered 400, and the interview's private blocks
+ *   are dropped from its data whatever type it asked for.
  * @param {Function} [args.critiqueDraft]
  * @param {() => Date} [args.now]
  * @param {() => string} [args.uuid]
@@ -86,6 +99,7 @@ export async function createContentDocument({
   data,
   runEditorialCritique = true,
   forceQualityBypass = false,
+  interviewAllowed = false,
   critiqueDraft = nullCritique,
   now = () => new Date(),
   uuid = randomUUID,
@@ -94,6 +108,23 @@ export async function createContentDocument({
   const normalizedType = SUPPORTED_PUBLISH_TARGETS.has(requestedType)
     ? requestedType
     : "blog";
+  const asksForInterview =
+    normalizedType === "interview" ||
+    String(data.publishTarget || "").trim().toLowerCase() === "interview";
+  if (asksForInterview && !interviewAllowed) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        code: "USE_INTERVIEW_ROUTE",
+        error: "An interview is created through POST cms/interviews, which records the guest's consent.",
+      },
+    };
+  }
+  if (!interviewAllowed) {
+    data = { ...data };
+    for (const key of INTERVIEW_PRIVATE_BLOCKS) delete data[key];
+  }
 
   // Before the dedup read: a bad classification is the caller's mistake and
   // costs no query. A disabled id is refused here even though an existing

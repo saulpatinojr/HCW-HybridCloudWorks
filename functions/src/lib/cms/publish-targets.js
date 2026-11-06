@@ -16,6 +16,9 @@ export const SUPPORTED_PUBLISH_TARGETS = new Set([
   'framework',
   'architecture',
   'coder_corner',
+  // A conversation with a guest, written up as questions and answers,
+  // reviewed and published from the admin (ADR 0040, D5).
+  'interview',
 ]);
 
 export function normalizeContentType(type) {

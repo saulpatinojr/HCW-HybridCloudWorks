@@ -477,17 +477,30 @@ export function injectIntoTemplate(template, { head, body }, route = '/', seeded
 
 /** `/azure/blog` -> `dist/azure/blog/index.html`; `/` -> `dist/index.html`. */
 /**
+ * The query key a route's page reads, as `usePublicData` keys it, or null
+ * for a route that needs no seed. `/azure` is the landing page, whose
+ * Interviews card reads the interview list (ADR 0040, D6).
+ */
+export function seedKeyFor(route) {
+  const article = /\/blog\/([^/]+)$/.exec(route)?.[1];
+  if (article) return `article:${article}`;
+  const interview = /^\/azure\/interviews\/([^/]+)$/.exec(route)?.[1];
+  if (interview) return `interview:${interview}`;
+  if (route === '/azure/interviews' || route === '/azure') return 'interviews:list';
+  return null;
+}
+
+/**
  * The data a route needs, keyed as `usePublicData` keys it.
  *
  * Only the entry for THIS route is handed over, not the whole manifest: a page
  * that reads a key it was not given should fall through to its normal fetch,
  * and passing everything would hide that.
  */
-function seedFor(manifest, route) {
+export function seedFor(manifest, route) {
   if (!manifest?.data) return null;
-  const slug = /\/blog\/([^/]+)$/.exec(route)?.[1];
-  if (!slug) return null;
-  const key = `article:${slug}`;
+  const key = seedKeyFor(route);
+  if (!key) return null;
   return Object.prototype.hasOwnProperty.call(manifest.data, key)
     ? { [key]: manifest.data[key] }
     : null;
