@@ -261,6 +261,25 @@ describe('following the jobs', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('shows an interview being deleted, rather than taking that 409 as already running', async () => {
+    install({
+      doc: baseDoc({ interview: { stage: 'transcribed' }, qa: [] }),
+      onPost: {
+        'cms/interviews/int-1/draft': () => {
+          throw Object.assign(
+            new Error('This interview is being deleted; nothing new was queued.'),
+            {
+              status: 409,
+              code: 'INTERVIEW_DELETED',
+            }
+          );
+        },
+      },
+    });
+    renderPage();
+    expect(await screen.findByText(/This interview is being deleted/)).toBeInTheDocument();
+  });
+
   it('asks the API nothing for an address that is not an interview id', async () => {
     install();
     render(

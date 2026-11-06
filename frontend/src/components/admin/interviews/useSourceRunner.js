@@ -47,6 +47,19 @@ async function queueDownload(path, url) {
   }
 }
 
+/**
+ * Queue the transcription of an uploaded recording. A 409 is "already
+ * queued" (a second tap, or the page's own step), which is fine; an
+ * interview being deleted is not.
+ */
+async function queueTranscription(path) {
+  try {
+    await postJSON(path, {});
+  } catch (error) {
+    if (error?.status !== 409 || error?.code === 'INTERVIEW_DELETED') throw error;
+  }
+}
+
 export function useSourceRunner() {
   const [progress, setProgress] = useState(null);
   const [running, setRunning] = useState(false);
@@ -92,12 +105,7 @@ export function useSourceRunner() {
           };
         }
         await upload.current.job.run({ signal: controller.current.signal });
-        try {
-          await postJSON(route('transcribe'), {});
-        } catch (queueError) {
-          // Already queued (a second tap, or the page's own step): fine.
-          if (queueError?.status !== 409) throw queueError;
-        }
+        await queueTranscription(route('transcribe'));
       }
       return true;
     } catch (failure) {

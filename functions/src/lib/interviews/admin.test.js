@@ -482,6 +482,33 @@ describe('deleteAudio', () => {
     expect(logged()).not.toContain('storage said no');
   });
 
+  it('answers 409 INTERVIEW_BUSY and deletes nothing while a transcription reads the recording', async () => {
+    const doc = interviewDoc({ transcription: { version: 1, jobId: 'job-t', status: 'queued' } });
+    const store = makeStore([doc]);
+    const content = store.readDoc.getMockImplementation();
+    let jobStatus = 'running';
+    store.readDoc.mockImplementation(async (container, id) =>
+      container === 'jobs' && id === 'job-t' ? { id, status: jobStatus } : content(container, id)
+    );
+    const blobs = makeBlobs([CURRENT]);
+    const res = await handlersWith(store, blobs, 'publisher').deleteAudio(
+      makeRequest({ params: { id: 'i1' } }),
+      context
+    );
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body).code).toBe('INTERVIEW_BUSY');
+    expect([...blobs.present]).toEqual([CURRENT]);
+    expect(store.patchDoc).not.toHaveBeenCalled();
+    // Once the job has ended the same delete goes through.
+    jobStatus = 'succeeded';
+    const after = await handlersWith(store, blobs, 'publisher').deleteAudio(
+      makeRequest({ params: { id: 'i1' } }),
+      context
+    );
+    expect(after.status).toBe(200);
+    expect([...blobs.present]).toEqual([]);
+  });
+
   it('answers 409 when the document changed since it was read', async () => {
     const store = makeStore([interviewDoc()]);
     store.patchDoc.mockRejectedValueOnce(Object.assign(new Error('precondition'), { code: 412 }));

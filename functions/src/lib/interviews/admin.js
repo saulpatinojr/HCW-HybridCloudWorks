@@ -28,6 +28,7 @@ import { CONSENT_WORDING_V1, ConsentError, attributeConsent, validateConsent } f
 import { checkInterviewFields, interviewStorage } from './sibling-modules.js';
 import { INTERVIEW_ID_PATTERN } from './tombstone.js';
 import { ownsAudioPath } from './upload.js';
+import { recordingInUse } from './enqueue.js';
 
 /** A create body is a form's worth of text; a transcript never comes this way. */
 const MAX_CREATE_BYTES = 64 * 1024;
@@ -445,6 +446,17 @@ export function createInterviewAdminHandlers({
         if (!id) return refused(400, 'INVALID_ID', 'The interview id is not valid.');
         const doc = await store.readDoc('content', id, id);
         if (!doc || !isInterview(doc)) return refused(404, 'NOT_FOUND', 'No interview has that id.');
+        // A download or transcription reading the recording would fail mid-run.
+        // Checked before the deletes, not held through them: a transcribe
+        // queued in the seconds the deletes take loses its run, and the
+        // document patch below then answers 409 CONFLICT on the moved ETag.
+        if (await recordingInUse(store, doc, now())) {
+          return refused(
+            409,
+            'INTERVIEW_BUSY',
+            'A step is still working on the recording; delete it once that step has finished.'
+          );
+        }
         const outcome = await deleteInterviewAssets({ blobs, log: context }, doc, { scope: 'recording' });
         if (outcome.failed > 0) {
           return refused(502, 'DELETE_FAILED', 'The recording could not be deleted; try again.');

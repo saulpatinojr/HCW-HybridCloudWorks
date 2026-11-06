@@ -6,7 +6,7 @@
  * document, sends the queue message and marks the interview's stage.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createInterviewJobHandlers, readInterviewId } from './enqueue.js';
+import { createInterviewJobHandlers, readInterviewId, recordingInUse } from './enqueue.js';
 
 const user = { oid: '00000000-0000-0000-0000-000000000001', email: 'editor@example.test' };
 const guard = { requireRole: vi.fn(async () => ({ user, role: 'editor', error: null })) };
@@ -160,6 +160,64 @@ describe('POST cms/interviews/{id}/transcribe', () => {
     });
     expect(parse(await busy.handlers.transcribe(request('int-1'), context, busy.io))).toEqual({ status: 409, body: { ok: false, error: 'Transcript version 1 is already being made.' } });
     expect(busy.io.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('an interview whose deletion has started (provenance.audio.deletedAt)', () => {
+  const tombstoned = {
+    id: 'int-1',
+    type: 'interview',
+    interview: { stage: 'fetched' },
+    provenance: { audio: { path: 'audio/int-1.mp3', deletedAt: '2026-11-05T09:59:00Z' } },
+  };
+
+  it('queues no transcription, though the recording still has its path', async () => {
+    const { handlers, io, store } = makeDeps({ doc: tombstoned });
+    const res = parse(await handlers.transcribe(request('int-1'), context, io));
+    expect(res).toEqual({ status: 409, body: { ok: false, error: 'This interview is being deleted; nothing new was queued.', code: 'INTERVIEW_DELETED' } });
+    expect(io.enqueue).not.toHaveBeenCalled();
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('queues no download either', async () => {
+    const { handlers, io } = makeDeps({ doc: tombstoned });
+    const res = parse(await handlers.audioFromUrl(request('int-1', { url: 'https://files.example/guest.mp3' }), context, io));
+    expect(res.body.code).toBe('INTERVIEW_DELETED');
+    expect(io.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('recordingInUse', () => {
+  const store = (jobs) => ({ readDoc: vi.fn(async (container, id) => jobs[id] ?? null) });
+
+  it('is true while the download or the transcription named on the document is queued or running', async () => {
+    expect(await recordingInUse(store({ f: { status: 'running' } }), { interview: { fetchJobId: 'f' } })).toBe(true);
+    expect(await recordingInUse(store({ t: { status: 'queued' } }), { transcription: { jobId: 't' } })).toBe(true);
+  });
+
+  it('stops counting a job past its budget plus the sweeper grace: a lost worker cannot hold the delete', async () => {
+    const at = new Date('2026-11-05T12:00:00Z');
+    const minutesAgo = (m) => new Date(at.getTime() - m * 60_000).toISOString();
+    const doc = { transcription: { jobId: 't' } };
+    // The transcription budget is 25 minutes, the grace 5: 29 minutes running is still working.
+    expect(await recordingInUse(store({ t: { status: 'running', startedAt: minutesAgo(29) } }), doc, at)).toBe(true);
+    expect(await recordingInUse(store({ t: { status: 'running', startedAt: minutesAgo(31) } }), doc, at)).toBe(false);
+    // A queued job also gets the sweeper's four 10-minute re-sends.
+    expect(await recordingInUse(store({ t: { status: 'queued', createdAt: minutesAgo(60) } }), doc, at)).toBe(true);
+    expect(await recordingInUse(store({ t: { status: 'queued', createdAt: minutesAgo(80) } }), doc, at)).toBe(false);
+    // The download's budget is 10 minutes.
+    const fetchDoc = { interview: { fetchJobId: 'f' } };
+    expect(await recordingInUse(store({ f: { status: 'running', startedAt: minutesAgo(14) } }), fetchDoc, at)).toBe(true);
+    expect(await recordingInUse(store({ f: { status: 'running', startedAt: minutesAgo(16) } }), fetchDoc, at)).toBe(false);
+  });
+
+  it('is false once those jobs have ended, when none is named, and for a running draft', async () => {
+    const ended = store({ f: { status: 'succeeded' }, t: { status: 'failed' } });
+    expect(await recordingInUse(ended, { interview: { fetchJobId: 'f' }, transcription: { jobId: 't' } })).toBe(false);
+    expect(await recordingInUse(store({}), {})).toBe(false);
+    // The draft reads the transcript, not the recording.
+    expect(await recordingInUse(store({ d: { status: 'running' } }), { interview: { draftJobId: 'd' } })).toBe(false);
   });
 });
 

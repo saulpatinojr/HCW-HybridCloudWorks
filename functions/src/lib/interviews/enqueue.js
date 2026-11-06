@@ -28,13 +28,21 @@
  */
 import { randomUUID } from 'node:crypto';
 import { json } from '../http/admin-handler.js';
-import { JOBS_CONTAINER, TERMINAL_JOB_STATUSES, newJobDoc } from '../jobs.js';
+import {
+  JOBS_CONTAINER,
+  MAX_REQUEUE_COUNT,
+  RUNNING_GRACE_MS,
+  STALE_QUEUED_MS,
+  TERMINAL_JOB_STATUSES,
+  newJobDoc,
+} from '../jobs.js';
 import { authoredMessage, logFailure } from '../http/error-response.js';
-import { checkAudioUrl, FETCH_JOB_TYPE } from './fetch-audio.js';
-import { TRANSCRIBE_JOB_TYPE } from './transcribe.js';
+import { checkAudioUrl, FETCH_JOB_TYPE, FETCH_TIMEOUT_MS } from './fetch-audio.js';
+import { TRANSCRIBE_JOB_TIMEOUT_MS, TRANSCRIBE_JOB_TYPE } from './transcribe.js';
 import { DRAFT_JOB_TYPE } from './draft.js';
 import { checkTranscriptText, storeProvidedTranscript } from './transcript-text.js';
 import { MAX_AUDIO_SECONDS, probeAudioDuration, tooLong } from './duration.js';
+import { isTombstoned } from './upload.js';
 
 export const CONTENT_CONTAINER = 'content';
 
@@ -46,6 +54,63 @@ export function readInterviewId(request) {
   const raw = request?.params?.id;
   return typeof raw === 'string' && ID.test(raw.trim()) ? raw.trim() : '';
 }
+
+/**
+ * True while the job a document names is still queued or running.
+ *
+ * @param {{ readDoc: Function }} store
+ * @param {unknown} jobId
+ * @returns {Promise<boolean>}
+ */
+async function jobInFlight(store, jobId) {
+  if (typeof jobId !== 'string' || !jobId) return false;
+  const job = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
+  return Boolean(job) && !TERMINAL_JOB_STATUSES.includes(job.status);
+}
+
+/**
+ * True while a job that can still be working names the recording: the
+ * download that stores it, or the transcription that reads it. The draft
+ * reads only the transcript, so it does not count.
+ *
+ * A job whose worker died keeps its `queued` or `running` status until the
+ * job sweeper reaps it, and the sweeper is a timer that may be switched off.
+ * So a job counts only while it is inside its own budget plus the sweeper's
+ * grace (a queued one also gets the sweeper's re-send allowance): past that
+ * it is treated as lost, the same rule the sweeper applies, and a lost job
+ * cannot hold a recording's deletion (a consent withdrawal, say) forever.
+ *
+ * @param {{ readDoc: Function }} store
+ * @param {object} doc - the interview document
+ * @param {Date} [at] - now
+ * @returns {Promise<boolean>}
+ */
+export async function recordingInUse(store, doc, at = new Date()) {
+  const interview = isObject(doc?.interview) ? doc.interview : {};
+  const transcription = isObject(doc?.transcription) ? doc.transcription : {};
+  return (
+    (await jobStillWorking(store, interview.fetchJobId, FETCH_TIMEOUT_MS, at)) ||
+    jobStillWorking(store, transcription.jobId, TRANSCRIBE_JOB_TIMEOUT_MS, at)
+  );
+}
+
+/** A job not yet ended and not yet past the point the sweeper would call it lost. */
+async function jobStillWorking(store, jobId, budgetMs, at) {
+  if (typeof jobId !== 'string' || !jobId) return false;
+  const job = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
+  if (!job || TERMINAL_JOB_STATUSES.includes(job.status)) return false;
+  const running = job.status === 'running';
+  const since = Date.parse(running ? job.startedAt : job.createdAt);
+  // An undated job is not evidence of a lost one (the sweeper leaves it too).
+  if (!Number.isFinite(since)) return true;
+  const allowance =
+    budgetMs + RUNNING_GRACE_MS + (running ? 0 : STALE_QUEUED_MS * (MAX_REQUEUE_COUNT + 1));
+  return at.getTime() - since <= allowance;
+}
+
+/** The 409 the job routes answer once the interview's deletion has started. */
+const interviewDeleted = () =>
+  json(409, { ok: false, error: 'This interview is being deleted; nothing new was queued.', code: 'INTERVIEW_DELETED' });
 
 /**
  * @param {object} deps
@@ -65,12 +130,7 @@ export function createInterviewJobHandlers({ guard, store, storage, uuid = rando
     return { id, doc };
   }
 
-  /** True while the job the document names is still queued or running. */
-  async function jobInFlight(jobId) {
-    if (typeof jobId !== 'string' || !jobId) return false;
-    const job = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
-    return Boolean(job) && !TERMINAL_JOB_STATUSES.includes(job.status);
-  }
+  const jobRunning = (jobId) => jobInFlight(store, jobId);
 
   /** Write the job document and send the message; the 202 every enqueue answers. */
   async function queue({ type, payload, user, enqueue }) {
@@ -106,11 +166,12 @@ export function createInterviewJobHandlers({ guard, store, storage, uuid = rando
     audioFromUrl: guarded('fetch', async ({ request, auth, io }) => {
       const read = await readInterview(request);
       if (read.error) return read.error;
+      if (isTombstoned(read.doc)) return interviewDeleted();
       const body = (await request.json().catch(() => null)) ?? {};
       const url = checkAudioUrl(body?.url);
       if (!url.ok) return json(400, { ok: false, error: url.error });
       const interview = isObject(read.doc.interview) ? read.doc.interview : {};
-      if (await jobInFlight(interview.fetchJobId)) {
+      if (await jobRunning(interview.fetchJobId)) {
         return json(409, { ok: false, error: 'A download for this interview is already running.' });
       }
       const { jobId, body: answer } = await queue({
@@ -129,12 +190,14 @@ export function createInterviewJobHandlers({ guard, store, storage, uuid = rando
     transcribe: guarded('transcribe', async ({ request, auth, io }) => {
       const read = await readInterview(request);
       if (read.error) return read.error;
+      // A recording whose deletion has started still has its path for a moment.
+      if (isTombstoned(read.doc)) return interviewDeleted();
       const audio = isObject(read.doc.provenance) ? read.doc.provenance.audio : null;
       if (!isObject(audio) || !audio.path) {
         return json(422, { ok: false, error: 'This interview has no recording; upload one or fetch it from a URL first.' });
       }
       const current = isObject(read.doc.transcription) ? read.doc.transcription : {};
-      if (await jobInFlight(current.jobId)) {
+      if (await jobRunning(current.jobId)) {
         return json(409, { ok: false, error: `Transcript version ${current.version} is already being made.` });
       }
       // The length, read once from the headers and kept on the document.
@@ -181,7 +244,7 @@ export function createInterviewJobHandlers({ guard, store, storage, uuid = rando
         return json(422, { ok: false, error: 'This interview has no finished transcript to draft from.' });
       }
       const interview = isObject(read.doc.interview) ? read.doc.interview : {};
-      if (await jobInFlight(interview.draftJobId)) {
+      if (await jobRunning(interview.draftJobId)) {
         return json(409, { ok: false, error: 'A draft for this interview is already being made.' });
       }
       const { jobId, body: answer } = await queue({
@@ -204,7 +267,7 @@ export function createInterviewJobHandlers({ guard, store, storage, uuid = rando
       const text = checkTranscriptText(body);
       if (!text.ok) return json(text.status, { ok: false, error: text.error });
       const current = isObject(read.doc.transcription) ? read.doc.transcription : {};
-      if (await jobInFlight(current.jobId)) {
+      if (await jobRunning(current.jobId)) {
         return json(409, { ok: false, error: 'A transcription for this interview is still running; wait for it, or paste the text afterwards.' });
       }
       const report = await storeProvidedTranscript({
