@@ -34,8 +34,17 @@
 # ---------------------------------------------------------------------------
 FROM python:3.15.2-slim-trixie@sha256:8c13a3f37a6a5b71498228e902c4b9f51c1f7900d49fabf71f9a650c6120e0d0 AS fetch
 
+# Every RUN below is bash with pipefail (hadolint DL4006, #1575): a failing
+# command on the left of a pipe fails the step instead of being hidden by
+# the command on the right. Every pipe in this file ends in a command that
+# reads all of its input, so pipefail cannot fail a step that worked.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # gcc, libc6-dev and libyaml-dev are for the PyYAML wheel built below and
 # stay in this stage; the runner gets the finished wheel and no compiler.
+# Not version-pinned (DL3008): the base image is pinned by digest, and a
+# Debian package pin breaks on every point release (#1575).
+# hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl unzip git gcc libc6-dev libyaml-dev \
  && rm -rf /var/lib/apt/lists/*
@@ -48,6 +57,9 @@ COPY versions.env /build/versions.env
 # blobless checkout (the repository holds every Kubernetes release and is
 # far too large to take whole), then hashed with the same pipeline
 # versions.env documents for the vendored modules and compared with the pin.
+# cd inside this one script (DL3003): a WORKDIR would carry into every
+# later step of the stage (#1575).
+# hadolint ignore=DL3003
 RUN set -eu; . /build/versions.env; \
     mkdir -p /build/schemas /out/kubeconform/schemas; \
     cd /build/schemas; \
@@ -101,6 +113,9 @@ RUN set -eu; . /build/versions.env; \
 # --check-build-dependencies makes pip check that what is installed meets
 # the archive's own pyproject.toml build requirements rather than silently
 # using whatever is there.
+# cd inside this one script (DL3003): a WORKDIR would carry into every
+# later step of the stage (#1575).
+# hadolint ignore=DL3003
 RUN set -eu; . /build/versions.env; \
     mkdir -p /build/pyyaml; cd /build/pyyaml; \
     printf '%s\n' "${PYYAML_BUILD_DEPS}" | sed '/^[[:space:]]*$/d' > tools.txt; \
@@ -126,6 +141,9 @@ RUN set -eu; . /build/versions.env; \
 # present. The wheel goes to /out/wheels for the runner and alone to
 # /out/pyyaml-wheel for the pyyaml-wheel stage below, and its SHA256 becomes
 # its requirements line, written to /build/pyyaml-wheel.txt for the next step.
+# cd inside this one script (DL3003): a WORKDIR would carry into every
+# later step of the stage (#1575).
+# hadolint ignore=DL3003
 RUN --network=none set -eu; . /build/versions.env; \
     mkdir -p /out/wheels /out/pyyaml-wheel; cd /build/pyyaml; \
     rm "$(dpkg -L libyaml-dev | grep '/libyaml\.so$')"; \
@@ -140,7 +158,7 @@ RUN --network=none set -eu; . /build/versions.env; \
     python3 -m venv check; \
     check/bin/pip install --disable-pip-version-check --no-cache-dir --no-index --no-deps "${whl}"; \
     ext="$(find check/lib -name '_yaml*.so')"; test -n "${ext}"; \
-    if ldd "${ext}" | grep -q yaml; then echo "PyYAML's extension links libyaml dynamically; the runner has no libyaml" >&2; ldd "${ext}" >&2; exit 1; fi; \
+    if ldd "${ext}" | grep yaml > /dev/null; then echo "PyYAML's extension links libyaml dynamically; the runner has no libyaml" >&2; ldd "${ext}" >&2; exit 1; fi; \
     check/bin/python -I -c 'import sys, yaml; sys.exit(0 if yaml.__with_libyaml__ and yaml.CSafeLoader else "the built PyYAML has no libyaml C loader")'; \
     sum="$(sha256sum "${whl}" | cut -d' ' -f1)"; \
     echo "built ${whl##*/} ${sum}"; \
@@ -333,6 +351,12 @@ RUN set -eu; . /build/versions.env; \
 # ---------------------------------------------------------------------------
 FROM python:3.15.2-slim-trixie@sha256:8c13a3f37a6a5b71498228e902c4b9f51c1f7900d49fabf71f9a650c6120e0d0 AS runner
 
+# Every RUN in this stage and `full` is bash with pipefail (hadolint DL4006, #1575): a failing
+# command on the left of a pipe fails the step instead of being hidden by
+# the command on the right. Every pipe in this file ends in a command that
+# reads all of its input, so pipefail cannot fail a step that worked.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # No apt layer: the base already carries python3 (BASE_PYTHON_VERSION, at /usr/local/bin,
 # with ensurepip for the venv below), ca-certificates, bash and coreutils,
 # which is everything the runner needs. ansible-core's dependencies come from
@@ -351,7 +375,7 @@ COPY --chmod=0755 bin/ /usr/local/bin/
 # untraversable for uid 65534 (measured in #675: ModuleNotFoundError).
 COPY lib/ /usr/local/lib/hcw/
 RUN chmod 0755 /usr/local/lib/hcw && chmod 0644 /usr/local/lib/hcw/*.py \
- && test "$(ls -A /usr/local/lib/hcw | grep -vc '\.py$')" -eq 0
+ && test -z "$(find /usr/local/lib/hcw -mindepth 1 -maxdepth 1 ! -name '*.py' -print -quit)"
 COPY --from=vendor /out/avm/ /opt/avm/
 COPY --from=fetch /out/kubeconform/ /opt/kubeconform/
 COPY --from=mirror /out/mirror/ /opt/terraform/mirror/
@@ -454,6 +478,8 @@ COPY versions.env /tmp/versions.env
 # declares. The wheels are bind-mounted for this one RUN, as for ansible-core
 # above. This RUN keeps the network because apt and curl need it; pip does
 # not use it.
+# Not version-pinned (DL3008), as in the fetch stage (#1575).
+# hadolint ignore=DL3008
 RUN --mount=type=bind,from=fetch,source=/out/az-wheels,target=/tmp/az-wheels \
     set -eu; . /tmp/versions.env; \
     apt-get update; \
