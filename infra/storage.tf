@@ -228,6 +228,29 @@ resource "azurerm_storage_container" "podcast" {
   container_access_type = "private" # transcript MP3s, served via the media route
 }
 
+# Interview recordings and their transcripts (ADR 0040 D10, #1565). The
+# admin's interview form uploads a guest's recording here in 4 MiB blocks
+# through the Function App (functions/src/lib/interviews/upload.js), and the
+# transcription job writes its transcripts beside it. Two prefixes in one
+# container: `audio/` holds the recordings and is expired by the
+# expire-interview-audio rule below after var.interview_audio_retention_days;
+# `transcripts/` is the provenance the owner asked to keep and is never
+# expired by rule.
+#
+# Private, and it stays out of PUBLIC_MEDIA_CONTAINERS and UPLOAD_CONTAINERS
+# in blob-paths.js on purpose: a recording is a guest's voice, there is no
+# player, and nothing public reads here. No new role assignment either: the
+# Function App identity already holds Storage Blob Data Contributor on the
+# whole account (azurerm_role_assignment.func_blob), the same way cosmos_export
+# was added. The network rule, CORS rule and shared-key setting are untouched,
+# so nothing outside the Function App's subnet can read or write it.
+resource "azurerm_storage_container" "interviews_audio" {
+  #checkov:skip=CKV2_AZURE_21:Blob read logging is on for this account via azurerm_monitor_diagnostic_setting.content_blob (StorageRead). docs/security/scanner-triage.md#checkov
+  name                  = "interviews-audio"
+  storage_account_id    = azurerm_storage_account.hcw.id
+  container_access_type = "private" # guest recordings and transcripts; never served
+}
+
 # Cosmos out-of-account export (ADR 0028, #231). The Function App's exporter
 # writes here: one prefix per run (`full/<date>/`, `delta/<date>/`) of
 # gzip-compressed NDJSON block blobs at the Cool tier, plus `state/` for the
@@ -411,6 +434,45 @@ resource "azurerm_storage_management_policy" "cleanup" {
       }
     }
   }
+
+  # Interview recordings (ADR 0040 D10, #1565). A guest's recording is kept
+  # privately for re-transcription and provenance, for as long as the owner
+  # decides: var.interview_audio_retention_days, 365 by default, changed in
+  # the HCP Terraform workspace's variables and confirmed with a run.
+  #
+  # Only `audio/` inside the interviews-audio container. The transcripts
+  # beside it (`transcripts/`) are the record the owner asked to keep and are
+  # never expired by rule; deleting a recording early is the admin page's
+  # "Delete recording" button, not this. days_since_creation, like the two
+  # rules above: a recording is committed once and never rewritten.
+  #
+  # Uncommitted blocks (a browser upload that was never completed) are not
+  # this rule's concern: Storage drops them a week after the last Put Block
+  # on its own (https://learn.microsoft.com/rest/api/storageservices/put-block#remarks).
+  #
+  # The account keeps blob versions, so a recording that is re-uploaded or
+  # deleted leaves a previous version behind; the `version` action expires
+  # those on the same clock, so no copy of a guest's voice outlives the
+  # retention. (The expire-noncurrent-versions rule above would clear them
+  # at 30 days anyway; this one says so where the retention is decided.)
+  rule {
+    name    = "expire-interview-audio"
+    enabled = true
+
+    filters {
+      prefix_match = ["interviews-audio/audio/"]
+      blob_types   = ["blockBlob"]
+    }
+
+    actions {
+      base_blob {
+        delete_after_days_since_creation_greater_than = var.interview_audio_retention_days
+      }
+      version {
+        delete_after_days_since_creation = var.interview_audio_retention_days
+      }
+    }
+  }
 }
 
 
@@ -539,6 +601,29 @@ resource "azurerm_role_assignment" "func_blob" {
   scope                = azurerm_storage_account.hcw.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azurerm_function_app_flex_consumption.hcw.identity[0].principal_id
+}
+
+# One more grant for the Function App identity, on the interviews-audio
+# container only (ADR 0040 D10, #1565). The account keeps blob versions, and
+# "Delete recording" has to remove a guest's recording together with its
+# previous versions; deleting a version is the data action
+# Microsoft.Storage/storageAccounts/blobServices/containers/blobs/deleteBlobVersion/action,
+# which Storage Blob Data Contributor (func_blob above: delete, read, write,
+# move, add) does not carry and Storage Blob Data Owner (every blob data
+# action, blobs/*) does.
+# Read 2026-11-05 at
+# https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/storage
+# Container scope, like lab_hybrid_backups_writer in lab-hybrid-backups.tf,
+# so the wider right reaches this container and nothing else on the account.
+# A built-in role rather than a custom one in infra/roles/, because a custom
+# role is created by the owner by hand before the apply that references it;
+# this one needs no such step, and the deployer's RBAC condition
+# (scripts/Set-TerraformRbacCondition.ps1) does not refuse it.
+resource "azurerm_role_assignment" "func_interviews_audio_owner" {
+  scope                = azurerm_storage_container.interviews_audio.id
+  role_definition_name = "Storage Blob Data Owner"
+  principal_id         = azurerm_function_app_flex_consumption.hcw.identity[0].principal_id
+  principal_type       = "ServicePrincipal"
 }
 
 resource "azurerm_role_assignment" "func_queue" {

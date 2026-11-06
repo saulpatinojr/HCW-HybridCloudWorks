@@ -815,6 +815,36 @@ variable "cosmos_export_immutability_locked" {
   default     = false
 }
 
+# How long a guest's interview recording is kept (ADR 0040 D10, #1565).
+variable "interview_audio_retention_days" {
+  description = <<-EOT
+    Days a guest's interview recording stays in the private interviews-audio
+    container before Storage's lifecycle rule deletes it, counted from the
+    day the upload was completed. 365 by default. A deleted recording can
+    still be restored for 7 more days (the account's soft delete), so the
+    number to quote to a guest is this one plus seven.
+
+    What it covers: only the recordings (the `audio/` folder of the
+    container), including any earlier version of one that was re-uploaded.
+    The transcripts beside them are kept as the site's record of what was
+    said and are never deleted by this rule. The recording is never
+    published and has no player; it is kept so a transcript can be made
+    again, and this number is how long that stays possible.
+
+    To change it: edit this variable in the HCP Terraform workspace and
+    confirm the run. Storage applies the new number within about a day, to
+    every recording including those already stored. To delete one recording
+    sooner, use "Delete recording" on its admin page instead.
+  EOT
+  type        = number
+  default     = 365
+
+  validation {
+    condition     = var.interview_audio_retention_days >= 1 && var.interview_audio_retention_days <= 3650 && floor(var.interview_audio_retention_days) == var.interview_audio_retention_days
+    error_message = "interview_audio_retention_days must be a whole number of days from 1 to 3650 (ten years)."
+  }
+}
+
 variable "availability_test_frequency_seconds" {
   description = <<-EOT
     How often EACH location runs the test. Azure accepts 300, 600 or 900 only.
