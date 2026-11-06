@@ -267,6 +267,9 @@ COPY --from=fetch /out/pyyaml-wheel/ /
 #   docker build --target vendor --build-arg AVM_PRINT_PINS=1 --progress=plain lab-image
 # ---------------------------------------------------------------------------
 FROM fetch AS vendor
+# The same SHELL as the stage this builds on. Docker already inherits it;
+# it is repeated because hadolint starts every stage afresh (DL4006, #1575).
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 COPY vendor-avm.sh /build/vendor-avm.sh
 ARG AVM_PRINT_PINS=
@@ -299,6 +302,9 @@ RUN set -eu; . /build/versions.env; \
 # merges into the same index.json.
 # ---------------------------------------------------------------------------
 FROM fetch AS mirror
+# The same SHELL as the stage this builds on. Docker already inherits it;
+# it is repeated because hadolint starts every stage afresh (DL4006, #1575).
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN set -eu; . /build/versions.env; \
     mkdir -p /build/mirror-current /build/mirror-v4 /out/mirror; \
@@ -462,6 +468,9 @@ CMD ["terraform", "version"]
 # Microsoft's page documents. kubectl by version and sum.
 # ---------------------------------------------------------------------------
 FROM runner AS full
+# The same SHELL as the stage this builds on. Docker already inherits it;
+# it is repeated because hadolint starts every stage afresh (DL4006, #1575).
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 USER root
 COPY versions.env /tmp/versions.env

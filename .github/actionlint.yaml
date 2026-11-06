@@ -1,12 +1,14 @@
-# actionlint configuration, read by a local `actionlint` run and by Qlty's
-# actionlint plugin (.qlty/qlty.toml).
+# actionlint configuration, read by the `actionlint, zizmor, hadolint` job in
+# ci.yml, by a local `actionlint` run and by Qlty's actionlint plugin
+# (.qlty/qlty.toml).
 #
 # ubuntu-26.04 is a GitHub-hosted runner label, not a self-hosted one. It is
 # listed here only because actionlint 1.7.12, the newest release (2026-03-30),
 # predates it and reports `label "ubuntu-26.04" is unknown` on every job:
 # GitHub made the image generally available on 2026-09-17, and
 # https://github.com/rhysd/actionlint/pull/743 adds the label upstream. Once a
-# release carrying it is out, this file can go.
+# release carrying it is pinned, the label entry can go (the `paths:` entry
+# below has its own condition).
 #
 # Every workflow names the runner release rather than ubuntu-latest, held there
 # by the runners ceiling in scripts/version-floors.json. version-floors.test.mjs
@@ -15,3 +17,15 @@
 self-hosted-runner:
   labels:
     - ubuntu-26.04
+
+# actionlint 1.7.12 does not know `job.workflow_sha`, which GitHub documents
+# for a reusable workflow checking out its own source ("Example usage of `job`
+# context workflow identity" on
+# https://docs.github.com/en/actions/reference/workflows-and-actions/contexts).
+# addon-guide-check.yml uses it, and checks the value is a 40-hex commit
+# before relying on it. Drop this once an actionlint release knows the
+# property (#1575).
+paths:
+  .github/workflows/addon-guide-check.yml:
+    ignore:
+      - 'property "workflow_sha" is not defined in object type'
