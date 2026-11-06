@@ -110,8 +110,8 @@ function renderPage({ role = null } = {}) {
   );
 }
 
-/** A wider wait for the polling journey: under the coverage run the five reads take longer than the default second. */
-const SLOW = { timeout: 5000 };
+/** A wider wait where a test waits on the page's own polling, which runs slower under the full suite. */
+const SLOW = { timeout: 4000 };
 
 const routes = () => postJSON.mock.calls.map(([route]) => route);
 const stage = () => screen.getByTestId('interview-stage');
@@ -121,20 +121,51 @@ beforeEach(() => {
 });
 
 describe('following the jobs', () => {
-  it('checks again while transcribing, drafts the new transcript by itself, and shows the draft', async () => {
+  it('checks again while transcribing, and says which hour it is on', async () => {
     install({
       doc: baseDoc({
         interview: { stage: 'transcribing', window: 1 },
         transcription: { version: 1, status: 'running' },
       }),
+    });
+    renderPage();
+    expect(await screen.findByText('Working on hour 2 of the recording.')).toBeInTheDocument();
+    expect(stage()).toHaveTextContent('Transcribing the recording');
+    const reads = getJSON.mock.calls.length;
+    await waitFor(() => expect(getJSON.mock.calls.length).toBeGreaterThan(reads), SLOW);
+    expect(postJSON).not.toHaveBeenCalled();
+  });
+
+  it('keeps checking after a read fails, so a network blip does not stop the progress view', async () => {
+    install({
+      doc: baseDoc({
+        interview: { stage: 'transcribing', window: 0 },
+        transcription: { version: 1, status: 'running' },
+      }),
+    });
+    const answer = getJSON.getMockImplementation();
+    let calls = 0;
+    getJSON.mockImplementation(async (...args) => {
+      calls += 1;
+      if (calls === 2) throw new Error('Failed to fetch');
+      return answer(...args);
+    });
+    renderPage();
+    await waitFor(() => expect(calls).toBeGreaterThan(3), SLOW);
+    expect(stage()).toHaveTextContent('Transcribing the recording');
+  });
+
+  it('drafts a new transcript by itself, once, and shows the pass it is on', async () => {
+    install({
+      doc: baseDoc({ interview: { stage: 'transcribed' }, qa: [] }),
       onPost: {
         'cms/interviews/int-1/draft': () => {
+          // The shape draft.js writes while it runs: one pass saved of three.
           state.doc = {
             ...state.doc,
             interview: { stage: 'drafting' },
             provenance: {
               ...state.doc.provenance,
-              // The shape draft.js writes while it runs: one pass saved of three.
               drafting: {
                 transcriptVersion: 1,
                 passCount: 3,
@@ -148,25 +179,25 @@ describe('following the jobs', () => {
     });
     renderPage();
     expect(
-      await screen.findByText('Working on hour 2 of the recording.', {}, SLOW)
-    ).toBeInTheDocument();
-    expect(stage()).toHaveTextContent('Transcribing the recording');
-    state.doc = {
-      ...state.doc,
-      interview: { stage: 'transcribed' },
-      transcription: { version: 1, status: 'done' },
-    };
-    expect(
       await screen.findByText('Pass 2 of 3 over the transcript.', {}, SLOW)
     ).toBeInTheDocument();
+    expect(stage()).toHaveTextContent('Drafting the questions and answers');
     expect(routes().filter((r) => r === 'cms/interviews/int-1/draft')).toHaveLength(1);
-    state.doc = {
-      ...state.doc,
-      qa: QA,
-      interview: { stage: 'ready', speakers: { guest: 'Speaker 2', unsure: true } },
-      provenance: { ...state.doc.provenance, drafting: { droppedQuotes: 2, truncated: true } },
-    };
-    await waitFor(() => expect(screen.getAllByTestId('qa-item')).toHaveLength(2), SLOW);
+  });
+
+  it('shows a finished draft with its flags and notes, and stops checking', async () => {
+    install({
+      doc: baseDoc({
+        qa: QA,
+        interview: { stage: 'ready', speakers: { guest: 'Speaker 2', unsure: true } },
+        provenance: {
+          audio: { path: 'audio/int-1/u.mp3' },
+          drafting: { droppedQuotes: 2, truncated: true, passCount: 3 },
+        },
+      }),
+    });
+    renderPage();
+    await waitFor(() => expect(screen.getAllByTestId('qa-item')).toHaveLength(2));
     expect(stage()).toHaveTextContent('Draft ready for your review');
     const [first, second] = screen.getAllByTestId('qa-item');
     expect(within(second).getByText(/Check this answer/)).toBeInTheDocument();
@@ -181,6 +212,7 @@ describe('following the jobs', () => {
     const reads = getJSON.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(getJSON.mock.calls.length).toBe(reads);
+    expect(postJSON).not.toHaveBeenCalled();
   });
 
   it('transcribes a fetched recording by itself, but never redrafts over existing questions', async () => {

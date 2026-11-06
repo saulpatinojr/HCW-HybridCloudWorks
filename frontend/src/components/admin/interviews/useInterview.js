@@ -37,6 +37,10 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
   const [actionError, setActionError] = useState('');
   const [busy, setBusy] = useState('');
   const [advancing, setAdvancing] = useState(false);
+  // One more on every finished read, success or failure, so the next check
+  // is scheduled after each read even when the answer is unchanged or the
+  // read failed (a network blip must not stop the progress view).
+  const [reads, setReads] = useState(0);
   const started = useRef(new Set());
   const alive = useRef(true);
 
@@ -63,7 +67,10 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
       if (alive.current) setLoadError(error?.message || 'The interview could not be read.');
       return null;
     } finally {
-      if (alive.current) setLoading(false);
+      if (alive.current) {
+        setLoading(false);
+        setReads((count) => count + 1);
+      }
     }
   }, [id]);
 
@@ -84,7 +91,7 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
     if (!doc || !(isInFlight(doc) || advancing)) return undefined;
     const timer = setTimeout(load, pollMs);
     return () => clearTimeout(timer);
-  }, [doc, advancing, load, pollMs]);
+  }, [doc, advancing, reads, load, pollMs]);
 
   /** Queue a job; a 409 means one is already running, which is what was wanted. */
   const queueStep = useCallback(
