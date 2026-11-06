@@ -1931,12 +1931,19 @@ jobs:
   #   hadolint    every tracked Dockerfile, failing at warning or worse
   # Each tool is a pinned release whose SHA-256 is written here, not fetched
   # from the release it checks (the Trivy rule in iac-validate.yml, T-755);
-  # move a version and its digest together. The same job, with the same
-  # pins, runs in the four add-on repositories.
+  # move a version and its digest together. The four add-on repositories run
+  # the same three tools with the same pins as steps of their own required
+  # job (`lint`, or `build-test` in MigrateOrchestrator).
+  # Not pinned: shellcheck. actionlint runs the runner image's own shellcheck
+  # over every `run:` script, so an image update that adds a shellcheck rule
+  # can turn this job red on an unrelated pull request. Fix the script it
+  # names; the image release notes say what changed.
   lint-actions-docker:
     name: actionlint, zizmor, hadolint
     runs-on: ubuntu-26.04
     timeout-minutes: 10
+    permissions:
+      contents: read
     env:
       ACTIONLINT_VERSION: 1.7.12
       ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -1963,15 +1970,15 @@ jobs:
           mkdir -p "$tools"
           cd "$tools"
           tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -sSfL -o "$tarball" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
+          curl -sSfL --retry 3 --retry-all-errors -o "$tarball" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
           echo "${ACTIONLINT_SHA256}  ${tarball}" | sha256sum -c -
           tar -xzf "$tarball" actionlint
-          curl -sSfL -o hadolint "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          curl -sSfL --retry 3 --retry-all-errors -o hadolint "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
           echo "${HADOLINT_SHA256}  hadolint" | sha256sum -c -
           chmod 0755 actionlint hadolint
           # One wheel, one hash: pip refuses any other file.
           echo "zizmor==${ZIZMOR_VERSION} --hash=sha256:${ZIZMOR_SHA256}" > zizmor-requirements.txt
-          python -m pip install --disable-pip-version-check --no-deps --only-binary=:all: --require-hashes -r zizmor-requirements.txt
+          python -m pip install --disable-pip-version-check --retries 3 --no-deps --only-binary=:all: --require-hashes -r zizmor-requirements.txt
           echo "$tools" >> "$GITHUB_PATH"
 
       # Each linter runs even when the one before it failed, so one run
@@ -1993,7 +2000,11 @@ jobs:
         run: |
           set -euo pipefail
           hadolint --version
-          mapfile -d '' files < <(git ls-files -z -- '*Dockerfile*')
+          # Written to a file first, so a failing git stops the step (inside
+          # `< <(...)` its failure would be lost and read as "none tracked").
+          list="${RUNNER_TEMP}/dockerfiles"
+          git ls-files -z -- ':(glob)**/Dockerfile' ':(glob)**/Dockerfile.*' ':(glob)**/*.Dockerfile' > "$list"
+          mapfile -d '' files < "$list"
           if [ "${#files[@]}" -eq 0 ]; then
             echo "no Dockerfile is tracked; nothing to lint"
             exit 0

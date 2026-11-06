@@ -261,8 +261,10 @@ much as they should be.
     says bash, one line, no placeholder, exact URLs). The redaction gate
     covers ids and secrets, not this.
   Workflows and Dockerfiles are linted in CI by actionlint, zizmor and
-  hadolint (the `actionlint, zizmor, hadolint` job, which `gate` waits for),
-  in this repository and the four add-ons, with the same pinned versions.
+  hadolint, with the same pinned versions everywhere: here by the
+  `actionlint, zizmor, hadolint` job, which `gate` waits for, and in the four
+  add-ons by steps at the end of each one's required `lint` job (`build-test`
+  in MigrateOrchestrator).
 - **For Microsoft and Azure facts, look them up with the Microsoft Learn
   documentation tools (`microsoft_docs_search`, `microsoft_docs_fetch`) before
   answering from memory, and link the page used.** If those tools are not
