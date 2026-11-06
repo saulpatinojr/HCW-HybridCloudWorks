@@ -3299,19 +3299,19 @@ Success looks like: one line, `hcw-vault-set: set vault_addon_migration_turnstil
 appears on a command line or in output. The `addons` role refuses to start
 the container while this key is unset, naming the key and this line.
 
-**2. Write the digest in.** The add-on's `v0.3.2` release prints
+**2. Write the digest in.** The add-on's `v0.3.3` release prints
 `docker.io/hybridcloudworks/img-mo-lab-addon@sha256:…` in its
 `publish-images` run summary; the same value, read from the registry.
 PowerShell, anywhere with Docker:
 
 ```powershell
-docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.2
+docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.3
 ```
 
 The `Digest:` line is the value for `image_digest` of the `migration` row in
-`lab-host/ansible/group_vars/all.yml`: for `v0.3.2`,
-`sha256:bd3e0a164429984d50382368f9789d47ffa1af48061221041326a0bd0ed35ade`,
-read from the registry on 2026-10-25. A row whose digest is empty deploys nothing and
+`lab-host/ansible/group_vars/all.yml`: for `v0.3.3`,
+`sha256:7db831b3f348ce904c538881d744d8d6afa8d46f0aa4dddef913a4ecc16bf2e6`,
+read from the registry on 2026-11-05. A row whose digest is empty deploys nothing and
 says so.
 Merge, then run the playbook as after any merge. PowerShell:
 
@@ -3329,7 +3329,7 @@ ssh hcw-lab "curl -s http://127.0.0.1:18081/api/health"
 ```
 
 Success looks like a JSON body with `"ok":true`, `"id":"migration"` and a
-`"version"` matching the pinned tag without its `v` (`0.3.1`). From outside, the name answers
+`"version"` matching the pinned tag without its `v` (`0.3.3`). From outside, the name answers
 with the site-only `frame-ancestors` and the add-on's own headers. PowerShell:
 
 ```powershell
@@ -3347,7 +3347,7 @@ sent to `https://hybridcloudworks.com/tools/migration`.
 request sets it; nothing is seeded. Once applied,
 `https://hybridcloudworks.com/tools/migration` shows the pane, and
 `https://hybridcloudworks.com/admin/integrations?tab=services` (Tool add-ons,
-*Migration add-on*, **Test**) answers `Connected: version 0.3.1, edition demo.`
+*Migration add-on*, **Test**) answers `Connected: version 0.3.3, edition demo.`
 Until the host runs the container, the same page and the status read say the
 tool isn't available, which is the truth.
 
