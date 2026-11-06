@@ -447,7 +447,10 @@ export function createInterviewAdminHandlers({
         const doc = await store.readDoc('content', id, id);
         if (!doc || !isInterview(doc)) return refused(404, 'NOT_FOUND', 'No interview has that id.');
         // A download or transcription reading the recording would fail mid-run.
-        if (await recordingInUse(store, doc)) {
+        // Checked before the deletes, not held through them: a transcribe
+        // queued in the seconds the deletes take loses its run, and the
+        // document patch below then answers 409 CONFLICT on the moved ETag.
+        if (await recordingInUse(store, doc, now())) {
           return refused(
             409,
             'INTERVIEW_BUSY',

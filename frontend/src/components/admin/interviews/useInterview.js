@@ -121,7 +121,8 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
         await postJSON(`cms/interviews/${encodeURIComponent(id)}/${step}`, {});
         return null;
       } catch (error) {
-        if (error?.status === 409) return null;
+        // Already running is what was wanted; an interview being deleted is not.
+        if (error?.status === 409 && error?.code !== 'INTERVIEW_DELETED') return null;
         return error instanceof Error ? error : new Error(`The ${step} step could not start.`);
       } finally {
         await load();

@@ -196,6 +196,22 @@ describe('recordingInUse', () => {
     expect(await recordingInUse(store({ t: { status: 'queued' } }), { transcription: { jobId: 't' } })).toBe(true);
   });
 
+  it('stops counting a job past its budget plus the sweeper grace: a lost worker cannot hold the delete', async () => {
+    const at = new Date('2026-11-05T12:00:00Z');
+    const minutesAgo = (m) => new Date(at.getTime() - m * 60_000).toISOString();
+    const doc = { transcription: { jobId: 't' } };
+    // The transcription budget is 25 minutes, the grace 5: 29 minutes running is still working.
+    expect(await recordingInUse(store({ t: { status: 'running', startedAt: minutesAgo(29) } }), doc, at)).toBe(true);
+    expect(await recordingInUse(store({ t: { status: 'running', startedAt: minutesAgo(31) } }), doc, at)).toBe(false);
+    // A queued job also gets the sweeper's four 10-minute re-sends.
+    expect(await recordingInUse(store({ t: { status: 'queued', createdAt: minutesAgo(60) } }), doc, at)).toBe(true);
+    expect(await recordingInUse(store({ t: { status: 'queued', createdAt: minutesAgo(80) } }), doc, at)).toBe(false);
+    // The download's budget is 10 minutes.
+    const fetchDoc = { interview: { fetchJobId: 'f' } };
+    expect(await recordingInUse(store({ f: { status: 'running', startedAt: minutesAgo(14) } }), fetchDoc, at)).toBe(true);
+    expect(await recordingInUse(store({ f: { status: 'running', startedAt: minutesAgo(16) } }), fetchDoc, at)).toBe(false);
+  });
+
   it('is false once those jobs have ended, when none is named, and for a running draft', async () => {
     const ended = store({ f: { status: 'succeeded' }, t: { status: 'failed' } });
     expect(await recordingInUse(ended, { interview: { fetchJobId: 'f' }, transcription: { jobId: 't' } })).toBe(false);
