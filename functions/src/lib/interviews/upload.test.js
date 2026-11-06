@@ -15,6 +15,7 @@ import {
   blockLengthFor,
   createInterviewUploadHandlers,
   isSoundSession,
+  isTombstoned,
   ownsAudioPath,
   parseOpenBody,
 } from './upload.js';
@@ -264,6 +265,15 @@ describe('parseOpenBody', () => {
   });
 });
 
+describe('isTombstoned', () => {
+  it('reads provenance.audio.deletedAt', () => {
+    expect(isTombstoned({ provenance: { audio: { deletedAt: '2026-11-06T00:00:00.000Z' } } })).toBe(true);
+    for (const doc of [null, {}, { provenance: {} }, { provenance: { audio: {} } }, { provenance: { audio: { deletedAt: '' } } }]) {
+      expect(isTombstoned(doc)).toBe(false);
+    }
+  });
+});
+
 describe('openUpload', () => {
   let store;
   let storage;
@@ -314,6 +324,14 @@ describe('openUpload', () => {
     expect(store.readDoc).not.toHaveBeenCalled();
     const ok = await handlers().openUpload(makeRequest({ body: openBody({ durationSec: 34_200 }) }), ctx);
     expect(ok.status).toBe(201);
+  });
+
+  it('409s INTERVIEW_DELETED on a tombstoned interview and writes nothing', async () => {
+    store.content['int-1'].provenance = { audio: { deletedAt: '2026-11-06T00:00:00.000Z' } };
+    const res = await handlers().openUpload(makeRequest({ body: openBody() }), ctx);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toMatchObject({ code: 'INTERVIEW_DELETED' });
+    expect(store.patchDoc).not.toHaveBeenCalled();
   });
 
   it('404s an interview that does not exist or is not an interview', async () => {
@@ -453,6 +471,18 @@ describe('putBlock', () => {
       expect(request.arrayBuffer).not.toHaveBeenCalled();
     }
     expect(storage.stageBlock).not.toHaveBeenCalled();
+  });
+
+  it('409s INTERVIEW_DELETED for the session owner on a tombstoned interview, before reading the body', async () => {
+    store.content['int-1'].provenance.audio.deletedAt = '2026-11-06T00:00:00.000Z';
+    const request = blockRequest();
+    const res = await handlers().putBlock(request, ctx);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toMatchObject({ code: 'INTERVIEW_DELETED' });
+    expect(request.arrayBuffer).not.toHaveBeenCalled();
+    expect(storage.stageBlock).not.toHaveBeenCalled();
+    // Anyone else still learns nothing.
+    expect((await handlers(guardFor(OTHER)).putBlock(blockRequest(), ctx)).status).toBe(404);
   });
 
   it('400s an index out of range or malformed', async () => {
@@ -621,6 +651,86 @@ describe('completeUpload', () => {
     await handlers().completeUpload(completeRequest(), ctx);
     expect(store.content['int-1'].provenance.audio.superseded).toEqual([OLD_PATH]);
     expect(storage.deleteBlob).not.toHaveBeenCalled();
+  });
+
+  it('tombstone first: a completion that reads a tombstoned interview answers 409 INTERVIEW_DELETED and commits nothing', async () => {
+    store.content['int-1'].provenance.audio.deletedAt = '2026-11-06T00:00:00.000Z';
+    const res = await handlers().completeUpload(completeRequest(), ctx);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toMatchObject({ code: 'INTERVIEW_DELETED' });
+    expect(storage.commitBlockList).not.toHaveBeenCalled();
+    expect(storage.deleteBlob).not.toHaveBeenCalled();
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('completion first: the pointer write meets the tombstone ETag, so the committed blob is deleted and the answer is 409 INTERVIEW_DELETED', async () => {
+    // The completion read the document; the delete hook then wrote the
+    // tombstone under the ETag, so this completion's pointer write fails.
+    store.patchDoc.mockImplementationOnce(async () => {
+      const current = store.content['int-1'];
+      store.content['int-1'] = {
+        ...current,
+        provenance: { ...current.provenance, audio: { ...current.provenance.audio, deletedAt: '2026-11-06T00:00:00.000Z' } },
+        _etag: '"2"',
+      };
+      throw Object.assign(new Error('changed'), { code: 412 });
+    });
+    const res = await handlers().completeUpload(completeRequest(), ctx);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toMatchObject({ code: 'INTERVIEW_DELETED' });
+    expect(storage.commitBlockList).toHaveBeenCalledTimes(1);
+    expect(storage.deleteBlob).toHaveBeenCalledTimes(1);
+    expect(storage.deleteBlob).toHaveBeenCalledWith(INTERVIEWS_AUDIO_CONTAINER, PATH);
+    expect(store.content['int-1'].provenance.audio.path).toBeUndefined();
+    expect(allLogText(ctx)).not.toContain('audio/int-1');
+  });
+
+  it('completion first, document already gone: the committed blob is deleted too', async () => {
+    store.patchDoc.mockImplementationOnce(async () => {
+      delete store.content['int-1'];
+      throw Object.assign(new Error('changed'), { code: 412 });
+    });
+    const res = await handlers().completeUpload(completeRequest(), ctx);
+    expect(res.status).toBe(409);
+    expect(storage.deleteBlob).toHaveBeenCalledWith(INTERVIEWS_AUDIO_CONTAINER, PATH);
+  });
+
+  it('prefers the version-aware delete when it is wired', async () => {
+    const deleteBlobWithVersions = vi.fn(async () => {});
+    storage.deleteBlobWithVersions = deleteBlobWithVersions;
+    store.patchDoc.mockImplementationOnce(async () => {
+      store.content['int-1'].provenance.audio.deletedAt = '2026-11-06T00:00:00.000Z';
+      throw Object.assign(new Error('changed'), { code: 412 });
+    });
+    expect((await handlers().completeUpload(completeRequest(), ctx)).status).toBe(409);
+    expect(deleteBlobWithVersions).toHaveBeenCalledWith(INTERVIEWS_AUDIO_CONTAINER, PATH);
+    expect(storage.deleteBlob).not.toHaveBeenCalled();
+  });
+
+  it('a refusal whose fence meets the tombstone ETag deletes its blob and answers 409 INTERVIEW_DELETED', async () => {
+    storage.hashBlobSha256.mockResolvedValueOnce('b'.repeat(64));
+    store.patchDoc.mockImplementationOnce(async () => {
+      store.content['int-1'].provenance.audio.deletedAt = '2026-11-06T00:00:00.000Z';
+      throw Object.assign(new Error('changed'), { code: 412 });
+    });
+    const res = await handlers().completeUpload(completeRequest(), ctx);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toMatchObject({ code: 'INTERVIEW_DELETED' });
+    expect(storage.deleteBlob).toHaveBeenCalledWith(INTERVIEWS_AUDIO_CONTAINER, PATH);
+  });
+
+  it('a pointer write lost to any other writer keeps the committed blob for the retry', async () => {
+    store.patchDoc.mockRejectedValueOnce(Object.assign(new Error('changed'), { code: 412 }));
+    const res = await handlers().completeUpload(completeRequest(), ctx);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body).code).toBeUndefined();
+    expect(storage.deleteBlob).not.toHaveBeenCalled();
+  });
+
+  it('completing one of two open sessions leaves the other in provenance.audio.uploads', async () => {
+    store.content['int-1'] = sessionDoc({ sha256: digest }, session({ uploadId: UPLOAD_ID_2, path: PATH_2 }));
+    expect((await handlers().completeUpload(completeRequest(UPLOAD_ID), ctx)).status).toBe(200);
+    expect(store.content['int-1'].provenance.audio.uploads.map((s) => s.uploadId)).toEqual([UPLOAD_ID_2]);
   });
 
   it('409s a second completion and commits nothing again', async () => {
