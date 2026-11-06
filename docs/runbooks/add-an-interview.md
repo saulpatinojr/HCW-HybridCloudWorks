@@ -1,16 +1,15 @@
 # Add an interview
 
-> **Status: being built (ADR 0040, proposed 2026-11-05).** An interview is
-> made on the admin site, reviewed there, and published there; nothing is
-> written to this repository and nothing is deployed. Of the four parts of the
-> plan, the content type, the public pages and the admin routes on this page
-> exist; the upload, the fetching, the transcription and the drafting (slices
-> A and B of the plan) and the admin form itself (slice D) are still to merge,
-> and until slice D merges there is no page to do these steps on. Before this
-> an interview was a JSON file in the repository and the only one was a
-> made-up sample; both are gone. With no published interview the Azure landing
-> page has no Interviews card and the sitemap has no Interviews page, on
-> purpose.
+> **Status: built (ADR 0040, proposed 2026-11-05).** An interview is made on
+> the admin site, reviewed there, and published there; nothing is written to
+> this repository and nothing is deployed per interview. All four parts of the
+> plan are merged (the last, the admin pages, in
+> [#1576](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1576)).
+> They work on the live site once the owner has applied the storage change in
+> HCP Terraform and deployed the functions and the frontend. Before this an
+> interview was a JSON file in the repository and the only one was a made-up
+> sample; both are gone. With no published interview the Azure landing page
+> has no Interviews card and the sitemap has no Interviews page, on purpose.
 
 **Scope:** how to get one interview from a recording (or a transcript) to its
 page at `/azure/interviews/<name>`, and how to take it down again. The design
@@ -67,14 +66,19 @@ You need, for the guest:
 
 1. **Open the form.** Sign in to the admin and go to
    `https://hybridcloudworks.com/admin/interviews/new`. You should see the
-   guest fields, the consent sentence with its checkbox and date, and the
-   three inputs with "choose one". (The admin pages are slice D of the plan;
-   until it has merged the routes below exist and the page does not.)
+   guest fields, the consent sentence with its checkbox and date, the
+   optional photo, and "Where the interview comes from" with three choices.
+   The page is also in the admin menu: **Interviews** under Pipeline, then
+   **New interview**.
 2. **Fill in the guest, the title and the consent, then choose one input and
-   save.** The form creates the interview first (you get its page at
-   `/admin/interviews/<id>`), then runs the input you chose. A file is sent
-   in pieces of 4 MB; a closed tab stops it, and reopening the interview's
-   page lets you send the file again.
+   press Create interview.** A chosen file is checked at once: the form shows
+   its length, and refuses a recording longer than 9 hours 30 minutes (split
+   it into parts, one interview each) or one whose length it cannot read. The
+   form creates the interview first, then runs the input you chose, then
+   opens the interview's page at `/admin/interviews/<id>`. A file is sent in
+   pieces of 4 MB with a percentage; if it stops part way, **Carry on
+   uploading** sends only the pieces still missing. A closed tab stops it;
+   reopening the interview's page lets you send the file again.
 3. **Watch the stage.** The page shows where the interview is:
 
    | Stage | Meaning | How long |
@@ -82,19 +86,27 @@ You need, for the guest:
    | `created` | saved, but no input has started yet | until you choose an input |
    | `uploading` | the file is still being sent from your browser | minutes, for a large file |
    | `fetching` | the site is downloading the recording from the link you gave | up to 10 minutes |
-   | `transcribing` | the recording is being written down, an hour of audio at a time | up to 25 minutes, then the step stops as `failed` |
-   | `drafting` | the transcript is being turned into questions and answers | a few minutes |
+   | `fetched` | the recording is stored; the page starts the transcription by itself | seconds |
+   | `transcribing` | the recording is being written down, an hour of audio at a time ("Working on hour 2") | up to 25 minutes, then the step stops as `failed` |
+   | `transcribed` | the transcript is stored; the page starts the draft by itself when there are no questions yet | seconds |
+   | `drafting` | the transcript is being turned into questions and answers, a part at a time for a long one ("Pass 2 of 3") | a few minutes |
    | `ready` | the draft is on the page for you to read | |
    | `failed` | something stopped; the page says what (see below) | |
 
-   A pasted transcript goes from saving straight to `drafting`.
+   A pasted transcript goes from saving straight to `transcribed` and then
+   `drafting`. The page checks again every five seconds while a step works;
+   you can leave and come back. It never drafts again by itself once there
+   are questions, because a new draft replaces them; that is your **Draft
+   again**.
 4. **Read every answer before you go on.** The draft is a machine's reading of
    a conversation. Three things are yours to check on the interview's page:
-   - the **speakers**: the draft says which voice is the guest; if the page
-     shows "unsure", pick the right one;
-   - any item marked **needs review**: the answer uses words the guest did
-     not say in the transcript. Fix the words or drop the item, then clear
-     the mark;
+   - the **speakers**: the draft says which voice is the guest. If the page
+     says it "could not tell for certain which speaker is the guest", check
+     the answers against the transcript; if they are the interviewer's
+     words, press **Draft again** (the page has no speaker picker yet);
+   - any item marked **Check this answer**: the answer uses words the guest
+     did not say in the transcript. Fix the words or remove the item, then
+     press **I have checked answer N** and **Save questions and answers**;
    - the **pull quotes**: each is a sentence the guest said word for word, or
      it was dropped. You can add one by copying a sentence, word for word,
      from the transcript on the same page.

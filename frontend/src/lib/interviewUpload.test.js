@@ -56,7 +56,7 @@ function fakeFile(bytes, { name = 'talk.mp3', type = 'audio/mpeg', failSlice = -
 }
 
 /** An upload id shaped like the server's (a UUID); made up. */
-const UP = '0e2e0000-0000-4000-8000-0000000000a2';
+const UP = '00000000-0000-0000-0000-000000000012';
 
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 

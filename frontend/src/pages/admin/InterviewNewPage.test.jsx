@@ -26,7 +26,7 @@ vi.mock('@/lib/api', () => ({
 
 const readDuration = vi.fn();
 /** A made-up upload id in the server's UUID shape. */
-const UP = '0e2e0000-0000-4000-8000-0000000000a3';
+const UP = '00000000-0000-0000-0000-000000000013';
 
 function renderPage() {
   return render(
