@@ -239,7 +239,7 @@ function passesSignalOn(worker) {
   return false;
 }
 
-/** Every job type the registry must hold, today fifteen plus noop. */
+/** Every job type the registry must hold, today nineteen plus noop. */
 const EXPECTED_TYPES = [
   'batch-inspect',
   'build-newsletter-issue',
@@ -250,6 +250,9 @@ const EXPECTED_TYPES = [
   'generate-listen-and-learn',
   'generate-podcast-transcript',
   'generate-podcast-transcript-from-recording',
+  'interview-draft',
+  'interview-fetch-audio',
+  'interview-transcribe',
   'noop',
   'publish-content',
   'publish-podcast-transcript',
@@ -266,6 +269,7 @@ const EXPECTED_MODULES = [
   'functions/cosmos-export.js',
   'functions/forge-jobs.js',
   'functions/inspect-jobs.js',
+  'functions/interviews-jobs.js',
   'functions/listen-and-learn-jobs.js',
   'functions/podcast-jobs.js',
   'functions/publish-jobs.js',

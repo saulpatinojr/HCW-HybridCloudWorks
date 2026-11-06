@@ -130,6 +130,7 @@ nav:
       - 0037 Agent Content API (Koda): decisions/0037-agent-content-api.md
       - 0038 Koda's admin access: decisions/0038-koda-admin-access.md
       - 0039 The Cost page: decisions/0039-cost-page.md
+      - 0040 Interviews from the admin: decisions/0040-interviews-from-the-admin.md
   - Runbooks:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md
@@ -182,6 +183,7 @@ nav:
       - Resource validation report: architecture/resource-validation-report.md
       - Published pages audit 2026-09-06: architecture/published-pages-audit-2026-09-06.md
       - Labs host: architecture/labs-host.md
+      - Interviews from the admin, the four slices: architecture/interviews-slices.md
       - Azure Architecture MCP Appliance (proposal): architecture/azure-architecture-mcp-appliance.md
       - App-to-AddOn program:
           - architecture/app-to-addon/README.md

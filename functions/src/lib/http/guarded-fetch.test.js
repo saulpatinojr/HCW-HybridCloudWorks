@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   guardedFetch,
+  guardedFetchStream,
+  responseMediaType,
+  urlPathExtension,
   isPrivateIp,
   validateFetchUrl,
   pinnedLookup,
@@ -338,6 +341,237 @@ describe('pinnedDispatcher with the built-in fetch', () => {
     } finally {
       await dispatcher.close();
       server.close();
+    }
+  });
+});
+
+/**
+ * The stream variant (ADR 0040 D2): the same guard, a counting Readable
+ * instead of a buffer. Each SSRF case the buffered fetch refuses is refused
+ * here before any byte is read, and the cases the stream adds — a cap
+ * crossed on the wire, a stall after the headers, a type the caller did not
+ * allow — end the stream with a coded error instead of a wait.
+ */
+describe('guardedFetchStream', () => {
+  const drain = async (stream) => {
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return Buffer.concat(chunks).toString('utf8');
+  };
+  const audio = (chunks, headers = {}) =>
+    streamRes(chunks, { 'content-type': 'audio/mpeg', ...headers });
+
+  it('streams a body under the cap, counting bytes, with the final URL and the pinned dispatcher released on end', async () => {
+    const closed = [];
+    const closingPin = (address) => ({ pinnedTo: address, close: async () => closed.push(address) });
+    const fetch = vi.fn(async () => audio(['ab', 'cd', 'ef']));
+    const r = await guardedFetchStream('https://a.example/x.mp3', {
+      fetch,
+      resolve: publicAddr,
+      dispatcherFor: closingPin,
+      allowedTypes: ['audio/mpeg'],
+    });
+    expect(r.url).toBe('https://a.example/x.mp3');
+    expect(await drain(r.stream)).toBe('abcdef');
+    expect(r.bytesRead()).toBe(6);
+    await new Promise((tick) => setImmediate(tick));
+    expect(closed).toEqual([PUBLIC]);
+    expect(fetch.mock.calls[0][1]).toMatchObject({ redirect: 'manual', method: 'GET' });
+  });
+
+  it('never fetches a private, link-local or Azure-platform address, nor an http URL (https only by default)', async () => {
+    const fetch = vi.fn(async () => audio(['x']));
+    for (const [url, address] of [
+      ['https://10.0.0.5/a.mp3', '10.0.0.5'],
+      ['https://169.254.169.254/metadata', '169.254.169.254'],
+      ['https://168.63.129.16/?comp=versions', '168.63.129.16'],
+    ]) {
+      await expect(
+        guardedFetchStream(url, { fetch, resolve: async () => ({ address }), dispatcherFor: pin })
+      ).rejects.toMatchObject({ refused: true });
+    }
+    await expect(
+      guardedFetchStream('http://a.example/a.mp3', { fetch, resolve: publicAddr, dispatcherFor: pin })
+    ).rejects.toMatchObject({ refused: true, message: expect.stringMatching(/Only https/) });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a redirect to a private address and a redirect down to http, after re-validating the hop', async () => {
+    const toPrivate = vi.fn(async () => res(302, { location: 'https://internal.example/a.mp3' }));
+    const resolve = vi.fn(async (host) => ({ address: host === 'a.example' ? PUBLIC : '10.0.0.5' }));
+    await expect(
+      guardedFetchStream('https://a.example/a.mp3', { fetch: toPrivate, resolve, dispatcherFor: pin })
+    ).rejects.toMatchObject({ refused: true });
+    expect(toPrivate).toHaveBeenCalledTimes(1);
+    const down = vi.fn(async () => res(302, { location: 'http://a.example/a.mp3' }));
+    await expect(
+      guardedFetchStream('https://a.example/a.mp3', { fetch: down, resolve: publicAddr, dispatcherFor: pin })
+    ).rejects.toMatchObject({ refused: true });
+    expect(down).toHaveBeenCalledTimes(1);
+  });
+
+  it('follows a public redirect, re-pinning, and reports the final URL', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(res(302, { location: 'https://cdn.example/f/a.mp3' }))
+      .mockResolvedValueOnce(audio(['ok']));
+    const resolve = vi.fn(async (host) => ({ address: host === 'cdn.example' ? '93.184.216.35' : PUBLIC }));
+    const r = await guardedFetchStream('https://a.example/share', { fetch, resolve, dispatcherFor: pin });
+    expect(r.url).toBe('https://cdn.example/f/a.mp3');
+    expect(fetch.mock.calls[1][1].dispatcher.pinnedTo).toBe('93.184.216.35');
+    expect(await drain(r.stream)).toBe('ok');
+  });
+
+  it('refuses a declared Content-Length over the cap before reading a byte', async () => {
+    const fetch = vi.fn(async () => audio(['x'], { 'content-length': '9999' }));
+    await expect(
+      guardedFetchStream('https://a.example/a.mp3', { fetch, resolve: publicAddr, dispatcherFor: pin, maxBytes: 150 })
+    ).rejects.toMatchObject({ code: 'BODY_TOO_LARGE' });
+  });
+
+  it('destroys the stream with BODY_TOO_LARGE when the body grows past the cap on the wire', async () => {
+    const fetch = vi.fn(async () => audio(['x'.repeat(100), 'y'.repeat(100)]));
+    const r = await guardedFetchStream('https://a.example/a.mp3', {
+      fetch,
+      resolve: publicAddr,
+      dispatcherFor: pin,
+      maxBytes: 150,
+    });
+    await expect(drain(r.stream)).rejects.toMatchObject({ code: 'BODY_TOO_LARGE' });
+    expect(r.bytesRead()).toBe(200);
+  });
+
+  it('ends a body that stalls past the deadline with FETCH_TIMEOUT, and a hung socket too', async () => {
+    const stalled = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (k) => (k === 'content-type' ? 'audio/mpeg' : null) },
+      body: new ReadableStream({ start() {} }),
+    }));
+    const r = await guardedFetchStream('https://a.example/a.mp3', {
+      fetch: stalled,
+      resolve: publicAddr,
+      dispatcherFor: pin,
+      timeoutMs: 10,
+    });
+    await expect(drain(r.stream)).rejects.toMatchObject({ code: 'FETCH_TIMEOUT' });
+
+    const hung = vi.fn(
+      (_url, { signal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        })
+    );
+    await expect(
+      guardedFetchStream('https://a.example/a.mp3', { fetch: hung, resolve: publicAddr, dispatcherFor: pin, timeoutMs: 5 })
+    ).rejects.toMatchObject({ code: 'FETCH_TIMEOUT' });
+  });
+
+  it('refuses a content type outside allowedTypes, and accepts octet-stream only with an allowed extension on the path', async () => {
+    const html = vi.fn(async () => streamRes(['<html>'], { 'content-type': 'text/html; charset=utf-8' }));
+    await expect(
+      guardedFetchStream('https://a.example/a.mp3', {
+        fetch: html,
+        resolve: publicAddr,
+        dispatcherFor: pin,
+        allowedTypes: ['audio/mpeg'],
+        allowedExtensions: ['mp3'],
+      })
+    ).rejects.toMatchObject({ code: 'UNSUPPORTED_TYPE' });
+
+    const octet = (u) =>
+      guardedFetchStream(u, {
+        fetch: vi.fn(async () => streamRes(['b'], { 'content-type': 'application/octet-stream' })),
+        resolve: publicAddr,
+        dispatcherFor: pin,
+        allowedTypes: ['audio/mpeg'],
+        allowedExtensions: ['mp3'],
+      });
+    await expect(octet('https://a.example/dl/file.MP3?dl=1')).resolves.toMatchObject({ url: expect.any(String) });
+    await expect(octet('https://a.example/dl/file.exe')).rejects.toMatchObject({ code: 'UNSUPPORTED_TYPE' });
+    await expect(octet('https://a.example/dl/noext')).rejects.toMatchObject({ code: 'UNSUPPORTED_TYPE' });
+    // Without allowedTypes, the caller judges the type itself, as guardedFetch's callers do.
+    await expect(
+      guardedFetchStream('https://a.example/a', { fetch: html, resolve: publicAddr, dispatcherFor: pin })
+    ).resolves.toMatchObject({ response: expect.objectContaining({ status: 200 }) });
+  });
+
+  it('refuses a non-2xx answer rather than streaming an error page', async () => {
+    const fetch = vi.fn(async () => res(404));
+    await expect(
+      guardedFetchStream('https://a.example/a.mp3', { fetch, resolve: publicAddr, dispatcherFor: pin })
+    ).rejects.toMatchObject({ code: 'FETCH_STATUS', status: 404 });
+  });
+
+  it('reads a response without a web stream (a test double) whole, under the cap', async () => {
+    const r = await guardedFetchStream('https://a.example/a.mp3', {
+      fetch: vi.fn(async () => res(200, { 'content-type': 'audio/mpeg' }, 'whole-body')),
+      resolve: publicAddr,
+      dispatcherFor: pin,
+    });
+    expect(await drain(r.stream)).toBe('whole-body');
+    const big = await guardedFetchStream('https://a.example/a.mp3', {
+      fetch: vi.fn(async () => res(200, { 'content-type': 'audio/mpeg' }, 'x'.repeat(20))),
+      resolve: publicAddr,
+      dispatcherFor: pin,
+      maxBytes: 10,
+    });
+    await expect(drain(big.stream)).rejects.toMatchObject({ code: 'BODY_TOO_LARGE' });
+  });
+
+  it('aborts with the parent signal, and refuses to start on one already aborted', async () => {
+    const parent = new AbortController();
+    parent.abort(new Error('job timeout'));
+    await expect(
+      guardedFetchStream('https://a.example/a.mp3', { fetch: vi.fn(), resolve: publicAddr, dispatcherFor: pin, signal: parent.signal })
+    ).rejects.toThrow('job timeout');
+  });
+
+  it('responseMediaType and urlPathExtension read what the type and extension checks read', () => {
+    expect(responseMediaType(res(200, { 'content-type': 'Audio/MP4; codecs=x' }))).toBe('audio/mp4');
+    expect(responseMediaType(res(200))).toBe('');
+    expect(urlPathExtension('https://a.example/f/x.M4A?x=1#y')).toBe('m4a');
+    expect(urlPathExtension('https://a.example/f/.hidden')).toBe('');
+    expect(urlPathExtension('not a url')).toBe('');
+  });
+});
+
+describe('guardedFetchStream, the host rule and the unread body', () => {
+  it('applies allowHost on every hop: an allowed host cannot redirect past it, and the refusal carries its own code', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(res(302, { location: 'https://cdn.example/a.mp3' }))
+      .mockResolvedValueOnce(streamRes(['x'], { 'content-type': 'audio/mpeg' }));
+    const allowHost = vi.fn((host) => host.endsWith('dropbox.com'));
+    await expect(
+      guardedFetchStream('https://www.dropbox.com/s/a.mp3', { fetch, resolve: publicAddr, dispatcherFor: pin, allowHost })
+    ).rejects.toMatchObject({ refused: true, code: 'HOST_NOT_ALLOWED' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(allowHost.mock.calls.map(([h]) => h)).toEqual(['www.dropbox.com', 'cdn.example']);
+    // Refused by the rule before the name is even resolved.
+    const resolve = vi.fn(publicAddr);
+    await expect(
+      guardedFetchStream('https://other.example/a.mp3', { fetch: vi.fn(), resolve, dispatcherFor: pin, allowHost })
+    ).rejects.toMatchObject({ code: 'HOST_NOT_ALLOWED' });
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('leaves the body unread on a Content-Length refusal, and cancels it on a type or status refusal', async () => {
+    const declared = streamRes(['x'], { 'content-type': 'audio/mpeg', 'content-length': '9999' });
+    await expect(
+      guardedFetchStream('https://a.example/a.mp3', { fetch: vi.fn(async () => declared), resolve: publicAddr, dispatcherFor: pin, maxBytes: 150 })
+    ).rejects.toMatchObject({ code: 'BODY_TOO_LARGE' });
+    expect(declared.body.locked).toBe(false);
+    for (const [response, code] of [
+      [streamRes(['<html>'], { 'content-type': 'text/html' }), 'UNSUPPORTED_TYPE'],
+      [streamRes(['nope'], { 'content-type': 'audio/mpeg' }), 'FETCH_STATUS'],
+    ]) {
+      if (code === 'FETCH_STATUS') response.status = 500;
+      const cancel = vi.spyOn(response.body, 'cancel');
+      await expect(
+        guardedFetchStream('https://a.example/a.mp3', { fetch: vi.fn(async () => response), resolve: publicAddr, dispatcherFor: pin, allowedTypes: ['audio/mpeg'] })
+      ).rejects.toMatchObject({ code });
+      expect(cancel, code).toHaveBeenCalledTimes(1);
     }
   });
 });

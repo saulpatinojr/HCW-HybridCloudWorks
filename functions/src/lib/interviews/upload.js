@@ -45,6 +45,11 @@
  *     must equal the declaration, or the session's blob is deleted and the
  *     answer is 422; the recording the document already points at is untouched;
  *   - a second completion of the same upload answers 409 and changes nothing;
+ *   - once the interview's deletion has started (the tombstone
+ *     `provenance.audio.deletedAt`, written first by slice C's delete hook),
+ *     open, block and complete answer 409 INTERVIEW_DELETED before storing
+ *     anything, and a completion that read the document before the tombstone
+ *     loses its ETag write, deletes the blob it committed and answers the same;
  *   - the content type is taken from the declaration the server validated,
  *     never from the body.
  *
@@ -269,6 +274,26 @@ const FIND_QUERY =
   'SELECT TOP 1 * FROM c WHERE c.type = @type AND ' +
   '(ARRAY_CONTAINS(c.provenance.audio.uploads, { "uploadId": @uploadId }, true) OR c.provenance.audio.uploadId = @uploadId)';
 
+/**
+ * Whether the interview's deletion has started. The delete hook (slice C)
+ * first writes `provenance.audio.deletedAt` under the document's ETag, then
+ * sweeps the interview's whole `audio/<interviewId>/` prefix (ADR 0040 D10).
+ * Every route here refuses a tombstoned document with 409 INTERVIEW_DELETED
+ * before it stores anything, and a completion that read the document before
+ * the tombstone loses its ETag write and deletes the blob it committed.
+ *
+ * @param {object|null|undefined} doc
+ * @returns {boolean}
+ */
+export function isTombstoned(doc) {
+  const at = doc?.provenance?.audio?.deletedAt;
+  return typeof at === 'string' ? at.length > 0 : Boolean(at);
+}
+
+/** The 409 every route answers once the interview's deletion has started. */
+const interviewDeleted = () =>
+  json(409, { error: 'This interview is being deleted; the upload was not kept', code: 'INTERVIEW_DELETED' });
+
 const sessionsOf = (doc) => {
   const list = doc?.provenance?.audio?.uploads;
   return Array.isArray(list) ? list : [];
@@ -304,9 +329,26 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
       if (session.ownerOid !== oid || session.status !== 'open' || !isSoundSession(doc, session)) {
         return { doc: null, session: null, completed: false };
       }
+      // Reported only to the session's own admin; anyone else still gets 404.
+      if (isTombstoned(doc)) return { doc, session: null, completed: false, deleted: true };
       return { doc, session, completed: false };
     }
-    return { doc, session: null, completed: audio.uploadId === uploadId && audio.uploadedBy === oid };
+    const completed = audio.uploadId === uploadId && audio.uploadedBy === oid;
+    if (completed && isTombstoned(doc)) return { doc, session: null, completed: false, deleted: true };
+    return { doc, session: null, completed };
+  }
+
+  /**
+   * After an ETag write of this completion failed: was it the deletion?
+   * Re-reads the document; gone or tombstoned means the interview's deletion
+   * started after this completion read it, so the blob it committed must go
+   * (the delete hook may already have listed the prefix). Anything else is
+   * another write (another session, an editor) and the blob is kept for the
+   * retry, which re-commits the same, now committed, blocks.
+   */
+  async function deletedSinceRead(doc) {
+    const fresh = await store.readDoc(CONTENT_CONTAINER, doc.id, doc.id);
+    return !fresh || isTombstoned(fresh);
   }
 
   /** Write `provenance` as one merged object under the document's ETag. */
@@ -318,7 +360,14 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
   /** Best effort: the caller is already answering. Status code only in the log. */
   async function discardBlob(path, context, label, why) {
     try {
-      await storage.deleteBlob(INTERVIEWS_AUDIO_CONTAINER, path);
+      // The version-aware delete (slice C's deleteBlobWithVersions) when it
+      // is wired: with versioning on, a plain delete leaves the blob as a
+      // previous version until slice C's prefix sweep or the lifecycle rule.
+      if (typeof storage.deleteBlobWithVersions === 'function') {
+        await storage.deleteBlobWithVersions(INTERVIEWS_AUDIO_CONTAINER, path);
+      } else {
+        await storage.deleteBlob(INTERVIEWS_AUDIO_CONTAINER, path);
+      }
     } catch (err) {
       context.warn?.(`${label}: blob not deleted ${why} (${err?.code || err?.statusCode || 'error'})`);
     }
@@ -345,6 +394,7 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
 
         const doc = await store.readDoc(CONTENT_CONTAINER, interviewId, interviewId);
         if (!doc || doc.type !== 'interview') return json(404, { error: 'Interview not found' });
+        if (isTombstoned(doc)) return interviewDeleted();
 
         const uploadId = uuid();
         const blockCount = Math.ceil(bytes / BLOCK_SIZE);
@@ -404,7 +454,8 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
           return json(413, { error: `A block is at most ${BLOCK_SIZE} bytes` });
         }
 
-        const { session } = await findSession(uploadId, oid);
+        const { session, deleted } = await findSession(uploadId, oid);
+        if (deleted) return interviewDeleted();
         if (!session) return json(404, { error: 'Upload not found' });
 
         if (index >= session.blockCount) {
@@ -445,7 +496,9 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
       const uploadId = String(request.params?.uploadId || '');
 
       try {
-        const { doc, session, completed } = await findSession(uploadId, oid);
+        const { doc, session, completed, deleted } = await findSession(uploadId, oid);
+        // A tombstone read before the commit: nothing is committed.
+        if (deleted) return interviewDeleted();
         if (completed) return json(409, { error: 'This upload was already completed' });
         if (!session) return json(404, { error: 'Upload not found' });
 
@@ -482,7 +535,14 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
               ? { ...s, refusals: (Number.isInteger(s.refusals) ? s.refusals : 0) + 1, lastRefusedAt: now().toISOString() }
               : s
           );
-          await writeProvenance(doc, { ...(doc.provenance?.audio ?? {}), uploads: fenced });
+          try {
+            await writeProvenance(doc, { ...(doc.provenance?.audio ?? {}), uploads: fenced });
+          } catch (error) {
+            if (error?.code !== 412 || !(await deletedSinceRead(doc))) throw error;
+            await discardBlob(session.path, context, 'interviewUploadComplete', 'after the interview was deleted');
+            context.warn?.(`interviewUploadComplete: ${uploadId} refused; the interview's deletion started meanwhile`);
+            return interviewDeleted();
+          }
           await discardBlob(session.path, context, 'interviewUploadComplete', 'after a refused completion');
           context.warn?.(line);
           return json(422, { error: sentence });
@@ -539,7 +599,20 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
           superseded,
           ...(uploads.length > 0 ? { uploads } : {}),
         };
-        await writeProvenance(doc, audio, { source: 'upload' });
+        try {
+          await writeProvenance(doc, audio, { source: 'upload' });
+        } catch (error) {
+          // The pointer write lost its ETag. If the interview's deletion
+          // started after this completion read the document, the blob just
+          // committed is deleted here, since the delete hook may already have
+          // listed the prefix; any other writer leaves it for the retry.
+          if (error?.code === 412 && (await deletedSinceRead(doc))) {
+            await discardBlob(session.path, context, 'interviewUploadComplete', 'after the interview was deleted');
+            context.warn?.(`interviewUploadComplete: ${uploadId} committed; the interview's deletion started meanwhile, blob removed`);
+            return interviewDeleted();
+          }
+          throw error;
+        }
 
         context.log?.(
           `interviewUploadComplete: ${uploadId} committed for ${doc.id} (${session.bytes} B, ${session.blockCount} blocks)`
