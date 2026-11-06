@@ -40,16 +40,22 @@ const EDGE_TIMEOUT_MS = 100_000;
 const MIN_HEADROOM_MS = 5_000;
 
 /**
- * The client's timeout table, read from its source. The lookup is exact
- * (`FUNCTION_TIMEOUT_MS[fnName] || DEFAULT_TIMEOUT_MS`). A route not in the
- * table, and every route whose name carries an id, gets the default.
+ * The client's timeout tables, read from its source. The lookup is the exact
+ * name first (`FUNCTION_TIMEOUT_MS`), then a shape for routes whose name
+ * carries an id (`PATTERN_TIMEOUT_MS`), then `DEFAULT_TIMEOUT_MS`. A route in
+ * neither table gets the default; `patternMs` says whether an id route is
+ * caught by a shape instead.
  */
 function clientTimeouts() {
   const source = readFileSync(API_JS, 'utf8');
   const fallback = source.match(/const DEFAULT_TIMEOUT_MS = (\d+);/);
   const table = source.match(/const FUNCTION_TIMEOUT_MS = \{([\s\S]*?)\n\};/);
-  const exactLookup = source.includes('return FUNCTION_TIMEOUT_MS[fnName] || DEFAULT_TIMEOUT_MS;');
-  if (!fallback || !table || !exactLookup) {
+  const patterns = source.match(/const PATTERN_TIMEOUT_MS = \[([\s\S]*?)\];\n/);
+  const lookup =
+    source.includes('if (FUNCTION_TIMEOUT_MS[fnName]) return FUNCTION_TIMEOUT_MS[fnName];') &&
+    source.includes('PATTERN_TIMEOUT_MS.find(([pattern]) => pattern.test(fnName));') &&
+    source.includes('return matched ? matched[1] : DEFAULT_TIMEOUT_MS;');
+  if (!fallback || !table || !patterns || !lookup) {
     throw new Error(
       'frontend/src/lib/api.js no longer declares its timeouts the way this test reads them. Update the parser here; do not change the budgets to make it pass.'
     );
@@ -58,7 +64,9 @@ function clientTimeouts() {
   for (const [, key, ms] of table[1].matchAll(/^\s*'?([\w/{}.-]+)'?:\s*(\d+),/gm)) {
     byRoute[key] = Number(ms);
   }
-  return { fallback: Number(fallback[1]), byRoute };
+  const byPattern = [...patterns[1].matchAll(/\[\/(.+?)\/,\s*(\d+)\]/g)].map(([, src, ms]) => [new RegExp(src), Number(ms)]);
+  const patternMs = (route) => byPattern.find(([pattern]) => pattern.test(route))?.[1];
+  return { fallback: Number(fallback[1]), byRoute, byPattern, patternMs };
 }
 
 const CLIENT = clientTimeouts();
@@ -143,10 +151,14 @@ describe('synchronous AI routes answer before the browser and the edge give up',
     expect(CLIENT.fallback).toBeGreaterThan(0);
     expect(CLIENT.byRoute.generateArticleDraft).toBeGreaterThan(0);
     expect(CLIENT.byRoute.createContentFromRecording).toBeGreaterThan(0);
-    // The newsletter routes carry an id, so only the default can apply.
+    // The newsletter routes carry an id, so only the default can apply: no
+    // exact entry, and no id shape that catches them.
     expect(Object.keys(CLIENT.byRoute).filter((key) => key.startsWith('cms/newsletters'))).toEqual(
       []
     );
+    expect(CLIENT.byPattern.length).toBeGreaterThan(0);
+    expect(CLIENT.patternMs('cms/newsletters/sample-id/intro')).toBeUndefined();
+    expect(CLIENT.patternMs('cms/newsletters/sample-id/subjects')).toBeUndefined();
   });
 
   it.each(BUDGETED)(

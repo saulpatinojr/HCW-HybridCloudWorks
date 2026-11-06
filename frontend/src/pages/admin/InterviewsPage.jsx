@@ -71,7 +71,7 @@ export default function InterviewsPage() {
 
   useEffect(() => {
     if (!authReady) return;
-    // Started from an async function, as useDocVault does: the read's own
+    // Started from an async function, as the other admin lists do: the read's own
     // setState calls come after the request, not in the effect's body.
     (async () => {
       await load();
