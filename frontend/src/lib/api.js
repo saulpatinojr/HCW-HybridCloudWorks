@@ -94,8 +94,19 @@ const SAFE_RETRY_FUNCTIONS = new Set([
   'aiStackReadiness',
 ]);
 
+/**
+ * Timeouts for routes whose path carries an id, matched by shape. Completing
+ * an interview upload commits up to 125 blocks and then reads the whole
+ * committed recording back to check its SHA-256 (functions/src/lib/interviews/
+ * upload.js), which for 500 MiB is far past the default; sized under the
+ * Function host's 230 s cap. Not retried: a second completion answers 409.
+ */
+const PATTERN_TIMEOUT_MS = [[/^cms\/interviews\/uploads\/[^/]+\/complete$/, 200000]];
+
 function timeoutForFunction(fnName) {
-  return FUNCTION_TIMEOUT_MS[fnName] || DEFAULT_TIMEOUT_MS;
+  if (FUNCTION_TIMEOUT_MS[fnName]) return FUNCTION_TIMEOUT_MS[fnName];
+  const matched = PATTERN_TIMEOUT_MS.find(([pattern]) => pattern.test(fnName));
+  return matched ? matched[1] : DEFAULT_TIMEOUT_MS;
 }
 
 /**
@@ -342,6 +353,86 @@ export async function postJSON(fnName, body) {
     body: JSON.stringify(body),
   });
   return res.json();
+}
+
+/** How long one raw-bytes PUT may take: a 4 MiB block over a slow uplink. */
+export const PUT_BYTES_TIMEOUT_MS = 60000;
+
+/**
+ * PUT a raw body (not JSON) to an authenticated route: one block of an
+ * interview recording (ADR 0040, D1 and D7), `PUT
+ * cms/interviews/uploads/{uploadId}/blocks/{index}`.
+ *
+ * Differences from `authedFetch`, each on purpose:
+ *   - `Content-Type: application/octet-stream`, because the body is bytes the
+ *     server reads with `request.arrayBuffer()`. The route never trusts this
+ *     type; the session the upload opened carries the audio type.
+ *   - `Content-Length` is not set here. A page cannot set it (the browser
+ *     treats it as a forbidden header and drops it); the browser writes the
+ *     exact length of an ArrayBuffer or Blob body itself, and the route
+ *     requires it and checks it against the block's expected size.
+ *   - One attempt and a 60-second timeout. The caller
+ *     (lib/interviewUpload.js) decides what is retried, because a block is
+ *     idempotent and a refusal such as `INTERVIEW_DELETED` must not be.
+ *   - Authorization is the token acquired here and nothing a caller passes.
+ *
+ * Throws the same Error `authedFetch` does on a non-2xx answer (status,
+ * code, correlation id), and resolves to the parsed JSON answer, or `{}` when
+ * the answer has no JSON body.
+ *
+ * @param {string} fnName - route path after the API base
+ * @param {ArrayBuffer | Blob | Uint8Array} body
+ * @param {{ headers?: Record<string, string>, signal?: AbortSignal }} [options]
+ * @returns {Promise<object>}
+ */
+export async function putBytes(fnName, body, { headers, signal } = {}) {
+  const stoppedError = () =>
+    Object.assign(new Error('The upload was stopped.'), { code: 'ABORTED' });
+  // An abort that happened before this call fires no event later, so it is
+  // checked here and again just before the request, as well as listened for.
+  if (signal?.aborted) throw stoppedError();
+  const { acquireApiToken } = await import('@/lib/entraAuth');
+  const token = await acquireApiToken({ forceRefresh: false });
+  const url = getEndpoint(fnName);
+  const callerHeaders = Object.fromEntries(
+    Object.entries(headers || {}).filter(
+      ([name]) => !['authorization', 'content-type', 'content-length'].includes(name.toLowerCase())
+    )
+  );
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PUT_BYTES_TIMEOUT_MS);
+  const stop = () => controller.abort();
+  signal?.addEventListener?.('abort', stop, { once: true });
+  if (signal?.aborted) controller.abort();
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'PUT',
+      body,
+      headers: {
+        ...callerHeaders,
+        'Content-Type': 'application/octet-stream',
+        Authorization: `Bearer ${token}`,
+      },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      if (signal?.aborted) throw stoppedError();
+      throw new Error(
+        `${fnName} timed out after ${Math.round(PUT_BYTES_TIMEOUT_MS / 1000)}s. Check the connection and try again.`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener?.('abort', stop);
+  }
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw callError(fnName, res, errData);
+  }
+  return res.json().catch(() => ({}));
 }
 
 /**

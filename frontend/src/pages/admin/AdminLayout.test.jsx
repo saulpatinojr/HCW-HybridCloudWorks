@@ -35,6 +35,7 @@ describe('the navigation registry', () => {
     expect(group('Pipeline').items.map((i) => i.label)).toEqual([
       'New Content',
       'Drafts',
+      'Interviews',
       'Review Queue',
       'Editor',
       'Publish',
@@ -182,7 +183,7 @@ describe('the admin sidebar', () => {
   it('explains every item on hover with the registry sentence', () => {
     renderAdmin();
     const queue = screen.getByRole('link', { name: /^Review Queue/ });
-    expect(queue).toHaveAttribute('title', group('Pipeline').items[2].description);
+    expect(queue).toHaveAttribute('title', group('Pipeline').items[3].description);
     const labs = screen.getByRole('link', { name: 'Labs' });
     expect(labs.getAttribute('title')).toMatch(/learning environments/i);
   });
