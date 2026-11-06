@@ -92,9 +92,6 @@ $allowedRootFiles = @(
   # entry in either is a row in docs/security/scanner-triage.md.
   '.gitleaksignore',
   '.checkov.yaml',
-  # CodeRabbit's configuration (owner request 2026-10-08). CodeRabbit reads it
-  # only from the repository root, so it lives there by tool convention.
-  '.coderabbit.yaml',
   # The repository licence (owner decision 2026-09-28, #780: Apache-2.0).
   # GitHub detects a repository's licence from a LICENSE file at the root, and
   # Apache practice keeps NOTICE beside it, so both live at the root by
