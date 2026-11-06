@@ -74,6 +74,7 @@ import "./telegram-http.js";
 import "./doc-vault-http.js";
 import "./calendar-alerts-http.js";
 import "./cost-http.js";
+import "./interviews-upload-http.js";
 import "./interviews-admin-http.js";
 
 const BUILD_TIME = new Date().toISOString();

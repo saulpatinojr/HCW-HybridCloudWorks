@@ -1,0 +1,91 @@
+/**
+ * What interviews-upload-http.js wires into its handlers (#1565).
+ *
+ * The routes themselves are covered by route-inventory.test.js and
+ * api-contract.test.js; this pins the DEPENDENCIES: a handler handed
+ * `commitBlockList` without `deleteBlob` or `hashBlobSha256` registers, passes
+ * the inventory, and then either keeps a wrong file or never checks it.
+ */
+import { describe, it, expect, vi } from 'vitest';
+
+const registrations = new Map();
+vi.mock('../lib/auth/http-route.js', () => ({
+  httpRoute: (name, options) => registrations.set(name, options),
+  httpRouteByMethod: (name, { handlers, ...options }) =>
+    registrations.set(name, { ...options, methods: Object.keys(handlers), handler: handlers.PUT }),
+}));
+vi.mock('../lib/auth/default-guard.js', () => ({
+  getDefaultGuard: () => ({ requireRole: vi.fn() }),
+}));
+const storageSpies = {
+  stageBlock: vi.fn(),
+  commitBlockList: vi.fn(),
+  hashBlobSha256: vi.fn(),
+  deleteBlob: vi.fn(),
+};
+vi.mock('../lib/blob-storage.js', () => ({
+  stageBlock: (...args) => storageSpies.stageBlock(...args),
+  commitBlockList: (...args) => storageSpies.commitBlockList(...args),
+  hashBlobSha256: (...args) => storageSpies.hashBlobSha256(...args),
+  deleteBlob: (...args) => storageSpies.deleteBlob(...args),
+}));
+vi.mock('../lib/cosmos-client.js', () => ({ readDoc: vi.fn(), queryDocs: vi.fn(), patchDoc: vi.fn() }));
+
+const created = [];
+const createdHandlers = [];
+vi.mock('../lib/interviews/upload.js', () => ({
+  createInterviewUploadHandlers: (deps) => {
+    created.push(deps);
+    const handlers = {
+      openUpload: vi.fn(async () => ({ status: 201 })),
+      putBlock: vi.fn(async () => ({ status: 200 })),
+      completeUpload: vi.fn(async () => ({ status: 200 })),
+    };
+    createdHandlers.push(handlers);
+    return handlers;
+  },
+}));
+
+await import('./interviews-upload-http.js');
+
+describe('interviews-upload-http registrations', () => {
+  it('dispatches each route to its matching operation with the request and context', async () => {
+    for (const [name, operation] of [
+      ['cmsInterviewUploads', 'openUpload'],
+      ['cmsInterviewUploadBlock', 'putBlock'],
+      ['cmsInterviewUploadComplete', 'completeUpload'],
+    ]) {
+      const request = { method: 'X' };
+      const context = {};
+      await registrations.get(name).handler(request, context);
+      const handlers = createdHandlers.at(-1);
+      expect(handlers[operation], name).toHaveBeenCalledTimes(1);
+      expect(handlers[operation]).toHaveBeenCalledWith(request, context);
+      for (const other of Object.keys(handlers).filter((k) => k !== operation)) {
+        expect(handlers[other], `${name} must not reach ${other}`).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it('registers the three routes with their verbs and no queue output', () => {
+    const open = registrations.get('cmsInterviewUploads');
+    const block = registrations.get('cmsInterviewUploadBlock');
+    const complete = registrations.get('cmsInterviewUploadComplete');
+    expect(open).toMatchObject({ route: 'cms/interviews/uploads', methods: ['POST'] });
+    expect(block).toMatchObject({ route: 'cms/interviews/uploads/{uploadId}/blocks/{index}', methods: ['PUT'] });
+    expect(complete).toMatchObject({ route: 'cms/interviews/uploads/{uploadId}/complete', methods: ['POST'] });
+    for (const spec of [open, block, complete]) expect(spec.extraOutputs).toBeUndefined();
+  });
+
+  it('hands the handlers the full storage seam, including deleteBlob and hashBlobSha256', async () => {
+    await registrations.get('cmsInterviewUploadComplete').handler({}, {});
+    const deps = created.at(-1);
+    for (const name of ['stageBlock', 'commitBlockList', 'hashBlobSha256', 'deleteBlob']) {
+      expect(typeof deps.storage[name], name).toBe('function');
+      await deps.storage[name]('interviews-audio', 'audio/x.mp3');
+      expect(storageSpies[name]).toHaveBeenCalledWith('interviews-audio', 'audio/x.mp3');
+    }
+    for (const name of ['readDoc', 'queryDocs', 'patchDoc']) expect(typeof deps.store[name], name).toBe('function');
+    expect(typeof deps.guard.requireRole).toBe('function');
+  });
+});
