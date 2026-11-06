@@ -20,9 +20,9 @@ const TEXT_JSON_VISION = Object.freeze(['text', 'json', 'vision']);
  * honest: a context is written only where the provider publishes one for
  * the family, and a model that is not a chat model (realtime, audio in,
  * transcription, embeddings, moderation, video) carries no capability at
- * all until a call path exists for it — the task registry lists `stt`,
- * `ocr` and `embedding` as planned (tasks.js), and a capability nobody can
- * call would make a model selectable for a task that then fails.
+ * all until a call path exists for it — the task registry lists `ocr` and
+ * `embedding` as planned (tasks.js), and a capability nobody can call would
+ * make a model selectable for a task that then fails.
  *
  * The audio and image rows (ADR 0034 slice 5, #860) come first because the
  * Gemini TTS ids start with `gemini-` and would otherwise read as chat
@@ -49,8 +49,11 @@ export const ENRICHMENT_TABLE = Object.freeze([
     context: null,
   },
   // Gemini: every generateContent model reads images and returns JSON; the
-  // Interactions API grounds on pages and YouTube (router.js header).
-  { pattern: /^gemini-/, capabilities: ['text', 'json', 'vision', 'grounding'], modality: 'text', context: 1_048_576 },
+  // Interactions API grounds on pages and YouTube (router.js header); and
+  // every one reads audio from the Files API (`stt`, ADR 0040 — the
+  // interview transcription, lib/interviews/gemini-files.js). The TTS and
+  // transcribe-only ids are caught by the rows above.
+  { pattern: /^gemini-/, capabilities: ['text', 'json', 'vision', 'grounding', 'stt'], modality: 'text', context: 1_048_576 },
   { pattern: /^gpt-5/, capabilities: TEXT_JSON_VISION, modality: 'text', context: 400_000 },
   { pattern: /^gpt-4\.1/, capabilities: TEXT_JSON_VISION, modality: 'text', context: 1_047_576 },
   { pattern: /^gpt-4/, capabilities: TEXT_JSON_VISION, modality: 'text', context: 128_000 },

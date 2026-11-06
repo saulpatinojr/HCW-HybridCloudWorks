@@ -221,6 +221,32 @@ export async function downloadBlob(containerName, blobName) {
 }
 
 /**
+ * Download a blob as a STREAM, with its size and type, for a body too large
+ * to hold: an interview recording of up to 500 MiB (ADR 0040 D3), which the
+ * transcription job pipes into Gemini's resumable upload without ever
+ * holding the file. `downloadBlob` above buffers the whole blob, which for
+ * a recording would be the blob again in memory on a 2048 MB instance.
+ *
+ * A read, so it is never refused after a job's abort. A missing blob is a
+ * throw here (the caller's document named it, so its absence is a fault,
+ * not an ordinary outcome as it is for the delivery route).
+ *
+ * @param {string} containerName
+ * @param {string} blobName
+ * @returns {Promise<{ stream: NodeJS.ReadableStream, contentLength: number, contentType: string }>}
+ */
+export async function downloadBlobStream(containerName, blobName) {
+  const containerClient = getContainerClient(containerName);
+  const blobClient = containerClient.getBlobClient(blobName);
+  const response = await blobClient.download(0);
+  return {
+    stream: response.readableStreamBody,
+    contentLength: Number(response.contentLength) || 0,
+    contentType: response.contentType || 'application/octet-stream',
+  };
+}
+
+/**
  * Read a blob for HTTP delivery: bytes plus the metadata a response needs.
  *
  * Separate from `downloadBlob` because the delivery path needs the content type

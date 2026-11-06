@@ -12,7 +12,11 @@ import { describe, it, expect } from 'vitest';
 import {
   SERVICES,
   DEFAULT_THRESHOLD_HOURS,
-  parseLastSuccessfulRun,
+  parseRunIds,
+  baselineOf,
+  lastSuccessfulRun,
+  RUNS_PER_PAGE,
+  MAX_RUN_PAGES,
   parseLastAppliedRun,
   missingTfcTokenMessage,
   parseCommitDate,
@@ -63,36 +67,201 @@ const runsDocument = ({ run = appliedRun(), sha = APPLIED_SHA, included } = {}) 
   included: included ?? [cvFor('cv-1', 'ia-1'), iaFor('ia-1', sha)],
 });
 
-describe('parseLastSuccessfulRun', () => {
-  it('reads the head sha of the newest successful run', () => {
-    const out = parseLastSuccessfulRun({
-      workflow_runs: [{ head_sha: 'abc123', run_number: 82, created_at: hoursAgo(3) }],
-    });
-    expect(out.sha).toBe('abc123');
-    expect(out.runNumber).toBe(82);
+describe('parseRunIds', () => {
+  it('reads the ids a listing page names, in the order it names them', () => {
+    expect(parseRunIds({ workflow_runs: [{ id: 9, conclusion: 'failure' }, { id: 7 }] })).toEqual([9, 7]);
   });
 
-  it('returns null for a workflow that has never deployed — a fact, not an error', () => {
-    expect(parseLastSuccessfulRun({ workflow_runs: [] })).toBe(null);
+  it('is empty for a workflow with no runs — a fact, not an error', () => {
+    expect(parseRunIds({ workflow_runs: [] })).toEqual([]);
   });
 
-  it('throws on a shape it cannot read, rather than reporting it as never-deployed', () => {
-    // These are different facts. "Never deployed" sends someone to run a deploy;
-    // an unreadable answer sends them to look at the check.
-    expect(() => parseLastSuccessfulRun({})).toThrow(/workflow_runs/);
-    expect(() => parseLastSuccessfulRun(null)).toThrow(/workflow_runs/);
-    expect(() => parseLastSuccessfulRun({ workflow_runs: [{}] })).toThrow(/head_sha/);
+  it('throws on a shape it cannot read, rather than reporting it as no runs', () => {
+    expect(() => parseRunIds({})).toThrow(/workflow_runs/);
+    expect(() => parseRunIds(null)).toThrow(/workflow_runs/);
+    expect(() => parseRunIds({ workflow_runs: [{}] })).toThrow(/`id`/);
+    expect(() => parseRunIds({ workflow_runs: [{ id: 'later' }] })).toThrow(/`id`/);
+  });
+});
+
+describe('baselineOf', () => {
+  const success = {
+    id: 9,
+    status: 'completed',
+    conclusion: 'success',
+    head_sha: 'abc123',
+    run_number: 82,
+    created_at: hoursAgo(3),
+  };
+
+  it('reads the head sha of a run whose record says completed and success', () => {
+    expect(baselineOf(success)).toEqual({ sha: 'abc123', runNumber: 82, at: hoursAgo(3) });
+  });
+
+  it('is null for a run that did not deploy, whatever the listing said of it', () => {
+    expect(baselineOf({ ...success, conclusion: 'failure' })).toBe(null);
+    expect(baselineOf({ ...success, conclusion: 'cancelled' })).toBe(null);
+    expect(baselineOf({ ...success, status: 'in_progress', conclusion: null })).toBe(null);
+    // "Re-run jobs" takes a completed run back to in_progress under the same
+    // id, so the status is read as well as the conclusion.
+    expect(baselineOf({ ...success, status: 'in_progress' })).toBe(null);
+    expect(baselineOf({ ...success, status: 'queued', conclusion: null })).toBe(null);
+  });
+
+  it('throws on a record it cannot read, rather than reading it as a run that did not deploy', () => {
+    // A payload with no status is not a run record, and a completed run has
+    // a conclusion. Null here would reach the ❌ "never deployed" row; a
+    // throw reaches the ⚠️ "could not read" row, which is the honest one.
+    expect(() => baselineOf(null)).toThrow(/no `status`/);
+    expect(() => baselineOf({})).toThrow(/no `status`/);
+    expect(() => baselineOf({ ...success, status: undefined })).toThrow(/no `status`/);
+    expect(() => baselineOf({ ...success, status: '' })).toThrow(/no `status`/);
+    expect(() => baselineOf({ ...success, conclusion: null })).toThrow(/no `conclusion`/);
+    expect(() => baselineOf({ ...success, conclusion: undefined })).toThrow(/no `conclusion`/);
+    expect(() => baselineOf({ ...success, conclusion: '' })).toThrow(/no `conclusion`/);
+  });
+
+  it('throws on a successful run with no head_sha, rather than skipping to an older one', () => {
+    expect(() => baselineOf({ ...success, head_sha: '' })).toThrow(/head_sha/);
+    expect(() => baselineOf({ ...success, head_sha: undefined })).toThrow(/head_sha/);
   });
 });
 
 /**
- * The Terraform baseline, read from the apply rather than from a workflow run.
- *
- * The defect this guards (F4, #963): the row used to take the last green
- * tfc-plan-check.yml run as "deployed", and that run is green with the token
- * unset, on an unconfirmed plan, and on a plan nobody applied. Every case
- * below is about not letting anything that is not an apply become a baseline.
+ * The read that replaced `runs?status=success&per_page=1` (#1564). The
+ * fakes answer by path, the way GitHub did on 2026-11-05: the filtered
+ * listing is a search that lags the run, the unfiltered listing names every
+ * id, and the run by id is the truth.
  */
+describe('lastSuccessfulRun', () => {
+  const record = (
+    id,
+    { status = 'completed', conclusion = 'success', sha = `sha-${id}`, at = hoursAgo(100 - id) } = {}
+  ) => ({ id, status, conclusion, head_sha: sha, run_number: id, created_at: at, run_started_at: at });
+
+  /** A fake API: the listing pages, the runs by id, and what was asked. */
+  const api = ({ pages, runs, stale }) => {
+    const asked = [];
+    const read = async (path) => {
+      asked.push(path);
+      if (path.includes('status=success')) return { workflow_runs: stale ?? [] };
+      const page = path.match(/[?&]page=(\d+)/);
+      if (page) return { workflow_runs: (pages[Number(page[1]) - 1] ?? []).map((id) => ({ id })) };
+      const id = path.match(/\/actions\/runs\/(\d+)$/);
+      if (id && runs[id[1]]) return runs[id[1]];
+      throw new Error(`unstubbed: ${path}`);
+    };
+    return { read, asked };
+  };
+
+  it('takes the newest success by its own record, not the one a stale status=success listing names', async () => {
+    // The newest run, 9, finished a minute ago and the search has not caught
+    // up: the filtered listing still answers the run before it. The old read
+    // would have measured drift against run 7 and called the just-deployed
+    // commit one commit of drift.
+    const { read, asked } = api({
+      pages: [[9, 7, 5]],
+      runs: { 9: record(9), 7: record(7), 5: record(5, { conclusion: 'failure' }) },
+      stale: [{ id: 7, head_sha: 'sha-7', conclusion: 'success' }],
+    });
+    const out = await lastSuccessfulRun('deploy-functions.yml', read);
+    expect(out.sha).toBe('sha-9');
+    expect(out.runNumber).toBe(9);
+    expect(asked.some((path) => path.includes('status='))).toBe(false);
+    expect(asked[0]).toBe(`/actions/workflows/deploy-functions.yml/runs?per_page=${RUNS_PER_PAGE}&page=1`);
+    expect(asked).toContain('/actions/runs/9');
+  });
+
+  it('finds the success when the stale listing answers nothing at all', async () => {
+    const { read } = api({ pages: [[9]], runs: { 9: record(9) }, stale: [] });
+    expect((await lastSuccessfulRun('w.yml', read)).sha).toBe('sha-9');
+  });
+
+  it('ignores the status and conclusion the listing carries, which can lag the run', async () => {
+    // The listing shows run 9 as queued; its record says it completed.
+    const read = async (path) => {
+      if (path.includes('page=1')) return { workflow_runs: [{ id: 9, status: 'queued', conclusion: null }] };
+      if (path.endsWith('/actions/runs/9')) return record(9);
+      throw new Error(`unstubbed: ${path}`);
+    };
+    expect((await lastSuccessfulRun('w.yml', read)).sha).toBe('sha-9');
+  });
+
+  it('passes over a newer run that is still going, or failed, to the newest that deployed', async () => {
+    const { read } = api({
+      pages: [[11, 9, 7]],
+      runs: {
+        11: record(11, { status: 'in_progress', conclusion: null }),
+        9: record(9, { conclusion: 'failure' }),
+        7: record(7),
+      },
+    });
+    expect((await lastSuccessfulRun('w.yml', read)).sha).toBe('sha-7');
+  });
+
+  it('orders by the records, not by the listing', async () => {
+    // "Re-run jobs" keeps an older run's id, place in the listing and
+    // created_at, and moves its run_started_at; the listing order is not the
+    // deploy order.
+    const { read } = api({
+      pages: [[9, 7]],
+      runs: {
+        9: record(9, { at: hoursAgo(10) }),
+        7: { ...record(7, { at: hoursAgo(20) }), run_started_at: hoursAgo(1) },
+      },
+    });
+    expect((await lastSuccessfulRun('w.yml', read)).sha).toBe('sha-7');
+  });
+
+  it('is null for a workflow that has never run — a fact, not an error', async () => {
+    const { read } = api({ pages: [[]], runs: {} });
+    expect(await lastSuccessfulRun('w.yml', read)).toBe(null);
+  });
+
+  it('is null when the whole history was read and nothing in it succeeded', async () => {
+    const { read } = api({
+      pages: [[9, 7]],
+      runs: { 9: record(9, { conclusion: 'failure' }), 7: record(7, { conclusion: 'cancelled' }) },
+    });
+    expect(await lastSuccessfulRun('w.yml', read)).toBe(null);
+  });
+
+  it('reads the next page when a full page holds no success', async () => {
+    const first = Array.from({ length: RUNS_PER_PAGE }, (_, i) => 100 + i);
+    const runs = Object.fromEntries(first.map((id) => [id, record(id, { conclusion: 'failure' })]));
+    runs[7] = record(7);
+    const { read, asked } = api({ pages: [first, [7]], runs });
+    expect((await lastSuccessfulRun('w.yml', read)).sha).toBe('sha-7');
+    expect(asked.filter((path) => path.includes('&page=')).length).toBe(2);
+  });
+
+  it('throws, rather than calling it never deployed, when the page cap is reached without a success', async () => {
+    // A hundred failures in a row and older runs unread: "never deployed"
+    // and "has not deployed lately" cannot be told apart from here, and the
+    // row renders ⚠️ with the reason instead of ❌ on a guess.
+    const ids = Array.from({ length: RUNS_PER_PAGE }, (_, i) => 100 + i);
+    const pages = Array.from({ length: MAX_RUN_PAGES }, () => ids);
+    const runs = Object.fromEntries(ids.map((id) => [id, record(id, { conclusion: 'failure' })]));
+    await expect(lastSuccessfulRun('w.yml', api({ pages, runs }).read)).rejects.toThrow(
+      new RegExp(`newest ${MAX_RUN_PAGES * RUNS_PER_PAGE} runs`)
+    );
+  });
+
+  it('throws on a listing it cannot read, rather than reading it as never deployed', async () => {
+    await expect(lastSuccessfulRun('w.yml', async () => ({}))).rejects.toThrow(/workflow_runs/);
+  });
+
+  it('throws when the only listed run has no status, rather than calling the workflow never deployed', async () => {
+    const { read } = api({ pages: [[9]], runs: { 9: { id: 9, head_sha: 'sha-9' } } });
+    await expect(lastSuccessfulRun('w.yml', read)).rejects.toThrow(/Run 9 came back with no `status`/);
+  });
+
+  it('throws when a completed run has no conclusion', async () => {
+    const { read } = api({ pages: [[9]], runs: { 9: record(9, { conclusion: null }) } });
+    await expect(lastSuccessfulRun('w.yml', read)).rejects.toThrow(/Run 9 is `completed` with no `conclusion`/);
+  });
+});
+
 describe('parseLastAppliedRun', () => {
   it("reads the ingress commit, run id and applied-at of the newest applied run", () => {
     const out = parseLastAppliedRun(runsDocument({ run: appliedRun({ appliedAt: '2026-08-30T01:21:00Z' }) }));
@@ -332,6 +501,11 @@ describe('formatReport', () => {
 });
 
 describe('driftFor', () => {
+  /** The record `GET /actions/runs/41` answers for the run that deployed. */
+  const DEPLOYED_RUN = { id: 41, status: 'completed', conclusion: 'success', head_sha: 'deployed', run_number: 1 };
+  // A URL with no stub throws, and `ghJson` retries a thrown fetch once
+  // after RETRY_DELAY_MS, so a test that leans on that throw passes
+  // `retryDelayMs: 0` or waits two seconds for it.
   const stub = (map) => async (url) => {
     const key = Object.keys(map).find((k) => url.includes(k));
     if (!key) throw new Error(`unstubbed: ${url}`);
@@ -348,7 +522,8 @@ describe('driftFor', () => {
       repo: 'r',
       nowMs: NOW,
       fetchImpl: stub({
-        '/runs?status=success': { workflow_runs: [{ head_sha: 'deployed', run_number: 1 }] },
+        '/runs?per_page=': { workflow_runs: [{ id: 41 }] },
+        '/actions/runs/41': DEPLOYED_RUN,
         '/commits/deployed': { commit: { committer: { date: hoursAgo(5) } } },
         '/commits?sha=main': [commit('deployed', hoursAgo(5), 'the deployed one')],
       }),
@@ -365,7 +540,8 @@ describe('driftFor', () => {
       repo: 'r',
       nowMs: NOW,
       fetchImpl: stub({
-        '/runs?status=success': { workflow_runs: [{ head_sha: 'deployed', run_number: 1 }] },
+        '/runs?per_page=': { workflow_runs: [{ id: 41 }] },
+        '/actions/runs/41': DEPLOYED_RUN,
         '/commits/deployed': { commit: { committer: { date: hoursAgo(60) } } },
         '/commits?sha=main': [
           commit('new', hoursAgo(2), 'recent'),
@@ -392,8 +568,9 @@ describe('driftFor', () => {
       repo: 'r',
       nowMs: NOW,
       fetchImpl: async (url) => {
-        if (url.includes('/runs?status=success'))
-          return { ok: true, json: async () => ({ workflow_runs: [{ head_sha: 'deployed' }] }) };
+        if (url.includes('/runs?per_page='))
+          return { ok: true, json: async () => ({ workflow_runs: [{ id: 41 }] }) };
+        if (url.endsWith('/actions/runs/41')) return { ok: true, json: async () => DEPLOYED_RUN };
         if (url.includes('/commits/deployed'))
           return { ok: true, json: async () => ({ commit: { committer: { date: hoursAgo(300) } } }) };
         // `&page=`, not `page=` — `per_page=100` contains `page=100`, which
@@ -419,8 +596,9 @@ describe('driftFor', () => {
         repo: 'r',
         nowMs: NOW,
         fetchImpl: async (url) => {
-          if (url.includes('/runs?status=success'))
-            return { ok: true, json: async () => ({ workflow_runs: [{ head_sha: 'deployed' }] }) };
+          if (url.includes('/runs?per_page='))
+            return { ok: true, json: async () => ({ workflow_runs: [{ id: 41 }] }) };
+          if (url.endsWith('/actions/runs/41')) return { ok: true, json: async () => DEPLOYED_RUN };
           if (url.includes('/commits/deployed'))
             return { ok: true, json: async () => ({ commit: { committer: { date: hoursAgo(99) } } }) };
           return { ok: true, json: async () => [shared] };
@@ -437,8 +615,9 @@ describe('driftFor', () => {
       repo: 'r',
       nowMs: NOW,
       fetchImpl: async (url) => {
-        if (url.includes('/runs?status=success'))
-          return { ok: true, json: async () => ({ workflow_runs: [{ head_sha: 'deployed' }] }) };
+        if (url.includes('/runs?per_page='))
+          return { ok: true, json: async () => ({ workflow_runs: [{ id: 41 }] }) };
+        if (url.endsWith('/actions/runs/41')) return { ok: true, json: async () => DEPLOYED_RUN };
         if (url.includes('/commits/deployed'))
           return { ok: true, json: async () => ({ commit: { committer: { date: hoursAgo(99) } } }) };
         return { ok: true, json: async () => [{ sha: 'x', commit: { message: 'no date' } }] };
@@ -459,8 +638,9 @@ describe('driftFor', () => {
       repo: 'r',
       nowMs: NOW,
       fetchImpl: async (url) => {
-        if (url.includes('/runs?status=success'))
-          return { ok: true, json: async () => ({ workflow_runs: [{ head_sha: 'deployed' }] }) };
+        if (url.includes('/runs?per_page='))
+          return { ok: true, json: async () => ({ workflow_runs: [{ id: 41 }] }) };
+        if (url.endsWith('/actions/runs/41')) return { ok: true, json: async () => DEPLOYED_RUN };
         if (url.includes('/commits/deployed'))
           return { ok: true, json: async () => ({ commit: { committer: { date: hoursAgo(99) } } }) };
         return { ok: true, json: async () => ({ message: 'not an array' }) };
@@ -480,6 +660,70 @@ describe('driftFor', () => {
       fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({}) }),
     });
     expect(out.error).toContain('403');
+  });
+
+  it('renders ⚠️, not ❌ never deployed, when the only run record has no status', async () => {
+    const out = await driftFor(SERVICES[0], {
+      token: 't',
+      owner: 'o',
+      repo: 'r',
+      nowMs: NOW,
+      fetchImpl: stub({
+        '/runs?per_page=': { workflow_runs: [{ id: 41 }] },
+        '/actions/runs/41': { id: 41, head_sha: 'deployed' },
+      }),
+    });
+    expect(out.error).toMatch(/no `status`/);
+    expect(out.neverDeployed).toBeUndefined();
+    expect(formatReport([out], 24).text).toContain('⚠️');
+  });
+
+  it('retries a body that cannot be read, and takes the second answer', async () => {
+    // GitHub sent 200 headers and the body then failed. That is inside the
+    // one retry, like a dropped connection, not a verdict on the service.
+    let bodies = 0;
+    const out = await driftFor(SERVICES[0], {
+      token: 't',
+      owner: 'o',
+      repo: 'r',
+      nowMs: NOW,
+      retryDelayMs: 0,
+      fetchImpl: async (url) => {
+        if (url.includes('/runs?per_page=')) {
+          bodies += 1;
+          if (bodies === 1) return { ok: true, status: 200, json: async () => { throw new Error('socket hang up'); } };
+          return { ok: true, status: 200, json: async () => ({ workflow_runs: [{ id: 41 }] }) };
+        }
+        if (url.endsWith('/actions/runs/41')) return { ok: true, status: 200, json: async () => DEPLOYED_RUN };
+        if (url.includes('/commits/deployed'))
+          return { ok: true, status: 200, json: async () => ({ commit: { committer: { date: hoursAgo(5) } } }) };
+        return { ok: true, status: 200, json: async () => [] };
+      },
+    });
+    expect(bodies).toBe(2);
+    expect(out.error).toBeUndefined();
+    expect(out.deployedSha).toBe('deployed');
+  });
+
+  it('gives up on a body that stalls past the deadline, twice, and says so', async () => {
+    // Headers arrived; the body never does. Without the deadline on the body
+    // this would wait on undici's defaults, past the job's own timeout.
+    let bodies = 0;
+    const out = await driftFor(SERVICES[0], {
+      token: 't',
+      owner: 'o',
+      repo: 'r',
+      nowMs: NOW,
+      retryDelayMs: 0,
+      timeoutMs: 20,
+      fetchImpl: async () => {
+        bodies += 1;
+        return { ok: true, status: 200, json: () => new Promise(() => {}) };
+      },
+    });
+    expect(bodies).toBe(2);
+    expect(out.error).toMatch(/body could not be read/);
+    expect(formatReport([out], 24).text).toContain('⚠️');
   });
 });
 
