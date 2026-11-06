@@ -37,12 +37,22 @@
  * differed into that task's custom chain, so nothing changed for the owner
  * on merge. They default to mode `recommended` (`defaultMode`) because the
  * Priority list is a chat list and a media provider never joins it: a media
- * task in `global` mode would have nothing eligible. Three more tasks —
- * `recordingTranscript` (stt), `pageOcr` (ocr), `embeddings` (embedding) —
- * are registered with no provider carrying their need yet (`planned`): the
- * Tasks tab shows them as "no eligible model" rather than omitting them,
- * they have no feature switch and no call site, and `recommended` is null
- * because a recommendation nobody can serve would be a claim about nothing.
+ * task in `global` mode would have nothing eligible. Two more tasks —
+ * `pageOcr` (ocr) and `embeddings` (embedding) — are registered with no
+ * provider carrying their need yet (`planned`): the Tasks tab shows them as
+ * "no eligible model" rather than omitting them, they have no feature switch
+ * and no call site, and `recommended` is null because a recommendation
+ * nobody can serve would be a claim about nothing.
+ *
+ * THE INTERVIEW TASKS (ADR 0040, #1565). `recordingTranscript` (stt) left
+ * the planned list on 2026-11-05: Gemini reads audio through its Files API
+ * and generateContent (lib/interviews/gemini-files.js), so Gemini carries
+ * `stt` (provider-order.js) and the task is Gemini-only by product rule —
+ * the recording is a guest's voice and goes to the one provider the owner
+ * chose, never to a failover. Its call site is the interview-transcribe job
+ * (lib/interviews/transcribe.js), through `modelForTask`. The transcript
+ * then becomes a Q&A draft through `interviewDrafting`, a text task on the
+ * owner's global order like forgeDrafting (lib/interviews/draft.js).
  *
  * `only` IS A PRODUCT RULE IN CODE, and no document lifts it (select.js
  * policy locks): the podcast voice is ElevenLabs and only ElevenLabs,
@@ -331,13 +341,31 @@ export const AI_TASKS = Object.freeze({
   }),
   recordingTranscript: task({
     label: 'Recording transcripts',
-    description: 'Transcribes an uploaded recording to text.',
-    route: 'No provider carries speech-to-text yet; the task is listed so the gap is visible.',
+    description: 'Transcribes an interview recording to text with speaker labels, 20 minutes at a time.',
+    route:
+      'The interview-transcribe job, queued from the Interviews admin page (ADR 0040). Off means the job fails before any audio is sent; a pasted transcript still drafts.',
     modality: 'stt',
     needs: ['stt'],
     public: false,
-    planned: true,
-    recommended: null,
+    only: ['gemini'],
+    defaultMode: 'recommended',
+    recommended: Object.freeze({
+      provider: 'gemini',
+      model: 'gemini-3.6-flash',
+      reason:
+        'The Gemini Flash model the catalogue recommends for JSON and vision; the pricing page lists no separate audio input rate for it, so audio is billed at its input rate: $0.75 per 1M tokens through 2026-12-31, $1.50 from 2027-01-01 (aistudio.google.com/docs/pricing, read 2026-11-05). At 32 tokens a second of audio an hour costs about 9 cents.',
+      asOf: '2026-11-05',
+    }),
+  }),
+  interviewDrafting: task({
+    label: 'Interview drafting',
+    description: 'Turns an interview transcript into a question-and-answer draft in the guest\u2019s own words.',
+    route:
+      'The interview-draft job, run after a transcription or from Draft again on the Interviews admin page (ADR 0040). Off means the job fails before the model is called; the transcript stays.',
+    modality: 'json',
+    needs: ['text', 'json'],
+    public: false,
+    recommended: foundryMini('Reads a whole transcript and returns a structured Q&A list; the honesty guard checks the answer against the transcript.'),
   }),
   pageOcr: task({
     label: 'Page OCR',
