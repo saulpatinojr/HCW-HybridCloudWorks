@@ -105,7 +105,20 @@ describe('baselineOf', () => {
     // "Re-run jobs" takes a completed run back to in_progress under the same
     // id, so the status is read as well as the conclusion.
     expect(baselineOf({ ...success, status: 'in_progress' })).toBe(null);
-    expect(baselineOf(null)).toBe(null);
+    expect(baselineOf({ ...success, status: 'queued', conclusion: null })).toBe(null);
+  });
+
+  it('throws on a record it cannot read, rather than reading it as a run that did not deploy', () => {
+    // A payload with no status is not a run record, and a completed run has
+    // a conclusion. Null here would reach the ❌ "never deployed" row; a
+    // throw reaches the ⚠️ "could not read" row, which is the honest one.
+    expect(() => baselineOf(null)).toThrow(/no `status`/);
+    expect(() => baselineOf({})).toThrow(/no `status`/);
+    expect(() => baselineOf({ ...success, status: undefined })).toThrow(/no `status`/);
+    expect(() => baselineOf({ ...success, status: '' })).toThrow(/no `status`/);
+    expect(() => baselineOf({ ...success, conclusion: null })).toThrow(/no `conclusion`/);
+    expect(() => baselineOf({ ...success, conclusion: undefined })).toThrow(/no `conclusion`/);
+    expect(() => baselineOf({ ...success, conclusion: '' })).toThrow(/no `conclusion`/);
   });
 
   it('throws on a successful run with no head_sha, rather than skipping to an older one', () => {
@@ -236,6 +249,16 @@ describe('lastSuccessfulRun', () => {
 
   it('throws on a listing it cannot read, rather than reading it as never deployed', async () => {
     await expect(lastSuccessfulRun('w.yml', async () => ({}))).rejects.toThrow(/workflow_runs/);
+  });
+
+  it('throws when the only listed run has no status, rather than calling the workflow never deployed', async () => {
+    const { read } = api({ pages: [[9]], runs: { 9: { id: 9, head_sha: 'sha-9' } } });
+    await expect(lastSuccessfulRun('w.yml', read)).rejects.toThrow(/Run 9 came back with no `status`/);
+  });
+
+  it('throws when a completed run has no conclusion', async () => {
+    const { read } = api({ pages: [[9]], runs: { 9: record(9, { conclusion: null }) } });
+    await expect(lastSuccessfulRun('w.yml', read)).rejects.toThrow(/Run 9 is `completed` with no `conclusion`/);
   });
 });
 
@@ -637,6 +660,70 @@ describe('driftFor', () => {
       fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({}) }),
     });
     expect(out.error).toContain('403');
+  });
+
+  it('renders ⚠️, not ❌ never deployed, when the only run record has no status', async () => {
+    const out = await driftFor(SERVICES[0], {
+      token: 't',
+      owner: 'o',
+      repo: 'r',
+      nowMs: NOW,
+      fetchImpl: stub({
+        '/runs?per_page=': { workflow_runs: [{ id: 41 }] },
+        '/actions/runs/41': { id: 41, head_sha: 'deployed' },
+      }),
+    });
+    expect(out.error).toMatch(/no `status`/);
+    expect(out.neverDeployed).toBeUndefined();
+    expect(formatReport([out], 24).text).toContain('⚠️');
+  });
+
+  it('retries a body that cannot be read, and takes the second answer', async () => {
+    // GitHub sent 200 headers and the body then failed. That is inside the
+    // one retry, like a dropped connection, not a verdict on the service.
+    let bodies = 0;
+    const out = await driftFor(SERVICES[0], {
+      token: 't',
+      owner: 'o',
+      repo: 'r',
+      nowMs: NOW,
+      retryDelayMs: 0,
+      fetchImpl: async (url) => {
+        if (url.includes('/runs?per_page=')) {
+          bodies += 1;
+          if (bodies === 1) return { ok: true, status: 200, json: async () => { throw new Error('socket hang up'); } };
+          return { ok: true, status: 200, json: async () => ({ workflow_runs: [{ id: 41 }] }) };
+        }
+        if (url.endsWith('/actions/runs/41')) return { ok: true, status: 200, json: async () => DEPLOYED_RUN };
+        if (url.includes('/commits/deployed'))
+          return { ok: true, status: 200, json: async () => ({ commit: { committer: { date: hoursAgo(5) } } }) };
+        return { ok: true, status: 200, json: async () => [] };
+      },
+    });
+    expect(bodies).toBe(2);
+    expect(out.error).toBeUndefined();
+    expect(out.deployedSha).toBe('deployed');
+  });
+
+  it('gives up on a body that stalls past the deadline, twice, and says so', async () => {
+    // Headers arrived; the body never does. Without the deadline on the body
+    // this would wait on undici's defaults, past the job's own timeout.
+    let bodies = 0;
+    const out = await driftFor(SERVICES[0], {
+      token: 't',
+      owner: 'o',
+      repo: 'r',
+      nowMs: NOW,
+      retryDelayMs: 0,
+      timeoutMs: 20,
+      fetchImpl: async () => {
+        bodies += 1;
+        return { ok: true, status: 200, json: () => new Promise(() => {}) };
+      },
+    });
+    expect(bodies).toBe(2);
+    expect(out.error).toMatch(/body could not be read/);
+    expect(formatReport([out], 24).text).toContain('⚠️');
   });
 });
 

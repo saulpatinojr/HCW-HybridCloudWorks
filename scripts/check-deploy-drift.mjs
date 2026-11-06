@@ -211,12 +211,33 @@ export function parseRunIds(body) {
  * a cancellation, a run still going) is null, and the caller moves to the
  * next older run.
  *
+ * A record this cannot read throws, and is not read as "did not deploy":
+ * no `status` at all, or `completed` with no `conclusion`, is a payload
+ * that is not a run record (GitHub documents `conclusion` as null only
+ * while the run is not completed), and treating it as null would let a
+ * broken read reach the ❌ "never deployed" row. A read error is the ⚠️
+ * row, which is the other thing (raised in CodeRabbit's review of #1567).
+ * A run that is not completed is allowed a null `conclusion`.
+ *
  * A successful run with no `head_sha` throws: it IS the newest deploy, and
  * nothing on `main` can be compared with it, which is an answer this row
  * cannot give rather than zero drift.
  */
 export function baselineOf(run) {
-  if (run?.status !== 'completed' || run?.conclusion !== 'success') return null;
+  const id = run?.id ?? '(unidentified run)';
+  if (typeof run?.status !== 'string' || run.status === '') {
+    throw new Error(
+      `Run ${id} came back with no \`status\`, so it cannot be read as a run record. Expected the ` +
+        'response of GET /repos/:owner/:repo/actions/runs/:id.'
+    );
+  }
+  if (run.status !== 'completed') return null;
+  if (typeof run.conclusion !== 'string' || run.conclusion === '') {
+    throw new Error(
+      `Run ${id} is \`completed\` with no \`conclusion\`, so whether it deployed cannot be read.`
+    );
+  }
+  if (run.conclusion !== 'success') return null;
   if (typeof run.head_sha !== 'string' || !run.head_sha) {
     throw new Error(
       `Successful run ${run.id ?? '(unidentified run)'} came back with no \`head_sha\`, so nothing can be compared.`
@@ -484,17 +505,39 @@ export function formatReport(results, thresholdHours) {
   };
 }
 
+/** Rejects with the signal's reason once it aborts; never resolves. */
+function abortedBy(signal) {
+  return new Promise((_, reject) => {
+    if (signal.aborted) reject(signal.reason);
+    else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  });
+}
+
 /**
  * The JSON of one GitHub read, after at most one retry, or an error naming
- * why not. A request that takes longer than `TIMEOUT_MS` is abandoned, and a
- * 5xx, a 429 or a dropped connection is asked once more after
- * `retryDelayMs`; a 4xx other than 429 is a refusal and is not. The same
- * shape as `check-functions-deploy-in-progress.mjs`'s reader (#1564).
+ * why not. One attempt is the headers and the body under one deadline of
+ * `timeoutMs`, and a 5xx, a 429, a dropped connection, a stalled body or a
+ * body that cannot be read is asked once more after `retryDelayMs`; a 4xx
+ * other than 429 is a refusal and is not. The same shape as
+ * `check-functions-deploy-in-progress.mjs`'s reader (#1564).
+ *
+ * The body is raced against the same signal rather than left to the fetch:
+ * `AbortSignal.timeout` on the request covers the headers, and a body that
+ * GitHub starts and never finishes would otherwise wait on undici's own
+ * defaults, past the deadline and outside the retry (raised in CodeRabbit's
+ * review of #1567). The timeout is a parameter so a test can see it fire.
  */
-async function ghJson(fetchImpl, url, token, { retryDelayMs = RETRY_DELAY_MS } = {}) {
+async function ghJson(
+  fetchImpl,
+  url,
+  token,
+  { retryDelayMs = RETRY_DELAY_MS, timeoutMs = TIMEOUT_MS } = {}
+) {
   const retryable = (status) => status >= 500 || status === 429;
+  const pause = () => new Promise((resolve) => setTimeout(resolve, retryDelayMs));
   for (let attempt = 1; ; attempt += 1) {
     const last = attempt === 2;
+    const signal = AbortSignal.timeout(timeoutMs);
     let res;
     try {
       res = await fetchImpl(url, {
@@ -503,16 +546,28 @@ async function ghJson(fetchImpl, url, token, { retryDelayMs = RETRY_DELAY_MS } =
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
         },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal,
       });
     } catch (error) {
       if (last) throw new Error(`GitHub did not answer ${url}: ${error?.message || String(error)}`);
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      await pause();
       continue;
     }
-    if (res.ok) return res.json();
-    if (last || !retryable(res.status)) throw new Error(`GitHub answered ${res.status} for ${url}`);
-    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    if (!res.ok) {
+      if (last || !retryable(res.status)) throw new Error(`GitHub answered ${res.status} for ${url}`);
+      await pause();
+      continue;
+    }
+    try {
+      return await Promise.race([res.json(), abortedBy(signal)]);
+    } catch (error) {
+      if (last) {
+        throw new Error(
+          `GitHub answered ${url} but its body could not be read: ${error?.message || String(error)}`
+        );
+      }
+      await pause();
+    }
   }
 }
 
@@ -521,9 +576,9 @@ async function ghJson(fetchImpl, url, token, { retryDelayMs = RETRY_DELAY_MS } =
  * `lastSuccessfulRun` does the reading and says why the listing's
  * `status=success` filter is no longer asked (#1564).
  */
-async function workflowBaseline(service, { token, owner, repo, fetchImpl, retryDelayMs }) {
+async function workflowBaseline(service, { token, owner, repo, fetchImpl, retryDelayMs, timeoutMs }) {
   return lastSuccessfulRun(service.workflow, (path) =>
-    ghJson(fetchImpl, `${API}/repos/${owner}/${repo}${path}`, token, { retryDelayMs })
+    ghJson(fetchImpl, `${API}/repos/${owner}/${repo}${path}`, token, { retryDelayMs, timeoutMs })
   );
 }
 
@@ -564,9 +619,10 @@ async function appliedBaseline(service, { tfcToken, fetchImpl }) {
  * `behind` or `diverged` means main does not contain it. A status this does
  * not recognise is thrown on, in the direction the rest of the file takes.
  */
-async function compareWithMain(sha, { token, owner, repo, fetchImpl, retryDelayMs }) {
+async function compareWithMain(sha, { token, owner, repo, fetchImpl, retryDelayMs, timeoutMs }) {
   const body = await ghJson(fetchImpl, `${API}/repos/${owner}/${repo}/compare/${sha}...main`, token, {
     retryDelayMs,
+    timeoutMs,
   });
   const status = body?.status;
   if (status === 'ahead' || status === 'identical') return { onMain: true, status };
@@ -580,12 +636,21 @@ async function compareWithMain(sha, { token, owner, repo, fetchImpl, retryDelayM
 /** Drift for one service. Never throws: a failure is reported as its own row. */
 export async function driftFor(
   service,
-  { token, tfcToken, owner, repo, nowMs, fetchImpl = fetch, retryDelayMs = RETRY_DELAY_MS }
+  {
+    token,
+    tfcToken,
+    owner,
+    repo,
+    nowMs,
+    fetchImpl = fetch,
+    retryDelayMs = RETRY_DELAY_MS,
+    timeoutMs = TIMEOUT_MS,
+  }
 ) {
   try {
     const last = service.terraform
       ? await appliedBaseline(service, { tfcToken, fetchImpl })
-      : await workflowBaseline(service, { token, owner, repo, fetchImpl, retryDelayMs });
+      : await workflowBaseline(service, { token, owner, repo, fetchImpl, retryDelayMs, timeoutMs });
     if (!last) return { name: service.name, neverDeployed: true };
 
     if (service.terraform) {
@@ -595,6 +660,7 @@ export async function driftFor(
         repo,
         fetchImpl,
         retryDelayMs,
+        timeoutMs,
       });
       if (!onMain) {
         return { name: service.name, notOnMain: { sha: last.sha, status, runId: last.runId } };
@@ -605,7 +671,7 @@ export async function driftFor(
       fetchImpl,
       `${API}/repos/${owner}/${repo}/commits/${last.sha}`,
       token,
-      { retryDelayMs }
+      { retryDelayMs, timeoutMs }
     );
     const since = parseCommitDate(deployed);
 
@@ -625,7 +691,7 @@ export async function driftFor(
           `${API}/repos/${owner}/${repo}/commits?sha=main&path=${encodeURIComponent(path)}` +
             `&since=${encodeURIComponent(since)}&per_page=${COMMITS_PER_PAGE}&page=${page}`,
           token,
-          { retryDelayMs }
+          { retryDelayMs, timeoutMs }
         );
         // THROWN, not defaulted to []. Silently treating an unreadable payload
         // as an empty page reports the service as up to date — the same
