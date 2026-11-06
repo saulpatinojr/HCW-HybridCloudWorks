@@ -39,13 +39,6 @@ export function UploadProgress({ progress }) {
   );
 }
 
-/**
- * @param {object} props
- * @param {object} props.doc - the interview document
- * @param {string} props.busy - the action running, if any
- * @param {() => void} props.onTranscribe
- * @param {() => void} props.onDraft
- */
 /** What the panel shows, read once from the document. */
 function panelState(doc) {
   const transcription = doc?.transcription || {};
@@ -62,8 +55,18 @@ function panelState(doc) {
   };
 }
 
-export default function StagePanel({ doc, busy, onTranscribe, onDraft }) {
+/**
+ * @param {object} props
+ * @param {object} props.doc - the interview document
+ * @param {string} props.busy - the action running, if any
+ * @param {boolean} [props.blocked] - unsaved edits on the page: a new
+ *   transcript or draft would replace what the editor holds, so both wait
+ * @param {() => void} props.onTranscribe
+ * @param {() => void} props.onDraft
+ */
+export default function StagePanel({ doc, busy, blocked = false, onTranscribe, onDraft }) {
   const { stage, working, detail, error, hasAudio, hasTranscript, hasQa } = panelState(doc);
+  const locked = working || Boolean(busy) || blocked;
   return (
     <section aria-labelledby="interview-stage" className="space-y-3 rounded-md border p-4">
       <h2 id="interview-stage" className="text-base font-semibold">
@@ -89,7 +92,7 @@ export default function StagePanel({ doc, busy, onTranscribe, onDraft }) {
           <Button
             size="sm"
             variant="outline"
-            disabled={working || Boolean(busy)}
+            disabled={locked}
             onClick={onTranscribe}
             className="gap-1"
           >
@@ -97,17 +100,16 @@ export default function StagePanel({ doc, busy, onTranscribe, onDraft }) {
           </Button>
         )}
         {hasTranscript && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={working || Boolean(busy)}
-            onClick={onDraft}
-            className="gap-1"
-          >
+          <Button size="sm" variant="outline" disabled={locked} onClick={onDraft} className="gap-1">
             <RefreshCw className="h-4 w-4" aria-hidden="true" /> Draft again
           </Button>
         )}
       </div>
+      {blocked && (hasAudio || hasTranscript) && (
+        <p className="text-xs text-muted-foreground">
+          A step can run again once your changes are saved or undone, as it replaces them.
+        </p>
+      )}
       {hasTranscript && hasQa && (
         <p className="text-xs text-muted-foreground">
           Draft again replaces the questions and answers below with a new draft.

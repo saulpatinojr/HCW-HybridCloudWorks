@@ -32,7 +32,12 @@ import SharedPageHeader from '@/components/admin/shared/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { postJSON } from '@/lib/api';
-import { imageExtensionFor, publicImageFileProblem, uploadImageFile } from '@/lib/imageUpload';
+import {
+  imageExtensionFor,
+  publicImageFileProblem,
+  stripImageMetadata,
+  uploadImageFile,
+} from '@/lib/imageUpload';
 import {
   ConsentField,
   DetailsFields,
@@ -84,10 +89,12 @@ export default function InterviewNewPage({ readDuration }) {
   const savePhoto = async (id) => {
     if (!photo || photoDone) return;
     try {
+      // `covers` is public: send the pixels only, never the camera's metadata.
+      const clean = await stripImageMetadata(photo);
       const uploaded = await uploadImageFile({
         container: 'covers',
-        path: `interviews/${id}/guest-${Date.now()}.${imageExtensionFor(photo)}`,
-        file: photo,
+        path: `interviews/${id}/guest-${Date.now()}.${imageExtensionFor(clean)}`,
+        file: clean,
       });
       if (!uploaded?.url) throw new Error('The photo was stored without an address.');
       await postJSON('updateContentItem', {
@@ -223,10 +230,15 @@ export default function InterviewNewPage({ readDuration }) {
               })}
             </Button>
           )}
-          {runner.running && form.source === 'file' && (
+          {runner.canStop && form.source === 'file' && (
             <Button type="button" variant="outline" onClick={runner.stop}>
               Stop the upload
             </Button>
+          )}
+          {runner.finishing && form.source === 'file' && (
+            <p className="text-sm text-muted-foreground">
+              The server is checking the recording; this last step cannot be stopped.
+            </p>
           )}
           <Button asChild variant="ghost">
             <Link to="/admin/interviews">Back to interviews</Link>

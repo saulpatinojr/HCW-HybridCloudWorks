@@ -31,6 +31,19 @@ const CHOICES = [
  * @param {string} [props.problem]
  * @param {(file: Blob) => Promise<number>} [props.readDuration]
  */
+/** The recording's own problem, unless it repeats the source problem shown below it. */
+function shownFileProblem(form, audio, problem) {
+  return form.source === 'file' && audio?.problem && !audio.reading && audio.problem !== problem;
+}
+
+/** Ties the file picker to the problems shown for it, for a screen reader. */
+function problemLinks(id, fileProblem, problem) {
+  const ids = [fileProblem && `${id}-file-problem`, problem && `${id}-source-problem`].filter(
+    Boolean
+  );
+  return ids.length ? { 'aria-invalid': true, 'aria-describedby': ids.join(' ') } : {};
+}
+
 export default function SourceField({
   form,
   onChange,
@@ -40,6 +53,9 @@ export default function SourceField({
   readDuration = readAudioDuration,
 }) {
   const id = useId();
+  // The recording's own problem, shown under the picker unless it is the
+  // same sentence as the source problem below it.
+  const fileProblemShown = shownFileProblem(form, audio, problem);
   // The latest choice wins: a slow length read of a file the owner has
   // since replaced is dropped rather than shown against the new one.
   const latest = useRef(0);
@@ -143,6 +159,7 @@ export default function SourceField({
             type="file"
             accept=".mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/wav"
             className="block w-full text-sm"
+            {...problemLinks(id, fileProblemShown, problem)}
             onChange={(event) => chooseFile(event.target.files?.[0] || null)}
           />
           {audio?.reading && (
@@ -159,10 +176,16 @@ export default function SourceField({
         </div>
       )}
 
-      {form.source === 'file' && audio?.problem && !audio.reading && audio.problem !== problem && (
-        <p className="text-sm text-red-700 dark:text-red-400">{audio.problem}</p>
+      {fileProblemShown && (
+        <p id={`${id}-file-problem`} className="text-sm text-red-700 dark:text-red-400">
+          {audio.problem}
+        </p>
       )}
-      {problem && <p className="text-sm text-red-700 dark:text-red-400">{problem}</p>}
+      {problem && (
+        <p id={`${id}-source-problem`} className="text-sm text-red-700 dark:text-red-400">
+          {problem}
+        </p>
+      )}
     </fieldset>
   );
 }

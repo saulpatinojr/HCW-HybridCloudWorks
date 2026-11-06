@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import InterviewEditPage from './InterviewEditPage';
 import { AdminRoleProvider } from '@/hooks/useAdminRole';
@@ -337,6 +337,42 @@ describe('the Q&A editor', () => {
 });
 
 describe('review and publish', () => {
+  it('shows nothing of the last interview when the address moves to another', async () => {
+    install({ doc: baseDoc({ qa: QA }) });
+    let answerSecond;
+    getJSON.mockImplementation((route) =>
+      route === 'cms/interviews/int-2'
+        ? new Promise((resolve) => {
+            answerSecond = resolve;
+          })
+        : Promise.resolve({ ok: true, interview: state.doc, transcript: null, consentWording: 'x' })
+    );
+    render(
+      <MemoryRouter initialEntries={['/admin/interviews/int-1']}>
+        <AdminRoleProvider value={null}>
+          <Link to="/admin/interviews/int-2">Next interview</Link>
+          <Routes>
+            <Route
+              path="/admin/interviews/:interviewId"
+              element={<InterviewEditPage pollMs={10} readDuration={async () => 60} />}
+            />
+          </Routes>
+        </AdminRoleProvider>
+      </MemoryRouter>
+    );
+    expect(await screen.findByLabelText('Question 1')).toHaveValue('Why landing zones?');
+    fireEvent.click(screen.getByText('Next interview'));
+    // While the second is read, the first's Q&A is gone, not shown under its address.
+    await waitFor(() => expect(screen.queryByLabelText('Question 1')).not.toBeInTheDocument());
+    answerSecond({
+      ok: true,
+      interview: baseDoc({ id: 'int-2', qa: [{ q: 'Second?', a: 'Yes.', pullQuote: '' }] }),
+      transcript: null,
+      consentWording: 'x',
+    });
+    expect(await screen.findByLabelText('Question 1')).toHaveValue('Second?');
+  });
+
   it('sends to review and approves, holding both while edits are unsaved', async () => {
     install({ doc: baseDoc({ qa: QA }) });
     renderPage();
@@ -344,6 +380,9 @@ describe('review and publish', () => {
     fireEvent.change(screen.getByLabelText('Question 1'), { target: { value: 'Changed?' } });
     expect(review).toBeDisabled();
     expect(screen.getByText(/Save or undo your changes first/)).toBeInTheDocument();
+    // A new draft or transcript would replace the unsaved Q&A, so both wait too.
+    expect(screen.getByRole('button', { name: /Draft again/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Transcribe again/ })).toBeDisabled();
     fireEvent.click(screen.getAllByRole('button', { name: 'Undo changes' })[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Send to review' }));
     await waitFor(() =>

@@ -31,10 +31,21 @@ export const POLL_MS = 5000;
  * @param {{ authReady: boolean, toast: Function, pollMs?: number }} deps
  */
 export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
+  // Each read is stored with the id it was made for, and shown only while the
+  // page is on that id: the router reuses this page when only the id
+  // changes, and a slow answer for the last interview must not appear, or be
+  // acted on, under the next one's address.
+  const [read, setRead] = useState({ id: undefined, data: null, error: '', done: false });
+  const mine = read.id === id;
+  const data = mine ? read.data : null;
+  const loadError = mine ? read.error : '';
+  const loading = !mine || !read.done;
   const [actionError, setActionError] = useState('');
+  const [errorFor, setErrorFor] = useState(id);
+  if (errorFor !== id) {
+    setErrorFor(id);
+    setActionError('');
+  }
   const [busy, setBusy] = useState('');
   const [advancing, setAdvancing] = useState(false);
   // One more on every finished read, success or failure, so the next check
@@ -43,6 +54,12 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
   const [reads, setReads] = useState(0);
   const started = useRef(new Set());
   const alive = useRef(true);
+
+  // The id the page is on now, for answers that arrive after it moved on.
+  const currentId = useRef(id);
+  useEffect(() => {
+    currentId.current = id;
+  }, [id]);
 
   useEffect(() => {
     alive.current = true;
@@ -53,24 +70,27 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
 
   const load = useCallback(async () => {
     if (!id) {
-      setLoadError('No interview has that address.');
-      setLoading(false);
+      setRead({ id, data: null, error: 'No interview has that address.', done: true });
       return null;
     }
     try {
       const answer = await getJSON(`cms/interviews/${encodeURIComponent(id)}`);
-      if (!alive.current) return null;
-      setData(answer);
-      setLoadError('');
+      if (!alive.current || currentId.current !== id) return null;
+      setRead({ id, data: answer, error: '', done: true });
       return answer;
     } catch (error) {
-      if (alive.current) setLoadError(error?.message || 'The interview could not be read.');
+      // A failed re-read keeps the document already shown for this id.
+      if (alive.current && currentId.current === id) {
+        setRead((last) => ({
+          id,
+          data: last.id === id ? last.data : null,
+          error: error?.message || 'The interview could not be read.',
+          done: true,
+        }));
+      }
       return null;
     } finally {
-      if (alive.current) {
-        setLoading(false);
-        setReads((count) => count + 1);
-      }
+      if (alive.current && currentId.current === id) setReads((count) => count + 1);
     }
   }, [id]);
 
@@ -114,14 +134,14 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
   useEffect(() => {
     const step = nextStep(doc);
     if (!step) return;
-    const key = `${step}:${stageOf(doc)}:${doc?.transcription?.version ?? 0}`;
+    const key = `${id}:${step}:${stageOf(doc)}:${doc?.transcription?.version ?? 0}`;
     if (started.current.has(key)) return;
     started.current.add(key);
     queueStep(step).then((error) => {
       if (error && alive.current)
         setActionError(error.message || `The ${step} step could not start.`);
     });
-  }, [doc, queueStep]);
+  }, [id, doc, queueStep]);
 
   /** Run one owner action with the busy flag, the error line and a reload. */
   const act = useCallback(

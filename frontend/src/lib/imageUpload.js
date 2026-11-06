@@ -111,6 +111,54 @@ export async function readImageDimensions(file) {
   }
 }
 
+/** The type a photo is redrawn as; an animated or AVIF original becomes a still PNG or JPEG. */
+const REDRAWN_TYPE = Object.freeze({
+  'image/jpeg': 'image/jpeg',
+  'image/png': 'image/png',
+  'image/webp': 'image/webp',
+  'image/gif': 'image/png',
+  'image/avif': 'image/jpeg',
+});
+
+/**
+ * A copy of a photo with nothing but its pixels: redrawn onto a canvas and
+ * encoded again, so the camera's metadata (EXIF location, device, time) is
+ * not carried into a public container. Refuses rather than sending the
+ * original when the browser cannot redraw it.
+ *
+ * @param {File} file
+ * @returns {Promise<File>}
+ */
+export async function stripImageMetadata(file) {
+  const refuse = () =>
+    new Error('This browser could not prepare the photo. Try a JPEG or PNG, or another browser.');
+  const wanted = REDRAWN_TYPE[String(file?.type || '').toLowerCase()];
+  const Canvas = globalThis.OffscreenCanvas;
+  if (
+    !wanted ||
+    typeof globalThis.createImageBitmap !== 'function' ||
+    typeof Canvas !== 'function'
+  ) {
+    throw refuse();
+  }
+  let bitmap;
+  try {
+    // 'from-image' keeps a phone photo upright once its orientation tag is gone.
+    bitmap = await globalThis.createImageBitmap(file, { imageOrientation: 'from-image' });
+    const canvas = new Canvas(bitmap.width, bitmap.height);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    const blob = await canvas.convertToBlob({ type: wanted, quality: 0.92 });
+    const type = PUBLIC_IMAGE_EXTENSIONS[blob.type] ? blob.type : '';
+    if (!type) throw refuse();
+    const base = String(file.name || 'photo').replace(/\.[^.]*$/, '');
+    return new File([blob], `${base}.${PUBLIC_IMAGE_EXTENSIONS[type]}`, { type });
+  } catch (error) {
+    throw error?.message === refuse().message ? error : refuse();
+  } finally {
+    bitmap?.close?.();
+  }
+}
+
 /**
  * Hex sha256 of a file's bytes through WebCrypto, or '' where it is
  * unavailable. The server records it on the row and marks later uploads of

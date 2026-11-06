@@ -29,7 +29,12 @@ import SharedPageHeader from '@/components/admin/shared/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuthReady } from '@/hooks/useAuthReady';
-import { imageExtensionFor, publicImageFileProblem, uploadImageFile } from '@/lib/imageUpload';
+import {
+  imageExtensionFor,
+  publicImageFileProblem,
+  stripImageMetadata,
+  uploadImageFile,
+} from '@/lib/imageUpload';
 import { DetailsFields, PhotoField } from '@/components/admin/interviews/InterviewFields';
 import QaEditor from '@/components/admin/interviews/QaEditor';
 import SourceField from '@/components/admin/interviews/SourceField';
@@ -144,10 +149,18 @@ function DetailsBox({ doc, saving, onSave, onDirty }) {
     if (Object.keys(found).length > 0) return;
     const updates = detailsUpdates(form);
     if (photo) {
+      // `covers` is public: send the pixels only, never the camera's metadata.
+      let clean;
+      try {
+        clean = await stripImageMetadata(photo);
+      } catch (failure) {
+        setProblems({ photo: failure.message });
+        return;
+      }
       const uploaded = await uploadImageFile({
         container: 'covers',
-        path: `interviews/${doc.id}/guest-${Date.now()}.${imageExtensionFor(photo)}`,
-        file: photo,
+        path: `interviews/${doc.id}/guest-${Date.now()}.${imageExtensionFor(clean)}`,
+        file: clean,
       }).catch(() => null);
       if (!uploaded?.url) {
         setProblems({ photo: 'The photo could not be uploaded. Try again.' });
@@ -287,6 +300,7 @@ export default function InterviewEditPage({ readDuration, pollMs }) {
         <StagePanel
           doc={doc}
           busy={view.busy}
+          blocked={dirty}
           onTranscribe={view.transcribeAgain}
           onDraft={view.draftAgain}
         />

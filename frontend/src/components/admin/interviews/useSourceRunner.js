@@ -5,6 +5,9 @@
  * transcription.
  *
  *   transcript  POST cms/interviews/{id}/transcript     { text }
+ *               (a retry reads GET cms/interviews/{id} first: each store
+ *               is a new version, so a send whose answer was lost is not
+ *               sent again)
  *   url         POST cms/interviews/{id}/audio-from-url { url }
  *   file        lib/interviewUpload.js, then POST cms/interviews/{id}/transcribe
  *
@@ -13,8 +16,23 @@
  * form never writes a transcript or a Q&A itself; the jobs do.
  */
 import { useCallback, useRef, useState } from 'react';
-import { postJSON } from '@/lib/api';
+import { getJSON, postJSON } from '@/lib/api';
 import { createAudioUpload } from '@/lib/interviewUpload';
+
+/**
+ * Store a pasted transcript, at most once per interview: a retry first reads
+ * the interview, and an earlier send that landed (its answer lost) is taken
+ * as done, because each store makes a new transcript version.
+ */
+async function sendTranscriptOnce(interviewId, text, sent) {
+  const base = `cms/interviews/${encodeURIComponent(interviewId)}`;
+  if (sent.has(interviewId)) {
+    const answer = await getJSON(base);
+    if (answer?.interview?.transcription?.status === 'provided') return;
+  }
+  sent.add(interviewId);
+  await postJSON(`${base}/transcript`, { text });
+}
 
 export function useSourceRunner() {
   const [progress, setProgress] = useState(null);
@@ -23,6 +41,9 @@ export function useSourceRunner() {
   const [canResume, setCanResume] = useState(false);
   const upload = useRef(null);
   const controller = useRef(null);
+  // Interviews whose transcript was sent but not answered: the text may be
+  // stored already, and storing it again makes a second version.
+  const transcriptSent = useRef(new Set());
 
   /**
    * @param {string} interviewId
@@ -37,7 +58,7 @@ export function useSourceRunner() {
     controller.current = new AbortController();
     try {
       if (input.source === 'transcript') {
-        await postJSON(route('transcript'), { text: input.transcript });
+        await sendTranscriptOnce(interviewId, input.transcript, transcriptSent.current);
       } else if (input.source === 'url') {
         await postJSON(route('audio-from-url'), { url: String(input.url).trim() });
       } else {
@@ -83,6 +104,10 @@ export function useSourceRunner() {
   }, []);
 
   const stop = useCallback(() => controller.current?.abort(), []);
+  // Once the blocks are sent the server commits and checks them in one
+  // request, which a Stop cannot call back; from then on there is no Stop.
+  const finishing = running && ['completing', 'done'].includes(progress?.phase);
+  const canStop = running && !finishing;
 
-  return { run, stop, progress, running, error, canResume };
+  return { run, stop, progress, running, error, canResume, canStop, finishing };
 }

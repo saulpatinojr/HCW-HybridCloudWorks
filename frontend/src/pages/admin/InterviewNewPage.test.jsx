@@ -14,12 +14,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import InterviewNewPage from './InterviewNewPage';
 import { CONSENT_WORDING_V1 } from '@/components/admin/interviews/interviewModel';
 
+const getJSON = vi.fn();
 const postJSON = vi.fn();
 const putBytes = vi.fn();
 const toast = vi.fn();
 vi.mock('@/hooks/useAuthReady', () => ({ useAuthReady: () => ({ authReady: true }) }));
 vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast }) }));
 vi.mock('@/lib/api', () => ({
+  getJSON: (...args) => getJSON(...args),
   postJSON: (...args) => postJSON(...args),
   putBytes: (...args) => putBytes(...args),
 }));
@@ -68,7 +70,7 @@ const routesCalled = () => postJSON.mock.calls.map(([route]) => route);
 const submit = () => fireEvent.click(screen.getByRole('button', { name: 'Create interview' }));
 
 beforeEach(() => {
-  for (const mock of [postJSON, putBytes, toast, readDuration]) mock.mockReset();
+  for (const mock of [getJSON, postJSON, putBytes, toast, readDuration]) mock.mockReset();
   readDuration.mockImplementation(async () => 60);
 });
 
@@ -130,6 +132,25 @@ describe('InterviewNewPage', () => {
     expect(screen.getByLabelText('Guest’s name')).toBeEnabled();
   });
 
+  it('does not store a pasted transcript twice when the first answer was lost', async () => {
+    answerRoutes({
+      'cms/interviews/int-1/transcript': () => {
+        throw new Error('Failed to fetch');
+      },
+    });
+    // The server stored it all the same: the interview says so when read back.
+    getJSON.mockResolvedValue({ ok: true, interview: { transcription: { status: 'provided' } } });
+    renderPage();
+    fillGuest();
+    fireEvent.change(screen.getByLabelText('Transcript'), { target: { value: 'Speaker 1: Hi' } });
+    submit();
+    expect(await screen.findByText('Failed to fetch')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByRole('heading', { name: 'Interview page' });
+    expect(getJSON).toHaveBeenCalledWith('cms/interviews/int-1');
+    expect(routesCalled().filter((route) => route.endsWith('/transcript'))).toHaveLength(1);
+  });
+
   it('sends a link to the server to download', async () => {
     answerRoutes();
     renderPage();
@@ -175,6 +196,28 @@ describe('InterviewNewPage', () => {
     expect(putBytes.mock.calls[0][0]).toBe(`cms/interviews/uploads/${UP}/blocks/0`);
   });
 
+  it('offers no Stop once the server is checking the finished upload', async () => {
+    let finish;
+    answerRoutes({
+      [`cms/interviews/uploads/${UP}/complete`]: () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ ok: true });
+        }),
+    });
+    renderPage();
+    fillGuest();
+    fireEvent.click(screen.getByLabelText('Upload a recording'));
+    fireEvent.change(screen.getByLabelText('Recording file'), {
+      target: { files: [new File([new Uint8Array([1, 2])], 'talk.mp3', { type: 'audio/mpeg' })] },
+    });
+    await screen.findByText(/Length: 1 min 00 s/);
+    submit();
+    expect(await screen.findByText(/this last step cannot be stopped/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop the upload' })).not.toBeInTheDocument();
+    finish();
+    await screen.findByRole('heading', { name: 'Interview page' });
+  });
+
   it('refuses a recording over 9.5 hours before anything is created', async () => {
     answerRoutes();
     readDuration.mockImplementation(async () => 34_201);
@@ -209,7 +252,11 @@ describe('InterviewNewPage', () => {
     });
     await waitFor(() => expect(readDuration).toHaveBeenCalled());
     submit();
-    expect(await screen.findByText(/could not be read/)).toBeInTheDocument();
+    const problem = await screen.findByText(/could not be read/);
+    // The picker names its problem, so a screen reader hears it back at the field.
+    const picker = screen.getByLabelText('Recording file');
+    expect(picker).toHaveAttribute('aria-invalid', 'true');
+    expect(picker.getAttribute('aria-describedby')).toContain(problem.id);
     expect(postJSON).not.toHaveBeenCalled();
   });
 
@@ -258,7 +305,28 @@ describe('InterviewNewPage', () => {
     expect(putBytes).toHaveBeenCalledTimes(1);
   });
 
+  /** A canvas for jsdom, which has none: redraws any image as the bytes `clean`. */
+  const fakeCanvas = () => {
+    const bitmap = { width: 4, height: 3, close: vi.fn() };
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => bitmap)
+    );
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext() {
+          return { drawImage: vi.fn() };
+        }
+        async convertToBlob({ type }) {
+          return new Blob(['clean'], { type });
+        }
+      }
+    );
+  };
+
   it('adds the optional photo through the image upload, with its description', async () => {
+    fakeCanvas();
     answerRoutes();
     renderPage();
     fillGuest();
@@ -277,13 +345,35 @@ describe('InterviewNewPage', () => {
     await screen.findByRole('heading', { name: 'Interview page' });
     const upload = postJSON.mock.calls.find(([route]) => route === 'cms/uploads/covers');
     expect(upload[1].path).toMatch(/^interviews\/int-1\/guest-\d+\.png$/);
+    // The redrawn copy goes up, not the original file with its metadata.
+    expect(upload[1].dataBase64).toBe(btoa('clean'));
+    vi.unstubAllGlobals();
     expect(postJSON).toHaveBeenCalledWith('updateContentItem', {
       contentId: 'int-1',
       updates: { image: { src: '/api/public/media/covers/x.png', alt: 'Ada on a stage' } },
     });
   });
 
+  it('does not send a photo it could not redraw, and says so', async () => {
+    // jsdom has no canvas: the original, metadata and all, must not go up.
+    answerRoutes();
+    renderPage();
+    fillGuest();
+    fireEvent.change(screen.getByLabelText('Transcript'), { target: { value: 'Speaker 1: Hi' } });
+    fireEvent.change(screen.getByLabelText('Photo file'), {
+      target: { files: [new File(['png'], 'ada.png', { type: 'image/png' })] },
+    });
+    fireEvent.change(screen.getByLabelText('What the photo shows'), { target: { value: 'Ada' } });
+    submit();
+    await screen.findByRole('heading', { name: 'Interview page' });
+    expect(postJSON.mock.calls.some(([route]) => route === 'cms/uploads/covers')).toBe(false);
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'The photo was not added' })
+    );
+  });
+
   it('keeps going without the photo when its upload fails, and says so', async () => {
+    fakeCanvas();
     answerRoutes({
       'cms/uploads/covers': () => {
         throw new Error('Images must be 15 MB or smaller');
@@ -301,5 +391,6 @@ describe('InterviewNewPage', () => {
     expect(toast).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'The photo was not added' })
     );
+    vi.unstubAllGlobals();
   });
 });
