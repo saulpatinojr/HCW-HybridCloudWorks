@@ -17,9 +17,26 @@
  * `/actions/runs?workflow_id=…`, which accepts the filter and ignores it. That
  * trap is recorded in full at the call site, and naming the wrong endpoint here
  * would undercut it. Measuring rather than asserting is what means a workflow
- * added tomorrow is covered tomorrow and one deleted today stops being checked
- * today; a hand-maintained list would have needed someone to notice the thing
- * this file exists to notice.
+ * added tomorrow is covered tomorrow; a hand-maintained list would have needed
+ * someone to notice the thing this file exists to notice.
+ *
+ * ONLY WORKFLOWS WHOSE FILE IS ON THE DEFAULT BRANCH ARE ASSESSED (#1564).
+ * GitHub's workflow listing is a list of everything that has run history, not
+ * of what is in the directory: a workflow file pushed on a branch and run once
+ * stays listed (`state: active`) after the branch is gone, and so does a file
+ * deleted from `main`. Until 2026-11-05 this file claimed a deleted workflow
+ * stopped being checked the day it was deleted, and every run since
+ * 2026-10-25 disproved it by naming `zz-probe-guide-drift.yml` as broken: that
+ * file lived only on `probe/guide-drift-1356`, for one deliberate-failure run
+ * that is cited as evidence on #1356, and was never on `main`. Deleting the
+ * run would erase that evidence, and disabling the workflow changes nothing
+ * in the listing. So `main()` reads the default branch's `.github/workflows`
+ * tree once, assesses only the listed workflows whose `path` is in it, and
+ * names the rest on a separate line that never fails the run, so a reader
+ * knows why they are left out. A workflow deleted from the default branch
+ * therefore stops being assessed with the deletion, and its run history is
+ * named, not judged, until GitHub stops listing it. `state` is read into the
+ * record as before and does not decide anything, for the reason above.
  *
  * THE THREE VERDICTS ARE KEPT APART, because collapsing them is the mistake
  * this repository keeps paying for (T-514; `05-verify-timer.ps1` 2026-08-30;
@@ -187,8 +204,19 @@ export function assessAll(workflows, options) {
   return workflows.map((w) => assessWorkflow(w, options));
 }
 
-/** Markdown for the job summary. Kept pure so the tests can read it. */
-export function renderReport(results, { staleDays }) {
+/**
+ * Markdown for the job summary. Kept pure so the tests can read it.
+ *
+ * `absent` is the listed workflows whose file is not on the default branch
+ * (#1564). They are not in `results`, so nothing below can call one broken;
+ * they get one line of their own, after the verdicts, so a reader who
+ * remembers the row knows why it is gone rather than wondering whether the
+ * check stopped looking.
+ *
+ * @param {Array} results the verdicts, from `assessAll`
+ * @param {{staleDays: number, absent?: Array<{path: string}>, defaultBranch?: string}} options
+ */
+export function renderReport(results, { staleDays, absent = [], defaultBranch = 'main' }) {
   const broken = results.filter((r) => r.verdict === 'broken');
   const unproven = results.filter((r) => r.verdict === 'unproven');
   const lines = ['## Workflow health', ''];
@@ -234,6 +262,15 @@ export function renderReport(results, { staleDays }) {
     lines.push('', '<details><summary>Not concluded either way</summary>', '');
     for (const r of recent) lines.push(`- \`${r.path}\` — ${r.why}`);
     lines.push('', '</details>');
+  }
+
+  if (absent.length > 0) {
+    lines.push(
+      '',
+      `Not on \`${defaultBranch}\`, run history only, not assessed: ` +
+        absent.map((w) => `\`${w.path}\``).join(', ') +
+        '. GitHub lists a workflow while it has runs, even when its file was only ever on a branch or has since been deleted.'
+    );
   }
 
   return lines.join('\n');
@@ -389,6 +426,52 @@ export function runsRefusal(payload, workflow) {
 }
 
 /**
+ * Why the default branch's `.github/workflows` tree cannot be trusted, or
+ * null when it can. The same job as `listingRefusal`, for the second listing
+ * `main` reads (#1564).
+ *
+ * FAILS CLOSED, for the reason the two refusals above do. The tree decides
+ * which listed workflows are assessed at all; an unreadable tree treated as
+ * empty would name every workflow "not on the default branch" and assess
+ * nothing, a green answer to a question that was never asked. The contents
+ * API answers an array of entries for a directory and a single object for a
+ * file, so an object here means the path was not a directory.
+ *
+ * @param {unknown} contents the parsed response body
+ * @param {string} branch the branch it was asked for, for the message
+ */
+export function treeRefusal(contents, branch) {
+  if (!Array.isArray(contents)) {
+    return `The \`.github/workflows\` listing on ${branch} was not an array of entries; nothing is asserted.`;
+  }
+  const bad = contents.findIndex((entry) => typeof entry?.path !== 'string' || entry.path === '');
+  if (bad !== -1) {
+    return `Entry ${bad} of the \`.github/workflows\` listing on ${branch} carries no usable \`path\`; nothing is asserted.`;
+  }
+  return null;
+}
+
+/**
+ * The listed workflows split by whether their file is on the default branch
+ * (#1564). `present` is assessed; `absent` is named and not judged.
+ *
+ * Matched on `path`, the repository-relative file path both listings carry
+ * (`.github/workflows/ci.yml`), and not on name or id: the workflow listing
+ * is keyed by run history, the tree by what is in the directory, and the
+ * path is the only field they share.
+ *
+ * @param {Array<{path: string}>} workflows the listing, already past `listingRefusal`
+ * @param {Array<{path: string}>} tree the directory listing, already past `treeRefusal`
+ */
+export function partitionByPresence(workflows, tree) {
+  const onBranch = new Set(tree.map((entry) => entry.path));
+  const present = [];
+  const absent = [];
+  for (const w of workflows) (onBranch.has(w.path) ? present : absent).push(w);
+  return { present, absent };
+}
+
+/**
  * The two tunables, read from an environment.
  *
  * A FUNCTION AND NOT TWO LINES INSIDE main(), so the WIRING is testable and
@@ -439,8 +522,36 @@ async function main() {
   // business.
   const files = listing.workflows.filter((w) => w.path.startsWith('.github/workflows/'));
 
+  // Which of those files are on the default branch today (#1564). One read of
+  // the repository for the branch's name, one of the directory on it; the
+  // header says why the workflow listing alone cannot answer this. Both fail
+  // closed, like the listing above: an unreadable tree is not an empty one.
+  let defaultBranch;
+  let tree;
+  try {
+    const repository = await api(`/repos/${repo}`, token);
+    defaultBranch = repository?.default_branch;
+    if (typeof defaultBranch !== 'string' || defaultBranch === '') {
+      throw new Error('the repository payload carried no `default_branch`');
+    }
+    tree = await api(
+      `/repos/${repo}/contents/.github/workflows?ref=${encodeURIComponent(defaultBranch)}`,
+      token
+    );
+  } catch (err) {
+    console.error(`Could not read the workflow files on the default branch: ${err.message}`);
+    console.error('Nothing was asserted either way.');
+    process.exit(2);
+  }
+  const treeWrong = treeRefusal(tree, defaultBranch);
+  if (treeWrong) {
+    console.error(treeWrong);
+    process.exit(2);
+  }
+  const { present, absent } = partitionByPresence(files, tree);
+
   const workflows = [];
-  for (const w of files) {
+  for (const w of present) {
     let got;
     try {
       // `/actions/workflows/{id}/runs`, NOT `/actions/runs?workflow_id={id}`.
@@ -470,7 +581,7 @@ async function main() {
   }
 
   const results = assessAll(workflows, { now: new Date(), staleDays });
-  const report = renderReport(results, { staleDays });
+  const report = renderReport(results, { staleDays, absent, defaultBranch });
   console.log(report);
   process.exit(results.some((r) => r.verdict === 'broken') ? 1 : 0);
 }
