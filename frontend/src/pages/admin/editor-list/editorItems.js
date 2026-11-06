@@ -30,6 +30,7 @@ export const TYPE_BADGE = {
   framework: 'bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-300',
   architecture: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300',
   coder_corner: 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300',
+  interview: 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300',
   news: 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300',
 };
 

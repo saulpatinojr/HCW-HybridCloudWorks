@@ -164,6 +164,13 @@ const PUBLIC_ROUTES = new Set([
   // /api/health, which deploy-functions.yml already probes that way.
   "public/content-manifest",
   "public/content/{slugOrId}",
+  // Published interviews (ADR 0040, D6): the list and one by slug, projected
+  // to PUBLIC_INTERVIEW_LIST_FIELDS / PUBLIC_INTERVIEW_DETAIL_FIELDS, which
+  // name the fields the public page renders and nothing else — never the
+  // consent record, the recording's path, the transcript or the job state.
+  // Same public filter as content; an unpublished interview answers 404.
+  "public/interviews",
+  "public/interviews/{slug}",
   "public/snapshots/{id}", // allowlisted to certifications + speakerevents
   "public/podcasts",
   "public/feed",

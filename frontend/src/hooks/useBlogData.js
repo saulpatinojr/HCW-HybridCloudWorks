@@ -11,7 +11,9 @@ import { canonicalizeProvider, inferProviderFromText, squashProvider } from '@/l
 // Canonical governance source is `content`.
 // `blogs` is retained as a legacy read fallback for older migrated content.
 
-const EXCLUDED_TYPES = new Set(['architecture', 'framework']);
+// An interview has its own page at /azure/interviews (ADR 0040, D6); it is
+// never a blog post, and the blog list never shows one.
+const EXCLUDED_TYPES = new Set(['architecture', 'framework', 'interview']);
 
 const firstPresent = (...values) => {
   for (const value of values) {

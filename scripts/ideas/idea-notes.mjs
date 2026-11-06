@@ -42,7 +42,13 @@
  * to prove that what it writes passes the real import.
  */
 
-export const IDEA_TYPES = Object.freeze(['blog', 'framework', 'architecture', 'coder_corner']);
+export const IDEA_TYPES = Object.freeze([
+  'blog',
+  'framework',
+  'architecture',
+  'coder_corner',
+  'interview',
+]);
 export const IDEA_FORMATS = Object.freeze([
   'how-to',
   'build-log',

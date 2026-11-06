@@ -21,6 +21,20 @@ owner-gated activation checklist (below) and the backlog. Per-phase
 "As built" notes record where the landed code deliberately differs from
 the original spec text.
 
+## The interview type (2026-11-05)
+
+An **interview** is the one content type that is not written by the forge or
+by hand in the Drafts stage: it is made on **Admin → Interviews** (the admin
+page is slice D of the plan and lands after the content type) from a
+recording, a link to one, or a pasted transcript, written down and drafted
+into questions and answers by the AI layer, read by a person, then sent
+through the same `draft → in_review → approved → published` statuses as a
+blog post and served live at `/azure/interviews/<slug>`. It carries the
+guest's consent record, which publishing requires, and the daily forge never
+picks one up. The steps are in the
+[add an interview runbook](../runbooks/add-an-interview.md); the design and
+the reasons are [ADR 0040](../decisions/0040-interviews-from-the-admin.md).
+
 ## The Drafts stage (2026-10-03)
 
 Hand-written articles have a stage of their own before the queue:

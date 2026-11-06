@@ -91,6 +91,7 @@ const EXPECTED_SHIM_FILES = [
   "image-prompts-http.js",
   "inspect-jobs.js",
   "integrations-http.js",
+  "interviews-admin-http.js",
   "interviews-jobs.js",
   "interviews-upload-http.js",
   "jobs-http.js",

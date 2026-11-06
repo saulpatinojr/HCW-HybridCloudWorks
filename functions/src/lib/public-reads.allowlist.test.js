@@ -566,3 +566,122 @@ describe('listPodcasts and getFeed — the other anonymous whole-document reads'
     expect(missingFrom(PUBLIC_CONTENT_LIST_FIELDS, Object.keys(item))).toEqual([]);
   });
 });
+
+describe('the public interview routes (ADR 0040, D6)', async () => {
+  const { PUBLIC_INTERVIEW_LIST_FIELDS, PUBLIC_INTERVIEW_DETAIL_FIELDS } = await import('./public-reads.js');
+
+  /** Every private block an interview document carries, each holding the sentinel. */
+  const PRIVATE_INTERVIEW_FIELDS = Object.freeze({
+    consent: { confirmed: true, date: '2026-11-01', confirmedBy: { oid: SENTINEL, email: SENTINEL } },
+    provenance: { source: 'url', audio: { path: `audio/${SENTINEL}.mp3`, sourceUrl: `https://${SENTINEL}` } },
+    interview: { stage: 'failed', error: SENTINEL },
+    transcription: { version: 1, model: SENTINEL, jobId: SENTINEL },
+    transcriptDraft: SENTINEL,
+    qaDraft: [{ q: SENTINEL }],
+    ...INTERNAL_CONTENT_FIELDS,
+  });
+
+  const publishedInterview = (over = {}) => ({
+    id: 'i1',
+    type: 'interview',
+    slug: 'a-conversation',
+    title: 'A conversation',
+    subtitle: 'About landing zones',
+    date: '2026-11-01',
+    // Editorial state the Q&A editor keeps on the nested objects (ADR 0040,
+    // D4 and D5): flags, the speaker mapping, a note on the guest. None of
+    // it is on the public shape.
+    guest: { name: 'Test Guest', role: 'Test Role', note: SENTINEL },
+    bio: 'A bio.',
+    image: { src: '/images/interviews/test.jpg', alt: 'A grey square', blobPath: SENTINEL },
+    tags: ['landing-zones'],
+    qa: [{ q: 'Q?', a: 'A.', pullQuote: 'A.', needsReview: true, speaker: SENTINEL }],
+    related: { labs: [{ title: 'Lab', url: '/azure/education/labs', addedBy: SENTINEL }], learn: [] },
+    publishedAt: '2026-11-02T00:00:00Z',
+    updatedAt: '2026-11-02T00:00:00Z',
+    Live: true,
+    contentStatus: 'published',
+    ...PRIVATE_INTERVIEW_FIELDS,
+    ...over,
+  });
+  const storeOf = (...docs) => ({
+    readDoc: vi.fn(async () => null),
+    queryDocs: vi.fn(async () => docs),
+  });
+
+  it('the list answers no private block and only allowlisted keys', async () => {
+    const h = createPublicReadHandlers({ store: storeOf(publishedInterview()) });
+    const res = await h.listInterviews(makeRequest(), context);
+    expect(res.status).toBe(200);
+    expect(res.body).not.toContain(SENTINEL);
+    const { items } = JSON.parse(res.body);
+    expect(items).toHaveLength(1);
+    expect(missingFrom(PUBLIC_INTERVIEW_LIST_FIELDS, Object.keys(items[0]))).toEqual([]);
+    for (const field of ['consent', 'provenance', 'interview', 'transcription', 'qa', 'bio']) {
+      expect(items[0], `${field} reached the public list`).not.toHaveProperty(field);
+    }
+  });
+
+  it('the detail answers no private block and only allowlisted keys', async () => {
+    const h = createPublicReadHandlers({ store: storeOf(publishedInterview()) });
+    const res = await h.getInterview(makeRequest({ params: { slug: 'a-conversation' } }), context);
+    expect(res.status).toBe(200);
+    expect(res.body).not.toContain(SENTINEL);
+    const { item } = JSON.parse(res.body);
+    expect(missingFrom(PUBLIC_INTERVIEW_DETAIL_FIELDS, Object.keys(item))).toEqual([]);
+    for (const field of Object.keys(PRIVATE_INTERVIEW_FIELDS)) {
+      expect(item, `${field} reached the public detail`).not.toHaveProperty(field);
+    }
+    expect(item).toMatchObject({ slug: 'a-conversation' });
+    // The nested shapes are written out field by field, as the page reads them.
+    expect(item.qa).toEqual([{ q: 'Q?', a: 'A.', pullQuote: 'A.' }]);
+    expect(item.guest).toEqual({ name: 'Test Guest', role: 'Test Role' });
+    expect(item.image).toEqual({ src: '/images/interviews/test.jpg', alt: 'A grey square' });
+    expect(item.related).toEqual({ labs: [{ title: 'Lab', url: '/azure/education/labs' }], learn: [] });
+    expect(res.body).not.toContain('needsReview');
+  });
+
+  it('the same nested projection reaches the manifest, so the pre-rendered page carries no editorial flag', async () => {
+    const { createPublicContentManifestHandlers } = await import('./public-content-manifest.js');
+    const queryDocs = vi.fn(async (_container, query) =>
+      query.includes('"interview"') ? [publishedInterview()] : []
+    );
+    const res = await createPublicContentManifestHandlers({ store: { queryDocs } }).getManifest({}, {});
+    expect(JSON.stringify(res.jsonBody.interviews)).not.toContain(SENTINEL);
+    expect(res.jsonBody.interviews[0].qa).toEqual([{ q: 'Q?', a: 'A.', pullQuote: 'A.' }]);
+    expect(res.jsonBody.interviews[0]).not.toHaveProperty('Live');
+  });
+
+  it('projects both queries in SQL, carrying the fields the visibility filter reads and no private block', async () => {
+    const store = storeOf();
+    const h = createPublicReadHandlers({ store });
+    await h.listInterviews(makeRequest(), context);
+    await h.getInterview(makeRequest({ params: { slug: 'a-conversation' } }), context);
+    expect(store.queryDocs).toHaveBeenCalledTimes(2);
+    for (const [, query] of store.queryDocs.mock.calls) {
+      expect(query).not.toMatch(/SELECT TOP \d+ \*/);
+      for (const field of ['Live', 'Status', 'contentStatus', 'softDeletedAt', 'softDeleteExpiresAt']) {
+        expect(query).toContain(`c["${field}"]`);
+      }
+      for (const field of ['consent', 'provenance', 'interview', 'transcription']) {
+        expect(query).not.toContain(`c["${field}"]`);
+      }
+    }
+  });
+
+  it('covers every field the page’s validator reads (pinned against frontend/src/lib/interviews.js)', () => {
+    // normalizeInterview(raw, slug) reads the interview off `raw`; the slug is
+    // the route's, so the detail must carry it too.
+    const read = fieldsReadIn('lib/interviews.js', ['raw']);
+    expect(read.size).toBeGreaterThan(5);
+    expect(missingFrom(PUBLIC_INTERVIEW_DETAIL_FIELDS, read)).toEqual([]);
+    expect(PUBLIC_INTERVIEW_DETAIL_FIELDS).toContain('slug');
+    // The list is what the cards and the landing page read: a subset of the detail.
+    expect(missingFrom(PUBLIC_INTERVIEW_DETAIL_FIELDS, PUBLIC_INTERVIEW_LIST_FIELDS)).toEqual([]);
+  });
+
+  it('names no private or operational field on either list', () => {
+    const forbidden = /^(consent|provenance|interview|transcription)$|Draft$|Error|Trigger|JobId|By$|Prompt/;
+    expect(PUBLIC_INTERVIEW_DETAIL_FIELDS.filter((f) => forbidden.test(f))).toEqual([]);
+  });
+});

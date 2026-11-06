@@ -61,7 +61,7 @@ describe('normalizeContentTaxonomy', () => {
     expect(saved.kinds.map((k) => k.order)).toEqual(saved.kinds.map((_, i) => i));
   });
 
-  it('lets an admin disable, rename, reorder and add, but not drop a built-in', () => {
+  it('lets an admin disable, rename, reorder and add; a dropped built-in comes back enabled', () => {
     const base = defaultTaxonomy();
     const kinds = [...base.kinds].reverse();
     kinds[0] = { ...kinds[0], enabled: false, label: 'Renamed' };
@@ -71,10 +71,20 @@ describe('normalizeContentTaxonomy', () => {
     expect(saved.kinds[0].label).toBe('Renamed');
     expect(saved.kinds.at(-1)).toMatchObject({ id: 'webinar', enabled: true });
 
+    // A built-in the stored list lacks is appended, enabled, at the end: a
+    // taxonomy saved before `interview` existed (ADR 0040) keeps validating
+    // on read and on save, and a built-in cannot be removed by dropping it.
     const dropped = base.kinds.filter((k) => k.id !== 'article');
-    expect(() => normalizeContentTaxonomy({ kinds: dropped, ideaOrigins: base.ideaOrigins })).toThrow(
-      /keep the built-in entry article/
-    );
+    const restored = normalizeContentTaxonomy({ kinds: dropped, ideaOrigins: base.ideaOrigins });
+    expect(restored.kinds.at(-1)).toMatchObject({ id: 'article', enabled: true });
+    expect(restored.kinds).toHaveLength(base.kinds.length);
+    expect(restored.kinds.map((k) => k.order)).toEqual(restored.kinds.map((_, i) => i));
+  });
+
+  it('classifies an interview as its own kind (ADR 0040, D5)', () => {
+    expect(DEFAULT_KINDS.find((k) => k.id === 'interview')).toBeTruthy();
+    expect(resolveKind({ type: 'interview' })).toBe('interview');
+    expect(resolveKind({ publishTarget: 'INTERVIEW' })).toBe('interview');
   });
 
   it('refuses bad ids, duplicates, blank labels, non-boolean enabled and unknown keys', () => {

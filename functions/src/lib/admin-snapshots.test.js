@@ -106,6 +106,10 @@ describe("classification helpers", () => {
 
   it("matchesAdminContentType folds news into the blog filter", () => {
     expect(matchesAdminContentType({ type: "news" }, "blog")).toBe(true);
+    // ADR 0040, D5: an interview is its own admin type, never folded into blog.
+    expect(matchesAdminContentType({ type: "interview" }, "interview")).toBe(true);
+    expect(matchesAdminContentType({ type: "interview" }, "blog")).toBe(false);
+    expect(summarizeDashboardItems([{ type: "interview", contentStatus: "draft" }]).interview.total).toBe(1);
     expect(matchesAdminContentType({ type: "framework" }, "blog")).toBe(false);
     expect(
       matchesAdminContentType(

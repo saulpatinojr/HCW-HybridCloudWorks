@@ -163,7 +163,7 @@ describe('checkNote', () => {
   it('refuses a value outside the vocabulary and says what is allowed', () => {
     const result = checkNote('x.md', note(['type: post', 'theme: t', 'format: how-to', 'status: outline']));
     expect(messages(result)).toEqual([
-      'type: "post" is not one of blog, framework, architecture, coder_corner',
+      'type: "post" is not one of blog, framework, architecture, coder_corner, interview',
       'status: "outline" is not one of idea, outlined, drafted, published, parked',
     ]);
     expect(result.issues[0]).toMatchObject({ field: 'type', line: 2 });

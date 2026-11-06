@@ -51,9 +51,13 @@
  * `public-section-counts.js`, which owns every rule.
  */
 import {
+  CONTENT_VISIBILITY_FIELDS,
   NEVER_PUBLIC_STATUSES,
+  PUBLIC_INTERVIEW_DETAIL_FIELDS,
   SQL_NOT_SOFT_DELETED,
   SQL_PUBLIC_CLAUSE,
+  isPublicDocument,
+  projectInterview as projectPublicInterview,
 } from './public-reads.js';
 import { countSections } from './public-section-counts.js';
 
@@ -218,7 +222,45 @@ export const PUBLISHED_PREDICATE = `${SQL_PUBLIC_CLAUSE} AND ${SQL_NOT_SOFT_DELE
  */
 const ARTICLE_PROJECTION = ARTICLE_FIELDS.map((field) => `c["${field}"]`).join(', ');
 
-export const PUBLISHED_QUERY = `SELECT ${ARTICLE_PROJECTION} FROM c WHERE ${PUBLISHED_PREDICATE}`;
+/**
+ * An interview is not an article (ADR 0040, D6): it has its own page at
+ * /azure/interviews/<slug> and its own public routes, so the article corpus
+ * leaves it out and the second query below carries it. A document with no
+ * `type` is a blog post and stays in the articles.
+ */
+const SQL_NOT_INTERVIEW = '(NOT IS_STRING(c.type) OR LOWER(c.type) != "interview")';
+const SQL_IS_INTERVIEW = 'LOWER(c.type) = "interview"';
+
+export const PUBLISHED_QUERY = `SELECT ${ARTICLE_PROJECTION} FROM c WHERE ${PUBLISHED_PREDICATE} AND ${SQL_NOT_INTERVIEW}`;
+
+/**
+ * The fields the manifest keeps per interview: exactly the public detail
+ * route's allowlist, so the pre-rendered page and the live page read the
+ * same shape. DUPLICATED in `scripts/build-content-manifest.mjs` as
+ * INTERVIEW_FIELDS, with the same drift test as ARTICLE_FIELDS.
+ */
+export const INTERVIEW_FIELDS = PUBLIC_INTERVIEW_DETAIL_FIELDS;
+
+/**
+ * Projected with the visibility fields as well, so `isPublicDocument` can
+ * re-check every row in code the way the public route does; the visibility
+ * fields are dropped again by `projectInterview`.
+ */
+const INTERVIEW_PROJECTION = [...INTERVIEW_FIELDS, ...CONTENT_VISIBILITY_FIELDS]
+  .map((field) => `c["${field}"]`)
+  .join(', ');
+
+export const PUBLISHED_INTERVIEW_QUERY = `SELECT ${INTERVIEW_PROJECTION} FROM c WHERE ${PUBLISHED_PREDICATE} AND ${SQL_IS_INTERVIEW}`;
+
+/**
+ * Keep only the interview allowlist, nested shapes included: the same
+ * projection the public detail route answers with, so the pre-rendered page
+ * carries exactly what the live page would (and no editorial flag an item
+ * of `qa` may hold).
+ */
+export function projectInterview(item) {
+  return projectPublicInterview(item, INTERVIEW_FIELDS);
+}
 
 export function createPublicContentManifestHandlers({ store }) {
   return {
@@ -235,18 +277,23 @@ export function createPublicContentManifestHandlers({ store }) {
         // next frontend deploy. A 500 fails `publish-content-manifest.yml`
         // loudly, leaves the committed manifest and its counts in place, and
         // is fixed by re-running.
-        const [rows, sections] = await Promise.all([
+        const [rows, interviewRows, sections] = await Promise.all([
           store.queryDocs('content', PUBLISHED_QUERY, []),
+          store.queryDocs('content', PUBLISHED_INTERVIEW_QUERY, []),
           countSections({ store }),
         ]);
         const items = (Array.isArray(rows) ? rows : []).map(projectArticle);
+        const interviews = (Array.isArray(interviewRows) ? interviewRows : [])
+          .filter(isPublicDocument)
+          .map(projectInterview);
         return {
           status: 200,
           // `sections` is null when a counting read filled its window; the
           // builder treats anything but an object as "no counts from the
           // route" and falls back, which drops no route it would not have
-          // dropped before.
-          jsonBody: { success: true, items, count: items.length, sections },
+          // dropped before. `interviews` are the published interviews
+          // (ADR 0040, D6), for the /azure/interviews routes and seeds.
+          jsonBody: { success: true, items, count: items.length, interviews, sections },
           // The build reads this once a day and commits the result; a cached
           // copy would silently pre-render yesterday's corpus.
           headers: { 'Cache-Control': 'no-store' },

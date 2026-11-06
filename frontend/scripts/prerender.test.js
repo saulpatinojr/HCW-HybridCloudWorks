@@ -22,6 +22,8 @@ import {
   canonicalFor,
   socialTags,
   seedAttribute,
+  seedFor,
+  seedKeyFor,
   SEED_ATTRIBUTE,
   MOUNT_POINT_PATTERN,
 } from './prerender.mjs';
@@ -755,5 +757,35 @@ describe('staticSectionItems', () => {
 
   it('answers nothing for a directory tree that does not exist', async () => {
     expect(await staticSectionItems(join(PAGES, 'no-such-directory'))).toEqual({});
+  });
+});
+
+describe('seedFor: the one entry a route is handed (ADR 0040 added the interview keys)', () => {
+  const manifest = {
+    data: {
+      'article:my-post': { slug: 'my-post' },
+      'interviews:list': [{ slug: 'first-one' }],
+      'interview:first-one': { slug: 'first-one', qa: [] },
+    },
+  };
+
+  it('keys an article page, the interview list, one interview and the Azure landing page as usePublicData does', () => {
+    expect(seedKeyFor('/aws/blog/my-post')).toBe('article:my-post');
+    expect(seedKeyFor('/azure/interviews')).toBe('interviews:list');
+    expect(seedKeyFor('/azure/interviews/first-one')).toBe('interview:first-one');
+    expect(seedKeyFor('/azure')).toBe('interviews:list');
+    for (const route of ['/', '/aws', '/azure/blog', '/azure/frameworks', '/aws/interviews', '/azure/interviews/a/b']) {
+      expect(seedKeyFor(route), route).toBeNull();
+    }
+  });
+
+  it('hands over only that entry, and nothing for a route whose key the manifest lacks', () => {
+    expect(seedFor(manifest, '/azure/interviews/first-one')).toEqual({
+      'interview:first-one': { slug: 'first-one', qa: [] },
+    });
+    expect(seedFor(manifest, '/azure')).toEqual({ 'interviews:list': [{ slug: 'first-one' }] });
+    expect(seedFor(manifest, '/azure/interviews/second-one')).toBeNull();
+    expect(seedFor(manifest, '/azure/frameworks')).toBeNull();
+    expect(seedFor(null, '/azure')).toBeNull();
   });
 });

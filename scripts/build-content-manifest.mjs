@@ -162,8 +162,13 @@ async function fetchPublished() {
     throw new Error(`${url} returned an unexpected body: ${JSON.stringify(body).slice(0, 200)}`);
   }
   // `sections` is optional: a deployed revision that predates it simply does
-  // not send one, and `buildManifest` then counts what it can itself.
-  return { items: body.items, sections: body.sections };
+  // not send one, and `buildManifest` then counts what it can itself. So are
+  // `interviews` (ADR 0040): a revision without them pre-renders none.
+  return {
+    items: body.items,
+    sections: body.sections,
+    interviews: Array.isArray(body.interviews) ? body.interviews : [],
+  };
 }
 
 /** The provider segment an article's URL lives under. */
@@ -262,6 +267,87 @@ function project(item) {
     if (item[field] !== undefined) out[field] = item[field];
   }
   return out;
+}
+
+/**
+ * The fields the interview page renders (ADR 0040, D6): exactly the public
+ * detail route's allowlist, PUBLIC_INTERVIEW_DETAIL_FIELDS in
+ * functions/src/lib/public-reads.js. DUPLICATED there as INTERVIEW_FIELDS in
+ * public-content-manifest.js, and `public-content-manifest.test.js` fails if
+ * the two drift, for the same reason ARTICLE_FIELDS is pinned. The first
+ * seven are the list route's fields, which the list page and the Azure
+ * landing card read; keep them first.
+ */
+export const INTERVIEW_FIELDS = Object.freeze([
+  'slug',
+  'title',
+  'subtitle',
+  'date',
+  'guest',
+  'tags',
+  'publishedAt',
+  'bio',
+  'image',
+  'qa',
+  'related',
+  'updatedAt',
+]);
+
+/** The list route's projection: what a card and the landing page read. */
+export const INTERVIEW_LIST_FIELDS = Object.freeze(INTERVIEW_FIELDS.slice(0, 7));
+
+/** The address of one interview; the frontend's validator spells it the same way. */
+const INTERVIEW_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** The interview list page, Azure only (App.jsx: any other provider is a 404). */
+export const INTERVIEWS_ROUTE = '/azure/interviews';
+
+const isInterviewItem = (item) => String(item?.type || '').toLowerCase() === 'interview';
+
+function projectInterviewTo(item, fields) {
+  const out = {};
+  for (const field of fields) {
+    if (item[field] !== undefined) out[field] = item[field];
+  }
+  return out;
+}
+
+/** Newest interview first by its own date; the same day keeps a steady order by slug. */
+const byInterviewDateDesc = (a, b) =>
+  String(b.date || '').localeCompare(String(a.date || '')) ||
+  String(a.slug || '').localeCompare(String(b.slug || ''));
+
+/**
+ * The interview routes and seeds (ADR 0040, D6), onto `routes`, `data` and
+ * `skipped`. KEYS MATCH `usePublicData` as for articles: `interviews:list`
+ * is the list page's and the landing card's query, `interview:<slug>` the
+ * page's. The list route is listed only once there is an interview: an
+ * empty list page would be thin content in the sitemap.
+ */
+function addInterviews(interviews, { routes, data, skipped }) {
+  const kept = [];
+  const seen = new Set();
+  for (const item of interviews) {
+    const slug = slugOf(item);
+    if (!slug || !INTERVIEW_SLUG.test(slug)) {
+      skipped.push(`interview ${item?.id || '(no id)'}: no usable slug`);
+      continue;
+    }
+    if (seen.has(slug)) {
+      skipped.push(`interview ${slug}: duplicate slug; first occurrence kept`);
+      continue;
+    }
+    seen.add(slug);
+    kept.push(item);
+  }
+  if (kept.length === 0) return;
+  kept.sort(byInterviewDateDesc);
+  routes.push(INTERVIEWS_ROUTE);
+  data['interviews:list'] = kept.map((item) => projectInterviewTo(item, INTERVIEW_LIST_FIELDS));
+  for (const item of kept) {
+    routes.push(`${INTERVIEWS_ROUTE}/${item.slug}`);
+    data[`interview:${item.slug}`] = projectInterviewTo(item, INTERVIEW_FIELDS);
+  }
 }
 
 /**
@@ -381,7 +467,7 @@ export function describeSectionCounts(sections, fromRoute) {
   return 'sections: none — the route sent none and no item carries a type, so no section page leaves the sitemap this build';
 }
 
-export function buildManifest(items, sectionsFromRoute = null) {
+export function buildManifest(items, sectionsFromRoute = null, interviews = []) {
   const routes = [];
   const data = {};
   const skipped = [];
@@ -393,6 +479,13 @@ export function buildManifest(items, sectionsFromRoute = null) {
   for (const item of items) {
     const slug = slugOf(item);
     const provider = providerOf(item);
+    if (isInterviewItem(item)) {
+      // An interview is not an article: the route leaves them out of
+      // `items` and sends them as `interviews`; a revision that still sends
+      // one here must not put it at /<provider>/blog/<slug>.
+      skipped.push(`${slug || item.id}: an interview, not an article`);
+      continue;
+    }
     if (!slug) {
       skipped.push(`${item.id}: no slug`);
       continue;
@@ -416,6 +509,8 @@ export function buildManifest(items, sectionsFromRoute = null) {
     data[`article:${slug}`] = project(item);
   }
 
+  addInterviews(Array.isArray(interviews) ? interviews : [], { routes, data, skipped });
+
   return { generatedAt: null, routes, data, skipped, sections };
 }
 
@@ -424,9 +519,9 @@ async function main() {
   // — the query just lives in the app now
   // (functions/src/lib/public-content-manifest.js), where it is pinned by an
   // exact-match test for that reason.
-  const { items: resources, sections } = await fetchPublished();
+  const { items: resources, sections, interviews } = await fetchPublished();
 
-  const manifest = buildManifest(resources, sections);
+  const manifest = buildManifest(resources, sections, interviews);
   manifest.generatedAt = new Date().toISOString();
 
   mkdirSync(dirname(OUT_PATH), { recursive: true });
@@ -458,7 +553,7 @@ async function main() {
 
   writeFileSync(OUT_PATH, next);
   console.log(
-    `[content-manifest] ${manifest.routes.length} routes, ${resources.length} published items`
+    `[content-manifest] ${manifest.routes.length} routes, ${resources.length} published items, ${interviews.length} published interviews`
   );
   console.log(`  ${describeSectionCounts(manifest.sections, serverSections(sections) !== null)}`);
   for (const reason of manifest.skipped) console.log(`  skipped ${reason}`);

@@ -33,6 +33,7 @@ const KNOWN_TYPES = Object.freeze([
   "framework",
   "architecture",
   "coder_corner",
+  "interview",
 ]);
 /** The `source` values the pipeline writes; each derives to one idea origin. */
 const KNOWN_SOURCES = Object.freeze([

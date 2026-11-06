@@ -76,6 +76,7 @@ import "./calendar-alerts-http.js";
 import "./cost-http.js";
 import "./interviews-jobs.js";
 import "./interviews-upload-http.js";
+import "./interviews-admin-http.js";
 
 const BUILD_TIME = new Date().toISOString();
 
