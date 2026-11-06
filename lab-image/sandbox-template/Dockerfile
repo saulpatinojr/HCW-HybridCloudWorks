@@ -40,6 +40,10 @@
 
 FROM docker/sandbox-templates:claude-code@sha256:30ec2b1bb76e3993aff912c553a5c249ad95b595249a32fde7158eafb71bda25
 
+# Every RUN is bash with pipefail (hadolint DL4006, #1575), so a failing
+# command on the left of a pipe fails the step.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # System packages as root (base-images guidance). The base image, Ubuntu,
 # already carries curl, unzip and ca-certificates; terraform is one verified
 # binary, the Azure CLI is Microsoft's apt package.

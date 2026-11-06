@@ -100,7 +100,7 @@ describe('the Dockerfile around the block', () => {
     expect(fetch).toContain(`ext="$(find check/lib -name '_yaml*.so')"`);
     expect(fetch).toContain(`check/bin/python -I -c 'import sys, yaml;`);
     expect(fetch).toContain('-linux_x86_64.whl") ;;');
-    expect(fetch).toContain('if ldd "${ext}" | grep -q yaml; then');
+    expect(fetch).toContain('if ldd "${ext}" | grep yaml > /dev/null; then');
     expect(fetch).toContain('yaml.__with_libyaml__ and yaml.CSafeLoader');
     expect(fetch).toContain(`rm "$(dpkg -L libyaml-dev | grep '/libyaml\\.so$')"`);
   });
