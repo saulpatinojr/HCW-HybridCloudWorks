@@ -161,11 +161,13 @@ the pull request: `infrastructure-pr-reviewer` (the Terraform) and
   from the file's metadata, and a file whose duration cannot be read is
   refused with `DURATION_REQUIRED`); the blob path is
   `audioBlobPath(interviewId, uploadId, ext)`, unique per session, so two
-  sessions for one interview never share a blob or its block ids; writes an `uploads/<uploadId>` sub-document
-  on the interview's content document, or a small `interview_uploads`
-  record if the CMS slice's document is not merged yet: **use the content
-  document's `provenance.audio.upload` field, created with a `patchDoc` that
-  tolerates the document being a bare `{ type: 'interview' }` stub in tests**;
+  sessions for one interview never share a blob or its block ids; appends
+  the session to the bounded list `provenance.audio.uploads` on the
+  interview's content document (one entry per open session, keyed by
+  `uploadId`, written under the document's ETag with a `patchDoc` that
+  tolerates the document being a bare `{ type: 'interview' }` stub in
+  tests); refuses with 409 when the document carries the deletion
+  tombstone `provenance.audio.deletedAt` (see `completeUpload` below);
   returns `{ uploadId, blockSize: 4194304, blockCount }`). `putBlock`
   (editor; `PUT`, raw body read with `request.arrayBuffer()`, `Content-Length`
   required and at most `blockSize`, `index` an integer in `[0, blockCount)`,
@@ -173,13 +175,24 @@ the pull request: `infrastructure-pr-reviewer` (the Terraform) and
   base64 of the zero-padded index, 404 when the upload id does not belong
   to the caller's oid). `completeUpload` (editor; commits the blocks in
   order on the session's own blob, reads the committed blob's size, refuses
-  a size or SHA-256 mismatch with 422 and deletes that blob, then moves the
+  a size or SHA-256 mismatch with 422 and deletes that blob (fenced: the
+  session's `refusals` count is written under the ETag first, so a blob is
+  never deleted after another completion published it), then moves the
   pointer: the previous `provenance.audio.path`, if any, is appended to
   `provenance.audio.superseded` (slice C's `deleteBlobWithVersions` sweeps
   that list on delete, and the lifecycle rule expires it regardless), and
-  `provenance.audio = { container, path, bytes, sha256, contentType,
-  durationSec, uploadedAt, superseded }` is written under the document's
-  ETag; the session is cleared; 409 if already complete).
+  the pointer fields (`container, path, bytes, sha256, contentType,
+  durationSec, uploadedAt, uploadId, superseded`) are written under the
+  document's ETag **together with every other open session in
+  `provenance.audio.uploads`**, so only this session leaves the list and
+  another upload in flight can still send blocks and complete; 409 if
+  already complete. **Deletion race:** a completion that finds the
+  tombstone `provenance.audio.deletedAt` before committing refuses with 409
+  and commits nothing; a completion whose pointer write fails its ETag
+  because the delete hook wrote the tombstone after this completion read
+  the document answers 409 and deletes the blob it just committed (with its
+  versions); slice C's sweep of the whole `audio/<interviewId>/` prefix
+  catches the one window left between the two.
 - `functions/src/functions/interviews-upload-http.js`: the registrations
   with `httpRouteByMethod` (`POST cms/interviews/uploads`, `PUT
   cms/interviews/uploads/{uploadId}/blocks/{index}`, `POST
@@ -196,7 +209,10 @@ the pull request: `infrastructure-pr-reviewer` (the Terraform) and
   only if that test enumerates containers (read it first; it may not).
 - `functions/src/lib/interviews/upload.test.js`: open with a bad type,
   oversize, mismatched extension; a block out of range; a block that is too
-  long; a block from another admin's oid; a duration of 34,200 accepted
+  long; a block from another admin's oid; a completion against a
+  tombstoned document (409, nothing committed) and one whose pointer write
+  meets the tombstone's ETag (409, its blob deleted); completing one of two
+  open sessions leaves the other in `provenance.audio.uploads`; a duration of 34,200 accepted
   and 34,201 refused with `TOO_LONG`; two sessions for one interview stage
   on different blobs and the second completion lists the first path under
   `superseded`; complete with the wrong hash
@@ -311,13 +327,23 @@ fence, the logs) and `typescript-test-engineer` (the stubbed Gemini client).
   handler (400,000-character cap, `Speaker N:` lines kept, written to
   `transcripts/<id>/v1.json`, `transcription.status = 'provided'`). The
   drafting worker (`draft.js`) splits any transcript into passes of at most
-  120 kB on speaker-turn boundaries, as many as needed (four for the
-  400,000-character cap), gives each pass the questions already drafted,
+  120 kB on speaker-turn boundaries, as many as needed (up to ten for the
+  400,000-character cap, which is at most about 1.2 MB of UTF-8); a single
+  turn longer than a pass is split at a UTF-8 character boundary (the last
+  sentence end before the limit when there is one), each piece keeping the
+  turn's `Speaker N:` label, so nothing is dropped (`splitTranscript` must
+  not truncate a turn); each pass is checkpointed: its validated items are
+  saved on the document as `provenance.drafting.passes[k]` with the
+  transcript version, each pass runs under a 3-minute deadline, and a
+  re-run or re-queue for the same version resumes at the first pass with no
+  saved output; gives each pass the questions already drafted,
   checks the monthly ceiling before each pass, records each pass under
   `ai:interviewDrafting`, and validates the combined list once (over 40:
   first 40 kept, `truncated` flag). `draft.test.js` covers a three-pass
-  transcript, the no-repeat input, the ceiling refusal between passes and
-  the truncation flag.
+  transcript, the no-repeat input, the ceiling refusal between passes, the
+  truncation flag, a 300 kB single turn split into three labelled pieces
+  with no character lost (including a multi-byte character at the cut),
+  and a job that stops after pass two resuming at pass three.
 - The `transcribe` enqueue route refuses `provenance.audio.durationSec >
   MAX_AUDIO_SECONDS` (from A's `storage.js`) with 422 `TOO_LONG` before
   writing a job, and the worker stops with `TOO_LONG` when the tenth window
@@ -327,7 +353,8 @@ fence, the logs) and `typescript-test-engineer` (the stubbed Gemini client).
 - `functions/src/functions/interviews-jobs.js`: `registerJobType` for the
   three types (`interview-fetch-audio`, `interview-transcribe`,
   `interview-draft`; role `editor`; `maxPayloadBytes` 1024; `timeoutMs`
-  10, 25 and 5 minutes), and the enqueue routes `POST
+  10, 25 and 25 minutes, the drafting job checkpointed by pass as above),
+  and the enqueue routes `POST
   cms/interviews/{id}/audio-from-url`, `POST cms/interviews/{id}/transcribe`,
   `POST cms/interviews/{id}/draft`, `POST cms/interviews/{id}/transcript`
   (all editor, with the queue output binding as
@@ -378,7 +405,12 @@ hook, D12's page tests.
   `functions/src/lib/interviews/schema.js`, which B owns), `content-create.js`
   (accept `interview`), `functions/src/lib/admin-snapshots.js` type lists,
   `functions/src/lib/timers/forge-scheduled.js` (exclude `type = 'interview'`),
-  `functions/src/lib/content-workflow.js` (delete hook removes the audio and
+  `functions/src/lib/content-workflow.js` (delete hook first writes the
+  tombstone `provenance.audio.deletedAt` under the document's ETag, then
+  sweeps every blob under the interview's whole `audio/<interviewId>/`
+  prefix and `transcripts/<interviewId>/` prefix, not only the paths the
+  document names, so an upload that committed while the delete was starting
+  is removed too; it removes the audio and
   transcripts, listing each blob's versions with `includeVersions` and
   deleting every `versionId` as well as the current blob, since the account
   keeps versions and a plain delete would leave the recording as a previous
@@ -429,7 +461,9 @@ hook, D12's page tests.
 **Tests to add:** the publish refusals (no consent, future date, bad `qa`);
 the public routes (allow-list, unpublished gives 404, `Cache-Control`);
 the version-aware delete (a stubbed blob client lists two versions and the
-test asserts three deletes: each version and the current blob);
+test asserts three deletes: each version and the current blob); the delete
+hook writes the tombstone before it lists, and deletes a blob under
+`audio/<interviewId>/` that the document does not name;
 the manifest builder (interview routes present, blog routes exclude
 interviews); the forge timer query excludes interviews; the frontend pages
 with a stubbed `publicApi` (list, detail, not-found marker, landing card

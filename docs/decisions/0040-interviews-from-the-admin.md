@@ -313,8 +313,16 @@ guard.**
      owner's global provider order applies). Call site:
      `generateJsonResponse({ feature: 'interviewDrafting', ... })`, as
      `forgeDrafting` does, run by a job `interview-draft` (role `editor`,
-     `timeoutMs` 5 minutes) that `interview-transcribe` enqueues on success
-     and the owner can re-run.
+     `timeoutMs` 25 minutes, the transcription job's ceiling) that
+     `interview-transcribe` enqueues on success and the owner can re-run.
+     The job is **checkpointed by pass**: each pass's validated items are
+     saved on the document (`provenance.drafting.passes[k]`, with the
+     transcript version they came from) as soon as the pass returns, each
+     pass runs under its own 3-minute deadline, and a re-run or a sweeper
+     re-queue for the same transcript version starts at the first pass
+     with no saved output. So a long transcript never needs to fit in one
+     timeout, and a job that does time out keeps the passes it finished;
+     the combined list is validated once all passes are saved.
    - *Prompt shape.* System: the site's interview voice, "use only words
      and facts that appear between the markers; if the guest did not say
      it, leave it out; never add a fact, a number, a name or a title". The
@@ -322,7 +330,12 @@ guard.**
      markers of `prompt-fence.js`, neutralised with `fenceArticleText`, in
      **passes of at most 120 kB** (the cap `recording-script.js` uses),
      split on speaker-turn boundaries, as many passes as the transcript
-     needs (a 400,000-character pasted transcript is four); each pass is
+     needs (a 400,000-character pasted transcript is at most about 1.2 MB of
+     UTF-8, so up to ten passes); a single turn longer than one pass is
+     split at a UTF-8 character boundary (never inside a multi-byte
+     character), preferring the last sentence end before the limit, and
+     each piece keeps the turn's `Speaker N:` label, so no words are
+     dropped and every piece is still attributed; each pass is
      given the questions already drafted as data so it does not repeat
      them, each pass is one router call recorded under
      `ai:interviewDrafting` and checked against the same monthly ceiling
@@ -550,8 +563,19 @@ date and the admin's oid, nothing else.
      `version { delete_after_days_since_creation }` action as the base
      blob, so an expired recording's versions go with it. Deleting the
      interview (`deleteContentItem`, existing) deletes its audio and
-     transcripts the same way through an interview-aware hook. Unpublishing
-     deletes nothing.
+     transcripts the same way through an interview-aware hook, in an order
+     that also catches an upload still in flight: the hook **first writes a
+     tombstone** (`provenance.audio.deletedAt`) under the document's ETag,
+     so any upload completion that read the document before it fails its
+     own ETag write with 409 and deletes the blob it just committed, and
+     any completion or session open that reads the document after it sees
+     the tombstone and refuses (409) before committing; only then does the
+     hook sweep, and it sweeps the interview's **whole `audio/<interviewId>/`
+     prefix** (and `transcripts/<interviewId>/`), not only the paths the
+     document names, so a blob committed in the moment between the two
+     writes is removed too. Uncommitted blocks of an abandoned session are
+     not blobs and go with Azure's one-week clean-up. Unpublishing deletes
+     nothing.
    - Kept out of `PUBLIC_MEDIA_CONTAINERS` (a disclosure decision, says its
      comment) and out of `UPLOAD_CONTAINERS` (the generic upload route is
      15 MB and image-only). Nothing in `connect-src` or the storage CORS
