@@ -482,9 +482,11 @@ describe('the agent and the daemons around the proxy', () => {
     expect(value(checks, 'privilege_checks_coder_proxy_config')).toBe(
       `${value(coderDefaults, 'coder_project_dir')}/docker-proxy.haproxy.cfg`
     );
-    expect(value(coderDefaults, 'coder_docker_proxy_config_file')).toBe('{{ coder_project_dir }}/docker-proxy.haproxy.cfg');
     expect(value(coderDefaults, 'coder_compose_file')).toBe('{{ coder_project_dir }}/docker-compose.yml');
     const coderVars = read(ansible, 'roles', 'coder', 'vars', 'main.yml');
+    // A var, not a default: docker-compose.yml mounts ./docker-proxy.haproxy.cfg.
+    expect(value(coderVars, 'coder_docker_proxy_config_file')).toBe('{{ coder_project_dir }}/docker-proxy.haproxy.cfg');
+    expect(coderDefaults).not.toMatch(/^coder_docker_proxy_config_file:/m);
     const source = '{{ role_path }}/../../../coder/docker-proxy.haproxy.cfg';
     expect(value(coderVars, 'coder_docker_proxy_config_source')).toBe(source);
     expect(value(checks, 'privilege_checks_coder_proxy_config_source')).toBe(source);

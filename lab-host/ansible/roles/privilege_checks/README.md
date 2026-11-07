@@ -34,9 +34,12 @@ anything but the one script the role installs.
    `/etc/hcw/coder/docker-proxy.haproxy.cfg` is byte for byte the
    checkout's `lab-host/coder/docker-proxy.haproxy.cfg` (since 2026-11-07;
    before that the policy was environment switches of the
-   tecnativa/docker-socket-proxy image), `coder-docker-proxy` runs with a
-   read-only root and mounts that file and `/run/hcw-coder-docker` alone,
-   both read-only, and the daemon behind it reports `name=rootless`.
+   tecnativa/docker-socket-proxy image), `coder-docker-proxy` carries that
+   file's sha256 in its `hcw.config-sha256` label (so it started after the
+   file last changed), runs as user `0:0` with every capability dropped but
+   `DAC_OVERRIDE`, `no-new-privileges:true` and a read-only root, mounts that
+   file and `/run/hcw-coder-docker` alone, both read-only, and the daemon
+   behind it reports `name=rootless`.
 6. **Every deployed tool add-on runs as the addons role describes** (ADR
    0035): a read-only root, every capability dropped, not privileged, no
    bind mount, one port published on `127.0.0.1`, and the daemon's

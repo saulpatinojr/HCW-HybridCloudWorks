@@ -8,8 +8,10 @@ argument_specs:
         read-only root and no capabilities, and one shell-echo job run as the agent user through
         that proxy prints its payload while docker ps and a privileged docker run are refused.
       - While Coder is enabled, also fails unless coder-docker-proxy runs read-only with the allowlist
-        the repository's lab-host/coder/docker-proxy.haproxy.cfg holds, mounts that file and the sandbox
-        daemon's socket directory alone, both read-only, and that daemon reports name=rootless.
+        the repository's lab-host/coder/docker-proxy.haproxy.cfg holds and that file's sha256 as its
+        hcw.config-sha256 label, as user 0:0 with every capability dropped but DAC_OVERRIDE and
+        no-new-privileges, mounts that file and the sandbox daemon's socket directory alone, both
+        read-only, and that daemon reports name=rootless.
       - For every deployed tool add-on (ADR 0035), also fails unless hcw-addon-<id> runs with a
         read-only root, every capability dropped, not privileged, no bind mount, every published
         port bound to 127.0.0.1 and no host user namespace.
@@ -83,7 +85,7 @@ argument_specs:
       privilege_checks_coder_proxy_config_source:
         type: path
         required: false
-        description: The repository's lab-host/coder/docker-proxy.haproxy.cfg, which the installed allowlist must equal.
+        description: The repository's lab-host/coder/docker-proxy.haproxy.cfg, which the installed allowlist must equal and whose sha256 the proxy's hcw.config-sha256 label must carry.
       privilege_checks_sandbox_socket_dir:
         type: path
         required: false

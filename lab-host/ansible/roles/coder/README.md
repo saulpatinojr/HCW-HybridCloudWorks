@@ -130,7 +130,8 @@ starts or stops it, adds the Caddy route and keeps a week of nightly dumps.
 The privilege boundary is the Compose file's and the template's, not this
 role's (the role copies the proxy's allowlist,
 `lab-host/coder/docker-proxy.haproxy.cfg`, beside the Compose file and
-restarts the proxy when it changes): a socket goes to the `coder-docker-proxy` service only, read-only,
+writes its sha256 into `.env` as the proxy's `hcw.config-sha256` label, so
+`docker compose up` recreates the proxy whenever the file changes): a socket goes to the `coder-docker-proxy` service only, read-only,
 on a control network the `coder` service alone shares with it; the server
 reaches Docker through it over `DOCKER_HOST` and gets only the API sections
 it allows (no exec, build, commit, swarm or system; since 2026-10-06,

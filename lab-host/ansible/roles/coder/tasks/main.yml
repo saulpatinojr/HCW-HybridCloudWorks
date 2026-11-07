@@ -79,7 +79,11 @@
     mode: "0640"
 
 # Before any `up`: Docker would create a directory where a bind-mounted file
-# is missing. A changed file is put in front of a running proxy below.
+# is missing. HAProxy reads the file only when it starts, and Compose does not
+# look inside a mounted file, so the file's sha256 also goes into .env below
+# as a label on the proxy: a changed file changes the label, and the next `up`
+# recreates the proxy, even when an earlier run copied the file and then
+# failed before the proxy moved.
 - name: Install the Docker socket proxy's allowlist from the repository checkout
   ansible.builtin.copy:
     src: "{{ coder_docker_proxy_config_source }}"
@@ -87,9 +91,8 @@
     owner: root
     group: root
     mode: "0644"
-  register: coder_docker_proxy_config
 
-- name: Write the Compose interpolation values (the three image pins)
+- name: Write the Compose interpolation values (the three image pins and the proxy allowlist's hash)
   ansible.builtin.template:
     src: compose.env.j2
     dest: "{{ coder_compose_env_file }}"
@@ -198,20 +201,6 @@
     wait: true
     wait_timeout: 300
   when: coder_enabled | bool
-
-# HAProxy reads its configuration when it starts, and Compose does not see a
-# change inside a mounted file, so a changed allowlist restarts the proxy.
-# A restart also mounts the new file: the copy above replaces it, and a
-# running container would keep the old one.
-- name: Restart the Docker socket proxy onto a changed allowlist
-  community.docker.docker_compose_v2:
-    project_src: "{{ coder_project_dir }}"
-    services: [coder-docker-proxy]
-    state: restarted
-  when:
-    - coder_enabled | bool
-    - coder_docker_proxy_config is changed
-    - not ansible_check_mode
 
 # Before the route below is written: a Coder with no account is never
 # published, because whoever reached it could make its Owner.

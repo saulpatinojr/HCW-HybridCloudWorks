@@ -207,7 +207,7 @@ test('the proxy policy is exactly the allowlist the provisioner needs, every sec
   assert.deepEqual(
     frontend.filter((line) => /^\s*bind\s/.test(line)).map((line) => line.trim()),
     ['bind :2375'],
-    'it listens on the port DOCKER_HOST names, IPv4, as the old image did with DISABLE_IPV6=1',
+    'it listens on the port DOCKER_HOST names, IPv4 only: the old image listened on [::]:2375 v4v6, and coder-control has no IPv6',
   );
 });
 
@@ -230,6 +230,12 @@ test('the proxy runs as root with DAC_OVERRIDE alone, read-only, with no privile
   assert.deepEqual(listAfter('security_opt'), ['no-new-privileges:true']);
   assert.ok(proxy.includes('read_only: true'), 'read-only root filesystem');
   assert.equal(proxy.filter((line) => /^environment:/.test(line)).length, 0, 'no environment: the policy is the file, not switches');
+  // The coder role writes the allowlist's sha256 into .env; a changed file
+  // changes this label, so `docker compose up` recreates the proxy.
+  assert.ok(
+    proxy.includes('hcw.config-sha256: "${CODER_DOCKER_PROXY_CONFIG_SHA256:?set by the coder role in .env from the sha256 of docker-proxy.haproxy.cfg}"'),
+    'the proxy is labelled with the allowlist\'s sha256, required',
+  );
 });
 
 test('the proxy and the server share a control network that PostgreSQL is not on (#900 review)', () => {

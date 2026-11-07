@@ -149,11 +149,6 @@ argument_specs:
         required: false
         default: /etc/hcw/coder/docker-compose.yml
         description: Where the Compose file is installed.
-      coder_docker_proxy_config_file:
-        type: path
-        required: false
-        default: /etc/hcw/coder/docker-proxy.haproxy.cfg
-        description: Where coder-docker-proxy's HAProxy configuration is installed, beside the Compose file that mounts it read-only.
       coder_compose_env_file:
         type: path
         required: false

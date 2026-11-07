@@ -195,6 +195,19 @@ services:
   # and no privilege gain: it binds a port above 1024 and opens one socket,
   # which needs nothing more.
   #
+  # Kept as root for now (2026-11-07). The narrower form is user 99 with
+  # group_add of hcw-coder-docker's gid and no capabilities at all, but it
+  # works only if the live socket is group hcw-coder-docker with mode 660,
+  # and nobody has checked that on the host yet. On the host:
+  #   sudo stat -c '%a %U:%G' /run/hcw-coder-docker/docker.sock
+  # `660 hcw-coder-docker:hcw-coder-docker` would allow the group form; any
+  # other answer keeps it as it is.
+  #
+  # The label carries the sha256 of the allowlist file, written into .env by
+  # the coder role: a changed file changes the label, so `docker compose up`
+  # recreates the proxy and HAProxy reads the new file (it reads it only when
+  # it starts). privilege_checks compares the label with the repository's file.
+  #
   # The proxy sits on the `coder-control` network with `coder` alone —
   # PostgreSQL shares the `coder` network with the server and never sees
   # this one — and publishes no port. Pinned by digest in
@@ -215,6 +228,8 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: true
+    labels:
+      hcw.config-sha256: "${CODER_DOCKER_PROXY_CONFIG_SHA256:?set by the coder role in .env from the sha256 of docker-proxy.haproxy.cfg}"
     volumes:
       - /run/hcw-coder-docker:/run/hcw-coder-docker:ro
       # The allowlist, copied here by the coder role from the repository.

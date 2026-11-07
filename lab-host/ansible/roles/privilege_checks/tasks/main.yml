@@ -194,7 +194,11 @@
 # lab-host/coder/docker-proxy.haproxy.cfg says, and the sandbox daemon's
 # socket, never the host's; the daemon behind it is rootless. Since
 # 2026-11-07 the allowlist is that file, mounted read-only, not environment
-# switches (the coder role restarts the proxy when the file changes).
+# switches. The coder role labels the proxy with the file's sha256, so a
+# proxy started before the file last changed carries the old hash and fails
+# here. It runs as root with DAC_OVERRIDE alone (docker-compose.yml says
+# why); the capability lists are compared without the CAP_ prefix, which
+# some Docker versions add when they store them.
 - name: Read the proxy allowlist this host runs
   ansible.builtin.slurp:
     src: "{{ privilege_checks_coder_proxy_config }}"
@@ -218,10 +222,22 @@
       - privilege_checks_coder_proxy.container.HostConfig.ReadonlyRootfs
       - privilege_checks_coder_proxy.container.Mounts | map(attribute='Source') | sort == [privilege_checks_coder_proxy_config, privilege_checks_sandbox_socket_dir] | sort
       - privilege_checks_coder_proxy.container.Mounts | selectattr('RW') | list | length == 0
+      - (privilege_checks_coder_proxy.container.Config.Labels | default({}, true)).get('hcw.config-sha256') == privilege_checks_coder_proxy_config_expected | hash('sha256')
+      - privilege_checks_coder_proxy.container.Config.User == '0:0'
+      - privilege_checks_coder_proxy.container.HostConfig.CapDrop | default([], true) | map('upper') | map('regex_replace', '^CAP_', '') | list == ['ALL']
+      - privilege_checks_coder_proxy.container.HostConfig.CapAdd | default([], true) | map('upper') | map('regex_replace', '^CAP_', '') | list == ['DAC_OVERRIDE']
+      - "'no-new-privileges:true' in (privilege_checks_coder_proxy.container.HostConfig.SecurityOpt | default([], true))"
     fail_msg: >-
       coder-docker-proxy is not the one the repository describes: its allowlist
       {{ privilege_checks_coder_proxy_config }} differs from lab-host/coder/docker-proxy.haproxy.cfg in
-      this checkout, or its root filesystem is writable, or it mounts
+      this checkout, or its hcw.config-sha256 label is not that file's sha256 (it started before the
+      file last changed), or it does not run as user 0:0 with every capability dropped but
+      DAC_OVERRIDE and no-new-privileges (user
+      {{ privilege_checks_coder_proxy.container.Config.User | default('') }}, dropped
+      {{ privilege_checks_coder_proxy.container.HostConfig.CapDrop | default([], true) }}, added
+      {{ privilege_checks_coder_proxy.container.HostConfig.CapAdd | default([], true) }}, security options
+      {{ privilege_checks_coder_proxy.container.HostConfig.SecurityOpt | default([], true) }}), or its root
+      filesystem is writable, or it mounts
       {{ privilege_checks_coder_proxy.container.Mounts | default([]) | map(attribute='Source') | list }} where it
       must mount {{ privilege_checks_sandbox_socket_dir }} and {{ privilege_checks_coder_proxy_config }}
       alone, read-only (never the host's Docker socket). Re-run bootstrap.sh, which copies the file and

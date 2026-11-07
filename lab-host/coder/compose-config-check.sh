@@ -25,10 +25,13 @@ cp "$here/docker-compose.yml" "$work/docker-compose.yml"
 cp "$here/docker-proxy.haproxy.cfg" "$work/docker-proxy.haproxy.cfg"
 : > "$work/coder.env"
 : > "$work/coder-postgres.env"
-printf 'CODER_IMAGE=%s\nCODER_POSTGRES_IMAGE=%s\nCODER_DOCKER_PROXY_IMAGE=%s\n' \
+# The proxy's label is the allowlist's sha256, as the coder role writes it.
+config_sha256="$(sha256sum "$here/docker-proxy.haproxy.cfg" | cut -d' ' -f1)"
+printf 'CODER_IMAGE=%s\nCODER_POSTGRES_IMAGE=%s\nCODER_DOCKER_PROXY_IMAGE=%s\nCODER_DOCKER_PROXY_CONFIG_SHA256=%s\n' \
   'ghcr.io/coder/coder@sha256:0000000000000000000000000000000000000000000000000000000000000000' \
   'postgres@sha256:0000000000000000000000000000000000000000000000000000000000000000' \
-  'haproxy@sha256:0000000000000000000000000000000000000000000000000000000000000000' > "$work/.env"
+  'haproxy@sha256:0000000000000000000000000000000000000000000000000000000000000000' \
+  "$config_sha256" > "$work/.env"
 
 docker compose --project-directory "$work" -f "$work/docker-compose.yml" config --quiet
 docker compose --project-directory "$work" -f "$work/docker-compose.yml" config --services

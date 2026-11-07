@@ -2318,7 +2318,8 @@ sudo diff /opt/hcw-src/lab-host/coder/docker-proxy.haproxy.cfg /etc/hcw/coder/do
 ```
 
 Good is `same`. Any other output is the difference, and re-running
-`bootstrap.sh` copies the file and restarts the proxy.
+`bootstrap.sh` copies the file and recreates the proxy (the file's sha256
+is a label on the container, so a changed file changes the container).
 
 The daemon Coder's workspaces run on:
 
