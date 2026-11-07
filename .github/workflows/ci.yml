@@ -1979,7 +1979,7 @@ jobs:
           chmod 0755 actionlint hadolint
           # One wheel, one hash: pip refuses any other file.
           echo "zizmor==${ZIZMOR_VERSION} --hash=sha256:${ZIZMOR_SHA256}" > zizmor-requirements.txt
-          python -m pip install --disable-pip-version-check --retries 3 --no-deps --only-binary=:all: --require-hashes -r zizmor-requirements.txt
+          python -m pip install --disable-pip-version-check --no-deps --only-binary=:all: --require-hashes -r zizmor-requirements.txt
           echo "$tools" >> "$GITHUB_PATH"
 
       # Each linter runs even when the one before it failed, so one run
