@@ -220,12 +220,20 @@
       - (privilege_checks_coder_proxy_config_installed.content | b64decode) == privilege_checks_coder_proxy_config_expected
       - privilege_checks_coder_proxy.container.HostConfig.Privileged == false
       - privilege_checks_coder_proxy.container.HostConfig.ReadonlyRootfs
-      - privilege_checks_coder_proxy.container.Mounts | map(attribute='Source') | sort == [privilege_checks_coder_proxy_config, privilege_checks_sandbox_socket_dir] | sort
+      - >-
+        privilege_checks_coder_proxy.container.Mounts | map(attribute='Source') | sort
+        == [privilege_checks_coder_proxy_config, privilege_checks_sandbox_socket_dir] | sort
       - privilege_checks_coder_proxy.container.Mounts | selectattr('RW') | list | length == 0
-      - (privilege_checks_coder_proxy.container.Config.Labels | default({}, true)).get('hcw.config-sha256') == privilege_checks_coder_proxy_config_expected | hash('sha256')
+      - >-
+        (privilege_checks_coder_proxy.container.Config.Labels | default({}, true)).get('hcw.config-sha256')
+        == privilege_checks_coder_proxy_config_expected | hash('sha256')
       - privilege_checks_coder_proxy.container.Config.User == '0:0'
-      - privilege_checks_coder_proxy.container.HostConfig.CapDrop | default([], true) | map('upper') | map('regex_replace', '^CAP_', '') | list == ['ALL']
-      - privilege_checks_coder_proxy.container.HostConfig.CapAdd | default([], true) | map('upper') | map('regex_replace', '^CAP_', '') | list == ['DAC_OVERRIDE']
+      - >-
+        privilege_checks_coder_proxy.container.HostConfig.CapDrop | default([], true)
+        | map('upper') | map('regex_replace', '^CAP_', '') | list == ['ALL']
+      - >-
+        privilege_checks_coder_proxy.container.HostConfig.CapAdd | default([], true)
+        | map('upper') | map('regex_replace', '^CAP_', '') | list == ['DAC_OVERRIDE']
       - "'no-new-privileges:true' in (privilege_checks_coder_proxy.container.HostConfig.SecurityOpt | default([], true))"
     fail_msg: >-
       coder-docker-proxy is not the one the repository describes: its allowlist

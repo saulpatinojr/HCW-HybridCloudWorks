@@ -85,7 +85,9 @@ argument_specs:
       privilege_checks_coder_proxy_config_source:
         type: path
         required: false
-        description: The repository's lab-host/coder/docker-proxy.haproxy.cfg, which the installed allowlist must equal and whose sha256 the proxy's hcw.config-sha256 label must carry.
+        description: >-
+          The repository's lab-host/coder/docker-proxy.haproxy.cfg, which the installed allowlist must equal and whose
+          sha256 the proxy's hcw.config-sha256 label must carry.
       privilege_checks_sandbox_socket_dir:
         type: path
         required: false

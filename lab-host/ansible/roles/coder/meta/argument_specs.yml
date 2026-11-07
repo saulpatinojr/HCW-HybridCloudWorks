@@ -111,7 +111,9 @@ argument_specs:
       coder_docker_proxy_image:
         type: str
         required: true
-        description: The Docker socket proxy image the coder server reaches the daemon through (LAB-5), haproxy (Docker's official image), configured from lab-host/coder/docker-proxy.haproxy.cfg.
+        description: >-
+          The Docker socket proxy image the coder server reaches the daemon through (LAB-5), haproxy (Docker's official
+          image), configured from lab-host/coder/docker-proxy.haproxy.cfg.
       coder_docker_proxy_image_tag:
         type: str
         required: true
