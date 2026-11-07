@@ -22,8 +22,8 @@
  * a digest is something a command prints rather than something the page
  * quotes. Nothing here needs an allowance in that test.
  *
- * Every command was written against those files on 2026-10-02 and is printed
- * for both shells. Git Bash rewrites an argument that looks like a Unix path
+ * Every command was written against those files on 2026-10-02 (last checked
+ * against them on the CHECKED_ON date below) and is printed for both shells. Git Bash rewrites an argument that looks like a Unix path
  * into a Windows one, so the bash lines that hand Docker a container path set
  * MSYS_NO_PATHCONV=1, as the lab image README does; elsewhere that variable
  * does nothing.
