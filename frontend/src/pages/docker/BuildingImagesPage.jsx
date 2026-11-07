@@ -22,8 +22,8 @@
  * a digest is something a command prints rather than something the page
  * quotes. Nothing here needs an allowance in that test.
  *
- * Every command was written against those files on 2026-10-02 and is printed
- * for both shells. Git Bash rewrites an argument that looks like a Unix path
+ * Every command was written against those files on 2026-10-02 (last checked
+ * against them on the CHECKED_ON date below) and is printed for both shells. Git Bash rewrites an argument that looks like a Unix path
  * into a Windows one, so the bash lines that hand Docker a container path set
  * MSYS_NO_PATHCONV=1, as the lab image README does; elsewhere that variable
  * does nothing.
@@ -40,7 +40,7 @@ export const BUILDING_IMAGES_PATH = routes.buildingImages('docker');
 const CANONICAL = `https://hybridcloudworks.com${BUILDING_IMAGES_PATH}`;
 
 /** When the commands were last read against the files they describe. */
-export const CHECKED_ON = Object.freeze({ iso: '2026-10-31', label: '31 October 2026' });
+export const CHECKED_ON = Object.freeze({ iso: '2026-11-07', label: '7 November 2026' });
 
 const REPO = 'https://github.com/saulpatinojr/HCW-HybridCloudWorks';
 
