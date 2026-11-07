@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-14T06:39:17.439Z",
+  "generatedAt": "2026-11-07T06:22:50.556Z",
   "routes": [
     "/azure/blog/azure-foundry-hosted-agents-accelerating-ai-agent-deployment-optimization-featur",
     "/azure/blog/in-preview-public-preview-code-first-observability-for-foundry-agents-in-vs-code",
@@ -998,7 +998,8 @@
       "code": 0,
       "audio": 3,
       "audio-architecture": 3,
-      "architecture-designs": 0
+      "architecture-designs": 0,
+      "interviews": 0
     },
     "azure": {
       "blog": 26,
@@ -1007,7 +1008,8 @@
       "code": 0,
       "audio": 6,
       "audio-architecture": 6,
-      "architecture-designs": 1
+      "architecture-designs": 1,
+      "interviews": 0
     },
     "gcp": {
       "blog": 0,
@@ -1016,7 +1018,8 @@
       "code": 0,
       "audio": 3,
       "audio-architecture": 3,
-      "architecture-designs": 0
+      "architecture-designs": 0,
+      "interviews": 0
     },
     "finops": {
       "blog": 0,
@@ -1025,7 +1028,8 @@
       "code": 0,
       "audio": 3,
       "audio-architecture": 3,
-      "architecture-designs": 0
+      "architecture-designs": 0,
+      "interviews": 0
     },
     "github": {
       "blog": 0,
@@ -1034,7 +1038,8 @@
       "code": 0,
       "audio": 3,
       "audio-architecture": 3,
-      "architecture-designs": 0
+      "architecture-designs": 0,
+      "interviews": 0
     },
     "terraform": {
       "blog": 0,
@@ -1043,7 +1048,8 @@
       "code": 0,
       "audio": 3,
       "audio-architecture": 3,
-      "architecture-designs": 0
+      "architecture-designs": 0,
+      "interviews": 0
     },
     "vmware": {
       "blog": 0,
@@ -1052,7 +1058,8 @@
       "code": 0,
       "audio": 3,
       "audio-architecture": 3,
-      "architecture-designs": 0
+      "architecture-designs": 0,
+      "interviews": 0
     },
     "ansible": {
       "blog": 0,
@@ -1061,7 +1068,8 @@
       "code": 0,
       "audio": 3,
       "audio-architecture": 3,
-      "architecture-designs": 0
+      "architecture-designs": 0,
+      "interviews": 0
     },
     "docker": {
       "blog": 0,
@@ -1070,7 +1078,8 @@
       "code": 0,
       "audio": 3,
       "audio-architecture": 3,
-      "architecture-designs": 0
+      "architecture-designs": 0,
+      "interviews": 0
     },
     "_unattributed": {
       "blog": 0,
@@ -1079,7 +1088,8 @@
       "code": 0,
       "audio": 0,
       "audio-architecture": 0,
-      "architecture-designs": 0
+      "architecture-designs": 0,
+      "interviews": 0
     }
   }
 }
