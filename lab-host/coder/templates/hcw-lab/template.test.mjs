@@ -37,6 +37,7 @@ import { LIMIT_REFUSAL, isBlocking, limitBlocker } from '../../launcher/launcher
 const here = dirname(fileURLToPath(import.meta.url));
 const mainTf = readFileSync(join(here, 'main.tf'), 'utf8');
 const compose = readFileSync(join(here, '..', '..', 'docker-compose.yml'), 'utf8');
+const proxyCfg = readFileSync(join(here, '..', '..', 'docker-proxy.haproxy.cfg'), 'utf8');
 
 // A line of HCL or YAML with its trailing `#` comment removed. Comments in
 // both files talk about the socket and about `privileged` by name, so the
@@ -124,16 +125,20 @@ test('no service holds the host\'s Docker socket; the proxy holds the sandbox da
     assert.equal(hostSocket(lines).length, 0, `${name} never mounts or names the host daemon's socket`);
   }
   const proxy = services['coder-docker-proxy'];
-  const mounts = proxy.filter((line) => /^\s*-\s*\/.+:.+$/.test(line));
+  const mounts = proxy.filter((line) => /^\s*-\s*\.?\/.+:.+$/.test(line));
   assert.deepEqual(
     mounts.map((line) => line.trim()),
-    ['- /run/hcw-coder-docker:/run/hcw-coder-docker:ro'],
-    'the proxy\'s one mount is the coder_sandbox daemon\'s socket directory, read-only',
+    [
+      '- /run/hcw-coder-docker:/run/hcw-coder-docker:ro',
+      '- ./docker-proxy.haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro',
+    ],
+    'the proxy mounts the coder_sandbox daemon\'s socket directory and its own allowlist, both read-only, and nothing else',
   );
-  assert.ok(
-    proxy.some((line) => /^\s*SOCKET_PATH:\s*\/run\/hcw-coder-docker\/docker\.sock\s*$/.test(line)),
-    'and it connects to that daemon\'s socket',
-  );
+  const servers = codeLines(proxyCfg).filter((line) => /^\s*server\s/.test(line));
+  assert.ok(servers.length > 0, 'the allowlist names a server');
+  for (const line of servers) {
+    assert.match(line, /^\s*server\s+\S+\s+unix@\/run\/hcw-coder-docker\/docker\.sock\s*$/, 'and every server it forwards to is that daemon\'s socket');
+  }
   assert.equal(proxy.filter((line) => /^\s*userns_mode:\s*host\s*$/.test(line)).length, 1, 'the proxy opts out of the host daemon\'s remap, which it needs to open another user\'s socket');
   for (const name of ['coder', 'coder-postgres']) {
     assert.equal(services[name].filter((line) => /userns_mode/.test(line)).length, 0, `${name} stays remapped`);
@@ -163,20 +168,68 @@ test('the coder server keeps its non-root user and reaches the daemon only throu
   assert.equal(services['coder-docker-proxy'].filter((line) => /^\s*ports:/.test(line)).length, 0, 'the proxy publishes no port');
 });
 
-test('the proxy policy is exactly the allowlist the provisioner needs, every key pinned (LAB-5)', () => {
-  const proxy = services['coder-docker-proxy'];
-  const value = (name) => proxy.find((line) => new RegExp(`^\\s*${name}:`).test(line))?.match(/"(\d)"/)?.[1];
-  const on = ['CONTAINERS', 'IMAGES', 'NETWORKS', 'VOLUMES', 'POST', 'ALLOW_START', 'ALLOW_STOP', 'ALLOW_RESTARTS', 'INFO', 'VERSION', 'PING', 'EVENTS'];
-  const off = ['EXEC', 'BUILD', 'COMMIT', 'AUTH', 'SECRETS', 'SWARM', 'SERVICES', 'NODES', 'TASKS', 'SYSTEM', 'PLUGINS', 'SESSION', 'DISTRIBUTION', 'CONFIGS'];
-  for (const name of on) assert.equal(value(name), '1', `${name} is on`);
-  for (const name of off) assert.equal(value(name), '0', `${name} is off`);
-  // Every policy key the service sets is one of the two lists above: a key
-  // added or renamed without a decision here fails, which is the point of
-  // a regression guard (#900 review).
-  const configured = proxy
-    .map((line) => line.match(/^\s*([A-Z_]+):\s*"[01]"\s*$/)?.[1])
-    .filter(Boolean);
-  assert.deepEqual(configured.sort(), [...on, ...off].sort());
+// The allowlist was tecnativa/docker-socket-proxy 0.3.0's haproxy.cfg with
+// environment switches until 2026-11-07; it is now that file written out for
+// the switches that were on (docker-proxy.haproxy.cfg says how). Each allowed
+// section is one `allow` line with the original's expression, and anything
+// else is denied.
+test('the proxy policy is exactly the allowlist the provisioner needs, every section pinned (LAB-5)', () => {
+  const frontend = codeLines(proxyCfg);
+  const prefix = "'^(/v[\\d\\.]+)?/";
+  const allow = frontend
+    .filter((line) => /^\s*http-request\s+allow\b/.test(line))
+    .map((line) => line.trim());
+  const rule = (tail) => `http-request allow if { path,url_dec -m reg -i ${prefix}${tail}' }`;
+  // CONTAINERS, EVENTS, IMAGES, INFO, NETWORKS, PING, VERSION, VOLUMES, then
+  // ALLOW_RESTARTS, ALLOW_START and ALLOW_STOP, which CONTAINERS already
+  // covers and the original lists first.
+  assert.deepEqual(allow, [
+    rule('containers/[a-zA-Z0-9_.-]+/((stop)|(restart)|(kill))'),
+    rule('containers/[a-zA-Z0-9_.-]+/start'),
+    rule('containers/[a-zA-Z0-9_.-]+/stop'),
+    rule('containers'),
+    rule('events'),
+    rule('images'),
+    rule('info'),
+    rule('networks'),
+    rule('_ping'),
+    rule('version'),
+    rule('volumes'),
+  ]);
+  // Sections that stay off have no line at all, so they reach the deny.
+  for (const off of ['exec', 'build', 'commit', 'auth', 'secrets', 'swarm', 'services', 'nodes', 'tasks', 'system', 'plugins', 'session', 'distribution', 'configs', 'grpc']) {
+    assert.equal(frontend.filter((line) => line.includes(`/${off}`)).length, 0, `${off} is not allowed`);
+  }
+  // One unconditional deny after the allows, and no other http-request rule.
+  const rules = frontend.filter((line) => /^\s*http-request\s/.test(line)).map((line) => line.trim());
+  assert.equal(rules.at(-1), 'http-request deny', 'everything else is refused');
+  assert.equal(rules.length, allow.length + 1, 'no rule but the allows and the final deny');
+  assert.deepEqual(
+    frontend.filter((line) => /^\s*bind\s/.test(line)).map((line) => line.trim()),
+    ['bind :2375'],
+    'it listens on the port DOCKER_HOST names, IPv4, as the old image did with DISABLE_IPV6=1',
+  );
+});
+
+test('the proxy runs as root with DAC_OVERRIDE alone, read-only, with no privilege gain', () => {
+  const proxy = services['coder-docker-proxy'].map((line) => line.trim());
+  const listAfter = (key) => {
+    const start = proxy.indexOf(`${key}:`);
+    if (start === -1) return [];
+    const out = [];
+    for (const line of proxy.slice(start + 1)) {
+      const m = line.match(/^-\s*(\S+)$/);
+      if (!m) break;
+      out.push(m[1]);
+    }
+    return out;
+  };
+  assert.ok(proxy.includes('user: "0:0"'), 'root, which is what opens hcw-coder-docker\'s socket');
+  assert.deepEqual(listAfter('cap_drop'), ['ALL']);
+  assert.deepEqual(listAfter('cap_add'), ['DAC_OVERRIDE']);
+  assert.deepEqual(listAfter('security_opt'), ['no-new-privileges:true']);
+  assert.ok(proxy.includes('read_only: true'), 'read-only root filesystem');
+  assert.equal(proxy.filter((line) => /^environment:/.test(line)).length, 0, 'no environment: the policy is the file, not switches');
 });
 
 test('the proxy and the server share a control network that PostgreSQL is not on (#900 review)', () => {

@@ -7,9 +7,9 @@ argument_specs:
         agent's proxy socket is root:<agent group> 0660 and its container has no network, a
         read-only root and no capabilities, and one shell-echo job run as the agent user through
         that proxy prints its payload while docker ps and a privileged docker run are refused.
-      - While Coder is enabled, also fails unless coder-docker-proxy runs with every policy key the
-        installed Compose file sets and mounts the sandbox daemon's socket directory alone, and that
-        daemon reports name=rootless.
+      - While Coder is enabled, also fails unless coder-docker-proxy runs read-only with the allowlist
+        the repository's lab-host/coder/docker-proxy.haproxy.cfg holds, mounts that file and the sandbox
+        daemon's socket directory alone, both read-only, and that daemon reports name=rootless.
       - For every deployed tool add-on (ADR 0035), also fails unless hcw-addon-<id> runs with a
         read-only root, every capability dropped, not privileged, no bind mount, every published
         port bound to 127.0.0.1 and no host user namespace.
@@ -75,16 +75,20 @@ argument_specs:
         type: bool
         required: false
         description: Check Coder's proxy and the sandbox daemon; defaults to coder_enabled.
-      privilege_checks_coder_compose_file:
+      privilege_checks_coder_proxy_config:
         type: path
         required: false
-        default: /etc/hcw/coder/docker-compose.yml
-        description: The Compose file the coder role installs, whose proxy policy the container must carry.
+        default: /etc/hcw/coder/docker-proxy.haproxy.cfg
+        description: The HAProxy allowlist the coder role installs and Coder's proxy mounts read-only.
+      privilege_checks_coder_proxy_config_source:
+        type: path
+        required: false
+        description: The repository's lab-host/coder/docker-proxy.haproxy.cfg, which the installed allowlist must equal.
       privilege_checks_sandbox_socket_dir:
         type: path
         required: false
         default: /run/hcw-coder-docker
-        description: The coder_sandbox daemon's socket directory, the one mount Coder's proxy may have.
+        description: The coder_sandbox daemon's socket directory, the one socket mount Coder's proxy may have.
       privilege_checks_sandbox_docker_host:
         type: str
         required: false

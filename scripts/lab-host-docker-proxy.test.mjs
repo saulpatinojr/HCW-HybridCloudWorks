@@ -434,10 +434,21 @@ describe('the agent and the daemons around the proxy', () => {
     expect(agentTasks).not.toMatch(/^\s+- docker\s*$/m);
   });
 
-  it('the proxy is the pinned haproxy image, by digest', () => {
+  it('the proxy is the pinned haproxy image, Debian trixie, by digest', () => {
     expect(groupVars).toMatch(/^labs_agent_docker_proxy_image: haproxy$/m);
-    expect(groupVars).toMatch(/^labs_agent_docker_proxy_image_tag: "\d+\.\d+\.\d+-alpine"$/m);
+    expect(groupVars).toMatch(/^labs_agent_docker_proxy_image_tag: "\d+\.\d+\.\d+-trixie"$/m);
     expect(groupVars).toMatch(/^labs_agent_docker_proxy_image_digest: sha256:[0-9a-f]{64}$/m);
+  });
+
+  // Coder's proxy (lab-host/coder/docker-proxy.haproxy.cfg) runs the same
+  // official image since 2026-11-07, in place of tecnativa/docker-socket-proxy
+  // on the end-of-life HAProxy 2.2 line: one pin to read and move, not two.
+  it('Coder\'s proxy runs the same haproxy pin as the agent\'s', () => {
+    const pin = (key) => groupVars.match(new RegExp(`^${key}: (.+)$`, 'm'))?.[1];
+    expect(pin('coder_docker_proxy_image')).toBe('haproxy');
+    for (const part of ['image', 'image_tag', 'image_digest']) {
+      expect(pin(`coder_docker_proxy_${part}`)).toBe(pin(`labs_agent_docker_proxy_${part}`));
+    }
   });
 
   it('the host daemon remaps user namespaces, with the containerd image store off', () => {
@@ -465,10 +476,18 @@ describe('the agent and the daemons around the proxy', () => {
     // (LAB-13, #959); a socket that drifted would see none and reboot
     // through a workspace in use.
     expect(value(hardeningDefaults, 'hardening_reboot_workspace_docker_host')).toBe(`unix://${sandboxDir}/docker.sock`);
-    expect(value(checks, 'privilege_checks_coder_compose_file')).toBe(
-      `${value(coderDefaults, 'coder_project_dir')}/docker-compose.yml`
+    // Coder's proxy allowlist (since 2026-11-07, in place of the Compose
+    // file's environment switches): the file the coder role installs, and the
+    // repository copy both roles read.
+    expect(value(checks, 'privilege_checks_coder_proxy_config')).toBe(
+      `${value(coderDefaults, 'coder_project_dir')}/docker-proxy.haproxy.cfg`
     );
+    expect(value(coderDefaults, 'coder_docker_proxy_config_file')).toBe('{{ coder_project_dir }}/docker-proxy.haproxy.cfg');
     expect(value(coderDefaults, 'coder_compose_file')).toBe('{{ coder_project_dir }}/docker-compose.yml');
+    const coderVars = read(ansible, 'roles', 'coder', 'vars', 'main.yml');
+    const source = '{{ role_path }}/../../../coder/docker-proxy.haproxy.cfg';
+    expect(value(coderVars, 'coder_docker_proxy_config_source')).toBe(source);
+    expect(value(checks, 'privilege_checks_coder_proxy_config_source')).toBe(source);
   });
 
   it('the site playbook runs the sandbox daemon before Coder, and the checks after everything', () => {

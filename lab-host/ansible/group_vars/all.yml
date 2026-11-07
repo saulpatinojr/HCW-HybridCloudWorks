@@ -277,12 +277,16 @@ coder_postgres_image: postgres
 coder_postgres_image_tag: "18.6"
 coder_postgres_image_digest: sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
 # The Docker socket proxy the coder server reaches the daemon through
-# (LAB-5, 2026-10-06): HAProxy with one allow rule per API section. Image
-# index digest read 2026-10-06 from the registry's Docker-Content-Digest for
-# the 0.3.0 tag, the newest numbered tag on Docker Hub that day.
-coder_docker_proxy_image: tecnativa/docker-socket-proxy
-coder_docker_proxy_image_tag: "0.3.0"
-coder_docker_proxy_image_digest: sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
+# (LAB-5, 2026-10-06): HAProxy with one allow rule per API section, written
+# in lab-host/coder/docker-proxy.haproxy.cfg. Until 2026-11-07 it was
+# tecnativa/docker-socket-proxy 0.3.0, built on the end-of-life HAProxy 2.2
+# line; since then it is the same official image and pin as the agent's
+# proxy below (Debian 13 "trixie", owner goal of 2026-11-07), and the
+# allowlist is that file, a line-for-line translation of what the old image's
+# settings allowed. The digest was read 2026-11-07 the way the agent's is.
+coder_docker_proxy_image: haproxy
+coder_docker_proxy_image_tag: "3.4.7-trixie"
+coder_docker_proxy_image_digest: sha256:f6d2ee87b47192d9cc8c22e88fef405122ff339859644883edc2a7d1827f87b3
 # Since 2026-10-07 (LAB-5) that proxy opens the socket of the coder_sandbox
 # role's rootless daemon, not the host's: Coder's workspaces run there, as the
 # unprivileged user hcw-coder-docker, and a privileged container a compromised
@@ -339,13 +343,17 @@ labs_agent_id: vps-hostinger-01
 # official image with the allowlist in
 # roles/labs_agent/templates/docker-proxy.haproxy.cfg.j2, which the agent
 # reaches instead of the docker group. 3.4 is HAProxy's newest LTS line
-# (endoflife.date, supported to 2031-04-01) and 3.4.6 its newest release; the
-# image index digest of haproxy:3.4.6-alpine was read 2026-10-07 from the
-# registry's Docker-Content-Digest and the Docker Hub API, which agreed, and
-# haproxy:3.4-alpine resolved to the same index that day.
+# (endoflife.date, supported to 2031-04-01). The tag is the Debian 13
+# "trixie" variant (owner goal 2026-11-07: every image runs on trixie where
+# an official trixie variant exists; the Alpine variant was used from
+# 2026-10-07). The image index digest of the tag below was read 2026-11-07
+# from the registry's Docker-Content-Digest and the Docker Hub API, which
+# agreed, and haproxy:3.4-trixie resolved to the same index that day. The
+# image runs as its own user haproxy (uid 99) on both variants; the
+# labs_agent role runs it as root with no capabilities either way.
 labs_agent_docker_proxy_image: haproxy
-labs_agent_docker_proxy_image_tag: "3.4.6-alpine"
-labs_agent_docker_proxy_image_digest: sha256:7af8255207ee9964ccb4eec8ce4b7a40b777769665e3ae83897fb01b24d8a43a
+labs_agent_docker_proxy_image_tag: "3.4.7-trixie"
+labs_agent_docker_proxy_image_digest: sha256:f6d2ee87b47192d9cc8c22e88fef405122ff339859644883edc2a7d1827f87b3
 
 # node_exporter release tarball, linux-amd64, from the release's sha256sums.txt.
 node_exporter_version: 1.12.1

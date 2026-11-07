@@ -13,6 +13,10 @@ coder_compose_file: "{{ coder_project_dir }}/docker-compose.yml"
 coder_compose_env_file: "{{ coder_project_dir }}/.env"
 coder_env_file: "{{ coder_project_dir }}/coder.env"
 coder_postgres_env_file: "{{ coder_project_dir }}/coder-postgres.env"
+# coder-docker-proxy's HAProxy configuration, copied from the repository's
+# lab-host/coder/docker-proxy.haproxy.cfg; docker-compose.yml mounts it
+# read-only by this name, relative to the project directory.
+coder_docker_proxy_config_file: "{{ coder_project_dir }}/docker-proxy.haproxy.cfg"
 
 # The port docker-compose.yml publishes on the host's loopback and the Caddy
 # route proxies to.

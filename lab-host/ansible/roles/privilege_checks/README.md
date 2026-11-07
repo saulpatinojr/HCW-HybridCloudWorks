@@ -29,12 +29,14 @@ anything but the one script the role installs.
    printed its payload. Then `docker ps` must be refused as a call, and a
    job-shaped `docker run --privileged` must be refused for its body. It
    prints what it saw as JSON either way.
-5. **While Coder is on, Coder's proxy carries the repository's policy and
-   the sandbox daemon's socket**: every `KEY=value` the installed Compose
-   file (`/etc/hcw/coder/docker-compose.yml`) sets for
-   `coder-docker-proxy` is in the container's environment, its one mount is
-   `/run/hcw-coder-docker`, and the daemon behind it reports
-   `name=rootless`.
+5. **While Coder is on, Coder's proxy carries the repository's allowlist
+   and the sandbox daemon's socket**: the installed
+   `/etc/hcw/coder/docker-proxy.haproxy.cfg` is byte for byte the
+   checkout's `lab-host/coder/docker-proxy.haproxy.cfg` (since 2026-11-07;
+   before that the policy was environment switches of the
+   tecnativa/docker-socket-proxy image), `coder-docker-proxy` runs with a
+   read-only root and mounts that file and `/run/hcw-coder-docker` alone,
+   both read-only, and the daemon behind it reports `name=rootless`.
 6. **Every deployed tool add-on runs as the addons role describes** (ADR
    0035): a read-only root, every capability dropped, not privileged, no
    bind mount, one port published on `127.0.0.1`, and the daemon's

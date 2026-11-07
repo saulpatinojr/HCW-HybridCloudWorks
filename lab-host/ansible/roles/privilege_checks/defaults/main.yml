@@ -30,7 +30,10 @@ privilege_checks_dnat_argv:
   - [ip6tables, -w, -t, nat, -S, DOCKER]
 
 privilege_checks_coder_enabled: "{{ coder_enabled }}"
-privilege_checks_coder_compose_file: /etc/hcw/coder/docker-compose.yml
+privilege_checks_coder_proxy_config: /etc/hcw/coder/docker-proxy.haproxy.cfg
+# The repository's copy, on the controller (the host itself), which the
+# coder role installs at the path above.
+privilege_checks_coder_proxy_config_source: "{{ role_path }}/../../../coder/docker-proxy.haproxy.cfg"
 privilege_checks_sandbox_socket_dir: /run/hcw-coder-docker
 privilege_checks_sandbox_docker_host: unix:///run/hcw-coder-docker/docker.sock
 
