@@ -221,8 +221,14 @@
       - privilege_checks_coder_proxy.container.HostConfig.Privileged == false
       - privilege_checks_coder_proxy.container.HostConfig.ReadonlyRootfs
       - >-
-        privilege_checks_coder_proxy.container.Mounts | map(attribute='Source') | sort
-        == [privilege_checks_coder_proxy_config, privilege_checks_sandbox_socket_dir] | sort
+        privilege_checks_coder_proxy.container.Mounts | map(attribute='Destination') | sort
+        == ['/run/hcw-coder-docker', '/usr/local/etc/haproxy/haproxy.cfg']
+      - >-
+        privilege_checks_coder_proxy.container.Mounts | selectattr('Destination', 'equalto', '/usr/local/etc/haproxy/haproxy.cfg')
+        | map(attribute='Source') | list == [privilege_checks_coder_proxy_config]
+      - >-
+        privilege_checks_coder_proxy.container.Mounts | selectattr('Destination', 'equalto', '/run/hcw-coder-docker')
+        | map(attribute='Source') | list == [privilege_checks_sandbox_socket_dir]
       - privilege_checks_coder_proxy.container.Mounts | selectattr('RW') | list | length == 0
       - >-
         (privilege_checks_coder_proxy.container.Config.Labels | default({}, true)).get('hcw.config-sha256')
@@ -246,9 +252,11 @@
       {{ privilege_checks_coder_proxy.container.HostConfig.CapAdd | default([], true) }}, security options
       {{ privilege_checks_coder_proxy.container.HostConfig.SecurityOpt | default([], true) }}), or its root
       filesystem is writable, or it mounts
-      {{ privilege_checks_coder_proxy.container.Mounts | default([]) | map(attribute='Source') | list }} where it
-      must mount {{ privilege_checks_sandbox_socket_dir }} and {{ privilege_checks_coder_proxy_config }}
-      alone, read-only (never the host's Docker socket). Re-run bootstrap.sh, which copies the file and
+      {{ privilege_checks_coder_proxy.container.Mounts | default([]) | map(attribute='Source') | list }} at
+      {{ privilege_checks_coder_proxy.container.Mounts | default([]) | map(attribute='Destination') | list }}
+      where it must mount {{ privilege_checks_sandbox_socket_dir }} at /run/hcw-coder-docker and
+      {{ privilege_checks_coder_proxy_config }} at /usr/local/etc/haproxy/haproxy.cfg alone, read-only
+      (never the host's Docker socket). Re-run bootstrap.sh, which copies the file and
       recreates the proxy; if this fails again, recreate it with sudo docker compose --project-directory
       /etc/hcw/coder up -d --force-recreate coder-docker-proxy.
     quiet: true
