@@ -37,9 +37,12 @@ anything but the one script the role installs.
    tecnativa/docker-socket-proxy image), `coder-docker-proxy` carries that
    file's sha256 in its `hcw.config-sha256` label (so it started after the
    file last changed), runs as user `0:0` with every capability dropped but
-   `DAC_OVERRIDE`, `no-new-privileges:true` and a read-only root, mounts that
-   file and `/run/hcw-coder-docker` alone, both read-only, and the daemon
-   behind it reports `name=rootless`.
+   `DAC_OVERRIDE`, `no-new-privileges:true` and a read-only root, in the
+   host's user namespace (`userns_mode: host`, without which it cannot open
+   the sandbox socket), on the `coder-control` network alone with no
+   published port, mounts that file at HAProxy's config path and
+   `/run/hcw-coder-docker` at the same path, alone and both read-only, and
+   the daemon behind it reports `name=rootless`.
 6. **Every deployed tool add-on runs as the addons role describes** (ADR
    0035): a read-only root, every capability dropped, not privileged, no
    bind mount, one port published on `127.0.0.1`, and the daemon's

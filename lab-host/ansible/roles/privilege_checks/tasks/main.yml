@@ -234,6 +234,11 @@
         (privilege_checks_coder_proxy.container.Config.Labels | default({}, true)).get('hcw.config-sha256')
         == privilege_checks_coder_proxy_config_expected | hash('sha256')
       - privilege_checks_coder_proxy.container.Config.User == '0:0'
+      - privilege_checks_coder_proxy.container.HostConfig.UsernsMode == 'host'
+      - >-
+        privilege_checks_coder_proxy.container.NetworkSettings.Networks | default({}, true) | list | sort
+        == ['coder-control']
+      - privilege_checks_coder_proxy.container.HostConfig.PortBindings | default({}, true) | length == 0
       - >-
         privilege_checks_coder_proxy.container.HostConfig.CapDrop | default([], true)
         | map('upper') | map('regex_replace', '^CAP_', '') | list == ['ALL']
@@ -246,7 +251,11 @@
       {{ privilege_checks_coder_proxy_config }} differs from lab-host/coder/docker-proxy.haproxy.cfg in
       this checkout, or its hcw.config-sha256 label is not that file's sha256 (it started before the
       file last changed), or it does not run as user 0:0 with every capability dropped but
-      DAC_OVERRIDE and no-new-privileges (user
+      DAC_OVERRIDE and no-new-privileges, in the host's user namespace, on the coder-control network
+      alone with no published port (user namespace
+      {{ privilege_checks_coder_proxy.container.HostConfig.UsernsMode | default('') }}, networks
+      {{ privilege_checks_coder_proxy.container.NetworkSettings.Networks | default({}, true) | list }}, published
+      {{ privilege_checks_coder_proxy.container.HostConfig.PortBindings | default({}, true) }}, user
       {{ privilege_checks_coder_proxy.container.Config.User | default('') }}, dropped
       {{ privilege_checks_coder_proxy.container.HostConfig.CapDrop | default([], true) }}, added
       {{ privilege_checks_coder_proxy.container.HostConfig.CapAdd | default([], true) }}, security options
