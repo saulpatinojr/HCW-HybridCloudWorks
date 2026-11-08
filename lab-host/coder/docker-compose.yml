@@ -52,9 +52,10 @@ name: coder
 services:
   coder:
     # Pinned by digest in ansible/group_vars/all.yml (coder_image_digest, the
-    # image index of ghcr.io/coder/coder:v2.37.3 on 2026-09-25). Docker
-    # verifies the content against the digest on pull, so the tag is recorded
-    # there for humans and never pulled.
+    # image index of ghcr.io/coder/coder at the release named in
+    # coder_image_tag; the version is kept there only, so this comment cannot
+    # fall behind it). Docker verifies the content against the digest on pull,
+    # so the tag is recorded there for humans and never pulled.
     image: ${CODER_IMAGE:?set by the coder role in .env from coder_image and coder_image_digest}
     # Named so the ADR 0032 validation list (`docker ps` shows `coder` and
     # `coder-postgres`) holds by name rather than by Compose's <project>-<service>-1.
