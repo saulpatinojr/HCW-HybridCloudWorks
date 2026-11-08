@@ -88,7 +88,8 @@ ever added, and a session cannot list secrets. Nothing uses the `HCW Lockfile Sy
    You should see `HCW_MAIN_ADMIN_CLIENT_ID` and `HCW_MAIN_ADMIN_PRIVATE_KEY`. If either is missing, stop: Monday's
    proof on #70 will fail without it, so re-add it before anything else.
 2. If the same page lists `LOCKFILES_APP_CLIENT_ID` or `LOCKFILES_APP_PRIVATE_KEY`, click the bin icon beside it and
-   confirm. Leave both `HCW_MAIN_ADMIN_*` secrets alone. Afterwards only the two `HCW_MAIN_ADMIN_*` names are listed.
+   confirm. Leave both `HCW_MAIN_ADMIN_*` secrets, and any other secret on the page, alone. Afterwards both `HCW_MAIN_ADMIN_*`
+   names are still listed and neither `LOCKFILES_APP_*` name is.
 3. Repeat steps 1 and 2 on the
    [HCW-CloudAssessor_App Dependabot secrets](https://github.com/saulpatinojr/HCW-CloudAssessor_App/settings/secrets/dependabot).
 4. Open [your GitHub Apps](https://github.com/settings/apps). If `HCW Lockfile Sync` is not listed, it was never
