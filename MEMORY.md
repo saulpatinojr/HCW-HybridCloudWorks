@@ -82,10 +82,26 @@ App instead, and on 2026-11-05 installed it on both App repositories; its key wa
 reads the Dependabot secrets `HCW_MAIN_ADMIN_CLIENT_ID` and `HCW_MAIN_ADMIN_PRIVATE_KEY`, and a test in each App
 repository fails if `LOCKFILES_APP` ever comes back into a workflow. The removal of the old `LOCKFILES_APP_CLIENT_ID`
 secret from both repositories is recorded on #70 (2026-11-05); no record says whether a `LOCKFILES_APP_PRIVATE_KEY` was
-ever added, and a session cannot list secrets, so the owner checks each repository's Dependabot secrets page
-(`https://github.com/saulpatinojr/HCW-CloudCrawler_App/settings/secrets/dependabot` and the same for
-HCW-CloudAssessor_App) and deletes it if it is there. Nothing uses the `HCW Lockfile Sync` App, so it can be deleted
-(GitHub's [Deleting a GitHub App](https://docs.github.com/en/apps/maintaining-github-apps/deleting-a-github-app)).
+ever added, and a session cannot list secrets. Nothing uses the `HCW Lockfile Sync` App. The owner's clean-up:
+
+1. Open the [HCW-CloudCrawler_App Dependabot secrets](https://github.com/saulpatinojr/HCW-CloudCrawler_App/settings/secrets/dependabot).
+   You should see `HCW_MAIN_ADMIN_CLIENT_ID` and `HCW_MAIN_ADMIN_PRIVATE_KEY`. If either is missing, stop: Monday's
+   proof on #70 will fail without it, so re-add it before anything else.
+2. If the same page lists `LOCKFILES_APP_CLIENT_ID` or `LOCKFILES_APP_PRIVATE_KEY`, click the bin icon beside it and
+   confirm. Leave both `HCW_MAIN_ADMIN_*` secrets alone. Afterwards only the two `HCW_MAIN_ADMIN_*` names are listed.
+3. Repeat steps 1 and 2 on the
+   [HCW-CloudAssessor_App Dependabot secrets](https://github.com/saulpatinojr/HCW-CloudAssessor_App/settings/secrets/dependabot).
+4. Open [your GitHub Apps](https://github.com/settings/apps). If `HCW Lockfile Sync` is not listed, it was never
+   created and the clean-up is done. **Stop here** if `HCW Lockfile Sync` is the App whose name appears beside the
+   lockfile commits on the App repositories' Dependabot pull requests, or if you are unsure which App is which: that
+   would mean it is still in use. Ask before going on.
+5. **The next step cannot be undone:** deleting an App removes its registration and uninstalls it everywhere. Click
+   **Edit** beside `HCW Lockfile Sync`, then **Advanced**, then **Delete GitHub App**, and type its name to confirm
+   (GitHub's [Deleting a GitHub App](https://docs.github.com/en/apps/maintaining-github-apps/deleting-a-github-app)).
+   Back on the Apps page, `HCW Lockfile Sync` is gone and `HCW Main Admin` is still listed. If `HCW Main Admin` is
+   gone too, the wrong App was deleted: it has to be recreated and its key stored again in every repository that
+   holds it.
+
 **Still pending:** the last proof, a Dependabot Python pull request that regenerates the lockfile exports on its own
 (expected Monday 2026-11-09), tracked on
 [HCW-CloudCrawler_App#70](https://github.com/saulpatinojr/HCW-CloudCrawler_App/issues/70).
