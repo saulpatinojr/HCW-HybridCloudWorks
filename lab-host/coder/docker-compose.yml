@@ -159,11 +159,15 @@ services:
 
   # A Docker socket, behind a path allowlist (estate review 2026-10-06,
   # LAB-5). Until then the coder server held the host's socket itself. This
-  # is HAProxy with one rule per Docker API section: the provisioner's Docker
+  # is HAProxy with one rule per Docker API section, written out in
+  # docker-proxy.haproxy.cfg beside this file: the provisioner's Docker
   # provider gets containers, images, networks, volumes, the lifecycle verbs
   # it uses and the read-only daemon endpoints, and nothing else answers —
   # no exec on a container it did not create, no build, no commit, no
-  # swarm, no system prune, no daemon auth.
+  # swarm, no system prune, no daemon auth. Since 2026-11-07 the image is the
+  # official haproxy one on Debian 13 "trixie", the same pin as the lab
+  # agent's proxy; before that it was tecnativa/docker-socket-proxy 0.3.0,
+  # whose settings the configuration file translates line for line.
   #
   # Which daemon (2026-10-07, LAB-5). The proxy inspects paths, not bodies,
   # so code running as the coder server could still create a privileged
@@ -183,6 +187,27 @@ services:
   # another user's socket. The proxy is one of the three containers of this
   # host's own that opt out; nothing a workspace or a job creates can.
   #
+  # Root with one capability. The official image runs as its own user,
+  # haproxy (uid 99), which cannot enter hcw-coder-docker's 0750 directory;
+  # the old image ran as root with Docker's default capabilities. So it runs
+  # as root, every capability dropped but DAC_OVERRIDE (the one that lets
+  # root open a file another user owns), with a read-only root filesystem
+  # and no privilege gain: it binds a port above 1024 and opens one socket,
+  # which needs nothing more.
+  #
+  # Kept as root for now (2026-11-07). The narrower form is user 99 with
+  # group_add of hcw-coder-docker's gid and no capabilities at all, but it
+  # works only if the live socket is group hcw-coder-docker with mode 660,
+  # and nobody has checked that on the host yet. On the host:
+  #   sudo stat -c '%a %U:%G' /run/hcw-coder-docker/docker.sock
+  # `660 hcw-coder-docker:hcw-coder-docker` would allow the group form; any
+  # other answer keeps it as it is.
+  #
+  # The label carries the sha256 of the allowlist file, written into .env by
+  # the coder role: a changed file changes the label, so `docker compose up`
+  # recreates the proxy and HAProxy reads the new file (it reads it only when
+  # it starts). privilege_checks compares the label with the repository's file.
+  #
   # The proxy sits on the `coder-control` network with `coder` alone —
   # PostgreSQL shares the `coder` network with the server and never sees
   # this one — and publishes no port. Pinned by digest in
@@ -194,38 +219,21 @@ services:
     image: ${CODER_DOCKER_PROXY_IMAGE:?set by the coder role in .env from coder_docker_proxy_image and coder_docker_proxy_image_digest}
     container_name: coder-docker-proxy
     restart: unless-stopped
-    environment:
-      LOG_LEVEL: warning
-      CONTAINERS: "1"
-      IMAGES: "1"
-      NETWORKS: "1"
-      VOLUMES: "1"
-      POST: "1"
-      ALLOW_START: "1"
-      ALLOW_STOP: "1"
-      ALLOW_RESTARTS: "1"
-      INFO: "1"
-      VERSION: "1"
-      PING: "1"
-      EVENTS: "1"
-      EXEC: "0"
-      BUILD: "0"
-      COMMIT: "0"
-      AUTH: "0"
-      SECRETS: "0"
-      SWARM: "0"
-      SERVICES: "0"
-      NODES: "0"
-      TASKS: "0"
-      SYSTEM: "0"
-      PLUGINS: "0"
-      SESSION: "0"
-      DISTRIBUTION: "0"
-      CONFIGS: "0"
-      SOCKET_PATH: /run/hcw-coder-docker/docker.sock
     userns_mode: host
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    labels:
+      hcw.config-sha256: "${CODER_DOCKER_PROXY_CONFIG_SHA256:?set by the coder role in .env from the sha256 of docker-proxy.haproxy.cfg}"
     volumes:
       - /run/hcw-coder-docker:/run/hcw-coder-docker:ro
+      # The allowlist, copied here by the coder role from the repository.
+      - ./docker-proxy.haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks:
       - coder-control
     deploy:

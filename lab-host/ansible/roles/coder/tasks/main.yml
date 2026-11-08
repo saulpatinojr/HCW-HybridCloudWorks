@@ -78,7 +78,21 @@
     group: root
     mode: "0640"
 
-- name: Write the Compose interpolation values (the three image pins)
+# Before any `up`: Docker would create a directory where a bind-mounted file
+# is missing. HAProxy reads the file only when it starts, and Compose does not
+# look inside a mounted file, so the file's sha256 also goes into .env below
+# as a label on the proxy: a changed file changes the label, and the next `up`
+# recreates the proxy, even when an earlier run copied the file and then
+# failed before the proxy moved.
+- name: Install the Docker socket proxy's allowlist from the repository checkout
+  ansible.builtin.copy:
+    src: "{{ coder_docker_proxy_config_source }}"
+    dest: "{{ coder_docker_proxy_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Write the Compose interpolation values (the three image pins and the proxy allowlist's hash)
   ansible.builtin.template:
     src: compose.env.j2
     dest: "{{ coder_compose_env_file }}"

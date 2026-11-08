@@ -190,13 +190,19 @@
     - not ansible_check_mode
     - privilege_checks_agent_run.rc == 0
 
-# 5. Coder's proxy holds the policy the repository's Compose file says, and
-# the sandbox daemon's socket, never the host's; the daemon behind it is
-# rootless.
-- name: Read the Compose file this host runs
+# 5. Coder's proxy holds the allowlist the repository's
+# lab-host/coder/docker-proxy.haproxy.cfg says, and the sandbox daemon's
+# socket, never the host's; the daemon behind it is rootless. Since
+# 2026-11-07 the allowlist is that file, mounted read-only, not environment
+# switches. The coder role labels the proxy with the file's sha256, so a
+# proxy started before the file last changed carries the old hash and fails
+# here. It runs as root with DAC_OVERRIDE alone (docker-compose.yml says
+# why); the capability lists are compared without the CAP_ prefix, which
+# some Docker versions add when they store them.
+- name: Read the proxy allowlist this host runs
   ansible.builtin.slurp:
-    src: "{{ privilege_checks_coder_compose_file }}"
-  register: privilege_checks_compose
+    src: "{{ privilege_checks_coder_proxy_config }}"
+  register: privilege_checks_coder_proxy_config_installed
   when: privilege_checks_coder_enabled | bool
 
 - name: Read Coder's proxy container
@@ -206,34 +212,65 @@
   check_mode: false
   when: privilege_checks_coder_enabled | bool
 
-# The Compose file's environment for the proxy, as the KEY=value strings
-# Docker reports in Config.Env. Every one must be there; the image's own
-# defaults for keys the file does not set may be there too.
-- name: Record the allowlist the Compose file sets for Coder's proxy
-  ansible.builtin.set_fact:
-    privilege_checks_coder_policy_expected: >-
-      {{ privilege_checks_coder_env.keys() | zip(privilege_checks_coder_env.values()) | map('join', '=') | list }}
-  vars:
-    privilege_checks_coder_env: "{{ (privilege_checks_compose.content | b64decode | from_yaml).services['coder-docker-proxy'].environment }}"
-  when: privilege_checks_coder_enabled | bool
-
 - name: Refuse a Coder proxy whose allowlist or socket is not the repository's
   ansible.builtin.assert:
     that:
       - privilege_checks_coder_proxy.exists
       - privilege_checks_coder_proxy.container.State.Running
-      - privilege_checks_coder_policy_expected | difference(privilege_checks_coder_proxy.container.Config.Env) | length == 0
+      - (privilege_checks_coder_proxy_config_installed.content | b64decode) == privilege_checks_coder_proxy_config_expected
       - privilege_checks_coder_proxy.container.HostConfig.Privileged == false
-      - privilege_checks_coder_proxy.container.Mounts | map(attribute='Source') | list == [privilege_checks_sandbox_socket_dir]
+      - privilege_checks_coder_proxy.container.HostConfig.ReadonlyRootfs
+      - >-
+        privilege_checks_coder_proxy.container.Mounts | map(attribute='Destination') | sort
+        == ['/run/hcw-coder-docker', '/usr/local/etc/haproxy/haproxy.cfg']
+      - >-
+        privilege_checks_coder_proxy.container.Mounts | selectattr('Destination', 'equalto', '/usr/local/etc/haproxy/haproxy.cfg')
+        | map(attribute='Source') | list == [privilege_checks_coder_proxy_config]
+      - >-
+        privilege_checks_coder_proxy.container.Mounts | selectattr('Destination', 'equalto', '/run/hcw-coder-docker')
+        | map(attribute='Source') | list == [privilege_checks_sandbox_socket_dir]
+      - privilege_checks_coder_proxy.container.Mounts | selectattr('RW') | list | length == 0
+      - >-
+        (privilege_checks_coder_proxy.container.Config.Labels | default({}, true)).get('hcw.config-sha256')
+        == privilege_checks_coder_proxy_config_expected | hash('sha256')
+      - privilege_checks_coder_proxy.container.Config.User == '0:0'
+      - privilege_checks_coder_proxy.container.HostConfig.UsernsMode == 'host'
+      - >-
+        privilege_checks_coder_proxy.container.NetworkSettings.Networks | default({}, true) | list | sort
+        == ['coder-control']
+      - privilege_checks_coder_proxy.container.HostConfig.PortBindings | default({}, true) | length == 0
+      - >-
+        privilege_checks_coder_proxy.container.HostConfig.CapDrop | default([], true)
+        | map('upper') | map('regex_replace', '^CAP_', '') | list == ['ALL']
+      - >-
+        privilege_checks_coder_proxy.container.HostConfig.CapAdd | default([], true)
+        | map('upper') | map('regex_replace', '^CAP_', '') | list == ['DAC_OVERRIDE']
+      - "'no-new-privileges:true' in (privilege_checks_coder_proxy.container.HostConfig.SecurityOpt | default([], true))"
     fail_msg: >-
-      coder-docker-proxy is not the one {{ privilege_checks_coder_compose_file }} describes: the policy
-      {{ privilege_checks_coder_policy_expected | difference(privilege_checks_coder_proxy.container.Config.Env | default([])) }}
-      is missing from its environment, or it mounts
-      {{ privilege_checks_coder_proxy.container.Mounts | default([]) | map(attribute='Source') | list }} where it
-      must mount {{ privilege_checks_sandbox_socket_dir }} alone (never the host's Docker socket). Recreate it
-      from the repository's file with sudo docker compose --project-directory /etc/hcw/coder up -d
-      --force-recreate coder-docker-proxy, then re-run bootstrap.sh.
+      coder-docker-proxy is not the one the repository describes: its allowlist
+      {{ privilege_checks_coder_proxy_config }} differs from lab-host/coder/docker-proxy.haproxy.cfg in
+      this checkout, or its hcw.config-sha256 label is not that file's sha256 (it started before the
+      file last changed), or it does not run as user 0:0 with every capability dropped but
+      DAC_OVERRIDE and no-new-privileges, in the host's user namespace, on the coder-control network
+      alone with no published port (user namespace
+      {{ privilege_checks_coder_proxy.container.HostConfig.UsernsMode | default('') }}, networks
+      {{ privilege_checks_coder_proxy.container.NetworkSettings.Networks | default({}, true) | list }}, published
+      {{ privilege_checks_coder_proxy.container.HostConfig.PortBindings | default({}, true) }}, user
+      {{ privilege_checks_coder_proxy.container.Config.User | default('') }}, dropped
+      {{ privilege_checks_coder_proxy.container.HostConfig.CapDrop | default([], true) }}, added
+      {{ privilege_checks_coder_proxy.container.HostConfig.CapAdd | default([], true) }}, security options
+      {{ privilege_checks_coder_proxy.container.HostConfig.SecurityOpt | default([], true) }}), or its root
+      filesystem is writable, or it mounts
+      {{ privilege_checks_coder_proxy.container.Mounts | default([]) | map(attribute='Source') | list }} at
+      {{ privilege_checks_coder_proxy.container.Mounts | default([]) | map(attribute='Destination') | list }}
+      where it must mount {{ privilege_checks_sandbox_socket_dir }} at /run/hcw-coder-docker and
+      {{ privilege_checks_coder_proxy_config }} at /usr/local/etc/haproxy/haproxy.cfg alone, read-only
+      (never the host's Docker socket). Re-run bootstrap.sh, which copies the file and
+      recreates the proxy; if this fails again, recreate it with sudo docker compose --project-directory
+      /etc/hcw/coder up -d --force-recreate coder-docker-proxy.
     quiet: true
+  vars:
+    privilege_checks_coder_proxy_config_expected: "{{ lookup('ansible.builtin.file', privilege_checks_coder_proxy_config_source, rstrip=false) }}"
   when:
     - privilege_checks_coder_enabled | bool
     - not ansible_check_mode

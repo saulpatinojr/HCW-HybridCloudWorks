@@ -1562,6 +1562,47 @@ jobs:
           docker run --rm --network none -v "$out:/usr/local/etc/haproxy/haproxy.cfg:ro" "haproxy@${digest}" \
             haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
 
+      # Coder's Docker socket proxy runs the same image with the allowlist in
+      # lab-host/coder/docker-proxy.haproxy.cfg (since 2026-11-07, in place
+      # of tecnativa/docker-socket-proxy). HAProxy parses it here at the
+      # digest the host runs, as root with only DAC_OVERRIDE and a read-only
+      # root filesystem, the way docker-compose.yml runs it, so a line it
+      # would refuse fails here and not as a Coder that cannot reach Docker.
+      - name: Coder Docker proxy configuration parses
+        run: |
+          set -euo pipefail
+          digest="$(sed -n 's/^coder_docker_proxy_image_digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p' group_vars/all.yml)"
+          test -n "$digest"
+          docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add DAC_OVERRIDE \
+            --security-opt no-new-privileges:true --read-only \
+            -v "$GITHUB_WORKSPACE/lab-host/coder/docker-proxy.haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
+            "haproxy@${digest}" haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
+
+      # The same file, started: parsing proves the syntax, not that HAProxy
+      # stays up under the flags docker-compose.yml gives it (root with only
+      # DAC_OVERRIDE, a read-only root, no privilege gain). No network and no
+      # daemon socket behind it, which HAProxy does not need to start. The
+      # agent's proxy is started, and driven, by the step after Node.js below.
+      - name: Coder Docker proxy starts with the Compose runtime flags
+        run: |
+          set -euo pipefail
+          digest="$(sed -n 's/^coder_docker_proxy_image_digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p' group_vars/all.yml)"
+          test -n "$digest"
+          name=coder-docker-proxy-smoke
+          trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+          docker run -d --name "$name" --network none --user 0:0 --cap-drop ALL --cap-add DAC_OVERRIDE \
+            --security-opt no-new-privileges:true --read-only \
+            -v "$GITHUB_WORKSPACE/lab-host/coder/docker-proxy.haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
+            "haproxy@${digest}"
+          sleep 5
+          running="$(docker inspect -f '{{.State.Running}}' "$name")"
+          if [ "$running" != "true" ]; then
+            echo "::error::coder-docker-proxy did not stay up with the Compose runtime flags"
+            docker logs "$name" || true
+            exit 1
+          fi
+          echo "coder-docker-proxy is running"
+
       - name: Set up Node.js for the agent proxy run
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:

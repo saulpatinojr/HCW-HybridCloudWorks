@@ -645,8 +645,9 @@ bodies.
 **Decision.**
 
 1. **The agent leaves the docker group and reaches the host daemon through
-   its own socket proxy.** `hcw-labs-agent-docker-proxy` is HAProxy 3.4.6
-   (the newest LTS line) from Docker's official image, pinned by digest,
+   its own socket proxy.** `hcw-labs-agent-docker-proxy` is HAProxy 3.4
+   (the newest LTS line; 3.4.6 on Alpine when decided, the Debian 13
+   "trixie" variant since 2026-11-07) from Docker's official image, pinned by digest,
    with its configuration in this repository
    (`lab-host/ansible/roles/labs_agent/templates/docker-proxy.haproxy.cfg.j2`).
    It listens on a Unix socket owned `root:hcw-labs-agent` with mode 0660,
@@ -1031,7 +1032,9 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
 
   *Amendment 2026-10-06 (estate review, LAB-5):* the Coder server no longer
   holds the socket. A `coder-docker-proxy` Compose service (HAProxy, one
-  allow rule per Docker API section) mounts it read-only on a control
+  allow rule per Docker API section; tecnativa/docker-socket-proxy until
+  2026-11-07, then the official `haproxy` image on Debian 13 "trixie" with
+  the same rules written out in `lab-host/coder/docker-proxy.haproxy.cfg`) mounts it read-only on a control
   network the server alone shares with it, and the server reaches the
   daemon through it over `DOCKER_HOST`: containers, images, networks,
   volumes and the lifecycle verbs the provisioner uses, and nothing else —
@@ -1241,7 +1244,12 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
     unix:///run/hcw-coder-docker/docker.sock info` lists `name=rootless`,
     and `coder-docker-proxy` carries every policy key of
     `lab-host/coder/docker-compose.yml` with `/run/hcw-coder-docker` as its
-    one mount (the runbook's commands, with what good looks like).
+    one mount (the runbook's commands, with what good looks like). Since
+    2026-11-07 the policy is `lab-host/coder/docker-proxy.haproxy.cfg`,
+    mounted read-only beside that socket directory, in place of the
+    tecnativa/docker-socket-proxy image's environment switches; the
+    `privilege_checks` role compares the installed file with the
+    repository's.
   - Since the amendment of 2026-09-29, accepted and live that day: on the
     host, `sudo systemctl restart vault && sleep 5 && vault status` shows
     `Seal Type azurekeyvault` and `Sealed false`, and `az role assignment

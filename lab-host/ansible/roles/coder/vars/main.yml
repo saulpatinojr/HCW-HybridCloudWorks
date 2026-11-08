@@ -8,6 +8,13 @@ coder_docker_proxy_image_ref: "{{ coder_docker_proxy_image }}@{{ coder_docker_pr
 # The Compose file in this repository is the one source; the role copies it
 # rather than carrying a second copy under files/.
 coder_compose_source: "{{ role_path }}/../../../coder/docker-compose.yml"
+# The proxy's allowlist beside it, the same way. It is installed beside the
+# Compose file because docker-compose.yml mounts ./docker-proxy.haproxy.cfg,
+# so its path is not a setting. The sha256 is of the file's exact bytes
+# (rstrip=false keeps the last newline), as sha256sum prints it.
+coder_docker_proxy_config_source: "{{ role_path }}/../../../coder/docker-proxy.haproxy.cfg"
+coder_docker_proxy_config_file: "{{ coder_project_dir }}/docker-proxy.haproxy.cfg"
+coder_docker_proxy_config_sha256: "{{ lookup('ansible.builtin.file', coder_docker_proxy_config_source, rstrip=false) | hash('sha256') }}"
 # The launcher's files, the same way: the repository's lab-host/coder/launcher/
 # is the one source. They are named, so the role can remove anything else from
 # the directory Caddy serves; scripts/lab-host-launcher.test.mjs fails when

@@ -2301,14 +2301,25 @@ Good is `permission denied while trying to connect to the docker API`.
 Coder's proxy and the allowlist it runs with:
 
 ```bash
-sudo docker inspect coder-docker-proxy --format '{{range .Config.Env}}{{println .}}{{end}}{{range .Mounts}}mount {{.Source}}{{println}}{{end}}'
+sudo docker inspect coder-docker-proxy --format '{{.Config.Image}} readonly={{.HostConfig.ReadonlyRootfs}}{{println}}{{range .Mounts}}mount {{.Source}} rw={{.RW}}{{println}}{{end}}'
 ```
 
-Good is every `KEY="0"` or `KEY="1"` line of the `coder-docker-proxy`
-service in `lab-host/coder/docker-compose.yml` (on `main`) appearing as
-`KEY=0` or `KEY=1`, `SOCKET_PATH=/run/hcw-coder-docker/docker.sock`, and
-one mount line, `mount /run/hcw-coder-docker`. A `mount
-/var/run/docker.sock` line is the finding.
+Good is the `haproxy@sha256:` image whose digest is
+`coder_docker_proxy_image_digest` in `lab-host/ansible/group_vars/all.yml`
+(on `main`), `readonly=true`, and exactly two mount lines,
+`mount /etc/hcw/coder/docker-proxy.haproxy.cfg rw=false` and
+`mount /run/hcw-coder-docker rw=false`, in either order. A `mount
+/var/run/docker.sock` line is the finding. Since 2026-11-07 the allowlist
+is that file, not environment switches; the installed copy must match the
+checkout the playbook ran from:
+
+```bash
+sudo diff /opt/hcw-src/lab-host/coder/docker-proxy.haproxy.cfg /etc/hcw/coder/docker-proxy.haproxy.cfg && echo same
+```
+
+Good is `same`. Any other output is the difference, and re-running
+`bootstrap.sh` copies the file and recreates the proxy (the file's sha256
+is a label on the container, so a changed file changes the container).
 
 The daemon Coder's workspaces run on:
 

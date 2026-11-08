@@ -111,11 +111,13 @@ argument_specs:
       coder_docker_proxy_image:
         type: str
         required: true
-        description: The Docker socket proxy image the coder server reaches the daemon through (LAB-5), for example tecnativa/docker-socket-proxy.
+        description: >-
+          The Docker socket proxy image the coder server reaches the daemon through (LAB-5), haproxy (Docker's official
+          image), configured from lab-host/coder/docker-proxy.haproxy.cfg.
       coder_docker_proxy_image_tag:
         type: str
         required: true
-        description: The release the proxy digest was read from, for example 0.3.0. Recorded, not pulled.
+        description: The tag the proxy digest was read from, for example 3.4.7-trixie. Recorded, not pulled.
       coder_docker_proxy_image_digest:
         type: str
         required: true
