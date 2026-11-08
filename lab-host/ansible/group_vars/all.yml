@@ -262,6 +262,9 @@ coder_max_workspaces: 5
 # breaking changes are Tasks removal, MCP private CIDRs and HA pubsub, none of
 # which this host uses). The weekly pin bump reads each digest from the
 # registry again for every move and records the read in its pull request.
+# v2.38.6 was read 2026-11-08 from the registry's Docker-Content-Digest (twice,
+# fresh token each time) for #1589; coder:latest no longer matches the newest
+# numbered tag, so the pin follows the numbered v2.38 line, not latest.
 coder_image: ghcr.io/coder/coder
 coder_image_tag: v2.38.6
 coder_image_digest: sha256:c9245405c482ede17699d65deb8c21488a17feff5497fc84d6a350c395da2bdd
