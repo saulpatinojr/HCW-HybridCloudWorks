@@ -74,15 +74,16 @@ Neither repository had any open issues, and after this no pull requests are open
    are now on the v4.39.2 release, and a test fails if they are ever pinned apart. Every other action pin in both
    repositories was checked against its release tag, and all of them match.
 
-### Owner step still needed (the fix above is inert until this is done)
+### Owner step: done (the dedicated App was not needed)
 
-Create the small GitHub App once, for both App repositories, and add two Dependabot secrets to each. Tracked in
-[HCW-CloudCrawler_App#70](https://github.com/saulpatinojr/HCW-CloudCrawler_App/issues/70), which has every form value
-and the numbered steps. In short:
-an App named `HCW Lockfile Sync` with only **Contents: Read and write**, installed on the two App repositories. Its Client
-ID goes in the Dependabot secret `LOCKFILES_APP_CLIENT_ID`, and its private key in `LOCKFILES_APP_PRIVATE_KEY`. Until
-then the workflow stops with an error naming the two secrets, and a Dependabot Python pull request still requires a
-manual `make lock` run.
+The plan above first called for a separate GitHub App, `HCW Lockfile Sync`, with Dependabot secrets
+`LOCKFILES_APP_CLIENT_ID` and `LOCKFILES_APP_PRIVATE_KEY`. On 2026-11-04 the owner chose to reuse the HCW Main Admin
+App instead, and on 2026-11-05 installed it on both App repositories; its key was reset on 2026-11-06. The workflow
+reads the Dependabot secrets `HCW_MAIN_ADMIN_CLIENT_ID` and `HCW_MAIN_ADMIN_PRIVATE_KEY`, the old secret names were
+removed, and a test in each App repository fails if `LOCKFILES_APP` ever comes back. So the `HCW Lockfile Sync` App is
+not used anywhere and can be deleted. The last proof, a Dependabot Python pull request that regenerates the lockfile
+exports on its own, is tracked on
+[HCW-CloudCrawler_App#70](https://github.com/saulpatinojr/HCW-CloudCrawler_App/issues/70).
 
 ### Differences between the repositories that were found and fixed
 
@@ -162,8 +163,8 @@ After this, no pull requests or issues are open in either repository.
   uses the old name still works, though each push prints "This repository moved". Use the new name when starting
   a session for that repository.
 - NetworkEyes and MigrateOrchestrator have no lockfile export like CloudCrawler and CloudAssessor do. Their
-  Dependabot pull requests do not need the "HCW Lockfile Sync" App from the section above, so it is not installed
-  there.
+  Dependabot pull requests do not need the lockfile workflow or the HCW Main Admin App credential it uses
+  (see the section above).
 
 ### What this means for this repository and the add-ons
 
