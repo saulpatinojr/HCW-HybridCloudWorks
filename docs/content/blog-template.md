@@ -178,13 +178,20 @@ body, and a live preview, and a save is instant from any device. **Send to In
 Review** puts the article on the Content Queue; nothing is published from the
 Drafts page.
 
-The `blog-*.md` files in this directory were brought in once with **Import
-from docs/content** on that page, which reads each file from `main`, takes
-these seven keys from its front matter, and creates a draft. Importing again
-skips every file already imported, so it never duplicates and never
-overwrites. **After import, the Drafts page is the source of truth:** an edit
-made to a file here does not reach the site. The files stay as an archive for
-now. A new file added here can still be imported the same way, once.
+A draft written somewhere else comes in through **Paste or upload a markdown
+draft** on the same page: choose one or more `.md` files from the private
+vault, or paste one draft into the box. Each file is in the format this page
+describes, front matter first and then the article, and becomes a draft;
+nothing is published. A second upload of an article with the same title is
+reported as already present rather than saved again. **After the upload, the
+Drafts page is the source of truth:** a later edit to the file does not reach
+the site.
+
+Drafts never live in this repository, which is public. There is no longer an
+import from `docs/content` (the route that read files from `main` was
+removed), and the only `blog-*.md` files here are this template and
+`blog-machine.md`, which describe how articles are written and contain no
+article text.
 
 ## Code blocks
 

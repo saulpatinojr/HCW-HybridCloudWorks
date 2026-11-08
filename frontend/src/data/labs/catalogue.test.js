@@ -13,6 +13,9 @@ import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { VALID_PROVIDERS } from '@/context/ProviderContext';
 import { FALLBACK_JOB_TYPES } from '@/components/admin/labs/labsView';
+import { emitFiles } from '@/lib/landingZone/hcl/index';
+import { DEFAULT_STATE } from '@/lib/landingZone/state';
+import { ZIP_NAME } from '@/pages/tools/landingZone/LzFiles';
 import {
   CODER_APPS_ORIGIN,
   CODER_GITHUB_SIGN_IN_PATH,
@@ -286,6 +289,19 @@ describe('the lists the pages derive', () => {
       'ansible',
       'docker',
     ]);
+  });
+
+  it('names only the files the Landing Zone Builder really downloads (#1590)', () => {
+    // The lab walks a learner through the builder's own zip, so a file it
+    // names that the builder does not write is a step that cannot be followed.
+    const text = labById('landing-zone-builder-output')
+      .steps.map((s) => s.body)
+      .join('\n');
+    expect(text).toContain(`unzip ${ZIP_NAME} `);
+    const emitted = emitFiles(DEFAULT_STATE).map((f) => f.path);
+    const named = [...text.matchAll(/`([\w.-]+\.(?:tf|tfvars\.example|md))`/g)].map(([, n]) => n);
+    expect(named.length).toBeGreaterThan(0);
+    for (const name of named) expect(emitted).toContain(name);
   });
 
   it('knows each lab’s home provider', () => {

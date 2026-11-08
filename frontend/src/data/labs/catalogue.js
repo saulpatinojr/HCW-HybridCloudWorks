@@ -443,10 +443,10 @@ export const labs = Object.freeze([
           'The lab folder starts empty apart from a README. Drag the zip into the file explorer (or use File > Upload), then in the terminal:',
           '',
           '```bash',
-          'unzip landing-zone-*.zip -d landing-zone && cd landing-zone && ls',
+          'unzip landing-zone.zip -d landing-zone && cd landing-zone && ls',
           '```',
           '',
-          'You should see nine `.tf` files. Read `main.tf` first: the comments say why each call looks the way it does, not only what it is.',
+          "This lab uses the Terraform format, the builder's default, which downloads as `landing-zone.zip` (the OpenTofu and Terragrunt formats download under other names and change some of the files). For the full default build you should see nine `.tf` files (`terraform.tf`, `providers.tf`, `alz.tf`, `subscriptions.tf`, `management.tf`, `connectivity.tf`, `identity.tf`, `application.tf` and `variables.tf`), plus `terraform.tfvars.example` and `README.md`; a smaller build has fewer. Read `README.md` first: it lists the other files and the module version each component uses. Then open the `.tf` files: the comment at the top of each says why its calls look the way they do, not only what they are.",
         ])
       ),
       step(
@@ -467,7 +467,7 @@ export const labs = Object.freeze([
           'terraform validate',
           '```',
           '',
-          '`fmt -check` reports formatting only and changes nothing; `validate` checks that every reference resolves and every argument is one the provider or module accepts. Now open `main.tf`, misspell a reference inside one module call (for example the resource group name a module reads), and run `terraform validate` again. It names the file and line. Fix it and re-run until both pass.',
+          '`fmt -check` reports formatting only and changes nothing; `validate` checks that every reference resolves and every argument is one the provider or module accepts. Now open `management.tf`, misspell a reference inside its module call (for example `local.management_resource_group_name`, the resource group name the module reads), and run `terraform validate` again. It names the file and line. Fix it and re-run until both pass.',
         ])
       ),
       step(

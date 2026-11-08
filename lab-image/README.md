@@ -34,16 +34,25 @@ there, and checks the sandbox template's `FROM` against
 
 ## Sizes
 
-Measured on 2026-09-27 with Docker 29.8.0 (`docker image ls`, which since
+Measured on 2026-11-08 with Docker 29.9.2 (`docker image ls`, which since
 Docker 29 reports both the unpacked size on disk and the compressed size a
-pull transfers), on the Python 3.14.7 / Debian 13 base:
+pull transfers), on the images `publish-lab-image.yml` published from commit
+`e114a5a` (the Python 3.15.2 / Debian 13.7 base, the builder modules at the
+versions `versions.env` pins, listed under "What works offline"), pulled from Docker Hub:
 
 | Target   | On disk | Compressed (what a pull downloads) |
 | -------- | ------- | ---------------------------------- |
-| `runner` | 1.71 GB | 319 MB                             |
-| `full`   | 2.73 GB | 497 MB                             |
+| `runner` | 1.79 GB | 340 MB                             |
+| `full`   | 2.84 GB | 523 MB                             |
 
-Vendoring the fourth builder module that day (avm-res-network-virtualnetwork
+Docker Hub's own tag listing gives the same compressed sizes (340,233,209
+and 522,861,852 bytes). Inside the runner that day, `du -sh` gave 8.7 MB for
+`/opt/avm`, 928 MB for the provider mirror and 62 MB for the Kubernetes
+schemas.
+
+On 2026-09-27, with Docker 29.8.0 on the Python 3.14.7 / Debian 13 base, the
+two measured 1.71 GB / 319 MB and 2.73 GB / 497 MB. Vendoring the fourth
+builder module that day (avm-res-network-virtualnetwork
 0.22.2 and its one new child, avm-utl-interfaces 0.6.0) grew `/opt/avm` from
 5.7 MB to 7.5 MB and each image by 2.1 MB (`docker image inspect`: the
 runner 1,708,013,228 to 1,710,127,612 bytes), which the table's precision
@@ -62,8 +71,9 @@ Phase 1 measured 880 MB / 311 MB and 1.88 GB / 484 MB. The on-disk growth is
 the provider mirror, now unpacked (931 MB of binaries where the zips were
 191 MB) so that `terraform init` symlinks providers instead of extracting
 them; see "What works offline". The pull size barely moved, because a layer
-is compressed in transit whichever form the binaries take on disk. The
-vendored module tree is 7.5 MB and the Kubernetes schemas 62 MB on disk.
+is compressed in transit whichever form the binaries take on disk. In
+September the vendored module tree was 7.5 MB and the Kubernetes schemas
+62 MB on disk.
 
 ## Run the toolchain locally
 
@@ -148,10 +158,10 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   yes** (ADR 0032 decision 5). The builder modules are the four in
   `AVM_MODULES` in
   [`avmVersions.js`](../frontend/src/lib/landingZone/avmVersions.js), each at
-  the version the builder pins: `/opt/avm/avm-ptn-alz@0.21.0`,
+  the version the builder pins: `/opt/avm/avm-ptn-alz@0.22.0`,
   `/opt/avm/avm-ptn-alz-management@0.9.0`,
-  `/opt/avm/avm-ptn-alz-connectivity-hub-and-spoke-vnet@0.17.5` and
-  `/opt/avm/avm-res-network-virtualnetwork@0.22.2`, the module every spoke is
+  `/opt/avm/avm-ptn-alz-connectivity-hub-and-spoke-vnet@0.17.7` and
+  `/opt/avm/avm-res-network-virtualnetwork@0.22.3`, the module every spoke is
   built from. Each is the release source tarball of its
   `Azure/terraform-azurerm-<name>` repository, verified by SHA256.
 
@@ -166,7 +176,7 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   which runs in the `scripts (operations)` CI job on any change to either,
   and the weekly `update-avm-versions.yml` moves a pair in the same pull
   request as the builder's pin. Until 2026-09-27 the image carried only the
-  three pattern modules, so the spokes' 0.22.2 was left for the registry and
+  three pattern modules, so the spokes' module was left for the registry and
   the full default build could not init offline (#737); nothing compared the
   two lists then.
 
@@ -195,7 +205,7 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
 
   **Two versions of one module coexist**, as two directories:
   `avm-res-network-virtualnetwork@0.15.0` is the connectivity module's own
-  child (its hub network) and `@0.22.2` is the builder's spokes', and
+  child (its hub network) and `@0.22.3` is the builder's spokes', and
   `avm-utl-interfaces` is vendored at 0.2.0, 0.5.0 and 0.6.0. A child at
   exactly a builder module's `name@version` is not copied twice: its calls
   resolve to the builder module's directory.
@@ -235,7 +245,17 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   each start a plugin process. 320m passes, erratically, in 20 to 86 s and
   512m in 15 to 19 s (measured 2026-09-27), so the agent's default and the
   host's `labs_agent_job_memory` are 512m (owner decision that day; the
-  reason is beside the default in `vps-agent/index.js`).
+  reason is beside the default in `vps-agent/index.js`). At 512m the build
+  leans on swap: the agent also passes `--memory-swap` at twice the memory
+  limit, which lets the job use up to as much swap again, but only on a
+  machine that has swap. On 2026-11-08, with the image published from
+  `e114a5a`, the same check passed in 4 of 4 runs on a machine with 2 GB of
+  swap, and in 1 of 3 on the same machine with none, where the kernel log
+  showed the other two killed for running out of memory inside the job's
+  limit. The lab host had no swap when it was last read (2026-10-26, "Host
+  memory" in [the labs host runbook](../docs/runbooks/labs-host.md)), so
+  the no-swap result is the one that looks like the host. The limit is
+  unchanged until the build is re-measured on the host itself (#1590).
 - **Helm and kubeconform: yes.** [`bin/hcw-helm-template`](bin/hcw-helm-template)
   renders one chart (its `Chart.yaml` at `/workspace` or one level down;
   dependencies must already be under `charts/`).

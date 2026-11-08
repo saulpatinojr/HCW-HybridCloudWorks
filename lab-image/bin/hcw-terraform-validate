@@ -22,7 +22,7 @@ The rewrite is the whole reason this is a script and not a one-liner:
     as written, so `init` fails loudly with "registry.terraform.io ... no
     such host" under --network none rather than validating against a module
     the learner did not ask for.
-  - The new source is a RELATIVE path (`../../opt/avm/<name>@<version>` from
+  - The new source is a RELATIVE path (`../../../opt/avm/<name>@<version>` from
     /tmp/run/src): Terraform uses `./` and `../` paths in place, while an
     absolute path is a `file://` source it copies onto the tmpfs first.
 
