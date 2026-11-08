@@ -200,10 +200,17 @@ test('the proxy policy is exactly the allowlist the provisioner needs, every sec
   for (const off of ['exec', 'build', 'commit', 'auth', 'secrets', 'swarm', 'services', 'nodes', 'tasks', 'system', 'plugins', 'session', 'distribution', 'configs', 'grpc']) {
     assert.equal(frontend.filter((line) => line.includes(`/${off}`)).length, 0, `${off} is not allowed`);
   }
-  // One unconditional deny after the allows, and no other http-request rule.
+  // First the method gate (owner decision on #1587, 2026-11-08: GET and HEAD,
+  // POST and DELETE only, so PUT /containers/{id}/archive is refused), then the
+  // allows, then one unconditional deny, and no other http-request rule.
   const rules = frontend.filter((line) => /^\s*http-request\s/.test(line)).map((line) => line.trim());
+  assert.equal(
+    rules[0],
+    'http-request deny unless METH_GET || METH_POST || METH_DELETE',
+    'only GET/HEAD, POST and DELETE reach the path rules',
+  );
   assert.equal(rules.at(-1), 'http-request deny', 'everything else is refused');
-  assert.equal(rules.length, allow.length + 1, 'no rule but the allows and the final deny');
+  assert.equal(rules.length, allow.length + 2, 'no rule but the method gate, the allows and the final deny');
   assert.deepEqual(
     frontend.filter((line) => /^\s*bind\s/.test(line)).map((line) => line.trim()),
     ['bind :2375'],
