@@ -263,8 +263,8 @@ coder_max_workspaces: 5
 # which this host uses). The weekly pin bump reads each digest from the
 # registry again for every move and records the read in its pull request.
 coder_image: ghcr.io/coder/coder
-coder_image_tag: v2.38.5
-coder_image_digest: sha256:28de41a8546e37e0fbed91565a4acd76ec7571f3317f34937c6f556a16ab71cf
+coder_image_tag: v2.38.6
+coder_image_digest: sha256:c9245405c482ede17699d65deb8c21488a17feff5497fc84d6a350c395da2bdd
 # PostgreSQL, a digest of the same kind. Read 2026-09-26: 18 is the newest major
 # (supported to November 2030), its newest numbered tag and postgres:18
 # resolved to the same index, and the registry's Docker-Content-Digest and the
