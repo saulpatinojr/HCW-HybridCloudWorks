@@ -1034,7 +1034,8 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
   holds the socket. A `coder-docker-proxy` Compose service (HAProxy, one
   allow rule per Docker API section; tecnativa/docker-socket-proxy until
   2026-11-07, then the official `haproxy` image on Debian 13 "trixie" with
-  the same rules written out in `lab-host/coder/docker-proxy.haproxy.cfg`) mounts it read-only on a control
+  the same rules written out in `lab-host/coder/docker-proxy.haproxy.cfg`,
+  plus a GET/HEAD, POST and DELETE method gate since 2026-11-08) mounts it read-only on a control
   network the server alone shares with it, and the server reaches the
   daemon through it over `DOCKER_HOST`: containers, images, networks,
   volumes and the lifecycle verbs the provisioner uses, and nothing else —

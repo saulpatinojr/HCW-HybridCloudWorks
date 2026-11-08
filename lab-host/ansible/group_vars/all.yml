@@ -283,7 +283,8 @@ coder_postgres_image_digest: sha256:3a4264520e121176619f54ff867d12774bc81e95e7b8
 # line; since then it is the same official image and pin as the agent's
 # proxy below (Debian 13 "trixie", owner goal of 2026-11-07), and the
 # allowlist is that file, a line-for-line translation of what the old image's
-# settings allowed. The digest was read 2026-11-07 the way the agent's is.
+# settings allowed, plus a GET/HEAD, POST and DELETE method gate since
+# 2026-11-08. The digest was read 2026-11-07 the way the agent's is.
 coder_docker_proxy_image: haproxy
 coder_docker_proxy_image_tag: "3.4.7-trixie"
 coder_docker_proxy_image_digest: sha256:f6d2ee87b47192d9cc8c22e88fef405122ff339859644883edc2a7d1827f87b3

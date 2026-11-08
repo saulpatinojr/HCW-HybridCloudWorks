@@ -167,7 +167,8 @@ services:
   # swarm, no system prune, no daemon auth. Since 2026-11-07 the image is the
   # official haproxy one on Debian 13 "trixie", the same pin as the lab
   # agent's proxy; before that it was tecnativa/docker-socket-proxy 0.3.0,
-  # whose settings the configuration file translates line for line.
+  # whose settings the configuration file translates line for line, plus
+  # a GET/HEAD, POST and DELETE method gate since 2026-11-08.
   #
   # Which daemon (2026-10-07, LAB-5). The proxy inspects paths, not bodies,
   # so code running as the coder server could still create a privileged
