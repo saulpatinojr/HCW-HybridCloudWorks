@@ -79,10 +79,15 @@ Neither repository had any open issues, and after this no pull requests are open
 The plan above first called for a separate GitHub App, `HCW Lockfile Sync`, with Dependabot secrets
 `LOCKFILES_APP_CLIENT_ID` and `LOCKFILES_APP_PRIVATE_KEY`. On 2026-11-04 the owner chose to reuse the HCW Main Admin
 App instead, and on 2026-11-05 installed it on both App repositories; its key was reset on 2026-11-06. The workflow
-reads the Dependabot secrets `HCW_MAIN_ADMIN_CLIENT_ID` and `HCW_MAIN_ADMIN_PRIVATE_KEY`, the old secret names were
-removed, and a test in each App repository fails if `LOCKFILES_APP` ever comes back. So the `HCW Lockfile Sync` App is
-not used anywhere and can be deleted. The last proof, a Dependabot Python pull request that regenerates the lockfile
-exports on its own, is tracked on
+reads the Dependabot secrets `HCW_MAIN_ADMIN_CLIENT_ID` and `HCW_MAIN_ADMIN_PRIVATE_KEY`, and a test in each App
+repository fails if `LOCKFILES_APP` ever comes back into a workflow. The removal of the old `LOCKFILES_APP_CLIENT_ID`
+secret from both repositories is recorded on #70 (2026-11-05); no record says whether a `LOCKFILES_APP_PRIVATE_KEY` was
+ever added, and a session cannot list secrets, so the owner checks each repository's Dependabot secrets page
+(`https://github.com/saulpatinojr/HCW-CloudCrawler_App/settings/secrets/dependabot` and the same for
+HCW-CloudAssessor_App) and deletes it if it is there. Nothing uses the `HCW Lockfile Sync` App, so it can be deleted
+(GitHub's [Deleting a GitHub App](https://docs.github.com/en/apps/maintaining-github-apps/deleting-a-github-app)).
+**Still pending:** the last proof, a Dependabot Python pull request that regenerates the lockfile exports on its own
+(expected Monday 2026-11-09), tracked on
 [HCW-CloudCrawler_App#70](https://github.com/saulpatinojr/HCW-CloudCrawler_App/issues/70).
 
 ### Differences between the repositories that were found and fixed
