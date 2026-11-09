@@ -35,6 +35,17 @@
 # Python and cannot be loaded by another interpreter.
 set -euo pipefail
 
+# GitHub release downloads sometimes answer 504 Gateway Time-out for a while
+# (2026-11-09: about half of them for over half an hour). Each download below
+# is checked against a pinned SHA256, and the PyYAML wheel against its
+# attestation too, before it is used, so retrying cannot let a different file
+# through; it only stops a passing outage from failing the whole run. A try is
+# cut only when it stalls (under 10 kB/s for a minute), never for being slow:
+# cosign alone is about 146 MB. scripts/lab-host-bootstrap-ansible-core.test.mjs
+# fails if a curl here loses these flags (under set -u an undefined array
+# expands to nothing, so a typo would drop them silently).
+HCW_CURL_RETRY=(--retry 6 --retry-delay 10 --retry-all-errors --connect-timeout 20 --speed-limit 10000 --speed-time 60)
+
 # Tool versions. A bump is an edit here and a re-run.
 # uv 0.13.6 (released 2026-10-26), the newest release and the first whose
 # built-in list of interpreters has CPython 3.15.2 (0.12.19 stopped at
@@ -411,7 +422,7 @@ if ! "${UV_BIN}" --version 2>/dev/null | grep -qx "uv ${UV_VERSION}\( .*\)\?"; t
   uv_tmp="$(mktemp -d)"
   trap 'rm -rf "${uv_tmp}"' EXIT
   uv_archive=uv-x86_64-unknown-linux-gnu.tar.gz
-  curl -fsSL --proto '=https' --tlsv1.2 -o "${uv_tmp}/${uv_archive}" \
+  curl -fsSL --proto '=https' --tlsv1.2 "${HCW_CURL_RETRY[@]}" -o "${uv_tmp}/${uv_archive}" \
     "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uv_archive}"
   if [ "$(sha256sum "${uv_tmp}/${uv_archive}" | cut -d ' ' -f 1)" != "${UV_SHA256}" ]; then
     echo "refusing to install uv: ${uv_archive} does not match UV_SHA256" >&2
@@ -428,7 +439,7 @@ if ! "${COSIGN_BIN}" version 2>/dev/null | grep -q "${COSIGN_VERSION}"; then
   cosign_tmp="$(mktemp -d)"
   trap 'rm -rf "${cosign_tmp}"' EXIT
   cosign_binary=cosign-linux-amd64
-  curl -fsSL --proto '=https' --tlsv1.2 -o "${cosign_tmp}/${cosign_binary}" \
+  curl -fsSL --proto '=https' --tlsv1.2 "${HCW_CURL_RETRY[@]}" -o "${cosign_tmp}/${cosign_binary}" \
     "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/${cosign_binary}"
   if [ "$(sha256sum "${cosign_tmp}/${cosign_binary}" | cut -d ' ' -f 1)" != "${COSIGN_SHA256}" ]; then
     echo "refusing to install cosign: ${cosign_binary} does not match COSIGN_SHA256" >&2
@@ -673,8 +684,8 @@ if [ -n "${PYYAML_WHEEL_SHA256}" ]; then
   hcw_pyyaml_base="https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/${hcw_pyyaml_tag}"
   log "taking PyYAML ${PYYAML_VERSION} for CPython ${PYTHON_VERSION} from the ${hcw_pyyaml_tag} release of this repository, SHA256 and provenance checked"
   for hcw_pyyaml_file in "${hcw_pyyaml_wheel}" "${hcw_pyyaml_wheel}.sigstore.json"; do
-    if ! curl -fsSL --proto '=https' --tlsv1.2 -o "${hcw_pyyaml_dir}/${hcw_pyyaml_file}" "${hcw_pyyaml_base}/${hcw_pyyaml_file}"; then
-      echo "refusing to run: could not download ${hcw_pyyaml_base}/${hcw_pyyaml_file}; the ${hcw_pyyaml_tag} release may not exist yet for this Python line, or may be missing that file (docs/runbooks/pyyaml-wheel.md says how it is published and repaired)" >&2
+    if ! curl -fsSL --proto '=https' --tlsv1.2 "${HCW_CURL_RETRY[@]}" -o "${hcw_pyyaml_dir}/${hcw_pyyaml_file}" "${hcw_pyyaml_base}/${hcw_pyyaml_file}"; then
+      echo "refusing to run: could not download ${hcw_pyyaml_base}/${hcw_pyyaml_file}; GitHub's release downloads may have failed on every retry (curl's error is above; https://www.githubstatus.com/ shows outages, and running this script again is safe), or the ${hcw_pyyaml_tag} release may not exist yet for this Python line, or may be missing that file (docs/runbooks/pyyaml-wheel.md says how it is published and repaired)" >&2
       exit 1
     fi
   done

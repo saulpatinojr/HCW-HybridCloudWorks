@@ -69,6 +69,22 @@ function expectedRequirements(envText) {
 const WRITE_BLOCK = cut(SCRIPT, 'hcw_ansible_requirements="$(mktemp)"', 'fi');
 
 describe('bootstrap.sh and lab-image/versions.env', () => {
+  it('retries every download, with a retry array defined before its first use', () => {
+    // Under set -u an undefined array still expands to nothing, so a renamed or
+    // deleted HCW_CURL_RETRY would drop the retries without any error.
+    const lines = SCRIPT.split('\n');
+    const defined = lines.findIndex((line) => line.startsWith('HCW_CURL_RETRY=('));
+    expect(defined, 'HCW_CURL_RETRY=( not found').toBeGreaterThan(-1);
+    expect(lines[defined]).toMatch(/--retry \d+ .*--retry-all-errors/);
+    const curls = lines.map((line, i) => [line, i]).filter(([line]) => /(^|[\s!(])curl\s+-/.test(line) && !line.trim().startsWith('#'));
+    const downloads = curls.filter(([line]) => line.includes(' -o '));
+    expect(downloads.length).toBeGreaterThanOrEqual(3);
+    for (const [line, i] of downloads) {
+      expect(line, `line ${i + 1}`).toContain('"${HCW_CURL_RETRY[@]}"');
+      expect(i).toBeGreaterThan(defined);
+    }
+  });
+
   it('carries no ansible-core pin of its own', () => {
     // The reader names the three keys and resets them to '', so the check is
     // on values: no release, no digest and no pinned wheel line anywhere.
@@ -634,6 +650,7 @@ describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the releas
   const STAND_IN_CURL = [
     '#!/usr/bin/env bash',
     'set -euo pipefail',
+    'printf "%s\\n" "$*" >>"$CURL_STUB_LOG.args"',
     'out=""; while [ "$#" -gt 1 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done',
     'printf "%s\\n" "$1" >>"$CURL_STUB_LOG"',
     '[ "${CURL_STUB_FAIL:-}" != 1 ] || { echo "curl: (22) The requested URL returned error: 404" >&2; exit 22; }',
@@ -645,6 +662,9 @@ describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the releas
     'exit "${COSIGN_STUB_FAIL:-0}"',
   ];
 
+  // The script's own retry line, so the downloads below run with the flags the host uses.
+  const CURL_RETRY_LINE = SCRIPT.split('\n').find((line) => line.startsWith('HCW_CURL_RETRY=('));
+
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'hcw-bootstrap-pyyaml-'));
     writeFileSync(join(dir, 'uv'), `${STAND_IN_UV.join('\n')}\n`, { mode: 0o755 });
@@ -652,6 +672,7 @@ describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the releas
     writeFileSync(join(dir, 'cosign'), `${STAND_IN_COSIGN.join('\n')}\n`, { mode: 0o755 });
     const preamble = [
       'set -euo pipefail',
+      CURL_RETRY_LINE,
       'log() { printf "[bootstrap] %s\\n" "$*"; }',
       'install() { local a=(); while [ "$#" -gt 0 ]; do case "$1" in -o | -g) shift 2 ;; *) a+=("$1"); shift ;; esac; done; command install "${a[@]}"; }',
       // bash splits PATH on ':', so a Windows path with a drive letter would
@@ -689,6 +710,9 @@ describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the releas
     expect(result.stdout).toContain(`taking PyYAML ${pyyamlVersion} for CPython ${PINNED_PYTHON} from the ${tag} release`);
     const base = `https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/${tag}`;
     expect(logOf('curl.log').split('\n')).toEqual([`${base}/${wheel}`, `${base}/${wheel}.sigstore.json`]);
+    for (const args of logOf('curl.log.args').split('\n')) {
+      expect(args).toContain('--retry 6 --retry-delay 10 --retry-all-errors');
+    }
     const cosign = logOf('cosign.log');
     expect(cosign).toContain('verify-blob-attestation --type slsaprovenance1 --bundle ');
     expect(cosign).not.toContain('--new-bundle-format');
@@ -736,10 +760,12 @@ describe.skipIf(!linksReady)('the self-built PyYAML wheel, taken from the releas
     expect(inUse()).toBe('');
   });
 
-  it('says which file could not be downloaded and where the release is documented, when the download fails', () => {
+  it('says which file could not be downloaded, that a GitHub outage is a likely cause, and where the release is documented, when the download fails', () => {
     const result = step(withWheel(WHEEL_SHA256), { CURL_STUB_FAIL: '1' });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`refusing to run: could not download https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/${tag}/${wheel}; the ${tag} release may not exist yet`);
+    expect(result.stderr).toContain(`refusing to run: could not download https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/download/${tag}/${wheel}; GitHub's release downloads may have failed on every retry`);
+    expect(result.stderr).toContain('running this script again is safe');
+    expect(result.stderr).toContain(`or the ${tag} release may not exist yet`);
     expect(result.stderr).toContain('docs/runbooks/pyyaml-wheel.md');
     expect(logOf('cosign.log')).toBe('');
     expect(logOf('uv.log')).not.toContain('pip install');
