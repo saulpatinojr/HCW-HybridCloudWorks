@@ -44,12 +44,14 @@ labs_agent_api_scope: "{{ vault_labs_agent_api_scope | default('') }}"
 # Job limits, the defaults from vps-agent/.env.example.
 labs_agent_max_concurrent: 1
 labs_agent_poll_ms: 15000
-# 512m since 2026-09-27 (owner decision). At 256m `terraform validate` of the
+# 768m since 2026-11-09 (#1590): at 512m, on this host with no swap, one of
+# three full-default-build checks was killed for running out of memory.
+# 512m from 2026-09-27 (owner decision). At 256m `terraform validate` of the
 # Landing Zone Builder's full default build is OOM-killed (exit 247) after an
 # offline init that succeeded; 320m passes in 20 to 86 s, 512m in 15 to 19 s.
 # One job at a time on a 16 GB host makes the margin cheap. The measurement
 # and the reason are beside the agent's own default in vps-agent/index.js.
-labs_agent_job_memory: 512m
+labs_agent_job_memory: 768m
 labs_agent_job_cpus: "0.5"
 labs_agent_job_pids: 128
 labs_agent_job_nofile: 1024

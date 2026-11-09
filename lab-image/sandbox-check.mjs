@@ -28,7 +28,8 @@
  * emits a module or a version the image does not vendor fails this check
  * (ADR 0032 decision 5). It runs at the agent's own limits like every other
  * case, which is what set those limits: at 256m of memory its `terraform
- * validate` was OOM-killed, so the agent's default is 512m (vps-agent/index.js
+ * validate` was OOM-killed, and at 512m on the swapless lab host one run in
+ * three was (#1590), so the agent's default is 768m (vps-agent/index.js
  * says why). The builder imports its siblings without a `.js` extension, as
  * Vite allows; the one resolve hook below adds it, and it applies to nothing
  * but those relative imports.

@@ -60,7 +60,11 @@ const config = {
   pollIntervalMs: Number(process.env.LABS_AGENT_POLL_MS || 15000),
   maxConcurrentJobs: Number(process.env.LABS_AGENT_MAX_CONCURRENT || 1),
   limits: {
-    // 512m, not the 256m this was until 2026-09-27 (owner decision that day).
+    // 768m since 2026-11-09 (#1590): on the lab host itself, which has no
+    // swap, lab-image/sandbox-check.mjs at 512m passed 2 of 3 runs and the
+    // third had `terraform` killed by the job's memory cgroup during the
+    // full default build. 512m from 2026-09-27 (owner decision that day),
+    // 256m before that.
     // The Landing Zone Builder's full default build, both landing zones
     // included, is OOM-killed by `terraform validate` at 256m: exit 247,
     // docker inspect OOMKilled true, after an offline init that succeeded,
@@ -70,9 +74,10 @@ const config = {
     // but erratically, in 20 to 86 s across four runs, and 512m in 15 to
     // 19 s every time. The host runs one job at a time
     // (LABS_AGENT_MAX_CONCURRENT=1, labs_agent_max_concurrent) on a 16 GB
-    // VPS, so 512m buys margin over the 320m floor for next to nothing.
+    // VPS, so 768m buys margin over the measured edge for next to nothing:
+    // at most 256 MiB more than 512m, for the one job that can run.
     // lab-image/sandbox-check.mjs runs every job at these limits.
-    memory: process.env.LABS_AGENT_JOB_MEMORY || '512m',
+    memory: process.env.LABS_AGENT_JOB_MEMORY || '768m',
     cpus: process.env.LABS_AGENT_JOB_CPUS || '0.5',
     pidsLimit: Number(process.env.LABS_AGENT_JOB_PIDS || 128),
     // Open files per job container (LAB-13, #959). The swap bound is not a
