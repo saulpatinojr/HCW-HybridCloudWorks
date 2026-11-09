@@ -38,7 +38,7 @@ Measured on 2026-11-08 with Docker 29.9.2 (`docker image ls`, which since
 Docker 29 reports both the unpacked size on disk and the compressed size a
 pull transfers), on the images `publish-lab-image.yml` published from commit
 `e114a5a` (the Python 3.15.2 / Debian 13.7 base, the builder modules at the
-versions `versions.env` pins, listed under "What works offline"), pulled from Docker Hub:
+versions [`versions.env` pinned at that commit](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/e114a5a/lab-image/versions.env)), pulled from Docker Hub:
 
 | Target   | On disk | Compressed (what a pull downloads) |
 | -------- | ------- | ---------------------------------- |
@@ -183,8 +183,9 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   two lists then.
 
   **The children.** Terraform has a provider mirror but no module mirror,
-  and measured in #686 `avm-ptn-alz` calls one registry module and the
-  connectivity module thirteen, some from inside its own nested modules.
+  and when measured in #686 `avm-ptn-alz` called one registry module and the
+  connectivity module thirteen, some from inside its own nested modules
+  (`AVM_CHILD_CALLS` in `versions.env` has today's list).
   [`vendor-avm.sh`](vendor-avm.sh) runs `terraform get` on each builder
   module at build time, copies each distinct child once to
   `/opt/avm/<name>@<version>` (one pair per entry of `AVM_CHILD_MODULES` in
@@ -208,8 +209,8 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   **Two versions of one module can coexist**, as two directories:
   `avm-res-network-virtualnetwork` is both the connectivity module's own
   child (its hub network) and the builder's spokes' module, usually at
-  different versions, and `avm-utl-interfaces` is vendored at more than one
-  version. `AVM_CHILD_MODULES` lists which. A child at
+  different versions, and `avm-utl-interfaces` can be vendored at more than
+  one version. `AVM_CHILD_MODULES` lists which. A child at
   exactly a builder module's `name@version` is not copied twice: its calls
   resolve to the builder module's directory.
 

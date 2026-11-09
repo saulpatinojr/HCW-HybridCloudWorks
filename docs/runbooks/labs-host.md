@@ -1149,7 +1149,7 @@ https://hybridcloudworks.com/tools/landing-zone, open the files and press
 **Validate on the lab**. The line beside it goes from *Queued on the lab…* to
 *Running on the lab…*, and the report under it reads *The configuration is
 valid: Terraform found no errors.*, then **Modules used** (the default build
-lists four, such as `avm-ptn-alz@0.21.0`) and **Providers** (six, such as
+lists the four builder modules, such as `avm-ptn-alz` with the version the builder pins) and **Providers** (six, such as
 `hashicorp/azurerm v4.81.0`). The visitor never sees the job log: no image
 pull, no `/opt/avm` path, no `(unauthenticated)`. The log itself is on the
 job at https://hybridcloudworks.com/admin/labs?tab=jobs, claimed by
