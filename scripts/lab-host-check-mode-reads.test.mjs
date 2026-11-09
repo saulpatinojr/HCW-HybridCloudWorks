@@ -106,11 +106,6 @@ function includedFile(task, file) {
 }
 
 /**
- * In a template, a guard that keeps the read out of a check run.
- */
-const CHECK_MODE_GUARD = /\bnot\s+ansible_check_mode\b/;
-
-/**
  * Whether one ANDed condition keeps everything after it from being evaluated
  * in a check run. It must be the guard itself (`guard`, a regex matching the
  * whole condition), or start with it and continue only with `and`: an `or`
@@ -155,6 +150,44 @@ const isCommandTask = (task) => Object.keys(task).some((key) => COMMAND_MODULES.
 /** A reference to the output fields of registered result `name`. */
 const outputRef = (name) =>
   new RegExp(`\\b${name}(?:\\.(?:stdout|stdout_lines|stderr|stderr_lines|rc|results)\\b|\\[['"](?:stdout|stdout_lines|stderr|stderr_lines|rc|results)['"]\\])`);
+
+/**
+ * Whether every read of `ref` in `text` is kept out of a check run by a guard
+ * of its own, not by one elsewhere in the same file or task (Copilot review,
+ * #1630). A read counts as guarded when either
+ *   - it sits behind `not ansible_check_mode and` in the same `{{ }}`, with no
+ *     `or` between the guard and the read, or
+ *   - it sits inside a `{% if not ansible_check_mode %}` block still open at
+ *     the read: every `{% if %}` opened after the guard is closed again, and
+ *     no `{% else %}` or `{% elif %}` of the guard's own block comes first.
+ */
+function everyReadGuarded(text, ref) {
+  const reads = [...text.matchAll(new RegExp(ref.source, 'g'))];
+  return (
+    reads.length > 0 &&
+    reads.every(({ index }) => {
+      const open = text.lastIndexOf('{{', index);
+      if (open >= 0 && text.lastIndexOf('}}', index) < open) {
+        const before = text.slice(open, index);
+        const at = before.search(/\bnot\s+ansible_check_mode\s+and\b/);
+        if (at >= 0 && !/\bor\b/.test(before.slice(at))) return true;
+      }
+      const head = text.slice(0, index);
+      const guardRe = /\{%-?\s*if\s+not\s+ansible_check_mode\s*-?%\}/g;
+      let start = -1;
+      for (const m of head.matchAll(guardRe)) start = m.index + m[0].length;
+      if (start < 0) return false;
+      let depth = 0;
+      for (const tag of head.slice(start).matchAll(/\{%-?\s*(if|endif|else|elif)\b/g)) {
+        if (tag[1] === 'if') depth += 1;
+        else if (tag[1] === 'endif') depth -= 1;
+        else if (depth === 0) return false;
+        if (depth < 0) return false;
+      }
+      return true;
+    })
+  );
+}
 
 /**
  * Every place a command result that is not produced in check mode is read
@@ -203,22 +236,14 @@ export function unguardedCheckModeReads(taskFiles, textFiles = {}) {
       if (!guarded && !whenReads) {
         const { when: _when, ...body } = reader.task;
         const bodyText = JSON.stringify(body).replace(/\\[nt]/g, ' ');
-        const reads = [...bodyText.matchAll(new RegExp(ref.source, 'g'))];
-        guarded =
-          reads.length > 0 &&
-          reads.every(({ index }) => {
-            const open = bodyText.lastIndexOf('{{', index);
-            const before = open < 0 ? '' : bodyText.slice(open, index);
-            const at = before.search(/\bnot\s+ansible_check_mode\s+and\b/);
-            return at >= 0 && !/\bor\b/.test(before.slice(at));
-          });
+        guarded = everyReadGuarded(bodyText, ref);
       }
       if (!guarded) {
         found.push(`${reader.file}: task "${reader.task.name}" reads ${name} (from ${producer.file}: task "${producer.task.name}")`);
       }
     }
     for (const [file, text] of Object.entries(textFiles)) {
-      if (ref.test(text) && !CHECK_MODE_GUARD.test(text)) {
+      if (ref.test(text) && !everyReadGuarded(text, ref)) {
         found.push(`${file} reads ${name} (from ${producer.file}: task "${producer.task.name}")`);
       }
     }
@@ -308,6 +333,16 @@ describe('command results read later are produced in check mode, or read behind 
     expect(
       unguardedCheckModeReads({ 'r/a.yml': [awkRead, include('not ansible_check_mode'), include('x')], 'r/b.yml': [usermod] }),
     ).toHaveLength(1);
+  });
+
+  it('takes a template guard only for the read it covers, not for the whole file (Copilot review, #1630)', () => {
+    const read = (file) => unguardedCheckModeReads({ 'x.yml': [awkRead] }, { 'x.j2': file });
+    expect(read('{% if not ansible_check_mode %}{{ ids.rc }}{% endif %}')).toEqual([]);
+    expect(read('{{ not ansible_check_mode and ids.rc == 0 }}')).toEqual([]);
+    expect(read('{% if not ansible_check_mode %}x{% endif %}\n{{ ids.stdout }}')).toHaveLength(1);
+    expect(read('{{ ids.stdout }}\n{# not ansible_check_mode #}')).toHaveLength(1);
+    expect(read('{% if not ansible_check_mode %}a{% else %}{{ ids.rc }}{% endif %}')).toHaveLength(1);
+    expect(read('{% if not ansible_check_mode %}{% if y %}z{% endif %}{{ ids.rc }}{% endif %}')).toEqual([]);
   });
 
   it('does not take `| default` as a guard, and reads templates', () => {
