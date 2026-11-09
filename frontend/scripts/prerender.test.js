@@ -27,6 +27,7 @@ import {
   SEED_ATTRIBUTE,
   MOUNT_POINT_PATTERN,
 } from './prerender.mjs';
+import { routes as prerenderRoutes } from './prerender-entry.jsx';
 // Imported rather than read from a path, so the JSON is parsed once by the
 // bundler and a malformed file fails at import instead of mid-assertion.
 //
@@ -484,6 +485,39 @@ describe('the deploy workflow mount-point check', () => {
 
   it('rejects the untouched vite template', () => {
     expect(new RegExp(MOUNT_POINT_PATTERN).test(TEMPLATE)).toBe(false);
+  });
+});
+
+/**
+ * The live probe after the upload, tied to the page it asks for (#1613).
+ *
+ * The probe asked for `/news` until #1613, a page the site never builds. It
+ * answered 200 only because the old catch-all sent the app to every address.
+ * Once that catch-all went, every deploy would have failed after uploading.
+ * So the probe now asks for `/about`, a page the build writes, and requires
+ * the mark the pre-render puts on it; these tests fail when either side moves.
+ */
+describe('the deploy workflow live probe', () => {
+  const workflow = readFileSync(
+    join(REPO_ROOT, '.github', 'workflows', 'deploy-azure-frontend.yml'),
+    'utf8'
+  );
+
+  it('asks for a page the build writes, and for the mark the pre-render stamps on it', () => {
+    const url = /PRERENDER_URL="https:\/\/\$\{DEFAULT_HOSTNAME\}([^"]+)"/.exec(workflow);
+    expect(url, 'the workflow no longer sets PRERENDER_URL').not.toBe(null);
+    expect(prerenderRoutes()).toContain(url[1]);
+    const mark = /PRERENDER_MARK='([^']+)'/.exec(workflow);
+    expect(mark, 'the workflow no longer sets PRERENDER_MARK').not.toBe(null);
+    const html = injectIntoTemplate(TEMPLATE, { head: '', body: '<main>real</main>' }, url[1]);
+    expect(html).toContain(mark[1]);
+  });
+
+  it('asks for a made-up address and expects 404', () => {
+    expect(workflow).toMatch(/MISSING_PATH="\/__deploy-probe-\$\{GITHUB_RUN_ID\}"/);
+    expect(workflow).toMatch(/probe_url "\$\{MISSING_URL\}" "[^"]*" 404 /);
+    // The address must not be one the site builds, or the probe would read 200.
+    expect(prerenderRoutes().some((route) => route.startsWith('/__deploy-probe-'))).toBe(false);
   });
 });
 
