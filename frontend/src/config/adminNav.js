@@ -209,8 +209,7 @@ export function roleLabel(role) {
  *   Integrations       editor     connectionProbe (integrations/connection-probe.js), cms/integration-status
  *                                 (integrations/integration-status.js); the Keys tab's cms/secrets is super_admin (admin-secrets.js)
  *   Cost               editor     cms/cost/summary, cms/cost/services, cms/cost/settings (cost/handlers.js, ADR 0039)
- *   Search Console     editor     cms/search-console and its Run now, cms/search-console/run (#1612); the
- *                                 backend was written alongside this page, so check its requireRole if it differs
+ *   Search Console     editor     cms/search-console and cms/search-console/run (search-console/handlers.js, #1612)
  *   Doc Vault          publisher  cms/doc-vault (doc-vault/handlers.js), every route, reads included: the vault holds
  *                                 private letters and applications, so it is above the editor role (doc-vault/model.js)
  */

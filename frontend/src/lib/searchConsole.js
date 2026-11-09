@@ -148,6 +148,25 @@ export function canonicalMismatch(page) {
   return google !== declared;
 }
 
+/**
+ * The addresses the page will turn into links. The report comes from the
+ * server, but its links were written by Google and by the sitemap, so the
+ * page only links to the two places they should point: Google's own
+ * inspection screen and the public site. Anything else is shown as text.
+ */
+export const GOOGLE_INSPECTION_PREFIX = 'https://search.google.com/';
+export const SITE_PAGE_PREFIX = 'https://hybridcloudworks.com/';
+
+/** Google's "inspect this page" link, or null when it does not point at Google's Search Console. */
+export function inspectionHref(link) {
+  return typeof link === 'string' && link.startsWith(GOOGLE_INSPECTION_PREFIX) ? link : null;
+}
+
+/** A page's own address as a link, or null when it is not on the public site. */
+export function sitePageHref(url) {
+  return typeof url === 'string' && url.startsWith(SITE_PAGE_PREFIX) ? url : null;
+}
+
 /** A number, or null when the value is missing or not a number. */
 const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 
@@ -222,6 +241,7 @@ export function normalizeReport(raw) {
       finishedAt: run.finishedAt ?? null,
       inspected: num(run.inspected),
       failed: num(run.failed),
+      stale: num(run.stale),
       message: typeof run.message === 'string' && run.message.trim() ? run.message : null,
     },
     indexing: {
@@ -233,7 +253,11 @@ export function normalizeReport(raw) {
         byCoverageState: list(summary.byCoverageState),
         byPageFetchState: list(summary.byPageFetchState),
       },
-      pages: list(indexing.pages).filter((page) => page && typeof page === 'object'),
+      // `stale` is true only when the server says so: the page's answer is
+      // from an earlier run because this run could not refresh it.
+      pages: list(indexing.pages)
+        .filter((page) => page && typeof page === 'object')
+        .map((page) => ({ ...page, stale: page.stale === true })),
       strays: list(indexing.strays).filter((row) => row && typeof row === 'object'),
       history: list(indexing.history).filter((row) => row && typeof row === 'object'),
     },

@@ -18,14 +18,25 @@
  * The POST does not run the ~200 inspections inside the request (an HTTP
  * answer on Flex Consumption is cut at 230 seconds). It writes a platform job
  * and sends its queue message (lib/jobs.js, the same path as enqueueJob), and
- * answers 202 at once. A run already queued or running is answered with that
- * run's job id instead of a second one.
+ * answers 202 at once. Before that it checks, in this order:
+ *
+ *   - a run already holds the run lease (lease.js), whether the timer's or a
+ *     job's: 202 with `alreadyRunning` (and that job's id when a job holds it);
+ *   - today's inspection budget is spent: 429 `daily_budget_spent`, with a
+ *     sentence saying when it starts again;
+ *   - a sync job is already queued: 202 with `alreadyQueued` and its id.
+ *
+ * These answers are for the person pressing the button. The rules themselves
+ * are kept by the run (sync.js takes the lease and the budget), so a job
+ * queued some other way, for example straight through enqueueJob, keeps them
+ * too.
  */
 import { randomUUID } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
 import { errorResponse } from '../http/error-response.js';
 import { readGoogleAuthConfig } from './google-auth.js';
+import { budgetLeft, budgetSpentMessage, dailyBudget, LEASE_DOC_ID, leaseIsLive } from './lease.js';
 import { CONTAINER, emptySnapshot, NOT_AVAILABLE, SNAPSHOT_DOC_ID } from './sync.js';
 
 export const SEARCH_CONSOLE_ROLE = 'editor';
@@ -118,6 +129,21 @@ export function createSearchConsoleHandlers({ guard, store, env = process.env, n
             message: 'Google sign-in is not set up yet; the runbook docs/runbooks/search-console.md has the steps.',
             missing: config.missing,
           });
+        }
+        const at = now();
+        const lease = await store.readDoc(CONTAINER, LEASE_DOC_ID, ADMIN_CONFIG_PARTITION);
+        if (leaseIsLive(lease, at)) {
+          return privateJson(202, {
+            ok: true,
+            queued: true,
+            alreadyRunning: true,
+            status: 'running',
+            ...(typeof lease.jobId === 'string' && lease.jobId ? { jobId: lease.jobId } : {}),
+          });
+        }
+        const budget = dailyBudget(env);
+        if (budgetLeft(lease, at, budget) === 0) {
+          return privateJson(429, { ok: false, error: 'daily_budget_spent', message: budgetSpentMessage(at, budget) });
         }
         const running = await jobInFlight();
         if (running) {

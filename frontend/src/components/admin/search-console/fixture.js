@@ -108,7 +108,7 @@ export const REPORT = Object.freeze({
       isPending: false,
       warnings: 0,
       errors: 0,
-      contents: [{ type: 'web', submitted: 4, indexed: 0 }],
+      contents: [{ type: 'web', submitted: 4 }],
     },
   ],
   notAvailable: ['Page indexing totals and reasons', 'Links (internal and external)'],

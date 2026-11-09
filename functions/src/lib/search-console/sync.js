@@ -7,13 +7,21 @@
  * demand by the page's Run now button, which queues the `sync-search-console`
  * job (functions/search-console-http.js). One run:
  *
+ *   0. Takes the run lease (lease.js). If another run holds it, this run
+ *      stops at once and calls nothing, so two runs never overlap, however
+ *      they were started.
  *   1. Reads the sitemap (GSC_SITEMAP_URL), keeps only pages on the root
  *      domain `hybridcloudworks.com` (owner decision on #1612), removes
- *      repeats, and stops at 900 pages, so two runs a day stay under Google's
- *      2,000 inspections a day.
- *   2. Inspects each page, four at a time, pacing the starts so a minute
- *      never sees more than about 545 (Google allows 600). One page failing is
- *      recorded on that page and never fails the run.
+ *      repeats, and stops at 900 pages. A sitemap that cannot be read, or
+ *      that lists no such page, makes the run an error that changes nothing
+ *      on the page but the message.
+ *   2. Reserves one inspection per page against the daily budget (lease.js:
+ *      1,800 a Pacific-time day, under Google's 2,000), and inspects at most
+ *      that many pages, four at a time, pacing the starts so a minute never
+ *      sees more than about 545 (Google allows 600). One page failing is
+ *      recorded on that page and never fails the run. If Google still
+ *      answers 429 (quota used up) after client.js's retries, the run stops
+ *      inspecting rather than spend more of the quota on retries.
  *   3. Reads Search Analytics for the 90 days ending two days ago (Google's
  *      figures lag about two days): totals, a line per day, and the top 50
  *      queries, pages, countries, devices and search appearances; the same
@@ -24,6 +32,15 @@
  *   5. Replaces `admin_config/search_console_snapshot` under the ETag it was
  *      read with (a lost race re-reads and tries again), carrying a short
  *      history of the indexing counts, the last 120 runs (about two months).
+ *   6. Gives the lease back, handing back any reserved inspections it did
+ *      not send.
+ *
+ * A degraded run never replaces good figures with worse ones: a page whose
+ * inspection failed or was not attempted keeps its last answer, marked
+ * `stale: true` with `error` saying why; a Search Analytics query or the
+ * sitemaps list that failed keeps the last run's figures for that part; the
+ * strays are worked out only from a sitemap read in full; and the history
+ * gains a point only from pages inspected afresh in this run.
  *
  * When GSC_WIF_AUDIENCE, GSC_ENTRA_APP_ID_URI or GSC_SERVICE_ACCOUNT_EMAIL is
  * empty the run returns `{ skipped: 'not_configured' }` and writes nothing.
@@ -38,8 +55,10 @@
  * no Google response (house rule for functions/**).
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
+import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 import { createGoogleTokenProvider, GoogleAuthError, readGoogleAuthConfig } from './google-auth.js';
 import { createSearchConsoleClient, defaultSleep, SearchConsoleError } from './client.js';
+import { budgetSpentMessage, createRunLease, dailyBudget, LEASE_TTL_MS, nextPacificMidnight } from './lease.js';
 
 export const CONTAINER = 'admin_config';
 export const SNAPSHOT_DOC_ID = 'search_console_snapshot';
@@ -80,14 +99,24 @@ const num = (value) => {
 };
 const isoDate = (ms) => new Date(ms).toISOString().slice(0, 10);
 
-/** Undo the five XML entities a sitemap may use in an address. */
+const NAMED_ENTITIES = { lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' };
+
+/** One numeric character reference (`&#38;`, `&#x26;`) as its character, or as written when it is not a real one. */
+function codePoint(text, code) {
+  return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : text;
+}
+
+/**
+ * Undo the XML escapes a sitemap may use in an address: the five named ones
+ * and numeric ones in decimal or hex. One pass, so `&amp;lt;` becomes `&lt;`
+ * and is not undone a second time.
+ */
 function decodeXml(value) {
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&');
+  return value.replace(/&(lt|gt|quot|apos|amp|#\d+|#x[0-9a-f]+);/gi, (text, name) => {
+    if (name[0] !== '#') return NAMED_ENTITIES[name.toLowerCase()] ?? text;
+    const hex = name[1] === 'x' || name[1] === 'X';
+    return codePoint(text, Number.parseInt(name.slice(hex ? 2 : 1), hex ? 16 : 10));
+  });
 }
 
 /**
@@ -207,7 +236,7 @@ export function findStrays(pageRows, sitemapUrls) {
 }
 
 /** One inspected page as stored, from Google's UrlInspectionResult. */
-export function presentInspection(url, result) {
+export function presentInspection(url, result, inspectedAt = null) {
   const index = result?.indexStatusResult ?? {};
   const verdict = VERDICTS.has(index.verdict) ? index.verdict : 'VERDICT_UNSPECIFIED';
   return {
@@ -222,10 +251,12 @@ export function presentInspection(url, result) {
     userCanonical: str(index.userCanonical),
     inspectionResultLink: str(result?.inspectionResultLink),
     error: null,
+    stale: false,
+    inspectedAt,
   };
 }
 
-/** A page whose inspection failed: the same shape, with the failure's sentence. */
+/** A page with no answer from Google: the same shape, with the failure's sentence. */
 export function failedInspection(url, note) {
   return {
     url,
@@ -239,7 +270,23 @@ export function failedInspection(url, note) {
     userCanonical: null,
     inspectionResultLink: null,
     error: note,
+    stale: false,
+    inspectedAt: null,
   };
+}
+
+/** Whether a stored page entry holds a real answer from Google: a fresh one, or an older one kept. */
+const hasResult = (page) => page?.error === null || page?.stale === true;
+
+/**
+ * A page this run has no fresh answer for: its inspection failed, or it was
+ * not inspected because of the daily budget or Google's quota. Its last
+ * answer is kept and marked stale, with `error` saying why it was not
+ * refreshed. A page with no earlier answer is a failed entry.
+ */
+export function keptInspection(previous, url, note) {
+  if (previous && hasResult(previous)) return { ...previous, url, stale: true, error: note };
+  return failedInspection(url, note);
 }
 
 /** `[{ key, count }]`, most first, then by name. */
@@ -254,9 +301,13 @@ function tally(values) {
     .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
-/** The counts the page's summary cards show, from the inspected pages. */
+/**
+ * The counts the page's summary cards show: each page by its latest answer
+ * from Google, kept (stale) answers included. A page with no answer at all
+ * is unknown.
+ */
 export function summarizeIndexing(pages) {
-  const inspected = pages.filter((page) => page.error === null);
+  const inspected = pages.filter(hasResult);
   const count = (verdict) => inspected.filter((page) => page.verdict === verdict).length;
   const pass = count('PASS');
   const neutral = count('NEUTRAL');
@@ -275,7 +326,9 @@ export function summarizeIndexing(pages) {
 const VERDICT_ORDER = { FAIL: 0, NEUTRAL: 1, VERDICT_UNSPECIFIED: 2, PASS: 3 };
 export function sortPages(pages) {
   return [...pages].sort(
-    (a, b) => VERDICT_ORDER[a.verdict] - VERDICT_ORDER[b.verdict] || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0)
+    (a, b) =>
+      (VERDICT_ORDER[a.verdict] ?? 2) - (VERDICT_ORDER[b.verdict] ?? 2) ||
+      (a.url < b.url ? -1 : a.url > b.url ? 1 : 0)
   );
 }
 
@@ -288,10 +341,11 @@ export function presentSitemaps(list) {
     isPending: entry?.isPending === true,
     warnings: num(entry?.warnings),
     errors: num(entry?.errors),
+    // Only `submitted` is kept: Google marks `contents[].indexed`
+    // "Deprecated; do not use" (https://developers.google.com/webmaster-tools/v1/sitemaps).
     contents: (Array.isArray(entry?.contents) ? entry.contents : []).map((part) => ({
       type: str(part?.type) ?? '',
       submitted: num(part?.submitted),
-      indexed: num(part?.indexed),
     })),
   }));
 }
@@ -327,6 +381,9 @@ function isFatal(failure) {
   if (failure instanceof GoogleAuthError) return true;
   return failure instanceof SearchConsoleError && (failure.status === 401 || failure.status === 403);
 }
+
+/** Google's quota answer (HTTP 429), still there after client.js's retries. */
+const isQuota = (failure) => failure instanceof SearchConsoleError && failure.status === 429;
 
 /** The snapshot the page reads before any run has written one. */
 export function emptySnapshot(siteUrl) {
@@ -385,6 +442,8 @@ const isWriteConflict = (failure) => {
   return status === 412 || status === 409;
 };
 
+const utcMinute = (date) => `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+
 /**
  * @param {object} deps
  * @param {{ readDoc: Function, createDoc: Function, replaceDocIfMatch: Function }} deps.store
@@ -396,6 +455,7 @@ const isWriteConflict = (failure) => {
  * @param {(ms: number) => Promise<void>} [deps.sleep]
  * @param {number} [deps.spacingMs]
  * @param {AbortSignal} [deps.signal] - the job's, so a timed-out job stops starting inspections
+ * @param {string|null} [deps.jobId] - the job's id when a job runs it, kept on the lease for Run now
  * @param {object} [deps.log] - invocation context or logger
  */
 export function createSearchConsoleSync({
@@ -408,26 +468,31 @@ export function createSearchConsoleSync({
   sleep = defaultSleep,
   spacingMs = INSPECT_SPACING_MS,
   signal,
+  jobId = null,
   log,
 }) {
   const info = (line) => log?.log?.(`[searchConsoleSync] ${line}`);
 
+  /**
+   * The sitemap's `<loc>` entries. `failed` says why the sitemap could not be
+   * read at all; `complete` is false when any part of it was not read (a
+   * child sitemap of an index), so the strays are not worked out from it.
+   */
   async function readSitemapUrls() {
     const root = (typeof env.GSC_SITEMAP_URL === 'string' && env.GSC_SITEMAP_URL.trim()) || DEFAULT_SITEMAP_URL;
     const fetchXml = async (address) => {
-      let response;
       try {
-        response = await fetchImpl(address, { headers: { Accept: 'application/xml, text/xml' } });
+        const response = await fetchWithTimeout(fetchImpl, address, { headers: { Accept: 'application/xml, text/xml' } });
+        if (!response.ok) return { failed: `HTTP ${response.status}` };
+        return { xml: await response.text() };
       } catch {
         return { failed: 'unreachable' };
       }
-      if (!response.ok) return { failed: `HTTP ${response.status}` };
-      return { xml: await response.text() };
     };
     const first = await fetchXml(root);
-    if (first.failed) return { locs: [], note: `The sitemap could not be read (${first.failed}).` };
+    if (first.failed) return { locs: [], failed: first.failed, complete: false, note: null };
     const parsed = parseSitemap(first.xml);
-    if (!parsed.isIndex) return { locs: parsed.locs, note: null };
+    if (!parsed.isIndex) return { locs: parsed.locs, failed: null, complete: true, note: null };
     // A sitemap index: read each child sitemap on the site's own host.
     const children = parsed.locs.filter((loc) => rootDomainUrl(loc)).slice(0, MAX_CHILD_SITEMAPS);
     const locs = [];
@@ -437,7 +502,15 @@ export function createSearchConsoleSync({
       if (answer.failed) unread += 1;
       else locs.push(...parseSitemap(answer.xml).locs);
     }
-    return { locs, note: unread ? `${unread} of ${children.length} child sitemaps could not be read.` : null };
+    if (children.length > 0 && unread === children.length) {
+      return { locs: [], failed: `none of its ${children.length} child sitemaps could be read`, complete: false, note: null };
+    }
+    return {
+      locs,
+      failed: null,
+      complete: unread === 0,
+      note: unread ? `${unread} of ${children.length} child sitemaps could not be read, so the strays were not worked out this run.` : null,
+    };
   }
 
   async function readStored() {
@@ -468,11 +541,231 @@ export function createSearchConsoleSync({
     return null;
   }
 
+  /** A failed run's document: the last good figures kept, only the status and run replaced. */
+  const keepPrevious = (stored, siteUrl, run) => ({
+    ...emptySnapshot(siteUrl),
+    ...pick(stored),
+    siteUrl,
+    status: 'error',
+    run,
+  });
+
   /** The stored history with this run's entry added, newest last, at most HISTORY_MAX. */
   const withHistory = (stored, entry) => {
     const previous = Array.isArray(stored?.indexing?.history) ? stored.indexing.history : [];
-    return [...previous, entry].slice(-HISTORY_MAX);
+    return entry ? [...previous, entry].slice(-HISTORY_MAX) : previous.slice(-HISTORY_MAX);
   };
+
+  /** The run itself, while this run holds the lease. `counts` tells the caller what to hand back. */
+  async function runHeld(config, budget, lease, counts) {
+    const startedAt = now();
+    const started = startedAt.getTime();
+    const elapsed = () => Math.round((now().getTime() - started) / 1000);
+    const google =
+      client ??
+      createSearchConsoleClient({
+        siteUrl: config.siteUrl,
+        auth: createGoogleTokenProvider({
+          audience: config.audience,
+          appIdUri: config.appIdUri,
+          serviceAccountEmail: config.serviceAccountEmail,
+          credential,
+          env,
+          fetchImpl,
+        }),
+        fetchImpl,
+        sleep,
+      });
+
+    const notes = [];
+    let fatal = null;
+    let quotaHit = false;
+    const stopped = () => fatal !== null || signal?.aborted === true;
+
+    // 1. The sitemap. Without it there is nothing to inspect and no way to
+    // tell a stray, so the run is an error that keeps everything as it was.
+    const sitemap = await readSitemapUrls();
+    const { urls, total } = selectSiteUrls(sitemap.locs);
+    if (sitemap.failed || urls.length === 0) {
+      const finishedAt = now();
+      const message = sitemap.failed
+        ? `The sitemap could not be read (${sitemap.failed}), so nothing was asked of Google.`
+        : `The sitemap lists no page on ${SITE_HOST}, so nothing was asked of Google.`;
+      const run = { startedAt: startedAt.toISOString(), finishedAt: finishedAt.toISOString(), inspected: 0, failed: 0, stale: 0, message };
+      await save((stored) => keepPrevious(stored, config.siteUrl, run));
+      info(`error: sitemap ${sitemap.failed ? 'unreadable' : 'empty'}, nothing inspected, ${elapsed()}s`);
+      return { status: 'error', pages: 0, inspected: 0, failed: 0, strays: 0, seconds: elapsed() };
+    }
+    if (sitemap.note) notes.push(sitemap.note);
+    if (total > urls.length) notes.push(`The sitemap lists ${total} root-domain pages; only the first ${urls.length} are inspected.`);
+
+    // 2. The daily budget: reserve one inspection per page before sending any.
+    const allowed = await lease.reserve(urls.length);
+    counts.reserved = allowed;
+    if (allowed === 0) {
+      notes.push(`${budgetSpentMessage(startedAt, budget)} No page was inspected; each keeps its last result.`);
+    } else if (allowed < urls.length) {
+      notes.push(
+        `Only ${allowed} of ${urls.length} pages fit in what is left of today's allowance of ${budget.toLocaleString('en-US')} Google page inspections; the rest keep their last result until it starts again at midnight Pacific time (${utcMinute(nextPacificMidnight(startedAt))}).`
+      );
+    }
+    const toInspect = urls.slice(0, allowed);
+
+    // 3. Inspect each page in the allowance.
+    const fresh = new Map();
+    const failures = new Map();
+    const inspectedAt = startedAt.toISOString();
+    await runPaced(toInspect, {
+      limit: CONCURRENCY,
+      spacingMs,
+      sleep,
+      now: () => now().getTime(),
+      stop: () => stopped() || quotaHit,
+      task: async (url) => {
+        counts.sent += 1;
+        try {
+          fresh.set(url, presentInspection(url, await google.inspect(url), inspectedAt));
+        } catch (failure) {
+          if (isFatal(failure)) fatal ??= failure;
+          if (isQuota(failure)) quotaHit = true;
+          failures.set(url, failureNote(failure, 'The inspection failed.'));
+        }
+      },
+    });
+    const sent = counts.sent;
+    const failed = failures.size;
+    if (quotaHit) {
+      notes.push(
+        `Google still answered 429 (quota used up) after retries, so the run stopped inspecting after ${sent} of ${toInspect.length} pages; the rest keep their last result.`
+      );
+    }
+
+    // 4 and 5. Performance and sitemaps, unless the run already cannot go on.
+    // A query that fails gives null, and that part keeps the last run's figures.
+    let performanceParts = null;
+    let pageRows = null;
+    let sitemaps = null;
+    if (!stopped()) {
+      const longRange = analyticsRange(startedAt, RANGE_DAYS);
+      const shortRange = analyticsRange(startedAt, SHORT_RANGE_DAYS);
+      const query = async (label, body) => {
+        if (stopped()) return null;
+        try {
+          return await google.searchAnalytics(body);
+        } catch (failure) {
+          if (isFatal(failure)) fatal ??= failure;
+          notes.push(`Performance ${label}: ${failureNote(failure, 'the query failed.')} The last figures were kept.`);
+          return null;
+        }
+      };
+      const grouped = (dimension, rowLimit = TOP_ROWS) => query(dimension, { ...longRange, dimensions: [dimension], rowLimit });
+      const totals = await query('totals', { ...longRange });
+      const totals28d = await query('28-day totals', { ...shortRange });
+      const daily = await grouped('date', 1000);
+      const queries = await grouped('query');
+      pageRows = await grouped('page', PAGE_ROWS_FOR_STRAYS);
+      const countries = await grouped('country');
+      const devices = await grouped('device');
+      // searchAppearance cannot be combined with another dimension, so it is its own query.
+      const appearance = await grouped('searchAppearance');
+      performanceParts = {
+        range: longRange,
+        totals: totals && presentTotals(totals),
+        totals28d: totals28d && presentTotals(totals28d),
+        daily: daily && presentDaily(daily),
+        queries: queries && presentRows(queries),
+        pages: pageRows && presentRows(pageRows).slice(0, TOP_ROWS),
+        countries: countries && presentRows(countries),
+        devices: devices && presentRows(devices),
+        searchAppearance: appearance && presentRows(appearance),
+      };
+      if (!stopped()) {
+        try {
+          sitemaps = presentSitemaps(await google.listSitemaps());
+        } catch (failure) {
+          if (isFatal(failure)) fatal ??= failure;
+          notes.push(`Sitemaps: ${failureNote(failure, 'the list could not be read.')} The last list was kept.`);
+        }
+      }
+    }
+    // Strays only from a sitemap read in full and a page query that answered;
+    // otherwise every page Google shows could look like a stray.
+    const strays =
+      sitemap.complete && pageRows !== null
+        ? findStrays(pageRows, selectSiteUrls(sitemap.locs, { max: Number.POSITIVE_INFINITY }).urls)
+        : null;
+
+    const finishedAt = now();
+    const seconds = elapsed();
+    if (signal?.aborted) {
+      // The job's budget ran out. Half a run is not written over the last
+      // whole one; the job is recorded as timed out by lib/jobs.js.
+      info(`stopped: out of time after ${sent} of ${urls.length} pages, ${seconds}s`);
+      return { status: 'error', aborted: true, pages: urls.length, inspected: sent, failed, strays: 0, seconds };
+    }
+    const status = fatal ? 'error' : 'ok';
+    const notInspected = (index) =>
+      index >= allowed
+        ? 'Not inspected in the last run: the daily allowance of Google page inspections was used up.'
+        : 'Not inspected in the last run: Google answered that its quota was used up.';
+    let staleCount = 0;
+    let strayCount = 0;
+
+    await save((stored) => {
+      const run = {
+        startedAt: startedAt.toISOString(),
+        finishedAt: finishedAt.toISOString(),
+        inspected: sent,
+        failed,
+        stale: 0,
+        message: fatal ? failureNote(fatal, 'The run failed.') : notes.length ? notes.join(' ') : null,
+      };
+      if (fatal) return keepPrevious(stored, config.siteUrl, run);
+
+      const previous = new Map(
+        (Array.isArray(stored?.indexing?.pages) ? stored.indexing.pages : [])
+          .filter((page) => page && typeof page.url === 'string')
+          .map((page) => [page.url, page])
+      );
+      const pages = urls.map(
+        (url, index) => fresh.get(url) ?? keptInspection(previous.get(url), url, failures.get(url) ?? notInspected(index))
+      );
+      run.stale = pages.filter((page) => page.stale).length;
+      staleCount = run.stale;
+      const sortedPages = sortPages(pages);
+      // History counts only pages Google answered in this run.
+      const freshSummary = summarizeIndexing([...fresh.values()]);
+      const entry =
+        fresh.size > 0
+          ? { at: run.finishedAt, pass: freshSummary.pass, neutral: freshSummary.neutral, fail: freshSummary.fail, inspected: fresh.size, failed }
+          : null;
+      const base = stored ?? emptySnapshot(config.siteUrl);
+      const previousPerformance = { ...emptySnapshot(config.siteUrl).performance, ...(base.performance ?? {}) };
+      const performance = { ...previousPerformance };
+      for (const [key, value] of Object.entries(performanceParts ?? {})) {
+        if (value !== null) performance[key] = value;
+      }
+      const keptStrays = Array.isArray(base.indexing?.strays) ? base.indexing.strays : [];
+      strayCount = (strays ?? keptStrays).length;
+      return {
+        siteUrl: config.siteUrl,
+        status: 'ok',
+        generatedAt: run.finishedAt,
+        run,
+        indexing: {
+          summary: summarizeIndexing(sortedPages),
+          pages: sortedPages,
+          strays: strays ?? keptStrays,
+          history: withHistory(stored, entry),
+        },
+        performance,
+        sitemaps: sitemaps ?? (Array.isArray(base.sitemaps) ? base.sitemaps : []),
+      };
+    });
+
+    info(`${status}: ${urls.length} pages, ${sent} inspected, ${failed} failed, ${staleCount} stale, ${strayCount} strays, ${seconds}s`);
+    return { status, pages: urls.length, inspected: sent, failed, stale: staleCount, strays: strayCount, seconds };
+  }
 
   return {
     async run() {
@@ -481,161 +774,26 @@ export function createSearchConsoleSync({
         info(`skipped: ${config.missing.length} setting(s) empty`);
         return { skipped: 'not_configured' };
       }
-      const startedAt = now();
-      const started = startedAt.getTime();
-      const google =
-        client ??
-        createSearchConsoleClient({
-          siteUrl: config.siteUrl,
-          auth: createGoogleTokenProvider({
-            audience: config.audience,
-            appIdUri: config.appIdUri,
-            serviceAccountEmail: config.serviceAccountEmail,
-            credential,
-            fetchImpl,
-          }),
-          fetchImpl,
-          sleep,
-        });
-
-      const notes = [];
-      let fatal = null;
-      const stopped = () => fatal !== null || signal?.aborted === true;
-
-      // 1. The sitemap.
-      const sitemap = await readSitemapUrls();
-      if (sitemap.note) notes.push(sitemap.note);
-      const { urls, total } = selectSiteUrls(sitemap.locs);
-      if (total > urls.length) notes.push(`The sitemap lists ${total} root-domain pages; the first ${urls.length} were inspected.`);
-
-      // 2. Inspect each page.
-      const pages = new Array(urls.length);
-      let failed = 0;
-      await runPaced(urls, {
-        limit: CONCURRENCY,
-        spacingMs,
-        sleep,
-        now: () => now().getTime(),
-        stop: stopped,
-        task: async (url, index) => {
-          try {
-            pages[index] = presentInspection(url, await google.inspect(url));
-          } catch (failure) {
-            failed += 1;
-            if (isFatal(failure)) fatal ??= failure;
-            pages[index] = failedInspection(url, failureNote(failure, 'The inspection failed.'));
-          }
-        },
-      });
-      const done = pages.filter(Boolean);
-      const inspected = done.length;
-
-      // 3 and 4. Performance and sitemaps, unless the run already cannot go on.
-      let performance = null;
-      let sitemaps = null;
-      let strays = [];
-      if (!stopped()) {
-        const longRange = analyticsRange(startedAt, RANGE_DAYS);
-        const shortRange = analyticsRange(startedAt, SHORT_RANGE_DAYS);
-        const query = async (label, body, fallback) => {
-          if (stopped()) return fallback;
-          try {
-            return await google.searchAnalytics(body);
-          } catch (failure) {
-            if (isFatal(failure)) fatal ??= failure;
-            notes.push(`Performance ${label}: ${failureNote(failure, 'the query failed.')}`);
-            return fallback;
-          }
-        };
-        const grouped = (dimension, rowLimit = TOP_ROWS) =>
-          query(dimension, { ...longRange, dimensions: [dimension], rowLimit }, []);
-        const totals = await query('totals', { ...longRange }, []);
-        const totals28d = await query('28-day totals', { ...shortRange }, []);
-        const daily = await grouped('date', 1000);
-        const queries = await grouped('query');
-        const pageRows = await grouped('page', PAGE_ROWS_FOR_STRAYS);
-        const countries = await grouped('country');
-        const devices = await grouped('device');
-        // searchAppearance cannot be combined with another dimension, so it is its own query.
-        const appearance = await grouped('searchAppearance');
-        performance = {
-          range: longRange,
-          totals: presentTotals(totals),
-          totals28d: presentTotals(totals28d),
-          daily: presentDaily(daily),
-          queries: presentRows(queries),
-          pages: presentRows(pageRows).slice(0, TOP_ROWS),
-          countries: presentRows(countries),
-          devices: presentRows(devices),
-          searchAppearance: presentRows(appearance),
-        };
-        strays = findStrays(pageRows, selectSiteUrls(sitemap.locs, { max: Number.POSITIVE_INFINITY }).urls);
-        if (!stopped()) {
-          try {
-            sitemaps = presentSitemaps(await google.listSitemaps());
-          } catch (failure) {
-            if (isFatal(failure)) fatal ??= failure;
-            notes.push(`Sitemaps: ${failureNote(failure, 'the list could not be read.')}`);
-          }
+      const budget = dailyBudget(env);
+      const lease = createRunLease({ store, now, budget, by: jobId ? 'job' : 'timer', jobId });
+      const taken = await lease.acquire();
+      if (!taken.ok) {
+        info('skipped: another run is in progress');
+        return { skipped: 'already_running' };
+      }
+      // What was reserved against the daily budget and what was sent, so the
+      // lease gets back the inspections this run did not use.
+      const counts = { reserved: 0, sent: 0 };
+      try {
+        return await runHeld(config, budget, lease, counts);
+      } finally {
+        try {
+          await lease.release({ unused: Math.max(0, counts.reserved - counts.sent) });
+        } catch {
+          // A timed-out job may no longer write; the lease lapses on its own.
+          info(`lease not given back; it lapses within ${LEASE_TTL_MS / 60000} minutes`);
         }
       }
-      const finishedAt = now();
-      const seconds = Math.round((finishedAt.getTime() - started) / 1000);
-      if (signal?.aborted) {
-        // The job's budget ran out. Half a run is not written over the last
-        // whole one; the job is recorded as timed out by lib/jobs.js.
-        info(`stopped: out of time after ${inspected} of ${urls.length} pages, ${seconds}s`);
-        return { status: 'error', aborted: true, pages: urls.length, inspected, failed, strays: 0, seconds };
-      }
-      const status = fatal ? 'error' : 'ok';
-      const message = fatal
-        ? failureNote(fatal, 'The run failed.')
-        : notes.length
-          ? notes.join(' ')
-          : null;
-      const run = {
-        startedAt: startedAt.toISOString(),
-        finishedAt: finishedAt.toISOString(),
-        inspected,
-        failed,
-        message,
-      };
-      const sortedPages = sortPages(done);
-      const summary = summarizeIndexing(sortedPages);
-
-      await save((stored) => {
-        const base = stored ?? emptySnapshot(config.siteUrl);
-        if (fatal) {
-          // Keep the last good figures; record only that this run failed.
-          return {
-            ...emptySnapshot(config.siteUrl),
-            ...pick(base),
-            siteUrl: config.siteUrl,
-            status: 'error',
-            run,
-          };
-        }
-        const entry = {
-          at: run.finishedAt,
-          pass: summary.pass,
-          neutral: summary.neutral,
-          fail: summary.fail,
-          inspected,
-          failed,
-        };
-        return {
-          siteUrl: config.siteUrl,
-          status: 'ok',
-          generatedAt: run.finishedAt,
-          run,
-          indexing: { summary, pages: sortedPages, strays, history: withHistory(stored, entry) },
-          performance: performance ?? emptySnapshot(config.siteUrl).performance,
-          sitemaps: sitemaps ?? (Array.isArray(base.sitemaps) ? base.sitemaps : []),
-        };
-      });
-
-      info(`${status}: ${urls.length} pages, ${inspected} inspected, ${failed} failed, ${strays.length} strays, ${seconds}s`);
-      return { status, pages: urls.length, inspected, failed, strays: strays.length, seconds };
     },
   };
 }

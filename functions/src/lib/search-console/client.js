@@ -8,9 +8,10 @@
  *   listSitemaps()        The sitemaps submitted for the property
  *                         https://developers.google.com/webmaster-tools/v1/sitemaps/list
  *
- * Every call carries the access token from google-auth.js. A 429 (too many
- * requests) or a 5xx (Google's side) is retried a few times with a growing
- * pause; anything else fails at once. A failure is a SearchConsoleError whose
+ * Every call carries the access token from google-auth.js and gives up after
+ * 30 seconds without an answer (http/fetch-with-timeout.js). A 429 (too many
+ * requests), a 5xx (Google's side) or no answer at all is retried a few times
+ * with a growing pause; anything else fails at once. A failure is a SearchConsoleError whose
  * sentence this file wrote, with the HTTP status: Google's response body is
  * never read into an error, a log or a document.
  *
@@ -19,6 +20,7 @@
  * sync keeps to four calls at a time and paces their starts (sync.js).
  */
 import { AuthoredError } from '../http/error-response.js';
+import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 
 export const API_BASE = 'https://searchconsole.googleapis.com';
 export const INSPECT_URL = `${API_BASE}/v1/urlInspection/index:inspect`;
@@ -92,7 +94,9 @@ export function createSearchConsoleClient({
       const token = await auth.getAccessToken();
       let response;
       try {
-        response = await fetchImpl(url, {
+        // A call that hangs past the helper's 30 seconds throws like a
+        // dropped connection, so it is retried the same way.
+        response = await fetchWithTimeout(fetchImpl, url, {
           method,
           headers: {
             Authorization: `Bearer ${token}`,

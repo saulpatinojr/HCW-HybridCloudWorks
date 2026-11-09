@@ -36,13 +36,16 @@
  * 2. ERRORS NAME THE HOP AND THE HTTP STATUS, nothing else, as a
  *    GoogleAuthError whose sentence this file wrote (an AuthoredError, so the
  *    admin page may show it).
- * 3. PURE AND INJECTABLE: `fetchImpl`, the Azure `credential` and the clock
- *    are parameters, so the tests run with no network.
+ * 3. PURE AND INJECTABLE: `fetchImpl`, the Azure `credential`, the settings
+ *    (`env`) and the clock are parameters, so the tests run with no network.
  * 4. CACHED IN MEMORY until five minutes before the Google token expires, and
  *    two callers asking at once share one sign-in.
+ * 5. NO HOP WAITS FOREVER: each call to Google gives up after 30 seconds
+ *    (http/fetch-with-timeout.js) and fails as that hop.
  */
 import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
 import { AuthoredError } from '../http/error-response.js';
+import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 
 export const STS_TOKEN_URL = 'https://sts.googleapis.com/v1/token';
 export const IAM_CREDENTIALS_BASE = 'https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts';
@@ -121,11 +124,18 @@ export function readGoogleAuthConfig(env = process.env) {
  * The same credential choice cosmos-client.js makes: the managed identity
  * when running in Azure (WEBSITE_INSTANCE_ID or IDENTITY_ENDPOINT is set),
  * otherwise whatever `az login` provides on a workstation.
+ *
+ * Everything this function decides is read from `env`. The Function App uses
+ * its system-assigned identity, so AZURE_CLIENT_ID is normally empty; when it
+ * is set (a user-assigned identity), it is passed to the managed identity
+ * credential from `env` too. DefaultAzureCredential, the workstation branch,
+ * takes no settings object: it reads its own variables from process.env, so
+ * that branch cannot be steered through `env`.
  */
 export function defaultAzureCredential(env = process.env) {
-  return env.WEBSITE_INSTANCE_ID || env.IDENTITY_ENDPOINT
-    ? new ManagedIdentityCredential()
-    : new DefaultAzureCredential();
+  if (!(env.WEBSITE_INSTANCE_ID || env.IDENTITY_ENDPOINT)) return new DefaultAzureCredential();
+  const clientId = typeof env.AZURE_CLIENT_ID === 'string' ? env.AZURE_CLIENT_ID.trim() : '';
+  return clientId ? new ManagedIdentityCredential({ clientId }) : new ManagedIdentityCredential();
 }
 
 /** Read a JSON body without letting a parse failure carry its text anywhere. */
@@ -147,6 +157,7 @@ async function readJson(response) {
  * @param {string} deps.appIdUri - the Entra Application ID URI the token is minted for
  * @param {string} deps.serviceAccountEmail
  * @param {{ getToken: (scope: string) => Promise<{ token: string }|null> }} [deps.credential]
+ * @param {Record<string, string|undefined>} [deps.env] - where the Azure credential choice is read from
  * @param {typeof fetch} [deps.fetchImpl]
  * @param {() => number} [deps.now] - milliseconds
  */
@@ -155,6 +166,7 @@ export function createGoogleTokenProvider({
   appIdUri,
   serviceAccountEmail,
   credential,
+  env = process.env,
   fetchImpl = globalThis.fetch,
   now = () => Date.now(),
 }) {
@@ -163,7 +175,7 @@ export function createGoogleTokenProvider({
   let azureCredential = credential ?? null;
 
   async function entraToken() {
-    azureCredential ??= defaultAzureCredential();
+    azureCredential ??= defaultAzureCredential(env);
     let answer = null;
     try {
       answer = await azureCredential.getToken(`${appIdUri}/.default`);
@@ -186,7 +198,7 @@ export function createGoogleTokenProvider({
     });
     let response;
     try {
-      response = await fetchImpl(STS_TOKEN_URL, {
+      response = await fetchWithTimeout(fetchImpl, STS_TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString(),
@@ -205,7 +217,7 @@ export function createGoogleTokenProvider({
     const url = `${IAM_CREDENTIALS_BASE}/${encodeURIComponent(serviceAccountEmail)}:generateAccessToken`;
     let response;
     try {
-      response = await fetchImpl(url, {
+      response = await fetchWithTimeout(fetchImpl, url, {
         method: 'POST',
         headers: { Authorization: `Bearer ${federated}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ scope: [SEARCH_CONSOLE_READONLY_SCOPE], lifetime: TOKEN_LIFETIME }),

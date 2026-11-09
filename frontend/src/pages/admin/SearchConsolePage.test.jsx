@@ -7,11 +7,16 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 
 import SearchConsolePage from './SearchConsolePage';
 import { REPORT } from '@/components/admin/search-console/fixture';
+import {
+  POLL_EVERY_MS,
+  POLL_FOR_MS,
+  runNowToast,
+} from '@/components/admin/search-console/useSearchConsole';
 import { NAV_ITEMS, navGroupFor } from '@/config/adminNav';
 import {
   SEARCH_CONSOLE_ROUTE,
@@ -232,6 +237,91 @@ describe('SearchConsolePage states', () => {
     ).toBeTruthy();
   });
 
+  it('shows a note from a run that worked as information, not a failure', async () => {
+    getJSON.mockResolvedValueOnce({
+      ...REPORT,
+      run: { ...REPORT.run, stale: 3, message: 'Only 1 of 4 pages fit in today’s allowance.' },
+    });
+    renderAt();
+    await loaded();
+    const note = screen.getByTestId('run-note');
+    expect(note.getAttribute('role')).toBe('status');
+    expect(note.textContent).toBe(
+      'Note from the last run: Only 1 of 4 pages fit in today’s allowance.'
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByTestId('last-run').textContent).toMatch(/3 kept from an earlier run/);
+  });
+
+  it('marks a page whose answer is from an earlier run as stale', async () => {
+    const [first, ...rest] = REPORT.indexing.pages;
+    getJSON.mockResolvedValueOnce({
+      ...REPORT,
+      indexing: {
+        ...REPORT.indexing,
+        pages: [
+          {
+            ...first,
+            stale: true,
+            inspectedAt: '2026-11-08T12:10:00.000Z',
+            error: 'Not inspected in the last run: the daily allowance was used up.',
+          },
+          { ...rest[0], stale: true, error: 'Kept.' },
+          ...rest.slice(1),
+        ],
+      },
+    });
+    renderAt();
+    await loaded();
+    const staleRows = screen
+      .getAllByTestId('indexing-row')
+      .filter((row) => row.dataset.stale === 'true');
+    expect(staleRows).toHaveLength(2);
+    const markers = screen.getAllByTestId('stale-marker');
+    expect(markers).toHaveLength(2);
+    expect(markers.map((marker) => marker.getAttribute('title'))).toContain(
+      'This answer is from an earlier run (2026-11-08 12:10 UTC); the last run could not ask Google again.'
+    );
+    expect(
+      screen.getByText('Not inspected in the last run: the daily allowance was used up.')
+    ).toBeTruthy();
+    expect(screen.queryByText(/Could not inspect: Not inspected/)).toBeNull();
+  });
+
+  it('links only to the public site and to Google, and shows any other address as text', async () => {
+    const [first, second, ...rest] = REPORT.indexing.pages;
+    getJSON.mockResolvedValueOnce({
+      ...REPORT,
+      indexing: {
+        ...REPORT.indexing,
+        pages: [
+          { ...first, inspectionResultLink: 'javascript:alert(1)' },
+          { ...second, url: 'https://evil.example/b-canonical-elsewhere' },
+          ...rest,
+        ],
+        strays: [
+          { url: 'https://hybridcloudworks.com.evil.example/x', clicks: 1, impressions: 2 },
+          ...REPORT.indexing.strays,
+        ],
+      },
+    });
+    renderAt();
+    await loaded();
+    const rows = screen.getAllByTestId('indexing-row');
+    const allLinks = rows.flatMap((row) => within(row).queryAllByRole('link'));
+    for (const link of allLinks) {
+      expect(link.getAttribute('href')).toMatch(
+        /^https:\/\/(hybridcloudworks\.com|search\.google\.com)\//
+      );
+    }
+    expect(screen.getByText('https://evil.example/b-canonical-elsewhere')).toBeTruthy();
+    const strays = screen.getByRole('table', {
+      name: 'Pages Google shows that are not in the sitemap',
+    });
+    expect(within(strays).getByText('https://hybridcloudworks.com.evil.example/x')).toBeTruthy();
+    expect(within(strays).getAllByRole('link')).toHaveLength(1);
+  });
+
   it('says when the report could not be read, and reads again on Try again', async () => {
     getJSON.mockRejectedValueOnce(new Error('HTTP 500: the store did not answer'));
     renderAt();
@@ -271,6 +361,94 @@ describe('Run now', () => {
       variant: 'destructive',
     });
     expect(screen.getByRole('button', { name: /Run now/ })).toBeTruthy();
+  });
+
+  it('says so when a run is already going, and waits for it', async () => {
+    authedFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: async () => ({ ok: true, queued: true, alreadyRunning: true, status: 'running' }),
+    });
+    renderAt();
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(toast.mock.calls[0][0].title).toBe('A run is already going');
+    expect(await screen.findByRole('button', { name: /Run in progress/ })).toBeTruthy();
+  });
+
+  it('explains a 429 with the server sentence saying when the allowance starts again', async () => {
+    authedFetch.mockRejectedValueOnce(
+      apiError(
+        429,
+        'daily_budget_spent — Today’s allowance of 1,800 Google page inspections is used up. It starts again at midnight Pacific time (2026-11-10 08:00 UTC).'
+      )
+    );
+    renderAt();
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(toast.mock.calls[0][0]).toEqual({
+      title: 'Today’s Google inspections are used up',
+      description:
+        'Today’s allowance of 1,800 Google page inspections is used up. It starts again at midnight Pacific time (2026-11-10 08:00 UTC).',
+    });
+    expect(screen.getByRole('button', { name: /Run now/ })).toBeTruthy();
+  });
+
+  it('has its own words for a 429 that carries no sentence', () => {
+    expect(
+      runNowToast({ ok: false, error: apiError(429, 'daily_budget_spent') }).description
+    ).toMatch(/starts again at midnight Pacific time/);
+    expect(runNowToast({ ok: true, alreadyQueued: true }).title).toBe('A run is already going');
+  });
+
+  it('keeps the report on screen when a background read fails, and shows the new run when it lands', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      renderAt();
+      await loaded();
+      fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
+      expect(await screen.findByRole('button', { name: /Run in progress/ })).toBeTruthy();
+
+      getJSON.mockRejectedValueOnce(new Error('HTTP 503: try later'));
+      await act(async () => {
+        vi.advanceTimersByTime(POLL_EVERY_MS);
+      });
+      await waitFor(() => expect(getJSON).toHaveBeenCalledTimes(2));
+      expect(screen.getAllByTestId('indexing-row')).toHaveLength(4);
+      expect(screen.queryByText('The Search Console report could not be read')).toBeNull();
+      expect(screen.getByRole('button', { name: /Run in progress/ })).toBeTruthy();
+
+      getJSON.mockResolvedValueOnce({
+        ...REPORT,
+        run: { ...REPORT.run, finishedAt: '2026-11-09T13:00:00.000Z' },
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(POLL_EVERY_MS);
+      });
+      expect(await screen.findByRole('button', { name: /Run now/ })).toBeTruthy();
+      expect(screen.getByTestId('last-run').textContent).toMatch(/2026-11-09 13:00 UTC/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops waiting after fifteen minutes', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      renderAt();
+      await loaded();
+      fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
+      expect(await screen.findByRole('button', { name: /Run in progress/ })).toBeTruthy();
+      getJSON.mockResolvedValue(REPORT);
+      await act(async () => {
+        vi.advanceTimersByTime(POLL_FOR_MS + POLL_EVERY_MS);
+      });
+      expect(await screen.findByRole('button', { name: /Run now/ })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('gives any other failure a plain toast with the server sentence', async () => {

@@ -58,17 +58,20 @@ registerJobType(SYNC_JOB_TYPE, {
   // nothing.
   role: 'editor',
   description:
-    'Refresh the admin Search Console page (#1612): inspect every root-domain page in the sitemap with Google\'s URL Inspection API (at most 900), read 90 days of Search Analytics and the sitemaps list, and replace admin_config/search_console_snapshot. No payload. Skips with not_configured when the Google sign-in settings are empty.',
+    'Refresh the admin Search Console page (#1612): inspect every root-domain page in the sitemap with Google\'s URL Inspection API (at most 900, and at most 1,800 a Pacific day across all runs), read 90 days of Search Analytics and the sitemaps list, and replace admin_config/search_console_snapshot. No payload. Skips with not_configured when the Google sign-in settings are empty, and with already_running when another run holds the run lease (admin_config/search_console_lease).',
   maxPayloadBytes: 64,
   // About 200 pages, four at a time and paced under Google's 600 a minute:
   // two to four minutes. Twenty leaves room for 900 pages and Google's
-  // retries, well under the 30-minute Flex limit.
+  // retries, well under the 30-minute Flex limit and the lease's 35 minutes.
   timeoutMs: SYNC_JOB_TIMEOUT_MS,
-  worker: async (_payload, { context, signal }) => {
+  worker: async (_payload, { context, signal, job }) => {
+    // The run takes the lease and keeps to the daily budget itself, so a job
+    // queued straight through enqueueJob is held to the same rules as Run now.
     const result = await createSearchConsoleSync({
       store: { readDoc: store.readDoc, createDoc: store.createDoc, replaceDocIfMatch: store.replaceDocIfMatch },
       log: context,
       signal,
+      jobId: typeof job?.id === 'string' ? job.id : null,
     }).run();
     if (result?.status === 'error') {
       // The document already says what failed; the job records the same.

@@ -36,11 +36,29 @@ Four things to know before trusting a number:
 - **Search figures lag about two days**, so the 90 days end two days ago.
 - **Country codes** are Google's three-letter lower-case codes, for example
   `usa` and `gbr`.
-- **At most 900 pages are inspected per run.** Google allows 2,000
-  inspections a day and 600 a minute for one property
-  ([usage limits](https://developers.google.com/webmaster-tools/limits)); two
-  runs of 900 stay under the day's limit. On 2026-11-09 the sitemap had 203
-  pages, so two runs use about a fifth of it.
+- **Each run uses one inspection per sitemap page, and the app stops at
+  1,800 a day.** Google allows 2,000 inspections a day and 600 a minute for
+  one property, and its day runs midnight to midnight Pacific time
+  ([usage limits](https://developers.google.com/webmaster-tools/limits)).
+  Every run, scheduled or Run now, inspects each page in the sitemap once
+  (about 203 on 2026-11-09, never more than 900). The app counts the
+  inspections it sends in `admin_config/search_console_lease` and stops at
+  1,800 for the Pacific day, which leaves 200 for your own inspections in
+  Search Console. When the allowance runs out, Run now says so and when it
+  starts again, a scheduled run keeps each page's last answer (the Indexing
+  table marks it **stale**), and the note above the tabs says why. The app
+  setting `GSC_DAILY_INSPECTION_BUDGET` can lower the number; it is not set
+  in Terraform, so 1,800 applies.
+- **Two runs never overlap.** A run first takes a lease (a short hold) on
+  `admin_config/search_console_lease`. While a run holds it, Run now answers
+  that a run is already going, and a timer run that starts meanwhile does
+  nothing. A run that stops without giving the lease back holds it for at
+  most 35 minutes.
+- **A run that goes wrong keeps the last good figures.** If the sitemap
+  cannot be read, the run changes nothing but the message. If Google answers
+  that its quota is used up (HTTP 429) even after retrying, the run stops
+  inspecting, and the pages it did not reach keep their last answer, marked
+  stale.
 
 ## What Google's API cannot give us
 
@@ -180,13 +198,13 @@ not checked against a bill. No step creates a key.
 > **Cannot be undone:** a pool id cannot be changed after it is created
 > (Google's page above).
 
-9. Create the pool `hcw-azure` and its provider `entra`, trusting tokens from our directory meant for the app registration:
+9. Create the pool `hcw-azure` and its provider `entra`, trusting tokens from our directory meant for the app registration, and only those of the Function App's identity from step 8:
 
    ```powershell
-   gcloud iam workload-identity-pools create hcw-azure --project $project --location global --display-name "HCW Azure"; gcloud iam workload-identity-pools providers create-oidc entra --project $project --location global --workload-identity-pool hcw-azure --issuer-uri "https://sts.windows.net/$tenant/" --allowed-audiences $uri --attribute-mapping "google.subject=assertion.sub"
+   gcloud iam workload-identity-pools create hcw-azure --project $project --location global --display-name "HCW Azure"; gcloud iam workload-identity-pools providers create-oidc entra --project $project --location global --workload-identity-pool hcw-azure --issuer-uri "https://sts.windows.net/$tenant/" --allowed-audiences $uri --attribute-mapping "google.subject=assertion.sub" --attribute-condition "assertion.sub=='$principal'"
    ```
 
-   Success: `Created workload identity pool [hcw-azure].` and `Created workload identity pool provider [entra].` `google.subject=assertion.sub` makes each Azure identity's object id its Google name, which step 10 uses.
+   Success: `Created workload identity pool [hcw-azure].` and `Created workload identity pool provider [entra].` `google.subject=assertion.sub` makes each Azure identity's object id its Google name, which step 10 uses. The attribute condition (a rule Google checks on every token, described on [Google's federation page](https://cloud.google.com/iam/docs/workload-identity-federation-with-other-clouds)) refuses any token whose subject is not the Function App's identity, so no other identity in the directory can even exchange a token. PowerShell fills in `$principal` inside the double quotes and leaves the single quotes as they are, which is what Google's rule language expects. To check, run `gcloud iam workload-identity-pools providers describe entra --project $project --location global --workload-identity-pool hcw-azure --format "value(attributeCondition)"`: it prints `assertion.sub=='` followed by the id from step 8 and `'`. If it prints `assertion.sub==''`, step 8's `$principal` was empty; run step 8 again, then `gcloud iam workload-identity-pools providers update-oidc entra --project $project --location global --workload-identity-pool hcw-azure --attribute-condition "assertion.sub=='$principal'"`.
 
 10. Let the Function App's identity, and nothing else, act as the service account, and keep the provider's full name:
 
@@ -216,7 +234,7 @@ not checked against a bill. No step creates a key.
 
     Success: the three are listed. A value of the wrong shape fails the next plan on the variable's own check, naming it.
 
-14. In the same place, check that `schedulers_master_enabled` is `true`. If it is `false`, stop: turning it on lets every timer in `enabled_timers` run, which is a separate decision. Then edit `enabled_timers` (HCL) to add `"SYNC_SEARCH_CONSOLE"` to the list, and save.
+14. In the [`hcw-azure` workspace variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables), check that `schedulers_master_enabled` is `true`. If it is `false`, stop: turning it on lets every timer in `enabled_timers` run, which is a separate decision. Then edit `enabled_timers` (HCL) to add `"SYNC_SEARCH_CONSOLE"` to the list, and save.
 
 15. Start a run from the [workspace's runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs) and read the plan before you confirm it. Confirming applies the change to Azure.
 
@@ -233,7 +251,7 @@ not checked against a bill. No step creates a key.
     | Message says | What is wrong | Check |
     | --- | --- | --- |
     | hop 1 (Entra token) | The app cannot get a token for the registration | Steps 7 and 13: `gsc_entra_app_id_uri` is exactly the `api://...` value, and the service principal exists (`az ad sp show --id` followed by the app id prints it) |
-    | hop 2 (Google token exchange), HTTP 400 | Google's token service does not trust the token | Step 9: the issuer is `https://sts.windows.net/` + directory id + `/` and the allowed audience is the same `api://...` value; step 13: `gsc_wif_audience` uses the project **number** |
+    | hop 2 (Google token exchange), HTTP 400 | Google's token service does not trust the token | Step 9: the issuer is `https://sts.windows.net/` + directory id + `/`, the allowed audience is the same `api://...` value, and the attribute condition names the id from step 8; step 13: `gsc_wif_audience` uses the project **number** |
     | hop 3 (service account token), HTTP 403 | The app's identity may not act as the service account | Step 10 ran with the right `$principal` (step 8), and the IAM Credentials API is on (step 4) |
     | HTTP 403 ... not a Full user | Google signed in, but the service account cannot read the property | Step 11: the service account is listed as **Full** |
 
@@ -255,7 +273,9 @@ completely, remove the service account from the property in
   `sync-search-console` job.
 - The timer `syncSearchConsole` is in
   [`functions/src/functions/schedulers.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/functions/schedulers.js).
-- The document is `admin_config/search_console_snapshot` in Cosmos DB.
+- The documents are `admin_config/search_console_snapshot` (what the page shows) and
+  `admin_config/search_console_lease` (the run lease and the day's inspection count,
+  [`lease.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/search-console/lease.js)) in Cosmos DB.
 - The settings are in [`infra/functionapp.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/functionapp.tf)
   and [`infra/variables.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/variables.tf),
   and listed in [Required inputs](../standards/required-inputs.md).

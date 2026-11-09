@@ -4,8 +4,10 @@
  * credential are stubs; nothing here reaches the network.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
 import {
   createGoogleTokenProvider,
+  defaultAzureCredential,
   GoogleAuthError,
   IAM_CREDENTIALS_BASE,
   readGoogleAuthConfig,
@@ -158,5 +160,84 @@ describe('createGoogleTokenProvider', () => {
     const failure = await provider.getAccessToken().catch((caught) => caught);
     expect(failure).toMatchObject({ kind: 'sts' });
     expect(failure.status).toBeUndefined();
+  });
+
+  it('sends every hop with a deadline, and names the hop that never answered', async () => {
+    vi.useFakeTimers();
+    try {
+      const credential = { getToken: vi.fn(async () => ({ token: ENTRA_TOKEN })) };
+      const fetchImpl = vi.fn(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+          })
+      );
+      const provider = createGoogleTokenProvider({ audience: AUDIENCE, appIdUri: APP_ID_URI, serviceAccountEmail: SA, credential, fetchImpl });
+      const failure = provider.getAccessToken().catch((caught) => caught);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(failure).resolves.toMatchObject({ kind: 'sts' });
+      expect(fetchImpl.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('names hop impersonation when the token call fails to reach Google, or answers without a token', async () => {
+    const unreachable = setup({ iam: null });
+    unreachable.fetchImpl.mockImplementation(async (url) => {
+      if (url === STS_TOKEN_URL) return jsonResponse(200, { access_token: FEDERATED });
+      throw new TypeError('fetch failed');
+    });
+    await expect(unreachable.provider.getAccessToken()).rejects.toMatchObject({ kind: 'impersonation' });
+
+    const empty = setup({ iam: { ok: true, status: 200, json: async () => Promise.reject(new SyntaxError('x')) } });
+    await expect(empty.provider.getAccessToken()).rejects.toMatchObject({ kind: 'impersonation', status: 200 });
+  });
+
+  it('reads the real clock by default', async () => {
+    const credential = { getToken: vi.fn(async () => ({ token: ENTRA_TOKEN })) };
+    const fetchImpl = vi.fn(async (url) =>
+      url === STS_TOKEN_URL
+        ? jsonResponse(200, { access_token: FEDERATED })
+        : jsonResponse(200, { accessToken: SA_TOKEN, expireTime: new Date(Date.now() + 3_600_000).toISOString() })
+    );
+    const provider = createGoogleTokenProvider({ audience: AUDIENCE, appIdUri: APP_ID_URI, serviceAccountEmail: SA, credential, fetchImpl });
+    await provider.getAccessToken();
+    await provider.getAccessToken();
+    expect(credential.getToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a token for an hour when Google gives no expiry', async () => {
+    let clock = 0;
+    const { provider, fetchImpl } = setup({ iam: jsonResponse(200, { accessToken: SA_TOKEN }), now: () => clock });
+    await provider.getAccessToken();
+    clock = 3_600_000 - 5 * 60 * 1000 - 1;
+    await provider.getAccessToken();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('names hop entra when the managed identity answers without a token', async () => {
+    const provider = createGoogleTokenProvider({
+      audience: AUDIENCE,
+      appIdUri: APP_ID_URI,
+      serviceAccountEmail: SA,
+      credential: { getToken: vi.fn(async () => null) },
+      fetchImpl: vi.fn(),
+    });
+    await expect(provider.getAccessToken()).rejects.toMatchObject({ kind: 'entra' });
+  });
+});
+
+describe('defaultAzureCredential', () => {
+  it('uses the managed identity in Azure, with a client id only when one is set', () => {
+    expect(defaultAzureCredential({ WEBSITE_INSTANCE_ID: 'x' })).toBeInstanceOf(ManagedIdentityCredential);
+    expect(defaultAzureCredential({ IDENTITY_ENDPOINT: 'x', AZURE_CLIENT_ID: ' 00000000-0000-0000-0000-000000000001 ' })).toBeInstanceOf(
+      ManagedIdentityCredential
+    );
+    expect(defaultAzureCredential({ IDENTITY_ENDPOINT: 'x', AZURE_CLIENT_ID: '   ' })).toBeInstanceOf(ManagedIdentityCredential);
+  });
+
+  it('uses the workstation chain outside Azure', () => {
+    expect(defaultAzureCredential({})).toBeInstanceOf(DefaultAzureCredential);
   });
 });

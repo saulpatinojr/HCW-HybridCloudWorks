@@ -1646,6 +1646,14 @@ variable "gsc_entra_app_id_uri" {
   description = "Application ID URI of the Entra app registration the Function App's managed identity asks a token for (api://...); Google's pool provider allows exactly this audience. No secret is created for that registration. Empty until set up (#1612)"
   type        = string
   default     = ""
+
+  # Google's pool provider compares the token's audience with this value
+  # exactly, so a trailing slash, or a URI copied from somewhere other than
+  # the app registration, fails sign-in at hop 2 instead of here.
+  validation {
+    condition     = var.gsc_entra_app_id_uri == "" || can(regex("^api://.*[^/]$", var.gsc_entra_app_id_uri))
+    error_message = "gsc_entra_app_id_uri must be empty or the app registration's Application ID URI: it starts with api:// and does not end with a slash, as the runbook's step 7 prints it."
+  }
 }
 
 variable "gsc_service_account_email" {

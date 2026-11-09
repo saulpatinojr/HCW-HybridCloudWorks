@@ -20,7 +20,9 @@ import {
   fetchFailed,
   fetchStateLabel,
   fmtCount,
+  inspectionHref,
   pathOf,
+  sitePageHref,
   sortPages,
   utcText,
   verdictOf,
@@ -173,29 +175,70 @@ function CanonicalCell({ page }) {
   );
 }
 
+/**
+ * The small marker on a page whose answer is from an earlier run: this run
+ * could not ask Google again (the page's error line says why).
+ */
+function StaleMarker({ page }) {
+  const when = utcText(page.inspectedAt);
+  return (
+    <span
+      data-testid="stale-marker"
+      className="ml-1.5 inline-block rounded border border-amber-300 px-1 text-[10px] font-medium uppercase tracking-wide text-amber-800 dark:border-amber-800 dark:text-amber-300"
+      title={
+        when
+          ? `This answer is from an earlier run (${when}); the last run could not ask Google again.`
+          : 'This answer is from an earlier run; the last run could not ask Google again.'
+      }
+    >
+      stale
+    </span>
+  );
+}
+
+/**
+ * Why a page has no fresh answer. On a stale page it is a plain note (the
+ * answer shown is still Google's, from an earlier run); on a page with no
+ * answer at all it is the failure.
+ */
+function PageError({ page }) {
+  if (!page.error) return null;
+  if (page.stale) return <span className="block text-muted-foreground">{page.error}</span>;
+  return <span className={`block ${TONE_TEXT.bad}`}>Could not inspect: {page.error}</span>;
+}
+
 function PageRow({ page }) {
   const verdict = VERDICTS[verdictOf(page)];
   const failedFetch = fetchFailed(page.pageFetchState);
+  const pageHref = sitePageHref(page.url);
+  const googleHref = inspectionHref(page.inspectionResultLink);
   return (
-    <tr data-testid="indexing-row" data-verdict={verdictOf(page)}>
+    <tr
+      data-testid="indexing-row"
+      data-verdict={verdictOf(page)}
+      data-stale={page.stale ? 'true' : 'false'}
+    >
       <td className={`${TD_CLASS} max-w-[18rem] break-all`}>
-        <a
-          href={page.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-mono text-primary hover:underline"
-        >
-          {pathOf(page.url)}
-        </a>
+        {pageHref ? (
+          <a
+            href={pageHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono text-primary hover:underline"
+          >
+            {pathOf(page.url)}
+          </a>
+        ) : (
+          <span className="font-mono">{String(page.url ?? '')}</span>
+        )}
       </td>
       <td className={TD_CLASS}>
         <span className={`font-medium ${TONE_TEXT[verdict.tone]}`}>{verdict.label}</span>
+        {page.stale ? <StaleMarker page={page} /> : null}
         {page.coverageState ? (
           <span className="block text-muted-foreground">{page.coverageState}</span>
         ) : null}
-        {page.error ? (
-          <span className={`block ${TONE_TEXT.bad}`}>Could not inspect: {page.error}</span>
-        ) : null}
+        <PageError page={page} />
       </td>
       <td className={`${TD_CLASS} ${failedFetch ? TONE_TEXT.bad : ''}`}>
         {fetchStateLabel(page.pageFetchState)}
@@ -207,9 +250,9 @@ function PageRow({ page }) {
         <CanonicalCell page={page} />
       </td>
       <td className={TD_CLASS}>
-        {page.inspectionResultLink ? (
+        {googleHref ? (
           <a
-            href={page.inspectionResultLink}
+            href={googleHref}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-primary hover:underline"
@@ -320,14 +363,18 @@ function StraysTable({ strays }) {
           {strays.map((row) => (
             <tr key={row.url}>
               <td className={`${TD_CLASS} break-all`}>
-                <a
-                  href={row.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-mono text-primary hover:underline"
-                >
-                  {pathOf(row.url)}
-                </a>
+                {sitePageHref(row.url) ? (
+                  <a
+                    href={sitePageHref(row.url)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-primary hover:underline"
+                  >
+                    {pathOf(row.url)}
+                  </a>
+                ) : (
+                  <span className="font-mono">{String(row.url ?? '')}</span>
+                )}
               </td>
               <td className={`${TD_CLASS} text-right tabular-nums`}>{fmtCount(row.clicks)}</td>
               <td className={`${TD_CLASS} text-right tabular-nums`}>{fmtCount(row.impressions)}</td>

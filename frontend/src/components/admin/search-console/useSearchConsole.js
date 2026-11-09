@@ -10,6 +10,9 @@
  * answers 202 at once and the run takes a few minutes. So after a queued run
  * the report is read again every 30 seconds, for up to 15 minutes, until it
  * shows a newer run, and then the page has the new figures without a reload.
+ * Those background reads are quiet: one that fails leaves the report on
+ * screen as it was and the next one tries again, because a dropped poll is
+ * not a reason to blank a page the owner is reading.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuthReady } from '@/hooks/useAuthReady';
@@ -33,9 +36,23 @@ const loadReport = async () => normalizeReport(await getJSON(SEARCH_CONSOLE_ROUT
 /** Which run a report shows, so the page can tell when a newer one has landed. */
 const runStamp = (report) => report?.run?.finishedAt ?? report?.generatedAt ?? null;
 
+/** The server's sentence after "error — ", as lib/api.js joins them, or null. */
+const serverSentence = (error) => {
+  const text = String(error?.message ?? '');
+  const at = text.indexOf(' — ');
+  return at >= 0 ? text.slice(at + 3).trim() || null : null;
+};
+
 /** The toast for each answer to Run now. Exported for the tests. */
 export function runNowToast(outcome) {
   if (outcome.ok) {
+    if (outcome.alreadyRunning || outcome.alreadyQueued) {
+      return {
+        title: 'A run is already going',
+        description:
+          'Another run started first, so no second one was queued. The page updates when it finishes.',
+      };
+    }
     return {
       title: 'Run queued',
       description: 'Queued; the page updates when the run finishes, usually a few minutes.',
@@ -53,11 +70,29 @@ export function runNowToast(outcome) {
       variant: 'destructive',
     };
   }
+  if (error?.status === 429) {
+    return {
+      title: 'Today’s Google inspections are used up',
+      description:
+        serverSentence(error) ??
+        'The app’s daily allowance of Google page inspections is used up. It starts again at midnight Pacific time.',
+    };
+  }
   return {
     title: 'The run could not be started',
     description: `${error?.message || 'The request failed.'} Try again in a minute; if it keeps failing, check the Health page.`,
     variant: 'destructive',
   };
+}
+
+/** The 202's body, or {} when it has none or it is not JSON. */
+async function readAnswer(response) {
+  try {
+    const body = await response?.json?.();
+    return body && typeof body === 'object' ? body : {};
+  } catch {
+    return {};
+  }
 }
 
 export default function useSearchConsole() {
@@ -68,25 +103,42 @@ export default function useSearchConsole() {
   const [starting, setStarting] = useState(false);
   // Set while the page waits for a queued run: the run it is waiting to replace.
   const [waiting, setWaiting] = useState(null);
-  const reportRef = useRef(guarded.data);
+  // The newest report a background read brought, and when it landed.
+  const [polled, setPolled] = useState(null);
+
+  // A background read's report wins only over an older guarded one, so a
+  // later "Try again" or refresh still shows what it read.
+  const guardedAt = guarded.loadedAt ? guarded.loadedAt.getTime() : 0;
+  const report = polled && polled.at > guardedAt ? polled.report : guarded.data;
+
+  const reportRef = useRef(report);
   useEffect(() => {
-    reportRef.current = guarded.data;
-  }, [guarded.data]);
+    reportRef.current = report;
+  }, [report]);
 
   // Re-read on a timer while waiting; stop when a newer run shows or time is up.
   useEffect(() => {
     if (!waiting) return undefined;
-    const timer = setInterval(() => {
+    let live = true;
+    const timer = setInterval(async () => {
       if (Date.now() - waiting.since > POLL_FOR_MS) {
         setWaiting(null);
         return;
       }
-      refresh();
+      try {
+        const next = await loadReport();
+        if (live) setPolled({ report: next, at: Date.now() });
+      } catch {
+        // Quiet on purpose: keep what is on screen; the next tick tries again.
+      }
     }, POLL_EVERY_MS);
-    return () => clearInterval(timer);
-  }, [waiting, refresh]);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [waiting]);
 
-  const currentStamp = runStamp(guarded.data);
+  const currentStamp = runStamp(report);
   if (waiting && currentStamp && currentStamp !== waiting.stamp) {
     setWaiting(null);
   }
@@ -95,9 +147,14 @@ export default function useSearchConsole() {
     setStarting(true);
     let outcome;
     try {
-      // authedFetch rather than postJSON: a 202 may carry no body to parse.
-      await authedFetch(SEARCH_CONSOLE_RUN_ROUTE, { method: 'POST', body: '{}' });
-      outcome = { ok: true };
+      // authedFetch rather than postJSON: the 202's body is read only if it has one.
+      const response = await authedFetch(SEARCH_CONSOLE_RUN_ROUTE, { method: 'POST', body: '{}' });
+      const answer = await readAnswer(response);
+      outcome = {
+        ok: true,
+        alreadyRunning: answer.alreadyRunning === true,
+        alreadyQueued: answer.alreadyQueued === true,
+      };
     } catch (error) {
       outcome = { ok: false, error };
     } finally {
@@ -109,7 +166,7 @@ export default function useSearchConsole() {
   }, [toast]);
 
   return {
-    report: guarded.data,
+    report,
     pending: guarded.pending,
     error: guarded.error,
     refresh,

@@ -3,7 +3,7 @@
  * sentence (#1612). Fetch is a stub; nothing here reaches the network.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createSearchConsoleClient, INSPECT_URL, SearchConsoleError } from './client.js';
+import { createSearchConsoleClient, defaultSleep, INSPECT_URL, SearchConsoleError } from './client.js';
 
 const SITE = 'sc-domain:hybridcloudworks.com';
 const TOKEN = 'access-token-should-never-leak';
@@ -110,5 +110,65 @@ describe('createSearchConsoleClient', () => {
     expect(failure).toBeInstanceOf(SearchConsoleError);
     expect(failure.status).toBeUndefined();
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up on a call with no answer after 30 seconds, and retries it like a dropped connection', async () => {
+    vi.useFakeTimers();
+    try {
+      // A call that never answers until its signal fires.
+      const hanging = (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        });
+      const fetchImpl = vi.fn(hanging).mockImplementationOnce(hanging).mockImplementationOnce(async () => response(200, { rows: [{ keys: ['x'] }] }));
+      const client = createSearchConsoleClient({
+        siteUrl: SITE,
+        auth: { getAccessToken: async () => TOKEN },
+        fetchImpl,
+        sleep: async () => {},
+      });
+      const pending = client.searchAnalytics({});
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toHaveLength(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(fetchImpl.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('answers {} when a successful body is not JSON, and treats an odd status as unreachable', async () => {
+    const { client } = setup([{ ok: true, status: 200, json: async () => Promise.reject(new SyntaxError('x')) }, response(302)]);
+    await expect(client.inspect('https://hybridcloudworks.com/')).resolves.toEqual({});
+    const failure = await client.listSitemaps().catch((caught) => caught);
+    expect(failure.message).toBe('Search Console sitemaps failed: Search Console could not be reached (HTTP 302).');
+  });
+
+  it('gives up at once when Retry-After asks for longer than 30 seconds', async () => {
+    const { client, fetchImpl, sleep } = setup([response(429, {}, { 'retry-after': '120' })]);
+    await expect(client.inspect('https://hybridcloudworks.com/')).rejects.toMatchObject({ status: 429 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('waits with the real clock by default', async () => {
+    await expect(defaultSleep(0)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    [401, 'Google did not accept the access token'],
+    [404, 'Google has no such property or resource'],
+    [400, 'Google refused the request as malformed'],
+  ])('says what HTTP %s means', async (status, sentence) => {
+    const client = createSearchConsoleClient({
+      siteUrl: SITE,
+      auth: { getAccessToken: async () => TOKEN },
+      fetchImpl: vi.fn(async () => response(status)),
+      sleep: async () => {},
+    });
+    const failure = await client.inspect('https://hybridcloudworks.com/').catch((caught) => caught);
+    expect(failure.message).toContain(sentence);
   });
 });

@@ -14,8 +14,10 @@ import {
   fmtCount,
   fmtCtr,
   fmtPosition,
+  inspectionHref,
   normalizeReport,
   pathOf,
+  sitePageHref,
   resolveTab,
   sortBreakdown,
   sortPages,
@@ -153,5 +155,40 @@ describe('normalizeReport', () => {
     expect(report.indexing.pages).toHaveLength(1);
     expect(report.notAvailable).toEqual(['Links (internal and external)']);
     expect(report.run.message).toBeNull();
+  });
+
+  it('marks a page stale only when the server says true, and reads the stale count', () => {
+    const report = normalizeReport({
+      indexing: {
+        pages: [
+          { url: 'https://hybridcloudworks.com/a', stale: true },
+          { url: 'https://hybridcloudworks.com/b', stale: 'yes' },
+          { url: 'https://hybridcloudworks.com/c' },
+        ],
+      },
+      run: { stale: 2, message: 'Only 4 of 10 pages fit.' },
+    });
+    expect(report.indexing.pages.map((page) => page.stale)).toEqual([true, false, false]);
+    expect(report.run).toMatchObject({ stale: 2, message: 'Only 4 of 10 pages fit.' });
+    expect(normalizeReport({ run: {} }).run.stale).toBeNull();
+  });
+});
+
+describe('link addresses', () => {
+  it("links Google's inspection screen only on search.google.com", () => {
+    const google = 'https://search.google.com/search-console/inspect?resource_id=x&id=y';
+    expect(inspectionHref(google)).toBe(google);
+    expect(inspectionHref('https://search.google.com.evil.example/x')).toBeNull();
+    expect(inspectionHref('javascript:alert(1)')).toBeNull();
+    expect(inspectionHref(null)).toBeNull();
+  });
+
+  it('links a page only on the public site', () => {
+    expect(sitePageHref('https://hybridcloudworks.com/blog/x')).toBe(
+      'https://hybridcloudworks.com/blog/x'
+    );
+    expect(sitePageHref('https://hybridcloudworks.com.evil.example/')).toBeNull();
+    expect(sitePageHref('http://hybridcloudworks.com/a')).toBeNull();
+    expect(sitePageHref(undefined)).toBeNull();
   });
 });

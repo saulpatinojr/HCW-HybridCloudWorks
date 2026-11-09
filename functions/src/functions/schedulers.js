@@ -345,7 +345,10 @@ timer('labCanary', 'LAB_CANARY', '0 20 */1 * * *', async (context) => {
 // so 00:10 and 12:10 UTC, which is 18:10 / 06:10 CST and 19:10 / 07:10 CDT.
 // Ten past, to keep clear of the 00:00 cleanup timer. Does nothing (one log
 // line) until the Google sign-in settings are set (lib/search-console/sync.js).
-// A run that cannot sign in to Google or read the property is thrown as a
+// While a Run now job holds the run lease it also does nothing but log
+// `already_running`, and it keeps to the same daily inspection budget
+// (lib/search-console/lease.js). A run that cannot sign in to Google, read
+// the property or read the sitemap is thrown as a
 // failure after the page's document records it, so the host and
 // alert-timer-overdue see it too.
 timer('syncSearchConsole', 'SYNC_SEARCH_CONSOLE', '0 10 0,12 * * *', async (context) => {

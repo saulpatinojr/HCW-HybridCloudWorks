@@ -18,9 +18,9 @@ const refuse = {
   requireRole: vi.fn(async () => ({ error: { status: 403, headers: {}, body: '{"ok":false,"error":"Forbidden"}' } })),
 };
 
-function setup({ env = ENV, stored = null, jobs = [], guard = allow } = {}) {
+function setup({ env = ENV, stored = null, lease = null, jobs = [], guard = allow } = {}) {
   const store = {
-    readDoc: vi.fn(async () => stored),
+    readDoc: vi.fn(async (_container, id) => (id === 'search_console_lease' ? lease : stored)),
     upsertDoc: vi.fn(async (_c, doc) => doc),
     queryDocs: vi.fn(async () => jobs),
   };
@@ -148,6 +148,77 @@ describe('POST cms/search-console/run', () => {
     expect(body(response)).toMatchObject({ queued: true, alreadyQueued: true, jobId: 'live' });
     expect(store.upsertDoc).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('answers 202 alreadyRunning, with the job\'s id, while a run holds the lease', async () => {
+    const lease = { holder: 'run-a', by: 'job', jobId: 'job-9', expiresAt: '2026-11-09T12:20:00Z' };
+    const { handlers, store, context } = setup({ lease });
+    const enqueue = vi.fn();
+    const response = await handlers.run({}, context, { enqueue });
+    expect(response.status).toBe(202);
+    expect(body(response)).toEqual({ ok: true, queued: true, alreadyRunning: true, status: 'running', jobId: 'job-9' });
+    expect(store.readDoc).toHaveBeenCalledWith('admin_config', 'search_console_lease', 'admin_config');
+    expect(store.queryDocs).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('answers alreadyRunning without a job id while the timer holds the lease', async () => {
+    const lease = { holder: 'run-a', by: 'timer', jobId: null, expiresAt: '2026-11-09T12:20:00Z' };
+    const answer = body(await setup({ lease }).handlers.run({}, {}, { enqueue: vi.fn() }));
+    expect(answer).toEqual({ ok: true, queued: true, alreadyRunning: true, status: 'running' });
+  });
+
+  it('queues a run when the lease has lapsed', async () => {
+    const lease = { holder: 'dead-run', expiresAt: '2026-11-09T11:00:00Z', budget: { day: '2026-11-09', used: 10 } };
+    const enqueue = vi.fn();
+    const response = await setup({ lease }).handlers.run({}, {}, { enqueue });
+    expect(body(response)).toMatchObject({ queued: true, jobId: 'job-1' });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('is 429 daily_budget_spent, saying when it starts again, once today\'s budget is used', async () => {
+    const lease = { holder: null, budget: { day: '2026-11-09', used: 1800 } };
+    const { handlers, store, context } = setup({ lease });
+    const enqueue = vi.fn();
+    const response = await handlers.run({}, context, { enqueue });
+    expect(response.status).toBe(429);
+    expect(body(response)).toEqual({
+      ok: false,
+      error: 'daily_budget_spent',
+      message: "Today's allowance of 1,800 Google page inspections is used up. It starts again at midnight Pacific time (2026-11-10 08:00 UTC).",
+    });
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('counts yesterday\'s inspections as spent no longer', async () => {
+    const lease = { holder: null, budget: { day: '2026-11-08', used: 1800 } };
+    const response = await setup({ lease }).handlers.run({}, {}, { enqueue: vi.fn() });
+    expect(response.status).toBe(202);
+  });
+
+  it('keeps to a budget set in the app setting', async () => {
+    const lease = { holder: null, budget: { day: '2026-11-09', used: 5 } };
+    const response = await setup({ lease, env: { ...ENV, GSC_DAILY_INSPECTION_BUDGET: '5' } }).handlers.run({}, {}, { enqueue: vi.fn() });
+    expect(response.status).toBe(429);
+    expect(body(response).message).toContain('allowance of 5 Google');
+  });
+
+  it('answers a failed queue write with a fixed sentence', async () => {
+    const { handlers, store, context } = setup();
+    store.upsertDoc.mockRejectedValueOnce(new Error('cosmos said something private'));
+    const response = await handlers.run({}, context, { enqueue: vi.fn() });
+    expect(response.status).toBe(500);
+    expect(response.body).not.toContain('private');
+  });
+
+  it('names the job with a fresh id and the real clock by default', async () => {
+    const store = { readDoc: vi.fn(async () => null), upsertDoc: vi.fn(async (_c, doc) => doc), queryDocs: vi.fn(async () => []) };
+    const handlers = createSearchConsoleHandlers({ guard: allow, store, env: ENV });
+    const enqueue = vi.fn();
+    const answer = body(await handlers.run({}, {}, { enqueue }));
+    expect(answer.jobId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(Date.parse(store.upsertDoc.mock.calls[0][1].createdAt)).toBeGreaterThan(Date.parse('2026-01-01T00:00:00Z'));
   });
 
   it('is 500 when no queue output is wired', async () => {

@@ -22,7 +22,15 @@
  */
 import React from 'react';
 import { useSearchParams } from 'react-router';
-import { AlertTriangle, ExternalLink, Loader2, Play, SearchCheck, Settings2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  ExternalLink,
+  Info,
+  Loader2,
+  Play,
+  SearchCheck,
+  Settings2,
+} from 'lucide-react';
 import PageHeader from '@/components/admin/shared/PageHeader';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import HubTabs from '@/components/admin/HubTabs';
@@ -100,9 +108,43 @@ function LastRunLine({ report }) {
         <>
           {' · '}
           {fmtCount(run.inspected)} pages inspected, {fmtCount(run.failed)} could not be inspected
+          {run.stale ? `, ${fmtCount(run.stale)} kept from an earlier run` : null}
         </>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * What the last run said. A failed run is a warning; a run that worked can
+ * still have something to say (a page cap, a spent daily allowance, a query
+ * that failed and kept its last figures), shown as information.
+ */
+function RunMessage({ report }) {
+  if (report.status === 'error') {
+    return (
+      <p
+        role="alert"
+        className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+      >
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+        <span>
+          The last run failed: {report.run?.message || 'the server gave no reason.'} The figures
+          below are from the last run that worked, if there was one.
+        </span>
+      </p>
+    );
+  }
+  if (!report.run?.message) return null;
+  return (
+    <p
+      role="status"
+      data-testid="run-note"
+      className="flex items-start gap-2 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200"
+    >
+      <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+      <span>Note from the last run: {report.run.message}</span>
+    </p>
   );
 }
 
@@ -203,18 +245,7 @@ export default function SearchConsolePage() {
     const ActivePanel = PANELS[activeTab];
     body = (
       <div className="space-y-6">
-        {report.status === 'error' ? (
-          <p
-            role="alert"
-            className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
-          >
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            <span>
-              The last run failed: {report.run?.message || 'the server gave no reason.'} The figures
-              below are from the last run that worked, if there was one.
-            </span>
-          </p>
-        ) : null}
+        <RunMessage report={report} />
         <HubTabs
           tabs={TABS}
           active={activeTab}
