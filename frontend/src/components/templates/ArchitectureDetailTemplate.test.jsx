@@ -271,3 +271,74 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
     expect(totalCount).toBe(25);
   });
 });
+
+// #1613 review, #1616 item 3. VMware has no built-in catalogue, so the build
+// writes no `/vmware/architecture-designs/<slug>` page and the server answers
+// such an address with its 404 page. The browser then renders the route
+// itself, and until this fix the template fell back to the AWS catalogue and
+// showed an AWS design under the VMware heading.
+describe('ArchitectureDetailTemplate — a provider shows only its own designs', () => {
+  beforeEach(() => {
+    mockFetchPublicContentItem.mockReset();
+    mockFetchPublicContentItem.mockResolvedValue(null);
+  });
+
+  it('renders the site 404 page for a VMware address carrying an AWS design slug', async () => {
+    const { container } = renderArchitectureRoute(
+      '/vmware/architecture-designs/data-lake',
+      'vmware'
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'This page does not exist.' })
+    ).toBeInTheDocument();
+    expect(container.querySelector('[data-page="not-found"]')).not.toBeNull();
+    expect(screen.queryByText('Data Lake Architecture')).not.toBeInTheDocument();
+  });
+
+  it('renders the site 404 page for a slug no catalogue or API document has', async () => {
+    const { container } = renderArchitectureRoute(
+      '/aws/architecture-designs/no-such-design',
+      'aws'
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'This page does not exist.' })
+    ).toBeInTheDocument();
+    expect(container.querySelector('[data-page="not-found"]')).not.toBeNull();
+  });
+
+  it('still renders a VMware design that the API publishes', async () => {
+    mockFetchPublicContentItem.mockResolvedValue({
+      ...initialBlueprintForm,
+      type: 'architecture',
+      cloudProvider: 'vmware',
+      slug: 'vcf-stretched-cluster',
+      title: 'VCF Stretched Cluster',
+      promise: 'Two sites, one vSAN cluster.',
+    });
+
+    renderArchitectureRoute('/vmware/architecture-designs/vcf-stretched-cluster', 'vmware');
+
+    expect(
+      await screen.findByRole('heading', { name: 'VCF Stretched Cluster' })
+    ).toBeInTheDocument();
+  });
+
+  it('does not show an API design published for another provider under the VMware heading', async () => {
+    mockFetchPublicContentItem.mockResolvedValue({
+      ...initialBlueprintForm,
+      type: 'architecture',
+      cloudProvider: 'aws',
+      slug: 'aws-only-design',
+      title: 'AWS Only Design',
+    });
+
+    renderArchitectureRoute('/vmware/architecture-designs/aws-only-design', 'vmware');
+
+    expect(
+      await screen.findByRole('heading', { name: 'This page does not exist.' })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('AWS Only Design')).not.toBeInTheDocument();
+  });
+});
