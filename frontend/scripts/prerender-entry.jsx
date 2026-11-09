@@ -6,7 +6,7 @@
  * neither of which exists here. This renders the same tree with a static router
  * instead, and collects the head tags Helmet produces on the way.
  *
- * Everything else — providers, layout, the 42 pages that set their own title —
+ * Everything else — providers, layout, the pages that set their own title —
  * is imported from the real application, because a second copy of the tree
  * would pre-render a site that is not the site.
  */
@@ -150,7 +150,10 @@ const AWS_CERT_ROUTES = [
  * certification pages, so the built page is the catalogue entry.
  *
  * Designs that exist only in the API have no catalogue entry and so no page
- * here; they answer 404 until the content manifest learns to list them.
+ * here: their address answers 404 to a crawler, and the app still shows the
+ * design to a reader. The content manifest does carry such a design, but as an
+ * article (at `/<provider>/blog/<slug>`, with the article fields only), so it
+ * cannot build this page yet. not-found-routing.test.js pins this.
  */
 const ARCHITECTURE_ROUTES = Object.entries(architecturesByProvider).flatMap(
   ([provider, catalogue]) =>
