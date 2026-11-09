@@ -400,6 +400,11 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
      which pages `alert-lab-unit-failed`.
    - On a clean run with no drift, logs `playbook check: no drift detected ...`
      at `daemon.notice` and exits 0.
+   - Because this run is a check, a `command` or `shell` task whose output a later
+     task reads either runs in check mode too (`check_mode: false`, for reads
+     only) or its readers skip in check mode. On 2026-11-09 one read in the
+     `coder_sandbox` role did neither, and the check exited 1;
+     `scripts/lab-host-check-mode-reads.test.mjs` now fails on that pattern.
 
 ## Break-glass
 

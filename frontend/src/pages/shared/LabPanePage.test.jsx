@@ -13,8 +13,9 @@ import { join } from 'node:path';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { HelmetProvider } from 'react-helmet-async';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { CODER_ORIGIN, coderSignInUrl, labById, labs } from '@/data/labs/catalogue';
+import { PUBLISHED_ROUTES } from '@/data/publishedRoutes';
 import { SIGNED_IN_KEY, SIGN_IN_PENDING_KEY, markSignedIn } from '@/components/labs/labSignIn';
 
 const fetchCoderStatus = vi.fn();
@@ -635,7 +636,15 @@ describe('LabPanePage, the lab itself (ADR 0033 §4)', () => {
     expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
   });
 
-  it('lists the articles for a lab that has them, and no heading for one that has none', async () => {
+  it('lists the articles for a lab that has them, once they are published', async () => {
+    // As the manifest will read once the owner publishes them (#1616). The
+    // real set is changed for this test only and put back after it.
+    const paths = labById('landing-zone-builder-output').articleSlugs.map(
+      (entry) => `/${entry.provider}/blog/${entry.slug}`
+    );
+    const added = paths.filter((path) => !PUBLISHED_ROUTES.has(path));
+    added.forEach((path) => PUBLISHED_ROUTES.add(path));
+    onTestFinished(() => added.forEach((path) => PUBLISHED_ROUTES.delete(path)));
     renderPane('landing-zone-builder-output');
     await screen.findByTestId('lab-sign-in');
     expect(within(screen.getByTestId('lab-articles')).getAllByRole('link')).toHaveLength(3);
@@ -643,6 +652,23 @@ describe('LabPanePage, the lab itself (ADR 0033 §4)', () => {
       'href',
       '/azure/blog/build-a-landing-zone-you-can-read'
     );
+  });
+
+  it("shows no article heading while none of the lab's articles is published (#1616)", async () => {
+    // As the manifest read on 2026-11-09: none of the three. The real set is
+    // changed for this test only and put back after it, so the test does not
+    // depend on what the manifest holds on the day it runs. A link to an
+    // article with no page would answer 404 (#1613).
+    const paths = labById('landing-zone-builder-output').articleSlugs.map(
+      (entry) => `/${entry.provider}/blog/${entry.slug}`
+    );
+    const removed = paths.filter((path) => PUBLISHED_ROUTES.has(path));
+    removed.forEach((path) => PUBLISHED_ROUTES.delete(path));
+    onTestFinished(() => removed.forEach((path) => PUBLISHED_ROUTES.add(path)));
+    renderPane('landing-zone-builder-output');
+    await screen.findByTestId('lab-sign-in');
+    expect(screen.queryByTestId('lab-articles')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Articles for this lab' })).toBeNull();
   });
 
   it('shows no article heading for a lab without articles', async () => {

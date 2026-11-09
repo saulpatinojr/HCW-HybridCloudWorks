@@ -60,12 +60,13 @@ function readSeed() {
 /**
  * Is the markup in this document actually for the URL being displayed?
  *
- * THE QUESTION IS NOT "was anything pre-rendered". staticwebapp.config.json's
- * navigationFallback serves /index.html — the pre-rendered HOME PAGE — for any
- * path without a file of its own, at HTTP 200. Every /admin route and anything
- * added to the router but not to the pre-render list arrives that way. Asking
- * only whether the mount point has children would hydrate the admin tree
- * against the home page's DOM on every one of them.
+ * THE QUESTION IS NOT "was anything pre-rendered". A path without a file of
+ * its own is served markup made for another URL: the client-only areas
+ * (/admin, /preview, ...) get app-shell.html, and any other unknown path gets
+ * the same shell with a 404 (staticwebapp.config.json, #1613). This check was
+ * written when that fallback was the pre-rendered HOME PAGE, and it still
+ * matters: asking only whether the mount point has children would hydrate one
+ * route's tree against another route's DOM.
  *
  * So the pre-renderer stamps the route it rendered and this compares it to the
  * live path. A mismatch is not an error: it is the fallback working as

@@ -365,9 +365,20 @@ describe('indexing headers', () => {
     // page whose only job is to consume a fragment and navigate away. Indexing
     // it would publish a titled, empty page — and one that appears in search
     // results holding somebody's authorization code in the URL.
+    //
+    // `/admin` (the dashboard itself) and `/newsletter/confirm` joined with
+    // #1613, when each got its own rule to keep loading without the old
+    // catch-all. The confirm page means nothing without the signed link in
+    // its fragment, and robots.txt already keeps crawlers off it.
     const noindexed = config.routes
       .filter((entry) => entry.headers?.['X-Robots-Tag']?.includes('noindex'))
       .map((entry) => entry.route);
-    expect(noindexed.sort()).toEqual(['/admin/*', '/auth/*', '/preview/*']);
+    expect(noindexed.sort()).toEqual([
+      '/admin',
+      '/admin/*',
+      '/auth/*',
+      '/newsletter/confirm',
+      '/preview/*',
+    ]);
   });
 });
