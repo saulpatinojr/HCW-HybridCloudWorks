@@ -52,9 +52,10 @@
  * sitemap still waiting for an answer is cut off at once, retries and their
  * pauses included. The run then saves what it has, as in step 5, and the
  * pages it did not reach keep their last answer, marked stale. A job's own
- * cancel signal (lib/jobs.js, at the job's 20-minute budget) fires the same
- * switch, but then nothing is saved: half a run is not written over the last
- * whole one, and the job is recorded as timed out.
+ * cancel signal (lib/jobs.js, at the job's 28-minute budget, which the run's
+ * own 25-minute limit always reaches first) fires the same switch, but then
+ * nothing is saved: half a run is not written over the last whole one, and
+ * the job is recorded as timed out.
  *
  * A degraded run never replaces good figures with worse ones: a page whose
  * inspection failed or was not attempted keeps its last answer, marked

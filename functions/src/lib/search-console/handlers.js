@@ -57,8 +57,14 @@ import { CONTAINER, emptySnapshot, NOT_AVAILABLE, SNAPSHOT_DOC_ID } from './sync
 
 export const SEARCH_CONSOLE_ROLE = 'editor';
 export const SYNC_JOB_TYPE = 'sync-search-console';
-/** The job's budget; a queued or running job older than this plus slack is treated as lost. */
-export const SYNC_JOB_TIMEOUT_MS = 20 * 60 * 1000;
+/**
+ * The job's budget; a queued or running job older than this plus slack is
+ * treated as lost. Longer than the run's own 25-minute limit
+ * (RUN_DEADLINE_MS), so a slow Run now stops itself and saves what it has,
+ * as a timer run does, instead of being cut off by the job first. Still
+ * under the 30-minute default function timeout on Flex Consumption.
+ */
+export const SYNC_JOB_TIMEOUT_MS = 28 * 60 * 1000;
 const IN_FLIGHT_WINDOW_MS = SYNC_JOB_TIMEOUT_MS + 15 * 60 * 1000;
 /**
  * A marker whose job document is not there yet counts as waiting for this

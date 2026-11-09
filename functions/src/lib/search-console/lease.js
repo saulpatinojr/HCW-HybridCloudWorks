@@ -46,7 +46,7 @@ import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 const CONTAINER = 'admin_config';
 export const LEASE_DOC_ID = 'search_console_lease';
 export const LEASE_DOC_TYPE = 'search_console_lease';
-/** Longer than the job's 20-minute budget and a run's normal few minutes. */
+/** Longer than the job's 28-minute budget and a run's normal few minutes. */
 export const LEASE_TTL_MS = 35 * 60 * 1000;
 /**
  * How long one run may go on before it stops starting work and cancels the

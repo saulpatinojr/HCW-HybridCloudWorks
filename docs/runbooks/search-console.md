@@ -68,8 +68,9 @@ Four things to know before trusting a number:
   marked stale, and the note above the tabs says the run hit its time
   limit). Just before it saves, it checks that it still holds the lease; if
   another run has taken it, the slow run writes nothing, so it can never
-  overwrite newer figures. A Run now job has its own 20-minute limit; a job
-  that reaches it saves nothing and is recorded as timed out.
+  overwrite newer figures. A Run now job has its own 28-minute limit, set
+  above the run's 25 minutes so a slow Run now also saves what it has; a job
+  that somehow reaches it saves nothing and is recorded as timed out.
 - **A run that goes wrong keeps the last good figures.** If the sitemap
   cannot be read, the run changes nothing but the message. An answer counts
   as a sitemap only when it starts with `<urlset>` (or `<sitemapindex>` for
