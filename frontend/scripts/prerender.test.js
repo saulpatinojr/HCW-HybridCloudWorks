@@ -225,28 +225,39 @@ describe('injectIntoTemplate', () => {
 describe('the SPA fallback must not be a pre-rendered page', () => {
   const config = swaConfig;
 
-  it('rewrites unmatched requests to the shell, not to index.html', () => {
-    // index.html is the pre-rendered HOME PAGE. Pointing the fallback at it
-    // serves the site's front page, in full, at HTTP 200, for every URL that
-    // does not match a file — every mistyped link and every unpublished slug.
-    // That is unbounded duplicate content, and it is worse than the empty shell
-    // it replaced. Measured on the preview host on 2026-08-23, before the fix:
-    // /definitely-not-real returned 200 with the home page's title and body.
-    expect(config.navigationFallback.rewrite).toBe('/app-shell.html');
-    expect(config.navigationFallback.rewrite).not.toBe('/index.html');
+  // Every rewrite in the config: the app-only areas' route rules and the 404
+  // override. The catch-all `navigationFallback` was removed for #1613; the
+  // rules that replaced it are pinned in src/lib/not-found-routing.test.js.
+  const rewrites = () => [
+    ...config.routes.filter((rule) => rule.rewrite).map((rule) => rule.rewrite),
+    config.responseOverrides['404'].rewrite,
+  ];
+
+  it('rewrites to the shell, never to index.html', () => {
+    // index.html is the pre-rendered HOME PAGE. Pointing a rewrite at it
+    // serves the site's front page, in full, for every URL it covers — every
+    // mistyped link and every unpublished slug. That is unbounded duplicate
+    // content, and it is worse than the empty shell it replaced. Measured on
+    // the preview host on 2026-08-23, before the fix: /definitely-not-real
+    // returned 200 with the home page's title and body.
+    expect(rewrites().length).toBeGreaterThan(1);
+    for (const target of rewrites()) {
+      expect(target).toBe('/app-shell.html');
+    }
   });
 
-  it('sends the 404 override to the shell too', () => {
+  it('sends the 404 override to the shell, with the 404 status kept', () => {
     expect(config.responseOverrides['404'].rewrite).toBe('/app-shell.html');
     expect(config.responseOverrides['404'].statusCode).toBe(404);
   });
 
   it('names a file the pre-render step actually writes', () => {
-    // A rewrite target that does not exist is a 404 for every article page,
-    // which is the one thing the fallback exists to serve.
-    const target = config.navigationFallback.rewrite.replace(/^\//, '');
+    // A rewrite target that does not exist is a 404 for every admin page and
+    // a blank not-found page for every unknown one.
     const source = readFileSync(join(FRONTEND_ROOT, 'scripts', 'prerender.mjs'), 'utf8');
-    expect(source).toContain(`'${target}'`);
+    for (const target of new Set(rewrites())) {
+      expect(source).toContain(`'${target.replace(/^\//, '')}'`);
+    }
   });
 });
 
@@ -774,7 +785,14 @@ describe('seedFor: the one entry a route is handed (ADR 0040 added the interview
     expect(seedKeyFor('/azure/interviews')).toBe('interviews:list');
     expect(seedKeyFor('/azure/interviews/first-one')).toBe('interview:first-one');
     expect(seedKeyFor('/azure')).toBe('interviews:list');
-    for (const route of ['/', '/aws', '/azure/blog', '/azure/frameworks', '/aws/interviews', '/azure/interviews/a/b']) {
+    for (const route of [
+      '/',
+      '/aws',
+      '/azure/blog',
+      '/azure/frameworks',
+      '/aws/interviews',
+      '/azure/interviews/a/b',
+    ]) {
       expect(seedKeyFor(route), route).toBeNull();
     }
   });

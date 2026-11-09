@@ -460,12 +460,13 @@ export function injectIntoTemplate(template, { head, body }, route = '/', seeded
   // is the difference between hydration working and hydration corrupting every
   // page that was never pre-rendered.
   //
-  // staticwebapp.config.json's navigationFallback serves /index.html for any
-  // path without a file of its own. Pre-rendered routes have their own
-  // index.html and are fine. Everything else — every /admin route, /preview,
-  // any URL added to the router but not to the pre-render list — receives the
-  // HOME PAGE's markup with a 200. Hydrating that against the admin tree is a
-  // guaranteed mismatch on the busiest pages in the app.
+  // A path without a file of its own gets some other page's markup: the
+  // client-only areas (/admin, /preview, ...) are rewritten to app-shell.html
+  // by staticwebapp.config.json, and any other unknown path gets the same
+  // shell with a 404 (#1613). The stamp was added when that fallback was the
+  // HOME PAGE's markup (T-714), and it still guards the same thing: hydrating
+  // markup rendered for one route against the tree of another is a guaranteed
+  // mismatch, so main.jsx only hydrates when the stamp matches the URL.
   //
   // Comparing the stamp to location.pathname turns that from something a future
   // route addition can silently trip into a decision made per page load.
