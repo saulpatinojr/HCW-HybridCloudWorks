@@ -215,6 +215,8 @@ describe('link addresses', () => {
     );
     // Look-alikes: the parsed host must be the domain or end with ".hybridcloudworks.com".
     expect(sitePageHref('https://hybridcloudworks.com.evil.example/')).toBeNull();
+    expect(sitePageHref('https://hybridcloudworks.com:8443/x')).toBeNull();
+    expect(sitePageHref('https://user:pass@docs.hybridcloudworks.com/')).toBeNull();
     expect(sitePageHref('https://evilhybridcloudworks.com/')).toBeNull();
     expect(sitePageHref('https://evil.example/?next=https://hybridcloudworks.com/')).toBeNull();
     expect(sitePageHref('https://evil.example/hybridcloudworks.com')).toBeNull();

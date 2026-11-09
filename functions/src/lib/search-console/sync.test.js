@@ -827,7 +827,7 @@ describe('createSearchConsoleSync', () => {
     expect(store.doc.run.message).toContain(`The sitemap lists ${MAX_URLS + 1} pages; only the first ${MAX_URLS} are inspected.`);
   });
 
-  it('reads a sitemap index one level down, on the main site\'s own host only', async () => {
+  it('reads a sitemap index one level down, on the main site\'s own host only, and counts the others as not read', async () => {
     const fetchImpl = vi.fn(async (url) => {
       if (url.endsWith('/sitemap.xml'))
         return textResponse(
@@ -840,7 +840,20 @@ describe('createSearchConsoleSync', () => {
     await sync.run();
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual(['https://hybridcloudworks.com/sitemap.xml', 'https://hybridcloudworks.com/s1.xml']);
     expect(store.doc.indexing.pages.find((p) => p.source === 'sitemap').url).toBe('https://hybridcloudworks.com/from-child');
-    // Read in full: the strays are worked out.
+    // Two children are on other hosts and were not read, so the list is not
+    // whole: the strays are not worked out from it, and the note says why.
+    expect(store.doc.indexing.strays).toEqual([]);
+    expect(store.doc.run.message).toContain('2 child sitemaps are not on hybridcloudworks.com and were not read');
+  });
+
+  it('works out the strays from an index whose children are all on the main site', async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/sitemap.xml'))
+        return textResponse(200, '<sitemapindex><sitemap><loc>https://hybridcloudworks.com/s1.xml</loc></sitemap></sitemapindex>');
+      return textResponse(200, sitemapXml(['https://hybridcloudworks.com/from-child']));
+    });
+    const { sync, store } = setup({ fetchImpl, google: googleStub({ pageRows: STRAY_PAGE_ROWS }) });
+    await sync.run();
     expect(store.doc.indexing.strays.length).toBeGreaterThan(0);
   });
 
@@ -1491,6 +1504,21 @@ describe('createSearchConsoleSync, every subdomain and the strays inspected (own
     });
   });
 
+  it('fails only the stray on a 403 (an address outside the property), and the run goes on', async () => {
+    const stray = 'https://docs.hybridcloudworks.com/s0';
+    const google = googleStub({
+      pageRows: strayRows(1),
+      inspect: async (url) => {
+        if (url === stray) throw new SearchConsoleError('inspect', 403);
+        return passResult(url);
+      },
+    });
+    const { sync, store } = setup({ google });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok', failed: 1 });
+    expect(store.doc.status).toBe('ok');
+    expect(store.doc.indexing.pages.find((p) => p.url === stray).error).toContain('may not be part of the Search Console property');
+  });
+
   it('records a stray\'s failed inspection on that stray, keeping its last answer', async () => {
     const stray = 'https://docs.hybridcloudworks.com/s0';
     const google = googleStub({
@@ -1566,7 +1594,17 @@ describe('createSearchConsoleSync, every subdomain and the strays inspected (own
   it('knows the domain and its subdomains by the parsed host name', () => {
     expect(siteAddress('https://docs.hybridcloudworks.com/x')?.hostname).toBe('docs.hybridcloudworks.com');
     expect(siteAddress('https://a.b.lab.hybridcloudworks.com/')).not.toBeNull();
-    for (const bad of ['https://hybridcloudworks.com.example.net/', 'https://evilhybridcloudworks.com/', 'http://docs.hybridcloudworks.com/', 'ftp://hybridcloudworks.com/', 'nonsense', null]) {
+    for (const bad of [
+      'https://hybridcloudworks.com.example.net/',
+      'https://evilhybridcloudworks.com/',
+      'http://docs.hybridcloudworks.com/',
+      'ftp://hybridcloudworks.com/',
+      'https://hybridcloudworks.com:8443/x',
+      'https://user:pass@docs.hybridcloudworks.com/',
+      'https://user@hybridcloudworks.com/',
+      'nonsense',
+      null,
+    ]) {
       expect(siteAddress(bad)).toBeNull();
     }
     expect(hostOf('https://Docs.HybridCloudWorks.com/x')).toBe('docs.hybridcloudworks.com');
@@ -1613,6 +1651,13 @@ describe('createSearchConsoleSync, a job that is no longer needed (Copilot revie
     const { sync, store } = setup({ stored, lease, jobs: { 'job-old': { id: 'job-old', status: 'succeeded' } }, jobId: 'job-late', jobCreatedAt: JOB_CREATED });
     await expect(sync.run()).resolves.toEqual({ skipped: 'superseded' });
     expect(store.lease.pendingJob.jobId).toBe('job-old');
+  });
+
+  it('still runs when the last run finished only seconds after the job was queued (clocks on two hosts)', async () => {
+    const stored = { ...previousRun(), run: { finishedAt: '2026-11-09T00:00:02.000Z' } };
+    const { sync, client } = setup({ stored, jobId: 'job-now', jobCreatedAt: JOB_CREATED });
+    await expect(sync.run()).resolves.not.toEqual({ skipped: 'superseded' });
+    expect(client.inspect).toHaveBeenCalled();
   });
 
   it('tries again when the marker changes while it is cleared (412)', async () => {

@@ -506,6 +506,12 @@ describe('Run now', () => {
       await loaded();
       fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
       expect(await screen.findByRole('button', { name: /Run in progress/ })).toBeTruthy();
+      // The label changes when React commits, but the effect that starts the
+      // polling timer runs a moment later. Let it run before moving the clock;
+      // otherwise the timer can start after the jump, against the moved clock,
+      // and the fifteen minutes never pass (the test failed about one run in
+      // five that way).
+      await act(async () => {});
       getJSON.mockResolvedValue(REPORT);
       await act(async () => {
         vi.advanceTimersByTime(POLL_FOR_MS + POLL_EVERY_MS);

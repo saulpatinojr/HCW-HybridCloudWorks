@@ -131,6 +131,8 @@ export const DEFAULT_SITEMAP_URL = `https://${SITE_DOMAIN}/sitemap.xml`;
 export const MAX_URLS = 900;
 /** The most strays one run inspects, after the sitemap's pages and inside MAX_URLS. */
 export const STRAYS_INSPECTED_MAX = 150;
+/** How much later than a job's creation a finished run must be to supersede it. */
+export const SUPERSEDE_SLACK_MS = 5000;
 export const CONCURRENCY = 4;
 /** Gap between inspection starts: 110 ms is at most about 545 a minute, under Google's 600. */
 export const INSPECT_SPACING_MS = 110;
@@ -279,6 +281,9 @@ export function siteAddress(value) {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:') return null;
+    // A page address never carries a port or a user name; one that does is
+    // not a page of this site, even on the right host.
+    if (url.port || url.username || url.password) return null;
     const host = url.hostname.toLowerCase();
     return host === SITE_DOMAIN || host.endsWith(`.${SITE_DOMAIN}`) ? url : null;
   } catch {
@@ -697,6 +702,8 @@ export function createSearchConsoleSync({
     const sameHost = parsed.locs.filter(onMainSite);
     const children = sameHost.slice(0, MAX_CHILD_SITEMAPS);
     const skipped = sameHost.length - children.length;
+    // Child sitemaps on any other host are not read, so the list is not whole.
+    const offHost = parsed.locs.length - sameHost.length;
     const locs = [];
     let unread = 0;
     for (const child of children) {
@@ -711,6 +718,7 @@ export function createSearchConsoleSync({
     }
     const gaps = [];
     if (unread) gaps.push(`${unread} of ${children.length} child sitemaps could not be read`);
+    if (offHost) gaps.push(`${offHost} child sitemaps are not on ${SITE_DOMAIN} and were not read`);
     if (skipped) gaps.push(`the sitemap index lists ${sameHost.length} child sitemaps and only the first ${MAX_CHILD_SITEMAPS} were read`);
     if (gaps.length === 0) return { locs, failed: null, complete: true, note: null };
     const said = gaps.join('; ');
@@ -930,7 +938,7 @@ export function createSearchConsoleSync({
       sleep: (ms) => sleepUnlessAborted(sleep, ms, cancel),
       now: () => now().getTime(),
       stop: () => stopped() || quotaHit || budgetOut,
-      task: async ({ url }) => {
+      task: async ({ url, source }) => {
         try {
           sent += 1;
           fresh.set(url, presentInspection(url, await google.inspect(url, { beforeSend: takeInspection, signal: cancel }), inspectedAt));
@@ -944,9 +952,19 @@ export function createSearchConsoleSync({
           // Cut off because the run was stopped: not Google's failure, so it
           // is not recorded as one; the page keeps its last result.
           if (cancel.aborted) return;
-          if (isFatal(failure)) fatal ??= failure;
+          // A 403 on a page found in search can mean only that this one
+          // address is not part of the property (Google answers "the
+          // inspected URL is not part of this property"), so it fails that
+          // page and not the run. On a sitemap page it still stops the run.
+          const strayOutsideProperty = source === 'search' && failure instanceof SearchConsoleError && failure.status === 403;
+          if (isFatal(failure) && !strayOutsideProperty) fatal ??= failure;
           if (isQuota(failure)) quotaHit = true;
-          failures.set(url, failureNote(failure, 'The inspection failed.'));
+          failures.set(
+            url,
+            strayOutsideProperty
+              ? 'Google would not inspect this address (HTTP 403): it may not be part of the Search Console property.'
+              : failureNote(failure, 'The inspection failed.')
+          );
         }
       },
     });
@@ -1122,7 +1140,9 @@ export function createSearchConsoleSync({
     const created = Date.parse(jobCreatedAt);
     if (!Number.isFinite(created)) return false;
     const finished = Date.parse((await readStored())?.run?.finishedAt);
-    return Number.isFinite(finished) && finished > created;
+    // Five seconds of slack: finishedAt and createdAt come from different
+    // hosts' clocks, and a press just after a run ends must still run.
+    return Number.isFinite(finished) && finished > created + SUPERSEDE_SLACK_MS;
   }
 
   return {

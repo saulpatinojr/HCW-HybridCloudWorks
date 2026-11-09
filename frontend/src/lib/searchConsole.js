@@ -179,6 +179,8 @@ function siteUrl(value) {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:') return null;
+    // Same rule as the backend: a page address carries no port or user name.
+    if (url.port || url.username || url.password) return null;
     const host = url.hostname.toLowerCase();
     return host === SITE_DOMAIN || host.endsWith(`.${SITE_DOMAIN}`) ? url : null;
   } catch {
