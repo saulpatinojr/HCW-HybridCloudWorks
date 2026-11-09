@@ -589,6 +589,34 @@ export const DECLARED = [
       "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); planned only once the owner has created the role and set storage_firewall_remover_enabled = true (Required-Inputs §4.6b)",
   },
 
+  // #1590 (ADR 0032, amendment of 2026-11-09): the Run Command identity for
+  // lab-host-arc-run.yml and its two production-environment credentials,
+  // planned from the merge; and its role assignment, planned only once the
+  // owner has created HCW Arc Run Command Operator and set
+  // lab_arc_run_command_enabled = true (Required-Inputs §4.6b). Delete all
+  // four once they have applied.
+  {
+    address: "azurerm_user_assigned_identity.github_arc_run",
+    action: "create",
+    reason: "#1590: the identity lab-host-arc-run.yml signs in as, holding only the Run Command role",
+  },
+  {
+    address: "azurerm_federated_identity_credential.github_arc_run_production",
+    action: "create",
+    reason: "#1590: trusts the production environment's subject for the Run Command identity, so every sign-in waits for a production reviewer",
+  },
+  {
+    address: "azurerm_federated_identity_credential.github_arc_run_production_immutable",
+    action: "create",
+    reason: "#1590: the immutable-ID form of the same production subject",
+  },
+  {
+    address: "azurerm_role_assignment.github_arc_run_operator[0]",
+    action: "create",
+    reason:
+      "#1590: HCW Arc Run Command Operator on rg-lab-hybrid-prod-cus for lab-host-arc-run.yml; planned only once the owner has created the role and set lab_arc_run_command_enabled = true (Required-Inputs §4.6b)",
+  },
+
   // #1565 (ADR 0040 D10): the interviews-audio container and its retention
   // rule, slice A of the interviews feature. The rule is the policy's fifth
   // (index 4, after expire-recording-uploads); the -1 values are what the

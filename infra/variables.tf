@@ -1594,3 +1594,21 @@ variable "storage_firewall_remover_enabled" {
   type        = bool
   default     = false
 }
+
+variable "lab_arc_run_command_enabled" {
+  description = <<-EOT
+    Grant lab-host-arc-run.yml's identity (github_arc_run, oidc.tf, #1590)
+    the HCW Arc Run Command Operator role on rg-lab-hybrid-prod-cus, so the
+    workflow can run its fixed scripts on the lab host through Azure Arc Run
+    Command, and look that custom role up.
+
+    False until the owner has created the role (Required-Inputs §4.6b,
+    scripts/bootstrap-roles.ps1), for the reason storage_firewall_remover_enabled
+    gives: a lookup of a role that does not exist hung the plan on 2026-11-04.
+    Flip it in the workspace after the bootstrap; the next run plans exactly
+    one create. Setting it back to false removes the grant, which is the way
+    to take Run Command away from CI without touching the host.
+  EOT
+  type        = bool
+  default     = false
+}

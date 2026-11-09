@@ -1,0 +1,272 @@
+name: Lab host - run a fixed command through Azure Arc
+
+# Runs ONE of three fixed scripts on the lab host (vps-hostinger-01, the Arc
+# machine arcs-lab-hybrid-prod-cus-01) through Azure Arc Run Command, which is
+# in preview (#1590; ADR 0032, amendment of 2026-11-09). The owner asked for
+# it on 2026-11-09 so that the host can be reached without the one SSH key on
+# the one workstation:
+#
+#   status        read-only: memory, disk, uptime, containers, failed units,
+#                 the last completed bootstrap run (lab-host/arc-run/status.sh)
+#   memory-check  the five-run sandbox memory check (lab-host/arc-run/memory-check.sh)
+#   bootstrap     a full bootstrap.sh run to the current main commit, about six
+#                 minutes (lab-host/arc-run/bootstrap.sh)
+#
+# WHY IT IS SHAPED THIS WAY. Run Command runs a script as root on the host
+# (learn.microsoft.com/azure/azure-arc/servers/run-command), so whoever can
+# create one is root there. So:
+#   - there is no free-text input: `action` is a choice, the script is a file
+#     in this repository picked by a fixed `case`, and no `${{ }}` expression
+#     is written into any shell line (script injection);
+#   - the job is bound to the `production` environment, whose required
+#     reviewers approve each run and whose branch policy admits main only,
+#     and the identity it signs in as (github_arc_run, infra/oidc.tf) trusts
+#     that environment's subject and nothing else;
+#   - that identity holds one custom role on the lab group, HCW Arc Run
+#     Command Operator (infra/roles/arc-run-command-operator.json): run,
+#     read and delete run commands, read the machine;
+#   - the run command resource is deleted after every run, in an always()
+#     step, so no script is left stored on the machine;
+#   - Arc's activity log records every create and delete with the caller.
+#
+# THE OUTPUT IS PUBLIC. This repository is public, so this run's log and
+# summary are readable by anyone. The scripts print states, counts and names;
+# bootstrap.sh keeps its full log on the host (/var/log/hcw-arc-run/) and
+# prints only the PLAY RECAP and failed task names. Run Command itself keeps
+# only the last 4 KB of output and of error (instanceView.output and .error).
+#
+# It cannot run until three owner steps are done (docs/runbooks/labs-host.md,
+# "Run a fixed command on the host through Azure Arc"): the role created and
+# lab_arc_run_command_enabled set, ARC_RUN_CLIENT_ID set, and one bootstrap
+# over SSH so the agent's extension allowlist admits the Run Command handler.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to run on the lab host (status is read-only; bootstrap takes about six minutes)'
+        type: choice
+        required: true
+        default: status
+        options:
+          - status
+          - memory-check
+          - bootstrap
+
+permissions:
+  contents: read # the checkout, nothing more
+
+# One run on the host at a time. Two bootstraps at once would fight over
+# /opt/hcw-src and apt; a queued run waits rather than cancelling one that is
+# part-way through a play.
+concurrency:
+  group: lab-host-arc-run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: Run a fixed command on the lab host
+    permissions:
+      contents: read # the checkout, nothing more
+      id-token: write # exchanged by azure/login for an Azure access token
+    runs-on: ubuntu-26.04
+    # bootstrap: about six minutes on the host, 40 at most (RUN_TIMEOUT
+    # below), plus sign-in, install and clean-up.
+    timeout-minutes: 55
+    # The gate, as on deploy-functions.yml: `production` has required
+    # reviewers and a main-only deployment-branch policy (Required-Inputs
+    # §4.4), and github_arc_run trusts only this environment's subject.
+    environment: production
+    env:
+      ACTION: ${{ inputs.action }}
+      # The Arc machine, as the arc role names it
+      # (lab-host/ansible/group_vars/all.yml; scripts/lab-host-arc-run-workflow.test.mjs
+      # holds the two together).
+      ARC_RESOURCE_GROUP: rg-lab-hybrid-prod-cus
+      ARC_MACHINE: arcs-lab-hybrid-prod-cus-01
+      ARC_LOCATION: centralus
+      # The Azure CLI's connectedmachine extension, which carries
+      # `az connectedmachine run-command` (preview). 1.1.0 is the newest
+      # non-beta release; the digest is the index's sha256Digest for
+      # connectedmachine-1.1.0-py3-none-any.whl, read 2026-11-09 and equal to
+      # the sha256sum of the file downloaded that day.
+      CONNECTEDMACHINE_VERSION: 1.1.0
+      CONNECTEDMACHINE_SHA256: 9b71015a6b047770deed883dd4092857641c6a574f2107ee558b0535ff2946d8
+    steps:
+      - name: Refuse a run from a ref that is not main
+        # The environment's branch policy refuses it too; this is the
+        # repository-side backstop, as on deploy-functions.yml.
+        if: github.ref != 'refs/heads/main'
+        timeout-minutes: 1
+        run: |
+          ref="${GITHUB_REF//%/%25}"
+          ref="${ref//$'\r'/%0D}"
+          ref="${ref//$'\n'/%0A}"
+          echo "::error::Refusing to run from ${ref}. Commands on the lab host run from main only."
+          exit 1
+
+      - name: Refuse while ARC_RUN_CLIENT_ID is unset
+        timeout-minutes: 1
+        env:
+          ARC_RUN_CLIENT_ID: ${{ vars.ARC_RUN_CLIENT_ID }}
+        run: |
+          if [ -z "${ARC_RUN_CLIENT_ID}" ]; then
+            echo "::error::The repository variable ARC_RUN_CLIENT_ID is not set. It is the client id of github_arc_run, the arc_run_client_id output of the hcw-azure workspace (docs/runbooks/labs-host.md, 'Run a fixed command on the host through Azure Arc')."
+            exit 1
+          fi
+
+      - name: Checkout
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # The only place `action` turns into something that runs, and it can
+      # only turn into one of three files. A value outside the list (a
+      # dispatch through the API, say) stops here.
+      - name: Choose the script
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          case "${ACTION}" in
+            status) script=lab-host/arc-run/status.sh; timeout=300 ;;
+            memory-check) script=lab-host/arc-run/memory-check.sh; timeout=1200 ;;
+            bootstrap) script=lab-host/arc-run/bootstrap.sh; timeout=2400 ;;
+            *) echo "::error::Unknown action. Choose status, memory-check or bootstrap."; exit 1 ;;
+          esac
+          test -s "${script}"
+          # Linux run command names are at most 36 characters
+          # (learn.microsoft.com/azure/azure-arc/servers/run-command):
+          # hcw-memory-check-<11-digit run id>-<attempt> is 30.
+          name="hcw-${ACTION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [ "${#name}" -gt 36 ]; then
+            echo "::error::Run command name ${name} is longer than 36 characters."
+            exit 1
+          fi
+          {
+            echo "SCRIPT_FILE=${script}"
+            echo "RUN_TIMEOUT=${timeout}"
+            echo "RUN_NAME=${name}"
+          } >> "$GITHUB_ENV"
+
+      - name: Install the Azure CLI connectedmachine extension (pinned, digest checked)
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          az version --output none
+          wheel="connectedmachine-${CONNECTEDMACHINE_VERSION}-py3-none-any.whl"
+          curl -sSfL --retry 3 --retry-all-errors -o "${RUNNER_TEMP}/${wheel}" "https://azcliprod.blob.core.windows.net/cli-extensions/${wheel}"
+          echo "${CONNECTEDMACHINE_SHA256}  ${RUNNER_TEMP}/${wheel}" | sha256sum -c -
+          # A copy the runner image may already carry is replaced by the pinned one.
+          az extension remove --name connectedmachine --only-show-errors 2>/dev/null || true
+          az extension add --source "${RUNNER_TEMP}/${wheel}" --yes --only-show-errors
+          az extension show --name connectedmachine --query version --output tsv
+
+      # Federated OIDC, no stored credential. ARC_RUN_CLIENT_ID names
+      # github_arc_run, which holds only the Run Command role on the lab
+      # group; TENANT_ID and SUBSCRIPTION_ID are the ones every deploy uses.
+      - name: Azure Login
+        id: login
+        timeout-minutes: 2
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.ARC_RUN_CLIENT_ID }}
+          tenant-id: ${{ vars.TENANT_ID }}
+          subscription-id: ${{ vars.SUBSCRIPTION_ID }}
+
+      - name: Run the script on the host and report what it printed
+        id: run
+        # RUN_TIMEOUT (40 minutes at most) plus the CLI's own polling.
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          echo "Running ${SCRIPT_FILE} on ${ARC_MACHINE} as run command ${RUN_NAME} (timeout ${RUN_TIMEOUT} s)."
+          create=0
+          timeout "$((RUN_TIMEOUT + 300))" az connectedmachine run-command create \
+            --resource-group "${ARC_RESOURCE_GROUP}" \
+            --machine-name "${ARC_MACHINE}" \
+            --location "${ARC_LOCATION}" \
+            --name "${RUN_NAME}" \
+            --script "$(cat "${SCRIPT_FILE}")" \
+            --timeout-in-seconds "${RUN_TIMEOUT}" \
+            --async-execution false \
+            --only-show-errors --output none || create=$?
+          echo "create exited ${create}; reading the result back."
+
+          view="${RUNNER_TEMP}/run-command.json"
+          show=0
+          az connectedmachine run-command show \
+            --resource-group "${ARC_RESOURCE_GROUP}" \
+            --machine-name "${ARC_MACHINE}" \
+            --name "${RUN_NAME}" \
+            --only-show-errors --output json > "${view}" || show=$?
+          if [ "${show}" -ne 0 ]; then
+            # Nothing to read: the create was refused before the machine had
+            # a run command (a missing role, or the agent's allowlist not yet
+            # admitting the Run Command handler; the runbook says which).
+            echo "::error::Could not read run command ${RUN_NAME} back (create exited ${create}, show exited ${show}). The az error above says why."
+            exit 1
+          fi
+          state="$(jq -r '.instanceView.executionState // "unknown"' "${view}")"
+          exit_code="$(jq -r '.instanceView.exitCode // "none"' "${view}")"
+          message="$(jq -r '.instanceView.executionMessage // ""' "${view}")"
+          jq -r '.instanceView.output // ""' "${view}" > "${RUNNER_TEMP}/out.txt"
+          jq -r '.instanceView.error // ""' "${view}" > "${RUNNER_TEMP}/err.txt"
+
+          # The host's output is data: stop the runner reading `::` lines in
+          # it as workflow commands while it is printed.
+          token="$(openssl rand -hex 16)"
+          echo "::stop-commands::${token}"
+          echo "executionState=${state} exitCode=${exit_code} ${message}"
+          echo "---- output (last 4 KB) ----"
+          cat "${RUNNER_TEMP}/out.txt"
+          echo "---- error (last 4 KB) ----"
+          cat "${RUNNER_TEMP}/err.txt"
+          echo "::${token}::"
+
+          {
+            echo "## Lab host: ${ACTION}"
+            echo
+            echo "Run command \`${RUN_NAME}\` on \`${ARC_MACHINE}\`: execution state **${state}**, exit code **${exit_code}**."
+            echo
+            echo "Run Command keeps only the last 4 KB of output and of error, so a long run shows its end."
+            echo
+            echo "### Output"
+            echo
+            echo '~~~~text'
+            sed 's/^~~~~/ ~~~~/' "${RUNNER_TEMP}/out.txt"
+            echo '~~~~'
+            if [ -s "${RUNNER_TEMP}/err.txt" ]; then
+              echo
+              echo "### Error"
+              echo
+              echo '~~~~text'
+              sed 's/^~~~~/ ~~~~/' "${RUNNER_TEMP}/err.txt"
+              echo '~~~~'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${state}" != "Succeeded" ] || [ "${exit_code}" != "0" ]; then
+            echo "::error::The script did not succeed on the host: execution state ${state}, exit code ${exit_code}."
+            exit 1
+          fi
+          if [ "${create}" -ne 0 ]; then
+            echo "::error::az connectedmachine run-command create exited ${create} although the host reports success; read its error above."
+            exit 1
+          fi
+
+      # Always, once signed in: a run command left on the machine keeps the
+      # script stored there, and a still-running one is stopped by the delete
+      # (Microsoft: "If the script execution is still in progress, execution
+      # is terminated"). That includes a cancelled workflow run, so cancel a
+      # bootstrap only if stopping it part-way is what you want.
+      - name: Delete the run command from the machine
+        if: always() && steps.login.outcome == 'success' && env.RUN_NAME != ''
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          az connectedmachine run-command delete \
+            --resource-group "${ARC_RESOURCE_GROUP}" \
+            --machine-name "${ARC_MACHINE}" \
+            --name "${RUN_NAME}" \
+            --yes --only-show-errors
+          echo "Deleted run command ${RUN_NAME}."

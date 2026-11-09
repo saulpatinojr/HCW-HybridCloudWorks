@@ -86,6 +86,8 @@ const IDENTITY_BY_CLIENT_ID_VAR = {
   MANIFEST_WINDOW_CLIENT_ID: 'github_manifest_window',
   // copilot-setup-steps.yml: the identity Copilot code review signs in as.
   COPILOT_REVIEW_CLIENT_ID: 'github_copilot_review',
+  // lab-host-arc-run.yml: Run Command on the lab host, behind production (#1590).
+  ARC_RUN_CLIENT_ID: 'github_arc_run',
 };
 
 /**
@@ -323,6 +325,23 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
       'data.func_config_refresh @ azurerm_function_app_flex_consumption.hcw.id',
       'data.storage_firewall_writer @ azurerm_storage_account.functions.id',
     ]);
+  });
+
+  it('github_arc_run holds the Run Command role on the lab group, and nothing else (#1590)', () => {
+    // Run Command is root on the lab host. The identity that can create one
+    // holds nothing else, so a dependency in some other job's tree never
+    // inherits it, and no other identity holds the role: a second grant of
+    // data.arc_run_command_operator would be a second way to root.
+    expect(grantsTo('github_arc_run')).toEqual(['data.arc_run_command_operator @ azurerm_resource_group.lab_hybrid.id']);
+    for (const identity of ['github_deploy', 'github_reader', 'github_alert_reader', 'github_manifest_window', 'github_copilot_review']) {
+      expect(grantsTo(identity).filter((g) => g.startsWith('data.arc_run_command_operator')), identity).toEqual([]);
+    }
+  });
+
+  it('github_arc_run trusts the production environment only, so every sign-in waits for a reviewer (#1590)', () => {
+    const subjects = trustedSubjectsByIdentity().github_arc_run ?? [];
+    expect(subjects.length).toBe(2);
+    expect(subjects.every((s) => s.endsWith(':environment:production'))).toBe(true);
   });
 
   it('reads a grant it is shown, so an empty list above means no grant rather than a broken scan', () => {

@@ -191,7 +191,14 @@
 # Arc machine accepts any extension and Run Command from any identity with
 # Contributor on its resource group, which is root on the host over the
 # control plane, bypassing sshd. The allowlist admits the one extension this
-# estate installs (the Azure Monitor Agent, docs/runbooks/labs-host.md).
+# estate installs (the Azure Monitor Agent, docs/runbooks/labs-host.md) and,
+# since 2026-11-09 (#1590; ADR 0032, amendment of that date), the Run Command
+# handler while arc_run_command_enabled is true: the owner chose Run Command
+# from one approval-gated workflow with fixed scripts
+# (.github/workflows/lab-host-arc-run.yml) as a second way onto the host,
+# beside the one SSH key on one workstation. That reverses LAB-6's "no Run
+# Command" for whoever holds runCommands/write on the machine, which
+# infra/oidc.tf grants to one identity behind the production environment.
 # Incoming connections (SSH over Arc, Windows Admin Center) were off until
 # 2026-10-16; since #953 (LAB-7; ADR 0032, amendment of that date) they are
 # on for port 22 alone, sshd's, so the owner can reach sshd through Arc SSH
@@ -278,7 +285,7 @@
           | regex_replace('[\[\]"\s]', '')).split(',')
          | reject('eq', '') | sort }}
     arc_allowlist_wanted: >-
-      {{ (arc_extensions_allowlist | regex_replace('\s', '')).split(',')
+      {{ (arc_extensions_allowlist_wanted | regex_replace('\s', '')).split(',')
          | reject('eq', '') | sort }}
     arc_incoming_current: >-
       {{ (arc_incoming_get.stdout_lines | first | default('')) | regex_replace('^[^:]*:', '') | trim | lower }}
@@ -312,14 +319,14 @@
       or arc_ports_current != arc_incoming_ports_wanted
       or arc_guestconfig_current != 'false'
 
-- name: Allow only the Azure Monitor Agent extension
+- name: Allow only the Azure Monitor Agent extension, and the Run Command handler when enabled
   ansible.builtin.command:
     argv:
       - "{{ arc_azcmagent_path }}"
       - config
       - set
       - extensions.allowlist
-      - "{{ arc_extensions_allowlist }}"
+      - "{{ arc_extensions_allowlist_wanted }}"
   # Runs only when the whole list differs, so a run is a change.
   changed_when: true
   when:

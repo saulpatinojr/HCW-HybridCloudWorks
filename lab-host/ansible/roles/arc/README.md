@@ -69,8 +69,17 @@ With `arc_enabled: true`:
    arcs-lab-hybrid-prod-cus-01 in rg-lab-hybrid-prod-cus.`
 7. Locks the agent down (estate review 2026-10-06, LAB-6; ADR 0032,
    amendments of 2026-10-06 and 2026-10-07): the extension allowlist is
-   `arc_extensions_allowlist` alone (the Azure Monitor Agent), and guest
-   configuration is off. Incoming connections through Arc are on for port
+   `arc_extensions_allowlist` (the Azure Monitor Agent) plus, while
+   `arc_run_command_enabled` is true, the Run Command handler
+   (`Microsoft.CPlat.Core/RunCommandHandlerLinux`, owner decision
+   2026-11-09, #1590; ADR 0032, amendment of that date), and guest
+   configuration is off. The handler is what lets
+   `.github/workflows/lab-host-arc-run.yml` run one of its fixed scripts on
+   the host as root through Azure, after a production reviewer approves the
+   run; [Run command on Azure Arc-enabled
+   servers](https://learn.microsoft.com/azure/azure-arc/servers/run-command)
+   is Microsoft's page, and `docs/runbooks/labs-host.md` ("Run a fixed
+   command on the host through Azure Arc") is how to use it. Incoming connections through Arc are on for port
    22 alone (`incomingconnections.enabled true`,
    `incomingconnections.ports 22`) while `arc_incoming_ssh_enabled` is true,
    its default since #953 (LAB-7; ADR 0032, amendment of 2026-10-16): that
@@ -124,6 +133,7 @@ Connected, and then deletes the credential from Entra and the vault.
 | `arc_tenant_id` | `vault_arc_tenant_id` | Entra tenant id |
 | `arc_subscription_id` | `vault_arc_subscription_id` | Application subscription id |
 | `arc_extensions_allowlist` | `Microsoft.Azure.Monitor/AzureMonitorLinuxAgent` | The extensions the agent may install (LAB-6) |
+| `arc_run_command_enabled` | `true` | Azure Arc Run Command (preview, #1590): adds the Run Command handler to the allowlist. False puts LAB-6's allowlist back |
 | `arc_incoming_ssh_enabled` | `true` | Azure Arc SSH: incoming connections on, port 22 alone (#953). False turns incoming connections off and clears the port |
 
 To bump the agent, read the versions the repository offers and change

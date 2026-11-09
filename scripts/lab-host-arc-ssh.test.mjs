@@ -211,7 +211,7 @@ describe('the arc role opens the same port, and nothing else', () => {
     }
     // The writes stay out of check mode, where they could not run anyway.
     for (const name of [
-      'Allow only the Azure Monitor Agent extension',
+      'Allow only the Azure Monitor Agent extension, and the Run Command handler when enabled',
       'Admit port 22 alone for incoming connections through Arc',
       'Turn incoming connections through Arc on for Arc SSH, or off without it',
       'Clear the incoming ports when Arc SSH is off',
@@ -221,7 +221,7 @@ describe('the arc role opens the same port, and nothing else', () => {
     }
   });
 
-  it('leaves the extension allowlist as LAB-6 set it, and fails closed if it reads back anything else', () => {
+  it('writes the allowlist as LAB-6 set it plus the Run Command handler, and fails closed if it reads back anything else', () => {
     expect(yamlScalar(arcDefaults, 'arc_extensions_allowlist')).toBe('Microsoft.Azure.Monitor/AzureMonitorLinuxAgent');
     const assertion = task('Assert the extension allowlist is unchanged and incoming connections reach port 22 alone');
     expect(assertion).toContain('- arc_allowlist_after == arc_allowlist_wanted');
@@ -230,7 +230,7 @@ describe('the arc role opens the same port, and nothing else', () => {
     // The read-back comes after every write of the three settings.
     const readBack = onboard.indexOf('- name: Read the extension allowlist and the incoming-connection settings back');
     for (const write of [
-      '- name: Allow only the Azure Monitor Agent extension',
+      '- name: Allow only the Azure Monitor Agent extension, and the Run Command handler when enabled',
       '- name: Admit port 22 alone for incoming connections through Arc',
       '- name: Turn incoming connections through Arc on for Arc SSH, or off without it',
       '- name: Clear the incoming ports when Arc SSH is off',
@@ -257,5 +257,69 @@ describe('Connect-Lab.ps1 -Arc names the same machine', () => {
 
   it('tells the owner to install the az ssh extension, in those words, when it is missing', () => {
     expect(connectLab).toContain("Command = 'az extension add --name ssh'");
+  });
+});
+
+/**
+ * Azure Arc Run Command (#1590; ADR 0032, amendment of 2026-11-09). The owner
+ * reopened one thing LAB-6 closed: the Run Command handler, so
+ * .github/workflows/lab-host-arc-run.yml can run its fixed scripts on the host.
+ * These pin that it is exactly that one extension, behind a variable, and
+ * that the drift report, the write and the read-back all use the same list.
+ */
+describe('the Run Command handler is the one extension added to the allowlist (#1590)', () => {
+  /** The allowlist the role writes for a given switch, as vars/main.yml composes it. */
+  function wantedAllowlist(enabled) {
+    const base = yamlScalar(arcDefaults, 'arc_extensions_allowlist');
+    const handler = yamlScalar(arcVars, 'arc_run_command_extension');
+    return (enabled ? `${base},${handler}` : base).split(',').sort();
+  }
+
+  it("names Microsoft's Linux Run Command handler, and nothing else, as the extension the switch adds", () => {
+    // Publisher/type from learn.microsoft.com/azure/azure-arc/servers/security-extensions
+    // (its blocklist example names Microsoft.Cplat.Core/RunCommandHandlerLinux)
+    // and .../run-command ("Block run commands locally"), read 2026-11-09.
+    expect(yamlScalar(arcVars, 'arc_run_command_extension')).toBe('Microsoft.CPlat.Core/RunCommandHandlerLinux');
+    expect(arcVars).toContain(
+      'arc_extensions_allowlist_wanted: >-\n' +
+        "  {{ arc_extensions_allowlist ~ (',' ~ arc_run_command_extension\n" +
+        "     if arc_run_command_enabled | bool else '') }}\n"
+    );
+  });
+
+  it('is exactly the Azure Monitor Agent, plus the handler while arc_run_command_enabled is true', () => {
+    expect(wantedAllowlist(true)).toEqual([
+      'Microsoft.Azure.Monitor/AzureMonitorLinuxAgent',
+      'Microsoft.CPlat.Core/RunCommandHandlerLinux',
+    ]);
+    expect(wantedAllowlist(false)).toEqual(['Microsoft.Azure.Monitor/AzureMonitorLinuxAgent']);
+    // The base list holds no script-running extension of its own.
+    expect(yamlScalar(arcDefaults, 'arc_extensions_allowlist')).not.toMatch(
+      /CustomScript|HybridWorker|RunCommand|Microsoft\.Compute\//i
+    );
+  });
+
+  it('is on by default, through a variable with an argument spec', () => {
+    expect(yamlScalar(arcDefaults, 'arc_run_command_enabled')).toBe('true');
+    expect(arcSpecs).toMatch(
+      /^ {6}arc_run_command_enabled:\n {8}type: bool\n {8}required: false\n {8}default: true\n/m
+    );
+  });
+
+  it('feeds the same list to the drift comparison, the write and the read-back assertion', () => {
+    const reduce = task('Reduce the four readings to comparable values');
+    expect(reduce).toContain("{{ (arc_extensions_allowlist_wanted | regex_replace('\\s', '')).split(',')");
+    expect(reduce).not.toMatch(/\(arc_extensions_allowlist \|/);
+    const write = task('Allow only the Azure Monitor Agent extension, and the Run Command handler when enabled');
+    expect(write).toContain('- extensions.allowlist\n      - "{{ arc_extensions_allowlist_wanted }}"');
+    expect(task('Assert the extension allowlist is unchanged and incoming connections reach port 22 alone')).toContain(
+      '- arc_allowlist_after == arc_allowlist_wanted'
+    );
+  });
+
+  it('leaves guest configuration off and incoming connections at port 22 whatever the switch says', () => {
+    expect(onboard).toContain("arc_guestconfig_current != 'false'");
+    expect(arcVars).toContain(`arc_incoming_ports_wanted: "{{ ['22'] if arc_incoming_ssh_enabled | bool else [] }}"`);
+    expect(arcVars).not.toMatch(/arc_run_command_enabled[^\n]*incoming/);
   });
 });

@@ -107,6 +107,7 @@ either id from memory.
 4. `HCW Static Web App Deployer` (`infra/roles/static-web-app-deployer.json`)
 5. `HCW Alert Rule Reader` (`infra/roles/alert-rule-reader.json`)
 6. `HCW Storage Firewall Writer` (`infra/roles/storage-firewall-writer.json`)
+7. `HCW Arc Run Command Operator` (`infra/roles/arc-run-command-operator.json`)
 
 ---
 

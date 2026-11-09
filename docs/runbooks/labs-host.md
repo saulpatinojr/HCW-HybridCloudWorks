@@ -1,7 +1,9 @@
 # Labs host — desktop access and Azure Arc onboarding
 
 How to reach the Hostinger lab host from a desktop over SSH and VS Code (the
-first section); how to reinstall it, and what the first `bootstrap.sh` run
+first section); how to run one of three fixed commands on it through Azure
+Arc from a GitHub Actions workflow, without the SSH key ("Run a fixed
+command on the host through Azure Arc", #1590); how to reinstall it, and what the first `bootstrap.sh` run
 checks before it changes anything; how the lab agent goes live, which is one
 PowerShell line; the order of the run after a merge (the playbook, then the
 Coder template, at once); how the owner adds a learner to Coder and removes
@@ -506,6 +508,167 @@ Console**, signed in as `root`.
    `Connect-Lab.ps1 -Arc`): run `bootstrap.sh` as in "Closing port 22: the
    first run". It deletes the rule and binds sshd to the loopback again, and
    fails rather than leave the rule if it cannot.
+
+## Run a fixed command on the host through Azure Arc
+
+A second way onto the host, for when the workstation that holds the SSH key
+is not at hand
+([#1590](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1590);
+[ADR 0032](../decisions/0032-learner-labs-platform.md), amendment of
+2026-11-09). A GitHub Actions workflow,
+[`lab-host-arc-run.yml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/workflows/lab-host-arc-run.yml),
+asks Azure to run one of three scripts on the host through **Azure Arc Run
+Command** (a preview Azure feature: the Arc agent on the host runs a script
+it is handed, as root, and sends back what it printed;
+[Microsoft's page](https://learn.microsoft.com/azure/azure-arc/servers/run-command)).
+You pick the script from a list; you cannot type a command. Each run waits
+for a `production` reviewer to approve it.
+
+| Action | What it does | How long |
+| --- | --- | --- |
+| `status` | Read-only: uptime, memory, disk, the last completed `bootstrap.sh` run and its commit, running containers, failed system services ([`status.sh`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/arc-run/status.sh)) | under a minute |
+| `memory-check` | The five-run sandbox memory check: the `limits` and `sandbox-check:` lines of each run and the last three out-of-memory lines from the kernel log ([`memory-check.sh`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/arc-run/memory-check.sh)) | a few minutes |
+| `bootstrap` | A full `sudo /opt/hcw-src/lab-host/bootstrap.sh` run to the current `main` commit ([`bootstrap.sh`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/arc-run/bootstrap.sh)) | about six minutes, 40 at most |
+
+**The run's log is public**, because this repository is. So the scripts
+print states, counts and names only. `bootstrap` keeps its full log on the
+host, readable by root alone, in `/var/log/hcw-arc-run/` (the ten newest
+runs), and prints only the play recap and the names of any failed tasks.
+Azure itself keeps only the last 4 KB of what a script prints, so a long
+run shows its end.
+
+### One-time setup
+
+The workflow cannot run until all five steps below are done, in this
+order. Step 5 is the chicken-and-egg one: the host's Arc agent refuses the
+Run Command handler (the small Microsoft component that runs the script)
+until a `bootstrap.sh` run with this change has added it to the agent's
+allowlist, and the workflow cannot do that run for you before then. So
+step 5 is one last run over SSH, from the workstation with the key.
+
+1. **Confirm the merge run in `hcw-azure`.** After the pull request for
+   #1590 merges, HCP Terraform plans a run on
+   [the workspace's runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
+   Success is three creates for this change, each declared in
+   `scripts/assert-expected-plan.mjs`:
+   `azurerm_user_assigned_identity.github_arc_run` and the two
+   `azurerm_federated_identity_credential.github_arc_run_production…`
+   credentials. Confirm it as usual. Anything else in the plan that is
+   not declared is a reason to stop and read it, not to confirm.
+2. **Create the role.** PowerShell, from the repository root, signed in
+   with `az login` as an account that is Owner on the Application
+   subscription. The first part brings your copy up to date, so the role
+   file exists:
+
+   ```powershell
+   git checkout main; git pull origin main; Test-Path infra/roles/arc-run-command-operator.json; pwsh scripts/bootstrap-roles.ps1
+   ```
+
+   `Test-Path` should print `True`. Success is a "Created successfully" line
+   under `Processing role 'HCW Arc Run Command Operator'...` (the other six
+   roles say "Updated successfully", which changes nothing), and a final
+   table whose `HCW Arc Run Command Operator` row ends in
+   `/resourceGroups/rg-lab-hybrid-prod-cus`. If it stops saying a
+   subscription id "is the repository placeholder", sign in again with
+   `az login` and rerun the same line.
+3. **Turn the grant on.** In
+   [the workspace's variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables),
+   **Add variable**, category **Terraform variable**, key
+   `lab_arc_run_command_enabled`, value `true`, **HCL** ticked,
+   **Sensitive** not ticked, description `Grant lab-host-arc-run.yml the HCW
+   Arc Run Command Operator role on rg-lab-hybrid-prod-cus (#1590)`. Save,
+   then **New run** (top right of the workspace) and confirm it. Success is
+   a plan with one create, `azurerm_role_assignment.github_arc_run_operator[0]`.
+   If the plan sits at "refreshing" for minutes instead, the role from step
+   2 does not exist yet: cancel the run, set the variable back to `false`,
+   and do step 2 again.
+4. **Seed the client id.** PowerShell, from the repository root on `main`.
+   The script reads the `arc_run_client_id` output from the workspace and
+   sets the repository variable `ARC_RUN_CLIENT_ID`, beside the ones it
+   already manages:
+
+   ```powershell
+   git checkout main; git pull origin main; ./scripts/set-github-variables.ps1
+   ```
+
+   Success is a line naming `ARC_RUN_CLIENT_ID` and a GUID. It is an
+   identifier, not a secret: it grants nothing without an approved
+   `production` run from this repository.
+5. **Let the agent accept the handler: one `bootstrap.sh` run over SSH.**
+   PowerShell, on the workstation with the key:
+
+   ```powershell
+   ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+   ```
+
+   Success is a recap with `failed=0`, after the line `Arc agent: extension
+   allowlist
+   Microsoft.Azure.Monitor/AzureMonitorLinuxAgent,Microsoft.CPlat.Core/RunCommandHandlerLinux;
+   incoming connections on, port 22 only (Arc SSH).` If the run stops at
+   *Assert the extension allowlist is unchanged…*, the agent stored the
+   list differently from how the role wrote it; read it with
+   `sudo /opt/azcmagent/bin/azcmagent config get extensions.allowlist` and
+   put the output on #1590.
+
+### Running it
+
+1. Open
+   [the workflow's page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/lab-host-arc-run.yml),
+   click **Run workflow**, leave the branch at `main`, choose the action
+   (start with `status`), and click the green **Run workflow**.
+2. Open the run that appears. It shows **Waiting** with a **Review
+   deployments** button. Click it, tick `production`, and click **Approve
+   and deploy**
+   ([GitHub's page on reviewing deployments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)).
+   `production` allows self-review (read 2026-10-03,
+   [Required-Inputs §4.4](../standards/required-inputs.md)), so you can
+   approve your own run. If GitHub ever refuses that, the other required
+   reviewer, `hcw-architect`, approves it.
+3. **What success looks like:** the job goes green, and its summary (the
+   run's **Summary** tab) reads `execution state Succeeded, exit code 0`
+   above the script's output. For `bootstrap`, the output ends with the
+   play recap showing `failed=0`.
+4. **What failure looks like, and what to do:**
+   - *The run stops at "Refuse while ARC_RUN_CLIENT_ID is unset":* do setup
+     step 4.
+   - *"Could not read run command … back" with `AuthorizationFailed` above
+     it:* the role is not granted yet; do setup steps 2 and 3.
+   - *"Could not read run command … back" with a message about the
+     extension not being allowed:* the agent's allowlist has not got the
+     handler yet; do setup step 5.
+   - *`execution state Failed` or a non-zero exit code:* the script ran and
+     failed on the host. The summary shows its last 4 KB. For `bootstrap`,
+     it names the failed tasks; the end of the full log is one line away
+     over SSH, PowerShell, on the workstation with the key:
+
+     ```powershell
+     ssh -t hcw-lab "sudo tail -n 80 /var/log/hcw-arc-run/latest.log"
+     ```
+   - *`TimedOut`:* the script ran past its limit (5 minutes for `status`,
+     20 for `memory-check`, 40 for `bootstrap`) and Azure stopped it.
+
+The last step deletes the run command from the machine whatever happened,
+so nothing is left stored there. It also stops a script that is still
+running: cancelling a `bootstrap` run part-way stops the play part-way,
+and the next full run puts the host right.
+
+Each run is recorded in the Azure activity log of the Arc machine
+`arcs-lab-hybrid-prod-cus-01` (in `rg-lab-hybrid-prod-cus`) as a create
+and a delete of a run command, with the identity that did it.
+
+### Taking it away
+
+Either half is enough on its own:
+
+- **From Azure, without touching the host:** set
+  `lab_arc_run_command_enabled` to `false` in
+  [the workspace's variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables)
+  and confirm the run (one destroy, the role assignment). The workflow then
+  fails at its Run Command step with `AuthorizationFailed`.
+- **On the host:** set `arc_run_command_enabled: false` for the `arc` role
+  in a pull request and run `bootstrap.sh` over SSH; the agent's allowlist
+  goes back to the Azure Monitor agent alone, and the agent refuses any run
+  command, from anyone.
 
 ## The first-run host check
 
