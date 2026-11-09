@@ -448,6 +448,20 @@ describe('formatReport', () => {
     expect(text).toContain('49h');
   });
 
+  // #1613: the frontend deploys by itself on a merge that changes frontend/,
+  // the functions deploy is still started by hand. The advice under a red
+  // table has to say which is which, or the reader starts the wrong thing.
+  it('says the frontend deploys by itself and the functions deploy is started by hand', () => {
+    const { text } = formatReport(
+      [{ name: 'Static Web App', count: 2, oldest: { message: 'x' }, hours: 30 }],
+      DEFAULT_THRESHOLD_HOURS
+    );
+    expect(text).toContain('The Function App deploy is started by hand (deploy-functions.yml)');
+    expect(text).toContain('The Static Web App deploys by itself when a merge changes frontend/');
+    expect(text).toContain('deploy-azure-frontend.yml by hand');
+    expect(text).not.toMatch(/dispatch-only/);
+  });
+
   it('passes thirty-five commits merged in the last hour', () => {
     const { failed } = formatReport(
       [{ name: 'Static Web App', count: 35, oldest: { message: 'x' }, hours: 0 }],
@@ -492,10 +506,12 @@ describe('formatReport', () => {
     expect(row).not.toContain('✅');
   });
 
-  // F5 (#963): the footer said "Both deploys" over three rows.
+  // F5 (#963): the footer said "Both deploys" over three rows. Since #1613 it
+  // names each of the three, because each is deployed a different way.
   it('describes all three rows in the footer, not two', () => {
     const { text } = formatReport([{ name: 'X', neverDeployed: true }], 24);
-    expect(text).toContain('none of the three');
+    const footer = text.split('\n').at(-1);
+    for (const service of SERVICES) expect(footer).toContain(service.name);
     expect(text).not.toContain('Both deploys');
   });
 });
