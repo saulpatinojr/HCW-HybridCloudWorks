@@ -288,7 +288,7 @@ const MVP_NOMINATION_QUESTIONS = [
     hint: 'The address the MVP programme writes to. The invitation goes there, and the application opens only when signed in with it.',
   }),
   question('mvp-nom-title', MVP_NOMINATION, 'Title', 'profile', {
-    hint: 'A drop-down on the form: pick the closest job title.',
+    hint: 'A drop-down on the form: pick the closest option it offers.',
   }),
   question('mvp-nom-country', MVP_NOMINATION, 'Country or Region', 'profile', {
     required: true,
