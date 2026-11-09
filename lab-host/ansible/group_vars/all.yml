@@ -471,8 +471,8 @@ addons:
   # the signer is the publish-images workflow at refs/tags/v0.1.3
   # (https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn/actions/runs/42563530777,
   # tag on commit b0a361a7). v0.1.3 carries engine 0.1.5: an upload whose
-  # resource names contain a hedge word no longer fails, and rule set
-  # 2026.11.1 (Trivy clean in the dry run and the tag run).
+  # resource names contain a word such as "may" no longer fails; the rule set
+  # is 2026.11.1 (Trivy clean in the dry run and the tag run).
   # Before it the row pinned v0.1.2
   # (digest sha256:b8818f7a25610da372d0744f2b0584ccbea5d91a60518d02b68a48fbda99f381)
   # from 2026-11-05 to 2026-11-09, and v0.1.0

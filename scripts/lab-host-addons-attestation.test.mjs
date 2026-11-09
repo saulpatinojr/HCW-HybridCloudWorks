@@ -63,7 +63,7 @@ describe('group_vars/all.yml add-on attestation configuration', () => {
       },
       'network-assessment': {
         repo: 'saulpatinojr/HCW-NetworkEyes_AddOn',
-        tag: 'v0.1.2',
+        tag: 'v0.1.3',
       },
       'cloud-assessment': {
         repo: 'saulpatinojr/HCW-CloudAssessor_AddOn',
