@@ -14,10 +14,11 @@
     - the two subscription ids, SUBSCRIPTION_ID (the Application
       subscription) and SUBSCRIPTION_MGMT_ID (the Management subscription),
       since #1610;
-    - the tenant id, TENANT_ID, and the six client ids of the identities the
+    - the tenant id, TENANT_ID, and the client ids of the identities the
       workflows sign in as (CLIENT_ID, READER_CLIENT_ID,
       MANIFEST_WINDOW_CLIENT_ID, COPILOT_REVIEW_CLIENT_ID, ARC_RUN_CLIENT_ID,
-      ALERT_READER_CLIENT_ID), since #1618.
+      ALERT_READER_CLIENT_ID), since #1618, and FRONTEND_DEPLOY_CLIENT_ID
+      since #1617.
 
   The name says "Subscription" because the script was written for the first
   two; it works the same for any of them. Every one of these ids is a GUID,
@@ -51,7 +52,7 @@
 
 .PARAMETER Names
   The names to copy. Default: SUBSCRIPTION_ID and SUBSCRIPTION_MGMT_ID. Any
-  of the nine names above may be given, for example
+  of the ten names above may be given, for example
   -Names TENANT_ID,CLIENT_ID,READER_CLIENT_ID,MANIFEST_WINDOW_CLIENT_ID,COPILOT_REVIEW_CLIENT_ID,ARC_RUN_CLIENT_ID,ALERT_READER_CLIENT_ID
 
 .PARAMETER FromPrompt

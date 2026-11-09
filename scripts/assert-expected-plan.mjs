@@ -617,6 +617,44 @@ export const DECLARED = [
       "#1590: HCW Arc Run Command Operator on rg-lab-hybrid-prod-cus for lab-host-arc-run.yml; planned only once the owner has created the role and set lab_arc_run_command_enabled = true (Required-Inputs §4.6b)",
   },
 
+  // #1617, PR 1: the frontend deploy's own identity (github_frontend_deploy,
+  // its two `production` environment credentials and HCW Static Web App
+  // Deployer on the one site), and the deploy identity's two
+  // `production-backend` credentials. All six are planned from the merge.
+  // Nothing is deleted in this run: github_deploy keeps its `production` pair
+  // and its site role until PR 2 moves the workflows, and PR 2 declares
+  // those three deletes. Delete these six once they have applied.
+  {
+    address: "azurerm_user_assigned_identity.github_frontend_deploy",
+    action: "create",
+    reason: "#1617: the identity deploy-azure-frontend.yml will sign in as, holding only HCW Static Web App Deployer on the site",
+  },
+  {
+    address: "azurerm_federated_identity_credential.github_frontend_deploy_env_production",
+    action: "create",
+    reason: "#1617: the frontend deploy identity trusts the production environment's subject",
+  },
+  {
+    address: "azurerm_federated_identity_credential.github_frontend_deploy_env_production_immutable",
+    action: "create",
+    reason: "#1617: the immutable-ID form of the same production subject, for the frontend deploy identity",
+  },
+  {
+    address: "azurerm_role_assignment.github_frontend_deploy_swa_token",
+    action: "create",
+    reason: "#1617: HCW Static Web App Deployer on the one Static Web App for the frontend deploy identity, the same role and scope github_deploy holds today",
+  },
+  {
+    address: "azurerm_federated_identity_credential.github_production_backend",
+    action: "create",
+    reason: "#1617: the deploy identity trusts the reviewed production-backend environment, which deploy-functions.yml moves to in PR 2",
+  },
+  {
+    address: "azurerm_federated_identity_credential.github_production_backend_immutable",
+    action: "create",
+    reason: "#1617: the immutable-ID form of the same production-backend subject",
+  },
+
   // #1565 (ADR 0040 D10): the interviews-audio container and its retention
   // rule, slice A of the interviews feature. The rule is the policy's fifth
   // (index 4, after expire-recording-uploads); the -1 values are what the

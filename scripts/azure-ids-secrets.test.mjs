@@ -1,12 +1,13 @@
 /**
  * The Azure ids the workflows sign in with are read from repository SECRETS,
  * never from repository variables: the two subscription ids since #1610, and
- * the tenant id and the six client ids since #1618.
+ * the tenant id and the six client ids since #1618, and the frontend
+ * deploy's client id since #1617.
  *
  * This repository is public, so every Actions log is public. GitHub prints a
  * step's `env:` and `with:` values in its log, and it masks a value as `***`
  * only when it came from a secret; a variable is printed as it is. Since
- * 2026-11-09 the owner keeps these nine ids as secrets, so a workflow that
+ * 2026-11-09 the owner keeps these ids as secrets, so a workflow that
  * reads `vars.<one of them>` would print a real id again (and, once the
  * variables are deleted, would read an empty value). This test fails on any
  * such read in .github/workflows, comments included, and holds the script
@@ -31,7 +32,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOWS = join(REPO, '.github', 'workflows');
 const files = readdirSync(WORKFLOWS).filter((name) => /\.ya?ml$/.test(name));
 
-/** The ids kept as secrets: two since #1610, seven since #1618. */
+/** The ids kept as secrets: two since #1610, seven since #1618, one since #1617. */
 const SUBSCRIPTION_IDS = ['SUBSCRIPTION_ID', 'SUBSCRIPTION_MGMT_ID'];
 const TENANT_AND_CLIENT_IDS = [
   'TENANT_ID',
@@ -41,6 +42,7 @@ const TENANT_AND_CLIENT_IDS = [
   'COPILOT_REVIEW_CLIENT_ID',
   'ARC_RUN_CLIENT_ID',
   'ALERT_READER_CLIENT_ID',
+  'FRONTEND_DEPLOY_CLIENT_ID',
 ];
 const SECRET_IDS = [...SUBSCRIPTION_IDS, ...TENANT_AND_CLIENT_IDS];
 const NAMES = SECRET_IDS.join('|');
@@ -66,7 +68,7 @@ describe('Azure ids come from secrets, so public logs show ***', () => {
     expect(files.length).toBeGreaterThan(10);
   });
 
-  it('no workflow reads one of the nine ids from vars', () => {
+  it('no workflow reads one of the ids from vars', () => {
     const found = files.flatMap((file) => hits(file, readFileSync(join(WORKFLOWS, file), 'utf8'), VARS_READ));
     expect(found, `read secrets.<name> instead for ${SECRET_IDS.join(', ')} (#1610, #1618)`).toEqual([]);
   });
@@ -140,6 +142,10 @@ describe('Azure ids come from secrets, so public logs show ***', () => {
     ['COPILOT_REVIEW_CLIENT_ID', ['copilot-setup-steps.yml']],
     ['ARC_RUN_CLIENT_ID', ['lab-host-arc-run.yml']],
     ['ALERT_READER_CLIENT_ID', ['verify-alert-state.yml']],
+    // #1617: no workflow reads it until the second pull request moves
+    // deploy-azure-frontend.yml onto it (then CLIENT_ID's list above loses
+    // that file and this one gains it).
+    ['FRONTEND_DEPLOY_CLIENT_ID', []],
   ])('%s is read from the secret by the workflows that sign in with it', (name, expected) => {
     expect(readersOf(name).sort()).toEqual(expected.sort());
   });
