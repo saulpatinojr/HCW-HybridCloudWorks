@@ -133,6 +133,9 @@ export const WITNESSES = {
   labCanary: {
     none: 'runs one lab job, deletes it, and records the run in admin_config/lab_canary, which has no public route; the labs status read it also makes is refreshed by visitors too, so it witnesses nothing',
   },
+  syncSearchConsole: {
+    none: 'reads Google and rewrites admin_config/search_console_snapshot, which has no public route; the admin Search Console page shows run.finishedAt',
+  },
 };
 
 // ── pure helpers (unit-tested) ───────────────────────────────────────────────

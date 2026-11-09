@@ -125,8 +125,8 @@ describe('lab job limits agree across the agent, its example env and the host ro
     });
   }
 
-  it('job memory is 512m, the owner decision of 2026-09-27', () => {
-    expect(agentDefault(index, 'LABS_AGENT_JOB_MEMORY')).toBe('512m');
+  it('job memory is 768m, raised from 512m after the host measurement of 2026-11-09 (#1590)', () => {
+    expect(agentDefault(index, 'LABS_AGENT_JOB_MEMORY')).toBe('768m');
   });
 });
 

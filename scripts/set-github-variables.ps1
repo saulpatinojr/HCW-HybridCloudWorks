@@ -9,7 +9,10 @@
 
     Wave 1 - known BEFORE the first terraform apply: tenant and application
              subscription. These two are inputs TO Terraform, not products of
-             it, which is the test for belonging in this wave.
+             it, which is the test for belonging in this wave. TENANT_ID is a
+             repository variable; SUBSCRIPTION_ID is a repository SECRET
+             (#1610), because GitHub masks a secret as *** in this public
+             repository's logs and prints a variable as it is.
     Wave 2 - everything that is a Terraform output, read from the workspace's
              applied state via the HCP Terraform API (the same token
              set-tfc-variables.ps1 resolves): CLIENT_ID (client_id),
@@ -17,6 +20,7 @@
              ALERT_READER_CLIENT_ID (alert_reader_client_id),
              MANIFEST_WINDOW_CLIENT_ID (manifest_window_client_id),
              COPILOT_REVIEW_CLIENT_ID (copilot_review_client_id),
+             ARC_RUN_CLIENT_ID (arc_run_client_id),
              APP_HOSTNAME (function_hostname), FUNCTIONS_URL (api_base_url),
              FUNCTION_APP_NAME, RESOURCE_GROUP (web_resource_group),
              FUNCTIONS_STORAGE_ACCOUNT, STORAGE_ACCOUNT,
@@ -73,8 +77,11 @@
 
 .PARAMETER SubscriptionApp
   Application landing zone subscription GUID (sub-app-site-prod-cus).
-  Becomes SUBSCRIPTION_ID — the subscription azure/login targets, which is
-  where the Function App lives.
+  Becomes the SUBSCRIPTION_ID repository secret (not a variable, #1610) —
+  the subscription azure/login targets, which is where the Function App
+  lives. Its value is never printed. The Management subscription's id,
+  SUBSCRIPTION_MGMT_ID, is also a secret; set it with
+  scripts/Set-SubscriptionSecrets.ps1 -Names SUBSCRIPTION_MGMT_ID -FromPrompt.
 
 .PARAMETER WhatIf
   Report what would be set without writing anything.
@@ -109,6 +116,21 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/deploy-console.ps1')
 
+# The arguments as they may be shown: the value after --body (a secret's
+# value) becomes ***, so an error never repeats it.
+function Format-GhArguments {
+  param([string[]] $Arguments)
+  $shown = [System.Collections.Generic.List[string]]::new()
+  for ($i = 0; $i -lt $Arguments.Count; $i++) {
+    $shown.Add($Arguments[$i])
+    if ($Arguments[$i] -eq '--body' -and $i + 1 -lt $Arguments.Count) {
+      $shown.Add('***')
+      $i++
+    }
+  }
+  return ($shown -join ' ')
+}
+
 # gh writes progress to stderr, which PowerShell 7 escalates under 'Stop'.
 # Judge success by exit code, same pattern as Invoke-Az in the bootstrap.
 function Invoke-Gh {
@@ -124,7 +146,7 @@ function Invoke-Gh {
   } finally { $ErrorActionPreference = $previous }
   if ($LASTEXITCODE -ne 0) {
     if ($AllowFailure) { return $null }
-    throw "gh $($Arguments -join ' ') failed:`n$output"
+    throw "gh $(Format-GhArguments $Arguments) failed:`n$output"
   }
   return ($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n"
 }
@@ -216,13 +238,15 @@ if (-not $TenantId -or -not $SubscriptionApp) {
     $subscriptions = Get-AzSubscriptionList
     if ($subscriptions.Count -eq 0) {
       Stop-WithGuidance 'The sign-in can see no enabled subscriptions.' @(
-        'Check with: az account list --all -o table'
+        'Check with: az account list --all -o json | ConvertFrom-Json | Select-Object name, state'
       )
     }
     # The application landing zone: where the Function App lives, and so the
     # subscription azure/login must target. NOT a platform subscription.
+    # -NamesOnly: the picker and its confirmation show subscription names,
+    # never ids (#1610).
     $chosen = Select-Subscription -Purpose 'Application landing zone (SUBSCRIPTION_ID)' -Pattern 'sub-app-*' `
-      -Subscriptions $subscriptions
+      -Subscriptions $subscriptions -NamesOnly
     $SubscriptionApp = $chosen.id
   }
 }
@@ -239,22 +263,36 @@ function Set-RepoVariable {
   }
 }
 
+# A repository secret, for a value GitHub must mask in the public logs. The
+# value is passed to gh and never printed (#1610).
+function Set-RepoSecret {
+  [CmdletBinding(SupportsShouldProcess = $true)]
+  param([Parameter(Mandatory)][string] $Name, [Parameter(Mandatory)][string] $Value)
+  $verb = if ($existingSecrets -contains $Name) { 'update' } else { 'create' }
+  if ($PSCmdlet.ShouldProcess("secret $Name", "$verb repository secret")) {
+    Invoke-Gh @('secret', 'set', $Name, '-R', $Repository, '--body', $Value) | Out-Null
+    Write-Act "$verb  $Name (secret; value not shown)"
+  } else {
+    Write-Act "would $verb  $Name (secret; value not shown)"
+  }
+}
+
 # ===========================================================================
 # 2. Wave 1 — known before the first apply
 # ===========================================================================
-$proceed = Confirm-Plan -Title 'About to write these repository variables' -Force:$WhatIfPreference -Order @(
+$proceed = Confirm-Plan -Title 'About to write the TENANT_ID variable and the SUBSCRIPTION_ID secret' -Force:$WhatIfPreference -Order @(
   'Repository', 'TENANT_ID', 'SUBSCRIPTION_ID'
 ) -Values @{
   'Repository'      = $Repository
   'TENANT_ID'       = $TenantId
-  'SUBSCRIPTION_ID' = $SubscriptionApp
+  'SUBSCRIPTION_ID' = '(secret; the subscription chosen above)'
 }
 if (-not $proceed) { Write-Info 'Cancelled — nothing was written.'; exit 0 }
 
 Write-Step 'Wave 1: values known before the first apply'
 
 Set-RepoVariable -Name 'TENANT_ID' -Value $TenantId
-Set-RepoVariable -Name 'SUBSCRIPTION_ID' -Value $SubscriptionApp
+Set-RepoSecret -Name 'SUBSCRIPTION_ID' -Value $SubscriptionApp
 
 # ===========================================================================
 # 3. Wave 2 — Terraform outputs, via the workspace's current state
@@ -317,6 +355,10 @@ if ($outputs) {
     # Reader on the four workload groups and nothing else; the login fails
     # closed while this is unset, so seed it in the same pass as the apply.
     @{ output = 'copilot_review_client_id'; kind = 'variable'; name = 'COPILOT_REVIEW_CLIENT_ID'; transform = { param($v) $v } }
+    # #1590: lab-host-arc-run.yml's identity, the Run Command role on the lab
+    # group and nothing else. The workflow refuses to start while this is
+    # unset, naming the variable.
+    @{ output = 'arc_run_client_id'; kind = 'variable'; name = 'ARC_RUN_CLIENT_ID'; transform = { param($v) $v } }
     @{ output = 'function_hostname'; kind = 'variable'; name = 'APP_HOSTNAME'; transform = { param($v) $v } }
     # api_base_url, NOT function_hostname. This was built from the
     # azurewebsites.net origin until 2026-08-20, which stopped working the

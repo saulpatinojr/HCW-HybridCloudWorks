@@ -142,6 +142,9 @@ const CLOCK_DEPENDENT = {
   buildWeeklyNewsletter: { schedule: '0 0 13 * * 1', utc: 'Monday 13:00' },
   // 08:00 CDT / 07:00 CST: the owner's reminders, read with the morning's first coffee.
   sendReminders: { schedule: '0 0 13 * * *', utc: 'daily 13:00' },
+  // #1612: the owner's 06:00 and 18:00 Central, written in UTC; ten past to
+  // clear the 00:00 cleanup. 18:10 / 06:10 CST, 19:10 / 07:10 CDT.
+  syncSearchConsole: { schedule: '0 10 0,12 * * *', utc: 'daily 00:10 and 12:10' },
   scrapeSkillsHubRss: { schedule: '0 0 9 * * 5', utc: 'Friday 09:00' },
   // Hour intervals. The cadence survives any whole-hour offset; the PHASE does
   // not, so which instants they land on is still a property of the clock.
@@ -188,7 +191,7 @@ describe('timer schedules are UTC', () => {
     // Guards the guard. An empty read on either side would make every
     // assertion below pass by inspecting nothing.
     expect(terraformSource(INFRA).length).toBeGreaterThan(1000);
-    expect(timerRegistrations.size).toBe(28);
+    expect(timerRegistrations.size).toBe(29);
   });
 
   it('the app clock is UTC — no WEBSITE_TIME_ZONE or TZ app setting exists', () => {

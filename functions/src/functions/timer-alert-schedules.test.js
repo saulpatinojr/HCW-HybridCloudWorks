@@ -74,8 +74,19 @@ export function periodOf(schedule) {
   const [, minute, hour, , , weekday] = f;
   const step = (field) => /^(?:\*|\d+-\d+)\/(\d+)$/.exec(field)?.[1];
   const fixed = (field) => /^\d+$/.test(field);
+  // A list of hours evenly spread over the day (`0,12` for syncSearchConsole,
+  // #1612) repeats every 24/n hours, the same as `*/12`; an uneven list
+  // (`0,9`) has no fixed period and stays null.
+  const evenHours = (field) => {
+    if (!/^\d+(?:,\d+)+$/.test(field)) return null;
+    const hours = field.split(',').map(Number).sort((a, b) => a - b);
+    const gap = 24 / hours.length;
+    const even = Number.isInteger(gap) && hours.every((h, i) => h < 24 && (i === 0 || h - hours[i - 1] === gap));
+    return even ? gap : null;
+  };
   if (hour === '*' && weekday === '*' && step(minute)) return `${step(minute)}m`;
   if (fixed(minute) && weekday === '*' && step(hour)) return `${step(hour)}h`;
+  if (fixed(minute) && weekday === '*' && evenHours(hour)) return `${evenHours(hour)}h`;
   if (fixed(minute) && fixed(hour) && weekday === '*') return '1d';
   if (fixed(minute) && fixed(hour) && /^[0-6]$/.test(weekday)) return '7d';
   return null;
@@ -85,6 +96,7 @@ export function periodOf(schedule) {
 function admits(field, value) {
   if (field === '*') return true;
   if (/^\d+$/.test(field)) return Number(field) === value;
+  if (/^\d+(?:,\d+)+$/.test(field)) return field.split(',').some((part) => Number(part) === value);
   const m = /^(?:\*|(\d+)-(\d+))\/(\d+)$/.exec(field);
   if (!m) return false;
   const from = m[1] === undefined ? 0 : Number(m[1]);
@@ -146,5 +158,10 @@ describe('alert-timer-overdue schedules', () => {
     expect(firesAt('0 2-59/5 * * * *', '2026-01-01 00:00')).toBe(false);
     expect(firesAt('0 30 */2 * * *', '2026-01-01 01:30')).toBe(false);
     expect(periodOf('0 0 9 1 * *')).toBeNull();
+    // An hour list: even (#1612) has a period, uneven does not.
+    expect(periodOf('0 10 0,12 * * *')).toBe('12h');
+    expect(periodOf('0 10 0,9 * * *')).toBeNull();
+    expect(firesAt('0 10 0,12 * * *', '2026-01-01 12:10')).toBe(true);
+    expect(firesAt('0 10 0,12 * * *', '2026-01-01 06:10')).toBe(false);
   });
 });

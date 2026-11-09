@@ -30,6 +30,7 @@ import '../functions/listen-and-learn-jobs.js';
 import '../functions/podcast-jobs.js';
 import '../functions/publish-jobs.js';
 import '../functions/rss-jobs.js';
+import '../functions/search-console-http.js';
 
 const worker = async () => ({});
 
@@ -77,6 +78,14 @@ describe('registered job types', () => {
     }
     // Under the 30-minute Flex Consumption function timeout, with the sweeper's grace in mind.
     expect(types.find((t) => t.type === 'interview-transcribe').timeoutMs).toBe(25 * 60 * 1000);
+  });
+
+  it('gates sync-search-console at editor, matching POST cms/search-console/run that queues it (#1612)', () => {
+    const spec = types.find((t) => t.type === 'sync-search-console');
+    expect(spec).toBeDefined();
+    expect(spec.role).toBe('editor');
+    // No payload: the run reads its settings, never the caller's text.
+    expect(spec.maxPayloadBytes).toBeLessThanOrEqual(64);
   });
 
   it('gates publish-content at publisher, matching POST /api/publishContent', () => {

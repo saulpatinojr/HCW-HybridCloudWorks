@@ -47,8 +47,22 @@ arc_subscription_id: "{{ vault_arc_subscription_id | default('') }}"
 
 # The extensions the Arc agent may install, as azcmagent's allowlist value
 # (publisher/type, comma-separated). The Azure Monitor Agent is the one this
-# estate uses (LAB-6, 2026-10-06).
+# estate uses (LAB-6, 2026-10-06). The Run Command handler is added to it by
+# arc_run_command_enabled below, not here, so this stays the LAB-6 list.
 arc_extensions_allowlist: "Microsoft.Azure.Monitor/AzureMonitorLinuxAgent"
+
+# Azure Arc Run Command (preview; #1590; ADR 0032, amendment of 2026-11-09).
+# True adds the Run Command handler (vars/main.yml, arc_run_command_extension)
+# to the allowlist above, so .github/workflows/lab-host-arc-run.yml can run
+# one of its fixed scripts on the host as root through Azure, without the
+# owner's SSH key. It reverses part of LAB-6 by owner decision 2026-11-09
+# ("create a workflow to use Azure Arc to run [commands on the host] even if
+# it's in preview"): Run Command is root on the host for whoever holds
+# Microsoft.HybridCompute/machines/runCommands/write on the machine. Nothing
+# else opens: no other extension, Windows Admin Center and every port but 22
+# stay closed, guest configuration stays off. False puts LAB-6's allowlist
+# back (the Azure Monitor Agent alone).
+arc_run_command_enabled: true
 
 # Azure Arc SSH (#953, LAB-7; ADR 0032, amendment of 2026-10-16). True lets
 # the agent accept incoming connections through Arc on port 22 alone, sshd's

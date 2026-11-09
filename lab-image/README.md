@@ -38,7 +38,7 @@ Measured on 2026-11-08 with Docker 29.9.2 (`docker image ls`, which since
 Docker 29 reports both the unpacked size on disk and the compressed size a
 pull transfers), on the images `publish-lab-image.yml` published from commit
 `e114a5a` (the Python 3.15.2 / Debian 13.7 base, the builder modules at the
-versions `versions.env` pins, listed under "What works offline"), pulled from Docker Hub:
+versions [`versions.env` pinned at that commit](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/e114a5a/lab-image/versions.env)), pulled from Docker Hub:
 
 | Target   | On disk | Compressed (what a pull downloads) |
 | -------- | ------- | ---------------------------------- |
@@ -158,11 +158,13 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   yes** (ADR 0032 decision 5). The builder modules are the four in
   `AVM_MODULES` in
   [`avmVersions.js`](../frontend/src/lib/landingZone/avmVersions.js), each at
-  the version the builder pins: `/opt/avm/avm-ptn-alz@0.22.0`,
-  `/opt/avm/avm-ptn-alz-management@0.9.0`,
-  `/opt/avm/avm-ptn-alz-connectivity-hub-and-spoke-vnet@0.17.7` and
-  `/opt/avm/avm-res-network-virtualnetwork@0.22.3`, the module every spoke is
-  built from. Each is the release source tarball of its
+  the version the builder pins, at `/opt/avm/<name>@<version>`:
+  `avm-ptn-alz`, `avm-ptn-alz-management`,
+  `avm-ptn-alz-connectivity-hub-and-spoke-vnet` and
+  `avm-res-network-virtualnetwork`, the module every spoke is built from.
+  Their versions are not repeated here, because the weekly bump moves them:
+  read the `AVM_<KEY>_VERSION` lines of [`versions.env`](versions.env)
+  (#1594). Each is the release source tarball of its
   `Azure/terraform-azurerm-<name>` repository, verified by SHA256.
 
   **How the list is derived.** It is written once, as one
@@ -181,12 +183,13 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   two lists then.
 
   **The children.** Terraform has a provider mirror but no module mirror,
-  and measured in #686 `avm-ptn-alz` calls one registry module and the
-  connectivity module thirteen, some from inside its own nested modules.
+  and when measured in #686 `avm-ptn-alz` called one registry module and the
+  connectivity module thirteen, some from inside its own nested modules
+  (`AVM_CHILD_CALLS` in `versions.env` has today's list).
   [`vendor-avm.sh`](vendor-avm.sh) runs `terraform get` on each builder
   module at build time, copies each distinct child once to
-  `/opt/avm/<name>@<version>` (seventeen `name@version` pairs across
-  fourteen modules), and rewrites every `module` block inside the vendored
+  `/opt/avm/<name>@<version>` (one pair per entry of `AVM_CHILD_MODULES` in
+  `versions.env`), and rewrites every `module` block inside the vendored
   copies from `source = "Azure/<name>/azurerm"` plus a `version` to the
   child's **relative** path, `../<name>@<version>`, with the `version` line
   commented out. Relative because Terraform uses `./` and `../` paths in
@@ -203,10 +206,11 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   registry. `smoke.sh` checks every recorded child is on disk and inits and
   validates each builder module from a generated root with no network.
 
-  **Two versions of one module coexist**, as two directories:
-  `avm-res-network-virtualnetwork@0.15.0` is the connectivity module's own
-  child (its hub network) and `@0.22.3` is the builder's spokes', and
-  `avm-utl-interfaces` is vendored at 0.2.0, 0.5.0 and 0.6.0. A child at
+  **Two versions of one module can coexist**, as two directories:
+  `avm-res-network-virtualnetwork` is both the connectivity module's own
+  child (its hub network) and the builder's spokes' module, usually at
+  different versions, and `avm-utl-interfaces` can be vendored at more than
+  one version. `AVM_CHILD_MODULES` lists which. A child at
   exactly a builder module's `name@version` is not copied twice: its calls
   resolve to the builder module's directory.
 
@@ -244,8 +248,8 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   sixteen provider configurations (`azurerm` and `azapi` six times each)
   each start a plugin process. 320m passes, erratically, in 20 to 86 s and
   512m in 15 to 19 s (measured 2026-09-27), so the agent's default and the
-  host's `labs_agent_job_memory` are 512m (owner decision that day; the
-  reason is beside the default in `vps-agent/index.js`). At 512m the build
+  host's `labs_agent_job_memory` were 512m from that day (owner decision;
+  the reason is beside the default in `vps-agent/index.js`). At 512m the build
   leans on swap: the agent also passes `--memory-swap` at twice the memory
   limit, which lets the job use up to as much swap again, but only on a
   machine that has swap. On 2026-11-08, with the image published from
@@ -254,8 +258,11 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   showed the other two killed for running out of memory inside the job's
   limit. The lab host had no swap when it was last read (2026-10-26, "Host
   memory" in [the labs host runbook](../docs/runbooks/labs-host.md)), so
-  the no-swap result is the one that looks like the host. The limit is
-  unchanged until the build is re-measured on the host itself (#1590).
+  the no-swap result is the one that looks like the host. Measured on the
+  host itself on 2026-11-09 (#1590; `free -m` showed no swap), the check
+  passed 2 of 3 runs at 512m and in the third the kernel killed `terraform`
+  for running out of memory inside the job's limit, so the limit is 768m
+  since that day.
 - **Helm and kubeconform: yes.** [`bin/hcw-helm-template`](bin/hcw-helm-template)
   renders one chart (its `Chart.yaml` at `/workspace` or one level down;
   dependencies must already be under `charts/`).
@@ -333,7 +340,7 @@ from `frontend/src/lib/landingZone` when the script runs, so it needs that
 directory beside this one (a full checkout, as CI has) and fails on any
 module block the image would leave for the registry. Every case runs at the
 agent's limits, which the script reads from `vps-agent/index.js` rather than
-restating (512m of memory, for the reason under "What works offline"). The
+restating (768m of memory, for the reason under "What works offline"). The
 workflow runs it after the smoke tests, and runs on pull requests that
 change the builder as well as this directory.
 

@@ -161,6 +161,7 @@ nav:
       - Calendar Alerts: runbooks/calendar-alerts.md
       - AI Engine models and costs: runbooks/ai-engine-model-review.md
       - Cost page: runbooks/cost.md
+      - Search Console page: runbooks/search-console.md
       - PyYAML wheel for the lab host: runbooks/pyyaml-wheel.md
       - Required checks and the main ruleset: runbooks/required-checks.md
   - Standards:

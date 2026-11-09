@@ -959,18 +959,16 @@ describe('DECLARED', () => {
     expect(rows.length).toBeGreaterThan(20);
     expect(declaration.after).toBe(overdueQuery(rows));
     // Each declaration of this rule states its own shape. #964's changed the
-    // due-time line alone; #1302's, like #1009's, is one row more: `before`
-    // is the tree's rows without ambassadorAudienceMonthly, and the only line
-    // the update adds is that timer's row. Neither value carries the bin_at()
-    // line Kusto refuses (#964), applied away on 2026-10-15.
-    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => !['ambassadorAudienceMonthly', 'brainIndexReconcile', 'sweepVisitorSessions'].includes(name))));
+    // due-time line alone; #1302's, like #1009's, was one row more. #1612's
+    // is one row more too: `before` is the query the rule holds in state
+    // (TIMER_SCHEDULES_APPLIED), and the only line the update adds is
+    // syncSearchConsole's row. Neither value carries the bin_at() line Kusto
+    // refuses (#964), applied away on 2026-10-15.
+    expect(declaration.before).toBe(overdueQuery(TIMER_SCHEDULES_APPLIED));
+    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => name !== 'syncSearchConsole')));
     const before = declaration.before.split('\n');
     const added = declaration.after.split('\n').filter((line) => !before.includes(line));
-    expect(added).toEqual([
-      '  "ambassadorAudienceMonthly", 1d, datetime(2026-01-01 06:45),',
-      '  "brainIndexReconcile", 15m, datetime(2026-01-01 00:00),',
-      '  "sweepVisitorSessions", 2m, datetime(2026-01-01 00:00),',
-    ]);
+    expect(added).toEqual(['  "syncSearchConsole", 12h, datetime(2026-01-01 00:10),']);
     expect(declaration.before).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
     expect(declaration.after).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
   });
@@ -1021,6 +1019,34 @@ describe('DECLARED', () => {
     expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
   });
 
+  it('passes the plan after #1612’s merge: the disarmed flag, the four GSC settings and the overdue row', () => {
+    const { plan, app } = fixture();
+    app.after.app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE = 'false';
+    app.after.app_settings.GSC_WIF_AUDIENCE = '';
+    app.after.app_settings.GSC_ENTRA_APP_ID_URI = '';
+    app.after.app_settings.GSC_SERVICE_ACCOUNT_EMAIL = '';
+    app.after.app_settings.GSC_SITE_URL = 'sc-domain:hybridcloudworks.com';
+    plan.resource_changes.push(
+      timerRuleUpdate(
+        DECLARED.find(
+          (entry) =>
+            entry.address === 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue' &&
+            entry.path === 'criteria[0].query'
+        )
+      )
+    );
+    expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [] });
+  });
+
+  it('reads the owner’s own GSC values as unexpected, so they are checked by hand (#1612)', () => {
+    const { plan, app } = fixture();
+    app.before.app_settings.GSC_SERVICE_ACCOUNT_EMAIL = '';
+    app.after.app_settings.GSC_SERVICE_ACCOUNT_EMAIL = 'sa-hcw-search-console@example-project.iam.gserviceaccount.com';
+    const result = checkPlan(plan);
+    expect(result.ok).toBe(false);
+    expect(result.unexpected.some((line) => line.includes('app_settings.GSC_SERVICE_ACCOUNT_EMAIL'))).toBe(true);
+  });
+
   it('names a changed timer schedule or any other setting riding along with an arming (#1403)', () => {
     const rows = treeTimerRows();
     const { plan, app } = fixture();
@@ -1046,7 +1072,8 @@ describe('DECLARED', () => {
   it('prunes the stateful-rule and export-latency entries once applied (#1207, #964, #970)', () => {
     // timer_overdue left this list while #1302, the Second Brain and #1403
     // declared the rule again (three rows more); those applied and were
-    // deleted on 2026-11-01, so it is back.
+    // deleted on 2026-11-01. It left it again for #1612's one row
+    // (syncSearchConsole); put it back once that declaration is deleted.
     const addresses = DECLARED.map((entry) => entry.address);
     for (const name of [
       'lab_hybrid_backup_missing_coder',
@@ -1054,7 +1081,6 @@ describe('DECLARED', () => {
       'lab_hybrid_disk_used',
       'logs_daily_cap',
       'export_window_latency',
-      'timer_overdue',
     ]) {
       expect(addresses, name).not.toContain(`azurerm_monitor_scheduled_query_rules_alert_v2.${name}`);
     }

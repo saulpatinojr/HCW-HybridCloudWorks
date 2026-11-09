@@ -17,6 +17,18 @@ arc_guid_pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
 # port (scripts/lab-host-arc-ssh.test.mjs holds the two together).
 arc_incoming_ports_wanted: "{{ ['22'] if arc_incoming_ssh_enabled | bool else [] }}"
 arc_incoming_enabled_wanted: "{{ 'true' if arc_incoming_ssh_enabled | bool else 'false' }}"
+# The Run Command handler, as publisher/type: the extension the agent runs
+# a Run Command through, which an allowlist has to name before Run Command
+# works (learn.microsoft.com/azure/azure-arc/servers/run-command, "Block run
+# commands locally"; read 2026-11-09). Fixed, not a setting: it is the one
+# extension arc_run_command_enabled may add, and
+# scripts/lab-host-arc-ssh.test.mjs fails if a second one appears.
+arc_run_command_extension: Microsoft.CPlat.Core/RunCommandHandlerLinux
+# The allowlist this role writes: arc_extensions_allowlist (the Azure Monitor
+# Agent), plus the Run Command handler when arc_run_command_enabled is true.
+arc_extensions_allowlist_wanted: >-
+  {{ arc_extensions_allowlist ~ (',' ~ arc_run_command_extension
+     if arc_run_command_enabled | bool else '') }}
 # azcmagent --tags takes Name=Value pairs separated by commas.
 arc_tags_argument: "{{ arc_tags.items() | map('join', '=') | join(',') }}"
 # The --config file. Keys are azcmagent connect's long option names; Microsoft

@@ -716,8 +716,11 @@ describe("non-HTTP triggers", () => {
     // ambassadorAudienceMonthly (ambassador-audience.js, #1302), behind
     // FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY; the twenty-eighth (after
     // brainIndexReconcile) is sweepVisitorSessions (visitor-session-sweep.js,
-    // #1403), behind FEATURE_FLAG_SWEEP_VISITOR_SESSIONS.
-    expect(timerRegistrations.size).toBe(29);
+    // #1403), behind FEATURE_FLAG_SWEEP_VISITOR_SESSIONS; the thirtieth is
+    // syncSearchConsole (schedulers.js, #1612), behind
+    // FEATURE_FLAG_SYNC_SEARCH_CONSOLE.
+    expect(timerRegistrations.size).toBe(30);
+    expect(timerRegistrations.has("syncSearchConsole")).toBe(true);
     expect(timerRegistrations.has("sweepVisitorSessions")).toBe(true);
     expect(timerRegistrations.has("brainIndexReconcile")).toBe(true);
     expect(timerRegistrations.has("ambassadorAudienceMonthly")).toBe(true);

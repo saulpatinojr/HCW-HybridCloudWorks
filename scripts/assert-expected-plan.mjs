@@ -589,6 +589,34 @@ export const DECLARED = [
       "#1463: HCW Storage Firewall Writer on the host storage account for the hourly window remover (remove-ci-access-windows.yml); planned only once the owner has created the role and set storage_firewall_remover_enabled = true (Required-Inputs §4.6b)",
   },
 
+  // #1590 (ADR 0032, amendment of 2026-11-09): the Run Command identity for
+  // lab-host-arc-run.yml and its two lab-host-arc environment credentials,
+  // planned from the merge; and its role assignment, planned only once the
+  // owner has created HCW Arc Run Command Operator and set
+  // lab_arc_run_command_enabled = true (Required-Inputs §4.6b). Delete all
+  // four once they have applied.
+  {
+    address: "azurerm_user_assigned_identity.github_arc_run",
+    action: "create",
+    reason: "#1590: the identity lab-host-arc-run.yml signs in as, holding only the Run Command role",
+  },
+  {
+    address: "azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc",
+    action: "create",
+    reason: "#1590: trusts the lab-host-arc environment's subject for the Run Command identity, so every sign-in waits for that environment's reviewers",
+  },
+  {
+    address: "azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc_immutable",
+    action: "create",
+    reason: "#1590: the immutable-ID form of the same lab-host-arc subject",
+  },
+  {
+    address: "azurerm_role_assignment.github_arc_run_operator[0]",
+    action: "create",
+    reason:
+      "#1590: HCW Arc Run Command Operator on rg-lab-hybrid-prod-cus for lab-host-arc-run.yml; planned only once the owner has created the role and set lab_arc_run_command_enabled = true (Required-Inputs §4.6b)",
+  },
+
   // #1565 (ADR 0040 D10): the interviews-audio container and its retention
   // rule, slice A of the interviews feature. The rule is the policy's fifth
   // (index 4, after expire-recording-uploads); the -1 values are what the
@@ -658,6 +686,55 @@ export const DECLARED = [
     address: "azurerm_role_assignment.func_interviews_audio_owner",
     action: "create",
     reason: "#1565 ADR 0040 D10: Storage Blob Data Owner for the Function App identity on the interviews-audio container only, for deleteBlobVersion (the account keeps versions)",
+  },
+
+  // #1612: the admin Search Console page. The plan after the merge adds the
+  // syncSearchConsole timer's flag, disarmed; the four GSC_* settings at
+  // their defaults (three empty, the property's name); and one row to
+  // alert-timer-overdue's datatable. Delete these six once that run has
+  // applied, and fold the row into TIMER_SCHEDULES_APPLIED above. The
+  // arming plan (false -> true) stays until the owner adds
+  // SYNC_SEARCH_CONSOLE to enabled_timers, like the other arming plans. The
+  // owner's own values for the three empty settings ("" -> a value) are
+  // workspace edits and deliberately not declared: they show as UNEXPECTED
+  // and are read by hand, since this file holds no real identifier.
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue",
+    path: "criteria[0].query",
+    before: overdueQuery(TIMER_SCHEDULES_APPLIED),
+    after: overdueQuery([
+      ...TIMER_SCHEDULES_APPLIED,
+      ["syncSearchConsole", "12h", "2026-01-01 00:10"],
+    ]),
+    reason: "#1612: alert-timer-overdue watches syncSearchConsole (00:10 and 12:10 UTC)",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE",
+    before: undefined,
+    after: "false",
+    reason: "#1612: the Search Console timer catalogued, disarmed",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE",
+    before: "false",
+    after: "true",
+    reason: "#1612: SYNC_SEARCH_CONSOLE added to enabled_timers, arming the twice-daily run",
+  },
+  ...["GSC_WIF_AUDIENCE", "GSC_ENTRA_APP_ID_URI", "GSC_SERVICE_ACCOUNT_EMAIL"].map((name) => ({
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: `app_settings.${name}`,
+    before: undefined,
+    after: "",
+    reason: `#1612: ${name} declared empty until the owner sets up Google's side`,
+  })),
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.GSC_SITE_URL",
+    before: undefined,
+    after: "sc-domain:hybridcloudworks.com",
+    reason: "#1612: the Search Console property the page reads",
   },
 ];
 

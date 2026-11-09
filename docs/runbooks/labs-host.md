@@ -1,7 +1,9 @@
 # Labs host — desktop access and Azure Arc onboarding
 
 How to reach the Hostinger lab host from a desktop over SSH and VS Code (the
-first section); how to reinstall it, and what the first `bootstrap.sh` run
+first section); how to run one of three fixed commands on it through Azure
+Arc from a GitHub Actions workflow, without the SSH key ("Run a fixed
+command on the host through Azure Arc", #1590); how to reinstall it, and what the first `bootstrap.sh` run
 checks before it changes anything; how the lab agent goes live, which is one
 PowerShell line; the order of the run after a merge (the playbook, then the
 Coder template, at once); how the owner adds a learner to Coder and removes
@@ -506,6 +508,276 @@ Console**, signed in as `root`.
    `Connect-Lab.ps1 -Arc`): run `bootstrap.sh` as in "Closing port 22: the
    first run". It deletes the rule and binds sshd to the loopback again, and
    fails rather than leave the rule if it cannot.
+
+## Run a fixed command on the host through Azure Arc
+
+A second way onto the host, for when the workstation that holds the SSH key
+is not at hand
+([#1590](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1590);
+[ADR 0032](../decisions/0032-learner-labs-platform.md), amendment of
+2026-11-09). A GitHub Actions workflow,
+[`lab-host-arc-run.yml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/workflows/lab-host-arc-run.yml),
+asks Azure to run one of three scripts on the host through **Azure Arc Run
+Command** (a preview Azure feature: the Arc agent on the host runs a script
+it is handed, as root, and sends back what it printed;
+[Microsoft's page](https://learn.microsoft.com/azure/azure-arc/servers/run-command)).
+You pick the script from a list; you cannot type a command. Each run waits
+for a reviewer of the workflow's own GitHub environment, `lab-host-arc`, to
+approve it.
+
+**That environment is the lock.** The Azure identity the workflow signs in
+as trusts any GitHub job that runs in the `lab-host-arc` environment (Azure
+checks the environment's name in the job's sign-in token, not which
+workflow sent it), so the environment's reviewers and its `main`-only
+branch rule decide who can be root on the host. That is also why it is not
+`production`: the deploy jobs run there, and they install npm packages
+whose install scripts must never reach the host. A test fails if any other
+workflow names `lab-host-arc`.
+
+| Action | What it does | How long |
+| --- | --- | --- |
+| `status` | Read-only: uptime, memory, disk, the last completed `bootstrap.sh` run and its commit, running containers, failed system services ([`status.sh`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/arc-run/status.sh)) | under a minute |
+| `memory-check` | The five-run sandbox memory check: the `limits` and `sandbox-check:` lines of each run and the last three out-of-memory lines from the kernel log ([`memory-check.sh`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/arc-run/memory-check.sh)) | a few minutes |
+| `bootstrap` | A full `sudo /opt/hcw-src/lab-host/bootstrap.sh` run to the current `main` commit ([`bootstrap.sh`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/arc-run/bootstrap.sh)) | about six minutes, 40 at most |
+
+**The run's log is public**, because this repository is. So the scripts
+print states, counts and names only. `bootstrap` keeps its full log on the
+host, readable by root alone, in `/var/log/hcw-arc-run/` (the ten newest
+runs), and prints only the play recap and the names of any failed tasks.
+Azure itself keeps only the last 4 KB of what a script prints, so a long
+run shows its end.
+
+### One-time setup
+
+The workflow cannot run until all six steps below are done, in this
+order. Step 6 is the chicken-and-egg one: the host's Arc agent refuses the
+Run Command handler (the small Microsoft component that runs the script)
+until a `bootstrap.sh` run with this change has added it to the agent's
+allowlist, and the workflow cannot do that run for you before then. So
+step 6 is one last run over SSH, from the workstation with the key.
+
+1. **Create the `lab-host-arc` environment, with its protection, first.**
+   It must exist before anything can sign in with it: the first time a job
+   names an environment that does not exist, GitHub creates it silently
+   with **no** reviewers and no branch rule, and that unprotected
+   environment would be the way to root on the host. Open
+   [the repository's environments](https://github.com/saulpatinojr/HCW-HybridCloudWorks/settings/environments)
+   ([GitHub's page on managing environments](https://docs.github.com/actions/deployment/targeting-different-environments/using-environments-for-deployment)),
+   click **New environment**, name it `lab-host-arc`, and click
+   **Configure environment**. Then:
+   - **Required reviewers**: ticked, and add `saulpatinojr` and
+     `hcw-architect` (the same two as `production`; either one approves).
+   - **Prevent self-review**: not ticked.
+   - **Allow administrators to bypass configured protection rules**: not
+     ticked.
+   - **Wait timer**: not ticked.
+   - **Deployment branches and tags**: choose **Selected branches and
+     tags**, **Add deployment branch or tag rule**, type **Branch**, name
+     pattern `main`, **Add rule**.
+   - **Environment secrets** and **Environment variables**: add none.
+
+   Click **Save protection rules**. Then read it back, PowerShell:
+
+   ```powershell
+   gh api repos/saulpatinojr/HCW-HybridCloudWorks/environments/lab-host-arc --jq '.protection_rules[].type'
+   ```
+
+   Success is two lines, `required_reviewers` and `branch_policy` (in
+   either order). `HTTP 404` means the environment does not exist yet; one
+   line or none means a rule was not saved, so open the environment again
+   and save it.
+2. **Confirm the merge run in `hcw-azure`.** After the pull request for
+   #1590 merges, HCP Terraform plans a run on
+   [the workspace's runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
+   Success is three creates for this change, each declared in
+   `scripts/assert-expected-plan.mjs`:
+   `azurerm_user_assigned_identity.github_arc_run` and the two
+   `azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc…`
+   credentials. Confirm it as usual. Anything else in the plan that is
+   not declared is a reason to stop and read it, not to confirm.
+3. **Create the role.** PowerShell, from the repository root, signed in
+   with `az login` as an account that is Owner on the Application
+   subscription. The first part brings your copy up to date, so the role
+   file exists:
+
+   ```powershell
+   git checkout main; git pull origin main; Test-Path infra/roles/arc-run-command-operator.json; pwsh scripts/bootstrap-roles.ps1
+   ```
+
+   `Test-Path` should print `True`. Success is a "Created successfully" line
+   under `Processing role 'HCW Arc Run Command Operator'...` (the other six
+   roles say "Updated successfully", which changes nothing), and a final
+   table whose `HCW Arc Run Command Operator` row ends in
+   `/resourceGroups/rg-lab-hybrid-prod-cus`. If it stops saying a
+   subscription id "is the repository placeholder", sign in again with
+   `az login` and rerun the same line.
+4. **Turn the grant on.** In
+   [the workspace's variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables),
+   **Add variable**, category **Terraform variable**, key
+   `lab_arc_run_command_enabled`, value `true`, **HCL** ticked,
+   **Sensitive** not ticked, description `Grant lab-host-arc-run.yml the HCW
+   Arc Run Command Operator role on rg-lab-hybrid-prod-cus (#1590)`. Save,
+   then **New run** (top right of the workspace) and confirm it. Success is
+   a plan with one create, `azurerm_role_assignment.github_arc_run_operator[0]`.
+   If the plan sits at "refreshing" for minutes instead, the role from step
+   3 does not exist yet: cancel the run, set the variable back to `false`,
+   and do step 3 again.
+5. **Seed the client id.** PowerShell, from the repository root on `main`.
+   The script reads the `arc_run_client_id` output from the workspace and
+   sets the repository variable `ARC_RUN_CLIENT_ID`, beside the ones it
+   already manages:
+
+   ```powershell
+   git checkout main; git pull origin main; ./scripts/set-github-variables.ps1
+   ```
+
+   Success is a line naming `ARC_RUN_CLIENT_ID` and a GUID. It is an
+   identifier, not a secret, and public: what decides who can sign in as
+   this identity is the `lab-host-arc` environment from step 1.
+6. **Let the agent accept the handler: one `bootstrap.sh` run over SSH.**
+   PowerShell, on the workstation with the key:
+
+   ```powershell
+   ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+   ```
+
+   Success is a recap with `failed=0`, after the line `Arc agent: extension
+   allowlist
+   microsoft.azure.monitor/azuremonitorlinuxagent,microsoft.cplat.core/runcommandhandlerlinux;
+   incoming connections on, port 22 only (Arc SSH).` (The role compares
+   extension names in lower case, so that is how the line prints them; the
+   agent holds them as the role wrote them.) If the run stops at
+   *Assert the extension allowlist is unchanged…*, the agent stored a
+   different list from the one the role wrote; read it with
+   `sudo /opt/azcmagent/bin/azcmagent config get extensions.allowlist` and
+   put the output on #1590.
+
+**Expected drift until step 6.** Between the merge and that SSH run, the
+host's nightly `--check --diff` drift run (`hcw-playbook-drift`) reports
+the `arc` role's *Report Arc agent settings that differ from this role's*
+task as changed, naming the extension allowlist: the role now wants the
+handler in it and the host does not have it yet. That is expected, and step
+6 clears it. Drift in anything else on that line is not this change.
+
+### Running it
+
+1. Open
+   [the workflow's page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/lab-host-arc-run.yml),
+   click **Run workflow**, leave the branch at `main`, choose the action
+   (start with `status`), and click the green **Run workflow**.
+2. Open the run that appears. It shows **Waiting** with a **Review
+   deployments** button. Click it, tick `lab-host-arc`, and click
+   **Approve and deploy**
+   ([GitHub's page on reviewing deployments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)).
+   Step 1 left **Prevent self-review** unticked, so you can approve your
+   own run. If GitHub ever refuses that, the other required reviewer,
+   `hcw-architect`, approves it.
+3. **Watch it run.** Open the job, then the step **Run the script on the
+   host and report what it printed**. It does not sit silent while the
+   script runs: it prints a line every 20 seconds, so you can always tell
+   whether the host has started, is still working, or has finished. A
+   `bootstrap` looks like this (shortened):
+
+   ```text
+   == Next: signing in to Azure as github_arc_run ==
+   == Uploading lab-host/arc-run/bootstrap.sh to arcs-lab-hybrid-prod-cus-01 as run command hcw-bootstrap-19283746501-1 (timeout 2400 s) ==
+   == Waiting for the host to start the script (a line every 20 s) ==
+   [+0m20s] provisioningState=Creating executionState=Pending
+   == Running on the host ==
+   [+0m40s] provisioningState=Creating executionState=Running
+   [+1m00s] provisioningState=Creating executionState=Running
+   ...
+   [+6m20s] provisioningState=Succeeded executionState=Succeeded
+   PLAY RECAP ...
+   == Reading the result ==
+   [+6m20s] executionState=Succeeded exitCode=0
+   ```
+
+   The time in brackets counts from when the command was handed to Azure.
+   `executionState` is what the host reports about the script: `Pending`
+   (not started yet), `Running`, then one of `Succeeded`, `Failed`,
+   `TimedOut` or `Canceled`. `provisioningState` is Azure's view of the run
+   command itself, and stays `Creating` until the script ends. When the host
+   has printed new lines since the last check, they appear under the state
+   line; whether the Arc agent passes lines on while the script is still
+   running, or only at the end, Microsoft does not say, so a run may show
+   only state lines until it finishes. The host's lines are shown as plain
+   text: a line in them that looks like a GitHub workflow command (it starts
+   with `::`) is never acted on. Azure keeps only the last 4 KB, so on a
+   long run the log may say `(earlier output scrolled out of the 4 KB the
+   host keeps)`; nothing is wrong, the full `bootstrap` log stays on the
+   host. The final `== Deleting run command ... ==` line comes from the
+   clean-up step.
+4. **What success looks like:** the job goes green, and its summary (the
+   run's **Summary** tab) reads `execution state Succeeded, exit code 0`
+   above the script's output. For `bootstrap`, the output ends with the
+   play recap showing `failed=0`.
+5. **What failure looks like, and what to do:**
+   - *The run starts at once with no **Review deployments** button:* the
+     `lab-host-arc` environment has no reviewers. Cancel the run and do
+     setup step 1.
+   - *The run stops at "Refuse while ARC_RUN_CLIENT_ID is unset":* do setup
+     step 5.
+   - *"Could not read run command … back" with `AuthorizationFailed` above
+     it:* the role is not granted yet; do setup steps 3 and 4.
+   - *"Could not read run command … back" with a message about the
+     extension not being allowed:* the agent's allowlist has not got the
+     handler yet; do setup step 6.
+   - *`execution state Failed` or a non-zero exit code:* the script ran and
+     failed on the host. The summary shows its last 4 KB. For `bootstrap`,
+     it names the failed tasks; the end of the full log is one line away
+     over SSH, PowerShell, on the workstation with the key:
+
+     ```powershell
+     ssh -t hcw-lab "sudo tail -n 80 /var/log/hcw-arc-run/latest.log"
+     ```
+   - *`TimedOut`:* the script ran past its limit (5 minutes for `status`,
+     20 for `memory-check`, 40 for `bootstrap`) and Azure stopped it.
+   - *"had not finished … s + 240 s after it was sent":* the host never
+     reported an end, and the workflow stopped waiting four minutes after the
+     script's own limit. The state lines above it show the last thing the
+     host said; if they stayed `Pending`, the host never started the script.
+     Check that the machine is connected, PowerShell, after `az login`
+     (it should print `Connected`):
+     `az connectedmachine show --subscription sub-app-site-prod-cus --resource-group rg-lab-hybrid-prod-cus --name arcs-lab-hybrid-prod-cus-01 --query status -o tsv`.
+     The clean-up step deletes the run command, which stops it.
+   - *"The repository secret SUBSCRIPTION_ID is not set":* the subscription id
+     is a repository secret since 2026-11-09 (so the public log shows it as
+     `***`). Set it, PowerShell, from the repository folder:
+     `./scripts/Set-SubscriptionSecrets.ps1 -Names SUBSCRIPTION_ID -FromPrompt`,
+     and paste the Application subscription's id at the hidden prompt
+     ([Required inputs §4.3](../standards/required-inputs.md#43-github-repository-secrets)).
+
+The last step deletes the run command from the machine whatever happened,
+so nothing is left stored there. It also stops a script that is still
+running: cancelling a `bootstrap` run part-way stops the play part-way,
+and the next full run puts the host right. It tries three times; if all
+three fail, the step fails with a warning that names the run command and
+gives the one PowerShell line, with that name already filled in, that
+deletes it by hand; copy it from the warning in the run's summary.
+
+`memory-check` fails the run if any of its five checks crashes (for
+example when Docker does not answer), after all five have run and printed
+their lines. A check that prints no `limits` or `sandbox-check:` line but
+exits cleanly is not a failure.
+
+Each run is recorded in the Azure activity log of the Arc machine
+`arcs-lab-hybrid-prod-cus-01` (in `rg-lab-hybrid-prod-cus`) as a create
+and a delete of a run command, with the identity that did it.
+
+### Taking it away
+
+Either half is enough on its own:
+
+- **From Azure, without touching the host:** set
+  `lab_arc_run_command_enabled` to `false` in
+  [the workspace's variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables)
+  and confirm the run (one destroy, the role assignment). The workflow then
+  fails at its Run Command step with `AuthorizationFailed`.
+- **On the host:** set `arc_run_command_enabled: false` for the `arc` role
+  in a pull request and run `bootstrap.sh` over SSH; the agent's allowlist
+  goes back to the Azure Monitor agent alone, and the agent refuses any run
+  command, from anyone.
 
 ## The first-run host check
 
@@ -1149,7 +1421,7 @@ https://hybridcloudworks.com/tools/landing-zone, open the files and press
 **Validate on the lab**. The line beside it goes from *Queued on the lab…* to
 *Running on the lab…*, and the report under it reads *The configuration is
 valid: Terraform found no errors.*, then **Modules used** (the default build
-lists four, such as `avm-ptn-alz@0.21.0`) and **Providers** (six, such as
+lists the four builder modules, such as `avm-ptn-alz` with the version the builder pins) and **Providers** (six, such as
 `hashicorp/azurerm v4.81.0`). The visitor never sees the job log: no image
 pull, no `/opt/avm` path, no `(unauthenticated)`. The log itself is on the
 job at https://hybridcloudworks.com/admin/labs?tab=jobs, claimed by
@@ -3645,7 +3917,13 @@ same moment (4 x 512 + 5 x 2048 + 2560 = 14,848 MiB of limits, from the capacity
 figures in [the labs host architecture](../architecture/labs-host.md) and the
 `coder` role), would leave 1,139 MiB for the system; that needs five
 workspaces at their 2 GiB limit and every add-on at its limit together and
-has not been seen. The playbook has run, so run `ssh hcw-lab "free -m"` now and
+has not been seen. That sum leaves out two more limits: Portainer's 512 MiB
+and the one lab job's, 768 MiB since 2026-11-09
+([#1590](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1590);
+512 MiB before). Counting them, the limits add up to 16,128 MiB, 141 MiB
+more than the host's 15,987. It stays a paper worst case (the 2,560 MiB
+includes the 1 GiB kept for the OS, and every limit has never been reached
+at once), but it is why the `available` figure below is worth reading. The playbook has run, so run `ssh hcw-lab "free -m"` now and
 again tomorrow, and post both readings on
 [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357); if
 the `available` column is under 4,000 MiB, say so there.

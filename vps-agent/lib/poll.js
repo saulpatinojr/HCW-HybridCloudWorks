@@ -78,7 +78,7 @@ export function createPoller({ api, supervisor, log, maxConcurrentJobs, hold = N
     // claimJob resolves — and claimJob's timeout (20s) is longer than the poll
     // interval (15s), so a slow claim let a second poll pass this guard with
     // the counter still at its old value. With the documented
-    // LABS_AGENT_MAX_CONCURRENT=1 and a 512 MB / 0.5 CPU budget per job, two
+    // LABS_AGENT_MAX_CONCURRENT=1 and the job memory and 0.5 CPU budget per job, two
     // concurrent Terraform containers is a real resource-exhaustion path on a
     // small VPS.
     //
