@@ -13,6 +13,7 @@ import {
   parseSitemap,
   presentSitemaps,
   selectSiteUrls,
+  sitemapRoot,
   SNAPSHOT_DOC_ID,
   sortPages,
   summarizeIndexing,
@@ -145,7 +146,7 @@ function googleStub({ inspect, searchAnalytics, listSitemaps } = {}) {
   };
 }
 
-function setup({ urls = [A, BAD], stored = null, lease = null, google, env = ENV, signal, sitemap, fetchImpl, jobId } = {}) {
+function setup({ urls = [A, BAD], stored = null, lease = null, google, env = ENV, signal, sitemap, fetchImpl, jobId, deadlineMs } = {}) {
   const store = memoryStore({ snapshot: stored, lease });
   const client = google ?? googleStub();
   const fetch = fetchImpl ?? vi.fn(async () => sitemap ?? textResponse(200, sitemapXml(urls)));
@@ -160,6 +161,7 @@ function setup({ urls = [A, BAD], stored = null, lease = null, google, env = ENV
     spacingMs: 0,
     signal,
     jobId,
+    ...(deadlineMs === undefined ? {} : { deadlineMs }),
     log,
   });
   return { store, client, fetchImpl: fetch, log, sync };
@@ -393,7 +395,10 @@ describe('createSearchConsoleSync', () => {
     const credential = { getToken: vi.fn(async () => ({ token: 'entra' })) };
     const sync = createSearchConsoleSync({ store, env: ENV, fetchImpl, credential, now: () => NOW, sleep: async () => {}, spacingMs: 0 });
     await expect(sync.run()).resolves.toMatchObject({ status: 'ok', inspected: 1, failed: 0 });
-    expect(credential.getToken).toHaveBeenCalledWith('api://00000000-0000-0000-0000-000000000001/.default');
+    // The run's cancel switch reaches hop 1 too.
+    expect(credential.getToken).toHaveBeenCalledWith('api://00000000-0000-0000-0000-000000000001/.default', {
+      abortSignal: expect.any(AbortSignal),
+    });
     expect(store.doc.indexing.pages[0]).toMatchObject({ url: A, verdict: 'PASS' });
   });
 
@@ -1064,5 +1069,279 @@ describe('createSearchConsoleSync, Copilot review round 1 (#1614)', () => {
     expect(store.doc.performance.totals.clicks).toBe(99);
     expect(store.doc.sitemaps).toEqual([{ path: 'kept' }]);
     expect(store.doc.generatedAt).toBe('2026-11-08T12:10:00.000Z');
+  });
+});
+
+describe('createSearchConsoleSync, Copilot review round 2 (#1614)', () => {
+  /** What the site sends, with HTTP 200, for any address it does not know (#1613). */
+  const HTML_SHELL = '<!doctype html><html lang="en"><head><title>HCW</title></head><body><div id="root"></div></body></html>';
+  const indexOf = (children) =>
+    `<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${children
+      .map((c) => `<sitemap><loc>${c}</loc></sitemap>`)
+      .join('')}</sitemapindex>`;
+  const S1 = 'https://hybridcloudworks.com/s1.xml';
+  const S2 = 'https://hybridcloudworks.com/s2.xml';
+  const pagesNamed = (count) => Array.from({ length: count }, (_, i) => `https://hybridcloudworks.com/p${i}`);
+  const DEADLINE_NOTE = 'Not inspected in the last run: the run reached its 25-minute time limit first.';
+
+  /** A Google call that waits until the run's cancel switch fires, then fails the way client.js does. */
+  const untilCancelled =
+    (kind) =>
+    (...args) => {
+      const signal = args.map((arg) => arg?.signal).find(Boolean);
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new SearchConsoleError(kind)), { once: true });
+      });
+    };
+
+  describe('a sitemap counts as read only when it really is one (finding A)', () => {
+    it('names the first element, past a byte-order mark, the declaration, comments and a DOCTYPE', () => {
+      expect(sitemapRoot(sitemapXml([A]))).toBe('urlset');
+      expect(
+        sitemapRoot(
+          '﻿<?xml version="1.0"?>\n<!-- made by the build -->\n<!DOCTYPE urlset [<!ENTITY x "y">]>\n<sm:urlset xmlns:sm="http://www.sitemaps.org/schemas/sitemap/0.9"/>'
+        )
+      ).toBe('urlset');
+      expect(sitemapRoot('<?xml version="1.0"?><?xml-stylesheet href="s.xsl"?><SitemapIndex>')).toBe('sitemapindex');
+      expect(sitemapRoot(HTML_SHELL)).toBe('html');
+      expect(sitemapRoot('<rss version="2.0"><channel/></rss>')).toBe('rss');
+      expect(sitemapRoot('')).toBeNull();
+      expect(sitemapRoot('not markup')).toBeNull();
+      expect(sitemapRoot('<!-- never closed <urlset>')).toBeNull();
+      expect(sitemapRoot(undefined)).toBeNull();
+    });
+
+    it('does not take a web page that merely contains <sitemapindex> for an index', () => {
+      expect(parseSitemap('<html><body><code><sitemapindex ></code></body></html>').isIndex).toBe(false);
+    });
+
+    it('counts a child sitemap that answers 200 with the web page as unread, keeps its pages and the last strays', async () => {
+      const fetchImpl = vi.fn(async (url) => {
+        if (url.endsWith('/sitemap.xml')) return textResponse(200, indexOf([S1, S2]));
+        if (url === S2) return textResponse(200, HTML_SHELL);
+        return textResponse(200, sitemapXml([A]));
+      });
+      const { sync, store, client } = setup({ fetchImpl, stored: previousRun([A, BAD]) });
+      await expect(sync.run()).resolves.toMatchObject({ status: 'ok', pages: 1, inspected: 1 });
+      expect(client.inspect.mock.calls.map(([url]) => url)).toEqual([A]);
+      expect(store.doc.run.message).toContain(
+        '1 of 2 child sitemaps could not be read, so the strays were not worked out this run, and pages the part read does not list keep their last result.'
+      );
+      // BAD was listed only by the child that moved: it keeps its last answer, marked stale.
+      expect(store.doc.indexing.pages.find((p) => p.url === BAD)).toMatchObject({
+        verdict: 'PASS',
+        stale: true,
+        error: 'Not inspected in the last run: the sitemap could not be read in full, and the part that was read does not list this page.',
+      });
+      expect(store.doc.indexing.strays).toEqual(previousRun().indexing.strays);
+    });
+
+    it('does not follow an index inside an index, and does not inspect its addresses as pages', async () => {
+      const fetchImpl = vi.fn(async (url) => {
+        if (url.endsWith('/sitemap.xml')) return textResponse(200, indexOf([S1, S2]));
+        if (url === S2) return textResponse(200, indexOf(['https://hybridcloudworks.com/s3.xml']));
+        return textResponse(200, sitemapXml([A]));
+      });
+      const { sync, store, client } = setup({ fetchImpl, stored: previousRun([A]) });
+      await expect(sync.run()).resolves.toMatchObject({ status: 'ok', pages: 1 });
+      expect(client.inspect.mock.calls.map(([url]) => url)).toEqual([A]);
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+      expect(store.doc.run.message).toContain('1 of 2 child sitemaps could not be read');
+    });
+
+    it.each([
+      ['the web page', HTML_SHELL],
+      ['an empty body', ''],
+      ['another kind of XML', '<rss version="2.0"><channel/></rss>'],
+    ])('treats a sitemap address that answers 200 with %s as unreadable, keeping the last good figures', async (_label, body) => {
+      const { sync, store, client } = setup({ sitemap: textResponse(200, body), stored: previousRun() });
+      await expect(sync.run()).resolves.toMatchObject({ status: 'error', pages: 0, inspected: 0 });
+      expect(client.inspect).not.toHaveBeenCalled();
+      expect(client.searchAnalytics).not.toHaveBeenCalled();
+      expect(store.doc.status).toBe('error');
+      expect(store.doc.run.message).toBe('The sitemap could not be read (the answer is not a sitemap), so nothing was asked of Google.');
+      expect(store.doc.indexing.pages.every((p) => !p.stale)).toBe(true);
+      expect(store.doc.indexing.strays).toEqual(previousRun().indexing.strays);
+      expect(store.doc.performance.totals.clicks).toBe(99);
+      expect(store.doc.generatedAt).toBe('2026-11-08T12:10:00.000Z');
+    });
+  });
+
+  describe('a run is bounded in time and writes only while it holds the lease (finding B)', () => {
+    /** Another run takes the lease, as it could once this run's lease had lapsed. */
+    async function changeLease(store, fields = { holder: 'newer-run', expiresAt: '2026-11-09T00:50:00Z' }) {
+      const current = await store.readDoc('admin_config', LEASE_DOC_ID, 'admin_config');
+      await store.replaceDocIfMatch('admin_config', { ...current, ...fields }, { partitionKey: 'admin_config' });
+    }
+
+    it("writes nothing when another run took the lease before the save, and leaves that run's lease alone", async () => {
+      let store;
+      const google = googleStub({
+        listSitemaps: async () => {
+          await changeLease(store);
+          return [];
+        },
+      });
+      const ctx = setup({ google, stored: previousRun() });
+      store = ctx.store;
+      await expect(ctx.sync.run()).resolves.toEqual({ skipped: 'lease_lost' });
+      expect(store.snapshotWrites()).toBe(0);
+      expect(store.doc.generatedAt).toBe('2026-11-08T12:10:00.000Z');
+      expect(store.lease).toMatchObject({ holder: 'newer-run', expiresAt: '2026-11-09T00:50:00Z' });
+      const lines = ctx.log.log.mock.calls.flat().join('\n');
+      expect(lines).toMatch(/stopped: the run lease was lost before saving, nothing written, \d+s/);
+      expect(lines).not.toContain('hybridcloudworks.com');
+    });
+
+    it('writes nothing when its own lease has lapsed by the time it saves', async () => {
+      let store;
+      const google = googleStub({
+        listSitemaps: async () => {
+          await changeLease(store, { expiresAt: '2026-11-09T00:09:00Z' });
+          return [];
+        },
+      });
+      const ctx = setup({ google });
+      store = ctx.store;
+      await expect(ctx.sync.run()).resolves.toEqual({ skipped: 'lease_lost' });
+      expect(store.snapshotWrites()).toBe(0);
+    });
+
+    it('writes no error document either when the lease was lost while the sitemap was read', async () => {
+      let store;
+      const fetchImpl = vi.fn(async () => {
+        await changeLease(store);
+        return textResponse(503, '');
+      });
+      const ctx = setup({ fetchImpl, stored: previousRun() });
+      store = ctx.store;
+      await expect(ctx.sync.run()).resolves.toEqual({ skipped: 'lease_lost' });
+      expect(store.snapshotWrites()).toBe(0);
+    });
+
+    it.each([
+      ['writes nothing when renewing keeps losing to another writer (412)', Infinity, { skipped: 'lease_lost' }, 0, 3],
+      ['still saves when one renew loses to a Run now press and the lease is still its own', 1, { status: 'ok' }, 1, 2],
+    ])('%s', async (_label, failFirst, result, writes, tries) => {
+      let saving = false;
+      const google = googleStub({
+        listSitemaps: async () => {
+          saving = true;
+          return [];
+        },
+      });
+      const ctx = setup({ google });
+      const real = ctx.store.replaceDocIfMatch.getMockImplementation();
+      let renewTries = 0;
+      ctx.store.replaceDocIfMatch.mockImplementation(async (container, doc, options) => {
+        if (saving && doc.id === LEASE_DOC_ID && doc.holder !== null) {
+          renewTries += 1;
+          if (renewTries <= failFirst) throw Object.assign(new Error('precondition'), { code: 412 });
+        }
+        return real(container, doc, options);
+      });
+      await expect(ctx.sync.run()).resolves.toMatchObject(result);
+      expect(renewTries).toBe(tries);
+      expect(ctx.store.snapshotWrites()).toBe(writes);
+    });
+
+    it('at the time limit, cuts off the inspections still waiting, starts no more, and saves what it has', async () => {
+      const urls = pagesNamed(10);
+      const google = googleStub({ inspect: untilCancelled('inspect') });
+      const { sync, store, client } = setup({ google, urls, stored: previousRun(urls), deadlineMs: 20 });
+      await expect(sync.run()).resolves.toMatchObject({ status: 'ok', pages: 10, inspected: 4, failed: 0 });
+      expect(client.inspect).toHaveBeenCalledTimes(4);
+      expect(client.searchAnalytics).not.toHaveBeenCalled();
+      expect(client.listSitemaps).not.toHaveBeenCalled();
+      expect(store.snapshotWrites()).toBe(1);
+      expect(store.doc.status).toBe('ok');
+      expect(store.doc.run.message).toBe(
+        'The run reached its 25-minute time limit after 4 of 10 pages were sent to Google, so it stopped; the pages it did not finish keep their last result, and any part not read keeps its last figures.'
+      );
+      for (const page of store.doc.indexing.pages) expect(page).toMatchObject({ verdict: 'PASS', stale: true, error: DEADLINE_NOTE });
+      expect(store.doc.performance.totals.clicks).toBe(99);
+      expect(store.doc.sitemaps).toEqual([{ path: 'kept' }]);
+      expect(store.doc.indexing.strays).toEqual(previousRun().indexing.strays);
+      expect(store.doc.indexing.history).toEqual([{ at: 'x' }]);
+      expect(store.lease.holder).toBeNull();
+    });
+
+    it.each([
+      ['a performance query', { searchAnalytics: untilCancelled('searchAnalytics') }, 99],
+      ['the sitemaps list', { listSitemaps: untilCancelled('sitemaps') }, 10],
+    ])('at the time limit, cuts off %s and keeps the last figures for what was not read', async (_label, overrides, clicks) => {
+      const google = googleStub(overrides);
+      const { sync, store } = setup({ google, stored: previousRun(), deadlineMs: 20 });
+      await expect(sync.run()).resolves.toMatchObject({ status: 'ok', inspected: 2, failed: 0 });
+      expect(store.doc.run.message).toContain('25-minute time limit after 2 of 2 pages');
+      expect(store.doc.run.message).not.toContain('Performance');
+      expect(store.doc.run.message).not.toContain('Sitemaps:');
+      expect(store.doc.performance.totals.clicks).toBe(clicks);
+      expect(store.doc.sitemaps).toEqual([{ path: 'kept' }]);
+      // Pages Google answered before the limit are fresh.
+      expect(store.doc.indexing.pages.every((p) => !p.stale)).toBe(true);
+    });
+
+    it('ends the pause between inspection starts at the time limit, and starts nothing after it', async () => {
+      const store = memoryStore({ snapshot: previousRun([A, BAD]) });
+      const client = googleStub();
+      // A pause that would never end by itself.
+      const sleep = vi.fn(() => new Promise(() => {}));
+      const sync = createSearchConsoleSync({ store, env: ENV, fetchImpl: vi.fn(async () => textResponse(200, sitemapXml([A, BAD]))), client, now: () => NOW, sleep, spacingMs: 1000, deadlineMs: 20 });
+      await expect(sync.run()).resolves.toMatchObject({ status: 'ok', inspected: 1 });
+      expect(sleep).toHaveBeenCalledWith(1000);
+      expect(client.inspect.mock.calls.map(([url]) => url)).toEqual([A]);
+      expect(store.doc.indexing.pages.find((p) => p.url === BAD)).toMatchObject({ stale: true, error: DEADLINE_NOTE });
+    });
+
+    it('cuts off a hanging request through the real client and sign-in, and does not retry it', async () => {
+      const json = (status, body) => ({ ok: status < 300, status, json: async () => body, headers: { get: () => null } });
+      let inspections = 0;
+      const fetchImpl = vi.fn((url, init) => {
+        if (url.endsWith('/sitemap.xml')) return Promise.resolve(textResponse(200, sitemapXml([A])));
+        if (url.startsWith('https://sts.googleapis.com/')) return Promise.resolve(json(200, { access_token: 'federated' }));
+        if (url.startsWith('https://iamcredentials.googleapis.com/'))
+          return Promise.resolve(json(200, { accessToken: 'sa-token', expireTime: '2026-11-09T01:10:00Z' }));
+        if (url.includes('urlInspection')) {
+          inspections += 1;
+          return new Promise((_resolve, reject) => {
+            init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+          });
+        }
+        return Promise.resolve(json(200, {}));
+      });
+      const store = memoryStore({ snapshot: previousRun([A]) });
+      const credential = { getToken: vi.fn(async () => ({ token: 'entra' })) };
+      const sync = createSearchConsoleSync({ store, env: ENV, fetchImpl, credential, now: () => NOW, sleep: async () => {}, spacingMs: 0, deadlineMs: 20 });
+      await expect(sync.run()).resolves.toMatchObject({ status: 'ok', inspected: 1, failed: 0 });
+      expect(inspections).toBe(1);
+      expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/searchAnalytics/query'))).toBe(false);
+      expect(store.doc.indexing.pages[0]).toMatchObject({ verdict: 'PASS', stale: true, error: DEADLINE_NOTE });
+    });
+
+    it("cuts off the inspections still waiting when the job's signal fires, and saves nothing", async () => {
+      const controller = new AbortController();
+      const google = googleStub({
+        inspect: (url, options) => {
+          setTimeout(() => controller.abort(), 5);
+          return untilCancelled('inspect')(url, options);
+        },
+      });
+      const { sync, store, client } = setup({ google, signal: controller.signal, stored: previousRun() });
+      await expect(sync.run()).resolves.toMatchObject({ status: 'error', aborted: true });
+      expect(client.searchAnalytics).not.toHaveBeenCalled();
+      expect(store.snapshotWrites()).toBe(0);
+      expect(store.lease.holder).toBeNull();
+    });
+
+    it("reads nothing when the job's signal fired before the run began", async () => {
+      const { sync, store, client, fetchImpl, log } = setup({ signal: AbortSignal.abort() });
+      await expect(sync.run()).resolves.toMatchObject({ status: 'error', aborted: true, pages: 0 });
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(client.inspect).not.toHaveBeenCalled();
+      expect(store.snapshotWrites()).toBe(0);
+      expect(store.lease.holder).toBeNull();
+      expect(log.log.mock.calls.flat().join('\n')).toMatch(/stopped: out of time while reading the sitemap, \d+s/);
+    });
   });
 });

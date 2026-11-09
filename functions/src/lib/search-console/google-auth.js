@@ -41,7 +41,10 @@
  * 4. CACHED IN MEMORY until five minutes before the Google token expires, and
  *    two callers asking at once share one sign-in.
  * 5. NO HOP WAITS FOREVER: each call to Google gives up after 30 seconds
- *    (http/fetch-with-timeout.js) and fails as that hop.
+ *    (http/fetch-with-timeout.js) and fails as that hop. When the provider is
+ *    given the run's `signal` (an AbortSignal, the run's cancel switch), every
+ *    hop is also cut off the moment it fires, so a run that has reached its
+ *    time limit is not kept waiting by a sign-in.
  */
 import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
 import { AuthoredError } from '../http/error-response.js';
@@ -160,6 +163,7 @@ async function readJson(response) {
  * @param {Record<string, string|undefined>} [deps.env] - where the Azure credential choice is read from
  * @param {typeof fetch} [deps.fetchImpl]
  * @param {() => number} [deps.now] - milliseconds
+ * @param {AbortSignal} [deps.signal] - the run's cancel switch; cuts off every hop when it fires
  */
 export function createGoogleTokenProvider({
   audience,
@@ -169,8 +173,11 @@ export function createGoogleTokenProvider({
   env = process.env,
   fetchImpl = globalThis.fetch,
   now = () => Date.now(),
+  signal,
 }) {
   let cached = null; // { token, expiresAt }
+  /** Added to every request, so the run's cancel switch reaches it. */
+  const cancel = signal ? { signal } : {};
   let inflight = null;
   let azureCredential = credential ?? null;
 
@@ -178,7 +185,9 @@ export function createGoogleTokenProvider({
     azureCredential ??= defaultAzureCredential(env);
     let answer = null;
     try {
-      answer = await azureCredential.getToken(`${appIdUri}/.default`);
+      answer = signal
+        ? await azureCredential.getToken(`${appIdUri}/.default`, { abortSignal: signal })
+        : await azureCredential.getToken(`${appIdUri}/.default`);
     } catch {
       // The credential's own error can name endpoints and claims; only the hop is kept.
       throw new GoogleAuthError('entra');
@@ -202,6 +211,7 @@ export function createGoogleTokenProvider({
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString(),
+        ...cancel,
       });
     } catch {
       throw new GoogleAuthError('sts');
@@ -221,6 +231,7 @@ export function createGoogleTokenProvider({
         method: 'POST',
         headers: { Authorization: `Bearer ${federated}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ scope: [SEARCH_CONSOLE_READONLY_SCOPE], lifetime: TOKEN_LIFETIME }),
+        ...cancel,
       });
     } catch {
       throw new GoogleAuthError('impersonation');

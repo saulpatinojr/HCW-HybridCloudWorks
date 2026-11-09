@@ -3,7 +3,7 @@
  * sentence (#1612). Fetch is a stub; nothing here reaches the network.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createSearchConsoleClient, defaultSleep, INSPECT_URL, SearchConsoleError } from './client.js';
+import { createSearchConsoleClient, defaultSleep, INSPECT_URL, SearchConsoleError, sleepUnlessAborted } from './client.js';
 
 const SITE = 'sc-domain:hybridcloudworks.com';
 const TOKEN = 'access-token-should-never-leak';
@@ -217,5 +217,59 @@ describe('createSearchConsoleClient', () => {
     });
     const failure = await client.inspect('https://hybridcloudworks.com/').catch((caught) => caught);
     expect(failure.message).toContain(sentence);
+  });
+});
+
+describe('the run\'s cancel switch (Copilot review round 2, #1614)', () => {
+  it('sends nothing once the signal has fired', async () => {
+    const { client, fetchImpl } = setup([response(200, { rows: [] })]);
+    const failure = await client.searchAnalytics({}, { signal: AbortSignal.abort() }).catch((caught) => caught);
+    expect(failure).toBeInstanceOf(SearchConsoleError);
+    expect(failure.status).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('cuts off a call waiting for its answer and does not try again', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        })
+    );
+    const sleep = vi.fn(async () => {});
+    const client = createSearchConsoleClient({ siteUrl: SITE, auth: { getAccessToken: async () => TOKEN }, fetchImpl, sleep });
+    const call = client.listSitemaps({ signal: controller.signal }).catch((caught) => caught);
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    controller.abort();
+    await expect(call).resolves.toBeInstanceOf(SearchConsoleError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('ends the pause before a retry when the signal fires, and sends no retry', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn(async () => response(503));
+    // A pause that would never end by itself.
+    const sleep = vi.fn(() => new Promise(() => {}));
+    const client = createSearchConsoleClient({ siteUrl: SITE, auth: { getAccessToken: async () => TOKEN }, fetchImpl, sleep });
+    const call = client.inspect('https://hybridcloudworks.com/', { signal: controller.signal }).catch((caught) => caught);
+    await vi.waitFor(() => expect(sleep).toHaveBeenCalledTimes(1));
+    controller.abort();
+    await expect(call).resolves.toMatchObject({ status: 503 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('sleeps as asked without a signal, and not at all once it has fired', async () => {
+    const sleep = vi.fn(async () => {});
+    await sleepUnlessAborted(sleep, 5);
+    expect(sleep).toHaveBeenCalledWith(5);
+    sleep.mockClear();
+    await sleepUnlessAborted(sleep, 5, AbortSignal.abort());
+    expect(sleep).not.toHaveBeenCalled();
+    // A pause that ends by itself leaves no listener behind.
+    const controller = new AbortController();
+    await sleepUnlessAborted(async () => {}, 5, controller.signal);
+    expect(controller.signal.aborted).toBe(false);
   });
 });

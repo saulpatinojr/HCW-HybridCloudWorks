@@ -16,6 +16,7 @@ import {
   nextPacificMidnight,
   pacificDay,
   pendingJobIsLive,
+  RUN_DEADLINE_MS,
   usedToday,
 } from './lease.js';
 
@@ -392,5 +393,64 @@ describe('a run that reserves on two Pacific days', () => {
     expect(store.doc.budget).toEqual({ day: '2026-11-09', used: 1 });
     await held.release({ unused: 150 });
     expect(store.doc.budget).toEqual({ day: '2026-11-09', used: 1 });
+  });
+});
+
+describe('renew, the check before a run writes its results (Copilot review round 2, #1614)', () => {
+  it('is well inside the lease: a run stops at 25 minutes, the lease lapses at 35', () => {
+    expect(RUN_DEADLINE_MS).toBe(25 * 60 * 1000);
+    expect(RUN_DEADLINE_MS).toBeLessThan(LEASE_TTL_MS);
+  });
+
+  it('extends the lease by 35 minutes from now while this run still holds it, keeping every other field', async () => {
+    const store = memoryStore();
+    let at = NOW;
+    const held = createRunLease({ store, now: () => at, holder: 'run-a' });
+    await held.acquire();
+    await held.reserve(5);
+    at = new Date(NOW.getTime() + 20 * 60 * 1000);
+    await expect(held.renew()).resolves.toEqual({ ok: true });
+    expect(store.doc).toMatchObject({
+      holder: 'run-a',
+      takenAt: NOW.toISOString(),
+      expiresAt: new Date(at.getTime() + LEASE_TTL_MS).toISOString(),
+      budget: { day: '2026-11-08', used: 5 },
+    });
+  });
+
+  it('says the run lost the lease when another run holds it, when it lapsed, or when it is gone, and writes nothing', async () => {
+    const taken = memoryStore({ holder: 'run-b', expiresAt: '2026-11-09T00:40:00Z' });
+    await expect(lease(taken).renew()).resolves.toEqual({ ok: false });
+    expect(taken.replaceDocIfMatch).not.toHaveBeenCalled();
+
+    const lapsed = memoryStore({ holder: 'run-a', expiresAt: '2026-11-09T00:09:59Z' });
+    await expect(lease(lapsed).renew()).resolves.toEqual({ ok: false });
+    expect(lapsed.replaceDocIfMatch).not.toHaveBeenCalled();
+
+    await expect(lease(memoryStore()).renew()).resolves.toEqual({ ok: false });
+  });
+
+  it('re-reads after a lost race (a Run now press marking a job) and still renews', async () => {
+    const store = memoryStore({ holder: 'run-a', expiresAt: '2026-11-09T00:40:00Z' });
+    store.replaceDocIfMatch.mockImplementationOnce(async () => {
+      throw conflict(412);
+    });
+    await expect(lease(store).renew()).resolves.toEqual({ ok: true });
+    expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(2);
+    expect(store.doc.expiresAt).toBe(new Date(NOW.getTime() + LEASE_TTL_MS).toISOString());
+  });
+
+  it('gives up after three lost races, and passes on other failures', async () => {
+    const store = memoryStore({ holder: 'run-a', expiresAt: '2026-11-09T00:40:00Z' });
+    store.replaceDocIfMatch.mockImplementation(async () => {
+      throw conflict(412);
+    });
+    await expect(lease(store).renew()).resolves.toEqual({ ok: false });
+    expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3);
+
+    store.replaceDocIfMatch.mockImplementation(async () => {
+      throw new Error('write refused');
+    });
+    await expect(lease(store).renew()).rejects.toThrow('write refused');
   });
 });

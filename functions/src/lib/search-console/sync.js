@@ -36,11 +36,25 @@
  *      the "strays" are found: root-domain pages that get impressions but
  *      are not in the sitemap.
  *   4. Lists the sitemaps Google has.
- *   5. Replaces `admin_config/search_console_snapshot` under the ETag it was
- *      read with (a lost race re-reads and tries again), carrying a short
- *      history of the indexing counts, the last 120 runs (about two months).
+ *   5. Checks that it still holds the lease and extends it (lease.js
+ *      `renew`), then replaces `admin_config/search_console_snapshot` under
+ *      the ETag it was read with (a lost race re-reads and tries again),
+ *      carrying a short history of the indexing counts, the last 120 runs
+ *      (about two months). A run that no longer holds the lease writes
+ *      nothing and returns `{ skipped: 'lease_lost' }`: another run took the
+ *      lease after it lapsed, and that run's results are the newer ones.
  *   6. Gives the lease back, handing back any reserved inspections it did
  *      not send.
+ *
+ * A run has a time limit, RUN_DEADLINE_MS (25 minutes), well inside the
+ * lease's 35. When it is reached, the run's cancel switch (an AbortController)
+ * fires: no new inspection or query starts, and every call to Google or for a
+ * sitemap still waiting for an answer is cut off at once, retries and their
+ * pauses included. The run then saves what it has, as in step 5, and the
+ * pages it did not reach keep their last answer, marked stale. A job's own
+ * cancel signal (lib/jobs.js, at the job's 20-minute budget) fires the same
+ * switch, but then nothing is saved: half a run is not written over the last
+ * whole one, and the job is recorded as timed out.
  *
  * A degraded run never replaces good figures with worse ones: a page whose
  * inspection failed or was not attempted keeps its last answer, marked
@@ -68,8 +82,8 @@
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 import { createGoogleTokenProvider, GoogleAuthError, readGoogleAuthConfig } from './google-auth.js';
-import { createSearchConsoleClient, defaultSleep, SearchConsoleError } from './client.js';
-import { budgetSpentMessage, createRunLease, dailyBudget, LEASE_TTL_MS, nextPacificMidnight } from './lease.js';
+import { createSearchConsoleClient, defaultSleep, SearchConsoleError, sleepUnlessAborted } from './client.js';
+import { budgetSpentMessage, createRunLease, dailyBudget, LEASE_TTL_MS, nextPacificMidnight, RUN_DEADLINE_MS } from './lease.js';
 
 export const CONTAINER = 'admin_config';
 export const SNAPSHOT_DOC_ID = 'search_console_snapshot';
@@ -160,16 +174,49 @@ function decodeXml(value) {
   });
 }
 
+/** What may come before a document's first element: a `<?…?>` declaration, a comment, or a DOCTYPE. */
+const PROLOG_PART = /^(?:<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE[^>[]*(?:\[[^\]]*\][^>]*)?>)/i;
+/** A first element's name, with or without a namespace prefix (`<urlset`, `<sm:urlset`). */
+const FIRST_ELEMENT = /^<(?:[A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)[\s/>]/;
+
+/**
+ * The name of a document's first element, in lower case and without any
+ * namespace prefix: `urlset` for a sitemap, `sitemapindex` for a sitemap
+ * index, `html` for a web page. A byte-order mark, the `<?xml …?>`
+ * declaration, comments and a DOCTYPE before it are skipped. Null when the
+ * text has no element at all (empty, or not markup).
+ *
+ * This is how the run tells a real sitemap from the site's web page: the site
+ * answers HTTP 200 with its HTML page for any address it does not know
+ * (#1613), so a sitemap that moved still answers 200, and only its first
+ * element shows it is not a sitemap.
+ *
+ * @param {string} xml
+ * @returns {string|null}
+ */
+export function sitemapRoot(xml) {
+  let rest = typeof xml === 'string' ? xml.replace(/^\uFEFF/, '') : '';
+  for (;;) {
+    rest = rest.trimStart();
+    const part = PROLOG_PART.exec(rest);
+    if (!part) break;
+    rest = rest.slice(part[0].length);
+  }
+  const element = FIRST_ELEMENT.exec(rest);
+  return element ? element[1].toLowerCase() : null;
+}
+
 /**
  * The `<loc>` addresses in a sitemap or sitemap index, in order, and whether
- * it is an index (a list of further sitemaps rather than pages).
+ * it is an index (a list of further sitemaps rather than pages), which its
+ * first element says (sitemapRoot).
  *
  * @param {string} xml
  * @returns {{ isIndex: boolean, locs: string[] }}
  */
 export function parseSitemap(xml) {
   const source = typeof xml === 'string' ? xml : '';
-  const isIndex = /<sitemapindex[\s>]/i.test(source);
+  const isIndex = sitemapRoot(source) === 'sitemapindex';
   const locs = [...source.matchAll(/<loc>\s*(?:<!\[CDATA\[)?\s*([^<\]]+?)\s*(?:\]\]>)?\s*<\/loc>/gi)].map((m) =>
     decodeXml(m[1].trim())
   );
@@ -438,6 +485,7 @@ const isNotSent = (failure) => failure instanceof SearchConsoleError && failure.
 const NOT_INSPECTED_BUDGET = 'Not inspected in the last run: the daily allowance of Google page inspections was used up.';
 const NOT_INSPECTED_QUOTA = 'Not inspected in the last run: Google answered that its quota was used up.';
 const NOT_IN_SITEMAP_READ = 'Not inspected in the last run: the sitemap could not be read in full, and the part that was read does not list this page.';
+const NOT_INSPECTED_DEADLINE = `Not inspected in the last run: the run reached its ${RUN_DEADLINE_MS / 60000}-minute time limit first.`;
 
 /** Google's quota answer (HTTP 429), still there after client.js's retries. */
 const isQuota = (failure) => failure instanceof SearchConsoleError && failure.status === 429;
@@ -511,7 +559,8 @@ const utcMinute = (date) => `${date.toISOString().slice(0, 16).replace('T', ' ')
  * @param {() => Date} [deps.now]
  * @param {(ms: number) => Promise<void>} [deps.sleep]
  * @param {number} [deps.spacingMs]
- * @param {AbortSignal} [deps.signal] - the job's, so a timed-out job stops starting inspections
+ * @param {AbortSignal} [deps.signal] - the job's, so a timed-out job stops at once and saves nothing
+ * @param {number} [deps.deadlineMs] - the run's time limit (a test seam; RUN_DEADLINE_MS otherwise)
  * @param {string|null} [deps.jobId] - the job's id when a job runs it, kept on the lease for Run now
  * @param {object} [deps.log] - invocation context or logger
  */
@@ -525,6 +574,7 @@ export function createSearchConsoleSync({
   sleep = defaultSleep,
   spacingMs = INSPECT_SPACING_MS,
   signal,
+  deadlineMs = RUN_DEADLINE_MS,
   jobId = null,
   log,
 }) {
@@ -536,12 +586,21 @@ export function createSearchConsoleSync({
    * child sitemap of an index that failed, or children past the first
    * MAX_CHILD_SITEMAPS), so the strays are not worked out from it and pages
    * it may have left out are kept rather than dropped.
+   *
+   * An answer counts as read only when it really is a sitemap: its first
+   * element is `<urlset>` (or, for the address in GSC_SITEMAP_URL only,
+   * `<sitemapindex>`). Anything else, such as the site's HTML page, which it
+   * sends with HTTP 200 for an address it does not know (#1613), is treated
+   * like an answer that never came. Without this, a child sitemap that moved
+   * would read as an empty one and its pages would be dropped.
+   *
+   * @param {AbortSignal} cancel - the run's cancel switch
    */
-  async function readSitemapUrls() {
+  async function readSitemapUrls(cancel) {
     const root = (typeof env.GSC_SITEMAP_URL === 'string' && env.GSC_SITEMAP_URL.trim()) || DEFAULT_SITEMAP_URL;
     const fetchXml = async (address) => {
       try {
-        const response = await fetchWithTimeout(fetchImpl, address, { headers: { Accept: 'application/xml, text/xml' } });
+        const response = await fetchWithTimeout(fetchImpl, address, { headers: { Accept: 'application/xml, text/xml' }, signal: cancel });
         if (!response.ok) return { failed: `HTTP ${response.status}` };
         return { xml: await response.text() };
       } catch {
@@ -550,6 +609,9 @@ export function createSearchConsoleSync({
     };
     const first = await fetchXml(root);
     if (first.failed) return { locs: [], failed: first.failed, complete: false, note: null };
+    if (!['urlset', 'sitemapindex'].includes(sitemapRoot(first.xml))) {
+      return { locs: [], failed: 'the answer is not a sitemap', complete: false, note: null };
+    }
     const parsed = parseSitemap(first.xml);
     if (!parsed.isIndex) return { locs: parsed.locs, failed: null, complete: true, note: null };
     // A sitemap index: read each child sitemap on the site's own host, at
@@ -561,7 +623,9 @@ export function createSearchConsoleSync({
     let unread = 0;
     for (const child of children) {
       const answer = await fetchXml(child);
-      if (answer.failed) unread += 1;
+      // A child must be a list of pages: an index one level further down is
+      // not followed, and a web page or other answer is not a sitemap.
+      if (answer.failed || sitemapRoot(answer.xml) !== 'urlset') unread += 1;
       else locs.push(...parseSitemap(answer.xml).locs);
     }
     if (children.length > 0 && unread === children.length) {
@@ -608,6 +672,18 @@ export function createSearchConsoleSync({
     return null;
   }
 
+  /**
+   * `save(build)`, but only while this run still holds the lease: it is
+   * checked and extended first (lease.js `renew`), so no other run can take
+   * it during the write. False, with nothing written, when the run lost it.
+   */
+  async function saveWhileHeld(lease, build) {
+    const held = await lease.renew();
+    if (!held.ok) return false;
+    await save(build);
+    return true;
+  }
+
   /** A failed run's document: the last good figures kept, only the status and run replaced. */
   const keepPrevious = (stored, siteUrl, run) => ({
     ...emptySnapshot(siteUrl),
@@ -623,8 +699,12 @@ export function createSearchConsoleSync({
     return entry ? [...previous, entry].slice(-HISTORY_MAX) : previous.slice(-HISTORY_MAX);
   };
 
-  /** The run itself, while this run holds the lease. `counts` tells the caller what to hand back. */
-  async function runHeld(config, budget, lease, counts) {
+  /**
+   * The run itself, while this run holds the lease. `counts` tells the caller
+   * what to hand back. `cancel` is the run's cancel switch: it fires at the
+   * time limit or when the job's own signal fires.
+   */
+  async function runHeld(config, budget, lease, counts, cancel) {
     const startedAt = now();
     const started = startedAt.getTime();
     const elapsed = () => Math.round((now().getTime() - started) / 1000);
@@ -639,6 +719,7 @@ export function createSearchConsoleSync({
           credential,
           env,
           fetchImpl,
+          signal: cancel,
         }),
         fetchImpl,
         sleep,
@@ -647,11 +728,23 @@ export function createSearchConsoleSync({
     const notes = [];
     let fatal = null;
     let quotaHit = false;
-    const stopped = () => fatal !== null || signal?.aborted === true;
+    const stopped = () => fatal !== null || cancel.aborted;
+    /** The time limit was reached (the switch fired, and not because of the job). */
+    const timeUp = () => cancel.aborted && signal?.aborted !== true;
+    const leaseLost = () => {
+      info(`stopped: the run lease was lost before saving, nothing written, ${elapsed()}s`);
+      return { skipped: 'lease_lost' };
+    };
 
     // 1. The sitemap. Without it there is nothing to inspect and no way to
     // tell a stray, so the run is an error that keeps everything as it was.
-    const sitemap = await readSitemapUrls();
+    const sitemap = await readSitemapUrls(cancel);
+    if (cancel.aborted) {
+      // Stopped while the sitemap was read: what was read cannot be trusted
+      // to be whole, and nothing has been asked of Google yet.
+      info(`stopped: out of time while reading the sitemap, ${elapsed()}s`);
+      return { status: 'error', aborted: true, pages: 0, inspected: 0, failed: 0, strays: 0, seconds: elapsed() };
+    }
     const { urls, total } = selectSiteUrls(sitemap.locs);
     if (sitemap.failed || urls.length === 0) {
       const finishedAt = now();
@@ -659,7 +752,7 @@ export function createSearchConsoleSync({
         ? `The sitemap could not be read (${sitemap.failed}), so nothing was asked of Google.`
         : `The sitemap lists no page on ${SITE_HOST}, so nothing was asked of Google.`;
       const run = { startedAt: startedAt.toISOString(), finishedAt: finishedAt.toISOString(), inspected: 0, failed: 0, stale: 0, message };
-      await save((stored) => keepPrevious(stored, config.siteUrl, run));
+      if (!(await saveWhileHeld(lease, (stored) => keepPrevious(stored, config.siteUrl, run)))) return leaseLost();
       info(`error: sitemap ${sitemap.failed ? 'unreadable' : 'empty'}, nothing inspected, ${elapsed()}s`);
       return { status: 'error', pages: 0, inspected: 0, failed: 0, strays: 0, seconds: elapsed() };
     }
@@ -713,13 +806,13 @@ export function createSearchConsoleSync({
     await runPaced(toInspect, {
       limit: CONCURRENCY,
       spacingMs,
-      sleep,
+      sleep: (ms) => sleepUnlessAborted(sleep, ms, cancel),
       now: () => now().getTime(),
       stop: () => stopped() || quotaHit || budgetOut,
       task: async (url) => {
         try {
           sent += 1;
-          fresh.set(url, presentInspection(url, await google.inspect(url, { beforeSend: takeInspection }), inspectedAt));
+          fresh.set(url, presentInspection(url, await google.inspect(url, { beforeSend: takeInspection, signal: cancel }), inspectedAt));
         } catch (failure) {
           // Held back before its first request: the page was not inspected
           // at all, and keeps its last result like the pages after it.
@@ -727,6 +820,9 @@ export function createSearchConsoleSync({
             sent -= 1;
             return;
           }
+          // Cut off because the run was stopped: not Google's failure, so it
+          // is not recorded as one; the page keeps its last result.
+          if (cancel.aborted) return;
           if (isFatal(failure)) fatal ??= failure;
           if (isQuota(failure)) quotaHit = true;
           failures.set(url, failureNote(failure, 'The inspection failed.'));
@@ -758,8 +854,11 @@ export function createSearchConsoleSync({
       const query = async (label, body) => {
         if (stopped()) return null;
         try {
-          return await google.searchAnalytics({ ...body, dimensionFilterGroups: ROOT_DOMAIN_FILTER });
+          return await google.searchAnalytics({ ...body, dimensionFilterGroups: ROOT_DOMAIN_FILTER }, { signal: cancel });
         } catch (failure) {
+          // Cut off by the time limit: that part keeps its last figures, and
+          // the note about the time limit says why.
+          if (cancel.aborted) return null;
           if (isFatal(failure)) fatal ??= failure;
           notes.push(`Performance ${label}: ${failureNote(failure, 'the query failed.')} The last figures were kept.`);
           return null;
@@ -788,10 +887,12 @@ export function createSearchConsoleSync({
       };
       if (!stopped()) {
         try {
-          sitemaps = presentSitemaps(await google.listSitemaps());
+          sitemaps = presentSitemaps(await google.listSitemaps({ signal: cancel }));
         } catch (failure) {
-          if (isFatal(failure)) fatal ??= failure;
-          notes.push(`Sitemaps: ${failureNote(failure, 'the list could not be read.')} The last list was kept.`);
+          if (!cancel.aborted) {
+            if (isFatal(failure)) fatal ??= failure;
+            notes.push(`Sitemaps: ${failureNote(failure, 'the list could not be read.')} The last list was kept.`);
+          }
         }
       }
     }
@@ -810,8 +911,18 @@ export function createSearchConsoleSync({
       info(`stopped: out of time after ${sent} of ${urls.length} pages, ${seconds}s`);
       return { status: 'error', aborted: true, pages: urls.length, inspected: sent, failed, strays: 0, seconds };
     }
+    if (timeUp()) {
+      // The run's own time limit: what it has is saved, the rest kept.
+      notes.push(
+        `The run reached its ${RUN_DEADLINE_MS / 60000}-minute time limit after ${sent} of ${toInspect.length} pages were sent to Google, so it stopped; the pages it did not finish keep their last result, and any part not read keeps its last figures.`
+      );
+    }
     const status = fatal ? 'error' : 'ok';
-    const notInspected = (index) => (index >= allowed || !quotaHit ? NOT_INSPECTED_BUDGET : NOT_INSPECTED_QUOTA);
+    const notInspected = (index) => {
+      if (index >= allowed) return NOT_INSPECTED_BUDGET;
+      if (timeUp()) return NOT_INSPECTED_DEADLINE;
+      return quotaHit ? NOT_INSPECTED_QUOTA : NOT_INSPECTED_BUDGET;
+    };
     // Every root-domain page the part of the sitemap that was read lists,
     // past the 900 cap included: a page from the last run that is missing
     // from this list may sit in a child sitemap that could not be read.
@@ -819,7 +930,7 @@ export function createSearchConsoleSync({
     let staleCount = 0;
     let strayCount = 0;
 
-    await save((stored) => {
+    const saved = await saveWhileHeld(lease, (stored) => {
       const run = {
         startedAt: startedAt.toISOString(),
         finishedAt: finishedAt.toISOString(),
@@ -882,6 +993,7 @@ export function createSearchConsoleSync({
         sitemaps: sitemaps ?? (Array.isArray(base.sitemaps) ? base.sitemaps : []),
       };
     });
+    if (!saved) return leaseLost();
 
     info(`${status}: ${urls.length} pages, ${sent} inspected, ${failed} failed, ${staleCount} stale, ${strayCount} strays, ${seconds}s`);
     return { status, pages: urls.length, inspected: sent, failed, stale: staleCount, strays: strayCount, seconds };
@@ -901,12 +1013,22 @@ export function createSearchConsoleSync({
         info('skipped: another run is in progress');
         return { skipped: 'already_running' };
       }
+      // The run's cancel switch: it fires at the time limit, or when the
+      // job's own signal fires, and cuts off every call still waiting.
+      const cancel = new AbortController();
+      const deadline = setTimeout(() => cancel.abort(new Error('run time limit reached')), deadlineMs);
+      deadline.unref?.();
+      const onJobAbort = () => cancel.abort(signal.reason);
+      if (signal?.aborted) cancel.abort(signal.reason);
+      else signal?.addEventListener('abort', onJobAbort, { once: true });
       // What was reserved against the daily budget and what was sent, so the
       // lease gets back the inspections this run did not use.
       const counts = { reserved: 0, sent: 0 };
       try {
-        return await runHeld(config, budget, lease, counts);
+        return await runHeld(config, budget, lease, counts, cancel.signal);
       } finally {
+        clearTimeout(deadline);
+        signal?.removeEventListener('abort', onJobAbort);
         try {
           await lease.release({ unused: Math.max(0, counts.reserved - counts.sent) });
         } catch {

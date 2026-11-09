@@ -182,6 +182,30 @@ describe('createGoogleTokenProvider', () => {
     }
   });
 
+  it('cuts off every hop when the run\'s cancel switch fires, and passes it to the Entra token call (Copilot review round 2, #1614)', async () => {
+    const controller = new AbortController();
+    const credential = { getToken: vi.fn(async () => ({ token: ENTRA_TOKEN })) };
+    const fetchImpl = vi.fn(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        })
+    );
+    const provider = createGoogleTokenProvider({
+      audience: AUDIENCE,
+      appIdUri: APP_ID_URI,
+      serviceAccountEmail: SA,
+      credential,
+      fetchImpl,
+      signal: controller.signal,
+    });
+    const failure = provider.getAccessToken().catch((caught) => caught);
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    controller.abort();
+    await expect(failure).resolves.toMatchObject({ kind: 'sts' });
+    expect(credential.getToken).toHaveBeenCalledWith(`${APP_ID_URI}/.default`, { abortSignal: controller.signal });
+  });
+
   it('names hop impersonation when the token call fails to reach Google, or answers without a token', async () => {
     const unreachable = setup({ iam: null });
     unreachable.fetchImpl.mockImplementation(async (url) => {

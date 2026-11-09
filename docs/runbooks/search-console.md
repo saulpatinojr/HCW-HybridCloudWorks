@@ -61,8 +61,23 @@ Four things to know before trusting a number:
   most 35 minutes. Two presses of Run now at the same moment queue one run:
   the first press marks the same document (`pendingJob`) before it queues,
   and the second answers that a run is already queued.
+- **A run stops itself after 25 minutes.** That is well inside the lease's
+  35, so a slow run cannot outlive its lease. At 25 minutes the run starts
+  nothing new, cuts off any call to Google still waiting for an answer,
+  saves what it has (the pages it did not reach keep their last answer,
+  marked stale, and the note above the tabs says the run hit its time
+  limit). Just before it saves, it checks that it still holds the lease; if
+  another run has taken it, the slow run writes nothing, so it can never
+  overwrite newer figures. A Run now job has its own 20-minute limit; a job
+  that reaches it saves nothing and is recorded as timed out.
 - **A run that goes wrong keeps the last good figures.** If the sitemap
-  cannot be read, the run changes nothing but the message. If only part of
+  cannot be read, the run changes nothing but the message. An answer counts
+  as a sitemap only when it starts with `<urlset>` (or `<sitemapindex>` for
+  the main sitemap address): the site answers any address it does not know
+  with its normal web page and HTTP 200
+  ([#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)),
+  so a sitemap that has moved is treated as not read rather than as an
+  empty one. If only part of
   it can be read (one of the sitemaps a sitemap index points to fails, or
   the index lists more than the 20 the run reads), pages the last run had
   that the part read does not list keep their last answer, marked stale,

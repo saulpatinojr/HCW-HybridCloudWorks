@@ -14,6 +14,11 @@
  *     two runs never overlap. A run that dies without giving it back cannot
  *     block the next ones for long: the lease lapses after 35 minutes, longer
  *     than any run is allowed to take, and an expired lease can be taken over.
+ *     A run stops itself 25 minutes after it starts (RUN_DEADLINE_MS), and
+ *     before it writes its results it checks that it still holds the lease
+ *     and extends it (`renew`). A run that lost the lease, because it ran so
+ *     long that the lease lapsed and another run took it, writes nothing, so
+ *     it can never overwrite the newer run's results.
  *
  *   - A daily budget: the same document counts the inspections sent on the
  *     current Google quota day, which runs midnight to midnight Pacific time.
@@ -43,6 +48,12 @@ export const LEASE_DOC_ID = 'search_console_lease';
 export const LEASE_DOC_TYPE = 'search_console_lease';
 /** Longer than the job's 20-minute budget and a run's normal few minutes. */
 export const LEASE_TTL_MS = 35 * 60 * 1000;
+/**
+ * How long one run may go on before it stops starting work and cancels the
+ * calls still waiting for an answer: well inside the lease's 35 minutes, so
+ * the run still holds the lease when it writes its results.
+ */
+export const RUN_DEADLINE_MS = 25 * 60 * 1000;
 /** Google's own daily limit of URL inspections for one property. */
 export const GOOGLE_DAILY_LIMIT = 2000;
 /** What the app allows itself a day: Google's 2,000 less 200 for the owner. */
@@ -295,6 +306,31 @@ export function createRunLease({
         }
       }
       return 0;
+    },
+
+    /**
+     * Check, just before the run writes its results, that this run still
+     * holds the lease and that it has not lapsed, and extend it by another
+     * LEASE_TTL_MS so no other run can take it while the write is made. The
+     * extension is a conditional write (ifMatch): if the document changed
+     * since it was read (412), it is read again and checked again, because
+     * the change may only be a Run now press marking a queued job. `{ ok: true }`
+     * when this run still holds the lease; `{ ok: false }` when another run
+     * holds it, it lapsed, or it kept changing under every attempt.
+     */
+    async renew() {
+      for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt += 1) {
+        const current = await read();
+        const at = now();
+        if (!current || current.holder !== holder || !leaseIsLive(current, at)) return { ok: false };
+        try {
+          await replace(current, { ...keep(current), expiresAt: new Date(at.getTime() + LEASE_TTL_MS).toISOString() });
+          return { ok: true };
+        } catch (failure) {
+          if (!isWriteConflict(failure)) throw failure;
+        }
+      }
+      return { ok: false };
     },
 
     /**

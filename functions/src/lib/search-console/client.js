@@ -26,6 +26,12 @@
  * request goes out, retries included. When it answers false the request is
  * not sent (sync.js uses this to keep every request inside the daily budget).
  *
+ * Every call may be given `signal`, the run's cancel switch (an AbortSignal).
+ * When it fires, a request waiting for Google's answer is cut off, a pause
+ * before a retry ends at once, and no further try is made: the call fails as
+ * "could not be reached", and sync.js knows from the same signal that the run
+ * was stopped rather than that Google failed.
+ *
  * Quota (https://developers.google.com/webmaster-tools/limits): URL
  * inspection allows 2,000 calls a day and 600 a minute per property. The
  * sync keeps to four calls at a time and paces their starts (sync.js).
@@ -84,6 +90,25 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 
 export const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * `sleep(ms)`, except that it ends as soon as `signal` fires (or at once if
+ * it already has). It never rejects: the caller checks the signal afterwards.
+ *
+ * @param {(ms: number) => Promise<void>} sleep
+ * @param {number} ms
+ * @param {AbortSignal} [signal]
+ */
+export function sleepUnlessAborted(sleep, ms, signal) {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.resolve();
+  let onAbort;
+  const aborted = new Promise((resolve) => {
+    onAbort = resolve;
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  return Promise.race([sleep(ms), aborted]).finally(() => signal.removeEventListener('abort', onAbort));
+}
+
 /** Seconds from a Retry-After header, or null. Only the number form is read. */
 function retryAfterMs(response) {
   const raw = response?.headers?.get?.('retry-after');
@@ -116,10 +141,13 @@ export function createSearchConsoleClient({
    * not send. A first request held back fails as 'not_sent'; a retry held
    * back fails with the failure it was going to retry.
    */
-  async function call(kind, url, { method = 'GET', body, valid, beforeSend } = {}) {
+  async function call(kind, url, { method = 'GET', body, valid, beforeSend, signal } = {}) {
     let refreshedOnce = false;
     let lastFailure = null;
+    const pause = (ms) => sleepUnlessAborted(sleep, ms, signal);
     for (let attempt = 1; ; attempt += 1) {
+      // The run was stopped: no further try, not even the first.
+      if (signal?.aborted) throw lastFailure ?? new SearchConsoleError(kind);
       if (typeof beforeSend === 'function' && !(await beforeSend())) {
         throw lastFailure ?? new SearchConsoleError(kind, undefined, { reason: NOT_SENT });
       }
@@ -136,11 +164,12 @@ export function createSearchConsoleClient({
             ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          ...(signal ? { signal } : {}),
         });
       } catch {
         lastFailure = new SearchConsoleError(kind);
-        if (attempt >= maxAttempts) throw lastFailure;
-        await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+        if (attempt >= maxAttempts || signal?.aborted) throw lastFailure;
+        await pause(BASE_BACKOFF_MS * 2 ** (attempt - 1));
         continue;
       }
       if (response.ok) {
@@ -168,7 +197,7 @@ export function createSearchConsoleClient({
       if (!RETRYABLE.has(status) || attempt >= maxAttempts) throw lastFailure;
       const wait = retryAfterMs(response) ?? BASE_BACKOFF_MS * 2 ** (attempt - 1);
       if (wait > MAX_BACKOFF_MS) throw lastFailure;
-      await sleep(wait);
+      await pause(wait);
     }
   }
 
@@ -177,32 +206,36 @@ export function createSearchConsoleClient({
 
     /**
      * Google's UrlInspectionResult for one page. `options.beforeSend` is
-     * asked before each request goes out (see `call`).
+     * asked before each request goes out, and `options.signal` stops the
+     * call (see `call`).
      */
-    async inspect(inspectionUrl, { beforeSend } = {}) {
+    async inspect(inspectionUrl, { beforeSend, signal } = {}) {
       const answer = await call('inspect', INSPECT_URL, {
         method: 'POST',
         body: { inspectionUrl, siteUrl, languageCode: 'en-US' },
         valid: (json) => isObject(json.inspectionResult),
         beforeSend,
+        signal,
       });
       return answer.inspectionResult;
     },
 
-    /** The rows of one Search Analytics query, [] when there are none. */
-    async searchAnalytics(body) {
+    /** The rows of one Search Analytics query, [] when there are none. `options.signal` stops the call. */
+    async searchAnalytics(body, { signal } = {}) {
       const answer = await call('searchAnalytics', `${siteBase}/searchAnalytics/query`, {
         method: 'POST',
         body,
         valid: (json) => json.rows === undefined || Array.isArray(json.rows),
+        signal,
       });
       return answer.rows ?? [];
     },
 
-    /** The sitemaps submitted for the property, [] when there are none. */
-    async listSitemaps() {
+    /** The sitemaps submitted for the property, [] when there are none. `options.signal` stops the call. */
+    async listSitemaps({ signal } = {}) {
       const answer = await call('sitemaps', `${siteBase}/sitemaps`, {
         valid: (json) => json.sitemap === undefined || Array.isArray(json.sitemap),
+        signal,
       });
       return answer.sitemap ?? [];
     },
