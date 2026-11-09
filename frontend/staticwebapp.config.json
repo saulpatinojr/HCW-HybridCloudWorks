@@ -19,6 +19,41 @@
       "statusCode": 301
     },
     {
+      "route": "/azure/labs",
+      "redirect": "/azure/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/aws/labs",
+      "redirect": "/aws/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/gcp/labs",
+      "redirect": "/gcp/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/vmware/labs",
+      "redirect": "/vmware/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/terraform/labs",
+      "redirect": "/terraform/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/ansible/labs",
+      "redirect": "/ansible/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/docker/labs",
+      "redirect": "/docker/education/labs",
+      "statusCode": 301
+    },
+    {
       "route": "/admin",
       "rewrite": "/app-shell.html",
       "headers": {

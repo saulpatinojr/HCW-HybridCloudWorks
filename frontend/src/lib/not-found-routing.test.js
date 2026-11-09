@@ -51,6 +51,7 @@ import manifest from '../../data/content-manifest.json';
 import { routes } from '../../scripts/prerender-entry.jsx';
 import { certifications as awsCertifications } from '@/data/aws/certifications';
 import { architecturesByProvider } from '@/data/architectures';
+import { labsPath, providersWithLabs } from '@/data/labs/catalogue';
 
 const SHELL = '/app-shell.html';
 
@@ -135,16 +136,48 @@ describe('unknown addresses answer 404 (#1613)', () => {
     ).not.toHaveLength(0);
   });
 
-  it("sends each AWS certification's old slug to its current page with a 301", () => {
-    const expected = awsCertifications.flatMap((cert) =>
+  /** The 301s for each AWS certification's old slug, in catalogue order. */
+  const certRedirects = () =>
+    awsCertifications.flatMap((cert) =>
       (cert.previousSlugs || []).map((old) => ({
         route: `/aws/education/${old}`,
         redirect: `/aws/education/${cert.slug}`,
         statusCode: 301,
       }))
     );
-    expect(expected.length).toBeGreaterThan(0);
-    expect(redirectRules()).toEqual(expected);
+
+  /**
+   * The 301s from a provider's old labs address, `/<provider>/labs`, to its
+   * labs page, `/<provider>/education/labs` (ADR 0033 moved the labs under
+   * Learn). The app still answers the old address in the browser, but it has
+   * no page of its own, so without these it answers 404 (#1613). Only for a
+   * provider whose labs page the site builds; FinOps and GitHub have none.
+   */
+  const labsRedirects = () =>
+    providersWithLabs().map((provider) => ({
+      route: `/${provider}/labs`,
+      redirect: labsPath(provider),
+      statusCode: 301,
+    }));
+
+  it("sends each AWS certification's old slug to its current page with a 301", () => {
+    expect(certRedirects().length).toBeGreaterThan(0);
+    expect(redirectRules().filter((rule) => rule.route.startsWith('/aws/education/'))).toEqual(
+      certRedirects()
+    );
+  });
+
+  it("sends each provider's old labs address to its labs page with a 301", () => {
+    expect(labsRedirects().length).toBeGreaterThan(0);
+    expect(redirectRules().filter((rule) => rule.route.endsWith('/labs'))).toEqual(labsRedirects());
+  });
+
+  it('has no redirect but those two kinds, each to a page the site builds', () => {
+    expect(redirectRules()).toEqual([...certRedirects(), ...labsRedirects()]);
+    const prerendered = new Set(routes(manifest));
+    for (const rule of redirectRules()) {
+      expect(prerendered.has(rule.redirect), `${rule.route} -> ${rule.redirect}`).toBe(true);
+    }
   });
 
   it('puts every redirect and rewrite before the header-only rules', () => {

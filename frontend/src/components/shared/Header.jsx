@@ -5,6 +5,7 @@ import { useProvider } from '@/context/ProviderContext';
 import { routes, staticRoutes, parseRoute } from '@/lib/routeFactory';
 import { SkipToMainContent } from '@/components/accessibility/SkipToMainContent';
 import CommandPalette from '@/components/shared/CommandPalette';
+import { providersWithLabs } from '@/data/labs/catalogue';
 
 /**
  * Cross-provider Learn links retained as a named export for compatibility and
@@ -62,9 +63,15 @@ export function getPrimaryNavItems(currentProvider) {
     { label: 'Blogs', path: routes.blog(currentProvider), section: 'blog' },
   ];
 
+  // Labs only for a provider that has a lab. The labs list of a provider with
+  // none (FinOps and GitHub today) is not a page the site builds, so since
+  // #1613 its address answers 404. Its slot stays empty: the grid below is
+  // nine fixed columns, so every other link keeps its place.
   const tailLinks = [
     { label: 'Learn', path: routes.education(currentProvider), section: 'learn' },
-    { label: 'Labs', path: routes.labs(currentProvider), section: 'labs' },
+    ...(providersWithLabs().includes(currentProvider)
+      ? [{ label: 'Labs', path: routes.labs(currentProvider), section: 'labs' }]
+      : []),
   ];
 
   if (['aws', 'azure', 'gcp', 'vmware'].includes(currentProvider)) {

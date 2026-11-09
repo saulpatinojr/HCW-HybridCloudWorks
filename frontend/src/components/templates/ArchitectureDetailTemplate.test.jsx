@@ -56,7 +56,7 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
     );
     expect(screen.getByRole('link', { name: /Test in Browser Lab/i })).toHaveAttribute(
       'href',
-      '/education/labs/terraform-validate'
+      '/education/labs/terraform-validate-walkthrough'
     );
 
     // Overview tab contains "When NOT to Use This Architecture"
