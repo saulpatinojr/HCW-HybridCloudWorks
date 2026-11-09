@@ -508,7 +508,7 @@ describe('Multi-Cloud Landing Zone HCL emission (#Deliverable04)', () => {
     (cloud) => {
       const state = { ...DEFAULT_STATE, cloud };
       const terraform = emitFiles(state);
-      for (const format of ['opentofu', 'terragrunt', 'terraform', undefined]) {
+      for (const format of ['unknown', 'terraform', undefined]) {
         expect(emitFiles(state, format)).toEqual(terraform);
       }
       const paths = terraform.map((f) => f.path);

@@ -64,3 +64,4 @@ card, no lab instruction and no recommendation on a public page.
 ## Related decisions and references
 
 - [ADR 0020](0020-native-terraform-root-module.md) · [ADR 0005](0005-github-terraform-delivery.md)
+- HashiCorp's [Terraform documentation](https://developer.hashicorp.com/terraform/docs), the reference for the only tool this decision approves.

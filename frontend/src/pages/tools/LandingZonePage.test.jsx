@@ -688,14 +688,13 @@ describe('Multi-Cloud Target Cloud Selector and Architecture Previews (#Phase4)'
 
   // Native Terraform is the only export (owner decision 2026-11-09, ADR 0041):
   // the OpenTofu and Terragrunt formats, and the picker that chose between
-  // them, are gone. An old link or bookmark that still carries a format value
-  // gets the Terraform files and the usual zip name, not an error.
+  // them, are gone. The site never put a format in a link; a made-up format
+  // value someone types still gets the Terraform files and the usual zip name.
   it.each([
     PATH,
-    `${PATH}?format=opentofu`,
-    `${PATH}?format=terragrunt`,
+    `${PATH}?format=unknown`,
     `${PATH}?format=terraform`,
-    `${PATH}?lz=mg,hub,fw&corp=2&online=0&format=opentofu`,
+    `${PATH}?lz=mg,hub,fw&corp=2&online=0&format=unknown`,
   ])('offers only the Terraform files, with no format picker, for %s', async (url) => {
     renderPage(url);
     expect(screen.queryByTestId('lz-format-switcher')).toBeNull();
