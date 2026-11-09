@@ -93,6 +93,9 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
   it('hides empty panes and empty deep-dive tabs instead of rendering placeholder text (#1084 item 3)', async () => {
     mockFetchPublicContentItem.mockResolvedValue({
       type: 'architecture',
+      // Designs saved from the admin always name their provider (the form
+      // defaults to AWS); one with none is not shown off-catalogue (#1624).
+      cloudProvider: 'Azure',
       title: 'Minimal Custom Blueprint',
       promise: 'A concise custom pattern with only How It Works populated.',
       howItWorks: ['Ingress hits the edge gateway.', 'Requests route to the private worker pool.'],
@@ -340,6 +343,24 @@ describe('ArchitectureDetailTemplate — a provider shows only its own designs',
       await screen.findByRole('heading', { name: 'This page does not exist.' })
     ).toBeInTheDocument();
     expect(screen.queryByText('AWS Only Design')).not.toBeInTheDocument();
+  });
+
+  it('does not show an API design that names no provider under the VMware heading', async () => {
+    mockFetchPublicContentItem.mockResolvedValue({
+      ...initialBlueprintForm,
+      type: 'architecture',
+      cloudProvider: undefined,
+      provider: undefined,
+      slug: 'unattributed-design',
+      title: 'Unattributed Design',
+    });
+
+    renderArchitectureRoute('/vmware/architecture-designs/unattributed-design', 'vmware');
+
+    expect(
+      await screen.findByRole('heading', { name: 'This page does not exist.' })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Unattributed Design')).not.toBeInTheDocument();
   });
 
   it('reads the older "Cloud Provider" spelling too, so a legacy AWS design stays off the VMware page', async () => {

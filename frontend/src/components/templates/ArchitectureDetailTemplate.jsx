@@ -61,7 +61,11 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
   )
     .trim()
     .toLowerCase();
-  const providerMatches = !itemProvider || itemProvider === providerKey;
+  // An API design with no provider at all (the API keeps such designs as
+  // unattributed) is shown only where this provider has a built-in design of
+  // the same address, which it then refreshes. Otherwise it would show under
+  // every provider's heading, VMware included (Copilot review of #1624).
+  const providerMatches = itemProvider ? itemProvider === providerKey : Boolean(staticData);
   const dynamicArchitecture =
     item && String(item.type || '').toLowerCase() === 'architecture' && providerMatches
       ? item
