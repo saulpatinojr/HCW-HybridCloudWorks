@@ -57,19 +57,24 @@ function filesUnder(dir) {
   });
 }
 
-const whenText = (when) => (when === undefined ? '' : JSON.stringify(when));
+/**
+ * A `when` as the list of conditions Ansible ANDs together: a list stays a
+ * list, a string or a boolean is one condition.
+ */
+const whenConds = (when) =>
+  when === undefined || when === null ? [] : (Array.isArray(when) ? when : [when]).map((c) => String(c));
 
 /**
  * Flattens a task list into its tasks, each with the `check_mode` and `when`
  * text of the blocks around it. A block itself is not returned.
  */
-export function flattenTasks(list, inherited = { checkModeOff: false, when: '' }) {
+export function flattenTasks(list, inherited = { checkModeOff: false, when: [] }) {
   if (!Array.isArray(list)) return [];
   return list.flatMap((task) => {
     if (!task || typeof task !== 'object') return [];
     const scope = {
       checkModeOff: inherited.checkModeOff || task.check_mode === false,
-      when: `${inherited.when} ${whenText(task.when)}`,
+      when: [...inherited.when, ...whenConds(task.when)],
     };
     if (BLOCK_KEYS.some((key) => Array.isArray(task[key]))) {
       return BLOCK_KEYS.flatMap((key) => flattenTasks(task[key], scope));
@@ -101,11 +106,26 @@ function includedFile(task, file) {
 }
 
 /**
- * A guard that keeps a reader out of a check run: `not ansible_check_mode`,
- * alone or opening a negated group. A bare mention is not enough, since
- * `ansible_check_mode and x.stdout ...` reads the empty output in a check.
+ * In a template, a guard that keeps the read out of a check run.
  */
-const CHECK_MODE_GUARD = /\bnot\s+\(?\s*ansible_check_mode\b/;
+const CHECK_MODE_GUARD = /\bnot\s+ansible_check_mode\b/;
+
+/**
+ * Whether one ANDed condition keeps everything after it from being evaluated
+ * in a check run. It must be the guard itself (`guard`, a regex matching the
+ * whole condition), or start with it and continue only with `and`: an `or`
+ * anywhere would evaluate the rest when the guard is false, and a guard
+ * nested in a group (`not (ansible_check_mode and x.stdout ...)`) does not
+ * stop the read either.
+ */
+function condGuards(cond, guard) {
+  const c = cond.trim();
+  if (guard.test(c)) return true;
+  if (/\bor\b/.test(c)) return false;
+  const head = c.split(/\s+and\s+/)[0];
+  return guard.test(head.trim());
+}
+const CHECK_MODE_COND = /^not\s+ansible_check_mode$/;
 
 /**
  * The `when` text a file inherits from the tasks that include it, kept only
@@ -119,11 +139,12 @@ function includeGuards(entries) {
     for (const { task, file, when } of entries) {
       const target = includedFile(task, file);
       if (!target) continue;
-      const text = `${when} ${whenText(task.when)} ${guards[file] ?? ''}`;
-      (seen[target] ??= []).push(text);
+      (seen[target] ??= []).push([...when, ...whenConds(task.when), ...(guards[file] ?? [])]);
     }
-    for (const [target, texts] of Object.entries(seen)) {
-      guards[target] = texts.every((t) => CHECK_MODE_GUARD.test(t)) ? texts.join(' ') : '';
+    for (const [target, lists] of Object.entries(seen)) {
+      guards[target] = lists.every((conds) => conds.some((c) => condGuards(c, CHECK_MODE_COND)))
+        ? lists[0].filter((c) => condGuards(c, CHECK_MODE_COND))
+        : [];
     }
   }
   return guards;
@@ -147,7 +168,7 @@ export function unguardedCheckModeReads(taskFiles, textFiles = {}) {
     playTasks(doc).map((entry) => ({ ...entry, file })),
   );
   const guards = includeGuards(raw);
-  const entries = raw.map((entry) => ({ ...entry, when: `${entry.when} ${guards[entry.file] ?? ''}` }));
+  const entries = raw.map((entry) => ({ ...entry, when: [...(guards[entry.file] ?? []), ...entry.when] }));
   const producers = entries.filter(
     ({ task, checkModeOff }) => typeof task.register === 'string' && isCommandTask(task) && !checkModeOff,
   );
@@ -155,12 +176,43 @@ export function unguardedCheckModeReads(taskFiles, textFiles = {}) {
   for (const producer of producers) {
     const name = producer.task.register;
     const ref = outputRef(name);
-    const skippedGuard = new RegExp(`\\b${name}\\s+is\\s+not\\s+skipped\\b|\\bnot\\s+${name}\\.skipped\\b`);
+    const skippedCond = new RegExp(`^(?:${name}\\s+is\\s+not\\s+skipped|not\\s+${name}\\.skipped)$`);
     for (const reader of entries) {
       if (reader.task === producer.task) continue;
       const text = JSON.stringify(reader.task);
       if (!ref.test(text)) continue;
-      const guarded = CHECK_MODE_GUARD.test(`${text} ${reader.when}`) || skippedGuard.test(`${text} ${reader.when}`);
+      // A `when` guards the whole task (the reader's own, its blocks' and its
+      // includes'): Ansible evaluates it before anything else in the task,
+      // condition by condition, outermost first, and stops at the first
+      // false one. So the guard must come before any condition that reads.
+      let guarded = false;
+      let whenReads = false;
+      for (const cond of reader.when) {
+        if (condGuards(cond, CHECK_MODE_COND) || condGuards(cond, skippedCond)) {
+          guarded = true;
+          break;
+        }
+        if (ref.test(cond)) {
+          whenReads = true;
+          break;
+        }
+      }
+      // Without one, each read in the task's own expressions must sit behind
+      // `not ansible_check_mode and` in the same `{{ }}`, with no `or`
+      // between the guard and the read (an `or` would evaluate it anyway).
+      if (!guarded && !whenReads) {
+        const { when: _when, ...body } = reader.task;
+        const bodyText = JSON.stringify(body).replace(/\\[nt]/g, ' ');
+        const reads = [...bodyText.matchAll(new RegExp(ref.source, 'g'))];
+        guarded =
+          reads.length > 0 &&
+          reads.every(({ index }) => {
+            const open = bodyText.lastIndexOf('{{', index);
+            const before = open < 0 ? '' : bodyText.slice(open, index);
+            const at = before.search(/\bnot\s+ansible_check_mode\s+and\b/);
+            return at >= 0 && !/\bor\b/.test(before.slice(at));
+          });
+      }
       if (!guarded) {
         found.push(`${reader.file}: task "${reader.task.name}" reads ${name} (from ${producer.file}: task "${producer.task.name}")`);
       }
@@ -230,6 +282,24 @@ describe('command results read later are produced in check mode, or read behind 
     // Both still let the reader see the empty output of a check run.
     expect(unguardedCheckModeReads({ 'x.yml': [awkRead, { ...usermod, when: ['ansible_check_mode', usermod.when] }] })).toHaveLength(1);
     expect(unguardedCheckModeReads({ 'x.yml': [awkRead, { ...usermod, when: ['ids is skipped', usermod.when] }] })).toHaveLength(1);
+  });
+
+  it('does not take a guard that an `or`, a group or an earlier read can get past (Copilot review, #1630)', () => {
+    const withWhen = (when) => ({ 'x.yml': [awkRead, { ...usermod, when }] });
+    const read = usermod.when;
+    expect(unguardedCheckModeReads(withWhen(`not ansible_check_mode or ${read}`))).toHaveLength(1);
+    expect(unguardedCheckModeReads(withWhen(`not (ansible_check_mode and ${read})`))).toHaveLength(1);
+    expect(unguardedCheckModeReads(withWhen(`ids is not skipped or ${read}`))).toHaveLength(1);
+    expect(unguardedCheckModeReads(withWhen([read, 'not ansible_check_mode']))).toHaveLength(1);
+    expect(unguardedCheckModeReads(withWhen(`not ansible_check_mode and ${read}`))).toEqual([]);
+  });
+
+  it('accepts a read behind `not ansible_check_mode and` in the same expression, and no other shape', () => {
+    const fact = (expr) => ({ 'x.yml': [awkRead, { name: 'f', 'ansible.builtin.set_fact': { v: `{{ ${expr} }}` } }] });
+    expect(unguardedCheckModeReads(fact("not ansible_check_mode and ids.stdout | trim == 'x'"))).toEqual([]);
+    expect(unguardedCheckModeReads(fact("a and not ansible_check_mode and ids.stdout == 'x'"))).toEqual([]);
+    expect(unguardedCheckModeReads(fact("not ansible_check_mode and a or ids.stdout == 'x'"))).toHaveLength(1);
+    expect(unguardedCheckModeReads(fact("ids.stdout == 'x' and not ansible_check_mode"))).toHaveLength(1);
   });
 
   it('accepts a reader in a file every include of which skips check mode', () => {

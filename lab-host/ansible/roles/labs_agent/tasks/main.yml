@@ -189,7 +189,13 @@
       - "{{ labs_agent_public_certificate_path }}"
   register: labs_agent_certificate_check
   changed_when: false
-  failed_when: labs_agent_certificate_check.rc not in [0, 1]
+  # openssl answers rc 1 both for "Certificate will expire" and for a
+  # certificate it cannot load (missing or not a certificate), so the answer
+  # is read from its output: an unreadable certificate fails here, loudly,
+  # instead of passing as an expiry warning.
+  failed_when: >-
+    labs_agent_certificate_check.rc not in [0, 1]
+    or (labs_agent_certificate_check.rc == 1 and 'Certificate will expire' not in labs_agent_certificate_check.stdout)
   # openssl only reads the certificate, so this runs in check mode too:
   # skipped, it reports rc 0 and the nightly drift check never sees the
   # warning below.
@@ -202,7 +208,7 @@
       {{ labs_agent_certificate_warn_days }} days. Rotate it now: generate the next key
       pair, register the new public certificate on the app registration first, then swap
       the PEM — the steps are in lab-host/README.md under "Rotating the agent certificate".
-  when: labs_agent_certificate_check.rc | default(0) == 1
+  when: "'Certificate will expire' in labs_agent_certificate_check.stdout"
 
 - name: Install the daily certificate expiry check script
   ansible.builtin.template:
