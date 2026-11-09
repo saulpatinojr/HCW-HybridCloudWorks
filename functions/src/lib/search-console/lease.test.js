@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   budgetLeft,
   budgetSpentMessage,
+  claimPendingJob,
   createRunLease,
   dailyBudget,
   DEFAULT_DAILY_BUDGET,
@@ -14,6 +15,7 @@ import {
   leaseIsLive,
   nextPacificMidnight,
   pacificDay,
+  pendingJobIsLive,
   usedToday,
 } from './lease.js';
 
@@ -278,5 +280,117 @@ describe('createRunLease', () => {
     expect(first.holder).not.toBe(createRunLease({ store }).holder);
     await expect(first.acquire()).resolves.toEqual({ ok: true });
     expect(leaseIsLive(store.doc, new Date())).toBe(true);
+  });
+});
+
+describe('the queued-job marker (Copilot review round 1, #1614)', () => {
+  const LIVE = { jobId: 'job-1', claimedAt: '2026-11-09T00:09:00.000Z', expiresAt: '2026-11-09T00:44:00.000Z' };
+
+  it('is live only while it names a job and has not lapsed', () => {
+    expect(pendingJobIsLive(null, NOW)).toBe(false);
+    expect(pendingJobIsLive({ pendingJob: null }, NOW)).toBe(false);
+    expect(pendingJobIsLive({ pendingJob: { jobId: '', expiresAt: LIVE.expiresAt } }, NOW)).toBe(false);
+    expect(pendingJobIsLive({ pendingJob: { jobId: 'job-1', expiresAt: 'not a date' } }, NOW)).toBe(false);
+    expect(pendingJobIsLive({ pendingJob: { jobId: 'job-1', expiresAt: '2026-11-09T00:10:00Z' } }, NOW)).toBe(false);
+    expect(pendingJobIsLive({ pendingJob: LIVE }, NOW)).toBe(true);
+  });
+
+  it('is claimed by creating the lease document when there is none, for 35 minutes', async () => {
+    const store = memoryStore();
+    await expect(claimPendingJob(store, null, { jobId: 'job-1', now: NOW })).resolves.toEqual({ ok: true });
+    expect(store.doc).toMatchObject({
+      id: LEASE_DOC_ID,
+      configScope: 'admin_config',
+      docType: 'search_console_lease',
+      holder: null,
+      budget: null,
+      pendingJob: { jobId: 'job-1', claimedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + LEASE_TTL_MS).toISOString() },
+    });
+  });
+
+  it('is claimed on an existing document under its ETag, keeping the budget', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: null, budget: { day: '2026-11-08', used: 7 } });
+    const current = await store.readDoc('admin_config', LEASE_DOC_ID, 'admin_config');
+    await expect(claimPendingJob(store, current, { jobId: 'job-2', now: NOW })).resolves.toEqual({ ok: true });
+    expect(store.doc).toMatchObject({ budget: { day: '2026-11-08', used: 7 }, pendingJob: { jobId: 'job-2' } });
+  });
+
+  it('loses to a press that wrote first (409 on create, 412 on replace), and passes on other failures', async () => {
+    const store = memoryStore();
+    await claimPendingJob(store, null, { jobId: 'job-1', now: NOW });
+    // A second press read "no document" before the first wrote.
+    await expect(claimPendingJob(store, null, { jobId: 'job-2', now: NOW })).resolves.toEqual({ ok: false });
+    // A third press read the document before the first claimed it.
+    await expect(claimPendingJob(store, { id: LEASE_DOC_ID, _etag: 'stale' }, { jobId: 'job-3', now: NOW })).resolves.toEqual({ ok: false });
+    expect(store.doc.pendingJob.jobId).toBe('job-1');
+    const failing = memoryStore();
+    failing.createDoc.mockRejectedValueOnce(Object.assign(new Error('down'), { code: 503 }));
+    await expect(claimPendingJob(failing, null, { jobId: 'job-5', now: NOW })).rejects.toThrow('down');
+  });
+
+  it('is cleared by the job it names when that job takes the lease', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: null, pendingJob: LIVE });
+    await expect(lease(store, { by: 'job', jobId: 'job-1' }).acquire()).resolves.toEqual({ ok: true });
+    expect(store.doc).toMatchObject({ holder: 'run-a', jobId: 'job-1', pendingJob: null });
+  });
+
+  it('is kept when the timer or another job takes the lease, and through the budget and the release', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: null, pendingJob: LIVE });
+    const held = lease(store);
+    await held.acquire();
+    expect(store.doc.pendingJob).toEqual(LIVE);
+    await held.reserve(3);
+    expect(store.doc.pendingJob).toEqual(LIVE);
+    await held.release({ unused: 1 });
+    expect(store.doc).toMatchObject({ holder: null, pendingJob: LIVE });
+    await lease(store, { by: 'job', jobId: 'job-other' }).acquire();
+    expect(store.doc.pendingJob).toEqual(LIVE);
+  });
+
+  it('is dropped when it has lapsed', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: null, pendingJob: { ...LIVE, expiresAt: '2026-11-09T00:00:00Z' } });
+    await lease(store).acquire();
+    expect(store.doc.pendingJob).toBeNull();
+  });
+
+  it('is cleared by its job when another run holds the lease, so Run now is not blocked until it lapses', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: 'run-b', expiresAt: '2026-11-09T00:40:00Z', pendingJob: LIVE });
+    await expect(lease(store, { by: 'job', jobId: 'job-1' }).acquire()).resolves.toEqual({ ok: false });
+    expect(store.doc).toMatchObject({ holder: 'run-b', pendingJob: null });
+    // A run whose job the marker does not name leaves it alone.
+    const other = memoryStore({ id: LEASE_DOC_ID, holder: 'run-b', expiresAt: '2026-11-09T00:40:00Z', pendingJob: LIVE });
+    await expect(lease(other).acquire()).resolves.toEqual({ ok: false });
+    expect(other.replaceDocIfMatch).not.toHaveBeenCalled();
+  });
+
+  it('retries clearing its marker after a lost race, and passes on other failures', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: 'run-b', expiresAt: '2026-11-09T00:40:00Z', pendingJob: LIVE });
+    const real = store.replaceDocIfMatch.getMockImplementation();
+    store.replaceDocIfMatch.mockImplementationOnce(async () => {
+      throw conflict(412);
+    });
+    await expect(lease(store, { jobId: 'job-1' }).acquire()).resolves.toEqual({ ok: false });
+    expect(store.doc.pendingJob).toBeNull();
+    const failing = memoryStore({ id: LEASE_DOC_ID, holder: 'run-b', expiresAt: '2026-11-09T00:40:00Z', pendingJob: LIVE });
+    failing.replaceDocIfMatch.mockImplementation(async () => {
+      throw new Error('down');
+    });
+    await expect(lease(failing, { jobId: 'job-1' }).acquire()).rejects.toThrow('down');
+    store.replaceDocIfMatch.mockImplementation(real);
+  });
+});
+
+describe('a run that reserves on two Pacific days', () => {
+  it('hands nothing back, since what is unused cannot be told apart by day', async () => {
+    let now = NOW;
+    const store = memoryStore();
+    const held = createRunLease({ store, now: () => now, holder: 'run-a' });
+    await held.acquire();
+    await held.reserve(200);
+    now = new Date('2026-11-09T08:30:00Z');
+    await held.reserve(1);
+    expect(store.doc.budget).toEqual({ day: '2026-11-09', used: 1 });
+    await held.release({ unused: 150 });
+    expect(store.doc.budget).toEqual({ day: '2026-11-09', used: 1 });
   });
 });

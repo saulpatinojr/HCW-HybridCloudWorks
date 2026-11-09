@@ -15,16 +15,19 @@ portal's **editor** role or above can open it and press Run now.
 
 ## What the page shows
 
-The page reads one document the backend writes twice a day, at 00:10 and
-12:10 UTC (the owner's 06:00 and 18:00 Central; 19:10 and 07:10 in summer
-time, because the app clock is UTC). It never calls Google while you look at
-it. The **Run now** button asks for one extra run; it takes a few minutes.
+The page reads one document the backend writes twice a day. The run starts
+at 00:10 and 12:10 UTC, which is 18:10 and 06:10 Central Standard Time
+(19:10 and 07:10 Central Daylight Time, in summer). The owner asked for about
+6 PM and 6 AM Central; the times are written in UTC because the app clock is
+UTC ([#416](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/416)).
+The page never calls Google while you look at it. The **Run now** button asks
+for one extra run; it takes a few minutes.
 
 | Part | What it shows | Where it comes from |
 | --- | --- | --- |
 | Indexing | For each page in the live [sitemap](https://hybridcloudworks.com/sitemap.xml) on `hybridcloudworks.com` itself (not `api-azure.` or the lab subdomains): Google's verdict (pass, neutral, fail), its coverage state ("Submitted and indexed", "Crawled - currently not indexed", ...), whether Google could fetch it, robots.txt, the last crawl, and which address Google treats as the real one (the "canonical"). Totals by verdict and by state, and how those totals moved over the last two months | Google's [URL Inspection API](https://developers.google.com/webmaster-tools/v1/urlInspection.index/inspect), one call per page |
 | Strays | Pages on `hybridcloudworks.com` that get search impressions but are **not** in the sitemap, most impressions first | The Performance data below, grouped by page, compared with the sitemap |
-| Performance | Clicks, impressions, click-through rate (CTR, a fraction from 0 to 1) and average position for the last 90 days and the last 28, a line per day, and the top 50 queries, pages, countries, devices and search appearances | Google's [Search Analytics API](https://developers.google.com/webmaster-tools/v1/searchanalytics/query) |
+| Performance | Clicks, impressions, click-through rate (CTR, a fraction from 0 to 1) and average position for the last 90 days and the last 28, a line per day, and the top 50 queries, pages, countries, devices and search appearances. Only pages under `https://hybridcloudworks.com/` are counted, not the subdomains (owner decision). Because every query filters by page, Google adds the figures up page by page, so the totals can differ a little from the property-wide totals in Google's own Performance screen ([how Google counts by page and by property](https://support.google.com/webmasters/answer/6155685#urlorsite)) | Google's [Search Analytics API](https://developers.google.com/webmaster-tools/v1/searchanalytics/query) |
 | Sitemaps | Each sitemap Google has, when it was submitted and last read, and its warnings and errors | Google's [Sitemaps API](https://developers.google.com/webmaster-tools/v1/sitemaps/list) |
 
 Four things to know before trusting a number:
@@ -41,8 +44,10 @@ Four things to know before trusting a number:
   one property, and its day runs midnight to midnight Pacific time
   ([usage limits](https://developers.google.com/webmaster-tools/limits)).
   Every run, scheduled or Run now, inspects each page in the sitemap once
-  (about 203 on 2026-11-09, never more than 900). The app counts the
-  inspections it sends in `admin_config/search_console_lease` and stops at
+  (about 203 on 2026-11-09, never more than 900). The app counts every
+  inspection request it sends, a retry after an error from Google included,
+  in `admin_config/search_console_lease`, never sends one it has no room
+  for, and stops at
   1,800 for the Pacific day, which leaves 200 for your own inspections in
   Search Console. When the allowance runs out, Run now says so and when it
   starts again, a scheduled run keeps each page's last answer (the Indexing
@@ -53,12 +58,19 @@ Four things to know before trusting a number:
   `admin_config/search_console_lease`. While a run holds it, Run now answers
   that a run is already going, and a timer run that starts meanwhile does
   nothing. A run that stops without giving the lease back holds it for at
-  most 35 minutes.
+  most 35 minutes. Two presses of Run now at the same moment queue one run:
+  the first press marks the same document (`pendingJob`) before it queues,
+  and the second answers that a run is already queued.
 - **A run that goes wrong keeps the last good figures.** If the sitemap
-  cannot be read, the run changes nothing but the message. If Google answers
-  that its quota is used up (HTTP 429) even after retrying, the run stops
-  inspecting, and the pages it did not reach keep their last answer, marked
-  stale.
+  cannot be read, the run changes nothing but the message. If only part of
+  it can be read (one of the sitemaps a sitemap index points to fails, or
+  the index lists more than the 20 the run reads), pages the last run had
+  that the part read does not list keep their last answer, marked stale,
+  instead of disappearing. If Google answers that its quota is used up (HTTP
+  429) even after retrying, the run stops inspecting, and the pages it did
+  not reach keep their last answer, marked stale. If Google answers with
+  something that is not what it documents, that part keeps its last
+  figures.
 
 ## What Google's API cannot give us
 
@@ -261,6 +273,7 @@ not checked against a bill. No step creates a key.
     | hop 2 (Google token exchange), HTTP 400 | Google's token service does not trust the token | Step 9: the issuer is `https://sts.windows.net/` + directory id + `/`, the allowed audience is the same `api://...` value, and the attribute condition names the id from step 8; step 13: `gsc_wif_audience` uses the project **number** |
     | hop 3 (service account token), HTTP 403 | The app's identity may not act as the service account | Step 10 ran with the right `$principal` (step 8), and the IAM Credentials API is on (step 4) |
     | HTTP 403 ... not a Full user | Google signed in, but the service account cannot read the property | Step 11: the service account is listed as **Full** |
+    | 404 ... GSC_SITE_URL | Google has no property at that address, or the service account cannot see it | The workspace variable `gsc_site_url`, if someone set it (step 13 leaves it out, so its default `sc-domain:hybridcloudworks.com` applies), must be the property's exact name in Search Console; step 11 for the service account |
 
 ## Turning it off
 

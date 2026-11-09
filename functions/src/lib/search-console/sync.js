@@ -12,22 +12,29 @@
  *      they were started.
  *   1. Reads the sitemap (GSC_SITEMAP_URL), keeps only pages on the root
  *      domain `hybridcloudworks.com` (owner decision on #1612), removes
- *      repeats, and stops at 900 pages. A sitemap that cannot be read, or
+ *      repeats, and stops at 900 pages. A sitemap index is read one level
+ *      down, at most 20 child sitemaps. A sitemap that cannot be read, or
  *      that lists no such page, makes the run an error that changes nothing
  *      on the page but the message.
  *   2. Reserves one inspection per page against the daily budget (lease.js:
  *      1,800 a Pacific-time day, under Google's 2,000), and inspects at most
  *      that many pages, four at a time, pacing the starts so a minute never
- *      sees more than about 545 (Google allows 600). One page failing is
- *      recorded on that page and never fails the run. If Google still
- *      answers 429 (quota used up) after client.js's retries, the run stops
- *      inspecting rather than spend more of the quota on retries.
+ *      sees more than about 545 (Google allows 600). Every request sent,
+ *      client.js's retries included, uses one reserved inspection; one with
+ *      none left asks the budget for one more and is not sent if the day
+ *      has none. One page failing is recorded on that page and never fails
+ *      the run. If Google still answers 429 (quota used up) after
+ *      client.js's retries, the run stops inspecting rather than spend more
+ *      of the quota on retries.
  *   3. Reads Search Analytics for the 90 days ending two days ago (Google's
- *      figures lag about two days): totals, a line per day, and the top 50
- *      queries, pages, countries, devices and search appearances; the same
- *      totals for the last 28 days; and up to 1,000 pages, from which the
- *      "strays" are found: root-domain pages that get impressions but are
- *      not in the sitemap.
+ *      figures lag about two days), for pages under
+ *      `https://hybridcloudworks.com/` only: the property is a Domain
+ *      property, which also counts every subdomain, and the owner decided
+ *      the page covers the root domain only. Totals, a line per day, and the
+ *      top 50 queries, pages, countries, devices and search appearances; the
+ *      same totals for the last 28 days; and up to 1,000 pages, from which
+ *      the "strays" are found: root-domain pages that get impressions but
+ *      are not in the sitemap.
  *   4. Lists the sitemaps Google has.
  *   5. Replaces `admin_config/search_console_snapshot` under the ETag it was
  *      read with (a lost race re-reads and tries again), carrying a short
@@ -39,14 +46,18 @@
  * inspection failed or was not attempted keeps its last answer, marked
  * `stale: true` with `error` saying why; a Search Analytics query or the
  * sitemaps list that failed keeps the last run's figures for that part; the
- * strays are worked out only from a sitemap read in full; and the history
+ * strays are worked out only from a sitemap read in full; a page from the
+ * last run that this run's sitemap did not list is dropped only when the
+ * sitemap was read in full (otherwise it is kept, stale); and the history
  * gains a point only from pages inspected afresh in this run.
  *
  * When GSC_WIF_AUDIENCE, GSC_ENTRA_APP_ID_URI or GSC_SERVICE_ACCOUNT_EMAIL is
  * empty the run returns `{ skipped: 'not_configured' }` and writes nothing.
  *
- * When Google sign-in fails, or Google says the service account may not read
- * the property, the run stops, keeps the last good figures in the document,
+ * When Google sign-in fails, Google says the service account may not read
+ * the property (401, 403), or Google has no such property (404: the
+ * GSC_SITE_URL setting is wrong or the service account cannot see it), the
+ * run stops, keeps the last good figures in the document,
  * and records the failure in `run.message` with status 'error', so the page
  * shows both. The caller (the timer or the job) then treats it as a failed
  * run.
@@ -78,7 +89,10 @@ export const RANGE_DAYS = 90;
 export const SHORT_RANGE_DAYS = 28;
 /** Google's Search Analytics data lags about two days. */
 export const LAG_DAYS = 2;
-/** A sitemap index may point at this many child sitemaps; the rest are skipped. */
+/**
+ * A sitemap index may point at this many child sitemaps. When it lists more,
+ * the rest are not read, and the run treats the sitemap as not read in full.
+ */
 export const MAX_CHILD_SITEMAPS = 20;
 export const WRITE_ATTEMPTS = 3;
 /** Long strings from Google are cut to this length before they are stored. */
@@ -88,6 +102,33 @@ const MAX_FIELD = 2048;
 export const NOT_AVAILABLE = Object.freeze(['Page indexing totals and reasons', 'Links (internal and external)']);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A string as a regular expression (RE2 or JavaScript) that matches it literally. */
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The filter every Search Analytics query carries: pages whose address starts
+ * with `https://hybridcloudworks.com/`. The property is a Domain property
+ * (`sc-domain:`), which also counts `api-azure.` and the lab subdomains; the
+ * owner decided the page reports the root domain only (#1612). The host is
+ * SITE_HOST, the same one the sitemap's pages are chosen by.
+ *
+ * `includingRegex` takes an RE2 regular expression
+ * (https://developers.google.com/webmaster-tools/v1/searchanalytics/query).
+ * The same page says that a query grouped or filtered by page cannot be
+ * aggregated by property: Google adds it up by page (by canonical address)
+ * instead, so these totals can differ from the property-wide totals in
+ * Google's own Performance screen. Google's help explains the difference:
+ * https://support.google.com/webmasters/answer/6155685#urlorsite
+ */
+export const ROOT_DOMAIN_FILTER = Object.freeze([
+  Object.freeze({
+    groupType: 'and',
+    filters: Object.freeze([
+      Object.freeze({ dimension: 'page', operator: 'includingRegex', expression: `^https://${escapeRegex(SITE_HOST)}/` }),
+    ]),
+  }),
+]);
 const VERDICTS = new Set(['PASS', 'NEUTRAL', 'FAIL']);
 
 // ── Small pure helpers ───────────────────────────────────────────────────────
@@ -359,7 +400,7 @@ export function failureNote(failure, fallback) {
   if (failure instanceof GoogleAuthError || failure instanceof SearchConsoleError) {
     const status = Number.isInteger(failure.status) ? failure.status : null;
     if (failure instanceof GoogleAuthError) return describeAuth(failure.kind, status);
-    return describeCall(failure.kind, status);
+    return describeCall(failure.kind, status, failure.reason ?? null);
   }
   return fallback;
 }
@@ -369,18 +410,34 @@ function describeAuth(kind, status) {
   return `Google sign-in failed at ${hop}${status === null ? '' : ` with HTTP ${status}`}. The runbook's setup steps say what each hop needs.`;
 }
 
-function describeCall(kind, status) {
+function describeCall(kind, status, reason) {
+  if (reason === 'unreadable') return `Search Console ${kind} sent an answer that is not what Google documents, so it was not used.`;
+  if (reason === 'not_sent') return NOT_INSPECTED_BUDGET;
   if (status === 403) return 'Google answered 403: the service account is not a Full user on the Search Console property.';
+  if (status === 404)
+    return "Google answered 404: it has no Search Console property at the address in the GSC_SITE_URL setting, or the service account cannot see it. Check the setting against the property's name in Search Console.";
   if (status === 429) return `Search Console ${kind} hit Google's quota (HTTP 429).`;
   if (status === null) return `Search Console ${kind} could not be reached.`;
   return `Search Console ${kind} failed with HTTP ${status}.`;
 }
 
-/** Is this failure one that every later call would hit too? Then the run stops. */
+/**
+ * Is this failure one that every later call would hit too? Then the run
+ * stops. 401 and 403: Google will not let the service account read the
+ * property. 404: Google has no property at GSC_SITE_URL, or the service
+ * account cannot see it, so every call would get the same answer.
+ */
 function isFatal(failure) {
   if (failure instanceof GoogleAuthError) return true;
-  return failure instanceof SearchConsoleError && (failure.status === 401 || failure.status === 403);
+  return failure instanceof SearchConsoleError && [401, 403, 404].includes(failure.status);
 }
+
+/** A request client.js held back because the day's inspections are used up. */
+const isNotSent = (failure) => failure instanceof SearchConsoleError && failure.reason === 'not_sent';
+
+const NOT_INSPECTED_BUDGET = 'Not inspected in the last run: the daily allowance of Google page inspections was used up.';
+const NOT_INSPECTED_QUOTA = 'Not inspected in the last run: Google answered that its quota was used up.';
+const NOT_IN_SITEMAP_READ = 'Not inspected in the last run: the sitemap could not be read in full, and the part that was read does not list this page.';
 
 /** Google's quota answer (HTTP 429), still there after client.js's retries. */
 const isQuota = (failure) => failure instanceof SearchConsoleError && failure.status === 429;
@@ -476,7 +533,9 @@ export function createSearchConsoleSync({
   /**
    * The sitemap's `<loc>` entries. `failed` says why the sitemap could not be
    * read at all; `complete` is false when any part of it was not read (a
-   * child sitemap of an index), so the strays are not worked out from it.
+   * child sitemap of an index that failed, or children past the first
+   * MAX_CHILD_SITEMAPS), so the strays are not worked out from it and pages
+   * it may have left out are kept rather than dropped.
    */
   async function readSitemapUrls() {
     const root = (typeof env.GSC_SITEMAP_URL === 'string' && env.GSC_SITEMAP_URL.trim()) || DEFAULT_SITEMAP_URL;
@@ -493,8 +552,11 @@ export function createSearchConsoleSync({
     if (first.failed) return { locs: [], failed: first.failed, complete: false, note: null };
     const parsed = parseSitemap(first.xml);
     if (!parsed.isIndex) return { locs: parsed.locs, failed: null, complete: true, note: null };
-    // A sitemap index: read each child sitemap on the site's own host.
-    const children = parsed.locs.filter((loc) => rootDomainUrl(loc)).slice(0, MAX_CHILD_SITEMAPS);
+    // A sitemap index: read each child sitemap on the site's own host, at
+    // most MAX_CHILD_SITEMAPS of them.
+    const sameHost = parsed.locs.filter((loc) => rootDomainUrl(loc));
+    const children = sameHost.slice(0, MAX_CHILD_SITEMAPS);
+    const skipped = sameHost.length - children.length;
     const locs = [];
     let unread = 0;
     for (const child of children) {
@@ -505,11 +567,16 @@ export function createSearchConsoleSync({
     if (children.length > 0 && unread === children.length) {
       return { locs: [], failed: `none of its ${children.length} child sitemaps could be read`, complete: false, note: null };
     }
+    const gaps = [];
+    if (unread) gaps.push(`${unread} of ${children.length} child sitemaps could not be read`);
+    if (skipped) gaps.push(`the sitemap index lists ${sameHost.length} child sitemaps and only the first ${MAX_CHILD_SITEMAPS} were read`);
+    if (gaps.length === 0) return { locs, failed: null, complete: true, note: null };
+    const said = gaps.join('; ');
     return {
       locs,
       failed: null,
-      complete: unread === 0,
-      note: unread ? `${unread} of ${children.length} child sitemaps could not be read, so the strays were not worked out this run.` : null,
+      complete: false,
+      note: `${said[0].toUpperCase()}${said.slice(1)}, so the strays were not worked out this run, and pages the part read does not list keep their last result.`,
     };
   }
 
@@ -611,32 +678,69 @@ export function createSearchConsoleSync({
     }
     const toInspect = urls.slice(0, allowed);
 
+    // Every request sent to URL Inspection, client.js's retries included,
+    // uses one inspection this run reserved (counts.sent against
+    // counts.reserved). Once they are all used, one more is asked of the
+    // budget before a request goes out, and the request is not sent when the
+    // day has none left. The asks are made one at a time, so this run's own
+    // four lanes do not race each other for the lease document.
+    let budgetOut = false;
+    let unitQueue = Promise.resolve(true);
+    const takeInspection = () => {
+      unitQueue = unitQueue.then(async () => {
+        if (counts.sent < counts.reserved) {
+          counts.sent += 1;
+          return true;
+        }
+        if (stopped()) return false;
+        const more = await lease.reserve(1).catch(() => 0);
+        if (more > 0) {
+          counts.reserved += more;
+          counts.sent += 1;
+          return true;
+        }
+        budgetOut = true;
+        return false;
+      });
+      return unitQueue;
+    };
+
     // 3. Inspect each page in the allowance.
     const fresh = new Map();
     const failures = new Map();
     const inspectedAt = startedAt.toISOString();
+    let sent = 0;
     await runPaced(toInspect, {
       limit: CONCURRENCY,
       spacingMs,
       sleep,
       now: () => now().getTime(),
-      stop: () => stopped() || quotaHit,
+      stop: () => stopped() || quotaHit || budgetOut,
       task: async (url) => {
-        counts.sent += 1;
         try {
-          fresh.set(url, presentInspection(url, await google.inspect(url), inspectedAt));
+          sent += 1;
+          fresh.set(url, presentInspection(url, await google.inspect(url, { beforeSend: takeInspection }), inspectedAt));
         } catch (failure) {
+          // Held back before its first request: the page was not inspected
+          // at all, and keeps its last result like the pages after it.
+          if (isNotSent(failure)) {
+            sent -= 1;
+            return;
+          }
           if (isFatal(failure)) fatal ??= failure;
           if (isQuota(failure)) quotaHit = true;
           failures.set(url, failureNote(failure, 'The inspection failed.'));
         }
       },
     });
-    const sent = counts.sent;
     const failed = failures.size;
     if (quotaHit) {
       notes.push(
         `Google still answered 429 (quota used up) after retries, so the run stopped inspecting after ${sent} of ${toInspect.length} pages; the rest keep their last result.`
+      );
+    } else if (budgetOut) {
+      notes.push(
+        `Retries used up what was left of today's allowance of ${budget.toLocaleString('en-US')} Google page inspections, so the run stopped inspecting after ${sent} of ${toInspect.length} pages; the rest keep their last result.`
       );
     }
 
@@ -648,10 +752,13 @@ export function createSearchConsoleSync({
     if (!stopped()) {
       const longRange = analyticsRange(startedAt, RANGE_DAYS);
       const shortRange = analyticsRange(startedAt, SHORT_RANGE_DAYS);
+      // Every query, the undimensioned totals included, carries the
+      // root-domain filter (ROOT_DOMAIN_FILTER says why, and what it does to
+      // the totals).
       const query = async (label, body) => {
         if (stopped()) return null;
         try {
-          return await google.searchAnalytics(body);
+          return await google.searchAnalytics({ ...body, dimensionFilterGroups: ROOT_DOMAIN_FILTER });
         } catch (failure) {
           if (isFatal(failure)) fatal ??= failure;
           notes.push(`Performance ${label}: ${failureNote(failure, 'the query failed.')} The last figures were kept.`);
@@ -704,10 +811,11 @@ export function createSearchConsoleSync({
       return { status: 'error', aborted: true, pages: urls.length, inspected: sent, failed, strays: 0, seconds };
     }
     const status = fatal ? 'error' : 'ok';
-    const notInspected = (index) =>
-      index >= allowed
-        ? 'Not inspected in the last run: the daily allowance of Google page inspections was used up.'
-        : 'Not inspected in the last run: Google answered that its quota was used up.';
+    const notInspected = (index) => (index >= allowed || !quotaHit ? NOT_INSPECTED_BUDGET : NOT_INSPECTED_QUOTA);
+    // Every root-domain page the part of the sitemap that was read lists,
+    // past the 900 cap included: a page from the last run that is missing
+    // from this list may sit in a child sitemap that could not be read.
+    const listedAnywhere = sitemap.complete ? null : new Set(selectSiteUrls(sitemap.locs, { max: Number.POSITIVE_INFINITY }).urls);
     let staleCount = 0;
     let strayCount = 0;
 
@@ -730,6 +838,18 @@ export function createSearchConsoleSync({
       const pages = urls.map(
         (url, index) => fresh.get(url) ?? keptInspection(previous.get(url), url, failures.get(url) ?? notInspected(index))
       );
+      // A sitemap read in full is the list: a page it no longer lists is
+      // dropped. One read only in part may have lost pages with the part it
+      // could not read, so those keep their last answer, marked stale, as
+      // long as the total stays within MAX_URLS (the snapshot is one
+      // document and has to stay small).
+      if (listedAnywhere) {
+        for (const [url, page] of previous) {
+          if (pages.length >= MAX_URLS) break;
+          if (listedAnywhere.has(url)) continue;
+          pages.push(keptInspection(page, url, NOT_IN_SITEMAP_READ));
+        }
+      }
       run.stale = pages.filter((page) => page.stale).length;
       staleCount = run.stale;
       const sortedPages = sortPages(pages);

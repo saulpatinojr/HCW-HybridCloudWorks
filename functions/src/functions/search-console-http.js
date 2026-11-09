@@ -27,7 +27,14 @@ const queueOutput = output.storageQueue({
 const handlers = () =>
   createSearchConsoleHandlers({
     guard: getDefaultGuard(),
-    store: { readDoc: store.readDoc, upsertDoc: store.upsertDoc, queryDocs: store.queryDocs },
+    store: {
+      readDoc: store.readDoc,
+      upsertDoc: store.upsertDoc,
+      queryDocs: store.queryDocs,
+      // The queued-job marker on the lease document (lib/search-console/lease.js).
+      createDoc: store.createDoc,
+      replaceDocIfMatch: store.replaceDocIfMatch,
+    },
   });
 
 httpRoute('cmsSearchConsole', {

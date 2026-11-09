@@ -91,9 +91,27 @@ const passResult = (url) => ({
   },
 });
 
+/**
+ * Asks `beforeSend` before each of `requests` requests, the way client.js
+ * does before a first request and each retry, and fails the way client.js
+ * does when it answers false.
+ */
+async function sendAsClientDoes(options, requests = 1) {
+  for (let request = 1; request <= requests; request += 1) {
+    if (options?.beforeSend && !(await options.beforeSend())) {
+      if (request === 1) throw new SearchConsoleError('inspect', undefined, { reason: 'not_sent' });
+      throw new SearchConsoleError('inspect', 503);
+    }
+  }
+}
+
 function googleStub({ inspect, searchAnalytics, listSitemaps } = {}) {
+  const answer = inspect ?? (async (url) => passResult(url));
   return {
-    inspect: vi.fn(inspect ?? (async (url) => passResult(url))),
+    inspect: vi.fn(async (url, options) => {
+      await sendAsClientDoes(options);
+      return answer(url, options);
+    }),
     searchAnalytics: vi.fn(
       searchAnalytics ??
         (async (body) => {
@@ -334,6 +352,14 @@ describe('createSearchConsoleSync', () => {
     expect(dims.every((d) => d.length <= 1)).toBe(true);
     const pageQuery = client.searchAnalytics.mock.calls.find(([body]) => body.dimensions?.[0] === 'page')[0];
     expect(pageQuery.rowLimit).toBe(1000);
+    // Every query, the two undimensioned totals and the strays' page query
+    // included, asks for root-domain pages only (owner decision on #1612).
+    expect(client.searchAnalytics).toHaveBeenCalledTimes(8);
+    for (const [body] of client.searchAnalytics.mock.calls) {
+      expect(body.dimensionFilterGroups).toEqual([
+        { groupType: 'and', filters: [{ dimension: 'page', operator: 'includingRegex', expression: '^https://hybridcloudworks\\.com/' }] },
+      ]);
+    }
 
     // The lease is given back, with the two inspections counted for the Pacific day.
     expect(store.lease).toMatchObject({ holder: null, expiresAt: null, by: null, budget: { day: PACIFIC_DAY, used: 2 } });
@@ -738,7 +764,9 @@ describe('createSearchConsoleSync', () => {
     const { sync, store } = setup({ fetchImpl, stored: previousRun() });
     await expect(sync.run()).resolves.toMatchObject({ status: 'ok', pages: 1 });
     expect(store.doc.indexing.strays).toEqual([{ url: 'https://hybridcloudworks.com/kept-stray', clicks: 1, impressions: 2 }]);
-    expect(store.doc.run.message).toContain('1 of 2 child sitemaps could not be read, so the strays were not worked out this run.');
+    expect(store.doc.run.message).toContain(
+      '1 of 2 child sitemaps could not be read, so the strays were not worked out this run, and pages the part read does not list keep their last result.'
+    );
   });
 
   it('treats a sitemap index whose children all fail as unreadable', async () => {
@@ -785,5 +813,256 @@ describe('createSearchConsoleSync', () => {
     expect(client.searchAnalytics).not.toHaveBeenCalled();
     // Half a run is not written over the last whole one.
     expect(store.snapshotWrites()).toBe(0);
+  });
+});
+
+describe('createSearchConsoleSync, Copilot review round 1 (#1614)', () => {
+  const pagesNamed = (count) => Array.from({ length: count }, (_, i) => `https://hybridcloudworks.com/p${i}`);
+  const indexOf = (children) =>
+    `<sitemapindex>${children.map((c) => `<sitemap><loc>${c}</loc></sitemap>`).join('')}</sitemapindex>`;
+
+  it('treats a sitemap index with more children than it reads as not read in full', async () => {
+    const children = Array.from({ length: 21 }, (_, i) => `https://hybridcloudworks.com/s${i}.xml`);
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/sitemap.xml')) return textResponse(200, indexOf(children));
+      return textResponse(200, sitemapXml([A]));
+    });
+    const { sync, store } = setup({ fetchImpl, stored: previousRun([A, BAD]) });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok' });
+    // The root and the first 20 children; the 21st is not read.
+    expect(fetchImpl).toHaveBeenCalledTimes(21);
+    expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain('https://hybridcloudworks.com/s20.xml');
+    // Not read in full: the last strays are kept, not worked out again.
+    expect(store.doc.indexing.strays).toEqual([{ url: 'https://hybridcloudworks.com/kept-stray', clicks: 1, impressions: 2 }]);
+    expect(store.doc.run.message).toContain(
+      'The sitemap index lists 21 child sitemaps and only the first 20 were read, so the strays were not worked out this run'
+    );
+    // BAD may be in the child that was not read, so it keeps its last answer.
+    expect(store.doc.indexing.pages.find((p) => p.url === BAD)).toMatchObject({ stale: true, verdict: 'PASS' });
+  });
+
+  it('names both gaps when children fail and some are not read', async () => {
+    const children = Array.from({ length: 22 }, (_, i) => `https://hybridcloudworks.com/s${i}.xml`);
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/sitemap.xml')) return textResponse(200, indexOf(children));
+      if (url.endsWith('/s0.xml')) return textResponse(500, '');
+      return textResponse(200, sitemapXml([A]));
+    });
+    const { sync, store } = setup({ fetchImpl });
+    await sync.run();
+    expect(store.doc.run.message).toContain(
+      '1 of 20 child sitemaps could not be read; the sitemap index lists 22 child sitemaps and only the first 20 were read, so the strays'
+    );
+  });
+
+  it('keeps pages from the last run that a sitemap read only in part leaves out, stale, with the reason', async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/sitemap.xml'))
+        return textResponse(200, indexOf(['https://hybridcloudworks.com/s1.xml', 'https://hybridcloudworks.com/s2.xml']));
+      if (url.endsWith('/s2.xml')) return textResponse(503, '');
+      return textResponse(200, sitemapXml([A]));
+    });
+    const stored = previousRun([A, BAD]);
+    // A page the last run had no answer for is kept too, still without one.
+    const never = 'https://hybridcloudworks.com/never';
+    stored.indexing.pages.push({ url: never, verdict: 'VERDICT_UNSPECIFIED', error: 'The inspection failed.', stale: false });
+    const { sync, store, client } = setup({ fetchImpl, stored });
+    const result = await sync.run();
+    expect(client.inspect.mock.calls.map(([url]) => url)).toEqual([A]);
+    expect(result).toMatchObject({ status: 'ok', pages: 1, inspected: 1, stale: 1 });
+    expect(store.doc.indexing.pages.find((p) => p.url === BAD)).toMatchObject({
+      verdict: 'PASS',
+      stale: true,
+      error: 'Not inspected in the last run: the sitemap could not be read in full, and the part that was read does not list this page.',
+    });
+    expect(store.doc.indexing.pages.find((p) => p.url === never)).toMatchObject({ verdict: 'VERDICT_UNSPECIFIED', stale: false });
+    expect(store.doc.indexing.pages.find((p) => p.url === A)).toMatchObject({ stale: false, error: null });
+    expect(store.doc.indexing.summary).toMatchObject({ pass: 2, unknown: 1 });
+  });
+
+  it('drops pages the sitemap no longer lists when it was read in full', async () => {
+    const { sync, store } = setup({ urls: [A], stored: previousRun([A, BAD]) });
+    await sync.run();
+    expect(store.doc.indexing.pages.map((p) => p.url)).toEqual([A]);
+  });
+
+  it('keeps no more than MAX_URLS pages in all when it keeps pages a partial sitemap left out', async () => {
+    const urls = pagesNamed(MAX_URLS);
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/sitemap.xml'))
+        return textResponse(200, indexOf(['https://hybridcloudworks.com/s1.xml', 'https://hybridcloudworks.com/s2.xml']));
+      if (url.endsWith('/s2.xml')) return textResponse(500, '');
+      return textResponse(200, sitemapXml(urls));
+    });
+    const { sync, store } = setup({ fetchImpl, stored: previousRun([BAD]) });
+    await sync.run();
+    expect(store.doc.indexing.pages).toHaveLength(MAX_URLS);
+    expect(store.doc.indexing.pages.map((p) => p.url)).not.toContain(BAD);
+  });
+
+  it('counts every request sent, retries included, and sends no retry the budget has no room for', async () => {
+    // Three left today; A needs three requests (two retries), BAD one.
+    const lease = { holder: null, budget: { day: PACIFIC_DAY, used: 1797 } };
+    let allowedRequests = 0;
+    const google = googleStub();
+    google.inspect.mockImplementation(async (url, options) => {
+      const counting = async () => {
+        const ok = await options.beforeSend();
+        if (ok) allowedRequests += 1;
+        return ok;
+      };
+      await sendAsClientDoes({ beforeSend: counting }, url === A ? 3 : 1);
+      return passResult(url);
+    });
+    const { sync, store } = setup({ google, lease, stored: previousRun() });
+    const result = await sync.run();
+    // A's first request and BAD's used the two reserved; A's first retry got
+    // the last one left today; its second retry was not sent.
+    expect(allowedRequests).toBe(3);
+    expect(store.lease.budget).toEqual({ day: PACIFIC_DAY, used: 1800 });
+    expect(result).toMatchObject({ status: 'ok', inspected: 2, failed: 1 });
+    expect(store.doc.indexing.pages.find((p) => p.url === A)).toMatchObject({ stale: true, error: 'Search Console inspect failed with HTTP 503.' });
+    expect(store.doc.run.message).toContain(
+      "Retries used up what was left of today's allowance of 1,800 Google page inspections, so the run stopped inspecting after 2 of 2 pages"
+    );
+  });
+
+  it('does not send a page whose first request has no room left, and counts it as not inspected', async () => {
+    const urls = pagesNamed(6);
+    // Six left today, for six pages; p0 needs three requests.
+    const lease = { holder: null, budget: { day: PACIFIC_DAY, used: 1794 } };
+    const google = googleStub();
+    google.inspect.mockImplementation(async (url, options) => {
+      await sendAsClientDoes(options, url.endsWith('/p0') ? 3 : 1);
+      return passResult(url);
+    });
+    const { sync, store } = setup({ google, urls, lease, stored: previousRun(urls) });
+    const result = await sync.run();
+    // Which request loses depends on how the four lanes interleave; what
+    // holds either way is that six requests were sent, no more, and at least
+    // one page was never sent, so it is not counted as inspected.
+    expect(result.status).toBe('ok');
+    expect(result.inspected).toBeLessThan(6);
+    expect(store.lease.budget).toEqual({ day: PACIFIC_DAY, used: 1800 });
+    const notSent = store.doc.indexing.pages.filter(
+      (p) => p.stale && p.error === 'Not inspected in the last run: the daily allowance of Google page inspections was used up.'
+    );
+    expect(notSent).toHaveLength(6 - result.inspected);
+    expect(store.doc.run.message).toContain(`so the run stopped inspecting after ${result.inspected} of 6 pages`);
+  });
+
+  it('does not ask the budget for more once the run has stopped', async () => {
+    const lease = { holder: null, budget: { day: PACIFIC_DAY, used: 1798 } };
+    const google = googleStub();
+    let retryAllowed = null;
+    google.inspect.mockImplementation(async (url, options) => {
+      if (url === A) {
+        await options.beforeSend();
+        throw new SearchConsoleError('inspect', 403);
+      }
+      await options.beforeSend();
+      // Let A's fatal answer land before this page's retry asks.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      retryAllowed = await options.beforeSend();
+      throw new SearchConsoleError('inspect', 503);
+    });
+    const { sync, store } = setup({ google, lease, stored: previousRun() });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'error' });
+    expect(retryAllowed).toBe(false);
+    // Two reserved, two sent, nothing more asked of the budget.
+    expect(store.lease.budget).toEqual({ day: PACIFIC_DAY, used: 1800 });
+  });
+
+  it('counts a request as not sent when the budget cannot be asked', async () => {
+    const lease = { holder: null, budget: { day: PACIFIC_DAY, used: 1798 } };
+    const google = googleStub();
+    google.inspect.mockImplementation(async (url, options) => {
+      await sendAsClientDoes(options, url === A ? 2 : 1);
+      return passResult(url);
+    });
+    const { sync, store } = setup({ google, lease, stored: previousRun() });
+    // The lease document cannot be read once inspecting starts.
+    const real = store.readDoc.getMockImplementation();
+    let reads = 0;
+    store.readDoc.mockImplementation(async (container, id, pk) => {
+      if (id === LEASE_DOC_ID) {
+        reads += 1;
+        if (reads === 3) throw new Error('read refused');
+      }
+      return real(container, id, pk);
+    });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok', failed: 1 });
+    expect(store.doc.indexing.pages.find((p) => p.url === A)).toMatchObject({ error: 'Search Console inspect failed with HTTP 503.' });
+  });
+
+  it('sends a retry through the real client only after the budget gives one more', async () => {
+    const json = (status, body) => ({ ok: status < 300, status, json: async () => body, headers: { get: () => null } });
+    let inspections = 0;
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/sitemap.xml')) return textResponse(200, sitemapXml([A]));
+      if (url.startsWith('https://sts.googleapis.com/')) return json(200, { access_token: 'federated' });
+      if (url.startsWith('https://iamcredentials.googleapis.com/')) return json(200, { accessToken: 'sa-token', expireTime: '2026-11-09T01:10:00Z' });
+      if (url.includes('urlInspection')) {
+        inspections += 1;
+        return json(503, {});
+      }
+      return json(200, {});
+    });
+    // One left today: the first request is sent, its retry is not.
+    const store = memoryStore({ lease: { holder: null, budget: { day: PACIFIC_DAY, used: 1799 } } });
+    const credential = { getToken: vi.fn(async () => ({ token: 'entra' })) };
+    const sync = createSearchConsoleSync({ store, env: ENV, fetchImpl, credential, now: () => NOW, sleep: async () => {}, spacingMs: 0 });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok', inspected: 1, failed: 1 });
+    expect(inspections).toBe(1);
+    expect(store.lease.budget).toEqual({ day: PACIFIC_DAY, used: 1800 });
+    // An empty Search Analytics answer ({}) is a good empty answer.
+    expect(store.doc.performance.queries).toEqual([]);
+  });
+
+  it('keeps the last figures when Google answers a query with something it does not document', async () => {
+    const google = googleStub({
+      searchAnalytics: async (body) => {
+        if (body.dimensions?.[0] === 'query') throw new SearchConsoleError('searchAnalytics', 200, { reason: 'unreadable' });
+        return [];
+      },
+    });
+    const { sync, store } = setup({ google, stored: previousRun() });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok' });
+    expect(store.doc.performance.queries).toEqual([{ key: 'kept' }]);
+    expect(store.doc.run.message).toContain(
+      'Performance query: Search Console searchAnalytics sent an answer that is not what Google documents, so it was not used. The last figures were kept.'
+    );
+  });
+
+  it("keeps a page's last answer when its inspection answer is not what Google documents", async () => {
+    const google = googleStub({
+      inspect: async () => {
+        throw new SearchConsoleError('inspect', 200, { reason: 'unreadable' });
+      },
+    });
+    const { sync, store } = setup({ google, urls: [A], stored: previousRun([A]) });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok', failed: 1 });
+    expect(store.doc.indexing.pages[0]).toMatchObject({
+      verdict: 'PASS',
+      stale: true,
+      error: 'Search Console inspect sent an answer that is not what Google documents, so it was not used.',
+    });
+  });
+
+  it.each([
+    ['an inspection', { inspect: async () => Promise.reject(new SearchConsoleError('inspect', 404)) }],
+    ['a performance query', { searchAnalytics: async () => Promise.reject(new SearchConsoleError('searchAnalytics', 404)) }],
+    ['the sitemaps list', { listSitemaps: async () => Promise.reject(new SearchConsoleError('sitemaps', 404)) }],
+  ])('stops on a 404 to %s, keeps the last good figures and names GSC_SITE_URL', async (_label, overrides) => {
+    const google = googleStub(overrides);
+    const { sync, store } = setup({ google, stored: previousRun() });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'error' });
+    expect(store.doc.status).toBe('error');
+    expect(store.doc.run.message).toBe(
+      "Google answered 404: it has no Search Console property at the address in the GSC_SITE_URL setting, or the service account cannot see it. Check the setting against the property's name in Search Console."
+    );
+    expect(store.doc.performance.totals.clicks).toBe(99);
+    expect(store.doc.sitemaps).toEqual([{ path: 'kept' }]);
+    expect(store.doc.generatedAt).toBe('2026-11-08T12:10:00.000Z');
   });
 });

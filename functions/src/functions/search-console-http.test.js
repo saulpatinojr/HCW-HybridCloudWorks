@@ -14,6 +14,8 @@ const fakes = vi.hoisted(() => ({
   readDoc: vi.fn(),
   upsertDoc: vi.fn(),
   queryDocs: vi.fn(),
+  createDoc: vi.fn(),
+  replaceDocIfMatch: vi.fn(),
   registrations: new Map(),
 }));
 vi.mock('../lib/search-console/sync.js', async (load) => ({
@@ -34,6 +36,8 @@ vi.mock('../lib/cosmos-client.js', async (load) => ({
   readDoc: (...args) => fakes.readDoc(...args),
   upsertDoc: (...args) => fakes.upsertDoc(...args),
   queryDocs: (...args) => fakes.queryDocs(...args),
+  createDoc: (...args) => fakes.createDoc(...args),
+  replaceDocIfMatch: (...args) => fakes.replaceDocIfMatch(...args),
 }));
 import { getJobType } from '../lib/jobs.js';
 import './search-console-http.js';
@@ -47,6 +51,8 @@ beforeEach(() => {
   fakes.readDoc.mockResolvedValue(null);
   fakes.upsertDoc.mockImplementation(async (_container, doc) => doc);
   fakes.queryDocs.mockResolvedValue([]);
+  fakes.createDoc.mockImplementation(async (_container, doc) => doc);
+  fakes.replaceDocIfMatch.mockImplementation(async (_container, doc) => doc);
   vi.stubEnv('GSC_WIF_AUDIENCE', '//iam.googleapis.com/projects/000000000001/locations/global/workloadIdentityPools/hcw-azure/providers/entra');
   vi.stubEnv('GSC_ENTRA_APP_ID_URI', 'api://00000000-0000-0000-0000-000000000001');
   vi.stubEnv('GSC_SERVICE_ACCOUNT_EMAIL', 'sa-hcw-search-console@example-project.iam.gserviceaccount.com');
@@ -71,6 +77,11 @@ describe('the routes', () => {
     const { jobId } = JSON.parse(response.body);
     expect(set).toHaveBeenCalledWith(expect.anything(), { jobId, type: 'sync-search-console' });
     expect(fakes.upsertDoc).toHaveBeenCalledWith('jobs', expect.objectContaining({ id: jobId, type: 'sync-search-console' }));
+    // The queued-job marker was claimed first, on the lease document.
+    expect(fakes.createDoc).toHaveBeenCalledWith(
+      'admin_config',
+      expect.objectContaining({ id: 'search_console_lease', pendingJob: expect.objectContaining({ jobId }) })
+    );
   });
 });
 

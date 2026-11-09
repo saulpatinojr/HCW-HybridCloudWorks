@@ -139,11 +139,58 @@ describe('createSearchConsoleClient', () => {
     }
   });
 
-  it('answers {} when a successful body is not JSON, and treats an odd status as unreachable', async () => {
-    const { client } = setup([{ ok: true, status: 200, json: async () => Promise.reject(new SyntaxError('x')) }, response(302)]);
-    await expect(client.inspect('https://hybridcloudworks.com/')).resolves.toEqual({});
+  it('fails a call whose successful body is not JSON, without retrying it, and treats an odd status as unreachable', async () => {
+    const { client, fetchImpl } = setup([{ ok: true, status: 200, json: async () => Promise.reject(new SyntaxError('x')) }, response(302)]);
+    const unreadable = await client.inspect('https://hybridcloudworks.com/').catch((caught) => caught);
+    expect(unreadable).toBeInstanceOf(SearchConsoleError);
+    expect(unreadable).toMatchObject({ reason: 'unreadable', code: 'GSC_UNREADABLE', status: 200 });
+    expect(unreadable.message).toBe("Search Console inspect failed: Google's answer could not be read.");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
     const failure = await client.listSitemaps().catch((caught) => caught);
     expect(failure.message).toBe('Search Console sitemaps failed: Search Console could not be reached (HTTP 302).');
+    expect(failure.reason).toBeNull();
+  });
+
+  it.each([
+    ['an inspection without inspectionResult', (client) => client.inspect('https://hybridcloudworks.com/'), {}],
+    ['an inspection whose inspectionResult is not an object', (client) => client.inspect('https://hybridcloudworks.com/'), { inspectionResult: 'x' }],
+    ['Search Analytics rows that are not a list', (client) => client.searchAnalytics({}), { rows: { a: 1 } }],
+    ['a sitemaps list that is not a list', (client) => client.listSitemaps(), { sitemap: 'x' }],
+    ['a body that is a list, not an object', (client) => client.listSitemaps(), []],
+    ['a body that is null', (client) => client.searchAnalytics({}), null],
+  ])('fails %s, so the caller keeps its last good figures', async (_label, callIt, body) => {
+    const { client } = setup([response(200, body)]);
+    await expect(callIt(client)).rejects.toMatchObject({ reason: 'unreadable' });
+  });
+
+  it('asks beforeSend before every request, retries included, and stops when it says no', async () => {
+    const { client, fetchImpl } = setup([response(503), response(503), response(200, { inspectionResult: {} })]);
+    const answers = [true, false];
+    const beforeSend = vi.fn(async () => answers.shift());
+    const failure = await client.inspect('https://hybridcloudworks.com/', { beforeSend }).catch((caught) => caught);
+    // The retry was held back, so the call fails with what it was retrying.
+    expect(failure).toMatchObject({ status: 503, reason: null });
+    expect(beforeSend).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends nothing when beforeSend says no to the first request', async () => {
+    const { client, fetchImpl, auth } = setup([]);
+    const failure = await client.inspect('https://hybridcloudworks.com/', { beforeSend: async () => false }).catch((caught) => caught);
+    expect(failure).toBeInstanceOf(SearchConsoleError);
+    expect(failure).toMatchObject({ reason: 'not_sent', code: 'GSC_NOT_SENT' });
+    expect(failure.status).toBeUndefined();
+    expect(failure.message).toBe('Search Console inspect failed: the daily allowance of inspections is used up, so it was not sent.');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(auth.getAccessToken).not.toHaveBeenCalled();
+  });
+
+  it('asks beforeSend again for the request it sends after signing in again', async () => {
+    const { client, fetchImpl } = setup([response(401), response(200, { inspectionResult: { indexStatusResult: {} } })]);
+    const beforeSend = vi.fn(async () => true);
+    await expect(client.inspect('https://hybridcloudworks.com/', { beforeSend })).resolves.toEqual({ indexStatusResult: {} });
+    expect(beforeSend).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it('gives up at once when Retry-After asks for longer than 30 seconds', async () => {

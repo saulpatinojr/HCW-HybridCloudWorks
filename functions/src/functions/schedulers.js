@@ -341,8 +341,9 @@ timer('labCanary', 'LAB_CANARY', '0 20 */1 * * *', async (context) => {
 
 // The admin Search Console page (#1612): what Google knows about each public
 // page, the site's search traffic and the sitemaps, refreshed twice a day.
-// The owner asked for 06:00 and 18:00 Central; the app clock is UTC (#416),
-// so 00:10 and 12:10 UTC, which is 18:10 / 06:10 CST and 19:10 / 07:10 CDT.
+// Runs at 00:10 and 12:10 UTC, which is 18:10 and 06:10 Central Standard
+// Time (19:10 and 07:10 Central Daylight Time); the owner asked for about
+// 6 PM and 6 AM Central; the app clock is UTC (#416).
 // Ten past, to keep clear of the 00:00 cleanup timer. Does nothing (one log
 // line) until the Google sign-in settings are set (lib/search-console/sync.js).
 // While a Run now job holds the run lease it also does nothing but log

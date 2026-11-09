@@ -26,6 +26,14 @@
  *     sentence saying when it starts again;
  *   - a sync job is already queued: 202 with `alreadyQueued` and its id.
  *
+ * Checking and then writing are two steps, so two presses at the same moment
+ * could both pass the checks. To make sure only one of them queues a job,
+ * the press first claims the queued-job marker on the lease document
+ * (`pendingJob`, lease.js) in one conditional write. The press that loses
+ * that write reads the document again and answers with the winner's job
+ * (`alreadyQueued`) or the run that has started since (`alreadyRunning`).
+ * The run clears the marker when it starts.
+ *
  * These answers are for the person pressing the button. The rules themselves
  * are kept by the run (sync.js takes the lease and the budget), so a job
  * queued some other way, for example straight through enqueueJob, keeps them
@@ -36,7 +44,15 @@ import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
 import { errorResponse } from '../http/error-response.js';
 import { readGoogleAuthConfig } from './google-auth.js';
-import { budgetLeft, budgetSpentMessage, dailyBudget, LEASE_DOC_ID, leaseIsLive } from './lease.js';
+import {
+  budgetLeft,
+  budgetSpentMessage,
+  claimPendingJob,
+  dailyBudget,
+  LEASE_DOC_ID,
+  leaseIsLive,
+  pendingJobIsLive,
+} from './lease.js';
 import { CONTAINER, emptySnapshot, NOT_AVAILABLE, SNAPSHOT_DOC_ID } from './sync.js';
 
 export const SEARCH_CONSOLE_ROLE = 'editor';
@@ -44,6 +60,15 @@ export const SYNC_JOB_TYPE = 'sync-search-console';
 /** The job's budget; a queued or running job older than this plus slack is treated as lost. */
 export const SYNC_JOB_TIMEOUT_MS = 20 * 60 * 1000;
 const IN_FLIGHT_WINDOW_MS = SYNC_JOB_TIMEOUT_MS + 15 * 60 * 1000;
+/**
+ * A marker whose job document is not there yet counts as waiting for this
+ * long: the press that claimed it may still be writing the job. After that
+ * the write is taken to have failed, and the marker no longer blocks Run now.
+ */
+export const PENDING_WRITE_GRACE_MS = 2 * 60 * 1000;
+/** Times one press re-reads and tries again after losing the marker write to something other than another press. */
+const CLAIM_ATTEMPTS = 3;
+const WAITING = new Set(['queued', 'running']);
 
 const privateJson = (status, body) => ({
   status,
@@ -68,7 +93,7 @@ function present(stored, siteUrl) {
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
- * @param {{ readDoc: Function, upsertDoc: Function, queryDocs: Function }} deps.store
+ * @param {{ readDoc: Function, upsertDoc: Function, queryDocs: Function, createDoc: Function, replaceDocIfMatch: Function }} deps.store
  * @param {Record<string, string|undefined>} [deps.env]
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
@@ -86,6 +111,33 @@ export function createSearchConsoleHandlers({ guard, store, env = process.env, n
     live.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     return live[0] ?? null;
   }
+
+  /**
+   * The job the lease document's queued-job marker names, while it is still
+   * waiting to run: `{ id, status }`, or null when there is no live marker or
+   * its job has already finished.
+   */
+  async function markedJobWaiting(lease, at) {
+    if (!pendingJobIsLive(lease, at)) return null;
+    const { jobId, claimedAt } = lease.pendingJob;
+    const job = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
+    if (!job) {
+      const claimed = Date.parse(claimedAt);
+      return Number.isFinite(claimed) && at.getTime() - claimed < PENDING_WRITE_GRACE_MS ? { id: jobId, status: 'queued' } : null;
+    }
+    return WAITING.has(job.status) ? { id: jobId, status: job.status } : null;
+  }
+
+  const runningAnswer = (lease) =>
+    privateJson(202, {
+      ok: true,
+      queued: true,
+      alreadyRunning: true,
+      status: 'running',
+      ...(typeof lease.jobId === 'string' && lease.jobId ? { jobId: lease.jobId } : {}),
+    });
+
+  const queuedAnswer = (job) => privateJson(202, { ok: true, queued: true, alreadyQueued: true, jobId: job.id, status: job.status });
 
   return {
     /** GET cms/search-console */
@@ -130,32 +182,36 @@ export function createSearchConsoleHandlers({ guard, store, env = process.env, n
             missing: config.missing,
           });
         }
-        const at = now();
-        const lease = await store.readDoc(CONTAINER, LEASE_DOC_ID, ADMIN_CONFIG_PARTITION);
-        if (leaseIsLive(lease, at)) {
-          return privateJson(202, {
-            ok: true,
-            queued: true,
-            alreadyRunning: true,
-            status: 'running',
-            ...(typeof lease.jobId === 'string' && lease.jobId ? { jobId: lease.jobId } : {}),
-          });
-        }
         const budget = dailyBudget(env);
-        if (budgetLeft(lease, at, budget) === 0) {
-          return privateJson(429, { ok: false, error: 'daily_budget_spent', message: budgetSpentMessage(at, budget) });
+        for (let attempt = 1; attempt <= CLAIM_ATTEMPTS; attempt += 1) {
+          const at = now();
+          const lease = await store.readDoc(CONTAINER, LEASE_DOC_ID, ADMIN_CONFIG_PARTITION);
+          if (leaseIsLive(lease, at)) return runningAnswer(lease);
+          if (budgetLeft(lease, at, budget) === 0) {
+            return privateJson(429, { ok: false, error: 'daily_budget_spent', message: budgetSpentMessage(at, budget) });
+          }
+          const marked = await markedJobWaiting(lease, at);
+          if (marked) return queuedAnswer(marked);
+          // A job queued some other way (straight through enqueueJob) has no marker.
+          const running = await jobInFlight();
+          if (running) return queuedAnswer(running);
+          const jobId = uuid();
+          const claim = await claimPendingJob(store, lease, { jobId, now: at });
+          // Lost the write: read again, and answer with whoever won.
+          if (!claim.ok) continue;
+          await store.upsertDoc(
+            JOBS_CONTAINER,
+            newJobDoc({ id: jobId, type: SYNC_JOB_TYPE, payload: {}, requestedBy: auth.user ?? null, createdAt: now().toISOString() })
+          );
+          io.enqueue({ jobId, type: SYNC_JOB_TYPE });
+          return privateJson(202, { ok: true, queued: true, jobId, status: 'queued', poll: `getJob?jobId=${jobId}` });
         }
-        const running = await jobInFlight();
-        if (running) {
-          return privateJson(202, { ok: true, queued: true, alreadyQueued: true, jobId: running.id, status: running.status });
-        }
-        const jobId = uuid();
-        await store.upsertDoc(
-          JOBS_CONTAINER,
-          newJobDoc({ id: jobId, type: SYNC_JOB_TYPE, payload: {}, requestedBy: auth.user ?? null, createdAt: now().toISOString() })
-        );
-        io.enqueue({ jobId, type: SYNC_JOB_TYPE });
-        return privateJson(202, { ok: true, queued: true, jobId, status: 'queued', poll: `getJob?jobId=${jobId}` });
+        // Lost the write every time to something that left no job behind.
+        return privateJson(409, {
+          ok: false,
+          error: 'busy',
+          message: 'Another request changed the run state at the same moment. Press Run now again.',
+        });
       } catch (failure) {
         return errorResponse(context, 'Failed to queue a Search Console run', failure, 500, request);
       }

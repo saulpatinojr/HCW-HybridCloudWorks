@@ -23,6 +23,13 @@
  *     The app stops at 1,800 a day, leaving 200 for the owner's own
  *     inspections in Google's Search Console screens.
  *
+ *   - A queued-job marker, `pendingJob` on the same document: the Run now
+ *     button claims it (`claimPendingJob`) before it writes a job, so two
+ *     presses at the same moment queue one job, not two. The run that job
+ *     starts clears it when it takes the lease, or when it finds another run
+ *     holding the lease and stops. A marker nobody cleared lapses after 35
+ *     minutes, like the lease.
+ *
  * Every write is conditional: a new lease document is created only if none
  * exists (Cosmos answers 409 otherwise), and a change to an existing one is
  * made only if it has not changed since it was read (its ETag; Cosmos answers
@@ -88,6 +95,14 @@ export function leaseIsLive(lease, now) {
   return Number.isFinite(expiresAt) && expiresAt > now.getTime();
 }
 
+/** Whether a stored queued-job marker names a job and has not lapsed. */
+export function pendingJobIsLive(lease, now) {
+  const pending = lease?.pendingJob;
+  if (!pending || typeof pending.jobId !== 'string' || !pending.jobId) return false;
+  const expiresAt = Date.parse(pending.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt > now.getTime();
+}
+
 /** Inspections already counted for `now`'s Pacific day (zero on a new day). */
 export function usedToday(lease, now) {
   const budget = lease?.budget;
@@ -114,6 +129,64 @@ const isWriteConflict = (failure) => {
   return status === 412 || status === 409;
 };
 
+/** The lease document's own fields, without Cosmos's system fields. */
+const shape = (fields) => ({
+  id: LEASE_DOC_ID,
+  configScope: ADMIN_CONFIG_PARTITION,
+  docType: LEASE_DOC_TYPE,
+  ...fields,
+});
+
+/** Every field of a stored lease document that a write must carry over. */
+const keep = (current) => ({
+  holder: current.holder ?? null,
+  by: current.by ?? null,
+  jobId: current.jobId ?? null,
+  takenAt: current.takenAt ?? null,
+  expiresAt: current.expiresAt ?? null,
+  budget: current.budget ?? null,
+  pendingJob: current.pendingJob ?? null,
+});
+
+const readLease = (store) => store.readDoc(CONTAINER, LEASE_DOC_ID, ADMIN_CONFIG_PARTITION);
+
+const replaceLease = (store, current, fields) =>
+  store.replaceDocIfMatch(CONTAINER, { ...shape(fields), _etag: current._etag }, { partitionKey: ADMIN_CONFIG_PARTITION });
+
+/**
+ * Claim the queued-job marker for `jobId`, in one conditional write against
+ * the lease document `lease` was read as (null when there is none yet): a
+ * create when there is no document, a replace under its ETag otherwise.
+ * `{ ok: true }` when this request now holds the marker; `{ ok: false }` when
+ * another request or a run changed the document first (409 or 412), and the
+ * caller reads it again to see who won.
+ *
+ * @param {{ createDoc: Function, replaceDocIfMatch: Function }} store
+ * @param {object|null} lease - the lease document as just read
+ * @param {{ jobId: string, now: Date }} claim
+ */
+export async function claimPendingJob(store, lease, { jobId, now }) {
+  const pendingJob = {
+    jobId,
+    claimedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + LEASE_TTL_MS).toISOString(),
+  };
+  try {
+    if (lease) {
+      await replaceLease(store, lease, { ...keep(lease), pendingJob });
+    } else {
+      await store.createDoc(
+        CONTAINER,
+        shape({ holder: null, by: null, jobId: null, takenAt: null, expiresAt: null, budget: null, pendingJob })
+      );
+    }
+    return { ok: true };
+  } catch (failure) {
+    if (!isWriteConflict(failure)) throw failure;
+    return { ok: false };
+  }
+}
+
 /**
  * One run's hold on the lease.
  *
@@ -135,28 +208,23 @@ export function createRunLease({
 }) {
   /** The day the reservation was counted against, so a refund lands on the same day. */
   let reservedDay = null;
+  /**
+   * Set when this run reserved on two different days (a run that crossed
+   * midnight Pacific): what is unused cannot be told apart by day, so
+   * nothing is handed back, which errs on the safe side.
+   */
+  let reservedOnTwoDays = false;
 
-  const read = () => store.readDoc(CONTAINER, LEASE_DOC_ID, ADMIN_CONFIG_PARTITION);
+  const read = () => readLease(store);
+  const replace = (current, fields) => replaceLease(store, current, fields);
 
-  /** The lease document's own fields, without Cosmos's system fields. */
-  const shape = (fields) => ({
-    id: LEASE_DOC_ID,
-    configScope: ADMIN_CONFIG_PARTITION,
-    docType: LEASE_DOC_TYPE,
-    ...fields,
-  });
-
-  const keep = (current) => ({
-    holder: current.holder ?? null,
-    by: current.by ?? null,
-    jobId: current.jobId ?? null,
-    takenAt: current.takenAt ?? null,
-    expiresAt: current.expiresAt ?? null,
-    budget: current.budget ?? null,
-  });
-
-  const replace = (current, fields) =>
-    store.replaceDocIfMatch(CONTAINER, { ...shape(fields), _etag: current._etag }, { partitionKey: ADMIN_CONFIG_PARTITION });
+  /**
+   * The queued-job marker after this run starts: cleared when it names this
+   * run's job (the job is no longer waiting) or has lapsed, kept otherwise
+   * (another job is still queued).
+   */
+  const pendingAfterStart = (current, at) =>
+    pendingJobIsLive(current, at) && current.pendingJob.jobId !== jobId ? current.pendingJob : null;
 
   return {
     holder,
@@ -169,7 +237,19 @@ export function createRunLease({
       for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt += 1) {
         const current = await read();
         const at = now();
-        if (leaseIsLive(current, at)) return { ok: false };
+        if (leaseIsLive(current, at)) {
+          // Another run holds it, so this job will not run. Its marker is
+          // cleared all the same, or Run now would wait for it until it lapses.
+          if (jobId && current.pendingJob?.jobId === jobId) {
+            try {
+              await replace(current, { ...keep(current), pendingJob: null });
+            } catch (failure) {
+              if (!isWriteConflict(failure)) throw failure;
+              continue;
+            }
+          }
+          return { ok: false };
+        }
         const fields = {
           budget: current?.budget ?? { day: pacificDay(at), used: 0 },
           holder,
@@ -177,6 +257,7 @@ export function createRunLease({
           jobId,
           takenAt: at.toISOString(),
           expiresAt: new Date(at.getTime() + LEASE_TTL_MS).toISOString(),
+          pendingJob: pendingAfterStart(current, at),
         };
         try {
           if (current) await replace(current, fields);
@@ -206,6 +287,7 @@ export function createRunLease({
         if (allowed === 0) return 0;
         try {
           await replace(current, { ...keep(current), budget: { day, used: used + allowed } });
+          if (reservedDay !== null && reservedDay !== day) reservedOnTwoDays = true;
           reservedDay = day;
           return allowed;
         } catch (failure) {
@@ -225,7 +307,7 @@ export function createRunLease({
         const current = await read();
         if (!current || current.holder !== holder) return;
         let counted = current.budget ?? null;
-        if (unused > 0 && counted && counted.day === reservedDay) {
+        if (unused > 0 && !reservedOnTwoDays && counted && counted.day === reservedDay) {
           counted = { day: counted.day, used: Math.max(0, (Number(counted.used) || 0) - unused) };
         }
         try {
@@ -237,6 +319,7 @@ export function createRunLease({
             expiresAt: null,
             releasedAt: now().toISOString(),
             budget: counted,
+            pendingJob: current.pendingJob ?? null,
           });
           return;
         } catch (failure) {

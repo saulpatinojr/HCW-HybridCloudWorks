@@ -15,6 +15,17 @@
  * sentence this file wrote, with the HTTP status: Google's response body is
  * never read into an error, a log or a document.
  *
+ * A 2xx answer counts only if it is JSON in the shape Google documents for
+ * that call: `inspectionResult` for an inspection; `rows` for Search Analytics
+ * and `sitemap` for the sitemaps list, both of which Google leaves out when
+ * there is nothing to list, so `{}` is a good empty answer for those two.
+ * Anything else is an error for that call, so the run keeps the last good
+ * figures instead of saving empty ones.
+ *
+ * An inspection may be given `beforeSend`, which is asked before every
+ * request goes out, retries included. When it answers false the request is
+ * not sent (sync.js uses this to keep every request inside the daily budget).
+ *
  * Quota (https://developers.google.com/webmaster-tools/limits): URL
  * inspection allows 2,000 calls a day and 600 a minute per property. The
  * sync keeps to four calls at a time and paces their starts (sync.js).
@@ -32,6 +43,9 @@ export const BASE_BACKOFF_MS = 1000;
 export const MAX_BACKOFF_MS = 30_000;
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+/** Reasons that are not an HTTP status: a 2xx whose body was not what Google documents, and a request held back by `beforeSend`. */
+const UNREADABLE = 'unreadable';
+const NOT_SENT = 'not_sent';
 
 /** Fixed sentences by status, so the page says what to do. */
 function sentenceFor(status) {
@@ -39,6 +53,8 @@ function sentenceFor(status) {
   if (status === 401) return 'Google did not accept the access token';
   if (status === 429) return 'Google\'s Search Console quota was used up';
   if (status === 404) return 'Google has no such property or resource';
+  if (status === UNREADABLE) return 'Google\'s answer could not be read';
+  if (status === NOT_SENT) return 'the daily allowance of inspections is used up, so it was not sent';
   if (status === 400) return 'Google refused the request as malformed';
   if (Number.isInteger(status) && status >= 500) return 'Google\'s Search Console service failed';
   return 'Search Console could not be reached';
@@ -47,18 +63,24 @@ function sentenceFor(status) {
 /**
  * A failed Search Console call. `kind` names the call ('inspect',
  * 'searchAnalytics', 'sitemaps'); `status` the HTTP status, or undefined when
- * the request never got an answer.
+ * the request never got an answer. `reason` is set instead of a status for
+ * the two failures that are not one: 'unreadable' (a 2xx whose body was not
+ * the JSON Google documents) and 'not_sent' (held back by `beforeSend`).
  */
 export class SearchConsoleError extends AuthoredError {
-  constructor(kind, status) {
+  constructor(kind, status, { reason } = {}) {
     const suffix = Number.isInteger(status) ? ` (HTTP ${status})` : '';
-    super(`Search Console ${kind} failed: ${sentenceFor(status)}${suffix}.`, {
-      code: Number.isInteger(status) ? `GSC_HTTP_${status}` : 'GSC_UNREACHABLE',
+    const code = reason === UNREADABLE ? 'GSC_UNREADABLE' : reason === NOT_SENT ? 'GSC_NOT_SENT' : Number.isInteger(status) ? `GSC_HTTP_${status}` : 'GSC_UNREACHABLE';
+    super(`Search Console ${kind} failed: ${sentenceFor(reason ?? status)}${reason ? '' : suffix}.`, {
+      code,
       ...(Number.isInteger(status) ? { status } : {}),
     });
     this.kind = kind;
+    this.reason = reason ?? null;
   }
 }
+
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 export const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -87,10 +109,20 @@ export function createSearchConsoleClient({
 }) {
   const siteBase = `${API_BASE}/webmasters/v3/sites/${encodeURIComponent(siteUrl)}`;
 
-  /** One call with the retry rule; returns the parsed JSON body. */
-  async function call(kind, url, { method = 'GET', body } = {}) {
+  /**
+   * One call with the retry rule; returns the parsed JSON body once `valid`
+   * accepts it. `beforeSend` (optional) is asked before every request,
+   * retries and the re-send after a refused token included; false means do
+   * not send. A first request held back fails as 'not_sent'; a retry held
+   * back fails with the failure it was going to retry.
+   */
+  async function call(kind, url, { method = 'GET', body, valid, beforeSend } = {}) {
     let refreshedOnce = false;
+    let lastFailure = null;
     for (let attempt = 1; ; attempt += 1) {
+      if (typeof beforeSend === 'function' && !(await beforeSend())) {
+        throw lastFailure ?? new SearchConsoleError(kind, undefined, { reason: NOT_SENT });
+      }
       const token = await auth.getAccessToken();
       let response;
       try {
@@ -106,27 +138,36 @@ export function createSearchConsoleClient({
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         });
       } catch {
-        if (attempt >= maxAttempts) throw new SearchConsoleError(kind);
+        lastFailure = new SearchConsoleError(kind);
+        if (attempt >= maxAttempts) throw lastFailure;
         await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
         continue;
       }
       if (response.ok) {
+        // Not retried: Google answered, and asking again would spend quota on
+        // the same answer. The caller keeps its last good figures instead.
+        let answer;
         try {
-          return await response.json();
+          answer = await response.json();
         } catch {
-          return {};
+          throw new SearchConsoleError(kind, response.status, { reason: UNREADABLE });
         }
+        if (!isObject(answer) || (valid && !valid(answer))) {
+          throw new SearchConsoleError(kind, response.status, { reason: UNREADABLE });
+        }
+        return answer;
       }
       const status = response.status;
+      lastFailure = new SearchConsoleError(kind, status);
       // A token Google issued and then refused: sign in again, once.
       if (status === 401 && !refreshedOnce && typeof auth.reset === 'function') {
         refreshedOnce = true;
         auth.reset();
         continue;
       }
-      if (!RETRYABLE.has(status) || attempt >= maxAttempts) throw new SearchConsoleError(kind, status);
+      if (!RETRYABLE.has(status) || attempt >= maxAttempts) throw lastFailure;
       const wait = retryAfterMs(response) ?? BASE_BACKOFF_MS * 2 ** (attempt - 1);
-      if (wait > MAX_BACKOFF_MS) throw new SearchConsoleError(kind, status);
+      if (wait > MAX_BACKOFF_MS) throw lastFailure;
       await sleep(wait);
     }
   }
@@ -134,25 +175,36 @@ export function createSearchConsoleClient({
   return {
     siteUrl,
 
-    /** Google's UrlInspectionResult for one page, or {} when it sent none. */
-    async inspect(inspectionUrl) {
+    /**
+     * Google's UrlInspectionResult for one page. `options.beforeSend` is
+     * asked before each request goes out (see `call`).
+     */
+    async inspect(inspectionUrl, { beforeSend } = {}) {
       const answer = await call('inspect', INSPECT_URL, {
         method: 'POST',
         body: { inspectionUrl, siteUrl, languageCode: 'en-US' },
+        valid: (json) => isObject(json.inspectionResult),
+        beforeSend,
       });
-      return answer?.inspectionResult ?? {};
+      return answer.inspectionResult;
     },
 
     /** The rows of one Search Analytics query, [] when there are none. */
     async searchAnalytics(body) {
-      const answer = await call('searchAnalytics', `${siteBase}/searchAnalytics/query`, { method: 'POST', body });
-      return Array.isArray(answer?.rows) ? answer.rows : [];
+      const answer = await call('searchAnalytics', `${siteBase}/searchAnalytics/query`, {
+        method: 'POST',
+        body,
+        valid: (json) => json.rows === undefined || Array.isArray(json.rows),
+      });
+      return answer.rows ?? [];
     },
 
     /** The sitemaps submitted for the property, [] when there are none. */
     async listSitemaps() {
-      const answer = await call('sitemaps', `${siteBase}/sitemaps`);
-      return Array.isArray(answer?.sitemap) ? answer.sitemap : [];
+      const answer = await call('sitemaps', `${siteBase}/sitemaps`, {
+        valid: (json) => json.sitemap === undefined || Array.isArray(json.sitemap),
+      });
+      return answer.sitemap ?? [];
     },
   };
 }

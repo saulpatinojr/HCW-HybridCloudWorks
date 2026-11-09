@@ -54,7 +54,7 @@ import {
 
 const HELP = [
   'This page shows what Google Search knows about the public site (hybridcloudworks.com): which pages Google has indexed, how people find the site in Google, and the sitemaps Google has read.',
-  'The server asks Google twice a day, at 00:10 and 12:10 UTC: 6:10 AM and 6:10 PM Central in winter, 7:10 AM and 7:10 PM in summer. Run now asks straight away; a run takes a few minutes and the page updates when it lands.',
+  'The server asks Google twice a day, at 00:10 and 12:10 UTC, which is 6:10 PM and 6:10 AM Central Standard Time (7:10 PM and 7:10 AM Central Daylight Time, in summer). Run now asks straight away; a run takes a few minutes and the page updates when it lands.',
   'Indexing inspects every page in the sitemap one by one. Google answers from its saved copy of each page, not a live test, so a fix shows here only after Google crawls the page again. Pages that are not indexed are listed first.',
   'Performance is clicks (someone opened the site from a Google result), impressions (the site was shown in a result), CTR (the share of impressions that became a click) and average position (1 is the top of the first page).',
   'Some Search Console screens have no API, so they cannot be shown here; the note at the bottom says which, with a link to open them in Google.',
