@@ -5,6 +5,8 @@ import { useProvider } from '@/context/ProviderContext';
 import { routes, staticRoutes, parseRoute } from '@/lib/routeFactory';
 import { SkipToMainContent } from '@/components/accessibility/SkipToMainContent';
 import CommandPalette from '@/components/shared/CommandPalette';
+// Adds nothing to the first download: the search palette above already
+// brings the lab catalogue into the main bundle (through data/searchIndex.js).
 import { providersWithLabs } from '@/data/labs/catalogue';
 
 /**
