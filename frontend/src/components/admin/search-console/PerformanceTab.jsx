@@ -28,7 +28,6 @@ import {
   fmtCount,
   fmtCtr,
   fmtPosition,
-  pathOf,
   sortBreakdown,
 } from '@/lib/searchConsole';
 import { Section, TABLE_CLASS, TD_CLASS, TH_CLASS, Tile } from './shared';
@@ -43,7 +42,8 @@ export const BREAKDOWNS = Object.freeze([
     id: 'pages',
     label: 'Pages',
     heading: 'Page',
-    show: (key) => <span className="font-mono">{pathOf(key)}</span>,
+    // The whole address: the figures cover every subdomain, so the host matters.
+    show: (key) => <span className="break-all font-mono">{String(key ?? '')}</span>,
   },
   { id: 'countries', label: 'Countries', heading: 'Country', show: countryLabel },
   { id: 'devices', label: 'Devices', heading: 'Device', show: deviceLabel },

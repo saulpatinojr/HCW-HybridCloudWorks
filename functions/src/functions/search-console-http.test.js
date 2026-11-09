@@ -89,14 +89,26 @@ describe('the sync-search-console job', () => {
   it('runs one sync with the job\'s signal and id, and answers its summary', async () => {
     fakes.run.mockResolvedValueOnce({ status: 'ok', pages: 2, inspected: 2 });
     const signal = new AbortController().signal;
-    await expect(worker()({}, { context, signal, job: { id: 'job-1' } })).resolves.toEqual({ status: 'ok', pages: 2, inspected: 2 });
-    expect(fakes.createSearchConsoleSync).toHaveBeenCalledWith(expect.objectContaining({ log: context, signal, jobId: 'job-1' }));
+    await expect(worker()({}, { context, signal, job: { id: 'job-1', createdAt: '2026-11-09T12:00:00.000Z' } })).resolves.toEqual({
+      status: 'ok',
+      pages: 2,
+      inspected: 2,
+    });
+    expect(fakes.createSearchConsoleSync).toHaveBeenCalledWith(
+      expect.objectContaining({ log: context, signal, jobId: 'job-1', jobCreatedAt: '2026-11-09T12:00:00.000Z' })
+    );
   });
 
   it('completes with the skip when another run holds the lease', async () => {
     fakes.run.mockResolvedValueOnce({ skipped: 'already_running' });
     await expect(worker()({}, { context })).resolves.toEqual({ skipped: 'already_running' });
-    expect(fakes.createSearchConsoleSync).toHaveBeenCalledWith(expect.objectContaining({ jobId: null }));
+    expect(fakes.createSearchConsoleSync).toHaveBeenCalledWith(expect.objectContaining({ jobId: null, jobCreatedAt: null }));
+  });
+
+  it('completes with the skip when the run is no longer needed', async () => {
+    fakes.run.mockResolvedValueOnce({ skipped: 'superseded' });
+    await expect(worker()({}, { context, job: { id: 'job-3', createdAt: 42 } })).resolves.toEqual({ skipped: 'superseded' });
+    expect(fakes.createSearchConsoleSync).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-3', jobCreatedAt: null }));
   });
 
   it('fails with its own sentence when the run failed', async () => {

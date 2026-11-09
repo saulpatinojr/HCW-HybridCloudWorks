@@ -136,6 +136,71 @@ describe('SearchConsolePage with a report', () => {
     expect(screen.getByText('No pages match the current filter.')).toBeTruthy();
   });
 
+  it('says where each page came from, shows a subdomain page in full, and filters by host', async () => {
+    renderAt();
+    await loaded();
+    const rows = screen.getAllByTestId('indexing-row');
+    expect(rows.map((row) => row.dataset.source)).toEqual([
+      'sitemap',
+      'search',
+      'sitemap',
+      'sitemap',
+    ]);
+    const [, docsRow] = rows;
+    expect(within(docsRow).getByText('Found in search')).toBeTruthy();
+    const docsLink = within(docsRow).getByRole('link', {
+      name: 'https://docs.hybridcloudworks.com/d-not-chosen',
+    });
+    expect(docsLink.getAttribute('href')).toBe('https://docs.hybridcloudworks.com/d-not-chosen');
+    // A page on the main site shows its path only.
+    expect(within(rows[0]).getByRole('link', { name: '/c-locked-page' })).toBeTruthy();
+    expect(within(rows[0]).getByText('Sitemap')).toBeTruthy();
+
+    const hosts = screen.getByRole('group', { name: 'Host' });
+    fireEvent.click(within(hosts).getByText('docs.hybridcloudworks.com (1)'));
+    expect(screen.getAllByTestId('indexing-row')).toHaveLength(1);
+    fireEvent.click(within(hosts).getByText('hybridcloudworks.com (3)'));
+    expect(screen.getAllByTestId('indexing-row')).toHaveLength(3);
+    fireEvent.click(within(hosts).getByText('All'));
+    fireEvent.change(screen.getByLabelText('Search inspected pages'), {
+      target: { value: 'found in search' },
+    });
+    expect(screen.getAllByTestId('indexing-row')).toHaveLength(1);
+  });
+
+  it('links a stray on a subdomain, showing its whole address', async () => {
+    getJSON.mockResolvedValueOnce({
+      ...REPORT,
+      indexing: {
+        ...REPORT.indexing,
+        strays: [
+          { url: 'https://api-azure.hybridcloudworks.com/x', clicks: 1, impressions: 40 },
+          ...REPORT.indexing.strays,
+        ],
+      },
+    });
+    renderAt();
+    await loaded();
+    const table = screen.getByRole('table', {
+      name: 'Pages Google shows that are not in the sitemap',
+    });
+    expect(
+      within(table)
+        .getByRole('link', { name: 'https://api-azure.hybridcloudworks.com/x' })
+        .getAttribute('href')
+    ).toBe('https://api-azure.hybridcloudworks.com/x');
+    expect(within(table).getByRole('link', { name: '/old-stray-page' })).toBeTruthy();
+  });
+
+  it('shows each page in the Performance tab by its whole address, host included', async () => {
+    renderAt('/admin/search-console?tab=performance');
+    await loaded();
+    fireEvent.click(screen.getByRole('tab', { name: 'Pages' }));
+    const table = screen.getByRole('table', { name: 'Performance by pages' });
+    expect(within(table).getByText('https://hybridcloudworks.com/a-indexed-page')).toBeTruthy();
+    expect(within(table).getByText('https://docs.hybridcloudworks.com/d-not-chosen')).toBeTruthy();
+  });
+
   it('lists pages Google shows that are not in the sitemap', async () => {
     renderAt();
     await loaded();
@@ -311,7 +376,7 @@ describe('SearchConsolePage states', () => {
     const allLinks = rows.flatMap((row) => within(row).queryAllByRole('link'));
     for (const link of allLinks) {
       expect(link.getAttribute('href')).toMatch(
-        /^https:\/\/(hybridcloudworks\.com|search\.google\.com)\//
+        /^https:\/\/(([a-z0-9-]+\.)*hybridcloudworks\.com|search\.google\.com)\//
       );
     }
     expect(screen.getByText('https://evil.example/b-canonical-elsewhere')).toBeTruthy();
@@ -441,6 +506,12 @@ describe('Run now', () => {
       await loaded();
       fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
       expect(await screen.findByRole('button', { name: /Run in progress/ })).toBeTruthy();
+      // The label changes when React commits, but the effect that starts the
+      // polling timer runs a moment later. Let it run before moving the clock;
+      // otherwise the timer can start after the jump, against the moved clock,
+      // and the fifteen minutes never pass (the test failed about one run in
+      // five that way).
+      await act(async () => {});
       getJSON.mockResolvedValue(REPORT);
       await act(async () => {
         vi.advanceTimersByTime(POLL_FOR_MS + POLL_EVERY_MS);

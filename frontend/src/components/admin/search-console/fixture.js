@@ -32,6 +32,8 @@ export const REPORT = Object.freeze({
     pages: [
       {
         url: 'https://hybridcloudworks.com/a-indexed-page',
+        source: 'sitemap',
+        host: 'hybridcloudworks.com',
         verdict: 'PASS',
         coverageState: 'Submitted and indexed',
         pageFetchState: 'SUCCESSFUL',
@@ -45,6 +47,8 @@ export const REPORT = Object.freeze({
       },
       {
         url: 'https://hybridcloudworks.com/b-canonical-elsewhere',
+        source: 'sitemap',
+        host: 'hybridcloudworks.com',
         verdict: 'PASS',
         coverageState: 'Submitted and indexed',
         pageFetchState: 'SUCCESSFUL',
@@ -56,6 +60,8 @@ export const REPORT = Object.freeze({
       },
       {
         url: 'https://hybridcloudworks.com/c-locked-page',
+        source: 'sitemap',
+        host: 'hybridcloudworks.com',
         verdict: 'FAIL',
         coverageState: 'Blocked due to unauthorized request (401)',
         pageFetchState: 'ACCESS_DENIED',
@@ -66,13 +72,16 @@ export const REPORT = Object.freeze({
         error: null,
       },
       {
-        url: 'https://hybridcloudworks.com/d-not-chosen',
+        // A stray on a subdomain: not in the sitemap, found in search.
+        url: 'https://docs.hybridcloudworks.com/d-not-chosen',
+        source: 'search',
+        host: 'docs.hybridcloudworks.com',
         verdict: 'NEUTRAL',
         coverageState: 'Crawled - currently not indexed',
         pageFetchState: 'SUCCESSFUL',
         lastCrawlTime: '2026-11-01T03:00:00.000Z',
         googleCanonical: null,
-        userCanonical: 'https://hybridcloudworks.com/d-not-chosen',
+        userCanonical: 'https://docs.hybridcloudworks.com/d-not-chosen',
         inspectionResultLink: null,
         error: null,
       },
@@ -95,7 +104,22 @@ export const REPORT = Object.freeze({
       { key: 'azure landing zone', clicks: 5, impressions: 100, ctr: 0.05, position: 7.25 },
       { key: 'terraform modules', clicks: 9, impressions: 300, ctr: 0.03, position: 11 },
     ],
-    pages: [],
+    pages: [
+      {
+        key: 'https://hybridcloudworks.com/a-indexed-page',
+        clicks: 7,
+        impressions: 300,
+        ctr: 0.0233,
+        position: 6,
+      },
+      {
+        key: 'https://docs.hybridcloudworks.com/d-not-chosen',
+        clicks: 2,
+        impressions: 90,
+        ctr: 0.0222,
+        position: 9,
+      },
+    ],
     countries: [{ key: 'usa', clicks: 20, impressions: 900, ctr: 0.0222, position: 16 }],
     devices: [{ key: 'MOBILE', clicks: 4, impressions: 80, ctr: 0.05, position: 9 }],
     searchAppearance: [],
