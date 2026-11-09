@@ -15,9 +15,11 @@
              repository's logs and prints a variable as it is.
     Wave 2 - everything that is a Terraform output, read from the workspace's
              applied state via the HCP Terraform API (the same token
-             set-tfc-variables.ps1 resolves). Six client ids, written as
+             set-tfc-variables.ps1 resolves). Seven client ids, written as
              repository SECRETS for the same reason (#1618): CLIENT_ID
-             (client_id), READER_CLIENT_ID (reader_client_id),
+             (client_id), FRONTEND_DEPLOY_CLIENT_ID
+             (frontend_deploy_client_id, #1617), READER_CLIENT_ID
+             (reader_client_id),
              ALERT_READER_CLIENT_ID (alert_reader_client_id),
              MANIFEST_WINDOW_CLIENT_ID (manifest_window_client_id),
              COPILOT_REVIEW_CLIENT_ID (copilot_review_client_id) and
@@ -346,9 +348,15 @@ if (-not $script:tfcToken) {
 
 if ($outputs) {
   $waveTwo = @(
-    # The six client ids are SECRETS (#1618), so the public logs show ***;
+    # The client ids are SECRETS, so the public logs show ***: the six from
+    # #1618, and FRONTEND_DEPLOY_CLIENT_ID added by #1617;
     # every workflow reads them as `secrets.<name>`.
     @{ output = 'client_id'; kind = 'secret'; name = 'CLIENT_ID'; transform = { param($v) $v } }
+    # #1617: the frontend deploy's own identity, HCW Static Web App Deployer
+    # on the one site and nothing else. deploy-azure-frontend.yml signs in
+    # with it from #1617's second pull request on, so seed it after the apply
+    # that creates the identity and before that pull request merges.
+    @{ output = 'frontend_deploy_client_id'; kind = 'secret'; name = 'FRONTEND_DEPLOY_CLIENT_ID'; transform = { param($v) $v } }
     # T-728: the read-only identity. monitor-functions-registered and
     # monitor-unresolved-secrets are gated on this secret being non-empty
     # (their `armed` job) and SKIP until it is set, so a missing READER_CLIENT_ID presents as

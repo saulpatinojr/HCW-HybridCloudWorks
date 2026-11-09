@@ -1223,6 +1223,35 @@ describe('DECLARED', () => {
     ]);
   });
 
+  it('declares #1617’s six creates and none of PR 2’s deletes, so the deploy identity keeps production until the workflows move', () => {
+    // PR 1 adds the frontend deploy identity and the deploy identity's
+    // production-backend pair. It removes nothing: github_deploy's production
+    // pair and its site role stay until PR 2 has moved both workflows, or a
+    // deploy in between would fail at sign-in. A declared delete of any of
+    // the three here would wave that destroy through the plan check.
+    const byAction = (action) => DECLARED.filter((entry) => entry.action === action).map((entry) => entry.address);
+    for (const address of [
+      'azurerm_user_assigned_identity.github_frontend_deploy',
+      'azurerm_federated_identity_credential.github_frontend_deploy_env_production',
+      'azurerm_federated_identity_credential.github_frontend_deploy_env_production_immutable',
+      'azurerm_role_assignment.github_frontend_deploy_swa_token',
+      'azurerm_federated_identity_credential.github_production_backend',
+      'azurerm_federated_identity_credential.github_production_backend_immutable',
+    ]) {
+      expect(byAction('create'), address).toContain(address);
+    }
+    for (const address of [
+      'azurerm_federated_identity_credential.github_production',
+      'azurerm_federated_identity_credential.github_production_immutable',
+      'azurerm_role_assignment.github_deploy_swa_token',
+    ]) {
+      expect(byAction('delete'), address).not.toContain(address);
+      expect(infraSource, `${address} is gone from infra/ before PR 2`).toContain(
+        `resource "${address.split('.')[0]}" "${address.split('.')[1]}"`
+      );
+    }
+  });
+
   it('prunes the Cosmos request-log filter’s four entries once applied, with their resources still in infra/ and the azapi table gone (#1530, pruned 2026-11-04)', () => {
     // run-fQRFPxBy7CowV6zG applied the delete and the three creates on
     // 2026-11-04. The declarations go; the three resources stay in the tree
