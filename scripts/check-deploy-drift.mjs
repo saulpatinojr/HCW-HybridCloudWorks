@@ -3,10 +3,20 @@
  *
  * ## The gap this closes
  *
- * `deploy-functions.yml` and `deploy-azure-frontend.yml` are both
+ * `deploy-functions.yml` and `deploy-azure-frontend.yml` were both
  * workflow_dispatch only, by a recorded decision: enabling a workflow and
  * enabling auto-deploy-on-merge are separate choices, and only the first was
- * made. Merging therefore deploys nothing, and NOTHING SAID SO.
+ * made. Merging therefore deployed nothing, and NOTHING SAID SO.
+ *
+ * Since 2026-11-09 (owner decision on #1613) a merge that changes `frontend/`
+ * starts a frontend deploy by itself, with no approval step (the owner
+ * removed the `production` environment's required reviewers the same day).
+ * The functions deploy is still started by hand. This check reads the last
+ * SUCCESSFUL run of each workflow, whatever started it, so a frontend run that
+ * failed still shows here as drift. What it does not see is a change outside
+ * `frontend/` that the site still needs (a repository variable, the deploy
+ * workflow itself): that starts no deploy, and this check counts only commits
+ * under `frontend/`, so such a change needs a frontend deploy started by hand.
  *
  * That single gap produced both of 2026-08-31's incidents, hours apart and both
  * found by accident:
@@ -25,9 +35,9 @@
  * tolerates ordinary merges misses the outage.
  *
  * What the two share is TIME. Both sat undeployed for days. Drift measured in
- * hours tolerates the normal merge-then-deploy gap — which is the whole point of
- * dispatch-only releases — and still catches a change that was merged and
- * forgotten. So this reports the age of the OLDEST undeployed commit touching a
+ * hours tolerates the normal gap between a merge and its deploy (minutes for
+ * the automatic frontend deploy, longer for a deploy started by hand) and still
+ * catches a change that was merged and forgotten. So this reports the age of the OLDEST undeployed commit touching a
  * service's own paths, and fails past a threshold.
  *
  * ## Paths, not commits
@@ -496,10 +506,12 @@ export function formatReport(results, thresholdHours) {
       ...rows,
       '',
       failed
-        ? '**Deploy the service(s) marked ❌.** The two deploys are dispatch-only by ' +
-          'design and the Terraform apply is confirmed by hand in HCP Terraform, so merging ' +
-          'ships none of the three — this is the thing that says so. ' +
-          'A ⚠️ means the check could not read the answer, which is not the same as drift.'
+        ? '**Deploy the service(s) marked ❌.** The Function App deploy is started by hand ' +
+          '(deploy-functions.yml). The Static Web App deploys by itself when a merge changes ' +
+          'frontend/, so ❌ there means that run failed or did not finish: re-run it, or start ' +
+          'deploy-azure-frontend.yml by hand. The Terraform Infrastructure apply is confirmed ' +
+          'by hand in HCP Terraform. A ⚠️ means the check could not read the answer, which is ' +
+          'not the same as drift.'
         : 'Every service is within the threshold.',
     ].join('\n'),
   };
