@@ -7,6 +7,7 @@ import {
   budgetLeft,
   budgetSpentMessage,
   claimPendingJob,
+  clearPendingJob,
   createRunLease,
   dailyBudget,
   DEFAULT_DAILY_BUDGET,
@@ -15,9 +16,11 @@ import {
   leaseIsLive,
   nextPacificMidnight,
   pacificDay,
+  PENDING_WRITE_GRACE_MS,
   pendingJobIsLive,
   RUN_DEADLINE_MS,
   usedToday,
+  waitingMarkedJob,
 } from './lease.js';
 
 /** 2026-11-09 00:10 UTC is still 2026-11-08 in Pacific time (UTC-8). */
@@ -452,5 +455,60 @@ describe('renew, the check before a run writes its results (Copilot review round
       throw new Error('write refused');
     });
     await expect(lease(store).renew()).rejects.toThrow('write refused');
+  });
+});
+
+describe('clearPendingJob, for a job that will not run after all (Copilot review round 3, #1614)', () => {
+  const marker = (jobId) => ({ jobId, claimedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + LEASE_TTL_MS).toISOString() });
+
+  it('clears a marker naming the job and keeps every other field', async () => {
+    const store = memoryStore({ holder: null, budget: { day: '2026-11-08', used: 7 }, pendingJob: marker('job-1') });
+    await clearPendingJob(store, 'job-1');
+    expect(store.doc).toMatchObject({ pendingJob: null, budget: { day: '2026-11-08', used: 7 } });
+  });
+
+  it('does nothing when there is no document, or the marker names another job', async () => {
+    const empty = memoryStore();
+    await clearPendingJob(empty, 'job-1');
+    expect(empty.createDoc).not.toHaveBeenCalled();
+    const other = memoryStore({ holder: null, pendingJob: marker('job-2') });
+    await clearPendingJob(other, 'job-1');
+    expect(other.replaceDocIfMatch).not.toHaveBeenCalled();
+  });
+
+  it('gives up after three lost writes, and passes on any other failure', async () => {
+    const store = memoryStore({ holder: null, pendingJob: marker('job-1') });
+    store.replaceDocIfMatch.mockRejectedValue(conflict(412));
+    await clearPendingJob(store, 'job-1');
+    expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3);
+    store.replaceDocIfMatch.mockRejectedValue(new Error('cosmos is down'));
+    await expect(clearPendingJob(store, 'job-1')).rejects.toThrow('cosmos is down');
+  });
+});
+
+describe('waitingMarkedJob', () => {
+  const jobsStore = (jobs) => ({
+    readDoc: vi.fn(async (container, id, partitionKey) => (container === 'jobs' && id === partitionKey ? (jobs[id] ?? null) : null)),
+  });
+  const marked = (claimedAt = NOW.toISOString()) => ({
+    pendingJob: { jobId: 'job-1', claimedAt, expiresAt: new Date(NOW.getTime() + LEASE_TTL_MS).toISOString() },
+  });
+
+  it('names the marked job while it is queued or running, and not once it has finished', async () => {
+    await expect(waitingMarkedJob(jobsStore({ 'job-1': { status: 'queued' } }), marked(), NOW)).resolves.toEqual({ id: 'job-1', status: 'queued' });
+    await expect(waitingMarkedJob(jobsStore({ 'job-1': { status: 'running' } }), marked(), NOW)).resolves.toEqual({ id: 'job-1', status: 'running' });
+    await expect(waitingMarkedJob(jobsStore({ 'job-1': { status: 'failed' } }), marked(), NOW)).resolves.toBeNull();
+  });
+
+  it('counts a marker whose job is not written yet as queued for two minutes', async () => {
+    await expect(waitingMarkedJob(jobsStore({}), marked(), NOW)).resolves.toEqual({ id: 'job-1', status: 'queued' });
+    const old = new Date(NOW.getTime() - PENDING_WRITE_GRACE_MS).toISOString();
+    await expect(waitingMarkedJob(jobsStore({}), marked(old), NOW)).resolves.toBeNull();
+  });
+
+  it('reads nothing without a live marker', async () => {
+    const store = jobsStore({});
+    await expect(waitingMarkedJob(store, null, NOW)).resolves.toBeNull();
+    expect(store.readDoc).not.toHaveBeenCalled();
   });
 });

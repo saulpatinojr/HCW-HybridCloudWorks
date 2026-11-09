@@ -32,8 +32,11 @@
  *     button claims it (`claimPendingJob`) before it writes a job, so two
  *     presses at the same moment queue one job, not two. The run that job
  *     starts clears it when it takes the lease, or when it finds another run
- *     holding the lease and stops. A marker nobody cleared lapses after 35
- *     minutes, like the lease.
+ *     holding the lease and stops, or when it finds it is no longer needed
+ *     (`clearPendingJob`, sync.js). A marker nobody cleared lapses after 35
+ *     minutes, like the lease. A sync job checks the marker before it starts
+ *     (`waitingMarkedJob`): when the marker names another job still waiting,
+ *     that job is the one that runs, and this one stops without calling Google.
  *
  * Every write is conditional: a new lease document is created only if none
  * exists (Cosmos answers 409 otherwise), and a change to an existing one is
@@ -42,6 +45,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
+import { JOBS_CONTAINER } from '../jobs.js';
 
 const CONTAINER = 'admin_config';
 export const LEASE_DOC_ID = 'search_console_lease';
@@ -114,6 +118,34 @@ export function pendingJobIsLive(lease, now) {
   return Number.isFinite(expiresAt) && expiresAt > now.getTime();
 }
 
+/**
+ * A marker whose job document is not there yet counts as waiting for this
+ * long: the press that claimed it may still be writing the job. After that
+ * the write is taken to have failed, and the marker no longer counts.
+ */
+export const PENDING_WRITE_GRACE_MS = 2 * 60 * 1000;
+const WAITING = new Set(['queued', 'running']);
+
+/**
+ * The job the stored queued-job marker names, while that job is still
+ * waiting to run or running: `{ id, status }`. Null when there is no live
+ * marker, or its job has already finished. Reads the job's own document.
+ *
+ * @param {{ readDoc: Function }} store
+ * @param {object|null} lease - the lease document as just read
+ * @param {Date} now
+ */
+export async function waitingMarkedJob(store, lease, now) {
+  if (!pendingJobIsLive(lease, now)) return null;
+  const { jobId, claimedAt } = lease.pendingJob;
+  const job = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
+  if (!job) {
+    const claimed = Date.parse(claimedAt);
+    return Number.isFinite(claimed) && now.getTime() - claimed < PENDING_WRITE_GRACE_MS ? { id: jobId, status: 'queued' } : null;
+  }
+  return WAITING.has(job.status) ? { id: jobId, status: job.status } : null;
+}
+
 /** Inspections already counted for `now`'s Pacific day (zero on a new day). */
 export function usedToday(lease, now) {
   const budget = lease?.budget;
@@ -159,7 +191,8 @@ const keep = (current) => ({
   pendingJob: current.pendingJob ?? null,
 });
 
-const readLease = (store) => store.readDoc(CONTAINER, LEASE_DOC_ID, ADMIN_CONFIG_PARTITION);
+/** The lease document as stored, or null before the first run. */
+export const readLease = (store) => store.readDoc(CONTAINER, LEASE_DOC_ID, ADMIN_CONFIG_PARTITION);
 
 const replaceLease = (store, current, fields) =>
   store.replaceDocIfMatch(CONTAINER, { ...shape(fields), _etag: current._etag }, { partitionKey: ADMIN_CONFIG_PARTITION });
@@ -195,6 +228,28 @@ export async function claimPendingJob(store, lease, { jobId, now }) {
   } catch (failure) {
     if (!isWriteConflict(failure)) throw failure;
     return { ok: false };
+  }
+}
+
+/**
+ * Clear the queued-job marker when it names `jobId`, for a job that will not
+ * run after all. Leaves a marker naming another job alone. A conditional
+ * write under the document's ETag; when something else changed the document
+ * first (412), it is read again and checked again.
+ *
+ * @param {{ readDoc: Function, replaceDocIfMatch: Function }} store
+ * @param {string} jobId
+ */
+export async function clearPendingJob(store, jobId) {
+  for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt += 1) {
+    const current = await readLease(store);
+    if (!current || current.pendingJob?.jobId !== jobId) return;
+    try {
+      await replaceLease(store, current, { ...keep(current), pendingJob: null });
+      return;
+    } catch (failure) {
+      if (!isWriteConflict(failure)) throw failure;
+    }
   }
 }
 

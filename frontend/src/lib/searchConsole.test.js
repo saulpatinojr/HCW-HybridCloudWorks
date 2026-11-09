@@ -14,10 +14,13 @@ import {
   fmtCount,
   fmtCtr,
   fmtPosition,
+  hostOf,
   inspectionHref,
   normalizeReport,
+  pageLabel,
   pathOf,
   sitePageHref,
+  sourceOf,
   resolveTab,
   sortBreakdown,
   sortPages,
@@ -144,6 +147,23 @@ describe('normalizeReport', () => {
     expect(report.run).toBeNull();
   });
 
+  it('gives every page a source and a host, taking the host from the address when the report has none', () => {
+    const report = normalizeReport({
+      indexing: {
+        pages: [
+          { url: 'https://docs.hybridcloudworks.com/a', source: 'search' },
+          { url: 'https://hybridcloudworks.com/b', host: 'hybridcloudworks.com' },
+          { url: 'https://example.net/c' },
+        ],
+      },
+    });
+    expect(report.indexing.pages.map((page) => [page.source, page.host])).toEqual([
+      ['search', 'docs.hybridcloudworks.com'],
+      ['sitemap', 'hybridcloudworks.com'],
+      ['sitemap', null],
+    ]);
+  });
+
   it('drops entries that are not objects and keeps the known status', () => {
     const report = normalizeReport({
       status: 'never_run',
@@ -183,12 +203,42 @@ describe('link addresses', () => {
     expect(inspectionHref(null)).toBeNull();
   });
 
-  it('links a page only on the public site', () => {
+  it('links a page only on the public site or one of its subdomains', () => {
     expect(sitePageHref('https://hybridcloudworks.com/blog/x')).toBe(
       'https://hybridcloudworks.com/blog/x'
     );
+    expect(sitePageHref('https://docs.hybridcloudworks.com/a')).toBe(
+      'https://docs.hybridcloudworks.com/a'
+    );
+    expect(sitePageHref('https://a.lab.hybridcloudworks.com/')).toBe(
+      'https://a.lab.hybridcloudworks.com/'
+    );
+    // Look-alikes: the parsed host must be the domain or end with ".hybridcloudworks.com".
     expect(sitePageHref('https://hybridcloudworks.com.evil.example/')).toBeNull();
+    expect(sitePageHref('https://evilhybridcloudworks.com/')).toBeNull();
+    expect(sitePageHref('https://evil.example/?next=https://hybridcloudworks.com/')).toBeNull();
+    expect(sitePageHref('https://evil.example/hybridcloudworks.com')).toBeNull();
     expect(sitePageHref('http://hybridcloudworks.com/a')).toBeNull();
+    expect(sitePageHref('javascript:alert(1)//.hybridcloudworks.com')).toBeNull();
+    expect(sitePageHref('not a url')).toBeNull();
     expect(sitePageHref(undefined)).toBeNull();
+  });
+
+  it('names the host, and shows a path on the main site but the whole address on a subdomain', () => {
+    expect(hostOf('https://Docs.HybridCloudWorks.com/a')).toBe('docs.hybridcloudworks.com');
+    expect(hostOf('https://example.net/')).toBeNull();
+    expect(pageLabel('https://hybridcloudworks.com/blog/x?y=1')).toBe('/blog/x?y=1');
+    expect(pageLabel('https://docs.hybridcloudworks.com/a')).toBe(
+      'https://docs.hybridcloudworks.com/a'
+    );
+    expect(pageLabel('https://example.net/a')).toBe('https://example.net/a');
+    expect(pageLabel(null)).toBe('');
+  });
+
+  it('reads a page from search as found in search, and anything else as the sitemap', () => {
+    expect(sourceOf({ source: 'search' })).toBe('search');
+    expect(sourceOf({ source: 'sitemap' })).toBe('sitemap');
+    expect(sourceOf({ source: 'odd' })).toBe('sitemap');
+    expect(sourceOf(null)).toBe('sitemap');
   });
 });
