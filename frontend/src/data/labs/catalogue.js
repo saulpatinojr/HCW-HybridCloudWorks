@@ -54,6 +54,7 @@
  * rule.
  */
 import { routes, staticRoutes } from '@/lib/routeFactory';
+import { PUBLISHED_ROUTES } from '@/data/publishedRoutes';
 
 /** Every tool a lab may name; the test refuses anything outside this set. */
 export const LAB_TOOLS = Object.freeze(['az', 'terraform', 'kubectl', 'helm', 'ansible', 'docker']);
@@ -212,8 +213,12 @@ const step = (title, body, validation = null) =>
 const resource = (label, url) => Object.freeze({ label, url });
 
 /**
- * A published article on this site, `/<provider>/blog/<slug>`: the three
- * parts of the landing-zone series, published from the CMS.
+ * An article on this site, `/<provider>/blog/<slug>`: the three parts of the
+ * landing-zone series. On 2026-11-09 none of the three was published (none is
+ * in the content manifest), so the pages show none of them yet. The pages
+ * list only the entries `publishedArticles()` keeps, so each link appears by
+ * itself once its article is published and the next build picks it up
+ * (#1616).
  */
 const article = (provider, slug, title) => Object.freeze({ provider, slug, title });
 
@@ -1339,17 +1344,32 @@ export function articlePath(entry) {
   return `/${entry.provider}/blog/${encodeURIComponent(entry.slug)}`;
 }
 
-/** Every article any available lab points at, once each, in catalogue order. */
-export function allLabArticles() {
+/**
+ * The entries whose article page the site builds: those whose address is in
+ * the content manifest the build uses (`publishedRoutes.js`). Since #1613 an
+ * address with no page answers 404, so an article that is written into a lab
+ * row before it is published is left off the page until it is (#1616).
+ * `published` is a parameter so a test can name its own set.
+ */
+export function publishedArticles(entries, published = PUBLISHED_ROUTES) {
+  return entries.filter((entry) => published.has(articlePath(entry)));
+}
+
+/**
+ * Every published article any available lab points at, once each, in
+ * catalogue order.
+ */
+export function allLabArticles(published = PUBLISHED_ROUTES) {
   const seen = new Set();
-  return availableLabs
-    .flatMap((lab) => lab.articleSlugs)
-    .filter((entry) => {
-      const key = `${entry.provider}/${entry.slug}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  return publishedArticles(
+    availableLabs.flatMap((lab) => lab.articleSlugs),
+    published
+  ).filter((entry) => {
+    const key = `${entry.provider}/${entry.slug}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**

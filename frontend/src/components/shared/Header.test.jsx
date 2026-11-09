@@ -6,6 +6,7 @@
  * - Every provider page uses the exact same `repeat(9, 100px)` 9-column grid:
  *   `Home`, `<Provider>`, `News`, `Blogs`, `<Architecture|Code>`,
  *   `<Podcast|FOCUS|Workflows|Modules|Sandboxes>`, `<Frameworks|Tools>`, `Learn`, `Labs`.
+ *   `Labs` is left out, its slot empty, for a provider with no lab (#1613).
  * - `Learn` points directly to `/:provider/education` and `Labs` points directly to
  *   `/:provider/education/labs` without caret menus.
  */
@@ -14,6 +15,8 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import Header, { LEARN_MENU_ITEMS } from './Header';
+import { providersWithLabs } from '@/data/labs/catalogue';
+import { VALID_PROVIDERS } from '@/context/ProviderContext';
 
 function renderAt(pathname) {
   return render(
@@ -79,7 +82,10 @@ describe('Header symmetrical layout & decluttered chrome', () => {
     (pathname) => {
       renderAt(pathname);
       expect(primaryNav().style.gridTemplateColumns).toBe('repeat(9, 100px)');
-      expect(within(primaryNav()).getAllByRole('link')).toHaveLength(9);
+      // Nine links, except on a hub with no lab, whose Labs slot is empty (#1613).
+      const provider = pathname.slice(1);
+      const expected = provider && !providersWithLabs().includes(provider) ? 8 : 9;
+      expect(within(primaryNav()).getAllByRole('link')).toHaveLength(expected);
     }
   );
 
@@ -182,9 +188,10 @@ describe('Header provider-specific direct Learn and Labs links', () => {
         '/vmware/education/labs',
       ],
     ],
+    // FinOps and GitHub have no lab, so no Labs link (#1613).
     [
       '/finops',
-      ['Home', 'FinOps', 'News', 'Blogs', 'Architecture', 'FOCUS', 'Frameworks', 'Learn', 'Labs'],
+      ['Home', 'FinOps', 'News', 'Blogs', 'Architecture', 'FOCUS', 'Frameworks', 'Learn'],
       [
         '/',
         '/finops',
@@ -194,12 +201,11 @@ describe('Header provider-specific direct Learn and Labs links', () => {
         '/finops/focus',
         '/finops/frameworks',
         '/finops/education',
-        '/finops/education/labs',
       ],
     ],
     [
       '/github',
-      ['Home', 'GitHub', 'News', 'Blogs', 'Code', 'Workflows', 'Tools', 'Learn', 'Labs'],
+      ['Home', 'GitHub', 'News', 'Blogs', 'Code', 'Workflows', 'Tools', 'Learn'],
       [
         '/',
         '/github',
@@ -209,7 +215,6 @@ describe('Header provider-specific direct Learn and Labs links', () => {
         '/github/workflows',
         '/github/tools',
         '/github/education',
-        '/github/education/labs',
       ],
     ],
     [
@@ -257,14 +262,11 @@ describe('Header provider-specific direct Learn and Labs links', () => {
         '/ansible/education/labs',
       ],
     ],
-  ])(
-    'renders symmetrical 9-item provider navigation on %s',
-    (pathname, expectedLabels, expectedHrefs) => {
-      renderAt(pathname);
-      expect(primaryLabels()).toEqual(expectedLabels);
-      expect(primaryHrefs()).toEqual(expectedHrefs);
-    }
-  );
+  ])('renders the provider navigation on %s', (pathname, expectedLabels, expectedHrefs) => {
+    renderAt(pathname);
+    expect(primaryLabels()).toEqual(expectedLabels);
+    expect(primaryHrefs()).toEqual(expectedHrefs);
+  });
 
   it.each(['/docker/sandboxes', '/docker/building-images', '/docker/desktop'])(
     'keeps the Docker hub nav on %s, a static route outside the provider layout',
@@ -283,6 +285,24 @@ describe('Header provider-specific direct Learn and Labs links', () => {
       ]);
     }
   );
+
+  it.each(VALID_PROVIDERS)(
+    'shows Labs on /%s only when that provider has a labs page the site builds (#1613)',
+    (provider) => {
+      renderAt(`/${provider}`);
+      const labs = within(primaryNav()).queryByRole('link', { name: 'Labs' });
+      if (providersWithLabs().includes(provider)) {
+        expect(labs).toHaveAttribute('href', `/${provider}/education/labs`);
+      } else {
+        expect(labs).toBeNull();
+      }
+    }
+  );
+
+  it('has providers without labs, so the hidden case above is exercised', () => {
+    const without = VALID_PROVIDERS.filter((p) => !providersWithLabs().includes(p));
+    expect([...without].sort()).toEqual(['finops', 'github']);
+  });
 
   it('highlights Labs and not Learn when viewing a provider labs page', () => {
     renderAt('/azure/education/labs');

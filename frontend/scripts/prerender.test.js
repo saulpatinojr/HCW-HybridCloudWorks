@@ -27,6 +27,7 @@ import {
   SEED_ATTRIBUTE,
   MOUNT_POINT_PATTERN,
 } from './prerender.mjs';
+import { routes as prerenderRoutes } from './prerender-entry.jsx';
 // Imported rather than read from a path, so the JSON is parsed once by the
 // bundler and a malformed file fails at import instead of mid-assertion.
 //
@@ -225,28 +226,39 @@ describe('injectIntoTemplate', () => {
 describe('the SPA fallback must not be a pre-rendered page', () => {
   const config = swaConfig;
 
-  it('rewrites unmatched requests to the shell, not to index.html', () => {
-    // index.html is the pre-rendered HOME PAGE. Pointing the fallback at it
-    // serves the site's front page, in full, at HTTP 200, for every URL that
-    // does not match a file — every mistyped link and every unpublished slug.
-    // That is unbounded duplicate content, and it is worse than the empty shell
-    // it replaced. Measured on the preview host on 2026-08-23, before the fix:
-    // /definitely-not-real returned 200 with the home page's title and body.
-    expect(config.navigationFallback.rewrite).toBe('/app-shell.html');
-    expect(config.navigationFallback.rewrite).not.toBe('/index.html');
+  // Every rewrite in the config: the app-only areas' route rules and the 404
+  // override. The catch-all `navigationFallback` was removed for #1613; the
+  // rules that replaced it are pinned in src/lib/not-found-routing.test.js.
+  const rewrites = () => [
+    ...config.routes.filter((rule) => rule.rewrite).map((rule) => rule.rewrite),
+    config.responseOverrides['404'].rewrite,
+  ];
+
+  it('rewrites to the shell, never to index.html', () => {
+    // index.html is the pre-rendered HOME PAGE. Pointing a rewrite at it
+    // serves the site's front page, in full, for every URL it covers — every
+    // mistyped link and every unpublished slug. That is unbounded duplicate
+    // content, and it is worse than the empty shell it replaced. Measured on
+    // the preview host on 2026-08-23, before the fix: /definitely-not-real
+    // returned 200 with the home page's title and body.
+    expect(rewrites().length).toBeGreaterThan(1);
+    for (const target of rewrites()) {
+      expect(target).toBe('/app-shell.html');
+    }
   });
 
-  it('sends the 404 override to the shell too', () => {
+  it('sends the 404 override to the shell, with the 404 status kept', () => {
     expect(config.responseOverrides['404'].rewrite).toBe('/app-shell.html');
     expect(config.responseOverrides['404'].statusCode).toBe(404);
   });
 
   it('names a file the pre-render step actually writes', () => {
-    // A rewrite target that does not exist is a 404 for every article page,
-    // which is the one thing the fallback exists to serve.
-    const target = config.navigationFallback.rewrite.replace(/^\//, '');
+    // A rewrite target that does not exist is a 404 for every admin page and
+    // a blank not-found page for every unknown one.
     const source = readFileSync(join(FRONTEND_ROOT, 'scripts', 'prerender.mjs'), 'utf8');
-    expect(source).toContain(`'${target}'`);
+    for (const target of new Set(rewrites())) {
+      expect(source).toContain(`'${target.replace(/^\//, '')}'`);
+    }
   });
 });
 
@@ -473,6 +485,39 @@ describe('the deploy workflow mount-point check', () => {
 
   it('rejects the untouched vite template', () => {
     expect(new RegExp(MOUNT_POINT_PATTERN).test(TEMPLATE)).toBe(false);
+  });
+});
+
+/**
+ * The live probe after the upload, tied to the page it asks for (#1613).
+ *
+ * The probe asked for `/news` until #1613, a page the site never builds. It
+ * answered 200 only because the old catch-all sent the app to every address.
+ * Once that catch-all went, every deploy would have failed after uploading.
+ * So the probe now asks for `/about`, a page the build writes, and requires
+ * the mark the pre-render puts on it; these tests fail when either side moves.
+ */
+describe('the deploy workflow live probe', () => {
+  const workflow = readFileSync(
+    join(REPO_ROOT, '.github', 'workflows', 'deploy-azure-frontend.yml'),
+    'utf8'
+  );
+
+  it('asks for a page the build writes, and for the mark the pre-render stamps on it', () => {
+    const url = /PRERENDER_URL="https:\/\/\$\{DEFAULT_HOSTNAME\}([^"]+)"/.exec(workflow);
+    expect(url, 'the workflow no longer sets PRERENDER_URL').not.toBe(null);
+    expect(prerenderRoutes()).toContain(url[1]);
+    const mark = /PRERENDER_MARK='([^']+)'/.exec(workflow);
+    expect(mark, 'the workflow no longer sets PRERENDER_MARK').not.toBe(null);
+    const html = injectIntoTemplate(TEMPLATE, { head: '', body: '<main>real</main>' }, url[1]);
+    expect(html).toContain(mark[1]);
+  });
+
+  it('asks for a made-up address and expects 404', () => {
+    expect(workflow).toMatch(/MISSING_PATH="\/__deploy-probe-\$\{GITHUB_RUN_ID\}"/);
+    expect(workflow).toMatch(/probe_url "\$\{MISSING_URL\}" "[^"]*" 404 /);
+    // The address must not be one the site builds, or the probe would read 200.
+    expect(prerenderRoutes().some((route) => route.startsWith('/__deploy-probe-'))).toBe(false);
   });
 });
 
@@ -774,7 +819,14 @@ describe('seedFor: the one entry a route is handed (ADR 0040 added the interview
     expect(seedKeyFor('/azure/interviews')).toBe('interviews:list');
     expect(seedKeyFor('/azure/interviews/first-one')).toBe('interview:first-one');
     expect(seedKeyFor('/azure')).toBe('interviews:list');
-    for (const route of ['/', '/aws', '/azure/blog', '/azure/frameworks', '/aws/interviews', '/azure/interviews/a/b']) {
+    for (const route of [
+      '/',
+      '/aws',
+      '/azure/blog',
+      '/azure/frameworks',
+      '/aws/interviews',
+      '/azure/interviews/a/b',
+    ]) {
       expect(seedKeyFor(route), route).toBeNull();
     }
   });

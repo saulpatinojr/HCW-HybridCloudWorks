@@ -236,7 +236,7 @@ resource "azurerm_private_endpoint" "sql" {
       ],
     },
     landingZonePreset: 'secure-2-tier',
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'terraform-validate-walkthrough',
     whenNotToUse: [
       'Low-budget dev/test sandboxes where Application Gateway v2 and Private Endpoint hourly standing charges exceed compute spend.',
       'Teams without Terraform state management maturity (use App Service with built-in VNet integration first).',
@@ -258,7 +258,7 @@ resource "azurerm_private_endpoint" "sql" {
     ecosystemPartnerValidation: {
       validatedWith: 'HashiCorp Terraform 1.9 + Azure Verified Modules (AVM)',
       ctaLabel: 'Verify in 15-Min Browser Lab',
-      ctaUrl: '/education/labs/terraform-validate',
+      ctaUrl: '/education/labs/terraform-validate-walkthrough',
     },
     tags: ['Two-Tier', 'WAF', 'Private Link', 'Zero Trust', 'Azure SQL'],
   },
@@ -272,7 +272,7 @@ resource "azurerm_private_endpoint" "sql" {
       'Centralized hub-and-spoke network topology with Azure Firewall inspection, Private DNS resolution, and policy guardrails across workload subscriptions.',
     estimatedCost: '$2,100 / month',
     landingZonePreset: 'enterprise-default',
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'terraform-validate-walkthrough',
     whenNotToUse: [
       'Single-workload prototypes or early-stage startups where hub operational overhead and Azure Firewall hourly costs ($912/mo) dwarf compute value.',
       'Isolated edge deployments with zero cross-region or hybrid on-premises connectivity requirements.',
@@ -337,7 +337,7 @@ resource "azurerm_private_endpoint" "sql" {
     ecosystemPartnerValidation: {
       validatedWith: 'HashiCorp Terraform 1.9 + Azure Verified Modules (AVM)',
       ctaLabel: 'Verify in 15-Min Browser Lab',
-      ctaUrl: '/education/labs/terraform-validate',
+      ctaUrl: '/education/labs/terraform-validate-walkthrough',
     },
     tags: ['Landing Zone', 'Hub-and-Spoke', 'Azure Firewall', 'AVM'],
   },
@@ -442,7 +442,7 @@ resource "azurerm_private_endpoint" "sql" {
       <h2>Architecture Overview</h2>
       <p>Automated FinOps guardrails combine preventive Azure Policy definitions with daily FOCUS 1.4 cost exports and budget alerting.</p>
     `,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'terraform-validate-walkthrough',
     whenNotToUse: [
       'Single-subscription exploratory sandboxes or transient hackathons where strict tag-blocking policies and automated shutdown scripts block rapid prototyping.',
       'Organizations without a centralized cloud center of excellence (CCoE) or FinOps practice to review policy exemption requests.',
@@ -503,7 +503,7 @@ resource "azurerm_private_endpoint" "sql" {
       <h2>Architecture Overview</h2>
       <p>Pairs globally distributed NoSQL storage with geo-replicated relational SQL behind regional Private Endpoints.</p>
     `,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'terraform-validate-walkthrough',
     whenNotToUse: [
       'Single-region workloads with low concurrency where Azure SQL single database or Azure Cache for Redis provides sufficient throughput at a fraction of the cost.',
       'Purely relational workloads requiring complex multi-table distributed cross-partition ACID transactions across geographic boundaries.',
@@ -569,7 +569,7 @@ resource "azurerm_private_endpoint" "sql" {
       <h2>Architecture Overview</h2>
       <p>Establishes an identity-first Zero Trust perimeter across human administrators and automated workloads.</p>
     `,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'terraform-validate-walkthrough',
     whenNotToUse: [
       'Small businesses or early-stage startups without Microsoft Entra ID P2 licensing or dedicated security operations staff to manage PIM workflow approvals.',
       'Static headless machine workloads that cannot support modern OIDC Workload Identity Federation and rely on legacy basic authentication.',
@@ -635,7 +635,7 @@ resource "azurerm_private_endpoint" "sql" {
       <h2>Architecture Overview</h2>
       <p>Combines Event Grid push routing with Service Bus enterprise queuing and serverless compute handlers.</p>
     `,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'terraform-validate-walkthrough',
     whenNotToUse: [
       'Synchronous low-latency transactional architectures requiring guaranteed sub-10ms request-response SLAs.',
       'Monolithic workloads where simple in-memory queues (e.g. RabbitMQ or Redis pub/sub) satisfy throughput without distributed cloud orchestration overhead.',
@@ -979,7 +979,7 @@ export const awsArchitectures = {
     ecosystemPartnerValidation: {
       validatedWith: 'AWS Serverless Application Model (SAM) + Terraform AWS Provider',
       ctaLabel: 'Verify in 15-Min Browser Lab',
-      ctaUrl: '/education/labs/terraform-validate',
+      ctaUrl: '/education/labs/terraform-validate-walkthrough',
     },
     tags: ['Serverless', 'API', 'Cost-Effective'],
   },
@@ -1299,7 +1299,7 @@ export const gcpArchitectures = {
     ecosystemPartnerValidation: {
       validatedWith: 'Google Cloud Foundation Fabric + Terraform Google Provider',
       ctaLabel: 'Verify in 15-Min Browser Lab',
-      ctaUrl: '/education/labs/terraform-validate',
+      ctaUrl: '/education/labs/terraform-validate-walkthrough',
     },
     tags: ['Networking', 'Security', 'Global', 'Compute'],
   },
@@ -2637,7 +2637,7 @@ export const finopsArchitectures = {
     }
   }
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'terraform-validate-walkthrough',
     whenNotToUse: [
       'Dynamic startups undergoing major architecture replatforming (e.g. migrating VM fleets to serverless or Kubernetes within 6 months).',
       'Workloads with highly seasonal, unpredictable traffic where commitment utilization would fall below break-even thresholds (typically 65-70%).',
@@ -2793,7 +2793,7 @@ export const finopsArchitectures = {
     }
   }
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'terraform-validate-walkthrough',
     whenNotToUse: [
       'Early-stage rapid prototyping labs where aggressive automated shutdowns or hard resource creation blocks disrupt critical product iterations.',
       'Organizations without clear escalation paths or budget owners to respond to automated notification thresholds.',

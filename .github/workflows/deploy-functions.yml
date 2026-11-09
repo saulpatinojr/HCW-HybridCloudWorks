@@ -38,25 +38,27 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 60 # slowest 5 min; each step up to the last window close has its own limit, 55 min in all (#1441)
     # Binding the job to an environment gives production deploys a deployment
-    # history and an approval gate. The gate lives in the environment, not
-    # here: read live on 2026-10-03, `production` has two required reviewers
-    # (saulpatinojr and hcw-architect; either one approves) and a main-only
-    # deployment-branch policy (Required-Inputs §4.4). Without
-    # them GitHub would auto-create a bare environment that records who
-    # deployed without gating whether they may.
+    # history, and the environment's main-only deployment-branch policy
+    # (Required-Inputs §4.4) refuses a run from any other branch. It no longer
+    # holds an approval: the owner removed `production`'s two required
+    # reviewers (saulpatinojr and hcw-architect) on 2026-11-09 (#1613), so a
+    # run started by hand now deploys with nobody approving it. The controls
+    # left are that branch policy and the guard step below. #1617 moves this
+    # job to a reviewed `production-backend` environment.
     environment: production
     steps:
       - name: Refuse a deploy from a ref that is not main
         # The federated credential's subject is environment-scoped, so it
         # matches from ANY branch, and GitHub auto-creates a missing
         # environment with no protection rules. Without a gate a dispatch from
-        # an unreviewed ref ships to production past all 12 required contexts
-        # (T-705). Read live on 2026-10-03, the `production` environment does
-        # gate: two required reviewers, saulpatinojr and hcw-architect, either
-        # of whom can approve, and a main-only deployment-branch policy
-        # (Required-Inputs §4.4). Both are settings
-        # outside the repository that nothing in a checkout can prove are
-        # still set, so this step stays as the repository-side backstop.
+        # an unreviewed ref ships to production past the required checks (five
+        # since 2026-11-04, #1545) (T-705). Since the owner removed the
+        # environment's two required reviewers on 2026-11-09 (#1613), the gate
+        # is the `production` environment's main-only deployment-branch policy
+        # (Required-Inputs §4.4) and this step. That policy is a setting
+        # outside the repository that nothing in a checkout can prove is still
+        # set, so this step stays as the repository-side backstop. #1617
+        # brings back a reviewed environment for this deploy.
         if: github.ref != 'refs/heads/main'
         timeout-minutes: 1 # an echo and exit
         run: |
@@ -112,11 +114,12 @@ jobs:
         working-directory: functions
         run: npm ci
 
-      # Federated OIDC — no stored credential. These three are repository
-      # VARIABLES, not secrets: they identify the managed identity but grant
-      # nothing without an OIDC token from this repo and ref. Their values come
-      # from the `client_id` Terraform output and the subscription
-      # and tenant the workspace targets.
+      # Federated OIDC — no stored credential. These three identify the
+      # managed identity but grant nothing without an OIDC token from this repo
+      # and ref. They are repository SECRETS all the same (#1610, #1618): this
+      # repository is public, and GitHub masks a value as *** in the log only
+      # when it came from a secret. Their values come from the `client_id`
+      # Terraform output and the subscription and tenant the workspace targets.
       #
       # On AADSTS70021 ("no matching federated identity record found"), compare
       # the token's subject against the `federated_subjects`
@@ -126,8 +129,8 @@ jobs:
         timeout-minutes: 2 # slowest 17 s
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ vars.CLIENT_ID }}
-          tenant-id: ${{ vars.TENANT_ID }}
+          client-id: ${{ secrets.CLIENT_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
 
       # T-503: the Functions host storage account is default-Deny, and the

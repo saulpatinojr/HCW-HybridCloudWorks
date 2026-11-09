@@ -46,7 +46,7 @@ name: Lab host - run a fixed command through Azure Arc
 # (docs/runbooks/labs-host.md, "Run a fixed command on the host through Azure
 # Arc"): the `lab-host-arc` environment created with its reviewers and branch
 # rule, the role created and lab_arc_run_command_enabled set,
-# ARC_RUN_CLIENT_ID set, and one bootstrap over SSH so the agent's extension
+# the ARC_RUN_CLIENT_ID secret set, and one bootstrap over SSH so the agent's extension
 # allowlist admits the Run Command handler.
 on:
   workflow_dispatch:
@@ -122,11 +122,11 @@ jobs:
       - name: Refuse while ARC_RUN_CLIENT_ID is unset
         timeout-minutes: 1
         env:
-          ARC_RUN_CLIENT_ID: ${{ vars.ARC_RUN_CLIENT_ID }}
+          ARC_RUN_CLIENT_ID: ${{ secrets.ARC_RUN_CLIENT_ID }}
           SUBSCRIPTION_ID: ${{ secrets.SUBSCRIPTION_ID }}
         run: |
           if [ -z "${ARC_RUN_CLIENT_ID}" ]; then
-            echo "::error::The repository variable ARC_RUN_CLIENT_ID is not set. It is the client id of github_arc_run, the arc_run_client_id output of the hcw-azure workspace (docs/runbooks/labs-host.md, 'Run a fixed command on the host through Azure Arc')."
+            echo "::error::The repository secret ARC_RUN_CLIENT_ID is not set. It is the client id of github_arc_run, the arc_run_client_id output of the hcw-azure workspace, kept as a secret so the log shows *** (docs/runbooks/labs-host.md, 'Run a fixed command on the host through Azure Arc')."
             exit 1
           fi
           if [ -z "${SUBSCRIPTION_ID}" ]; then
@@ -184,7 +184,8 @@ jobs:
 
       # Federated OIDC, no stored credential. ARC_RUN_CLIENT_ID names
       # github_arc_run, which holds only the Run Command role on the lab
-      # group; TENANT_ID is the one every deploy uses.
+      # group; TENANT_ID is the one every deploy uses. Both are repository
+      # secrets since #1618, so this public log shows them as ***.
       #
       # No `subscription-id`, and `allow-no-subscriptions`, as in
       # verify-alert-state.yml: the identity's only role is at resource-group
@@ -199,8 +200,8 @@ jobs:
         timeout-minutes: 2
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ vars.ARC_RUN_CLIENT_ID }}
-          tenant-id: ${{ vars.TENANT_ID }}
+          client-id: ${{ secrets.ARC_RUN_CLIENT_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
           allow-no-subscriptions: true
 
       # The run step shows progress while the script runs (owner request of

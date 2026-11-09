@@ -891,6 +891,13 @@ const LEFT_OUT = new Map([
   ['codeql.yml / analyze', 'Checks out, then runs only the CodeQL init and analyze actions (no detect step since it left the pull-request path, #1545); no shell step runs code from this repository. It has its own limit anyway (20 minutes).'],
   ['dependency-review.yml / dependency-review', 'Its only step after the checkout is the dependency-review action; there is no shell step that runs code from this repository.'],
   ['docs-pages.yml / deploy', 'Never checks out the repository: it hands the site the build job made to the Pages deploy action, with no shell step.'],
+  // The self-arming gates (#1618): a job's `if:` cannot read `secrets`, so
+  // each of these reads one client-id secret into env and answers true or
+  // false for the Azure job that needs it.
+  ...['monitor-functions-registered.yml', 'monitor-unresolved-secrets.yml', 'publish-content-manifest.yml', 'remove-ci-access-windows.yml', 'verify-alert-state.yml'].map((file) => [
+    `${file} / armed`,
+    'Never checks out: its one shell step only tests whether a client-id secret is set, and holds no permission. It has its own limit anyway (2 minutes).',
+  ]),
 ]);
 
 /** GitHub-hosted runners stop a job after six hours whatever it asks for; Copilot's setup job allows at most 59 minutes. */

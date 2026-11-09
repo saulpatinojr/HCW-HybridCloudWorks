@@ -34,7 +34,7 @@
  *
  * So credentials are attributed to the identity their
  * `user_assigned_identity_id` names, workflows are attributed to the identity
- * whose client-id variable they send, and the two are matched up. Both identities
+ * whose client-id secret they send, and the two are matched up. Both identities
  * happen to trust the same ref subject today, which is exactly why the pooled
  * version would have looked fine.
  */
@@ -128,12 +128,18 @@ function trustedSubjectsByIdentity() {
 }
 
 /**
- * Which identity a workflow authenticates as, from the client-id variable it
- * sends. The variable name is the only thing that decides it — both identities
- * trust the same ref subject, so the subject cannot tell them apart.
+ * Which identity a workflow authenticates as, from the client-id secret it
+ * sends. The name is the only thing that decides it — both identities trust
+ * the same ref subject, so the subject cannot tell them apart. They were
+ * repository variables until #1618 and are repository secrets since, so the
+ * public logs print them as ***; azure-ids-secrets.test.mjs forbids a `vars.`
+ * read of any of them.
  */
-const IDENTITY_BY_CLIENT_ID_VAR = {
+const IDENTITY_BY_CLIENT_ID_SECRET = {
   CLIENT_ID: 'github_deploy',
+  // deploy-azure-frontend.yml from #1617's PR 2: the Static Web App's
+  // deployment token, nothing else.
+  FRONTEND_DEPLOY_CLIENT_ID: 'github_frontend_deploy',
   READER_CLIENT_ID: 'github_reader',
   // verify-alert-state.yml: alert rules and action groups, nothing else (#1053).
   ALERT_READER_CLIENT_ID: 'github_alert_reader',
@@ -200,10 +206,10 @@ function azureLoginJobs() {
               [...body.matchAll(/^\s{4}environment:\s*([A-Za-z0-9._-]+)\s*$/gm)].map((m) => m[1])
             ),
           ],
-          clientIdVars: [
+          clientIdSecrets: [
             ...new Set(
               [
-                ...body.matchAll(/client-id:\s*\$\{\{[^}]*?\bvars\.([A-Z0-9_]+)\b[^}]*\}\}/g),
+                ...body.matchAll(/client-id:\s*\$\{\{[^}]*?\bsecrets\.([A-Z0-9_]+)\b[^}]*\}\}/g),
               ].map((m) => m[1])
             ),
           ],
@@ -224,27 +230,28 @@ describe('OIDC federated credentials cover every Azure login', () => {
     expect(Object.keys(byIdentity).length).toBeGreaterThan(0);
   });
 
-  it.each(workflows)('$file:$job names exactly one known client-id variable', ({ file, job, clientIdVars }) => {
+  it.each(workflows)('$file:$job names exactly one known client-id secret', ({ file, job, clientIdSecrets }) => {
     // Two would mean two jobs authenticating as different identities in one
     // file, which nothing here does and which the per-workflow checks below
-    // would then only half cover. An unknown one means a variable this test
-    // cannot attribute to an identity — it would silently check nothing.
+    // would then only half cover. An unknown one means a secret this test
+    // cannot attribute to an identity — it would silently check nothing. A
+    // `vars.` client id counts as none, which fails here too (#1618).
     expect(
-      clientIdVars.length,
-      `${file}:${job} sends ${clientIdVars.length} client-id variables`
+      clientIdSecrets.length,
+      `${file}:${job} sends ${clientIdSecrets.length} client-id secrets`
     ).toBe(1);
     expect(
-      IDENTITY_BY_CLIENT_ID_VAR[clientIdVars[0]],
-      `${file} authenticates with vars.${clientIdVars[0]}, which this test cannot map to an ` +
-        `identity in infra/oidc.tf. Add it to IDENTITY_BY_CLIENT_ID_VAR, or the workflow's ` +
+      IDENTITY_BY_CLIENT_ID_SECRET[clientIdSecrets[0]],
+      `${file} authenticates with secrets.${clientIdSecrets[0]}, which this test cannot map to an ` +
+        `identity in infra/oidc.tf. Add it to IDENTITY_BY_CLIENT_ID_SECRET, or the workflow's ` +
         'credentials go unchecked.'
     ).toBeDefined();
   });
 
   it.each(workflows)(
     '$file:$job presents a subject its own identity trusts',
-    ({ file, job, environments, clientIdVars }) => {
-      const identity = IDENTITY_BY_CLIENT_ID_VAR[clientIdVars[0]];
+    ({ file, job, environments, clientIdSecrets }) => {
+      const identity = IDENTITY_BY_CLIENT_ID_SECRET[clientIdSecrets[0]];
       const subjects = byIdentity[identity] ?? [];
       const held = `Trusted by ${identity} today:\n  ${subjects.join('\n  ') || '(none)'}`;
 
@@ -282,7 +289,48 @@ describe('OIDC federated credentials cover every Azure login', () => {
       refForm,
       `github_deploy trusts a ref-form subject, which bypasses the production environment gate:\n  ${refForm.join('\n  ')}`
     ).toEqual([]);
-    expect(subjects.every((s) => s.includes(':environment:production'))).toBe(true);
+  });
+
+  it('the deploy identity trusts exactly production and production-backend, both forms, until PR 2 of #1617', () => {
+    // PR 1 of #1617 adds the reviewed production-backend environment's pair
+    // beside the production pair, so nothing breaks before the workflows
+    // move. PR 2 moves deploy-functions.yml to production-backend, moves the
+    // frontend to github_frontend_deploy, and deletes the production pair:
+    // then this list is the two production-backend subjects alone.
+    // An exact list, not a substring: `:environment:production` is also the
+    // start of `:environment:production-backend`.
+    expect([...(byIdentity.github_deploy ?? [])].sort()).toEqual(
+      [
+        'repo:${var.github_org}/${var.github_repo}:environment:production',
+        '${local.github_immutable_prefix}:environment:production',
+        'repo:${var.github_org}/${var.github_repo}:environment:production-backend',
+        '${local.github_immutable_prefix}:environment:production-backend',
+      ].sort()
+    );
+  });
+
+  it('the frontend deploy identity trusts exactly the production environment, both forms (#1617)', () => {
+    // Entra matches on the subject, not the client id, so whatever this
+    // identity trusts, any job presenting that subject can sign in as it.
+    // production is the frontend's environment, with no reviewers since
+    // #1613; this identity can reach the site's deployment token and nothing
+    // else, which is why that is acceptable.
+    expect([...(byIdentity.github_frontend_deploy ?? [])].sort()).toEqual(
+      [
+        'repo:${var.github_org}/${var.github_repo}:environment:production',
+        '${local.github_immutable_prefix}:environment:production',
+      ].sort()
+    );
+  });
+
+  it('no identity but the deploy identity trusts production-backend, the reviewed backend environment (#1617)', () => {
+    // A second identity trusting it would be a second identity reachable by
+    // a job that names production-backend, and the deploy identity holds the
+    // Function App's publishing rights.
+    const holders = Object.entries(byIdentity)
+      .filter(([, subjects]) => subjects.some((s) => s.endsWith(':environment:production-backend')))
+      .map(([identity]) => identity);
+    expect(holders).toEqual(['github_deploy']);
   });
 
   it('trusts each subject in both the name and immutable-ID forms, per identity', () => {
@@ -389,9 +437,25 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
     // inherits it, and no other identity holds the role: a second grant of
     // data.arc_run_command_operator would be a second way to root.
     expect(grantsTo('github_arc_run')).toEqual(['data.arc_run_command_operator @ azurerm_resource_group.lab_hybrid.id']);
-    for (const identity of ['github_deploy', 'github_reader', 'github_alert_reader', 'github_manifest_window', 'github_copilot_review']) {
+    for (const identity of ['github_deploy', 'github_frontend_deploy', 'github_reader', 'github_alert_reader', 'github_manifest_window', 'github_copilot_review']) {
       expect(grantsTo(identity).filter((g) => g.startsWith('data.arc_run_command_operator')), identity).toEqual([]);
     }
+  });
+
+  it('github_frontend_deploy holds HCW Static Web App Deployer on the one site, and nothing else (#1617)', () => {
+    // The frontend deploy reads the site's deployment token and does nothing
+    // else in Azure. The site itself is the narrowest scope the role can
+    // have; the resource group would also reach any later static site.
+    expect(grantsTo('github_frontend_deploy')).toEqual(['data.static_web_app_deployer @ azurerm_static_web_app.hcw.id']);
+  });
+
+  it('only the deploy identity and the frontend deploy identity hold the site role, until PR 2 of #1617 removes the first', () => {
+    // PR 2 deletes github_deploy_swa_token once deploy-azure-frontend.yml
+    // signs in as github_frontend_deploy; then this list is that one.
+    const holders = ['github_deploy', 'github_frontend_deploy', 'github_reader', 'github_alert_reader', 'github_manifest_window', 'github_copilot_review', 'github_arc_run'].filter(
+      (identity) => grantsTo(identity).some((g) => g.startsWith('data.static_web_app_deployer @'))
+    );
+    expect(holders).toEqual(['github_deploy', 'github_frontend_deploy']);
   });
 
   it('github_arc_run trusts the lab-host-arc environment only, and no other identity trusts it (#1590)', () => {
@@ -410,7 +474,7 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
     }
   });
 
-  it('no workflow but lab-host-arc-run.yml names the lab-host-arc environment, in any form (#1590)', () => {
+  it('no workflow but lab-host-arc-run.yml names the lab-host-arc environment, and none but deploy-functions.yml names production-backend, in any form (#1590, #1617)', () => {
     // Naming it is what presents the subject github_arc_run trusts, so a
     // second workflow naming it would be a second way to root on the lab host.
     // Every workflow is parsed as YAML; anything that cannot be read as a
@@ -424,6 +488,11 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
     expect(named.some((n) => n.file === 'deploy-functions.yml' && n.name === 'production'), 'deploy-functions.yml does not read as production').toBe(true);
     // Environment names are not case-sensitive on GitHub, so neither is this.
     expect(named.filter((n) => n.name.toLowerCase() === 'lab-host-arc').map((n) => n.file)).toEqual(['lab-host-arc-run.yml']);
+    // production-backend (#1617) is the reviewed environment the deploy
+    // identity trusts for the backend. No workflow names it until PR 2 moves
+    // deploy-functions.yml to it, and no other workflow may name it after.
+    const backend = [...new Set(named.filter((n) => n.name.toLowerCase() === 'production-backend').map((n) => n.file))];
+    expect(backend.filter((file) => file !== 'deploy-functions.yml')).toEqual([]);
   });
 
   /** A fixture workflow whose one job, `only`, carries `lines`. */

@@ -123,6 +123,7 @@ import {
   labPanePath,
   labsPath,
   primaryProvider,
+  publishedArticles,
 } from '@/data/labs/catalogue';
 import DefenderWslSimulator from '@/components/labs/DefenderWslSimulator';
 import HowLabsWork from '@/components/labs/HowLabsWork';
@@ -408,6 +409,9 @@ function LabPane({ lab, provider, turnstile = DEFAULT_TURNSTILE }) {
  * pane is doing.
  */
 function LabDetails({ lab }) {
+  // Only the articles the site has a page for (#1616): one written into the
+  // row before it is published would otherwise be a link to a 404.
+  const articles = publishedArticles(lab.articleSlugs);
   return (
     <div
       className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_22rem] gap-8"
@@ -484,7 +488,7 @@ function LabDetails({ lab }) {
             </ul>
           </section>
         ) : null}
-        {lab.articleSlugs.length > 0 ? (
+        {articles.length > 0 ? (
           <section
             aria-labelledby="lab-articles-heading"
             className="glass rounded-xl p-5 flex flex-col gap-2"
@@ -495,7 +499,7 @@ function LabDetails({ lab }) {
             >
               Articles for this lab
             </h2>
-            <LabArticles articles={lab.articleSlugs} />
+            <LabArticles articles={articles} />
           </section>
         ) : null}
         <HowLabsWork headingLevel="h2" id="lab-how-labs-work" />
