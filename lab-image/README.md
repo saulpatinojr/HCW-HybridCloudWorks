@@ -158,11 +158,13 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   yes** (ADR 0032 decision 5). The builder modules are the four in
   `AVM_MODULES` in
   [`avmVersions.js`](../frontend/src/lib/landingZone/avmVersions.js), each at
-  the version the builder pins: `/opt/avm/avm-ptn-alz@0.22.0`,
-  `/opt/avm/avm-ptn-alz-management@0.9.0`,
-  `/opt/avm/avm-ptn-alz-connectivity-hub-and-spoke-vnet@0.17.7` and
-  `/opt/avm/avm-res-network-virtualnetwork@0.22.3`, the module every spoke is
-  built from. Each is the release source tarball of its
+  the version the builder pins, at `/opt/avm/<name>@<version>`:
+  `avm-ptn-alz`, `avm-ptn-alz-management`,
+  `avm-ptn-alz-connectivity-hub-and-spoke-vnet` and
+  `avm-res-network-virtualnetwork`, the module every spoke is built from.
+  Their versions are not repeated here, because the weekly bump moves them:
+  read the `AVM_<KEY>_VERSION` lines of [`versions.env`](versions.env)
+  (#1594). Each is the release source tarball of its
   `Azure/terraform-azurerm-<name>` repository, verified by SHA256.
 
   **How the list is derived.** It is written once, as one
@@ -185,8 +187,8 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   connectivity module thirteen, some from inside its own nested modules.
   [`vendor-avm.sh`](vendor-avm.sh) runs `terraform get` on each builder
   module at build time, copies each distinct child once to
-  `/opt/avm/<name>@<version>` (seventeen `name@version` pairs across
-  fourteen modules), and rewrites every `module` block inside the vendored
+  `/opt/avm/<name>@<version>` (one pair per entry of `AVM_CHILD_MODULES` in
+  `versions.env`), and rewrites every `module` block inside the vendored
   copies from `source = "Azure/<name>/azurerm"` plus a `version` to the
   child's **relative** path, `../<name>@<version>`, with the `version` line
   commented out. Relative because Terraform uses `./` and `../` paths in
@@ -203,10 +205,11 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   registry. `smoke.sh` checks every recorded child is on disk and inits and
   validates each builder module from a generated root with no network.
 
-  **Two versions of one module coexist**, as two directories:
-  `avm-res-network-virtualnetwork@0.15.0` is the connectivity module's own
-  child (its hub network) and `@0.22.3` is the builder's spokes', and
-  `avm-utl-interfaces` is vendored at 0.2.0, 0.5.0 and 0.6.0. A child at
+  **Two versions of one module can coexist**, as two directories:
+  `avm-res-network-virtualnetwork` is both the connectivity module's own
+  child (its hub network) and the builder's spokes' module, usually at
+  different versions, and `avm-utl-interfaces` is vendored at more than one
+  version. `AVM_CHILD_MODULES` lists which. A child at
   exactly a builder module's `name@version` is not copied twice: its calls
   resolve to the builder module's directory.
 
