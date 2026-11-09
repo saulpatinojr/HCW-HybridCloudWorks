@@ -156,10 +156,10 @@ const resources = [
     id: 'cost-tools',
     title: 'Cloud Cost Tools',
     description:
-      'Open source and SaaS tools for cloud cost visibility — including Infracost for Terraform cost estimation and OpenCost for Kubernetes cost monitoring.',
+      'The FinOps Landscape — the FinOps Foundation’s directory of cost visibility tools, services and training, grouped by FinOps Framework capability.',
     type: 'Tools',
     icon: 'build',
-    url: 'https://www.infracost.io/',
+    url: 'https://www.finops.org/landscape/',
   },
   {
     id: 'finops-slack',

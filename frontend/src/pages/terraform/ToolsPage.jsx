@@ -27,13 +27,6 @@ export default function TerraformToolsPage() {
       tags: ['CLI', 'Core', 'Official'],
     },
     {
-      title: 'Infracost',
-      description: 'Cost estimation tool showing infrastructure costs before deployment and in pull requests.',
-      category: 'Cost Management',
-      complexity: 'Beginner',
-      tags: ['Cost', 'Estimation', 'CI/CD'],
-    },
-    {
       title: 'TFLint',
       description: 'Linter for Terraform code quality, security best practices, and AWS/Azure/GCP compliance checks.',
       category: 'Quality',
@@ -47,21 +40,17 @@ export default function TerraformToolsPage() {
       complexity: 'Advanced',
       tags: ['Policy', 'Governance', 'Compliance'],
     },
-    {
-      title: 'Atlantis',
-      description: 'Terraform automation and collaboration platform for pull request-based infrastructure updates.',
-      category: 'Automation',
-      complexity: 'Advanced',
-      tags: ['Automation', 'CI/CD', 'Collaboration'],
-    },
   ];
 
-  const categories = ['Learn', 'Core', 'Cost Management', 'Quality', 'Governance', 'Automation'];
+  // Only the tools the site stands behind: Terraform itself, HashiCorp's own
+  // Sentinel, and TFLint, which the site's own checks run (owner decision
+  // 2026-11-09, ADR 0041). A category with no card left is gone too.
+  const categories = ['Learn', 'Core', 'Quality', 'Governance'];
 
   return (
     <ContentListingTemplate
       title="Terraform Tools & Utilities"
-      description="Essential and advanced tools for Terraform development, testing, cost management, and automation."
+      description="The tools this site recommends for writing, checking and governing Terraform."
       items={tools}
       itemType="guide"
       categories={categories}
