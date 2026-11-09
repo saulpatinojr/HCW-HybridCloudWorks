@@ -34,7 +34,7 @@
  *
  * So credentials are attributed to the identity their
  * `user_assigned_identity_id` names, workflows are attributed to the identity
- * whose client-id variable they send, and the two are matched up. Both identities
+ * whose client-id secret they send, and the two are matched up. Both identities
  * happen to trust the same ref subject today, which is exactly why the pooled
  * version would have looked fine.
  */
@@ -128,11 +128,14 @@ function trustedSubjectsByIdentity() {
 }
 
 /**
- * Which identity a workflow authenticates as, from the client-id variable it
- * sends. The variable name is the only thing that decides it — both identities
- * trust the same ref subject, so the subject cannot tell them apart.
+ * Which identity a workflow authenticates as, from the client-id secret it
+ * sends. The name is the only thing that decides it — both identities trust
+ * the same ref subject, so the subject cannot tell them apart. They were
+ * repository variables until #1618 and are repository secrets since, so the
+ * public logs print them as ***; azure-ids-secrets.test.mjs forbids a `vars.`
+ * read of any of them.
  */
-const IDENTITY_BY_CLIENT_ID_VAR = {
+const IDENTITY_BY_CLIENT_ID_SECRET = {
   CLIENT_ID: 'github_deploy',
   READER_CLIENT_ID: 'github_reader',
   // verify-alert-state.yml: alert rules and action groups, nothing else (#1053).
@@ -200,10 +203,10 @@ function azureLoginJobs() {
               [...body.matchAll(/^\s{4}environment:\s*([A-Za-z0-9._-]+)\s*$/gm)].map((m) => m[1])
             ),
           ],
-          clientIdVars: [
+          clientIdSecrets: [
             ...new Set(
               [
-                ...body.matchAll(/client-id:\s*\$\{\{[^}]*?\bvars\.([A-Z0-9_]+)\b[^}]*\}\}/g),
+                ...body.matchAll(/client-id:\s*\$\{\{[^}]*?\bsecrets\.([A-Z0-9_]+)\b[^}]*\}\}/g),
               ].map((m) => m[1])
             ),
           ],
@@ -224,27 +227,28 @@ describe('OIDC federated credentials cover every Azure login', () => {
     expect(Object.keys(byIdentity).length).toBeGreaterThan(0);
   });
 
-  it.each(workflows)('$file:$job names exactly one known client-id variable', ({ file, job, clientIdVars }) => {
+  it.each(workflows)('$file:$job names exactly one known client-id secret', ({ file, job, clientIdSecrets }) => {
     // Two would mean two jobs authenticating as different identities in one
     // file, which nothing here does and which the per-workflow checks below
-    // would then only half cover. An unknown one means a variable this test
-    // cannot attribute to an identity — it would silently check nothing.
+    // would then only half cover. An unknown one means a secret this test
+    // cannot attribute to an identity — it would silently check nothing. A
+    // `vars.` client id counts as none, which fails here too (#1618).
     expect(
-      clientIdVars.length,
-      `${file}:${job} sends ${clientIdVars.length} client-id variables`
+      clientIdSecrets.length,
+      `${file}:${job} sends ${clientIdSecrets.length} client-id secrets`
     ).toBe(1);
     expect(
-      IDENTITY_BY_CLIENT_ID_VAR[clientIdVars[0]],
-      `${file} authenticates with vars.${clientIdVars[0]}, which this test cannot map to an ` +
-        `identity in infra/oidc.tf. Add it to IDENTITY_BY_CLIENT_ID_VAR, or the workflow's ` +
+      IDENTITY_BY_CLIENT_ID_SECRET[clientIdSecrets[0]],
+      `${file} authenticates with secrets.${clientIdSecrets[0]}, which this test cannot map to an ` +
+        `identity in infra/oidc.tf. Add it to IDENTITY_BY_CLIENT_ID_SECRET, or the workflow's ` +
         'credentials go unchecked.'
     ).toBeDefined();
   });
 
   it.each(workflows)(
     '$file:$job presents a subject its own identity trusts',
-    ({ file, job, environments, clientIdVars }) => {
-      const identity = IDENTITY_BY_CLIENT_ID_VAR[clientIdVars[0]];
+    ({ file, job, environments, clientIdSecrets }) => {
+      const identity = IDENTITY_BY_CLIENT_ID_SECRET[clientIdSecrets[0]];
       const subjects = byIdentity[identity] ?? [];
       const held = `Trusted by ${identity} today:\n  ${subjects.join('\n  ') || '(none)'}`;
 

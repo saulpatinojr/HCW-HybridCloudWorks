@@ -1,7 +1,8 @@
 <#
-    Pester 5 tests for Set-SubscriptionSecrets.ps1 (#1610).
+    Pester 5 tests for Set-SubscriptionSecrets.ps1 (#1610, #1618).
 
-    The script copies the subscription ids into repository secrets, and its
+    The script copies Azure ids (subscription, tenant and client ids) into
+    repository secrets, and its
     one promise is that it never shows a value. So these tests check what it
     hands to gh, what it reports, and that the value appears in neither its
     results nor, in the whole-script run, anything it prints.
@@ -111,6 +112,22 @@ Describe 'Copy-SubscriptionSecret, from the variables' {
         $results = @(Copy-SubscriptionSecret -Repository 'o/r' -SecretNames 'SUBSCRIPTION_ID' -Confirm:$false)
         $results[0].Set | Should -BeFalse
         $results[0].Reason | Should -Match 'gh could not set it'
+    }
+
+    It 'copies the tenant id and the six client ids the same way (#1618)' {
+        $names = 'TENANT_ID', 'CLIENT_ID', 'READER_CLIENT_ID', 'MANIFEST_WINDOW_CLIENT_ID', 'COPILOT_REVIEW_CLIENT_ID', 'ARC_RUN_CLIENT_ID', 'ALERT_READER_CLIENT_ID'
+        $n = 10
+        foreach ($name in $names) {
+            $script:vars[$name] = '00000000-0000-0000-0000-0000000000{0}' -f $n
+            $n++
+        }
+        $results = @(Copy-SubscriptionSecret -Repository 'o/r' -SecretNames $names -Confirm:$false)
+        $results.Count | Should -Be 7
+        $results | ForEach-Object { $_.Set | Should -BeTrue }
+        @($script:calls | Where-Object { $_ -like 'secret set *' }).Count | Should -Be 7
+        $script:calls | Should -Contain 'secret set TENANT_ID -R o/r --body 00000000-0000-0000-0000-000000000010'
+        $script:calls | Should -Contain 'secret set ALERT_READER_CLIENT_ID -R o/r --body 00000000-0000-0000-0000-000000000016'
+        ($results | ConvertTo-Json -Compress) | Should -Not -Match '00000000-0000-0000-0000-'
     }
 
     It 'with -WhatIf, calls gh for nothing' {

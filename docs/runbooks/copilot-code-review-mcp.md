@@ -119,9 +119,11 @@ of which holds on its own:
    assume it by accident. The three values the workflow needs are
    identifiers that grant nothing without a token, per
    [Variables and secrets](../standards/variables-and-secrets.md):
-   `COPILOT_REVIEW_CLIENT_ID` and `TENANT_ID` are repository **variables**,
-   and `SUBSCRIPTION_ID` is a repository **secret** since 2026-11-09, so
-   that the public logs show it as `***` (#1610).
+   `COPILOT_REVIEW_CLIENT_ID`, `TENANT_ID` and `SUBSCRIPTION_ID` are
+   repository **secrets** (the subscription id since #1610, the other two
+   since [#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)),
+   so that the public logs show them as `***`. They are still not
+   credentials.
 3. **The server refuses writes.** `--read-only` on the command line drops
    every mutating tool before the server registers anything.
 4. **The tool list is fourteen names, chosen by hand** from the server's own
@@ -342,18 +344,20 @@ four `azurerm_role_assignment` (Reader on `web`, `db`, `stor`, `sec`).
 Nothing else changes or is destroyed. Any other destroy is a reason to stop
 and read the plan, not to approve it.
 
-### 2. Seed the client-id variable
+### 2. Seed the client-id secret
 
 PowerShell, from the repository root on `main`. The script reads the
 `copilot_review_client_id` output from the workspace's applied state and
-upserts it alongside the variables it already manages:
+upserts it as a repository secret, alongside the values it already manages:
 
 ```powershell
 git checkout main; git pull origin main; ./scripts/set-github-variables.ps1
 ```
 
-**Success looks like:** a line naming `COPILOT_REVIEW_CLIENT_ID` and a GUID.
-It is a variable, not a secret — the value is printed on purpose.
+**Success looks like:** a line `create  COPILOT_REVIEW_CLIENT_ID (secret; value
+not shown)`, or `update` when it was already set. Since
+[#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618) it is
+a secret, so neither the script nor a workflow log prints the id.
 
 ### 2b. Mirror the four identifiers into the Agents store
 
@@ -362,16 +366,13 @@ Done 2026-09-06 as
 kept here for a rotation, which has to change both copies. Copilot's own runner reads only Agents secrets (see
 [the Azure server](#the-azure-server-read-only-federated-no-secret)), so the
 four identifiers the workflow reads — three for the Azure login, one for the
-GitHub App — must exist there as well as in the repository variables and
-secret the manual run uses. Nothing to retype: the first line prints the
-three values the variables hold, and the later lines copy each value to the
-clipboard in turn for the paste. The subscription id is a repository secret
-since 2026-11-09 (#1610), and a secret cannot be read back, so its line reads
-the id from your Azure sign-in instead.
-
-```powershell
-gh variable list --repo saulpatinojr/HCW-HybridCloudWorks | Select-String 'COPILOT_REVIEW_CLIENT_ID|^TENANT_ID|COPILOT_REVIEW_APP_ID'
-```
+GitHub App — must exist there as well as in the repository secrets and
+variable the manual run uses. Nothing to retype: the lines below copy each
+value to the clipboard in turn for the paste. The client id, tenant id and
+subscription id are repository secrets (#1610,
+[#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)),
+and a secret cannot be read back, so their lines read each id from Azure under
+your `az login` sign-in instead; only the App id is still a variable.
 
 Then, in the repository, **Settings → Secrets and variables → Agents →
 Secrets → New repository secret**, four times (the Agents tab sits beside
@@ -379,22 +380,36 @@ the Actions tab at
 <https://github.com/saulpatinojr/HCW-HybridCloudWorks/settings/secrets/actions>);
 `gh secret set` cannot write this store:
 
-| Agents secret | Value: the repository variable |
+| Agents secret | Value |
 | --- | --- |
-| `COPILOT_REVIEW_CLIENT_ID` | `COPILOT_REVIEW_CLIENT_ID` |
-| `COPILOT_REVIEW_TENANT_ID` | `TENANT_ID` |
-| `COPILOT_REVIEW_SUBSCRIPTION_ID` | the Application subscription's id (the `SUBSCRIPTION_ID` repository secret holds the same; copy it with the `az account show` line below) |
-| `COPILOT_REVIEW_APP_ID` | `COPILOT_REVIEW_APP_ID` (exists once step 4 is done) |
+| `COPILOT_REVIEW_CLIENT_ID` | the client id of `id-site-github-copilot-review-prod-cus-01` (the `COPILOT_REVIEW_CLIENT_ID` repository secret holds the same; first line below) |
+| `COPILOT_REVIEW_TENANT_ID` | the tenant id (the `TENANT_ID` repository secret holds the same; second line below) |
+| `COPILOT_REVIEW_SUBSCRIPTION_ID` | the Application subscription's id (the `SUBSCRIPTION_ID` repository secret holds the same; last line below) |
+| `COPILOT_REVIEW_APP_ID` | the `COPILOT_REVIEW_APP_ID` repository variable (exists once step 4 is done; third line below) |
 
-To copy one value without retyping it, PowerShell:
+Each line copies one value to the clipboard and prints nothing. Run one,
+paste it into its Agents secret, then run the next. PowerShell, signed in
+with `az login` and `gh auth login`.
+
+The client id:
 
 ```powershell
-gh variable get COPILOT_REVIEW_CLIENT_ID --repo saulpatinojr/HCW-HybridCloudWorks | Set-Clipboard
+az identity show --name id-site-github-copilot-review-prod-cus-01 --resource-group rg-web-site-prod-cus --subscription sub-app-site-prod-cus --query clientId -o tsv | Set-Clipboard
 ```
 
-and the same with `TENANT_ID` and `COPILOT_REVIEW_APP_ID` in place of the
-variable name. For the subscription, PowerShell, signed in with `az login`
-(the clipboard then holds the id, and nothing is printed):
+The tenant id:
+
+```powershell
+az account show --subscription sub-app-site-prod-cus --query tenantId -o tsv | Set-Clipboard
+```
+
+The App id:
+
+```powershell
+gh variable get COPILOT_REVIEW_APP_ID --repo saulpatinojr/HCW-HybridCloudWorks | Set-Clipboard
+```
+
+The subscription id:
 
 ```powershell
 az account show --subscription sub-app-site-prod-cus --query id -o tsv | Set-Clipboard
@@ -577,7 +592,8 @@ draft and fills the row in before it leaves draft.
 - **Revoke the Azure access outright:** remove the `github_copilot_review`
   resources from `infra/oidc.tf` in a pull request (four role assignments,
   two credentials, one identity — seven destroys, the plan should show
-  nothing else) and delete `COPILOT_REVIEW_CLIENT_ID`. The workflow then
+  nothing else) and delete the `COPILOT_REVIEW_CLIENT_ID` repository secret
+  and Agents secret. The workflow then
   fails at login and the server fails closed.
 - **Revoke the GitHub access:** uninstall or delete the App at
   <https://github.com/organizations/HybridCloudWorks/settings/installations>
