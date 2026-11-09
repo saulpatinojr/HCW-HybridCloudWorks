@@ -687,6 +687,55 @@ export const DECLARED = [
     action: "create",
     reason: "#1565 ADR 0040 D10: Storage Blob Data Owner for the Function App identity on the interviews-audio container only, for deleteBlobVersion (the account keeps versions)",
   },
+
+  // #1612: the admin Search Console page. The plan after the merge adds the
+  // syncSearchConsole timer's flag, disarmed; the four GSC_* settings at
+  // their defaults (three empty, the property's name); and one row to
+  // alert-timer-overdue's datatable. Delete these six once that run has
+  // applied, and fold the row into TIMER_SCHEDULES_APPLIED above. The
+  // arming plan (false -> true) stays until the owner adds
+  // SYNC_SEARCH_CONSOLE to enabled_timers, like the other arming plans. The
+  // owner's own values for the three empty settings ("" -> a value) are
+  // workspace edits and deliberately not declared: they show as UNEXPECTED
+  // and are read by hand, since this file holds no real identifier.
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue",
+    path: "criteria[0].query",
+    before: overdueQuery(TIMER_SCHEDULES_APPLIED),
+    after: overdueQuery([
+      ...TIMER_SCHEDULES_APPLIED,
+      ["syncSearchConsole", "12h", "2026-01-01 00:10"],
+    ]),
+    reason: "#1612: alert-timer-overdue watches syncSearchConsole (00:10 and 12:10 UTC)",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE",
+    before: undefined,
+    after: "false",
+    reason: "#1612: the Search Console timer catalogued, disarmed",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_SYNC_SEARCH_CONSOLE",
+    before: "false",
+    after: "true",
+    reason: "#1612: SYNC_SEARCH_CONSOLE added to enabled_timers, arming the twice-daily run",
+  },
+  ...["GSC_WIF_AUDIENCE", "GSC_ENTRA_APP_ID_URI", "GSC_SERVICE_ACCOUNT_EMAIL"].map((name) => ({
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: `app_settings.${name}`,
+    before: undefined,
+    after: "",
+    reason: `#1612: ${name} declared empty until the owner sets up Google's side`,
+  })),
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.GSC_SITE_URL",
+    before: undefined,
+    after: "sc-domain:hybridcloudworks.com",
+    reason: "#1612: the Search Console property the page reads",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

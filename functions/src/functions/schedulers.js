@@ -339,6 +339,24 @@ timer('labCanary', 'LAB_CANARY', '0 20 */1 * * *', async (context) => {
   return createLabCanary({ store, log: context }).run();
 });
 
+// The admin Search Console page (#1612): what Google knows about each public
+// page, the site's search traffic and the sitemaps, refreshed twice a day.
+// The owner asked for 06:00 and 18:00 Central; the app clock is UTC (#416),
+// so 00:10 and 12:10 UTC, which is 18:10 / 06:10 CST and 19:10 / 07:10 CDT.
+// Ten past, to keep clear of the 00:00 cleanup timer. Does nothing (one log
+// line) until the Google sign-in settings are set (lib/search-console/sync.js).
+// A run that cannot sign in to Google or read the property is thrown as a
+// failure after the page's document records it, so the host and
+// alert-timer-overdue see it too.
+timer('syncSearchConsole', 'SYNC_SEARCH_CONSOLE', '0 10 0,12 * * *', async (context) => {
+  const { createSearchConsoleSync } = await import('../lib/search-console/sync.js');
+  const result = await createSearchConsoleSync({ store, log: context }).run();
+  if (result?.status === 'error') {
+    throw new Error('syncSearchConsole: the run failed; the admin Search Console page shows which step');
+  }
+  return result;
+});
+
 // ── AI ───────────────────────────────────────────────────────────────────────
 
 // The owner's reminders sheet (Platform Settings → Reminders), said on

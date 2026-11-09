@@ -134,6 +134,8 @@
     "cmsRecordings",
     "cmsRemindersTelegramTest",
     "cmsResolveImagePrompt",
+    "cmsSearchConsole",
+    "cmsSearchConsoleRun",
     "cmsSecrets",
     "cmsSettings",
     "cmsSocialPostById",
@@ -312,6 +314,7 @@
     "sendReminders",
     "sweepVisitorSessions",
     "syncRssFeeds",
+    "syncSearchConsole",
     "syncSocialCalendarScheduled"
   ],
   "cosmosDB": [

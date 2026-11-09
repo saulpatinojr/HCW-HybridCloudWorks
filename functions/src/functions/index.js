@@ -68,6 +68,7 @@ import "./rss-jobs.js";
 import "./blog-sources-http.js";
 import "./public-submissions.js";
 import "./schedulers.js";
+import "./search-console-http.js";
 import "./social-caption-http.js";
 import "./streamyard-http.js";
 import "./telegram-http.js";
