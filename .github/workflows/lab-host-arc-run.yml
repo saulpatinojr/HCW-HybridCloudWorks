@@ -324,7 +324,6 @@ jobs:
             --only-show-errors --output none || create=$?
           started="$(date +%s)"
 
-          finished=0
           timed_out=0
           if [ "${create}" -ne 0 ]; then
             echo "create exited ${create}, so there is nothing to wait for."
@@ -356,10 +355,10 @@ jobs:
               print_host "${RUNNER_TEMP}/new.txt"
               cp "${RUNNER_TEMP}/now-complete.txt" "${seen}"
               case "${now_state}" in
-                Succeeded | Failed | TimedOut | Canceled) finished=1; break ;;
+                Succeeded | Failed | TimedOut | Canceled) break ;;
               esac
               case "${prov}" in
-                Failed | Canceled) finished=1; break ;;
+                Failed | Canceled) break ;;
               esac
             done
           fi
