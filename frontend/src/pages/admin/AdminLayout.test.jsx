@@ -58,6 +58,7 @@ describe('the navigation registry', () => {
       'Health',
       'Integrations',
       'Cost',
+      'Search Console',
     ]);
     expect(group('Spotlight').items.map((i) => i.label)).toEqual([
       'Speaking',
