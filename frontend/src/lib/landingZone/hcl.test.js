@@ -499,4 +499,30 @@ describe('Multi-Cloud Landing Zone HCL emission (#Deliverable04)', () => {
     expect(emitFiles({ cloud: 'aws', selected: [] }).map((f) => f.path)).toEqual(['README.md']);
     expect(emitFiles({ cloud: 'gcp', selected: [] }).map((f) => f.path)).toEqual(['README.md']);
   });
+
+  // Native Terraform is the only export (owner decision 2026-11-09, ADR 0041).
+  // The OpenTofu and Terragrunt formats are gone, so a format value left over
+  // from an old caller changes nothing, and no emitted file names either tool.
+  it.each(['azure', 'aws', 'gcp'])(
+    'writes plain Terraform for %s whatever format value it is handed',
+    (cloud) => {
+      const state = { ...DEFAULT_STATE, cloud };
+      const terraform = emitFiles(state);
+      for (const format of ['opentofu', 'terragrunt', 'terraform', undefined]) {
+        expect(emitFiles(state, format)).toEqual(terraform);
+      }
+      const paths = terraform.map((f) => f.path);
+      expect(paths).not.toContain('tofu.tf');
+      expect(paths).not.toContain('terragrunt.hcl');
+      for (const file of terraform)
+        expect(file.content).not.toMatch(/opentofu|terragrunt|\btofu\b/i);
+    }
+  );
+
+  it('no longer exports the format list or the bundle transformer', async () => {
+    const lz = await import('./index');
+    expect(lz.SUPPORTED_FORMATS).toBeUndefined();
+    expect(lz.FORMAT_LABELS).toBeUndefined();
+    expect(lz.transformBundle).toBeUndefined();
+  });
 });
