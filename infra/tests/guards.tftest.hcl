@@ -5,6 +5,7 @@
 # 2. Deploy identity trusts environment-only subjects (SEC-2).
 # 3. Cosmos DB built-in data role is granted to the Function App per database, never account-wide (#1469).
 # 4. Cosmos DB account enforces virtual network filtering and disables local keys (T-504).
+# 5. gsc_entra_app_id_uri is empty or an api:// URI with no trailing slash (#1612).
 
 mock_provider "azurerm" {}
 mock_provider "azurerm" {
@@ -114,4 +115,35 @@ run "infrastructure_security_guards" {
     condition     = azurerm_cosmosdb_account.hcw.local_authentication_enabled == false
     error_message = "Cosmos DB account must have local key authentication disabled (T-504)."
   }
+}
+
+# 5. gsc_entra_app_id_uri (#1612): Google's pool provider compares the
+# token's audience with it exactly, so a wrong shape is refused at plan time
+# rather than at the first sign-in.
+run "gsc_entra_app_id_uri_accepts_an_api_uri" {
+  command = plan
+
+  variables {
+    gsc_entra_app_id_uri = "api://00000000-0000-0000-0000-000000000001"
+  }
+}
+
+run "gsc_entra_app_id_uri_refuses_a_trailing_slash" {
+  command = plan
+
+  variables {
+    gsc_entra_app_id_uri = "api://00000000-0000-0000-0000-000000000001/"
+  }
+
+  expect_failures = [var.gsc_entra_app_id_uri]
+}
+
+run "gsc_entra_app_id_uri_refuses_another_scheme" {
+  command = plan
+
+  variables {
+    gsc_entra_app_id_uri = "https://example.com/app"
+  }
+
+  expect_failures = [var.gsc_entra_app_id_uri]
 }

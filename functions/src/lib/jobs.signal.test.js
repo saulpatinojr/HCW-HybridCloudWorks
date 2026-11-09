@@ -239,7 +239,7 @@ function passesSignalOn(worker) {
   return false;
 }
 
-/** Every job type the registry must hold, today nineteen plus noop. */
+/** Every job type the registry must hold, today twenty plus noop. */
 const EXPECTED_TYPES = [
   'batch-inspect',
   'build-newsletter-issue',
@@ -259,6 +259,7 @@ const EXPECTED_TYPES = [
   'refresh-tool-pricing',
   'speak-listen-and-learn-chapter',
   'sync-blog-source',
+  'sync-search-console',
   'transcribe-recording-upload',
   'voice-calibration',
 ];
@@ -274,6 +275,7 @@ const EXPECTED_MODULES = [
   'functions/podcast-jobs.js',
   'functions/publish-jobs.js',
   'functions/rss-jobs.js',
+  'functions/search-console-http.js',
 ];
 
 describe('the job modules and types are all found (#942)', () => {

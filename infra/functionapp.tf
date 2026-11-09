@@ -128,6 +128,14 @@ locals {
     # a Coder user, and it runs whatever LABS_VISITOR_SESSIONS_ENABLED says.
     # Stays off until the owner adds SWEEP_VISITOR_SESSIONS to enabled_timers.
     SWEEP_VISITOR_SESSIONS = "sweepVisitorSessions — every 2 minutes, ends visitor lab sessions past their hour and retries Coder clean-ups Coder has not confirmed (visitor-session-sweep.js); never creates a session"
+    # #1612: the admin Search Console page. Signs in to Google through
+    # workload identity federation (the GSC_* settings below, no stored
+    # secret), inspects up to 900 sitemap pages, reads 90 days of search
+    # traffic and the sitemaps list, and rewrites one admin_config document.
+    # Reads Google only; does nothing until the GSC_* settings are set. Stays
+    # off until the owner adds SYNC_SEARCH_CONSOLE to enabled_timers
+    # (docs/runbooks/search-console.md).
+    SYNC_SEARCH_CONSOLE = "syncSearchConsole — daily 00:10 and 12:10 UTC (the owner's 06:00 and 18:00 Central, an hour later in summer), refreshes the admin Search Console page from Google's URL Inspection, Search Analytics and Sitemaps APIs"
   }
 
   timer_flags = {
@@ -503,6 +511,18 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # unset, which the timer reads as "not configured" (one log line, nothing
     # written) rather than as a missing setting.
     "CF_ACCOUNT_ID" = var.cloudflare_account_id == null ? "" : var.cloudflare_account_id
+
+    # The admin Search Console page's Google sign-in (#1612,
+    # functions/src/lib/search-console/google-auth.js): workload identity
+    # federation from this app's managed identity, so there is no Google key
+    # to store or rotate. Identifiers, not secrets, so plain settings. Empty,
+    # not absent, until the owner has done the Google side
+    # (docs/runbooks/search-console.md): the page then says "not configured"
+    # and the syncSearchConsole timer writes nothing.
+    "GSC_WIF_AUDIENCE"          = var.gsc_wif_audience
+    "GSC_ENTRA_APP_ID_URI"      = var.gsc_entra_app_id_uri
+    "GSC_SERVICE_ACCOUNT_EMAIL" = var.gsc_service_account_email
+    "GSC_SITE_URL"              = var.gsc_site_url
 
     # -------------------------------------------------------------------------
     # Runtime Key Vault bindings.
