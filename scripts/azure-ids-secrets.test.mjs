@@ -25,6 +25,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOWS = join(REPO, '.github', 'workflows');
@@ -77,10 +78,59 @@ describe('Azure ids come from secrets, so public logs show ***', () => {
     expect(readFileSync(join(WORKFLOWS, 'verify-alert-state.yml'), 'utf8')).toContain('${{ secrets.SUBSCRIPTION_MGMT_ID }}');
   });
 
-  it('every azure/login reads its tenant from the secret', () => {
-    // Nine logins today: the two deploys, the two monitors, the alert check,
-    // the manifest build, the window remover, the Arc run and Copilot's setup.
-    expect(readersOf('TENANT_ID').length).toBeGreaterThanOrEqual(9);
+  // Every `azure/login` step, found by parsing each workflow rather than by
+  // counting files that mention a secret, so a login that loses its tenant or
+  // subscription secret fails here even if another workflow gains a stray read.
+  const logins = files.flatMap((file) => {
+    const doc = parseYaml(readFileSync(join(WORKFLOWS, file), 'utf8'));
+    return Object.entries(doc?.jobs ?? {}).flatMap(([job, body]) =>
+      (body?.steps ?? [])
+        .filter((step) => typeof step?.uses === 'string' && step.uses.startsWith('azure/login@'))
+        .map((step) => ({ where: `${file} > ${job}`, with: step.with ?? {} })),
+    );
+  });
+  /** An input that is one expression whose every operand is `secrets.<name>`. */
+  const SECRETS_ONLY = /^\$\{\{\s*secrets\.\w+(\s*\|\|\s*secrets\.\w+)*\s*\}\}$/;
+  const CLIENT_IDS = TENANT_AND_CLIENT_IDS.filter((name) => name !== 'TENANT_ID');
+
+  it('finds every azure/login step', () => {
+    // Nine today: the two deploys, the two monitors, the alert check, the
+    // manifest build, the window remover, the Arc run and Copilot's setup.
+    expect(logins.map((login) => login.where.split(' > ')[0]).sort()).toEqual(
+      [
+        'copilot-setup-steps.yml',
+        'deploy-azure-frontend.yml',
+        'deploy-functions.yml',
+        'lab-host-arc-run.yml',
+        'monitor-functions-registered.yml',
+        'monitor-unresolved-secrets.yml',
+        'publish-content-manifest.yml',
+        'remove-ci-access-windows.yml',
+        'verify-alert-state.yml',
+      ].sort(),
+    );
+  });
+
+  it('every azure/login reads its client, tenant and subscription from secrets only', () => {
+    const problems = logins.flatMap(({ where, with: input }) => {
+      const out = [];
+      const client = String(input['client-id'] ?? '');
+      const tenant = String(input['tenant-id'] ?? '');
+      const subscription = String(input['subscription-id'] ?? '');
+      if (!SECRETS_ONLY.test(client) || !CLIENT_IDS.some((name) => client.includes(`secrets.${name}`))) {
+        out.push(`${where}: client-id is not one of the client id secrets: ${client}`);
+      }
+      if (!SECRETS_ONLY.test(tenant) || !tenant.includes('secrets.TENANT_ID')) {
+        out.push(`${where}: tenant-id is not secrets.TENANT_ID: ${tenant}`);
+      }
+      if (input['allow-no-subscriptions'] === true) {
+        if (subscription) out.push(`${where}: sets both allow-no-subscriptions and subscription-id`);
+      } else if (!SECRETS_ONLY.test(subscription) || !SUBSCRIPTION_IDS.some((name) => subscription.includes(`secrets.${name}`))) {
+        out.push(`${where}: subscription-id is not a subscription id secret: ${subscription}`);
+      }
+      return out;
+    });
+    expect(problems).toEqual([]);
   });
 
   it.each([
