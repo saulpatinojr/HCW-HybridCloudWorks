@@ -161,7 +161,10 @@ const outputRef = (name) =>
  *     the read: every `{% if %}` opened after the guard is closed again, and
  *     no `{% else %}` or `{% elif %}` of the guard's own block comes first.
  */
-function everyReadGuarded(text, ref) {
+function everyReadGuarded(source, ref) {
+  // A Jinja comment renders nothing, so a guard inside one guards nothing:
+  // blank it out, keeping the length so read positions stay the same.
+  const text = source.replace(/\{#[\s\S]*?#\}/g, (c) => ' '.repeat(c.length));
   const reads = [...text.matchAll(new RegExp(ref.source, 'g'))];
   return (
     reads.length > 0 &&
@@ -343,6 +346,7 @@ describe('command results read later are produced in check mode, or read behind 
     expect(read('{{ ids.stdout }}\n{# not ansible_check_mode #}')).toHaveLength(1);
     expect(read('{% if not ansible_check_mode %}a{% else %}{{ ids.rc }}{% endif %}')).toHaveLength(1);
     expect(read('{% if not ansible_check_mode %}{% if y %}z{% endif %}{{ ids.rc }}{% endif %}')).toEqual([]);
+    expect(read('{# {% if not ansible_check_mode %} #}{{ ids.rc }}')).toHaveLength(1);
   });
 
   it('does not take `| default` as a guard, and reads templates', () => {
