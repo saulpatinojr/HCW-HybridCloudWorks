@@ -24,7 +24,8 @@
  *     job's: 202 with `alreadyRunning` (and that job's id when a job holds it);
  *   - today's inspection budget is spent: 429 `daily_budget_spent`, with a
  *     sentence saying when it starts again;
- *   - a sync job is already queued: 202 with `alreadyQueued` and its id.
+ *   - a sync job is already waiting: 202 with `alreadyQueued` and its id while
+ *     it is queued, or `alreadyRunning` and its id once it has started.
  *
  * Checking and then writing are two steps, so two presses at the same moment
  * could both pass the checks. To make sure only one of them queues a job,
@@ -34,10 +35,20 @@
  * (`alreadyQueued`) or the run that has started since (`alreadyRunning`).
  * The run clears the marker when it starts.
  *
+ * A job queued some other way, for example straight through enqueueJob,
+ * claims no marker, so the third check also looks in the jobs container for a
+ * sync job still queued or running. It judges each job by its latest sign of
+ * life (the newest of `createdAt`, `startedAt`, `requeuedAt`, `updatedAt` and
+ * Cosmos's own last-write time `_ts`), not by when it was created: the jobs
+ * sweeper (lib/jobs.js) sends a queued job's message again every ten minutes
+ * and records that in `requeuedAt`, so a job can wait far longer than its own
+ * budget and still be about to run. A job with no sign of life for
+ * IN_FLIGHT_WINDOW_MS is taken as lost.
+ *
  * These answers are for the person pressing the button. The rules themselves
- * are kept by the run (sync.js takes the lease and the budget), so a job
- * queued some other way, for example straight through enqueueJob, keeps them
- * too.
+ * are kept by the run (sync.js takes the lease and the budget, and a job whose
+ * run is no longer needed stops before it calls Google), so a job queued some
+ * other way keeps them too.
  */
 import { randomUUID } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
@@ -51,7 +62,7 @@ import {
   dailyBudget,
   LEASE_DOC_ID,
   leaseIsLive,
-  pendingJobIsLive,
+  waitingMarkedJob,
 } from './lease.js';
 import { CONTAINER, emptySnapshot, NOT_AVAILABLE, SNAPSHOT_DOC_ID } from './sync.js';
 
@@ -65,16 +76,30 @@ export const SYNC_JOB_TYPE = 'sync-search-console';
  * under the 30-minute default function timeout on Flex Consumption.
  */
 export const SYNC_JOB_TIMEOUT_MS = 28 * 60 * 1000;
-const IN_FLIGHT_WINDOW_MS = SYNC_JOB_TIMEOUT_MS + 15 * 60 * 1000;
 /**
- * A marker whose job document is not there yet counts as waiting for this
- * long: the press that claimed it may still be writing the job. After that
- * the write is taken to have failed, and the marker no longer blocks Run now.
+ * A sync job queued or running with no sign of life for this long is taken
+ * as lost: its 28-minute budget plus 15 minutes of slack, more than the jobs
+ * sweeper (lib/jobs.js) waits before it re-sends a queued job's message (10
+ * minutes) or marks a running job past its budget as timed out (5 minutes).
  */
-export const PENDING_WRITE_GRACE_MS = 2 * 60 * 1000;
+export const IN_FLIGHT_WINDOW_MS = SYNC_JOB_TIMEOUT_MS + 15 * 60 * 1000;
+/** Kept here too for callers that read it from the routes' module. */
+export { PENDING_WRITE_GRACE_MS } from './lease.js';
 /** Times one press re-reads and tries again after losing the marker write to something other than another press. */
 const CLAIM_ATTEMPTS = 3;
-const WAITING = new Set(['queued', 'running']);
+
+/**
+ * The latest sign of life of a job document, in milliseconds: the newest of
+ * the times lib/jobs.js and the sweeper write, and Cosmos's own last-write
+ * time (`_ts`, in seconds). NaN when the document carries none of them.
+ */
+export function lastActivity(job) {
+  const times = ['createdAt', 'startedAt', 'requeuedAt', 'updatedAt']
+    .map((field) => Date.parse(job?.[field]))
+    .filter(Number.isFinite);
+  if (Number.isFinite(job?._ts)) times.push(job._ts * 1000);
+  return times.length ? Math.max(...times) : Number.NaN;
+}
 
 const privateJson = (status, body) => ({
   status,
@@ -105,45 +130,36 @@ function present(stored, siteUrl) {
  * @param {() => string} [deps.uuid]
  */
 export function createSearchConsoleHandlers({ guard, store, env = process.env, now = () => new Date(), uuid = randomUUID }) {
-  /** The newest sync job still queued or running inside its window, or null. */
+  /** The sync job queued or running with the most recent sign of life inside the window, or null. */
   async function jobInFlight() {
     const rows = await store.queryDocs(
       JOBS_CONTAINER,
-      "SELECT c.id, c.status, c.createdAt FROM c WHERE c.type = @type AND (c.status = 'queued' OR c.status = 'running')",
+      "SELECT c.id, c.status, c.createdAt, c.startedAt, c.requeuedAt, c.updatedAt, c._ts FROM c WHERE c.type = @type AND (c.status = 'queued' OR c.status = 'running')",
       [{ name: '@type', value: SYNC_JOB_TYPE }]
     );
     const cutoff = now().getTime() - IN_FLIGHT_WINDOW_MS;
-    const live = (Array.isArray(rows) ? rows : []).filter((row) => Date.parse(row?.createdAt) >= cutoff);
-    live.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-    return live[0] ?? null;
+    const live = (Array.isArray(rows) ? rows : [])
+      .map((row) => ({ row, at: lastActivity(row) }))
+      .filter(({ at }) => at >= cutoff);
+    live.sort((a, b) => b.at - a.at);
+    return live[0]?.row ?? null;
   }
 
-  /**
-   * The job the lease document's queued-job marker names, while it is still
-   * waiting to run: `{ id, status }`, or null when there is no live marker or
-   * its job has already finished.
-   */
-  async function markedJobWaiting(lease, at) {
-    if (!pendingJobIsLive(lease, at)) return null;
-    const { jobId, claimedAt } = lease.pendingJob;
-    const job = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
-    if (!job) {
-      const claimed = Date.parse(claimedAt);
-      return Number.isFinite(claimed) && at.getTime() - claimed < PENDING_WRITE_GRACE_MS ? { id: jobId, status: 'queued' } : null;
-    }
-    return WAITING.has(job.status) ? { id: jobId, status: job.status } : null;
-  }
-
-  const runningAnswer = (lease) =>
+  /** A run already going: the lease is held, or a sync job's status is running. */
+  const runningAnswer = (jobId) =>
     privateJson(202, {
       ok: true,
       queued: true,
       alreadyRunning: true,
       status: 'running',
-      ...(typeof lease.jobId === 'string' && lease.jobId ? { jobId: lease.jobId } : {}),
+      ...(typeof jobId === 'string' && jobId ? { jobId } : {}),
     });
 
-  const queuedAnswer = (job) => privateJson(202, { ok: true, queued: true, alreadyQueued: true, jobId: job.id, status: job.status });
+  /** A sync job found waiting: still queued, or already started. */
+  const waitingAnswer = (job) =>
+    job.status === 'running'
+      ? runningAnswer(job.id)
+      : privateJson(202, { ok: true, queued: true, alreadyQueued: true, jobId: job.id, status: 'queued' });
 
   return {
     /** GET cms/search-console */
@@ -192,15 +208,15 @@ export function createSearchConsoleHandlers({ guard, store, env = process.env, n
         for (let attempt = 1; attempt <= CLAIM_ATTEMPTS; attempt += 1) {
           const at = now();
           const lease = await store.readDoc(CONTAINER, LEASE_DOC_ID, ADMIN_CONFIG_PARTITION);
-          if (leaseIsLive(lease, at)) return runningAnswer(lease);
+          if (leaseIsLive(lease, at)) return runningAnswer(lease.jobId);
           if (budgetLeft(lease, at, budget) === 0) {
             return privateJson(429, { ok: false, error: 'daily_budget_spent', message: budgetSpentMessage(at, budget) });
           }
-          const marked = await markedJobWaiting(lease, at);
-          if (marked) return queuedAnswer(marked);
+          const marked = await waitingMarkedJob(store, lease, at);
+          if (marked) return waitingAnswer(marked);
           // A job queued some other way (straight through enqueueJob) has no marker.
           const running = await jobInFlight();
-          if (running) return queuedAnswer(running);
+          if (running) return waitingAnswer(running);
           const jobId = uuid();
           const claim = await claimPendingJob(store, lease, { jobId, now: at });
           // Lost the write: read again, and answer with whoever won.
