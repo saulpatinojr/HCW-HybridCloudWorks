@@ -97,6 +97,15 @@ Describe 'Copy-SubscriptionSecret, from the variables' {
         @($script:calls | Where-Object { $_ -like 'secret set*' }).Count | Should -Be 0
     }
 
+    It 'refuses a value that is not a GUID, sets nothing for it and never repeats the value' {
+        $script:vars['SUBSCRIPTION_ID'] = 'sub-app-site-prod-cus'
+        $results = @(Copy-SubscriptionSecret -Repository 'o/r' -SecretNames 'SUBSCRIPTION_ID' -Confirm:$false)
+        $results[0].Set | Should -BeFalse
+        $results[0].Reason | Should -Be 'SUBSCRIPTION_ID is not a GUID'
+        ($results | ConvertTo-Json -Compress) | Should -Not -Match 'sub-app-site-prod-cus'
+        @($script:calls | Where-Object { $_ -like 'secret set*' }).Count | Should -Be 0
+    }
+
     It 'reports a failed gh secret set as not set' {
         $script:failSet = $true
         $results = @(Copy-SubscriptionSecret -Repository 'o/r' -SecretNames 'SUBSCRIPTION_ID' -Confirm:$false)

@@ -423,6 +423,56 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
     expect(result.stdout).toContain('::error::Could not read run command hcw-status-1-1 back (create exited 1, show exited 3)');
   });
 
+  it('prints each line once when the 4 KB window is cut mid-line, with no false scroll note', () => {
+    // 300 distinct lines, about 12 KB; each poll sees 3000 bytes more, and
+    // Azure keeps the last 4096 bytes, cut wherever that falls.
+    const text = Array.from({ length: 300 }, (_, i) => `line ${String(i).padStart(3, '0')} ${'x'.repeat(30)}`).join('\n') + '\n';
+    const windows = [];
+    for (let upto = 3000; ; upto += 3000) {
+      const end = Math.min(upto, text.length);
+      windows.push(text.slice(Math.max(0, end - 4096), end));
+      if (end === text.length) break;
+    }
+    expect(windows.length).toBeGreaterThan(3);
+    expect(windows.slice(1).some((w) => !w.startsWith('line '))).toBe(true);
+    const views = windows.map((w, i) => (i === windows.length - 1 ? view('Succeeded', 0, w) : running(w)));
+    const result = runStep({ views });
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    const printed = guarded(result.stdout).inside.filter((line) => line.trim() !== '');
+    expect(printed).not.toContain('(earlier output scrolled out of the 4 KB the host keeps)');
+    expect(printed).toEqual(text.trimEnd().split('\n'));
+  });
+
+  it('shows a state or exit code that is not a plain word or number as unexpected, so it cannot forge a command', () => {
+    const forged = {
+      provisioningState: 'Creating\n::warning::FORGED-PROV',
+      instanceView: { executionState: 'Failed\n::warning::FORGED-STATE', exitCode: '0\n::error::FORGED-CODE', executionMessage: '', output: '', error: '' },
+    };
+    const result = runStep({ runTimeout: 0, views: [forged] });
+    expect(result.status).toBe(1);
+    expect(result.stdout).not.toMatch(/^::(warning|error)::FORGED/m);
+    expect(result.stdout).toContain('provisioningState=unexpected executionState=unexpected');
+    expect(result.stdout).toContain('executionState=unexpected exitCode=unexpected');
+    expect(result.summary).toContain('execution state **unexpected**, exit code **unexpected**');
+    expect(result.stdout).toContain('::error::Run command hcw-status-1-1 had not finished 0 s + 240 s');
+  });
+
+  it('keeps a carriage return from closing the summary fence', () => {
+    const result = runStep({ views: [view('Succeeded', 0, 'a\r~~~~\r# INJECTED HEADING', 'b\r~~~~\r# ERROR HEADING')] });
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    expect(result.summary).not.toContain('\r');
+    const blocks = result.summary.split('~~~~text\n').slice(1).map((part) => part.split('\n~~~~\n')[0]);
+    expect(blocks).toEqual(['a\n    ~~~~\n# INJECTED HEADING', 'b\n    ~~~~\n# ERROR HEADING']);
+  });
+
+  it('stops polling when provisioning has succeeded, and lets the read-back decide', () => {
+    const result = runStep({ views: [{ provisioningState: 'Succeeded', instanceView: { exitCode: 0, executionMessage: '', output: 'ok\n', error: '' } }] });
+    expect(result.sleeps).toHaveLength(1);
+    expect(result.stdout).toContain('[+0m20s] provisioningState=Succeeded executionState=unknown');
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('::error::The script did not succeed on the host: execution state unknown, exit code 0.');
+  });
+
   it('keeps a host line that would close the summary fence inside it', () => {
     const result = runStep({ views: [view('Succeeded', 0, 'before\n ~~~~\n~~~ also\nafter')] });
     expect(result.status).toBe(0);

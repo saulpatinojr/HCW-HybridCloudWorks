@@ -27,7 +27,8 @@
   --body, so it is on gh's command line on this computer for that moment.
 
   Exits 1 when a variable is missing or empty, when a prompt is left empty,
-  or when a gh call fails; the message names the secret, never the value.
+  when a value is not a GUID, or when a gh call fails; the message names the
+  secret, never the value.
 
   Needs the GitHub CLI signed in as someone who can manage the repository's
   secrets (`gh auth status`).
@@ -68,6 +69,9 @@ $ErrorActionPreference = 'Stop'
 # not a value) goes to the screen as gh writes it.
 function Invoke-Gh {
   param([Parameter(Mandatory)][string[]] $Arguments)
+  # A failing gh returns its exit code here rather than throwing, whatever
+  # the caller's preference (this variable is local to the function).
+  $PSNativeCommandUseErrorActionPreference = $false
   $out = & gh @Arguments
   [pscustomobject]@{ ExitCode = $LASTEXITCODE; Stdout = (@($out) -join "`n") }
 }
@@ -131,6 +135,10 @@ function Copy-SubscriptionSecret {
       if (-not $v) {
         $why = if ($Prompt) { 'the prompt was left empty' } else { "the repository variable $n is missing or empty" }
         [pscustomobject]@{ Name = $n; Set = $false; Reason = $why }
+      } elseif ($v -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+        # A subscription id is a GUID; anything else is a paste or copy
+        # mistake. The value itself is not repeated.
+        [pscustomobject]@{ Name = $n; Set = $false; Reason = "$n is not a GUID" }
       } elseif (Set-RepoSecretValue -Name $n -Repository $Repository -Value $v) {
         [pscustomobject]@{ Name = $n; Set = $true; Reason = '' }
       } else {

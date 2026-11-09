@@ -230,9 +230,10 @@ jobs:
       # line appears every poll either way.
       #
       # The poll stops at a terminal executionState (Succeeded, Failed,
-      # TimedOut, Canceled), at a provisioningState of Failed or Canceled (the
-      # run command failed before the script could report), or RUN_TIMEOUT +
-      # 240 s after this step started. Then the run command is read once more
+      # TimedOut, Canceled), at a terminal provisioningState (Succeeded,
+      # Failed or Canceled: with --async-execution false provisioning ends
+      # with the script, and a failed one may never report a script state),
+      # or RUN_TIMEOUT + 240 s after this step started. Then the run command is read once more
       # for the summary and the exit code, as before.
       - name: Run the script on the host and report what it printed
         id: run
@@ -279,7 +280,10 @@ jobs:
           }
           # The lines of $2 not printed yet. The longest run of lines at the
           # end of $1 (what was printed) that also starts $2 is skipped, since
-          # the 4 KB window may have moved on between two polls.
+          # the 4 KB window may have moved on between two polls. Once the
+          # output passes 4 KB the window is cut by bytes, so its first line
+          # can be the end of a line printed before: that line matches when it
+          # is a suffix of the printed one.
           new_lines() {
             awk -v seen_file="$1" '
               FILENAME == seen_file { p[++np] = $0; next }
@@ -288,7 +292,13 @@ jobs:
                 best = 0
                 for (k = (np < nc ? np : nc); k > 0; k--) {
                   ok = 1
-                  for (i = 1; i <= k; i++) if (p[np - k + i] != c[i]) { ok = 0; break }
+                  for (i = 1; i <= k; i++) {
+                    a = p[np - k + i]
+                    if (a == c[i]) continue
+                    if (i == 1 && length(c[1]) > 0 && length(c[1]) < length(a) && substr(a, length(a) - length(c[1]) + 1) == c[1]) continue
+                    ok = 0
+                    break
+                  }
                   if (ok) { best = k; break }
                 }
                 if (best == 0 && np > 0 && nc > 0) print "(earlier output scrolled out of the 4 KB the host keeps)"
@@ -303,6 +313,15 @@ jobs:
             else
               sed '$d' "$1" > "$2"
             fi
+          }
+          # A state or exit code is printed outside the stop-commands guard,
+          # so it is checked first: anything else (a newline that would start
+          # a workflow command, say) is shown as `unexpected`.
+          clean_state() {
+            if [[ "$1" =~ ^[A-Za-z]{1,32}$ ]]; then printf '%s' "$1"; else printf 'unexpected'; fi
+          }
+          clean_code() {
+            if [[ "$1" =~ ^-?[0-9]{1,10}$ ]] || [ "$1" = "none" ]; then printf '%s' "$1"; else printf 'unexpected'; fi
           }
           elapsed() {
             local s="$(( $(date +%s) - started ))"
@@ -342,8 +361,8 @@ jobs:
                 echo "[+$(elapsed)] could not read the run command (show exited ${show}); trying again."
                 continue
               fi
-              prov="$(jq -r '.provisioningState // .properties.provisioningState // "unknown"' "${view}" 2> /dev/null || echo unknown)"
-              now_state="$(jq -r "${iv}.executionState // \"unknown\"" "${view}" 2> /dev/null || echo unknown)"
+              prov="$(clean_state "$(jq -r '.provisioningState // .properties.provisioningState // "unknown"' "${view}" 2> /dev/null || echo unknown)")"
+              now_state="$(clean_state "$(jq -r "${iv}.executionState // \"unknown\"" "${view}" 2> /dev/null || echo unknown)")"
               if [ "${running}" -eq 0 ] && [ "${now_state}" = "Running" ]; then
                 phase "Running on the host"
                 running=1
@@ -357,8 +376,11 @@ jobs:
               case "${now_state}" in
                 Succeeded | Failed | TimedOut | Canceled) break ;;
               esac
+              # With --async-execution false the run command's provisioning
+              # ends with the script, so Succeeded is an end too; the
+              # read-back below decides what it was.
               case "${prov}" in
-                Failed | Canceled) break ;;
+                Succeeded | Failed | Canceled) break ;;
               esac
             done
           fi
@@ -389,8 +411,8 @@ jobs:
             echo "::error::Run command ${RUN_NAME} came back without an instance view, so its state and exit code cannot be read (create exited ${create}). Read it by hand with az connectedmachine run-command show."
             exit 1
           fi
-          state="$(jq -r "${iv}.executionState // \"unknown\"" "${view}")"
-          exit_code="$(jq -r "${iv}.exitCode // \"none\"" "${view}")"
+          state="$(clean_state "$(jq -r "${iv}.executionState // \"unknown\"" "${view}")")"
+          exit_code="$(clean_code "$(jq -r "${iv}.exitCode // \"none\"" "${view}")")"
           jq -r "${iv}.executionMessage // \"\"" "${view}" > "${RUNNER_TEMP}/msg.txt"
           jq -r "${iv}.output // \"\"" "${view}" > "${RUNNER_TEMP}/out.txt"
           jq -r "${iv}.error // \"\"" "${view}" > "${RUNNER_TEMP}/err.txt"
@@ -420,15 +442,17 @@ jobs:
             echo
             echo '~~~~text'
             # A line starting with up to three spaces and ~~~ would close the
-            # fence; four spaces in front make it plain text inside it.
-            sed 's/^ \{0,3\}~~~/    &/' "${RUNNER_TEMP}/out.txt"
+            # fence; four spaces in front make it plain text inside it. A bare
+            # carriage return ends a line in Markdown too, so each becomes a
+            # newline first and the line after it is escaped the same way.
+            tr '\r' '\n' < "${RUNNER_TEMP}/out.txt" | sed 's/^ \{0,3\}~~~/    &/'
             echo '~~~~'
             if [ -n "$(tr -d '[:space:]' < "${RUNNER_TEMP}/err.txt")" ]; then
               echo
               echo "### Error"
               echo
               echo '~~~~text'
-              sed 's/^ \{0,3\}~~~/    &/' "${RUNNER_TEMP}/err.txt"
+              tr '\r' '\n' < "${RUNNER_TEMP}/err.txt" | sed 's/^ \{0,3\}~~~/    &/'
               echo '~~~~'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
