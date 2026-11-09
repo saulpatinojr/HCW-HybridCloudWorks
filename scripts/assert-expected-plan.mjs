@@ -623,7 +623,9 @@ export const DECLARED = [
   // `production-backend` credentials. All six are planned from the merge.
   // Nothing is deleted in this run: github_deploy keeps its `production` pair
   // and its site role until PR 2 moves the workflows, and PR 2 declares
-  // those three deletes. Delete these six once they have applied.
+  // those three deletes. Delete these six once they have applied, and with
+  // them the test in assert-expected-plan.test.mjs that asserts they are
+  // declared ("declares #1617's six creates ..."), or it fails.
   {
     address: "azurerm_user_assigned_identity.github_frontend_deploy",
     action: "create",

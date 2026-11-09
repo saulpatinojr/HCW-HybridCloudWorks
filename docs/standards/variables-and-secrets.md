@@ -254,7 +254,7 @@ the real Application subscription id in every step of a public run, which
 the repository's own rule (no real tenant, subscription or application id in
 anything public) does not allow, even though a subscription id grants nothing
 by itself. The tenant id and the client ids were printed the same way, in
-`azure/login`'s `with:` block on every run that signs in. So all nine are
+`azure/login`'s `with:` block on every run that signs in. So all ten are
 repository secrets: `SUBSCRIPTION_ID`, `SUBSCRIPTION_MGMT_ID`, `TENANT_ID`,
 `CLIENT_ID`, `READER_CLIENT_ID`, `MANIFEST_WINDOW_CLIENT_ID`,
 `COPILOT_REVIEW_CLIENT_ID`, `ARC_RUN_CLIENT_ID` and `ALERT_READER_CLIENT_ID`

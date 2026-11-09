@@ -213,8 +213,9 @@ resource "azurerm_federated_identity_credential" "github_production_immutable" {
 # approval step too. #1617 gives it an environment of its own,
 # `production-backend`, which keeps a main-only branch rule AND required
 # reviewers (saulpatinojr and hcw-architect). The owner creates it in GitHub
-# before the backend workflow names it: GitHub makes a missing environment,
-# with no protection at all, the first time a job names it.
+# before confirming the apply that adds this trust: GitHub makes a missing
+# environment, with no protection at all, the first time a job on any branch
+# names it, and from this apply such a job could sign in as this identity.
 #
 # A job that names `production-backend` presents this subject, in either form,
 # so this identity must trust it before the workflow moves. The work is in two
