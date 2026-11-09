@@ -221,7 +221,8 @@ Under workload identity federation these are identifiers, not credentials.
 Possession of a client ID grants nothing. The trust decision is made by the
 federated identity credential, which pins **issuer + subject + audience** —
 `https://token.actions.githubusercontent.com`, `repo:<org>/<repo>:ref:…` or
-`repo:<org>/<repo>:environment:production`, and
+`repo:<org>/<repo>:environment:<name>` (`production`, `copilot` or
+`lab-host-arc`), and
 `api://AzureADTokenExchange`. A token that does not match all three is refused
 with AADSTS70021 no matter who is holding the client ID.
 
