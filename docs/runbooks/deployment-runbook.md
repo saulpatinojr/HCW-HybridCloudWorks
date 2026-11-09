@@ -315,7 +315,8 @@ both take no arguments for the reasons given in section 0:
   are typed, and only when they cannot be discovered.
 - `scripts/set-github-variables.ps1` seeds the GitHub repository variables
   and secrets. Run it once **before** the first apply — that seeds only
-  `TENANT_ID` and `SUBSCRIPTION_ID`, the two values that are inputs *to*
+  `TENANT_ID` and `SUBSCRIPTION_ID` (a secret since 2026-11-09, #1610, so the
+  public logs mask it), the two values that are inputs *to*
   Terraform rather than products of it — and once **after**, when it reads
   `CLIENT_ID`, `APP_HOSTNAME`, `FUNCTIONS_URL`, `RESOURCE_GROUP`,
   `FUNCTIONS_STORAGE_ACCOUNT` and the `COSMOS_ENDPOINT` secret straight from

@@ -9,7 +9,10 @@
 
     Wave 1 - known BEFORE the first terraform apply: tenant and application
              subscription. These two are inputs TO Terraform, not products of
-             it, which is the test for belonging in this wave.
+             it, which is the test for belonging in this wave. TENANT_ID is a
+             repository variable; SUBSCRIPTION_ID is a repository SECRET
+             (#1610), because GitHub masks a secret as *** in this public
+             repository's logs and prints a variable as it is.
     Wave 2 - everything that is a Terraform output, read from the workspace's
              applied state via the HCP Terraform API (the same token
              set-tfc-variables.ps1 resolves): CLIENT_ID (client_id),
@@ -74,8 +77,11 @@
 
 .PARAMETER SubscriptionApp
   Application landing zone subscription GUID (sub-app-site-prod-cus).
-  Becomes SUBSCRIPTION_ID — the subscription azure/login targets, which is
-  where the Function App lives.
+  Becomes the SUBSCRIPTION_ID repository secret (not a variable, #1610) —
+  the subscription azure/login targets, which is where the Function App
+  lives. Its value is never printed. The Management subscription's id,
+  SUBSCRIPTION_MGMT_ID, is also a secret; set it with
+  scripts/Set-SubscriptionSecrets.ps1 -Names SUBSCRIPTION_MGMT_ID -FromPrompt.
 
 .PARAMETER WhatIf
   Report what would be set without writing anything.
@@ -240,22 +246,36 @@ function Set-RepoVariable {
   }
 }
 
+# A repository secret, for a value GitHub must mask in the public logs. The
+# value is passed to gh and never printed (#1610).
+function Set-RepoSecret {
+  [CmdletBinding(SupportsShouldProcess = $true)]
+  param([Parameter(Mandatory)][string] $Name, [Parameter(Mandatory)][string] $Value)
+  $verb = if ($existingSecrets -contains $Name) { 'update' } else { 'create' }
+  if ($PSCmdlet.ShouldProcess("secret $Name", "$verb repository secret")) {
+    Invoke-Gh @('secret', 'set', $Name, '-R', $Repository, '--body', $Value) | Out-Null
+    Write-Act "$verb  $Name (secret; value not shown)"
+  } else {
+    Write-Act "would $verb  $Name (secret; value not shown)"
+  }
+}
+
 # ===========================================================================
 # 2. Wave 1 — known before the first apply
 # ===========================================================================
-$proceed = Confirm-Plan -Title 'About to write these repository variables' -Force:$WhatIfPreference -Order @(
+$proceed = Confirm-Plan -Title 'About to write the TENANT_ID variable and the SUBSCRIPTION_ID secret' -Force:$WhatIfPreference -Order @(
   'Repository', 'TENANT_ID', 'SUBSCRIPTION_ID'
 ) -Values @{
   'Repository'      = $Repository
   'TENANT_ID'       = $TenantId
-  'SUBSCRIPTION_ID' = $SubscriptionApp
+  'SUBSCRIPTION_ID' = '(secret; the subscription chosen above)'
 }
 if (-not $proceed) { Write-Info 'Cancelled — nothing was written.'; exit 0 }
 
 Write-Step 'Wave 1: values known before the first apply'
 
 Set-RepoVariable -Name 'TENANT_ID' -Value $TenantId
-Set-RepoVariable -Name 'SUBSCRIPTION_ID' -Value $SubscriptionApp
+Set-RepoSecret -Name 'SUBSCRIPTION_ID' -Value $SubscriptionApp
 
 # ===========================================================================
 # 3. Wave 2 — Terraform outputs, via the workspace's current state
