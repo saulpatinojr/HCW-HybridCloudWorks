@@ -1018,27 +1018,44 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
   host through Azure, without sshd and without the pinned key. Owner and
   Contributor on the subscription or on `rg-lab-hybrid-prod-cus` carry that
   action, so since this amendment those roles reach root on the host again,
-  which LAB-6 had taken away. It is also a preview feature, so its
-  behaviour can change.
+  which LAB-6 had taken away. **Root on the host is also the Arc machine's
+  own managed identity:** any root process can ask the agent's local
+  identity endpoint for a token as that identity, which holds Key Vault
+  Crypto Service Encryption User on the Vault seal key
+  (`lab_hybrid_vault_seal` in `infra/lab-hybrid.tf`) and Storage Blob Data
+  Contributor on the backup container (`infra/lab-hybrid-backups.tf`). So a
+  run command can unwrap the Vault seal key and read and write the off-host
+  backups (a delete inside the container's immutability window is refused). The *HCW Arc Run Command Operator* role names none of
+  those actions; the host reaches them anyway. It is also a preview
+  feature, so its behaviour can change.
 
   *The mitigations:*
   1. **No free text.** The workflow's one input is a choice of three, each
      mapped by a fixed `case` to a file in the repository; no input is
      written into a shell line. A new action is a reviewed pull request.
-  2. **A person approves every run.** The job is bound to the `production`
-     environment, whose required reviewers approve each run and whose branch
-     policy admits `main` only.
-  3. **Its own identity, with one narrow role.** The workflow signs in as
-     `github_arc_run` (`infra/oidc.tf`), which trusts only the `production`
-     environment's subject and holds one custom role,
-     *HCW Arc Run Command Operator*
+  2. **A person approves every run, in an environment of its own.** The job
+     is bound to a dedicated GitHub environment, `lab-host-arc`, whose
+     required reviewers approve each run and whose deployment-branch policy
+     admits `main` only. That environment is the control. The identity the
+     workflow signs in as, `github_arc_run` (`infra/oidc.tf`), trusts the
+     OIDC subject `repo:<org>/<repo>:environment:lab-host-arc`, and Entra
+     matches a federated credential on issuer, subject and audience alone
+     (the client id is public), so any job that names `lab-host-arc` could
+     sign in as it. That is why it is not `production`: both deploy jobs
+     name `production` and run `npm ci`, and a package script there must
+     not reach root on the lab host. `scripts/oidc-subjects.test.mjs` fails
+     if any workflow but `lab-host-arc-run.yml` names `lab-host-arc`, or any
+     other identity trusts its subject. The owner creates the environment,
+     with its reviewers and branch rule, before the first run, because
+     GitHub creates a missing environment with no protection the first time
+     a job names it.
+  3. **Its own identity, with one narrow role.** `github_arc_run` holds one
+     custom role, *HCW Arc Run Command Operator*
      (`infra/roles/arc-run-command-operator.json`): read the machine, create,
      read and delete run commands, read the operation's status. No extension
-     install, no machine write, no SSH relay credentials. The deploy identity
-     does not get it, so a package script in a deploy cannot reach the host.
-     The grant is behind `lab_arc_run_command_enabled` in `hcw-azure`;
-     setting it to `false` takes Run Command away from CI without touching
-     the host.
+     install, no machine write, no SSH relay credentials. The grant is behind
+     `lab_arc_run_command_enabled` in `hcw-azure`; setting it to `false`
+     takes Run Command away from CI without touching the host.
   4. **Nothing left behind.** Each run's run command is deleted from the
      machine in an `always()` step, so no script stays stored there.
   5. **A record.** Arc's activity log records every create and delete of a

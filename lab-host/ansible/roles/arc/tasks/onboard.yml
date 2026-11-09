@@ -198,7 +198,8 @@
 # (.github/workflows/lab-host-arc-run.yml) as a second way onto the host,
 # beside the one SSH key on one workstation. That reverses LAB-6's "no Run
 # Command" for whoever holds runCommands/write on the machine, which
-# infra/oidc.tf grants to one identity behind the production environment.
+# infra/oidc.tf grants to one identity that only the workflow's own GitHub
+# environment, lab-host-arc, can sign in as.
 # Incoming connections (SSH over Arc, Windows Admin Center) were off until
 # 2026-10-16; since #953 (LAB-7; ADR 0032, amendment of that date) they are
 # on for port 22 alone, sshd's, so the owner can reach sshd through Arc SSH
@@ -277,16 +278,21 @@
 # Agent 1.68 prints the bare value: `false`, `[]`, and
 # `[Microsoft.Azure.Monitor/AzureMonitorLinuxAgent]` (read on the host
 # 2026-10-16); the ports list reads the same way, so `[22]` and `[]` reduce
-# to ['22'] and [].
+# to ['22'] and []. Extension names are compared in lower case (#1590):
+# Microsoft writes the Run Command handler as Microsoft.CPlat.Core,
+# Microsoft.Cplat.Core and microsoft.cplat.core on different pages, so a
+# case-only difference in what the agent reads back is the same extension,
+# not drift. The value is still written exactly as
+# arc_extensions_allowlist_wanted spells it.
 - name: Reduce the four readings to comparable values
   ansible.builtin.set_fact:
     arc_allowlist_current: >-
       {{ ((arc_allowlist_get.stdout_lines | first | default('')) | regex_replace('^[^:]*:', '')
           | regex_replace('[\[\]"\s]', '')).split(',')
-         | reject('eq', '') | sort }}
+         | reject('eq', '') | map('lower') | sort }}
     arc_allowlist_wanted: >-
       {{ (arc_extensions_allowlist_wanted | regex_replace('\s', '')).split(',')
-         | reject('eq', '') | sort }}
+         | reject('eq', '') | map('lower') | sort }}
     arc_incoming_current: >-
       {{ (arc_incoming_get.stdout_lines | first | default('')) | regex_replace('^[^:]*:', '') | trim | lower }}
     arc_ports_current: >-
@@ -409,7 +415,7 @@
     arc_allowlist_after: >-
       {{ ((arc_lockdown_after.results[0].stdout_lines | first | default('')) | regex_replace('^[^:]*:', '')
           | regex_replace('[\[\]"\s]', '')).split(',')
-         | reject('eq', '') | sort }}
+         | reject('eq', '') | map('lower') | sort }}
     arc_incoming_after: >-
       {{ (arc_lockdown_after.results[1].stdout_lines | first | default('')) | regex_replace('^[^:]*:', '') | trim | lower }}
     arc_ports_after: >-

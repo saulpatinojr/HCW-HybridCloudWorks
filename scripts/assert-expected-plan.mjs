@@ -590,7 +590,7 @@ export const DECLARED = [
   },
 
   // #1590 (ADR 0032, amendment of 2026-11-09): the Run Command identity for
-  // lab-host-arc-run.yml and its two production-environment credentials,
+  // lab-host-arc-run.yml and its two lab-host-arc environment credentials,
   // planned from the merge; and its role assignment, planned only once the
   // owner has created HCW Arc Run Command Operator and set
   // lab_arc_run_command_enabled = true (Required-Inputs §4.6b). Delete all
@@ -601,14 +601,14 @@ export const DECLARED = [
     reason: "#1590: the identity lab-host-arc-run.yml signs in as, holding only the Run Command role",
   },
   {
-    address: "azurerm_federated_identity_credential.github_arc_run_production",
+    address: "azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc",
     action: "create",
-    reason: "#1590: trusts the production environment's subject for the Run Command identity, so every sign-in waits for a production reviewer",
+    reason: "#1590: trusts the lab-host-arc environment's subject for the Run Command identity, so every sign-in waits for that environment's reviewers",
   },
   {
-    address: "azurerm_federated_identity_credential.github_arc_run_production_immutable",
+    address: "azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc_immutable",
     action: "create",
-    reason: "#1590: the immutable-ID form of the same production subject",
+    reason: "#1590: the immutable-ID form of the same lab-host-arc subject",
   },
   {
     address: "azurerm_role_assignment.github_arc_run_operator[0]",

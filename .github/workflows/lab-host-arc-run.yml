@@ -18,10 +18,17 @@ name: Lab host - run a fixed command through Azure Arc
 #   - there is no free-text input: `action` is a choice, the script is a file
 #     in this repository picked by a fixed `case`, and no `${{ }}` expression
 #     is written into any shell line (script injection);
-#   - the job is bound to the `production` environment, whose required
-#     reviewers approve each run and whose branch policy admits main only,
-#     and the identity it signs in as (github_arc_run, infra/oidc.tf) trusts
-#     that environment's subject and nothing else;
+#   - the job is bound to its own environment, `lab-host-arc`, whose
+#     required reviewers approve each run and whose deployment-branch policy
+#     admits main only. That environment is the control: the identity it
+#     signs in as (github_arc_run, infra/oidc.tf) trusts the OIDC subject
+#     repo:<org>/<repo>:environment:lab-host-arc, and Entra matches a
+#     federated credential on issuer, subject and audience alone (a client
+#     id is public). So any job that names `lab-host-arc` could sign in as
+#     it, and scripts/oidc-subjects.test.mjs fails if any workflow but this
+#     one names that environment. It is not `production`, because every
+#     deploy job names `production` and runs `npm ci`, whose package scripts
+#     must never reach root on the lab host;
 #   - that identity holds one custom role on the lab group, HCW Arc Run
 #     Command Operator (infra/roles/arc-run-command-operator.json): run,
 #     read and delete run commands, read the machine;
@@ -35,10 +42,12 @@ name: Lab host - run a fixed command through Azure Arc
 # prints only the PLAY RECAP and failed task names. Run Command itself keeps
 # only the last 4 KB of output and of error (instanceView.output and .error).
 #
-# It cannot run until three owner steps are done (docs/runbooks/labs-host.md,
-# "Run a fixed command on the host through Azure Arc"): the role created and
-# lab_arc_run_command_enabled set, ARC_RUN_CLIENT_ID set, and one bootstrap
-# over SSH so the agent's extension allowlist admits the Run Command handler.
+# It cannot run until the owner's one-time steps are done
+# (docs/runbooks/labs-host.md, "Run a fixed command on the host through Azure
+# Arc"): the `lab-host-arc` environment created with its reviewers and branch
+# rule, the role created and lab_arc_run_command_enabled set,
+# ARC_RUN_CLIENT_ID set, and one bootstrap over SSH so the agent's extension
+# allowlist admits the Run Command handler.
 on:
   workflow_dispatch:
     inputs:
@@ -70,12 +79,14 @@ jobs:
       id-token: write # exchanged by azure/login for an Azure access token
     runs-on: ubuntu-26.04
     # bootstrap: about six minutes on the host, 40 at most (RUN_TIMEOUT
-    # below), plus sign-in, install and clean-up.
-    timeout-minutes: 55
-    # The gate, as on deploy-functions.yml: `production` has required
-    # reviewers and a main-only deployment-branch policy (Required-Inputs
-    # §4.4), and github_arc_run trusts only this environment's subject.
-    environment: production
+    # below), plus sign-in, install, the read-back and the clean-up.
+    timeout-minutes: 70
+    # The gate. `lab-host-arc` is this workflow's own environment: required
+    # reviewers approve each run, and its deployment-branch policy admits
+    # main only (Required-Inputs §4.4). The owner creates it before the
+    # first run; GitHub would otherwise create a missing one, with no
+    # protection, the first time a job names it.
+    environment: lab-host-arc
     env:
       ACTION: ${{ inputs.action }}
       # The Arc machine, as the arc role names it
@@ -93,8 +104,11 @@ jobs:
       CONNECTEDMACHINE_SHA256: 9b71015a6b047770deed883dd4092857641c6a574f2107ee558b0535ff2946d8
     steps:
       - name: Refuse a run from a ref that is not main
-        # The environment's branch policy refuses it too; this is the
-        # repository-side backstop, as on deploy-functions.yml.
+        # A backstop only. A dispatch runs the workflow file as it is on the
+        # ref it was dispatched from, so a branch could carry a copy without
+        # this step. The control is the `lab-host-arc` environment's
+        # deployment-branch policy (main only), which GitHub enforces before
+        # the job starts and which no file on a branch can change.
         if: github.ref != 'refs/heads/main'
         timeout-minutes: 1
         run: |
@@ -175,13 +189,14 @@ jobs:
 
       - name: Run the script on the host and report what it printed
         id: run
-        # RUN_TIMEOUT (40 minutes at most) plus the CLI's own polling.
-        timeout-minutes: 45
+        # RUN_TIMEOUT (40 minutes at most), plus the CLI's own polling, plus
+        # the read-back below.
+        timeout-minutes: 50
         run: |
           set -euo pipefail
           echo "Running ${SCRIPT_FILE} on ${ARC_MACHINE} as run command ${RUN_NAME} (timeout ${RUN_TIMEOUT} s)."
           create=0
-          timeout "$((RUN_TIMEOUT + 300))" az connectedmachine run-command create \
+          timeout "$((RUN_TIMEOUT + 240))" az connectedmachine run-command create \
             --resource-group "${ARC_RESOURCE_GROUP}" \
             --machine-name "${ARC_MACHINE}" \
             --location "${ARC_LOCATION}" \
@@ -233,14 +248,16 @@ jobs:
             echo "### Output"
             echo
             echo '~~~~text'
-            sed 's/^~~~~/ ~~~~/' "${RUNNER_TEMP}/out.txt"
+            # A line starting with up to three spaces and ~~~ would close the
+            # fence; four spaces in front make it plain text inside it.
+            sed 's/^ \{0,3\}~~~/    &/' "${RUNNER_TEMP}/out.txt"
             echo '~~~~'
             if [ -s "${RUNNER_TEMP}/err.txt" ]; then
               echo
               echo "### Error"
               echo
               echo '~~~~text'
-              sed 's/^~~~~/ ~~~~/' "${RUNNER_TEMP}/err.txt"
+              sed 's/^ \{0,3\}~~~/    &/' "${RUNNER_TEMP}/err.txt"
               echo '~~~~'
             fi
           } >> "$GITHUB_STEP_SUMMARY"

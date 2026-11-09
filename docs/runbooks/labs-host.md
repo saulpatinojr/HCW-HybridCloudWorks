@@ -522,7 +522,17 @@ Command** (a preview Azure feature: the Arc agent on the host runs a script
 it is handed, as root, and sends back what it printed;
 [Microsoft's page](https://learn.microsoft.com/azure/azure-arc/servers/run-command)).
 You pick the script from a list; you cannot type a command. Each run waits
-for a `production` reviewer to approve it.
+for a reviewer of the workflow's own GitHub environment, `lab-host-arc`, to
+approve it.
+
+**That environment is the lock.** The Azure identity the workflow signs in
+as trusts any GitHub job that runs in the `lab-host-arc` environment (Azure
+checks the environment's name in the job's sign-in token, not which
+workflow sent it), so the environment's reviewers and its `main`-only
+branch rule decide who can be root on the host. That is also why it is not
+`production`: the deploy jobs run there, and they install npm packages
+whose install scripts must never reach the host. A test fails if any other
+workflow names `lab-host-arc`.
 
 | Action | What it does | How long |
 | --- | --- | --- |
@@ -539,23 +549,53 @@ run shows its end.
 
 ### One-time setup
 
-The workflow cannot run until all five steps below are done, in this
-order. Step 5 is the chicken-and-egg one: the host's Arc agent refuses the
+The workflow cannot run until all six steps below are done, in this
+order. Step 6 is the chicken-and-egg one: the host's Arc agent refuses the
 Run Command handler (the small Microsoft component that runs the script)
 until a `bootstrap.sh` run with this change has added it to the agent's
 allowlist, and the workflow cannot do that run for you before then. So
-step 5 is one last run over SSH, from the workstation with the key.
+step 6 is one last run over SSH, from the workstation with the key.
 
-1. **Confirm the merge run in `hcw-azure`.** After the pull request for
+1. **Create the `lab-host-arc` environment, with its protection, first.**
+   It must exist before anything can sign in with it: the first time a job
+   names an environment that does not exist, GitHub creates it silently
+   with **no** reviewers and no branch rule, and that unprotected
+   environment would be the way to root on the host. Open
+   [the repository's environments](https://github.com/saulpatinojr/HCW-HybridCloudWorks/settings/environments)
+   ([GitHub's page on managing environments](https://docs.github.com/actions/deployment/targeting-different-environments/using-environments-for-deployment)),
+   click **New environment**, name it `lab-host-arc`, and click
+   **Configure environment**. Then:
+   - **Required reviewers**: ticked, and add `saulpatinojr` and
+     `hcw-architect` (the same two as `production`; either one approves).
+   - **Prevent self-review**: not ticked.
+   - **Allow administrators to bypass configured protection rules**: not
+     ticked.
+   - **Wait timer**: not ticked.
+   - **Deployment branches and tags**: choose **Selected branches and
+     tags**, **Add deployment branch or tag rule**, type **Branch**, name
+     pattern `main`, **Add rule**.
+   - **Environment secrets** and **Environment variables**: add none.
+
+   Click **Save protection rules**. Then read it back, PowerShell:
+
+   ```powershell
+   gh api repos/saulpatinojr/HCW-HybridCloudWorks/environments/lab-host-arc --jq '.protection_rules[].type'
+   ```
+
+   Success is two lines, `required_reviewers` and `branch_policy` (in
+   either order). `HTTP 404` means the environment does not exist yet; one
+   line or none means a rule was not saved, so open the environment again
+   and save it.
+2. **Confirm the merge run in `hcw-azure`.** After the pull request for
    #1590 merges, HCP Terraform plans a run on
    [the workspace's runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
    Success is three creates for this change, each declared in
    `scripts/assert-expected-plan.mjs`:
    `azurerm_user_assigned_identity.github_arc_run` and the two
-   `azurerm_federated_identity_credential.github_arc_run_production…`
+   `azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc…`
    credentials. Confirm it as usual. Anything else in the plan that is
    not declared is a reason to stop and read it, not to confirm.
-2. **Create the role.** PowerShell, from the repository root, signed in
+3. **Create the role.** PowerShell, from the repository root, signed in
    with `az login` as an account that is Owner on the Application
    subscription. The first part brings your copy up to date, so the role
    file exists:
@@ -571,7 +611,7 @@ step 5 is one last run over SSH, from the workstation with the key.
    `/resourceGroups/rg-lab-hybrid-prod-cus`. If it stops saying a
    subscription id "is the repository placeholder", sign in again with
    `az login` and rerun the same line.
-3. **Turn the grant on.** In
+4. **Turn the grant on.** In
    [the workspace's variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables),
    **Add variable**, category **Terraform variable**, key
    `lab_arc_run_command_enabled`, value `true`, **HCL** ticked,
@@ -580,9 +620,9 @@ step 5 is one last run over SSH, from the workstation with the key.
    then **New run** (top right of the workspace) and confirm it. Success is
    a plan with one create, `azurerm_role_assignment.github_arc_run_operator[0]`.
    If the plan sits at "refreshing" for minutes instead, the role from step
-   2 does not exist yet: cancel the run, set the variable back to `false`,
-   and do step 2 again.
-4. **Seed the client id.** PowerShell, from the repository root on `main`.
+   3 does not exist yet: cancel the run, set the variable back to `false`,
+   and do step 3 again.
+5. **Seed the client id.** PowerShell, from the repository root on `main`.
    The script reads the `arc_run_client_id` output from the workspace and
    sets the repository variable `ARC_RUN_CLIENT_ID`, beside the ones it
    already manages:
@@ -592,9 +632,9 @@ step 5 is one last run over SSH, from the workstation with the key.
    ```
 
    Success is a line naming `ARC_RUN_CLIENT_ID` and a GUID. It is an
-   identifier, not a secret: it grants nothing without an approved
-   `production` run from this repository.
-5. **Let the agent accept the handler: one `bootstrap.sh` run over SSH.**
+   identifier, not a secret, and public: what decides who can sign in as
+   this identity is the `lab-host-arc` environment from step 1.
+6. **Let the agent accept the handler: one `bootstrap.sh` run over SSH.**
    PowerShell, on the workstation with the key:
 
    ```powershell
@@ -603,12 +643,21 @@ step 5 is one last run over SSH, from the workstation with the key.
 
    Success is a recap with `failed=0`, after the line `Arc agent: extension
    allowlist
-   Microsoft.Azure.Monitor/AzureMonitorLinuxAgent,Microsoft.CPlat.Core/RunCommandHandlerLinux;
-   incoming connections on, port 22 only (Arc SSH).` If the run stops at
-   *Assert the extension allowlist is unchanged…*, the agent stored the
-   list differently from how the role wrote it; read it with
+   microsoft.azure.monitor/azuremonitorlinuxagent,microsoft.cplat.core/runcommandhandlerlinux;
+   incoming connections on, port 22 only (Arc SSH).` (The role compares
+   extension names in lower case, so that is how the line prints them; the
+   agent holds them as the role wrote them.) If the run stops at
+   *Assert the extension allowlist is unchanged…*, the agent stored a
+   different list from the one the role wrote; read it with
    `sudo /opt/azcmagent/bin/azcmagent config get extensions.allowlist` and
    put the output on #1590.
+
+**Expected drift until step 6.** Between the merge and that SSH run, the
+host's nightly `--check --diff` drift run (`hcw-playbook-drift`) reports
+the `arc` role's *Report Arc agent settings that differ from this role's*
+task as changed, naming the extension allowlist: the role now wants the
+handler in it and the host does not have it yet. That is expected, and step
+6 clears it. Drift in anything else on that line is not this change.
 
 ### Running it
 
@@ -617,25 +666,27 @@ step 5 is one last run over SSH, from the workstation with the key.
    click **Run workflow**, leave the branch at `main`, choose the action
    (start with `status`), and click the green **Run workflow**.
 2. Open the run that appears. It shows **Waiting** with a **Review
-   deployments** button. Click it, tick `production`, and click **Approve
-   and deploy**
+   deployments** button. Click it, tick `lab-host-arc`, and click
+   **Approve and deploy**
    ([GitHub's page on reviewing deployments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)).
-   `production` allows self-review (read 2026-10-03,
-   [Required-Inputs §4.4](../standards/required-inputs.md)), so you can
-   approve your own run. If GitHub ever refuses that, the other required
-   reviewer, `hcw-architect`, approves it.
+   Step 1 left **Prevent self-review** unticked, so you can approve your
+   own run. If GitHub ever refuses that, the other required reviewer,
+   `hcw-architect`, approves it.
 3. **What success looks like:** the job goes green, and its summary (the
    run's **Summary** tab) reads `execution state Succeeded, exit code 0`
    above the script's output. For `bootstrap`, the output ends with the
    play recap showing `failed=0`.
 4. **What failure looks like, and what to do:**
+   - *The run starts at once with no **Review deployments** button:* the
+     `lab-host-arc` environment has no reviewers. Cancel the run and do
+     setup step 1.
    - *The run stops at "Refuse while ARC_RUN_CLIENT_ID is unset":* do setup
-     step 4.
+     step 5.
    - *"Could not read run command … back" with `AuthorizationFailed` above
-     it:* the role is not granted yet; do setup steps 2 and 3.
+     it:* the role is not granted yet; do setup steps 3 and 4.
    - *"Could not read run command … back" with a message about the
      extension not being allowed:* the agent's allowlist has not got the
-     handler yet; do setup step 5.
+     handler yet; do setup step 6.
    - *`execution state Failed` or a non-zero exit code:* the script ran and
      failed on the host. The summary shows its last 4 KB. For `bootstrap`,
      it names the failed tasks; the end of the full log is one line away

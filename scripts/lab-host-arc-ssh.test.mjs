@@ -309,6 +309,10 @@ describe('the Run Command handler is the one extension added to the allowlist (#
   it('feeds the same list to the drift comparison, the write and the read-back assertion', () => {
     const reduce = task('Reduce the four readings to comparable values');
     expect(reduce).toContain("{{ (arc_extensions_allowlist_wanted | regex_replace('\\s', '')).split(',')");
+    // Compared in lower case on all three sides (current, wanted, read-back),
+    // so a case-only difference is not drift; the write stays verbatim.
+    expect(reduce.match(/\| reject\('eq', ''\) \| map\('lower'\) \| sort \}\}/g)).toHaveLength(2);
+    expect(task('Reduce the read-back to comparable values').match(/\| map\('lower'\) \| sort \}\}/g)).toHaveLength(1);
     expect(reduce).not.toMatch(/\(arc_extensions_allowlist \|/);
     const write = task('Allow only the Azure Monitor Agent extension, and the Run Command handler when enabled');
     expect(write).toContain('- extensions.allowlist\n      - "{{ arc_extensions_allowlist_wanted }}"');

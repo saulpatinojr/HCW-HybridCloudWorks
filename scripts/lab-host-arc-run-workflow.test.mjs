@@ -9,10 +9,11 @@
  * - The manual trigger's one input is a choice of three fixed actions, each
  *   action maps to one file under lab-host/arc-run/, and no `${{ }}`
  *   expression is written into a shell line (script injection).
- * - The job names the `production` environment (its required reviewers
- *   approve each run) and signs in as github_arc_run (ARC_RUN_CLIENT_ID),
- *   which trusts only that environment's subject (oidc-subjects.test.mjs
- *   holds the credential side).
+ * - The job names its own environment, `lab-host-arc` (its required
+ *   reviewers approve each run and its branch policy admits main only), and
+ *   signs in as github_arc_run (ARC_RUN_CLIENT_ID). The environment is the
+ *   control: github_arc_run trusts that environment's subject, so
+ *   oidc-subjects.test.mjs fails if any other workflow names it.
  * - `id-token: write` is on the job, not the workflow; every action is pinned
  *   by commit; the job and each step have a time limit; two runs never
  *   overlap and a queued one never cancels a run in flight.
@@ -80,8 +81,9 @@ describe('lab-host-arc-run.yml', () => {
     expect(job.lines.some((line) => /^ {6}ACTION: \$\{\{ inputs\.action \}\}$/.test(line))).toBe(true);
   });
 
-  it('names the production environment and signs in as the Run Command identity', () => {
-    expect(job.lines.some((line) => /^ {4}environment: production$/.test(line))).toBe(true);
+  it('names its own lab-host-arc environment, never production, and signs in as the Run Command identity', () => {
+    expect(job.lines.some((line) => /^ {4}environment: lab-host-arc$/.test(line))).toBe(true);
+    expect(source).not.toMatch(/^\s*environment:\s*production\b/m);
     expect(job.lines.some((line) => /client-id: \$\{\{ vars\.ARC_RUN_CLIENT_ID \}\}/.test(line))).toBe(true);
     expect(job.lines.some((line) => /vars\.(CLIENT_ID|READER_CLIENT_ID|MANIFEST_WINDOW_CLIENT_ID)\b/.test(line))).toBe(false);
     expect(job.steps.find((step) => step.name === 'Refuse a run from a ref that is not main')?.if).toBe("github.ref != 'refs/heads/main'");
@@ -239,6 +241,13 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
     const result = runStep({ createExit: 1, view: null });
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('::error::Could not read run command hcw-status-1-1 back (create exited 1, show exited 3)');
+  });
+
+  it('keeps a host line that would close the summary fence inside it', () => {
+    const result = runStep({ view: view('Succeeded', 0, 'before\n ~~~~\n~~~ also\nafter') });
+    expect(result.status).toBe(0);
+    const fenced = result.summary.split('~~~~text\n')[1].split('\n~~~~\n')[0];
+    expect(fenced).toBe('before\n     ~~~~\n    ~~~ also\nafter');
   });
 
   it("prints the host's output with workflow commands stopped, so a `::` line in it is only text", () => {

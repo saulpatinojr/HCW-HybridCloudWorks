@@ -86,7 +86,8 @@ const IDENTITY_BY_CLIENT_ID_VAR = {
   MANIFEST_WINDOW_CLIENT_ID: 'github_manifest_window',
   // copilot-setup-steps.yml: the identity Copilot code review signs in as.
   COPILOT_REVIEW_CLIENT_ID: 'github_copilot_review',
-  // lab-host-arc-run.yml: Run Command on the lab host, behind production (#1590).
+  // lab-host-arc-run.yml: Run Command on the lab host, behind its own
+  // environment, lab-host-arc (#1590).
   ARC_RUN_CLIENT_ID: 'github_arc_run',
 };
 
@@ -338,10 +339,29 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
     }
   });
 
-  it('github_arc_run trusts the production environment only, so every sign-in waits for a reviewer (#1590)', () => {
-    const subjects = trustedSubjectsByIdentity().github_arc_run ?? [];
+  it('github_arc_run trusts the lab-host-arc environment only, and no other identity trusts it (#1590)', () => {
+    // Entra matches a federated credential on issuer, subject and audience
+    // alone, and a client id is public: any job presenting a subject this
+    // identity trusts can sign in as it. So its subject is an environment
+    // only lab-host-arc-run.yml names, never production (whose deploy jobs
+    // run package scripts), and no other identity shares it.
+    const byIdentity = trustedSubjectsByIdentity();
+    const subjects = byIdentity.github_arc_run ?? [];
     expect(subjects.length).toBe(2);
-    expect(subjects.every((s) => s.endsWith(':environment:production'))).toBe(true);
+    expect(subjects.every((s) => s.endsWith(':environment:lab-host-arc'))).toBe(true);
+    for (const [identity, held] of Object.entries(byIdentity)) {
+      if (identity === 'github_arc_run') continue;
+      expect(held.filter((s) => s.includes(':environment:lab-host-arc')), identity).toEqual([]);
+    }
+  });
+
+  it('no workflow but lab-host-arc-run.yml names the lab-host-arc environment (#1590)', () => {
+    // Naming it is what presents the subject github_arc_run trusts, so a
+    // second workflow naming it would be a second way to root on the lab host.
+    const naming = readdirSync(WORKFLOWS)
+      .filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))
+      .filter((f) => /^\s*(?:environment|name):\s*(?:\{[^}]*name:\s*)?['"]?lab-host-arc['"]?\s*\}?\s*(?:#.*)?$/m.test(readFileSync(join(WORKFLOWS, f), 'utf8')));
+    expect(naming).toEqual(['lab-host-arc-run.yml']);
   });
 
   it('reads a grant it is shown, so an empty list above means no grant rather than a broken scan', () => {

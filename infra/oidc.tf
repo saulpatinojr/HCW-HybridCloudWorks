@@ -634,13 +634,20 @@ resource "azurerm_role_assignment" "github_alert_reader_mgmt" {
 # script in either would inherit root on the lab host. This identity holds the
 # Run Command role and nothing else.
 #
-# SUBJECT IS THE production ENVIRONMENT, in both forms, and nothing else, as
-# for github_deploy (SEC-2): a sign-in waits for one of that environment's
-# required reviewers and is refused from any ref but main by its
-# deployment-branch policy. No ref-form credential, so no job on main can sign
-# in as this identity without a reviewer. github_deploy trusts the same
-# subjects; the client-id a job sends (ARC_RUN_CLIENT_ID) decides which
-# identity it reaches, and scripts/oidc-subjects.test.mjs checks that per job.
+# AND AN ENVIRONMENT OF ITS OWN, lab-host-arc, not production. Entra matches a
+# federated credential on issuer, subject and audience alone, and a client id
+# is public, so ANY job that presents a subject this identity trusts can sign
+# in as it, whatever client id it was written to send. Trusting
+# environment:production would have handed root on the lab host to every
+# production job (deploy-functions.yml and deploy-azure-frontend.yml both run
+# `npm ci` with package scripts). So the subject is
+# environment:lab-host-arc, in both forms, and nothing else. The control is
+# that environment: its required reviewers approve each run and its
+# deployment-branch policy admits main only. The owner creates it before the
+# first run (docs/runbooks/labs-host.md), because GitHub creates a missing
+# environment with no protection the first time a job names it.
+# scripts/oidc-subjects.test.mjs fails if any workflow but lab-host-arc-run.yml
+# names that environment, or any other identity trusts its subject.
 resource "azurerm_user_assigned_identity" "github_arc_run" {
   name                = "id-${var.workload_name}-github-arcrun-${var.environment}-${var.region_abbreviation}-${var.instance}"
   location            = azurerm_resource_group.app["web"].location
@@ -648,20 +655,20 @@ resource "azurerm_user_assigned_identity" "github_arc_run" {
   tags                = local.tags
 }
 
-resource "azurerm_federated_identity_credential" "github_arc_run_production" {
-  name                      = "github-${var.github_repo}-arc-run-env-production"
+resource "azurerm_federated_identity_credential" "github_arc_run_env_lab_host_arc" {
+  name                      = "github-${var.github_repo}-arc-run-env-lab-host-arc"
   user_assigned_identity_id = azurerm_user_assigned_identity.github_arc_run.id
   audience                  = ["api://AzureADTokenExchange"]
   issuer                    = "https://token.actions.githubusercontent.com"
-  subject                   = "repo:${var.github_org}/${var.github_repo}:environment:production"
+  subject                   = "repo:${var.github_org}/${var.github_repo}:environment:lab-host-arc"
 }
 
-resource "azurerm_federated_identity_credential" "github_arc_run_production_immutable" {
-  name                      = "github-${var.github_repo}-arc-run-env-production-immutable"
+resource "azurerm_federated_identity_credential" "github_arc_run_env_lab_host_arc_immutable" {
+  name                      = "github-${var.github_repo}-arc-run-env-lab-host-arc-immutable"
   user_assigned_identity_id = azurerm_user_assigned_identity.github_arc_run.id
   audience                  = ["api://AzureADTokenExchange"]
   issuer                    = "https://token.actions.githubusercontent.com"
-  subject                   = "${local.github_immutable_prefix}:environment:production"
+  subject                   = "${local.github_immutable_prefix}:environment:lab-host-arc"
 }
 
 # HCW Arc Run Command Operator (infra/roles/arc-run-command-operator.json):
@@ -673,9 +680,16 @@ resource "azurerm_federated_identity_credential" "github_arc_run_production_immu
 # scripts/bootstrap-roles.ps1 or .sh, which fill in the real subscription.
 #
 # SCOPED TO THE LAB GROUP, rg-lab-hybrid-prod-cus, not to the machine. The
-# role's actions reach Arc machines and nothing else, and the group holds one
-# (the vault key, the backup account and the data collection rule there are
-# outside every action the role names). A machine-scoped grant would be
+# role's Azure actions reach Arc machines and nothing else, and the group
+# holds one; the vault key, the backup account and the data collection rule
+# there are outside every action the role names. That is a statement about
+# the role, not about what its holder can reach: a run command is root on the
+# host, and root on the host can ask the local identity endpoint for the Arc
+# machine's own managed identity, which holds Key Vault Crypto Service
+# Encryption User on the Vault seal key (lab_hybrid_vault_seal, lab-hybrid.tf)
+# and Storage Blob Data Contributor on the backup container
+# (lab-hybrid-backups.tf). ADR 0032's amendment of 2026-11-09 records that.
+# A machine-scoped grant would be
 # replaced each time the host is rebuilt and onboarded as a new machine, and
 # would leave the subscription undiscoverable at sign-in, the reason
 # github_manifest_window's Reader sits on its group (above).
@@ -926,9 +940,8 @@ output "deploy_principal_id" {
   value       = azurerm_user_assigned_identity.github_deploy.principal_id
 }
 
-# Twelve entries since #1590, when the Run Command identity's production pair
-# was added (the same two subjects github_deploy trusts, on a second
-# identity). Ten since #1098, when the manifest window identity's ref pair was
+# Twelve entries since #1590, when the Run Command identity's lab-host-arc
+# environment pair was added. Ten since #1098, when the manifest window identity's ref pair was
 # added. Eight since 2026-10-11, when the alert reader identity's ref pair
 # was added (#1053). Six since 2026-10-06, down from eight: the deploy
 # identity's ref pair was retired (SEC-2). Eight since 2026-09-06, when the Copilot review
@@ -959,7 +972,7 @@ output "federated_subjects" {
     azurerm_federated_identity_credential.github_manifest_window_branch_immutable.subject,
     azurerm_federated_identity_credential.github_copilot_review_environment.subject,
     azurerm_federated_identity_credential.github_copilot_review_environment_immutable.subject,
-    azurerm_federated_identity_credential.github_arc_run_production.subject,
-    azurerm_federated_identity_credential.github_arc_run_production_immutable.subject,
+    azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc.subject,
+    azurerm_federated_identity_credential.github_arc_run_env_lab_host_arc_immutable.subject,
   ]
 }

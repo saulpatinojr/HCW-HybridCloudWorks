@@ -75,8 +75,8 @@ With `arc_enabled: true`:
    2026-11-09, #1590; ADR 0032, amendment of that date), and guest
    configuration is off. The handler is what lets
    `.github/workflows/lab-host-arc-run.yml` run one of its fixed scripts on
-   the host as root through Azure, after a production reviewer approves the
-   run; [Run command on Azure Arc-enabled
+   the host as root through Azure, after a reviewer of its own GitHub
+   environment, `lab-host-arc`, approves the run; [Run command on Azure Arc-enabled
    servers](https://learn.microsoft.com/azure/azure-arc/servers/run-command)
    is Microsoft's page, and `docs/runbooks/labs-host.md` ("Run a fixed
    command on the host through Azure Arc") is how to use it. Incoming connections through Arc are on for port
