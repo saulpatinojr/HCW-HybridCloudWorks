@@ -348,7 +348,8 @@ if (-not $script:tfcToken) {
 
 if ($outputs) {
   $waveTwo = @(
-    # The seven client ids are SECRETS (#1618), so the public logs show ***;
+    # The client ids are SECRETS, so the public logs show ***: the six from
+    # #1618, and FRONTEND_DEPLOY_CLIENT_ID added by #1617;
     # every workflow reads them as `secrets.<name>`.
     @{ output = 'client_id'; kind = 'secret'; name = 'CLIENT_ID'; transform = { param($v) $v } }
     # #1617: the frontend deploy's own identity, HCW Static Web App Deployer

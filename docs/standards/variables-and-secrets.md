@@ -221,7 +221,7 @@ the workflows sign in with (`secrets.TENANT_ID`, `secrets.CLIENT_ID`,
 `secrets.COPILOT_REVIEW_CLIENT_ID`, `secrets.ARC_RUN_CLIENT_ID`,
 `secrets.ALERT_READER_CLIENT_ID`,
 [#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)).
-They were store 3 variables until then; the reason they moved is below. A
+They were stored as variables until then; the reason they moved is below. A
 seventh client id, `FRONTEND_DEPLOY_CLIENT_ID`
 ([#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617)),
 was a secret from the start.

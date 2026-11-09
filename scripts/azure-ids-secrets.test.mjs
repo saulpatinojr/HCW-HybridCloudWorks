@@ -209,4 +209,24 @@ describe('Azure ids come from secrets, so public logs show ***', () => {
     // The wave-2 loop honours `kind`, so a 'secret' entry is never written as a variable.
     expect(script).toMatch(/if \(\$entry\.kind -eq 'secret'\) \{\s*Set-RepoSecret -Name \$entry\.name -Value \$value/);
   });
+
+  // Copilot review of #1633: the Pester tests only exercise the generic secret
+  // writer, so a typo in a wave-2 output key would leave its secret unset
+  // without any test failing. Each entry's output must be a real Terraform
+  // output, and the #1617 one must feed FRONTEND_DEPLOY_CLIENT_ID.
+  it('every wave-2 entry of set-github-variables.ps1 reads a Terraform output that exists', () => {
+    const script = readFileSync(join(REPO, 'scripts', 'set-github-variables.ps1'), 'utf8');
+    const infra = join(REPO, 'infra');
+    const outputs = new Set(
+      readdirSync(infra)
+        .filter((name) => name.endsWith('.tf'))
+        .flatMap((name) => [...readFileSync(join(infra, name), 'utf8').matchAll(/^output "([^"]+)"/gm)].map((m) => m[1]))
+    );
+    const entries = [...script.matchAll(/@\{ output = '([^']+)'; kind = '(secret|variable)'; name = '([^']+)'/g)].map(
+      ([, output, kind, name]) => ({ output, kind, name })
+    );
+    expect(entries.length).toBeGreaterThan(5);
+    for (const entry of entries) expect(outputs, `${entry.name} reads output ${entry.output}`).toContain(entry.output);
+    expect(entries).toContainEqual({ output: 'frontend_deploy_client_id', kind: 'secret', name: 'FRONTEND_DEPLOY_CLIENT_ID' });
+  });
 });
