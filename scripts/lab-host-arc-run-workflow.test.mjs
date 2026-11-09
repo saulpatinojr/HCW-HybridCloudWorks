@@ -89,6 +89,20 @@ describe('lab-host-arc-run.yml', () => {
     expect(job.steps.find((step) => step.name === 'Refuse a run from a ref that is not main')?.if).toBe("github.ref != 'refs/heads/main'");
   });
 
+  it('signs in without selecting a subscription, and names it on every az connectedmachine call', () => {
+    // The identity's only grant is at resource-group scope, so a pinned
+    // subscription could fail the login (as verify-alert-state.yml says).
+    expect(job.lines.some((line) => /^\s+allow-no-subscriptions: true$/.test(line))).toBe(true);
+    expect(job.lines.some((line) => /^\s+subscription-id:/.test(line))).toBe(false);
+    expect(job.lines.some((line) => /^ {6}SUBSCRIPTION_ID: \$\{\{ vars\.SUBSCRIPTION_ID \}\}$/.test(line))).toBe(true);
+    // Each call is written one option per line; its first option is the subscription.
+    const calls = job.steps.flatMap((step) =>
+      [...(step.run ?? '').matchAll(/az connectedmachine run-command (\w+) \\\n([^\n]*)\n/g)].map((m) => ({ verb: m[1], first: m[2] }))
+    );
+    expect(calls.map((c) => c.verb).sort()).toEqual(['create', 'delete', 'show']);
+    for (const { verb, first } of calls) expect(first, verb).toMatch(/^\s*--subscription "\$\{SUBSCRIPTION_ID\}" \\$/);
+  });
+
   it('holds contents read and, on the job only, id-token write', () => {
     const grants = commandLines.filter((line) => /^\s+(contents|actions|id-token|pull-requests|issues|packages|deployments|statuses|checks):\s/.test(line));
     expect(grants.map((line) => line.replace(/\s+#.*$/, '').trim()).sort()).toEqual(['contents: read', 'contents: read', 'id-token: write']);
@@ -183,6 +197,7 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
     writeFileSync(`${dir}/view.json`, view === null ? '' : JSON.stringify(view));
     const fake = [
       '#!/usr/bin/env bash',
+      `{ printf '%s' "$*" | tr '\\n' ' '; echo; } >> '${dir}/az-calls.txt'`,
       'case "$3" in',
       `  create) exit ${createExit} ;;`,
       `  show) ${view === null ? 'echo "ResourceNotFound" >&2; exit 3' : `cat '${dir}/view.json'; exit 0`} ;;`,
@@ -207,10 +222,12 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
         ARC_RESOURCE_GROUP: 'rg-lab-hybrid-prod-cus',
         ARC_MACHINE: 'arcs-lab-hybrid-prod-cus-01',
         ARC_LOCATION: 'centralus',
+        SUBSCRIPTION_ID: '00000000-0000-0000-0000-000000000001',
       },
       timeout: 60000,
     });
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr, summary: readFileSync(summary, "utf8") };
+    const calls = readFileSync(`${dir}/az-calls.txt`, 'utf8').trim().split('\n');
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls, summary: readFileSync(summary, "utf8") };
   }
 
   const view = (state, exitCode, output = 'hello', error = '') => ({
@@ -222,6 +239,9 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
     expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     expect(result.summary).toContain('execution state **Succeeded**, exit code **0**');
     expect(result.summary).toContain('free -m says 7900');
+    // The login selects no subscription, so each call names it.
+    expect(result.calls.map((call) => call.split(' ')[2])).toEqual(['create', 'show']);
+    for (const call of result.calls) expect(call, call).toContain('--subscription 00000000-0000-0000-0000-000000000001');
   });
 
   it('fails a run the host reports as failed, after writing the summary', () => {
@@ -261,5 +281,135 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
     expect(injected).toBeGreaterThan(stop);
     expect(resume).toBeGreaterThan(injected);
     expect(lines[resume]).toBe(`::${lines[stop].split('::')[2]}::`);
+  });
+});
+
+describe.skipIf(!TOOLS.ready)(`the delete step under bash, against a stand-in az${SKIPPED}`, () => {
+  const dirs = [];
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Runs the delete step with an `az` that fails its first `failures` deletes, and a `sleep` that returns at once. */
+  function runDelete(failures) {
+    const step = job.steps.find((s) => s.name === 'Delete the run command from the machine');
+    const dir = forward(mkdtempSync(join(tmpdir(), 'arc-delete-')));
+    dirs.push(dir);
+    const bin = `${dir}/bin`;
+    mkdirSync(bin);
+    writeFileSync(
+      `${bin}/az`,
+      [
+        '#!/usr/bin/env bash',
+        `printf '%s\\n' "$*" >> '${dir}/calls.txt'`,
+        `n=$(wc -l < '${dir}/calls.txt')`,
+        `if [ "$n" -le ${failures} ]; then echo "ERROR: transient" >&2; exit 1; fi`,
+        'exit 0',
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    writeFileSync(`${bin}/sleep`, '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+    const result = spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', step.run], {
+      cwd: REPO,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        RUN_NAME: 'hcw-status-1-1',
+        ARC_RESOURCE_GROUP: 'rg-lab-hybrid-prod-cus',
+        ARC_MACHINE: 'arcs-lab-hybrid-prod-cus-01',
+        SUBSCRIPTION_ID: '00000000-0000-0000-0000-000000000001',
+      },
+      timeout: 60000,
+    });
+    const calls = readFileSync(`${dir}/calls.txt`, 'utf8').trim().split('\n');
+    return { status: result.status, stdout: result.stdout, calls };
+  }
+
+  it('deletes on the first try, naming the subscription', () => {
+    const result = runDelete(0);
+    expect(result.status).toBe(0);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toContain('connectedmachine run-command delete --subscription 00000000-0000-0000-0000-000000000001');
+    expect(result.stdout).toContain('Deleted run command hcw-status-1-1.');
+  });
+
+  it('retries a passing failure and succeeds on the third try', () => {
+    const result = runDelete(2);
+    expect(result.status).toBe(0);
+    expect(result.calls).toHaveLength(3);
+    expect(result.stdout).toContain('Delete try 2 of 3 exited 1.');
+  });
+
+  it('after three failures, fails with a warning that names the run command and the line to delete it by hand', () => {
+    const result = runDelete(3);
+    expect(result.status).toBe(1);
+    expect(result.calls).toHaveLength(3);
+    expect(result.stdout).toContain(
+      '::warning::Run command hcw-status-1-1 could NOT be deleted from arcs-lab-hybrid-prod-cus-01 after three tries'
+    );
+    expect(result.stdout).toContain(
+      'az connectedmachine run-command delete --subscription sub-app-site-prod-cus --resource-group rg-lab-hybrid-prod-cus --machine-name arcs-lab-hybrid-prod-cus-01 --name hcw-status-1-1 --yes'
+    );
+  });
+});
+
+describe.skipIf(!TOOLS.ready)(`memory-check.sh with a stand-in node${SKIPPED}`, () => {
+  const dirs = [];
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Runs memory-check.sh under sh with a checkout, `node` exiting `codes[n]` on run n, and quiet `free`/`dmesg`. */
+  function runCheck(codes) {
+    const dir = forward(mkdtempSync(join(tmpdir(), 'arc-memcheck-')));
+    dirs.push(dir);
+    const bin = `${dir}/bin`;
+    const src = `${dir}/src`;
+    mkdirSync(bin);
+    mkdirSync(`${src}/vps-agent/lib`, { recursive: true });
+    writeFileSync(
+      `${src}/vps-agent/lib/capabilities.js`,
+      `'docker.io/hybridcloudworks/hcw-lab-runner:${'a'.repeat(40)}@sha256:${'b'.repeat(64)}',\n`
+    );
+    writeFileSync(
+      `${bin}/node`,
+      [
+        '#!/bin/sh',
+        `echo x >> '${dir}/runs'`,
+        `n=$(wc -l < '${dir}/runs')`,
+        'echo "limits: memory 768m"',
+        'echo "noise line"',
+        'echo "sandbox-check: ok"',
+        `case "$n" in ${codes.map((code, i) => `${i + 1}) exit ${code} ;;`).join(' ')} esac`,
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    writeFileSync(`${bin}/free`, '#!/bin/sh\necho "Mem: 7900"\n', { mode: 0o755 });
+    writeFileSync(`${bin}/dmesg`, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const result = spawnSync('sh', [join(REPO, 'lab-host', 'arc-run', 'memory-check.sh')], {
+      encoding: 'utf8',
+      env: { ...process.env, HCW_ARC_RUN_PATH: `${bin}:${process.env.PATH}`, HCW_ARC_RUN_SRC: src },
+      timeout: 60000,
+    });
+    return { status: result.status, stdout: result.stdout };
+  }
+
+  it('exits 0 when all five runs succeed, printing only the matching lines', () => {
+    const result = runCheck([0, 0, 0, 0, 0]);
+    expect(result.status, result.stdout).toBe(0);
+    expect(result.stdout.match(/^sandbox-check: ok$/gm)).toHaveLength(5);
+    expect(result.stdout.match(/^limits: memory 768m$/gm)).toHaveLength(5);
+    expect(result.stdout).not.toContain('noise line');
+  });
+
+  it('runs all five and exits 1 when a run crashes, saying which', () => {
+    const result = runCheck([0, 0, 3, 0, 0]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('run 3: sandbox-check.mjs exited 3');
+    expect(result.stdout).toContain('== run 5');
+    expect(result.stdout).toContain('1 of 5 runs failed');
   });
 });

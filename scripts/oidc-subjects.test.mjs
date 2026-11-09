@@ -43,6 +43,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { identityMismatches, mainSubject, onActions, readOidcIdentity } from './check-oidc-owner.mjs';
+import { jobEnvironments } from './lib/workflow-text.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOWS = join(REPO, '.github', 'workflows');
@@ -355,13 +356,55 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
     }
   });
 
-  it('no workflow but lab-host-arc-run.yml names the lab-host-arc environment (#1590)', () => {
+  it('no workflow but lab-host-arc-run.yml names the lab-host-arc environment, in any form (#1590)', () => {
     // Naming it is what presents the subject github_arc_run trusts, so a
     // second workflow naming it would be a second way to root on the lab host.
-    const naming = readdirSync(WORKFLOWS)
-      .filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))
-      .filter((f) => /^\s*(?:environment|name):\s*(?:\{[^}]*name:\s*)?['"]?lab-host-arc['"]?\s*\}?\s*(?:#.*)?$/m.test(readFileSync(join(WORKFLOWS, f), 'utf8')));
-    expect(naming).toEqual(['lab-host-arc-run.yml']);
+    // Every job's environment is read in all three forms (string, flow and
+    // block mapping); see the fixture test below.
+    const files = readdirSync(WORKFLOWS).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
+    const named = files.flatMap((file) =>
+      jobEnvironments(readFileSync(join(WORKFLOWS, file), 'utf8')).map((env) => ({ file, ...env }))
+    );
+    // Guards the guard: every `environment:` key in a job was read, and none
+    // is an expression the scan could not resolve.
+    for (const file of files) {
+      const text = readFileSync(join(WORKFLOWS, file), 'utf8');
+      const keys = (text.match(/^ {4}environment:/gm) ?? []).length;
+      expect(named.filter((n) => n.file === file).length, `${file}: an environment: key the scan did not read`).toBe(keys);
+    }
+    for (const env of named) expect(env.name, `${env.file}:${env.job} names an environment by expression`).not.toMatch(/\$\{\{/);
+    expect(named.some((n) => n.file === 'docs-pages.yml' && n.name === 'github-pages'), 'the block form in docs-pages.yml was not read').toBe(true);
+    expect(named.filter((n) => n.name === 'lab-host-arc').map((n) => n.file)).toEqual(['lab-host-arc-run.yml']);
+  });
+
+  it('reads a job environment in the string, flow-mapping and block-mapping forms (#1590)', () => {
+    const workflow = [
+      'name: fixture',
+      'on: workflow_dispatch',
+      'jobs:',
+      '  plain:',
+      '    environment: lab-host-arc',
+      '    runs-on: ubuntu-26.04',
+      '  quoted:',
+      "    environment: 'lab-host-arc' # comment",
+      '  flow:',
+      '    environment: { name: "lab-host-arc", url: https://example.invalid }',
+      '  block:',
+      '    environment:',
+      '      # a comment',
+      '      url: https://example.invalid',
+      '      name: lab-host-arc',
+      '    runs-on: ubuntu-26.04',
+      '  none:',
+      '    runs-on: ubuntu-26.04',
+      '',
+    ].join('\n');
+    expect(jobEnvironments(workflow)).toEqual([
+      { job: 'plain', name: 'lab-host-arc' },
+      { job: 'quoted', name: 'lab-host-arc' },
+      { job: 'flow', name: 'lab-host-arc' },
+      { job: 'block', name: 'lab-host-arc' },
+    ]);
   });
 
   it('reads a grant it is shown, so an empty list above means no grant rather than a broken scan', () => {

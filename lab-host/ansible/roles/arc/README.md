@@ -79,7 +79,9 @@ With `arc_enabled: true`:
    environment, `lab-host-arc`, approves the run; [Run command on Azure Arc-enabled
    servers](https://learn.microsoft.com/azure/azure-arc/servers/run-command)
    is Microsoft's page, and `docs/runbooks/labs-host.md` ("Run a fixed
-   command on the host through Azure Arc") is how to use it. Incoming connections through Arc are on for port
+   command on the host through Azure Arc") is how to use it.
+   `arc_run_command_enabled: false` puts LAB-6's allowlist back, the Azure
+   Monitor Agent alone. Incoming connections through Arc are on for port
    22 alone (`incomingconnections.enabled true`,
    `incomingconnections.ports 22`) while `arc_incoming_ssh_enabled` is true,
    its default since #953 (LAB-7; ADR 0032, amendment of 2026-10-16): that
@@ -93,16 +95,22 @@ With `arc_enabled: true`:
    this role's tag, so no run leaves the host with neither path. Each setting is
    read with `azcmagent config get` and written with `config set` only when
    it differs, so a second run reports nothing changed; then all three are
-   read back, and the run fails closed unless the allowlist is still the
-   Azure Monitor Agent alone and port 22 is the only port admitted. In
+   read back, and the run fails closed unless the allowlist is exactly what
+   this role wrote (the Azure Monitor Agent, plus the Run Command handler
+   while `arc_run_command_enabled` is true; extension names are compared in
+   lower case) and port 22 is the only port admitted. In
    check mode, which the nightly drift check (`hcw-playbook-drift`) runs,
    the settings are read all the same and any difference is reported as one
    changed task, which that check counts as drift, without stopping the
    check of the roles after this one.
    These settings live on the host and cannot be changed from Azure, which
-   is the point: a Contributor on the resource group can no longer push an
-   extension or a Run Command, and a custom machine configuration policy
-   cannot rewrite them. Read back on the host with `sudo
+   is the point: a Contributor on the resource group cannot push any other
+   extension, and a custom machine configuration policy cannot rewrite them.
+   **Run Command is the exception while `arc_run_command_enabled` is true**
+   (the default since 2026-11-09): anyone who may create a run command on
+   the machine (Owner, Contributor, or the *HCW Arc Run Command Operator*
+   role the `lab-host-arc-run.yml` identity holds) can run a script as root
+   on the host. With it false, no one can, as under LAB-6. Read back on the host with `sudo
    /opt/azcmagent/bin/azcmagent config list`.
 
 What it does **not** do: install the Azure Monitor Agent, or associate the

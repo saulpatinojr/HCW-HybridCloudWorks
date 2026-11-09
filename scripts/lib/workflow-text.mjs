@@ -139,3 +139,48 @@ export const GIT_TEST_CONFIG = [
 export function isIfGrepLine(line) {
   return /^(?:if|elif|while|until)\s/.test(line) && /\b(?:grep|egrep|fgrep)\b/.test(line);
 }
+
+/**
+ * The GitHub environment each job of a workflow names, as `{ job, name }`
+ * (#1590). A job names one in any of three forms, and all three present the
+ * same OIDC subject, so a scan that read only the first would miss the others:
+ *
+ *     environment: lab-host-arc                  (a string)
+ *     environment: { name: lab-host-arc }        (a flow mapping)
+ *     environment:                               (a block mapping, as
+ *       name: lab-host-arc                        docs-pages.yml writes it)
+ *
+ * Quotes around the name are removed. A job with no environment is absent.
+ * An expression (`${{ ... }}`) is returned as written, so a caller can refuse
+ * a name it cannot know. No YAML parser is a dependency of this package, so
+ * this reads the repository's regular shape, like the rest of this file.
+ */
+export function jobEnvironments(text) {
+  const unquote = (value) =>
+    scalar(value.replace(/\s+#.*$/, ''))
+      .replace(/^"(.*)"$/s, '$1')
+      .trim();
+  const found = [];
+  for (const job of parseJobs(text)) {
+    const at = job.lines.findIndex((line) => /^ {4}environment:/.test(line));
+    if (at === -1) continue;
+    const inline = job.lines[at].replace(/^ {4}environment:/, '').replace(/\s+#.*$/, '').trim();
+    if (inline.startsWith('{')) {
+      const name = inline.match(/\bname:\s*([^,}]+)/)?.[1];
+      found.push({ job: job.key, name: name === undefined ? '' : unquote(name) });
+    } else if (inline !== '') {
+      found.push({ job: job.key, name: unquote(inline) });
+    } else {
+      // Block mapping: the `name:` among the lines indented under it.
+      let name = '';
+      for (const line of job.lines.slice(at + 1)) {
+        if (/^\s*(#.*)?$/.test(line)) continue;
+        if (!/^ {6,}\S/.test(line)) break;
+        const key = line.match(/^ {6}name:\s*(.+)$/);
+        if (key) name = unquote(key[1]);
+      }
+      found.push({ job: job.key, name });
+    }
+  }
+  return found;
+}

@@ -101,6 +101,10 @@ jobs:
       # connectedmachine-1.1.0-py3-none-any.whl, read 2026-11-09 and equal to
       # the sha256sum of the file downloaded that day.
       CONNECTEDMACHINE_VERSION: 1.1.0
+      # The Application subscription, from the repository variable every
+      # deploy uses. Passed to each az connectedmachine call with
+      # --subscription, because the login below does not select one.
+      SUBSCRIPTION_ID: ${{ vars.SUBSCRIPTION_ID }}
       CONNECTEDMACHINE_SHA256: 9b71015a6b047770deed883dd4092857641c6a574f2107ee558b0535ff2946d8
     steps:
       - name: Refuse a run from a ref that is not main
@@ -125,6 +129,10 @@ jobs:
         run: |
           if [ -z "${ARC_RUN_CLIENT_ID}" ]; then
             echo "::error::The repository variable ARC_RUN_CLIENT_ID is not set. It is the client id of github_arc_run, the arc_run_client_id output of the hcw-azure workspace (docs/runbooks/labs-host.md, 'Run a fixed command on the host through Azure Arc')."
+            exit 1
+          fi
+          if [ -z "${SUBSCRIPTION_ID}" ]; then
+            echo "::error::The repository variable SUBSCRIPTION_ID is not set. It is the Application subscription every deploy uses (docs/standards/required-inputs.md, section 4.2)."
             exit 1
           fi
 
@@ -177,7 +185,15 @@ jobs:
 
       # Federated OIDC, no stored credential. ARC_RUN_CLIENT_ID names
       # github_arc_run, which holds only the Run Command role on the lab
-      # group; TENANT_ID and SUBSCRIPTION_ID are the ones every deploy uses.
+      # group; TENANT_ID is the one every deploy uses.
+      #
+      # No `subscription-id`, and `allow-no-subscriptions`, as in
+      # verify-alert-state.yml: the identity's only role is at resource-group
+      # scope, and whether that makes the subscription selectable at sign-in
+      # is not documented, so pinning one could fail the login with "No
+      # subscriptions found" before anything runs. Each az call names the
+      # subscription itself (SUBSCRIPTION_ID above). No subscription-scope
+      # grant is added to make the pin work.
       - name: Azure Login
         id: login
         timeout-minutes: 2
@@ -185,7 +201,7 @@ jobs:
         with:
           client-id: ${{ vars.ARC_RUN_CLIENT_ID }}
           tenant-id: ${{ vars.TENANT_ID }}
-          subscription-id: ${{ vars.SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
 
       - name: Run the script on the host and report what it printed
         id: run
@@ -197,6 +213,7 @@ jobs:
           echo "Running ${SCRIPT_FILE} on ${ARC_MACHINE} as run command ${RUN_NAME} (timeout ${RUN_TIMEOUT} s)."
           create=0
           timeout "$((RUN_TIMEOUT + 240))" az connectedmachine run-command create \
+            --subscription "${SUBSCRIPTION_ID}" \
             --resource-group "${ARC_RESOURCE_GROUP}" \
             --machine-name "${ARC_MACHINE}" \
             --location "${ARC_LOCATION}" \
@@ -210,6 +227,7 @@ jobs:
           view="${RUNNER_TEMP}/run-command.json"
           show=0
           az connectedmachine run-command show \
+            --subscription "${SUBSCRIPTION_ID}" \
             --resource-group "${ARC_RESOURCE_GROUP}" \
             --machine-name "${ARC_MACHINE}" \
             --name "${RUN_NAME}" \
@@ -276,14 +294,29 @@ jobs:
       # (Microsoft: "If the script execution is still in progress, execution
       # is terminated"). That includes a cancelled workflow run, so cancel a
       # bootstrap only if stopping it part-way is what you want.
+      #
+      # Three tries, 10 and then 20 seconds apart, for a passing ARM or relay
+      # error. If all three fail the step fails, and the warning names the
+      # run command and the one PowerShell line that deletes it by hand.
       - name: Delete the run command from the machine
         if: always() && steps.login.outcome == 'success' && env.RUN_NAME != ''
         timeout-minutes: 10
         run: |
-          set -euo pipefail
-          az connectedmachine run-command delete \
-            --resource-group "${ARC_RESOURCE_GROUP}" \
-            --machine-name "${ARC_MACHINE}" \
-            --name "${RUN_NAME}" \
-            --yes --only-show-errors
-          echo "Deleted run command ${RUN_NAME}."
+          set -uo pipefail
+          for try in 1 2 3; do
+            deleted=0
+            az connectedmachine run-command delete \
+              --subscription "${SUBSCRIPTION_ID}" \
+              --resource-group "${ARC_RESOURCE_GROUP}" \
+              --machine-name "${ARC_MACHINE}" \
+              --name "${RUN_NAME}" \
+              --yes --only-show-errors || deleted=$?
+            if [ "${deleted}" -eq 0 ]; then
+              echo "Deleted run command ${RUN_NAME}."
+              exit 0
+            fi
+            echo "Delete try ${try} of 3 exited ${deleted}."
+            if [ "${try}" -lt 3 ]; then sleep "$((try * 10))"; fi
+          done
+          echo "::warning::Run command ${RUN_NAME} could NOT be deleted from ${ARC_MACHINE} after three tries, so its script is still stored on the machine. Delete it by hand, PowerShell: az connectedmachine run-command delete --subscription sub-app-site-prod-cus --resource-group ${ARC_RESOURCE_GROUP} --machine-name ${ARC_MACHINE} --name ${RUN_NAME} --yes"
+          exit 1

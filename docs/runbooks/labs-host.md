@@ -701,7 +701,15 @@ handler in it and the host does not have it yet. That is expected, and step
 The last step deletes the run command from the machine whatever happened,
 so nothing is left stored there. It also stops a script that is still
 running: cancelling a `bootstrap` run part-way stops the play part-way,
-and the next full run puts the host right.
+and the next full run puts the host right. It tries three times; if all
+three fail, the step fails with a warning that names the run command and
+gives the one PowerShell line, with that name already filled in, that
+deletes it by hand; copy it from the warning in the run's summary.
+
+`memory-check` fails the run if any of its five checks crashes (for
+example when Docker does not answer), after all five have run and printed
+their lines. A check that prints no `limits` or `sandbox-check:` line but
+exits cleanly is not a failure.
 
 Each run is recorded in the Azure activity log of the Arc machine
 `arcs-lab-hybrid-prod-cus-01` (in `rg-lab-hybrid-prod-cus`) as a create
