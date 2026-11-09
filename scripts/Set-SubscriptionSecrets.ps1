@@ -82,14 +82,20 @@ function Get-RepoVariableValue {
 }
 
 # A value typed at a hidden prompt, converted in memory, trimmed.
+# An empty answer (Enter alone) comes back as an empty SecureString, which
+# ConvertFrom-SecureString refuses, so it is answered with '' before any
+# conversion; the caller then reports the secret as not set.
 function Read-HiddenValue {
   param([Parameter(Mandatory)][string] $Name)
   $secure = Read-Host -AsSecureString -Prompt "Value for the $Name secret (hidden)"
+  if ($null -eq $secure) { return '' }
   try {
+    if ($secure.Length -eq 0) { return '' }
     $plain = ConvertFrom-SecureString -SecureString $secure -AsPlainText
     if ($null -eq $plain) { return '' }
     return $plain.Trim()
   } finally {
+    $plain = $null
     $secure.Dispose()
   }
 }
