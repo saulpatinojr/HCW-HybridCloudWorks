@@ -311,7 +311,8 @@ are therefore read on every run, and the script's `UNREADABLE` table is empty.
 scope, the sign-in pins no subscription (`allow-no-subscriptions`), and the
 subscription list the identity sees may leave one out. The workflow therefore
 names both ids in `ALERT_SUBSCRIPTION_IDS`, built from the repository
-variables `SUBSCRIPTION_ID` and `SUBSCRIPTION_MGMT_ID`, and the script uses a
+secrets `SUBSCRIPTION_ID` and `SUBSCRIPTION_MGMT_ID` (secrets, so the public
+log shows them as `***`, #1610), and the script uses a
 named id for any subscription the list does not show. If the list itself is
 refused, the named ids are used for every rule, and the report says so above
 its table. An entry that is not

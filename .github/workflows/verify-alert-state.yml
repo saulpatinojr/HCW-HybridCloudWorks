@@ -147,11 +147,13 @@ jobs:
       # way and is never reported as health.
       #
       # ALERT_SUBSCRIPTION_IDS pairs each subscription's display name (the one
-      # infra/ declares) with its id. The ids are not secret: both already sit
-      # in infra/roles/*.json as assignable scopes. An entry that is not
-      # name=GUID stops the check with exit 2 rather than being skipped.
+      # infra/ declares) with its id. Both ids are repository secrets, not
+      # variables, so that GitHub prints them as *** in this public log
+      # (#1610); a subscription id grants nothing by itself. An entry that
+      # is not name=GUID stops the check with exit 2 rather than being
+      # skipped.
       - name: Compare the declared rules with the live ones
         id: verify
         env:
-          ALERT_SUBSCRIPTION_IDS: sub-app-site-prod-cus=${{ vars.SUBSCRIPTION_ID }},sub-plat-mgmt-prod-cus=${{ vars.SUBSCRIPTION_MGMT_ID }}
+          ALERT_SUBSCRIPTION_IDS: sub-app-site-prod-cus=${{ secrets.SUBSCRIPTION_ID }},sub-plat-mgmt-prod-cus=${{ secrets.SUBSCRIPTION_MGMT_ID }}
         run: node scripts/verify-alert-state.mjs --summary "$GITHUB_STEP_SUMMARY"
