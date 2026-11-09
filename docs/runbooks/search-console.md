@@ -115,7 +115,14 @@ signed in as your Google account (`gcloud auth login`), and the Google
 account that owns the Search Console property. Run the commands in one
 PowerShell window from top to bottom: later commands use values the earlier
 ones put in `$variables`. If you close the window, run steps 3, 5, 8 and 10
-again (they only read values) before continuing.
+again (they only read values) before continuing. Do **not** run steps 6 and 7
+again: step 7 creates the app registration, and a second run makes a second
+one. Read their values back instead with this one line (PowerShell); it prints
+the `api://` address, and an empty line means step 7 never finished:
+
+```powershell
+az account set --subscription sub-app-site-prod-cus; $tenant = az account show --query tenantId -o tsv; $app = az ad app list --display-name app-gsc-wif-site-prod-cus -o json | ConvertFrom-Json | Select-Object -First 1; $appId = $app.appId; $uri = "api://" + $appId; $uri
+```
 
 Google lists no charge for the APIs and the federation used here; this was
 not checked against a bill. No step creates a key.
