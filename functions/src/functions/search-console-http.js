@@ -65,20 +65,24 @@ registerJobType(SYNC_JOB_TYPE, {
   // nothing.
   role: 'editor',
   description:
-    'Refresh the admin Search Console page (#1612): inspect every root-domain page in the sitemap with Google\'s URL Inspection API (at most 900, and at most 1,800 a Pacific day across all runs), read 90 days of Search Analytics and the sitemaps list, and replace admin_config/search_console_snapshot. No payload. Skips with not_configured when the Google sign-in settings are empty, and with already_running when another run holds the run lease (admin_config/search_console_lease).',
+    'Refresh the admin Search Console page (#1612): inspect every page the sitemap lists on hybridcloudworks.com and its subdomains, then up to 150 pages Google shows in search that the sitemap does not list, with Google\'s URL Inspection API (at most 900 a run, and at most 1,800 a Pacific day across all runs), read 90 days of Search Analytics for the whole property and the sitemaps list, and replace admin_config/search_console_snapshot. No payload. Skips with not_configured when the Google sign-in settings are empty, with superseded when another queued job will do the run or a run finished after this job was queued, and with already_running when another run holds the run lease (admin_config/search_console_lease).',
   maxPayloadBytes: 64,
   // About 200 pages, four at a time and paced under Google's 600 a minute:
-  // two to four minutes. Twenty leaves room for 900 pages and Google's
-  // retries, well under the 30-minute Flex limit and the lease's 35 minutes.
+  // two to four minutes. The 28 minutes (handlers.js says why) leave room
+  // for 900 pages and Google's retries, under the 30-minute Flex limit and
+  // the lease's 35 minutes.
   timeoutMs: SYNC_JOB_TIMEOUT_MS,
   worker: async (_payload, { context, signal, job }) => {
     // The run takes the lease and keeps to the daily budget itself, so a job
     // queued straight through enqueueJob is held to the same rules as Run now.
+    // The job's queued time lets the run see that a newer run has already
+    // done its work (a late or repeated queue message), and skip.
     const result = await createSearchConsoleSync({
       store: { readDoc: store.readDoc, createDoc: store.createDoc, replaceDocIfMatch: store.replaceDocIfMatch },
       log: context,
       signal,
       jobId: typeof job?.id === 'string' ? job.id : null,
+      jobCreatedAt: typeof job?.createdAt === 'string' ? job.createdAt : null,
     }).run();
     if (result?.status === 'error') {
       // The document already says what failed; the job records the same.
