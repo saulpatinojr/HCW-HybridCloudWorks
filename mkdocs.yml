@@ -131,6 +131,7 @@ nav:
       - 0038 Koda's admin access: decisions/0038-koda-admin-access.md
       - 0039 The Cost page: decisions/0039-cost-page.md
       - 0040 Interviews from the admin: decisions/0040-interviews-from-the-admin.md
+      - 0041 Native Terraform only: decisions/0041-native-terraform-only.md
   - Runbooks:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md

@@ -57,6 +57,11 @@ const BACKEND_TERMS = Object.freeze({
   adminTodo:
     /not configured|not provisioned|\bthe owner\b|admin needs to|key vault reference|production estate|endpoint is not published/i,
   issue: /\b(?:issue|pull request|PR) ?#/i,
+  // Not backend, but never offered either: native Terraform is the only
+  // infrastructure-as-code tool the site generates and teaches, and its forks
+  // and wrappers are not approved partners (owner decision 2026-11-09, ADR
+  // 0041). No file is allowed this term, so neither name can come back.
+  unapprovedIac: /open[ -]?tofu|\btofu (?:init|plan|apply|validate)\b|terragrunt/i,
 });
 
 /**
@@ -218,6 +223,11 @@ describe('the scan itself', () => {
     ],
     ['- connectivity in ../../../opt/avm/avm-ptn-alz@0.21.0', 'labRunner'],
     ['- Installed hashicorp/azurerm v4.81.0 (unauthenticated)', 'labRunner'],
+    ['OpenTofu 1.8+ · State Encryption', 'unapprovedIac'],
+    ['Wrapper for Terraform: Terragrunt', 'unapprovedIac'],
+    ['downloads as landing-zone-opentofu.zip', 'unapprovedIac'],
+    ['the open-tofu fork', 'unapprovedIac'],
+    ['run tofu init in the folder', 'unapprovedIac'],
   ])('catches %j', (text, term) => {
     expect(termsIn(text).map(([t]) => t)).toContain(term);
   });

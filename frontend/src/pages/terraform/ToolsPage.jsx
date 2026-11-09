@@ -27,13 +27,6 @@ export default function TerraformToolsPage() {
       tags: ['CLI', 'Core', 'Official'],
     },
     {
-      title: 'Terragrunt',
-      description: 'Wrapper for Terraform providing DRY configs, remote state management, and dependency handling.',
-      category: 'Orchestration',
-      complexity: 'Intermediate',
-      tags: ['Orchestration', 'DRY', 'State'],
-    },
-    {
       title: 'Infracost',
       description: 'Cost estimation tool showing infrastructure costs before deployment and in pull requests.',
       category: 'Cost Management',
@@ -63,7 +56,7 @@ export default function TerraformToolsPage() {
     },
   ];
 
-  const categories = ['Learn', 'Core', 'Orchestration', 'Cost Management', 'Quality', 'Governance', 'Automation'];
+  const categories = ['Learn', 'Core', 'Cost Management', 'Quality', 'Governance', 'Automation'];
 
   return (
     <ContentListingTemplate

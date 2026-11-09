@@ -686,29 +686,52 @@ describe('Multi-Cloud Target Cloud Selector and Architecture Previews (#Phase4)'
     expect(bom).toBeInTheDocument();
   });
 
-  it('switches export format between Terraform, OpenTofu, and Terragrunt', () => {
-    renderPage(PATH);
-    const filesSection = screen.getByTestId('lz-files');
-    expect(filesSection).toBeInTheDocument();
+  // Native Terraform is the only export (owner decision 2026-11-09, ADR 0041):
+  // the OpenTofu and Terragrunt formats, and the picker that chose between
+  // them, are gone. The site never put a format in a link; a made-up format
+  // value someone types still gets the Terraform files and the usual zip name.
+  it.each([
+    PATH,
+    `${PATH}?format=unknown`,
+    `${PATH}?format=terraform`,
+    `${PATH}?lz=mg,hub,fw&corp=2&online=0&format=unknown`,
+  ])('offers only the Terraform files, with no format picker, for %s', async (url) => {
+    renderPage(url);
+    expect(screen.queryByTestId('lz-format-switcher')).toBeNull();
+    expect(screen.queryByTestId('lz-format-opentofu')).toBeNull();
+    expect(screen.queryByTestId('lz-format-terragrunt')).toBeNull();
+    const names = tabNames();
+    expect(names).toEqual(emitFiles(decodeLz(paramsOf(url))).map((f) => f.path));
+    expect(names).toContain('README.md');
+    expect(names).not.toContain('tofu.tf');
+    expect(names).not.toContain('terragrunt.hcl');
+    expect(screen.getByTestId('lz-files').textContent).toContain('Generated Terraform');
+    expect(screen.getByTestId('lz-files').textContent).not.toMatch(/opentofu|terragrunt/i);
 
-    const formatSwitcher = screen.getByTestId('lz-format-switcher');
-    expect(formatSwitcher).toBeInTheDocument();
-
-    // Default is Terraform HCL
-    expect(screen.getByTestId('lz-format-terraform')).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('tab', { name: 'terraform.tf' })).toBeInTheDocument();
-
-    // Switch to OpenTofu
-    const tofuBtn = screen.getByTestId('lz-format-opentofu');
-    fireEvent.click(tofuBtn);
-    expect(tofuBtn).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('tab', { name: 'tofu.tf' })).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'terraform.tf' })).toBeNull();
-
-    // Switch to Terragrunt
-    const tgBtn = screen.getByTestId('lz-format-terragrunt');
-    fireEvent.click(tgBtn);
-    expect(tgBtn).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('tab', { name: 'terragrunt.hcl' })).toBeInTheDocument();
+    const createObjectURL = vi.fn(() => 'blob:landing-zone');
+    const revokeObjectURL = vi.fn();
+    const hadCreate = 'createObjectURL' in URL;
+    const previous = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+    const saved = [];
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(function record() {
+        saved.push(this.download);
+      });
+    try {
+      fireEvent.click(screen.getByTestId('lz-download'));
+      await waitFor(() => expect(saved).toEqual(['landing-zone.zip']));
+    } finally {
+      click.mockRestore();
+      if (hadCreate) {
+        URL.createObjectURL = previous.create;
+        URL.revokeObjectURL = previous.revoke;
+      } else {
+        delete URL.createObjectURL;
+        delete URL.revokeObjectURL;
+      }
+    }
   });
 });
