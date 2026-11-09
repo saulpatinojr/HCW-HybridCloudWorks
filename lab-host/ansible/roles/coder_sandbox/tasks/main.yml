@@ -89,6 +89,11 @@
 # after every range already in the file (dockremap's, which the docker role's
 # restart has just allocated, and any login user's), so none overlaps: an
 # overlap would map two daemons' containers onto the same host uids.
+#
+# The read runs in check mode too (check_mode: false; awk only reads the two
+# files): the two tasks after it split its output, and in the nightly
+# `--check --diff` run (hcw-playbook-drift) a skipped command leaves an empty
+# stdout, so `.split()[0]` failed the whole check on 2026-11-09.
 - name: Read the subordinate id ranges already allocated
   ansible.builtin.command:
     argv:
@@ -107,6 +112,7 @@
     - /etc/subgid
   register: coder_sandbox_subids
   changed_when: false
+  check_mode: false
 
 - name: Give the user a subordinate uid range
   ansible.builtin.command:
