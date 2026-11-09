@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { DEFAULT_PROGRAMS, SUPERSEDED_SEED_VALUES, currentSeedRevision } from './programs.js';
 import { EVIDENCE_SOURCES, toCalendarDate } from './model.js';
 import { seedBackfillFor } from './steps.js';
@@ -73,7 +74,7 @@ describe('ambassador seed programs (ADR 0033 §4)', () => {
     expect(gk).toBeDefined();
     expect(currentSeedRevision('program-gitkraken-ambassador')).toBe(3);
     expect(currentSeedRevision('program-docker-captain')).toBe(4);
-    expect(currentSeedRevision('program-microsoft-mvp')).toBe(2);
+    expect(currentSeedRevision('program-microsoft-mvp')).toBe(3);
     expect(currentSeedRevision('program-microsoft-mct')).toBeNull();
     // Each program's history: ascending revisions from 2, each step a
     // non-empty record of the fields it replaced, every one a seed field.
@@ -294,7 +295,11 @@ describe('the published rules read on 2026-10-20', () => {
     ]);
 
     // The MVP's revision 2 (#1302) added `manual` to `reach`, for the monthly audience rows.
-    const [[mvpRevision, mvp]] = stepsOf('program-microsoft-mvp');
+    const [[mvpRevision, mvp], [mvpQuestionsRevision, mvpQuestions]] =
+      stepsOf('program-microsoft-mvp');
+    // Revision 3 (#1543) appended the nomination form and changed nothing else.
+    expect(mvpQuestionsRevision).toBe(3);
+    expect(Object.keys(mvpQuestions)).toEqual(['applicationQuestions']);
     expect(mvpRevision).toBe(2);
     expect(Object.keys(mvp)).toEqual(['requirements']);
     expect(mvp.requirements.map(rule)).toEqual([
@@ -408,5 +413,83 @@ describe('the published rules read on 2026-10-20', () => {
     for (const program of DEFAULT_PROGRAMS) expect(program.contributionTrackerUrl).toBeUndefined();
     const source = readFileSync(new URL('./programs.js', import.meta.url), 'utf8');
     expect(source).not.toMatch(/docs\.google\.com|spreadsheets|sharepoint\.com/i);
+  });
+});
+
+// #1543: the nomination form, filled in by the nominator, follows the
+// application the nominee completes. Revision 3 records the list before it.
+describe('the Microsoft MVP nomination form (#1543)', () => {
+  const MVP = 'program-microsoft-mvp';
+  const seed = byId(MVP);
+  const nomination = seed.applicationQuestions.filter((q) => q.id.startsWith('mvp-nom-'));
+  const [, [, before]] = stepsOf(MVP);
+
+  it('appends the form after the application, with its labels, kinds and limits', () => {
+    expect(seed.applicationQuestions.slice(-nomination.length)).toEqual(nomination);
+    expect(new Set(nomination.map((q) => q.section))).toEqual(
+      new Set(['Nomination (filled in by your nominator)'])
+    );
+    expect(nomination.map((q) => [q.prompt, q.kind, q.maxChars, q.required])).toEqual([
+      ['First Name', 'profile', null, true],
+      ['Last Name', 'profile', null, true],
+      ['Email Address', 'profile', null, true],
+      ['Title', 'profile', null, false],
+      ['Country or Region', 'profile', null, true],
+      ['State or Province', 'profile', null, false],
+      ['How long have you known the nominee?', 'profile', null, true],
+      ['How did you meet and how have you engaged with your nominee?', 'text', 500, true],
+      ['How has your nominee demonstrated impact with technology?', 'text', 500, true],
+      [
+        'How has your nominee demonstrated impact and influence as a community leader?',
+        'text',
+        500,
+        true,
+      ],
+      [
+        'Is there additional information that you would like us to know about your nominee for consideration?',
+        'text',
+        500,
+        false,
+      ],
+    ]);
+    // The process is explained where the section starts; every text area carries its advice.
+    expect(nomination[0].hint).toMatch(/full-time employee or a current MVP/);
+    expect(nomination[0].hint).toMatch(/45 days/);
+    for (const q of nomination.filter((n) => n.kind === 'text')) {
+      expect(q.hint, q.id).toMatch(/80 to 90 words/);
+    }
+    // No guessed drop-down lists: the form's options are not published.
+    for (const q of nomination) expect(q.options, q.id).toEqual([]);
+  });
+
+  it('records the revision-2 question list exactly as main seeded it, frozen', () => {
+    const list = before.applicationQuestions;
+    expect(Object.isFrozen(list)).toBe(true);
+    expect(Object.isFrozen(list[0])).toBe(true);
+    expect(list).toHaveLength(28);
+    expect(list.some((q) => q.id.startsWith('mvp-nom-'))).toBe(false);
+    expect(seed.applicationQuestions.slice(0, list.length)).toEqual(list);
+    // The list as it was seeded before #1543. If this fails, an application
+    // question changed: write the old list out literally in programs.js first.
+    const digest = createHash('sha256').update(JSON.stringify(list)).digest('hex');
+    expect(digest).toBe('30b6d834a84ee24718162b209f08062c7bbcc92e7cdbb4e009fb2c09a66180a8');
+  });
+
+  it('gives a stored MVP still holding the revision-2 questions the new list, once', () => {
+    const stored = {
+      ...seed,
+      applicationQuestions: before.applicationQuestions,
+      seeded: true,
+      seedRevision: 2,
+    };
+    const patch = seedBackfillFor(stored, seed);
+    expect(patch).toEqual({ applicationQuestions: seed.applicationQuestions, seedRevision: 3 });
+    expect(seedBackfillFor({ ...stored, ...patch }, seed)).toBeNull();
+  });
+
+  it('keeps a question list that was changed, and only stamps the revision', () => {
+    const changed = before.applicationQuestions.map((q, i) => (i === 5 ? { ...q, hint: 'Mine.' } : q));
+    const stored = { ...seed, applicationQuestions: changed, seeded: true, seedRevision: 2 };
+    expect(seedBackfillFor(stored, seed)).toEqual({ seedRevision: 3 });
   });
 });
