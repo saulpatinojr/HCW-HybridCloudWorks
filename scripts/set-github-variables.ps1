@@ -354,8 +354,8 @@ if ($outputs) {
     @{ output = 'client_id'; kind = 'secret'; name = 'CLIENT_ID'; transform = { param($v) $v } }
     # #1617: the frontend deploy's own identity, HCW Static Web App Deployer
     # on the one site and nothing else. deploy-azure-frontend.yml signs in
-    # with it from #1617's second pull request on, so seed it after the apply
-    # that creates the identity and before that pull request merges.
+    # with it since #1617, so on a rebuild seed it after the apply that
+    # creates the identity and before the frontend deploys.
     @{ output = 'frontend_deploy_client_id'; kind = 'secret'; name = 'FRONTEND_DEPLOY_CLIENT_ID'; transform = { param($v) $v } }
     # T-728: the read-only identity. monitor-functions-registered and
     # monitor-unresolved-secrets are gated on this secret being non-empty

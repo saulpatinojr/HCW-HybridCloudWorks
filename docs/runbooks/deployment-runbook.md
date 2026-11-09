@@ -826,10 +826,10 @@ Two things came with that, and
 [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617)
 fixes both:
 
-- The backend deploy (`deploy-functions.yml`) names the same environment, so
+- The backend deploy (`deploy-functions.yml`) named the same environment, so
   it lost its approval step too. It moves to a new environment,
   `production-backend`, which keeps required reviewers.
-- Both deploys sign in to Azure as the same identity, `github_deploy` (a
+- Both deploys signed in to Azure as the same identity, `github_deploy` (a
   managed identity: an Azure account for a program, with no password, that
   GitHub signs in as through OIDC, a trust between GitHub and Azure). That
   identity can publish code into the Function App and read its storage
@@ -841,18 +841,30 @@ fixes both:
 **Two pull requests, because HCP Terraform applies only from `main`.** The
 first (Terraform, tests and these steps) adds the new identity and teaches
 `github_deploy` to trust `production-backend` as well as `production`. It
-changes nothing for any workflow that runs today. The second moves the two
+changes nothing for any workflow that runs. The second moves the two
 workflows onto the new names and then removes `github_deploy`'s trust in
-`production` and its role on the site. The steps below start before the
+`production` and its role on the site. Part 1's steps start before the
 first pull request's apply is confirmed (the new environment has to be
 protected before anything in Azure trusts its name), and the second pull
 request is opened only once they are all done, because a
 workflow that signs in with an identity Azure does not have yet, or names an
 environment GitHub does not have yet, fails or runs unprotected.
 
+**Where this stands.** Part 1 is done: the first pull request,
+[#1633](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1633),
+merged on 2026-11-09 and its apply finished that day (the HCP Terraform
+commit status on `3ba8f791` read Success at 23:39 UTC); the owner created
+`production-backend` and set `FRONTEND_DEPLOY_CLIENT_ID` the same day. A
+session cannot read either back (its API access to environments and to the
+secrets list is refused), so they are recorded as the owner reported them.
+Part 2 is the second pull request and the apply it queues (steps 4 to 7).
+
 The resources are in
-[`infra/oidc.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/oidc.tf)
-(on `main` once the first pull request has merged).
+[`infra/oidc.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/oidc.tf).
+
+#### Part 1: the new identity and the new environment (done 2026-11-09)
+
+Kept as written, for a rebuild of the estate, which repeats them.
 
 1. **Create the `production-backend` environment first, before the apply.**
    Once the apply in step 2 runs, the deploy identity trusts any job that
@@ -983,13 +995,110 @@ The resources are in
    from the outputs; and it deletes a repository secret named
    `COSMOS_ENDPOINT` if one is left over.
 4. **Tell the session the three steps are done**, with a comment on
-   [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617).
-   The session then opens the second pull request: the frontend deploy
-   signs in with `FRONTEND_DEPLOY_CLIENT_ID`, `deploy-functions.yml` names
-   `production-backend`, and `github_deploy`'s `production` credentials and
-   its role on the site are deleted. Nothing is needed from the owner for
-   that pull request except confirming its HCP Terraform run, which deletes
-   those three.
+   [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617). Done on 2026-11-09; the session then opened the second
+   pull request.
+
+#### Part 2: move the workflows, then delete the old trust
+
+The second pull request changes three things at once when it merges, before
+any apply:
+
+- `deploy-azure-frontend.yml` signs in with `FRONTEND_DEPLOY_CLIENT_ID`, so
+  the next frontend deploy signs in as `github_frontend_deploy`, which can
+  read the Static Web App's deployment token and nothing else. The deploy
+  itself looks the same; nobody approves it, as since
+  [#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613).
+- `deploy-functions.yml` names `production-backend`, so the next backend
+  deploy, started by hand as always, stops at **Waiting** until
+  `saulpatinojr` or `hcw-architect` approves it (GitHub's
+  [page on required reviewers](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-required-reviews-in-workflows)
+  shows the **Review deployments** button).
+- `infra/oidc.tf` no longer declares `github_deploy`'s two `production`
+  credentials or its role on the site, so HCP Terraform queues a run that
+  deletes them.
+
+Nothing breaks between the merge and that apply. Each workflow's new sign-in
+was made ready by Part 1: `github_frontend_deploy` trusts `production` and
+holds the site role, and `github_deploy` trusts `production-backend`. The
+three things the apply deletes are the ones no workflow uses after the
+merge. That is also why the apply comes after the merge and not before: run
+first, it would take away the sign-in both deploys still used.
+
+5. **Optional, and harmless: check the frontend deploy on the new identity
+   now.** The merge changes no file under `frontend/`, so it starts no
+   frontend deploy by itself; the next frontend merge (often the daily
+   content-manifest pull request) does it anyway. To see it sooner, open
+   [Deploy Frontend](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml),
+   click **Run workflow**, leave the branch on `main` and the input blank,
+   and click **Run workflow**. This redeploys the site as it is on `main`.
+   Success is a green run whose **Mint the deployment token** step prints
+   `minted a deployment token for stapp-site-prod-cus-01`. If **Azure login
+   (OIDC)** fails with `AADSTS700213` or `AADSTS700016`, the secret does not
+   hold the new identity's client id: set it again with step 3 and re-run.
+   If **Mint the deployment token** fails with "Not authorized", the role
+   from Part 1 is missing: put the run's link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617) and do not
+   confirm the apply in step 6 yet.
+
+   **Read this before step 6: it is an apply, and it deletes three things in
+   Azure.** Confirming it cannot be undone by a click; putting them back
+   takes a revert pull request and a new apply. What it deletes is unused
+   after the merge, which is the point.
+
+6. **Confirm the HCP Terraform run that the merge of the second pull request
+   queues.** Open
+   [the hcw-azure runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs)
+   and open the newest run. Success is a plan that shows the permanent
+   differences plus exactly these three destroys, and nothing else:
+   - `azurerm_federated_identity_credential.github_production`
+   - `azurerm_federated_identity_credential.github_production_immutable`
+   - `azurerm_role_assignment.github_deploy_swa_token`
+
+   With the permanent differences (the three `azapi` resources it replaces
+   on every run and the one Function App setting it rewrites), the plan line
+   reads `Plan: 3 to add, 1 to change, 6 to destroy`. Each of the three
+   destroys is declared in
+   [`scripts/assert-expected-plan.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/assert-expected-plan.mjs),
+   so the
+   [plan check](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml)
+   for the run should be green. If the plan shows any other destroy, any
+   create, or anything the plan check marks UNEXPECTED, do not confirm it:
+   discard the run and put its link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617). Otherwise click
+   **Confirm & Apply**. Success is the run ending **Applied**, with
+   `Apply complete! Resources: 3 added, 1 changed, 6 destroyed`. If the
+   apply fails with `409 Conflict` on a federated credential, Azure refused
+   two changes to one identity at the same moment (the note in step 2);
+   start a new run from the workspace (**New run**) and confirm it, and the
+   rest are deleted.
+
+7. **Read the result back** (PowerShell, signed in with `az login`). The
+   first line lists the deploy identity's federated credentials
+   ([`az identity federated-credential list`](https://learn.microsoft.com/cli/azure/identity/federated-credential?view=azure-cli-latest)):
+
+   ```powershell
+   az identity federated-credential list --identity-name id-site-github-deploy-prod-cus-01 --resource-group rg-web-site-prod-cus -o json | ConvertFrom-Json | Select-Object name, subject
+   ```
+
+   Success is exactly two rows, both ending `:environment:production-backend`
+   (one starting `repo:saulpatinojr/`, one with the numeric ids). A row
+   ending `:environment:production` means the apply did not delete it. The
+   second line lists what the deploy identity holds on the site:
+
+   ```powershell
+   $p = az identity show --name id-site-github-deploy-prod-cus-01 --resource-group rg-web-site-prod-cus --query principalId -o tsv; az role assignment list --assignee $p --all -o json | ConvertFrom-Json | Select-Object roleDefinitionName, scope
+   ```
+
+   Success is the deploy identity's three roles on the Function App and its
+   storage account (`Website Contributor`, `Storage Blob Data Contributor`
+   and `Storage Account Contributor`) and no `HCW Static Web App Deployer`
+   row. Then say so on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617), and the session closes it. These
+   two lines have not been run from a session, which has no Azure sign-in;
+   they use only reads.
+
+**If something goes wrong after the apply.** A frontend deploy that fails at
+sign-in is fixed by the secret (step 3), not by giving the old identity its
+trust back. To undo Part 2 entirely, revert the second pull request: its
+merge queues a run that creates the three again, and that run is an apply to
+confirm the same way.
 
 ## 5. Rollback
 

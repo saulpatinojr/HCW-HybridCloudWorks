@@ -222,10 +222,20 @@ Ensure GitHub Environment `production` is configured:
 - Required Reviewers: none. The owner removed them on 2026-11-09 so the
   frontend deploy, which starts by itself on a frontend merge, finishes without
   an approval ([#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)).
-  [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617)
-  adds a separate, reviewed `production-backend` environment for the backend
-  deploy; once it is done, Required-Inputs §4.4 lists that environment too.
+  Only the frontend deploy names it since [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617).
 - Deployment branch policy: **Selected branches &rarr; `main` only**.
+
+Ensure GitHub Environment `production-backend` is configured, before the
+first apply (from that apply the backend deploy identity trusts its name,
+and GitHub creates a missing environment with no protection the first time a
+job names it). The backend deploy, `deploy-functions.yml`, names it
+([#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617)):
+- Required Reviewers: `saulpatinojr` and `hcw-architect`; administrators may
+  not bypass.
+- Deployment branch policy: **Selected branches &rarr; `main` only**.
+- The steps and the read-back are in the
+  [deployment runbook](deployment-runbook.md), the #1617 subsection, step 1;
+  Required-Inputs §4.4 lists the environment.
 
 ---
 

@@ -419,11 +419,23 @@ const OTHER_ENTRIES = [
     rotate:
       "Generate a new private key on the App’s settings page, store it in the Agents store (docs/runbooks/copilot-code-review-mcp.md, step 4), then delete the old key.",
   },
+  // Since #1617 each deploy has its own environment and identity: the
+  // frontend signs in through `production` as github_frontend_deploy, and
+  // the backend through the reviewed `production-backend` as github_deploy.
   {
     id: "gh-oidc-production",
-    name: "environment production → github_deploy",
+    name: "environment production → github_frontend_deploy",
     store: "github-environment",
-    consumer: "deploy-functions.yml, deploy-azure-frontend.yml",
+    consumer: "deploy-azure-frontend.yml",
+    issuer: "GitHub OIDC, trusted by Entra",
+    renewal: "self",
+    lifetimeDays: null,
+  },
+  {
+    id: "gh-oidc-production-backend",
+    name: "environment production-backend → github_deploy",
+    store: "github-environment",
+    consumer: "deploy-functions.yml",
     issuer: "GitHub OIDC, trusted by Entra",
     renewal: "self",
     lifetimeDays: null,

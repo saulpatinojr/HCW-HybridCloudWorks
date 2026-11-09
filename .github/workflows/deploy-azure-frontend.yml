@@ -29,13 +29,16 @@ name: Deploy Frontend
 # repository that nothing in a checkout can prove is still set.
 #
 # Two gaps the owner accepted that day, both closed by #1617:
-#   - The backend deploy (deploy-functions.yml) names the same `production`
-#     environment. It still starts only by hand, but no approval follows
-#     that start any more. #1617 moves it to a reviewed `production-backend`.
-#   - This workflow still signs in as `github_deploy` (infra/oidc.tf), the one
-#     deploy identity, which also holds rights on the Function App and its
-#     storage that uploading a static site does not need. #1617 gives the
-#     frontend an identity that can only deploy the Static Web App.
+#   - The backend deploy (deploy-functions.yml) named the same `production`
+#     environment, so no approval followed its start either. It now names
+#     `production-backend`, which keeps required reviewers, so `production`
+#     is this workflow's alone.
+#   - This workflow signed in as `github_deploy` (infra/oidc.tf), the backend
+#     deploy's identity, which also holds rights on the Function App and its
+#     storage that uploading a static site does not need. It now signs in as
+#     `github_frontend_deploy`, which can read the Static Web App's
+#     deployment token and nothing else, so a run nobody approves cannot
+#     reach the API.
 #
 # The workflow publishes to the Static Web App hostname configured in Azure;
 # DNS and custom-domain changes are separate infrastructure decisions.
@@ -492,18 +495,21 @@ jobs:
     # GitHub would auto-create a bare one that records who deployed without
     # gating whether they may (T-705).
     #
-    # deploy-functions.yml names this same environment, so the backend deploy
-    # has no approval either until #1617 moves it to a reviewed
-    # `production-backend`. Do not rename the environment here on its own:
-    # the sign-in below matches on this exact name.
+    # Since #1617 this is the only workflow that names `production`; the
+    # backend deploy names the reviewed `production-backend`
+    # (scripts/oidc-subjects.test.mjs fails if another workflow names
+    # either). Do not rename the environment here on its own: the sign-in
+    # below matches on this exact name.
     environment: production
     # id-token for the federated login that mints the deployment token (T-727).
     # `environment: production` above is load-bearing for it: the OIDC subject
-    # becomes repo:<org>/<repo>:environment:production, and github_deploy holds
-    # exactly that credential plus its immutable form (github_production and
-    # github_production_immutable in infra/oidc.tf). The subject is the same
-    # whether a push or a dispatch started the run, because a job that names an
-    # environment presents the environment form, not the branch form
+    # becomes repo:<org>/<repo>:environment:production, and
+    # github_frontend_deploy holds exactly that credential plus its immutable
+    # form (github_frontend_deploy_env_production and
+    # github_frontend_deploy_env_production_immutable in infra/oidc.tf). Since
+    # #1617 it is the only identity that trusts this subject. The subject is
+    # the same whether a push or a dispatch started the run, because a job
+    # that names an environment presents the environment form, not the branch form
     # (https://docs.github.com/en/actions/reference/security/oidc#filtering-for-a-specific-environment),
     # so the automatic runs need no new credential.
     # Removing the environment key would break authentication with AADSTS700213,
@@ -545,14 +551,21 @@ jobs:
       # credential — azure/static-web-apps#1304 is an open request for exactly
       # that. So the token is still what the action takes; what changed is that
       # it no longer lives as a long-lived GitHub secret and a Terraform output.
-      # It is read from ARM under the same federated identity this repository
-      # already uses everywhere else, and it lives for one run. Keeping it is
-      # an accepted risk (TODO.md, Accepted risks; #834), compensated by
-      # resetting the token every 90 days or on any suspicion.
+      # It is read from ARM under a federated identity, and it lives for one
+      # run. Keeping it is an accepted risk (TODO.md, Accepted risks; #834),
+      # compensated by resetting the token every 90 days or on any suspicion.
+      #
+      # The identity is github_frontend_deploy (#1617), named by the
+      # FRONTEND_DEPLOY_CLIENT_ID repository secret: it holds HCW Static Web
+      # App Deployer on the one site, the single action that reads this
+      # token, and nothing else. Until #1617 this signed in with CLIENT_ID as
+      # github_deploy, which can also publish code into the Function App. The
+      # client id is an identifier, not a credential; it is a secret only so
+      # this public repository's logs print it as ***.
       - name: Azure login (OIDC)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ secrets.CLIENT_ID }}
+          client-id: ${{ secrets.FRONTEND_DEPLOY_CLIENT_ID }}
           tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
 
@@ -576,10 +589,11 @@ jobs:
             reason=$(tr -d '\r' < "${err}" | tr '\n' ' ' | cut -c1-300)
             case "${reason}" in
               *AuthorizationFailed*|*does\ not\ have\ authorization*|*Forbidden*)
-                echo "::error::Not authorized to list the deployment token. github_deploy needs"
-                echo "::error::the 'HCW Static Web App Deployer' role on ${APP}; the definition is"
-                echo "::error::in infra/roles/static-web-app-deployer.json and must be created by"
-                echo "::error::the owner before the Terraform assignment can be applied." ;;
+                echo "::error::Not authorized to list the deployment token. The frontend deploy"
+                echo "::error::identity (github_frontend_deploy, FRONTEND_DEPLOY_CLIENT_ID) needs the"
+                echo "::error::'HCW Static Web App Deployer' role on ${APP}, which infra/oidc.tf assigns"
+                echo "::error::(github_frontend_deploy_swa_token). Check that the apply that creates it"
+                echo "::error::has run, and that the secret holds that identity's client id." ;;
               *)
                 echo "::error::Could not read the deployment token from ARM." ;;
             esac
@@ -634,22 +648,25 @@ jobs:
       #     proves on every deploy that an unknown address is a real 404 and
       #     not a "Soft 404" (an error page sent with 200), which is the bug
       #     #1613 fixed.
+      #
+      # The site's address comes from the STATIC_WEB_APP_DEFAULT_HOSTNAME
+      # repository variable, or the built-in default beside it. There is no
+      # fallback that asks Azure: this job signs in as github_frontend_deploy,
+      # which can read the deployment token and cannot read the site
+      # (`az staticwebapp show` needs a read it does not hold, #1617). An
+      # `az staticwebapp show` fallback stood here until #1617; it could not
+      # have worked under either deploy identity and never ran, because the
+      # default is never empty.
       - name: Post-deploy frontend probe
         env:
-          APP: ${{ vars.STATIC_WEB_APP_NAME || 'stapp-site-prod-cus-01' }}
-          RG: ${{ vars.STATIC_WEB_APP_RESOURCE_GROUP || 'rg-web-site-prod-cus' }}
-          DEFAULT_HOSTNAME_OVERRIDE: ${{ vars.STATIC_WEB_APP_DEFAULT_HOSTNAME || 'calm-ground-0d0e6a010.7.azurestaticapps.net' }}
+          DEFAULT_HOSTNAME: ${{ vars.STATIC_WEB_APP_DEFAULT_HOSTNAME || 'calm-ground-0d0e6a010.7.azurestaticapps.net' }}
           POLL_INTERVAL_S: '5'
           POLL_BUDGET_S: '90'
         run: |
           set -euo pipefail
 
-          DEFAULT_HOSTNAME="${DEFAULT_HOSTNAME_OVERRIDE:-}"
-          if [ -z "${DEFAULT_HOSTNAME}" ]; then
-            DEFAULT_HOSTNAME=$(az staticwebapp show --name "${APP}" --resource-group "${RG}" --query "defaultHostname" -o tsv 2>/dev/null || true)
-          fi
-          if [ -z "${DEFAULT_HOSTNAME}" ]; then
-            echo "::error::Could not read defaultHostname for ${APP}"
+          if [ -z "${DEFAULT_HOSTNAME:-}" ]; then
+            echo "::error::No address to probe: the STATIC_WEB_APP_DEFAULT_HOSTNAME variable and its built-in default are both empty. Set the variable to the site's *.azurestaticapps.net address (Azure portal, the Static Web App's Overview page, URL)."
             exit 1
           fi
 
