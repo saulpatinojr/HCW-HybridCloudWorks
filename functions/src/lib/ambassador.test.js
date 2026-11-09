@@ -295,6 +295,7 @@ describe('programs', () => {
       'Application Questions',
       'Technology Area',
       'Technical Expertise',
+      'Nomination (filled in by your nominator)',
     ]);
     expect(mvp.applicationQuestions.find((q) => q.id === 'mvp-activities')).toMatchObject({
       kind: 'activities',
@@ -462,13 +463,13 @@ describe('programs', () => {
       updatedAt: stamp,
     });
     expect(store.patchDoc).toHaveBeenCalledTimes(1);
-    // The owner edited the requirements, so revision 2 of the MVP seed
-    // (#1302) replaces nothing — but the row takes the stamp, once, as
+    // The owner edited the requirements, so revisions 2 and 3 of the MVP
+    // seed (#1302, #1543) replace nothing — but the row takes the stamp, once, as
     // SUPERSEDED_SEED_VALUES says every stored seed below its revision does.
     expect(store.patchDoc).toHaveBeenCalledWith(
       'ambassador',
       mvpSeed.id,
-      { applicationQuestions: mvpSeed.applicationQuestions, seedRevision: 2, updatedAt: stamp },
+      { applicationQuestions: mvpSeed.applicationQuestions, seedRevision: 3, updatedAt: stamp },
       { ifMatch: '"etag-mvp"' }
     );
     expect(log.info).toHaveBeenCalledWith(
@@ -1378,29 +1379,29 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
     await h.listPrograms(makeRequest(), context);
     expect(store.data.get('ambassador').get(GITKRAKEN).seedRevision).toBe(revision);
-    // The MVP (revision 2, #1302) and Docker Captain (revision 4, #1313 on
-    // top of #1302 and the 2026-10-20 rules) carry stamps of their own; a
-    // seed with no history carries none.
-    expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBe(2);
+    // The MVP (revision 3, #1543 on top of #1302) and Docker Captain
+    // (revision 4, #1313 on top of #1302 and the 2026-10-20 rules) carry
+    // stamps of their own; a seed with no history carries none.
+    expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBe(3);
     expect(store.data.get('ambassador').get('program-docker-captain').seedRevision).toBe(4);
     expect(store.data.get('ambassador').get('program-microsoft-mct').seedRevision).toBeUndefined();
   });
 
   // #1302, #1313: a stored MVP or Docker Captain seed whose requirements are
   // still the previous revision's takes the current list — `manual` under
-  // `reach`, and `manual` back on Docker's `labs` — in one patch; the edited
-  // case is proven on the MVP earlier in this file.
+  // `reach`, and `manual` back on Docker's `labs` — in one patch, stamped at
+  // the seed's current revision (the MVP's is 3 since #1543 added the
+  // nomination form); the edited case is proven on the MVP earlier in this file.
   it.each([
-    ['program-microsoft-mvp', 2],
-    ['program-docker-captain', 4],
-  ])('replaces an unedited requirements list on %s with revision %i', (id, rev) => {
+    ['program-microsoft-mvp', 2, 3],
+    ['program-docker-captain', 4, 4],
+  ])('replaces an unedited requirements list on %s with revision %i', (id, rev, target) => {
     const current = DEFAULT_PROGRAMS.find((p) => p.id === id);
-    const step = SUPERSEDED_SEED_VALUES[id].revisions.at(-1);
-    expect(step.revision).toBe(rev);
+    const step = SUPERSEDED_SEED_VALUES[id].revisions.find((s) => s.revision === rev);
     expect(Object.keys(step.fields)).toEqual(['requirements']);
     const stored = { ...current, ...step.fields, seeded: true, seedRevision: rev - 1 };
     const patch = seedBackfillFor(stored, current);
-    expect(patch).toEqual({ requirements: current.requirements, seedRevision: rev });
+    expect(patch).toEqual({ requirements: current.requirements, seedRevision: target });
     expect(patch.requirements).not.toEqual(step.fields.requirements);
     expect(patch.requirements.find((r) => r.id === 'reach').evidenceTypes).toContain('manual');
     expect(seedBackfillFor({ ...stored, ...patch }, current)).toBeNull();

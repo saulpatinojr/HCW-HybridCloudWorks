@@ -146,7 +146,8 @@ const MVP_GATES = [
   ['mentorship', 'Have you provided technical mentorship?'],
 ];
 
-const MVP_APPLICATION_QUESTIONS = [
+/** The application the nominee completes once nominated, in the form's order. */
+const MVP_APPLICATION_FORM_QUESTIONS = [
   question('mvp-first-name', MVP_PROFILE, 'First name', 'profile'),
   question('mvp-last-name', MVP_PROFILE, 'Last name', 'profile'),
   question('mvp-email', MVP_PROFILE, 'Email', 'profile'),
@@ -248,6 +249,125 @@ const MVP_APPLICATION_QUESTIONS = [
     { maxChars: 1000 }
   ),
 ];
+
+// ── Microsoft MVP: the nomination form (#1543) ──────────────────────────────
+//
+// A nomination comes before the application above, and it is filled in by a
+// different person: the nominator, about the nominee. The labels, the order,
+// which fields are required and the 500-character limits are the form's
+// "Nominee Information" page as recorded on #1543 (2026-11-04). The form's
+// drop-down lists (Title, Country or Region, State or Province, How long
+// have you known the nominee?) are not published anywhere that could be
+// checked, so those fields are typed by hand here ('profile') rather than
+// seeded with guessed options.
+//
+// How nomination works, from the MVP FAQ
+// (https://mvp.microsoft.com/en-US/faq?section=mvp, retrieved 2026-11-09):
+// a Microsoft full-time employee or a current MVP submits the nomination;
+// the nominee gets an email from an @microsoft.com address inviting them to
+// complete the MVP Application, signs in with the email address the
+// nominator gave, and has 45 days to finish it. A nomination alone does not
+// grant the award. That the nominator's answers are used to evaluate the
+// nominee is the form's own intro text, as recorded on #1543.
+//
+// No answer is seeded: the answers name a person, and this file is public.
+
+const MVP_NOMINATION = 'Nomination (filled in by your nominator)';
+
+const MVP_NOMINATION_PROCESS =
+  'Filled in by your nominator (a Microsoft full-time employee or a current MVP) on the MVP site, before your application. Microsoft then emails you an invitation to complete the application above; you sign in with the email address given here and have 45 days. The form says these answers are used to evaluate you and to tell you about the nomination. The name and contact fields are yours, as the nominee.';
+
+const MVP_NOMINATION_QUESTIONS = [
+  question('mvp-nom-first-name', MVP_NOMINATION, 'First Name', 'profile', {
+    required: true,
+    hint: MVP_NOMINATION_PROCESS,
+  }),
+  question('mvp-nom-last-name', MVP_NOMINATION, 'Last Name', 'profile', { required: true }),
+  question('mvp-nom-email', MVP_NOMINATION, 'Email Address', 'profile', {
+    required: true,
+    hint: 'The address the MVP programme writes to. The invitation goes there, and the application opens only when signed in with it.',
+  }),
+  question('mvp-nom-title', MVP_NOMINATION, 'Title', 'profile', {
+    hint: 'A drop-down on the form: pick the closest job title.',
+  }),
+  question('mvp-nom-country', MVP_NOMINATION, 'Country or Region', 'profile', {
+    required: true,
+    hint: 'A drop-down on the form.',
+  }),
+  question('mvp-nom-state', MVP_NOMINATION, 'State or Province', 'profile', {
+    hint: 'A drop-down on the form, enabled once a country is chosen.',
+  }),
+  question('mvp-nom-known-for', MVP_NOMINATION, 'How long have you known the nominee?', 'profile', {
+    required: true,
+    hint: 'A drop-down on the form.',
+  }),
+  question(
+    'mvp-nom-engagement',
+    MVP_NOMINATION,
+    'How did you meet and how have you engaged with your nominee?',
+    'text',
+    {
+      maxChars: 500,
+      required: true,
+      hint: 'About 80 to 90 words. Lead with the concrete thing: where you met and what you have done together, with a date.',
+    }
+  ),
+  question(
+    'mvp-nom-technology',
+    MVP_NOMINATION,
+    'How has your nominee demonstrated impact with technology?',
+    'text',
+    {
+      maxChars: 500,
+      required: true,
+      hint: 'About 80 to 90 words. Name the technologies and what was built, taught or written, with a number or a date and where it can be seen. Public links only.',
+    }
+  ),
+  question(
+    'mvp-nom-community',
+    MVP_NOMINATION,
+    'How has your nominee demonstrated impact and influence as a community leader?',
+    'text',
+    {
+      maxChars: 500,
+      required: true,
+      hint: 'About 80 to 90 words. Events organised or spoken at, people helped, communities run, with dates and rough sizes. Public links only.',
+    }
+  ),
+  question(
+    'mvp-nom-additional',
+    MVP_NOMINATION,
+    'Is there additional information that you would like us to know about your nominee for consideration?',
+    'text',
+    {
+      maxChars: 500,
+      hint: 'Optional, about 80 to 90 words: what the two answers above could not fit, or the one thing the reviewer should not miss. Check every link still opens.',
+    }
+  ),
+];
+
+/** The MVP seed's questions: the nominee's application, then the nominator's form. */
+const MVP_APPLICATION_QUESTIONS = [...MVP_APPLICATION_FORM_QUESTIONS, ...MVP_NOMINATION_QUESTIONS];
+
+/** Freeze a value and everything inside it, so a recorded seed value cannot change in place. */
+const deepFreeze = (value) => {
+  if (value && typeof value === 'object') {
+    for (const inner of Object.values(value)) deepFreeze(inner);
+    Object.freeze(value);
+  }
+  return value;
+};
+
+/**
+ * The MVP seed's question list at revision 2, before the nomination form was
+ * added (revision 3, #1543): what SUPERSEDED_SEED_VALUES records, so a
+ * stored program still holding it unedited takes the new list once. It is a
+ * copy taken when this module loads, so it equals the application questions
+ * above only while they are unchanged; programs.test.js pins its content,
+ * and a later edit to those questions must write this list out literally
+ * first, or the record would follow the edit and stop matching stored rows.
+ */
+const MVP_QUESTIONS_REVISION_2 = deepFreeze(structuredClone(MVP_APPLICATION_FORM_QUESTIONS));
 
 // ── Microsoft Elevate Educator – Expert: the 2026-2027 question list ────────
 
@@ -565,8 +685,10 @@ const dockerCaptainRequirements = (labsEvidenceTypes) => [
  * timer files under `reach` do not read as hands-on material, and revision 4
  * (#1313) puts it back once those rows name their requirement
  * (`dockerCaptainRequirements` above says why). Microsoft MVP's revision 2
- * (#1302) adds `manual` to its `reach` requirement for the same rows. A
- * requirements list the owner edited is left as it is. The two window
+ * (#1302) adds `manual` to its `reach` requirement for the same rows, and
+ * its revision 3 (#1543) appends the nomination form to its questions; a
+ * question list changed through the API keeps its changes and does not gain
+ * the form. A requirements list the owner edited is left as it is. The two window
  * revisions (MIEE, AWS Community Builders) move a window the year has passed
  * into the coming cycle; MIEE's description and its "apply before" line roll
  * with it, so the seed does not contradict its own window. MCT Regional
@@ -617,6 +739,8 @@ export const SUPERSEDED_SEED_VALUES = Object.freeze({
           ),
         ],
       }),
+      // Revision 3 (#1543) appended the nomination form to the questions.
+      revised(3, { applicationQuestions: MVP_QUESTIONS_REVISION_2 }),
     ]),
   }),
   'program-gitkraken-ambassador': Object.freeze({
