@@ -58,6 +58,8 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The Terraform outputs for the six client ids no longer call them repository variables ([#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)).** Since #1619 the workflows read every client id from a repository secret, so GitHub hides it in the public logs. The output descriptions in `infra/oidc.tf` and the comment above them said "a repository variable, not a secret"; they now say each one is a secret kept only for log masking, and still an identifier rather than a credential. Only description text changed, so a plan shows no resource change.
+
 - **Addresses that do not exist now answer 404, so Google stops counting them as "Soft 404" pages ([#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)).** Google's Page indexing report of 2026-11-09 listed 90 soft 404s: pages that look "not found" to a reader but answer 200 OK to a crawler. The cause was the catch-all `navigationFallback` in `frontend/staticwebapp.config.json`, which answered every address without a file with the app and status 200 (Microsoft documents this under [fallback routes](https://learn.microsoft.com/azure/static-web-apps/configuration#fallback-routes)).
   - **What changed in the site:**
     - The catch-all is gone. An unknown address gets the site's own not-found page with status 404, through the existing `responseOverrides` rule.

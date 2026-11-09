@@ -910,37 +910,38 @@ resource "azurerm_role_assignment" "github_copilot_review_reader" {
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Values the GitHub workflows need. None are secret: federation means
+# Values the GitHub workflows need. None is a credential: federation means
 # possession of these IDs grants nothing without a matching OIDC token from
-# this repository and ref.
+# this repository and ref. Since #1618 the client ids are still stored as
+# repository secrets, only so that GitHub masks them in the public logs.
 # ---------------------------------------------------------------------------
 output "client_id" {
-  description = "CLIENT_ID for azure/login — set as a repository variable, not a secret"
+  description = "CLIENT_ID for azure/login — a repository secret since #1618, kept secret only so the public logs mask it; an identifier, not a credential"
   value       = azurerm_user_assigned_identity.github_deploy.client_id
 }
 
 output "reader_client_id" {
-  description = "READER_CLIENT_ID for azure/login in the read-only workflows — a repository variable, not a secret"
+  description = "READER_CLIENT_ID for azure/login in the read-only workflows — a repository secret since #1618, for log masking only"
   value       = azurerm_user_assigned_identity.github_reader.client_id
 }
 
 output "alert_reader_client_id" {
-  description = "ALERT_READER_CLIENT_ID for azure/login in verify-alert-state.yml (#1053) — a repository variable, not a secret"
+  description = "ALERT_READER_CLIENT_ID for azure/login in verify-alert-state.yml (#1053) — a repository secret since #1618, for log masking only"
   value       = azurerm_user_assigned_identity.github_alert_reader.client_id
 }
 
 output "manifest_window_client_id" {
-  description = "MANIFEST_WINDOW_CLIENT_ID for azure/login in publish-content-manifest.yml's origin window (#1098) — a repository variable, not a secret"
+  description = "MANIFEST_WINDOW_CLIENT_ID for azure/login in publish-content-manifest.yml's origin window (#1098) — a repository secret since #1618, for log masking only"
   value       = azurerm_user_assigned_identity.github_manifest_window.client_id
 }
 
 output "copilot_review_client_id" {
-  description = "COPILOT_REVIEW_CLIENT_ID for azure/login in copilot-setup-steps.yml — a repository variable, mirrored as an Agents secret of the same name because Copilot's own runner resolves no repository variables (runbook step 2b); an identifier in both stores, not a secret"
+  description = "COPILOT_REVIEW_CLIENT_ID for azure/login in copilot-setup-steps.yml — a repository secret since #1618, mirrored as an Agents secret of the same name for Copilot's own runner (runbook step 2b); an identifier in both stores, kept secret only for log masking"
   value       = azurerm_user_assigned_identity.github_copilot_review.client_id
 }
 
 output "arc_run_client_id" {
-  description = "ARC_RUN_CLIENT_ID for azure/login in lab-host-arc-run.yml (#1590), the Run Command identity — a repository variable, not a secret"
+  description = "ARC_RUN_CLIENT_ID for azure/login in lab-host-arc-run.yml (#1590), the Run Command identity — a repository secret since #1618, for log masking only"
   value       = azurerm_user_assigned_identity.github_arc_run.client_id
 }
 
