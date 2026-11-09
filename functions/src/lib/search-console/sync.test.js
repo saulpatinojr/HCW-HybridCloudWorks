@@ -5,6 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   analyticsRange,
+  comparableUrl,
   createSearchConsoleSync,
   findStrays,
   HISTORY_MAX,
@@ -14,8 +15,11 @@ import {
   presentSitemaps,
   selectSiteUrls,
   sitemapRoot,
+  siteAddress,
+  hostOf,
   SNAPSHOT_DOC_ID,
   sortPages,
+  STRAYS_INSPECTED_MAX,
   summarizeIndexing,
 } from './sync.js';
 import { LEASE_DOC_ID } from './lease.js';
@@ -42,13 +46,17 @@ const sitemapXml = (urls) =>
 const textResponse = (status, text) => ({ ok: status >= 200 && status < 300, status, text: async () => text });
 
 /** A Cosmos stand-in for admin_config, by document id, with ETags, so the ifMatch paths are exercised. */
-function memoryStore({ snapshot = null, lease = null } = {}) {
+function memoryStore({ snapshot = null, lease = null, jobs = {} } = {}) {
   const docs = new Map();
   let version = 0;
   if (snapshot) docs.set(SNAPSHOT_DOC_ID, { ...snapshot, id: SNAPSHOT_DOC_ID, _etag: 'e0' });
   if (lease) docs.set(LEASE_DOC_ID, { ...lease, id: LEASE_DOC_ID, _etag: 'e0' });
   const store = {
-    readDoc: vi.fn(async (_container, id) => (docs.has(id) ? structuredClone(docs.get(id)) : null)),
+    readDoc: vi.fn(async (container, id) => {
+      // Job documents live in their own container (lib/jobs.js).
+      if (container === 'jobs') return jobs[id] ?? null;
+      return docs.has(id) ? structuredClone(docs.get(id)) : null;
+    }),
     createDoc: vi.fn(async (_container, next) => {
       if (docs.has(next.id)) throw Object.assign(new Error('conflict'), { code: 409 });
       version += 1;
@@ -106,7 +114,25 @@ async function sendAsClientDoes(options, requests = 1) {
   }
 }
 
-function googleStub({ inspect, searchAnalytics, listSitemaps } = {}) {
+/**
+ * Search Analytics' page rows with two strays: a page the sitemap does not
+ * list on the main site, and one on a subdomain. `A/` is A with a trailing
+ * slash, so it is not a stray. The stub answers no page rows unless a test
+ * asks for these, so most tests inspect only their sitemap's pages.
+ */
+const OLD_PAGE = 'https://hybridcloudworks.com/old-page';
+const API_PAGE = 'https://api-azure.hybridcloudworks.com/x';
+const STRAY_PAGE_ROWS = [
+  { keys: [A], clicks: 5, impressions: 50, ctr: 0.1, position: 2 },
+  { keys: [OLD_PAGE], clicks: 1, impressions: 90, ctr: 0.01, position: 9 },
+  { keys: ['https://hybridcloudworks.com/a/'], clicks: 0, impressions: 3, ctr: 0, position: 9 },
+  { keys: [API_PAGE], clicks: 0, impressions: 80, ctr: 0, position: 9 },
+];
+
+/** The Search Analytics queries a run asked, by their dimension ('totals' for none). */
+const askedFor = (client) => client.searchAnalytics.mock.calls.map(([body]) => body.dimensions?.[0] ?? 'totals');
+
+function googleStub({ inspect, searchAnalytics, listSitemaps, pageRows = [] } = {}) {
   const answer = inspect ?? (async (url) => passResult(url));
   return {
     inspect: vi.fn(async (url, options) => {
@@ -119,13 +145,7 @@ function googleStub({ inspect, searchAnalytics, listSitemaps } = {}) {
           const dimension = body.dimensions?.[0];
           if (!dimension) return [{ clicks: 10, impressions: 200, ctr: 0.05, position: 7.5 }];
           if (dimension === 'date') return [{ keys: ['2026-11-02'], clicks: 1, impressions: 2, ctr: 0.5, position: 3 }, { keys: ['2026-11-01'], clicks: 2, impressions: 4, ctr: 0.5, position: 4 }];
-          if (dimension === 'page')
-            return [
-              { keys: [A], clicks: 5, impressions: 50, ctr: 0.1, position: 2 },
-              { keys: ['https://hybridcloudworks.com/old-page'], clicks: 1, impressions: 90, ctr: 0.01, position: 9 },
-              { keys: ['https://hybridcloudworks.com/a/'], clicks: 0, impressions: 3, ctr: 0, position: 9 },
-              { keys: ['https://api-azure.hybridcloudworks.com/x'], clicks: 0, impressions: 80, ctr: 0, position: 9 },
-            ];
+          if (dimension === 'page') return pageRows;
           return [{ keys: [`${dimension}-1`], clicks: 3, impressions: 30, ctr: 0.1, position: 5 }];
         })
     ),
@@ -146,8 +166,8 @@ function googleStub({ inspect, searchAnalytics, listSitemaps } = {}) {
   };
 }
 
-function setup({ urls = [A, BAD], stored = null, lease = null, google, env = ENV, signal, sitemap, fetchImpl, jobId, deadlineMs } = {}) {
-  const store = memoryStore({ snapshot: stored, lease });
+function setup({ urls = [A, BAD], stored = null, lease = null, jobs, google, env = ENV, signal, sitemap, fetchImpl, jobId, jobCreatedAt, deadlineMs } = {}) {
+  const store = memoryStore({ snapshot: stored, lease, jobs });
   const client = google ?? googleStub();
   const fetch = fetchImpl ?? vi.fn(async () => sitemap ?? textResponse(200, sitemapXml(urls)));
   const log = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -161,6 +181,7 @@ function setup({ urls = [A, BAD], stored = null, lease = null, google, env = ENV
     spacingMs: 0,
     signal,
     jobId,
+    jobCreatedAt,
     ...(deadlineMs === undefined ? {} : { deadlineMs }),
     log,
   });
@@ -221,17 +242,25 @@ describe('the pure helpers', () => {
     ]);
   });
 
-  it('keeps root-domain https pages only, once each, up to the cap', () => {
+  it('keeps https pages on the domain and its subdomains only, once each, up to the cap', () => {
     const locs = [
       A,
       A,
       'https://api-azure.hybridcloudworks.com/x',
       'https://www.hybridcloudworks.com/y',
+      'https://HYBRIDCLOUDWORKS.COM/upper',
       'http://hybridcloudworks.com/z',
       'not a url',
+      // Look-alikes: the host must be the domain or end with ".hybridcloudworks.com".
+      'https://evilhybridcloudworks.com/a',
+      'https://hybridcloudworks.com.example.net/a',
+      'https://example.net/?u=https://hybridcloudworks.com/',
       'https://hybridcloudworks.com/b',
     ];
-    expect(selectSiteUrls(locs)).toEqual({ urls: [A, 'https://hybridcloudworks.com/b'], total: 2 });
+    expect(selectSiteUrls(locs)).toEqual({
+      urls: [A, 'https://api-azure.hybridcloudworks.com/x', 'https://www.hybridcloudworks.com/y', 'https://HYBRIDCLOUDWORKS.COM/upper', 'https://hybridcloudworks.com/b'],
+      total: 5,
+    });
     const many = Array.from({ length: MAX_URLS + 5 }, (_, i) => `https://hybridcloudworks.com/p${i}`);
     expect(selectSiteUrls(many).urls).toHaveLength(MAX_URLS);
     expect(selectSiteUrls(many).total).toBe(MAX_URLS + 5);
@@ -242,18 +271,42 @@ describe('the pure helpers', () => {
     expect(analyticsRange(NOW, 28)).toEqual({ startDate: '2026-10-11', endDate: '2026-11-07' });
   });
 
-  it('finds strays: root-domain pages with traffic the sitemap lacks, trailing slash ignored', () => {
+  it('finds strays on the domain and its subdomains with traffic the sitemap lacks, trailing slashes ignored', () => {
     const rows = [
-      { keys: ['https://hybridcloudworks.com/a/'], clicks: 1, impressions: 5 },
+      { keys: ['https://hybridcloudworks.com/a//'], clicks: 1, impressions: 5 },
       { keys: ['https://hybridcloudworks.com/old'], clicks: 0, impressions: 9 },
       { keys: ['https://hybridcloudworks.com/older'], clicks: 2, impressions: 20 },
       { keys: ['https://hybridcloudworks.com/'], clicks: 2, impressions: 15 },
       { keys: ['https://labs.hybridcloudworks.com/x'], clicks: 9, impressions: 99 },
+      { keys: ['https://docs.hybridcloudworks.com/listed/'], clicks: 9, impressions: 98 },
+      { keys: ['https://hybridcloudworks.com.example.net/x'], clicks: 9, impressions: 97 },
     ];
-    expect(findStrays(rows, [A])).toEqual([
+    expect(findStrays(rows, [A, 'https://docs.hybridcloudworks.com/listed'])).toEqual([
+      { url: 'https://labs.hybridcloudworks.com/x', clicks: 9, impressions: 99 },
       { url: 'https://hybridcloudworks.com/older', clicks: 2, impressions: 20 },
       { url: 'https://hybridcloudworks.com/', clicks: 2, impressions: 15 },
       { url: 'https://hybridcloudworks.com/old', clicks: 0, impressions: 9 },
+    ]);
+    expect(findStrays(rows, [A], { max: 2 })).toHaveLength(2);
+  });
+
+  it('compares a path made only of slashes, and a long run of them, without a slow pattern', () => {
+    expect(comparableUrl('https://hybridcloudworks.com//')).toBe('https://hybridcloudworks.com/');
+    const many = `https://hybridcloudworks.com/${'/'.repeat(50000)}x`;
+    const started = Date.now();
+    expect(comparableUrl(many)).toBe(`https://hybridcloudworks.com/${'/'.repeat(50000)}x`);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('reads a <loc> whose spaces never close in a time that grows only with its length', () => {
+    const hostile = `<urlset><loc>${' '.repeat(30000)}</urlset>`;
+    const started = Date.now();
+    expect(parseSitemap(hostile).locs).toEqual([]);
+    expect(parseSitemap(`<urlset>${'<loc>'.repeat(20000)}</urlset>`).locs).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(1000);
+    // A <loc> holding markup, an empty one, and a closing tag with no opening one give nothing.
+    expect(parseSitemap('<urlset></loc><loc><b>x</b></loc><loc>  </loc><LOC> https://hybridcloudworks.com/u </LOC></urlset>').locs).toEqual([
+      'https://hybridcloudworks.com/u',
     ]);
   });
 
@@ -317,34 +370,59 @@ describe('createSearchConsoleSync', () => {
   });
 
   it('writes the snapshot in the page\'s shape', async () => {
-    const { sync, store, client, fetchImpl } = setup();
+    const { sync, store, client, fetchImpl } = setup({ google: googleStub({ pageRows: STRAY_PAGE_ROWS }) });
     const result = await sync.run();
-    expect(result).toMatchObject({ status: 'ok', pages: 2, inspected: 2, failed: 0, stale: 0, strays: 1 });
+    // Two sitemap pages and the two strays, one of them on a subdomain.
+    expect(result).toMatchObject({ status: 'ok', pages: 4, inspected: 4, failed: 0, stale: 0, strays: 2 });
     expect(fetchImpl).toHaveBeenCalledWith('https://hybridcloudworks.com/sitemap.xml', expect.objectContaining({ signal: expect.any(AbortSignal) }));
 
     const doc = store.doc;
     expect(doc).toMatchObject({ id: SNAPSHOT_DOC_ID, configScope: 'admin_config', status: 'ok', siteUrl: 'sc-domain:hybridcloudworks.com' });
     expect(doc.generatedAt).toBe(NOW.toISOString());
-    expect(doc.run).toEqual({ startedAt: NOW.toISOString(), finishedAt: NOW.toISOString(), inspected: 2, failed: 0, stale: 0, message: null });
-    // Problems first.
-    expect(doc.indexing.pages.map((p) => [p.url, p.verdict])).toEqual([
-      [BAD, 'FAIL'],
-      [A, 'PASS'],
+    expect(doc.run).toEqual({ startedAt: NOW.toISOString(), finishedAt: NOW.toISOString(), inspected: 4, failed: 0, stale: 0, message: null });
+    // Problems first, then by address; each says where it came from and its host.
+    expect(doc.indexing.pages.map((p) => [p.url, p.verdict, p.source, p.host])).toEqual([
+      [BAD, 'FAIL', 'sitemap', 'hybridcloudworks.com'],
+      [API_PAGE, 'PASS', 'search', 'api-azure.hybridcloudworks.com'],
+      [A, 'PASS', 'sitemap', 'hybridcloudworks.com'],
+      [OLD_PAGE, 'PASS', 'search', 'hybridcloudworks.com'],
     ]);
     expect(Object.keys(doc.indexing.pages[0]).sort()).toEqual(
-      ['coverageState', 'error', 'googleCanonical', 'indexingState', 'inspectedAt', 'inspectionResultLink', 'lastCrawlTime', 'pageFetchState', 'robotsTxtState', 'stale', 'url', 'userCanonical', 'verdict'].sort()
+      [
+        'coverageState',
+        'error',
+        'googleCanonical',
+        'host',
+        'indexingState',
+        'inspectedAt',
+        'inspectionResultLink',
+        'lastCrawlTime',
+        'pageFetchState',
+        'robotsTxtState',
+        'source',
+        'stale',
+        'url',
+        'userCanonical',
+        'verdict',
+      ].sort()
     );
     expect(doc.indexing.pages[0]).toMatchObject({ stale: false, inspectedAt: NOW.toISOString(), error: null });
-    expect(doc.indexing.summary).toMatchObject({ pass: 1, neutral: 0, fail: 1, unknown: 0 });
-    expect(doc.indexing.strays).toEqual([{ url: 'https://hybridcloudworks.com/old-page', clicks: 1, impressions: 90 }]);
-    expect(doc.indexing.history).toEqual([{ at: NOW.toISOString(), pass: 1, neutral: 0, fail: 1, inspected: 2, failed: 0 }]);
+    expect(doc.indexing.summary).toMatchObject({ pass: 3, neutral: 0, fail: 1, unknown: 0 });
+    expect(doc.indexing.strays).toEqual([
+      { url: OLD_PAGE, clicks: 1, impressions: 90 },
+      { url: API_PAGE, clicks: 0, impressions: 80 },
+    ]);
+    expect(doc.indexing.history).toEqual([{ at: NOW.toISOString(), pass: 3, neutral: 0, fail: 1, inspected: 4, failed: 0 }]);
+    // Sitemap pages are inspected first, then the strays, most impressions first.
+    expect(client.inspect.mock.calls.map(([url]) => url)).toEqual([A, BAD, OLD_PAGE, API_PAGE]);
 
     expect(doc.performance.range).toEqual({ startDate: '2026-08-10', endDate: '2026-11-07' });
     expect(doc.performance.totals).toEqual({ clicks: 10, impressions: 200, ctr: 0.05, position: 7.5 });
     expect(doc.performance.totals28d).toEqual({ clicks: 10, impressions: 200, ctr: 0.05, position: 7.5 });
     expect(doc.performance.daily.map((d) => d.date)).toEqual(['2026-11-01', '2026-11-02']);
     expect(doc.performance.queries).toEqual([{ key: 'query-1', clicks: 3, impressions: 30, ctr: 0.1, position: 5 }]);
-    expect(doc.performance.pages).toHaveLength(4);
+    // Full addresses, the subdomain's included.
+    expect(doc.performance.pages.map((row) => row.key)).toEqual(STRAY_PAGE_ROWS.map((row) => row.keys[0]));
     for (const key of ['countries', 'devices', 'searchAppearance']) expect(doc.performance[key]).toHaveLength(1);
     expect(doc.sitemaps[0]).toMatchObject({ errors: 1, contents: [{ type: 'web', submitted: 203 }] });
 
@@ -354,17 +432,14 @@ describe('createSearchConsoleSync', () => {
     expect(dims.every((d) => d.length <= 1)).toBe(true);
     const pageQuery = client.searchAnalytics.mock.calls.find(([body]) => body.dimensions?.[0] === 'page')[0];
     expect(pageQuery.rowLimit).toBe(1000);
-    // Every query, the two undimensioned totals and the strays' page query
-    // included, asks for root-domain pages only (owner decision on #1612).
-    expect(client.searchAnalytics).toHaveBeenCalledTimes(8);
-    for (const [body] of client.searchAnalytics.mock.calls) {
-      expect(body.dimensionFilterGroups).toEqual([
-        { groupType: 'and', filters: [{ dimension: 'page', operator: 'includingRegex', expression: '^https://hybridcloudworks\\.com/' }] },
-      ]);
-    }
+    // The page query comes first (it finds the strays to inspect). No query
+    // carries a filter: the figures cover the whole property, the domain and
+    // every subdomain (owner decision of 2026-11-09 on #1612).
+    expect(askedFor(client)).toEqual(['page', 'totals', 'totals', 'date', 'query', 'country', 'device', 'searchAppearance']);
+    for (const [body] of client.searchAnalytics.mock.calls) expect(body).not.toHaveProperty('dimensionFilterGroups');
 
-    // The lease is given back, with the two inspections counted for the Pacific day.
-    expect(store.lease).toMatchObject({ holder: null, expiresAt: null, by: null, budget: { day: PACIFIC_DAY, used: 2 } });
+    // The lease is given back, with the four inspections counted for the Pacific day.
+    expect(store.lease).toMatchObject({ holder: null, expiresAt: null, by: null, budget: { day: PACIFIC_DAY, used: 4 } });
   });
 
   it('reads the real clock by default', async () => {
@@ -551,7 +626,8 @@ describe('createSearchConsoleSync', () => {
     expect(result.status).toBe('error');
     // Four lanes may already be in flight; no more start once one has failed.
     expect(client.inspect.mock.calls.length).toBeLessThanOrEqual(4);
-    expect(client.searchAnalytics).not.toHaveBeenCalled();
+    // Only the page query, which finds the strays before the inspections.
+    expect(askedFor(client)).toEqual(['page']);
     expect(store.doc.status).toBe('error');
     expect(store.doc.run.message).toContain('not a Full user');
     expect(store.doc.generatedAt).toBe('2026-11-08T12:10:00.000Z');
@@ -724,11 +800,17 @@ describe('createSearchConsoleSync', () => {
     expect(brokenBody.store.doc.run.message).toContain('(unreachable)');
   });
 
-  it('treats a sitemap with no root-domain page as an error', async () => {
-    const { sync, store, client } = setup({ urls: ['https://api-azure.hybridcloudworks.com/x'] });
+  it('treats a sitemap with no page on the domain or a subdomain as an error', async () => {
+    const { sync, store, client } = setup({ urls: ['https://example.com/x', 'http://hybridcloudworks.com/y', 'https://hybridcloudworks.com.example.net/z'] });
     await expect(sync.run()).resolves.toMatchObject({ status: 'error' });
     expect(client.inspect).not.toHaveBeenCalled();
-    expect(store.doc.run.message).toBe('The sitemap lists no page on hybridcloudworks.com, so nothing was asked of Google.');
+    expect(store.doc.run.message).toBe('The sitemap lists no page on hybridcloudworks.com or its subdomains, so nothing was asked of Google.');
+  });
+
+  it('inspects a subdomain page the sitemap lists', async () => {
+    const { sync, store } = setup({ urls: [API_PAGE] });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok', pages: 1, inspected: 1 });
+    expect(store.doc.indexing.pages[0]).toMatchObject({ url: API_PAGE, source: 'sitemap', host: 'api-azure.hybridcloudworks.com' });
   });
 
   it('reads the sitemap from GSC_SITEMAP_URL when it is set', async () => {
@@ -742,19 +824,22 @@ describe('createSearchConsoleSync', () => {
     const { sync, store, client } = setup({ urls });
     await sync.run();
     expect(client.inspect).toHaveBeenCalledTimes(MAX_URLS);
-    expect(store.doc.run.message).toContain(`The sitemap lists ${MAX_URLS + 1} root-domain pages; only the first ${MAX_URLS} are inspected.`);
+    expect(store.doc.run.message).toContain(`The sitemap lists ${MAX_URLS + 1} pages; only the first ${MAX_URLS} are inspected.`);
   });
 
-  it('reads a sitemap index one level down, on the site\'s own host only', async () => {
+  it('reads a sitemap index one level down, on the main site\'s own host only', async () => {
     const fetchImpl = vi.fn(async (url) => {
       if (url.endsWith('/sitemap.xml'))
-        return textResponse(200, '<sitemapindex><sitemap><loc>https://hybridcloudworks.com/s1.xml</loc></sitemap><sitemap><loc>https://evil.example/s.xml</loc></sitemap></sitemapindex>');
+        return textResponse(
+          200,
+          '<sitemapindex><sitemap><loc>https://hybridcloudworks.com/s1.xml</loc></sitemap><sitemap><loc>https://evil.example/s.xml</loc></sitemap><sitemap><loc>https://docs.hybridcloudworks.com/s.xml</loc></sitemap></sitemapindex>'
+        );
       return textResponse(200, sitemapXml(['https://hybridcloudworks.com/from-child']));
     });
-    const { sync, store } = setup({ fetchImpl });
+    const { sync, store } = setup({ fetchImpl, google: googleStub({ pageRows: STRAY_PAGE_ROWS }) });
     await sync.run();
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual(['https://hybridcloudworks.com/sitemap.xml', 'https://hybridcloudworks.com/s1.xml']);
-    expect(store.doc.indexing.pages.map((p) => p.url)).toEqual(['https://hybridcloudworks.com/from-child']);
+    expect(store.doc.indexing.pages.find((p) => p.source === 'sitemap').url).toBe('https://hybridcloudworks.com/from-child');
     // Read in full: the strays are worked out.
     expect(store.doc.indexing.strays.length).toBeGreaterThan(0);
   });
@@ -785,11 +870,11 @@ describe('createSearchConsoleSync', () => {
   });
 
   it('logs counts and durations only: no address, no token', async () => {
-    const { sync, log } = setup();
+    const { sync, log } = setup({ google: googleStub({ pageRows: STRAY_PAGE_ROWS }) });
     await sync.run();
     const lines = log.log.mock.calls.flat().join('\n');
     expect(lines).not.toContain('hybridcloudworks.com');
-    expect(lines).toMatch(/2 pages, 2 inspected, 0 failed, 0 stale, 1 strays, \d+s/);
+    expect(lines).toMatch(/4 pages \(2 from search\), 4 inspected, 0 failed, 0 stale, 2 strays, \d+s/);
   });
 
   it('logs, and still answers, when the lease cannot be given back', async () => {
@@ -815,7 +900,7 @@ describe('createSearchConsoleSync', () => {
     const { sync, client, store } = setup({ google, urls, signal: controller.signal });
     await expect(sync.run()).resolves.toMatchObject({ status: 'error', aborted: true });
     expect(client.inspect.mock.calls.length).toBeLessThanOrEqual(4);
-    expect(client.searchAnalytics).not.toHaveBeenCalled();
+    expect(askedFor(client)).toEqual(['page']);
     // Half a run is not written over the last whole one.
     expect(store.snapshotWrites()).toBe(0);
   });
@@ -1251,7 +1336,7 @@ describe('createSearchConsoleSync, Copilot review round 2 (#1614)', () => {
       const { sync, store, client } = setup({ google, urls, stored: previousRun(urls), deadlineMs: 20 });
       await expect(sync.run()).resolves.toMatchObject({ status: 'ok', pages: 10, inspected: 4, failed: 0 });
       expect(client.inspect).toHaveBeenCalledTimes(4);
-      expect(client.searchAnalytics).not.toHaveBeenCalled();
+      expect(askedFor(client)).toEqual(['page']);
       expect(client.listSitemaps).not.toHaveBeenCalled();
       expect(store.snapshotWrites()).toBe(1);
       expect(store.doc.status).toBe('ok');
@@ -1261,13 +1346,15 @@ describe('createSearchConsoleSync, Copilot review round 2 (#1614)', () => {
       for (const page of store.doc.indexing.pages) expect(page).toMatchObject({ verdict: 'PASS', stale: true, error: DEADLINE_NOTE });
       expect(store.doc.performance.totals.clicks).toBe(99);
       expect(store.doc.sitemaps).toEqual([{ path: 'kept' }]);
-      expect(store.doc.indexing.strays).toEqual(previousRun().indexing.strays);
+      // The page query answered before the limit, so the strays were worked out (none).
+      expect(store.doc.indexing.strays).toEqual([]);
       expect(store.doc.indexing.history).toEqual([{ at: 'x' }]);
       expect(store.lease.holder).toBeNull();
     });
 
     it.each([
-      ['a performance query', { searchAnalytics: untilCancelled('searchAnalytics') }, 99],
+      // The page query answers (it comes before the inspections); the next one hangs.
+      ['a performance query', { searchAnalytics: (body, options) => (body.dimensions?.[0] === 'page' ? [] : untilCancelled('searchAnalytics')(body, options)) }, 99],
       ['the sitemaps list', { listSitemaps: untilCancelled('sitemaps') }, 10],
     ])('at the time limit, cuts off %s and keeps the last figures for what was not read', async (_label, overrides, clicks) => {
       const google = googleStub(overrides);
@@ -1315,7 +1402,8 @@ describe('createSearchConsoleSync, Copilot review round 2 (#1614)', () => {
       const sync = createSearchConsoleSync({ store, env: ENV, fetchImpl, credential, now: () => NOW, sleep: async () => {}, spacingMs: 0, deadlineMs: 20 });
       await expect(sync.run()).resolves.toMatchObject({ status: 'ok', inspected: 1, failed: 0 });
       expect(inspections).toBe(1);
-      expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('/searchAnalytics/query'))).toBe(false);
+      // Only the page query, made before the inspections; none after the limit.
+      expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('/searchAnalytics/query'))).toHaveLength(1);
       expect(store.doc.indexing.pages[0]).toMatchObject({ verdict: 'PASS', stale: true, error: DEADLINE_NOTE });
     });
 
@@ -1329,7 +1417,7 @@ describe('createSearchConsoleSync, Copilot review round 2 (#1614)', () => {
       });
       const { sync, store, client } = setup({ google, signal: controller.signal, stored: previousRun() });
       await expect(sync.run()).resolves.toMatchObject({ status: 'error', aborted: true });
-      expect(client.searchAnalytics).not.toHaveBeenCalled();
+      expect(askedFor(client)).toEqual(['page']);
       expect(store.snapshotWrites()).toBe(0);
       expect(store.lease.holder).toBeNull();
     });
@@ -1343,5 +1431,230 @@ describe('createSearchConsoleSync, Copilot review round 2 (#1614)', () => {
       expect(store.lease.holder).toBeNull();
       expect(log.log.mock.calls.flat().join('\n')).toMatch(/stopped: out of time while reading the sitemap, \d+s/);
     });
+  });
+});
+
+describe('createSearchConsoleSync, every subdomain and the strays inspected (owner decision 2026-11-09, #1612)', () => {
+  const pagesNamed = (count, host = 'hybridcloudworks.com') => Array.from({ length: count }, (_, i) => `https://${host}/p${i}`);
+  /** Page rows for `count` strays on a subdomain, the first with the most impressions. */
+  const strayRows = (count) =>
+    Array.from({ length: count }, (_, i) => ({ keys: [`https://docs.hybridcloudworks.com/s${i}`], clicks: 0, impressions: 10000 - i, ctr: 0, position: 5 }));
+  /** A stored stray from an earlier run. */
+  const storedStray = (url) => ({ url, verdict: 'PASS', coverageState: 'Submitted and indexed', error: null, stale: false, source: 'search', inspectedAt: '2026-11-08T12:10:00.000Z' });
+
+  it('inspects at most 150 strays a run, the ones with the most impressions, and says how many it left', async () => {
+    const google = googleStub({ pageRows: strayRows(160) });
+    const { sync, store, client } = setup({ google });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok', pages: 2 + STRAYS_INSPECTED_MAX, inspected: 2 + STRAYS_INSPECTED_MAX });
+    const inspected = client.inspect.mock.calls.map(([url]) => url);
+    expect(inspected.slice(0, 2)).toEqual([A, BAD]);
+    expect(inspected.at(-1)).toBe(`https://docs.hybridcloudworks.com/s${STRAYS_INSPECTED_MAX - 1}`);
+    expect(store.doc.run.message).toBe(
+      `Google shows 160 pages in search that the sitemap does not list; only the ${STRAYS_INSPECTED_MAX} with the most impressions are inspected.`
+    );
+    // The strays table keeps its own length.
+    expect(store.doc.indexing.strays).toHaveLength(100);
+    expect(store.doc.indexing.pages.filter((p) => p.source === 'search')).toHaveLength(STRAYS_INSPECTED_MAX);
+    expect(store.doc.indexing.pages.find((p) => p.source === 'search').host).toBe('docs.hybridcloudworks.com');
+  });
+
+  it('keeps the strays inside the 900 a run, after the sitemap pages', async () => {
+    const urls = pagesNamed(MAX_URLS - 10);
+    const google = googleStub({ pageRows: strayRows(20) });
+    const { sync, store, client } = setup({ google, urls });
+    await sync.run();
+    expect(client.inspect).toHaveBeenCalledTimes(MAX_URLS);
+    expect(store.doc.run.message).toContain('Google shows 20 pages in search that the sitemap does not list; only the 10 with the most impressions are inspected.');
+  });
+
+  it('inspects no stray when the sitemap pages fill the run, and says so', async () => {
+    const google = googleStub({ pageRows: strayRows(3) });
+    const { sync, store, client } = setup({ google, urls: pagesNamed(MAX_URLS) });
+    await sync.run();
+    expect(client.inspect).toHaveBeenCalledTimes(MAX_URLS);
+    expect(store.doc.run.message).toContain(`Google shows 3 pages in search that the sitemap does not list; none were inspected, because the sitemap's pages fill the run's ${MAX_URLS}.`);
+  });
+
+  it('spends the day\'s allowance on sitemap pages first; a stray without room keeps its last answer, stale', async () => {
+    const stray = 'https://docs.hybridcloudworks.com/s0';
+    const lease = { holder: null, budget: { day: PACIFIC_DAY, used: 1798 } };
+    const stored = { ...previousRun(), indexing: { ...previousRun().indexing, pages: [...previousRun().indexing.pages, storedStray(stray)] } };
+    const { sync, store, client } = setup({ google: googleStub({ pageRows: strayRows(1) }), lease, stored });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok', pages: 3, inspected: 2, stale: 1 });
+    expect(client.inspect.mock.calls.map(([url]) => url)).toEqual([A, BAD]);
+    expect(store.doc.indexing.pages.find((p) => p.url === stray)).toMatchObject({
+      source: 'search',
+      host: 'docs.hybridcloudworks.com',
+      verdict: 'PASS',
+      stale: true,
+      error: 'Not inspected in the last run: the daily allowance of Google page inspections was used up.',
+    });
+  });
+
+  it('records a stray\'s failed inspection on that stray, keeping its last answer', async () => {
+    const stray = 'https://docs.hybridcloudworks.com/s0';
+    const google = googleStub({
+      pageRows: strayRows(1),
+      inspect: async (url) => {
+        if (url === stray) throw new SearchConsoleError('inspect', 500);
+        return passResult(url);
+      },
+    });
+    const stored = { ...previousRun(), indexing: { ...previousRun().indexing, pages: [...previousRun().indexing.pages, storedStray(stray)] } };
+    const { sync, store } = setup({ google, stored });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok', failed: 1, stale: 1 });
+    expect(store.doc.indexing.pages.find((p) => p.url === stray)).toMatchObject({ source: 'search', stale: true, error: 'Search Console inspect failed with HTTP 500.' });
+  });
+
+  it('drops a stray from the last run once the strays are worked out again and it is not one', async () => {
+    const gone = 'https://docs.hybridcloudworks.com/gone';
+    const stored = { ...previousRun(), indexing: { ...previousRun().indexing, pages: [...previousRun().indexing.pages, storedStray(gone)] } };
+    const { sync, store } = setup({ stored });
+    await sync.run();
+    expect(store.doc.indexing.pages.map((p) => p.url).sort()).toEqual([A, BAD]);
+  });
+
+  it('keeps a stray from the last run, stale, when the page query fails', async () => {
+    const kept = 'https://docs.hybridcloudworks.com/kept';
+    const listedNow = `${A}/`;
+    const google = googleStub({
+      searchAnalytics: async (body) => {
+        if (body.dimensions?.[0] === 'page') throw new SearchConsoleError('searchAnalytics', 500);
+        return [];
+      },
+    });
+    const stored = {
+      ...previousRun(),
+      // An older snapshot's page with no `source` is a sitemap page, and a
+      // stray the sitemap now lists (A with a trailing slash) is not kept.
+      indexing: { ...previousRun().indexing, pages: [...previousRun().indexing.pages.map(({ source, ...page }) => page), storedStray(kept), storedStray(listedNow)] },
+    };
+    const { sync, store } = setup({ google, stored });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok', inspected: 2, stale: 1 });
+    expect(store.doc.indexing.pages.map((p) => p.url).sort()).toEqual([A, BAD, kept].sort());
+    expect(store.doc.indexing.pages.find((p) => p.url === kept)).toMatchObject({
+      source: 'search',
+      stale: true,
+      error: "Not inspected in the last run: the pages Google shows in search could not be worked out (the sitemap or Google's page list could not be read in full), so this page was not looked for.",
+    });
+    expect(store.doc.indexing.strays).toEqual(previousRun().indexing.strays);
+    expect(store.doc.run.message).toContain('Performance page: Search Console searchAnalytics failed with HTTP 500. The last figures were kept.');
+  });
+
+  it('keeps a stray from the last run, stale, when the sitemap is read only in part, and inspects no new stray', async () => {
+    const kept = 'https://docs.hybridcloudworks.com/kept';
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith('/sitemap.xml'))
+        return textResponse(200, '<sitemapindex><sitemap><loc>https://hybridcloudworks.com/s1.xml</loc></sitemap><sitemap><loc>https://hybridcloudworks.com/s2.xml</loc></sitemap></sitemapindex>');
+      if (url.endsWith('/s2.xml')) return textResponse(500, '');
+      return textResponse(200, sitemapXml([A]));
+    });
+    const stored = { ...previousRun([A]), indexing: { ...previousRun([A]).indexing, pages: [...previousRun([A]).indexing.pages, storedStray(kept)] } };
+    const { sync, store, client } = setup({ fetchImpl, stored, google: googleStub({ pageRows: strayRows(2) }) });
+    await sync.run();
+    expect(client.inspect.mock.calls.map(([url]) => url)).toEqual([A]);
+    expect(store.doc.indexing.pages.find((p) => p.url === kept)).toMatchObject({ source: 'search', stale: true });
+  });
+
+  it('reads Search Analytics for the whole property: no filter on any query', async () => {
+    const { sync, client } = setup();
+    await sync.run();
+    expect(client.searchAnalytics.mock.calls.length).toBeGreaterThan(0);
+    for (const [body] of client.searchAnalytics.mock.calls) expect(body.dimensionFilterGroups).toBeUndefined();
+  });
+
+  it('knows the domain and its subdomains by the parsed host name', () => {
+    expect(siteAddress('https://docs.hybridcloudworks.com/x')?.hostname).toBe('docs.hybridcloudworks.com');
+    expect(siteAddress('https://a.b.lab.hybridcloudworks.com/')).not.toBeNull();
+    for (const bad of ['https://hybridcloudworks.com.example.net/', 'https://evilhybridcloudworks.com/', 'http://docs.hybridcloudworks.com/', 'ftp://hybridcloudworks.com/', 'nonsense', null]) {
+      expect(siteAddress(bad)).toBeNull();
+    }
+    expect(hostOf('https://Docs.HybridCloudWorks.com/x')).toBe('docs.hybridcloudworks.com');
+    expect(hostOf('https://example.net/')).toBeNull();
+  });
+});
+
+describe('createSearchConsoleSync, a job that is no longer needed (Copilot review round 3, #1614)', () => {
+  const JOB_CREATED = '2026-11-09T00:00:00.000Z';
+  const marker = (jobId) => ({ jobId, claimedAt: '2026-11-09T00:05:00.000Z', expiresAt: '2026-11-09T00:40:00.000Z' });
+
+  it('stops before the lease and calls nothing when the marker names another job still waiting (a job queued straight through enqueueJob)', async () => {
+    const lease = { holder: null, budget: { day: PACIFIC_DAY, used: 0 }, pendingJob: marker('job-run-now') };
+    const { sync, store, client, fetchImpl, log } = setup({
+      lease,
+      jobs: { 'job-run-now': { id: 'job-run-now', status: 'queued' } },
+      jobId: 'job-direct',
+      jobCreatedAt: JOB_CREATED,
+    });
+    await expect(sync.run()).resolves.toEqual({ skipped: 'superseded' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(client.inspect).not.toHaveBeenCalled();
+    expect(client.searchAnalytics).not.toHaveBeenCalled();
+    // The other job's marker is left for it, and the lease was never taken.
+    expect(store.lease.pendingJob.jobId).toBe('job-run-now');
+    expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
+    expect(log.log.mock.calls.flat().join('\n')).toContain('skipped: a newer run or another queued job makes this one unneeded');
+  });
+
+  it('stops when a run finished after the job was queued (a queue message the sweeper sent again), and clears its own marker', async () => {
+    const stored = { ...previousRun(), run: { finishedAt: '2026-11-09T00:04:00.000Z' } };
+    const lease = { holder: null, budget: { day: PACIFIC_DAY, used: 2 }, pendingJob: marker('job-late') };
+    const { sync, store, client } = setup({ stored, lease, jobs: { 'job-late': { id: 'job-late', status: 'running' } }, jobId: 'job-late', jobCreatedAt: JOB_CREATED });
+    await expect(sync.run()).resolves.toEqual({ skipped: 'superseded' });
+    expect(client.inspect).not.toHaveBeenCalled();
+    expect(store.lease.pendingJob).toBeNull();
+    expect(store.lease.budget).toEqual({ day: PACIFIC_DAY, used: 2 });
+    expect(store.snapshotWrites()).toBe(0);
+  });
+
+  it('leaves the marker alone when it names another job that has finished, and gives way to a newer run', async () => {
+    const stored = { ...previousRun(), run: { finishedAt: '2026-11-09T00:04:00.000Z' } };
+    const lease = { holder: null, pendingJob: marker('job-old') };
+    const { sync, store } = setup({ stored, lease, jobs: { 'job-old': { id: 'job-old', status: 'succeeded' } }, jobId: 'job-late', jobCreatedAt: JOB_CREATED });
+    await expect(sync.run()).resolves.toEqual({ skipped: 'superseded' });
+    expect(store.lease.pendingJob.jobId).toBe('job-old');
+  });
+
+  it('tries again when the marker changes while it is cleared (412)', async () => {
+    const stored = { ...previousRun(), run: { finishedAt: '2026-11-09T00:04:00.000Z' } };
+    const lease = { holder: null, pendingJob: marker('job-late') };
+    const { sync, store } = setup({ stored, lease, jobId: 'job-late', jobCreatedAt: JOB_CREATED });
+    const real = store.replaceDocIfMatch.getMockImplementation();
+    store.replaceDocIfMatch.mockImplementationOnce(async () => {
+      throw Object.assign(new Error('precondition'), { code: 412 });
+    });
+    store.replaceDocIfMatch.mockImplementation(real);
+    await expect(sync.run()).resolves.toEqual({ skipped: 'superseded' });
+    expect(store.lease.pendingJob).toBeNull();
+    expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs when the marker names this job and no run finished since it was queued', async () => {
+    const stored = { ...previousRun(), run: { finishedAt: '2026-11-08T23:00:00.000Z' } };
+    const lease = { holder: null, pendingJob: marker('job-1') };
+    const { sync, store } = setup({ stored, lease, jobs: { 'job-1': { id: 'job-1', status: 'running' } }, jobId: 'job-1', jobCreatedAt: JOB_CREATED });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok', inspected: 2 });
+    // Taking the lease cleared the marker that named this job.
+    expect(store.lease.pendingJob).toBeNull();
+  });
+
+  it('runs a job queued straight through enqueueJob when nothing else is waiting', async () => {
+    const { sync } = setup({ stored: previousRun(), jobId: 'job-direct', jobCreatedAt: JOB_CREATED });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok' });
+  });
+
+  it('judges only by the marker when the job has no readable queued time', async () => {
+    const stored = { ...previousRun(), run: { finishedAt: '2026-11-09T00:04:00.000Z' } };
+    const { sync } = setup({ stored, jobId: 'job-direct', jobCreatedAt: 'not a time' });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok' });
+  });
+
+  it('never stops a timer run this way', async () => {
+    const stored = { ...previousRun(), run: { finishedAt: '2026-11-09T00:04:00.000Z' } };
+    const lease = { holder: null, pendingJob: marker('job-run-now') };
+    const { sync, store } = setup({ stored, lease, jobs: { 'job-run-now': { id: 'job-run-now', status: 'queued' } } });
+    await expect(sync.run()).resolves.toMatchObject({ status: 'ok' });
+    // The queued job's marker is kept for it.
+    expect(store.lease.pendingJob.jobId).toBe('job-run-now');
   });
 });

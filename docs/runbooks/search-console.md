@@ -25,12 +25,12 @@ for one extra run; it takes a few minutes.
 
 | Part | What it shows | Where it comes from |
 | --- | --- | --- |
-| Indexing | For each page in the live [sitemap](https://hybridcloudworks.com/sitemap.xml) on `hybridcloudworks.com` itself (not `api-azure.` or the lab subdomains): Google's verdict (pass, neutral, fail), its coverage state ("Submitted and indexed", "Crawled - currently not indexed", ...), whether Google could fetch it, robots.txt, the last crawl, and which address Google treats as the real one (the "canonical"). Totals by verdict and by state, and how those totals moved over the last two months | Google's [URL Inspection API](https://developers.google.com/webmaster-tools/v1/urlInspection.index/inspect), one call per page |
-| Strays | Pages on `hybridcloudworks.com` that get search impressions but are **not** in the sitemap, most impressions first | The Performance data below, grouped by page, compared with the sitemap |
-| Performance | Clicks, impressions, click-through rate (CTR, a fraction from 0 to 1) and average position for the last 90 days and the last 28, a line per day, and the top 50 queries, pages, countries, devices and search appearances. Only pages under `https://hybridcloudworks.com/` are counted, not the subdomains (owner decision). Because every query filters by page, Google adds the figures up page by page, so the totals can differ a little from the property-wide totals in Google's own Performance screen ([how Google counts by page and by property](https://support.google.com/webmasters/answer/6155685#urlorsite)) | Google's [Search Analytics API](https://developers.google.com/webmaster-tools/v1/searchanalytics/query) |
+| Indexing | For each page in the live [sitemap](https://hybridcloudworks.com/sitemap.xml), and for up to 150 strays (next row): Google's verdict (pass, neutral, fail), its coverage state ("Submitted and indexed", "Crawled - currently not indexed", ...), whether Google could fetch it, robots.txt, the last crawl, and which address Google treats as the real one (the "canonical"). Each row says which host it is on and where it came from (**Sitemap** or **Found in search**), and the table can be narrowed to one host. Totals by verdict and by state, and how those totals moved over the last two months | Google's [URL Inspection API](https://developers.google.com/webmaster-tools/v1/urlInspection.index/inspect), one call per page |
+| Strays | Pages on `hybridcloudworks.com` or any of its subdomains (for example `api-azure.`, `docs.` and the lab hosts) that get search impressions but are **not** in the sitemap, most impressions first. The 150 with the most impressions are also inspected in each run, after the sitemap's pages | The Performance data below, grouped by page, compared with the sitemap |
+| Performance | Clicks, impressions, click-through rate (CTR, a fraction from 0 to 1) and average position for the last 90 days and the last 28, a line per day, and the top 50 queries, pages, countries, devices and search appearances. The figures cover the whole Search Console property: `hybridcloudworks.com` and every subdomain (owner decision of 2026-11-09 on [#1612](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1612)), so they match Google's own Performance screen for the property. The Pages table shows each page's full address, host included | Google's [Search Analytics API](https://developers.google.com/webmaster-tools/v1/searchanalytics/query) |
 | Sitemaps | Each sitemap Google has, when it was submitted and last read, and its warnings and errors | Google's [Sitemaps API](https://developers.google.com/webmaster-tools/v1/sitemaps/list) |
 
-Four things to know before trusting a number:
+Things to know before trusting a number:
 
 - **The inspection result is Google's indexed copy, not a live test.**
   Google's own page says so: you cannot test the indexability of a live URL
@@ -39,12 +39,20 @@ Four things to know before trusting a number:
 - **Search figures lag about two days**, so the 90 days end two days ago.
 - **Country codes** are Google's three-letter lower-case codes, for example
   `usa` and `gbr`.
-- **Each run uses one inspection per sitemap page, and the app stops at
+- **Only the main site publishes a sitemap.** The run reads
+  `https://hybridcloudworks.com/sitemap.xml` (the app setting
+  `GSC_SITEMAP_URL` can point it elsewhere; it is not set in Terraform). The
+  subdomains publish none, so
+  their pages reach the Indexing table when the sitemap lists them or as
+  strays, found in Google's search figures.
+- **Each run uses one inspection per page, and the app stops at
   1,800 a day.** Google allows 2,000 inspections a day and 600 a minute for
   one property, and its day runs midnight to midnight Pacific time
   ([usage limits](https://developers.google.com/webmaster-tools/limits)).
   Every run, scheduled or Run now, inspects each page in the sitemap once
-  (about 203 on 2026-11-09, never more than 900). The app counts every
+  (about 203 on 2026-11-09), then up to 150 strays, never more than 900
+  pages in all. The sitemap's pages come first, so when the day's allowance
+  runs short it is the strays that wait. The app counts every
   inspection request it sends, a retry after an error from Google included,
   in `admin_config/search_console_lease`, never sends one it has no room
   for, and stops at
@@ -60,7 +68,12 @@ Four things to know before trusting a number:
   nothing. A run that stops without giving the lease back holds it for at
   most 35 minutes. Two presses of Run now at the same moment queue one run:
   the first press marks the same document (`pendingJob`) before it queues,
-  and the second answers that a run is already queued.
+  and the second answers that a run is already queued. A queued run that is
+  no longer needed stops before it calls Google: when that mark names
+  another queued run (for example, a run queued by hand through the jobs
+  route, which makes no mark, gives way to a Run now press), or when another
+  run finished after it was queued (a queue message that arrived late or
+  twice). The job then shows as succeeded with `skipped: superseded`.
 - **A run stops itself after 25 minutes.** That is well inside the lease's
   35, so a slow run cannot outlive its lease. At 25 minutes the run starts
   nothing new, cuts off any call to Google still waiting for an answer,
@@ -82,7 +95,9 @@ Four things to know before trusting a number:
   it can be read (one of the sitemaps a sitemap index points to fails, or
   the index lists more than the 20 the run reads), pages the last run had
   that the part read does not list keep their last answer, marked stale,
-  instead of disappearing. If Google answers that its quota is used up (HTTP
+  instead of disappearing. The strays are worked out only from a sitemap
+  read in full and Google's list of pages; when either is missing, the
+  strays from the last run keep their last answer, marked stale. If Google answers that its quota is used up (HTTP
   429) even after retrying, the run stops inspecting, and the pages it did
   not reach keep their last answer, marked stale. If Google answers with
   something that is not what it documents, that part keeps its last
@@ -97,9 +112,9 @@ page says so in a box rather than guessing:
 
 - **Page indexing totals and reasons** (the screen with "Indexed / Not
   indexed" and "Why pages aren't indexed"). The page shows its own tally of
-  the inspected sitemap pages instead, which is a smaller set than Google's:
-  on 2026-11-09 Google knew 436 addresses and the sitemap had 203. The
-  Strays list narrows that gap.
+  the pages it inspected instead (the sitemap's and up to 150 strays), which
+  is a smaller set than Google's: on 2026-11-09 Google knew 436 addresses
+  and the sitemap had 203. Inspecting the strays narrows that gap.
 - **Links** (internal and external links). Not shown; open it in
   [Search Console](https://search.google.com/search-console) (left menu, **Links**).
 
@@ -279,7 +294,7 @@ not checked against a bill. No step creates a key.
 
 16. Open the admin Search Console page (Platform menu, **Search Console**; [`/admin/search-console`](https://hybridcloudworks.com/admin/search-console)) and press **Run now**. Wait three to five minutes and reload.
 
-    Success: the status is **ok**, "last run" shows the time you pressed it, about 200 pages are inspected with none or few failed, and Performance has numbers. Then the timer runs on its own at the next 00:10 or 12:10 UTC.
+    Success: the status is **ok**, "last run" shows the time you pressed it, about 200 pages or more are inspected (the sitemap's, plus any strays) with none or few failed, and Performance has numbers. Then the timer runs on its own at the next 00:10 or 12:10 UTC.
 
     If the status is **error**, the message names the hop. Find it here:
 

@@ -3,7 +3,7 @@
  * (#1612), against a stubbed guard and store.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createSearchConsoleHandlers, SYNC_JOB_TYPE } from './handlers.js';
+import { createSearchConsoleHandlers, IN_FLIGHT_WINDOW_MS, lastActivity, PENDING_WRITE_GRACE_MS, SYNC_JOB_TYPE } from './handlers.js';
 
 const ENV = {
   GSC_WIF_AUDIENCE: '//iam.googleapis.com/projects/000000000001/locations/global/workloadIdentityPools/hcw-azure/providers/entra',
@@ -166,15 +166,20 @@ describe('POST cms/search-console/run', () => {
     const { handlers, store, context } = setup({
       jobs: [
         { id: 'old', status: 'queued', createdAt: '2026-11-08T00:00:00Z' },
-        { id: 'live', status: 'running', createdAt: '2026-11-09T11:55:00Z' },
+        { id: 'live', status: 'queued', createdAt: '2026-11-09T11:55:00Z' },
       ],
     });
     const enqueue = vi.fn();
     const response = await handlers.run({}, context, { enqueue });
     expect(response.status).toBe(202);
-    expect(body(response)).toMatchObject({ queued: true, alreadyQueued: true, jobId: 'live' });
+    expect(body(response)).toEqual({ ok: true, queued: true, alreadyQueued: true, jobId: 'live', status: 'queued' });
     expect(store.upsertDoc).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('answers alreadyRunning, with its id, for a sync job that has started but holds no lease yet', async () => {
+    const { handlers } = setup({ jobs: [{ id: 'live', status: 'running', createdAt: '2026-11-09T11:55:00Z', startedAt: '2026-11-09T11:59:00Z' }] });
+    expect(body(await handlers.run({}, {}, { enqueue: vi.fn() }))).toEqual({ ok: true, queued: true, alreadyRunning: true, status: 'running', jobId: 'live' });
   });
 
   it('answers 202 alreadyRunning, with the job\'s id, while a run holds the lease', async () => {
@@ -352,9 +357,10 @@ describe('POST cms/search-console/run, two presses at once (Copilot review round
   it.each([
     ['queued', 'queued'],
     ['running', 'running'],
-  ])('answers alreadyQueued while the marked job is %s', async (status) => {
+  ])('answers with the marked job while it is %s', async (status) => {
     const { handlers, store } = setup({ lease: { holder: null, pendingJob: marker('job-0', '2026-11-09T11:40:00.000Z') }, jobDocs: { 'job-0': { id: 'job-0', status } } });
-    expect(body(await handlers.run({}, {}, { enqueue: vi.fn() }))).toEqual({ ok: true, queued: true, alreadyQueued: true, jobId: 'job-0', status });
+    const already = status === 'running' ? { alreadyRunning: true } : { alreadyQueued: true };
+    expect(body(await handlers.run({}, {}, { enqueue: vi.fn() }))).toEqual({ ok: true, queued: true, ...already, jobId: 'job-0', status });
     expect(store.readDoc).toHaveBeenCalledWith('jobs', 'job-0', 'job-0');
     expect(store.queryDocs).not.toHaveBeenCalled();
   });
@@ -378,5 +384,60 @@ describe('POST cms/search-console/run, two presses at once (Copilot review round
     const { handlers, store } = setup({ lease: { holder: null, pendingJob: marker('job-0', '2026-11-09T11:00:00.000Z') } });
     expect(body(await handlers.run({}, {}, { enqueue: vi.fn() }))).toMatchObject({ jobId: 'job-1', status: 'queued' });
     expect(store.readDoc).not.toHaveBeenCalledWith('jobs', 'job-0', 'job-0');
+  });
+});
+
+describe('POST cms/search-console/run, a job that waited a long time (Copilot review round 3, #1614)', () => {
+  // NOW is 12:00 UTC; the window is the job's 28 minutes plus 15.
+  const longAgo = new Date(NOW.getTime() - IN_FLIGHT_WINDOW_MS - 60 * 1000).toISOString();
+  const recently = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString();
+
+  it('sees a queued job the sweeper sent again, by its requeuedAt, though it was created long ago', async () => {
+    const { handlers, store } = setup({ jobs: [{ id: 'requeued', status: 'queued', createdAt: longAgo, requeuedAt: recently }] });
+    const enqueue = vi.fn();
+    expect(body(await handlers.run({}, {}, { enqueue }))).toEqual({ ok: true, queued: true, alreadyQueued: true, jobId: 'requeued', status: 'queued' });
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('sees a job queued straight through enqueueJob, which claims no marker, by Cosmos\'s last-write time', async () => {
+    const { handlers, store } = setup({ jobs: [{ id: 'direct', status: 'queued', createdAt: longAgo, _ts: Math.floor(Date.parse(recently) / 1000) }] });
+    expect(body(await handlers.run({}, {}, { enqueue: vi.fn() }))).toMatchObject({ alreadyQueued: true, jobId: 'direct' });
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
+  it('asks the jobs container for every time it judges by', async () => {
+    const { handlers, store } = setup();
+    await handlers.run({}, {}, { enqueue: vi.fn() });
+    const [container, sql, params] = store.queryDocs.mock.calls[0];
+    expect(container).toBe('jobs');
+    for (const field of ['c.createdAt', 'c.startedAt', 'c.requeuedAt', 'c.updatedAt', 'c._ts']) expect(sql).toContain(field);
+    expect(params).toEqual([{ name: '@type', value: SYNC_JOB_TYPE }]);
+  });
+
+  it('answers with the job most recently alive when several are', async () => {
+    const { handlers } = setup({
+      jobs: [
+        { id: 'older', status: 'queued', createdAt: recently },
+        { id: 'newer', status: 'running', createdAt: longAgo, startedAt: new Date(NOW.getTime() - 60 * 1000).toISOString() },
+      ],
+    });
+    expect(body(await handlers.run({}, {}, { enqueue: vi.fn() }))).toMatchObject({ alreadyRunning: true, jobId: 'newer' });
+  });
+
+  it('queues a new job when the only one has shown no sign of life for the whole window', async () => {
+    const { handlers } = setup({ jobs: [{ id: 'lost', status: 'queued', createdAt: longAgo, requeuedAt: longAgo }, { id: 'blank', status: 'queued' }] });
+    expect(body(await handlers.run({}, {}, { enqueue: vi.fn() }))).toMatchObject({ jobId: 'job-1', status: 'queued' });
+  });
+
+  it('reads the latest of the job\'s times, ignoring missing and unreadable ones', () => {
+    expect(lastActivity({ createdAt: '2026-11-09T10:00:00Z', startedAt: 'nonsense', requeuedAt: '2026-11-09T11:00:00Z', updatedAt: null })).toBe(Date.parse('2026-11-09T11:00:00Z'));
+    expect(lastActivity({ createdAt: '2026-11-09T10:00:00Z', _ts: Date.parse('2026-11-09T11:30:00Z') / 1000 })).toBe(Date.parse('2026-11-09T11:30:00Z'));
+    expect(lastActivity({})).toBeNaN();
+    expect(lastActivity(null)).toBeNaN();
+  });
+
+  it('keeps the two-minute grace for a marker whose job is not written yet', () => {
+    expect(PENDING_WRITE_GRACE_MS).toBe(2 * 60 * 1000);
   });
 });
