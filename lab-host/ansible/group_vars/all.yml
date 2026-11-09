@@ -402,17 +402,20 @@ cosign_checksum: sha256:424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11
 # pulls and runs nothing for that row and says so, renders the route all the
 # same (the name then answers 503 with the site's sentence, and the site's
 # status proxy reads the add-on as unreachable), and asserts a non-empty
-# digest before deploying. The migration row's digest is v0.3.3's image
-# index (#1562), read on 2026-11-05 with
-# `docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.3`
-# and equal to what the add-on's publish-images run recorded for pinning and
-# attested (`gh attestation verify` against the add-on's repository passed on
-# 2026-11-05, exit 0; the signer is the publish-images workflow at
-# refs/tags/v0.3.3 of HCW-MigrateOrchestrator_AddOn,
-# https://github.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn/actions/runs/42161656096,
-# tag on commit 1ac40327). v0.3.3 builds on node:26-trixie-slim (Debian 13,
-# apt 3.0.4) and is the release that clears the apt CVE-2026-109518 finding
-# in the base image. Before it the row pinned v0.3.2
+# digest before deploying. The migration row's digest is v0.3.4's image
+# index (#1600), read on 2026-11-09 from Docker Hub's tag record for
+# docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.4 and equal to what the
+# add-on's publish-images run recorded for pinning and attested
+# (`gh attestation verify` against the add-on's repository passed on
+# 2026-11-09, exit 0; the signer is the publish-images workflow at
+# refs/tags/v0.3.4 of HCW-MigrateOrchestrator_AddOn,
+# https://github.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn/actions/runs/42566459768,
+# tag on commit 9f9e2c2). v0.3.4 is a rebuild with no code change that picks
+# up Debian's zlib fix for CVE-2026-76844 and CVE-2026-85091 (DSA-6613-1).
+# From 2026-11-05 to 2026-11-09 the row pinned v0.3.3
+# (digest sha256:7db831b3f348ce904c538881d744d8d6afa8d46f0aa4dddef913a4ecc16bf2e6),
+# which builds on node:26-trixie-slim (Debian 13, apt 3.0.4) and cleared the
+# apt CVE-2026-109518 finding (#1562). Before it the row pinned v0.3.2
 # (digest sha256:bd3e0a164429984d50382368f9789d47ffa1af48061221041326a0bd0ed35ade)
 # from 2026-10-25 to 2026-11-05.
 # Run read-only, with every capability dropped and this row's environment,
@@ -439,10 +442,10 @@ addons:
   - id: migration
     enabled: true
     image: docker.io/hybridcloudworks/img-mo-lab-addon
-    image_tag: "v0.3.3"
-    image_digest: "sha256:7db831b3f348ce904c538881d744d8d6afa8d46f0aa4dddef913a4ecc16bf2e6"
+    image_tag: "v0.3.4"
+    image_digest: "sha256:41d8ce05c164b40527f438dcfdccce56a6575842ce2bc5c8d693051940a0a61d"
     # ONE REPOSITORY NAME. The add-on's repository was renamed from HCW-AzMigrateOrchestrator_Addon on 2026-10-24, and a
-    # build attestation names the repository that built the image. The image pinned above (v0.3.3) was built after the
+    # build attestation names the repository that built the image. The image pinned above (v0.3.4) was built after the
     # rename and verified against the new name, so the old name is no longer accepted: an image attested under it is
     # refused. Rolling back to v0.3.1 or earlier therefore means putting the old name back here as well.
     attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
