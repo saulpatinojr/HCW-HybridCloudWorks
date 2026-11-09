@@ -196,11 +196,11 @@ workflow obtains it. In order of preference:
 1. **The workflow fetches it at run time** after `azure/login` with OIDC —
    `az functionapp show`, `az staticwebapp secrets list`, and so on. Nothing is
    stored, nothing goes stale.
-2. **The Terraform output feeds a GitHub variable**, and the two names mirror
-   each other exactly, per the IaC Repository Standard: output `app_hostname` →
-   variable `APP_HOSTNAME`; output `client_id` → `CLIENT_ID` (a secret since
-   #1618, for the reason under "Subscription, tenant and client IDs"). The
-   GitHub copy is a **cache**, not a source; when the resource is replaced, the
+2. **The Terraform output feeds a GitHub variable or secret**, and the two
+   names mirror each other exactly, per the IaC Repository Standard: output
+   `app_hostname` → variable `APP_HOSTNAME`; output `client_id` → secret
+   `CLIENT_ID` (a secret since #1618, for the reason under "Subscription,
+   tenant and client IDs"). The GitHub copy is a **cache**, not a source; when the resource is replaced, the
    cache is stale and the CHECKLIST entry is what tells the next person which
    side to trust.
 

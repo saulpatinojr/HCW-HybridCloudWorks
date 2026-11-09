@@ -204,10 +204,11 @@ says so.
 Enumerated live 2026-09-29: **two**, and neither is an Azure credential.
 Everything else a workflow needs is either a non-sensitive variable or reached
 by OIDC. The one Azure-issued secret this section used to list is retired
-(struck through below). Since 2026-11-09 the two subscription ids (#1610) and
-the tenant id and six client ids ([#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)) are here too: identifiers, not
+(struck through below). Since 2026-11-09 that count is out of date: **nine**
+more are listed here, the two subscription ids (#1610) and the tenant id and
+six client ids ([#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)). They are identifiers, not
 credentials, kept as secrets only so that GitHub masks them in the public
-logs. A secret cannot be read back, so to see one of these ids, read it from
+logs. The live list has not been enumerated again since they were added. A secret cannot be read back, so to see one of these ids, read it from
 Azure (for example `az account show` for the tenant, or the managed identity's
 Overview page in the portal for a client id).
 
