@@ -402,17 +402,20 @@ cosign_checksum: sha256:424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11
 # pulls and runs nothing for that row and says so, renders the route all the
 # same (the name then answers 503 with the site's sentence, and the site's
 # status proxy reads the add-on as unreachable), and asserts a non-empty
-# digest before deploying. The migration row's digest is v0.3.3's image
-# index (#1562), read on 2026-11-05 with
-# `docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.3`
-# and equal to what the add-on's publish-images run recorded for pinning and
-# attested (`gh attestation verify` against the add-on's repository passed on
-# 2026-11-05, exit 0; the signer is the publish-images workflow at
-# refs/tags/v0.3.3 of HCW-MigrateOrchestrator_AddOn,
-# https://github.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn/actions/runs/42161656096,
-# tag on commit 1ac40327). v0.3.3 builds on node:26-trixie-slim (Debian 13,
-# apt 3.0.4) and is the release that clears the apt CVE-2026-109518 finding
-# in the base image. Before it the row pinned v0.3.2
+# digest before deploying. The migration row's digest is v0.3.4's image
+# index (#1600), read on 2026-11-09 from Docker Hub's tag record for
+# docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.4 and equal to what the
+# add-on's publish-images run recorded for pinning and attested
+# (`gh attestation verify` against the add-on's repository passed on
+# 2026-11-09, exit 0; the signer is the publish-images workflow at
+# refs/tags/v0.3.4 of HCW-MigrateOrchestrator_AddOn,
+# https://github.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn/actions/runs/42566459768,
+# tag on commit 9f9e2c2). v0.3.4 is a rebuild with no code change that picks
+# up Debian's zlib fix for CVE-2026-76844 and CVE-2026-85091 (DSA-6613-1).
+# From 2026-11-05 to 2026-11-09 the row pinned v0.3.3
+# (digest sha256:7db831b3f348ce904c538881d744d8d6afa8d46f0aa4dddef913a4ecc16bf2e6),
+# which builds on node:26-trixie-slim (Debian 13, apt 3.0.4) and cleared the
+# apt CVE-2026-109518 finding (#1562). Before it the row pinned v0.3.2
 # (digest sha256:bd3e0a164429984d50382368f9789d47ffa1af48061221041326a0bd0ed35ade)
 # from 2026-10-25 to 2026-11-05.
 # Run read-only, with every capability dropped and this row's environment,
@@ -439,10 +442,10 @@ addons:
   - id: migration
     enabled: true
     image: docker.io/hybridcloudworks/img-mo-lab-addon
-    image_tag: "v0.3.3"
-    image_digest: "sha256:7db831b3f348ce904c538881d744d8d6afa8d46f0aa4dddef913a4ecc16bf2e6"
+    image_tag: "v0.3.4"
+    image_digest: "sha256:41d8ce05c164b40527f438dcfdccce56a6575842ce2bc5c8d693051940a0a61d"
     # ONE REPOSITORY NAME. The add-on's repository was renamed from HCW-AzMigrateOrchestrator_Addon on 2026-10-24, and a
-    # build attestation names the repository that built the image. The image pinned above (v0.3.3) was built after the
+    # build attestation names the repository that built the image. The image pinned above (v0.3.4) was built after the
     # rename and verified against the new name, so the old name is no longer accepted: an image attested under it is
     # refused. Rolling back to v0.3.1 or earlier therefore means putting the old name back here as well.
     attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
@@ -506,16 +509,19 @@ addons:
       NA_MAX_ITEMS: "200"
     secret_env:
       TURNSTILE_SECRET: vault_addon_network_assessment_turnstile_secret
-  # Cloud Assessor (#1562). image_digest is the v0.1.2 image INDEX, read on
-  # 2026-11-05 from `docker buildx imagetools inspect
-  # docker.io/hybridcloudworks/img-ca-lab-addon:v0.1.2`, which agreed with the
+  # Cloud Assessor (#1562, #1600). image_digest is the v0.1.3 image INDEX, read
+  # on 2026-11-09 from Docker Hub's tag record for
+  # docker.io/hybridcloudworks/img-ca-lab-addon:v0.1.3, which agreed with the
   # tag run's summary. `gh attestation verify` against HCW-CloudAssessor_AddOn
   # passed on it (exit 0); the signer is the publish-images workflow at
-  # refs/tags/v0.1.2
-  # (https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/actions/runs/42129319030,
-  # tag on commit d9fa0603). v0.1.2 is the release that clears the apt
-  # CVE-2026-109518 finding in the base image (Trivy clean in the dry run).
-  # Before it the row pinned v0.1.0
+  # refs/tags/v0.1.3
+  # (https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/actions/runs/42566448057,
+  # tag on commit edcb94e). v0.1.3 is a rebuild with no code change that picks
+  # up Debian's zlib fix for CVE-2026-76844 and CVE-2026-85091 (DSA-6613-1;
+  # Trivy clean in the dry run and the tag run).
+  # Before it the row pinned v0.1.2
+  # (digest sha256:8865ecf3115bbdeb8581ef2597290bee5e162b9dc23d5c34f5c1d3c5b1cd404c)
+  # from 2026-11-05 to 2026-11-09, and v0.1.0
   # (digest sha256:d51be5be6496588d84bc56f843aa45971fab576bf4ee0d14968fd496888d551b)
   # from 2026-10-12 to 2026-11-05; v0.1.1 (2026-10-27, the version bump that
   # put the licence label on the image) was never pinned here, so the row
@@ -523,8 +529,8 @@ addons:
   - id: cloud-assessment
     enabled: true
     image: docker.io/hybridcloudworks/img-ca-lab-addon
-    image_tag: "v0.1.2"
-    image_digest: "sha256:8865ecf3115bbdeb8581ef2597290bee5e162b9dc23d5c34f5c1d3c5b1cd404c"
+    image_tag: "v0.1.3"
+    image_digest: "sha256:8f4caff82721df06562c000707e23b1d243251af5721f0a9a2b60c8c358692e9"
     attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-CloudAssessor_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18083
     memory: 512m
@@ -546,16 +552,19 @@ addons:
   # Cloud Crawler (#1357). The row is here before the site's catalogue row says
   # `available`: the host runs the container first, and the site flips the row
   # (and its frame-src entry) once the status route answers configured and
-  # reachable. image_digest is the v0.3.0 image INDEX, read on 2026-11-05 from
-  # `docker buildx imagetools inspect
-  # docker.io/hybridcloudworks/img-cc-lab-addon:v0.3.0`, which agreed with the
+  # reachable. image_digest is the v0.3.1 image INDEX, read on 2026-11-09 from
+  # Docker Hub's tag record for
+  # docker.io/hybridcloudworks/img-cc-lab-addon:v0.3.1, which agreed with the
   # tag run's summary. `gh attestation verify` against HCW-CloudCrawler_AddOn
   # passed on it (exit 0); the signer is the publish-images workflow at
-  # refs/tags/v0.3.0
-  # (https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/actions/runs/42070419839).
-  # v0.3.0 carries engine cloud-crawler-core 0.1.1, the first that reads a
-  # Terraform state or plan as well as an Azure Resource Graph export
-  # (HCW-CloudCrawler_AddOn#29). v0.2.0 (the first image with the upload route,
+  # refs/tags/v0.3.1
+  # (https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/actions/runs/42566470461,
+  # tag on commit 2f7fdb6). v0.3.1 is a rebuild of v0.3.0 (engine
+  # cloud-crawler-core 0.1.1, which reads a Terraform state or plan as well as
+  # an Azure Resource Graph export) that picks up Debian's zlib fix for
+  # CVE-2026-76844 and CVE-2026-85091 (DSA-6613-1). v0.3.0
+  # (digest sha256:7660672a10b2196630f2a97edc804f8013ab1c70e0d7b8091f9430ae3ef01f4c)
+  # was pinned from 2026-11-05 to 2026-11-09. v0.2.0 (the first image with the upload route,
   # digest sha256:5a43c90bda9bed1d3472847f492b7c05405e6a6ce2d4aa7f4d9b519bb72daf28)
   # was pinned from 2026-10-26 to 2026-11-05; v0.1.0 has no upload route, so it
   # was never pinned. The widget is the owner's `HCW-CloudCrawler_AddOn`, for
@@ -572,8 +581,8 @@ addons:
   - id: cloud-crawler
     enabled: true
     image: docker.io/hybridcloudworks/img-cc-lab-addon
-    image_tag: "v0.3.0"
-    image_digest: "sha256:7660672a10b2196630f2a97edc804f8013ab1c70e0d7b8091f9430ae3ef01f4c"
+    image_tag: "v0.3.1"
+    image_digest: "sha256:262784f9c3a9350eda1730d2e2bc57959f178b6334f9b0dc0d6861c008dd5e4b"
     attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-CloudCrawler_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18084
     memory: 512m
