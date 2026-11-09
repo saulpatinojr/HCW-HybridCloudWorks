@@ -1,7 +1,8 @@
 <#
     Pester 5 tests for the parts of set-github-variables.ps1 that must never
-    show a subscription id (#1610): the error a failed gh call raises, and the
-    subscription picker it uses from lib/deploy-console.ps1.
+    show a subscription id (#1610), a tenant id or a client id (#1618): the
+    error a failed gh call raises, the line it prints when it writes a
+    secret, and the subscription picker it uses from lib/deploy-console.ps1.
 
     The functions are loaded from each script's syntax tree, so neither main
     body runs: no gh or az call, no prompt. The one gh call made runs a
@@ -77,6 +78,37 @@ Describe 'Invoke-Gh, when gh fails to set a secret' -Skip:($IsWindows) {
         $message | Should -Match 'gh secret set SUBSCRIPTION_ID -R o/r --body \*\*\* failed'
         $message | Should -Match 'HTTP 422'
         $message | Should -Not -Match '00000000-0000-0000-0000-'
+    }
+}
+
+Describe 'Set-RepoSecret, for the tenant id and the client ids (#1618)' {
+    BeforeAll {
+        foreach ($text in (Import-ScriptFunction -Path (Join-Path $PSScriptRoot 'set-github-variables.ps1') -Names 'Set-RepoSecret')) {
+            . ([scriptblock]::Create($text))
+        }
+    }
+
+    BeforeEach {
+        $script:Repository = 'o/r'
+        $script:existingSecrets = @('TENANT_ID')
+        $script:ghCalls = [System.Collections.Generic.List[string]]::new()
+        $script:shown = [System.Collections.Generic.List[string]]::new()
+        Mock Invoke-Gh { $script:ghCalls.Add(($Arguments -join ' ')) }
+        Mock Write-Host { $script:shown.Add([string]$Object) }
+    }
+
+    It 'writes each one as a secret and shows only its name' {
+        $n = 10
+        foreach ($name in 'TENANT_ID', 'CLIENT_ID', 'READER_CLIENT_ID', 'MANIFEST_WINDOW_CLIENT_ID', 'COPILOT_REVIEW_CLIENT_ID', 'ARC_RUN_CLIENT_ID', 'ALERT_READER_CLIENT_ID') {
+            Set-RepoSecret -Name $name -Value ('00000000-0000-0000-0000-0000000000{0}' -f $n) -Confirm:$false
+            $n++
+        }
+        $script:ghCalls.Count | Should -Be 7
+        $script:ghCalls | Should -Contain 'secret set TENANT_ID -R o/r --body 00000000-0000-0000-0000-000000000010'
+        @($script:ghCalls | Where-Object { $_ -like 'variable *' }).Count | Should -Be 0
+        ($script:shown -join "`n") | Should -Match 'update  TENANT_ID \(secret; value not shown\)'
+        ($script:shown -join "`n") | Should -Match 'create  ALERT_READER_CLIENT_ID \(secret; value not shown\)'
+        ($script:shown -join "`n") | Should -Not -Match '00000000-0000-0000-0000-'
     }
 }
 

@@ -1,16 +1,27 @@
 #requires -Version 7.0
 <#
 .SYNOPSIS
-  Copies the subscription ids into repository SECRETS, so the public Actions
-  logs show them as *** (#1610). Never prints a value.
+  Copies Azure ids (subscription, tenant and client ids) into repository
+  SECRETS, so the public Actions logs show them as *** (#1610, #1618). Never
+  prints a value.
 
 .DESCRIPTION
   This repository is public, so its Actions logs are public. GitHub prints the
   values a step is given, and masks a value as *** only when it came from a
-  secret. So the two subscription ids the workflows read, SUBSCRIPTION_ID
-  (the Application subscription) and SUBSCRIPTION_MGMT_ID (the Management
-  subscription), are kept as repository secrets, and every workflow reads
-  secrets.SUBSCRIPTION_ID / secrets.SUBSCRIPTION_MGMT_ID.
+  secret. So the Azure ids the workflows read are kept as repository secrets,
+  and every workflow reads them as secrets.<name>:
+
+    - the two subscription ids, SUBSCRIPTION_ID (the Application
+      subscription) and SUBSCRIPTION_MGMT_ID (the Management subscription),
+      since #1610;
+    - the tenant id, TENANT_ID, and the six client ids of the identities the
+      workflows sign in as (CLIENT_ID, READER_CLIENT_ID,
+      MANIFEST_WINDOW_CLIENT_ID, COPILOT_REVIEW_CLIENT_ID, ARC_RUN_CLIENT_ID,
+      ALERT_READER_CLIENT_ID), since #1618.
+
+  The name says "Subscription" because the script was written for the first
+  two; it works the same for any of them. Every one of these ids is a GUID,
+  which is what the script checks before it writes anything.
 
   By default, for each name in -Names, the script reads the repository
   VARIABLE of that name with `gh variable get` and writes a repository SECRET
@@ -19,8 +30,10 @@
 
   With -FromPrompt it reads each value from a hidden prompt instead
   (Read-Host -AsSecureString), so it still works once the variables have been
-  deleted: copy the id from the Azure portal's Subscriptions page and paste it
-  at the prompt.
+  deleted: copy the id from the Azure portal (the Subscriptions page for a
+  subscription id, the Microsoft Entra ID overview for the tenant id, or the
+  managed identity's Overview page for a client id) and paste it at the
+  prompt.
 
   The value is held in memory only as long as it takes to hand it to gh, and
   is never written to the screen, a file or the log. It is given to gh with
@@ -37,7 +50,9 @@
   The repository, owner/name. Default: saulpatinojr/HCW-HybridCloudWorks.
 
 .PARAMETER Names
-  The names to copy. Default: SUBSCRIPTION_ID and SUBSCRIPTION_MGMT_ID.
+  The names to copy. Default: SUBSCRIPTION_ID and SUBSCRIPTION_MGMT_ID. Any
+  of the nine names above may be given, for example
+  -Names TENANT_ID,CLIENT_ID,READER_CLIENT_ID,MANIFEST_WINDOW_CLIENT_ID,COPILOT_REVIEW_CLIENT_ID,ARC_RUN_CLIENT_ID,ALERT_READER_CLIENT_ID
 
 .PARAMETER FromPrompt
   Read each value from a hidden prompt instead of from the variable.
@@ -45,6 +60,10 @@
 .EXAMPLE
   # Copy both variables into secrets of the same names.
   ./scripts/Set-SubscriptionSecrets.ps1
+
+.EXAMPLE
+  # Copy the tenant id and the six client ids into secrets (#1618).
+  ./scripts/Set-SubscriptionSecrets.ps1 -Names TENANT_ID,CLIENT_ID,READER_CLIENT_ID,MANIFEST_WINDOW_CLIENT_ID,COPILOT_REVIEW_CLIENT_ID,ARC_RUN_CLIENT_ID,ALERT_READER_CLIENT_ID
 
 .EXAMPLE
   # See what would be done, without writing anything.
@@ -143,8 +162,8 @@ function Copy-SubscriptionSecret {
         $why = if ($Prompt) { 'the prompt was left empty' } else { "the repository variable $n is missing or empty" }
         [pscustomobject]@{ Name = $n; Set = $false; Reason = $why }
       } elseif ($v -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
-        # A subscription id is a GUID; anything else is a paste or copy
-        # mistake. The value itself is not repeated.
+        # A subscription, tenant or client id is a GUID; anything else is a
+        # paste or copy mistake. The value itself is not repeated.
         [pscustomobject]@{ Name = $n; Set = $false; Reason = "$n is not a GUID" }
       } elseif (Set-RepoSecretValue -Name $n -Repository $Repository -Value $v) {
         [pscustomobject]@{ Name = $n; Set = $true; Reason = '' }

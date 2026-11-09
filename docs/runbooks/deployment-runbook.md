@@ -89,7 +89,7 @@ Confusing these is the most common way to get stuck, because both are called
 | Identity | `id-plat-terraform-prod-cus-01` in `rg-mgmt-boot-prod-cus` | `id-site-github-deploy-prod-cus-01` in `rg-web-site-prod-cus` |
 | Issuer | `https://app.terraform.io` | `https://token.actions.githubusercontent.com` |
 | Exists when | After you run the script | After the first successful apply |
-| Consumed as | `TFC_AZURE_RUN_CLIENT_ID` in the workspace | `CLIENT_ID` repository variable |
+| Consumed as | `TFC_AZURE_RUN_CLIENT_ID` in the workspace | `CLIENT_ID` repository secret (a secret since [#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618), so the public logs show `***`) |
 
 If you are hunting for `CLIENT_ID` to give `azure/login`, it comes from the
 Terraform outputs **after** the left-hand column works. It does not exist
@@ -315,10 +315,9 @@ both take no arguments for the reasons given in section 0:
   are typed, and only when they cannot be discovered.
 - `scripts/set-github-variables.ps1` seeds the GitHub repository variables
   and secrets. Run it once **before** the first apply — that seeds only
-  `TENANT_ID` and `SUBSCRIPTION_ID` (a secret since 2026-11-09, #1610, so the
-  public logs mask it), the two values that are inputs *to*
+  `TENANT_ID` and `SUBSCRIPTION_ID`, the two values that are inputs *to*
   Terraform rather than products of it — and once **after**, when it reads
-  `CLIENT_ID`, `APP_HOSTNAME`, `FUNCTIONS_URL`, `RESOURCE_GROUP`,
+  the six client ids (`CLIENT_ID` and the five below), `APP_HOSTNAME`, `FUNCTIONS_URL`, `RESOURCE_GROUP`,
   `FUNCTIONS_STORAGE_ACCOUNT` and the `COSMOS_ENDPOINT` secret straight from
   the workspace's state outputs over the HCP Terraform API. Outputs rather
   than hardcoded copies on purpose: a copy drifts silently when the code
@@ -327,7 +326,14 @@ both take no arguments for the reasons given in section 0:
   new hostname), or the GitHub-side copies go stale. The first post-apply
   run is also what arms the self-skipping workflows that sign in with
   `CLIENT_ID`, `READER_CLIENT_ID`, `ALERT_READER_CLIENT_ID` and
-  `MANIFEST_WINDOW_CLIENT_ID`.
+  `MANIFEST_WINDOW_CLIENT_ID`, and the two that sign in with
+  `COPILOT_REVIEW_CLIENT_ID` and `ARC_RUN_CLIENT_ID`. The tenant id, the
+  subscription id and the six client ids are written as repository
+  **secrets** (#1610,
+  [#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)):
+  they grant nothing on their own, but GitHub masks a value as `***` in this
+  public repository's logs only when it came from a secret, and the script
+  never prints them.
 
 ### Verify
 

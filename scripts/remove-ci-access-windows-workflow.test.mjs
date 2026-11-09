@@ -36,11 +36,12 @@ const SCRIPT = 'scripts/remove-ci-access-windows.mjs';
 const source = readFileSync(WORKFLOW, 'utf8').replace(/\r\n/g, '\n');
 const commandLines = source.split('\n').filter((line) => !/^\s*#/.test(line));
 const jobs = parseJobs(source);
-const job = jobs[0];
+const job = jobs.find((j) => j.key === 'remove');
+const armed = jobs.find((j) => j.key === 'armed');
 
 describe('remove-ci-access-windows.yml', () => {
-  it('has one job, which runs the remover script', () => {
-    expect(jobs.map((j) => j.key)).toEqual(['remove']);
+  it('has the armed gate and one Azure job, which runs the remover script', () => {
+    expect(jobs.map((j) => j.key)).toEqual(['armed', 'remove']);
     const runner = job.steps.find((step) => (step.run ?? '').includes(SCRIPT));
     expect(runner, `no step runs ${SCRIPT}`).toBeDefined();
     expect(runner.name).toBe('Remove the windows whose runs have ended');
@@ -54,13 +55,20 @@ describe('remove-ci-access-windows.yml', () => {
   });
 
   it('signs in as the manifest-window identity and names no environment, so it presents the ref-form subject', () => {
-    expect(job.lines.some((line) => /client-id: \$\{\{ vars\.MANIFEST_WINDOW_CLIENT_ID \}\}/.test(line))).toBe(true);
-    expect(job.lines.some((line) => /vars\.CLIENT_ID\b/.test(line))).toBe(false);
+    expect(job.lines.some((line) => /client-id: \$\{\{ secrets\.MANIFEST_WINDOW_CLIENT_ID \}\}/.test(line))).toBe(true);
+    expect(job.lines.some((line) => /(vars|secrets)\.CLIENT_ID\b/.test(line))).toBe(false);
     expect(commandLines.some((line) => /^\s+environment:/.test(line))).toBe(false);
   });
 
-  it('is gated on the client-id variable, so an unseeded repository skips rather than fails at login', () => {
-    expect(job.lines.some((line) => /^\s{4}if: \$\{\{ vars\.MANIFEST_WINDOW_CLIENT_ID != '' \}\}$/.test(line))).toBe(true);
+  it('is gated on the client-id secret, so an unseeded repository skips rather than fails at login', () => {
+    // A job's `if:` cannot read `secrets`, so the armed job reads it into env
+    // and answers true or false, holding no permission at all (#1618).
+    expect(job.lines).toContain('    needs: armed');
+    expect(job.lines).toContain("    if: needs.armed.outputs.armed == 'true'");
+    expect(armed.lines).toContain('    permissions: {}');
+    expect(armed.lines).toContain('          MANIFEST_WINDOW_CLIENT_ID: ${{ secrets.MANIFEST_WINDOW_CLIENT_ID }}');
+    expect(armed.steps).toHaveLength(1);
+    expect(armed.steps[0].uses).toBeUndefined();
   });
 
   it('holds exactly the permissions it uses: contents and actions read, id-token write on the job', () => {
