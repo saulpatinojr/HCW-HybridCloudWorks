@@ -19,16 +19,18 @@
  * then either
  *   - the producing task (or a block around it) sets `check_mode: false`,
  *     which is right only for a read that changes nothing, or
- *   - the reading task names `ansible_check_mode` (in its `when`, a block's
- *     `when`, the `when` of every include of its file, or the expression
- *     itself), or tests the result `is skipped`,
+ *   - the reading task is guarded by `not ansible_check_mode` (in its `when`,
+ *     a block's `when`, the `when` of every include of its file, or the
+ *     expression itself), or tests the result `is not skipped`,
  *     which is how a task that must not run in a check (it writes, restarts
  *     or reports) keeps its readers safe.
  *
  * Limits, on purpose: it reads text, not Jinja. It does not follow a value
  * through `set_fact` to a later fact (the `set_fact` task itself is the
- * reader it checks), it trusts any mention of `ansible_check_mode` in a
- * reader as a guard, it follows an include only to a file in the same
+ * reader it checks), it trusts `not ansible_check_mode` anywhere in a
+ * reader as a guard, it covers only `command` and `shell` producers (a
+ * module that skips itself in a check, such as `uri` or `wait_for`, is not
+ * yet tracked; #1631), it follows an include only to a file in the same
  * folder, and `| default(...)` is not a guard, because a command skipped in
  * check mode still has `stdout: ''` and `rc: 0`. A real `--check` run on the
  * host is the full test; this one catches the pattern that broke it.
@@ -99,6 +101,13 @@ function includedFile(task, file) {
 }
 
 /**
+ * A guard that keeps a reader out of a check run: `not ansible_check_mode`,
+ * alone or opening a negated group. A bare mention is not enough, since
+ * `ansible_check_mode and x.stdout ...` reads the empty output in a check.
+ */
+const CHECK_MODE_GUARD = /\bnot\s+\(?\s*ansible_check_mode\b/;
+
+/**
  * The `when` text a file inherits from the tasks that include it, kept only
  * when every include of the file names `ansible_check_mode`: a file reached
  * once without that guard runs in a check.
@@ -114,7 +123,7 @@ function includeGuards(entries) {
       (seen[target] ??= []).push(text);
     }
     for (const [target, texts] of Object.entries(seen)) {
-      guards[target] = texts.every((t) => /\bansible_check_mode\b/.test(t)) ? texts.join(' ') : '';
+      guards[target] = texts.every((t) => CHECK_MODE_GUARD.test(t)) ? texts.join(' ') : '';
     }
   }
   return guards;
@@ -146,18 +155,18 @@ export function unguardedCheckModeReads(taskFiles, textFiles = {}) {
   for (const producer of producers) {
     const name = producer.task.register;
     const ref = outputRef(name);
-    const skippedGuard = new RegExp(`\\b${name}(?:\\s+is\\s+(?:not\\s+)?skipped\\b|\\.skipped\\b)`);
+    const skippedGuard = new RegExp(`\\b${name}\\s+is\\s+not\\s+skipped\\b|\\bnot\\s+${name}\\.skipped\\b`);
     for (const reader of entries) {
       if (reader.task === producer.task) continue;
       const text = JSON.stringify(reader.task);
       if (!ref.test(text)) continue;
-      const guarded = /\bansible_check_mode\b/.test(`${text} ${reader.when}`) || skippedGuard.test(`${text} ${reader.when}`);
+      const guarded = CHECK_MODE_GUARD.test(`${text} ${reader.when}`) || skippedGuard.test(`${text} ${reader.when}`);
       if (!guarded) {
         found.push(`${reader.file}: task "${reader.task.name}" reads ${name} (from ${producer.file}: task "${producer.task.name}")`);
       }
     }
     for (const [file, text] of Object.entries(textFiles)) {
-      if (ref.test(text) && !/\bansible_check_mode\b/.test(text)) {
+      if (ref.test(text) && !CHECK_MODE_GUARD.test(text)) {
         found.push(`${file} reads ${name} (from ${producer.file}: task "${producer.task.name}")`);
       }
     }
@@ -211,10 +220,16 @@ describe('command results read later are produced in check mode, or read behind 
     expect(unguardedCheckModeReads({ 'x.yml': [{ block: [awkRead], check_mode: false }, usermod] })).toEqual([]);
   });
 
-  it('accepts a reader guarded by ansible_check_mode, on itself or a block, or by `is skipped`', () => {
+  it('accepts a reader guarded by not ansible_check_mode, on itself or a block, or by `is not skipped`', () => {
     expect(unguardedCheckModeReads({ 'x.yml': [awkRead, { ...usermod, when: ['not ansible_check_mode', usermod.when] }] })).toEqual([]);
     expect(unguardedCheckModeReads({ 'x.yml': [awkRead, { block: [usermod], when: 'not ansible_check_mode' }] })).toEqual([]);
     expect(unguardedCheckModeReads({ 'x.yml': [awkRead, { ...usermod, when: ['ids is not skipped', usermod.when] }] })).toEqual([]);
+  });
+
+  it('does not take a positive mention of check mode, or `is skipped`, as a guard', () => {
+    // Both still let the reader see the empty output of a check run.
+    expect(unguardedCheckModeReads({ 'x.yml': [awkRead, { ...usermod, when: ['ansible_check_mode', usermod.when] }] })).toHaveLength(1);
+    expect(unguardedCheckModeReads({ 'x.yml': [awkRead, { ...usermod, when: ['ids is skipped', usermod.when] }] })).toHaveLength(1);
   });
 
   it('accepts a reader in a file every include of which skips check mode', () => {
