@@ -150,11 +150,20 @@ export function isIfGrepLine(line) {
  *     environment:                               (a block mapping, as
  *       name: lab-host-arc                        docs-pages.yml writes it)
  *
- * Quotes around the name are removed. A job with no environment is absent.
- * An expression (`${{ ... }}`) is returned as written, so a caller can refuse
- * a name it cannot know. No YAML parser is a dependency of this package, so
- * this reads the repository's regular shape, like the rest of this file.
+ * YAML allows spaces before a key's colon (`name : x`), so every key here
+ * does too. Quotes around the name are removed. A job with no environment is
+ * absent.
+ *
+ * This reads the repository's regular shape; no YAML parser is a dependency
+ * of this package. So it is meant to be used FAIL-CLOSED: anything it cannot
+ * read comes back as `name: ''` (a flow mapping split over lines, a block
+ * mapping with no `name`, an alias), or as the raw text (an expression such
+ * as `${{ ... }}`), and a caller that needs the name must refuse any value
+ * that is not a plain environment name. `ENVIRONMENT_KEY` lets a caller check
+ * that every `environment:` key in the file was seen here.
  */
+export const ENVIRONMENT_KEY = /^(\s*)environment\s*:/;
+
 export function jobEnvironments(text) {
   const unquote = (value) =>
     scalar(value.replace(/\s+#.*$/, ''))
@@ -162,21 +171,29 @@ export function jobEnvironments(text) {
       .trim();
   const found = [];
   for (const job of parseJobs(text)) {
-    const at = job.lines.findIndex((line) => /^ {4}environment:/.test(line));
+    const at = job.lines.findIndex((line) => /^ {4}environment\s*:/.test(line));
     if (at === -1) continue;
-    const inline = job.lines[at].replace(/^ {4}environment:/, '').replace(/\s+#.*$/, '').trim();
+    const inline = job.lines[at]
+      .replace(/^ {4}environment\s*:/, '')
+      .replace(/\s+#.*$/, '')
+      .trim();
     if (inline.startsWith('{')) {
-      const name = inline.match(/\bname:\s*([^,}]+)/)?.[1];
+      // A flow mapping on one line; anything else reads as no name.
+      const name = /\}\s*$/.test(inline) ? inline.match(/[{,]\s*name\s*:\s*([^,}]+)/)?.[1] : undefined;
       found.push({ job: job.key, name: name === undefined ? '' : unquote(name) });
     } else if (inline !== '') {
       found.push({ job: job.key, name: unquote(inline) });
     } else {
-      // Block mapping: the `name:` among the lines indented under it.
+      // Block mapping: the `name` key at the indentation of its first child.
       let name = '';
+      let indent;
       for (const line of job.lines.slice(at + 1)) {
         if (/^\s*(#.*)?$/.test(line)) continue;
-        if (!/^ {6,}\S/.test(line)) break;
-        const key = line.match(/^ {6}name:\s*(.+)$/);
+        const width = line.match(/^ */)[0].length;
+        if (width <= 4) break;
+        indent ??= width;
+        if (width !== indent) continue;
+        const key = line.slice(width).match(/^name\s*:\s*(.+)$/);
         if (key) name = unquote(key[1]);
       }
       found.push({ job: job.key, name });

@@ -198,6 +198,10 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
     const fake = [
       '#!/usr/bin/env bash',
       `{ printf '%s' "$*" | tr '\\n' ' '; echo; } >> '${dir}/az-calls.txt'`,
+      // As the pinned connectedmachine 1.1.0 does: its show takes no
+      // --expand (Hybrid Compute returns the instance view without one), and
+      // az refuses an option a command does not know.
+      'for arg in "$@"; do case "$arg" in --expand) echo "az: error: unrecognized arguments: --expand" >&2; exit 2 ;; esac; done',
       'case "$3" in',
       `  create) exit ${createExit} ;;`,
       `  show) ${view === null ? 'echo "ResourceNotFound" >&2; exit 3' : `cat '${dir}/view.json'; exit 0`} ;;`,
@@ -241,7 +245,23 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
     expect(result.summary).toContain('free -m says 7900');
     // The login selects no subscription, so each call names it.
     expect(result.calls.map((call) => call.split(' ')[2])).toEqual(['create', 'show']);
+    expect(result.calls[1]).not.toContain('--expand');
     for (const call of result.calls) expect(call, call).toContain('--subscription 00000000-0000-0000-0000-000000000001');
+  });
+
+  it('reads an instance view left under properties too, should a later extension stop flattening', () => {
+    const result = runStep({
+      view: { properties: { instanceView: { executionState: 'Succeeded', exitCode: 0, executionMessage: '', output: 'nested ok', error: '' } } },
+    });
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    expect(result.summary).toContain('execution state **Succeeded**, exit code **0**');
+    expect(result.summary).toContain('nested ok');
+  });
+
+  it('fails, saying so, when the run command comes back with no instance view', () => {
+    const result = runStep({ view: { name: 'hcw-status-1-1', provisioningState: 'Succeeded' } });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('::error::Run command hcw-status-1-1 came back without an instance view');
   });
 
   it('fails a run the host reports as failed, after writing the summary', () => {

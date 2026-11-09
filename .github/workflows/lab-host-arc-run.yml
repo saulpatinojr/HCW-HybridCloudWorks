@@ -224,6 +224,18 @@ jobs:
             --only-show-errors --output none || create=$?
           echo "create exited ${create}; reading the result back."
 
+          # The read-back. Hybrid Compute's GET of a run command returns its
+          # instance view (state, exit code, output, error) without any
+          # $expand: the REST reference "Machine Run Commands - Get" lists no
+          # such parameter and its sample response carries
+          # properties.instanceView. That is unlike Azure VM run commands,
+          # whose GET needs $expand=instanceView. The pinned connectedmachine
+          # 1.1.0 `show` accordingly takes no --expand (its arguments are the
+          # machine, the name and the group), and an unknown option would make
+          # az refuse the call. It flattens `properties`, so the view is at
+          # .instanceView; .properties.instanceView is read too, in case a
+          # later extension stops flattening. No view at all fails the job
+          # below rather than reading as an unknown state.
           view="${RUNNER_TEMP}/run-command.json"
           show=0
           az connectedmachine run-command show \
@@ -239,11 +251,16 @@ jobs:
             echo "::error::Could not read run command ${RUN_NAME} back (create exited ${create}, show exited ${show}). The az error above says why."
             exit 1
           fi
-          state="$(jq -r '.instanceView.executionState // "unknown"' "${view}")"
-          exit_code="$(jq -r '.instanceView.exitCode // "none"' "${view}")"
-          message="$(jq -r '.instanceView.executionMessage // ""' "${view}")"
-          jq -r '.instanceView.output // ""' "${view}" > "${RUNNER_TEMP}/out.txt"
-          jq -r '.instanceView.error // ""' "${view}" > "${RUNNER_TEMP}/err.txt"
+          iv='(.instanceView // .properties.instanceView)'
+          if ! jq -e "${iv} | type == \"object\"" "${view}" > /dev/null; then
+            echo "::error::Run command ${RUN_NAME} came back without an instance view, so its state and exit code cannot be read (create exited ${create}). Read it by hand with az connectedmachine run-command show."
+            exit 1
+          fi
+          state="$(jq -r "${iv}.executionState // \"unknown\"" "${view}")"
+          exit_code="$(jq -r "${iv}.exitCode // \"none\"" "${view}")"
+          message="$(jq -r "${iv}.executionMessage // \"\"" "${view}")"
+          jq -r "${iv}.output // \"\"" "${view}" > "${RUNNER_TEMP}/out.txt"
+          jq -r "${iv}.error // \"\"" "${view}" > "${RUNNER_TEMP}/err.txt"
 
           # The host's output is data: stop the runner reading `::` lines in
           # it as workflow commands while it is printed.
