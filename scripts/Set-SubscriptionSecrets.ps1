@@ -63,14 +63,22 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# The one place gh runs, so the tests can replace it. Its standard output is
+# returned, never printed; its error text (which names a variable or secret,
+# not a value) goes to the screen as gh writes it.
+function Invoke-Gh {
+  param([Parameter(Mandatory)][string[]] $Arguments)
+  $out = & gh @Arguments
+  [pscustomobject]@{ ExitCode = $LASTEXITCODE; Stdout = (@($out) -join "`n") }
+}
+
 # The repository variable's value, trimmed, or '' when gh cannot read it
-# (missing variable, no access). gh's own error text names the variable, not
-# its value, so it is let through.
+# (missing variable, no access).
 function Get-RepoVariableValue {
   param([Parameter(Mandatory)][string] $Name, [Parameter(Mandatory)][string] $Repository)
-  $value = & gh variable get $Name -R $Repository
-  if ($LASTEXITCODE -ne 0 -or $null -eq $value) { return '' }
-  return ([string]::Join("`n", @($value))).Trim()
+  $result = Invoke-Gh -Arguments @('variable', 'get', $Name, '-R', $Repository)
+  if ($result.ExitCode -ne 0 -or $null -eq $result.Stdout) { return '' }
+  return $result.Stdout.Trim()
 }
 
 # A value typed at a hidden prompt, converted in memory, trimmed.
@@ -93,8 +101,8 @@ function Set-RepoSecretValue {
     [Parameter(Mandatory)][string] $Repository,
     [Parameter(Mandatory)][string] $Value
   )
-  & gh secret set $Name -R $Repository --body $Value | Out-Null
-  return ($LASTEXITCODE -eq 0)
+  $result = Invoke-Gh -Arguments @('secret', 'set', $Name, '-R', $Repository, '--body', $Value)
+  return ($result.ExitCode -eq 0)
 }
 
 # The whole job, for each name: read the value, write the secret, forget the

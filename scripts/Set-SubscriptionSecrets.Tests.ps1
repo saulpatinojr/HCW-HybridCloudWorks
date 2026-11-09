@@ -7,8 +7,9 @@
     results nor, in the whole-script run, anything it prints.
 
     The functions are loaded from the script's syntax tree, so its main body
-    does not run in those tests. `gh` is a stand-in function recording each
-    call (a function wins over the gh program by PowerShell's command order).
+    does not run in those tests. Invoke-Gh, the script's one call to gh, is
+    mocked with a stand-in that records each call (the same seam the alert
+    tests use for az, ssh and gh).
     The whole-script runs put a stand-in gh program first on PATH, on Linux
     and macOS only.
 
@@ -30,43 +31,49 @@ BeforeAll {
 
     $script:sample = '00000000-0000-0000-0000-000000000001'
 
-    # The stand-in gh. Variables come from $script:vars; a name not in it is
-    # "not found". Setting a secret fails when $script:failSet is true.
-    function gh {
-        $script:calls.Add(($args -join ' '))
-        if ($args[0] -eq 'variable' -and $args[1] -eq 'get') {
-            if ($script:vars.ContainsKey($args[2])) {
-                $global:LASTEXITCODE = 0
-                return "$($script:vars[$args[2]])`n"
+    # The stand-in for Invoke-Gh, the script's one call to gh, as the alert
+    # tests replace Invoke-AlertGh. Variables come from $script:vars; a name
+    # not in it is "not found". Setting a secret fails when $script:failSet
+    # is true. Each call is recorded in $script:calls.
+    $script:ghStandIn = {
+        $script:calls.Add(($Arguments -join ' '))
+        if ($Arguments[0] -eq 'variable' -and $Arguments[1] -eq 'get') {
+            if ($script:vars.ContainsKey($Arguments[2])) {
+                return [pscustomobject]@{ ExitCode = 0; Stdout = "$($script:vars[$Arguments[2]])`n" }
             }
-            $global:LASTEXITCODE = 1
-            return
+            return [pscustomobject]@{ ExitCode = 1; Stdout = '' }
         }
-        if ($args[0] -eq 'secret' -and $args[1] -eq 'set') {
-            $global:LASTEXITCODE = if ($script:failSet) { 1 } else { 0 }
-            return
+        if ($Arguments[0] -eq 'secret' -and $Arguments[1] -eq 'set') {
+            $code = if ($script:failSet) { 1 } else { 0 }
+            return [pscustomobject]@{ ExitCode = $code; Stdout = '' }
         }
-        $global:LASTEXITCODE = 9
+        [pscustomobject]@{ ExitCode = 9; Stdout = '' }
+    }
+
+    # A fresh stand-in state for each test.
+    function Reset-StandIn {
+        $script:calls = [System.Collections.Generic.List[string]]::new()
+        $script:vars = @{ SUBSCRIPTION_ID = $script:sample; SUBSCRIPTION_MGMT_ID = '00000000-0000-0000-0000-000000000002' }
+        $script:failSet = $false
     }
 }
 
-BeforeEach {
-    $script:calls = [System.Collections.Generic.List[string]]::new()
-    $script:vars = @{ SUBSCRIPTION_ID = $script:sample; SUBSCRIPTION_MGMT_ID = '00000000-0000-0000-0000-000000000002' }
-    $script:failSet = $false
-}
-
 Describe 'Copy-SubscriptionSecret, from the variables' {
+    BeforeEach {
+        Reset-StandIn
+        Mock Invoke-Gh $script:ghStandIn
+    }
+
     It 'reads each variable and sets a secret of the same name, with the value trimmed' {
         $results = @(Copy-SubscriptionSecret -Repository 'o/r' -SecretNames 'SUBSCRIPTION_ID', 'SUBSCRIPTION_MGMT_ID' -Confirm:$false)
         $results.Count | Should -Be 2
         $results | ForEach-Object { $_.Set | Should -BeTrue }
-        $script:calls | Should -Be @(
-            'variable get SUBSCRIPTION_ID -R o/r',
-            "secret set SUBSCRIPTION_ID -R o/r --body $($script:sample)",
-            'variable get SUBSCRIPTION_MGMT_ID -R o/r',
-            'secret set SUBSCRIPTION_MGMT_ID -R o/r --body 00000000-0000-0000-0000-000000000002'
-        )
+        ($script:calls -join ' | ') | Should -Be (@(
+                'variable get SUBSCRIPTION_ID -R o/r',
+                "secret set SUBSCRIPTION_ID -R o/r --body $($script:sample)",
+                'variable get SUBSCRIPTION_MGMT_ID -R o/r',
+                'secret set SUBSCRIPTION_MGMT_ID -R o/r --body 00000000-0000-0000-0000-000000000002'
+            ) -join ' | ')
     }
 
     It 'never puts a value in what it returns' {
@@ -80,7 +87,6 @@ Describe 'Copy-SubscriptionSecret, from the variables' {
         $results[0].Set | Should -BeTrue
         $results[1].Set | Should -BeFalse
         $results[1].Reason | Should -Match 'SUBSCRIPTION_MGMT_ID is missing or empty'
-        $script:calls | Should -Not -Contain 'secret set SUBSCRIPTION_MGMT_ID -R o/r --body '
         @($script:calls | Where-Object { $_ -like 'secret set SUBSCRIPTION_MGMT_ID*' }).Count | Should -Be 0
     }
 
@@ -106,12 +112,17 @@ Describe 'Copy-SubscriptionSecret, from the variables' {
 }
 
 Describe 'Copy-SubscriptionSecret, from the hidden prompt' {
+    BeforeEach {
+        Reset-StandIn
+        Mock Invoke-Gh $script:ghStandIn
+    }
+
     It 'reads the value with Read-Host -AsSecureString and never asks gh for the variable' {
         Mock Read-Host { ConvertTo-SecureString "  $($script:sample)  " -AsPlainText -Force } -ParameterFilter { $AsSecureString }
         $results = @(Copy-SubscriptionSecret -Repository 'o/r' -SecretNames 'SUBSCRIPTION_ID' -Prompt -Confirm:$false)
         $results[0].Set | Should -BeTrue
         Should -Invoke Read-Host -Times 1 -Exactly
-        $script:calls | Should -Be @("secret set SUBSCRIPTION_ID -R o/r --body $($script:sample)")
+        ($script:calls -join ' | ') | Should -Be "secret set SUBSCRIPTION_ID -R o/r --body $($script:sample)"
     }
 
     It 'reports an empty prompt as not set' {
