@@ -16,7 +16,7 @@ import React from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { HelmetProvider } from 'react-helmet-async';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   RUN_LOCALLY_COMMANDS,
   allLabArticles,
@@ -24,6 +24,7 @@ import {
   labsForProvider,
   primaryProvider,
 } from '@/data/labs/catalogue';
+import { PUBLISHED_ROUTES } from '@/data/publishedRoutes';
 import {
   SIGN_IN_PENDING_KEY,
   markSignInStarted,
@@ -40,6 +41,13 @@ vi.mock('@/lib/publicApi', () => ({
 }));
 
 import LabsLearnPage from './LabsLearnPage';
+
+/** The three landing-zone articles the lab rows name, in catalogue order. */
+const THREE_ARTICLES = [
+  '/azure/blog/build-a-landing-zone-you-can-read',
+  '/terraform/blog/follow-along-in-one-container',
+  '/terraform/blog/let-an-agent-explain-it',
+];
 
 const NOW = Date.parse('2026-09-25T12:00:00Z');
 
@@ -279,18 +287,34 @@ describe('LabsLearnPage', () => {
     await screen.findByText(NOT_PROVISIONED_SENTENCE);
   });
 
+  it('lists no article slot while none of the articles is published (#1616)', async () => {
+    // As the manifest read on 2026-11-09: none of the three. The real set is
+    // changed for this test only and put back after it, so the test does not
+    // depend on what the manifest holds on the day it runs. A link to an
+    // article with no page would answer 404 (#1613).
+    const removed = THREE_ARTICLES.filter((path) => PUBLISHED_ROUTES.has(path));
+    removed.forEach((path) => PUBLISHED_ROUTES.delete(path));
+    onTestFinished(() => removed.forEach((path) => PUBLISHED_ROUTES.add(path)));
+    unprovisioned();
+    renderPage();
+    expect(allLabArticles()).toEqual([]);
+    expect(screen.queryByTestId('labs-slot-articles')).toBeNull();
+    await screen.findByText(NOT_PROVISIONED_SENTENCE);
+  });
+
   it('lists the published articles the labs point at, once each, and promises nothing', async () => {
+    // As the manifest will read once the owner publishes them. The real set
+    // is changed for this test only and put back after it.
+    const added = THREE_ARTICLES.filter((path) => !PUBLISHED_ROUTES.has(path));
+    added.forEach((path) => PUBLISHED_ROUTES.add(path));
+    onTestFinished(() => added.forEach((path) => PUBLISHED_ROUTES.delete(path)));
     unprovisioned();
     renderPage();
 
     const articles = screen.getByTestId('labs-slot-articles');
     expect(within(articles).getByRole('heading', { level: 2 })).toBeInTheDocument();
     const links = within(articles).getAllByRole('link');
-    expect(links.map((link) => link.getAttribute('href'))).toEqual([
-      '/azure/blog/build-a-landing-zone-you-can-read',
-      '/terraform/blog/follow-along-in-one-container',
-      '/terraform/blog/let-an-agent-explain-it',
-    ]);
+    expect(links.map((link) => link.getAttribute('href'))).toEqual(THREE_ARTICLES);
     expect(links).toHaveLength(allLabArticles().length);
     expect(articles).not.toHaveTextContent(/coming soon|#\d|issue/i);
     await screen.findByText(NOT_PROVISIONED_SENTENCE);

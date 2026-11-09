@@ -19,7 +19,7 @@
  *
  * HOW. `vite build` still produces the SPA exactly as before; this runs after it
  * and adds static HTML beside it. Each route is rendered through the real
- * application — same components, same providers, same 42 pages that set their
+ * application — same components, same providers, same pages that set their
  * own title — and written to `dist/<route>/index.html`. The client bundle is
  * untouched and still hydrates, so this is additive: if a file here were wrong,
  * the SPA underneath it still works.
@@ -30,8 +30,9 @@
  * for every URL. `prerenderToNodeStream` (React 19's static API) resolves every
  * boundary first.
  *
- * WHY NO ARTICLE PAGES. See `routes()` in prerender-entry.jsx: they would need
- * the API at build time, and CI cannot reach it (issue #175).
+ * ARTICLE PAGES COME FROM A FILE, NOT THE API. CI cannot reach the API at build
+ * time (issue #175), so the article pages are built from the content manifest
+ * (`frontend/data/content-manifest.json`); see `routes()` in prerender-entry.jsx.
  *
  * THIS STEP FAILS THE BUILD. A route that throws, renders its error boundary, or
  * comes back suspiciously small is a broken page — and a broken page written to
@@ -460,12 +461,13 @@ export function injectIntoTemplate(template, { head, body }, route = '/', seeded
   // is the difference between hydration working and hydration corrupting every
   // page that was never pre-rendered.
   //
-  // staticwebapp.config.json's navigationFallback serves /index.html for any
-  // path without a file of its own. Pre-rendered routes have their own
-  // index.html and are fine. Everything else — every /admin route, /preview,
-  // any URL added to the router but not to the pre-render list — receives the
-  // HOME PAGE's markup with a 200. Hydrating that against the admin tree is a
-  // guaranteed mismatch on the busiest pages in the app.
+  // A path without a file of its own gets some other page's markup: the
+  // client-only areas (/admin, /preview, ...) are rewritten to app-shell.html
+  // by staticwebapp.config.json, and any other unknown path gets the same
+  // shell with a 404 (#1613). The stamp was added when that fallback was the
+  // HOME PAGE's markup (T-714), and it still guards the same thing: hydrating
+  // markup rendered for one route against the tree of another is a guaranteed
+  // mismatch, so main.jsx only hydrates when the stamp matches the URL.
   //
   // Comparing the stamp to location.pathname turns that from something a future
   // route addition can silently trip into a decision made per page load.
@@ -619,23 +621,25 @@ async function main() {
 
   const template = readFileSync(join(dist, 'index.html'), 'utf8');
 
-  // The SPA fallback needs a shell of its own, and this is not optional.
+  // The app needs a shell of its own, and this is not optional.
   //
-  // `staticwebapp.config.json` rewrites any request with no matching file to a
-  // single HTML document, which is how article pages work: /azure/blog/{slug}
-  // is not pre-rendered — the slugs are not known at build time — so it falls
-  // back and the SPA renders it.
+  // `staticwebapp.config.json` sends two kinds of request to one bare copy of
+  // the app: the private areas (/admin, /preview, ...), which are never
+  // pre-rendered, with 200 and noindex; and any address that has no file of
+  // its own, with 404 (its `responseOverrides`). The app then renders the
+  // page in the browser, the not-found page included. There is no catch-all
+  // any more: until #1613 every unknown address got this shell with 200,
+  // which Google reports as a "Soft 404".
   //
-  // That fallback used to be dist/index.html, an empty shell. Pre-rendering
-  // turns dist/index.html into the fully rendered HOME PAGE, so every unknown
-  // URL would serve complete home-page content at HTTP 200 — the whole site's
-  // front page duplicated across unlimited addresses, which is worse for search
-  // than the shell it replaced. Measured on the preview host before this fix:
-  // /definitely-not-real returned 200 with the home page's title and body.
+  // That shell cannot be dist/index.html. Pre-rendering turns dist/index.html
+  // into the fully rendered HOME PAGE, so pointing the rules at it would serve
+  // the home page's title and body for every unknown address. Measured on the
+  // preview host before app-shell.html existed: /definitely-not-real returned
+  // 200 with the home page's title and body.
   //
-  // So the pristine template is kept as its own file and the fallback points at
-  // it. Known routes get their pre-rendered document; anything else gets a shell
-  // that boots the SPA, exactly as before.
+  // So the untouched template is kept as its own file and the rules point at
+  // it. Known routes get their pre-rendered document; everything else gets a
+  // shell that starts the app.
   writeFileSync(join(dist, 'app-shell.html'), template);
 
   const targets = dedupeRoutes(routes(manifest));

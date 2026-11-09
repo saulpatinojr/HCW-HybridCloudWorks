@@ -15,10 +15,11 @@
  * not the committed file: the policy is finished here, from the pages.
  *
  * WHAT BREAKS WITHOUT IT, and why it would not be obvious: §3.4 exists because
- * the soft 404 was already broken once. The config carries the SPA fallback
- * rewrite, the 404 override and the CSP. Deploy without it and the site loads,
- * the home page works, and every deep link 404s — which reads as a routing bug
- * in the app rather than a missing file.
+ * the soft 404 was already broken once. The config carries the rewrites that
+ * let the app-only pages (/admin, /preview, ...) load, the 404 override and
+ * the CSP. Deploy without it and the site loads, the home page works, and every
+ * app-only link 404s — which reads as a routing bug in the app rather than a
+ * missing file.
  *
  * THE CONTENT-SECURITY-POLICY IS FINISHED HERE, NOT IN THE SOURCE FILE (AP-F11,
  * #935). The committed policy has no 'unsafe-inline' anywhere. The site is
@@ -72,6 +73,9 @@ const START_TAG = /<([a-zA-Z][^\s/>]*)((?:"[^"]*"|'[^']*'|[^"'>])*)>/g;
 // single-quoted or unquoted. The unquoted class excludes what the
 // specification forbids there, so it stops where the parser would.
 const TAG_ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+
+/** The largest staged config Static Web Apps accepts (see stageConfig). */
+export const MAX_CONFIG_BYTES = 20000;
 
 /** The entities React and the CMS emit inside an attribute value. */
 const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -283,7 +287,18 @@ export function stageConfig({ source, dist }) {
     attributeHashes: [...styles.attributes.keys()],
   });
   const destination = join(dist, 'staticwebapp.config.json');
-  writeFileSync(destination, `${JSON.stringify(config, null, 2)}\n`);
+  const text = `${JSON.stringify(config, null, 2)}\n`;
+  // Static Web Apps refuses a config file over 20 KB ("Restrictions" on
+  // https://learn.microsoft.com/azure/static-web-apps/configuration). The
+  // staged file is the committed one plus this build's style hashes, so it is
+  // only known here. 20,000 bytes, the smaller reading of "20 KB".
+  const bytes = Buffer.byteLength(text, 'utf8');
+  if (bytes > MAX_CONFIG_BYTES) {
+    throw new Error(
+      `the staged staticwebapp.config.json is ${bytes} bytes; Static Web Apps refuses one over 20 KB (${MAX_CONFIG_BYTES} bytes).`
+    );
+  }
+  writeFileSync(destination, text);
   return { destination, styles, policy: config.globalHeaders['Content-Security-Policy'] };
 }
 

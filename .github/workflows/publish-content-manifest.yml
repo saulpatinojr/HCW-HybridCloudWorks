@@ -10,10 +10,17 @@ name: Publish Content Manifest
 #
 # So the data comes from the other side: this workflow holds Azure federated
 # credentials, fetches the published corpus from the Function App, and commits a
-# plain JSON file. deploy-azure-frontend.yml keeps `contents: read` and a Static
-# Web Apps token — no Azure identity at all — and reads a file from the
-# checkout. That separation is the point, not an implementation detail: the
-# build that runs on every push should not hold database credentials.
+# plain JSON file. deploy-azure-frontend.yml's build job keeps `contents: read`
+# and no Azure identity at all, and reads a file from the checkout; only its
+# separate deploy job signs in to Azure, to read the Static Web Apps upload
+# token (T-727). That separation is the point, not an implementation detail:
+# the build that runs on every push should not hold database credentials.
+#
+# Merging the pull request this workflow opens now deploys the site: since
+# 2026-11-09 (#1613) deploy-azure-frontend.yml runs by itself on a push to
+# main that changes frontend/, and that run deploys with no approval step.
+# It fires because the merge is made with the App's token (auto-merge armed by
+# the App), not GITHUB_TOKEN, whose own events start no workflow run.
 #
 # IT USED TO READ COSMOS DIRECTLY with data-plane RBAC, and that is what held
 # the 0.0.0.0 sentinel open on the Cosmos firewall — the switch admitting every

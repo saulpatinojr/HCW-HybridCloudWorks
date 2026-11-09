@@ -42,14 +42,19 @@ resource "azurerm_user_assigned_identity" "github_deploy" {
 #
 # They trusted a subject no workflow presents. Every job that signs in as
 # the deploy identity declares `environment: production`, so GitHub composes
-# the environment form and the production reviewers gate the sign-in. The
-# ref form was the way around that gate: any job on `main` holding
-# `id-token: write` — ten workflows do, for Qlty, Pages and the manifest —
-# could have signed in as this identity with no reviewer and deployed code
-# that runs as the Function App's own identity. Deleting the pair closes the
-# route; `scripts/oidc-subjects.test.mjs` now asserts this identity trusts
-# environment-form subjects only. The reader identity keeps its ref pair
-# below: its workflows name no environment and it holds read roles.
+# the environment form. At the time the production reviewers gated that
+# sign-in; the owner removed them on 2026-11-09 (#1613), and the controls now
+# are the environment's main-only branch rule and each deploy workflow's
+# guard step that refuses any ref but `main`. #1617 restores a reviewed
+# environment for the backend and gives the frontend a least-privilege
+# identity of its own. The ref form was a way around those controls: any job
+# on `main` holding `id-token: write` — ten workflows do, for Qlty, Pages and
+# the manifest — could have signed in as this identity without naming the
+# environment and deployed code that runs as the Function App's own identity.
+# Deleting the pair closes the route; `scripts/oidc-subjects.test.mjs` now
+# asserts this identity trusts environment-form subjects only. The reader
+# identity keeps its ref pair below: its workflows name no environment and it
+# holds read roles.
 #
 # `subject` must match the token's claim EXACTLY. GitHub composes it as
 # repo:<org>/<repo>:environment:<name> for a job that names an environment,
@@ -174,8 +179,10 @@ locals {
 # since T-728, and the healer was deleted in #816 part 2, so no workflow on
 # THIS identity presents the ref subject, and on 2026-10-06 the owner retired
 # the pair (SEC-2). These two environment credentials are the identity's
-# only trust now: a sign-in as the deploy identity passes the production
-# environment's reviewers or does not happen.
+# only trust now: a sign-in as the deploy identity comes from a job that names
+# the production environment, whose main-only branch rule admits main only.
+# The environment's required reviewers were removed on 2026-11-09 (#1613);
+# #1617 restores a reviewed environment for the backend.
 # ---------------------------------------------------------------------------
 resource "azurerm_federated_identity_credential" "github_production" {
   name                      = "github-${var.github_repo}-env-production"
@@ -497,7 +504,9 @@ resource "azurerm_role_assignment" "github_manifest_window_read" {
 # Refresh for the remove and Reader for the reads. It runs as this identity
 # and not as github_deploy because github_deploy trusts only the
 # `environment:production` subject, and that environment's required
-# reviewers would hold an hourly job for a person every hour.
+# reviewers would have held the hourly job for a person each time. They were
+# removed on 2026-11-09 (#1613), and #1617 brings a reviewed environment back
+# for the backend, so the reason stands.
 #
 # The storage half is this grant: the account's read and write actions and
 # nothing else (infra/roles/storage-firewall-writer.json). The firewall is a

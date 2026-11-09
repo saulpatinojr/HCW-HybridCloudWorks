@@ -20,7 +20,8 @@ import {
   FlaskConical,
   Layers,
 } from 'lucide-react';
-import { architecturesByProvider, awsArchitectures } from '@/data/architectures';
+import { architecturesByProvider } from '@/data/architectures';
+import NotFoundPage from '@/pages/NotFoundPage';
 import { useResolvedHotspots } from '@/hooks/useResolvedHotspots';
 import ContextSidebar from '@/components/layout/ContextSidebar';
 import ShareVia from '@/components/shared/ShareVia';
@@ -48,13 +49,23 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
   );
 
   const providerKey = String(provider || 'aws').toLowerCase();
-  const providerCatalog = architecturesByProvider[providerKey] || awsArchitectures;
-  const staticData = providerCatalog?.[slug] || null;
+  // Only this provider's own catalogue. A provider with none (VMware today)
+  // has no built-in designs, so a slug borrowed from another provider is an
+  // unknown page, not that provider's design under this heading (#1616 item 3).
+  const staticData = architecturesByProvider[providerKey]?.[slug] || null;
 
-  const itemProvider = String(item?.cloudProvider || item?.provider || '')
+  // Both spellings the backend reads: the RSS import writes 'Cloud Provider',
+  // a manual submission writes cloudProvider (functions/src/lib/content/inspect.js).
+  const itemProvider = String(
+    item?.cloudProvider || item?.['Cloud Provider'] || item?.provider || ''
+  )
     .trim()
     .toLowerCase();
-  const providerMatches = !itemProvider || itemProvider === providerKey;
+  // An API design with no provider at all (the API keeps such designs as
+  // unattributed) is shown only where this provider has a built-in design of
+  // the same address, which it then refreshes. Otherwise it would show under
+  // every provider's heading, VMware included (Copilot review of #1624).
+  const providerMatches = itemProvider ? itemProvider === providerKey : Boolean(staticData);
   const dynamicArchitecture =
     item && String(item.type || '').toLowerCase() === 'architecture' && providerMatches
       ? item
@@ -146,21 +157,11 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
     );
   }
 
+  // The site's own 404 page, the one every other unknown address shows, so the
+  // page says "not found" the same way everywhere and the build's check for
+  // `data-page="not-found"` recognises it.
   if (!architecture) {
-    return (
-      <div className="container mx-auto px-4 py-20 text-center">
-        <h1 className="text-3xl font-bold mb-4">Architecture Not Found</h1>
-        <p className="text-muted-foreground mb-6">
-          The architecture you&apos;re looking for doesn&apos;t exist.
-        </p>
-        <Button asChild>
-          <Link to={`/${provider}/architecture-designs`}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Architectures
-          </Link>
-        </Button>
-      </div>
-    );
+    return <NotFoundPage />;
   }
 
   const openDeepDiveTab = (targetTab) => {

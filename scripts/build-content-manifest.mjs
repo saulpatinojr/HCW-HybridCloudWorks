@@ -491,8 +491,9 @@ export function buildManifest(items, sectionsFromRoute = null, interviews = []) 
       continue;
     }
     if (!provider) {
-      // Without a provider there is no URL to pre-render it at. The article is
-      // still served by the SPA; it just has no static file.
+      // Without a provider there is no URL to pre-render it at. With no file
+      // of its own, any address for it answers 404 since #1613, though the
+      // app still shows it to a reader in the browser.
       skipped.push(`${slug}: no recognised provider (${item.cloudProvider || 'unset'})`);
       continue;
     }

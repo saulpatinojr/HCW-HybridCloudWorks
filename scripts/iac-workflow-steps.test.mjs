@@ -444,7 +444,7 @@ const REMAINING_IF_GREP = {
     { line: `if ! printf '%s' "\${WORKFLOW_SHA}" | grep -Eq '^[0-9a-f]{40}$'; then`, why: NEGATED },
   ],
   'cloudflare-ranges.yml': [{ line: `if grep -E '^(\\.github/|scripts/)' "\${RUNNER_TEMP}/cloudflare-ranges/patched.txt"; then`, why: PATCHED_LIST }],
-  'deploy-azure-frontend.yml': [{ line: `if ! grep -qiE "<(!DOCTYPE html|html|div id=\\"root\\")" "\${body_file}"; then`, why: NEGATED }],
+  'deploy-azure-frontend.yml': [{ line: `if ! grep -qF -- "\${required}" "\${body_file}"; then`, why: NEGATED }],
   'lab-supply-chain.yml': [
     { line: `if grep -E '^(\\.github/|scripts/)' "\${RUNNER_TEMP}/lab-pins/patched.txt" | grep -vE '^scripts/fixtures/'; then`, why: PATCHED_LIST },
     { line: `if grep -qx 'lab-host/bootstrap.sh' "\${RUNNER_TEMP}/lab-pins/patched.txt"; then`, why: PATCHED_LIST },
