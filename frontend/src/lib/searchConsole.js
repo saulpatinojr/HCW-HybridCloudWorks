@@ -179,7 +179,9 @@ function siteUrl(value) {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:') return null;
-    // Same rule as the backend: a page address carries no port or user name.
+    // Same rule as the backend: a page address carries no non-default port
+    // and no user name. An explicit :443 is HTTPS's default port and the
+    // same address, so the parser drops it and the link is to the same page.
     if (url.port || url.username || url.password) return null;
     const host = url.hostname.toLowerCase();
     return host === SITE_DOMAIN || host.endsWith(`.${SITE_DOMAIN}`) ? url : null;

@@ -367,6 +367,37 @@ describe('the queued-job marker (Copilot review round 1, #1614)', () => {
     expect(other.replaceDocIfMatch).not.toHaveBeenCalled();
   });
 
+  it('is not taken when admit says the job is superseded, and the job clears its own marker (Copilot review of #1615)', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: null, pendingJob: { ...LIVE, jobId: 'job-1' } });
+    const admit = vi.fn(async () => false);
+    await expect(lease(store, { by: 'job', jobId: 'job-1' }).acquire({ admit })).resolves.toEqual({ ok: false, superseded: true });
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(store.doc).toMatchObject({ holder: null, pendingJob: null });
+  });
+
+  it('asks admit again when the document changes between its check and the write, so the two cannot be split', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: null, pendingJob: null });
+    // Superseded only once a different job's marker is on the document.
+    const admit = vi.fn(async (current) => !(current?.pendingJob && current.pendingJob.jobId !== 'job-1'));
+    const realReplace = store.replaceDocIfMatch.getMockImplementation();
+    store.replaceDocIfMatch.mockImplementationOnce(async (container, next, options) => {
+      // A Run now press claims the marker after admit read the document and
+      // before this write: the write fails on the changed ETag.
+      await realReplace(container, { ...store.doc, pendingJob: { ...LIVE, jobId: 'job-2' } }, options);
+      return realReplace(container, next, options);
+    });
+    await expect(lease(store, { by: 'job', jobId: 'job-1' }).acquire({ admit })).resolves.toEqual({ ok: false, superseded: true });
+    expect(admit).toHaveBeenCalledTimes(2);
+    expect(store.doc).toMatchObject({ holder: null, pendingJob: { jobId: 'job-2' } });
+  });
+
+  it('does not ask admit while another run holds the lease', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: 'run-b', expiresAt: '2026-11-09T00:40:00Z' });
+    const admit = vi.fn(async () => false);
+    await expect(lease(store, { by: 'job', jobId: 'job-1' }).acquire({ admit })).resolves.toEqual({ ok: false });
+    expect(admit).not.toHaveBeenCalled();
+  });
+
   it('retries clearing its marker after a lost race, and passes on other failures', async () => {
     const store = memoryStore({ id: LEASE_DOC_ID, holder: 'run-b', expiresAt: '2026-11-09T00:40:00Z', pendingJob: LIVE });
     const real = store.replaceDocIfMatch.getMockImplementation();

@@ -299,10 +299,29 @@ export function createRunLease({
      * Take the lease. `{ ok: true }` when this run holds it now;
      * `{ ok: false }` when another run holds it.
      */
-    async acquire() {
+    /**
+     * Take the lease. `admit(current, at)`, when given, is asked about the
+     * document this call is about to replace; when it answers false the
+     * lease is not taken (`{ ok: false, superseded: true }`) and a marker
+     * naming this job is cleared. Because the write is conditional on that
+     * same document, a change made after `admit` read it fails the write,
+     * and the loop asks `admit` again about the new one.
+     */
+    async acquire({ admit } = {}) {
       for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt += 1) {
         const current = await read();
         const at = now();
+        if (!leaseIsLive(current, at) && admit && !(await admit(current, at))) {
+          if (jobId && current?.pendingJob?.jobId === jobId) {
+            try {
+              await replace(current, { ...keep(current), pendingJob: null });
+            } catch (failure) {
+              if (!isWriteConflict(failure)) throw failure;
+              continue;
+            }
+          }
+          return { ok: false, superseded: true };
+        }
         if (leaseIsLive(current, at)) {
           // Another run holds it, so this job will not run. Its marker is
           // cleared all the same, or Run now would wait for it until it lapses.

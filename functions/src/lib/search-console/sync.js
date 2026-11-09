@@ -281,8 +281,11 @@ export function siteAddress(value) {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:') return null;
-    // A page address never carries a port or a user name; one that does is
-    // not a page of this site, even on the right host.
+    // A page address never carries a non-default port or a user name; one
+    // that does is not a page of this site, even on the right host. An
+    // explicit :443 is HTTPS's own default port, so the parser drops it
+    // (url.port is ''): `https://hybridcloudworks.com:443/x` is the same
+    // address as `https://hybridcloudworks.com/x` and is accepted as such.
     if (url.port || url.username || url.password) return null;
     const host = url.hostname.toLowerCase();
     return host === SITE_DOMAIN || host.endsWith(`.${SITE_DOMAIN}`) ? url : null;
@@ -1134,8 +1137,10 @@ export function createSearchConsoleSync({
    *
    * The timer's runs are never superseded: they have no job.
    */
-  async function superseded(at) {
-    const marked = await waitingMarkedJob(store, await readLease(store), at);
+  async function superseded(at, leaseDoc) {
+    // leaseDoc: the lease document acquire() is about to replace, so the
+    // decision and the claim rest on the same read (see run() below).
+    const marked = await waitingMarkedJob(store, leaseDoc === undefined ? await readLease(store) : leaseDoc, at);
     if (marked && marked.id !== jobId) return true;
     const created = Date.parse(jobCreatedAt);
     if (!Number.isFinite(created)) return false;
@@ -1161,7 +1166,18 @@ export function createSearchConsoleSync({
       }
       const budget = dailyBudget(env);
       const lease = createRunLease({ store, now, budget, by: jobId ? 'job' : 'timer', jobId });
-      const taken = await lease.acquire();
+      // The superseded check runs again inside acquire(), on the very lease
+      // document it replaces with ifMatch. A press that claims the marker,
+      // or a run that finishes and releases the lease, changes that
+      // document between the check and the write, so the write fails, and
+      // acquire() reads again and checks again: the decision and the claim
+      // cannot be split (Copilot review of #1615). The check above stays as
+      // a cheap early exit that writes nothing.
+      const taken = await lease.acquire(jobId ? { admit: async (current, at) => !(await superseded(at, current)) } : undefined);
+      if (taken.superseded) {
+        info('skipped: a newer run or another queued job makes this one unneeded');
+        return { skipped: 'superseded' };
+      }
       if (!taken.ok) {
         info('skipped: another run is in progress');
         return { skipped: 'already_running' };
