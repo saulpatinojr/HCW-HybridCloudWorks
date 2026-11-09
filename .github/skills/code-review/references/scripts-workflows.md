@@ -57,10 +57,15 @@ monitors, and manual release workflows — all on GitHub-hosted runners.
   `scripts/version-floors.test.mjs` fails any other label, and
   `update-version-floors.yml` moves the ceiling when GitHub makes the next LTS
   generally available. A new `ubuntu-latest` is a finding.
-- **No auto-apply/auto-deploy**: Azure releases are explicit manual
-  dispatches (`deploy-azure-frontend.yml`, `deploy-functions.yml`);
-  Terraform applies only via HCP Terraform review. A trigger change that
-  makes deployment automatic on push/merge is blocking.
+- **No auto-apply/auto-deploy, with one approved exception**: the
+  functions release is an explicit manual dispatch (`deploy-functions.yml`)
+  and Terraform applies only via HCP Terraform review. The exception is
+  `deploy-azure-frontend.yml`, which also runs on a push to `main` that
+  changes `frontend/**` (owner decision 2026-11-09, #1613); its deploy job
+  still waits for an approval in the `production` environment. Any other
+  trigger change that makes deployment automatic on push/merge is blocking,
+  and so is widening that exception (more branches, more paths, or
+  dropping `environment: production` from its deploy job).
 - **Untrusted input**: no `pull_request_target` with checkout of PR code, no
   interpolation of PR titles/bodies/branch names into `run:` shells.
 - **Monitors** (`monitor-*.yml`, `verify-alert-state.yml`): check schedule

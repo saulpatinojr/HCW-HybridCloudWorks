@@ -3,10 +3,17 @@
  *
  * ## The gap this closes
  *
- * `deploy-functions.yml` and `deploy-azure-frontend.yml` are both
+ * `deploy-functions.yml` and `deploy-azure-frontend.yml` were both
  * workflow_dispatch only, by a recorded decision: enabling a workflow and
  * enabling auto-deploy-on-merge are separate choices, and only the first was
- * made. Merging therefore deploys nothing, and NOTHING SAID SO.
+ * made. Merging therefore deployed nothing, and NOTHING SAID SO.
+ *
+ * Since 2026-11-09 (owner decision on #1613) a merge that changes `frontend/`
+ * starts a frontend deploy by itself, but that run still waits for an
+ * approval in the `production` environment, so the Static Web App can still
+ * fall behind: a run nobody approves is not a deploy. The functions deploy is
+ * still dispatch-only. Neither changes what this check reads, which is the
+ * last SUCCESSFUL run of each workflow, whatever started it.
  *
  * That single gap produced both of 2026-08-31's incidents, hours apart and both
  * found by accident:
@@ -496,9 +503,10 @@ export function formatReport(results, thresholdHours) {
       ...rows,
       '',
       failed
-        ? '**Deploy the service(s) marked ❌.** The two deploys are dispatch-only by ' +
-          'design and the Terraform apply is confirmed by hand in HCP Terraform, so merging ' +
-          'ships none of the three — this is the thing that says so. ' +
+        ? '**Deploy the service(s) marked ❌.** The functions deploy is dispatch-only, the ' +
+          'frontend deploy starts on a merge but waits for a production approval, and the ' +
+          'Terraform apply is confirmed by hand in HCP Terraform, so a merge alone ships none ' +
+          'of the three — this is the thing that says so. ' +
           'A ⚠️ means the check could not read the answer, which is not the same as drift.'
         : 'Every service is within the threshold.',
     ].join('\n'),

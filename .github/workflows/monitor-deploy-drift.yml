@@ -1,9 +1,15 @@
 # Is production behind `main`, and for how long?
 #
-# WHY THIS EXISTS. deploy-functions.yml and deploy-azure-frontend.yml are both
+# WHY THIS EXISTS. deploy-functions.yml and deploy-azure-frontend.yml were both
 # workflow_dispatch only, by a recorded decision — enabling a workflow and
 # enabling auto-deploy-on-merge are separate choices, and only the first was
-# made. So merging deploys nothing, and until 2026-09-01 nothing said so.
+# made. So merging deployed nothing, and until 2026-09-01 nothing said so.
+#
+# Since 2026-11-09 (owner decision on #1613) a merge that changes frontend/
+# starts a frontend deploy by itself, but the run waits for an approval in the
+# `production` environment, so the site can still fall behind when nobody
+# approves it. This monitor reads the last successful run whatever started
+# it, so it still catches that. The functions deploy is still dispatch-only.
 #
 # That one gap produced both of 2026-08-31's incidents, hours apart, both found
 # by accident rather than by a check:

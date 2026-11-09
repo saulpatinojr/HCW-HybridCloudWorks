@@ -960,7 +960,7 @@ describe('driftFor — Terraform Infrastructure', () => {
 });
 
 describe('SERVICES', () => {
-  it('reads the two dispatch-only deploys from their workflows, and nothing else from a workflow', () => {
+  it('reads the two deploys (functions and frontend) from their workflows, and nothing else from a workflow', () => {
     expect(
       SERVICES.filter((s) => s.workflow)
         .map((s) => s.workflow)

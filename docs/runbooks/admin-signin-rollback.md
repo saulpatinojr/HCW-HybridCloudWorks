@@ -92,6 +92,11 @@ use in step 2.**
 **Run workflow** → set **`entra_client_id_override`** to the client id step 1
 printed. Leave everything else alone.
 
+If another Deploy Frontend run is already there and **Waiting** for approval
+(a merge to `main` starts one by itself), reject it first. Only one deploy runs
+at a time, so yours waits in the queue behind it until it is approved or
+rejected.
+
 The run logs a warning naming the id it built with, so what happened is recorded
 in the run rather than in somebody's memory. The build still validates it:
 `assertDeployConfig` refuses anything that is not a GUID, so a mistyped id fails
@@ -101,6 +106,15 @@ the build instead of shipping a sign-in that cannot work.
 deploy reads `VITE_ENTRA_CLIENT_ID` again. That is deliberate — an emergency
 should not silently become the configuration — but it means an ordinary deploy
 would undo the rollback without anyone intending it.
+
+Since 2026-11-09 that ordinary deploy can start by itself: any merge that
+changes `frontend/` starts a Deploy Frontend run, and the daily content-manifest
+pull request is one of those
+([#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)).
+Such a run still waits for an approval in the `production` environment, so
+until step 3 is done, **reject** any Deploy Frontend run that is waiting on
+[the workflow's runs page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml)
+rather than approving it.
 
 ### 3. Make it permanent, or undo it
 

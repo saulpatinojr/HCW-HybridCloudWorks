@@ -1375,9 +1375,11 @@ gh variable get VITE_TURNSTILE_SITE_KEY --repo saulpatinojr/HCW-HybridCloudWorks
 Success is the second line printing the same `0x4…` value. Keep the widget's
 page open: step 4 needs its **Secret Key**.
 
-**3. Deploy the functions and the site.** Both are dispatch-only, from
-`main`, PowerShell. The functions deploy refuses while step 1's run is
-unfinished, so run it after the apply:
+**3. Deploy the functions and the site.** Start both by hand, from `main`,
+PowerShell. The functions deploy only ever runs by hand. The site deploys by
+itself when a change under `frontend/` reaches `main`, but step 2 changed a
+repository variable, not a file, so no run starts for it. The functions
+deploy refuses while step 1's run is unfinished, so run it after the apply:
 
 ```powershell
 gh workflow run deploy-functions.yml --repo saulpatinojr/HCW-HybridCloudWorks --ref main
@@ -3941,10 +3943,12 @@ browser window on your own computer. The sample export is made up (the
 subscription `00000000-0000-0000-0000-000000000001` and names that start with
 `hcw-sample` or `hcwsample`), so nothing private is uploaded.
 
-**1. Deploy the site and check the deploy reached it (PowerShell).** The website
-is deployed by hand, so merging does not publish it. If a run of the Deploy
-Frontend workflow has not finished green since the pull request merged, start
-one. You should see `Created workflow_dispatch event for deploy-azure-frontend.yml at main`:
+**1. Deploy the site and check the deploy reached it (PowerShell).** Since
+2026-11-09 a merge that changes `frontend/` starts a run of the Deploy Frontend
+workflow by itself, and that run waits for an approval before it uploads
+anything. If a run since the pull request merged is waiting, approve it (the
+next paragraph says where). If none has finished green and none is waiting,
+start one. You should see `Created workflow_dispatch event for deploy-azure-frontend.yml at main`:
 
 ```powershell
 gh workflow run deploy-azure-frontend.yml --repo saulpatinojr/HCW-HybridCloudWorks --ref main
