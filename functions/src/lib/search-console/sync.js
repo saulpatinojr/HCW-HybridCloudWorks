@@ -1,0 +1,1219 @@
+/**
+ * sync.js — one Search Console run (#1612): what Google knows about each
+ * public page, the site's search traffic, and the sitemaps, saved as one
+ * document the admin page reads.
+ *
+ * Run twice a day by the `syncSearchConsole` timer (schedulers.js) and on
+ * demand by the page's Run now button, which queues the `sync-search-console`
+ * job (functions/search-console-http.js). One run:
+ *
+ *   0. A run started by a job first checks it is still wanted: when the
+ *      queued-job marker (lease.js) names another job still waiting, or a run
+ *      finished after this job was queued, the job stops at once with
+ *      `{ skipped: 'superseded' }` and calls nothing. So a job's queue
+ *      message that arrives late, or twice, never adds a second run.
+ *   1. Takes the run lease (lease.js). If another run holds it, this run
+ *      stops at once and calls nothing, so two runs never overlap, however
+ *      they were started.
+ *   2. Reads the sitemap (GSC_SITEMAP_URL; only the main site,
+ *      `hybridcloudworks.com`, publishes one), keeps the https pages on
+ *      hybridcloudworks.com and every subdomain (owner decision of
+ *      2026-11-09 on #1612: the report covers the whole Search Console
+ *      property), removes repeats, and stops at 900 pages. A sitemap index
+ *      is read one level down, at most 20 child sitemaps, on the main site's
+ *      host only. A sitemap that cannot be read, or that lists no such page,
+ *      makes the run an error that changes nothing on the page but the
+ *      message.
+ *   3. Reads the pages Google showed in search over the 90 days (up to 1,000
+ *      rows), and from them the "strays": pages on the domain or any
+ *      subdomain that got impressions but are not in the sitemap. The 150
+ *      strays with the most impressions are inspected too, after the
+ *      sitemap's pages, as long as the run stays within its 900 pages.
+ *   4. Reserves one inspection per page against the daily budget (lease.js:
+ *      1,800 a Pacific-time day, under Google's 2,000), sitemap pages first,
+ *      and inspects at most that many pages, four at a time, pacing the
+ *      starts so a minute never sees more than about 545 (Google allows
+ *      600). Every request sent, client.js's retries included, uses one
+ *      reserved inspection; one with none left asks the budget for one more
+ *      and is not sent if the day has none. One page failing is recorded on
+ *      that page and never fails the run. If Google still answers 429 (quota
+ *      used up) after client.js's retries, the run stops inspecting rather
+ *      than spend more of the quota on retries.
+ *   5. Reads the rest of Search Analytics for the 90 days ending two days ago
+ *      (Google's figures lag about two days), for the whole property, with
+ *      no filter: totals, a line per day, and the top 50 queries, pages,
+ *      countries, devices and search appearances, and the same totals for
+ *      the last 28 days.
+ *   6. Lists the sitemaps Google has.
+ *   7. Checks that it still holds the lease and extends it (lease.js
+ *      `renew`), then replaces `admin_config/search_console_snapshot` under
+ *      the ETag it was read with (a lost race re-reads and tries again),
+ *      carrying a short history of the indexing counts, the last 120 runs
+ *      (about two months). A run that no longer holds the lease writes
+ *      nothing and returns `{ skipped: 'lease_lost' }`: another run took the
+ *      lease after it lapsed, and that run's results are the newer ones.
+ *   8. Gives the lease back, handing back any reserved inspections it did
+ *      not send.
+ *
+ * A run has a time limit, RUN_DEADLINE_MS (25 minutes), well inside the
+ * lease's 35. When it is reached, the run's cancel switch (an AbortController)
+ * fires: no new inspection or query starts, and every call to Google or for a
+ * sitemap still waiting for an answer is cut off at once, retries and their
+ * pauses included. The run then saves what it has, as in step 5, and the
+ * pages it did not reach keep their last answer, marked stale. A job's own
+ * cancel signal (lib/jobs.js, at the job's 28-minute budget, which the run's
+ * own 25-minute limit always reaches first) fires the same switch, but then
+ * nothing is saved: half a run is not written over the last whole one, and
+ * the job is recorded as timed out.
+ *
+ * A degraded run never replaces good figures with worse ones: a page whose
+ * inspection failed or was not attempted keeps its last answer, marked
+ * `stale: true` with `error` saying why; a Search Analytics query or the
+ * sitemaps list that failed keeps the last run's figures for that part; the
+ * strays are worked out only from a sitemap read in full and a page query
+ * that answered; a sitemap page from the last run that this run's sitemap
+ * did not list is dropped only when the sitemap was read in full, and a
+ * stray from the last run only when the strays were worked out again
+ * (otherwise each is kept, stale); and the history gains a point only from
+ * pages inspected afresh in this run.
+ *
+ * Each stored page says where it came from (`source`: 'sitemap', or
+ * 'search' for a stray) and its host name (`host`), so the page can show
+ * which site of the domain it is on.
+ *
+ * When GSC_WIF_AUDIENCE, GSC_ENTRA_APP_ID_URI or GSC_SERVICE_ACCOUNT_EMAIL is
+ * empty the run returns `{ skipped: 'not_configured' }` and writes nothing.
+ *
+ * When Google sign-in fails, Google says the service account may not read
+ * the property (401, 403), or Google has no such property (404: the
+ * GSC_SITE_URL setting is wrong or the service account cannot see it), the
+ * run stops, keeps the last good figures in the document,
+ * and records the failure in `run.message` with status 'error', so the page
+ * shows both. The caller (the timer or the job) then treats it as a failed
+ * run.
+ *
+ * Log lines carry counts and durations only: no page address, no token and
+ * no Google response (house rule for functions/**).
+ */
+import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
+import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
+import { createGoogleTokenProvider, GoogleAuthError, readGoogleAuthConfig } from './google-auth.js';
+import { createSearchConsoleClient, defaultSleep, SearchConsoleError, sleepUnlessAborted } from './client.js';
+import {
+  budgetSpentMessage,
+  clearPendingJob,
+  createRunLease,
+  dailyBudget,
+  LEASE_TTL_MS,
+  nextPacificMidnight,
+  readLease,
+  RUN_DEADLINE_MS,
+  waitingMarkedJob,
+} from './lease.js';
+
+export const CONTAINER = 'admin_config';
+export const SNAPSHOT_DOC_ID = 'search_console_snapshot';
+export const SNAPSHOT_DOC_TYPE = 'search_console_snapshot';
+
+/**
+ * The site's domain. The Search Console property is the Domain property
+ * `sc-domain:hybridcloudworks.com`, which covers this host and every
+ * subdomain (api-azure., docs., the lab hosts), and the report covers all of
+ * them (owner decision of 2026-11-09 on #1612, which replaced the first
+ * version's main-site-only rule). So Search Analytics is read with no
+ * filter: every total, the daily line and each top-50 table count the same
+ * pages as Google's own Performance screen for the property.
+ */
+export const SITE_DOMAIN = 'hybridcloudworks.com';
+/** Only the main site publishes a sitemap. */
+export const DEFAULT_SITEMAP_URL = `https://${SITE_DOMAIN}/sitemap.xml`;
+/** The most pages one run inspects, sitemap pages and strays together. */
+export const MAX_URLS = 900;
+/** The most strays one run inspects, after the sitemap's pages and inside MAX_URLS. */
+export const STRAYS_INSPECTED_MAX = 150;
+/** How much later than a job's creation a finished run must be to supersede it. */
+export const SUPERSEDE_SLACK_MS = 5000;
+export const CONCURRENCY = 4;
+/** Gap between inspection starts: 110 ms is at most about 545 a minute, under Google's 600. */
+export const INSPECT_SPACING_MS = 110;
+export const HISTORY_MAX = 120;
+export const STRAYS_MAX = 100;
+export const TOP_ROWS = 50;
+export const PAGE_ROWS_FOR_STRAYS = 1000;
+export const RANGE_DAYS = 90;
+export const SHORT_RANGE_DAYS = 28;
+/** Google's Search Analytics data lags about two days. */
+export const LAG_DAYS = 2;
+/**
+ * A sitemap index may point at this many child sitemaps. When it lists more,
+ * the rest are not read, and the run treats the sitemap as not read in full.
+ */
+export const MAX_CHILD_SITEMAPS = 20;
+export const WRITE_ATTEMPTS = 3;
+/** Long strings from Google are cut to this length before they are stored. */
+const MAX_FIELD = 2048;
+
+/** What Google's API does not offer, shown on the page as is. */
+export const NOT_AVAILABLE = Object.freeze(['Page indexing totals and reasons', 'Links (internal and external)']);
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const VERDICTS = new Set(['PASS', 'NEUTRAL', 'FAIL']);
+
+// ── Small pure helpers ───────────────────────────────────────────────────────
+
+const str = (value) => (typeof value === 'string' && value ? value.slice(0, MAX_FIELD) : null);
+const num = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+const isoDate = (ms) => new Date(ms).toISOString().slice(0, 10);
+
+const NAMED_ENTITIES = { lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' };
+
+/** One numeric character reference (`&#38;`, `&#x26;`) as its character, or as written when it is not a real one. */
+function codePoint(text, code) {
+  return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : text;
+}
+
+/**
+ * Undo the XML escapes a sitemap may use in an address: the five named ones
+ * and numeric ones in decimal or hex. One pass, so `&amp;lt;` becomes `&lt;`
+ * and is not undone a second time.
+ */
+function decodeXml(value) {
+  return value.replace(/&(lt|gt|quot|apos|amp|#\d+|#x[0-9a-f]+);/gi, (text, name) => {
+    if (name[0] !== '#') return NAMED_ENTITIES[name.toLowerCase()] ?? text;
+    const hex = name[1] === 'x' || name[1] === 'X';
+    return codePoint(text, Number.parseInt(name.slice(hex ? 2 : 1), hex ? 16 : 10));
+  });
+}
+
+/** What may come before a document's first element: a `<?…?>` declaration, a comment, or a DOCTYPE. */
+const PROLOG_PART = /^(?:<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE[^>[]*(?:\[[^\]]*\][^>]*)?>)/i;
+/** A first element's name, with or without a namespace prefix (`<urlset`, `<sm:urlset`). */
+const FIRST_ELEMENT = /^<(?:[A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)[\s/>]/;
+
+/**
+ * The name of a document's first element, in lower case and without any
+ * namespace prefix: `urlset` for a sitemap, `sitemapindex` for a sitemap
+ * index, `html` for a web page. A byte-order mark, the `<?xml …?>`
+ * declaration, comments and a DOCTYPE before it are skipped. Null when the
+ * text has no element at all (empty, or not markup).
+ *
+ * This is how the run tells a real sitemap from the site's web page: the site
+ * answers HTTP 200 with its HTML page for any address it does not know
+ * (#1613), so a sitemap that moved still answers 200, and only its first
+ * element shows it is not a sitemap.
+ *
+ * @param {string} xml
+ * @returns {string|null}
+ */
+export function sitemapRoot(xml) {
+  let rest = typeof xml === 'string' ? xml.replace(/^\uFEFF/, '') : '';
+  for (;;) {
+    rest = rest.trimStart();
+    const part = PROLOG_PART.exec(rest);
+    if (!part) break;
+    rest = rest.slice(part[0].length);
+  }
+  const element = FIRST_ELEMENT.exec(rest);
+  return element ? element[1].toLowerCase() : null;
+}
+
+/** An opening or closing `<loc>` tag, in any letter case. */
+const LOC_TAG = /<(\/?)loc>/gi;
+
+/**
+ * The address inside one `<loc>…</loc>`: without the spaces around it or a
+ * CDATA wrapper. Null when it is empty or holds markup.
+ */
+function locText(inner) {
+  let text = inner.trim();
+  if (text.startsWith('<![CDATA[')) text = text.slice('<![CDATA['.length);
+  if (text.endsWith(']]>')) text = text.slice(0, -']]>'.length);
+  text = text.trim();
+  return text && !text.includes('<') && !text.includes(']') ? text : null;
+}
+
+/**
+ * The `<loc>` addresses in a sitemap or sitemap index, in order, and whether
+ * it is an index (a list of further sitemaps rather than pages), which its
+ * first element says (sitemapRoot).
+ *
+ * The tags are found one by one and the text between an opening tag and the
+ * next closing one is taken, rather than with one pattern for the whole
+ * entry: a pattern with several optional runs of spaces in a row can take a
+ * very long time on a sitemap built to defeat it (a "ReDoS", a regular
+ * expression denial of service), and this way the work grows only in step
+ * with the sitemap's length.
+ *
+ * @param {string} xml
+ * @returns {{ isIndex: boolean, locs: string[] }}
+ */
+export function parseSitemap(xml) {
+  const source = typeof xml === 'string' ? xml : '';
+  const isIndex = sitemapRoot(source) === 'sitemapindex';
+  const locs = [];
+  let start = -1;
+  for (const tag of source.matchAll(LOC_TAG)) {
+    if (!tag[1]) {
+      start = tag.index + tag[0].length;
+      continue;
+    }
+    if (start < 0) continue;
+    const text = locText(source.slice(start, tag.index));
+    start = -1;
+    if (text) locs.push(decodeXml(text));
+  }
+  return { isIndex, locs };
+}
+
+/**
+ * The URL when it is an https address on hybridcloudworks.com or one of its
+ * subdomains, else null. The check is on the host name the URL parser reads,
+ * which must be exactly the domain or end with `.hybridcloudworks.com`, never
+ * on the text of the address, so a look-alike host such as
+ * `hybridcloudworks.com.example.net` or `evilhybridcloudworks.com` does not
+ * pass.
+ */
+export function siteAddress(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') return null;
+    // A page address never carries a non-default port or a user name; one
+    // that does is not a page of this site, even on the right host. An
+    // explicit :443 is HTTPS's own default port, so the parser drops it
+    // (url.port is ''): `https://hybridcloudworks.com:443/x` is the same
+    // address as `https://hybridcloudworks.com/x` and is accepted as such.
+    if (url.port || url.username || url.password) return null;
+    const host = url.hostname.toLowerCase();
+    return host === SITE_DOMAIN || host.endsWith(`.${SITE_DOMAIN}`) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The host name of a page on the domain ("docs.hybridcloudworks.com"), or null. */
+export function hostOf(value) {
+  return siteAddress(value)?.hostname.toLowerCase() ?? null;
+}
+
+/** Whether an address is on the main site itself, where the sitemap and its child sitemaps live. */
+const onMainSite = (value) => hostOf(value) === SITE_DOMAIN;
+
+/**
+ * The pages to inspect: https addresses on the domain or a subdomain only,
+ * first occurrence kept, at most `max`.
+ *
+ * @param {string[]} locs
+ * @param {{ max?: number }} [options]
+ * @returns {{ urls: string[], total: number }} total is before the cap
+ */
+export function selectSiteUrls(locs, { max = MAX_URLS } = {}) {
+  const seen = new Set();
+  const kept = [];
+  for (const loc of locs) {
+    if (!siteAddress(loc)) continue;
+    if (seen.has(loc)) continue;
+    seen.add(loc);
+    kept.push(loc);
+  }
+  return { urls: kept.slice(0, max), total: kept.length };
+}
+
+/** A path without the slashes at its end, but never shorter than "/". A loop, not a pattern, for the reason parseSitemap gives. */
+function trimTrailingSlashes(path) {
+  let end = path.length;
+  while (end > 1 && path[end - 1] === '/') end -= 1;
+  return path.slice(0, end);
+}
+
+/** An address in one spelling for comparing: lower-case host, no trailing slash past the root, no fragment. */
+export function comparableUrl(value) {
+  const url = siteAddress(value);
+  if (!url) return null;
+  return `https://${url.hostname.toLowerCase()}${trimTrailingSlashes(url.pathname)}${url.search}`;
+}
+
+/**
+ * The Search Analytics date range: `days` days ending LAG_DAYS before today
+ * (UTC), both ends included.
+ *
+ * @param {Date} now
+ * @param {number} [days]
+ */
+export function analyticsRange(now, days = RANGE_DAYS) {
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const end = today - LAG_DAYS * DAY_MS;
+  return { startDate: isoDate(end - (days - 1) * DAY_MS), endDate: isoDate(end) };
+}
+
+/** One Search Analytics row as the page shows it. */
+function metrics(row) {
+  return {
+    clicks: num(row?.clicks),
+    impressions: num(row?.impressions),
+    ctr: num(row?.ctr),
+    position: num(row?.position),
+  };
+}
+
+/** Rows grouped by one dimension: `{ key, clicks, impressions, ctr, position }`. */
+export function presentRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    key: str(Array.isArray(row?.keys) ? row.keys[0] : '') ?? '',
+    ...metrics(row),
+  }));
+}
+
+/** The totals row of an undimensioned query, zeros when Google sent none. */
+export function presentTotals(rows) {
+  return metrics(Array.isArray(rows) && rows.length ? rows[0] : null);
+}
+
+/** The daily rows: `{ date, clicks, impressions, ctr, position }`, oldest first. */
+export function presentDaily(rows) {
+  return presentRows(rows)
+    .map(({ key, ...rest }) => ({ date: key, ...rest }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+/**
+ * Pages on the domain or a subdomain with search traffic that the sitemap
+ * does not list, most impressions first, at most `max` (STRAYS_MAX, the
+ * table's length, unless asked for more).
+ *
+ * @param {object[]} pageRows - Search Analytics rows grouped by page
+ * @param {string[]} sitemapUrls - the pages the sitemap lists (before the cap)
+ * @param {{ max?: number }} [options]
+ */
+export function findStrays(pageRows, sitemapUrls, { max = STRAYS_MAX } = {}) {
+  const listed = new Set(sitemapUrls.map(comparableUrl).filter(Boolean));
+  return presentRows(pageRows)
+    .filter((row) => {
+      const key = comparableUrl(row.key);
+      return key !== null && !listed.has(key);
+    })
+    .map((row) => ({ url: row.key, clicks: row.clicks, impressions: row.impressions }))
+    .sort((a, b) => b.impressions - a.impressions || b.clicks - a.clicks)
+    .slice(0, max);
+}
+
+/** One inspected page as stored, from Google's UrlInspectionResult. */
+export function presentInspection(url, result, inspectedAt = null) {
+  const index = result?.indexStatusResult ?? {};
+  const verdict = VERDICTS.has(index.verdict) ? index.verdict : 'VERDICT_UNSPECIFIED';
+  return {
+    url,
+    verdict,
+    coverageState: str(index.coverageState) ?? '',
+    pageFetchState: str(index.pageFetchState) ?? '',
+    robotsTxtState: str(index.robotsTxtState) ?? '',
+    indexingState: str(index.indexingState) ?? '',
+    lastCrawlTime: str(index.lastCrawlTime),
+    googleCanonical: str(index.googleCanonical),
+    userCanonical: str(index.userCanonical),
+    inspectionResultLink: str(result?.inspectionResultLink),
+    error: null,
+    stale: false,
+    inspectedAt,
+  };
+}
+
+/** A page with no answer from Google: the same shape, with the failure's sentence. */
+export function failedInspection(url, note) {
+  return {
+    url,
+    verdict: 'VERDICT_UNSPECIFIED',
+    coverageState: '',
+    pageFetchState: '',
+    robotsTxtState: '',
+    indexingState: '',
+    lastCrawlTime: null,
+    googleCanonical: null,
+    userCanonical: null,
+    inspectionResultLink: null,
+    error: note,
+    stale: false,
+    inspectedAt: null,
+  };
+}
+
+/** Whether a stored page entry holds a real answer from Google: a fresh one, or an older one kept. */
+const hasResult = (page) => page?.error === null || page?.stale === true;
+
+/**
+ * A page this run has no fresh answer for: its inspection failed, or it was
+ * not inspected because of the daily budget or Google's quota. Its last
+ * answer is kept and marked stale, with `error` saying why it was not
+ * refreshed. A page with no earlier answer is a failed entry.
+ */
+export function keptInspection(previous, url, note) {
+  if (previous && hasResult(previous)) return { ...previous, url, stale: true, error: note };
+  return failedInspection(url, note);
+}
+
+/** `[{ key, count }]`, most first, then by name. */
+function tally(values) {
+  const counts = new Map();
+  for (const value of values) {
+    const key = value || 'Not reported';
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+/**
+ * The counts the page's summary cards show: each page by its latest answer
+ * from Google, kept (stale) answers included. A page with no answer at all
+ * is unknown.
+ */
+export function summarizeIndexing(pages) {
+  const inspected = pages.filter(hasResult);
+  const count = (verdict) => inspected.filter((page) => page.verdict === verdict).length;
+  const pass = count('PASS');
+  const neutral = count('NEUTRAL');
+  const fail = count('FAIL');
+  return {
+    pass,
+    neutral,
+    fail,
+    unknown: pages.length - pass - neutral - fail,
+    byCoverageState: tally(inspected.map((page) => page.coverageState)),
+    byPageFetchState: tally(inspected.map((page) => page.pageFetchState)),
+  };
+}
+
+/** Problems first: FAIL, then NEUTRAL, then unknown, then PASS; then by address. */
+const VERDICT_ORDER = { FAIL: 0, NEUTRAL: 1, VERDICT_UNSPECIFIED: 2, PASS: 3 };
+export function sortPages(pages) {
+  return [...pages].sort(
+    (a, b) =>
+      (VERDICT_ORDER[a.verdict] ?? 2) - (VERDICT_ORDER[b.verdict] ?? 2) ||
+      (a.url < b.url ? -1 : a.url > b.url ? 1 : 0)
+  );
+}
+
+/** The sitemaps as the page shows them; Google sends its counts as strings. */
+export function presentSitemaps(list) {
+  return (Array.isArray(list) ? list : []).map((entry) => ({
+    path: str(entry?.path) ?? '',
+    lastSubmitted: str(entry?.lastSubmitted),
+    lastDownloaded: str(entry?.lastDownloaded),
+    isPending: entry?.isPending === true,
+    warnings: num(entry?.warnings),
+    errors: num(entry?.errors),
+    // Only `submitted` is kept: Google marks `contents[].indexed`
+    // "Deprecated; do not use" (https://developers.google.com/webmaster-tools/v1/sitemaps).
+    contents: (Array.isArray(entry?.contents) ? entry.contents : []).map((part) => ({
+      type: str(part?.type) ?? '',
+      submitted: num(part?.submitted),
+    })),
+  }));
+}
+
+/**
+ * A sentence about a failure for the page, built from the failure's kind and
+ * HTTP status only. An AuthoredError from client.js or google-auth.js
+ * already has a sentence of this file's family; anything else gets a fixed one.
+ */
+export function failureNote(failure, fallback) {
+  if (failure instanceof GoogleAuthError || failure instanceof SearchConsoleError) {
+    const status = Number.isInteger(failure.status) ? failure.status : null;
+    if (failure instanceof GoogleAuthError) return describeAuth(failure.kind, status);
+    return describeCall(failure.kind, status, failure.reason ?? null);
+  }
+  return fallback;
+}
+
+function describeAuth(kind, status) {
+  const hop = { entra: 'hop 1 (Entra token)', sts: 'hop 2 (Google token exchange)', impersonation: 'hop 3 (service account token)' }[kind] ?? 'an unknown hop';
+  return `Google sign-in failed at ${hop}${status === null ? '' : ` with HTTP ${status}`}. The runbook's setup steps say what each hop needs.`;
+}
+
+function describeCall(kind, status, reason) {
+  if (reason === 'unreadable') return `Search Console ${kind} sent an answer that is not what Google documents, so it was not used.`;
+  if (reason === 'not_sent') return NOT_INSPECTED_BUDGET;
+  if (status === 403) return 'Google answered 403: the service account is not a Full user on the Search Console property.';
+  if (status === 404)
+    return "Google answered 404: it has no Search Console property at the address in the GSC_SITE_URL setting, or the service account cannot see it. Check the setting against the property's name in Search Console.";
+  if (status === 429) return `Search Console ${kind} hit Google's quota (HTTP 429).`;
+  if (status === null) return `Search Console ${kind} could not be reached.`;
+  return `Search Console ${kind} failed with HTTP ${status}.`;
+}
+
+/**
+ * Is this failure one that every later call would hit too? Then the run
+ * stops. 401 and 403: Google will not let the service account read the
+ * property. 404: Google has no property at GSC_SITE_URL, or the service
+ * account cannot see it, so every call would get the same answer.
+ */
+function isFatal(failure) {
+  if (failure instanceof GoogleAuthError) return true;
+  return failure instanceof SearchConsoleError && [401, 403, 404].includes(failure.status);
+}
+
+/** A request client.js held back because the day's inspections are used up. */
+const isNotSent = (failure) => failure instanceof SearchConsoleError && failure.reason === 'not_sent';
+
+const NOT_INSPECTED_BUDGET = 'Not inspected in the last run: the daily allowance of Google page inspections was used up.';
+const NOT_INSPECTED_QUOTA = 'Not inspected in the last run: Google answered that its quota was used up.';
+const NOT_IN_SITEMAP_READ = 'Not inspected in the last run: the sitemap could not be read in full, and the part that was read does not list this page.';
+const NOT_IN_SEARCH_READ = "Not inspected in the last run: the pages Google shows in search could not be worked out (the sitemap or Google's page list could not be read in full), so this page was not looked for.";
+const NOT_INSPECTED_DEADLINE = `Not inspected in the last run: the run reached its ${RUN_DEADLINE_MS / 60000}-minute time limit first.`;
+
+/** Google's quota answer (HTTP 429), still there after client.js's retries. */
+const isQuota = (failure) => failure instanceof SearchConsoleError && failure.status === 429;
+
+/** A stored page with where it came from and its host name. */
+const withOrigin = (page, source) => ({ ...page, source, host: hostOf(page.url) });
+
+/** Where a stored page came from; a page from before the field existed came from the sitemap. */
+const sourceOf = (page) => (page?.source === 'search' ? 'search' : 'sitemap');
+
+/** The snapshot the page reads before any run has written one. */
+export function emptySnapshot(siteUrl) {
+  return {
+    siteUrl,
+    generatedAt: null,
+    run: null,
+    indexing: {
+      summary: { pass: 0, neutral: 0, fail: 0, unknown: 0, byCoverageState: [], byPageFetchState: [] },
+      pages: [],
+      strays: [],
+      history: [],
+    },
+    performance: {
+      range: null,
+      totals: metrics(null),
+      totals28d: metrics(null),
+      daily: [],
+      queries: [],
+      pages: [],
+      countries: [],
+      devices: [],
+      searchAppearance: [],
+    },
+    sitemaps: [],
+  };
+}
+
+// ── Running a set of tasks a few at a time ───────────────────────────────────
+
+/**
+ * Run `task(item)` over `items`, at most `limit` at once, with at least
+ * `spacingMs` between starts. Stops starting new tasks once `stop()` is true.
+ */
+async function runPaced(items, { limit, spacingMs, sleep, now, stop, task }) {
+  let next = 0;
+  let nextStartAt = 0;
+  async function lane() {
+    while (next < items.length && !stop()) {
+      const index = next;
+      next += 1;
+      const wait = nextStartAt - now();
+      nextStartAt = Math.max(now(), nextStartAt) + spacingMs;
+      if (wait > 0) await sleep(wait);
+      if (stop()) return;
+      await task(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+}
+
+// ── The run ──────────────────────────────────────────────────────────────────
+
+const isWriteConflict = (failure) => {
+  const status = failure?.code ?? failure?.statusCode;
+  return status === 412 || status === 409;
+};
+
+const utcMinute = (date) => `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+
+/**
+ * @param {object} deps
+ * @param {{ readDoc: Function, createDoc: Function, replaceDocIfMatch: Function }} deps.store
+ * @param {Record<string, string|undefined>} [deps.env]
+ * @param {typeof fetch} [deps.fetchImpl] - for the sitemap and, unless `client` is given, Google
+ * @param {object} [deps.client] - test seam: a ready client.js client
+ * @param {object} [deps.credential] - test seam: the Azure credential google-auth.js uses
+ * @param {() => Date} [deps.now]
+ * @param {(ms: number) => Promise<void>} [deps.sleep]
+ * @param {number} [deps.spacingMs]
+ * @param {AbortSignal} [deps.signal] - the job's, so a timed-out job stops at once and saves nothing
+ * @param {number} [deps.deadlineMs] - the run's time limit (a test seam; RUN_DEADLINE_MS otherwise)
+ * @param {string|null} [deps.jobId] - the job's id when a job runs it, kept on the lease for Run now
+ * @param {string|null} [deps.jobCreatedAt] - when that job was queued (its document's createdAt)
+ * @param {object} [deps.log] - invocation context or logger
+ */
+export function createSearchConsoleSync({
+  store,
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+  client,
+  credential,
+  now = () => new Date(),
+  sleep = defaultSleep,
+  spacingMs = INSPECT_SPACING_MS,
+  signal,
+  deadlineMs = RUN_DEADLINE_MS,
+  jobId = null,
+  jobCreatedAt = null,
+  log,
+}) {
+  const info = (line) => log?.log?.(`[searchConsoleSync] ${line}`);
+
+  /**
+   * The sitemap's `<loc>` entries. `failed` says why the sitemap could not be
+   * read at all; `complete` is false when any part of it was not read (a
+   * child sitemap of an index that failed, or children past the first
+   * MAX_CHILD_SITEMAPS), so the strays are not worked out from it and pages
+   * it may have left out are kept rather than dropped.
+   *
+   * An answer counts as read only when it really is a sitemap: its first
+   * element is `<urlset>` (or, for the address in GSC_SITEMAP_URL only,
+   * `<sitemapindex>`). Anything else, such as the site's HTML page, which it
+   * sends with HTTP 200 for an address it does not know (#1613), is treated
+   * like an answer that never came. Without this, a child sitemap that moved
+   * would read as an empty one and its pages would be dropped.
+   *
+   * @param {AbortSignal} cancel - the run's cancel switch
+   */
+  async function readSitemapUrls(cancel) {
+    const root = (typeof env.GSC_SITEMAP_URL === 'string' && env.GSC_SITEMAP_URL.trim()) || DEFAULT_SITEMAP_URL;
+    const fetchXml = async (address) => {
+      try {
+        const response = await fetchWithTimeout(fetchImpl, address, { headers: { Accept: 'application/xml, text/xml' }, signal: cancel });
+        if (!response.ok) return { failed: `HTTP ${response.status}` };
+        return { xml: await response.text() };
+      } catch {
+        return { failed: 'unreachable' };
+      }
+    };
+    const first = await fetchXml(root);
+    if (first.failed) return { locs: [], failed: first.failed, complete: false, note: null };
+    if (!['urlset', 'sitemapindex'].includes(sitemapRoot(first.xml))) {
+      return { locs: [], failed: 'the answer is not a sitemap', complete: false, note: null };
+    }
+    const parsed = parseSitemap(first.xml);
+    if (!parsed.isIndex) return { locs: parsed.locs, failed: null, complete: true, note: null };
+    // A sitemap index: read each child sitemap on the site's own host, at
+    // most MAX_CHILD_SITEMAPS of them.
+    const sameHost = parsed.locs.filter(onMainSite);
+    const children = sameHost.slice(0, MAX_CHILD_SITEMAPS);
+    const skipped = sameHost.length - children.length;
+    // Child sitemaps on any other host are not read, so the list is not whole.
+    const offHost = parsed.locs.length - sameHost.length;
+    const locs = [];
+    let unread = 0;
+    for (const child of children) {
+      const answer = await fetchXml(child);
+      // A child must be a list of pages: an index one level further down is
+      // not followed, and a web page or other answer is not a sitemap.
+      if (answer.failed || sitemapRoot(answer.xml) !== 'urlset') unread += 1;
+      else locs.push(...parseSitemap(answer.xml).locs);
+    }
+    if (children.length > 0 && unread === children.length) {
+      return { locs: [], failed: `none of its ${children.length} child sitemaps could be read`, complete: false, note: null };
+    }
+    const gaps = [];
+    if (unread) gaps.push(`${unread} of ${children.length} child sitemaps could not be read`);
+    if (offHost) gaps.push(`${offHost} child sitemaps are not on ${SITE_DOMAIN} and were not read`);
+    if (skipped) gaps.push(`the sitemap index lists ${sameHost.length} child sitemaps and only the first ${MAX_CHILD_SITEMAPS} were read`);
+    if (gaps.length === 0) return { locs, failed: null, complete: true, note: null };
+    const said = gaps.join('; ');
+    return {
+      locs,
+      failed: null,
+      complete: false,
+      note: `${said[0].toUpperCase()}${said.slice(1)}, so the strays were not worked out this run, and pages the part read does not list keep their last result.`,
+    };
+  }
+
+  async function readStored() {
+    return store.readDoc(CONTAINER, SNAPSHOT_DOC_ID, ADMIN_CONFIG_PARTITION);
+  }
+
+  /** Write `build(stored)` under the ETag `stored` was read with; retry a lost race. */
+  async function save(build) {
+    for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt += 1) {
+      const stored = await readStored();
+      const doc = {
+        ...build(stored),
+        id: SNAPSHOT_DOC_ID,
+        configScope: ADMIN_CONFIG_PARTITION,
+        docType: SNAPSHOT_DOC_TYPE,
+      };
+      try {
+        if (stored) {
+          await store.replaceDocIfMatch(CONTAINER, { ...doc, _etag: stored._etag }, { partitionKey: ADMIN_CONFIG_PARTITION });
+        } else {
+          await store.createDoc(CONTAINER, doc);
+        }
+        return doc;
+      } catch (failure) {
+        if (!isWriteConflict(failure) || attempt === WRITE_ATTEMPTS) throw failure;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * `save(build)`, but only while this run still holds the lease: it is
+   * checked and extended first (lease.js `renew`), so no other run can take
+   * it during the write. False, with nothing written, when the run lost it.
+   */
+  async function saveWhileHeld(lease, build) {
+    const held = await lease.renew();
+    if (!held.ok) return false;
+    await save(build);
+    return true;
+  }
+
+  /** A failed run's document: the last good figures kept, only the status and run replaced. */
+  const keepPrevious = (stored, siteUrl, run) => ({
+    ...emptySnapshot(siteUrl),
+    ...pick(stored),
+    siteUrl,
+    status: 'error',
+    run,
+  });
+
+  /** The stored history with this run's entry added, newest last, at most HISTORY_MAX. */
+  const withHistory = (stored, entry) => {
+    const previous = Array.isArray(stored?.indexing?.history) ? stored.indexing.history : [];
+    return entry ? [...previous, entry].slice(-HISTORY_MAX) : previous.slice(-HISTORY_MAX);
+  };
+
+  /**
+   * The run itself, while this run holds the lease. `counts` tells the caller
+   * what to hand back. `cancel` is the run's cancel switch: it fires at the
+   * time limit or when the job's own signal fires.
+   */
+  async function runHeld(config, budget, lease, counts, cancel) {
+    const startedAt = now();
+    const started = startedAt.getTime();
+    const elapsed = () => Math.round((now().getTime() - started) / 1000);
+    const google =
+      client ??
+      createSearchConsoleClient({
+        siteUrl: config.siteUrl,
+        auth: createGoogleTokenProvider({
+          audience: config.audience,
+          appIdUri: config.appIdUri,
+          serviceAccountEmail: config.serviceAccountEmail,
+          credential,
+          env,
+          fetchImpl,
+          signal: cancel,
+        }),
+        fetchImpl,
+        sleep,
+      });
+
+    const notes = [];
+    let fatal = null;
+    let quotaHit = false;
+    const stopped = () => fatal !== null || cancel.aborted;
+    /** The time limit was reached (the switch fired, and not because of the job). */
+    const timeUp = () => cancel.aborted && signal?.aborted !== true;
+    const leaseLost = () => {
+      info(`stopped: the run lease was lost before saving, nothing written, ${elapsed()}s`);
+      return { skipped: 'lease_lost' };
+    };
+
+    // 2. The sitemap. Without it there is nothing to inspect and no way to
+    // tell a stray, so the run is an error that keeps everything as it was.
+    const sitemap = await readSitemapUrls(cancel);
+    if (cancel.aborted) {
+      // Stopped while the sitemap was read: what was read cannot be trusted
+      // to be whole, and nothing has been asked of Google yet.
+      info(`stopped: out of time while reading the sitemap, ${elapsed()}s`);
+      return { status: 'error', aborted: true, pages: 0, inspected: 0, failed: 0, strays: 0, seconds: elapsed() };
+    }
+    const { urls, total } = selectSiteUrls(sitemap.locs);
+    if (sitemap.failed || urls.length === 0) {
+      const finishedAt = now();
+      const message = sitemap.failed
+        ? `The sitemap could not be read (${sitemap.failed}), so nothing was asked of Google.`
+        : `The sitemap lists no page on ${SITE_DOMAIN} or its subdomains, so nothing was asked of Google.`;
+      const run = { startedAt: startedAt.toISOString(), finishedAt: finishedAt.toISOString(), inspected: 0, failed: 0, stale: 0, message };
+      if (!(await saveWhileHeld(lease, (stored) => keepPrevious(stored, config.siteUrl, run)))) return leaseLost();
+      info(`error: sitemap ${sitemap.failed ? 'unreadable' : 'empty'}, nothing inspected, ${elapsed()}s`);
+      return { status: 'error', pages: 0, inspected: 0, failed: 0, strays: 0, seconds: elapsed() };
+    }
+    if (sitemap.note) notes.push(sitemap.note);
+    if (total > urls.length) notes.push(`The sitemap lists ${total} pages; only the first ${urls.length} are inspected.`);
+    // Every page the sitemap (or the part of it that was read) lists, past
+    // the 900 cap included.
+    const listed = selectSiteUrls(sitemap.locs, { max: Number.POSITIVE_INFINITY }).urls;
+
+    // Search Analytics, for the whole property with no filter (SITE_DOMAIN's
+    // note says why). A query that fails gives null, and that part keeps the
+    // last run's figures.
+    const longRange = analyticsRange(startedAt, RANGE_DAYS);
+    const shortRange = analyticsRange(startedAt, SHORT_RANGE_DAYS);
+    const query = async (label, body) => {
+      if (stopped()) return null;
+      try {
+        return await google.searchAnalytics(body, { signal: cancel });
+      } catch (failure) {
+        // Cut off by the time limit: that part keeps its last figures, and
+        // the note about the time limit says why.
+        if (cancel.aborted) return null;
+        if (isFatal(failure)) fatal ??= failure;
+        notes.push(`Performance ${label}: ${failureNote(failure, 'the query failed.')} The last figures were kept.`);
+        return null;
+      }
+    };
+    const grouped = (dimension, rowLimit = TOP_ROWS) => query(dimension, { ...longRange, dimensions: [dimension], rowLimit });
+
+    // 3. The strays: pages Google showed in search that the sitemap does not
+    // list. Only from a sitemap read in full and a page query that
+    // answered; otherwise every page Google shows could look like a stray.
+    const pageRows = await grouped('page', PAGE_ROWS_FOR_STRAYS);
+    const strays = sitemap.complete && pageRows !== null ? findStrays(pageRows, listed, { max: Number.POSITIVE_INFINITY }) : null;
+    const strayRoom = Math.max(0, Math.min(STRAYS_INSPECTED_MAX, MAX_URLS - urls.length));
+    const strayUrls = (strays ?? []).slice(0, strayRoom).map((row) => row.url);
+    if (strays && strays.length > strayUrls.length) {
+      notes.push(
+        strayUrls.length === 0
+          ? `Google shows ${strays.length} pages in search that the sitemap does not list; none were inspected, because the sitemap's pages fill the run's ${MAX_URLS}.`
+          : `Google shows ${strays.length} pages in search that the sitemap does not list; only the ${strayUrls.length} with the most impressions are inspected.`
+      );
+    }
+    // Sitemap pages first, so they come first out of the daily budget too.
+    const targets = [...urls.map((url) => ({ url, source: 'sitemap' })), ...strayUrls.map((url) => ({ url, source: 'search' }))];
+
+    // 4. The daily budget: reserve one inspection per page before sending any.
+    const allowed = stopped() ? 0 : await lease.reserve(targets.length);
+    counts.reserved = allowed;
+    if (stopped()) {
+      // A refusal that stops the run (the run's message says which), or the
+      // time limit: nothing is inspected.
+    } else if (allowed === 0) {
+      notes.push(`${budgetSpentMessage(startedAt, budget)} No page was inspected; each keeps its last result.`);
+    } else if (allowed < targets.length) {
+      notes.push(
+        `Only ${allowed} of ${targets.length} pages fit in what is left of today's allowance of ${budget.toLocaleString('en-US')} Google page inspections; the rest keep their last result until it starts again at midnight Pacific time (${utcMinute(nextPacificMidnight(startedAt))}).`
+      );
+    }
+    const toInspect = targets.slice(0, allowed);
+
+    // Every request sent to URL Inspection, client.js's retries included,
+    // uses one inspection this run reserved (counts.sent against
+    // counts.reserved). Once they are all used, one more is asked of the
+    // budget before a request goes out, and the request is not sent when the
+    // day has none left. The asks are made one at a time, so this run's own
+    // four lanes do not race each other for the lease document.
+    let budgetOut = false;
+    let unitQueue = Promise.resolve(true);
+    const takeInspection = () => {
+      unitQueue = unitQueue.then(async () => {
+        if (counts.sent < counts.reserved) {
+          counts.sent += 1;
+          return true;
+        }
+        if (stopped()) return false;
+        const more = await lease.reserve(1).catch(() => 0);
+        if (more > 0) {
+          counts.reserved += more;
+          counts.sent += 1;
+          return true;
+        }
+        budgetOut = true;
+        return false;
+      });
+      return unitQueue;
+    };
+
+    // Inspect each page in the allowance.
+    const fresh = new Map();
+    const failures = new Map();
+    const inspectedAt = startedAt.toISOString();
+    let sent = 0;
+    await runPaced(toInspect, {
+      limit: CONCURRENCY,
+      spacingMs,
+      sleep: (ms) => sleepUnlessAborted(sleep, ms, cancel),
+      now: () => now().getTime(),
+      stop: () => stopped() || quotaHit || budgetOut,
+      task: async ({ url, source }) => {
+        try {
+          sent += 1;
+          fresh.set(url, presentInspection(url, await google.inspect(url, { beforeSend: takeInspection, signal: cancel }), inspectedAt));
+        } catch (failure) {
+          // Held back before its first request: the page was not inspected
+          // at all, and keeps its last result like the pages after it.
+          if (isNotSent(failure)) {
+            sent -= 1;
+            return;
+          }
+          // Cut off because the run was stopped: not Google's failure, so it
+          // is not recorded as one; the page keeps its last result.
+          if (cancel.aborted) return;
+          // A 403 on a page found in search can mean only that this one
+          // address is not part of the property (Google answers "the
+          // inspected URL is not part of this property"), so it fails that
+          // page and not the run. On a sitemap page it still stops the run.
+          const strayOutsideProperty = source === 'search' && failure instanceof SearchConsoleError && failure.status === 403;
+          if (isFatal(failure) && !strayOutsideProperty) fatal ??= failure;
+          if (isQuota(failure)) quotaHit = true;
+          failures.set(
+            url,
+            strayOutsideProperty
+              ? 'Google would not inspect this address (HTTP 403): it may not be part of the Search Console property.'
+              : failureNote(failure, 'The inspection failed.')
+          );
+        }
+      },
+    });
+    const failed = failures.size;
+    if (quotaHit) {
+      notes.push(
+        `Google still answered 429 (quota used up) after retries, so the run stopped inspecting after ${sent} of ${toInspect.length} pages; the rest keep their last result.`
+      );
+    } else if (budgetOut) {
+      notes.push(
+        `Retries used up what was left of today's allowance of ${budget.toLocaleString('en-US')} Google page inspections, so the run stopped inspecting after ${sent} of ${toInspect.length} pages; the rest keep their last result.`
+      );
+    }
+
+    // 5 and 6. The rest of Performance, and the sitemaps, unless the run
+    // already cannot go on. The page query of step 3 is saved either way.
+    const performanceParts = { range: longRange, pages: pageRows && presentRows(pageRows).slice(0, TOP_ROWS) };
+    let sitemaps = null;
+    if (!stopped()) {
+      const totals = await query('totals', { ...longRange });
+      const totals28d = await query('28-day totals', { ...shortRange });
+      const daily = await grouped('date', 1000);
+      const queries = await grouped('query');
+      const countries = await grouped('country');
+      const devices = await grouped('device');
+      // searchAppearance cannot be combined with another dimension, so it is its own query.
+      const appearance = await grouped('searchAppearance');
+      Object.assign(performanceParts, {
+        totals: totals && presentTotals(totals),
+        totals28d: totals28d && presentTotals(totals28d),
+        daily: daily && presentDaily(daily),
+        queries: queries && presentRows(queries),
+        countries: countries && presentRows(countries),
+        devices: devices && presentRows(devices),
+        searchAppearance: appearance && presentRows(appearance),
+      });
+      if (!stopped()) {
+        try {
+          sitemaps = presentSitemaps(await google.listSitemaps({ signal: cancel }));
+        } catch (failure) {
+          if (!cancel.aborted) {
+            if (isFatal(failure)) fatal ??= failure;
+            notes.push(`Sitemaps: ${failureNote(failure, 'the list could not be read.')} The last list was kept.`);
+          }
+        }
+      }
+    }
+
+    const finishedAt = now();
+    const seconds = elapsed();
+    if (signal?.aborted) {
+      // The job's budget ran out. Half a run is not written over the last
+      // whole one; the job is recorded as timed out by lib/jobs.js.
+      info(`stopped: out of time after ${sent} of ${targets.length} pages, ${seconds}s`);
+      return { status: 'error', aborted: true, pages: targets.length, inspected: sent, failed, strays: 0, seconds };
+    }
+    if (timeUp()) {
+      // The run's own time limit: what it has is saved, the rest kept.
+      notes.push(
+        `The run reached its ${RUN_DEADLINE_MS / 60000}-minute time limit after ${sent} of ${toInspect.length} pages were sent to Google, so it stopped; the pages it did not finish keep their last result, and any part not read keeps its last figures.`
+      );
+    }
+    const status = fatal ? 'error' : 'ok';
+    const notInspected = (index) => {
+      if (index >= allowed) return NOT_INSPECTED_BUDGET;
+      if (timeUp()) return NOT_INSPECTED_DEADLINE;
+      return quotaHit ? NOT_INSPECTED_QUOTA : NOT_INSPECTED_BUDGET;
+    };
+    // A sitemap read only in part: a page from the last run that is missing
+    // from what was read may sit in a child sitemap that could not be read.
+    const listedAnywhere = sitemap.complete ? null : new Set(listed);
+    const listedComparable = new Set(listed.map(comparableUrl).filter(Boolean));
+    let staleCount = 0;
+    let strayCount = 0;
+
+    const saved = await saveWhileHeld(lease, (stored) => {
+      const run = {
+        startedAt: startedAt.toISOString(),
+        finishedAt: finishedAt.toISOString(),
+        inspected: sent,
+        failed,
+        stale: 0,
+        message: fatal ? failureNote(fatal, 'The run failed.') : notes.length ? notes.join(' ') : null,
+      };
+      if (fatal) return keepPrevious(stored, config.siteUrl, run);
+
+      const previous = new Map(
+        (Array.isArray(stored?.indexing?.pages) ? stored.indexing.pages : [])
+          .filter((page) => page && typeof page.url === 'string')
+          .map((page) => [page.url, page])
+      );
+      const pages = targets.map(({ url, source }, index) =>
+        withOrigin(fresh.get(url) ?? keptInspection(previous.get(url), url, failures.get(url) ?? notInspected(index)), source)
+      );
+      // Pages from the last run that this run did not set out to inspect.
+      // A sitemap page is dropped when the sitemap was read in full and no
+      // longer lists it, and a stray when the strays were worked out again
+      // and it is no longer one of those inspected. Otherwise, when this run
+      // could not tell (part of the sitemap, or Google's page list, could not
+      // be read), the page keeps its last answer, marked stale, as long as
+      // the total stays within MAX_URLS (the snapshot is one document and has
+      // to stay small).
+      const planned = new Set(targets.map((target) => target.url));
+      for (const [url, page] of previous) {
+        if (pages.length >= MAX_URLS) break;
+        if (planned.has(url)) continue;
+        if (sourceOf(page) === 'sitemap') {
+          if (listedAnywhere && !listedAnywhere.has(url)) pages.push(withOrigin(keptInspection(page, url, NOT_IN_SITEMAP_READ), 'sitemap'));
+        } else if (strays === null && !listedComparable.has(comparableUrl(url))) {
+          pages.push(withOrigin(keptInspection(page, url, NOT_IN_SEARCH_READ), 'search'));
+        }
+      }
+      run.stale = pages.filter((page) => page.stale).length;
+      staleCount = run.stale;
+      const sortedPages = sortPages(pages);
+      // History counts only pages Google answered in this run.
+      const freshSummary = summarizeIndexing([...fresh.values()]);
+      const entry =
+        fresh.size > 0
+          ? { at: run.finishedAt, pass: freshSummary.pass, neutral: freshSummary.neutral, fail: freshSummary.fail, inspected: fresh.size, failed }
+          : null;
+      const base = stored ?? emptySnapshot(config.siteUrl);
+      const previousPerformance = { ...emptySnapshot(config.siteUrl).performance, ...(base.performance ?? {}) };
+      const performance = { ...previousPerformance };
+      for (const [key, value] of Object.entries(performanceParts)) {
+        if (value !== null && value !== undefined) performance[key] = value;
+      }
+      const keptStrays = Array.isArray(base.indexing?.strays) ? base.indexing.strays : [];
+      const strayTable = strays ? strays.slice(0, STRAYS_MAX) : keptStrays;
+      strayCount = strayTable.length;
+      return {
+        siteUrl: config.siteUrl,
+        status: 'ok',
+        generatedAt: run.finishedAt,
+        run,
+        indexing: {
+          summary: summarizeIndexing(sortedPages),
+          pages: sortedPages,
+          strays: strayTable,
+          history: withHistory(stored, entry),
+        },
+        performance,
+        sitemaps: sitemaps ?? (Array.isArray(base.sitemaps) ? base.sitemaps : []),
+      };
+    });
+    if (!saved) return leaseLost();
+
+    info(
+      `${status}: ${targets.length} pages (${strayUrls.length} from search), ${sent} inspected, ${failed} failed, ${staleCount} stale, ${strayCount} strays, ${seconds}s`
+    );
+    return { status, pages: targets.length, inspected: sent, failed, stale: staleCount, strays: strayCount, seconds };
+  }
+
+  /**
+   * For a run a job started: whether that job is no longer needed, so it
+   * stops before it takes the lease or calls Google. Two cases:
+   *
+   *   - The queued-job marker (lease.js) names a different job that is still
+   *     waiting or running. That job is the one Run now queued, and it will
+   *     do the run. This is how a job queued straight through enqueueJob,
+   *     which claims no marker, gives way.
+   *   - A run finished after this job was queued (the snapshot's
+   *     `run.finishedAt` is later than the job's `createdAt`). A queue
+   *     message that arrives late, for example one the jobs sweeper sent
+   *     again, would otherwise run a second time for nothing and spend the
+   *     day's inspections twice.
+   *
+   * The timer's runs are never superseded: they have no job.
+   */
+  async function superseded(at, leaseDoc) {
+    // leaseDoc: the lease document acquire() is about to replace, so the
+    // decision and the claim rest on the same read (see run() below).
+    const marked = await waitingMarkedJob(store, leaseDoc === undefined ? await readLease(store) : leaseDoc, at);
+    if (marked && marked.id !== jobId) return true;
+    const created = Date.parse(jobCreatedAt);
+    if (!Number.isFinite(created)) return false;
+    const finished = Date.parse((await readStored())?.run?.finishedAt);
+    // Five seconds of slack: finishedAt and createdAt come from different
+    // hosts' clocks, and a press just after a run ends must still run.
+    return Number.isFinite(finished) && finished > created + SUPERSEDE_SLACK_MS;
+  }
+
+  return {
+    async run() {
+      const config = readGoogleAuthConfig(env);
+      if (!config.configured) {
+        info(`skipped: ${config.missing.length} setting(s) empty`);
+        return { skipped: 'not_configured' };
+      }
+      if (jobId && (await superseded(now()))) {
+        // A marker naming this job is cleared, or Run now would wait for it
+        // until it lapses.
+        await clearPendingJob(store, jobId);
+        info('skipped: a newer run or another queued job makes this one unneeded');
+        return { skipped: 'superseded' };
+      }
+      const budget = dailyBudget(env);
+      const lease = createRunLease({ store, now, budget, by: jobId ? 'job' : 'timer', jobId });
+      // The superseded check runs again inside acquire(), on the very lease
+      // document it replaces with ifMatch. A press that claims the marker,
+      // or a run that finishes and releases the lease, changes that
+      // document between the check and the write, so the write fails, and
+      // acquire() reads again and checks again: the decision and the claim
+      // cannot be split (Copilot review of #1615). The check above stays as
+      // a cheap early exit that writes nothing.
+      const taken = await lease.acquire(jobId ? { admit: async (current, at) => !(await superseded(at, current)) } : undefined);
+      if (taken.superseded) {
+        info('skipped: a newer run or another queued job makes this one unneeded');
+        return { skipped: 'superseded' };
+      }
+      if (!taken.ok) {
+        info('skipped: another run is in progress');
+        return { skipped: 'already_running' };
+      }
+      // The run's cancel switch: it fires at the time limit, or when the
+      // job's own signal fires, and cuts off every call still waiting.
+      const cancel = new AbortController();
+      const deadline = setTimeout(() => cancel.abort(new Error('run time limit reached')), deadlineMs);
+      deadline.unref?.();
+      const onJobAbort = () => cancel.abort(signal.reason);
+      if (signal?.aborted) cancel.abort(signal.reason);
+      else signal?.addEventListener('abort', onJobAbort, { once: true });
+      // What was reserved against the daily budget and what was sent, so the
+      // lease gets back the inspections this run did not use.
+      const counts = { reserved: 0, sent: 0 };
+      try {
+        return await runHeld(config, budget, lease, counts, cancel.signal);
+      } finally {
+        clearTimeout(deadline);
+        signal?.removeEventListener('abort', onJobAbort);
+        try {
+          await lease.release({ unused: Math.max(0, counts.reserved - counts.sent) });
+        } catch {
+          // A timed-out job may no longer write; the lease lapses on its own.
+          info(`lease not given back; it lapses within ${LEASE_TTL_MS / 60000} minutes`);
+        }
+      }
+    },
+  };
+}
+
+/** The data sections of a stored snapshot, without Cosmos's own fields. */
+function pick(stored) {
+  const out = {};
+  for (const key of ['generatedAt', 'indexing', 'performance', 'sitemaps']) {
+    if (stored?.[key] !== undefined && stored[key] !== null) out[key] = stored[key];
+  }
+  return out;
+}

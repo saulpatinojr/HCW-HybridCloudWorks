@@ -126,6 +126,7 @@ const EXPECTED_SHIM_FILES = [
   "reviewer-digest-http.js",
   "rss-jobs.js",
   "schedulers.js",
+  "search-console-http.js",
   "social-caption-http.js",
   "streamyard-http.js",
   "telegram-http.js",

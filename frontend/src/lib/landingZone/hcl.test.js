@@ -501,23 +501,26 @@ describe('Multi-Cloud Landing Zone HCL emission (#Deliverable04)', () => {
   });
 
   // Native Terraform is the only export (owner decision 2026-11-09, ADR 0041).
-  // The OpenTofu and Terragrunt formats are gone, so a format value left over
-  // from an old caller changes nothing, and no emitted file names either tool.
-  it.each(['azure', 'aws', 'gcp'])(
-    'writes plain Terraform for %s whatever format value it is handed',
-    (cloud) => {
-      const state = { ...DEFAULT_STATE, cloud };
-      const terraform = emitFiles(state);
-      for (const format of ['unknown', 'terraform', undefined]) {
-        expect(emitFiles(state, format)).toEqual(terraform);
-      }
-      const paths = terraform.map((f) => f.path);
-      expect(paths).not.toContain('tofu.tf');
-      expect(paths).not.toContain('terragrunt.hcl');
-      for (const file of terraform)
-        expect(file.content).not.toMatch(/opentofu|terragrunt|\btofu\b/i);
-    }
-  );
+  // The OpenTofu and Terragrunt formats are gone, and no emitted file names
+  // either tool.
+  //
+  // emitFiles takes the state and nothing else. A format value left over from
+  // an old caller cannot change the output, because JavaScript drops extra
+  // arguments a function does not declare; so the test pins the signature
+  // rather than passing extra values, which proves nothing and which CodeQL
+  // flags (js/superfluous-trailing-arguments, alert 1440).
+  it('takes the state only, with no format parameter', () => {
+    expect(emitFiles.length).toBe(1);
+  });
+
+  it.each(['azure', 'aws', 'gcp'])('writes plain Terraform for %s', (cloud) => {
+    const state = { ...DEFAULT_STATE, cloud };
+    const terraform = emitFiles(state);
+    const paths = terraform.map((f) => f.path);
+    expect(paths).not.toContain('tofu.tf');
+    expect(paths).not.toContain('terragrunt.hcl');
+    for (const file of terraform) expect(file.content).not.toMatch(/opentofu|terragrunt|\btofu\b/i);
+  });
 
   it('no longer exports the format list or the bundle transformer', async () => {
     const lz = await import('./index');

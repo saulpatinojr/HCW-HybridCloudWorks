@@ -1407,6 +1407,7 @@ variable "enabled_timers" {
         "PLATFORM_JOB_SWEEPER", "BUILD_WEEKLY_NEWSLETTER", "REFRESH_TOOL_SERVICE_CACHE",
         "LABS_WEEKLY_ROLLUP", "PROBE_AI_PROVIDERS", "SEND_REMINDERS", "HEALTH_PULSE",
         "LAB_CANARY", "AMBASSADOR_AUDIENCE_MONTHLY", "SWEEP_VISITOR_SESSIONS",
+        "SYNC_SEARCH_CONSOLE",
       ], name)
     ])
     error_message = "enabled_timers accepts only flag suffixes from local.timer_catalogue in functionapp.tf, e.g. SYNC_RSS_FEEDS — not the function name, and not the full FEATURE_FLAG_ prefix."
@@ -1593,4 +1594,81 @@ variable "storage_firewall_remover_enabled" {
   EOT
   type        = bool
   default     = false
+}
+
+variable "lab_arc_run_command_enabled" {
+  description = <<-EOT
+    Grant lab-host-arc-run.yml's identity (github_arc_run, oidc.tf, #1590)
+    the HCW Arc Run Command Operator role on rg-lab-hybrid-prod-cus, so the
+    workflow can run its fixed scripts on the lab host through Azure Arc Run
+    Command, and look that custom role up.
+
+    False until the owner has created the role (Required-Inputs §4.6b,
+    scripts/bootstrap-roles.ps1), for the reason storage_firewall_remover_enabled
+    gives: a lookup of a role that does not exist hung the plan on 2026-11-04.
+    Flip it in the workspace after the bootstrap; the next run plans exactly
+    one create. Setting it back to false removes the grant, which is the way
+    to take Run Command away from CI without touching the host.
+  EOT
+  type        = bool
+  default     = false
+}
+
+# -----------------------------------------------------------------------------
+# Google Search Console (#1612)
+#
+# The admin Search Console page signs in to Google with no stored secret:
+# the Function App's managed identity gets an Entra token for the app
+# registration named by gsc_entra_app_id_uri, Google's token service trusts
+# it through the workload identity pool provider named by gsc_wif_audience,
+# and the app then acts as the service account gsc_service_account_email
+# (functions/src/lib/search-console/google-auth.js). All four are
+# identifiers, not secrets (docs/standards/variables-and-secrets.md), so they
+# are plain app settings, not Key Vault references. Empty until the owner
+# has done the Google side (docs/runbooks/search-console.md); while any of
+# the first three is empty the page says "not configured" and the timer
+# writes nothing. No real value belongs in this file: set them in the HCP
+# Terraform workspace.
+# -----------------------------------------------------------------------------
+
+variable "gsc_wif_audience" {
+  description = "Google workload identity pool provider's full name, //iam.googleapis.com/projects/<project number>/locations/global/workloadIdentityPools/hcw-azure/providers/<provider>, the audience of the token exchange; empty until the Google side is set up (#1612)"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.gsc_wif_audience == "" || can(regex("^//iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$", var.gsc_wif_audience))
+    error_message = "gsc_wif_audience must be empty or the provider's full resource name, starting //iam.googleapis.com/projects/ with the project NUMBER (not its id), as the runbook's step computes it."
+  }
+}
+
+variable "gsc_entra_app_id_uri" {
+  description = "Application ID URI of the Entra app registration the Function App's managed identity asks a token for (api://...); Google's pool provider allows exactly this audience. No secret is created for that registration. Empty until set up (#1612)"
+  type        = string
+  default     = ""
+
+  # Google's pool provider compares the token's audience with this value
+  # exactly, so a trailing slash, or a URI copied from somewhere other than
+  # the app registration, fails sign-in at hop 2 instead of here.
+  validation {
+    condition     = var.gsc_entra_app_id_uri == "" || can(regex("^api://.*[^/]$", var.gsc_entra_app_id_uri))
+    error_message = "gsc_entra_app_id_uri must be empty or the app registration's Application ID URI: it starts with api:// and does not end with a slash, as the runbook's step 7 prints it."
+  }
+}
+
+variable "gsc_service_account_email" {
+  description = "Email of the Google service account the app acts as (sa-hcw-search-console@<project>.iam.gserviceaccount.com), a Full user on the Search Console property; empty until set up (#1612)"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.gsc_service_account_email == "" || can(regex("^[a-z0-9-]+@[a-z0-9-]+\\.iam\\.gserviceaccount\\.com$", var.gsc_service_account_email))
+    error_message = "gsc_service_account_email must be empty or a service account email ending in .iam.gserviceaccount.com."
+  }
+}
+
+variable "gsc_site_url" {
+  description = "The Search Console property the page reads: sc-domain:hybridcloudworks.com is the Domain property the owner chose on #1612"
+  type        = string
+  default     = "sc-domain:hybridcloudworks.com"
 }
