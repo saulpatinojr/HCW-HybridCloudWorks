@@ -72,7 +72,14 @@ function Invoke-Gh {
   # A failing gh returns its exit code here rather than throwing, whatever
   # the caller's preference (this variable is local to the function).
   $PSNativeCommandUseErrorActionPreference = $false
-  $out = & gh @Arguments
+  try {
+    $out = & gh @Arguments
+  } catch {
+    # The message names the gh command, never its arguments (they may hold
+    # the value).
+    Write-Warning "gh $($Arguments[0]) $($Arguments[1]) could not run ($($_.Exception.GetType().Name))."
+    return [pscustomobject]@{ ExitCode = 1; Stdout = '' }
+  }
   [pscustomobject]@{ ExitCode = $LASTEXITCODE; Stdout = (@($out) -join "`n") }
 }
 

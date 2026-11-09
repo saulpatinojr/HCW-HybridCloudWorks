@@ -493,6 +493,12 @@ function Format-Subscription {
   return "$($Subscription.name)  [$($Subscription.id)]"
 }
 
+# The name alone, for a script that must not show subscription ids (#1610).
+function Format-SubscriptionName {
+  param($Subscription)
+  return "$($Subscription.name)"
+}
+
 # ---------------------------------------------------------------------------
 # Entra — the API app registration behind entra_api_audience
 # ---------------------------------------------------------------------------
@@ -616,18 +622,21 @@ function Select-Subscription {
   param(
     [Parameter(Mandatory)][string] $Purpose,
     [string] $Pattern,
-    [object[]] $Subscriptions
+    [object[]] $Subscriptions,
+    # Show names only, never ids.
+    [switch] $NamesOnly
   )
 
   if (-not $Subscriptions) { $Subscriptions = Get-AzSubscriptionList }
   if ($Subscriptions.Count -eq 0) { return $null }
+  $label = if ($NamesOnly) { ${function:Format-SubscriptionName} } else { ${function:Format-Subscription} }
 
   $candidates = if ($Pattern) { @($Subscriptions | Where-Object { $_.name -like $Pattern }) } else { @() }
   if ($candidates.Count -eq 1) {
-    return (Select-Option -Title $Purpose -Options $candidates -Label ${function:Format-Subscription} `
+    return (Select-Option -Title $Purpose -Options $candidates -Label $label `
         -AutoSelectSingle -AutoSelectNote "matched $Pattern")
   }
 
   $options = if ($candidates.Count -gt 1) { $candidates } else { $Subscriptions }
-  return (Select-Option -Title $Purpose -Options $options -Label ${function:Format-Subscription})
+  return (Select-Option -Title $Purpose -Options $options -Label $label)
 }

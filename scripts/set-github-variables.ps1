@@ -116,6 +116,21 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/deploy-console.ps1')
 
+# The arguments as they may be shown: the value after --body (a secret's
+# value) becomes ***, so an error never repeats it.
+function Format-GhArguments {
+  param([string[]] $Arguments)
+  $shown = [System.Collections.Generic.List[string]]::new()
+  for ($i = 0; $i -lt $Arguments.Count; $i++) {
+    $shown.Add($Arguments[$i])
+    if ($Arguments[$i] -eq '--body' -and $i + 1 -lt $Arguments.Count) {
+      $shown.Add('***')
+      $i++
+    }
+  }
+  return ($shown -join ' ')
+}
+
 # gh writes progress to stderr, which PowerShell 7 escalates under 'Stop'.
 # Judge success by exit code, same pattern as Invoke-Az in the bootstrap.
 function Invoke-Gh {
@@ -131,7 +146,7 @@ function Invoke-Gh {
   } finally { $ErrorActionPreference = $previous }
   if ($LASTEXITCODE -ne 0) {
     if ($AllowFailure) { return $null }
-    throw "gh $($Arguments -join ' ') failed:`n$output"
+    throw "gh $(Format-GhArguments $Arguments) failed:`n$output"
   }
   return ($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n"
 }
@@ -223,13 +238,15 @@ if (-not $TenantId -or -not $SubscriptionApp) {
     $subscriptions = Get-AzSubscriptionList
     if ($subscriptions.Count -eq 0) {
       Stop-WithGuidance 'The sign-in can see no enabled subscriptions.' @(
-        'Check with: az account list --all -o table'
+        'Check with: az account list --all -o json | ConvertFrom-Json | Select-Object name, state'
       )
     }
     # The application landing zone: where the Function App lives, and so the
     # subscription azure/login must target. NOT a platform subscription.
+    # -NamesOnly: the picker and its confirmation show subscription names,
+    # never ids (#1610).
     $chosen = Select-Subscription -Purpose 'Application landing zone (SUBSCRIPTION_ID)' -Pattern 'sub-app-*' `
-      -Subscriptions $subscriptions
+      -Subscriptions $subscriptions -NamesOnly
     $SubscriptionApp = $chosen.id
   }
 }

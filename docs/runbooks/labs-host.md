@@ -733,7 +733,7 @@ handler in it and the host does not have it yet. That is expected, and step
      ```
    - *`TimedOut`:* the script ran past its limit (5 minutes for `status`,
      20 for `memory-check`, 40 for `bootstrap`) and Azure stopped it.
-   - *"had not finished … s + 240 s after this step started":* the host never
+   - *"had not finished … s + 240 s after it was sent":* the host never
      reported an end, and the workflow stopped waiting four minutes after the
      script's own limit. The state lines above it show the last thing the
      host said; if they stayed `Pending`, the host never started the script.

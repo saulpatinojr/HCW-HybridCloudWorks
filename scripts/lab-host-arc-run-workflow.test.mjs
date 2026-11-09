@@ -131,15 +131,20 @@ describe('lab-host-arc-run.yml', () => {
     const run = job.steps.find((step) => step.name === 'Run the script on the host and report what it printed');
     expect(run.run).toMatch(/--async-execution false \\\n\s+--no-wait \\\n/);
     expect(run.lines.some((line) => /^ {10}POLL_SECONDS: 20$/.test(line))).toBe(true);
-    expect(run.run).toContain('deadline="$((step_start + RUN_TIMEOUT + 240))"');
-    // The longest script (bootstrap, 2400 s) + 240 s, one poll that overruns
-    // the deadline (a 20 s sleep and a read capped at 60 s) and the read-back
-    // (capped at 60 s) must fit inside the step's limit.
-    expect(Number(run['timeout-minutes']) * 60).toBeGreaterThanOrEqual(2400 + 240 + 20 + 60 + 60);
+    // The deadline counts from when the create returns, so a slow create
+    // does not eat the grace.
+    expect(run.run).toContain('deadline="$((started + RUN_TIMEOUT + 240))"');
+    expect(run.run.indexOf('deadline="$((started')).toBeGreaterThan(run.run.indexOf('--no-wait'));
+    expect(run.run).toContain('timeout 180 az connectedmachine run-command create');
+    // The create (180 s at most), the longest script (bootstrap, 2400 s) +
+    // 240 s, one poll that overruns the deadline (a 20 s sleep and a read
+    // capped at 60 s) and the read-back (capped at 60 s) must fit inside the
+    // step's limit.
+    expect(Number(run['timeout-minutes']) * 60).toBeGreaterThanOrEqual(180 + 2400 + 240 + 20 + 60 + 60);
     expect(job.steps.find((step) => step.name === 'Choose the script').run).toContain('bootstrap) script=lab-host/arc-run/bootstrap.sh; timeout=2400 ;;');
     const jobLimit = Number(job.lines.find((line) => /^ {4}timeout-minutes: /.test(line)).split(': ')[1]);
     const stepSum = job.steps.reduce((sum, step) => sum + Number(step['timeout-minutes']), 0);
-    expect(jobLimit).toBeGreaterThanOrEqual(stepSum - 1);
+    expect(jobLimit).toBeGreaterThanOrEqual(stepSum);
   });
 
   it('runs one at a time and never cancels a run in flight', () => {
@@ -387,7 +392,7 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
     expect(result.sleeps).toHaveLength(15);
     expect(result.stdout).toContain('[+5m00s] provisioningState=Creating executionState=Running');
     expect(result.stdout).toContain(
-      '::error::Run command hcw-status-1-1 had not finished 60 s + 240 s after this step started (execution state Running).'
+      '::error::Run command hcw-status-1-1 had not finished 60 s + 240 s after it was sent (execution state Running).'
     );
     expect(guarded(result.stdout).inside.filter((line) => line === 'still going')).toHaveLength(1);
     expect(result.summary).toContain('execution state **Running**');
@@ -454,7 +459,7 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
     expect(result.stdout).toContain('provisioningState=unexpected executionState=unexpected');
     expect(result.stdout).toContain('executionState=unexpected exitCode=unexpected');
     expect(result.summary).toContain('execution state **unexpected**, exit code **unexpected**');
-    expect(result.stdout).toContain('::error::Run command hcw-status-1-1 had not finished 0 s + 240 s');
+    expect(result.stdout).toContain('::error::Run command hcw-status-1-1 had not finished 0 s + 240 s after it was sent');
   });
 
   it('keeps a carriage return from closing the summary fence', () => {

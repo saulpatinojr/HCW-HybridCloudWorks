@@ -149,13 +149,15 @@ Describe 'the whole script, against a stand-in gh program' -Skip:($IsWindows) {
         New-Item -ItemType Directory -Path $bin | Out-Null
         $log = Join-Path $TestDrive 'gh-calls.txt'
         # Prints the value for SUBSCRIPTION_ID only; MISSING is not found.
+        # With HCW_FAKE_FAIL_SET set, `secret set` fails the way gh does,
+        # with an error on stderr and exit 1.
         Set-Content -LiteralPath (Join-Path $bin 'gh') -NoNewline -Value (@(
                 '#!/bin/sh',
                 "echo `"`$*`" >> '$log'",
                 'case "$1 $2 $3" in',
                 "  'variable get SUBSCRIPTION_ID') echo '$($script:sample)'; exit 0 ;;",
                 "  'variable get '*) echo 'variable not found' >&2; exit 1 ;;",
-                "  'secret set '*) exit 0 ;;",
+                "  'secret set '*) if [ -n `"`$HCW_FAKE_FAIL_SET`" ]; then echo 'HTTP 422: failed to set secret' >&2; exit 1; fi; exit 0 ;;",
                 'esac',
                 'exit 9',
                 ''
@@ -193,6 +195,36 @@ Describe 'the whole script, against a stand-in gh program' -Skip:($IsWindows) {
         $r.Out | Should -Match '1 of 2 secret\(s\) were not set'
         $r.Out | Should -Not -Match '00000000-0000-0000-0000-'
         @($r.Calls | Where-Object { $_ -like 'secret set*' }).Count | Should -Be 1
+    }
+
+    It 'when gh fails to set the secret, exits 1 and never shows the value' {
+        $env:HCW_FAKE_FAIL_SET = '1'
+        try {
+            $r = Invoke-Whole '-Repo o/r -Names SUBSCRIPTION_ID'
+        } finally {
+            Remove-Item Env:HCW_FAKE_FAIL_SET
+        }
+        $r.Code | Should -Be 1
+        $r.Out | Should -Match 'Did not set the repository secret SUBSCRIPTION_ID'
+        $r.Out | Should -Match 'HTTP 422'
+        $r.Out | Should -Not -Match '00000000-0000-0000-0000-'
+        $r.Calls | Should -Contain "secret set SUBSCRIPTION_ID -R o/r --body $($script:sample)"
+    }
+
+    It 'Invoke-Gh returns a failing exit code without throwing, and puts no argument in any stream' {
+        $env:HCW_FAKE_FAIL_SET = '1'
+        $previous = $env:PATH
+        try {
+            $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$previous"
+            $all = @(& { Invoke-Gh -Arguments @('secret', 'set', 'SUBSCRIPTION_ID', '-R', 'o/r', '--body', $script:sample) } *>&1)
+        } finally {
+            $env:PATH = $previous
+            Remove-Item Env:HCW_FAKE_FAIL_SET
+        }
+        $result = @($all | Where-Object { $_ -is [System.Management.Automation.PSCustomObject] })
+        $result.Count | Should -Be 1
+        $result[0].ExitCode | Should -Be 1
+        ($all | ForEach-Object { "$_" }) -join "`n" | Should -Not -Match '00000000-0000-0000-0000-'
     }
 
     It 'with -WhatIf, calls gh for nothing and exits 0' {

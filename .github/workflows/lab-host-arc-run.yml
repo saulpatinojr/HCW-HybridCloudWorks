@@ -79,8 +79,9 @@ jobs:
       id-token: write # exchanged by azure/login for an Azure access token
     runs-on: ubuntu-26.04
     # bootstrap: about six minutes on the host, 40 at most (RUN_TIMEOUT
-    # below), plus sign-in, install, the read-back and the clean-up.
-    timeout-minutes: 70
+    # below), plus sign-in, install, the read-back and the clean-up. At least
+    # the sum of the step limits (74).
+    timeout-minutes: 75
     # The gate. `lab-host-arc` is this workflow's own environment: required
     # reviewers approve each run, and its deployment-branch policy admits
     # main only (Required-Inputs §4.4). The owner creates it before the
@@ -233,24 +234,23 @@ jobs:
       # TimedOut, Canceled), at a terminal provisioningState (Succeeded,
       # Failed or Canceled: with --async-execution false provisioning ends
       # with the script, and a failed one may never report a script state),
-      # or RUN_TIMEOUT + 240 s after this step started. Then the run command is read once more
+      # or RUN_TIMEOUT + 240 s after the create returned. Then the run command is read once more
       # for the summary and the exit code, as before.
       - name: Run the script on the host and report what it printed
         id: run
-        # RUN_TIMEOUT (40 minutes at most) + 240 s is the poll deadline,
-        # counted from the start of this step. One poll that overruns it (a
-        # sleep and a read, a minute and a half at most) and the read-back (a
-        # minute at most) fit inside the 50.
-        timeout-minutes: 50
+        # The worst case, in seconds: the create (180 at most), then the poll
+        # deadline counted from when the create returns (RUN_TIMEOUT, 2400 at
+        # most, + 240), one poll that overruns it (a 20 s sleep and a read
+        # capped at 60), and the read-back (capped at 60): 2960 s, about 49
+        # minutes. 55 leaves room for jq, awk and the summary.
+        timeout-minutes: 55
         env:
           # A secret, so GitHub masks it as *** in this public log (#1610).
           SUBSCRIPTION_ID: ${{ secrets.SUBSCRIPTION_ID }}
           POLL_SECONDS: 20
         run: |
           set -euo pipefail
-          step_start="$(date +%s)"
-          deadline="$((step_start + RUN_TIMEOUT + 240))"
-          started="${step_start}"
+          started="$(date +%s)"
           view="${RUNNER_TEMP}/run-command.json"
           seen="${RUNNER_TEMP}/seen.txt"
           : > "${seen}"
@@ -341,7 +341,10 @@ jobs:
             --async-execution false \
             --no-wait \
             --only-show-errors --output none || create=$?
+          # The clock starts when Azure has the command, so a slow create
+          # (up to 180 s) does not eat into the 240 s of grace.
           started="$(date +%s)"
+          deadline="$((started + RUN_TIMEOUT + 240))"
 
           timed_out=0
           if [ "${create}" -ne 0 ]; then
@@ -458,7 +461,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "${timed_out}" -eq 1 ]; then
-            echo "::error::Run command ${RUN_NAME} had not finished ${RUN_TIMEOUT} s + 240 s after this step started (execution state ${state}). The next step deletes it, which stops the script if it is still running."
+            echo "::error::Run command ${RUN_NAME} had not finished ${RUN_TIMEOUT} s + 240 s after it was sent (execution state ${state}). The next step deletes it, which stops the script if it is still running."
             exit 1
           fi
           if [ "${state}" != "Succeeded" ] || [ "${exit_code}" != "0" ]; then
