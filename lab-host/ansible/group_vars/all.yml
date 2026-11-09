@@ -465,25 +465,24 @@ addons:
       AMO_WORKSPACE_PROVIDER: disabled
     secret_env:
       TURNSTILE_SECRET: vault_addon_migration_turnstile_secret
-  # NetworkEyes (#1562). image_digest is the v0.1.2 image INDEX, read on
-  # 2026-11-05 from `docker buildx imagetools inspect
-  # docker.io/hybridcloudworks/img-ne-lab-addon:v0.1.2`, which agreed with the
-  # tag run's summary. `gh attestation verify` against HCW-NetworkEyes_AddOn
-  # passed on it (exit 0); the signer is the publish-images workflow at
-  # refs/tags/v0.1.2
-  # (https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn/actions/runs/42129301768,
-  # tag on commit bc6d21b2). v0.1.2 is the release that clears the apt
-  # CVE-2026-109518 finding in the base image (Trivy clean in the dry run).
-  # Before it the row pinned v0.1.0
+  # NetworkEyes. image_digest is the v0.1.3 image INDEX, read on 2026-11-09 from
+  # Docker Hub's tag v0.1.3, which agreed with the tag run's summary.
+  # `gh attestation verify` against HCW-NetworkEyes_AddOn passed on it (exit 0);
+  # the signer is the publish-images workflow at refs/tags/v0.1.3
+  # (https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn/actions/runs/42563530777,
+  # tag on commit b0a361a7). v0.1.3 carries engine 0.1.5: an upload whose
+  # resource names contain a hedge word no longer fails, and rule set
+  # 2026.11.1 (Trivy clean in the dry run and the tag run).
+  # Before it the row pinned v0.1.2
+  # (digest sha256:b8818f7a25610da372d0744f2b0584ccbea5d91a60518d02b68a48fbda99f381)
+  # from 2026-11-05 to 2026-11-09, and v0.1.0
   # (digest sha256:202bc43bba9b8842bc9594c1dbe203ff636fddf3514d4255b8a60aabcb60aa77)
-  # from 2026-10-12 to 2026-11-05; v0.1.1 (2026-10-27, the version bump that
-  # put the licence label on the image) was never pinned here, so the row
-  # skips it.
+  # from 2026-10-12 to 2026-11-05; v0.1.1 was never pinned here.
   - id: network-assessment
     enabled: true
     image: docker.io/hybridcloudworks/img-ne-lab-addon
-    image_tag: "v0.1.2"
-    image_digest: "sha256:b8818f7a25610da372d0744f2b0584ccbea5d91a60518d02b68a48fbda99f381"
+    image_tag: "v0.1.3"
+    image_digest: "sha256:a7d77470c9f965da019696b7e30b25007b7c98b348c3fc4f38ea47855c6bf6b2"
     attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-NetworkEyes_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18082
     memory: 512m
