@@ -54,7 +54,11 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
   // unknown page, not that provider's design under this heading (#1616 item 3).
   const staticData = architecturesByProvider[providerKey]?.[slug] || null;
 
-  const itemProvider = String(item?.cloudProvider || item?.provider || '')
+  // Both spellings the backend reads: the RSS import writes 'Cloud Provider',
+  // a manual submission writes cloudProvider (functions/src/lib/content/inspect.js).
+  const itemProvider = String(
+    item?.cloudProvider || item?.['Cloud Provider'] || item?.provider || ''
+  )
     .trim()
     .toLowerCase();
   const providerMatches = !itemProvider || itemProvider === providerKey;

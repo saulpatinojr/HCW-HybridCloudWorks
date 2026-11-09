@@ -341,4 +341,23 @@ describe('ArchitectureDetailTemplate — a provider shows only its own designs',
     ).toBeInTheDocument();
     expect(screen.queryByText('AWS Only Design')).not.toBeInTheDocument();
   });
+
+  it('reads the older "Cloud Provider" spelling too, so a legacy AWS design stays off the VMware page', async () => {
+    mockFetchPublicContentItem.mockResolvedValue({
+      ...initialBlueprintForm,
+      type: 'architecture',
+      cloudProvider: undefined,
+      provider: undefined,
+      'Cloud Provider': 'AWS',
+      slug: 'legacy-aws-design',
+      title: 'Legacy AWS Design',
+    });
+
+    renderArchitectureRoute('/vmware/architecture-designs/legacy-aws-design', 'vmware');
+
+    expect(
+      await screen.findByRole('heading', { name: 'This page does not exist.' })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Legacy AWS Design')).not.toBeInTheDocument();
+  });
 });
