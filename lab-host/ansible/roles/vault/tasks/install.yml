@@ -194,6 +194,10 @@
   register: vault_certificate_check
   changed_when: false
   failed_when: vault_certificate_check.rc not in [0, 1]
+  # openssl only reads the certificate, so this runs in check mode too:
+  # skipped, it reports rc 0 and the nightly drift check never sees the
+  # warning below.
+  check_mode: false
 
 - name: Warn when the listener certificate is close to expiry
   ansible.builtin.debug:

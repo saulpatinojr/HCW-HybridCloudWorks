@@ -117,6 +117,9 @@
       - --quiet
   register: docker_running_before_switch
   changed_when: false
+  # A read, so it runs in check mode too: a check run then shows the stop
+  # below with the containers it would stop, not skipped on an empty list.
+  check_mode: false
   # Fails closed (#987 review): a daemon that cannot list its containers here
   # could leave them running on the old root after the restart. Only a host
   # with no daemon.json yet is skipped: that is a first run, on a daemon the
