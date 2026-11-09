@@ -62,6 +62,12 @@ const BACKEND_TERMS = Object.freeze({
   // and wrappers are not approved partners (owner decision 2026-11-09, ADR
   // 0041). No file is allowed this term, so neither name can come back.
   unapprovedIac: /open[ -]?tofu|\btofu (?:init|plan|apply|validate)\b|terragrunt/i,
+  // Third-party Terraform add-ons the site does not use or recommend: the
+  // tools pages list only Terraform, HashiCorp's Sentinel and TFLint (owner
+  // decision 2026-11-09, ADR 0041, #1597). Word boundaries, because
+  // "Atlantis" is also a place name; no public file used it in that sense
+  // when this was written. No file is allowed this term either.
+  unapprovedTools: /\binfracost\b|\batlantis\b/i,
 });
 
 /**
@@ -228,6 +234,10 @@ describe('the scan itself', () => {
     ['downloads as landing-zone-opentofu.zip', 'unapprovedIac'],
     ['the open-tofu fork', 'unapprovedIac'],
     ['run tofu init in the folder', 'unapprovedIac'],
+    ['Infracost · Cost estimation in pull requests', 'unapprovedTools'],
+    ['estimate costs with infracost breakdown', 'unapprovedTools'],
+    ['Remote State & Atlantis', 'unapprovedTools'],
+    ['run atlantis plan on the pull request', 'unapprovedTools'],
   ])('catches %j', (text, term) => {
     expect(termsIn(text).map(([t]) => t)).toContain(term);
   });
@@ -251,6 +261,8 @@ describe('the scan itself', () => {
     'Coder (opens in a new tab)',
     'a single server whose Azure Arc status is on the live card further down this page.',
     'This card shows what Azure Arc reports for the lab host right now: its connection, its Arc agent and its policy compliance.',
+    // The tools the Terraform pages keep (#1597).
+    'Terraform CLI, TFLint and Sentinel',
   ])('passes %j', (text) => {
     expect(termsIn(text)).toEqual([]);
   });

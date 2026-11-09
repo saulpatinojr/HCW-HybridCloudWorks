@@ -2,6 +2,7 @@
 
 **Status:** Accepted 2026-11-09 (owner decision)
 **Decision date:** 2026-11-09
+**Amended:** 2026-11-09, approved Terraform tooling ([#1597](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1597))
 **Owners:** Workload owner
 
 Related: issue [#1593](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1593)
@@ -38,6 +39,26 @@ tool for what the site generates and teaches. Its forks and wrappers,
 OpenTofu and Terragrunt by name, are not offered: no export format, no tool
 card, no lab instruction and no recommendation on a public page.
 
+### Amendment 2026-11-09: approved Terraform tooling
+
+Added the same day, on issue
+[#1597](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1597)
+(owner: "go with the recommendation"). The tools the site recommends around
+Terraform are these, and only these:
+
+- **Terraform CLI**, HashiCorp's command-line tool.
+- **HCP Terraform and Sentinel**, HashiCorp's hosted service and its own
+  policy-as-code language (rules that check a plan before it applies).
+- **TFLint**, the Terraform linter (a checker for mistakes and style), which
+  the site's own required `fmt, validate, tflint` check runs.
+- The **Landing Zone Builder** on this site, because what it writes is native
+  Terraform.
+
+Infracost (cost estimates in pull requests) and Atlantis (a server that runs
+Terraform from pull request comments) are third-party tools the site does not
+use, so they are not recommended: no tool card, no learning-path module and no
+resource link names them. The public-copy guard fails a public page that does.
+
 ## Consequences and accepted risks
 
 - The Landing Zone Builder writes plain Terraform only, downloaded as
@@ -46,6 +67,8 @@ card, no lab instruction and no recommendation on a public page.
 - The fixed passphrase of #1593 is gone with the OpenTofu emitter.
 - `frontend/src/public-copy.test.js` fails a public page, component, hook or
   lab text that names OpenTofu or Terragrunt, so neither can return quietly.
+- Since the amendment of 2026-11-09, the same test also fails a public page
+  that names Infracost or Atlantis.
 - A visitor who uses OpenTofu or Terragrunt can still adapt the Terraform
   files themselves; the site does not explain how.
 
