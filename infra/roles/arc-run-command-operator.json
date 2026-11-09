@@ -1,0 +1,19 @@
+{
+  "Name": "HCW Arc Run Command Operator",
+  "IsCustom": true,
+  "Description": "Run a command on the Azure Arc machines in rg-lab-hybrid-prod-cus through Run Command (preview), read its result and delete it, and nothing else: no extension install, no machine write or delete, no connectivity endpoint credentials, no data plane. Run Command executes as root on the host, so whoever holds this role is root on the lab host, and through the host's local identity endpoint can act as the Arc machine's own managed identity (unwrap the Vault seal key, write the backup container), which this role does not name. Consumed by infra/oidc.tf for lab-host-arc-run.yml (#1590), whose identity trusts only the subject of the lab-host-arc environment, so the control on who uses it is that environment's required reviewers and main-only branch policy. The built-in that carries runCommands/write, Azure Connected Machine Resource Administrator, also installs extensions and writes the machine, which is the reason this role exists. Actions from learn.microsoft.com/azure/azure-arc/servers/run-command and learn.microsoft.com/azure/role-based-access-control/permissions/hybrid-multicloud, read 2026-11-09. Created once by the owner because the Terraform identity deliberately lacks Microsoft.Authorization/roleDefinitions/write; scripts/bootstrap-roles.sh and .ps1 fill in AssignableScopes.",
+  "Actions": [
+    "Microsoft.HybridCompute/machines/read",
+    "Microsoft.HybridCompute/machines/runcommands/read",
+    "Microsoft.HybridCompute/machines/runcommands/write",
+    "Microsoft.HybridCompute/machines/runcommands/delete",
+    "Microsoft.HybridCompute/locations/operationresults/read",
+    "Microsoft.HybridCompute/locations/operationstatus/read"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-lab-hybrid-prod-cus"
+  ]
+}

@@ -83,6 +83,7 @@ roles=(
   "static-web-app-deployer.json:/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-web-site-prod-cus"
   "alert-rule-reader.json:/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-web-site-prod-cus,/subscriptions/$MGMT_SUBSCRIPTION_ID/resourceGroups/rg-mgmt-plat-prod-cus"
   "storage-firewall-writer.json:/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-web-site-prod-cus"
+  "arc-run-command-operator.json:/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-lab-hybrid-prod-cus"
 )
 
 read_back=()

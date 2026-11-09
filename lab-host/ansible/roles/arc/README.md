@@ -69,8 +69,19 @@ With `arc_enabled: true`:
    arcs-lab-hybrid-prod-cus-01 in rg-lab-hybrid-prod-cus.`
 7. Locks the agent down (estate review 2026-10-06, LAB-6; ADR 0032,
    amendments of 2026-10-06 and 2026-10-07): the extension allowlist is
-   `arc_extensions_allowlist` alone (the Azure Monitor Agent), and guest
-   configuration is off. Incoming connections through Arc are on for port
+   `arc_extensions_allowlist` (the Azure Monitor Agent) plus, while
+   `arc_run_command_enabled` is true, the Run Command handler
+   (`Microsoft.CPlat.Core/RunCommandHandlerLinux`, owner decision
+   2026-11-09, #1590; ADR 0032, amendment of that date), and guest
+   configuration is off. The handler is what lets
+   `.github/workflows/lab-host-arc-run.yml` run one of its fixed scripts on
+   the host as root through Azure, after a reviewer of its own GitHub
+   environment, `lab-host-arc`, approves the run; [Run command on Azure Arc-enabled
+   servers](https://learn.microsoft.com/azure/azure-arc/servers/run-command)
+   is Microsoft's page, and `docs/runbooks/labs-host.md` ("Run a fixed
+   command on the host through Azure Arc") is how to use it.
+   `arc_run_command_enabled: false` puts LAB-6's allowlist back, the Azure
+   Monitor Agent alone. Incoming connections through Arc are on for port
    22 alone (`incomingconnections.enabled true`,
    `incomingconnections.ports 22`) while `arc_incoming_ssh_enabled` is true,
    its default since #953 (LAB-7; ADR 0032, amendment of 2026-10-16): that
@@ -84,16 +95,22 @@ With `arc_enabled: true`:
    this role's tag, so no run leaves the host with neither path. Each setting is
    read with `azcmagent config get` and written with `config set` only when
    it differs, so a second run reports nothing changed; then all three are
-   read back, and the run fails closed unless the allowlist is still the
-   Azure Monitor Agent alone and port 22 is the only port admitted. In
+   read back, and the run fails closed unless the allowlist is exactly what
+   this role wrote (the Azure Monitor Agent, plus the Run Command handler
+   while `arc_run_command_enabled` is true; extension names are compared in
+   lower case) and port 22 is the only port admitted. In
    check mode, which the nightly drift check (`hcw-playbook-drift`) runs,
    the settings are read all the same and any difference is reported as one
    changed task, which that check counts as drift, without stopping the
    check of the roles after this one.
    These settings live on the host and cannot be changed from Azure, which
-   is the point: a Contributor on the resource group can no longer push an
-   extension or a Run Command, and a custom machine configuration policy
-   cannot rewrite them. Read back on the host with `sudo
+   is the point: a Contributor on the resource group cannot push any other
+   extension, and a custom machine configuration policy cannot rewrite them.
+   **Run Command is the exception while `arc_run_command_enabled` is true**
+   (the default since 2026-11-09): anyone who may create a run command on
+   the machine (Owner, Contributor, or the *HCW Arc Run Command Operator*
+   role the `lab-host-arc-run.yml` identity holds) can run a script as root
+   on the host. With it false, no one can, as under LAB-6. Read back on the host with `sudo
    /opt/azcmagent/bin/azcmagent config list`.
 
 What it does **not** do: install the Azure Monitor Agent, or associate the
@@ -124,6 +141,7 @@ Connected, and then deletes the credential from Entra and the vault.
 | `arc_tenant_id` | `vault_arc_tenant_id` | Entra tenant id |
 | `arc_subscription_id` | `vault_arc_subscription_id` | Application subscription id |
 | `arc_extensions_allowlist` | `Microsoft.Azure.Monitor/AzureMonitorLinuxAgent` | The extensions the agent may install (LAB-6) |
+| `arc_run_command_enabled` | `true` | Azure Arc Run Command (preview, #1590): adds the Run Command handler to the allowlist. False puts LAB-6's allowlist back |
 | `arc_incoming_ssh_enabled` | `true` | Azure Arc SSH: incoming connections on, port 22 alone (#953). False turns incoming connections off and clears the port |
 
 To bump the agent, read the versions the repository offers and change

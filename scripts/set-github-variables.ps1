@@ -17,6 +17,7 @@
              ALERT_READER_CLIENT_ID (alert_reader_client_id),
              MANIFEST_WINDOW_CLIENT_ID (manifest_window_client_id),
              COPILOT_REVIEW_CLIENT_ID (copilot_review_client_id),
+             ARC_RUN_CLIENT_ID (arc_run_client_id),
              APP_HOSTNAME (function_hostname), FUNCTIONS_URL (api_base_url),
              FUNCTION_APP_NAME, RESOURCE_GROUP (web_resource_group),
              FUNCTIONS_STORAGE_ACCOUNT, STORAGE_ACCOUNT,
@@ -317,6 +318,10 @@ if ($outputs) {
     # Reader on the four workload groups and nothing else; the login fails
     # closed while this is unset, so seed it in the same pass as the apply.
     @{ output = 'copilot_review_client_id'; kind = 'variable'; name = 'COPILOT_REVIEW_CLIENT_ID'; transform = { param($v) $v } }
+    # #1590: lab-host-arc-run.yml's identity, the Run Command role on the lab
+    # group and nothing else. The workflow refuses to start while this is
+    # unset, naming the variable.
+    @{ output = 'arc_run_client_id'; kind = 'variable'; name = 'ARC_RUN_CLIENT_ID'; transform = { param($v) $v } }
     @{ output = 'function_hostname'; kind = 'variable'; name = 'APP_HOSTNAME'; transform = { param($v) $v } }
     # api_base_url, NOT function_hostname. This was built from the
     # azurewebsites.net origin until 2026-08-20, which stopped working the

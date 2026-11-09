@@ -22,7 +22,20 @@ argument_specs:
         type: str
         required: false
         default: "Microsoft.Azure.Monitor/AzureMonitorLinuxAgent"
-        description: The extensions the Arc agent may install, as azcmagent's extensions.allowlist value (LAB-6).
+        description:
+          - The extensions the Arc agent may install, as azcmagent's extensions.allowlist value (LAB-6).
+          - The Run Command handler is added to it by arc_run_command_enabled, not listed here.
+      arc_run_command_enabled:
+        type: bool
+        required: false
+        default: true
+        description:
+          - Azure Arc Run Command (preview, issue 1590; ADR 0032 amendment of 2026-11-09). True adds
+            Microsoft.CPlat.Core/RunCommandHandlerLinux to the extension allowlist, so
+            .github/workflows/lab-host-arc-run.yml can run one of its fixed scripts on the host as
+            root. It reverses part of LAB-6 by owner decision 2026-11-09.
+          - Nothing else is opened. No other extension is added, incoming connections stay at port 22
+            alone, and guest configuration stays off. False puts LAB-6's allowlist back.
       arc_incoming_ssh_enabled:
         type: bool
         required: false
@@ -33,7 +46,8 @@ argument_specs:
             connectivity endpoint in infra/lab-hybrid.tf can carry SSH to sshd and to nothing
             else. False puts LAB-6's state back, incoming connections off and no port listed.
           - The extension allowlist is not touched either way, and the role fails closed if it
-            reads back anything but arc_extensions_allowlist.
+            reads back anything but arc_extensions_allowlist (plus the Run Command handler while
+            arc_run_command_enabled is true).
       arc_enabled:
         type: bool
         required: true

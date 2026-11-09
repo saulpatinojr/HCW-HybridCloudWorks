@@ -990,6 +990,88 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
   it as it is while the agent is Disconnected, because a rebuilt or reset
   host is onboarded over port 22 by `Register-LabArc.ps1`. Since #1257 sshd
   also listens on the loopback alone, and that bind follows the same gate.)*
+
+  *Amendment 2026-11-09 ([#1590](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1590); owner decision that day):*
+  **Run Command comes back, from one gated workflow, for three fixed
+  scripts.** Until now the only way onto the host was SSH with one pinned
+  key that lives on one workstation, so a fix the host needed waited for
+  that one machine. The owner asked for "a workflow to use Azure Arc to run
+  [commands on the host] even if it's in preview", and approved changing
+  the lockdown above to get it. *What changes:* the `arc` role adds the Run
+  Command handler, `Microsoft.CPlat.Core/RunCommandHandlerLinux`, to the
+  extension allowlist beside the Azure Monitor agent, behind
+  `arc_run_command_enabled` (default true; false puts LAB-6's allowlist
+  back). Nothing else opens: no other extension, incoming connections stay
+  at port 22 alone, Windows Admin Center stays refused, guest configuration
+  stays off, and the role still fails closed if the allowlist reads back
+  anything but what it set. A new workflow,
+  [`lab-host-arc-run.yml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/workflows/lab-host-arc-run.yml), asks
+  Azure to run one of three scripts kept in this repository
+  (`lab-host/arc-run/`): `status` (read-only), `memory-check` (the five-run
+  sandbox memory check) and `bootstrap` (a full `bootstrap.sh` run).
+  ([Run command on Azure Arc-enabled servers (preview)](https://learn.microsoft.com/azure/azure-arc/servers/run-command),
+  read 2026-11-09.)
+
+  *The risk, said plainly:* Run Command runs its script **as root** on the
+  host. Whoever may create a run command on the Arc machine
+  (`Microsoft.HybridCompute/machines/runcommands/write`) is root on the lab
+  host through Azure, without sshd and without the pinned key. Owner and
+  Contributor on the subscription or on `rg-lab-hybrid-prod-cus` carry that
+  action, so since this amendment those roles reach root on the host again,
+  which LAB-6 had taken away. **Root on the host is also the Arc machine's
+  own managed identity:** any root process can ask the agent's local
+  identity endpoint for a token as that identity, which holds Key Vault
+  Crypto Service Encryption User on the Vault seal key
+  (`lab_hybrid_vault_seal` in `infra/lab-hybrid.tf`) and Storage Blob Data
+  Contributor on the backup container (`infra/lab-hybrid-backups.tf`). So a
+  run command can unwrap the Vault seal key and read and write the off-host
+  backups (a delete inside the container's immutability window is refused). The *HCW Arc Run Command Operator* role names none of
+  those actions; the host reaches them anyway. It is also a preview
+  feature, so its behaviour can change.
+
+  *The mitigations:*
+  1. **No free text.** The workflow's one input is a choice of three, each
+     mapped by a fixed `case` to a file in the repository; no input is
+     written into a shell line. A new action is a reviewed pull request.
+  2. **A person approves every run, in an environment of its own.** The job
+     is bound to a dedicated GitHub environment, `lab-host-arc`, whose
+     required reviewers approve each run and whose deployment-branch policy
+     admits `main` only. That environment is the control. The identity the
+     workflow signs in as, `github_arc_run` (`infra/oidc.tf`), trusts the
+     OIDC subject `repo:<org>/<repo>:environment:lab-host-arc`, and Entra
+     matches a federated credential on issuer, subject and audience alone
+     (the client id is public), so any job that names `lab-host-arc` could
+     sign in as it. That is why it is not `production`: both deploy jobs
+     name `production` and run `npm ci`, and a package script there must
+     not reach root on the lab host. `scripts/oidc-subjects.test.mjs` fails
+     if any workflow but `lab-host-arc-run.yml` names `lab-host-arc`, or any
+     other identity trusts its subject. The owner creates the environment,
+     with its reviewers and branch rule, before the first run, because
+     GitHub creates a missing environment with no protection the first time
+     a job names it.
+  3. **Its own identity, with one narrow role.** `github_arc_run` holds one
+     custom role, *HCW Arc Run Command Operator*
+     (`infra/roles/arc-run-command-operator.json`): read the machine, create,
+     read and delete run commands, read the operation's status. No extension
+     install, no machine write, no SSH relay credentials. The grant is behind
+     `lab_arc_run_command_enabled` in `hcw-azure`; setting it to `false`
+     takes Run Command away from CI without touching the host.
+  4. **Nothing left behind.** Each run's run command is deleted from the
+     machine in an `always()` step, so no script stays stored there.
+  5. **A record.** Arc's activity log records every create and delete of a
+     run command, with the caller.
+  6. **Public output kept small.** This repository is public, so the run's
+     log is readable by anyone. The scripts print states, counts and names;
+     `bootstrap` keeps its full log on the host, root-only, under
+     `/var/log/hcw-arc-run/`, and prints only the play recap and the names
+     of failed tasks.
+
+  *What it does not change:* SSH with the pinned key stays the main way in,
+  and hPanel's Web Console stays the break-glass. The workflow cannot run
+  until the host has had one `bootstrap.sh` run over SSH with this change,
+  because until then the agent's allowlist refuses the handler; the steps
+  are in the [runbook](../runbooks/labs-host.md), "Run a fixed command on
+  the host through Azure Arc".
 - **Ingestion is bounded but not zero.** Heartbeat and auth syslog on one host
   are kilobytes a day against the workspace's 0.25 GB/day cap
   ([ADR 0031](0031-security-scanner-owner-decisions.md) records the headroom).

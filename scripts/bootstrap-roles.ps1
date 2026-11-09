@@ -14,6 +14,7 @@
     4. HCW Static Web App Deployer (infra/roles/static-web-app-deployer.json)
     5. HCW Alert Rule Reader (infra/roles/alert-rule-reader.json)
     6. HCW Storage Firewall Writer (infra/roles/storage-firewall-writer.json)
+    7. HCW Arc Run Command Operator (infra/roles/arc-run-command-operator.json)
 
   Those files carry placeholder subscription ids
   (00000000-0000-0000-0000-00000000000N) in their AssignableScopes, because
@@ -125,6 +126,10 @@ $roleConfigs = @(
   @{
     File = Join-Path $rolesDir "storage-firewall-writer.json"
     Scopes = @("/subscriptions/$SubscriptionId/resourceGroups/rg-web-site-prod-cus")
+  },
+  @{
+    File = Join-Path $rolesDir "arc-run-command-operator.json"
+    Scopes = @("/subscriptions/$SubscriptionId/resourceGroups/rg-lab-hybrid-prod-cus")
   }
 )
 

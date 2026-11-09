@@ -470,6 +470,7 @@ Everything else there is a default nobody is expected to override.
 | `CLIENT_ID` | §7 | Identifier under WIF; grants nothing without a matching federated subject |
 | `READER_CLIENT_ID`, `ALERT_READER_CLIENT_ID`, `COPILOT_REVIEW_CLIENT_ID` | §7 | Identifiers for the read-only identities (`github_reader`; `github_alert_reader`, which reads alert rules; `github_copilot_review`, which Copilot code review signs in as) — same reasoning |
 | `MANIFEST_WINDOW_CLIENT_ID` | §7 | Identifier for `github_manifest_window`, which opens and closes `publish-content-manifest.yml`'s origin window (#1098) — same reasoning |
+| `ARC_RUN_CLIENT_ID` | — | Identifier for `github_arc_run`, which `lab-host-arc-run.yml` signs in as to run one of its fixed scripts on the lab host through Azure Arc Run Command (#1590). It grants nothing without an OIDC token for the `lab-host-arc` environment's subject, so the control is that environment's reviewers and main-only branch rule — same reasoning |
 | `COPILOT_REVIEW_APP_ID` | — | App ID of the read-only GitHub App Copilot code review reads GitHub with. An identifier, exactly like `MANIFEST_APP_ID`; the key is in store 4 |
 | `TENANT_ID` | §7 | Identifier |
 | `SUBSCRIPTION_ID` | §7 | Identifier |
