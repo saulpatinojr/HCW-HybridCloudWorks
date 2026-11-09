@@ -624,16 +624,20 @@ step 6 is one last run over SSH, from the workstation with the key.
    and do step 3 again.
 5. **Seed the client id.** PowerShell, from the repository root on `main`.
    The script reads the `arc_run_client_id` output from the workspace and
-   sets the repository variable `ARC_RUN_CLIENT_ID`, beside the ones it
-   already manages:
+   sets the repository **secret** `ARC_RUN_CLIENT_ID`, beside the ones it
+   already manages (a secret since
+   [#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618),
+   so the public run log shows `***` instead of the id):
 
    ```powershell
    git checkout main; git pull origin main; ./scripts/set-github-variables.ps1
    ```
 
-   Success is a line naming `ARC_RUN_CLIENT_ID` and a GUID. It is an
-   identifier, not a secret, and public: what decides who can sign in as
-   this identity is the `lab-host-arc` environment from step 1.
+   Success is a line `create  ARC_RUN_CLIENT_ID (secret; value not shown)`
+   (or `update` when it was already set). The id grants nothing by itself:
+   what decides who can sign in as this identity is the `lab-host-arc`
+   environment from step 1. It is kept as a secret only so that GitHub masks
+   it in this public repository's logs.
 6. **Let the agent accept the handler: one `bootstrap.sh` run over SSH.**
    PowerShell, on the workstation with the key:
 

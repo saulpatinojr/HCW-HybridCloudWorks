@@ -111,6 +111,33 @@ concurrency:
 # exist to prevent.
 
 jobs:
+  # The self-arming test, as a job of its own (#1618). The client id is a
+  # repository SECRET, so the public log prints it as ***, and GitHub does not
+  # let a job's `if:` read `secrets` (GitHub Docs, workflow syntax, "Example:
+  # Using secrets"). This job reads it into `env`, answers only true or false,
+  # and the job below runs when the answer is true. It holds no token and
+  # checks nothing out.
+  armed:
+    name: Is MANIFEST_WINDOW_CLIENT_ID set?
+    runs-on: ubuntu-26.04
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      armed: ${{ steps.armed.outputs.armed }}
+    steps:
+      - name: Is the MANIFEST_WINDOW_CLIENT_ID secret set?
+        id: armed
+        timeout-minutes: 1
+        env:
+          MANIFEST_WINDOW_CLIENT_ID: ${{ secrets.MANIFEST_WINDOW_CLIENT_ID }}
+        run: |
+          if [ -n "${MANIFEST_WINDOW_CLIENT_ID}" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The repository secret MANIFEST_WINDOW_CLIENT_ID is not set, so the job that signs in to Azure is skipped (docs/standards/required-inputs.md, section 4.3)."
+          fi
+
   build:
     name: Fetch the published corpus and build the manifest
     # MANIFEST_WINDOW_CLIENT_ID (#1098), not CLIENT_ID or READER_CLIENT_ID.
@@ -122,11 +149,13 @@ jobs:
     # holding this write beside its app-settings read (infra/oidc.tf).
     #
     # The self-arming gate matches monitor-functions-registered and
-    # verify-alert-state: until the apply lands and the variable is seeded, this
-    # skips rather than failing at azure/login on an empty client-id. `commit`
+    # verify-alert-state: until the apply lands and the secret is set (the
+    # `armed` job above tests it, since a job's `if:` cannot read a secret),
+    # this skips rather than failing at azure/login on an empty client-id. `commit`
     # needs this job, so it skips with it and the manifest simply stays at its
     # last committed version.
-    if: ${{ vars.MANIFEST_WINDOW_CLIENT_ID != '' }}
+    needs: armed
+    if: needs.armed.outputs.armed == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 25 # slowest 1.5 min; each step up to the window close has its own limit, 19 min in all (#1441)
     permissions:
@@ -151,8 +180,8 @@ jobs:
         timeout-minutes: 2 # slowest 17 s
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ vars.MANIFEST_WINDOW_CLIENT_ID }}
-          tenant-id: ${{ vars.TENANT_ID }}
+          client-id: ${{ secrets.MANIFEST_WINDOW_CLIENT_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
 
       # `--ignore-scripts`: nothing in this tree needs a lifecycle script, and

@@ -112,11 +112,12 @@ jobs:
         working-directory: functions
         run: npm ci
 
-      # Federated OIDC — no stored credential. These three are repository
-      # VARIABLES, not secrets: they identify the managed identity but grant
-      # nothing without an OIDC token from this repo and ref. Their values come
-      # from the `client_id` Terraform output and the subscription
-      # and tenant the workspace targets.
+      # Federated OIDC — no stored credential. These three identify the
+      # managed identity but grant nothing without an OIDC token from this repo
+      # and ref. They are repository SECRETS all the same (#1610, #1618): this
+      # repository is public, and GitHub masks a value as *** in the log only
+      # when it came from a secret. Their values come from the `client_id`
+      # Terraform output and the subscription and tenant the workspace targets.
       #
       # On AADSTS70021 ("no matching federated identity record found"), compare
       # the token's subject against the `federated_subjects`
@@ -126,8 +127,8 @@ jobs:
         timeout-minutes: 2 # slowest 17 s
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ vars.CLIENT_ID }}
-          tenant-id: ${{ vars.TENANT_ID }}
+          client-id: ${{ secrets.CLIENT_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
 
       # T-503: the Functions host storage account is default-Deny, and the

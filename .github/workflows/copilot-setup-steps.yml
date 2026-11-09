@@ -92,24 +92,22 @@ jobs:
       # and grant nothing without a token from this repository in the copilot
       # environment.
       #
-      # Each is read from TWO places, because this file runs in two runners
-      # that see different stores. A manual `gh workflow run` is an ordinary
-      # Actions job and resolves repository VARIABLES (COPILOT_REVIEW_CLIENT_ID,
-      # seeded from the copilot_review_client_id Terraform output by
-      # scripts/set-github-variables.ps1; TENANT_ID, which every other login
-      # here uses) and repository SECRETS (SUBSCRIPTION_ID, a secret since
-      # #1610 so that public logs show it as ***). Copilot's own runner, which executes
-      # these steps before a code review or a cloud-agent session, does NOT
-      # resolve `vars` at all — the first review session on 2026-09-06 (PR
-      # #378) ran azure/login with every `vars.*` input empty — and exposes
-      # only the Agents store, which is what GitHub's own Azure example reads
-      # with `secrets.`. So the same three identifiers are also held as Agents
-      # SECRETS named COPILOT_REVIEW_CLIENT_ID, COPILOT_REVIEW_TENANT_ID and
-      # COPILOT_REVIEW_SUBSCRIPTION_ID, and each `||` prefers that store when
-      # it is present. Holding identifiers in a secret store is a deliberate
-      # exception to docs/standards/variables-and-secrets.md, made because the
-      # Agents store is the only one Copilot's runner reads; the values are
-      # still not credentials.
+      # This file runs in two runners that see different stores. A manual
+      # `gh workflow run` is an ordinary Actions job and resolves repository
+      # SECRETS: COPILOT_REVIEW_CLIENT_ID (seeded from the
+      # copilot_review_client_id Terraform output by
+      # scripts/set-github-variables.ps1), TENANT_ID and SUBSCRIPTION_ID, all
+      # three secrets since #1610 and #1618 so that public logs show them as
+      # ***. Copilot's own runner, which executes these steps before a code
+      # review or a cloud-agent session, does NOT resolve `vars` at all — the
+      # first review session on 2026-09-06 (PR #378) ran azure/login with every
+      # `vars.*` input empty — and exposes only the Agents store, which is what
+      # GitHub's own Azure example reads with `secrets.`. So the same three
+      # identifiers are also held as Agents SECRETS named
+      # COPILOT_REVIEW_CLIENT_ID, COPILOT_REVIEW_TENANT_ID and
+      # COPILOT_REVIEW_SUBSCRIPTION_ID. The client id has the same name in
+      # both stores, so one `secrets.` read finds whichever the runner has;
+      # for the other two each `||` prefers the Agents copy when it is present.
       #
       # The VS Code GitHub Actions extension marks every `secrets.COPILOT_REVIEW_*`
       # below "Context access might be invalid". It checks names against the
@@ -129,8 +127,8 @@ jobs:
       - name: Are the Azure identifiers resolvable here?
         id: azure
         env:
-          CLIENT_ID: ${{ secrets.COPILOT_REVIEW_CLIENT_ID || vars.COPILOT_REVIEW_CLIENT_ID }}
-          TENANT_ID: ${{ secrets.COPILOT_REVIEW_TENANT_ID || vars.TENANT_ID }}
+          CLIENT_ID: ${{ secrets.COPILOT_REVIEW_CLIENT_ID }}
+          TENANT_ID: ${{ secrets.COPILOT_REVIEW_TENANT_ID || secrets.TENANT_ID }}
           SUBSCRIPTION_ID: ${{ secrets.COPILOT_REVIEW_SUBSCRIPTION_ID || secrets.SUBSCRIPTION_ID }}
         run: |
           set -euo pipefail
@@ -138,15 +136,15 @@ jobs:
             echo "armed=true" >> "$GITHUB_OUTPUT"
           else
             echo "armed=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::An Azure identifier is not resolvable in this runner (Agents secrets COPILOT_REVIEW_CLIENT_ID, COPILOT_REVIEW_TENANT_ID, COPILOT_REVIEW_SUBSCRIPTION_ID; variables COPILOT_REVIEW_CLIENT_ID, TENANT_ID; repository secret SUBSCRIPTION_ID), so Azure Login was skipped and the azure MCP server has no credential this session. Copilot's runner reads only the Agents copies (runbook step 2b)." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "::notice::An Azure identifier is not resolvable in this runner (Agents secrets COPILOT_REVIEW_CLIENT_ID, COPILOT_REVIEW_TENANT_ID, COPILOT_REVIEW_SUBSCRIPTION_ID; repository secrets COPILOT_REVIEW_CLIENT_ID, TENANT_ID, SUBSCRIPTION_ID), so Azure Login was skipped and the azure MCP server has no credential this session. Copilot's runner reads only the Agents copies (runbook step 2b)." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Azure Login
         if: steps.azure.outputs.armed == 'true'
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ secrets.COPILOT_REVIEW_CLIENT_ID || vars.COPILOT_REVIEW_CLIENT_ID }}
-          tenant-id: ${{ secrets.COPILOT_REVIEW_TENANT_ID || vars.TENANT_ID }}
+          client-id: ${{ secrets.COPILOT_REVIEW_CLIENT_ID }}
+          tenant-id: ${{ secrets.COPILOT_REVIEW_TENANT_ID || secrets.TENANT_ID }}
           subscription-id: ${{ secrets.COPILOT_REVIEW_SUBSCRIPTION_ID || secrets.SUBSCRIPTION_ID }}
 
       # The minter is in the repository, so the repository has to be here.

@@ -72,12 +72,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The self-arming test, as a job of its own (#1618). The client id is a
+  # repository SECRET, so the public log prints it as ***, and GitHub does not
+  # let a job's `if:` read `secrets` (GitHub Docs, workflow syntax, "Example:
+  # Using secrets"). This job reads it into `env`, answers only true or false,
+  # and the job below runs when the answer is true. It holds no token and
+  # checks nothing out.
+  armed:
+    name: Is MANIFEST_WINDOW_CLIENT_ID set?
+    runs-on: ubuntu-26.04
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      armed: ${{ steps.armed.outputs.armed }}
+    steps:
+      - name: Is the MANIFEST_WINDOW_CLIENT_ID secret set?
+        id: armed
+        timeout-minutes: 1
+        env:
+          MANIFEST_WINDOW_CLIENT_ID: ${{ secrets.MANIFEST_WINDOW_CLIENT_ID }}
+        run: |
+          if [ -n "${MANIFEST_WINDOW_CLIENT_ID}" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The repository secret MANIFEST_WINDOW_CLIENT_ID is not set, so the job that signs in to Azure is skipped (docs/standards/required-inputs.md, section 4.3)."
+          fi
+
   remove:
     name: Remove the windows dead runs left open
-    # Self-arming, as the monitor is: until the apply lands and the variable
-    # is seeded, this skips rather than failing at azure/login on an empty
-    # client-id.
-    if: ${{ vars.MANIFEST_WINDOW_CLIENT_ID != '' }}
+    # Self-arming, as the monitor is: until the apply lands and the secret is
+    # set, this skips rather than failing at azure/login on an empty
+    # client-id. The `armed` job above makes the test, since a job's `if:`
+    # cannot read a secret.
+    needs: armed
+    if: needs.armed.outputs.armed == 'true'
     permissions:
       contents: read # the checkout, nothing more
       actions: read # the run behind each ci-* rule, and whether a deploy is in progress
@@ -103,8 +132,8 @@ jobs:
         timeout-minutes: 2
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ vars.MANIFEST_WINDOW_CLIENT_ID }}
-          tenant-id: ${{ vars.TENANT_ID }}
+          client-id: ${{ secrets.MANIFEST_WINDOW_CLIENT_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
 
       # `--ignore-scripts`: nothing in this tree needs a lifecycle script, and
