@@ -61,11 +61,18 @@ monitors, and manual release workflows — all on GitHub-hosted runners.
   functions release is an explicit manual dispatch (`deploy-functions.yml`)
   and Terraform applies only via HCP Terraform review. The exception is
   `deploy-azure-frontend.yml`, which also runs on a push to `main` that
-  changes `frontend/**` (owner decision 2026-11-09, #1613); its deploy job
-  still waits for an approval in the `production` environment. Any other
-  trigger change that makes deployment automatic on push/merge is blocking,
-  and so is widening that exception (more branches, more paths, or
-  dropping `environment: production` from its deploy job).
+  changes `frontend/**` (owner decision 2026-11-09, #1613). It deploys with
+  no approval: the owner removed the required reviewers from the `production`
+  environment the same day. Its controls are the trigger's `branches: [main]`
+  and the main-only guard step in its build job. Any other trigger change that
+  makes deployment automatic on push/merge is blocking, and so is widening
+  that exception: more branches or tags, more paths than `frontend/**`,
+  removing the guard step, or dropping `environment: production` from its
+  deploy job (its Azure sign-in matches on that name). Because
+  `deploy-functions.yml` uses the same `production` environment, the backend
+  deploy has no approval either until #1617 moves it to a reviewed
+  `production-backend`; until then, anything that lets the backend deploy
+  start by itself is blocking too.
 - **Untrusted input**: no `pull_request_target` with checkout of PR code, no
   interpolation of PR titles/bodies/branch names into `run:` shells.
 - **Monitors** (`monitor-*.yml`, `verify-alert-state.yml`): check schedule

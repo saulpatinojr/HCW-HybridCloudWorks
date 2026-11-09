@@ -18,7 +18,7 @@ name: Publish Content Manifest
 #
 # Merging the pull request this workflow opens now deploys the site: since
 # 2026-11-09 (#1613) deploy-azure-frontend.yml runs by itself on a push to
-# main that changes frontend/, and that run waits for a production approval.
+# main that changes frontend/, and that run deploys with no approval step.
 # It fires because the merge is made with the App's token (auto-merge armed by
 # the App), not GITHUB_TOKEN, whose own events start no workflow run.
 #

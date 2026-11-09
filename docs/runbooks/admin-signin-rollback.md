@@ -85,49 +85,77 @@ It reads the registration back after writing, so a PATCH that silently did
 nothing fails here rather than three steps later. **It prints the client id to
 use in step 2.**
 
-### 2. Deploy the frontend with the old client id
+### 2. Point the site at the old client id, then deploy it
 
-<https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml>
-
-**Run workflow** → set **`entra_client_id_override`** to the client id step 1
-printed. Leave everything else alone.
-
-If another Deploy Frontend run is already there and **Waiting** for approval
-(a merge to `main` starts one by itself), reject it first. Only one deploy runs
-at a time, so yours waits in the queue behind it until it is approved or
-rejected.
-
-The run logs a warning naming the id it built with, so what happened is recorded
-in the run rather than in somebody's memory. The build still validates it:
-`assertDeployConfig` refuses anything that is not a GUID, so a mistyped id fails
-the build instead of shipping a sign-in that cannot work.
-
-**This does not persist.** The override applies to that build only; the next
-deploy reads `VITE_ENTRA_CLIENT_ID` again. That is deliberate — an emergency
-should not silently become the configuration — but it means an ordinary deploy
-would undo the rollback without anyone intending it.
-
-Since 2026-11-09 that ordinary deploy can start by itself: any merge that
-changes `frontend/` starts a Deploy Frontend run, and the daily content-manifest
-pull request is one of those
+Change the repository variable **before** you deploy, not after. Since
+2026-11-09 any merge that changes `frontend/` deploys the site by itself, with
+nobody approving it, and the daily content-manifest pull request is one of
+those merges
 ([#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)).
-Such a run still waits for an approval in the `production` environment, so
-until step 3 is done, **reject** any Deploy Frontend run that is waiting on
-[the workflow's runs page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml)
-rather than approving it.
+Every such deploy builds the site with the `VITE_ENTRA_CLIENT_ID` repository
+variable (a setting of the repository that the build reads). So while the
+variable still holds the broken id, the next merge puts the broken sign-in back
+within the day, without anyone choosing to.
+
+1. **Set the variable to the id step 1 printed** (PowerShell). The command asks
+   for the value at a prompt; paste the id there:
+
+   ```powershell
+   gh variable set VITE_ENTRA_CLIENT_ID --repo saulpatinojr/HCW-HybridCloudWorks
+   ```
+
+   You should see `✓ Updated variable VITE_ENTRA_CLIENT_ID for saulpatinojr/HCW-HybridCloudWorks`.
+   Read it back; it should print the id step 1 printed:
+
+   ```powershell
+   gh variable get VITE_ENTRA_CLIENT_ID --repo saulpatinojr/HCW-HybridCloudWorks
+   ```
+
+   If `gh` says you lack permission, the owner's account can do it, or on the
+   [Actions variables page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/settings/variables/actions)
+   with the pencil next to `VITE_ENTRA_CLIENT_ID`. If nobody who can change it
+   is reachable, deploy anyway (the next item) and get the variable changed
+   as soon as someone is: until then, any frontend merge undoes the rollback.
+
+2. **Deploy.** Changing a variable starts no deploy, so start one at
+   <https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml>:
+   **Run workflow** → set **`entra_client_id_override`** to the same client
+   id. Leave everything else alone. With the variable already changed the
+   override changes nothing in the build, but it makes the run log a warning
+   naming the id it built with, so what happened is recorded in the run
+   rather than in somebody's memory. The build still validates it:
+   `assertDeployConfig` refuses anything that is not a GUID, so a mistyped id
+   fails the build instead of shipping a sign-in that cannot work.
+
+3. **Check that your run ends green.** If another Deploy Frontend run is
+   already in progress (a merge to `main` starts one by itself), let it
+   finish. Only one deploy runs at a time, so yours waits in the queue and
+   uploads after it, which means yours is the one that stays. If a second
+   merge starts a run while yours is still queued, GitHub cancels the queued
+   one and yours shows **Cancelled**. That newer run builds with the variable
+   you changed, so it deploys the old id too; let it finish green. If you
+   could not change the variable, that newer run brings the broken id back:
+   start yours again the same way once it has finished.
+
+**The override alone does not persist.** It applies to that one build; the
+next deploy reads `VITE_ENTRA_CLIENT_ID` again. That is deliberate — an
+emergency should not silently become the configuration — and it is why the
+variable comes first.
 
 ### 3. Make it permanent, or undo it
 
 Once the incident is over, one of these:
 
-- **Keeping the rollback:** set the `VITE_ENTRA_CLIENT_ID` repository variable to
-  the same id step 1 printed, and reopen
+- **Keeping the rollback:** the `VITE_ENTRA_CLIENT_ID` repository variable
+  already holds the id step 1 printed (step 2 set it), so reopen
   [#522](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/522) —
   the split is then undone and ADR 0006 no longer matches the tenant, which is
   the state that whole issue existed to end.
-- **Going forward again:** fix the cause, dispatch a normal deploy with the
-  input blank, and re-clear the API registration's redirect URIs (the command is
-  in [#530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/530)).
+- **Going forward again:** fix the cause, set `VITE_ENTRA_CLIENT_ID` back to
+  the new registration's id (the same `gh variable set` line as step 2), then
+  dispatch a normal deploy with the input blank, and re-clear the API
+  registration's redirect URIs (the command is in
+  [#530](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/530)).
 
 ---
 

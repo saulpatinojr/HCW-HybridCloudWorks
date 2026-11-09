@@ -9,11 +9,12 @@
  * made. Merging therefore deployed nothing, and NOTHING SAID SO.
  *
  * Since 2026-11-09 (owner decision on #1613) a merge that changes `frontend/`
- * starts a frontend deploy by itself, but that run still waits for an
- * approval in the `production` environment, so the Static Web App can still
- * fall behind: a run nobody approves is not a deploy. The functions deploy is
- * still dispatch-only. Neither changes what this check reads, which is the
- * last SUCCESSFUL run of each workflow, whatever started it.
+ * starts a frontend deploy by itself, with no approval step (the owner
+ * removed the `production` environment's required reviewers the same day).
+ * The Static Web App can still fall behind: a failed run is not a deploy, and
+ * a change that is not a file under `frontend/` starts no run. The functions
+ * deploy is still dispatch-only. Neither changes what this check reads, which
+ * is the last SUCCESSFUL run of each workflow, whatever started it.
  *
  * That single gap produced both of 2026-08-31's incidents, hours apart and both
  * found by accident:
@@ -504,9 +505,9 @@ export function formatReport(results, thresholdHours) {
       '',
       failed
         ? '**Deploy the service(s) marked ❌.** The functions deploy is dispatch-only, the ' +
-          'frontend deploy starts on a merge but waits for a production approval, and the ' +
-          'Terraform apply is confirmed by hand in HCP Terraform, so a merge alone ships none ' +
-          'of the three — this is the thing that says so. ' +
+          'frontend deploy starts on a merge only when a file under frontend/ changed (and can ' +
+          'fail), and the Terraform apply is confirmed by hand in HCP Terraform, so a merge ' +
+          'alone guarantees none of the three — this is the thing that says so. ' +
           'A ⚠️ means the check could not read the answer, which is not the same as drift.'
         : 'Every service is within the threshold.',
     ].join('\n'),

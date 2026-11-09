@@ -16,13 +16,26 @@ name: Deploy Frontend
 #     `frontend/` (a repository variable, this workflow file itself) starts no
 #     run, so it still needs one by hand to reach the site.
 #
-# AN AUTOMATIC RUN STILL WAITS FOR A PERSON. The `deploy` job names the
-# `production` environment, and that environment has required reviewers (see
-# the `deploy` job). GitHub pauses the job as "Waiting" until one of them
-# approves, whatever started the run, and fails it after 30 days without one:
+# NOBODY APPROVES A RUN. A frontend merge deploys by itself, start to finish
+# (owner decision 2026-11-09, #1613). The `deploy` job names the `production`
+# environment, and on the same day the owner removed that environment's
+# required reviewers, so GitHub no longer pauses the job as "Waiting" for an
+# approval click. GitHub explains that pause, which no longer happens here:
 # https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-required-reviews-in-workflows
-# So "automatic" here means the build starts by itself; the upload still needs
-# an approval click unless the owner removes the reviewers from `production`.
+# The controls in this repository are two: the `push` trigger below names
+# `main` only, and the T-705 guard (the first step of the `build` job)
+# refuses any ref but `main`, for a run started by hand too. The environment's
+# own `main`-only branch rule (Required-Inputs §4.4) is a setting outside the
+# repository that nothing in a checkout can prove is still set.
+#
+# Two gaps the owner accepted that day, both closed by #1617:
+#   - The backend deploy (deploy-functions.yml) names the same `production`
+#     environment. It still starts only by hand, but no approval follows
+#     that start any more. #1617 moves it to a reviewed `production-backend`.
+#   - This workflow still signs in as `github_deploy` (infra/oidc.tf), the one
+#     deploy identity, which also holds rights on the Function App and its
+#     storage that uploading a static site does not need. #1617 gives the
+#     frontend an identity that can only deploy the Static Web App.
 #
 # The workflow publishes to the Static Web App hostname configured in Azure;
 # DNS and custom-domain changes are separate infrastructure decisions.
@@ -46,8 +59,8 @@ name: Deploy Frontend
 #   2. Merge it. Reverting through the normal gate is the point: a rollback is
 #      a production change and gets the same review as any other.
 #   3. Deploy `main`. When the reverted commit changed `frontend/`, the merge
-#      in step 2 has already started a run: approve it. Otherwise dispatch
-#      this workflow from `main`.
+#      in step 2 has already started a run, and it deploys by itself: wait
+#      for it to turn green. Otherwise dispatch this workflow from `main`.
 #
 # If the estate is unserviceable and step 1-2 is too slow, the escape hatch is
 # an owner one and lives outside this repository: Azure Portal → the Static Web
@@ -106,9 +119,9 @@ permissions:
 # waiting run per group; a third arrival cancels the waiting one, not the
 # running one (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency).
 # That loses nothing: every run builds the `main` it was started on, so the
-# newest waiting run already contains the commits of the one it replaced. A
-# run waiting at the approval step has already started, so it holds the
-# group until someone approves or rejects it.
+# newest waiting run already contains the commits of the one it replaced.
+# There is no approval step to wait at (#1613), so a waiting run only queues
+# behind the running one for the few minutes that one takes to finish.
 concurrency:
   group: swa-deploy
   cancel-in-progress: false
@@ -168,13 +181,15 @@ jobs:
         # The federated credential's subject is environment-scoped, so it
         # matches from ANY branch, and GitHub auto-creates a missing
         # environment with no protection rules. Without a gate a dispatch from
-        # an unreviewed ref ships to production past all 12 required contexts
-        # (T-705). Read live on 2026-10-03, the `production` environment does
-        # gate: two required reviewers, saulpatinojr and hcw-architect, either
-        # of whom can approve, and a main-only deployment-branch policy
-        # (Required-Inputs §4.4). Both are settings
-        # outside the repository that nothing in a checkout can prove are
-        # still set, so this step stays as the repository-side backstop.
+        # an unreviewed ref ships to production past every required check
+        # (T-705). Read live on 2026-10-03, the `production` environment had
+        # two required reviewers and a main-only deployment-branch policy
+        # (Required-Inputs §4.4). The owner removed the reviewers on
+        # 2026-11-09 (#1613), so no person checks a run any more: this step
+        # and the push trigger's `branches: [main]` are the repository's
+        # whole control. The branch policy is a setting outside the
+        # repository that nothing in a checkout can prove is still set, so
+        # this step stays as the repository-side backstop.
         #
         # The same test works for both ways the run starts. A push run's
         # github.ref is the branch that was pushed, and the trigger above
@@ -247,9 +262,9 @@ jobs:
           echo "  variable holds: ${VARIABLE_CLIENT_ID}"
           echo ""
           echo "This does NOT persist. The next deploy reads the variable again,"
-          echo "and any merge that changes frontend/ starts that deploy by itself"
-          echo "(it waits for a production approval). Reject those runs, or set the"
-          echo "variable to the same value to make it permanent."
+          echo "and any merge that changes frontend/ starts that deploy by itself,"
+          echo "with no approval step. Set the variable to this same value now so"
+          echo "that deploy keeps it (docs/runbooks/admin-signin-rollback.md, step 2)."
           echo ""
           echo "If you are rolling back to the API registration, its redirect"
           echo "URIs must exist or sign-in fails at the redirect. This workflow"
@@ -276,7 +291,8 @@ jobs:
           # the variable must still be corrected to make a rollback stick. The
           # step above says so in the log, where an operator mid-incident will
           # actually see it. Since 2026-11-09 that next deploy can start by
-          # itself, from any merge that changes frontend/.
+          # itself, from any merge that changes frontend/, and finishes with
+          # nobody approving it.
           #
           # The override is read on a dispatch only. A push run always builds
           # with the variable: `false && x || y` is y in a GitHub expression.
@@ -467,17 +483,19 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 15 # slowest 1.6 min; waiting for approval does not count (#1441)
     # Binding the job to an environment gives production deploys a deployment
-    # history and an approval gate. The gate lives in the environment, not
-    # here: read live on 2026-10-03, `production` has two required reviewers
-    # (saulpatinojr and hcw-architect; either one approves) and a main-only
-    # deployment-branch policy (Required-Inputs §4.4). Without
-    # them GitHub would auto-create a bare environment that records who
-    # deployed without gating whether they may
-    # (T-705).
+    # history, and any gate on them lives in the environment, not here. Read
+    # live on 2026-10-03, `production` had two required reviewers
+    # (saulpatinojr and hcw-architect) and a main-only deployment-branch
+    # policy (Required-Inputs §4.4). The owner removed the reviewers on
+    # 2026-11-09 (#1613), so every run, automatic or by hand, goes straight
+    # on to the upload with nobody approving it. Without the environment
+    # GitHub would auto-create a bare one that records who deployed without
+    # gating whether they may (T-705).
     #
-    # This applies to the automatic runs too: a push run stops here as
-    # "Waiting" until a reviewer approves it on the run's page. That is the
-    # owner's setting to keep or remove, not this file's.
+    # deploy-functions.yml names this same environment, so the backend deploy
+    # has no approval either until #1617 moves it to a reviewed
+    # `production-backend`. Do not rename the environment here on its own:
+    # the sign-in below matches on this exact name.
     environment: production
     # id-token for the federated login that mints the deployment token (T-727).
     # `environment: production` above is load-bearing for it: the OIDC subject

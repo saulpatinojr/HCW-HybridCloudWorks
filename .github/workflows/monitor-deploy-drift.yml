@@ -6,10 +6,12 @@
 # made. So merging deployed nothing, and until 2026-09-01 nothing said so.
 #
 # Since 2026-11-09 (owner decision on #1613) a merge that changes frontend/
-# starts a frontend deploy by itself, but the run waits for an approval in the
-# `production` environment, so the site can still fall behind when nobody
-# approves it. This monitor reads the last successful run whatever started
-# it, so it still catches that. The functions deploy is still dispatch-only.
+# starts a frontend deploy by itself, and nobody approves it (the owner removed
+# the `production` environment's required reviewers the same day). The site
+# can still fall behind when such a run fails, or when the change that
+# matters is not a file under frontend/ (a repository variable, the workflow
+# itself). This monitor reads the last successful run whatever started it, so
+# it still catches that. The functions deploy is still dispatch-only.
 #
 # That one gap produced both of 2026-08-31's incidents, hours apart, both found
 # by accident rather than by a check:
