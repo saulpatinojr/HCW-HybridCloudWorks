@@ -672,11 +672,47 @@ handler in it and the host does not have it yet. That is expected, and step
    Step 1 left **Prevent self-review** unticked, so you can approve your
    own run. If GitHub ever refuses that, the other required reviewer,
    `hcw-architect`, approves it.
-3. **What success looks like:** the job goes green, and its summary (the
+3. **Watch it run.** Open the job, then the step **Run the script on the
+   host and report what it printed**. It does not sit silent while the
+   script runs: it prints a line every 20 seconds, so you can always tell
+   whether the host has started, is still working, or has finished. A
+   `bootstrap` looks like this (shortened):
+
+   ```text
+   == Next: signing in to Azure as github_arc_run ==
+   == Uploading lab-host/arc-run/bootstrap.sh to arcs-lab-hybrid-prod-cus-01 as run command hcw-bootstrap-19283746501-1 (timeout 2400 s) ==
+   == Waiting for the host to start the script (a line every 20 s) ==
+   [+0m20s] provisioningState=Creating executionState=Pending
+   == Running on the host ==
+   [+0m40s] provisioningState=Creating executionState=Running
+   [+1m00s] provisioningState=Creating executionState=Running
+   ...
+   [+6m20s] provisioningState=Succeeded executionState=Succeeded
+   PLAY RECAP ...
+   == Reading the result ==
+   [+6m20s] executionState=Succeeded exitCode=0
+   ```
+
+   The time in brackets counts from when the command was handed to Azure.
+   `executionState` is what the host reports about the script: `Pending`
+   (not started yet), `Running`, then one of `Succeeded`, `Failed`,
+   `TimedOut` or `Canceled`. `provisioningState` is Azure's view of the run
+   command itself, and stays `Creating` until the script ends. When the host
+   has printed new lines since the last check, they appear under the state
+   line; whether the Arc agent passes lines on while the script is still
+   running, or only at the end, Microsoft does not say, so a run may show
+   only state lines until it finishes. The host's lines are shown as plain
+   text: a line in them that looks like a GitHub workflow command (it starts
+   with `::`) is never acted on. Azure keeps only the last 4 KB, so on a
+   long run the log may say `(earlier output scrolled out of the 4 KB the
+   host keeps)`; nothing is wrong, the full `bootstrap` log stays on the
+   host. The final `== Deleting run command ... ==` line comes from the
+   clean-up step.
+4. **What success looks like:** the job goes green, and its summary (the
    run's **Summary** tab) reads `execution state Succeeded, exit code 0`
    above the script's output. For `bootstrap`, the output ends with the
    play recap showing `failed=0`.
-4. **What failure looks like, and what to do:**
+5. **What failure looks like, and what to do:**
    - *The run starts at once with no **Review deployments** button:* the
      `lab-host-arc` environment has no reviewers. Cancel the run and do
      setup step 1.
@@ -697,6 +733,20 @@ handler in it and the host does not have it yet. That is expected, and step
      ```
    - *`TimedOut`:* the script ran past its limit (5 minutes for `status`,
      20 for `memory-check`, 40 for `bootstrap`) and Azure stopped it.
+   - *"had not finished … s + 240 s after it was sent":* the host never
+     reported an end, and the workflow stopped waiting four minutes after the
+     script's own limit. The state lines above it show the last thing the
+     host said; if they stayed `Pending`, the host never started the script.
+     Check that the machine is connected, PowerShell, after `az login`
+     (it should print `Connected`):
+     `az connectedmachine show --subscription sub-app-site-prod-cus --resource-group rg-lab-hybrid-prod-cus --name arcs-lab-hybrid-prod-cus-01 --query status -o tsv`.
+     The clean-up step deletes the run command, which stops it.
+   - *"The repository secret SUBSCRIPTION_ID is not set":* the subscription id
+     is a repository secret since 2026-11-09 (so the public log shows it as
+     `***`). Set it, PowerShell, from the repository folder:
+     `./scripts/Set-SubscriptionSecrets.ps1 -Names SUBSCRIPTION_ID -FromPrompt`,
+     and paste the Application subscription's id at the hidden prompt
+     ([Required inputs §4.3](../standards/required-inputs.md#43-github-repository-secrets)).
 
 The last step deletes the run command from the machine whatever happened,
 so nothing is left stored there. It also stops a script that is still

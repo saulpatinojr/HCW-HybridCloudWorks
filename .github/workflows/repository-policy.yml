@@ -115,11 +115,18 @@ jobs:
       # az, and the whole script runs under -WhatIf against a stand-in az that
       # refuses every write. The path list is explicit, so a new scripts/
       # directory with tests is added here.
+      #
+      # scripts/Set-SubscriptionSecrets.Tests.ps1 joined on 2026-11-09
+      # (#1610). The script copies the subscription ids into repository
+      # secrets and must never print one, so its tests check what it hands to
+      # a stand-in gh and that no value reaches its output.
+      # scripts/set-github-variables.Tests.ps1 joined the same day: a failed
+      # gh call's error and the subscription picker show no subscription id.
       - name: Test the lab, cutover and alert scripts
         shell: pwsh
         run: |
           Import-Module Pester -MinimumVersion 5.0
-          $result = Invoke-Pester -Path scripts/lab, scripts/cutover, scripts/alerts -Output Detailed -PassThru
+          $result = Invoke-Pester -Path scripts/lab, scripts/cutover, scripts/alerts, scripts/Set-SubscriptionSecrets.Tests.ps1, scripts/set-github-variables.Tests.ps1 -Output Detailed -PassThru
           if ($result.Result -ne 'Passed' -or $result.PassedCount -eq 0) { exit 1 }
 
       # A step that ran ./scripts/cutover/workspace-query.tests.ps1 stood here

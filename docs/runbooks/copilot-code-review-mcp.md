@@ -116,10 +116,12 @@ of which holds on its own:
    `repo:saulpatinojr/HCW-HybridCloudWorks:environment:copilot` (in both
    the name and immutable-ID forms, like every credential in this estate).
    No ref-form credential exists on it, so no branch-triggered workflow can
-   assume it by accident. The three values the workflow needs
-   (`COPILOT_REVIEW_CLIENT_ID`, `TENANT_ID`, `SUBSCRIPTION_ID`) are repository
-   **variables** — identifiers that grant nothing without a token, per
-   [Variables and secrets](../standards/variables-and-secrets.md).
+   assume it by accident. The three values the workflow needs are
+   identifiers that grant nothing without a token, per
+   [Variables and secrets](../standards/variables-and-secrets.md):
+   `COPILOT_REVIEW_CLIENT_ID` and `TENANT_ID` are repository **variables**,
+   and `SUBSCRIPTION_ID` is a repository **secret** since 2026-11-09, so
+   that the public logs show it as `***` (#1610).
 3. **The server refuses writes.** `--read-only` on the command line drops
    every mutating tool before the server registers anything.
 4. **The tool list is fourteen names, chosen by hand** from the server's own
@@ -360,13 +362,15 @@ Done 2026-09-06 as
 kept here for a rotation, which has to change both copies. Copilot's own runner reads only Agents secrets (see
 [the Azure server](#the-azure-server-read-only-federated-no-secret)), so the
 four identifiers the workflow reads — three for the Azure login, one for the
-GitHub App — must exist there as well as in the repository variables the
-manual run uses. Nothing to retype: the first line prints the four values the
-variables hold, and the later line copies each to the clipboard in turn for
-the paste.
+GitHub App — must exist there as well as in the repository variables and
+secret the manual run uses. Nothing to retype: the first line prints the
+three values the variables hold, and the later lines copy each value to the
+clipboard in turn for the paste. The subscription id is a repository secret
+since 2026-11-09 (#1610), and a secret cannot be read back, so its line reads
+the id from your Azure sign-in instead.
 
 ```powershell
-gh variable list --repo saulpatinojr/HCW-HybridCloudWorks | Select-String 'COPILOT_REVIEW_CLIENT_ID|^TENANT_ID|^SUBSCRIPTION_ID|COPILOT_REVIEW_APP_ID'
+gh variable list --repo saulpatinojr/HCW-HybridCloudWorks | Select-String 'COPILOT_REVIEW_CLIENT_ID|^TENANT_ID|COPILOT_REVIEW_APP_ID'
 ```
 
 Then, in the repository, **Settings → Secrets and variables → Agents →
@@ -379,7 +383,7 @@ the Actions tab at
 | --- | --- |
 | `COPILOT_REVIEW_CLIENT_ID` | `COPILOT_REVIEW_CLIENT_ID` |
 | `COPILOT_REVIEW_TENANT_ID` | `TENANT_ID` |
-| `COPILOT_REVIEW_SUBSCRIPTION_ID` | `SUBSCRIPTION_ID` |
+| `COPILOT_REVIEW_SUBSCRIPTION_ID` | the Application subscription's id (the `SUBSCRIPTION_ID` repository secret holds the same; copy it with the `az account show` line below) |
 | `COPILOT_REVIEW_APP_ID` | `COPILOT_REVIEW_APP_ID` (exists once step 4 is done) |
 
 To copy one value without retyping it, PowerShell:
@@ -388,8 +392,13 @@ To copy one value without retyping it, PowerShell:
 gh variable get COPILOT_REVIEW_CLIENT_ID --repo saulpatinojr/HCW-HybridCloudWorks | Set-Clipboard
 ```
 
-and the same with `TENANT_ID`, `SUBSCRIPTION_ID` and `COPILOT_REVIEW_APP_ID`
-in place of the variable name.
+and the same with `TENANT_ID` and `COPILOT_REVIEW_APP_ID` in place of the
+variable name. For the subscription, PowerShell, signed in with `az login`
+(the clipboard then holds the id, and nothing is printed):
+
+```powershell
+az account show --subscription sub-app-site-prod-cus --query id -o tsv | Set-Clipboard
+```
 
 **Success looks like:** four secrets listed under Agents (five with the App
 key), and the next review session's log showing `azure/login` with a

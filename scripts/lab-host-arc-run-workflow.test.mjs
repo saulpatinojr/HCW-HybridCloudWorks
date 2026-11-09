@@ -94,7 +94,12 @@ describe('lab-host-arc-run.yml', () => {
     // subscription could fail the login (as verify-alert-state.yml says).
     expect(job.lines.some((line) => /^\s+allow-no-subscriptions: true$/.test(line))).toBe(true);
     expect(job.lines.some((line) => /^\s+subscription-id:/.test(line))).toBe(false);
-    expect(job.lines.some((line) => /^ {6}SUBSCRIPTION_ID: \$\{\{ vars\.SUBSCRIPTION_ID \}\}$/.test(line))).toBe(true);
+    // The id comes from the repository secret, step by step, so the log
+    // shows *** (#1610); a job-level env would print it on every step.
+    expect(job.lines.some((line) => /^ {6}SUBSCRIPTION_ID:/.test(line))).toBe(false);
+    for (const step of job.steps.filter((s) => /az connectedmachine run-command/.test(s.run ?? ''))) {
+      expect(step.lines.some((line) => /^ {10}SUBSCRIPTION_ID: \$\{\{ secrets\.SUBSCRIPTION_ID \}\}$/.test(line)), step.name).toBe(true);
+    }
     // Each call is written one option per line; its first option is the subscription.
     const calls = job.steps.flatMap((step) =>
       [...(step.run ?? '').matchAll(/az connectedmachine run-command (\w+) \\\n([^\n]*)\n/g)].map((m) => ({ verb: m[1], first: m[2] }))
@@ -120,6 +125,26 @@ describe('lab-host-arc-run.yml', () => {
   it('has a time limit on the job and on every step', () => {
     expect(job.lines.some((line) => /^\s{4}timeout-minutes: \d+/.test(line))).toBe(true);
     for (const step of job.steps) expect(step['timeout-minutes'], `${step.name} has no timeout-minutes`).toMatch(/^\d+/);
+  });
+
+  it('creates the run command without waiting and polls it every 20 seconds, inside the step time limit', () => {
+    const run = job.steps.find((step) => step.name === 'Run the script on the host and report what it printed');
+    expect(run.run).toMatch(/--async-execution false \\\n\s+--no-wait \\\n/);
+    expect(run.lines.some((line) => /^ {10}POLL_SECONDS: 20$/.test(line))).toBe(true);
+    // The deadline counts from when the create returns, so a slow create
+    // does not eat the grace.
+    expect(run.run).toContain('deadline="$((started + RUN_TIMEOUT + 240))"');
+    expect(run.run.indexOf('deadline="$((started')).toBeGreaterThan(run.run.indexOf('--no-wait'));
+    expect(run.run).toContain('timeout 180 az connectedmachine run-command create');
+    // The create (180 s at most), the longest script (bootstrap, 2400 s) +
+    // 240 s, one poll that overruns the deadline (a 20 s sleep and a read
+    // capped at 60 s) and the read-back (capped at 60 s) must fit inside the
+    // step's limit.
+    expect(Number(run['timeout-minutes']) * 60).toBeGreaterThanOrEqual(180 + 2400 + 240 + 20 + 60 + 60);
+    expect(job.steps.find((step) => step.name === 'Choose the script').run).toContain('bootstrap) script=lab-host/arc-run/bootstrap.sh; timeout=2400 ;;');
+    const jobLimit = Number(job.lines.find((line) => /^ {4}timeout-minutes: /.test(line)).split(': ')[1]);
+    const stepSum = job.steps.reduce((sum, step) => sum + Number(step['timeout-minutes']), 0);
+    expect(jobLimit).toBeGreaterThanOrEqual(stepSum);
   });
 
   it('runs one at a time and never cancels a run in flight', () => {
@@ -182,19 +207,24 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
   afterAll(() => {
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
   });
+  const realDate = TOOLS.ready ? spawnSync('bash', ['-c', 'command -v date'], { encoding: 'utf8' }).stdout.trim() : '';
 
   /**
    * Runs the step the way a runner does (`bash -e`), with an `az` whose
-   * `create` exits `createExit` and whose `show` prints `view` (or exits 3
-   * when `view` is null).
+   * `create` exits `createExit` and whose n-th `show` prints `views[n-1]`
+   * (the last one again once they run out), or exits 3 when `views` is null.
+   * `date +%s` reads a clock that only the stand-in `sleep` moves, so the
+   * poll interval and the deadline are exercised without waiting for them.
    */
-  function runStep({ createExit = 0, view }) {
+  function runStep({ createExit = 0, views, runTimeout = 30 }) {
     const step = job.steps.find((s) => s.name === 'Run the script on the host and report what it printed');
     const dir = forward(mkdtempSync(join(tmpdir(), 'arc-run-')));
     dirs.push(dir);
     const bin = `${dir}/bin`;
     mkdirSync(bin);
-    writeFileSync(`${dir}/view.json`, view === null ? '' : JSON.stringify(view));
+    writeFileSync(`${dir}/clock`, '1000\n');
+    writeFileSync(`${dir}/shows`, '');
+    (views ?? []).forEach((v, i) => writeFileSync(`${dir}/view-${i + 1}.json`, JSON.stringify(v)));
     const fake = [
       '#!/usr/bin/env bash',
       `{ printf '%s' "$*" | tr '\\n' ' '; echo; } >> '${dir}/az-calls.txt'`,
@@ -204,11 +234,27 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
       'for arg in "$@"; do case "$arg" in --expand) echo "az: error: unrecognized arguments: --expand" >&2; exit 2 ;; esac; done',
       'case "$3" in',
       `  create) exit ${createExit} ;;`,
-      `  show) ${view === null ? 'echo "ResourceNotFound" >&2; exit 3' : `cat '${dir}/view.json'; exit 0`} ;;`,
+      views === null
+        ? '  show) echo "ResourceNotFound" >&2; exit 3 ;;'
+        : [
+            `  show) echo x >> '${dir}/shows'; n=$(wc -l < '${dir}/shows')`,
+            `    if [ "$n" -gt ${views.length} ]; then n=${views.length}; fi`,
+            `    cat "${dir}/view-$n.json"; exit 0 ;;`,
+          ].join('\n'),
       'esac',
       'exit 9',
     ].join('\n');
     writeFileSync(`${bin}/az`, `${fake}\n`, { mode: 0o755 });
+    writeFileSync(
+      `${bin}/date`,
+      `#!/usr/bin/env bash\nif [ "$1" = "+%s" ]; then cat '${dir}/clock'; else exec '${realDate}' "$@"; fi\n`,
+      { mode: 0o755 }
+    );
+    writeFileSync(
+      `${bin}/sleep`,
+      `#!/usr/bin/env bash\necho "$1" >> '${dir}/sleeps'\necho $(( $(cat '${dir}/clock') + $1 )) > '${dir}/clock'\n`,
+      { mode: 0o755 }
+    );
     const summary = `${dir}/summary.md`;
     writeFileSync(summary, '');
     const result = spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', step.run], {
@@ -221,86 +267,242 @@ describe.skipIf(!TOOLS.ready)(`the run step under bash -e, against a stand-in az
         RUNNER_TEMP: dir,
         ACTION: 'status',
         SCRIPT_FILE: 'lab-host/arc-run/status.sh',
-        RUN_TIMEOUT: '30',
+        RUN_TIMEOUT: String(runTimeout),
         RUN_NAME: 'hcw-status-1-1',
         ARC_RESOURCE_GROUP: 'rg-lab-hybrid-prod-cus',
         ARC_MACHINE: 'arcs-lab-hybrid-prod-cus-01',
         ARC_LOCATION: 'centralus',
         SUBSCRIPTION_ID: '00000000-0000-0000-0000-000000000001',
+        POLL_SECONDS: '20',
       },
       timeout: 60000,
     });
     const calls = readFileSync(`${dir}/az-calls.txt`, 'utf8').trim().split('\n');
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls, summary: readFileSync(summary, "utf8") };
+    const sleeps = existsSync(`${dir}/sleeps`) ? readFileSync(`${dir}/sleeps`, 'utf8').trim().split('\n') : [];
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls, sleeps, summary: readFileSync(summary, 'utf8') };
   }
 
-  const view = (state, exitCode, output = 'hello', error = '') => ({
+  const view = (state, exitCode, output = 'hello', error = '', provisioningState = 'Succeeded') => ({
+    provisioningState,
     instanceView: { executionState: state, exitCode, executionMessage: '', output, error },
   });
+  const running = (output = '') => view('Running', null, output, '', 'Creating');
+
+  /**
+   * Every line between a `::stop-commands::<token>` and its `::<token>::`, and
+   * a check that no line outside such a pair is host output.
+   */
+  function guarded(stdout) {
+    const inside = [];
+    const outside = [];
+    let token = null;
+    for (const line of stdout.split('\n')) {
+      const stop = line.match(/^::stop-commands::([0-9a-f]{32})$/);
+      if (token === null && stop) token = stop[1];
+      else if (token !== null && line === `::${token}::`) token = null;
+      else (token === null ? outside : inside).push(line);
+    }
+    expect(token, 'a stop-commands block was never closed').toBe(null);
+    return { inside, outside };
+  }
 
   it('passes a run the host reports as Succeeded with exit 0, and puts the output in the summary', () => {
-    const result = runStep({ view: view('Succeeded', 0, 'free -m says 7900') });
+    const result = runStep({ views: [view('Succeeded', 0, 'free -m says 7900')] });
     expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     expect(result.summary).toContain('execution state **Succeeded**, exit code **0**');
     expect(result.summary).toContain('free -m says 7900');
-    // The login selects no subscription, so each call names it.
-    expect(result.calls.map((call) => call.split(' ')[2])).toEqual(['create', 'show']);
-    expect(result.calls[1]).not.toContain('--expand');
+    // Created without waiting, polled once, read back once; the login
+    // selects no subscription, so each call names it.
+    expect(result.calls.map((call) => call.split(' ')[2])).toEqual(['create', 'show', 'show']);
+    expect(result.calls[0]).toContain('--no-wait');
+    expect(result.calls[0]).toContain('--async-execution false');
+    for (const call of result.calls.slice(1)) expect(call).not.toContain('--expand');
     for (const call of result.calls) expect(call, call).toContain('--subscription 00000000-0000-0000-0000-000000000001');
   });
 
-  it('reads an instance view left under properties too, should a later extension stop flattening', () => {
+  it('polls every 20 seconds while the script runs, printing each state and only the output that is new', () => {
     const result = runStep({
-      view: { properties: { instanceView: { executionState: 'Succeeded', exitCode: 0, executionMessage: '', output: 'nested ok', error: '' } } },
+      views: [
+        view('Pending', null, '', '', 'Creating'),
+        running('step one\nstep tw'),
+        running('step one\nstep two\nstep three\n'),
+        view('Succeeded', 0, 'step one\nstep two\nstep three\ndone\n'),
+      ],
     });
     expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
-    expect(result.summary).toContain('execution state **Succeeded**, exit code **0**');
-    expect(result.summary).toContain('nested ok');
+    expect(result.sleeps).toEqual(['20', '20', '20', '20']);
+    const out = result.stdout;
+    for (const phase of [
+      '== Uploading lab-host/arc-run/status.sh to arcs-lab-hybrid-prod-cus-01 as run command hcw-status-1-1 (timeout 30 s) ==',
+      '== Waiting for the host to start the script (a line every 20 s) ==',
+      '== Running on the host ==',
+      '== Reading the result ==',
+    ]) {
+      expect(out).toContain(phase);
+    }
+    expect(out).toContain('[+0m20s] provisioningState=Creating executionState=Pending');
+    expect(out).toContain('[+0m40s] provisioningState=Creating executionState=Running');
+    expect(out).toContain('[+1m00s] provisioningState=Creating executionState=Running');
+    expect(out).toContain('[+1m20s] provisioningState=Succeeded executionState=Succeeded');
+    expect(out.indexOf('== Running on the host ==')).toBeLessThan(out.indexOf('[+0m40s]'));
+    // Each host line is printed once, in order, inside a stop-commands
+    // block; the half line "step tw" waits until it is whole.
+    const { inside } = guarded(out);
+    expect(inside.filter((line) => line.trim() !== '')).toEqual(['step one', 'step two', 'step three', 'done']);
+    expect(out).not.toContain('step tw\n');
+    expect(out.indexOf('step one')).toBeLessThan(out.indexOf('[+1m00s]'));
+    expect(out.indexOf('step three')).toBeLessThan(out.indexOf('[+1m20s]'));
+    expect(result.summary).toContain('step one\nstep two\nstep three\ndone');
   });
 
-  it('fails, saying so, when the run command comes back with no instance view', () => {
-    const result = runStep({ view: { name: 'hcw-status-1-1', provisioningState: 'Succeeded' } });
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain('::error::Run command hcw-status-1-1 came back without an instance view');
+  it('says so when early output scrolls out of the 4 KB window between two polls', () => {
+    const result = runStep({ views: [running('a\nb\n'), running('c\nd\n'), view('Succeeded', 0, 'd\ne\n')] });
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    const { inside } = guarded(result.stdout);
+    expect(inside.filter((line) => line.trim() !== '')).toEqual(['a', 'b', '(earlier output scrolled out of the 4 KB the host keeps)', 'c', 'd', 'e']);
   });
 
-  it('fails a run the host reports as failed, after writing the summary', () => {
-    const result = runStep({ createExit: 1, view: view('Failed', 2, 'PLAY RECAP\nhost: ok=10 failed=1') });
+  it('stops polling at Failed and fails the step, after writing the summary', () => {
+    const result = runStep({ views: [running('PLAY RECAP\n'), view('Failed', 2, 'PLAY RECAP\nhost: ok=10 failed=1\n', '', 'Failed')] });
     expect(result.status).toBe(1);
+    expect(result.sleeps).toHaveLength(2);
+    expect(result.stdout).toContain('provisioningState=Failed executionState=Failed');
     expect(result.summary).toContain('exit code **2**');
-    expect(result.stdout).toContain('::error::The script did not succeed on the host');
+    expect(result.stdout).toContain('::error::The script did not succeed on the host: execution state Failed, exit code 2.');
   });
 
-  it('fails a run that timed out with no exit code', () => {
-    const result = runStep({ createExit: 1, view: view('TimedOut', null) });
+  it('stops polling when the run command itself fails before the script reports', () => {
+    const result = runStep({ views: [view('Unknown', null, '', 'handler not allowed', 'Failed')] });
+    expect(result.status).toBe(1);
+    expect(result.sleeps).toHaveLength(1);
+    expect(result.stdout).toContain('::error::The script did not succeed on the host: execution state Unknown, exit code none.');
+    expect(guarded(result.stdout).inside).toContain('handler not allowed');
+  });
+
+  it('fails a run that timed out on the host with no exit code', () => {
+    const result = runStep({ views: [view('TimedOut', null)] });
     expect(result.status).toBe(1);
     expect(result.summary).toContain('execution state **TimedOut**, exit code **none**');
   });
 
-  it('says so when there is no run command to read back', () => {
-    const result = runStep({ createExit: 1, view: null });
+  it('gives up at RUN_TIMEOUT + 240 seconds when the script never finishes, and fails saying so', () => {
+    const result = runStep({ runTimeout: 60, views: [running('still going\n')] });
     expect(result.status).toBe(1);
+    // 60 + 240 = 300 s from the start of the step: fifteen polls 20 s apart.
+    expect(result.sleeps).toHaveLength(15);
+    expect(result.stdout).toContain('[+5m00s] provisioningState=Creating executionState=Running');
+    expect(result.stdout).toContain(
+      '::error::Run command hcw-status-1-1 had not finished 60 s + 240 s after it was sent (execution state Running).'
+    );
+    expect(guarded(result.stdout).inside.filter((line) => line === 'still going')).toHaveLength(1);
+    expect(result.summary).toContain('execution state **Running**');
+  });
+
+  it('keeps polling while a read carries no state yet', () => {
+    const result = runStep({ views: [{ error: 'not json for jq' }, view('Succeeded', 0, 'ok\n')] });
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    expect(result.stdout).toContain('[+0m20s] provisioningState=unknown executionState=unknown');
+  });
+
+  it('reads an instance view left under properties too, should a later extension stop flattening', () => {
+    const result = runStep({
+      views: [{ properties: { provisioningState: 'Succeeded', instanceView: { executionState: 'Succeeded', exitCode: 0, executionMessage: '', output: 'nested ok', error: '' } } }],
+    });
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    expect(result.summary).toContain('execution state **Succeeded**, exit code **0**');
+    expect(result.summary).toContain('nested ok');
+    expect(result.stdout).toContain('provisioningState=Succeeded executionState=Succeeded');
+  });
+
+  it('fails, saying so, when the run command comes back with no instance view', () => {
+    const result = runStep({ runTimeout: 0, views: [{ name: 'hcw-status-1-1', provisioningState: 'Creating' }] });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('::error::Run command hcw-status-1-1 came back without an instance view');
+  });
+
+  it('does not wait, and says why, when the create is refused', () => {
+    const result = runStep({ createExit: 1, views: null });
+    expect(result.status).toBe(1);
+    expect(result.sleeps).toHaveLength(0);
+    expect(result.stdout).toContain('create exited 1, so there is nothing to wait for.');
     expect(result.stdout).toContain('::error::Could not read run command hcw-status-1-1 back (create exited 1, show exited 3)');
   });
 
+  it('prints each line once when the 4 KB window is cut mid-line, with no false scroll note', () => {
+    // 300 distinct lines, about 12 KB; each poll sees 3000 bytes more, and
+    // Azure keeps the last 4096 bytes, cut wherever that falls.
+    const text = Array.from({ length: 300 }, (_, i) => `line ${String(i).padStart(3, '0')} ${'x'.repeat(30)}`).join('\n') + '\n';
+    const windows = [];
+    for (let upto = 3000; ; upto += 3000) {
+      const end = Math.min(upto, text.length);
+      windows.push(text.slice(Math.max(0, end - 4096), end));
+      if (end === text.length) break;
+    }
+    expect(windows.length).toBeGreaterThan(3);
+    expect(windows.slice(1).some((w) => !w.startsWith('line '))).toBe(true);
+    const views = windows.map((w, i) => (i === windows.length - 1 ? view('Succeeded', 0, w) : running(w)));
+    const result = runStep({ views });
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    const printed = guarded(result.stdout).inside.filter((line) => line.trim() !== '');
+    expect(printed).not.toContain('(earlier output scrolled out of the 4 KB the host keeps)');
+    expect(printed).toEqual(text.trimEnd().split('\n'));
+  });
+
+  it('shows a state or exit code that is not a plain word or number as unexpected, so it cannot forge a command', () => {
+    const forged = {
+      provisioningState: 'Creating\n::warning::FORGED-PROV',
+      instanceView: { executionState: 'Failed\n::warning::FORGED-STATE', exitCode: '0\n::error::FORGED-CODE', executionMessage: '', output: '', error: '' },
+    };
+    const result = runStep({ runTimeout: 0, views: [forged] });
+    expect(result.status).toBe(1);
+    expect(result.stdout).not.toMatch(/^::(warning|error)::FORGED/m);
+    expect(result.stdout).toContain('provisioningState=unexpected executionState=unexpected');
+    expect(result.stdout).toContain('executionState=unexpected exitCode=unexpected');
+    expect(result.summary).toContain('execution state **unexpected**, exit code **unexpected**');
+    expect(result.stdout).toContain('::error::Run command hcw-status-1-1 had not finished 0 s + 240 s after it was sent');
+  });
+
+  it('keeps a carriage return from closing the summary fence', () => {
+    const result = runStep({ views: [view('Succeeded', 0, 'a\r~~~~\r# INJECTED HEADING', 'b\r~~~~\r# ERROR HEADING')] });
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    expect(result.summary).not.toContain('\r');
+    const blocks = result.summary.split('~~~~text\n').slice(1).map((part) => part.split('\n~~~~\n')[0]);
+    expect(blocks).toEqual(['a\n    ~~~~\n# INJECTED HEADING', 'b\n    ~~~~\n# ERROR HEADING']);
+  });
+
+  it('stops polling when provisioning has succeeded, and lets the read-back decide', () => {
+    const result = runStep({ views: [{ provisioningState: 'Succeeded', instanceView: { exitCode: 0, executionMessage: '', output: 'ok\n', error: '' } }] });
+    expect(result.sleeps).toHaveLength(1);
+    expect(result.stdout).toContain('[+0m20s] provisioningState=Succeeded executionState=unknown');
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('::error::The script did not succeed on the host: execution state unknown, exit code 0.');
+  });
+
   it('keeps a host line that would close the summary fence inside it', () => {
-    const result = runStep({ view: view('Succeeded', 0, 'before\n ~~~~\n~~~ also\nafter') });
+    const result = runStep({ views: [view('Succeeded', 0, 'before\n ~~~~\n~~~ also\nafter')] });
     expect(result.status).toBe(0);
     const fenced = result.summary.split('~~~~text\n')[1].split('\n~~~~\n')[0];
     expect(fenced).toBe('before\n     ~~~~\n    ~~~ also\nafter');
   });
 
-  it("prints the host's output with workflow commands stopped, so a `::` line in it is only text", () => {
-    const result = runStep({ view: view('Succeeded', 0, '::error::injected\n::set-output name=x::y') });
-    expect(result.status).toBe(0);
-    const lines = result.stdout.split('\n');
-    const stop = lines.findIndex((line) => /^::stop-commands::[0-9a-f]{32}$/.test(line));
-    const injected = lines.indexOf('::error::injected');
-    const resume = lines.findIndex((line) => /^::[0-9a-f]{32}::$/.test(line));
-    expect(stop).toBeGreaterThan(-1);
-    expect(injected).toBeGreaterThan(stop);
-    expect(resume).toBeGreaterThan(injected);
-    expect(lines[resume]).toBe(`::${lines[stop].split('::')[2]}::`);
+  it("prints the host's output with workflow commands stopped, mid-run and at the end, so a `::` line in it is only text", () => {
+    const result = runStep({
+      views: [
+        running('starting\n::error::injected mid-run\n'),
+        running('starting\n::error::injected mid-run\n::add-mask::x\n'),
+        view('Succeeded', 0, 'starting\n::error::injected mid-run\n::add-mask::x\n::set-output name=x::y', '::warning::from stderr'),
+      ],
+    });
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    const { inside, outside } = guarded(result.stdout);
+    expect(inside).toEqual(expect.arrayContaining(['::error::injected mid-run', '::add-mask::x', '::set-output name=x::y', '::warning::from stderr']));
+    // Nothing the host printed reaches the log outside a guarded block.
+    expect(outside.filter((line) => /^::(?!stop-commands)/.test(line))).toEqual([]);
+    expect(inside.filter((line) => line === '::error::injected mid-run')).toHaveLength(1);
+    // Each block has its own token.
+    const tokens = [...result.stdout.matchAll(/^::stop-commands::([0-9a-f]{32})$/gm)].map((m) => m[1]);
+    expect(tokens.length).toBeGreaterThan(2);
+    expect(new Set(tokens).size).toBe(tokens.length);
   });
 });
 

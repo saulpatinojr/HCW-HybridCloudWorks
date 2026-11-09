@@ -212,8 +212,10 @@ is authoritative and the variable is its cache.
 
 ### Subscription, tenant and client IDs
 
-**Store 3, GitHub Actions variables** — which is what the repository already
-does (`vars.CLIENT_ID`, `vars.TENANT_ID`, `vars.SUBSCRIPTION_ID`).
+**Store 3, GitHub Actions variables**, for the tenant and client ids
+(`vars.CLIENT_ID`, `vars.TENANT_ID`). **The two subscription ids are the
+exception, in store 4 since 2026-11-09**: `secrets.SUBSCRIPTION_ID` and
+`secrets.SUBSCRIPTION_MGMT_ID` (#1610, below).
 
 Under workload identity federation these are identifiers, not credentials.
 Possession of a client ID grants nothing. The trust decision is made by the
@@ -229,10 +231,26 @@ Note the deliberate asymmetry with Terraform, where the same values are marked
 | Mechanism | What it is | Why it is set the way it is |
 | --- | --- | --- |
 | Terraform `sensitive = true` | A log-hygiene flag — redacts the value from plan output and CI logs | Keeps subscription IDs out of run logs that get pasted into issues |
-| GitHub `secrets` | A storage-and-masking mechanism with a different reader set from `vars` | Not warranted: nothing is protected, and masking a GUID that appears in error messages hurts diagnosis |
+| GitHub `secrets` | A storage-and-masking mechanism with a different reader set from `vars` | Not warranted for the tenant and client ids: nothing is protected, and masking a GUID that appears in error messages hurts diagnosis. Chosen for the subscription ids (below) because the masking is the point |
 
 The two do not have to agree, and treating `sensitive` as a synonym for "must be
 a GitHub secret" is how identifiers end up in the last-resort column.
+
+**The subscription ids are secrets, for the log (2026-11-09, [#1610](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1610)).**
+This repository is public, so its Actions logs are public, and GitHub prints a
+step's `env:` and `with:` values in the log: a variable as it is, a secret as
+`***`. A job-level `SUBSCRIPTION_ID: ${{ vars.SUBSCRIPTION_ID }}` therefore put
+the real Application subscription id in every step of a public run, which
+the repository's own rule (no real tenant, subscription or application id in
+anything public) does not allow, even though a subscription id grants nothing
+by itself. So `SUBSCRIPTION_ID` and `SUBSCRIPTION_MGMT_ID` are repository
+secrets, every workflow reads `secrets.`, and
+`scripts/subscription-id-secrets.test.mjs` fails on a `vars.` read. They are
+still identifiers: the store is chosen for the masking, not because the value
+is a credential, which is the same reasoning as the Agents copies below.
+[`scripts/Set-SubscriptionSecrets.ps1`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/Set-SubscriptionSecrets.ps1)
+sets them without printing a value. The tenant id stays a variable for now:
+it is printed the same way, and moving it is a separate decision.
 
 **One documented exception: the Agents store for Copilot's runner.** The job
 GitHub runs before a Copilot code review or cloud-agent session replays
@@ -473,7 +491,7 @@ Everything else there is a default nobody is expected to override.
 | `ARC_RUN_CLIENT_ID` | — | Identifier for `github_arc_run`, which `lab-host-arc-run.yml` signs in as to run one of its fixed scripts on the lab host through Azure Arc Run Command (#1590). It grants nothing without an OIDC token for the `lab-host-arc` environment's subject, so the control is that environment's reviewers and main-only branch rule — same reasoning |
 | `COPILOT_REVIEW_APP_ID` | — | App ID of the read-only GitHub App Copilot code review reads GitHub with. An identifier, exactly like `MANIFEST_APP_ID`; the key is in store 4 |
 | `TENANT_ID` | §7 | Identifier |
-| `SUBSCRIPTION_ID` | §7 | Identifier |
+| ~~`SUBSCRIPTION_ID`~~ | §7 | Moved to store 4 on 2026-11-09 (#1610), with `SUBSCRIPTION_MGMT_ID`: an identifier, but a variable is printed in the public logs and a secret is masked |
 | `APP_HOSTNAME` | §7 | Public DNS name. Mirrors the `function_hostname` output |
 | `RESOURCE_GROUP` | §7 | Resource group name for the T-503 firewall window. Must equal the `resource_group_name` Terraform value |
 | `FUNCTIONS_STORAGE_ACCOUNT` | §7 | An account name, not a key. Three words to break the collision with the content storage account, which the standard permits |
@@ -493,6 +511,7 @@ available. An entry that cannot answer both belongs in store 3 or nowhere.
 | --- | --- | --- | --- | --- |
 | `GITHUB_TOKEN` | — | GitHub | Injected per-run by GitHub, scoped by `permissions:`, expires with the job. Not stored by us at all | Correct, and contractual |
 | `COPILOT_REVIEW_APP_PRIVATE_KEY` (Agents store, not Actions) | — | GitHub, read-only, this repository | Authenticates GitHub → *GitHub* for the MCP server Copilot code review uses, to reach the Actions, code-scanning, Dependabot and discussions toolsets the built-in per-review token cannot be given. The same shape as `MANIFEST_APP_PRIVATE_KEY`: a GitHub App's key, from which `copilot-setup-steps.yml` mints a one-hour installation token per session. The App holds eight **read** permissions on one repository and nothing else, so the key's ceiling is read-only — a leaked key mints nothing a leaked token would not already grant. **No personal access token, classic or fine-grained, is used**: those are user-bound and long-lived, and store 4 holds none | Justified — the one stored key in the Copilot configuration, and it can only ever produce read-only, one-hour tokens |
+| `SUBSCRIPTION_ID`, `SUBSCRIPTION_MGMT_ID` | §7 | Azure (names a subscription; authenticates nothing) | Not a credential, so federation is not the question. Stored as secrets so that GitHub masks them as `***` in this public repository's logs, which it does not do for a variable (#1610). Set with `scripts/Set-SubscriptionSecrets.ps1`, which never prints the value | Justified, for the masking alone |
 | `TFC_TOKEN` | §7 | HCP Terraform | Authenticates GitHub → *Terraform*, the reverse direction from §8. The HCP Terraform API has no inbound GitHub OIDC path. Read by `tfc-plan-check.yml`, which holds a plan to the permanent diff, and by `deploy-functions.yml`, which refuses to deploy while an apply is in flight (#454). Use a **team** token, not a user token, so it survives the user leaving | Justified |
 | `MANIFEST_APP_PRIVATE_KEY` | — | GitHub, this repository | A GitHub App's key, with `vars.MANIFEST_APP_ID`. `scripts/github-app-token.mjs` mints a one-hour installation token from it and revokes it after use, for the four workflows that push a branch and open a pull request. The App is what lets those pull requests run CI, which a `GITHUB_TOKEN`-opened one does not | Justified |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | §7 | Google Cloud | Source-side credential for the one-shot Firestore export, for a system being decommissioned | **Deleted** — the migration completed and `migrate-data.yml` went with it (`59e471b`); the repository holds no such secret |

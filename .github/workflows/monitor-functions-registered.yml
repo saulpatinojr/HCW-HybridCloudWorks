@@ -195,7 +195,7 @@ jobs:
         with:
           client-id: ${{ vars.READER_CLIENT_ID }}
           tenant-id: ${{ vars.TENANT_ID }}
-          subscription-id: ${{ vars.SUBSCRIPTION_ID }}
+          subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
 
       - name: Are the functions registered?
         env:
