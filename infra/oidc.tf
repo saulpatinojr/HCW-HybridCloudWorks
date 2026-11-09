@@ -42,14 +42,19 @@ resource "azurerm_user_assigned_identity" "github_deploy" {
 #
 # They trusted a subject no workflow presents. Every job that signs in as
 # the deploy identity declares `environment: production`, so GitHub composes
-# the environment form and the production reviewers gate the sign-in. The
-# ref form was the way around that gate: any job on `main` holding
-# `id-token: write` — ten workflows do, for Qlty, Pages and the manifest —
-# could have signed in as this identity with no reviewer and deployed code
-# that runs as the Function App's own identity. Deleting the pair closes the
-# route; `scripts/oidc-subjects.test.mjs` now asserts this identity trusts
-# environment-form subjects only. The reader identity keeps its ref pair
-# below: its workflows name no environment and it holds read roles.
+# the environment form. At the time the production reviewers gated that
+# sign-in; the owner removed them on 2026-11-09 (#1613), and the controls now
+# are the environment's main-only branch rule and each deploy workflow's
+# guard step that refuses any ref but `main`. #1617 restores a reviewed
+# environment for the backend and gives the frontend a least-privilege
+# identity of its own. The ref form was a way around those controls: any job
+# on `main` holding `id-token: write` — ten workflows do, for Qlty, Pages and
+# the manifest — could have signed in as this identity without naming the
+# environment and deployed code that runs as the Function App's own identity.
+# Deleting the pair closes the route; `scripts/oidc-subjects.test.mjs` now
+# asserts this identity trusts environment-form subjects only. The reader
+# identity keeps its ref pair below: its workflows name no environment and it
+# holds read roles.
 #
 # `subject` must match the token's claim EXACTLY. GitHub composes it as
 # repo:<org>/<repo>:environment:<name> for a job that names an environment,
@@ -174,8 +179,10 @@ locals {
 # since T-728, and the healer was deleted in #816 part 2, so no workflow on
 # THIS identity presents the ref subject, and on 2026-10-06 the owner retired
 # the pair (SEC-2). These two environment credentials are the identity's
-# only trust now: a sign-in as the deploy identity passes the production
-# environment's reviewers or does not happen.
+# only trust now: a sign-in as the deploy identity comes from a job that names
+# the production environment, whose main-only branch rule admits main only.
+# The environment's required reviewers were removed on 2026-11-09 (#1613);
+# #1617 restores a reviewed environment for the backend.
 # ---------------------------------------------------------------------------
 resource "azurerm_federated_identity_credential" "github_production" {
   name                      = "github-${var.github_repo}-env-production"
@@ -497,7 +504,9 @@ resource "azurerm_role_assignment" "github_manifest_window_read" {
 # Refresh for the remove and Reader for the reads. It runs as this identity
 # and not as github_deploy because github_deploy trusts only the
 # `environment:production` subject, and that environment's required
-# reviewers would hold an hourly job for a person every hour.
+# reviewers would have held the hourly job for a person each time. They were
+# removed on 2026-11-09 (#1613), and #1617 brings a reviewed environment back
+# for the backend, so the reason stands.
 #
 # The storage half is this grant: the account's read and write actions and
 # nothing else (infra/roles/storage-firewall-writer.json). The firewall is a
@@ -901,37 +910,38 @@ resource "azurerm_role_assignment" "github_copilot_review_reader" {
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Values the GitHub workflows need. None are secret: federation means
+# Values the GitHub workflows need. None is a credential: federation means
 # possession of these IDs grants nothing without a matching OIDC token from
-# this repository and ref.
+# this repository and ref. Since #1618 the client ids are still stored as
+# repository secrets, only so that GitHub masks them in the public logs.
 # ---------------------------------------------------------------------------
 output "client_id" {
-  description = "CLIENT_ID for azure/login — set as a repository variable, not a secret"
+  description = "CLIENT_ID for azure/login — a repository secret since #1618, kept secret only so the public logs mask it; an identifier, not a credential"
   value       = azurerm_user_assigned_identity.github_deploy.client_id
 }
 
 output "reader_client_id" {
-  description = "READER_CLIENT_ID for azure/login in the read-only workflows — a repository variable, not a secret"
+  description = "READER_CLIENT_ID for azure/login in the read-only workflows — a repository secret since #1618, for log masking only"
   value       = azurerm_user_assigned_identity.github_reader.client_id
 }
 
 output "alert_reader_client_id" {
-  description = "ALERT_READER_CLIENT_ID for azure/login in verify-alert-state.yml (#1053) — a repository variable, not a secret"
+  description = "ALERT_READER_CLIENT_ID for azure/login in verify-alert-state.yml (#1053) — a repository secret since #1618, for log masking only"
   value       = azurerm_user_assigned_identity.github_alert_reader.client_id
 }
 
 output "manifest_window_client_id" {
-  description = "MANIFEST_WINDOW_CLIENT_ID for azure/login in publish-content-manifest.yml's origin window (#1098) — a repository variable, not a secret"
+  description = "MANIFEST_WINDOW_CLIENT_ID for azure/login in publish-content-manifest.yml's origin window (#1098) — a repository secret since #1618, for log masking only"
   value       = azurerm_user_assigned_identity.github_manifest_window.client_id
 }
 
 output "copilot_review_client_id" {
-  description = "COPILOT_REVIEW_CLIENT_ID for azure/login in copilot-setup-steps.yml — a repository variable, mirrored as an Agents secret of the same name because Copilot's own runner resolves no repository variables (runbook step 2b); an identifier in both stores, not a secret"
+  description = "COPILOT_REVIEW_CLIENT_ID for azure/login in copilot-setup-steps.yml — a repository secret since #1618, mirrored as an Agents secret of the same name for Copilot's own runner (runbook step 2b); an identifier in both stores, kept secret only for log masking"
   value       = azurerm_user_assigned_identity.github_copilot_review.client_id
 }
 
 output "arc_run_client_id" {
-  description = "ARC_RUN_CLIENT_ID for azure/login in lab-host-arc-run.yml (#1590), the Run Command identity — a repository variable, not a secret"
+  description = "ARC_RUN_CLIENT_ID for azure/login in lab-host-arc-run.yml (#1590), the Run Command identity — a repository secret since #1618, for log masking only"
   value       = azurerm_user_assigned_identity.github_arc_run.client_id
 }
 
