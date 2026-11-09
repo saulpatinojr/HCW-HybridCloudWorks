@@ -3645,7 +3645,13 @@ same moment (4 x 512 + 5 x 2048 + 2560 = 14,848 MiB of limits, from the capacity
 figures in [the labs host architecture](../architecture/labs-host.md) and the
 `coder` role), would leave 1,139 MiB for the system; that needs five
 workspaces at their 2 GiB limit and every add-on at its limit together and
-has not been seen. The playbook has run, so run `ssh hcw-lab "free -m"` now and
+has not been seen. That sum leaves out two more limits: Portainer's 512 MiB
+and the one lab job's, 768 MiB since 2026-11-09
+([#1590](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1590);
+512 MiB before). Counting them, the limits add up to 16,128 MiB, 141 MiB
+more than the host's 15,987. It stays a paper worst case (the 2,560 MiB
+includes the 1 GiB kept for the OS, and every limit has never been reached
+at once), but it is why the `available` figure below is worth reading. The playbook has run, so run `ssh hcw-lab "free -m"` now and
 again tomorrow, and post both readings on
 [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357); if
 the `available` column is under 4,000 MiB, say so there.

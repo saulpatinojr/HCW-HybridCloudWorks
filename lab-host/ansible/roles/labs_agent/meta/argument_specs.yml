@@ -84,7 +84,7 @@ argument_specs:
       labs_agent_job_memory:
         type: str
         required: false
-        default: 512m
+        default: 768m
         description: LABS_AGENT_JOB_MEMORY.
       labs_agent_job_cpus:
         type: str

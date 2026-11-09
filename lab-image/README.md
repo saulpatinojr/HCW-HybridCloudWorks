@@ -248,8 +248,8 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   sixteen provider configurations (`azurerm` and `azapi` six times each)
   each start a plugin process. 320m passes, erratically, in 20 to 86 s and
   512m in 15 to 19 s (measured 2026-09-27), so the agent's default and the
-  host's `labs_agent_job_memory` are 512m (owner decision that day; the
-  reason is beside the default in `vps-agent/index.js`). At 512m the build
+  host's `labs_agent_job_memory` were 512m from that day (owner decision;
+  the reason is beside the default in `vps-agent/index.js`). At 512m the build
   leans on swap: the agent also passes `--memory-swap` at twice the memory
   limit, which lets the job use up to as much swap again, but only on a
   machine that has swap. On 2026-11-08, with the image published from
@@ -258,8 +258,11 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
   showed the other two killed for running out of memory inside the job's
   limit. The lab host had no swap when it was last read (2026-10-26, "Host
   memory" in [the labs host runbook](../docs/runbooks/labs-host.md)), so
-  the no-swap result is the one that looks like the host. The limit is
-  unchanged until the build is re-measured on the host itself (#1590).
+  the no-swap result is the one that looks like the host. Measured on the
+  host itself on 2026-11-09 (#1590; `free -m` showed no swap), the check
+  passed 2 of 3 runs at 512m and in the third the kernel killed `terraform`
+  for running out of memory inside the job's limit, so the limit is 768m
+  since that day.
 - **Helm and kubeconform: yes.** [`bin/hcw-helm-template`](bin/hcw-helm-template)
   renders one chart (its `Chart.yaml` at `/workspace` or one level down;
   dependencies must already be under `charts/`).
@@ -337,7 +340,7 @@ from `frontend/src/lib/landingZone` when the script runs, so it needs that
 directory beside this one (a full checkout, as CI has) and fails on any
 module block the image would leave for the registry. Every case runs at the
 agent's limits, which the script reads from `vps-agent/index.js` rather than
-restating (512m of memory, for the reason under "What works offline"). The
+restating (768m of memory, for the reason under "What works offline"). The
 workflow runs it after the smoke tests, and runs on pull requests that
 change the builder as well as this directory.
 
