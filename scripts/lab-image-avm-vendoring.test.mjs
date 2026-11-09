@@ -82,6 +82,28 @@ describe('the lab image vendors what the Landing Zone Builder emits', () => {
 // The versions below are read from the pins, not remembered (#1287, #1300):
 // the weekly bumper runs this file after a bump, and a literal `0.22.2`
 // here would fail the bump that moved it with a perfect record in hand.
+describe('lab-image/README.md names no module version the weekly bump moves (#1594)', () => {
+  // The weekly update-avm-versions.yml moves the pins in versions.env and
+  // avmVersions.js, and nothing rewrites the README, which is how it fell three
+  // versions behind before #1590. So the README names modules without their
+  // versions and points to versions.env; this keeps a version from coming back.
+  const README = read('lab-image', 'README.md');
+  const VERSIONED = /\bavm-[a-z0-9-]+@\d+\.\d+\.\d+/g;
+
+  it('writes no avm-<name>@<version> in the README', () => {
+    expect(README.match(VERSIONED) || []).toEqual([]);
+  });
+
+  it('still names every builder module, without its version', () => {
+    for (const m of MODULES) expect(README, m.name).toContain(`\`${m.name}\``);
+  });
+
+  it('catches a pinned version written back in', () => {
+    const pinned = `${MODULES[0].name}@${MODULES[0].version}`;
+    expect(`see /opt/avm/${pinned}`.match(VERSIONED)).toEqual([pinned]);
+  });
+});
+
 describe('the check goes red when the image is left behind', () => {
   const bumped = (name, version) =>
     MODULES.map((m) => (m.name === name ? { ...m, version } : m));
