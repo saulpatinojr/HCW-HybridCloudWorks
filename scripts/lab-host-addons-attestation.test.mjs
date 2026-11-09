@@ -67,11 +67,11 @@ describe('group_vars/all.yml add-on attestation configuration', () => {
       },
       'cloud-assessment': {
         repo: 'saulpatinojr/HCW-CloudAssessor_AddOn',
-        tag: 'v0.1.2',
+        tag: 'v0.1.3',
       },
       'cloud-crawler': {
         repo: 'saulpatinojr/HCW-CloudCrawler_AddOn',
-        tag: 'v0.3.0',
+        tag: 'v0.3.1',
       },
     };
 
