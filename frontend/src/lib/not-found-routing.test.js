@@ -136,6 +136,28 @@ describe('unknown addresses answer 404 (#1613)', () => {
     ).not.toHaveLength(0);
   });
 
+  it('does not yet pre-render a design that exists only in the API (the known gap above)', () => {
+    // A design published through the admin screens but not written into
+    // `data/architectures.js` gets no page under /<provider>/architecture-designs/,
+    // so that address answers 404 to a crawler while the app still shows it to
+    // a reader. The content manifest carries such a design today, but only
+    // with the fields an article page reads (no diagram, Well-Architected or
+    // cost fields), and a page built from a seed does not fetch again in the
+    // browser, so building the page from it would show readers less than they
+    // see now. Closing the gap needs the API's manifest route to send those
+    // fields first. When it does, this test is the one to turn around.
+    const prerendered = new Set(routes(manifest));
+    const apiOnly = Object.values(manifest.data)
+      .filter((item) => String(item?.type || '').toLowerCase() === 'architecture')
+      .map((item) => ({
+        provider: String(item.cloudProvider || item['Cloud Provider'] || '').toLowerCase(),
+        slug: String(item.slug || item.Slug || ''),
+      }))
+      .filter(({ provider, slug }) => slug && !architecturesByProvider[provider]?.[slug])
+      .map(({ provider, slug }) => `/${provider}/architecture-designs/${slug}`);
+    expect(apiOnly.filter((page) => prerendered.has(page))).toEqual([]);
+  });
+
   /** The 301s for each AWS certification's old slug, in catalogue order. */
   const certRedirects = () =>
     awsCertifications.flatMap((cert) =>
