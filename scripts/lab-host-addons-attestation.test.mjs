@@ -63,7 +63,7 @@ describe('group_vars/all.yml add-on attestation configuration', () => {
       },
       'network-assessment': {
         repo: 'saulpatinojr/HCW-NetworkEyes_AddOn',
-        tag: 'v0.1.2',
+        tag: 'v0.1.3',
       },
       'cloud-assessment': {
         repo: 'saulpatinojr/HCW-CloudAssessor_AddOn',
@@ -81,6 +81,12 @@ describe('group_vars/all.yml add-on attestation configuration', () => {
       );
       expect(patternMatch, `attestation_identity_regexp for ${id} not found`).toBeTruthy();
       const regex = new RegExp(patternMatch[1]);
+
+      // The tag above must be the one the row really pins: the identity pattern accepts any tag, so
+      // without this a stale expected tag would go unnoticed when a row moves to a new release.
+      const tagMatch = GROUP_VARS.match(new RegExp(`- id:\\s*${id}\\n[\\s\\S]*?image_tag:\\s*"([^"]+)"`));
+      expect(tagMatch, `image_tag for ${id} not found`).toBeTruthy();
+      expect(tagMatch[1], `group_vars pins ${id} at ${tagMatch[1]}; update the expected tag here`).toBe(spec.tag);
 
       const legitimateIdentity = `https://github.com/${spec.repo}/.github/workflows/publish-images.yml@refs/tags/${spec.tag}`;
       expect(regex.test(legitimateIdentity), `regex for ${id} must match ${legitimateIdentity}`).toBe(true);
