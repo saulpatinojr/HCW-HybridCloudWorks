@@ -449,7 +449,7 @@ jobs:
           git config user.email 'hcw-manifest[bot]@users.noreply.github.com'
           git checkout -b "${branch}"
           git add frontend/data/content-manifest.json
-          git commit -m "chore: refresh content manifest (${ROUTES} article routes)"
+          git commit -m "chore: refresh content manifest (${ROUTES} content routes)"
           git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin "${branch}"
 

@@ -126,7 +126,7 @@ describe('getManifest', () => {
       .map((f) => `c["${f}"]`)
       .join(', ');
     expect(PUBLISHED_DESIGN_QUERY).toBe(
-      `SELECT ${designProjection} FROM c WHERE ${PUBLISHED_PREDICATE} AND LOWER(c.type) = "architecture"`
+      `SELECT ${designProjection} FROM c WHERE ${PUBLISHED_PREDICATE} AND LOWER(c.type) = "architecture" ORDER BY c._ts DESC`
     );
     // The visibility fields ride along so isPublicDocument re-checks every
     // row in code, as the public route does; projectInterview drops them.
@@ -508,7 +508,10 @@ describe('the published architecture designs it carries (#1628)', () => {
   it('leaves designs out of the article corpus by type, and carries them in their own query', () => {
     const live = { Live: true, contentStatus: 'published' };
     const articles = PUBLISHED_QUERY.slice(PUBLISHED_QUERY.indexOf('WHERE ') + 6);
-    const designs = PUBLISHED_DESIGN_QUERY.slice(PUBLISHED_DESIGN_QUERY.indexOf('WHERE ') + 6);
+    const designs = PUBLISHED_DESIGN_QUERY.slice(
+      PUBLISHED_DESIGN_QUERY.indexOf('WHERE ') + 6,
+      PUBLISHED_DESIGN_QUERY.indexOf(' ORDER BY ')
+    );
     expect(evaluatePredicate(articles, { ...live, type: 'architecture' })).toBe(false);
     expect(evaluatePredicate(articles, { ...live, type: 'Architecture' })).toBe(false);
     expect(evaluatePredicate(articles, { ...live, type: 'framework' })).toBe(true);

@@ -36,6 +36,9 @@
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+// The public detail route's allowlist, imported rather than copied: the one
+// list both sides project a design to (#1628). The module imports nothing.
+import { PUBLIC_CONTENT_DETAIL_FIELDS } from '../functions/src/lib/public-reads.js';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 // NOT under public/. Vite copies public/ verbatim into dist, so a manifest
@@ -167,6 +170,12 @@ async function fetchPublished() {
   // `interviews` (ADR 0040): a revision without them pre-renders none. And
   // `designs` (#1628): a revision without them still sends its designs among
   // the articles, so null (not []) tells `buildManifest` to keep them there.
+  // Present but not a list is refused: a revision that sends the field has
+  // already taken designs out of `items`, so treating it as absent would
+  // drop every design while the log said they were among the articles.
+  if (body.designs !== undefined && !Array.isArray(body.designs)) {
+    throw new Error(`${url} returned designs that are not a list: ${JSON.stringify(body.designs).slice(0, 200)}`);
+  }
   return {
     items: body.items,
     sections: body.sections,
@@ -376,17 +385,29 @@ const isDesignItem = (item) => String(item?.type || '').toLowerCase() === 'archi
  * `architecture:<slug>` is the key ArchitectureDetailTemplate reads, as
  * `usePublicData` keys it.
  *
- * KEPT AS THE ROUTE SENT IT. The route projects each design to what
- * `public/content` answers for it (DESIGN_FIELDS in
- * functions/src/lib/public-content-manifest.js), and the seed has to be that
- * answer: a page built from a seed does not fetch again in the browser, so a
- * narrower copy here would show readers less than the live page does.
+ * PROJECTED TO WHAT `public/content` ANSWERS, PUBLIC_CONTENT_DETAIL_FIELDS,
+ * the same list the route projects to (DESIGN_FIELDS in
+ * functions/src/lib/public-content-manifest.js), imported rather than
+ * copied. The route's projection is the boundary; this one is the second
+ * layer, as `project` is for articles, so a field a route regression let
+ * through still never reaches the committed manifest. Not narrower than
+ * that list: a page built from a seed does not fetch again in the browser,
+ * so a narrower seed would show readers less than the live page does.
  *
  * A design whose address repeats one of the built-in designs
  * (frontend/src/data/architectures.js) is still listed: the pre-render drops
  * the repeated route, and the seed is the API's copy, which the page lays
  * over the built-in one exactly as it does in the browser.
  */
+/** Keep only the public detail fields, and only when present. */
+function projectDesign(item) {
+  const out = {};
+  for (const field of PUBLIC_CONTENT_DETAIL_FIELDS) {
+    if (item[field] !== undefined) out[field] = item[field];
+  }
+  return out;
+}
+
 function addDesigns(designs, { routes, data, skipped }) {
   for (const item of designs) {
     const slug = slugOf(item);
@@ -407,7 +428,7 @@ function addDesigns(designs, { routes, data, skipped }) {
       continue;
     }
     routes.push(`/${provider}/architecture-designs/${slug}`);
-    data[`architecture:${slug}`] = { ...item };
+    data[`architecture:${slug}`] = projectDesign(item);
   }
 }
 
@@ -542,7 +563,14 @@ export function buildManifest(items, sectionsFromRoute = null, interviews = [], 
   // The route's counts win. They see every container a section page reads;
   // sectionCounts() sees only the `content` corpus, so it can speak for
   // frameworks and nothing else.
-  const sections = serverSections(sectionsFromRoute) ?? sectionCounts(items);
+  //
+  // The fallback counts the designs too: a route that sends them apart has
+  // taken them out of `items`, and counting `items` alone would put every
+  // provider's architecture-designs at 0 and drop /vmware/architecture-designs
+  // from the sitemap whenever the route sent no counts.
+  const sections =
+    serverSections(sectionsFromRoute) ??
+    sectionCounts(Array.isArray(designs) ? [...items, ...designs] : items);
 
   for (const item of items) {
     const slug = slugOf(item);

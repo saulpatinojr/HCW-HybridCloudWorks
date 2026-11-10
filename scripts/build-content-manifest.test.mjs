@@ -440,8 +440,7 @@ describe('designs on the manifest (#1628)', () => {
       '/azure/architecture-designs/hub-and-spoke',
       '/aws/architecture-designs/serverless',
     ]);
-    // Kept whole, as the route sent it: the route already projected it to
-    // what public/content answers, and the page will not fetch it again.
+    // Whole, as public/content answers it: the page will not fetch it again.
     expect(manifest.data['architecture:hub-and-spoke']).toEqual(design('hub-and-spoke'));
     expect(manifest.data).not.toHaveProperty('article:hub-and-spoke');
   });
@@ -468,6 +467,18 @@ describe('designs on the manifest (#1628)', () => {
     ]);
     expect(manifest.routes).toEqual(['/azure/blog/hub-and-spoke']);
     expect(manifest.data).toHaveProperty('article:hub-and-spoke');
+  });
+
+  it('drops any field public/content would not send, even if the route let it through', () => {
+    const manifest = buildManifest([], null, [], [design('hub-and-spoke', { analysisPrompt: 'x', editorNotes: 'y' })]);
+    expect(manifest.data['architecture:hub-and-spoke']).toEqual(design('hub-and-spoke'));
+  });
+
+  it('counts the designs in the fallback section counts when the route sends none', () => {
+    // The route sends designs apart from the articles, so counting `items`
+    // alone would put VMware's designs at 0 and drop its page from the sitemap.
+    const manifest = buildManifest([], null, [], [design('estate', { cloudProvider: 'vmware' })]);
+    expect(manifest.sections.vmware['architecture-designs']).toBe(1);
   });
 
   it('skips a bad slug, a provider with no design page and a repeated slug, and says so', () => {

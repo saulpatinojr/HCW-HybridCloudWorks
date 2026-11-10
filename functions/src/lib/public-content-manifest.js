@@ -307,7 +307,12 @@ const DESIGN_PROJECTION = [...new Set([...DESIGN_FIELDS, ...CONTENT_VISIBILITY_F
   .map((field) => `c["${field}"]`)
   .join(', ');
 
-export const PUBLISHED_DESIGN_QUERY = `SELECT ${DESIGN_PROJECTION} FROM c WHERE ${PUBLISHED_PREDICATE} AND ${SQL_IS_DESIGN}`;
+/**
+ * Newest first, as `public/content` picks among documents sharing a slug
+ * (`ORDER BY c._ts DESC` in getContent): the builder keeps the first design
+ * per slug, so the built page and the live page show the same one.
+ */
+export const PUBLISHED_DESIGN_QUERY = `SELECT ${DESIGN_PROJECTION} FROM c WHERE ${PUBLISHED_PREDICATE} AND ${SQL_IS_DESIGN} ORDER BY c._ts DESC`;
 
 /** Keep only the design allowlist: the projection `public/content` answers with. */
 export function projectDesign(item) {
