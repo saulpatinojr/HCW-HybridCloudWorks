@@ -19,6 +19,54 @@ export const TONE_TEXT = Object.freeze({
 export const TABLE_CLASS = 'w-full text-xs';
 export const TH_CLASS = 'pb-1 pr-3 text-left font-medium text-muted-foreground';
 export const TD_CLASS = 'py-1.5 pr-3 align-top border-b border-border/60';
+/**
+ * A cell holding a page address. It wraps at a hyphen or slash where it can
+ * and mid-word only when a part is longer than the column, instead of
+ * `break-all`, which split every address at the column edge
+ * ("…/e/m" then "icrosoft-…").
+ */
+export const URL_CELL_CLASS = 'min-w-[13rem] [overflow-wrap:anywhere]';
+/** A short cell (a word or two, a link) that should not wrap. */
+export const NOWRAP_CELL_CLASS = 'whitespace-nowrap';
+
+/**
+ * An address with an optional line break after each slash, so a long one
+ * wraps between its parts ("…hybridcloudworks.com/" then "e/…") before it is
+ * ever split inside one, and a host name that is itself too long wraps after
+ * a dot ("podcast." then "hybridcloudworks.com/"). The scheme stays on the
+ * host ("https://docs…"), so no line is just "https://". The text, and what
+ * a screen reader or a copy reads, is unchanged: `<wbr>` adds no character.
+ */
+export function Breakable({ text }) {
+  const value = String(text ?? '');
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i.exec(value)?.[0] ?? '';
+  const parts = value.slice(scheme.length).split('/');
+  const host = scheme ? parts[0].split('.') : null;
+  return parts.map((part, index) => (
+    <React.Fragment key={index}>
+      {index === 0 && host
+        ? [
+            scheme,
+            ...host.map((label, at) => (
+              <React.Fragment key={at}>
+                {label}
+                {at < host.length - 1 ? (
+                  <>
+                    .<wbr />
+                  </>
+                ) : null}
+              </React.Fragment>
+            )),
+          ]
+        : part}
+      {index < parts.length - 1 ? (
+        <>
+          /<wbr />
+        </>
+      ) : null}
+    </React.Fragment>
+  ));
+}
 
 /**
  * One number and what it counts, with an optional second line.

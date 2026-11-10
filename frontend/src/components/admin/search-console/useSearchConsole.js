@@ -7,9 +7,14 @@
  * rather than leaving old figures beside an error.
  *
  * Run now (`POST cms/search-console/run`) only queues a run; the server
- * answers 202 at once and the run takes a few minutes. So after a queued run
- * the report is read again every 30 seconds, for up to 15 minutes, until it
- * shows a newer run, and then the page has the new figures without a reload.
+ * answers 202 at once and the run takes about ten minutes (about 400 pages,
+ * each one a separate question to Google; the first real run on 2026-11-10
+ * took 8 minutes 47 seconds). So after a queued run the report is read again
+ * every 30 seconds, for up to 30 minutes, until it shows a newer run, and
+ * then the page has the new figures without a reload. 30 minutes covers the
+ * job's whole 28-minute budget (SYNC_JOB_TIMEOUT_MS in the functions'
+ * lib/search-console/handlers.js); at 15 minutes a slow run could still be
+ * going when the page stopped looking.
  * Those background reads are quiet: one that fails leaves the report on
  * screen as it was and the next one tries again, because a dropped poll is
  * not a reason to blank a page the owner is reading.
@@ -27,7 +32,7 @@ import {
 
 /** How often, and for how long, the page re-reads after Run now. */
 export const POLL_EVERY_MS = 30_000;
-export const POLL_FOR_MS = 15 * 60_000;
+export const POLL_FOR_MS = 30 * 60_000;
 
 const describeError = (err) => err?.message || 'The Search Console report could not be read.';
 
@@ -55,7 +60,7 @@ export function runNowToast(outcome) {
     }
     return {
       title: 'Run queued',
-      description: 'Queued; the page updates when the run finishes, usually a few minutes.',
+      description: 'Queued; the page updates when the run finishes, usually in about ten minutes.',
     };
   }
   const { error } = outcome;

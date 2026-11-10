@@ -21,7 +21,12 @@ at 00:10 and 12:10 UTC, which is 18:10 and 06:10 Central Standard Time
 6 PM and 6 AM Central; the times are written in UTC because the app clock is
 UTC ([#416](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/416)).
 The page never calls Google while you look at it. The **Run now** button asks
-for one extra run; it takes a few minutes.
+for one extra run. A run takes about ten minutes, because each page is a
+separate question to Google: the first real run, on 2026-11-10, asked about
+roughly 400 pages and took 8 minutes 47 seconds. While it runs, the button
+reads **Run in progress** and the page checks for the new report every 30
+seconds for up to 30 minutes. The page opens on **Performance**; **Indexing**
+is the second tab.
 
 | Part | What it shows | Where it comes from |
 | --- | --- | --- |

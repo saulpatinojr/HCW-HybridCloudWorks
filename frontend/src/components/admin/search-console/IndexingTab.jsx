@@ -34,9 +34,12 @@ import {
 import {
   ChipRow,
   Section,
+  Breakable,
+  NOWRAP_CELL_CLASS,
   TABLE_CLASS,
   TD_CLASS,
   TH_CLASS,
+  URL_CELL_CLASS,
   TONE_TEXT,
   Tile,
   WhenText,
@@ -248,7 +251,7 @@ function PageRow({ page }) {
       data-stale={page.stale ? 'true' : 'false'}
       data-source={sourceOf(page)}
     >
-      <td className={`${TD_CLASS} max-w-[18rem] break-all`}>
+      <td className={`${TD_CLASS} ${URL_CELL_CLASS} max-w-[24rem]`}>
         {pageHref ? (
           <a
             href={pageHref}
@@ -256,16 +259,22 @@ function PageRow({ page }) {
             rel="noopener noreferrer"
             className="font-mono text-primary hover:underline"
           >
-            {pageLabel(page.url)}
+            <Breakable text={pageLabel(page.url)} />
           </a>
         ) : (
-          <span className="font-mono">{String(page.url ?? '')}</span>
+          <span className="font-mono">
+            <Breakable text={page.url} />
+          </span>
         )}
       </td>
-      <td className={TD_CLASS} data-testid="indexing-source" title={source.note}>
+      <td
+        className={`${TD_CLASS} ${NOWRAP_CELL_CLASS}`}
+        data-testid="indexing-source"
+        title={source.note}
+      >
         {source.label}
       </td>
-      <td className={TD_CLASS}>
+      <td className={`${TD_CLASS} min-w-[8rem]`}>
         <span className={`font-medium ${TONE_TEXT[verdict.tone]}`}>{verdict.label}</span>
         {page.stale ? <StaleMarker page={page} /> : null}
         {page.coverageState ? (
@@ -276,21 +285,23 @@ function PageRow({ page }) {
       <td className={`${TD_CLASS} ${failedFetch ? TONE_TEXT.bad : ''}`}>
         {fetchStateLabel(page.pageFetchState)}
       </td>
-      <td className={TD_CLASS}>
+      <td className={`${TD_CLASS} ${NOWRAP_CELL_CLASS}`}>
         <WhenText iso={page.lastCrawlTime} fallback="Never crawled" stacked />
       </td>
-      <td className={TD_CLASS}>
+      <td className={`${TD_CLASS} min-w-[8rem]`}>
         <CanonicalCell page={page} />
       </td>
-      <td className={TD_CLASS}>
+      <td className={`${TD_CLASS} ${NOWRAP_CELL_CLASS}`}>
         {googleHref ? (
           <a
             href={googleHref}
             target="_blank"
             rel="noopener noreferrer"
+            aria-label="Inspect in Google"
             className="inline-flex items-center gap-1 text-primary hover:underline"
           >
-            Inspect in Google
+            {/* "Inspect" on screen keeps the column narrow; aria-label gives the full name. */}
+            Inspect
             <ExternalLink className="h-3 w-3" aria-hidden="true" />
           </a>
         ) : (
@@ -399,7 +410,7 @@ function StraysTable({ strays }) {
         <tbody>
           {strays.map((row) => (
             <tr key={row.url}>
-              <td className={`${TD_CLASS} break-all`}>
+              <td className={`${TD_CLASS} ${URL_CELL_CLASS}`}>
                 {sitePageHref(row.url) ? (
                   <a
                     href={sitePageHref(row.url)}
@@ -407,10 +418,12 @@ function StraysTable({ strays }) {
                     rel="noopener noreferrer"
                     className="font-mono text-primary hover:underline"
                   >
-                    {pageLabel(row.url)}
+                    <Breakable text={pageLabel(row.url)} />
                   </a>
                 ) : (
-                  <span className="font-mono">{String(row.url ?? '')}</span>
+                  <span className="font-mono">
+                    <Breakable text={row.url} />
+                  </span>
                 )}
               </td>
               <td className={`${TD_CLASS} text-right tabular-nums`}>{fmtCount(row.clicks)}</td>
