@@ -12,6 +12,7 @@ import { recordRun } from '../rss/source-run.js';
 import { randomUUID } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { buildRssContentDoc, truncateText } from '../rss/feeds.js';
+import { errorCode } from '../http/error-response.js';
 
 export const FIRECRAWL_SCRAPE_URL = 'https://api.firecrawl.dev/v1/scrape';
 export const MAX_ARTICLES_PER_SOURCE = 20;
@@ -217,7 +218,8 @@ export function createBlogListingsScrape({
         await recordRun(store, source, 'failed', { fetchedAt: now().toISOString() });
         results.errors += 1;
         results.failures.push({ source: source.name, error: err?.message || String(err) });
-        log.error?.(`[blogScraper] Failed ${source.name}: ${err?.message || err}`);
+        // The provider and the error's code: no editor-typed name or raw error text (#1642).
+        log.error?.(`[blogScraper] ${source.provider} listing failed: ${errorCode(err)}`);
       }
     }
     return results;
