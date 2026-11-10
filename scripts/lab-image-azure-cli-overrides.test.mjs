@@ -128,6 +128,28 @@ describe('the sandbox template around the block', () => {
     expect(SANDBOX_DOCKERFILE).toContain('--require-hashes -r /tmp/az-wheels/requirements.txt');
   });
 
+  // #1650: base packages Ubuntu fixed after Docker built the template. The
+  // guard loop fails the build for a name that is not installed, so it must
+  // name exactly the packages the upgrade line does, inside the same RUN.
+  it('upgrades the base packages it guards, and only those, after apt-get update', () => {
+    const loop = SANDBOX_DOCKERFILE.match(/for pkg in ([^;]+); do/);
+    const upgrade = SANDBOX_DOCKERFILE.match(/apt-get install -y --no-install-recommends --only-upgrade ([^;]+);/);
+    expect(loop).not.toBeNull();
+    expect(upgrade).not.toBeNull();
+    const names = (m) => m[1].trim().split(/\s+/).sort();
+    expect(names(upgrade)).toEqual(names(loop));
+    expect(names(upgrade)).toEqual(['apt', 'libapt-pkg7.0', 'libbrotli1', 'linux-libc-dev']);
+    expect(SANDBOX_DOCKERFILE).toContain(`[ "$(dpkg-query -W -f='\${db:Status-Status}' "\${pkg}" 2> /dev/null)" = installed ]`);
+    // Located by the commands themselves: the comment above the RUN names --only-upgrade too.
+    const update = at('apt-get update;');
+    const guard = at('for pkg in');
+    const run = at('apt-get install -y --no-install-recommends --only-upgrade');
+    expect(update).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(update);
+    expect(run).toBeGreaterThan(guard);
+    expect(at('rm -rf /var/lib/apt/lists/* /tmp/terraform.zip')).toBeGreaterThan(run);
+  });
+
   it('builds with the block empty or removed', () => {
     expect(SANDBOX_DOCKERFILE).toContain('"${AZURE_CLI_PYTHON_OVERRIDES-}"');
     expect(SANDBOX_DOCKERFILE).toContain('if [ -s /tmp/az-wheels/requirements.txt ]; then');
