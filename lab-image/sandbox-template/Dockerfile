@@ -94,7 +94,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # downloaded wheels are removed with the apt lists. One thing to know for
 # a derived image: dpkg's file list for azure-cli still names the replaced
 # files, so reinstalling the CLI with apt would put the old packages back;
-# nothing here runs apt again, and the agent user cannot.
+# nothing after this RUN runs apt again, and the agent user cannot.
 #
 # Four of the base's own Ubuntu packages are upgraded in the same RUN
 # (#1650): Docker's template, at the digest pinned in versions.env, was built
@@ -102,7 +102,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # libbrotli1 with HIGH and CRITICAL fixes that Ubuntu has since published in
 # resolute-security. linux-libc-dev stays (libc6-dev and build-essential
 # need it; the template is meant to compile). Remove a name once the pinned
-# base carries the fixed version; the weekly scan says when.
+# base carries the fixed version; the weekly scan says when. dpkg-query
+# fails the build first if a name is not installed, because --only-upgrade
+# would skip a misspelt or renamed package without a word.
 # Not version-pinned (DL3008), as in the lab image (#1575): Ubuntu's index
 # lists only the newest build, so a pin breaks at the next security update.
 USER root
@@ -126,6 +128,7 @@ RUN set -eu; . /tmp/versions.env; . /etc/os-release; \
       'Signed-By: /etc/apt/keyrings/microsoft.asc' > /etc/apt/sources.list.d/azure-cli.sources; \
     apt-get update; \
     apt-get install -y --no-install-recommends "azure-cli=${AZURE_CLI_VERSION}-1~${VERSION_CODENAME}"; \
+    dpkg-query -W linux-libc-dev apt libapt-pkg7.0 libbrotli1 > /dev/null; \
     apt-get install -y --no-install-recommends --only-upgrade linux-libc-dev apt libapt-pkg7.0 libbrotli1; \
     mkdir -p /tmp/az-wheels; \
     printf '%s\n' "${AZURE_CLI_PYTHON_OVERRIDES-}" | sed '/^[[:space:]]*$/d' > /tmp/az-wheels/requirements.txt; \
