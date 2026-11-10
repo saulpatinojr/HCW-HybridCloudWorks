@@ -22,9 +22,12 @@
  *     a `transitionContentStatus` to `published` or `archived`, an
  *     `enqueueJob` of `publish-content`, and a `createContentItem` asking to
  *     be born published are refused by the body rules below.
- *   - Settings, secrets, credentials, admins, AI routing, MCP, the lab agent
- *     registry, the Coder token and every Amplify route are not listed: the
- *     owner named the sections Koda works in, and those are not among them.
+ *   - Settings writes, secrets, credentials, admins, AI routing, MCP, the
+ *     lab agent registry, the Coder token and every Amplify route are not
+ *     listed: the owner named the sections Koda works in, and those are not
+ *     among them. Platform Settings may be read (owner request 2026-11-10,
+ *     "all platform items"), never written: its autoposting settings decide
+ *     what is published.
  *   - Each route belongs to a section switch on the Koda tab
  *     (keys.js CAPABILITIES, the `admin.*` ids). A section that is off
  *     refuses its routes with 403 and an audit row, like a capability.
@@ -35,7 +38,8 @@
  *     key did it.
  *   - The role each route requires is the role the policy grants: `editor`
  *     for nearly everything, `publisher` for the Doc Vault (whose reads
- *     already need it) and `viewer` for the health reads. A route whose
+ *     already need it) and for acknowledging or resolving a workflow alert
+ *     (whose handler needs it), and `viewer` for the health reads. A route whose
  *     handler asks for more than the grant is refused with 403.
  *
  * Every refusal of a presented key is an `admin_audit_logs` row of kind
@@ -60,14 +64,27 @@ export const ADMIN_SECTION_IDS = Object.freeze(
  */
 export const TRANSITION_TARGETS_ALLOWED = Object.freeze(['approved', 'editing', 'forge_ready', 'rejected']);
 
-/** Job types Koda may enqueue: the ones that produce or inspect content, never the one that publishes it. */
+/**
+ * Job types Koda may enqueue: the ones that produce or inspect content, never
+ * the one that publishes it. `fetch-rss-feeds` is the Telegram bot's `/rss`
+ * (owner request 2026-11-10: Koda can do what the bot can, publishing aside).
+ */
 export const JOB_TYPES_ALLOWED = Object.freeze([
   'forge-article',
   'forge-from-url',
   'batch-inspect',
   'sync-blog-source',
   'generate-listen-and-learn',
+  'fetch-rss-feeds',
 ]);
+
+/**
+ * What Koda may do to a workflow alert: the Telegram bot's `/ack` and
+ * `/resolve`, and reopening one. Spelled out rather than imported, so an
+ * action added to ops-health.js later (a delete, say) is refused until it is
+ * listed here on purpose.
+ */
+export const WORKFLOW_ALERT_ACTIONS_ALLOWED = Object.freeze(['acknowledge', 'resolve', 'reopen']);
 
 /**
  * Statuses a new content item may not be created in by the key. The three
@@ -142,9 +159,12 @@ export const POLICY = Object.freeze(
     ['POST', 'triggerAiImageGeneration', P],
     ['POST', 'generateSocialCaption', P],
     ['POST', 'enqueueJob', P, { body: { field: 'type', allow: JOB_TYPES_ALLOWED } }],
-    ['GET', 'getJob', P],
-    ['POST', 'getJob', P],
-    ['POST', 'getQueueSnapshot', P, { role: 'viewer' }],
+    // Also under Platform: a job's state and the review queue are what the
+    // Telegram bot's /status and /queue answer from, so the Platform switch
+    // alone is enough to follow a run it started (owner request 2026-11-10).
+    ['GET', 'getJob', [P, H]],
+    ['POST', 'getJob', [P, H]],
+    ['POST', 'getQueueSnapshot', [P, H], { role: 'viewer' }],
     ['POST', 'getPublishSnapshot', P, { role: 'viewer' }],
     ['POST', 'getDecisionCenter', P, { role: 'viewer' }],
     ['POST', 'getAdminDashboardSnapshot', P, { role: 'viewer' }],
@@ -232,7 +252,16 @@ export const POLICY = Object.freeze(
     ['GET', 'cms/doc-vault/{id}/versions/{version}', S, { role: 'publisher' }],
     ['POST', 'cms/doc-vault/{id}/restore-version', S, { role: 'publisher' }],
 
-    // Platform: health and integrations, read, plus one connection test.
+    // Platform: every page under the Platform menu and the alerting around it
+    // (owner request 2026-11-10, widening ADR 0038's "health and
+    // integrations, read"). Reads of Health, Integrations, Cost, Search
+    // Console and Platform Settings; one connection test and one Search
+    // Console run; the alert log (what was sent to the owner's phone); the
+    // calendar alerts; and acknowledging, resolving or reopening a workflow
+    // alert, as the Telegram bot's /ack and /resolve do. Still closed: every
+    // settings write (Platform Settings decides autoposting, which publishes),
+    // keys and secrets, sending an alert to the owner's phone again (a
+    // person's choice, cms/alerts/resend), and every delete.
     ['GET', 'cms/health/probe-results', H, { role: 'viewer' }],
     ['POST', 'getOpsHealthSnapshot', H, { role: 'viewer' }],
     ['GET', 'cms/integration-status', H],
@@ -243,6 +272,18 @@ export const POLICY = Object.freeze(
     ['GET', 'cms/cost/summary', H],
     ['GET', 'cms/cost/services', H],
     ['GET', 'cms/cost/settings', H],
+    ['GET', 'cms/search-console', H],
+    // Queues one run; the run keeps its own lease and the daily budget of
+    // Google inspections (lib/search-console/lease.js), so a press by Koda is
+    // held to the same rules as a person's.
+    ['POST', 'cms/search-console/run', H],
+    ['GET', 'cms/alerts/recent', H, { role: 'viewer' }],
+    ['GET', 'cms/calendar-alerts', H],
+    ['GET', 'cms/platform-settings/history', H],
+    ['GET', 'cms/platform-settings/{setting}', H],
+    // The handler asks for publisher; the action is held to the three above.
+    ['POST', 'updateWorkflowAlert', H, { role: 'publisher', body: { field: 'action', allow: WORKFLOW_ALERT_ACTIONS_ALLOWED } }],
+    ['PATCH', 'updateWorkflowAlert', H, { role: 'publisher', body: { field: 'action', allow: WORKFLOW_ALERT_ACTIONS_ALLOWED } }],
   ].map(([method, route, sections, options = {}]) =>
     Object.freeze({
       method,

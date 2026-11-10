@@ -202,6 +202,35 @@ all, and the rules that count successes (reachability, the two export rules,
 the lab heartbeat) fire on silence rather than being silenced by it: a capped
 workspace makes them page, not sleep.
 
+### Missed a Telegram alert? Read it, or send it again
+
+Since 2026-11-10 the app keeps a copy of every alert Telegram accepted: the
+newest 50, with their words, in the Cosmos document `system/notify_log`.
+Before that an alert went to your phone and nowhere else, so an alert sent
+before the change was deployed cannot be read again.
+
+1. Open the [Health page's Alerts tab](https://hybridcloudworks.com/admin/health?tab=alerts)
+   and scroll to **Sent to your phone**.
+
+   Success: a list of alerts, newest first, each with its time in UTC.
+   **None yet** means no alert has been sent since the change was deployed.
+2. Press **Show the text** under an alert to read all of it.
+3. To get it on your phone again, press **Send again**.
+
+   Success: a "Sent again" notice on the page, and a Telegram message
+   starting "Sent again:" that says when the first one went.
+
+   If the page says "Telegram refused the message", go to Platform Settings,
+   then Reminders, and press **Test Telegram**. It shows Telegram's own
+   reason; a blocked bot is the usual one.
+
+Koda can read the same list (Platform switch on the Koda tab), but it cannot
+send an alert again: that stays your choice.
+
+"Send again" needs the editor role; reading the list needs viewer. The routes
+are `GET /api/cms/alerts/recent` and `POST /api/cms/alerts/resend`
+(`functions/src/lib/alerts/handlers.js`).
+
 ### The delivery monitor speaks on Telegram
 
 Merging to `main` ships nothing here: the frontend and Functions deploys are

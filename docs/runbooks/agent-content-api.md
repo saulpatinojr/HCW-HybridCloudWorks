@@ -197,10 +197,10 @@ rules that hold on every one of them:
   `published_news`, `published_both` spellings) or `archived`; a book or
   chapter may be restored but not archived.
 - **No secret or credential can be read, and no setting can be changed**
-  (settings are read-only, where the editor needs them), and no section the
-  owner did not name is open: Forge Studio, AI Engine, Image Prompts, the
-  Amplify section, Platform Settings, admins and the lab agent registry
-  answer `403`.
+  (settings are read-only: where the editor needs them, and Platform
+  Settings since 2026-11-10), and no section the owner did not name is open:
+  Forge Studio, AI Engine, Image Prompts, the Amplify section, admins and the
+  lab agent registry answer `403`.
 - **Every refusal is logged**: an `admin_audit_logs` row of kind
   `agent-content-denial` with `surface: "admin"`, the method, the route as
   the list spells it (`cms/drafts/{id}`, never the id itself; `unlisted` for
@@ -219,7 +219,14 @@ short, by switch:
 | Enhanced | Listen & Learn, Labs, Frameworks, Coder Corner, Blogs | Read, create and edit Listen & Learn books and chapters, estimate and regenerate, restore an archived book or chapter; read the lab estate, a lab job, the starts and the Coder automation; read, create and edit blog sources (Frameworks and Coder Corner are content, so the Pipeline rows cover them) | Archive or delete books, chapters or versions; publish or withdraw an episode; launch or cancel lab jobs; change lab agents; read the Coder token; delete a blog |
 | Second Brain | Second Brain | Read status, notes, history, graph and context; search and ask; create and edit notes and collections; draft from a note, acting as you | Reindex; the desktop sync routes |
 | Spotlight | Speaking, Certifications, Ambassador, Doc Vault | Read talks and upsert one; read, create and edit certifications; read, create and edit applications and evidence, import evidence, read sources, files, programs and readiness; in the Doc Vault read, create, upload, edit, untrash and restore a version | Delete a talk, a certification, an application, evidence or a document; create or edit a program |
-| Platform | Health, Integrations | Read the health probe results and the ops snapshot; read the integration status and the StreamYard status; run a connection test | Change a probe result or an integration setting; read secrets or credentials; change platform settings |
+| Platform | Health, Integrations, Cost, Search Console, Platform Settings, and the alerting around them | Read the health probe results and the ops snapshot (which carries the workflow alerts, the digest and the AI readiness, as the Telegram bot's `/status`, `/alerts`, `/digest` and `/ai` do); read the alerts sent to your phone (`cms/alerts/recent`) and the calendar alerts; acknowledge, resolve or reopen a workflow alert (the bot's `/ack` and `/resolve`); read job states and the review queue (the bot's `/queue`); read the integration status and the StreamYard status and run a connection test; read the Cost page; read Search Console and queue a run; read Platform Settings and their history | Change a probe result, an integration setting, the cost ledger or any Platform Setting; send an alert to your phone again; read secrets or credentials; delete anything |
+
+The Platform row was widened on 2026-11-10 at the owner's request ("make
+sure Koda has access to this and any alerting, all platform items, the
+Telegram bot queue"). Pipeline also gained one job type for the same reason:
+`fetch-rss-feeds`, the bot's `/rss`. What the bot can do and Koda cannot is
+`/approve`, which publishes. The decision and its limits are in
+[ADR 0038](../decisions/0038-koda-admin-access.md), amendment of 2026-11-10.
 
 To take a section away, turn its switch off on the tab; to give Koda a route
 that is not listed, or to let it publish, change the table in

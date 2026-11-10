@@ -170,6 +170,62 @@ either changed.
   section gains a destructive verb or body, or when the owner wants Koda to
   publish or to reach a section not named here.
 
+## Amendment 2026-11-10: every Platform page, and the alerting around it
+
+**Owner request, 2026-11-10:** "make sure Koda has access to this [the
+Search Console page] and any alerting (all platform item, telegram bot
+queue)". Until then the Platform switch opened Health and Integrations, and
+Cost since [ADR 0039](0039-cost-page.md).
+
+**What the Platform switch now opens**, all in
+`functions/src/lib/agent-content/admin-access.js`:
+
+- **Every Platform page, read:**
+  - Health
+  - Integrations
+  - Cost
+  - Search Console: `GET cms/search-console`
+  - Platform Settings: `GET cms/platform-settings/{setting}` and its history
+- **One Search Console run** (`POST cms/search-console/run`). It is held to
+  the same lease and daily budget of Google inspections as a person's press.
+- **The alerting:**
+  - **The new alert log** (`GET cms/alerts/recent`): what was sent to the
+    owner's phone. Until this change an alert went to Telegram only, and only
+    its time was kept.
+  - **The calendar alerts** (`GET cms/calendar-alerts`).
+  - **Acknowledging, resolving or reopening a workflow alert**
+    (`updateWorkflowAlert`, publisher, held by a body rule to those three
+    actions).
+  - **Job states and the review queue** (`getJob`, `getQueueSnapshot`), now
+    also under Platform, so the Platform switch alone is enough to follow a
+    run.
+
+**What else changes:**
+- **The Telegram bot's commands map onto this,** except `/approve`, which
+  publishes and stays a human act:
+  - `/status`, `/alerts`, `/digest` and `/ai` read the ops snapshot Koda
+    already had.
+  - `/queue` is `getQueueSnapshot`.
+  - `/ack` and `/resolve` are `updateWorkflowAlert`.
+  - `/rss` is the `fetch-rss-feeds` job, now in `JOB_TYPES_ALLOWED` (under
+    Pipeline, where enqueueing lives).
+  - `/inspect` and `/forge` were already allowed.
+- **Still closed, by this session's reading of the request:**
+  - **Every settings write:** Platform Settings decides autoposting, which
+    publishes, and point 4 keeps publishing a human act.
+  - **Sending an alert to the owner's phone again** (`cms/alerts/resend`):
+    a message to the owner's phone is a person's choice, and a loop in an
+    agent could page the owner repeatedly.
+  - **Keys, secrets and the cost ledger.**
+  - **Every delete.**
+- **The calendar alerts are the owner's private notes.** Their privacy test
+  (`functions/src/lib/calendar-alerts/privacy.test.js`) lists Koda's access
+  table as the one admin-side place allowed to name them. The read is the
+  same editor-gated route, and the key acts as `koda (agent)`.
+
+The owner can trim any of this with the Platform switch on the Koda tab, or
+ask for a write to be opened through a pull request.
+
 ## Related decisions and references
 
 - [ADR 0037](0037-agent-content-api.md): the key, the v1 API and the lines kept.

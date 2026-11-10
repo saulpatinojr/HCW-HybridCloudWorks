@@ -160,6 +160,11 @@ describe('nothing but the alerts module itself names the alerts', () => {
     `lib${sep}calendar.js`,
     `lib${sep}calendar${sep}collectors.js`,
     `functions${sep}calendar-http.js`,
+    // Koda's admin access table lists the one read, GET cms/calendar-alerts,
+    // under its Platform switch (owner request 2026-11-10, "any alerting").
+    // An admin-side grant through the same editor-gated route, never a
+    // public path; the key acts as `koda (agent)` and every read is audited.
+    `lib${sep}agent-content${sep}admin-access`,
   ];
   const NAMES = /calendar[_-]?alerts?/i;
 

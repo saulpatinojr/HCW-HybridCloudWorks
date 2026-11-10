@@ -5,35 +5,47 @@
  * Telegram's status travels in the result for the Test Telegram route.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { COOLDOWN_MS, NOTIFY_STATE_ID, createNotifier } from './notify.js';
+import { COOLDOWN_MS, NOTIFY_LOG_ID, NOTIFY_LOG_MAX, NOTIFY_STATE_ID, createNotifier, readAlertLog } from './notify.js';
 
 const NOW = new Date('2026-10-07T01:30:00.000Z');
 const now = () => NOW;
 const env = { TELEGRAM_BOT_TOKEN: 'tok', TELEGRAM_CHAT_ID: '1' };
 
-/** A store over one `system` document, with ETags and a 412 on a stale claim. */
+/**
+ * A store over the `system` container's documents by id, with ETags and a 412
+ * on a stale conditional write. Starts with the cooldown document (or none);
+ * the alert log (`notify_log`) is created by the first send that succeeds.
+ * `current` is the cooldown document; `calls(id)` the patches to one document.
+ */
 function stateStore(doc) {
-  let current = doc ? { _etag: '"e1"', ...doc } : null;
+  const docs = new Map();
   let version = 1;
+  if (doc) docs.set(NOTIFY_STATE_ID, { _etag: '"e1"', ...doc });
   const store = {
-    readDoc: vi.fn(async () => current),
+    readDoc: vi.fn(async (_c, id) => docs.get(id) ?? null),
     upsertDoc: vi.fn(async (_c, d) => {
       version += 1;
-      current = { ...d, _etag: `"e${version}"` };
-      return current;
+      const next = { ...d, _etag: `"e${version}"` };
+      docs.set(d.id, next);
+      return next;
     }),
-    patchDoc: vi.fn(async (_c, _id, updates, options = {}) => {
+    patchDoc: vi.fn(async (_c, id, updates, options = {}) => {
+      const current = docs.get(id) ?? null;
       if (options.ifMatch && current && options.ifMatch !== current._etag) {
         throw Object.assign(new Error('412'), { code: 412 });
       }
       version += 1;
-      current = { ...(current || { id: NOTIFY_STATE_ID }), ...updates, _etag: `"e${version}"` };
-      for (const [k, v] of Object.entries(updates)) if (v === undefined) delete current[k];
-      return current;
+      const next = { ...(current || { id }), ...updates, _etag: `"e${version}"` };
+      for (const [k, v] of Object.entries(updates)) if (v === undefined) delete next[k];
+      docs.set(id, next);
+      return next;
     }),
     get current() {
-      return current;
+      return docs.get(NOTIFY_STATE_ID) ?? null;
     },
+    log: () => docs.get(NOTIFY_LOG_ID) ?? null,
+    calls: (id) => store.patchDoc.mock.calls.filter((call) => call[1] === id),
+    upserts: (id) => store.upsertDoc.mock.calls.filter((call) => call[1]?.id === id),
   };
   return store;
 }
@@ -46,15 +58,15 @@ describe('claiming the cooldown', () => {
     const fetch = ok();
     const result = await createNotifier({ store, env, fetch, now }).notifyTelegram({ title: 't', message: 'm', source: 'checkLiveLinks' });
     expect(result).toEqual({ sent: true });
-    expect(store.patchDoc).toHaveBeenCalledTimes(1);
-    const [container, id, updates, options] = store.patchDoc.mock.calls[0];
+    expect(store.calls(NOTIFY_STATE_ID)).toHaveLength(1);
+    const [container, id, updates, options] = store.calls(NOTIFY_STATE_ID)[0];
     expect([container, id]).toEqual(['system', NOTIFY_STATE_ID]);
     expect(updates).toEqual({ checkLiveLinks: { lastNotifiedAt: NOW.toISOString() } });
     expect(options).toEqual({ partitionKey: NOTIFY_STATE_ID, ifMatch: '"e1"' });
     // The claim comes first: fetch runs after the patch.
     expect(store.patchDoc.mock.invocationCallOrder[0]).toBeLessThan(fetch.mock.invocationCallOrder[0]);
-    // Nothing writes the whole document any more.
-    expect(store.upsertDoc).not.toHaveBeenCalled();
+    // Nothing writes the whole cooldown document any more.
+    expect(store.upserts(NOTIFY_STATE_ID)).toHaveLength(0);
   });
 
   it('is told cooldown, and sends nothing, when another writer claimed first (412)', async () => {
@@ -93,7 +105,7 @@ describe('claiming the cooldown', () => {
     const result = await createNotifier({ store, env, fetch: ok(), now }).notifyTelegram({ title: 't', message: 'm', source: 'a' });
     expect(result).toEqual({ sent: true });
     expect(store.upsertDoc).toHaveBeenCalledWith('system', { id: NOTIFY_STATE_ID });
-    expect(store.patchDoc.mock.calls[0][3].ifMatch).toBe('"e2"');
+    expect(store.calls(NOTIFY_STATE_ID)[0][3].ifMatch).toBe('"e2"');
   });
 });
 
@@ -105,8 +117,8 @@ describe('when Telegram does not take it', () => {
     const log = { error: vi.fn(), log: vi.fn(), warn: vi.fn() };
     const result = await createNotifier({ store, env, fetch, now, log }).notifyTelegram({ title: 't', message: 'm', source: 'a' });
     expect(result).toEqual({ sent: false, reason: 'telegram_error', status: 403 });
-    expect(store.patchDoc).toHaveBeenCalledTimes(2);
-    expect(store.patchDoc.mock.calls[1][2]).toEqual({ a: before });
+    expect(store.calls(NOTIFY_STATE_ID)).toHaveLength(2);
+    expect(store.calls(NOTIFY_STATE_ID)[1][2]).toEqual({ a: before });
     expect(store.current.a).toEqual(before);
     expect(log.error.mock.calls[0][0]).toBe('[notify] Telegram API error 403');
   });
@@ -118,7 +130,7 @@ describe('when Telegram does not take it', () => {
     });
     const result = await createNotifier({ store, env, fetch, now, log: {} }).notifyTelegram({ title: 't', message: 'm', source: 'a' });
     expect(result).toEqual({ sent: false, reason: 'exception' });
-    expect(store.patchDoc.mock.calls[1][2]).toEqual({ a: undefined });
+    expect(store.calls(NOTIFY_STATE_ID)[1][2]).toEqual({ a: undefined });
     expect(store.current).not.toHaveProperty('a');
   });
 
@@ -140,5 +152,89 @@ describe('when Telegram does not take it', () => {
     await createNotifier({ store, env, fetch: ok(), now, log }).notifyTelegram({ title: 't', message: 'm', source: 'reminder:secret-id' });
     expect(log.log.mock.calls[0][0]).toContain('source="reminder"');
     expect(log.log.mock.calls[0][0]).not.toContain('secret-id');
+  });
+});
+
+describe('the alert log', () => {
+  const send = (n, i) => n.notifyTelegram({ title: `t${i}`, message: `m${i}`, severity: 'warning', source: `s${i}` });
+
+  it('keeps each alert Telegram accepted, with its words, newest first when read', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const n = createNotifier({ store, env, fetch: ok(), now });
+    await send(n, 1);
+    await send(n, 2);
+    const entries = await readAlertLog(store);
+    expect(entries.map((e) => [e.title, e.message, e.source, e.severity, e.at])).toEqual([
+      ['t2', 'm2', 's2', 'warning', NOW.toISOString()],
+      ['t1', 'm1', 's1', 'warning', NOW.toISOString()],
+    ]);
+    expect(new Set(entries.map((e) => e.id)).size).toBe(2);
+  });
+
+  it('keeps nothing for an alert that was not sent (cooldown, refused, not configured)', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID, s1: { lastNotifiedAt: NOW.toISOString() } });
+    const refused = vi.fn(async () => ({ ok: false, status: 403 }));
+    await createNotifier({ store, env, fetch: ok(), now }).notifyTelegram({ title: 't', message: 'm', source: 's1' });
+    await createNotifier({ store, env, fetch: refused, now }).notifyTelegram({ title: 't', message: 'm', source: 's2' });
+    await createNotifier({ store, env: {}, fetch: ok(), now }).notifyTelegram({ title: 't', message: 'm', source: 's3' });
+    expect(store.log()).toBeNull();
+  });
+
+  it('keeps only the newest NOTIFY_LOG_MAX', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const n = createNotifier({ store, env, fetch: ok(), now });
+    for (let i = 0; i < NOTIFY_LOG_MAX + 3; i += 1) await send(n, i);
+    const entries = await readAlertLog(store);
+    expect(entries).toHaveLength(NOTIFY_LOG_MAX);
+    expect(entries[0].title).toBe(`t${NOTIFY_LOG_MAX + 2}`);
+    expect(entries.at(-1).title).toBe('t3');
+  });
+
+  it('retries the log write on a 412, and a log that cannot be written never fails the send', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const n = createNotifier({ store, env, fetch: ok(), now });
+    await send(n, 1);
+    // The next read of the log hands back a stale ETag once, as if another
+    // alert had been logged between this one's read and its write.
+    const real = store.readDoc.getMockImplementation();
+    let staleOnce = true;
+    store.readDoc.mockImplementation(async (c, id) => {
+      const doc = await real(c, id);
+      if (id !== NOTIFY_LOG_ID || !staleOnce) return doc;
+      staleOnce = false;
+      return { ...doc, _etag: '"stale"' };
+    });
+    await send(n, 2);
+    expect(staleOnce).toBe(false);
+    expect((await readAlertLog(store)).map((e) => e.title)).toEqual(['t2', 't1']);
+
+    const broken = stateStore({ id: NOTIFY_STATE_ID });
+    broken.upsertDoc.mockRejectedValue(Object.assign(new Error('down'), { code: 503 }));
+    expect(await send(createNotifier({ store: broken, env, fetch: ok(), now }), 1)).toEqual({ sent: true });
+  });
+
+  it('sends a logged alert again, without the cooldown, marked as a repeat, and logs the repeat', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const fetch = ok();
+    const n = createNotifier({ store, env, fetch, now });
+    await send(n, 1);
+    const [first] = await readAlertLog(store);
+    // Inside the source's cooldown: a resend is a person asking, once.
+    expect(await n.resendLogged(first.id)).toEqual({ sent: true });
+    const body = JSON.parse(fetch.mock.calls[1][1].body);
+    expect(body.text).toContain('Sent again: t1');
+    expect(body.text).toContain('m1');
+    expect(body.text).toContain(`First sent ${first.at}`);
+    const [repeat] = await readAlertLog(store);
+    expect(repeat.resentOf).toBe(first.id);
+    expect(repeat.title).toBe('Sent again: t1');
+  });
+
+  it('says not_found for an id that is not in the log, and not_configured without the bot', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const fetch = ok();
+    expect(await createNotifier({ store, env, fetch, now }).resendLogged('nope')).toEqual({ sent: false, reason: 'not_found' });
+    expect(await createNotifier({ store, env: {}, fetch, now }).resendLogged('nope')).toEqual({ sent: false, reason: 'not_configured' });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
