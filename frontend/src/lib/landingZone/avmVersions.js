@@ -76,20 +76,35 @@ export function isAvmSource(source) {
 }
 
 /**
- * What `terraform.tf` requires, chosen so every module above is satisfied:
- * avm-ptn-alz 0.21.0 wants terraform >= 1.12, alz ~> 0.21, azapi ~> 2.4,
- * modtm ~> 0.3, random ~> 3.6 and time ~> 0.9; management 0.9.0 wants
- * azapi ~> 2.4, azurerm ~> 4.35, modtm ~> 0.3 and random ~> 3.6; the
- * connectivity module 0.17.5 wants terraform ~> 1.12, azapi ~> 2.4,
- * azurerm ~> 4.0, modtm ~> 0.3 and random ~> 3.5; the virtual network
- * module 0.22.2 wants azapi ~> 2.12, modtm ~> 0.3 and random ~> 3.5.
+ * What `terraform.tf` requires, chosen so every module above is satisfied.
+ * Each module's own `terraform.tf` at its pinned tag, read on 2026-11-10
+ * (https://raw.githubusercontent.com/Azure/terraform-azurerm-<module>/v<version>/terraform.tf):
  *
- * The alz line is avm-ptn-alz 0.21.0's own (`terraform.tf`, tag v0.21.0):
- * `~> 0.21` is Terraform's pessimistic constraint on a two-part version,
- * so it means `>= 0.21, < 1.0`, not 0.21.x. The lab image's mirror
- * (lab-image/versions.env, PROVIDER_ALZ_VERSION=0.22.0) satisfies it, as
- * do its azapi 2.12.0, azurerm 4.81.0, random 3.9.1, modtm 0.4.0 and time
- * 0.14.2.
+ *   avm-ptn-alz 0.22.0        terraform >= 1.12, < 2.0; alz ~> 0.21,
+ *                             azapi ~> 2.12, modtm ~> 0.3, random ~> 3.6,
+ *                             time ~> 0.9
+ *   management 0.9.0          terraform >= 1.9, < 2.0; azapi ~> 2.4,
+ *                             azurerm ~> 4.35, modtm ~> 0.3, random ~> 3.6
+ *   connectivity 0.17.7       terraform ~> 1.12; azapi ~> 2.12,
+ *                             azurerm ~> 4.0, modtm ~> 0.3, random ~> 3.5
+ *   virtual network 0.22.3    terraform >= 1.9, < 2.0; azapi ~> 2.12,
+ *                             modtm ~> 0.3, random ~> 3.5
+ *
+ * The modules these call in turn add no provider and no tighter bound than
+ * azurerm < 5.0. So the floor of 1.12 comes from avm-ptn-alz and
+ * connectivity, and each line of PROVIDER_PINS below is the tightest lower
+ * bound across the four. `~> 0.21` is Terraform's pessimistic constraint
+ * on a two-part version: it means `>= 0.21, < 1.0`, not 0.21.x.
+ *
+ * KEEP THIS TABLE IN STEP WITH THE PINS. A bump of a module above changes
+ * its row; .github/workflows/update-avm-versions.yml flags a release whose
+ * `required_providers` differ as a hand edit for its pull request (#1656).
+ *
+ * The lab image's provider mirror (lab-image/versions.env, the
+ * PROVIDER_*_VERSION lines and PROVIDER_AZURERM_V4_VERSION) must satisfy
+ * every line here; scripts/lab-image-avm-vendoring.test.mjs checks the
+ * modules it vendors. Its azurerm 5.x copy satisfies none of the azurerm
+ * constraints above, so Terraform picks the 4.x copy it also carries.
  */
 export const TERRAFORM_REQUIRED_VERSION = '>= 1.12, < 2.0';
 

@@ -87,7 +87,7 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
       /~15 Min • Zero Local Setup/i
     );
     expect(screen.getByTestId('blueprint-lab-verification')).toHaveTextContent(
-      /HashiCorp Terraform 1.9 \+ Azure Verified Modules/i
+      /validated with HashiCorp Terraform \+ Azure Verified Modules/i
     );
   });
 

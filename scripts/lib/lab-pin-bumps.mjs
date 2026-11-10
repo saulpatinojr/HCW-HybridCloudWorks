@@ -9,9 +9,9 @@
  * edited for it. So every planner below either returns edits AND evidence, or
  * a note, never edits alone.
  *
- * Three pin sets, one pull request each (.github/workflows/lab-supply-chain.yml
- * and publish-lab-image.yml open them, scripts/open-lab-pin-pr.mjs keeps one
- * per set):
+ * Four pin sets, one pull request each (.github/workflows/lab-supply-chain.yml
+ * opens the first three and publish-lab-image.yml the fourth;
+ * scripts/open-lab-pin-pr.mjs keeps one per set):
  *
  *   host           lab-host/ansible/group_vars/all.yml, for every row
  *                  lab-pins-upstream.mjs reports BEHIND.
@@ -23,6 +23,10 @@
  *                  release in its line with every wheel's hash (the lines
  *                  lab-host/bootstrap.sh installs the lab host's
  *                  ansible-core from, too).
+ *   image-tools    lab-image/versions.env and lab-image/README.md: the tools
+ *                  baked into the lab images and the Terraform providers in
+ *                  their mirror, each to its newest release with the
+ *                  publisher's checksum.
  *   image-digests  vps-agent/lib/capabilities.js and the Coder template: the
  *                  two digests a publish from main just pushed.
  *
