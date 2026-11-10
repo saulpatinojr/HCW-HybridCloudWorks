@@ -4284,9 +4284,11 @@ fix is installed.
   Helm, kubectl, the Azure CLI; azurerm, azapi, alz, random, modtm, time),
   each with the publisher's checksum, as `chore/lab-pins-image-tools`,
   scans the two published lab images with
-  Trivy, and opens or comments on one issue when anything is due,
-  including any pin it could not move because the publisher served no
-  checksum to verify it against. `bootstrap.sh` installs the host's own
+  Trivy, and keeps one issue (labelled `Platform`, found by that label and
+  its exact title) when anything is due, including any pin it could not
+  move because the publisher served no checksum to verify it against. It
+  comments on that issue only when the findings changed since its last
+  report, and closes it at the first week with nothing due (#1673). `bootstrap.sh` installs the host's own
   ansible-core from the same `lab-image/versions.env` lines with every
   wheel hash-checked, so a merged ansible-core move reaches the host on the
   next run, which prints `ansible-playbook [core <that release>]` before

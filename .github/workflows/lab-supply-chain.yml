@@ -558,20 +558,51 @@ jobs:
           echo "failed=${failed}" >> "$GITHUB_OUTPUT"
           exit 0
 
-      # One issue, kept current: created when none is open, commented on when
-      # one is. Nothing when both checks are clean and every bump was made.
-      - name: Open or update the issue when something is due
-        if: steps.pins.outputs.exit != '0' || steps.scan.outputs.failed == '1' || steps.notes.outputs.present == 'true'
+      # One issue, kept current (#1673), the way the delivery monitor keeps its
+      # workflow-health issue (#1661):
+      # - Found again by the `Platform` label plus its exact title, read from
+      #   the issue list rather than from search, which is fuzzy and could
+      #   pick another issue with similar words. So the title does not change.
+      #   (If someone removes the label, the next report opens a second issue;
+      #   that is the safe way to be wrong.)
+      # - Something due (a pin behind or unreadable, an image finding or a
+      #   scan that did not complete, or a note): opened when none is open,
+      #   commented on when the findings differ from the last report. The
+      #   report ends with a hidden line holding a fingerprint of its findings
+      #   (the run link and date left out), and a comment is posted only when
+      #   the newest text in the issue that carries such a line holds a
+      #   different one. A person's comment in between does not count.
+      # - Nothing due: the open issue is closed, with a comment naming the run.
+      # The step runs only when every step before it succeeded (the default),
+      # so it never closes the issue on a check that could not look: a pin
+      # source it could not read is exit 2, which is due, and a scan that
+      # failed to run fails its own step first. Values reach the shell
+      # through `env:` (zizmor's template-injection rule).
+      - name: Open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PINS_EXIT: ${{ steps.pins.outputs.exit }}
           SCAN_FAILED: ${{ steps.scan.outputs.failed }}
+          NOTES_PRESENT: ${{ steps.notes.outputs.present }}
           BUMP_SETS: ${{ steps.notes.outputs.sets }}
         run: |
           set -euo pipefail
           title="Lab supply chain: pins behind upstream or image vulnerabilities"
+          label="Platform"
+          existing=$(gh issue list --repo "$REPO" --state open --label "$label" --limit 200 --json number,title | jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          # Clean only on exactly these three values; anything else, an empty
+          # output included, is reported rather than taken as clean.
+          if [ "${PINS_EXIT}" = "0" ] && [ "${SCAN_FAILED}" = "0" ] && [ "${NOTES_PRESENT}" = "false" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$REPO" --reason completed --comment "Clean again: run ${RUN_URL} found every lab host pin current, every bump made, and no HIGH or CRITICAL vulnerability with a fix available in the lab, add-on and sandbox template images."
+              echo "Closed #${existing}."
+            else
+              echo "Nothing is due and no report issue is open."
+            fi
+            exit 0
+          fi
           {
             echo "Weekly check, run ${RUN_URL}, $(date -u +%Y-%m-%d)."
             echo
@@ -604,12 +635,26 @@ jobs:
             printf '\n\n… cut at 60,000 characters; the full report is the run summary: %s\n' "$RUN_URL" >> "${RUNNER_TEMP}/issue.cut"
             mv "${RUNNER_TEMP}/issue.cut" "${RUNNER_TEMP}/issue.md"
           fi
-          existing=$(gh issue list --repo "$REPO" --state open --search "\"${title}\" in:title" --json number --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
+          # The findings' fingerprint: the report without its first line (run
+          # link and date) and with every other mention of this run's link
+          # taken out, so a week that finds the same things gives the same
+          # fingerprint. Added after the cut above, so it is always there.
+          findings=$(tail -n +2 "${RUNNER_TEMP}/issue.md")
+          findings=${findings//"${RUN_URL}"/}
+          key="<!-- lab-supply-chain findings: $(printf '%s' "$findings" | sha256sum | cut -d' ' -f1) -->"
+          printf '\n%s\n' "$key" >> "${RUNNER_TEMP}/issue.md"
+          if [ -z "$existing" ]; then
+            gh issue create --repo "$REPO" --title "$title" --label "$label" --body-file "${RUNNER_TEMP}/issue.md"
+            exit 0
+          fi
+          reported=$(gh issue view "$existing" --repo "$REPO" --json body,comments --jq '[.body, .comments[].body] | map(strings | select(contains("<!-- lab-supply-chain findings:"))) | last // ""')
+          # A plain text comparison, not `if grep`, which this repository
+          # forbids in workflows because a grep error reads as "no match".
+          if [[ "$reported" == *"$key"* ]]; then
+            echo "#${existing} already reports these findings; no new comment."
+          else
             gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/issue.md"
             echo "Commented on #${existing}."
-          else
-            gh issue create --repo "$REPO" --title "$title" --body-file "${RUNNER_TEMP}/issue.md"
           fi
 
       - name: Fail the run when the pin check could not evaluate

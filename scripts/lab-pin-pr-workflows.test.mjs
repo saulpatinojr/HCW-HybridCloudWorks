@@ -249,7 +249,7 @@ describe('lab-supply-chain.yml', () => {
 
   it('scans once to JSON, renders the full table for the run summary and a compact table for the issue, and cuts an oversize body', () => {
     const check = source.slice(source.indexOf('  check:'));
-    const scan = check.slice(check.indexOf('- name: Scan the published lab images the host runs'), check.indexOf('- name: Open or update the issue'));
+    const scan = check.slice(check.indexOf('- name: Scan the published lab images the host runs'), check.indexOf('- name: Open, update or close the issue'));
     expect(scan).toContain('--format json -o "$report"');
     expect(scan).toContain('{ echo \'```\'; trivy convert --quiet --format table "$report" 2>&1; echo \'```\'; } >> "$table"');
     expect(scan).toContain('cat "$table" >> "$GITHUB_STEP_SUMMARY"');
@@ -257,7 +257,7 @@ describe('lab-supply-chain.yml', () => {
     // One row per installation, never one per package name (CodeRabbit on #1132).
     expect(scan).toContain('group_by([.target, .pkg, .inst])');
     expect(scan).toContain('head -40');
-    const issue = check.slice(check.indexOf('- name: Open or update the issue'), check.indexOf('- name: Fail the run when the pin check could not evaluate'));
+    const issue = check.slice(check.indexOf('- name: Open, update or close the issue'), check.indexOf('- name: Fail the run when the pin check could not evaluate'));
     expect(issue).toContain('cat "${RUNNER_TEMP}/scan-summary.md"');
     expect(issue).not.toContain('cat "${RUNNER_TEMP}/scan.md"');
     expect(issue).toContain('-gt 60000');
@@ -266,7 +266,7 @@ describe('lab-supply-chain.yml', () => {
 
   it('scans the tool add-on images the host runs too, read from the pins and not from a tag (#1367)', () => {
     const check = source.slice(source.indexOf('  check:'));
-    const scan = check.slice(check.indexOf('- name: Scan the published lab images the host runs'), check.indexOf('- name: Open or update the issue'));
+    const scan = check.slice(check.indexOf('- name: Scan the published lab images the host runs'), check.indexOf('- name: Open, update or close the issue'));
     // The reader stops on a pin it cannot read and the step refuses an empty list, so a broken read is a failure and not a quiet pass.
     expect(scan).toContain('addon_images="$(node scripts/lab/read-addon-pins.mjs | jq -r \'.include[].image\')"');
     expect(scan).toContain('test -n "$addon_images"');
@@ -282,13 +282,13 @@ describe('lab-supply-chain.yml', () => {
     expect(build).toContain('docker build --no-cache --platform linux/amd64 -f lab-image/sandbox-template/Dockerfile -t hcw-lz-sandbox:scan lab-image');
     // A failed build must not skip the scan of the published images.
     expect(build).toContain('continue-on-error: true');
-    const scan = check.slice(check.indexOf('- name: Scan the published lab images the host runs'), check.indexOf('- name: Open or update the issue'));
+    const scan = check.slice(check.indexOf('- name: Scan the published lab images the host runs'), check.indexOf('- name: Open, update or close the issue'));
     expect(scan).toContain('sandbox="hcw-lz-sandbox:scan"');
     // A template that did not build is a failed scan, named in the issue, never a quiet pass.
     expect(scan).toContain('if ! docker image inspect --format \'{{.Id}}\' "$sandbox" > /dev/null 2>&1; then');
     expect(scan).toMatch(/if ! docker image inspect[^\n]*\n\s*failed=1\n\s*sandbox=""/);
     expect(scan).toContain('did not build this week, so it was not scanned');
-    const issue = check.slice(check.indexOf('- name: Open or update the issue'), check.indexOf('- name: Fail the run when the pin check could not evaluate'));
+    const issue = check.slice(check.indexOf('- name: Open, update or close the issue'), check.indexOf('- name: Fail the run when the pin check could not evaluate'));
     expect(issue).toContain('hcw-lz-sandbox:scan\\` is the Docker Sandboxes template');
   });
 
@@ -392,7 +392,9 @@ describe('lab-supply-chain.yml', () => {
   it('puts the notes of pins it could not verify into the weekly issue', () => {
     expect(check).toContain('needs: propose');
     expect(check).toContain('if: always()');
-    expect(check).toContain("steps.notes.outputs.present == 'true'");
+    // A note alone makes the week due: the clean branch needs no notes at all (#1673).
+    expect(check).toContain('NOTES_PRESENT: ${{ steps.notes.outputs.present }}');
+    expect(check).toContain('[ "${NOTES_PRESENT}" = "false" ]');
     expect(check).toContain('Not bumped automatically');
   });
 
