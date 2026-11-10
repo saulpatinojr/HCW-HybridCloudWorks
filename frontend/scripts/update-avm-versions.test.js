@@ -38,6 +38,7 @@ import {
   rewriteEnv,
   rewritePin,
   rewriteSmokePin,
+  nextSmokeConstraint,
   sha256Hex,
   stampVerifiedOn,
   summarize,
@@ -379,10 +380,66 @@ describe('the smoke payload', () => {
     expect(source).toContain('version = "~> 0.9"');
   });
 
-  it('leaves a block whose version is a constraint alone, and says so', () => {
+  it('leaves a block whose constraint the new release still meets alone, and says so', () => {
     const { source, moved } = rewriteSmokePin(PAYLOAD, 'avm-ptn-alz-management', '0.9.0', '0.10.0');
     expect(moved).toBe(false);
     expect(source).toBe(PAYLOAD);
+  });
+
+  it('slides a one-minor window the release has left, keeping its operator (#1658)', () => {
+    // The payload's real connectivity block. 0.18.1 left `< 0.18.0`, the
+    // vendoring test refused the result, and no pull request opened for two
+    // weeks; the window now moves with the release.
+    const block = [
+      'module "connectivity" {',
+      '  source  = "Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm"',
+      '  version = ">= 0.17.0, < 0.18.0"',
+      '}',
+      '',
+    ].join('\n');
+    const name = 'avm-ptn-alz-connectivity-hub-and-spoke-vnet';
+    const moved = rewriteSmokePin(block, name, '0.17.7', '0.18.1');
+    expect(moved).toMatchObject({
+      moved: true,
+      from: '>= 0.17.0, < 0.18.0',
+      to: '>= 0.18.0, < 0.19.0',
+    });
+    expect(moved.source).toBe(block.replace('>= 0.17.0, < 0.18.0', '>= 0.18.0, < 0.19.0'));
+    // A patch release stays inside the window, and nothing moves.
+    expect(rewriteSmokePin(block, name, '0.17.7', '0.17.9')).toEqual({
+      source: block,
+      moved: false,
+    });
+  });
+
+  it('moves a pessimistic two-part constraint only when the release has left it', () => {
+    const block = 'source  = "Azure/avm-ptn-alz-management/azurerm"\n  version = "~> 0.9"\n';
+    expect(rewriteSmokePin(block, 'avm-ptn-alz-management', '0.9.0', '1.0.0')).toMatchObject({
+      moved: true,
+      to: '~> 1.0',
+    });
+  });
+
+  it('knows which shapes move and leaves every other one to the vendoring test', () => {
+    const cases = [
+      ['0.21.0', '0.22.0', '0.22.0'],
+      ['0.22.0', '0.22.0', null],
+      ['>= 0.17.0, < 0.18.0', '0.18.1', '>= 0.18.0, < 0.19.0'],
+      ['>= 0.17.0, < 0.18.0', '0.17.9', null],
+      ['~> 0.9', '0.10.0', null],
+      ['~> 0.9', '1.0.0', '~> 1.0'],
+      // No release outgrows a lower bound alone.
+      ['>= 0.15.0', '0.23.0', null],
+      // Shapes this does not move: a three-part pessimistic constraint and a
+      // window wider than one minor line.
+      ['~> 0.17.5', '0.18.0', null],
+      ['>= 0.17.0, < 0.19.0', '0.20.0', null],
+    ];
+    for (const [constraint, release, expected] of cases) {
+      expect(nextSmokeConstraint(constraint, release), `${constraint} at ${release}`).toBe(
+        expected
+      );
+    }
   });
 
   it('refuses a pin that is not at the version that was read, and a doubled block', () => {
@@ -390,7 +447,7 @@ describe('the smoke payload', () => {
       'the smoke payload pins avm-ptn-alz at 0.21.0, not the 0.20.0 avmVersions.js pins, so it was not written.'
     );
     expect(() => rewriteSmokePin(PAYLOAD + PAYLOAD, 'avm-ptn-alz', '0.21.0', '0.22.0')).toThrow(
-      EditRefused
+      'the smoke payload holds 2 blocks for avm-ptn-alz, not one, so it was not written.'
     );
     expect(() => rewriteSmokePin(PAYLOAD, 'avm-ptn-alz', '0.21.0', 'latest')).toThrow(TypeError);
   });

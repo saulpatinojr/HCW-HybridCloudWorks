@@ -219,39 +219,97 @@ export function rewriteEnv(envSource, name, fromVersion, toVersion, sha256) {
   return source.replace(versionPattern, `$1${toVersion}`).replace(shaPattern, `$1${sha256}`);
 }
 
+/** `1.2.3` as three numbers. */
+const parts = (version) => version.split('.').map(Number);
+
 /**
- * Move the exact pin on one module's block in the smoke payload
- * (lab-image/smoke/terraform-validate-payload/main.tf), where the version
- * line directly under `source = "Azure/<name>/azurerm"` reads `fromVersion`
- * and nothing else: the payload holds one block per builder module with a
- * different constraint operator each, and an exact pin is the one a bump
- * breaks by construction (`"0.21.0"` cannot resolve to 0.22.0). A block
- * whose version is a constraint (`~> 0.9`, `>= 0.15.0`) is left alone; the
- * static vendoring test says when a bump has outgrown it. Returns the text
- * and whether a pin moved; two exact pins on one module is a reshaped file
- * and is refused.
+ * The constraint a smoke payload block should carry once its module moves
+ * to `toVersion`, or null when the block can stay as it is.
+ *
+ * Only three shapes are moved, each keeping its operator, because the
+ * payload gives every builder module a different one on purpose (the
+ * operators hcw-terraform-validate evaluates):
+ *
+ *   exact          `0.21.0`              moves to the new release; it is the
+ *                                        builder's own pin, so it must.
+ *   minor window   `>= 0.17.0, < 0.18.0` slides to the new release's minor
+ *                                        line, only when the release has left
+ *                                        the window (#1658: connectivity
+ *                                        0.18.1 left `< 0.18.0`, and the
+ *                                        weekly run failed for two weeks).
+ *   pessimistic    `~> 0.9`              (two parts: `>= 0.9, < 1.0`) moves to
+ *                                        `~> <major>.<minor>` of the release,
+ *                                        only when the release has left it.
+ *
+ * Anything else (`>= 0.15.0`, a three-part `~>`) is left alone: either no
+ * release can outgrow it, or its shape is not one this knows, and
+ * scripts/lab-image-avm-vendoring.test.mjs still says when a bump has
+ * outgrown it.
+ */
+export function nextSmokeConstraint(constraint, toVersion) {
+  assertRelease(toVersion);
+  const [major, minor] = parts(toVersion);
+  const text = String(constraint).trim();
+
+  if (/^\d+\.\d+\.\d+$/.test(text)) return text === toVersion ? null : toVersion;
+
+  const window = /^>=\s*(\d+)\.(\d+)\.0\s*,\s*<\s*(\d+)\.(\d+)\.0$/.exec(text);
+  if (window) {
+    const [, loMajor, loMinor, hiMajor, hiMinor] = window.map(Number);
+    if (hiMajor !== loMajor || hiMinor !== loMinor + 1) return null;
+    const inside = major === loMajor && minor === loMinor;
+    return inside ? null : `>= ${major}.${minor}.0, < ${major}.${minor + 1}.0`;
+  }
+
+  const pessimistic = /^~>\s*(\d+)\.(\d+)$/.exec(text);
+  if (pessimistic) {
+    const [, pinMajor, pinMinor] = pessimistic.map(Number);
+    const inside = major === pinMajor && minor >= pinMinor;
+    return inside ? null : `~> ${major}.${minor}`;
+  }
+
+  return null;
+}
+
+/**
+ * Move one module's block in the smoke payload
+ * (lab-image/smoke/terraform-validate-payload/main.tf) so it still accepts
+ * the release the builder now pins: the version line directly under
+ * `source = "Azure/<name>/azurerm"`, rewritten by `nextSmokeConstraint`.
+ *
+ * An exact pin must read `fromVersion`, or the file is refused: it is the
+ * builder's own pin, and a different one means the two have drifted. Two
+ * blocks for one module is a reshaped file and is refused too. Returns the
+ * text, whether it moved, and the constraint before and after.
  */
 export function rewriteSmokePin(payloadSource, name, fromVersion, toVersion) {
   assertRelease(toVersion);
   const source = String(payloadSource);
   const pattern = new RegExp(
-    `(source\\s*=\\s*"Azure/${escapeRegExp(name)}/azurerm"\\s*\\n\\s*version\\s*=\\s*")(\\d+\\.\\d+\\.\\d+)(")`,
+    `(source\\s*=\\s*"Azure/${escapeRegExp(name)}/azurerm"\\s*\\n\\s*version\\s*=\\s*")([^"\\n]+)(")`,
     'g'
   );
   const matches = [...source.matchAll(pattern)];
   if (matches.length === 0) return { source, moved: false };
   if (matches.length > 1) {
     throw new EditRefused(
-      `the smoke payload holds ${matches.length} exact pins for ${name}, not one, so it was not written.`
+      `the smoke payload holds ${matches.length} blocks for ${name}, not one, so it was not written.`
     );
   }
   const [, , current] = matches[0];
-  if (current !== fromVersion) {
+  if (/^\d+\.\d+\.\d+$/.test(current) && current !== fromVersion) {
     throw new EditRefused(
       `the smoke payload pins ${name} at ${current}, not the ${fromVersion} avmVersions.js pins, so it was not written.`
     );
   }
-  return { source: source.replace(pattern, `$1${toVersion}$3`), moved: true };
+  const next = nextSmokeConstraint(current, toVersion);
+  if (next === null) return { source, moved: false };
+  return {
+    source: source.replace(pattern, `$1${next}$3`),
+    moved: true,
+    from: current,
+    to: next,
+  };
 }
 
 // --- the child record -------------------------------------------------------
