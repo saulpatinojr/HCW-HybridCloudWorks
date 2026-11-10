@@ -69,8 +69,8 @@ locals {
   # the tag is the commit the workflow built it from and is documentation
   # only (ADR 0032, decision 5: every learner-facing image is digest-pinned
   # where consumed).
-  image_tag    = "30f4e8819bd9452b2f3b5ac7b29661a00c4f5e76"
-  image_digest = "sha256:c13614d520892806050184ec1c4f9b1baa0d8b612556983a7a675de5825e9f10"
+  image_tag    = "8e7eeb40aef2b8bf6e94a09d173f88013897298e"
+  image_digest = "sha256:7cf5de5810fb8ab1b96d49e0c56c8c2868dab956cedce60847581258c093b1a5"
   image        = "docker.io/hybridcloudworks/hcw-lab@${local.image_digest}"
 
   # The image sets HOME=/tmp/home and owns it as 65534, so a named volume
