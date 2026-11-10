@@ -131,12 +131,12 @@ arc_tags:
 # does not match.
 docker_release_pins:
   resolute:
-    engine: "5:29.9.2-1~ubuntu.26.04~resolute"
+    engine: "5:29.9.3-1~ubuntu.26.04~resolute"
     containerd: "2.4.2-3~ubuntu.26.04~resolute"
     buildx: "0.38.1-1~ubuntu.26.04~resolute"
     compose: "5.7.0-1~ubuntu.26.04~resolute"
   noble:
-    engine: "5:29.9.2-1~ubuntu.24.04~noble"
+    engine: "5:29.9.3-1~ubuntu.24.04~noble"
     containerd: "2.4.2-3~ubuntu.24.04~noble"
     buildx: "0.38.1-1~ubuntu.24.04~noble"
     compose: "5.7.0-1~ubuntu.24.04~noble"
@@ -175,11 +175,11 @@ docker_userns_remap: true
 # is simply a new reference that gets pulled. The tag is recorded for humans
 # reading this file. The first twelve hex characters of the digest are part of
 # the built binary's filename, so bumping the builder rebuilds.
-caddy_version: v2.11.7
+caddy_version: v2.11.9
 caddy_cloudflare_module_version: v0.2.4
 caddy_builder_image: caddy
-caddy_builder_image_tag: 2.11.7-builder
-caddy_builder_image_digest: sha256:c4cd20eaa0b69112fd5d4f721ffc9671687e1d5d0b155c8620cf7546dbef94c0
+caddy_builder_image_tag: 2.11.9-builder
+caddy_builder_image_digest: sha256:3fddbec729442a56b942d4c9eaef1df80893dbf2cf5b86701bfae6aad1408eeb
 caddy_site_domain: "{{ lab_host_domain }}"
 # The three names ADR 0032 puts on the certificate. DNS-01 for each is answered
 # through the CNAME delegation of _acme-challenge.lab and _acme-challenge.coder.lab
@@ -265,8 +265,8 @@ coder_max_workspaces: 5
 # coder:latest no longer matches the newest numbered tag (seen 2026-11-08), so
 # the pin follows the numbered releases, not latest.
 coder_image: ghcr.io/coder/coder
-coder_image_tag: v2.38.6
-coder_image_digest: sha256:c9245405c482ede17699d65deb8c21488a17feff5497fc84d6a350c395da2bdd
+coder_image_tag: v2.39.0
+coder_image_digest: sha256:5fb8f624dc0d33be89c72c7b2e384cdc7c2c5ac0d5847348d3aa0edaf058605c
 # PostgreSQL, a digest of the same kind. Read 2026-09-26: 18 is the newest major
 # (supported to November 2030), its newest numbered tag and postgres:18
 # resolved to the same index, and the registry's Docker-Content-Digest and the
@@ -277,7 +277,7 @@ coder_image_digest: sha256:c9245405c482ede17699d65deb8c21488a17feff5497fc84d6a35
 # /var/lib/postgresql.
 coder_postgres_image: postgres
 coder_postgres_image_tag: "18.6"
-coder_postgres_image_digest: sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
+coder_postgres_image_digest: sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
 # The Docker socket proxy the coder server reaches the daemon through
 # (LAB-5, 2026-10-06): HAProxy with one allow rule per API section, written
 # in lab-host/coder/docker-proxy.haproxy.cfg. Until 2026-11-07 it was
