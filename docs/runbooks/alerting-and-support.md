@@ -240,13 +240,36 @@ are `GET /api/cms/alerts/recent` and `POST /api/cms/alerts/resend`
 
 ### The delivery monitor speaks on Telegram
 
-Merging to `main` ships nothing here: the frontend and Functions deploys are
-started by hand, and Terraform is confirmed in HCP Terraform. So a merge can
-leave production behind `main` without anything being broken. The GitHub check
+A merge that changes `frontend/` deploys the site by itself
+([#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)).
+The Functions deploy is started by hand and waits for a reviewer, and Terraform
+is confirmed in HCP Terraform. So a merge can still leave production behind
+`main` without anything being broken. The GitHub check
 [Monitor delivery health](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/monitor-deploy-drift.yml)
 (`monitor-deploy-drift.yml`) is what notices. It runs every four hours and goes
 red when a deploy has waited more than **8 hours** behind `main` (it was 24
 until 2026-10-23), or when a workflow keeps failing.
+
+"Keeps failing" is decided by its second job, "Can every workflow still
+succeed?" (`scripts/check-workflow-health.mjs`). It names a workflow in two
+cases. **Broken**: none of its recent runs succeeded, at least one failed, and
+nobody has run it for ten days. **Failing**: the last two runs started by its
+own schedule both failed, however recent, since a scheduled job is sure to run
+again and two red runs in a row means nobody is fixing it
+([#1661](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1661);
+the case that showed the gap was
+[#1658](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1658),
+two weeks of red weekly runs nobody saw). A run started by hand never counts
+as one of those failures, but a newer green run on `main`, however it was
+started, clears the finding, so a fix can be proven straight away with
+**Run workflow** instead of waiting for the next scheduled run. While a
+finding stands, the job keeps one open issue, labelled `Platform` and titled
+"Workflow health: a workflow is broken or keeps failing its scheduled runs".
+Each failing workflow's line links its newest failed run; for a broken one,
+open the workflow's own run list. The job comments when the list of findings
+changes and closes the issue at the first clean check. To act on it, open the
+red run, fix what it reports (or delete a workflow nobody needs), and run the
+workflow again on `main`.
 
 Red used to reach the owner only as GitHub's failure email. On 2026-10-22 it
 sat red for a day among other mail. Now the Functions app also sends a
@@ -257,8 +280,8 @@ token stays in Key Vault with the other notifier settings.
 
 | Message title | What it means | What to do |
 | --- | --- | --- |
-| **DELIVERY MONITOR RED** | The newest finished run of the check failed. The message names the failed jobs and links the run. Sent once per red stretch | Open the linked run and read its table: each service that is behind has a red mark. Start the matching deploy, or confirm the Terraform run, then wait for the next run |
-| **DELIVERY MONITOR STILL RED** | Still red 24 hours after the first message. Sent again so one missed notification does not mean silence | Same as above; nothing has fixed it yet |
+| **DELIVERY MONITOR RED** | The newest finished run of the check failed. The message names the failed jobs and links the run. Sent once when the check goes red, and again within the hour if, while it stays red, a job fails that no earlier message in that red stretch named (it then leads with "another job has now failed too") | Open the linked run and read its table: each service that is behind has a red mark. Start the matching deploy, or confirm the Terraform run, then wait for the next run. For a failing workflow, follow the workflow-health issue the check opened |
+| **DELIVERY MONITOR STILL RED** | Still red 24 hours after the last message about it. Sent again so one missed notification does not mean silence | Same as above; nothing has fixed it yet |
 | **DELIVERY MONITOR back to green** | A run succeeded after the owner was told. Sent once, then the record is cleared | Nothing |
 | **DELIVERY MONITOR WATCH IS BLIND** | The watcher has failed to read GitHub for about a day of hourly attempts, so it cannot tell red from green | Check GitHub's status page and the Functions logs; the GitHub failure email still goes out while this lasts |
 
