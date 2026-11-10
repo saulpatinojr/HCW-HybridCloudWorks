@@ -326,7 +326,9 @@ jobs:
             gh issue create --repo "$REPO" --title "$title" --label "$label" --body-file "${RUNNER_TEMP}/health-issue.md"
             exit 0
           fi
-          reported=$(gh issue view "$existing" --repo "$REPO" --json body,comments --jq '[.body, .comments[].body] | map(select(contains("<!-- workflow-health findings:"))) | last // ""')
+          # `strings` drops a null body (an issue opened by hand with none),
+          # which `contains` would otherwise fail on and turn this step red.
+          reported=$(gh issue view "$existing" --repo "$REPO" --json body,comments --jq '[.body, .comments[].body] | map(strings | select(contains("<!-- workflow-health findings:"))) | last // ""')
           # A plain text comparison (the quoted key is matched literally), not
           # `if grep`, which this repository forbids in workflows because a
           # grep error reads as "no match" (scripts/iac-workflow-steps.test.mjs).

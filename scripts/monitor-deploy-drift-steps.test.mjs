@@ -357,6 +357,13 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
     expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
   });
 
+  it('an issue opened by hand with no body (null) is read as no report yet, not a failed step', () => {
+    const got = runIssue(1, { list: OPEN, viewed: view(null, 'I opened this by hand.') });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toHaveLength(1);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
   it('an open issue with a similar but different title is left alone, and a new one created', () => {
     const got = runIssue(1, { list: JSON.stringify([{ number: 7, title: `${ISSUE_TITLE} (old)` }]) });
     expect(got.status, got.stderr).toBe(0);
