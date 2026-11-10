@@ -68,11 +68,16 @@ monitors, and manual release workflows — all on GitHub-hosted runners.
   makes deployment automatic on push/merge is blocking, and so is widening
   that exception: more branches or tags, more paths than `frontend/**`,
   removing the guard step, or dropping `environment: production` from its
-  deploy job (its Azure sign-in matches on that name). Because
-  `deploy-functions.yml` uses the same `production` environment, the backend
-  deploy has no approval either until #1617 moves it to a reviewed
-  `production-backend`; until then, anything that lets the backend deploy
-  start by itself is blocking too.
+  deploy job (its Azure sign-in matches on that name). Since #1617 that job
+  signs in as `github_frontend_deploy` (`secrets.FRONTEND_DEPLOY_CLIENT_ID`),
+  which can only read the Static Web App's deployment token; a change that
+  points it back at `secrets.CLIENT_ID`, or grants that identity anything
+  more, is blocking. `deploy-functions.yml` names its own reviewed
+  environment, `production-backend` (#1617), so a backend deploy waits for an
+  approval: moving it back to `production`, naming `production-backend` in
+  any other workflow, or anything that lets the backend deploy start by
+  itself is blocking too. `scripts/oidc-subjects.test.mjs` fails on the
+  environment names and the trust; the reviewer still reads the rest.
 - **Untrusted input**: no `pull_request_target` with checkout of PR code, no
   interpolation of PR titles/bodies/branch names into `run:` shells.
 - **Monitors** (`monitor-*.yml`, `verify-alert-state.yml`): check schedule

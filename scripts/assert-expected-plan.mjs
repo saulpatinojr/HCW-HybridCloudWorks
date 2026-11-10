@@ -617,44 +617,38 @@ export const DECLARED = [
       "#1590: HCW Arc Run Command Operator on rg-lab-hybrid-prod-cus for lab-host-arc-run.yml; planned only once the owner has created the role and set lab_arc_run_command_enabled = true (Required-Inputs §4.6b)",
   },
 
-  // #1617, PR 1: the frontend deploy's own identity (github_frontend_deploy,
-  // its two `production` environment credentials and HCW Static Web App
-  // Deployer on the one site), and the deploy identity's two
-  // `production-backend` credentials. All six are planned from the merge.
-  // Nothing is deleted in this run: github_deploy keeps its `production` pair
-  // and its site role until PR 2 moves the workflows, and PR 2 declares
-  // those three deletes. Delete these six once they have applied, and with
-  // them the test in assert-expected-plan.test.mjs that asserts they are
-  // declared ("declares #1617's six creates ..."), or it fails.
+  // #1617, PR 1's six creates (github_frontend_deploy, its two `production`
+  // environment credentials and HCW Static Web App Deployer on the one site,
+  // and the deploy identity's two `production-backend` credentials) applied
+  // on 2026-11-09 from the merge of #1633 (HCP Terraform commit status
+  // Success on 3ba8f791 at 23:39Z) and were deleted here, as the header asks.
+  // The owner then set FRONTEND_DEPLOY_CLIENT_ID from the new identity.
+  //
+  // #1617, PR 2: the three deletes that finish it. This pull request moves
+  // deploy-azure-frontend.yml onto github_frontend_deploy and
+  // deploy-functions.yml onto the reviewed `production-backend`
+  // environment, so nothing signs in through these three any more: the
+  // deploy identity's two `production` credentials, and its HCW Static Web
+  // App Deployer grant on the site, which the frontend identity holds
+  // instead. Delete these three once they have applied, and with them the
+  // test in assert-expected-plan.test.mjs that asserts they are declared
+  // ("declares #1617's three deletes ..."), or it fails.
   {
-    address: "azurerm_user_assigned_identity.github_frontend_deploy",
-    action: "create",
-    reason: "#1617: the identity deploy-azure-frontend.yml will sign in as, holding only HCW Static Web App Deployer on the site",
+    address: "azurerm_federated_identity_credential.github_production",
+    action: "delete",
+    reason:
+      "#1617: the deploy identity stops trusting the production environment; deploy-functions.yml names production-backend and the frontend signs in as github_frontend_deploy",
   },
   {
-    address: "azurerm_federated_identity_credential.github_frontend_deploy_env_production",
-    action: "create",
-    reason: "#1617: the frontend deploy identity trusts the production environment's subject",
+    address: "azurerm_federated_identity_credential.github_production_immutable",
+    action: "delete",
+    reason: "#1617: the immutable-ID form of the same production subject, on the deploy identity",
   },
   {
-    address: "azurerm_federated_identity_credential.github_frontend_deploy_env_production_immutable",
-    action: "create",
-    reason: "#1617: the immutable-ID form of the same production subject, for the frontend deploy identity",
-  },
-  {
-    address: "azurerm_role_assignment.github_frontend_deploy_swa_token",
-    action: "create",
-    reason: "#1617: HCW Static Web App Deployer on the one Static Web App for the frontend deploy identity, the same role and scope github_deploy holds today",
-  },
-  {
-    address: "azurerm_federated_identity_credential.github_production_backend",
-    action: "create",
-    reason: "#1617: the deploy identity trusts the reviewed production-backend environment, which deploy-functions.yml moves to in PR 2",
-  },
-  {
-    address: "azurerm_federated_identity_credential.github_production_backend_immutable",
-    action: "create",
-    reason: "#1617: the immutable-ID form of the same production-backend subject",
+    address: "azurerm_role_assignment.github_deploy_swa_token",
+    action: "delete",
+    reason:
+      "#1617: HCW Static Web App Deployer on the site for the deploy identity; github_frontend_deploy holds it for the frontend deploy",
   },
 
   // #1565 (ADR 0040 D10): the interviews-audio container and its retention

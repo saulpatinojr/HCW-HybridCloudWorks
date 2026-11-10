@@ -6,8 +6,9 @@
  *
  * - It signs in as github_manifest_window (MANIFEST_WINDOW_CLIENT_ID) and
  *   names NO environment. The deploy identity trusts only the
- *   `environment:production` subject, and that environment has required
- *   reviewers, so a job on it would wait for a person every hour. Naming any
+ *   `environment:production-backend` subject (since #1617), and that
+ *   environment has required reviewers, so a job on it would wait for a
+ *   person every hour. Naming any
  *   environment here would also change the OIDC subject away from the ref
  *   form the manifest-window identity trusts (oidc-subjects.test.mjs holds
  *   the credential side).

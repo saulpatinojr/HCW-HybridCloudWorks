@@ -136,9 +136,11 @@ function trustedSubjectsByIdentity() {
  * read of any of them.
  */
 const IDENTITY_BY_CLIENT_ID_SECRET = {
+  // deploy-functions.yml: the backend deploy, behind production-backend's
+  // reviewers since #1617.
   CLIENT_ID: 'github_deploy',
-  // deploy-azure-frontend.yml from #1617's PR 2: the Static Web App's
-  // deployment token, nothing else.
+  // deploy-azure-frontend.yml since #1617: the Static Web App's deployment
+  // token, nothing else.
   FRONTEND_DEPLOY_CLIENT_ID: 'github_frontend_deploy',
   READER_CLIENT_ID: 'github_reader',
   // verify-alert-state.yml: alert rules and action groups, nothing else (#1053).
@@ -278,10 +280,11 @@ describe('OIDC federated credentials cover every Azure login', () => {
     }
   );
 
-  it('the deploy identity trusts environment-form subjects only, so the production gate cannot be routed around (SEC-2)', () => {
+  it('the deploy identity trusts environment-form subjects only, so the backend gate cannot be routed around (SEC-2)', () => {
     // A ref-form credential on the deploy identity would let any job on
-    // main with `id-token: write` sign in as it without the production
-    // environment's reviewers. Retired 2026-10-06; this pins the retirement.
+    // main with `id-token: write` sign in as it without the backend
+    // environment's reviewers (production's until #1617, production-backend's
+    // since). Retired 2026-10-06; this pins the retirement.
     const subjects = byIdentity.github_deploy ?? [];
     expect(subjects.length).toBeGreaterThan(0);
     const refForm = subjects.filter((s) => s.includes(':ref:'));
@@ -291,18 +294,17 @@ describe('OIDC federated credentials cover every Azure login', () => {
     ).toEqual([]);
   });
 
-  it('the deploy identity trusts exactly production and production-backend, both forms, until PR 2 of #1617', () => {
-    // PR 1 of #1617 adds the reviewed production-backend environment's pair
-    // beside the production pair, so nothing breaks before the workflows
-    // move. PR 2 moves deploy-functions.yml to production-backend, moves the
-    // frontend to github_frontend_deploy, and deletes the production pair:
-    // then this list is the two production-backend subjects alone.
+  it('the deploy identity trusts exactly production-backend, both forms, and no longer production (#1617)', () => {
+    // PR 1 of #1617 added the reviewed production-backend environment's pair
+    // beside the production pair, so nothing broke before the workflows
+    // moved. PR 2 moved deploy-functions.yml to production-backend and the
+    // frontend to github_frontend_deploy, and deleted the production pair.
+    // A `production` job, which no one approves since #1613, must not reach
+    // the identity that can publish code into the Function App.
     // An exact list, not a substring: `:environment:production` is also the
     // start of `:environment:production-backend`.
     expect([...(byIdentity.github_deploy ?? [])].sort()).toEqual(
       [
-        'repo:${var.github_org}/${var.github_repo}:environment:production',
-        '${local.github_immutable_prefix}:environment:production',
         'repo:${var.github_org}/${var.github_repo}:environment:production-backend',
         '${local.github_immutable_prefix}:environment:production-backend',
       ].sort()
@@ -321,6 +323,16 @@ describe('OIDC federated credentials cover every Azure login', () => {
         '${local.github_immutable_prefix}:environment:production',
       ].sort()
     );
+  });
+
+  it('no identity but the frontend deploy identity trusts production, the unreviewed frontend environment (#1617)', () => {
+    // A second identity trusting it would be reachable by a job nobody
+    // approves. Matched on the whole environment name, so production-backend
+    // is not counted here.
+    const holders = Object.entries(byIdentity)
+      .filter(([, subjects]) => subjects.some((s) => s.endsWith(':environment:production')))
+      .map(([identity]) => identity);
+    expect(holders).toEqual(['github_frontend_deploy']);
   });
 
   it('no identity but the deploy identity trusts production-backend, the reviewed backend environment (#1617)', () => {
@@ -449,13 +461,15 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
     expect(grantsTo('github_frontend_deploy')).toEqual(['data.static_web_app_deployer @ azurerm_static_web_app.hcw.id']);
   });
 
-  it('only the deploy identity and the frontend deploy identity hold the site role, until PR 2 of #1617 removes the first', () => {
-    // PR 2 deletes github_deploy_swa_token once deploy-azure-frontend.yml
-    // signs in as github_frontend_deploy; then this list is that one.
+  it('only the frontend deploy identity holds the site role (#1617)', () => {
+    // The deploy identity held it too until the second pull request of
+    // #1617 deleted github_deploy_swa_token, once deploy-azure-frontend.yml
+    // signed in as github_frontend_deploy. The backend deploy never reads
+    // the deployment token.
     const holders = ['github_deploy', 'github_frontend_deploy', 'github_reader', 'github_alert_reader', 'github_manifest_window', 'github_copilot_review', 'github_arc_run'].filter(
       (identity) => grantsTo(identity).some((g) => g.startsWith('data.static_web_app_deployer @'))
     );
-    expect(holders).toEqual(['github_deploy', 'github_frontend_deploy']);
+    expect(holders).toEqual(['github_frontend_deploy']);
   });
 
   it('github_arc_run trusts the lab-host-arc environment only, and no other identity trusts it (#1590)', () => {
@@ -474,7 +488,7 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
     }
   });
 
-  it('no workflow but lab-host-arc-run.yml names the lab-host-arc environment, and none but deploy-functions.yml names production-backend, in any form (#1590, #1617)', () => {
+  it('no workflow but lab-host-arc-run.yml names the lab-host-arc environment, only deploy-functions.yml names production-backend, and only deploy-azure-frontend.yml names production, in any form (#1590, #1617)', () => {
     // Naming it is what presents the subject github_arc_run trusts, so a
     // second workflow naming it would be a second way to root on the lab host.
     // Every workflow is parsed as YAML; anything that cannot be read as a
@@ -485,14 +499,19 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
     expect(read.flatMap((r) => r.problems)).toEqual([]);
     const named = read.flatMap((r) => r.environments.map((env) => ({ file: r.file, ...env })));
     expect(named.some((n) => n.file === 'docs-pages.yml' && n.name === 'github-pages'), 'docs-pages.yml does not read as github-pages').toBe(true);
-    expect(named.some((n) => n.file === 'deploy-functions.yml' && n.name === 'production'), 'deploy-functions.yml does not read as production').toBe(true);
+    expect(named.some((n) => n.file === 'deploy-functions.yml' && n.name === 'production-backend'), 'deploy-functions.yml does not read as production-backend').toBe(true);
+    expect(named.some((n) => n.file === 'deploy-azure-frontend.yml' && n.name === 'production'), 'deploy-azure-frontend.yml does not read as production').toBe(true);
     // Environment names are not case-sensitive on GitHub, so neither is this.
     expect(named.filter((n) => n.name.toLowerCase() === 'lab-host-arc').map((n) => n.file)).toEqual(['lab-host-arc-run.yml']);
     // production-backend (#1617) is the reviewed environment the deploy
-    // identity trusts for the backend. No workflow names it until PR 2 moves
-    // deploy-functions.yml to it, and no other workflow may name it after.
-    const backend = [...new Set(named.filter((n) => n.name.toLowerCase() === 'production-backend').map((n) => n.file))];
-    expect(backend.filter((file) => file !== 'deploy-functions.yml')).toEqual([]);
+    // identity trusts, so naming it reaches the Function App's publishing
+    // rights: deploy-functions.yml alone. production is the frontend's, with
+    // no reviewers since #1613, and reaches the site's deployment token:
+    // deploy-azure-frontend.yml alone. A second workflow naming either would
+    // be a second way in.
+    const filesNaming = (env) => [...new Set(named.filter((n) => n.name.toLowerCase() === env).map((n) => n.file))];
+    expect(filesNaming('production-backend')).toEqual(['deploy-functions.yml']);
+    expect(filesNaming('production')).toEqual(['deploy-azure-frontend.yml']);
   });
 
   /** A fixture workflow whose one job, `only`, carries `lines`. */

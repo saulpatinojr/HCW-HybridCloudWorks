@@ -8,7 +8,8 @@
 # Since 2026-11-09 (owner decision on #1613) a merge that changes frontend/
 # starts a frontend deploy by itself, and nobody approves it (the owner removed
 # the `production` environment's required reviewers the same day). The
-# functions deploy is still started by hand. This monitor reads the last
+# functions deploy is still started by hand, and since #1617 it waits for a
+# reviewer in the `production-backend` environment. This monitor reads the last
 # successful run whatever started it, so a frontend run that failed still
 # shows as drift. It does not see a change outside frontend/ that the site
 # needs (a repository variable, the deploy workflow itself): that starts no
@@ -66,8 +67,10 @@
 # `check` job carries `TFC_TOKEN` and sits in the `automation` environment for
 # the same reason tfc-plan-check.yml does — a secret is reachable only from a
 # job GitHub has admitted into an environment (zizmor secrets-outside-env,
-# #567), and `automation` rather than `production` because a scheduled run
-# cannot wait on an approval gate. The token is read-only here: one workspace
+# #567), and `automation` rather than a deploy environment because a
+# scheduled run cannot wait on an approval gate (`production-backend` has one
+# since #1617; `production` had one until 2026-11-09, #1613, and is the
+# frontend deploy's alone). The token is read-only here: one workspace
 # lookup and one one-run listing. Without it the row reads ⚠️ and the job goes
 # red, never ✅ — the first version keyed that row on the last green
 # tfc-plan-check.yml run, which succeeds with the token unset, on an
