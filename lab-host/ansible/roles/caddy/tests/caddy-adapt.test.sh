@@ -31,7 +31,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ansible="$(cd "${here}/../../.." && pwd)"
 group_vars="${ansible}/group_vars/all.yml"
 
-CADDY_SHA512='a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7'
+CADDY_SHA512='0e85544340290a16ce4bfb76fe7d65e9de1bf3a6e67f5ccfff30b30d27ea4c73e078077b7bf3e58ae60b6b12e44327705287059c775bca5782e8ee85ea7edd75'
 
 passed=0
 failed=0
