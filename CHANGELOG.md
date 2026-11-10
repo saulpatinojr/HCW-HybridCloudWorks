@@ -68,7 +68,7 @@ This project has not cut a tagged release; entries are grouped under
 ### Fixed
 
 - **The Landing Zone Builder's Azure Verified Modules move to their current releases, the first weekly update since 27 October ([#1658](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1658)).** The fix in #1662 let the weekly update open its pull request again. It moves management to 0.10.0, connectivity to 0.18.1 and virtual network to 0.23.0, and the lab image's smoke payload window to `>= 0.18.0, < 0.19.0`. It also rewrites the child module record the lab image vendors.
-  - The hand edits the update flags are made here. At their new tags, management requires azapi and azurerm only, and virtual network requires azapi only, so their `requiredProviders` in `frontend/src/lib/landingZone/avmVersions.js` drop modtm and random.
+  - The update flags `requiredProviders` for two modules as a hand edit, and that edit is made here. At their new tags, management requires azapi and azurerm only, and virtual network requires azapi only, so their `requiredProviders` in `frontend/src/lib/landingZone/avmVersions.js` drop modtm and random.
   - The builder's output passes those modules only the providers they declare; the HCL snapshot and the spoke test follow.
   - `PROVIDER_PINS` is unchanged, because avm-ptn-alz still needs modtm, random and time.
   - The constraint table above `TERRAFORM_REQUIRED_VERSION` names the new tags. The child modules that changed (bastion host 0.9.0, virtual network 0.22.2, utl-interfaces 0.10.0) add no provider.
