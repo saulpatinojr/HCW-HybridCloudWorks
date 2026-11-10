@@ -24,6 +24,7 @@ import { buildVoiceAndFormatBlock, pickNextFormat } from './voice.js';
 import { extractPublishedDate, referenceScrapedImages } from './scrape.js';
 import { blogImageDefaults } from '../rss/source-config.js';
 import { fetchImage as defaultFetchImage } from '../triggers/fetch-image.js';
+import { errorCode } from '../http/error-response.js';
 
 /** The provider values the analysis prompt allows; only these are logged (#1635). */
 const LOGGABLE_PROVIDERS = new Set(['Azure', 'AWS', 'GCP', 'VMware', 'Ansible', 'GitHub', 'Terraform', 'FinOps', 'Docker', 'Multi']);
@@ -270,7 +271,8 @@ export function createInspector({
         // rather than being posted to a vision model as an image (#415). One
         // image skipped, the other four still described.
         if (fetched.refused) {
-          log.warn?.(`[alt-text] ${url}: ${fetched.reason}`);
+          // The refusal's code, never the image's address or the sentence (#1642).
+          log.warn?.(`[alt-text] image skipped: ${fetched.refused}`);
           continue;
         }
         // The fetcher's gate guarantees a mapped `image/*` type, so this is
@@ -289,7 +291,7 @@ export function createInspector({
         });
         if (altText && altText.trim()) results[url] = altText.trim().slice(0, 125);
       } catch (error) {
-        log.warn?.(`[alt-text] ${url}: ${error?.message || error}`);
+        log.warn?.(`[alt-text] image failed: ${errorCode(error)}`);
       }
     }
     return results;

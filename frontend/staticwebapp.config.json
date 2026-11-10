@@ -54,6 +54,11 @@
       "statusCode": 301
     },
     {
+      "route": "/azure/blog/enterprise-hub-and-spoke-zero-trust-edge",
+      "redirect": "/azure/architecture-designs/enterprise-hub-and-spoke-zero-trust-edge",
+      "statusCode": 301
+    },
+    {
       "route": "/admin",
       "rewrite": "/app-shell.html",
       "headers": {

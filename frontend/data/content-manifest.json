@@ -1,9 +1,8 @@
 {
-  "generatedAt": "2026-11-07T06:22:50.556Z",
+  "generatedAt": "2026-11-10T14:27:22.166Z",
   "routes": [
     "/azure/blog/azure-foundry-hosted-agents-accelerating-ai-agent-deployment-optimization-featur",
     "/azure/blog/in-preview-public-preview-code-first-observability-for-foundry-agents-in-vs-code",
-    "/azure/blog/enterprise-hub-and-spoke-zero-trust-edge",
     "/azure/blog/operationalizing-azure-updates-with-microsoft-release-communications-and-proacti",
     "/azure/blog/autonomous-self-healing-for-azure-vmware-solution-private-clouds",
     "/azure/blog/launched-generally-available-azure-api-management-premium-v2-and-standard-v2-now",
@@ -24,7 +23,8 @@
     "/aws/blog/aws-transform-enhances-migration-assessments-with-new-agentic-capabilities-IVrBFJ",
     "/azure/blog/nist-vs-microsoft-zero-trust-why-cloud-architects-should-care-LSzyB6",
     "/azure/blog/microsoft-sovereign-cloud-unleashing-disconnected-operations-with-enhanced-gover-Ttt3Hv",
-    "/azure/blog/microsoft-sovereign-cloud-empowering-europe-with-unprecedented-data-control-and--ibDYCO"
+    "/azure/blog/microsoft-sovereign-cloud-empowering-europe-with-unprecedented-data-control-and--ibDYCO",
+    "/azure/architecture-designs/enterprise-hub-and-spoke-zero-trust-edge"
   ],
   "data": {
     "article:azure-foundry-hosted-agents-accelerating-ai-agent-deployment-optimization-featur": {
@@ -97,34 +97,6 @@
       "contentImageUrl": "",
       "sourceUrl": "https://azure.microsoft.com/updates?id=563197",
       "CD Url": "https://azure.microsoft.com/updates?id=563197"
-    },
-    "article:enterprise-hub-and-spoke-zero-trust-edge": {
-      "id": "2loI8BH7BqRnikYdfPYa",
-      "slug": "enterprise-hub-and-spoke-zero-trust-edge",
-      "cloudProvider": "Azure",
-      "Cloud Provider": "Azure",
-      "terraformCode": "terraform {\n  required_version = \">= 1.5.0\"\n  required_providers {\n    azurerm = {\n      source  = \"hashicorp/azurerm\"\n      version = \"~> 3.90.0\"\n    }\n  }\n}\n\nprovider \"azurerm\" {\n  features {}\n}\n\nvariable \"location\" {\n  type        = string\n  default     = \"eastus\"\n  description = \"Primary Azure region for hub network and zero-trust edge resources.\"\n}\n\nvariable \"resource_group_name\" {\n  type        = string\n  default     = \"rg-zerotrust-hub\"\n  description = \"Target resource group name.\"\n}\n\nvariable \"vnet_cidr\" {\n  type        = string\n  default     = \"10.100.0.0/16\"\n  description = \"CIDR block for the primary hub virtual network.\"\n}\n\nvariable \"subnet_fw_cidr\" {\n  type        = string\n  default     = \"10.100.0.0/26\"\n  description = \"Dedicated subnet for Azure Firewall (minimum /26 required).\"\n}\n\nvariable \"subnet_gateway_cidr\" {\n  type        = string\n  default     = \"10.100.0.64/26\"\n  description = \"Dedicated GatewaySubnet for ExpressRoute circuit connection.\"\n}\n\nvariable \"subnet_workload_cidr\" {\n  type        = string\n  default     = \"10.100.1.0/24\"\n  description = \"Subnet hosting workload virtual machines.\"\n}\n\nvariable \"subnet_pe_cidr\" {\n  type        = string\n  default     = \"10.100.2.0/24\"\n  description = \"Dedicated subnet for Private Endpoints (RSV, Blob, Queue).\"\n}\n\n# --- Resource Group ---\nresource \"azurerm_resource_group\" \"rg\" {\n  name     = var.resource_group_name\n  location = var.location\n}\n\n# --- Virtual Network & Subnets ---\nresource \"azurerm_virtual_network\" \"vnet\" {\n  name                = \"vnet-hub\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  address_space       = [var.vnet_cidr]\n\n  # Direct VNet DNS resolution through Firewall DNS Proxy to preserve private zone forwarding\n  dns_servers = [azurerm_firewall.fw.ip_configuration[0].private_ip_address]\n}\n\nresource \"azurerm_subnet\" \"fw_subnet\" {\n  name                 = \"AzureFirewallSubnet\"\n  resource_group_name  = azurerm_resource_group.rg.name\n  virtual_network_name = azurerm_virtual_network.vnet.name\n  address_prefixes     = [var.subnet_fw_cidr]\n}\n\nresource \"azurerm_subnet\" \"gateway_subnet\" {\n  name                 = \"GatewaySubnet\"\n  resource_group_name  = azurerm_resource_group.rg.name\n  virtual_network_name = azurerm_virtual_network.vnet.name\n  address_prefixes     = [var.subnet_gateway_cidr]\n}\n\nresource \"azurerm_subnet\" \"workload_subnet\" {\n  name                 = \"snet-workload\"\n  resource_group_name  = azurerm_resource_group.rg.name\n  virtual_network_name = azurerm_virtual_network.vnet.name\n  address_prefixes     = [var.subnet_workload_cidr]\n}\n\nresource \"azurerm_subnet\" \"pe_subnet\" {\n  name                             = \"snet-private-endpoints\"\n  resource_group_name              = azurerm_resource_group.rg.name\n  virtual_network_name             = azurerm_virtual_network.vnet.name\n  address_prefixes     = [var.subnet_pe_cidr]\n  private_endpoint_network_policies = \"Enabled\"\n}\n\n# --- Azure Firewall & Policy (DNS Proxy Enabled) ---\nresource \"azurerm_public_ip\" \"fw_pip\" {\n  name                = \"pip-afw-hub\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  allocation_method   = \"Static\"\n  sku                 = \"Standard\"\n}\n\nresource \"azurerm_firewall_policy\" \"fw_policy\" {\n  name                = \"fwp-zerotrust-hub\"\n  resource_group_name = azurerm_resource_group.rg.name\n  location            = azurerm_resource_group.rg.location\n  sku                 = \"Standard\"\n\n  # DNS Proxy enabled so on-prem conditional forwarders and local VNets resolve via Firewall\n  dns {\n    proxy_enabled = true\n  }\n}\n\nresource \"azurerm_firewall\" \"fw\" {\n  name                = \"afw-hub\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  sku_name            = \"AZFW_VNet\"\n  sku_tier            = \"Standard\"\n  firewall_policy_id  = azurerm_firewall_policy.fw_policy.id\n\n  ip_configuration {\n    name                 = \"fw-ipconfig\"\n    subnet_id            = azurerm_subnet.fw_subnet.id\n    public_ip_address_id = azurerm_public_ip.fw_pip.id\n  }\n}\n\n# Rules matching explicit allow patterns in diagram\nresource \"azurerm_firewall_policy_rule_collection_group\" \"app_rules\" {\n  name               = \"fw-app-rule-group\"\n  firewall_policy_id = azurerm_firewall_policy.fw_policy.id\n  priority           = 100\n\n  application_rule_collection {\n    name     = \"allow-zerotrust-endpoints\"\n    priority = 110\n    action   = \"Allow\"\n\n    rule {\n      name = \"allow-azure-backup-storage-login\"\n      source_addresses = [\"*\"]\n      target_fqdns = [\n        \"*.backup.windowsazure.com\",\n        \"*.blob.core.windows.net\",\n        \"*.queue.core.windows.net\",\n        \"*.login.windows.net\"\n      ]\n\n      protocols {\n        type = \"Https\"\n        port = 443\n      }\n    }\n  }\n}\n\n# --- Route Table (Force Egress through Firewall) ---\nresource \"azurerm_route_table\" \"workload_rt\" {\n  name                = \"rt-workload-to-fw\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n\n  route {\n    name                   = \"default-egress-to-fw\"\n    address_prefix         = \"0.0.0.0/0\"\n    next_hop_type          = \"VirtualAppliance\"\n    next_hop_in_ip_address = azurerm_firewall.fw.ip_configuration[0].private_ip_address\n  }\n}\n\nresource \"azurerm_subnet_route_table_association\" \"workload_rt_assoc\" {\n  subnet_id      = azurerm_subnet.workload_subnet.id\n  route_table_id = azurerm_route_table.workload_rt.id\n}\n\n# --- ExpressRoute Gateway ---\nresource \"azurerm_public_ip\" \"gw_pip\" {\n  name                = \"pip-ergw\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  allocation_method   = \"Static\"\n  sku                 = \"Standard\"\n}\n\nresource \"azurerm_virtual_network_gateway\" \"er_gw\" {\n  name                = \"ergw-hub\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  type                = \"ExpressRoute\"\n  sku                 = \"Standard\"\n\n  ip_configuration {\n    name                          = \"ergw-config\"\n    public_ip_address_id          = azurerm_public_ip.gw_pip.id\n    private_ip_address_allocation = \"Dynamic\"\n    subnet_id                     = azurerm_subnet.gateway_subnet.id\n  }\n}\n\n# --- Private DNS Zones & Virtual Network Links ---\nresource \"azurerm_private_dns_zone\" \"dns_blob\" {\n  name                = \"privatelink.blob.core.windows.net\"\n  resource_group_name = azurerm_resource_group.rg.name\n}\n\nresource \"azurerm_private_dns_zone\" \"dns_queue\" {\n  name                = \"privatelink.queue.core.windows.net\"\n  resource_group_name = azurerm_resource_group.rg.name\n}\n\nresource \"azurerm_private_dns_zone\" \"dns_vault\" {\n  name                = \"privatelink.vaultcore.azure.net\"\n  resource_group_name = azurerm_resource_group.rg.name\n}\n\nresource \"azurerm_private_dns_zone_virtual_network_link\" \"link_blob\" {\n  name                  = \"link-dns-blob\"\n  resource_group_name   = azurerm_resource_group.rg.name\n  private_dns_zone_name = azurerm_private_dns_zone.dns_blob.name\n  virtual_network_id    = azurerm_virtual_network.vnet.id\n}\n\nresource \"azurerm_private_dns_zone_virtual_network_link\" \"link_queue\" {\n  name                  = \"link-dns-queue\"\n  resource_group_name   = azurerm_resource_group.rg.name\n  private_dns_zone_name = azurerm_private_dns_zone.dns_queue.name\n  virtual_network_id    = azurerm_virtual_network.vnet.id\n}\n\nresource \"azurerm_private_dns_zone_virtual_network_link\" \"link_vault\" {\n  name                  = \"link-dns-vault\"\n  resource_group_name   = azurerm_resource_group.rg.name\n  private_dns_zone_name = azurerm_private_dns_zone.dns_vault.name\n  virtual_network_id    = azurerm_virtual_network.vnet.id\n}\n\n# --- Target Back-End Services & Private Endpoints (RSV_PE) ---\nresource \"azurerm_storage_account\" \"sa\" {\n  name                     = \"stzerotrusthub001\"\n  resource_group_name      = azurerm_resource_group.rg.name\n  location                 = azurerm_resource_group.rg.location\n  account_tier             = \"Standard\"\n  account_replication_type = \"LRS\"\n  public_network_access_enabled = false\n}\n\nresource \"azurerm_recovery_services_vault\" \"rsv\" {\n  name                = \"rsv-hub-backup\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  sku                 = \"Standard\"\n  soft_delete_enabled = true\n}\n\nresource \"azurerm_private_endpoint\" \"pe_blob\" {\n  name                = \"pe-storage-blob\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  subnet_id           = azurerm_subnet.pe_subnet.id\n\n  private_service_connection {\n    name                           = \"psc-blob\"\n    private_connection_resource_id = azurerm_storage_account.sa.id\n    subresource_names              = [\"blob\"]\n    is_manual_connection           = false\n  }\n\n  private_dns_zone_group {\n    name                 = \"dns-group-blob\"\n    private_dns_zone_ids = [azurerm_private_dns_zone.dns_blob.id]\n  }\n}\n\nresource \"azurerm_private_endpoint\" \"pe_queue\" {\n  name                = \"pe-storage-queue\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  subnet_id           = azurerm_subnet.pe_subnet.id\n\n  private_service_connection {\n    name                           = \"psc-queue\"\n    private_connection_resource_id = azurerm_storage_account.sa.id\n    subresource_names              = [\"queue\"]\n    is_manual_connection           = false\n  }\n\n  private_dns_zone_group {\n    name                 = \"dns-group-queue\"\n    private_dns_zone_ids = [azurerm_private_dns_zone.dns_queue.id]\n  }\n}\n\nresource \"azurerm_private_endpoint\" \"pe_rsv\" {\n  name                = \"pe-recovery-vault\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  subnet_id           = azurerm_subnet.pe_subnet.id\n\n  private_service_connection {\n    name                           = \"psc-rsv\"\n    private_connection_resource_id = azurerm_recovery_services_vault.rsv.id\n    subresource_names              = [\"AzureBackup\"]\n    is_manual_connection           = false\n  }\n\n  private_dns_zone_group {\n    name                 = \"dns-group-vault\"\n    private_dns_zone_ids = [azurerm_private_dns_zone.dns_vault.id]\n  }\n}\n\n# --- Workload Machine ---\nresource \"azurerm_network_interface\" \"workload_nic\" {\n  name                = \"nic-workload-vm\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n\n  ip_configuration {\n    name                          = \"internal\"\n    subnet_id                     = azurerm_subnet.workload_subnet.id\n    private_ip_address_allocation = \"Dynamic\"\n  }\n}\n\nresource \"azurerm_linux_virtual_machine\" \"workload_vm\" {\n  name                = \"vm-workload\"\n  resource_group_name = azurerm_resource_group.rg.name\n  location            = azurerm_resource_group.rg.location\n  size                = \"Standard_D2s_v5\"\n  admin_username      = \"azureadmin\"\n  disable_password_authentication = true\n\n  admin_ssh_key {\n    username   = \"azureadmin\"\n    public_key = \"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3...\"\n  }\n\n  network_interface_ids = [\n    azurerm_network_interface.workload_nic.id,\n  ]\n\n  os_disk {\n    caching              = \"ReadWrite\"\n    storage_account_type = \"StandardSSD_LRS\"\n  }\n\n  source_image_reference {\n    publisher = \"Canonical\"\n    offer     = \"0001-com-ubuntu-server-jammy\"\n    sku       = \"22_04-lts\"\n    version   = \"latest\"\n  }\n}\n\noutput \"azure_firewall_dns_proxy_ip\" {\n  value       = azurerm_firewall.fw.ip_configuration[0].private_ip_address\n  description = \"IP address to configure as target in on-premises DNS conditional forwarders.\"\n}",
-      "Title": "Enterprise Hub-and-Spoke with Zero Trust Edge",
-      "title": "Enterprise Hub-and-Spoke with Zero Trust Edge",
-      "Summary": "A production-grade Azure landing zone pattern that centralizes connectivity, policy, and security controls while enabling autonomous workload subscriptions at scale.",
-      "summary": "A production-grade Azure landing zone pattern that centralizes connectivity, policy, and security controls while enabling autonomous workload subscriptions at scale.",
-      "description": "A production-grade Azure landing zone pattern that centralizes connectivity, policy, and security controls while enabling autonomous workload subscriptions at scale.",
-      "type": "architecture",
-      "category": "Networking",
-      "Tags": [
-        "CAF",
-        "WAF",
-        "Zero Trust",
-        "Landing Zone",
-        "Enterprise"
-      ],
-      "tags": [
-        "CAF",
-        "WAF",
-        "Zero Trust",
-        "Landing Zone",
-        "Enterprise"
-      ]
     },
     "article:operationalizing-azure-updates-with-microsoft-release-communications-and-proacti": {
       "id": "3lmh4MQz1Ecw2bCVgw49",
@@ -987,6 +959,164 @@
       "url": "https://blogs.microsoft.com/blog/2025/06/16/announcing-comprehensive-sovereign-solutions-empowering-european-organizations/",
       "sourceUrl": "https://blogs.microsoft.com/blog/2025/06/16/announcing-comprehensive-sovereign-solutions-empowering-european-organizations/",
       "CD Url": "https://blogs.microsoft.com/blog/2025/06/16/announcing-comprehensive-sovereign-solutions-empowering-european-organizations/"
+    },
+    "architecture:enterprise-hub-and-spoke-zero-trust-edge": {
+      "id": "2loI8BH7BqRnikYdfPYa",
+      "type": "architecture",
+      "publishTarget": "architecture",
+      "Title": "Enterprise Hub-and-Spoke with Zero Trust Edge",
+      "title": "Enterprise Hub-and-Spoke with Zero Trust Edge",
+      "Summary": "A production-grade Azure landing zone pattern that centralizes connectivity, policy, and security controls while enabling autonomous workload subscriptions at scale.",
+      "summary": "A production-grade Azure landing zone pattern that centralizes connectivity, policy, and security controls while enabling autonomous workload subscriptions at scale.",
+      "description": "A production-grade Azure landing zone pattern that centralizes connectivity, policy, and security controls while enabling autonomous workload subscriptions at scale.",
+      "slug": "enterprise-hub-and-spoke-zero-trust-edge",
+      "category": "Networking",
+      "complexity": "Low",
+      "level": "400",
+      "tags": [
+        "CAF",
+        "WAF",
+        "Zero Trust",
+        "Landing Zone",
+        "Enterprise"
+      ],
+      "Tags": [
+        "CAF",
+        "WAF",
+        "Zero Trust",
+        "Landing Zone",
+        "Enterprise"
+      ],
+      "featured": true,
+      "Cloud Provider": "Azure",
+      "cloudProvider": "Azure",
+      "updatedAt": "2026-11-10T14:17:58.230Z",
+      "createdAt": "2026-07-31T02:17:38.313Z",
+      "cost": "$2.1k/mo",
+      "costAnalysis": {
+        "estimatedMonthly": "$1,350 - $1,750/mo",
+        "breakdown": [
+          {
+            "item": "Azure Firewall (Standard)",
+            "monthly": "$940",
+            "notes": "Base deployment ($1.25/hr = $912.50/mo) operating as DNS proxy with ~1 TB processed data across rules."
+          },
+          {
+            "item": "Compute (Workload VM)",
+            "monthly": "$170",
+            "notes": "1x Standard_D4s_v5 (4 vCPU, 16 GB RAM) with Premium SSD P10 OS disk (128 GB)."
+          },
+          {
+            "item": "Networking Gateway (ExpressRoute VNet Gateway)",
+            "monthly": "$100",
+            "notes": "Standard ExpressRoute Virtual Network Gateway ($0.137/hr). Excludes on-premises circuit fees."
+          },
+          {
+            "item": "Private Link & Azure Private DNS",
+            "monthly": "$30",
+            "notes": "3 Private Endpoints (RSV, Blob, Queue) at $7.30/mo base each plus data ingress/egress and 3 Private DNS zones."
+          },
+          {
+            "item": "Storage & Backup Services",
+            "monthly": "$110",
+            "notes": "1 TB Blob Block Storage (Hot Tier), Storage Queue transactions, and Recovery Services Vault (RSV) with ~1 TB LRS backup target."
+          }
+        ]
+      },
+      "rpo": "< 15 min",
+      "rto": "< 1 hr",
+      "waf": {
+        "provider": "azure",
+        "overall": 59,
+        "pillars": [
+          {
+            "id": "reliability",
+            "score": 58,
+            "commentary": "The architecture establishes hybrid connectivity via ExpressRoute and leverages Azure Firewall as a DNS proxy for cross-premises Private Endpoint resolution. However, the Terraform module lacks explicit availability zone placement (`zones`) for the firewall and gateway resources. Without zone-redundant deployments explicitly declared, single-datacenter failure in the hub region remains an unmitigated risk."
+          },
+          {
+            "id": "security",
+            "score": 72,
+            "commentary": "Private Endpoints are consistently applied across storage, backup, and key vault services to isolate PaaS traffic from the public internet. Azure Firewall functions as a central DNS proxy enforcing FQDN filtering for outbound storage and identity endpoints. Centralized Private DNS zone integration via Terraform ensures spoke workloads route through strict zero-trust network paths."
+          },
+          {
+            "id": "costOptimization",
+            "score": 48,
+            "commentary": "Hub-and-spoke centralization prevents duplicating firewall instances across individual spoke subscriptions. However, deployed fixed-cost assets like ExpressRoute circuits and persistent Azure Firewall instances carry high baseline hourly charges regardless of utilization. The Terraform snippet provides no parameterization for lower-cost firewalls (e.g., Basic SKU) or idle workload auto-shutdown controls."
+          },
+          {
+            "id": "operationalExcellence",
+            "score": 55,
+            "commentary": "Encapsulating the hub connectivity pattern into a reusable Terraform module (`./modules/hub-network`) standardizes network provisioning across landing zones. Centralizing hybrid DNS forwarding inside Azure Firewall simplifies name resolution management for on-premises clients. The assessment material lacks operational telemetry inputs like diagnostic logging or central Log Analytics workspace attachments."
+          },
+          {
+            "id": "performanceEfficiency",
+            "score": 62,
+            "commentary": "Utilizing ExpressRoute ensures low-latency, dedicated transport between on-premises infrastructure and Azure VNet resources. Private Link connections route storage and database data planes directly across Azure's private backbone rather than traversing public networks. The configuration does not specify gateway SKUs or Azure Firewall scale units to guarantee throughput under high traffic loads."
+          }
+        ],
+        "source": "terraform+components",
+        "generatedBy": "gemini-3.5-flash-lite",
+        "generatedAt": "2026-07-31T06:57:30.773Z",
+        "overriddenBy": null
+      },
+      "overviewHtml": "<h2>Architecture Overview</h2><p>This deployment implements a hybrid enterprise topology connecting an on-premises Vnet to an Azure Vnet via ExpressRoute. Within the cloud boundary, workloads are isolated and managed through centralized DNS resolution, network security enforcement, and private endpoint routing.</p><h2>Traffic and Data Flow</h2><p>Data movement between environments traverses established private pathways and conditional forwarding rules:</p><ul><li><strong>Hybrid Transport:</strong> ExpressRoute establishes connectivity between the on-premises Vnet and the Azure Vnet.</li><li><strong>Workload Communication:</strong> Bidirectional traffic flows between the on-premises machine and the Azure workload machine, and onward to the Recovery Services Private Endpoint (RSV_PE).</li><li><strong>Storage Ingress/Egress:</strong> The RSV_PE routes traffic to specific Azure PaaS destinations: Storage Queue, Blob Block, and the Backup Service.</li><li><strong>Name Resolution:</strong> On-premises DNS servers utilize conditional forwarders for domains such as <code>*.backup.windowsazure.com</code>, <code>*.blob.core.windows.net</code>, and <code>*.queue.core.windows.net</code>, routing queries to the Azure Firewall configured as a DNS proxy.</li></ul><h2>Security Model</h2><p>Network security relies on explicit traffic filtering, private address spaces, and isolated endpoint resolution:</p><ul><li><strong>Firewall Proxy:</strong> Azure Firewall acts as a DNS proxy, inspecting and forwarding requests according to explicit allow lists (including <code>*.login.windows.net</code>).</li><li><strong>Private Endpoints:</strong> RSV_PE utilizes designated IP addresses (<PNP_IP> format) to ensure cloud storage and backup traffic stays off the public internet.</li><li><strong>DNS Zones:</strong> Private DNS zones map fully qualified domain names—such as <code>&lt;vaultId&gt;.privatelink.&lt;geo&gt;.windowsazure.com</code>—directly to private A records.</li></ul><h2>Operational Model</h2><p>Operations are centered around hybrid identity, backup orchestration, and structured name resolution across boundaries:</p><ul><li><strong>Virtual Network Links:</strong> Connect Azure provided DNS infrastructure with custom DNS zones to maintain consistent internal naming.</li><li><strong>Hybrid Backup:</strong> On-premises machines coordinate directly with Azure backup and storage targets through secure private paths.</li></ul><table><thead><tr><th>Component Type</th><th>Service / Protocol</th><th>Target / Resolution</th></tr></thead><tbody><tr><td>Connectivity</td><td>ExpressRoute</td><td>On-premises Vnet to Azure Vnet</td></tr><tr><td>Security</td><td>Azure Firewall</td><td>DNS Proxy and Traffic Filtering</td></tr><tr><td>Endpoints</td><td>RSV_PE</td><td>Storage Queue, Blob Block, Backup Service</td></tr><tr><td>Name Resolution</td><td>DNS Zones / Internal DNS</td><td>A Records for Privatelink and Storage Endpoints</td></tr></tbody></table>",
+      "overview": "<p>This reference design applies <strong>Cloud Adoption Framework</strong> and\n    <strong>Well-Architected Framework</strong> principles to create a scalable\n    multi-subscription platform. The pattern isolates shared connectivity from workload\n    execution and enforces policy at management-group scope.</p>\n   <p>Zero Trust controls are implemented at identity, network, and workload layers:\n    least privilege access, private endpoints by default, explicit egress paths,\n    and continuous policy enforcement.</p>\n<h2>Implementation Phases</h2><ol><li>Bootstrap management groups, subscriptions, and baseline policy initiatives.</li><li>Deploy connectivity hub (firewall, bastion, ER/VPN gateways, DNS).</li><li>Onboard workload spokes with private ingress/egress and policy inheritance.</li><li>Enable observability, incident workflows, and cost guardrails.</li></ol>\n<h2>Governance &amp; Compliance</h2><ul><li>Policy initiatives mapped to CAF enterprise-scale controls.</li><li>Deny-by-default guardrails for public endpoints and weak SKUs.</li><li>Centralized activity logs and immutable audit retention.</li></ul>\n<h2>Identity &amp; Access</h2><ul><li>Entra Conditional Access + PIM for privileged operations.</li><li>Managed identities for platform-to-service authentication.</li><li>Break-glass controls and role separation across subscriptions.</li></ul>\n<h2>Network Flows</h2><table><thead><tr><th>Source</th><th>Destination</th><th>Protocol / Channel</th><th>Control</th></tr></thead><tbody><tr><td>Internet</td><td>Front Door + WAF</td><td>HTTPS 443</td><td>Service tag + header validation</td></tr><tr><td>Front Door</td><td>App ingress</td><td>HTTPS 443</td><td>Private origin, WAF policy, rate limiting</td></tr><tr><td>App tier</td><td>Private endpoint</td><td>TLS 443</td><td>VNet-bound traffic</td></tr><tr><td>Service Bus</td><td>Function App</td><td>AMQP trigger</td><td>MI auth + retry policy</td></tr><tr><td>Platform telemetry</td><td>Log Analytics</td><td>Diag pipeline</td><td>Centralized monitoring workspace</td></tr></tbody></table>\n<h2>Network Segmentation</h2><ul><li>Hub-spoke with dedicated GatewaySubnet / AzureFirewallSubnet.</li><li>Private Link for SQL/Key Vault and DNS private zone integration.</li><li>Route table strategy for forced inspection and east-west controls.</li></ul>\n<h2>Best Practices</h2><ul><li>Use private endpoints for data services and disable public network access by policy.</li><li>Apply deny policies at management group scope; grant exceptions only through workflow.</li><li>Separate control plane and workload plane subscriptions for blast-radius reduction.</li><li>Log all diagnostic categories to centralized Log Analytics with immutable retention.</li></ul>\n<h2>References</h2><ul><li><a href=\"https://learn.microsoft.com/en-us/azure/architecture/\" target=\"_blank\" rel=\"noopener noreferrer\">Azure Architecture Center</a></li><li><a href=\"https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/\" target=\"_blank\" rel=\"noopener noreferrer\">Cloud Adoption Framework</a></li><li><a href=\"https://learn.microsoft.com/en-us/azure/well-architected/\" target=\"_blank\" rel=\"noopener noreferrer\">Azure Well-Architected Framework</a></li><li><a href=\"https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/landing-zone/\" target=\"_blank\" rel=\"noopener noreferrer\">Enterprise-Scale Landing Zones</a></li><li><a href=\"https://learn.microsoft.com/en-us/azure/architecture/networking/architecture/hub-spoke\" target=\"_blank\" rel=\"noopener noreferrer\">Azure Networking Hub-Spoke</a></li><li><a href=\"https://learn.microsoft.com/en-us/azure/governance/policy/overview\" target=\"_blank\" rel=\"noopener noreferrer\">Azure Policy documentation</a></li></ul>",
+      "terraformCode": "terraform {\n  required_version = \">= 1.5.0\"\n  required_providers {\n    azurerm = {\n      source  = \"hashicorp/azurerm\"\n      version = \"~> 3.90.0\"\n    }\n  }\n}\n\nprovider \"azurerm\" {\n  features {}\n}\n\nvariable \"location\" {\n  type        = string\n  default     = \"eastus\"\n  description = \"Primary Azure region for hub network and zero-trust edge resources.\"\n}\n\nvariable \"resource_group_name\" {\n  type        = string\n  default     = \"rg-zerotrust-hub\"\n  description = \"Target resource group name.\"\n}\n\nvariable \"vnet_cidr\" {\n  type        = string\n  default     = \"10.100.0.0/16\"\n  description = \"CIDR block for the primary hub virtual network.\"\n}\n\nvariable \"subnet_fw_cidr\" {\n  type        = string\n  default     = \"10.100.0.0/26\"\n  description = \"Dedicated subnet for Azure Firewall (minimum /26 required).\"\n}\n\nvariable \"subnet_gateway_cidr\" {\n  type        = string\n  default     = \"10.100.0.64/26\"\n  description = \"Dedicated GatewaySubnet for ExpressRoute circuit connection.\"\n}\n\nvariable \"subnet_workload_cidr\" {\n  type        = string\n  default     = \"10.100.1.0/24\"\n  description = \"Subnet hosting workload virtual machines.\"\n}\n\nvariable \"subnet_pe_cidr\" {\n  type        = string\n  default     = \"10.100.2.0/24\"\n  description = \"Dedicated subnet for Private Endpoints (RSV, Blob, Queue).\"\n}\n\n# --- Resource Group ---\nresource \"azurerm_resource_group\" \"rg\" {\n  name     = var.resource_group_name\n  location = var.location\n}\n\n# --- Virtual Network & Subnets ---\nresource \"azurerm_virtual_network\" \"vnet\" {\n  name                = \"vnet-hub\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  address_space       = [var.vnet_cidr]\n\n  # Direct VNet DNS resolution through Firewall DNS Proxy to preserve private zone forwarding\n  dns_servers = [azurerm_firewall.fw.ip_configuration[0].private_ip_address]\n}\n\nresource \"azurerm_subnet\" \"fw_subnet\" {\n  name                 = \"AzureFirewallSubnet\"\n  resource_group_name  = azurerm_resource_group.rg.name\n  virtual_network_name = azurerm_virtual_network.vnet.name\n  address_prefixes     = [var.subnet_fw_cidr]\n}\n\nresource \"azurerm_subnet\" \"gateway_subnet\" {\n  name                 = \"GatewaySubnet\"\n  resource_group_name  = azurerm_resource_group.rg.name\n  virtual_network_name = azurerm_virtual_network.vnet.name\n  address_prefixes     = [var.subnet_gateway_cidr]\n}\n\nresource \"azurerm_subnet\" \"workload_subnet\" {\n  name                 = \"snet-workload\"\n  resource_group_name  = azurerm_resource_group.rg.name\n  virtual_network_name = azurerm_virtual_network.vnet.name\n  address_prefixes     = [var.subnet_workload_cidr]\n}\n\nresource \"azurerm_subnet\" \"pe_subnet\" {\n  name                             = \"snet-private-endpoints\"\n  resource_group_name              = azurerm_resource_group.rg.name\n  virtual_network_name             = azurerm_virtual_network.vnet.name\n  address_prefixes     = [var.subnet_pe_cidr]\n  private_endpoint_network_policies = \"Enabled\"\n}\n\n# --- Azure Firewall & Policy (DNS Proxy Enabled) ---\nresource \"azurerm_public_ip\" \"fw_pip\" {\n  name                = \"pip-afw-hub\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  allocation_method   = \"Static\"\n  sku                 = \"Standard\"\n}\n\nresource \"azurerm_firewall_policy\" \"fw_policy\" {\n  name                = \"fwp-zerotrust-hub\"\n  resource_group_name = azurerm_resource_group.rg.name\n  location            = azurerm_resource_group.rg.location\n  sku                 = \"Standard\"\n\n  # DNS Proxy enabled so on-prem conditional forwarders and local VNets resolve via Firewall\n  dns {\n    proxy_enabled = true\n  }\n}\n\nresource \"azurerm_firewall\" \"fw\" {\n  name                = \"afw-hub\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  sku_name            = \"AZFW_VNet\"\n  sku_tier            = \"Standard\"\n  firewall_policy_id  = azurerm_firewall_policy.fw_policy.id\n\n  ip_configuration {\n    name                 = \"fw-ipconfig\"\n    subnet_id            = azurerm_subnet.fw_subnet.id\n    public_ip_address_id = azurerm_public_ip.fw_pip.id\n  }\n}\n\n# Rules matching explicit allow patterns in diagram\nresource \"azurerm_firewall_policy_rule_collection_group\" \"app_rules\" {\n  name               = \"fw-app-rule-group\"\n  firewall_policy_id = azurerm_firewall_policy.fw_policy.id\n  priority           = 100\n\n  application_rule_collection {\n    name     = \"allow-zerotrust-endpoints\"\n    priority = 110\n    action   = \"Allow\"\n\n    rule {\n      name = \"allow-azure-backup-storage-login\"\n      source_addresses = [\"*\"]\n      target_fqdns = [\n        \"*.backup.windowsazure.com\",\n        \"*.blob.core.windows.net\",\n        \"*.queue.core.windows.net\",\n        \"*.login.windows.net\"\n      ]\n\n      protocols {\n        type = \"Https\"\n        port = 443\n      }\n    }\n  }\n}\n\n# --- Route Table (Force Egress through Firewall) ---\nresource \"azurerm_route_table\" \"workload_rt\" {\n  name                = \"rt-workload-to-fw\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n\n  route {\n    name                   = \"default-egress-to-fw\"\n    address_prefix         = \"0.0.0.0/0\"\n    next_hop_type          = \"VirtualAppliance\"\n    next_hop_in_ip_address = azurerm_firewall.fw.ip_configuration[0].private_ip_address\n  }\n}\n\nresource \"azurerm_subnet_route_table_association\" \"workload_rt_assoc\" {\n  subnet_id      = azurerm_subnet.workload_subnet.id\n  route_table_id = azurerm_route_table.workload_rt.id\n}\n\n# --- ExpressRoute Gateway ---\nresource \"azurerm_public_ip\" \"gw_pip\" {\n  name                = \"pip-ergw\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  allocation_method   = \"Static\"\n  sku                 = \"Standard\"\n}\n\nresource \"azurerm_virtual_network_gateway\" \"er_gw\" {\n  name                = \"ergw-hub\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  type                = \"ExpressRoute\"\n  sku                 = \"Standard\"\n\n  ip_configuration {\n    name                          = \"ergw-config\"\n    public_ip_address_id          = azurerm_public_ip.gw_pip.id\n    private_ip_address_allocation = \"Dynamic\"\n    subnet_id                     = azurerm_subnet.gateway_subnet.id\n  }\n}\n\n# --- Private DNS Zones & Virtual Network Links ---\nresource \"azurerm_private_dns_zone\" \"dns_blob\" {\n  name                = \"privatelink.blob.core.windows.net\"\n  resource_group_name = azurerm_resource_group.rg.name\n}\n\nresource \"azurerm_private_dns_zone\" \"dns_queue\" {\n  name                = \"privatelink.queue.core.windows.net\"\n  resource_group_name = azurerm_resource_group.rg.name\n}\n\nresource \"azurerm_private_dns_zone\" \"dns_vault\" {\n  name                = \"privatelink.vaultcore.azure.net\"\n  resource_group_name = azurerm_resource_group.rg.name\n}\n\nresource \"azurerm_private_dns_zone_virtual_network_link\" \"link_blob\" {\n  name                  = \"link-dns-blob\"\n  resource_group_name   = azurerm_resource_group.rg.name\n  private_dns_zone_name = azurerm_private_dns_zone.dns_blob.name\n  virtual_network_id    = azurerm_virtual_network.vnet.id\n}\n\nresource \"azurerm_private_dns_zone_virtual_network_link\" \"link_queue\" {\n  name                  = \"link-dns-queue\"\n  resource_group_name   = azurerm_resource_group.rg.name\n  private_dns_zone_name = azurerm_private_dns_zone.dns_queue.name\n  virtual_network_id    = azurerm_virtual_network.vnet.id\n}\n\nresource \"azurerm_private_dns_zone_virtual_network_link\" \"link_vault\" {\n  name                  = \"link-dns-vault\"\n  resource_group_name   = azurerm_resource_group.rg.name\n  private_dns_zone_name = azurerm_private_dns_zone.dns_vault.name\n  virtual_network_id    = azurerm_virtual_network.vnet.id\n}\n\n# --- Target Back-End Services & Private Endpoints (RSV_PE) ---\nresource \"azurerm_storage_account\" \"sa\" {\n  name                     = \"stzerotrusthub001\"\n  resource_group_name      = azurerm_resource_group.rg.name\n  location                 = azurerm_resource_group.rg.location\n  account_tier             = \"Standard\"\n  account_replication_type = \"LRS\"\n  public_network_access_enabled = false\n}\n\nresource \"azurerm_recovery_services_vault\" \"rsv\" {\n  name                = \"rsv-hub-backup\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  sku                 = \"Standard\"\n  soft_delete_enabled = true\n}\n\nresource \"azurerm_private_endpoint\" \"pe_blob\" {\n  name                = \"pe-storage-blob\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  subnet_id           = azurerm_subnet.pe_subnet.id\n\n  private_service_connection {\n    name                           = \"psc-blob\"\n    private_connection_resource_id = azurerm_storage_account.sa.id\n    subresource_names              = [\"blob\"]\n    is_manual_connection           = false\n  }\n\n  private_dns_zone_group {\n    name                 = \"dns-group-blob\"\n    private_dns_zone_ids = [azurerm_private_dns_zone.dns_blob.id]\n  }\n}\n\nresource \"azurerm_private_endpoint\" \"pe_queue\" {\n  name                = \"pe-storage-queue\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  subnet_id           = azurerm_subnet.pe_subnet.id\n\n  private_service_connection {\n    name                           = \"psc-queue\"\n    private_connection_resource_id = azurerm_storage_account.sa.id\n    subresource_names              = [\"queue\"]\n    is_manual_connection           = false\n  }\n\n  private_dns_zone_group {\n    name                 = \"dns-group-queue\"\n    private_dns_zone_ids = [azurerm_private_dns_zone.dns_queue.id]\n  }\n}\n\nresource \"azurerm_private_endpoint\" \"pe_rsv\" {\n  name                = \"pe-recovery-vault\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n  subnet_id           = azurerm_subnet.pe_subnet.id\n\n  private_service_connection {\n    name                           = \"psc-rsv\"\n    private_connection_resource_id = azurerm_recovery_services_vault.rsv.id\n    subresource_names              = [\"AzureBackup\"]\n    is_manual_connection           = false\n  }\n\n  private_dns_zone_group {\n    name                 = \"dns-group-vault\"\n    private_dns_zone_ids = [azurerm_private_dns_zone.dns_vault.id]\n  }\n}\n\n# --- Workload Machine ---\nresource \"azurerm_network_interface\" \"workload_nic\" {\n  name                = \"nic-workload-vm\"\n  location            = azurerm_resource_group.rg.location\n  resource_group_name = azurerm_resource_group.rg.name\n\n  ip_configuration {\n    name                          = \"internal\"\n    subnet_id                     = azurerm_subnet.workload_subnet.id\n    private_ip_address_allocation = \"Dynamic\"\n  }\n}\n\nresource \"azurerm_linux_virtual_machine\" \"workload_vm\" {\n  name                = \"vm-workload\"\n  resource_group_name = azurerm_resource_group.rg.name\n  location            = azurerm_resource_group.rg.location\n  size                = \"Standard_D2s_v5\"\n  admin_username      = \"azureadmin\"\n  disable_password_authentication = true\n\n  admin_ssh_key {\n    username   = \"azureadmin\"\n    public_key = \"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC3...\"\n  }\n\n  network_interface_ids = [\n    azurerm_network_interface.workload_nic.id,\n  ]\n\n  os_disk {\n    caching              = \"ReadWrite\"\n    storage_account_type = \"StandardSSD_LRS\"\n  }\n\n  source_image_reference {\n    publisher = \"Canonical\"\n    offer     = \"0001-com-ubuntu-server-jammy\"\n    sku       = \"22_04-lts\"\n    version   = \"latest\"\n  }\n}\n\noutput \"azure_firewall_dns_proxy_ip\" {\n  value       = azurerm_firewall.fw.ip_configuration[0].private_ip_address\n  description = \"IP address to configure as target in on-premises DNS conditional forwarders.\"\n}",
+      "promise": "",
+      "outcome": [],
+      "diagramUrl": "",
+      "diagramXml": "",
+      "hotspots": [
+        {
+          "id": "fd",
+          "x": 13,
+          "y": 18,
+          "label": "Azure Front Door + WAF",
+          "description": "Global edge entry point with managed WAF policies and service tag restrictions into private workload ingress."
+        },
+        {
+          "id": "hub",
+          "x": 42,
+          "y": 42,
+          "label": "Connectivity Hub",
+          "description": "Centralized hub subscription hosting shared services: firewall, bastion, gateway subnet, and transit controls."
+        },
+        {
+          "id": "spoke",
+          "x": 72,
+          "y": 56,
+          "label": "Workload Spoke",
+          "description": "Application and data tiers in delegated spokes, peered to hub with forced tunneling and policy guardrails."
+        },
+        {
+          "id": "sec",
+          "x": 58,
+          "y": 28,
+          "label": "Security Plane",
+          "description": "Defender, Policy, and Key Vault establish preventive and detective controls with continuous compliance checks."
+        }
+      ],
+      "howItWorks": [],
+      "keyServices": [],
+      "practices": [],
+      "technicalSpecs": {
+        "components": [
+          "Azure Firewall",
+          "Azure Virtual Network",
+          "ExpressRoute",
+          "Azure Private Endpoint"
+        ],
+        "patterns": [
+          "Hub-spoke network topology"
+        ]
+      },
+      "whenNotToUse": [],
+      "finopsCostTraps": [],
+      "deploymentSteps": [],
+      "estimatedCost": "$2.1k - $4.8k",
+      "interactiveLabId": "",
+      "landingZonePreset": ""
     }
   },
   "skipped": [],

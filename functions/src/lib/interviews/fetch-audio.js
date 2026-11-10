@@ -176,7 +176,7 @@ export async function fetchAudioToContainer({
     try {
       await store.patchDoc(container, interviewId, { interview: { ...interview, stage: 'failed', error: sentence } });
     } catch (writeError) {
-      log?.warn?.(`${FETCH_JOB_TYPE}: ${interviewId} failure not recorded (${writeError?.code ?? 'unknown'})`);
+      log?.warn?.(`${FETCH_JOB_TYPE}: failure not recorded (${writeError?.code ?? 'unknown'})`);
     }
     return error;
   };
