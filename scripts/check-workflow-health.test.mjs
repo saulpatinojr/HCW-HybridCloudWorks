@@ -32,6 +32,8 @@ import {
   findingsKey,
   hasFinding,
   selfWorkflowPath,
+  hasScheduleTrigger,
+  runGuarded,
 } from './check-workflow-health.mjs';
 
 const NOW = new Date('2026-09-08T05:00:00Z');
@@ -656,9 +658,10 @@ describe('treeRefusal', () => {
 describe('a scheduled workflow that keeps failing (#1661)', () => {
   const NOV10 = { now: new Date('2026-11-10T12:00:00Z'), staleDays: DEFAULT_STALE_DAYS };
   const RUN = 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/';
-  const avm = (event, conclusion, created_at, id) => ({
+  const avm = (event, conclusion, created_at, id, head_branch = 'main') => ({
     workflow_id: 367129209,
     event,
+    head_branch,
     status: 'completed',
     conclusion,
     created_at,
@@ -683,6 +686,7 @@ describe('a scheduled workflow that keeps failing (#1661)', () => {
   };
   const sched = (conclusion, created_at, event = 'schedule') => ({
     event,
+    head_branch: 'main',
     conclusion,
     created_at,
     html_url: `${RUN}${created_at.slice(0, 10)}`,
@@ -810,13 +814,64 @@ describe('a scheduled workflow that keeps failing (#1661)', () => {
     expect(got.verdict).toBe('healthy');
     expect(hasFinding([got])).toBe(false);
     const text = renderReport([got], { staleDays: DEFAULT_STALE_DAYS });
-    expect(text).toContain(`Not judged as failing because it is the workflow running this check: \`${SELF}\``);
+    expect(text).toContain(`Not judged as failing: \`${SELF}\``);
+    expect(text).toContain('Set aside because it is the workflow running this check');
     // Any other workflow is still judged.
     expect(assessWorkflow(AVM, { ...NOV10, selfPath: SELF }).verdict).toBe('failing');
   });
 
+  /**
+   * Real: the run that proved the #1662 fix, dispatched by hand on `main` at
+   * 16:48 UTC the same day (`GET /actions/workflows/367129209/runs`, read
+   * 2026-11-10). It is newer than both scheduled failures.
+   */
+  const FIX_PROVEN = avm('workflow_dispatch', 'success', '2026-11-10T16:48:53Z', 42858386218);
+
+  it('is cleared by a newer success on the default branch, even one started by hand', () => {
+    const runs = [FIX_PROVEN, ...AVM_RUNS];
+    const got = assessWorkflow({ ...AVM, runs }, { ...NOV10, now: new Date('2026-11-10T17:00:00Z') });
+    expect(got.verdict).toBe('healthy');
+    expect(got.why).toContain('2026-11-10');
+  });
+
+  it('is not cleared by a newer success on another branch, a pull request for example', () => {
+    const elsewhere = { ...FIX_PROVEN, head_branch: 'fix/avm-smoke-window' };
+    const got = assessWorkflow({ ...AVM, runs: [elsewhere, ...AVM_RUNS] }, NOV10);
+    expect(got.verdict).toBe('failing');
+  });
+
+  it('reads the default branch it is told, not an assumed one', () => {
+    const runs = [{ ...FIX_PROVEN, head_branch: 'trunk' }, ...AVM_RUNS];
+    expect(assessWorkflow({ ...AVM, runs }, { ...NOV10, defaultBranch: 'trunk' }).verdict).toBe('healthy');
+    expect(assessWorkflow({ ...AVM, runs }, NOV10).verdict).toBe('failing');
+  });
+
+  it('is not cleared by a success older than the newest failure', () => {
+    // The 2026-10-27 success is in the sample and is on main; it is older.
+    expect(assessWorkflow(AVM, NOV10).verdict).toBe('failing');
+  });
+
+  it('sets aside a disabled workflow, which no scheduled run will ever clear, and says so', () => {
+    const got = assessWorkflow({ ...AVM, state: 'disabled_manually' }, NOV10);
+    expect(got.verdict).toBe('healthy');
+    expect(hasFinding([got])).toBe(false);
+    const text = renderReport([got], { staleDays: DEFAULT_STALE_DAYS });
+    expect(text).toContain('Not judged as failing: `.github/workflows/update-avm-versions.yml`');
+    expect(text).toContain('`disabled_manually`');
+    // An active one is judged.
+    expect(assessWorkflow({ ...AVM, state: 'active' }, NOV10).verdict).toBe('failing');
+  });
+
+  it('sets aside a workflow whose file no longer has a schedule, and judges one that still does', () => {
+    const gone = assessWorkflow({ ...AVM, hasSchedule: false }, NOV10);
+    expect(gone.verdict).toBe('healthy');
+    expect(gone.setAside.reason).toContain('no `schedule:` trigger any more');
+    expect(assessWorkflow({ ...AVM, hasSchedule: true }, NOV10).verdict).toBe('failing');
+  });
+
   it('every fixture run carries the fields this verdict reads, as the API gave them', () => {
-    for (const run of AVM_RUNS) {
+    for (const run of [FIX_PROVEN, ...AVM_RUNS]) {
+      expect(run.head_branch).toBe('main');
       expect(['schedule', 'workflow_dispatch']).toContain(run.event);
       expect(run.html_url).toMatch(/^https:\/\/github\.com\/saulpatinojr\/HCW-HybridCloudWorks\/actions\/runs\/\d+$/);
       expect(run.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
@@ -829,19 +884,56 @@ describe('findingsKey: what the monitor compares before commenting again (#1661)
     expect(findingsKey([{ path: 'a.yml', verdict: 'healthy' }])).toBe('');
   });
 
-  it('keys a broken workflow by path alone and a failing one by its newest failed run, sorted', () => {
+  it('keys each finding by path and verdict only, sorted', () => {
     const key = findingsKey([
       { path: 'b.yml', verdict: 'failing', newestFailedRun: 'https://example.test/runs/2' },
       { path: 'a.yml', verdict: 'broken', why: 'grows every day' },
       { path: 'c.yml', verdict: 'unproven' },
     ]);
-    expect(key).toBe('<!-- workflow-health findings: a.yml b.yml@https://example.test/runs/2 -->');
+    expect(key).toBe('<!-- workflow-health findings: a.yml:broken b.yml:failing -->');
+  });
+
+  it('does not change when an hourly monitor fails again, so the issue gets no comment every check', () => {
+    // monitor-functions-registered.yml runs at `41 * * * *`: while it is red,
+    // every check sees a newer failed run. Only a change in the SET of
+    // findings is news.
+    const earlier = findingsKey([{ path: 'm.yml', verdict: 'failing', newestFailedRun: 'https://example.test/runs/1' }]);
+    const later = findingsKey([{ path: 'm.yml', verdict: 'failing', newestFailedRun: 'https://example.test/runs/5' }]);
+    expect(later).toBe(earlier);
   });
 
   it('ends the report, hidden, only when there is a finding', () => {
     const text = renderReport([{ path: 'a.yml', verdict: 'broken', why: 'x' }], { staleDays: 10 });
-    expect(text.split('\n').at(-1)).toBe('<!-- workflow-health findings: a.yml -->');
+    expect(text.split('\n').at(-1)).toBe('<!-- workflow-health findings: a.yml:broken -->');
     expect(renderReport([], { staleDays: 10 })).not.toContain('workflow-health findings');
+  });
+});
+
+describe('hasScheduleTrigger', () => {
+  it('finds a schedule in the block form and the one-line form', () => {
+    expect(hasScheduleTrigger("on:\n  schedule:\n    - cron: '20 7 * * 1'\n  workflow_dispatch:\n")).toBe(true);
+    expect(hasScheduleTrigger('on: [push, schedule]\n')).toBe(true);
+  });
+
+  it('does not count a schedule that is only mentioned in a comment, or absent', () => {
+    expect(hasScheduleTrigger('# schedule: removed 2026-11-10\non:\n  workflow_dispatch:\n')).toBe(false);
+    expect(hasScheduleTrigger('on:\n  push:\n    branches: [main]\n')).toBe(false);
+  });
+});
+
+describe('runGuarded: an error nobody foresaw is exit 2, not a finding (#1661)', () => {
+  it('turns a throw into exit 2, which the monitor reads as "could not look"', async () => {
+    const codes = [];
+    await runGuarded(async () => {
+      throw new TypeError("Cannot read properties of undefined (reading 'slice')");
+    }, (code) => codes.push(code));
+    expect(codes).toEqual([2]);
+  });
+
+  it('leaves a run that ends normally alone', async () => {
+    const codes = [];
+    await runGuarded(async () => {}, (code) => codes.push(code));
+    expect(codes).toEqual([]);
   });
 });
 

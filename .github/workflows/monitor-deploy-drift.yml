@@ -91,16 +91,18 @@
 # else.
 #
 # Since #1661 it also names a scheduled workflow whose last two scheduled runs
-# both failed (`failing`), however recently. update-avm-versions.yml had
-# succeeded and then failed its weekly runs on 2026-11-03 and 2026-11-10
-# (#1658), and nobody heard: the check called it healthy, and a red job here
-# only reached whoever happened to open the run. So the job now keeps ONE
-# issue, titled "Workflow health: a workflow is broken or keeps failing its
-# scheduled runs" (the title is how the step finds it again, so it does not
-# change). It opens it on the first finding, comments when the findings
-# change, and closes it with a comment at the first clean check. The same
-# create-or-comment shape as check-drill-age.yml. A check that could not read
-# the history (exit 2) opens and closes nothing; the job just goes red, as
+# both failed (`failing`), however recently, unless a newer run on `main`
+# succeeded since. update-avm-versions.yml had succeeded and then failed its
+# weekly runs on 2026-11-03 and 2026-11-10 (#1658), and nobody heard: the
+# check called it healthy, and a red job here only reached whoever happened
+# to open the run. So the job now keeps ONE issue, labelled `Platform` and
+# titled "Workflow health: a workflow is broken or keeps failing its
+# scheduled runs" (label and exact title are how the step finds it again, so
+# the title does not change). It opens it on the first finding, comments when
+# the list of findings changes, and closes it with a comment at the first
+# clean check. The same create-or-comment shape as check-drill-age.yml. A
+# check that could not read the history (exit 2), or that ended on an error
+# it did not expect, opens and closes nothing; the job just goes red, as
 # before.
 #
 # WHY IT LIVES HERE AND NOT IN A FILE OF ITS OWN. The owner's instruction on
@@ -263,28 +265,47 @@ jobs:
 
       # One issue, kept current, the way check-drill-age.yml keeps its
       # drill-overdue one: created when none is open, commented on when one is,
-      # and here also closed at the first clean check. The title is how it is
-      # found again, so it does not change; the search narrows the list and the
-      # jq line keeps only an exact title match, so a similar title is never
-      # commented on or closed. Every value reaches the shell through `env:`,
-      # never `${{ }}` inside the script (zizmor's template-injection rule).
+      # and here also closed at the first clean check. It carries the existing
+      # `Platform` label (type: platform, operations and cloud infra), and it is
+      # found again by that label plus its exact title, read from the issue
+      # list itself rather than from search, whose index can lag behind a
+      # just-created issue. So the title does not change, and an issue with a
+      # similar title is never commented on or closed. (If someone removes the
+      # label, the next finding opens a second issue; that is the safe way to
+      # be wrong.) Every value reaches the shell through `env:`, never `${{ }}`
+      # inside the script (zizmor's template-injection rule).
       #
-      # The check runs every four hours and a weekly workflow stays failing
-      # for a week, so commenting on every run would post dozens of identical
+      # The check runs every four hours and a workflow can stay failing for a
+      # week, so commenting on every run would post dozens of identical
       # comments. The report ends with a hidden line naming the findings
-      # (`findingsKey` in the script); a comment is posted only when the
-      # issue's latest text does not already carry that exact line.
+      # (`findingsKey` in the script, one `path:verdict` each); a comment is
+      # posted only when the newest text in the issue that carries such a line
+      # does not carry this exact one. A comment from a person in between does
+      # not count as the issue's last report.
       - name: Open, update or close the workflow-health issue
         if: steps.health.outputs.exit == '0' || steps.health.outputs.exit == '1'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           HEALTH_EXIT: ${{ steps.health.outputs.exit }}
         run: |
           set -euo pipefail
           title="Workflow health: a workflow is broken or keeps failing its scheduled runs"
-          existing=$(gh issue list --repo "$REPO" --state open --search "\"${title}\" in:title" --json number,title | jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          label="Platform"
+          # The hidden findings line the report ends with. sed prints nothing
+          # when there is no such line and fails only when it cannot read the
+          # file, which stops the step instead of reading as "no line".
+          key=$(sed -n '/^<!-- workflow-health findings:/{p;q;}' "${RUNNER_TEMP}/health.md")
+          # Exit 1 with no findings line is not a report this step can trust:
+          # the script ends every real finding with one, so this is a crash it
+          # did not catch. Treat it like exit 2 and leave the issue alone; the
+          # last step still fails the job.
+          if [ "${HEALTH_EXIT}" = "1" ] && [ -z "$key" ]; then
+            echo "::warning::The check exited 1 without a findings line, so its report is not trusted; no issue was opened or updated."
+            exit 0
+          fi
+          existing=$(gh issue list --repo "$REPO" --state open --label "$label" --limit 200 --json number,title | jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
           if [ "${HEALTH_EXIT}" = "0" ]; then
             if [ -n "$existing" ]; then
               gh issue close "$existing" --repo "$REPO" --reason completed --comment "Clean again: run ${RUN_URL} found no broken or failing workflow."
@@ -294,27 +315,22 @@ jobs:
             fi
             exit 0
           fi
-          # The hidden findings line the report ends with, or empty (then the
-          # issue is commented on). sed prints nothing when there is no such
-          # line and fails only when it cannot read the file, which stops the
-          # step instead of reading as "no line".
-          key=$(sed -n '/^<!-- workflow-health findings:/{p;q;}' "${RUNNER_TEMP}/health.md")
           {
             echo "Delivery-health check, run ${RUN_URL}, $(date -u +%Y-%m-%d)."
             echo
             cat "${RUNNER_TEMP}/health.md"
             echo
-            echo "**What to do:** for each workflow named above, open the run it links (or its newest red run), fix what that run reports, or delete the workflow if nobody needs it. This issue gets a comment when the findings change and closes itself at the first check (every four hours) that finds none."
+            echo "**What to do:** for each workflow named above, open its newest red run (a failing workflow's line links it; for a broken one, open the workflow's run list), fix what that run reports, or delete the workflow if nobody needs it. This issue gets a comment when the list of findings changes and closes itself at the first check (every four hours) that finds none."
           } > "${RUNNER_TEMP}/health-issue.md"
           if [ -z "$existing" ]; then
-            gh issue create --repo "$REPO" --title "$title" --body-file "${RUNNER_TEMP}/health-issue.md"
+            gh issue create --repo "$REPO" --title "$title" --label "$label" --body-file "${RUNNER_TEMP}/health-issue.md"
             exit 0
           fi
-          latest=$(gh issue view "$existing" --repo "$REPO" --json body,comments --jq '([.body] + [.comments[].body]) | last')
+          reported=$(gh issue view "$existing" --repo "$REPO" --json body,comments --jq '[.body, .comments[].body] | map(select(contains("<!-- workflow-health findings:"))) | last // ""')
           # A plain text comparison (the quoted key is matched literally), not
           # `if grep`, which this repository forbids in workflows because a
           # grep error reads as "no match" (scripts/iac-workflow-steps.test.mjs).
-          if [ -n "$key" ] && [[ "$latest" == *"$key"* ]]; then
+          if [[ "$reported" == *"$key"* ]]; then
             echo "#${existing} already reports these findings; no new comment."
           else
             gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/health-issue.md"

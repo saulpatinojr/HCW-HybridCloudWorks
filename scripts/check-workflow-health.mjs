@@ -65,7 +65,11 @@
  *              them and however recent they are (#1661). Runs that stopped
  *              short of a verdict (cancelled, skipped and the rest) are
  *              stepped over, not counted either way, and a run started by hand
- *              or by a push never counts. A workflow that is `broken` is
+ *              or by a push never counts as one of the failures. But a success
+ *              on the default branch newer than the newest failure, however it
+ *              was started, clears the finding: that is how a fix is usually
+ *              proven, a week before the next scheduled run would prove it.
+ *              A workflow that is `broken` is
  *              reported as `broken` and not also as `failing`: `broken` is
  *              the stronger claim (it has never worked in the sample), and
  *              one line per workflow is easier to act on than two that say
@@ -100,7 +104,14 @@
  * red runs are this check's findings (or the drift job's, which alerts on its
  * own), so it is named on a note line instead. Read from `GITHUB_WORKFLOW_REF`,
  * which GitHub sets on every run; outside Actions it is absent and every
- * workflow is judged.
+ * workflow is judged. Two more are set aside the same way, because no
+ * scheduled run can ever come to clear them: a workflow GitHub lists as
+ * disabled (`state` not `active`), and one whose file on the default branch
+ * no longer has a `schedule:` trigger (read only for a workflow that would be
+ * `failing`, so it costs nothing on a clean run).
+ *
+ * AN ERROR NOBODY FORESAW EXITS 2, NOT 1 (`runGuarded`). An uncaught throw
+ * exits 1, which the monitor reads as a finding.
  *
  * WHY `broken` IS "NOTHING SUCCEEDED" AND NOT "EVERY RUN FAILED". Those differ
  * only for a mixed sample — say one failure and one cancellation, both a month
@@ -225,10 +236,26 @@ export function selfWorkflowPath(env = {}) {
  * caller with only the mixed sample still gets a `failing` verdict when that
  * sample shows one.
  *
- * @param {{path: string, state?: string, runs: Array<{event?: string, conclusion: string|null, created_at: string, html_url?: string}>, scheduledRuns?: Array}} workflow
- * @param {{now: Date, staleDays: number, selfPath?: string|null}} options
+ * A NEWER SUCCESS ON THE DEFAULT BRANCH CLEARS IT, whatever started it. A run
+ * started by hand never counts as one of the failures, but once the fault is
+ * fixed the usual proof is a run started by hand on the default branch, and a
+ * weekly workflow's next scheduled run can be a week away. Without this, a
+ * fixed workflow would keep the monitor red, and the owner's Telegram alert
+ * firing, for that week (seen on 2026-11-10: `update-avm-versions.yml` was
+ * fixed by #1662 and dispatched green at 16:48 UTC, run 42858386218). A
+ * success on another branch, a pull request's for example, says nothing about
+ * what is on the default branch and does not clear it.
+ *
+ * `hasSchedule` is set by `main` for a workflow that would be `failing`:
+ * false when its file on the default branch no longer has a `schedule:`
+ * trigger. Such a workflow, or one GitHub lists as not `active` (disabled),
+ * will never have a scheduled run to clear the finding, so it is set aside on
+ * a note line rather than named for ever.
+ *
+ * @param {{path: string, state?: string, hasSchedule?: boolean, runs: Array<{event?: string, head_branch?: string, conclusion: string|null, created_at: string, html_url?: string}>, scheduledRuns?: Array}} workflow
+ * @param {{now: Date, staleDays: number, selfPath?: string|null, defaultBranch?: string}} options
  */
-export function assessWorkflow(workflow, { now, staleDays, selfPath = null }) {
+export function assessWorkflow(workflow, { now, staleDays, selfPath = null, defaultBranch = 'main' }) {
   const base = assessSample(workflow, { now, staleDays });
   // `broken` first: it is the stronger claim, and a workflow gets one line.
   if (base.verdict === 'broken') return base;
@@ -239,6 +266,14 @@ export function assessWorkflow(workflow, { now, staleDays, selfPath = null }) {
   if (!failed) return base;
 
   const newestFailure = failed[0];
+  const clearedSince = [...runs, ...scheduled].some(
+    (r) =>
+      PASSING_CONCLUSIONS.has(r?.conclusion) &&
+      r.head_branch === defaultBranch &&
+      r.created_at > newestFailure.created_at
+  );
+  if (clearedSince) return base;
+
   const successes = [...runs, ...scheduled].filter((r) => PASSING_CONCLUSIONS.has(r?.conclusion));
   const lastSuccess = successes.length
     ? successes.reduce((a, b) => (a.created_at > b.created_at ? a : b)).created_at.slice(0, 10)
@@ -248,12 +283,42 @@ export function assessWorkflow(workflow, { now, staleDays, selfPath = null }) {
     (lastSuccess ? `last success ${lastSuccess}` : 'no success in the runs read') +
     `; newest failed run ${newestFailure.html_url ?? '(the API gave no link)'}`;
 
+  // Set aside, on a note line, when no later run can ever clear it.
   if (selfPath && workflow.path === selfPath) {
     // See the header: judging the workflow that runs this check would keep it
     // red after every other finding is fixed.
-    return { ...base, selfFailing: why };
+    return {
+      ...base,
+      setAside: { why, reason: "it is the workflow running this check; its own red runs are this check's findings, or the drift job's, which alerts on its own" },
+    };
+  }
+  if (workflow.state !== undefined && workflow.state !== 'active') {
+    return {
+      ...base,
+      setAside: { why, reason: `GitHub lists it as \`${workflow.state}\`, so no scheduled run will come to clear it` },
+    };
+  }
+  if (workflow.hasSchedule === false) {
+    return {
+      ...base,
+      setAside: { why, reason: `its file on \`${defaultBranch}\` has no \`schedule:\` trigger any more, so no scheduled run will come to clear it` },
+    };
   }
   return { path: workflow.path, verdict: 'failing', why, newestFailedRun: newestFailure.html_url };
+}
+
+/**
+ * Whether a workflow file's text has a `schedule:` trigger. A text check, as
+ * the rest of this repository reads workflows (scripts/lib/workflow-text.mjs):
+ * comment lines are dropped, then a `schedule:` key at any indent, or
+ * `schedule` inside a one-line `on:` list, counts. Over-matching is the safe
+ * direction here: it keeps a workflow judged rather than setting it aside.
+ */
+export function hasScheduleTrigger(text) {
+  const lines = String(text)
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*#/.test(line));
+  return lines.some((line) => /^\s*schedule\s*:/.test(line) || /^on\s*:.*\bschedule\b/.test(line));
 }
 
 /**
@@ -384,13 +449,11 @@ export function renderReport(results, { staleDays, absent = [], defaultBranch = 
     for (const r of failing) lines.push(`- \`${r.path}\` — ${r.why}`);
   }
 
-  // The workflow running this check, when it would have been `failing`. Not
-  // a finding (see the header), but not hidden either.
-  for (const r of results.filter((x) => x.selfFailing)) {
-    lines.push(
-      '',
-      `Not judged as failing because it is the workflow running this check: \`${r.path}\` — ${r.selfFailing}. Its own red runs are this check's findings, or the drift job's, which alerts on its own.`
-    );
+  // A workflow that would have been `failing` but was set aside: the one
+  // running this check, a disabled one, or one with no schedule any more. Not
+  // a finding (see `assessWorkflow`), but not hidden either.
+  for (const r of results.filter((x) => x.setAside)) {
+    lines.push('', `Not judged as failing: \`${r.path}\` — ${r.setAside.why}. Set aside because ${r.setAside.reason}.`);
   }
 
   // An unproven verdict is not a failure and never exits non-zero — nothing was
@@ -439,18 +502,19 @@ export function renderReport(results, { staleDays, absent = [], defaultBranch = 
  * checks, or '' when there are none.
  *
  * The monitor runs every four hours and keeps one issue open while a finding
- * stands. It compares this line with the issue's latest text and comments only
- * when it differs, so the issue gets a comment when something new is found or
- * a scheduled workflow fails again, and not six identical comments a day. A
- * `broken` workflow is keyed by its path alone, because its line carries an age
- * that grows every day; a `failing` one by its path and its newest failed run,
- * so a further failure is news. It is an HTML comment, so neither the job
- * summary nor the issue shows it.
+ * stands. It compares this line with the newest text in the issue that
+ * carries one, and comments only when it differs: a comment means the SET of
+ * findings changed (a workflow was added, or moved from one verdict to the
+ * other). Each finding is keyed `path:verdict` and nothing more. Not the
+ * `broken` line's age, which grows every day, and not the newest failed run:
+ * an hourly monitor (`monitor-functions-registered.yml`) fails again every
+ * hour while it is red, which would have meant a comment at every check. It
+ * is an HTML comment, so neither the job summary nor the issue shows it.
  */
 export function findingsKey(results) {
   const keys = results
     .filter((r) => FINDING_VERDICTS.has(r.verdict))
-    .map((r) => (r.verdict === 'failing' ? `${r.path}@${r.newestFailedRun ?? 'no-link'}` : r.path))
+    .map((r) => `${r.path}:${r.verdict}`)
     .sort();
   return keys.length ? `<!-- workflow-health findings: ${keys.join(' ')} -->` : '';
 }
@@ -800,10 +864,51 @@ async function main() {
   }
 
   const selfPath = selfWorkflowPath(process.env);
-  const results = assessAll(workflows, { now: new Date(), staleDays, selfPath });
+  const options = { now: new Date(), staleDays, selfPath, defaultBranch };
+  let results = assessAll(workflows, options);
+
+  // Does each workflow that would be `failing` still have a schedule on the
+  // default branch? Read only for those, usually none, so it costs a request
+  // only when there is a finding. Fails closed like every read above.
+  for (const [i, r] of results.entries()) {
+    if (r.verdict !== 'failing') continue;
+    try {
+      const file = await api(
+        `/repos/${repo}/contents/${r.path}?ref=${encodeURIComponent(defaultBranch)}`,
+        token
+      );
+      if (typeof file?.content !== 'string') throw new Error('the file payload carried no `content`');
+      workflows[i].hasSchedule = hasScheduleTrigger(Buffer.from(file.content, 'base64').toString('utf8'));
+    } catch (err) {
+      console.error(`Could not read ${r.path} on ${defaultBranch}: ${err.message}`);
+      console.error('Nothing was asserted either way.');
+      process.exit(2);
+    }
+    results[i] = assessWorkflow(workflows[i], options);
+  }
+
   const report = renderReport(results, { staleDays, absent, defaultBranch });
   console.log(report);
   process.exit(hasFinding(results) ? 1 : 0);
+}
+
+/**
+ * Runs `main`, and turns an error nobody caught into exit 2 (#1661).
+ *
+ * An uncaught throw from an awaited top-level call exits **1**, and 1 here
+ * means "a workflow is broken or failing": the monitor would open the
+ * workflow-health issue with a stack trace in it. The refusals above exist to
+ * stop exactly that; this is the backstop for the throw nobody foresaw.
+ * `exit` is a parameter so a test can see the code without ending its process.
+ */
+export async function runGuarded(fn, exit = process.exit) {
+  try {
+    await fn();
+  } catch (err) {
+    console.error(`The check stopped on an error it did not expect: ${err?.stack ?? err}`);
+    console.error('Nothing was asserted either way.');
+    exit(2);
+  }
 }
 
 // pathToFileURL, not a `file://` template: on Windows argv[1] is `C:\...` and
@@ -811,6 +916,6 @@ async function main() {
 // nothing. That exact bug shipped in smoke-deployed.mjs; scripts/entrypoint-
 // guards.test.mjs spawns this file to prove the guard still fires.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await main();
+  await runGuarded(main);
 }
 /* c8 ignore stop */

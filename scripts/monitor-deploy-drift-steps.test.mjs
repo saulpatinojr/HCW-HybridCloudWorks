@@ -110,6 +110,14 @@ describe('monitor-deploy-drift.yml workflow-health issue (#1661): its shape', ()
     expect(step.shell).toBeUndefined();
   });
 
+  it('spells the Actions token one way throughout the file', () => {
+    const code = readFileSync(WORKFLOW, 'utf8')
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*#/.test(l));
+    expect(code.some((l) => l.includes('github.token'))).toBe(false);
+    expect(stepOf('workflows', ISSUE_STEP).env.GH_TOKEN).toBe('${{ secrets.GITHUB_TOKEN }}');
+  });
+
   it('keys the issue on one fixed title', () => {
     expect(stepOf('workflows', ISSUE_STEP).run).toContain(`title="${ISSUE_TITLE}"`);
   });
@@ -238,8 +246,9 @@ describe('monitor-deploy-drift.yml workflow-health issue: jq is there', () => {
 
 describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#1661): run with bash -e${ISSUE_SKIPPED}`, () => {
   const RUN_URL = 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/1';
-  const KEY = '<!-- workflow-health findings: .github/workflows/update-avm-versions.yml@https://example.test/runs/42 -->';
+  const KEY = '<!-- workflow-health findings: .github/workflows/update-avm-versions.yml:failing -->';
   const REPORT = `## Workflow health\n\n- \`.github/workflows/update-avm-versions.yml\` — last 2 scheduled runs failed\n\n${KEY}\n`;
+  const OPEN = JSON.stringify([{ number: 12, title: ISSUE_TITLE }]);
   let work;
   let bin;
   let runs = 0;
@@ -250,17 +259,23 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
     mkdirSync(bin);
     // A stand-in for gh: it records each call, one line of arguments joined by
     // `|`, and answers `issue list` and `issue view` with what the test set.
-    // `issue view` is asked with --jq for the issue's latest text, so it
-    // answers that text directly.
+    // When asked with --jq, it applies that expression with the real jq, so
+    // the step's own filter is what is tested (gh uses gojq, which reads
+    // these expressions the same way).
     writeFileSync(
       `${bin}/gh`,
       [
         '#!/usr/bin/env bash',
         '(IFS="|"; printf "%s\\n" "$*") >> "$GH_LOG"',
+        'expr=""',
+        'args=("$@")',
+        'for i in "${!args[@]}"; do [ "${args[$i]}" = "--jq" ] && expr="${args[$((i + 1))]}"; done',
         'case "$1 $2" in',
-        '  "issue list") printf "%s\\n" "$FAKE_LIST" ;;',
-        '  "issue view") printf "%s\\n" "$FAKE_LATEST" ;;',
+        '  "issue list") answer="$FAKE_LIST" ;;',
+        '  "issue view") answer="$FAKE_VIEW" ;;',
+        '  *) exit 0 ;;',
         'esac',
+        'if [ -n "$expr" ]; then jq -r "$expr" <<< "$answer"; else printf "%s\\n" "$answer"; fi',
         '',
       ].join('\n'),
       { mode: 0o755 }
@@ -268,11 +283,14 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
   });
   afterAll(() => rmSync(work, { recursive: true, force: true }));
 
+  /** An `issue view --json body,comments` answer: the body, then the comments, oldest first. */
+  const view = (body, ...comments) => JSON.stringify({ body, comments: comments.map((c) => ({ body: c })) });
+
   /** Runs the issue step with the health step's exit code and what `gh` should answer. */
-  function runIssue(healthExit, { list = '[]', latest = '' } = {}) {
+  function runIssue(healthExit, { list = '[]', viewed = view(''), report = REPORT } = {}) {
     const dir = `${work}/run-${++runs}`;
     mkdirSync(dir);
-    writeFileSync(`${dir}/health.md`, REPORT);
+    writeFileSync(`${dir}/health.md`, report);
     writeFileSync(`${dir}/gh.log`, '');
     const result = spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', stepOf('workflows', ISSUE_STEP).run], {
       cwd: REPO,
@@ -282,7 +300,7 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
         RUNNER_TEMP: dir,
         GH_LOG: `${dir}/gh.log`,
         FAKE_LIST: list,
-        FAKE_LATEST: latest,
+        FAKE_VIEW: viewed,
         GH_TOKEN: 'not-a-real-token',
         REPO: 'saulpatinojr/HCW-HybridCloudWorks',
         RUN_URL,
@@ -299,7 +317,7 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
     const got = runIssue(1);
     expect(got.status, got.stderr).toBe(0);
     expect(got.writes).toEqual([
-      `issue|create|--repo|saulpatinojr/HCW-HybridCloudWorks|--title|${ISSUE_TITLE}|--body-file|${got.dir}/health-issue.md`,
+      `issue|create|--repo|saulpatinojr/HCW-HybridCloudWorks|--title|${ISSUE_TITLE}|--label|Platform|--body-file|${got.dir}/health-issue.md`,
     ]);
     const body = readFileSync(`${got.dir}/health-issue.md`, 'utf8');
     expect(body).toContain(RUN_URL);
@@ -307,11 +325,36 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
     expect(body).toContain(KEY);
   });
 
-  it('searches for the issue by its exact title', () => {
+  it('looks the issue up by its label in the issue list, not through search, whose index lags', () => {
     const got = runIssue(1);
     expect(got.calls[0]).toBe(
-      `issue|list|--repo|saulpatinojr/HCW-HybridCloudWorks|--state|open|--search|"${ISSUE_TITLE}" in:title|--json|number,title`
+      'issue|list|--repo|saulpatinojr/HCW-HybridCloudWorks|--state|open|--label|Platform|--limit|200|--json|number,title'
     );
+  });
+
+  it('exit 1 with no findings line is an uncaught crash, not a report: no issue is opened or touched', () => {
+    const got = runIssue(1, { list: OPEN, report: 'TypeError: something nobody foresaw\n    at main\n' });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.calls).toEqual([]);
+    expect(got.stdout).toContain('::warning::');
+  });
+
+  it('a comment from a person after the last report does not make the same findings look new', () => {
+    const got = runIssue(1, {
+      list: OPEN,
+      viewed: view(`first report\n${KEY}`, 'I am looking at this, give me a day.'),
+    });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([]);
+  });
+
+  it('compares with the newest report, not an older one that happens to match', () => {
+    const got = runIssue(1, {
+      list: OPEN,
+      viewed: view(`first report\n${KEY}`, 'later report\n<!-- workflow-health findings: .github/workflows/other.yml:broken -->'),
+    });
+    expect(got.writes).toHaveLength(1);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
   });
 
   it('an open issue with a similar but different title is left alone, and a new one created', () => {
@@ -323,8 +366,8 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
 
   it('a finding the open issue does not carry yet: comments on it', () => {
     const got = runIssue(1, {
-      list: JSON.stringify([{ number: 12, title: ISSUE_TITLE }]),
-      latest: 'an earlier report\n<!-- workflow-health findings: .github/workflows/other.yml -->',
+      list: OPEN,
+      viewed: view('an earlier report\n<!-- workflow-health findings: .github/workflows/other.yml:failing -->'),
     });
     expect(got.status, got.stderr).toBe(0);
     expect(got.writes).toEqual([
@@ -333,7 +376,7 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
   });
 
   it('the same findings as the issue already reports: no new comment, so a four-hourly check does not repeat itself', () => {
-    const got = runIssue(1, { list: JSON.stringify([{ number: 12, title: ISSUE_TITLE }]), latest: `earlier\n${KEY}\n` });
+    const got = runIssue(1, { list: OPEN, viewed: view('body', `earlier\n${KEY}\n`) });
     expect(got.status, got.stderr).toBe(0);
     expect(got.writes).toEqual([]);
     expect(got.stdout).toContain('#12 already reports these findings');

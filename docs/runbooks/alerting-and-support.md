@@ -240,9 +240,11 @@ are `GET /api/cms/alerts/recent` and `POST /api/cms/alerts/resend`
 
 ### The delivery monitor speaks on Telegram
 
-Merging to `main` ships nothing here: the frontend and Functions deploys are
-started by hand, and Terraform is confirmed in HCP Terraform. So a merge can
-leave production behind `main` without anything being broken. The GitHub check
+A merge that changes `frontend/` deploys the site by itself
+([#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)).
+The Functions deploy is started by hand and waits for a reviewer, and Terraform
+is confirmed in HCP Terraform. So a merge can still leave production behind
+`main` without anything being broken. The GitHub check
 [Monitor delivery health](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/monitor-deploy-drift.yml)
 (`monitor-deploy-drift.yml`) is what notices. It runs every four hours and goes
 red when a deploy has waited more than **8 hours** behind `main` (it was 24
@@ -257,12 +259,17 @@ again and two red runs in a row means nobody is fixing it
 ([#1661](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1661);
 the case that showed the gap was
 [#1658](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1658),
-two weeks of red weekly runs nobody saw). While either holds, the job keeps one
-open issue titled "Workflow health: a workflow is broken or keeps failing its
-scheduled runs", with a link to each workflow's newest failed run. It comments
-on it when the findings change and closes it at the first clean check. To act
-on it, open the linked run, fix what it reports (or delete a workflow nobody
-needs), and let the workflow run again.
+two weeks of red weekly runs nobody saw). A run started by hand never counts
+as one of those failures, but a newer green run on `main`, however it was
+started, clears the finding, so a fix can be proven straight away with
+**Run workflow** instead of waiting for the next scheduled run. While a
+finding stands, the job keeps one open issue, labelled `Platform` and titled
+"Workflow health: a workflow is broken or keeps failing its scheduled runs".
+Each failing workflow's line links its newest failed run; for a broken one,
+open the workflow's own run list. The job comments when the list of findings
+changes and closes the issue at the first clean check. To act on it, open the
+red run, fix what it reports (or delete a workflow nobody needs), and run the
+workflow again on `main`.
 
 Red used to reach the owner only as GitHub's failure email. On 2026-10-22 it
 sat red for a day among other mail. Now the Functions app also sends a
