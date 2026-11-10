@@ -11,7 +11,16 @@
 import React from 'react';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import { fmtCount } from '@/lib/searchConsole';
-import { Section, TABLE_CLASS, TD_CLASS, TH_CLASS, TONE_TEXT, WhenText } from './shared';
+import {
+  Breakable,
+  Section,
+  TABLE_CLASS,
+  TD_CLASS,
+  TH_CLASS,
+  TONE_TEXT,
+  URL_CELL_CLASS,
+  WhenText,
+} from './shared';
 
 /** "web: 203, image: 40" from a sitemap's contents list. */
 export function contentsText(contents) {
@@ -69,7 +78,9 @@ export default function SitemapsTab({ report }) {
               <tbody>
                 {sitemaps.map((sitemap) => (
                   <tr key={sitemap.path}>
-                    <td className={`${TD_CLASS} break-all font-mono`}>{sitemap.path}</td>
+                    <td className={`${TD_CLASS} ${URL_CELL_CLASS} font-mono`}>
+                      <Breakable text={sitemap.path} />
+                    </td>
                     <td className={TD_CLASS}>
                       <WhenText iso={sitemap.lastSubmitted} stacked />
                     </td>

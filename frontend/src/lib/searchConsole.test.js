@@ -122,11 +122,13 @@ describe('the pages table', () => {
 });
 
 describe('resolveTab', () => {
-  it('keeps a real tab, moves a guessed one, and falls back to Indexing', () => {
+  it('keeps a real tab, moves a guessed one, and falls back to Performance', () => {
     expect(resolveTab('sitemaps')).toBe('sitemaps');
+    expect(resolveTab('indexing')).toBe('indexing');
     expect(resolveTab('queries')).toBe('performance');
-    expect(resolveTab('nope')).toBe('indexing');
-    expect(resolveTab(null)).toBe('indexing');
+    expect(resolveTab('coverage')).toBe('indexing');
+    expect(resolveTab('nope')).toBe('performance');
+    expect(resolveTab(null)).toBe('performance');
   });
 });
 
