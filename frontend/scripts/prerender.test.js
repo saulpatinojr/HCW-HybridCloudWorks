@@ -811,6 +811,7 @@ describe('seedFor: the one entry a route is handed (ADR 0040 added the interview
       'article:my-post': { slug: 'my-post' },
       'interviews:list': [{ slug: 'first-one' }],
       'interview:first-one': { slug: 'first-one', qa: [] },
+      'architecture:hub-and-spoke': { slug: 'hub-and-spoke', type: 'architecture' },
     },
   };
 
@@ -819,6 +820,11 @@ describe('seedFor: the one entry a route is handed (ADR 0040 added the interview
     expect(seedKeyFor('/azure/interviews')).toBe('interviews:list');
     expect(seedKeyFor('/azure/interviews/first-one')).toBe('interview:first-one');
     expect(seedKeyFor('/azure')).toBe('interviews:list');
+    // A design page, whatever its provider (#1628).
+    expect(seedKeyFor('/azure/architecture-designs/hub-and-spoke')).toBe(
+      'architecture:hub-and-spoke'
+    );
+    expect(seedKeyFor('/vmware/architecture-designs/estate')).toBe('architecture:estate');
     for (const route of [
       '/',
       '/aws',
@@ -826,6 +832,8 @@ describe('seedFor: the one entry a route is handed (ADR 0040 added the interview
       '/azure/frameworks',
       '/aws/interviews',
       '/azure/interviews/a/b',
+      '/azure/architecture-designs',
+      '/azure/architecture-designs/a/b',
     ]) {
       expect(seedKeyFor(route), route).toBeNull();
     }
@@ -837,6 +845,11 @@ describe('seedFor: the one entry a route is handed (ADR 0040 added the interview
     });
     expect(seedFor(manifest, '/azure')).toEqual({ 'interviews:list': [{ slug: 'first-one' }] });
     expect(seedFor(manifest, '/azure/interviews/second-one')).toBeNull();
+    expect(seedFor(manifest, '/azure/architecture-designs/hub-and-spoke')).toEqual({
+      'architecture:hub-and-spoke': { slug: 'hub-and-spoke', type: 'architecture' },
+    });
+    // A built-in design the manifest does not carry fetches in the browser.
+    expect(seedFor(manifest, '/aws/architecture-designs/serverless-api')).toBeNull();
     expect(seedFor(manifest, '/azure/frameworks')).toBeNull();
     expect(seedFor(null, '/azure')).toBeNull();
   });

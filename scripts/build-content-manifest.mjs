@@ -21,8 +21,9 @@
  * the published set.
  *
  * KEYS MATCH `usePublicData`. Each entry is stored under the key that hook uses
- * for the same query — `article:<slug>` — so seeding is a lookup rather than a
- * translation. See frontend/src/hooks/prerenderData.js.
+ * for the same query — `article:<slug>`, `interview:<slug>`,
+ * `architecture:<slug>` — so seeding is a lookup rather than a translation.
+ * See frontend/src/hooks/prerenderData.js.
  *
  * PUBLISHED CONTENT ONLY. Drafts, scheduled and rejected items are excluded by
  * the query, not filtered afterwards: pre-rendering an unpublished article
@@ -35,6 +36,9 @@
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+// The public detail route's allowlist, imported rather than copied: the one
+// list both sides project a design to (#1628). The module imports nothing.
+import { PUBLIC_CONTENT_DETAIL_FIELDS } from '../functions/src/lib/public-reads.js';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 // NOT under public/. Vite copies public/ verbatim into dist, so a manifest
@@ -163,11 +167,20 @@ async function fetchPublished() {
   }
   // `sections` is optional: a deployed revision that predates it simply does
   // not send one, and `buildManifest` then counts what it can itself. So are
-  // `interviews` (ADR 0040): a revision without them pre-renders none.
+  // `interviews` (ADR 0040): a revision without them pre-renders none. And
+  // `designs` (#1628): a revision without them still sends its designs among
+  // the articles, so null (not []) tells `buildManifest` to keep them there.
+  // Present but not a list is refused: a revision that sends the field has
+  // already taken designs out of `items`, so treating it as absent would
+  // drop every design while the log said they were among the articles.
+  if (body.designs !== undefined && !Array.isArray(body.designs)) {
+    throw new Error(`${url} returned designs that are not a list: ${JSON.stringify(body.designs).slice(0, 200)}`);
+  }
   return {
     items: body.items,
     sections: body.sections,
     interviews: Array.isArray(body.interviews) ? body.interviews : [],
+    designs: Array.isArray(body.designs) ? body.designs : null,
   };
 }
 
@@ -351,6 +364,75 @@ function addInterviews(interviews, { routes, data, skipped }) {
 }
 
 /**
+ * Providers with a design page, `/<provider>/architecture-designs/<slug>`.
+ * Mirrors ProviderArchitectureDispatcher in frontend/src/App.jsx, which the
+ * test holds it to: any other provider's design address is the app's 404
+ * page, so a design there gets no page built.
+ */
+export const DESIGN_PROVIDERS = Object.freeze(['aws', 'azure', 'gcp', 'finops', 'vmware']);
+
+/**
+ * The address of one design. Strict for the same reason as INTERVIEW_SLUG:
+ * the slug becomes a folder of the built site, so nothing but lowercase
+ * words and hyphens may reach it.
+ */
+const DESIGN_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+const isDesignItem = (item) => String(item?.type || '').toLowerCase() === 'architecture';
+
+/**
+ * The design routes and seeds (#1628), onto `routes`, `data` and `skipped`.
+ * `architecture:<slug>` is the key ArchitectureDetailTemplate reads, as
+ * `usePublicData` keys it.
+ *
+ * PROJECTED TO WHAT `public/content` ANSWERS, PUBLIC_CONTENT_DETAIL_FIELDS,
+ * the same list the route projects to (DESIGN_FIELDS in
+ * functions/src/lib/public-content-manifest.js), imported rather than
+ * copied. The route's projection is the boundary; this one is the second
+ * layer, as `project` is for articles, so a field a route regression let
+ * through still never reaches the committed manifest. Not narrower than
+ * that list: a page built from a seed does not fetch again in the browser,
+ * so a narrower seed would show readers less than the live page does.
+ *
+ * A design whose address repeats one of the built-in designs
+ * (frontend/src/data/architectures.js) is still listed: the pre-render drops
+ * the repeated route, and the seed is the API's copy, which the page lays
+ * over the built-in one exactly as it does in the browser.
+ */
+/** Keep only the public detail fields, and only when present. */
+function projectDesign(item) {
+  const out = {};
+  for (const field of PUBLIC_CONTENT_DETAIL_FIELDS) {
+    if (item[field] !== undefined) out[field] = item[field];
+  }
+  return out;
+}
+
+function addDesigns(designs, { routes, data, skipped }) {
+  for (const item of designs) {
+    const slug = slugOf(item);
+    if (!slug || !DESIGN_SLUG.test(slug)) {
+      skipped.push(`design ${item?.id || '(no id)'}: no usable slug`);
+      continue;
+    }
+    const provider = providerOf(item);
+    if (!provider || !DESIGN_PROVIDERS.includes(provider)) {
+      const named = item.cloudProvider || item['Cloud Provider'] || 'unset';
+      skipped.push(`design ${slug}: no design page for provider (${named})`);
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, `architecture:${slug}`)) {
+      // One key per slug, whatever the provider: the page reads
+      // `architecture:<slug>`. First one in wins, as for articles.
+      skipped.push(`design ${slug}: duplicate slug (item ${item.id}); first occurrence kept`);
+      continue;
+    }
+    routes.push(`/${provider}/architecture-designs/${slug}`);
+    data[`architecture:${slug}`] = projectDesign(item);
+  }
+}
+
+/**
  * Sections countable from the corpus this script is handed, keyed by the `type`
  * their page selects on.
  *
@@ -467,14 +549,28 @@ export function describeSectionCounts(sections, fromRoute) {
   return 'sections: none — the route sent none and no item carries a type, so no section page leaves the sitemap this build';
 }
 
-export function buildManifest(items, sectionsFromRoute = null, interviews = []) {
+/**
+ * @param {object[]} items the published articles
+ * @param {object|null} sectionsFromRoute the route's section counts
+ * @param {object[]} interviews the published interviews
+ * @param {object[]|null} designs the published designs; null when the
+ *   deployed route predates them and still sends them among `items`
+ */
+export function buildManifest(items, sectionsFromRoute = null, interviews = [], designs = null) {
   const routes = [];
   const data = {};
   const skipped = [];
   // The route's counts win. They see every container a section page reads;
   // sectionCounts() sees only the `content` corpus, so it can speak for
   // frameworks and nothing else.
-  const sections = serverSections(sectionsFromRoute) ?? sectionCounts(items);
+  //
+  // The fallback counts the designs too: a route that sends them apart has
+  // taken them out of `items`, and counting `items` alone would put every
+  // provider's architecture-designs at 0 and drop /vmware/architecture-designs
+  // from the sitemap whenever the route sent no counts.
+  const sections =
+    serverSections(sectionsFromRoute) ??
+    sectionCounts(Array.isArray(designs) ? [...items, ...designs] : items);
 
   for (const item of items) {
     const slug = slugOf(item);
@@ -484,6 +580,12 @@ export function buildManifest(items, sectionsFromRoute = null, interviews = []) 
       // `items` and sends them as `interviews`; a revision that still sends
       // one here must not put it at /<provider>/blog/<slug>.
       skipped.push(`${slug || item.id}: an interview, not an article`);
+      continue;
+    }
+    if (designs !== null && isDesignItem(item)) {
+      // The route sends designs on their own; a copy among the articles
+      // must not also put the design at /<provider>/blog/<slug>.
+      skipped.push(`${slug || item.id}: a design, sent with the designs`);
       continue;
     }
     if (!slug) {
@@ -511,6 +613,7 @@ export function buildManifest(items, sectionsFromRoute = null, interviews = []) 
   }
 
   addInterviews(Array.isArray(interviews) ? interviews : [], { routes, data, skipped });
+  if (Array.isArray(designs)) addDesigns(designs, { routes, data, skipped });
 
   return { generatedAt: null, routes, data, skipped, sections };
 }
@@ -520,9 +623,9 @@ async function main() {
   // — the query just lives in the app now
   // (functions/src/lib/public-content-manifest.js), where it is pinned by an
   // exact-match test for that reason.
-  const { items: resources, sections, interviews } = await fetchPublished();
+  const { items: resources, sections, interviews, designs } = await fetchPublished();
 
-  const manifest = buildManifest(resources, sections, interviews);
+  const manifest = buildManifest(resources, sections, interviews, designs);
   manifest.generatedAt = new Date().toISOString();
 
   mkdirSync(dirname(OUT_PATH), { recursive: true });
@@ -554,7 +657,8 @@ async function main() {
 
   writeFileSync(OUT_PATH, next);
   console.log(
-    `[content-manifest] ${manifest.routes.length} routes, ${resources.length} published items, ${interviews.length} published interviews`
+    `[content-manifest] ${manifest.routes.length} routes, ${resources.length} published items, ${interviews.length} published interviews, ` +
+      (designs === null ? 'designs among the items (route predates them)' : `${designs.length} published designs`)
   );
   console.log(`  ${describeSectionCounts(manifest.sections, serverSections(sections) !== null)}`);
   for (const reason of manifest.skipped) console.log(`  skipped ${reason}`);
