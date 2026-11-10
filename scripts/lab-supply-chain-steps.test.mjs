@@ -444,3 +444,190 @@ describe.skipIf(!runnable)('lab-supply-chain.yml, check: the pin check step reco
     expect(existsSync(join(temp, 'pins.md'))).toBe(true);
   });
 });
+
+// The weekly report issue (#1673): found by label and exact title, closed on a
+// clean week, and commented on only when the findings changed. The step runs
+// for real under `bash -e` (as GitHub runs it) against a stand-in `gh` that
+// records each call and answers `issue list` and `issue view` with what the
+// test set, applying any --jq with the real jq.
+const jqReady = spawnSync('jq', ['--version'], { encoding: 'utf8' }).status === 0;
+
+describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the report issue is opened, updated or closed (#1673)', () => {
+  const TITLE = 'Lab supply chain: pins behind upstream or image vulnerabilities';
+  const RUN_URL = 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/1';
+  const OPEN = JSON.stringify([{ number: 12, title: TITLE }]);
+  const SCAN = '## Lab, add-on and sandbox template images against the vulnerability database\n\n### `img`\n\n**1 HIGH** with a fix available. The full table is the run summary: RUN.\n';
+  const STEP = runBlock(CHECK, 'Open, update or close the issue');
+  let dir;
+  let runs = 0;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'lab-issue-'));
+    mkdirSync(join(dir, 'bin'));
+    writeFileSync(
+      join(dir, 'bin', 'gh'),
+      [
+        '#!/usr/bin/env bash',
+        '(IFS="|"; printf "%s\\n" "$*") >> "$GH_LOG"',
+        'expr=""',
+        'args=("$@")',
+        'for i in "${!args[@]}"; do [ "${args[$i]}" = "--jq" ] && expr="${args[$((i + 1))]}"; done',
+        'case "$1 $2" in',
+        '  "issue list") [ -n "$FAKE_LIST_FAILS" ] && exit 1; answer="$FAKE_LIST" ;;',
+        '  "issue view") answer="$FAKE_VIEW" ;;',
+        '  *) exit 0 ;;',
+        'esac',
+        'if [ -n "$expr" ]; then jq -r "$expr" <<< "$answer"; else printf "%s\\n" "$answer"; fi',
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const view = (body, ...comments) => JSON.stringify({ body, comments: comments.map((c) => ({ body: c })) });
+
+  /** Runs the step; returns its status, output, the gh calls that write, and the report it wrote. */
+  function issueStep({ pins = '1', scan = '1', notes = 'false', list = '[]', viewed = view(''), runUrl = RUN_URL, scanText = SCAN, ref = 'refs/heads/main', listFails = false } = {}) {
+    const temp = join(dir, `run-${++runs}`);
+    mkdirSync(temp);
+    writeFileSync(join(temp, 'pins.md'), '| Component | Pinned | Newest stable | Status |\n| --- | --- | --- | --- |\n| Coder | 2.39.0 | 2.39.1 | BEHIND |\n');
+    writeFileSync(join(temp, 'bump-notes.md'), notes === 'true' ? '**host:** a note\n' : '');
+    writeFileSync(join(temp, 'scan-summary.md'), scanText.replaceAll('RUN', runUrl));
+    writeFileSync(join(temp, 'gh.log'), '');
+    const r = spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', STEP], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${join(dir, 'bin')}:${process.env.PATH}`,
+        RUNNER_TEMP: temp,
+        GH_LOG: join(temp, 'gh.log'),
+        FAKE_LIST: list,
+        FAKE_VIEW: viewed,
+        REPO: 'saulpatinojr/HCW-HybridCloudWorks',
+        RUN_URL: runUrl,
+        PINS_EXIT: pins,
+        SCAN_FAILED: scan,
+        NOTES_PRESENT: notes,
+        BUMP_SETS: '["host"]',
+        GITHUB_REF: ref,
+        FAKE_LIST_FAILS: listFails ? '1' : '',
+      },
+    });
+    const calls = readFileSync(join(temp, 'gh.log'), 'utf8').split('\n').filter(Boolean);
+    const writes = calls.filter((c) => /^issue\|(create|comment|close)\|/.test(c));
+    const report = existsSync(join(temp, 'issue.md')) ? readFileSync(join(temp, 'issue.md'), 'utf8') : '';
+    return { ...r, calls, writes, report, temp };
+  }
+  const keyOf = (report) => report.match(/<!-- lab-supply-chain findings: [0-9a-f]{64} -->/)?.[0];
+
+  it('finds the issue by the Platform label, never by search', () => {
+    const got = issueStep();
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.calls.find((c) => c.startsWith('issue|list|'))).toContain('--label|Platform');
+    expect(got.calls.join('\n')).not.toContain('--search');
+  });
+
+  it('due with none open: creates it with the label, the report ending in the findings line', () => {
+    const got = issueStep();
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toHaveLength(1);
+    expect(got.writes[0]).toMatch(/^issue\|create\|--repo\|saulpatinojr\/HCW-HybridCloudWorks\|--title\|Lab supply chain: pins behind upstream or image vulnerabilities\|--label\|Platform\|--body-file\|/);
+    expect(got.report.trimEnd().split('\n').at(-1)).toMatch(/^<!-- lab-supply-chain findings: [0-9a-f]{64} -->$/);
+  });
+
+  it('due with an older, different report open: comments on it', () => {
+    const got = issueStep({ list: OPEN, viewed: view('old\n<!-- lab-supply-chain findings: ' + '0'.repeat(64) + ' -->') });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toHaveLength(1);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('the same findings a week later, in another run: no new comment', () => {
+    const first = issueStep();
+    const key = keyOf(first.report);
+    expect(key).toBeDefined();
+    const later = issueStep({ list: OPEN, viewed: view('first', `last week\n${key}`), runUrl: 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/2' });
+    expect(later.status, later.stderr).toBe(0);
+    expect(keyOf(later.report)).toBe(key);
+    expect(later.writes).toEqual([]);
+    expect(later.stdout).toContain('#12 already reports these findings');
+  });
+
+  it('compares with the newest report, and a person\'s comment after it does not count', () => {
+    const key = keyOf(issueStep().report);
+    const same = issueStep({ list: OPEN, viewed: view(`first\n${key}`, 'I am on it.') });
+    expect(same.writes).toEqual([]);
+    const changed = issueStep({ list: OPEN, viewed: view(`first\n${key}`, 'later\n<!-- lab-supply-chain findings: ' + 'f'.repeat(64) + ' -->') });
+    expect(changed.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('an issue opened by hand with no body (null) is read as no report yet', () => {
+    const got = issueStep({ list: OPEN, viewed: view(null) });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('an open issue with a similar title is left alone, and a new one opened', () => {
+    const got = issueStep({ list: JSON.stringify([{ number: 7, title: `${TITLE} (old)` }]) });
+    expect(got.writes).toHaveLength(1);
+    expect(got.writes[0]).toMatch(/^issue\|create\|/);
+  });
+
+  it('a clean week closes the open issue, with a comment naming the run', () => {
+    const got = issueStep({ pins: '0', scan: '0', notes: 'false', list: OPEN });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toHaveLength(1);
+    expect(got.writes[0]).toMatch(/^issue\|close\|12\|--repo\|saulpatinojr\/HCW-HybridCloudWorks\|--reason\|completed\|--comment\|Clean again: run https:\/\/github\.com\/saulpatinojr\/HCW-HybridCloudWorks\/actions\/runs\/1 /);
+  });
+
+  it('a clean week with none open does nothing', () => {
+    const got = issueStep({ pins: '0', scan: '0', notes: 'false' });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([]);
+  });
+
+  it.each([
+    ['a pin source could not be read', { pins: '2', scan: '0' }],
+    ['a note alone', { pins: '0', scan: '0', notes: 'true' }],
+    ['an image finding alone', { pins: '0', scan: '1' }],
+    ['a pin exit that is missing', { pins: '', scan: '0' }],
+    ['a scan result that is missing', { pins: '0', scan: '' }],
+    ['a notes value that is missing', { pins: '0', scan: '0', notes: '' }],
+  ])('never closes on %s: it reports instead', (_why, opts) => {
+    const got = issueStep({ ...opts, list: OPEN });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes.some((w) => w.startsWith('issue|close|'))).toBe(false);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('a run of another branch never closes the issue, even on a clean week', () => {
+    const got = issueStep({ pins: '0', scan: '0', notes: 'false', list: OPEN, ref: 'refs/heads/feature' });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([]);
+    expect(got.stdout).toContain('not main, so #12 is left open');
+  });
+
+  it('fails the step, closing nothing, when the issue list cannot be read', () => {
+    const got = issueStep({ pins: '0', scan: '0', notes: 'false', list: OPEN, listFails: true });
+    expect(got.status).not.toBe(0);
+    expect(got.writes).toEqual([]);
+  });
+
+  it('gives the same fingerprint when only a timestamp in the report changed', () => {
+    const failed = (at) => SCAN + `the scan did not complete:\n\`\`\`\n${at}\tFATAL\tunable to pull\n\`\`\`\n`;
+    const a = keyOf(issueStep({ scanText: failed('2026-11-10T06:49:53Z') }).report);
+    const b = keyOf(issueStep({ scanText: failed('2026-11-17T06:50:12.345+00:00') }).report);
+    expect(a).toBeDefined();
+    expect(b).toBe(a);
+    const c = keyOf(issueStep({ scanText: failed('2026-11-17T06:50:12Z') + 'a new finding\n' }).report);
+    expect(c).not.toBe(a);
+  });
+
+  it('keeps the findings line on a report cut at 60,000 characters', () => {
+    const got = issueStep({ scanText: SCAN + 'x'.repeat(70000) + '\n' });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.report).toContain('… cut at 60,000 characters');
+    expect(keyOf(got.report)).toBeDefined();
+  });
+});
