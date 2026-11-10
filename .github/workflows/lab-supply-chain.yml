@@ -76,12 +76,13 @@
 #      this job builds it the same way from the checked-out commit (main on
 #      the schedule) and scans what it built (#1473) —
 #      with Trivy for HIGH and CRITICAL vulnerabilities with a fix available,
-#      and opens one issue (or comments on the open one) when a pin is
-#      behind, an image needs a fix, or a pin could not be bumped. That
-#      includes a publisher `propose` could not read even when this job's own
-#      read of it succeeded (#1447): the issue is then the only trace, since
-#      a set whose only content is a note has no edit and so no pull
-#      request. A clean week is a green run and nothing else.
+#      and keeps one issue when a pin is behind, an image needs a fix, or a
+#      pin could not be bumped: it opens the issue, comments on it only when
+#      the findings changed, and closes it at the first clean week (#1673).
+#      That includes a publisher `propose` could not read even when this
+#      job's own read of it succeeded (#1447): the issue is then the only
+#      trace, since a set whose only content is a note has no edit and so no
+#      pull request. A clean week is a green run that closes any open issue.
 #
 # The response times for a runtime advisory (runc, containerd, Docker
 # Engine), and who does what, are in docs/runbooks/labs-host.md, "Runtime
@@ -572,12 +573,16 @@ jobs:
       #   (the run link and date left out), and a comment is posted only when
       #   the newest text in the issue that carries such a line holds a
       #   different one. A person's comment in between does not count.
-      # - Nothing due: the open issue is closed, with a comment naming the run.
-      # The step runs only when every step before it succeeded (the default),
-      # so it never closes the issue on a check that could not look: a pin
-      # source it could not read is exit 2, which is due, and a scan that
-      # failed to run fails its own step first. Values reach the shell
-      # through `env:` (zizmor's template-injection rule).
+      # - Nothing due: the open issue is closed, with a comment naming the
+      #   run. Only a run of main closes it, so a run started by hand on
+      #   another branch cannot.
+      # It never closes the issue on a week it could not judge. A pin source
+      # it could not read is exit 2, and an image that could not be scanned
+      # (or a sandbox template that did not build) sets failed=1; both are
+      # due. If the image digests or add-on pins themselves cannot be read,
+      # the scan step fails, and this step, which runs only when every step
+      # before it succeeded (the default), does not run at all. Values reach
+      # the shell through `env:` (zizmor's template-injection rule).
       - name: Open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
@@ -595,8 +600,10 @@ jobs:
           # Clean only on exactly these three values; anything else, an empty
           # output included, is reported rather than taken as clean.
           if [ "${PINS_EXIT}" = "0" ] && [ "${SCAN_FAILED}" = "0" ] && [ "${NOTES_PRESENT}" = "false" ]; then
-            if [ -n "$existing" ]; then
-              gh issue close "$existing" --repo "$REPO" --reason completed --comment "Clean again: run ${RUN_URL} found every lab host pin current, every bump made, and no HIGH or CRITICAL vulnerability with a fix available in the lab, add-on and sandbox template images."
+            if [ -n "$existing" ] && [ "${GITHUB_REF:-}" != "refs/heads/main" ]; then
+              echo "Nothing is due, but this run is of ${GITHUB_REF:-an unknown ref}, not main, so #${existing} is left open."
+            elif [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$REPO" --reason completed --comment "Clean again: run ${RUN_URL} found every lab host pin current, no pin it could not bump, and no HIGH or CRITICAL vulnerability with a fix available in the lab, add-on and sandbox template images."
               echo "Closed #${existing}."
             else
               echo "Nothing is due and no report issue is open."
@@ -636,10 +643,12 @@ jobs:
             mv "${RUNNER_TEMP}/issue.cut" "${RUNNER_TEMP}/issue.md"
           fi
           # The findings' fingerprint: the report without its first line (run
-          # link and date) and with every other mention of this run's link
-          # taken out, so a week that finds the same things gives the same
-          # fingerprint. Added after the cut above, so it is always there.
-          findings=$(tail -n +2 "${RUNNER_TEMP}/issue.md")
+          # link and date), and with every other mention of this run's link
+          # and every timestamp taken out, so a week that finds the same
+          # things gives the same fingerprint (a scan that did not complete
+          # quotes Trivy's log, whose lines start with a timestamp). Added
+          # after the cut above, so it is always there.
+          findings=$(tail -n +2 "${RUNNER_TEMP}/issue.md" | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(Z|[+-][0-9:]+)?//g')
           findings=${findings//"${RUN_URL}"/}
           key="<!-- lab-supply-chain findings: $(printf '%s' "$findings" | sha256sum | cut -d' ' -f1) -->"
           printf '\n%s\n' "$key" >> "${RUNNER_TEMP}/issue.md"

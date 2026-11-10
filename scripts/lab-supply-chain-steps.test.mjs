@@ -473,7 +473,7 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the report 
         'args=("$@")',
         'for i in "${!args[@]}"; do [ "${args[$i]}" = "--jq" ] && expr="${args[$((i + 1))]}"; done',
         'case "$1 $2" in',
-        '  "issue list") answer="$FAKE_LIST" ;;',
+        '  "issue list") [ -n "$FAKE_LIST_FAILS" ] && exit 1; answer="$FAKE_LIST" ;;',
         '  "issue view") answer="$FAKE_VIEW" ;;',
         '  *) exit 0 ;;',
         'esac',
@@ -488,7 +488,7 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the report 
   const view = (body, ...comments) => JSON.stringify({ body, comments: comments.map((c) => ({ body: c })) });
 
   /** Runs the step; returns its status, output, the gh calls that write, and the report it wrote. */
-  function issueStep({ pins = '1', scan = '1', notes = 'false', list = '[]', viewed = view(''), runUrl = RUN_URL, scanText = SCAN } = {}) {
+  function issueStep({ pins = '1', scan = '1', notes = 'false', list = '[]', viewed = view(''), runUrl = RUN_URL, scanText = SCAN, ref = 'refs/heads/main', listFails = false } = {}) {
     const temp = join(dir, `run-${++runs}`);
     mkdirSync(temp);
     writeFileSync(join(temp, 'pins.md'), '| Component | Pinned | Newest stable | Status |\n| --- | --- | --- | --- |\n| Coder | 2.39.0 | 2.39.1 | BEHIND |\n');
@@ -510,6 +510,8 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the report 
         SCAN_FAILED: scan,
         NOTES_PRESENT: notes,
         BUMP_SETS: '["host"]',
+        GITHUB_REF: ref,
+        FAKE_LIST_FAILS: listFails ? '1' : '',
       },
     });
     const calls = readFileSync(join(temp, 'gh.log'), 'utf8').split('\n').filter(Boolean);
@@ -589,12 +591,37 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the report 
     ['a pin source could not be read', { pins: '2', scan: '0' }],
     ['a note alone', { pins: '0', scan: '0', notes: 'true' }],
     ['an image finding alone', { pins: '0', scan: '1' }],
-    ['an output that is missing', { pins: '', scan: '0' }],
+    ['a pin exit that is missing', { pins: '', scan: '0' }],
+    ['a scan result that is missing', { pins: '0', scan: '' }],
+    ['a notes value that is missing', { pins: '0', scan: '0', notes: '' }],
   ])('never closes on %s: it reports instead', (_why, opts) => {
     const got = issueStep({ ...opts, list: OPEN });
     expect(got.status, got.stderr).toBe(0);
     expect(got.writes.some((w) => w.startsWith('issue|close|'))).toBe(false);
     expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('a run of another branch never closes the issue, even on a clean week', () => {
+    const got = issueStep({ pins: '0', scan: '0', notes: 'false', list: OPEN, ref: 'refs/heads/feature' });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([]);
+    expect(got.stdout).toContain('not main, so #12 is left open');
+  });
+
+  it('fails the step, closing nothing, when the issue list cannot be read', () => {
+    const got = issueStep({ pins: '0', scan: '0', notes: 'false', list: OPEN, listFails: true });
+    expect(got.status).not.toBe(0);
+    expect(got.writes).toEqual([]);
+  });
+
+  it('gives the same fingerprint when only a timestamp in the report changed', () => {
+    const failed = (at) => SCAN + `the scan did not complete:\n\`\`\`\n${at}\tFATAL\tunable to pull\n\`\`\`\n`;
+    const a = keyOf(issueStep({ scanText: failed('2026-11-10T06:49:53Z') }).report);
+    const b = keyOf(issueStep({ scanText: failed('2026-11-17T06:50:12.345+00:00') }).report);
+    expect(a).toBeDefined();
+    expect(b).toBe(a);
+    const c = keyOf(issueStep({ scanText: failed('2026-11-17T06:50:12Z') + 'a new finding\n' }).report);
+    expect(c).not.toBe(a);
   });
 
   it('keeps the findings line on a report cut at 60,000 characters', () => {

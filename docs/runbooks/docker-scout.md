@@ -36,7 +36,7 @@ repository, and storing a Docker token anywhere, are the owner's decisions.
 | Check | Where it runs | When | What it does |
 | --- | --- | --- | --- |
 | Trivy before publishing | each add-on repository's `publish-images.yml` | on a release tag | stops the push when the image has a HIGH or CRITICAL vulnerability with a fix |
-| **Lab supply chain** (`lab-supply-chain.yml`, the scan step) | this repository | every Tuesday | looks again at the digests the host actually runs, the two lab images **and the add-on images** (four rows in `group_vars`), with Trivy; opens one issue, or comments on the open one when the findings changed, when something fixable turns up, and closes it at the first clean week (#1673) |
+| **Lab supply chain** (`lab-supply-chain.yml`, the scan step) | this repository | every Tuesday | looks again at the digests the host actually runs, the two lab images **and the add-on images** (four rows in `group_vars`), with Trivy; opens one issue when something fixable turns up, comments on it only when the findings change, and closes it at the first clean week (#1673) |
 | **Add-on images against Docker Scout** (`addon-image-scout.yml`) | this repository | when a pull request changes the pins, and every Wednesday | Scout's policy table for the same digests, then fails on a fixable CRITICAL or HIGH; needs the one Docker token below |
 | Scout's own analysis of a Docker Hub repository | Docker | continuously, once the owner enables it | shows every tag's findings and policy results in the Scout dashboard and in Docker Hub |
 | `docker scout` on your desktop | your machine | when you run it | the same Scout analysis on demand, for a published image or one you just built |
