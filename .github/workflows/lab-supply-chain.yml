@@ -16,7 +16,10 @@
 #        host        lab-host/ansible/group_vars/all.yml, every pin behind
 #                    its publisher;
 #        image-base  lab-image/versions.env and its FROM lines, to the
-#                    newest digest of the base image's release line, which is
+#                    newest digest of the base image's release line, with the
+#                    base tag and CPython release the Docker guide page
+#                    (BuildingImagesPage.jsx) and lab-image/README.md name,
+#                    which is
 #                    how the lab images are rebuilt on a newer base (the
 #                    rebuild itself is the publish that merging it triggers;
 #                    publish-lab-image.yml says what a rebuild can and cannot

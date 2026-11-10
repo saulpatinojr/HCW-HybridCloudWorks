@@ -264,7 +264,7 @@ resource "azurerm_private_endpoint" "sql" {
       },
     ],
     ecosystemPartnerValidation: {
-      validatedWith: 'HashiCorp Terraform 1.9 + Azure Verified Modules (AVM)',
+      validatedWith: 'HashiCorp Terraform + Azure Verified Modules (AVM)',
       ctaLabel: 'Verify in 15-Min Browser Lab',
       ctaUrl: '/education/labs/terraform-validate-walkthrough',
     },
@@ -335,7 +335,7 @@ resource "azurerm_private_endpoint" "sql" {
       <h2>Architecture Overview</h2>
       <p>The <strong>Enterprise Hub-and-Spoke Landing Zone</strong> separates shared transit, firewall inspection, and hybrid connectivity in a central hub VNet from workload spokes deployed across dedicated subscriptions.</p>
     `,
-    terraformCode: `module "alz_connectivity" {
+    terraformCode: `module "alz" {
   source              = "${ALZ_MODULE.source}"
   version             = "${ALZ_MODULE.version}"
   architecture_name   = "alz"
@@ -343,7 +343,7 @@ resource "azurerm_private_endpoint" "sql" {
   parent_resource_id  = data.azurerm_client_config.current.tenant_id
 }`,
     ecosystemPartnerValidation: {
-      validatedWith: 'HashiCorp Terraform 1.9 + Azure Verified Modules (AVM)',
+      validatedWith: 'HashiCorp Terraform + Azure Verified Modules (AVM)',
       ctaLabel: 'Verify in 15-Min Browser Lab',
       ctaUrl: '/education/labs/terraform-validate-walkthrough',
     },

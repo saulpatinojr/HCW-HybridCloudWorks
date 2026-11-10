@@ -56,3 +56,19 @@ describe('architecture examples name module versions the lab image carries (#160
     expect(labResolution(typed(version)).ok).toBe(true);
   });
 });
+
+describe('a design names no Terraform release of its own (#1656)', () => {
+  it('says "HashiCorp Terraform" without a version, which the lab and the builder would outgrow', () => {
+    // Two Azure designs said "Terraform 1.9" while the lab ran 1.17 and the
+    // builder required 1.12 or newer. The release is pinned in
+    // lab-image/versions.env and TERRAFORM_REQUIRED_VERSION, not here.
+    const named = Object.entries(architecturesByProvider).flatMap(([provider, catalogue]) =>
+      Object.entries(catalogue)
+        .filter(([, design]) =>
+          /Terraform\s+\d/.test(design.ecosystemPartnerValidation?.validatedWith || '')
+        )
+        .map(([slug]) => `${provider}/${slug}`)
+    );
+    expect(named).toEqual([]);
+  });
+});
