@@ -151,6 +151,6 @@ export async function storeProvidedTranscript({
     },
     interview: { ...interview, stage: 'transcribed', error: null },
   });
-  log?.log?.(`interview transcript: ${interviewId} v${version} provided (${segments.length} turns, ${text.length} chars)`);
+  log?.log?.(`interview transcript: v${version} provided (${segments.length} turns, ${text.length} chars)`);
   return { interviewId, version, segments: segments.length, chars: text.length };
 }

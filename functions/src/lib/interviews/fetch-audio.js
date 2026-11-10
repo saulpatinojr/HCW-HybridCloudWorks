@@ -277,7 +277,7 @@ export async function fetchAudioToContainer({
     },
     interview: { ...interview, stage: 'fetched', error: null },
   });
-  log?.log?.(`${FETCH_JOB_TYPE}: ${interviewId} ${bytes} B ${contentType} in ${Date.now() - startedAt} ms`);
+  log?.log?.(`${FETCH_JOB_TYPE}: ${bytes} B ${contentType} in ${Date.now() - startedAt} ms`);
   return { interviewId, bytes, contentType, path };
 }
 

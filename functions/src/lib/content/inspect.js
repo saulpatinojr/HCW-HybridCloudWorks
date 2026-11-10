@@ -230,7 +230,8 @@ export function createInspector({
     log.log?.(`[ai-model] article analysis via ${aiProvider}`);
     // Fingerprint only — never the payload.
     log.log?.('[ai-model] analysis complete', {
-      title: metadata?.title,
+      // No title: an article's words never reach a log line (#1635).
+      hasTitle: typeof metadata?.title === 'string' && metadata.title.length > 0,
       cloudProvider: metadata?.cloudProvider,
       postContentChars:
         typeof metadata?.postContent === 'string' ? metadata.postContent.length : undefined,
@@ -357,7 +358,8 @@ export function createInspector({
     if (!targetUrl) throw new Error('No URL provided in document (checked url, sourceUrl, CD Url)');
     if (newData.type === 'architecture') throw new Error(ARCHITECTURE_NOT_PORTED);
 
-    log.log?.(`[inspect:${collectionName}] ${docId} — ${targetUrl}`);
+    // No document id or URL in these lines (#1635).
+    log.log?.(`[inspect:${collectionName}] inspecting`);
     // RSS writes 'Cloud Provider'; manual submission writes cloudProvider.
     const cloudProvider = newData.cloudProvider || newData['Cloud Provider'] || null;
     const inspection = await inspectArticleSource(
@@ -368,7 +370,7 @@ export function createInspector({
     );
     const update = buildInspectionUpdateData({ newData, targetUrl, ...inspection, now: now() });
     await store.patchDoc(collectionName, docId, update);
-    log.log?.(`[inspect:${collectionName}] ${docId} → ${update.contentStatus}`);
+    log.log?.(`[inspect:${collectionName}] → ${update.contentStatus}`);
     return {
       docId,
       contentStatus: update.contentStatus,

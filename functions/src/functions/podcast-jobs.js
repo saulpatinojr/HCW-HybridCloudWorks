@@ -152,7 +152,7 @@ export async function runTranscriptPublish(payload, { context, job, signal } = {
     : record.error
       ? `failed (${record.error.code})`
       : 'on the host';
-  context?.log?.(`${PUBLISH_JOB_TYPE}: job ${jobId ?? 'unknown'} ${outcome}`);
+  context?.log?.(`${PUBLISH_JOB_TYPE}: ${outcome}`);
 
   return {
     id,

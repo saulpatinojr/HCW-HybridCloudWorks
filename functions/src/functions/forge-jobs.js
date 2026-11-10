@@ -166,7 +166,8 @@ export async function runForgeFromUrl(
   const provider = String(payload?.provider || '').trim() || inferProviderFromUrl(source.url);
   const doc = buildUrlSourceDoc({ source, provider, now, uuid });
   await docStore.upsertDoc('content', doc);
-  log.log?.(`[forge-from-url] ${source.url} → content/${doc.id} (${source.wordCount} words)`);
+  // Counts only: no URL or content id in a log line (#1635).
+  log.log?.(`[forge-from-url] source read (${source.wordCount} words)`);
 
   // A brief on the job always has substance once the scraped URL is on it
   // (sourceUrl counts), so it is applied whenever one was sent.
@@ -184,7 +185,7 @@ export async function runForgeFromUrl(
 
   if (signal?.aborted) throw signal.reason || new Error('aborted');
   const outcome = await forge.runForgePipeline({ contentId: doc.id, actor, signal });
-  log.log?.(`[forge-from-url] ${doc.id} → ${outcome.ok ? outcome.result.status : outcome.error}`);
+  log.log?.(`[forge-from-url] forge ${outcome.ok ? `→ ${outcome.result.status}` : 'failed'}`);
   // A duplicate (409) is a legitimate answer — the URL's story is already
   // published — so it reports rather than fails, same as forge-article.
   if (!outcome.ok && outcome.httpStatus !== 409) throw new JobFailedError(outcome.error);

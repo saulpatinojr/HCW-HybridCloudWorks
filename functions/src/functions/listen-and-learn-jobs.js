@@ -416,7 +416,7 @@ export async function runSpeakChapter(payload, { context, job, signal } = {}) {
         partitionKey: id,
       }
     );
-    context?.log?.(`speak-listen-and-learn-chapter: ${id}/${chapterId} — no speech provider`);
+    context?.log?.('speak-listen-and-learn-chapter: no speech provider');
     return {
       chapterId,
       status: chapter.status,
