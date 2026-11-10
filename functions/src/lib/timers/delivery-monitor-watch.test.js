@@ -115,7 +115,21 @@ describe('the messages', () => {
   it('mark a reminder and say how long it has been red', () => {
     const m = redMessage({ run: r, reminder: true, redForHours: 24 });
     expect(m.title).toBe('DELIVERY MONITOR STILL RED');
-    expect(m.message).toContain('STILL RED, 24 hours after the first alert');
+    expect(m.message).toContain('STILL RED, 24 hours after the last alert');
+  });
+
+  it('name the newly failing job first when the stretch was already red (#1666)', () => {
+    const m = redMessage({ run: r, jobs: ['check', 'workflows'], newJobs: ['workflows'] });
+    expect(m.title).toBe('DELIVERY MONITOR RED');
+    expect(m.message).toContain('still red, and a job no earlier alert named has failed: workflows.');
+    expect(m.message).toContain('Failed: check; workflows.');
+  });
+
+  it('say how each deploy ships today: the site on merge, functions by hand (#1613)', () => {
+    const { message } = redMessage({ run: r });
+    expect(message).toContain('A merge that changes frontend/ deploys the site on its own');
+    expect(message).toContain('the functions deploy is started by hand');
+    expect(message).not.toContain('merging ships none of them');
   });
 
   it('render through the notifier with their own source name', () => {
@@ -194,7 +208,117 @@ describe('checkIfDue', () => {
     expect(outcome.told).toBe(true);
     expect(n.notifyTelegram).toHaveBeenCalledTimes(2);
     expect(n.notifyTelegram.mock.calls[1][0].title).toBe('DELIVERY MONITOR STILL RED');
-    expect(n.notifyTelegram.mock.calls[1][0].message).toContain('24 hours after the first alert');
+    expect(n.notifyTelegram.mock.calls[1][0].message).toContain('24 hours after the last alert');
+  });
+
+  describe('a job that starts failing while the stretch is already red (#1666)', () => {
+    const check = { name: 'check', conclusion: 'failure' };
+    const workflows = { name: 'workflows', conclusion: 'failure' };
+    const hours = (h) => new Date(NOW.getTime() + h * 60 * 60_000);
+
+    async function toldAbout(jobs) {
+      const store = memoryStore();
+      const n = notifier();
+      await watch({ store, gh: github({ runs: [run(1234, 'failure')], jobs }), n }).checkIfDue();
+      return { store, n };
+    }
+
+    it('keeps the failed jobs with the first alert', async () => {
+      const { store } = await toldAbout([workflows]);
+      expect(store.doc.alertedJobs).toEqual(['workflows']);
+    });
+
+    it('sends a new red message on the next read when the set grows, naming the new job', async () => {
+      const { store, n } = await toldAbout([workflows]);
+      const gh = github({ runs: [run(1240, 'failure')], jobs: [check, workflows] });
+      const outcome = await watch({ store, gh, n, now: hours(1) }).checkIfDue();
+      expect(outcome).toMatchObject({ verdict: 'red', told: true });
+      expect(n.notifyTelegram).toHaveBeenCalledTimes(2);
+      const second = n.notifyTelegram.mock.calls[1][0];
+      expect(second).toMatchObject({ title: 'DELIVERY MONITOR RED', source: DELIVERY_RED_SOURCE });
+      expect(second.message).toContain('a job no earlier alert named has failed: check.');
+      expect(store.doc).toMatchObject({ alertedRunId: 1240, alertedAt: hours(1).toISOString() });
+      expect(store.doc.alertedJobs).toEqual(['workflows', 'check']);
+    });
+
+    it('says nothing when the same jobs are still failing', async () => {
+      const { store, n } = await toldAbout([check, workflows]);
+      const gh = github({ runs: [run(1240, 'failure')], jobs: [workflows, check] });
+      const outcome = await watch({ store, gh, n, now: hours(1) }).checkIfDue();
+      expect(outcome.told).toBe(false);
+      expect(n.notifyTelegram).toHaveBeenCalledTimes(1);
+    });
+
+    it('says nothing when the set shrinks, nor when a job that recovered fails again', async () => {
+      const { store, n } = await toldAbout([check, workflows]);
+      await watch({ store, gh: github({ runs: [run(1240, 'failure')], jobs: [workflows] }), n, now: hours(1) }).checkIfDue();
+      await watch({ store, gh: github({ runs: [run(1250, 'failure')], jobs: [check, workflows] }), n, now: hours(5) }).checkIfDue();
+      expect(n.notifyTelegram).toHaveBeenCalledTimes(1);
+      expect(store.doc.alertedJobs).toEqual(['check', 'workflows']);
+    });
+
+    it('does not call every job new when the jobs could not be read', async () => {
+      const { store, n } = await toldAbout([workflows]);
+      const gh = github({ runs: [run(1240, 'failure')], jobsStatus: 500 });
+      const outcome = await watch({ store, gh, n, now: hours(1) }).checkIfDue();
+      expect(outcome.told).toBe(false);
+      expect(n.notifyTelegram).toHaveBeenCalledTimes(1);
+      expect(store.doc.alertedJobs).toEqual(['workflows']);
+    });
+
+    it('names the jobs on the next read when the first alert could not', async () => {
+      const store = memoryStore();
+      const n = notifier();
+      await watch({ store, gh: github({ runs: [run(1234, 'failure')], jobsStatus: 500 }), n }).checkIfDue();
+      expect(store.doc.alertedJobs).toEqual([]);
+      await watch({ store, gh: github({ runs: [run(1234, 'failure')], jobs: [check] }), n, now: hours(1) }).checkIfDue();
+      expect(n.notifyTelegram).toHaveBeenCalledTimes(2);
+      expect(n.notifyTelegram.mock.calls[1][0].message).toContain('has failed: check.');
+    });
+
+    it('adopts the set quietly when the record is older than the jobs list', async () => {
+      const store = memoryStore({ id: 'delivery_monitor_watch', alertedRunId: 1234, alertedAt: iso(NOW - 3_600_000) });
+      const n = notifier();
+      const outcome = await watch({ store, gh: github({ runs: [run(1240, 'failure')], jobs: [check] }), n }).checkIfDue();
+      expect(outcome).toMatchObject({ verdict: 'red', told: false, written: true });
+      expect(n.notifyTelegram).not.toHaveBeenCalled();
+      expect(store.doc).toMatchObject({ alertedRunId: 1234, alertedJobs: ['check'] });
+    });
+
+    it('records nothing when the new-job message did not go, so the next read tries again', async () => {
+      const { store } = await toldAbout([workflows]);
+      const gh = github({ runs: [run(1240, 'failure')], jobs: [check, workflows] });
+      await watch({ store, gh, n: notifier({ sent: false, reason: 'cooldown' }), now: hours(1) }).checkIfDue();
+      expect(store.doc.alertedJobs).toEqual(['workflows']);
+      const working = notifier();
+      await watch({ store, gh, n: working, now: hours(2) }).checkIfDue();
+      expect(working.notifyTelegram).toHaveBeenCalledTimes(1);
+      expect(store.doc.alertedJobs).toEqual(['workflows', 'check']);
+    });
+
+    it('keeps the 24-hour reminder, which also remembers a job it names', async () => {
+      const { store, n } = await toldAbout([workflows]);
+      const gh = github({ runs: [run(1240, 'failure')], jobs: [check, workflows] });
+      await watch({ store, gh, n, now: hours(25) }).checkIfDue();
+      expect(n.notifyTelegram).toHaveBeenCalledTimes(2);
+      expect(n.notifyTelegram.mock.calls[1][0].title).toBe('DELIVERY MONITOR STILL RED');
+      expect(store.doc.alertedJobs).toEqual(['workflows', 'check']);
+    });
+
+    it('forgets the jobs once it is green again', async () => {
+      const { store, n } = await toldAbout([workflows]);
+      await watch({ store, gh: github({ runs: [run(1300, 'success')] }), n, now: hours(1) }).checkIfDue();
+      expect(store.doc.alertedJobs).toBeNull();
+    });
+  });
+
+  it('logs only an error code when the notifier throws', async () => {
+    const log = { warn: vi.fn() };
+    const n = { notifyTelegram: vi.fn(async () => { throw Object.assign(new Error('secret-ish detail /path'), { code: 'ECONNRESET' }); }) };
+    await watch({ store: memoryStore(), gh: github({ runs: [run(1234, 'failure')] }), n, log }).checkIfDue();
+    const lines = log.warn.mock.calls.map(([line]) => line).join('\n');
+    expect(lines).toContain('notification failed (ECONNRESET)');
+    expect(lines).not.toContain('secret-ish');
   });
 
   it('says it is green again, once, after the owner was told, and clears the record', async () => {
