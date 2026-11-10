@@ -130,7 +130,8 @@ export function createRssIngest({
 
   async function processSingleFeed(provider, feed, results, signal) {
     if (signal?.aborted) throw signal.reason || new Error('aborted');
-    info(`[rssFetcher] Fetching ${feed.name} (${provider})`);
+    // The provider and counts only: a feed's name is typed by an editor (#1635).
+    info(`[rssFetcher] Fetching a ${provider} feed`);
     let parsed;
     try {
       parsed = await parser.parseURL(feed.url, { signal });
@@ -155,7 +156,7 @@ export function createRssIngest({
     await draftNewContent(provider, feed, items, results, signal);
     results.processed += 1;
     await recordRun(store, feed, 'succeeded', { fetchedAt: now().toISOString(), itemCount: items.length });
-    info(`[rssFetcher] ${feed.name}: cached ${cached} items`);
+    info(`[rssFetcher] ${provider} feed: cached ${cached} items`);
   }
 
   async function rebuildHomepage(feeds) {

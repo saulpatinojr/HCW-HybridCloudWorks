@@ -377,6 +377,28 @@ describe('runJob', () => {
     expect(racy.patchDoc).not.toHaveBeenCalled();
   });
 
+  it('logs the job type and the outcome, never the job id, now that these lines reach Log Analytics (#1635)', async () => {
+    const lines = (ctx) => ctx.log.mock.calls.map((call) => call.join(' '));
+
+    const ok = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    await createJobHandlers({ guard: guardAs('editor'), store: makeStore({ 'job-1': queued() }), ...fixed }).runJob({ jobId: 'job-1' }, ok);
+    expect(lines(ok)).toEqual(['runJob: a noop job succeeded']);
+
+    const dup = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    await createJobHandlers({ guard: guardAs('editor'), store: makeStore({ 'job-1': { ...queued(), status: 'running' } }), ...fixed }).runJob({ jobId: 'job-1' }, dup);
+    expect(lines(dup)).toEqual(['runJob: a noop job is running; skipping']);
+
+    const racy = makeStore({ 'job-2': { ...queued(), id: 'job-2' } });
+    racy.replaceDocIfMatch.mockRejectedValueOnce(Object.assign(new Error('precondition'), { code: 412 }));
+    const race = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    await createJobHandlers({ guard: guardAs('editor'), store: racy, ...fixed }).runJob({ jobId: 'job-2' }, race);
+    expect(lines(race)).toEqual(['runJob: a noop job was claimed elsewhere']);
+
+    for (const line of [...lines(ok), ...lines(dup), ...lines(race)]) {
+      expect(line).not.toMatch(/job-[12]/);
+    }
+  });
+
   it('ignores malformed messages and missing documents without throwing', async () => {
     const store = makeStore();
     const h = createJobHandlers({ guard: guardAs('editor'), store, ...fixed });

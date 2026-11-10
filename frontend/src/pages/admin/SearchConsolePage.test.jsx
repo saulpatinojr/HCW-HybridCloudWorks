@@ -489,6 +489,11 @@ describe('Run now', () => {
       await loaded();
       fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
       expect(await screen.findByRole('button', { name: /Run in progress/ })).toBeTruthy();
+      // Let the effect that starts the polling timer run before moving the
+      // clock, as in "stops waiting after an hour" below: otherwise the timer
+      // can start after the jump and never fire, and the page reads only once
+      // (failed in CI on 2026-11-10, "called 2 times, but got 1 times").
+      await act(async () => {});
 
       getJSON.mockRejectedValueOnce(new Error('HTTP 503: try later'));
       await act(async () => {

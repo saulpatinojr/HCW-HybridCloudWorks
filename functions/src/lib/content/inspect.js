@@ -25,6 +25,9 @@ import { extractPublishedDate, referenceScrapedImages } from './scrape.js';
 import { blogImageDefaults } from '../rss/source-config.js';
 import { fetchImage as defaultFetchImage } from '../triggers/fetch-image.js';
 
+/** The provider values the analysis prompt allows; only these are logged (#1635). */
+const LOGGABLE_PROVIDERS = new Set(['Azure', 'AWS', 'GCP', 'VMware', 'Ansible', 'GitHub', 'Terraform', 'FinOps', 'Docker', 'Multi']);
+
 // The static system prompt — kept ≥1,024 tokens so Anthropic caches it.
 export const ANALYSIS_SYSTEM_PROMPT = `You are a technical content analyst for Hybrid Cloud Works (HCW), a publication targeting senior cloud practitioners — architects, DevOps leads, FinOps analysts, and platform engineers — at enterprises operating multi-cloud or hybrid environments. Every article you produce must be technical, concrete, and actionable. Do not write introductory-level content.
 
@@ -230,8 +233,11 @@ export function createInspector({
     log.log?.(`[ai-model] article analysis via ${aiProvider}`);
     // Fingerprint only — never the payload.
     log.log?.('[ai-model] analysis complete', {
-      title: metadata?.title,
-      cloudProvider: metadata?.cloudProvider,
+      // No title: an article's words never reach a log line (#1635).
+      hasTitle: typeof metadata?.title === 'string' && metadata.title.length > 0,
+      // The model's answer, logged only when it is one of the values the
+      // prompt allows; anything else is 'other' (#1635).
+      cloudProvider: LOGGABLE_PROVIDERS.has(metadata?.cloudProvider) ? metadata.cloudProvider : 'other',
       postContentChars:
         typeof metadata?.postContent === 'string' ? metadata.postContent.length : undefined,
     });
@@ -357,7 +363,8 @@ export function createInspector({
     if (!targetUrl) throw new Error('No URL provided in document (checked url, sourceUrl, CD Url)');
     if (newData.type === 'architecture') throw new Error(ARCHITECTURE_NOT_PORTED);
 
-    log.log?.(`[inspect:${collectionName}] ${docId} — ${targetUrl}`);
+    // No document id or URL in these lines (#1635).
+    log.log?.(`[inspect:${collectionName}] inspecting`);
     // RSS writes 'Cloud Provider'; manual submission writes cloudProvider.
     const cloudProvider = newData.cloudProvider || newData['Cloud Provider'] || null;
     const inspection = await inspectArticleSource(
@@ -368,7 +375,7 @@ export function createInspector({
     );
     const update = buildInspectionUpdateData({ newData, targetUrl, ...inspection, now: now() });
     await store.patchDoc(collectionName, docId, update);
-    log.log?.(`[inspect:${collectionName}] ${docId} → ${update.contentStatus}`);
+    log.log?.(`[inspect:${collectionName}] → ${update.contentStatus}`);
     return {
       docId,
       contentStatus: update.contentStatus,

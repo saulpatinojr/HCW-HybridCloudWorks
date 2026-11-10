@@ -132,7 +132,8 @@ async function tryReaderFallback(url, startedAt, { env, fetchImpl, log, signal }
     return null;
   try {
     const fallbackUrl = `https://r.jina.ai/http://${String(url).replace(/^https?:\/\//i, '')}`;
-    log.log?.('[scraper] Trying reader fallback:', fallbackUrl);
+    // No address in these lines (#1635): the URL is the reader's own content.
+    log.log?.('[scraper] Trying reader fallback');
     const response = await fetchWithTimeout(fetchImpl, fallbackUrl, {
       timeoutMs: 20000,
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HCW-Bot/1.0)' },
@@ -167,7 +168,7 @@ async function tryHeadlessFallback(url, startedAt, { env, fetchImpl, log, signal
   const endpoint = String(env.CONTENTFORGE_HEADLESS_FALLBACK_URL || '').trim();
   if (!enabled || !endpoint) return null;
   try {
-    log.log?.('[scraper] Trying headless fallback:', endpoint);
+    log.log?.('[scraper] Trying headless fallback');
     const response = await fetchWithTimeout(fetchImpl, endpoint, {
       method: 'POST',
       timeoutMs: 45000,
@@ -220,7 +221,7 @@ export async function scrapeArticle(
   { fetch: fetchImpl = globalThis.fetch, env = process.env, log = {}, now = Date.now, resolve, signal } = {}
 ) {
   const startedAt = now();
-  log.log?.('[scraper] Fetching:', url);
+  log.log?.('[scraper] Fetching');
   try {
     // `url` is whatever the editor (or a feed) named, so it is fetched through
     // the SSRF guard: resolved first, private and link-local refused, redirects

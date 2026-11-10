@@ -22,6 +22,12 @@ import { fileURLToPath } from 'node:url';
 
 const HOST_JSON = fileURLToPath(new URL('../host.json', import.meta.url));
 const raw = readFileSync(HOST_JSON, 'utf8');
+const INVENTORY = fileURLToPath(new URL('../function-inventory.json', import.meta.url));
+/** Every function name the app registers (function-inventory.test.js keeps this list true). */
+const functionNames = (() => {
+  const inventory = JSON.parse(readFileSync(INVENTORY, 'utf8'));
+  return new Set(Object.values(inventory).filter(Array.isArray).flat());
+})();
 
 /** The only values Microsoft.Extensions.Logging accepts. */
 const LOG_LEVELS = ['Trace', 'Debug', 'Information', 'Warning', 'Error', 'Critical', 'None'];
@@ -64,6 +70,29 @@ describe('host.json', () => {
     // "did the timer fire", so raising this makes the gate unobservable
     // (T-514).
     expect(config.logging?.logLevel?.['Host.Results']).toBe('Information');
+  });
+
+  it('names a real function in every Function.<name> category, or the entry silently matches nothing', () => {
+    // A function's own lines are the category Function.<name>.User and its
+    // run lines Function.<name> (Microsoft Learn, "Configure categories").
+    // `Function.admin` and `Function.jobs` sat here for months matching no
+    // function, so the lines they were meant to keep were dropped by the
+    // `Function` category's Warning, and nothing said so (#1635).
+    const stale = Object.keys(config.logging?.logLevel ?? {})
+      .filter((category) => category.startsWith('Function.'))
+      .map((category) => category.slice('Function.'.length).replace(/\.User$/, ''))
+      .filter((name) => !functionNames.has(name));
+    expect(stale, 'Function.<name> entries whose name is not a registered function').toEqual([]);
+  });
+
+  it('keeps the job worker and the Search Console timer at Information, or what a run did is never logged', () => {
+    // Under `Function: Warning`, these two entries are the only reason a
+    // job's outcome (`runJob: a … job succeeded`) and the twice-daily Search
+    // Console summary reach Log Analytics (#1635). Their lines are kept
+    // content-free for that reason: no document ids, URLs or titles.
+    for (const category of ['Function.platformJobWorker.User', 'Function.syncSearchConsole.User']) {
+      expect(config.logging?.logLevel?.[category], category).toBe('Information');
+    }
   });
 
   it('keeps the Azure SDK categories quiet, or the ingestion cap goes to noise', () => {

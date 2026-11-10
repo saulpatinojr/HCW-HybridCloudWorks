@@ -10,6 +10,7 @@
     "logLevel": {
       "default": "Warning",
       "Function": "Warning",
+      "Function.platformJobWorker.User": "Information",
       "Function.syncSearchConsole.User": "Information",
       "Host.Results": "Information",
       "Host.Aggregator": "Warning",

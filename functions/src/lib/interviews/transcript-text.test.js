@@ -67,7 +67,9 @@ describe('storeProvidedTranscript', () => {
       interview: { stage: 'transcribed', error: null },
     });
     const line = log.log.mock.calls[0][0];
-    expect(line).toBe(`interview transcript: int-1 v1 provided (2 turns, ${text.length} chars)`);
+    expect(line).toBe(`interview transcript: v1 provided (2 turns, ${text.length} chars)`);
+    // No interview id: the job worker's lines reach Log Analytics (#1635).
+    expect(line).not.toContain('int-1');
     expect(line).not.toContain('Alex');
     expect(line).not.toContain('secret.example');
   });

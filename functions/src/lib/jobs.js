@@ -543,7 +543,8 @@ export function createJobHandlers({
       }
       if (doc.status !== 'queued') {
         // Duplicate delivery, or an operator cancelled it while it waited.
-        context.log?.(`runJob: job ${jobId} is ${doc.status}; skipping`);
+        // No job id in these lines: they reach Log Analytics (#1635), and an id is a document id.
+        context.log?.(`runJob: a ${doc.type} job is ${doc.status}; skipping`);
         return { jobId, outcome: 'skipped' };
       }
 
@@ -570,7 +571,7 @@ export function createJobHandlers({
         });
       } catch (error) {
         if (isPreconditionFailure(error)) {
-          context.log?.(`runJob: job ${jobId} claimed elsewhere`);
+          context.log?.(`runJob: a ${doc.type} job was claimed elsewhere`);
           return { jobId, outcome: 'skipped' };
         }
         throw error;
@@ -633,7 +634,7 @@ export function createJobHandlers({
           result: result === undefined ? null : result,
           error: null,
         });
-        context.log?.(`runJob: job ${jobId} (${doc.type}) succeeded`);
+        context.log?.(`runJob: a ${doc.type} job succeeded`);
         await invokeOnComplete({
           job: claimed,
           status: 'succeeded',
