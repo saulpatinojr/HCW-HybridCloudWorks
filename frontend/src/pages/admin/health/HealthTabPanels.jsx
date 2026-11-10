@@ -26,6 +26,7 @@ import {
 } from './probes';
 import ProbeGrid from './ProbeCards';
 import { PROBES } from './probeRegistry';
+import SentAlertsCard from './SentAlertsCard';
 
 export function GlanceItem({ label, children }) {
   return (
@@ -181,7 +182,8 @@ export function AlertsTab({ ops, derived, alerts }) {
     <div className="space-y-4">
       <TabIntro>
         Alerts the workflows raised. Acknowledging, resolving or reopening one writes to the alert
-        and re-reads the snapshot.
+        and re-reads the snapshot. Below them, every alert sent to your phone, which you can send
+        again.
       </TabIntro>
       <div aria-live="polite">
         {alerts.message && <p className="text-sm text-emerald-600">{alerts.message}</p>}
@@ -201,6 +203,8 @@ export function AlertsTab({ ops, derived, alerts }) {
       ) : (
         <SnapshotNotice ops={ops} />
       )}
+      {/* Its own read, so a snapshot that could not load still shows what reached the phone. */}
+      <SentAlertsCard />
     </div>
   );
 }

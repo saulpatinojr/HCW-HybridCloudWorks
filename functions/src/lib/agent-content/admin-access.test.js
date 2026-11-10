@@ -5,6 +5,7 @@ import {
   ADMIN_SECTION_IDS,
   TRANSITION_TARGETS_ALLOWED,
   JOB_TYPES_ALLOWED,
+  WORKFLOW_ALERT_ACTIONS_ALLOWED,
   templateToPattern,
   apiPathOf,
   matchPolicy,
@@ -73,13 +74,18 @@ describe('the policy table', () => {
       'cms/newsletters', 'cms/social-posts', 'cms/calendar', 'publishSnapshot',
       'cms/podcast/transcripts/{id}/publish', 'cms/integration-status PUT', 'cms/agent-content/key',
       'cms/config/{collection}', 'cms/keyword-config',
+      // Sending an alert to the owner's phone again is a person's choice,
+      // and so are the Telegram test and the reminders sheet's writes.
+      'cms/alerts/resend', 'cms/platform-settings/reminders/test',
       // These three unpublish without a body rule to stop them: inspection
       // and reset write a published item back to ingested, review withdraws
       // an episode to draft (Copilot review, 2026-11-01).
       'requestContentInspection', 'resetContentReviewState', 'cms/listen-and-learn/review',
     ]) {
-      if (never === 'cms/settings') {
-        // read is allowed for the editor's pickers; the write is not
+      if (never === 'cms/settings' || never === 'cms/platform-settings/{setting}') {
+        // Read is allowed (the editor's pickers; Platform Settings since the
+        // owner's request of 2026-11-10, "all platform items"); a write is
+        // not: autoposting there decides what is published.
         expect(POLICY.some((row) => row.route === never && row.method !== 'GET')).toBe(false);
         continue;
       }
@@ -97,10 +103,28 @@ describe('the policy table', () => {
     }
   });
 
-  it('grants publisher only to the Doc Vault, and viewer only to reads', () => {
+  it('grants publisher only to the Doc Vault and the workflow-alert actions, and viewer only to reads', () => {
     for (const row of POLICY) {
-      if (row.role === 'publisher') expect(row.route.startsWith('cms/doc-vault')).toBe(true);
+      if (row.role === 'publisher') {
+        expect(row.route.startsWith('cms/doc-vault') || row.route === 'updateWorkflowAlert', row.route).toBe(true);
+      }
       if (row.route.startsWith('cms/doc-vault')) expect(row.role).toBe('publisher');
+    }
+    // The alert actions are held to acknowledge, resolve and reopen by a body rule.
+    for (const row of POLICY.filter((r) => r.route === 'updateWorkflowAlert')) {
+      expect(row.body).toEqual([{ field: 'action', allow: WORKFLOW_ALERT_ACTIONS_ALLOWED }]);
+    }
+  });
+
+  it('opens every Platform page and the alerting around it under the Platform switch (owner request 2026-11-10)', () => {
+    const platform = new Set(POLICY.filter((row) => row.sections.includes('admin.platform')).map((row) => `${row.method} ${row.route}`));
+    for (const route of [
+      'GET cms/health/probe-results', 'POST getOpsHealthSnapshot', 'GET cms/integration-status', 'POST connectionProbe',
+      'GET cms/cost/summary', 'GET cms/search-console', 'POST cms/search-console/run', 'GET cms/alerts/recent',
+      'GET cms/calendar-alerts', 'GET cms/platform-settings/{setting}', 'GET cms/platform-settings/history',
+      'POST updateWorkflowAlert', 'PATCH updateWorkflowAlert', 'GET getJob', 'POST getJob', 'POST getQueueSnapshot',
+    ]) {
+      expect(platform.has(route), route).toBe(true);
     }
   });
 
@@ -170,6 +194,16 @@ describe('body rules', () => {
     }
     expect((await checkBodyRule(enqueue, request({ body: { type: 'publish-content' } }))).reason).toBe('body-not-allowed');
     expect((await checkBodyRule(enqueue, request({ body: { type: ' forge-article ' } }))).ok).toBe(true);
+  });
+
+  it('lets a workflow alert be acknowledged, resolved or reopened, and nothing else', async () => {
+    const update = POLICY.find((row) => row.method === 'POST' && row.route === 'updateWorkflowAlert');
+    for (const action of WORKFLOW_ALERT_ACTIONS_ALLOWED) {
+      expect(await checkBodyRule(update, request({ body: { alertId: 'a', action } }))).toEqual({ ok: true });
+    }
+    for (const action of ['delete', 'purge', '']) {
+      expect((await checkBodyRule(update, request({ body: { alertId: 'a', action } }))).reason, action).toBe('body-not-allowed');
+    }
   });
 
   it('refuses a create whose item (under `data`, where the handler reads it) asks to be born published or live, and allows one that does not say', async () => {

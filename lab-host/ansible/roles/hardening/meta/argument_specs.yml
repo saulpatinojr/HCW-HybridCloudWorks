@@ -323,12 +323,14 @@ argument_specs:
       hardening_drift_vault_file:
         type: str
         required: false
-        default: /etc/hcw/vault.yml
+        default: /etc/hcw/ansible/vault.yml
         description:
-          - Path to Ansible vault file passed to check run when present.
+          - Path to the Ansible vault file, the one bootstrap.sh uses (HCW_VAULT_FILE).
+          - Passed to the check run when it and the password file both exist; one without the other fails the check.
       hardening_drift_vault_password_file:
         type: str
         required: false
-        default: /etc/hcw/vault.pass
+        default: /etc/hcw/ansible/vault-password
         description:
-          - Path to Ansible vault password file passed to check run when present.
+          - Path to the Ansible vault password file, the one bootstrap.sh uses (HCW_VAULT_PASSWORD_FILE).
+          - Passed to the check run when it and the vault file both exist; one without the other fails the check.
