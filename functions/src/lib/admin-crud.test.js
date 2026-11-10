@@ -247,6 +247,18 @@ describe('certifications', () => {
     expect(validateCertification({ _updatedAt: '1999-01-01' }).error).toMatch(/Unknown field/);
   });
 
+  it('accepts the editor\'s description, trimmed and capped, and keeps null as null (#1663)', () => {
+    // The editor's "Description / story" box was refused as an unknown field,
+    // and with it every save from the editor.
+    expect(validateCertification({ description: '  Why it matters  ' }).value.description).toBe(
+      'Why it matters'
+    );
+    expect(validateCertification({ description: 'x'.repeat(5000) }).value.description).toHaveLength(4000);
+    expect(validateCertification({ description: null }).value.description).toBeNull();
+    // `vendor` is still refused: it is worked out from the issuer, never stored.
+    expect(validateCertification({ vendor: 'azure' }).error).toMatch(/Unknown field.*vendor/);
+  });
+
   it.each(['_createdAt', '_updatedAt', '_etag', '_ts', 'id'])(
     'the routes refuse a write that names the system field %s, and store nothing (#945)',
     async (field) => {
