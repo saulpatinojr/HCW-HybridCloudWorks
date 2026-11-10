@@ -98,6 +98,30 @@ export function isAvmSource(source) {
  */
 export const TERRAFORM_REQUIRED_VERSION = '>= 1.12, < 2.0';
 
+/**
+ * What someone must do before applying this build over a landing zone that
+ * an earlier build deployed, per module, when a pinned release is a breaking
+ * upgrade. The generated README prints each one whose module is pinned at or
+ * above `since` (hcl/readme.js). A note stays while the pin is at or above
+ * its release: anyone upgrading from below it still needs it. Written by
+ * hand from the release notes; the weekly update flags a release, it does
+ * not read its notes (#1658).
+ */
+export const AVM_UPGRADE_NOTES = Object.freeze([
+  Object.freeze({
+    module: 'avm-ptn-alz-connectivity-hub-and-spoke-vnet',
+    since: '0.18.1',
+    note:
+      'Azure Bastion moves from the azurerm provider to azapi. Before applying this build over a ' +
+      'landing zone an earlier build deployed with a version below 0.18.1, migrate the Bastion ' +
+      "resources' Terraform state from azurerm to azapi as the module's README section " +
+      '"Upgrading Azure Bastion" describes. Without it, Bastion is destroyed and recreated, which ' +
+      'interrupts connectivity. Read the plan before applying either way: a known AzAPI issue can ' +
+      'still plan a replacement. A new deployment is not affected.',
+    url: 'https://github.com/Azure/terraform-azurerm-avm-ptn-alz-connectivity-hub-and-spoke-vnet/releases/tag/v0.18.1',
+  }),
+]);
+
 export const PROVIDER_PINS = Object.freeze([
   Object.freeze({ name: 'alz', source: 'azure/alz', version: '~> 0.21' }),
   Object.freeze({ name: 'azapi', source: 'Azure/azapi', version: '~> 2.12' }),

@@ -68,6 +68,10 @@ Pinned to the versions the Terraform Registry listed on 2026-11-10:
 - \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.18.1
 - \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.23.0
 
+## Upgrading a landing zone an earlier build deployed
+
+- **\`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.18.1 is a breaking upgrade.** Azure Bastion moves from the azurerm provider to azapi. Before applying this build over a landing zone an earlier build deployed with a version below 0.18.1, migrate the Bastion resources' Terraform state from azurerm to azapi as the module's README section "Upgrading Azure Bastion" describes. Without it, Bastion is destroyed and recreated, which interrupts connectivity. Read the plan before applying either way: a known AzAPI issue can still plan a replacement. A new deployment is not affected. Release notes: https://github.com/Azure/terraform-azurerm-avm-ptn-alz-connectivity-hub-and-spoke-vnet/releases/tag/v0.18.1
+
 ## Running it
 
 From a checkout with \`terraform.tfvars\` filled in:
