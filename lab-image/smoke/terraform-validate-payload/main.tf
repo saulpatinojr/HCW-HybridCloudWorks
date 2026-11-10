@@ -11,8 +11,9 @@
 # smoke.sh expects exactly one rewrite per builder module. The constraints
 # differ on purpose, to exercise the operators hcw-terraform-validate
 # evaluates; the spoke's is `>= 0.15.0` so that both vendored versions of
-# avm-res-network-virtualnetwork (0.15.0, a child of the connectivity
-# module, and the builder's pin) satisfy it and the highest must be chosen.
+# avm-res-network-virtualnetwork (the one the connectivity module calls,
+# AVM_CHILD_MODULES in lab-image/versions.env, and the builder's pin) satisfy
+# it and the highest must be chosen.
 # update-avm-versions.yml moves each block with its module's pin, keeping
 # its operator: the alz block's exact pin (the builder's own), the
 # connectivity block's one-minor window and the management block's `~>`,
@@ -63,7 +64,7 @@ module "alz" {
 
 module "connectivity" {
   source  = "Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm"
-  version = ">= 0.17.0, < 0.18.0"
+  version = ">= 0.18.0, < 0.19.0"
 }
 
 module "spoke" {

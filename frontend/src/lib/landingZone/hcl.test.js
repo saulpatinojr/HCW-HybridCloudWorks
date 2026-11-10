@@ -164,9 +164,12 @@ describe('emitFiles', () => {
     );
     expect(app).toContain('create_reverse_peering             = true');
     expect(app).toContain('reverse_name                       = "peer-hub-to-online-1"');
-    expect(app).toMatch(
-      /providers = \{\n    azapi  = azapi\.corp_1\n    modtm  = modtm\n    random = random\n  \}/
-    );
+    // Copy and paste through Bastion stays off: connectivity 0.18.1 changed
+    // the module's default to on, and the builder sets it back (#1658).
+    expect(full['connectivity.tf']).toMatch(/bastion = \{\n\s+copy_paste_enabled = false\n\s+\}/);
+    // avm-res-network-virtualnetwork 0.23.0 requires azapi alone (it no
+    // longer declares modtm or random), so the spoke passes only azapi.
+    expect(app).toMatch(/providers = \{\n    azapi = azapi\.corp_1\n  \}/);
     expect(app).not.toContain('resource_group_name = "');
 
     const identity = full['identity.tf'];

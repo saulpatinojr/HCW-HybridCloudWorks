@@ -16,12 +16,12 @@ have read.
 
 - **Management groups**: The tree of management groups every subscription is placed in. — \`Azure/avm-ptn-alz/azurerm\` 0.22.0
 - **Policy baseline**: The Azure Policy assignments the alz architecture makes on each management group.
-- **Management**: The Log Analytics workspace and Automation account that collect every subscription’s telemetry. — \`Azure/avm-ptn-alz-management/azurerm\` 0.9.0
-- **Connectivity hub**: The hub virtual network, Bastion and DNS that every landing zone peers into. — \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.17.7
+- **Management**: The Log Analytics workspace and Automation account that collect every subscription’s telemetry. — \`Azure/avm-ptn-alz-management/azurerm\` 0.10.0
+- **Connectivity hub**: The hub virtual network, Bastion and DNS that every landing zone peers into. — \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.18.1
 - **Azure Firewall**: The firewall in the hub that every private spoke’s traffic is routed through.
-- **Identity**: The identity subscription, placed under the Identity group, with its own spoke. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.3
-- **Corp landing zone (1)**: An application subscription for internal workloads, reached only through the hub. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.3
-- **Online landing zone (1)**: An application subscription that may face the internet and still uses the hub. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.3
+- **Identity**: The identity subscription, placed under the Identity group, with its own spoke. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.23.0
+- **Corp landing zone (1)**: An application subscription for internal workloads, reached only through the hub. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.23.0
+- **Online landing zone (1)**: An application subscription that may face the internet and still uses the hub. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.23.0
 
 ## Files
 
@@ -61,12 +61,16 @@ selected; online spokes egress directly.
 
 ## Module versions
 
-Pinned to the versions the Terraform Registry listed on 2026-10-20:
+Pinned to the versions the Terraform Registry listed on 2026-11-10:
 
 - \`Azure/avm-ptn-alz/azurerm\` 0.22.0
-- \`Azure/avm-ptn-alz-management/azurerm\` 0.9.0
-- \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.17.7
-- \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.3
+- \`Azure/avm-ptn-alz-management/azurerm\` 0.10.0
+- \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.18.1
+- \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.23.0
+
+## Upgrading a landing zone an earlier build deployed
+
+- **\`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.18.1 is a breaking upgrade.** Azure Bastion moves from the azurerm provider to azapi. Before applying this build over a landing zone an earlier build deployed with a version below 0.18.1, migrate the Bastion resources' Terraform state from azurerm to azapi as the module's README section "Upgrading Azure Bastion" describes. Without it, Bastion is destroyed and recreated, which interrupts connectivity. Read the plan before applying either way: a known AzAPI issue can still plan a replacement. A new deployment is not affected. Release notes: https://github.com/Azure/terraform-azurerm-avm-ptn-alz-connectivity-hub-and-spoke-vnet/releases/tag/v0.18.1
 
 ## Running it
 
@@ -229,7 +233,7 @@ resource "azurerm_route_table" "spoke_corp_1" {
 
 module "spoke_corp_1" {
   source  = "Azure/avm-res-network-virtualnetwork/azurerm"
-  version = "0.22.3"
+  version = "0.23.0"
 
   location         = var.location
   name             = "vnet-alz-corp-1-\${var.location}"
@@ -259,9 +263,7 @@ module "spoke_corp_1" {
   }
 
   providers = {
-    azapi  = azapi.corp_1
-    modtm  = modtm
-    random = random
+    azapi = azapi.corp_1
   }
 }
 
@@ -274,7 +276,7 @@ resource "azurerm_resource_group" "spoke_online_1" {
 
 module "spoke_online_1" {
   source  = "Azure/avm-res-network-virtualnetwork/azurerm"
-  version = "0.22.3"
+  version = "0.23.0"
 
   location         = var.location
   name             = "vnet-alz-online-1-\${var.location}"
@@ -301,9 +303,7 @@ module "spoke_online_1" {
   }
 
   providers = {
-    azapi  = azapi.online_1
-    modtm  = modtm
-    random = random
+    azapi = azapi.online_1
   }
 }
 "
@@ -323,7 +323,7 @@ resource "azurerm_resource_group" "connectivity" {
 
 module "connectivity" {
   source  = "Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm"
-  version = "0.17.7"
+  version = "0.18.1"
 
   enable_telemetry = var.enable_telemetry
 
@@ -348,6 +348,9 @@ module "connectivity" {
         dns_resolver_policy                   = true
         virtual_network_gateway_express_route = false
         virtual_network_gateway_vpn           = false
+      }
+      bastion = {
+        copy_paste_enabled = false
       }
       firewall = {
         sku_tier = "Standard"
@@ -402,7 +405,7 @@ resource "azurerm_route_table" "spoke_identity" {
 
 module "spoke_identity" {
   source  = "Azure/avm-res-network-virtualnetwork/azurerm"
-  version = "0.22.3"
+  version = "0.23.0"
 
   location         = var.location
   name             = "vnet-alz-identity-\${var.location}"
@@ -432,9 +435,7 @@ module "spoke_identity" {
   }
 
   providers = {
-    azapi  = azapi.identity
-    modtm  = modtm
-    random = random
+    azapi = azapi.identity
   }
 }
 "
@@ -454,7 +455,7 @@ locals {
 
 module "management" {
   source  = "Azure/avm-ptn-alz-management/azurerm"
-  version = "0.9.0"
+  version = "0.10.0"
 
   automation_account_name      = local.automation_account_name
   location                     = var.location
@@ -465,8 +466,6 @@ module "management" {
   providers = {
     azapi   = azapi.management
     azurerm = azurerm.management
-    modtm   = modtm
-    random  = random
   }
 }
 "
@@ -821,12 +820,12 @@ selected; online spokes egress directly.
 
 ## Module versions
 
-Pinned to the versions the Terraform Registry listed on 2026-10-20:
+Pinned to the versions the Terraform Registry listed on 2026-11-10:
 
 - \`Azure/avm-ptn-alz/azurerm\` 0.22.0
-- \`Azure/avm-ptn-alz-management/azurerm\` 0.9.0
-- \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.17.7
-- \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.3
+- \`Azure/avm-ptn-alz-management/azurerm\` 0.10.0
+- \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.18.1
+- \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.23.0
 
 ## Running it
 

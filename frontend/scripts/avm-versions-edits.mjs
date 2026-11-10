@@ -510,10 +510,18 @@ function envLine(result) {
 
 const PAYLOAD_PATH = 'lab-image/smoke/terraform-validate-payload/main.tf';
 
-/** One line when the smoke payload's exact pin on this module moved with it. */
+/**
+ * One line when the smoke payload's block for this module moved with it:
+ * an exact pin, or a window or `~>` the release had left (#1658). It names
+ * the constraint before and after, not the module's versions, because a
+ * window moves differently from the pin (the first run after #1658 called a
+ * window an exact pin).
+ */
 function payloadLine(result) {
   if (!result.smokePinMoved) return null;
-  return `- ${code(PAYLOAD_PATH)}: the exact ${code(`version = "${result.from}"`)} on its block for this module now reads ${code(result.to)}, so smoke.sh still rewrites one block per builder module.`;
+  const from = result.smokeFrom ?? result.from;
+  const to = result.smokeTo ?? result.to;
+  return `- ${code(PAYLOAD_PATH)}: its block for this module read ${code(`version = "${from}"`)} and now reads ${code(`version = "${to}"`)}, so smoke.sh still rewrites one block per builder module.`;
 }
 
 const driftParts = (drift) =>

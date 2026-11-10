@@ -3,9 +3,49 @@
  * pattern's prerequisites, the module pins, and the line that says these
  * files were generated for learning and never applied here.
  */
-import { AVM_MODULES, AVM_VERIFIED_ON, TERRAFORM_REQUIRED_VERSION } from '../avmVersions';
+import {
+  AVM_MODULES,
+  AVM_UPGRADE_NOTES,
+  AVM_VERIFIED_ON,
+  TERRAFORM_REQUIRED_VERSION,
+} from '../avmVersions';
 import { componentById, countOptionFor } from '../components';
 import { file } from './format';
+
+/** `1.2.3` compared as numbers: negative, zero or positive. */
+function compareRelease(a, b) {
+  const [x, y] = [a, b].map((v) => String(v).split('.').map(Number));
+  for (let i = 0; i < 3; i += 1) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
+  }
+  return 0;
+}
+
+/**
+ * The "Upgrading" section: one line per breaking upgrade note whose module
+ * this build uses (`used`, the modules' sources) and is pinned at or above
+ * the release the note names (AVM_UPGRADE_NOTES). Empty when there is none,
+ * so a build with nothing to warn about has no section.
+ */
+export function upgradeSection(used, notes = AVM_UPGRADE_NOTES, modules = AVM_MODULES) {
+  const due = notes.filter(
+    (n) =>
+      modules[n.module] &&
+      used.has(modules[n.module].source) &&
+      compareRelease(modules[n.module].version, n.since) >= 0
+  );
+  if (due.length === 0) return [];
+  return [
+    '## Upgrading a landing zone an earlier build deployed',
+    '',
+    ...due.map(
+      (n) =>
+        `- **\`${modules[n.module].source}\` ${n.since} is a breaking upgrade.** ${n.note} ` +
+        `Release notes: ${n.url}`
+    ),
+    '',
+  ];
+}
 
 const INTRO = [
   '# Azure landing zone, generated for learning',
@@ -100,6 +140,7 @@ export function readmeMd(state, emitted) {
     '',
     ...Object.values(AVM_MODULES).map((m) => `- \`${m.source}\` ${m.version}`),
     '',
+    ...upgradeSection(new Set(selected.map((c) => c.avm?.source).filter(Boolean))),
     ...RUNNING,
   ]);
 }

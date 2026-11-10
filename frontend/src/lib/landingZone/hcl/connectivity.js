@@ -39,6 +39,10 @@ function hubObject(firewall, dns, sku) {
       ]),
     ],
   ];
+  // Copy and paste through Bastion stays off, as it was before connectivity
+  // 0.18.1 changed the module's default to on (#1658). Turning it off needs
+  // the Standard or Premium SKU; the module's default SKU is Standard.
+  hub.push(['bastion', obj([['copy_paste_enabled', 'false']])]);
   if (firewall) {
     hub.push(
       ['firewall', obj([['sku_tier', q(sku)]])],

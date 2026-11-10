@@ -22,7 +22,7 @@
  * that module requires, because once a block carries a `providers` argument
  * Terraform stops inheriting defaults for the providers it leaves out.
  */
-export const AVM_VERIFIED_ON = '2026-10-20';
+export const AVM_VERIFIED_ON = '2026-11-10';
 
 const registryUrl = (name) => `https://registry.terraform.io/modules/Azure/${name}/azurerm`;
 const repositoryUrl = (name) => `https://github.com/Azure/terraform-azurerm-${name}`;
@@ -41,22 +41,13 @@ const avm = (name, version, requiredProviders) =>
 /** Keyed by module name; every `version` is a published release string. */
 export const AVM_MODULES = Object.freeze({
   'avm-ptn-alz': avm('avm-ptn-alz', '0.22.0', ['alz', 'azapi', 'modtm', 'random', 'time']),
-  'avm-ptn-alz-management': avm('avm-ptn-alz-management', '0.9.0', [
-    'azapi',
-    'azurerm',
-    'modtm',
-    'random',
-  ]),
+  'avm-ptn-alz-management': avm('avm-ptn-alz-management', '0.10.0', ['azapi', 'azurerm']),
   'avm-ptn-alz-connectivity-hub-and-spoke-vnet': avm(
     'avm-ptn-alz-connectivity-hub-and-spoke-vnet',
-    '0.17.7',
+    '0.18.1',
     ['azapi', 'azurerm', 'modtm', 'random']
   ),
-  'avm-res-network-virtualnetwork': avm('avm-res-network-virtualnetwork', '0.22.3', [
-    'azapi',
-    'modtm',
-    'random',
-  ]),
+  'avm-res-network-virtualnetwork': avm('avm-res-network-virtualnetwork', '0.23.0', ['azapi']),
 });
 
 export const AVM_MODULE_NAMES = Object.freeze(Object.keys(AVM_MODULES));
@@ -83,12 +74,11 @@ export function isAvmSource(source) {
  *   avm-ptn-alz 0.22.0        terraform >= 1.12, < 2.0; alz ~> 0.21,
  *                             azapi ~> 2.12, modtm ~> 0.3, random ~> 3.6,
  *                             time ~> 0.9
- *   management 0.9.0          terraform >= 1.9, < 2.0; azapi ~> 2.4,
- *                             azurerm ~> 4.35, modtm ~> 0.3, random ~> 3.6
- *   connectivity 0.17.7       terraform ~> 1.12; azapi ~> 2.12,
+ *   management 0.10.0         terraform >= 1.9, < 2.0; azapi ~> 2.12,
+ *                             azurerm ~> 4.35
+ *   connectivity 0.18.1       terraform ~> 1.12; azapi ~> 2.12,
  *                             azurerm ~> 4.0, modtm ~> 0.3, random ~> 3.5
- *   virtual network 0.22.3    terraform >= 1.9, < 2.0; azapi ~> 2.12,
- *                             modtm ~> 0.3, random ~> 3.5
+ *   virtual network 0.23.0    terraform >= 1.9, < 2.0; azapi ~> 2.12
  *
  * The modules these call in turn add no provider and no tighter bound than
  * azurerm < 5.0. So the floor of 1.12 comes from avm-ptn-alz and
@@ -107,6 +97,30 @@ export function isAvmSource(source) {
  * constraints above, so Terraform picks the 4.x copy it also carries.
  */
 export const TERRAFORM_REQUIRED_VERSION = '>= 1.12, < 2.0';
+
+/**
+ * What someone must do before applying this build over a landing zone that
+ * an earlier build deployed, per module, when a pinned release is a breaking
+ * upgrade. The generated README prints each one whose module is pinned at or
+ * above `since` (hcl/readme.js). A note stays while the pin is at or above
+ * its release: anyone upgrading from below it still needs it. Written by
+ * hand from the release notes; the weekly update flags a release, it does
+ * not read its notes (#1658).
+ */
+export const AVM_UPGRADE_NOTES = Object.freeze([
+  Object.freeze({
+    module: 'avm-ptn-alz-connectivity-hub-and-spoke-vnet',
+    since: '0.18.1',
+    note:
+      'Azure Bastion moves from the azurerm provider to azapi. Before applying this build over a ' +
+      'landing zone an earlier build deployed with a version below 0.18.1, migrate the Bastion ' +
+      "resources' Terraform state from azurerm to azapi as the module's README section " +
+      '"Upgrading Azure Bastion" describes. Without it, Bastion is destroyed and recreated, which ' +
+      'interrupts connectivity. Read the plan before applying either way: a known AzAPI issue can ' +
+      'still plan a replacement. A new deployment is not affected.',
+    url: 'https://github.com/Azure/terraform-azurerm-avm-ptn-alz-connectivity-hub-and-spoke-vnet/releases/tag/v0.18.1',
+  }),
+]);
 
 export const PROVIDER_PINS = Object.freeze([
   Object.freeze({ name: 'alz', source: 'azure/alz', version: '~> 0.21' }),
