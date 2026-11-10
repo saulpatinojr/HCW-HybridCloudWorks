@@ -511,7 +511,7 @@ describe('updateLabVaultSecret', () => {
     const mockExec = vi.fn(async () => ({
       code: 2,
       stdout: '',
-      stderr: 'hcw-vault-set: no vault password at /etc/hcw/ansible/.vault_password',
+      stderr: 'hcw-vault-set: no vault password at /etc/hcw/ansible/vault-password',
     }));
 
     await expect(
