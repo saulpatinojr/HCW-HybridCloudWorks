@@ -9,6 +9,11 @@
  *     ArrowLeft/ArrowRight (wrapping), Home and End move focus and select.
  *
  * Selection is the caller's (usually `?tab=`), so the bar holds no state.
+ *
+ * The bar scrolls sideways on a narrow screen. Its vertical overflow is
+ * hidden: each tab sits 1px over the bar's bottom border (`-mb-px`), and
+ * without `overflow-y-hidden` the browser drew a vertical scrollbar for
+ * that 1px beside every tab bar (seen on the Search Console page, #1612).
  */
 import React, { useRef } from 'react';
 
@@ -51,7 +56,7 @@ export default function HubTabs({ tabs, active, onSelect, idPrefix, label, child
       <div
         role="tablist"
         aria-label={label}
-        className="flex gap-1 overflow-x-auto border-b border-border"
+        className="flex gap-1 overflow-x-auto overflow-y-hidden border-b border-border"
       >
         {tabs.map(({ id, label: tabLabel }, index) => {
           const selected = active === id;
