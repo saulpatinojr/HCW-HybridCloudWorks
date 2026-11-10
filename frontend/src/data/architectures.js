@@ -1,3 +1,11 @@
+import { AVM_MODULES } from '../lib/landingZone/avmVersions.js';
+
+// The example below calls avm-ptn-alz, and its "Verify in 15-Min Browser Lab"
+// button opens a lab whose image carries only the module versions the Landing
+// Zone Builder pins. So the example reads its source and version from those
+// pins instead of a typed-in number, which fell behind the weekly bump (#1604).
+const ALZ_MODULE = AVM_MODULES['avm-ptn-alz'];
+
 export const azureArchitectures = {
   'secure-2-tier-azure': {
     title: 'Secure 2-Tier Application on Azure',
@@ -328,8 +336,8 @@ resource "azurerm_private_endpoint" "sql" {
       <p>The <strong>Enterprise Hub-and-Spoke Landing Zone</strong> separates shared transit, firewall inspection, and hybrid connectivity in a central hub VNet from workload spokes deployed across dedicated subscriptions.</p>
     `,
     terraformCode: `module "alz_connectivity" {
-  source              = "Azure/avm-ptn-alz/azurerm"
-  version             = "0.21.0"
+  source              = "${ALZ_MODULE.source}"
+  version             = "${ALZ_MODULE.version}"
   architecture_name   = "alz"
   location            = "eastus2"
   parent_resource_id  = data.azurerm_client_config.current.tenant_id

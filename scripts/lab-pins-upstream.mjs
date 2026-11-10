@@ -28,9 +28,11 @@
  *                         and for a current image tag or apt package the
  *                         publisher rebuilt under the same name
  *   --bump image-base     lab-image/versions.env and its FROM lines, to the
- *                         newest digest of the base image's release line,
- *                         and its ANSIBLE_CORE_* lines to ansible-core's
- *                         newest release in its line (PyPI's wheel hashes)
+ *                         newest digest of the base image's release line
+ *                         (and the base tag and CPython release the Docker
+ *                         guide page and lab-image/README.md name), and its
+ *                         ANSIBLE_CORE_* lines to ansible-core's newest
+ *                         release in its line (PyPI's wheel hashes)
  *   --bump image-tools    lab-image/versions.env and lab-image/README.md, to
  *                         the newest release of each tool (Terraform,
  *                         kubeconform, Helm, kubectl, Azure CLI) and of each
@@ -429,7 +431,7 @@ async function bumpMain(argv) {
     plan = await bump.planHost({ text, files, rows, http });
   } else if (set === 'image-base') {
     const files = Object.fromEntries(
-      [bump.VERSIONS_ENV_PATH, bump.DOCKERFILE_PATH, bump.SANDBOX_DOCKERFILE_PATH, bump.DOCKER_GUIDE_PAGE_PATH].map((p) => [
+      [bump.VERSIONS_ENV_PATH, bump.DOCKERFILE_PATH, bump.SANDBOX_DOCKERFILE_PATH, bump.DOCKER_GUIDE_PAGE_PATH, bump.README_PATH].map((p) => [
         p,
         read(p),
       ])

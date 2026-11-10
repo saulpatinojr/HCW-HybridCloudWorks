@@ -584,7 +584,9 @@ and attests. Where each sum comes from:
   `chore/lab-pins-image-base` pull request with all four edits, the base tag
   and CPython release the Docker guide page names
   (`frontend/src/pages/docker/BuildingImagesPage.jsx`, which
-  `DockerGuides.test.jsx` holds to this file), and that evidence. A new minor line (3.16) stays a hand bump, governed by
+  `DockerGuides.test.jsx` holds to `versions.env`), the same two in the
+  first paragraph of this README (which `scripts/lab-pin-bumps.test.mjs`
+  holds to `versions.env`, #1604), and that evidence. A new minor line (3.16) stays a hand bump, governed by
   `scripts/version-floors.json`. Merging it publishes from `main`, and the
   publish opens the `chore/lab-pins-image-digests` pull request for the
   consumers.

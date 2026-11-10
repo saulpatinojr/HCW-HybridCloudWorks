@@ -743,6 +743,19 @@ export async function planHost({ text, files = {}, rows, http, bumpers = HOST_BU
  */
 const noAmd64 = (ref) => `no linux/amd64 image in ${ref}, the only platform the lab image is built for; nothing moves until there is one`;
 
+/**
+ * The sentence in lab-image/README.md that names the base: its tag and the
+ * CPython release it carries, the same two values as BASE_IMAGE and
+ * BASE_PYTHON_VERSION. The python base bump rewrites it the way the image-tools
+ * bump rewrites the provider mirror sentence (README_MIRROR_RE, below).
+ */
+export const README_BASE_RE =
+  /(Both targets are built on the official `[^`\s]+` image,\s+pinned by index digest: CPython \d+\.\d+\.\d+)(?=\s)/m;
+
+export function renderReadmeBaseProse(versions) {
+  return `Both targets are built on the official \`${versions.BASE_IMAGE}\` image,\npinned by index digest: CPython ${versions.BASE_PYTHON_VERSION}`;
+}
+
 /** The python base: the line tag's newest digest, its CPython, and the patch tag that must agree on linux/amd64. */
 async function planPythonBase(env, http, today) {
   const base = parseImageRef(env.BASE_IMAGE);
@@ -812,6 +825,16 @@ async function planPythonBase(env, http, today) {
         where: 'CHECKED_ON, the day the page was last read against the files',
         to: today.toISOString().slice(0, 10),
         apply: (t) => setCheckedOn(t, today),
+      },
+      // The lab image README names the same tag and CPython release in its
+      // first paragraph. Nothing moved it until #1604, so a bump left it on
+      // the old base; a test in lab-pin-bumps.test.mjs holds it to versions.env.
+      {
+        file: README_PATH,
+        where: 'the base tag and CPython release the README names',
+        to: newImage,
+        apply: (t) =>
+          replaceOne(t, README_BASE_RE, renderReadmeBaseProse({ BASE_IMAGE: newImage, BASE_PYTHON_VERSION: pythonVersion }), 'README base sentence'),
       },
     ],
     evidence: [

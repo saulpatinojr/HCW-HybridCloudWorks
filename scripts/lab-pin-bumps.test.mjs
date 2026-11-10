@@ -13,6 +13,7 @@ import {
   GROUP_VARS_PATH,
   HOST_BUMPERS,
   PYPI,
+  README_BASE_RE,
   README_PATH,
   SANDBOX_DOCKERFILE_PATH,
   VERSIONS_ENV_PATH,
@@ -38,6 +39,7 @@ import {
   renderEvidence,
   renderNotes,
   renderPlan,
+  renderReadmeBaseProse,
   replaceEvery,
   replaceFrom,
   resolveTag,
@@ -495,7 +497,7 @@ describe('the host plan', () => {
 
 describe('the image base plan', () => {
   const files = Object.fromEntries(
-    [VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH].map((p) => [p, real(p)])
+    [VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH, README_PATH].map((p) => [p, real(p)])
   );
   const env = readEnv(files[VERSIONS_ENV_PATH]);
   const [, major, minor] = env.BASE_PYTHON_VERSION.match(/^(\d+)\.(\d+)\.(\d+)$/);
@@ -584,6 +586,13 @@ describe('the image base plan', () => {
     // And the day the page was last read against the files is the bump's day (CodeRabbit on #1123).
     expect(page).toContain("export const CHECKED_ON = Object.freeze({ iso: '2026-10-14', label: '14 October 2026' });");
     expect(base.changes.find((c) => c.where.startsWith('CHECKED_ON'))).toMatchObject({ to: '2026-10-14' });
+    // The lab image README's first paragraph names the same tag and CPython
+    // release, and nothing rewrote it until #1604; now it moves with them.
+    const readme = plan.files[README_PATH];
+    expect(readme).toContain(renderReadmeBaseProse({ BASE_IMAGE: `python:${next}${variant}`, BASE_PYTHON_VERSION: next }));
+    expect(readme).not.toContain(`\`${env.BASE_IMAGE}\``);
+    expect(readme).not.toContain(`CPython ${env.BASE_PYTHON_VERSION}`);
+    expect(base.changes.filter((c) => c.file === README_PATH)).toHaveLength(1);
   });
 
   it('setCheckedOn writes the ISO day and its en-GB label, and refuses a page without exactly one such line', () => {
@@ -606,6 +615,18 @@ describe('the image base plan', () => {
     expect([after.BASE_IMAGE, after.BASE_DIGEST, after.BASE_PYTHON_VERSION]).toEqual([env.BASE_IMAGE, env.BASE_DIGEST, env.BASE_PYTHON_VERSION]);
     expect(plan.files[DOCKERFILE_PATH]).toBe(files[DOCKERFILE_PATH]);
     expect(plan.notes.map((n) => n.reason).join(' ')).toMatch(/BuildingImagesPage\.jsx was not read/);
+  });
+
+  it('is a note that edits nothing when lab-image/README.md was not read (#1604)', async () => {
+    // A bump that cannot rewrite the README would leave it naming the old
+    // base, so the python base does not move at all without it.
+    const { [README_PATH]: _readme, ...withoutReadme } = files;
+    const plan = await planImageBase({ files: withoutReadme, http: makeHttp(fakeFetch(registry())) });
+    expect(plan.applied.filter((b) => b.key === 'base')).toEqual([]);
+    const after = readEnv(plan.files[VERSIONS_ENV_PATH]);
+    expect([after.BASE_IMAGE, after.BASE_DIGEST, after.BASE_PYTHON_VERSION]).toEqual([env.BASE_IMAGE, env.BASE_DIGEST, env.BASE_PYTHON_VERSION]);
+    expect(plan.files[DOCKER_GUIDE_PAGE_PATH]).toBe(files[DOCKER_GUIDE_PAGE_PATH]);
+    expect(plan.notes.map((n) => n.reason).join(' ')).toMatch(/lab-image\/README\.md was not read/);
   });
 
   it('moves nothing when the patch tag and the line tag carry different linux/amd64 images', async () => {
@@ -681,10 +702,31 @@ describe('the image base plan', () => {
   });
 });
 
+// The README is read against the real versions.env, not a remembered
+// version, so the weekly bump that moves both keeps this green (#1604).
+describe('lab-image/README.md names the base image versions.env pins (#1604)', () => {
+  const readme = real(README_PATH);
+  const env = readEnv(real(VERSIONS_ENV_PATH));
+  const flat = (text) => text.replace(/\s+/g, ' ');
+  const baseSentences = (text) => [...text.matchAll(new RegExp(README_BASE_RE.source, 'g'))].map((m) => flat(m[1]));
+
+  it('has exactly one base sentence, and it names BASE_IMAGE and BASE_PYTHON_VERSION', () => {
+    expect(baseSentences(readme)).toEqual([flat(renderReadmeBaseProse(env))]);
+  });
+
+  it('catches a README that names another release than versions.env', () => {
+    // Every mention of the pinned release, the tag and the CPython line alike.
+    const other = env.BASE_PYTHON_VERSION.replace(/\d+$/, (patch) => String(Number(patch) + 1));
+    const stale = readme.split(env.BASE_PYTHON_VERSION).join(other);
+    expect(baseSentences(stale)).toHaveLength(1);
+    expect(baseSentences(stale)).not.toEqual([flat(renderReadmeBaseProse(env))]);
+  });
+});
+
 describe('the ansible-core plan (image-base, LAB-13)', () => {
   // The live pins, so these tests survive the bumps they describe.
   const files = Object.fromEntries(
-    [VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH].map((p) => [p, real(p)])
+    [VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH, README_PATH].map((p) => [p, real(p)])
   );
   const envText = files[VERSIONS_ENV_PATH];
   const env = readEnv(envText);
