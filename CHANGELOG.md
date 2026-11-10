@@ -67,6 +67,13 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Warning and error lines in job code no longer log ids, addresses or raw error text ([#1642](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1642)).** These lines were already reaching Log Analytics; the audit for #1635 found them. Each now logs a code instead:
+  - The interview audio and draft jobs' "failure not recorded" lines drop the interview id (`functions/src/lib/interviews/fetch-audio.js`, `draft.js`).
+  - The inspector's alt-text lines log the refusal code (`not-an-image`) or the error's code instead of the image's address and the error's message (`functions/src/lib/content/inspect.js`).
+  - URL drafting's document and extra-page failures log the error's code instead of the address and the provider's words (`functions/src/lib/content/draft-from-url.js`).
+  - The blog-listing scraper's failure line logs the provider and the error's code instead of the source name an editor typed and the raw error (`functions/src/lib/timers/blog-listings.js`).
+
+  The codes come from the existing `errorCode()` in `functions/src/lib/http/error-response.js`, the same door the HTTP answers use. A new test in `draft-from-url.test.js` fails if an address or an error's text comes back into those lines.
 - **The job worker's log lines are content-free and reach Log Analytics, so what a job did is visible, and `host.json` is tested against the function list ([#1635](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1635)).** `Function.platformJobWorker.User` is now at Information in `functions/host.json`. That is the queue trigger that runs **Run now** and every other platform job, so a line such as `runJob: a sync-search-console job succeeded` now reaches the logs. Before turning it on, every information-level line a job can write was made content-free, under the `functions/**` rule:
   - `runJob` (`functions/src/lib/jobs.js`) no longer names the job id; it names the job type.
   - `forge-from-url` (`functions/src/functions/forge-jobs.js`) no longer names the source URL, the content id or the error text.
