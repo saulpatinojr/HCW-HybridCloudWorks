@@ -280,8 +280,8 @@ token stays in Key Vault with the other notifier settings.
 
 | Message title | What it means | What to do |
 | --- | --- | --- |
-| **DELIVERY MONITOR RED** | The newest finished run of the check failed. The message names the failed jobs and links the run. Sent once per red stretch | Open the linked run and read its table: each service that is behind has a red mark. Start the matching deploy, or confirm the Terraform run, then wait for the next run |
-| **DELIVERY MONITOR STILL RED** | Still red 24 hours after the first message. Sent again so one missed notification does not mean silence | Same as above; nothing has fixed it yet |
+| **DELIVERY MONITOR RED** | The newest finished run of the check failed. The message names the failed jobs and links the run. Sent once when the check goes red, and again within the hour if, while it stays red, a job fails that no earlier message in that red stretch named (it then leads with "another job has now failed too") | Open the linked run and read its table: each service that is behind has a red mark. Start the matching deploy, or confirm the Terraform run, then wait for the next run. For a failing workflow, follow the workflow-health issue the check opened |
+| **DELIVERY MONITOR STILL RED** | Still red 24 hours after the last message about it. Sent again so one missed notification does not mean silence | Same as above; nothing has fixed it yet |
 | **DELIVERY MONITOR back to green** | A run succeeded after the owner was told. Sent once, then the record is cleared | Nothing |
 | **DELIVERY MONITOR WATCH IS BLIND** | The watcher has failed to read GitHub for about a day of hourly attempts, so it cannot tell red from green | Check GitHub's status page and the Functions logs; the GitHub failure email still goes out while this lasts |
 
