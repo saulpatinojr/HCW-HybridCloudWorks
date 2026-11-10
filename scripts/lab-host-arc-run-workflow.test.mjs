@@ -84,8 +84,8 @@ describe('lab-host-arc-run.yml', () => {
   it('names its own lab-host-arc environment, never production, and signs in as the Run Command identity', () => {
     expect(job.lines.some((line) => /^ {4}environment: lab-host-arc$/.test(line))).toBe(true);
     expect(source).not.toMatch(/^\s*environment:\s*production\b/m);
-    expect(job.lines.some((line) => /client-id: \$\{\{ vars\.ARC_RUN_CLIENT_ID \}\}/.test(line))).toBe(true);
-    expect(job.lines.some((line) => /vars\.(CLIENT_ID|READER_CLIENT_ID|MANIFEST_WINDOW_CLIENT_ID)\b/.test(line))).toBe(false);
+    expect(job.lines.some((line) => /client-id: \$\{\{ secrets\.ARC_RUN_CLIENT_ID \}\}/.test(line))).toBe(true);
+    expect(job.lines.some((line) => /(vars|secrets)\.(CLIENT_ID|READER_CLIENT_ID|MANIFEST_WINDOW_CLIENT_ID)\b/.test(line))).toBe(false);
     expect(job.steps.find((step) => step.name === 'Refuse a run from a ref that is not main')?.if).toBe("github.ref != 'refs/heads/main'");
   });
 

@@ -446,7 +446,7 @@
 - name: Record whether Coder template publication was skipped for downstream roles
   ansible.builtin.set_fact:
     coder_template_publication_skipped: >-
-      {{ (coder_automation_push.rc | default(0) == 3)
+      {{ (not ansible_check_mode and coder_automation_push.rc | default(0) == 3)
          or (coder_automation_push.skipped | default(false) and coder_enabled | bool and not ansible_check_mode) }}
 
 - name: Record runtime marker when Coder template publication was skipped

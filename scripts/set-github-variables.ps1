@@ -9,18 +9,21 @@
 
     Wave 1 - known BEFORE the first terraform apply: tenant and application
              subscription. These two are inputs TO Terraform, not products of
-             it, which is the test for belonging in this wave. TENANT_ID is a
-             repository variable; SUBSCRIPTION_ID is a repository SECRET
-             (#1610), because GitHub masks a secret as *** in this public
+             it, which is the test for belonging in this wave. Both are
+             repository SECRETS (TENANT_ID since #1618, SUBSCRIPTION_ID since
+             #1610), because GitHub masks a secret as *** in this public
              repository's logs and prints a variable as it is.
     Wave 2 - everything that is a Terraform output, read from the workspace's
              applied state via the HCP Terraform API (the same token
-             set-tfc-variables.ps1 resolves): CLIENT_ID (client_id),
-             READER_CLIENT_ID (reader_client_id),
+             set-tfc-variables.ps1 resolves). Seven client ids, written as
+             repository SECRETS for the same reason (#1618): CLIENT_ID
+             (client_id), FRONTEND_DEPLOY_CLIENT_ID
+             (frontend_deploy_client_id, #1617), READER_CLIENT_ID
+             (reader_client_id),
              ALERT_READER_CLIENT_ID (alert_reader_client_id),
              MANIFEST_WINDOW_CLIENT_ID (manifest_window_client_id),
-             COPILOT_REVIEW_CLIENT_ID (copilot_review_client_id),
-             ARC_RUN_CLIENT_ID (arc_run_client_id),
+             COPILOT_REVIEW_CLIENT_ID (copilot_review_client_id) and
+             ARC_RUN_CLIENT_ID (arc_run_client_id). And as variables:
              APP_HOSTNAME (function_hostname), FUNCTIONS_URL (api_base_url),
              FUNCTION_APP_NAME, RESOURCE_GROUP (web_resource_group),
              FUNCTIONS_STORAGE_ACCOUNT, STORAGE_ACCOUNT,
@@ -52,7 +55,8 @@
              GitHub-hosted runners.
 
   Idempotent: gh variable/secret set are upserts. Variable values are printed
-  (they are public identifiers); secret values never are.
+  (they are public names and URLs); secret values never are, and neither is
+  the tenant id, even where it was read from the Azure sign-in.
 
 .PARAMETER Repository
   GitHub repository, owner/name. Default: saulpatinojr/HCW-HybridCloudWorks.
@@ -73,7 +77,8 @@
   ~/.terraform.d/ elsewhere), and skips wave 2 with a notice if neither exists.
 
 .PARAMETER TenantId
-  Entra tenant GUID. Becomes the TENANT_ID repository variable.
+  Entra tenant GUID. Becomes the TENANT_ID repository secret (not a variable,
+  #1618). Its value is never printed.
 
 .PARAMETER SubscriptionApp
   Application landing zone subscription GUID (sub-app-site-prod-cus).
@@ -231,7 +236,9 @@ if (-not $TenantId -or -not $SubscriptionApp) {
 
   if (-not $TenantId) {
     $TenantId = $account.tenantId
-    Write-Ok "Tenant: $TenantId  (from the current sign-in)"
+    # The id itself is not shown (#1618): this output is often pasted into an
+    # issue, and the tenant id is kept out of public text.
+    Write-Ok 'Tenant: from the current sign-in (id not shown)'
   }
 
   if (-not $SubscriptionApp) {
@@ -263,8 +270,10 @@ function Set-RepoVariable {
   }
 }
 
-# A repository secret, for a value GitHub must mask in the public logs. The
-# value is passed to gh and never printed (#1610).
+# A repository secret, for a value GitHub must mask in the public logs: the
+# subscription ids (#1610), the tenant id and the client ids (#1618). The
+# value is passed to gh and never printed; Format-GhArguments shows it as ***
+# if the call fails.
 function Set-RepoSecret {
   [CmdletBinding(SupportsShouldProcess = $true)]
   param([Parameter(Mandatory)][string] $Name, [Parameter(Mandatory)][string] $Value)
@@ -280,18 +289,18 @@ function Set-RepoSecret {
 # ===========================================================================
 # 2. Wave 1 — known before the first apply
 # ===========================================================================
-$proceed = Confirm-Plan -Title 'About to write the TENANT_ID variable and the SUBSCRIPTION_ID secret' -Force:$WhatIfPreference -Order @(
+$proceed = Confirm-Plan -Title 'About to write the TENANT_ID and SUBSCRIPTION_ID secrets' -Force:$WhatIfPreference -Order @(
   'Repository', 'TENANT_ID', 'SUBSCRIPTION_ID'
 ) -Values @{
   'Repository'      = $Repository
-  'TENANT_ID'       = $TenantId
+  'TENANT_ID'       = '(secret; the tenant of the current sign-in, or -TenantId)'
   'SUBSCRIPTION_ID' = '(secret; the subscription chosen above)'
 }
 if (-not $proceed) { Write-Info 'Cancelled — nothing was written.'; exit 0 }
 
 Write-Step 'Wave 1: values known before the first apply'
 
-Set-RepoVariable -Name 'TENANT_ID' -Value $TenantId
+Set-RepoSecret -Name 'TENANT_ID' -Value $TenantId
 Set-RepoSecret -Name 'SUBSCRIPTION_ID' -Value $SubscriptionApp
 
 # ===========================================================================
@@ -339,26 +348,34 @@ if (-not $script:tfcToken) {
 
 if ($outputs) {
   $waveTwo = @(
-    @{ output = 'client_id'; kind = 'variable'; name = 'CLIENT_ID'; transform = { param($v) $v } }
+    # The client ids are SECRETS, so the public logs show ***: the six from
+    # #1618, and FRONTEND_DEPLOY_CLIENT_ID added by #1617;
+    # every workflow reads them as `secrets.<name>`.
+    @{ output = 'client_id'; kind = 'secret'; name = 'CLIENT_ID'; transform = { param($v) $v } }
+    # #1617: the frontend deploy's own identity, HCW Static Web App Deployer
+    # on the one site and nothing else. deploy-azure-frontend.yml signs in
+    # with it since #1617, so on a rebuild seed it after the apply that
+    # creates the identity and before the frontend deploys.
+    @{ output = 'frontend_deploy_client_id'; kind = 'secret'; name = 'FRONTEND_DEPLOY_CLIENT_ID'; transform = { param($v) $v } }
     # T-728: the read-only identity. monitor-functions-registered and
-    # monitor-unresolved-secrets are gated on this variable being non-empty
-    # and SKIP until it is set, so a missing READER_CLIENT_ID presents as
+    # monitor-unresolved-secrets are gated on this secret being non-empty
+    # (their `armed` job) and SKIP until it is set, so a missing READER_CLIENT_ID presents as
     # workflows quietly not running rather than as a failure. Seed it in the
     # same pass as CLIENT_ID. The two below are gated the same way.
-    @{ output = 'reader_client_id'; kind = 'variable'; name = 'READER_CLIENT_ID'; transform = { param($v) $v } }
+    @{ output = 'reader_client_id'; kind = 'secret'; name = 'READER_CLIENT_ID'; transform = { param($v) $v } }
     # #1053: verify-alert-state's identity, alert rules and action groups only.
-    @{ output = 'alert_reader_client_id'; kind = 'variable'; name = 'ALERT_READER_CLIENT_ID'; transform = { param($v) $v } }
+    @{ output = 'alert_reader_client_id'; kind = 'secret'; name = 'ALERT_READER_CLIENT_ID'; transform = { param($v) $v } }
     # #1098: publish-content-manifest's origin window, config write on the one
     # site and nothing else.
-    @{ output = 'manifest_window_client_id'; kind = 'variable'; name = 'MANIFEST_WINDOW_CLIENT_ID'; transform = { param($v) $v } }
+    @{ output = 'manifest_window_client_id'; kind = 'secret'; name = 'MANIFEST_WINDOW_CLIENT_ID'; transform = { param($v) $v } }
     # The identity Copilot code review signs in as (copilot-setup-steps.yml).
     # Reader on the four workload groups and nothing else; the login fails
     # closed while this is unset, so seed it in the same pass as the apply.
-    @{ output = 'copilot_review_client_id'; kind = 'variable'; name = 'COPILOT_REVIEW_CLIENT_ID'; transform = { param($v) $v } }
+    @{ output = 'copilot_review_client_id'; kind = 'secret'; name = 'COPILOT_REVIEW_CLIENT_ID'; transform = { param($v) $v } }
     # #1590: lab-host-arc-run.yml's identity, the Run Command role on the lab
     # group and nothing else. The workflow refuses to start while this is
-    # unset, naming the variable.
-    @{ output = 'arc_run_client_id'; kind = 'variable'; name = 'ARC_RUN_CLIENT_ID'; transform = { param($v) $v } }
+    # unset, naming the secret.
+    @{ output = 'arc_run_client_id'; kind = 'secret'; name = 'ARC_RUN_CLIENT_ID'; transform = { param($v) $v } }
     @{ output = 'function_hostname'; kind = 'variable'; name = 'APP_HOSTNAME'; transform = { param($v) $v } }
     # api_base_url, NOT function_hostname. This was built from the
     # azurewebsites.net origin until 2026-08-20, which stopped working the
@@ -401,7 +418,11 @@ if ($outputs) {
       continue
     }
     $value = & $entry.transform $raw
-    Set-RepoVariable -Name $entry.name -Value $value
+    if ($entry.kind -eq 'secret') {
+      Set-RepoSecret -Name $entry.name -Value $value
+    } else {
+      Set-RepoVariable -Name $entry.name -Value $value
+    }
   }
 
   # COSMOS_ENDPOINT was seeded as a SECRET until 2026-08-20 (see the wave-2

@@ -566,7 +566,7 @@ step 6 is one last run over SSH, from the workstation with the key.
    click **New environment**, name it `lab-host-arc`, and click
    **Configure environment**. Then:
    - **Required reviewers**: ticked, and add `saulpatinojr` and
-     `hcw-architect` (the same two as `production`; either one approves).
+     `hcw-architect` (either one approves).
    - **Prevent self-review**: not ticked.
    - **Allow administrators to bypass configured protection rules**: not
      ticked.
@@ -624,16 +624,20 @@ step 6 is one last run over SSH, from the workstation with the key.
    and do step 3 again.
 5. **Seed the client id.** PowerShell, from the repository root on `main`.
    The script reads the `arc_run_client_id` output from the workspace and
-   sets the repository variable `ARC_RUN_CLIENT_ID`, beside the ones it
-   already manages:
+   sets the repository **secret** `ARC_RUN_CLIENT_ID`, beside the ones it
+   already manages (a secret since
+   [#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618),
+   so the public run log shows `***` instead of the id):
 
    ```powershell
    git checkout main; git pull origin main; ./scripts/set-github-variables.ps1
    ```
 
-   Success is a line naming `ARC_RUN_CLIENT_ID` and a GUID. It is an
-   identifier, not a secret, and public: what decides who can sign in as
-   this identity is the `lab-host-arc` environment from step 1.
+   Success is a line `create  ARC_RUN_CLIENT_ID (secret; value not shown)`
+   (or `update` when it was already set). The id grants nothing by itself:
+   what decides who can sign in as this identity is the `lab-host-arc`
+   environment from step 1. It is kept as a secret only so that GitHub masks
+   it in this public repository's logs.
 6. **Let the agent accept the handler: one `bootstrap.sh` run over SSH.**
    PowerShell, on the workstation with the key:
 
@@ -1375,9 +1379,11 @@ gh variable get VITE_TURNSTILE_SITE_KEY --repo saulpatinojr/HCW-HybridCloudWorks
 Success is the second line printing the same `0x4…` value. Keep the widget's
 page open: step 4 needs its **Secret Key**.
 
-**3. Deploy the functions and the site.** Both are dispatch-only, from
-`main`, PowerShell. The functions deploy refuses while step 1's run is
-unfinished, so run it after the apply:
+**3. Deploy the functions and the site.** Start both by hand, from `main`,
+PowerShell. The functions deploy only ever runs by hand. The site deploys by
+itself when a change under `frontend/` reaches `main`, but step 2 changed a
+repository variable, not a file, so no run starts for it. The functions
+deploy refuses while step 1's run is unfinished, so run it after the apply:
 
 ```powershell
 gh workflow run deploy-functions.yml --repo saulpatinojr/HCW-HybridCloudWorks --ref main
@@ -1613,7 +1619,7 @@ The flags were read from Coder's reference pages for [`coder delete`](https://co
    **1b. The token has been seeded.** A listed name is not enough: until its secret exists, the setting holds the unresolved reference, and the code treats that as no token. Open the Keys page, <https://hybridcloudworks.com/admin/integrations?tab=keys> (it needs the admin sign-in), and find **Coder broker token** in the Labs group. By the page's code a green light means the reference resolves; grey means it was never seeded or does not resolve; amber means it was seeded after the copy of the app answering you started, so that copy may still hold the old value (it can stay amber until the app restarts, and the apply in step 5 restarts it). If it is not green, do "Seeding the broker token" below first. Green is not proof that Coder accepts the token: nothing in the app tries it, so before you arm, check that seeding step 2 (deciding and measuring what the token may do) was done, because a token Coder refuses makes every tick spend clean-up tries. Armed without the token, the timer is safe but pointless: it logs one Warning after each restart, sweeps nothing and spends no clean-up try. One more thing to know before you count on it: `infra/` does not declare `LABS_VISITOR_SESSIONS_ENABLED` yet, so until it does, nothing in Terraform can switch visitor sessions on (a copy set by hand would be removed by the next apply), and the timer only has records left from earlier sessions to end. Arming it now is a safety net ahead of that, not a change anyone will see.
 2. In the `hcw-azure` variables, <https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables>, check that `schedulers_master_enabled` is `true`. If it is `false`, stop and ask the owner: setting it to `true` lets every timer that is in `enabled_timers` run, which is a separate decision.
 3. Edit `enabled_timers` (HCL) in the same place to add `"SWEEP_VISITOR_SESSIONS"` to the list, and save.
-4. Make sure the functions with the timer are deployed: <https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-functions.yml> (**Run workflow** on `main`; the `production` environment asks for approval, and either of its two required reviewers can give it). The deploy refuses to start while a Terraform run is going or is waiting for confirmation, because a deploy and an apply that overlap can overwrite each other's app settings ([#454](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/454)). After a merge HCP Terraform queues a run by itself, so there usually is one waiting. The order this repository uses is **apply, then deploy**: confirm that run, wait for it to finish, then deploy. The cost: `alert-timer-overdue` watches a timer the host is not running yet, so it pages until the deploy lands, then clears by itself. The other order (discard the waiting run, deploy, then start a new run, step 5) avoids the page, but only when that waiting plan holds nothing else the new code needs: if the deploy's closing check, `scripts/assert-live-app-settings.mjs`, finds a setting the code reads missing, it fails after the package is live, and the fix is to apply `infra/` and deploy again.
+4. Make sure the functions with the timer are deployed: <https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-functions.yml> (**Run workflow** on `main`; the run then shows **Waiting** until `saulpatinojr` or `hcw-architect` approves it with **Review deployments**, because it runs in the reviewed `production-backend` environment since [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617)). The deploy refuses to start while a Terraform run is going or is waiting for confirmation, because a deploy and an apply that overlap can overwrite each other's app settings ([#454](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/454)). After a merge HCP Terraform queues a run by itself, so there usually is one waiting. The order this repository uses is **apply, then deploy**: confirm that run, wait for it to finish, then deploy. The cost: `alert-timer-overdue` watches a timer the host is not running yet, so it pages until the deploy lands, then clears by itself. The other order (discard the waiting run, deploy, then start a new run, step 5) avoids the page, but only when that waiting plan holds nothing else the new code needs: if the deploy's closing check, `scripts/assert-live-app-settings.mjs`, finds a setting the code reads missing, it fails after the package is live, and the fix is to apply `infra/` and deploy again.
 5. Start a run at <https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs> if none is waiting, read the plan, and confirm it. What the plan shows for this timer depends on what has applied: if the catalogue run from the merge has applied, the flag changes from `false` to `true`; if not (you discarded it, or it is this run), the flag appears as `true` from nothing and the alert's query gains the timer's row. Each of these is `DECLARED` in the plan check. Other changes that were merged earlier and have not applied yet can be in the same plan, each declared too; anything the plan check calls UNEXPECTED needs reading before you confirm.
 
 **Seeding the broker token (#1403).** `CODER-BROKER-TOKEN` is the Key Vault secret behind the app setting `CODER_BROKER_TOKEN`, the token the broker and this timer act in Coder with. `infra/` declares only the reference; a person makes the token and seeds its value, the way `docs/standards/variables-and-secrets.md` describes for every secret. The value is never written in the repository, a pull request, an issue or a chat. While the secret is missing nothing breaks: the broker is "not configured", a visitor session cannot start, and the timer logs its one Warning and calls nothing. One thing to expect after the merge: `scripts/assert-live-app-settings.mjs`, the closing check of a functions deploy, now requires the `CODER_BROKER_TOKEN` setting to exist on the live app, so a functions deploy fails its closing check (after the package is live) until the `hcw-azure` run that adds the setting has been confirmed and has finished, and the deploy refuses to start while that run waits. Confirm the run first, as arming step 4 says. Do these in order:
@@ -3941,18 +3947,18 @@ browser window on your own computer. The sample export is made up (the
 subscription `00000000-0000-0000-0000-000000000001` and names that start with
 `hcw-sample` or `hcwsample`), so nothing private is uploaded.
 
-**1. Deploy the site and check the deploy reached it (PowerShell).** The website
-is deployed by hand, so merging does not publish it. If a run of the Deploy
-Frontend workflow has not finished green since the pull request merged, start
-one. You should see `Created workflow_dispatch event for deploy-azure-frontend.yml at main`:
+**1. Deploy the site and check the deploy reached it (PowerShell).** Since
+2026-11-09 a merge that changes `frontend/` starts a run of the Deploy Frontend
+workflow by itself, and that run deploys with nobody approving it. If a run
+since the pull request merged has finished green, or is still running, skip
+the command below. If none has, start one. You should see `Created workflow_dispatch event for deploy-azure-frontend.yml at main`:
 
 ```powershell
 gh workflow run deploy-azure-frontend.yml --repo saulpatinojr/HCW-HybridCloudWorks --ref main
 ```
 
-The deploy job waits until one of its reviewers approves it for the
-`production` environment. Open [the Deploy Frontend runs](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml),
-choose the newest run and approve it. When the run is green, run this line. It
+Open [the Deploy Frontend runs](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml)
+and wait for the newest run to turn green (a few minutes). Then run this line. It
 asks whether the site's frame policy (the list of other addresses the site is
 allowed to show inside its pages) now names the tool. You should see `True`:
 

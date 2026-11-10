@@ -196,10 +196,11 @@ workflow obtains it. In order of preference:
 1. **The workflow fetches it at run time** after `azure/login` with OIDC —
    `az functionapp show`, `az staticwebapp secrets list`, and so on. Nothing is
    stored, nothing goes stale.
-2. **The Terraform output feeds a GitHub variable**, and the two names mirror
-   each other exactly, per the IaC Repository Standard: output `app_hostname` →
-   variable `APP_HOSTNAME`; output `client_id` → variable `CLIENT_ID`. The
-   GitHub copy is a **cache**, not a source; when the resource is replaced, the
+2. **The Terraform output feeds a GitHub variable or secret**, and the two
+   names mirror each other exactly, per the IaC Repository Standard: output
+   `app_hostname` → variable `APP_HOSTNAME`; output `client_id` → secret
+   `CLIENT_ID` (a secret since #1618, for the reason under "Subscription,
+   tenant and client IDs"). The GitHub copy is a **cache**, not a source; when the resource is replaced, the
    cache is stale and the CHECKLIST entry is what tells the next person which
    side to trust.
 
@@ -212,16 +213,25 @@ is authoritative and the variable is its cache.
 
 ### Subscription, tenant and client IDs
 
-**Store 3, GitHub Actions variables**, for the tenant and client ids
-(`vars.CLIENT_ID`, `vars.TENANT_ID`). **The two subscription ids are the
-exception, in store 4 since 2026-11-09**: `secrets.SUBSCRIPTION_ID` and
-`secrets.SUBSCRIPTION_MGMT_ID` (#1610, below).
+**Store 4, GitHub Actions secrets, since 2026-11-09**, for the masking alone:
+the two subscription ids (`secrets.SUBSCRIPTION_ID`,
+`secrets.SUBSCRIPTION_MGMT_ID`, #1610) and the tenant id and the six client ids
+the workflows sign in with (`secrets.TENANT_ID`, `secrets.CLIENT_ID`,
+`secrets.READER_CLIENT_ID`, `secrets.MANIFEST_WINDOW_CLIENT_ID`,
+`secrets.COPILOT_REVIEW_CLIENT_ID`, `secrets.ARC_RUN_CLIENT_ID`,
+`secrets.ALERT_READER_CLIENT_ID`,
+[#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)).
+They were stored as variables until then; the reason they moved is below. A
+seventh client id, `FRONTEND_DEPLOY_CLIENT_ID`
+([#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617)),
+was a secret from the start.
 
 Under workload identity federation these are identifiers, not credentials.
 Possession of a client ID grants nothing. The trust decision is made by the
 federated identity credential, which pins **issuer + subject + audience** —
 `https://token.actions.githubusercontent.com`, `repo:<org>/<repo>:ref:…` or
-`repo:<org>/<repo>:environment:production`, and
+`repo:<org>/<repo>:environment:<name>` (`production`, `production-backend`,
+`copilot` or `lab-host-arc`), and
 `api://AzureADTokenExchange`. A token that does not match all three is refused
 with AADSTS70021 no matter who is holding the client ID.
 
@@ -231,26 +241,50 @@ Note the deliberate asymmetry with Terraform, where the same values are marked
 | Mechanism | What it is | Why it is set the way it is |
 | --- | --- | --- |
 | Terraform `sensitive = true` | A log-hygiene flag — redacts the value from plan output and CI logs | Keeps subscription IDs out of run logs that get pasted into issues |
-| GitHub `secrets` | A storage-and-masking mechanism with a different reader set from `vars` | Not warranted for the tenant and client ids: nothing is protected, and masking a GUID that appears in error messages hurts diagnosis. Chosen for the subscription ids (below) because the masking is the point |
+| GitHub `secrets` | A storage-and-masking mechanism with a different reader set from `vars` | Chosen for the subscription, tenant and client ids (below) because the masking is the point: this repository's logs are public. The cost is that a GUID in an error message shows as `***`, so diagnosis reads the id from Azure instead |
 
 The two do not have to agree, and treating `sensitive` as a synonym for "must be
 a GitHub secret" is how identifiers end up in the last-resort column.
 
-**The subscription ids are secrets, for the log (2026-11-09, [#1610](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1610)).**
+**The subscription, tenant and client ids are secrets, for the log (2026-11-09, [#1610](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1610) and [#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)).**
 This repository is public, so its Actions logs are public, and GitHub prints a
 step's `env:` and `with:` values in the log: a variable as it is, a secret as
 `***`. A job-level `SUBSCRIPTION_ID: ${{ vars.SUBSCRIPTION_ID }}` therefore put
 the real Application subscription id in every step of a public run, which
 the repository's own rule (no real tenant, subscription or application id in
 anything public) does not allow, even though a subscription id grants nothing
-by itself. So `SUBSCRIPTION_ID` and `SUBSCRIPTION_MGMT_ID` are repository
-secrets, every workflow reads `secrets.`, and
-`scripts/subscription-id-secrets.test.mjs` fails on a `vars.` read. They are
-still identifiers: the store is chosen for the masking, not because the value
-is a credential, which is the same reasoning as the Agents copies below.
+by itself. The tenant id and the client ids were printed the same way, in
+`azure/login`'s `with:` block on every run that signs in. So all ten are
+repository secrets: `SUBSCRIPTION_ID`, `SUBSCRIPTION_MGMT_ID`, `TENANT_ID`,
+`CLIENT_ID`, `READER_CLIENT_ID`, `MANIFEST_WINDOW_CLIENT_ID`,
+`COPILOT_REVIEW_CLIENT_ID`, `ARC_RUN_CLIENT_ID` and `ALERT_READER_CLIENT_ID`
+(and, since #1617, `FRONTEND_DEPLOY_CLIENT_ID`).
+Every workflow reads `secrets.`, with no fallback to `vars.`, and
+`scripts/azure-ids-secrets.test.mjs` fails on a `vars.` read of any of them.
+They are still identifiers: the store is chosen for the masking, not because
+the value is a credential, which is the same reasoning as the Agents copies
+below.
 [`scripts/Set-SubscriptionSecrets.ps1`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/Set-SubscriptionSecrets.ps1)
-sets them without printing a value. The tenant id stays a variable for now:
-it is printed the same way, and moving it is a separate decision.
+sets any of them without printing a value, and `scripts/set-github-variables.ps1`
+seeds them as secrets.
+
+Two things follow from GitHub's rules for secrets. A job's `if:` cannot read
+`secrets` ([GitHub Docs, "Example: Using
+secrets"](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#example-using-secrets)),
+so the five workflows that skip themselves while their client id is unset
+(`monitor-functions-registered.yml`, `monitor-unresolved-secrets.yml`,
+`verify-alert-state.yml`, `publish-content-manifest.yml`,
+`remove-ci-access-windows.yml`) each have a small `armed` job that reads the
+secret into `env` and answers true or false, and the Azure job needs it. And a
+secret cannot be read back, so a runbook that once copied one of these ids with
+`gh variable get` now reads it from Azure (`az account show`, `az identity
+show`) instead.
+
+**Not moved, on purpose:** `VITE_ENTRA_CLIENT_ID` and `VITE_ENTRA_TENANT_ID`
+are built into the public website's JavaScript for sign-in, so anyone can read
+them from the site and masking them in a log would hide nothing.
+`MANIFEST_APP_ID` and `COPILOT_REVIEW_APP_ID` are numeric GitHub App ids, and
+the `CLOUDFLARE_*` values are Cloudflare's; none is an Azure id.
 
 **One documented exception: the Agents store for Copilot's runner.** The job
 GitHub runs before a Copilot code review or cloud-agent session replays
@@ -263,7 +297,9 @@ App identifiers are mirrored there as well (`COPILOT_REVIEW_CLIENT_ID`,
 `COPILOT_REVIEW_TENANT_ID`, `COPILOT_REVIEW_SUBSCRIPTION_ID`,
 `COPILOT_REVIEW_APP_ID` — owner step 2b, issue #381, done 2026-09-06 and
 listed in [Required inputs §4.3](required-inputs.md)), and the workflow
-prefers them with a fallback to the variables. They are still identifiers,
+prefers them, falling back to the repository's own secrets (the client id has
+the same name in both stores, so one `secrets.COPILOT_REVIEW_CLIENT_ID` read
+finds whichever the runner has). They are still identifiers,
 still not credentials; the store is chosen by what the reader can see, not by
 what the value is. A rotation changes both copies.
 
@@ -274,7 +310,8 @@ Both cloud handshakes in this estate are federated, and neither has a secret:
 | Handshake | Identity | Trust anchor | Created by |
 | --- | --- | --- | --- |
 | HCP Terraform → Azure | `id-plat-terraform-prod-cus-01` | `TFC_AZURE_PROVIDER_AUTH=true` plus federated credentials `tfc-plan` / `tfc-apply`, issuer `https://app.terraform.io` | `scripts/bootstrap-terraform-oidc.ps1`, once, outside Terraform state |
-| GitHub Actions → Azure | the `github_deploy` user-assigned identity | Federated credentials on issuer `https://token.actions.githubusercontent.com`, subject-pinned to the deploy ref AND to the `production` environment, each in both the name and immutable-ID forms — four credentials | `infra/oidc.tf` |
+| GitHub Actions → Azure (backend deploy) | the `github_deploy` user-assigned identity | Federated credentials on issuer `https://token.actions.githubusercontent.com`, subject-pinned to the `production-backend` environment only, in both the name and immutable-ID forms — two credentials. That environment has required reviewers, so every sign-in waits for an approval. `deploy-functions.yml` alone signs in as it. Until [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617) it was pinned to `production` instead and both deploys signed in as it, so the frontend deploy held the Function App and storage rights too; #1617's first pull request added the `production-backend` pair beside the `production` one, and its second moved the backend deploy there, moved the frontend to its own identity (next row) and removed the `production` pair and this identity's role on the site. The deploy-ref pair it also held was retired on 2026-10-06 (SEC-2) | `infra/oidc.tf` |
+| GitHub Actions → Azure (frontend deploy) | the `github_frontend_deploy` user-assigned identity ([#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617)) | The same issuer, pinned to the `production` environment, both forms — two credentials. *HCW Static Web App Deployer* on the one Static Web App and nothing else, so a frontend run, which no one approves since #1613, can read the site's deployment token and cannot reach the Function App or its storage. Client id `FRONTEND_DEPLOY_CLIENT_ID`; `deploy-azure-frontend.yml` signs in as it since #1617, and it is the only identity that trusts `production` | `infra/oidc.tf` |
 | GitHub Copilot → Azure (read-only) | the `github_copilot_review` user-assigned identity | The same issuer, pinned to `…:environment:copilot` only, both forms — two credentials, no ref subject, so no branch-triggered workflow can assume it. Reader on the four workload groups and nothing else; the Azure MCP Server runs `--read-only` with fourteen hand-picked tools on top | `infra/oidc.tf` |
 | GitHub Actions → Azure (read-only) | the `github_reader` user-assigned identity | The same issuer, but pinned to the deploy **ref only**, in both forms — two credentials, no environment subject. That asymmetry is load-bearing: a reader workflow that declares `environment:` presents `…:environment:<name>` instead of `…:ref:<ref>` and is refused with AADSTS700213, which is why `verify-alert-state.yml` and `monitor-functions-registered.yml` each carry a header saying not to add one | `infra/oidc.tf` |
 | GitHub Actions → Azure (one job each) | the `github_alert_reader` (#1053) and `github_manifest_window` (#1098) user-assigned identities | The reader's trust exactly: the deploy ref only, both forms, two credentials each. The client-id a job sends picks the identity. The alert reader reads alert rules and action groups; the manifest window writes the Function App's config and lists nothing, so the reader no longer holds a write beside its app-settings read | `infra/oidc.tf` |
@@ -485,13 +522,9 @@ Everything else there is a default nobody is expected to override.
 
 | Value | CHECKLIST | Why store 3 |
 | --- | --- | --- |
-| `CLIENT_ID` | §7 | Identifier under WIF; grants nothing without a matching federated subject |
-| `READER_CLIENT_ID`, `ALERT_READER_CLIENT_ID`, `COPILOT_REVIEW_CLIENT_ID` | §7 | Identifiers for the read-only identities (`github_reader`; `github_alert_reader`, which reads alert rules; `github_copilot_review`, which Copilot code review signs in as) — same reasoning |
-| `MANIFEST_WINDOW_CLIENT_ID` | §7 | Identifier for `github_manifest_window`, which opens and closes `publish-content-manifest.yml`'s origin window (#1098) — same reasoning |
-| `ARC_RUN_CLIENT_ID` | — | Identifier for `github_arc_run`, which `lab-host-arc-run.yml` signs in as to run one of its fixed scripts on the lab host through Azure Arc Run Command (#1590). It grants nothing without an OIDC token for the `lab-host-arc` environment's subject, so the control is that environment's reviewers and main-only branch rule — same reasoning |
 | `COPILOT_REVIEW_APP_ID` | — | App ID of the read-only GitHub App Copilot code review reads GitHub with. An identifier, exactly like `MANIFEST_APP_ID`; the key is in store 4 |
-| `TENANT_ID` | §7 | Identifier |
 | ~~`SUBSCRIPTION_ID`~~ | §7 | Moved to store 4 on 2026-11-09 (#1610), with `SUBSCRIPTION_MGMT_ID`: an identifier, but a variable is printed in the public logs and a secret is masked |
+| ~~`TENANT_ID`~~, ~~`CLIENT_ID`~~, ~~`READER_CLIENT_ID`~~, ~~`ALERT_READER_CLIENT_ID`~~, ~~`COPILOT_REVIEW_CLIENT_ID`~~, ~~`MANIFEST_WINDOW_CLIENT_ID`~~, ~~`ARC_RUN_CLIENT_ID`~~ | §7 | Moved to store 4 on 2026-11-09 ([#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)), for the same reason as the subscription ids |
 | `APP_HOSTNAME` | §7 | Public DNS name. Mirrors the `function_hostname` output |
 | `RESOURCE_GROUP` | §7 | Resource group name for the T-503 firewall window. Must equal the `resource_group_name` Terraform value |
 | `FUNCTIONS_STORAGE_ACCOUNT` | §7 | An account name, not a key. Three words to break the collision with the content storage account, which the standard permits |
@@ -512,6 +545,8 @@ available. An entry that cannot answer both belongs in store 3 or nowhere.
 | `GITHUB_TOKEN` | — | GitHub | Injected per-run by GitHub, scoped by `permissions:`, expires with the job. Not stored by us at all | Correct, and contractual |
 | `COPILOT_REVIEW_APP_PRIVATE_KEY` (Agents store, not Actions) | — | GitHub, read-only, this repository | Authenticates GitHub → *GitHub* for the MCP server Copilot code review uses, to reach the Actions, code-scanning, Dependabot and discussions toolsets the built-in per-review token cannot be given. The same shape as `MANIFEST_APP_PRIVATE_KEY`: a GitHub App's key, from which `copilot-setup-steps.yml` mints a one-hour installation token per session. The App holds eight **read** permissions on one repository and nothing else, so the key's ceiling is read-only — a leaked key mints nothing a leaked token would not already grant. **No personal access token, classic or fine-grained, is used**: those are user-bound and long-lived, and store 4 holds none | Justified — the one stored key in the Copilot configuration, and it can only ever produce read-only, one-hour tokens |
 | `SUBSCRIPTION_ID`, `SUBSCRIPTION_MGMT_ID` | §7 | Azure (names a subscription; authenticates nothing) | Not a credential, so federation is not the question. Stored as secrets so that GitHub masks them as `***` in this public repository's logs, which it does not do for a variable (#1610). Set with `scripts/Set-SubscriptionSecrets.ps1`, which never prints the value | Justified, for the masking alone |
+| `TENANT_ID` | §7 | Azure (names the Entra tenant; authenticates nothing) | Same as the row above ([#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)). Every `azure/login` passes it as `tenant-id` | Justified, for the masking alone |
+| `CLIENT_ID`, `FRONTEND_DEPLOY_CLIENT_ID`, `READER_CLIENT_ID`, `ALERT_READER_CLIENT_ID`, `COPILOT_REVIEW_CLIENT_ID`, `MANIFEST_WINDOW_CLIENT_ID`, `ARC_RUN_CLIENT_ID` | §7 | Azure (names a managed identity; authenticates nothing under WIF, which needs a token matching a federated subject) | Same as the rows above ([#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)). The identities: `github_deploy` (the backend deploy; both deploys until #1617), `github_frontend_deploy` (the frontend deploy since #1617, the Static Web App's deployment token and nothing else), `github_reader` (the two monitors), `github_alert_reader` (alert rules), `github_copilot_review` (Copilot code review), `github_manifest_window` (`publish-content-manifest.yml`'s origin window and `remove-ci-access-windows.yml`, #1098, #1463) and `github_arc_run` (`lab-host-arc-run.yml`, whose control is the `lab-host-arc` environment's reviewers and main-only branch rule, #1590). Seeded from the Terraform outputs by `scripts/set-github-variables.ps1`, which never prints them | Justified, for the masking alone |
 | `TFC_TOKEN` | §7 | HCP Terraform | Authenticates GitHub → *Terraform*, the reverse direction from §8. The HCP Terraform API has no inbound GitHub OIDC path. Read by `tfc-plan-check.yml`, which holds a plan to the permanent diff, and by `deploy-functions.yml`, which refuses to deploy while an apply is in flight (#454). Use a **team** token, not a user token, so it survives the user leaving | Justified |
 | `MANIFEST_APP_PRIVATE_KEY` | — | GitHub, this repository | A GitHub App's key, with `vars.MANIFEST_APP_ID`. `scripts/github-app-token.mjs` mints a one-hour installation token from it and revokes it after use, for the four workflows that push a branch and open a pull request. The App is what lets those pull requests run CI, which a `GITHUB_TOKEN`-opened one does not | Justified |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | §7 | Google Cloud | Source-side credential for the one-shot Firestore export, for a system being decommissioned | **Deleted** — the migration completed and `migrate-data.yml` went with it (`59e471b`); the repository holds no such secret |
@@ -659,7 +694,7 @@ got there, and stops being true the moment the plumbing changes.
 | GitHub Actions variable | `UPPER_SNAKE_CASE` | `_` | `APP_HOSTNAME` | Alphanumerics and `_` only; must not start with a number; must not start with `GITHUB_`; names are case-insensitive |
 | GitHub Actions secret | `UPPER_SNAKE_CASE` | `_` | `TFC_TOKEN` | Same restrictions as variables, and a secret and a variable must not share a name |
 | Container Apps job secret | `lower-kebab-case` | `-` | `gh-app-private-key` | Lowercase alphanumerics and `-`; must start and end alphanumeric |
-| GitHub Environment | `lower-kebab-case` | `-` | `production` | Not a value, but load-bearing WHILE a federated credential pins it: the environment name appears verbatim in the OIDC subject, so renaming one that is pinned breaks login with AADSTS70021. `production` is pinned today (`infra/oidc.tf`). `data-migration` was the example here until 2026-08-30, by which point nothing pinned it and it had been deleted — an environment is immutable only for as long as a credential names it |
+| GitHub Environment | `lower-kebab-case` | `-` | `production` | Not a value, but load-bearing WHILE a federated credential pins it: the environment name appears verbatim in the OIDC subject, so renaming one that is pinned breaks login with AADSTS70021. `production` and `production-backend` are pinned today (`infra/oidc.tf`). `data-migration` was the example here until 2026-08-30, by which point nothing pinned it and it had been deleted — an environment is immutable only for as long as a credential names it |
 
 ### The Key Vault ↔ app setting transform
 

@@ -1,9 +1,20 @@
 # Is production behind `main`, and for how long?
 #
-# WHY THIS EXISTS. deploy-functions.yml and deploy-azure-frontend.yml are both
+# WHY THIS EXISTS. deploy-functions.yml and deploy-azure-frontend.yml were both
 # workflow_dispatch only, by a recorded decision — enabling a workflow and
 # enabling auto-deploy-on-merge are separate choices, and only the first was
-# made. So merging deploys nothing, and until 2026-09-01 nothing said so.
+# made. So merging deployed nothing, and until 2026-09-01 nothing said so.
+#
+# Since 2026-11-09 (owner decision on #1613) a merge that changes frontend/
+# starts a frontend deploy by itself, and nobody approves it (the owner removed
+# the `production` environment's required reviewers the same day). The
+# functions deploy is still started by hand, and since #1617 it waits for a
+# reviewer in the `production-backend` environment. This monitor reads the last
+# successful run whatever started it, so a frontend run that failed still
+# shows as drift. It does not see a change outside frontend/ that the site
+# needs (a repository variable, the deploy workflow itself): that starts no
+# deploy, and the monitor counts only commits under frontend/, so such a
+# change needs a frontend deploy started by hand.
 #
 # That one gap produced both of 2026-08-31's incidents, hours apart, both found
 # by accident rather than by a check:
@@ -19,9 +30,9 @@
 # incident was ONE commit behind and the second was THIRTY-FIVE. No count
 # threshold separates them: catch the one and you fire on every ordinary merge;
 # tolerate ordinary merges and you miss the outage. What they share is that both
-# sat undeployed for days. Age tolerates the normal merge-then-deploy gap, which
-# is the entire point of dispatch-only releases, and still catches a change that
-# was merged and forgotten. scripts/check-deploy-drift.mjs carries the reasoning
+# sat undeployed for days. Age tolerates the normal gap between a merge and its
+# deploy (minutes for the automatic frontend deploy, longer for a deploy started
+# by hand), and still catches a change that was merged and forgotten. scripts/check-deploy-drift.mjs carries the reasoning
 # beside the code.
 #
 # HOW IT PAGES. A failed scheduled run emails the repository owner through
@@ -56,8 +67,10 @@
 # `check` job carries `TFC_TOKEN` and sits in the `automation` environment for
 # the same reason tfc-plan-check.yml does — a secret is reachable only from a
 # job GitHub has admitted into an environment (zizmor secrets-outside-env,
-# #567), and `automation` rather than `production` because a scheduled run
-# cannot wait on an approval gate. The token is read-only here: one workspace
+# #567), and `automation` rather than a deploy environment because a
+# scheduled run cannot wait on an approval gate (`production-backend` has one
+# since #1617; `production` had one until 2026-11-09, #1613, and is the
+# frontend deploy's alone). The token is read-only here: one workspace
 # lookup and one one-run listing. Without it the row reads ⚠️ and the job goes
 # red, never ✅ — the first version keyed that row on the last green
 # tfc-plan-check.yml run, which succeeds with the token unset, on an

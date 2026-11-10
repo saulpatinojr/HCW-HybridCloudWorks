@@ -1,8 +1,44 @@
 name: Deploy Frontend
 
-# Manual release workflow for the public website. It remains dispatch-only so a
-# human can choose when the Static Web App receives a build; automatic deploys
-# can be enabled separately after the release process is formally approved.
+# Release workflow for the public website (the Static Web App).
+#
+# WHEN IT RUNS. Two ways:
+#
+#   - By itself, whenever a change under `frontend/` reaches `main` (a merged
+#     pull request, including the daily content-manifest pull request, which
+#     changes frontend/data/content-manifest.json). The owner approved this on
+#     2026-11-09 on #1613: since that change, an address with no pre-built
+#     page answers 404, so a newly published article has no page until the
+#     site is rebuilt and deployed. Before that date this workflow was
+#     dispatch-only.
+#   - By hand ("Run workflow", from `main`), for a re-deploy, a rollback (below)
+#     or the break-glass sign-in input. A change that is not a file under
+#     `frontend/` (a repository variable, this workflow file itself) starts no
+#     run, so it still needs one by hand to reach the site.
+#
+# NOBODY APPROVES A RUN. A frontend merge deploys by itself, start to finish
+# (owner decision 2026-11-09, #1613). The `deploy` job names the `production`
+# environment, and on the same day the owner removed that environment's
+# required reviewers, so GitHub no longer pauses the job as "Waiting" for an
+# approval click. GitHub explains that pause, which no longer happens here:
+# https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-required-reviews-in-workflows
+# The controls in this repository are two: the `push` trigger below names
+# `main` only, and the T-705 guard (the first step of the `build` job)
+# refuses any ref but `main`, for a run started by hand too. The environment's
+# own `main`-only branch rule (Required-Inputs §4.4) is a setting outside the
+# repository that nothing in a checkout can prove is still set.
+#
+# Two gaps the owner accepted that day, both closed by #1617:
+#   - The backend deploy (deploy-functions.yml) named the same `production`
+#     environment, so no approval followed its start either. It now names
+#     `production-backend`, which keeps required reviewers, so `production`
+#     is this workflow's alone.
+#   - This workflow signed in as `github_deploy` (infra/oidc.tf), the backend
+#     deploy's identity, which also holds rights on the Function App and its
+#     storage that uploading a static site does not need. It now signs in as
+#     `github_frontend_deploy`, which can read the Static Web App's
+#     deployment token and nothing else, so a run nobody approves cannot
+#     reach the API.
 #
 # The workflow publishes to the Static Web App hostname configured in Azure;
 # DNS and custom-domain changes are separate infrastructure decisions.
@@ -25,7 +61,9 @@ name: Deploy Frontend
 #   1. `git revert <bad commit>` on a branch, open a PR, let CI run.
 #   2. Merge it. Reverting through the normal gate is the point: a rollback is
 #      a production change and gets the same review as any other.
-#   3. Dispatch this workflow from `main`.
+#   3. Deploy `main`. When the reverted commit changed `frontend/`, the merge
+#      in step 2 has already started a run, and it deploys by itself: wait
+#      for it to turn green. Otherwise dispatch this workflow from `main`.
 #
 # If the estate is unserviceable and step 1-2 is too slow, the escape hatch is
 # an owner one and lives outside this repository: Azure Portal → the Static Web
@@ -44,13 +82,17 @@ name: Deploy Frontend
 # 2026-09-01 — so asking the probe's availabilityResults instead of the public
 # host is available; wiring that is a deliberate owner decision, not assumed
 # here.
-#
-# on:
-#   push:
-#     branches: [main]
-#     paths:
-#       - 'frontend/**'
 on:
+  # Automatic deploys (owner decision 2026-11-09, #1613). `branches: [main]`
+  # with no `tags` filter means a push to any other branch, and any tag, starts
+  # nothing: GitHub runs a push workflow only for the kind of ref it names.
+  # `paths` keeps a docs-only or functions-only merge from rebuilding the site.
+  # Only the frontend's own folder: the build reads nothing outside it
+  # (`npm run build` is vite plus scripts under frontend/scripts).
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
   workflow_dispatch:
     # checkov:skip=CKV_GHA_7: break-glass input is refused unless it is a GUID before it is printed or built. docs/security/scanner-triage.md#checkov
     inputs:
@@ -74,6 +116,15 @@ permissions:
 # `cancel-in-progress: false`, matching the functions deploy: cancelling a
 # deploy part-way through leaves the target in exactly the half-written state
 # the group exists to prevent. Queue instead.
+#
+# With pushes as well as dispatches in this one group, two merges close
+# together queue rather than race. GitHub keeps one running run and ONE
+# waiting run per group; a third arrival cancels the waiting one, not the
+# running one (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency).
+# That loses nothing: every run builds the `main` it was started on, so the
+# newest waiting run already contains the commits of the one it replaced.
+# There is no approval step to wait at (#1613), so a waiting run only queues
+# behind the running one for the few minutes that one takes to finish.
 concurrency:
   group: swa-deploy
   cancel-in-progress: false
@@ -133,13 +184,21 @@ jobs:
         # The federated credential's subject is environment-scoped, so it
         # matches from ANY branch, and GitHub auto-creates a missing
         # environment with no protection rules. Without a gate a dispatch from
-        # an unreviewed ref ships to production past all 12 required contexts
-        # (T-705). Read live on 2026-10-03, the `production` environment does
-        # gate: two required reviewers, saulpatinojr and hcw-architect, either
-        # of whom can approve, and a main-only deployment-branch policy
-        # (Required-Inputs §4.4). Both are settings
-        # outside the repository that nothing in a checkout can prove are
-        # still set, so this step stays as the repository-side backstop.
+        # an unreviewed ref ships to production past every required check
+        # (T-705). Read live on 2026-10-03, the `production` environment had
+        # two required reviewers and a main-only deployment-branch policy
+        # (Required-Inputs §4.4). The owner removed the reviewers on
+        # 2026-11-09 (#1613), so no person checks a run any more: this step
+        # and the push trigger's `branches: [main]` are the repository's
+        # whole control. The branch policy is a setting outside the
+        # repository that nothing in a checkout can prove is still set, so
+        # this step stays as the repository-side backstop.
+        #
+        # The same test works for both ways the run starts. A push run's
+        # github.ref is the branch that was pushed, and the trigger above
+        # admits only main, so it is refs/heads/main and this step skips. A
+        # dispatch's github.ref is the branch chosen in "Run workflow", so
+        # any branch but main, or a tag, still stops here.
         if: github.ref != 'refs/heads/main'
         # Overrides the job's `working-directory: frontend`: this step runs
         # before checkout, so that directory does not exist yet.
@@ -181,8 +240,13 @@ jobs:
 
       # An emergency deploy must say what it did, in the log, without anyone
       # having to reconstruct it from the inputs afterwards.
+      #
+      # Dispatch only, said in so many words. A push run has no inputs, and
+      # an empty input already compares equal to '', but the break-glass id
+      # must never reach an automatic build, so the event is checked too
+      # rather than left to how GitHub compares a missing value.
       - name: Note the break-glass override
-        if: inputs.entra_client_id_override != ''
+        if: github.event_name == 'workflow_dispatch' && inputs.entra_client_id_override != ''
         # Through env, not ${{ }} in the script (#561): a workflow input is
         # caller-supplied text, and expanding it into `run` would execute it.
         env:
@@ -200,8 +264,10 @@ jobs:
           echo "  building with : ${OVERRIDE_CLIENT_ID}"
           echo "  variable holds: ${VARIABLE_CLIENT_ID}"
           echo ""
-          echo "This does NOT persist. The next deploy reads the variable again."
-          echo "To make it permanent, set the variable to the same value."
+          echo "This does NOT persist. The next deploy reads the variable again,"
+          echo "and any merge that changes frontend/ starts that deploy by itself,"
+          echo "with no approval step. Set the variable to this same value now so"
+          echo "that deploy keeps it (docs/runbooks/admin-signin-rollback.md, step 2)."
           echo ""
           echo "If you are rolling back to the API registration, its redirect"
           echo "URIs must exist or sign-in fails at the redirect. This workflow"
@@ -226,9 +292,14 @@ jobs:
           #
           # IT DOES NOT PERSIST. The next deploy reads the variable again, so
           # the variable must still be corrected to make a rollback stick. The
-          # step below says so in the log, where an operator mid-incident will
-          # actually see it.
-          VITE_ENTRA_CLIENT_ID: ${{ inputs.entra_client_id_override || vars.VITE_ENTRA_CLIENT_ID }}
+          # step above says so in the log, where an operator mid-incident will
+          # actually see it. Since 2026-11-09 that next deploy can start by
+          # itself, from any merge that changes frontend/, and finishes with
+          # nobody approving it.
+          #
+          # The override is read on a dispatch only. A push run always builds
+          # with the variable: `false && x || y` is y in a GitHub expression.
+          VITE_ENTRA_CLIENT_ID: ${{ (github.event_name == 'workflow_dispatch' && inputs.entra_client_id_override) || vars.VITE_ENTRA_CLIENT_ID }}
           VITE_ENTRA_TENANT_ID: ${{ vars.VITE_ENTRA_TENANT_ID }}
           # Without this the SPA requests a token the backend rejects on
           # audience: sign-in succeeds and every API call 401s (Required-Inputs §4.2).
@@ -385,7 +456,7 @@ jobs:
             echo "::error::sitemap.xml does not use the canonical (non-trailing) form."
             exit 1
           }
-          test -f dist/robots.txt || { echo "::error::dist/robots.txt is missing; navigationFallback excludes it, so crawlers get a 404."; exit 1; }
+          test -f dist/robots.txt || { echo "::error::dist/robots.txt is missing, so crawlers asking for it would get a 404."; exit 1; }
           echo "metadata contract: canonical, og:url and sitemap verified on built HTML"
           bytes=$(du -sb dist | cut -f1)
           echo "dist: $(du -sh dist | cut -f1) ($bytes bytes), limit 524288000"
@@ -415,18 +486,32 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 15 # slowest 1.6 min; waiting for approval does not count (#1441)
     # Binding the job to an environment gives production deploys a deployment
-    # history and an approval gate. The gate lives in the environment, not
-    # here: read live on 2026-10-03, `production` has two required reviewers
-    # (saulpatinojr and hcw-architect; either one approves) and a main-only
-    # deployment-branch policy (Required-Inputs §4.4). Without
-    # them GitHub would auto-create a bare environment that records who
-    # deployed without gating whether they may
-    # (T-705).
+    # history, and any gate on them lives in the environment, not here. Read
+    # live on 2026-10-03, `production` had two required reviewers
+    # (saulpatinojr and hcw-architect) and a main-only deployment-branch
+    # policy (Required-Inputs §4.4). The owner removed the reviewers on
+    # 2026-11-09 (#1613), so every run, automatic or by hand, goes straight
+    # on to the upload with nobody approving it. Without the environment
+    # GitHub would auto-create a bare one that records who deployed without
+    # gating whether they may (T-705).
+    #
+    # Since #1617 this is the only workflow that names `production`; the
+    # backend deploy names the reviewed `production-backend`
+    # (scripts/oidc-subjects.test.mjs fails if another workflow names
+    # either). Do not rename the environment here on its own: the sign-in
+    # below matches on this exact name.
     environment: production
     # id-token for the federated login that mints the deployment token (T-727).
     # `environment: production` above is load-bearing for it: the OIDC subject
-    # becomes repo:<org>/<repo>:environment:production, and github_deploy holds
-    # exactly that credential plus its immutable form (infra/oidc.tf:153-167).
+    # becomes repo:<org>/<repo>:environment:production, and
+    # github_frontend_deploy holds exactly that credential plus its immutable
+    # form (github_frontend_deploy_env_production and
+    # github_frontend_deploy_env_production_immutable in infra/oidc.tf). Since
+    # #1617 it is the only identity that trusts this subject. The subject is
+    # the same whether a push or a dispatch started the run, because a job
+    # that names an environment presents the environment form, not the branch form
+    # (https://docs.github.com/en/actions/reference/security/oidc#filtering-for-a-specific-environment),
+    # so the automatic runs need no new credential.
     # Removing the environment key would break authentication with AADSTS700213,
     # not merely lose the deployment record.
     permissions:
@@ -466,15 +551,22 @@ jobs:
       # credential — azure/static-web-apps#1304 is an open request for exactly
       # that. So the token is still what the action takes; what changed is that
       # it no longer lives as a long-lived GitHub secret and a Terraform output.
-      # It is read from ARM under the same federated identity this repository
-      # already uses everywhere else, and it lives for one run. Keeping it is
-      # an accepted risk (TODO.md, Accepted risks; #834), compensated by
-      # resetting the token every 90 days or on any suspicion.
+      # It is read from ARM under a federated identity, and it lives for one
+      # run. Keeping it is an accepted risk (TODO.md, Accepted risks; #834),
+      # compensated by resetting the token every 90 days or on any suspicion.
+      #
+      # The identity is github_frontend_deploy (#1617), named by the
+      # FRONTEND_DEPLOY_CLIENT_ID repository secret: it holds HCW Static Web
+      # App Deployer on the one site, the single action that reads this
+      # token, and nothing else. Until #1617 this signed in with CLIENT_ID as
+      # github_deploy, which can also publish code into the Function App. The
+      # client id is an identifier, not a credential; it is a secret only so
+      # this public repository's logs print it as ***.
       - name: Azure login (OIDC)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ vars.CLIENT_ID }}
-          tenant-id: ${{ vars.TENANT_ID }}
+          client-id: ${{ secrets.FRONTEND_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
 
       - name: Mint the deployment token
@@ -497,10 +589,11 @@ jobs:
             reason=$(tr -d '\r' < "${err}" | tr '\n' ' ' | cut -c1-300)
             case "${reason}" in
               *AuthorizationFailed*|*does\ not\ have\ authorization*|*Forbidden*)
-                echo "::error::Not authorized to list the deployment token. github_deploy needs"
-                echo "::error::the 'HCW Static Web App Deployer' role on ${APP}; the definition is"
-                echo "::error::in infra/roles/static-web-app-deployer.json and must be created by"
-                echo "::error::the owner before the Terraform assignment can be applied." ;;
+                echo "::error::Not authorized to list the deployment token. The frontend deploy"
+                echo "::error::identity (github_frontend_deploy, FRONTEND_DEPLOY_CLIENT_ID) needs the"
+                echo "::error::'HCW Static Web App Deployer' role on ${APP}, which infra/oidc.tf assigns"
+                echo "::error::(github_frontend_deploy_swa_token). Check that the apply that creates it"
+                echo "::error::has run, and that the secret holds that identity's client id." ;;
               *)
                 echo "::error::Could not read the deployment token from ARM." ;;
             esac
@@ -538,81 +631,110 @@ jobs:
           # No skip_api_build here: it is not an input at the pinned action SHA,
           # and with no api_location set there is no API build to skip anyway.
 
-      # Post-deploy probe: fetch the root and one prerendered route (PLAT-5, #965).
+      # Post-deploy probe: three requests to the live site (PLAT-5, #965; #1613).
       #
       # Probes the Static Web App default hostname directly (bypassing Cloudflare
       # Bot Fight Mode, which rejects datacenter runner IPs on the custom domain).
-      # Verifies that both the root document shell (/) and a prerendered route (/news)
-      # return HTTP 200 with valid HTML markup.
+      #   - `/` must answer 200 with the page markup.
+      #   - `/about` must answer 200 and be the PRE-BUILT page: its body must
+      #     carry `data-prerendered-route="/about"`, the mark the pre-render
+      #     step puts on every page it writes (scripts/prerender.mjs). The
+      #     build step above already requires dist/about/index.html. This
+      #     probed `/news` until #1613, which is not a page the site builds;
+      #     it only answered 200 because the old catch-all sent the app to
+      #     every address.
+      #   - A made-up address must answer 404 with the app (the
+      #     `responseOverrides` 404 rule in staticwebapp.config.json). This
+      #     proves on every deploy that an unknown address is a real 404 and
+      #     not a "Soft 404" (an error page sent with 200), which is the bug
+      #     #1613 fixed.
+      #
+      # The site's address comes from the STATIC_WEB_APP_DEFAULT_HOSTNAME
+      # repository variable, or the built-in default beside it. There is no
+      # fallback that asks Azure: this job signs in as github_frontend_deploy,
+      # which can read the deployment token and cannot read the site
+      # (`az staticwebapp show` needs a read it does not hold, #1617). An
+      # `az staticwebapp show` fallback stood here until #1617; it could not
+      # have worked under either deploy identity and never ran, because the
+      # default is never empty.
       - name: Post-deploy frontend probe
         env:
-          APP: ${{ vars.STATIC_WEB_APP_NAME || 'stapp-site-prod-cus-01' }}
-          RG: ${{ vars.STATIC_WEB_APP_RESOURCE_GROUP || 'rg-web-site-prod-cus' }}
-          DEFAULT_HOSTNAME_OVERRIDE: ${{ vars.STATIC_WEB_APP_DEFAULT_HOSTNAME || 'calm-ground-0d0e6a010.7.azurestaticapps.net' }}
+          DEFAULT_HOSTNAME: ${{ vars.STATIC_WEB_APP_DEFAULT_HOSTNAME || 'calm-ground-0d0e6a010.7.azurestaticapps.net' }}
           POLL_INTERVAL_S: '5'
           POLL_BUDGET_S: '90'
         run: |
           set -euo pipefail
 
-          DEFAULT_HOSTNAME="${DEFAULT_HOSTNAME_OVERRIDE:-}"
-          if [ -z "${DEFAULT_HOSTNAME}" ]; then
-            DEFAULT_HOSTNAME=$(az staticwebapp show --name "${APP}" --resource-group "${RG}" --query "defaultHostname" -o tsv 2>/dev/null || true)
-          fi
-          if [ -z "${DEFAULT_HOSTNAME}" ]; then
-            echo "::error::Could not read defaultHostname for ${APP}"
+          if [ -z "${DEFAULT_HOSTNAME:-}" ]; then
+            echo "::error::No address to probe: the STATIC_WEB_APP_DEFAULT_HOSTNAME variable and its built-in default are both empty. Set the variable to the site's *.azurestaticapps.net address (Azure portal, the Static Web App's Overview page, URL)."
             exit 1
           fi
 
           echo "Probing deployed Static Web App at https://${DEFAULT_HOSTNAME} (PLAT-5)..."
           ROOT_URL="https://${DEFAULT_HOSTNAME}/"
-          PRERENDER_URL="https://${DEFAULT_HOSTNAME}/news"
+          PRERENDER_URL="https://${DEFAULT_HOSTNAME}/about"
+          PRERENDER_MARK='data-prerendered-route="/about"'
+          # GITHUB_RUN_ID is a number GitHub sets, so the path is new on each
+          # run and cannot be a page anyone has written.
+          MISSING_PATH="/__deploy-probe-${GITHUB_RUN_ID}"
+          MISSING_URL="https://${DEFAULT_HOSTNAME}${MISSING_PATH}"
 
+          # probe_url URL LABEL EXPECTED_STATUS REQUIRED_TEXT
+          # Asks again every POLL_INTERVAL_S seconds until the address answers
+          # EXPECTED_STATUS or POLL_BUDGET_S runs out (the upload can take a
+          # little while to reach every server). Then the body must contain
+          # REQUIRED_TEXT, matched as plain text, not as a pattern.
           probe_url() {
             local target_url="$1"
             local label="$2"
+            local expected="$3"
+            local required="$4"
             local started=$SECONDS
             local attempt=0
             local status=""
             local body_file
             body_file=$(mktemp)
 
-            echo "Probing ${label} at ${target_url}..."
+            echo "Probing ${label} at ${target_url}, expecting HTTP ${expected}..."
             while :; do
               attempt=$((attempt + 1))
               status=$(curl -sS -m 20 -w '%{http_code}' -o "${body_file}" "${target_url}" 2>/dev/null || true)
               local elapsed=$((SECONDS - started))
               echo "  attempt ${attempt} at +${elapsed} s: HTTP ${status}"
-              [ "${status}" = "200" ] && break
+              [ "${status}" = "${expected}" ] && break
               if [ $((elapsed + POLL_INTERVAL_S)) -gt "${POLL_BUDGET_S}" ]; then
-                echo "  no 200 within ${POLL_BUDGET_S} s"
+                echo "  no HTTP ${expected} within ${POLL_BUDGET_S} s"
                 break
               fi
               sleep "${POLL_INTERVAL_S}"
             done
 
-            if [ "${status}" != "200" ]; then
-              echo "::error::Probe failed for ${label}: HTTP ${status}"
+            if [ "${status}" != "${expected}" ]; then
+              echo "::error::Probe failed for ${label}: HTTP ${status}, expected ${expected}"
               echo "Response excerpt: $(head -c 300 "${body_file}" || true)"
               rm -f "${body_file}"
               return 1
             fi
 
-            if ! grep -qiE "<(!DOCTYPE html|html|div id=\"root\")" "${body_file}"; then
-              echo "::error::Probe response for ${label} did not contain expected HTML markup"
+            if ! grep -qF -- "${required}" "${body_file}"; then
+              echo "::error::Probe response for ${label} did not contain ${required}"
+              echo "Response excerpt: $(head -c 300 "${body_file}" || true)"
               rm -f "${body_file}"
               return 1
             fi
             rm -f "${body_file}"
-            echo "  ${label} verified: HTTP 200 with valid HTML"
+            echo "  ${label} verified: HTTP ${expected}, body contains ${required}"
           }
 
-          probe_url "${ROOT_URL}" "root document (/)"
-          probe_url "${PRERENDER_URL}" "prerendered route (/news)"
+          probe_url "${ROOT_URL}" "root document (/)" 200 '<div id="root"'
+          probe_url "${PRERENDER_URL}" "pre-built page (/about)" 200 "${PRERENDER_MARK}"
+          probe_url "${MISSING_URL}" "made-up address (${MISSING_PATH})" 404 '<div id="root"'
 
           {
             echo "## 🌐 Frontend Post-Deploy Verification"
             echo ""
             echo "Direct Azure Static Web Apps probe on \`${DEFAULT_HOSTNAME}\` (PLAT-5):"
-            echo "- \`GET /\` → **HTTP 200 OK** (HTML root shell)"
-            echo "- \`GET /news\` → **HTTP 200 OK** (Prerendered page markup)"
+            echo "- \`GET /\` → **HTTP 200 OK** (the app's page markup)"
+            echo "- \`GET /about\` → **HTTP 200 OK** (the pre-built page, \`${PRERENDER_MARK}\`)"
+            echo "- \`GET ${MISSING_PATH}\` → **HTTP 404** (an unknown address is a real 404, #1613)"
           } >> "$GITHUB_STEP_SUMMARY"
