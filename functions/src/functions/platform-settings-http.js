@@ -47,7 +47,7 @@ httpRoute('cmsRemindersTelegramTest', {
   handler: (request, context) =>
     createNotifyTestHandlers({
       guard: getDefaultGuard(),
-      notifier: createNotifier({ store: { readDoc, upsertDoc, patchDoc }, log: context }),
+      notifier: createNotifier({ store: { readDoc, upsertDoc, patchDoc, createDoc }, log: context }),
     }).sendTelegramTest(request, context),
 });
 

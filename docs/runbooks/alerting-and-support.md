@@ -202,6 +202,42 @@ all, and the rules that count successes (reachability, the two export rules,
 the lab heartbeat) fire on silence rather than being silenced by it: a capped
 workspace makes them page, not sleep.
 
+### Missed a Telegram alert? Read it, or send it again
+
+Since 2026-11-10 the app keeps a copy of every alert Telegram accepted: the
+newest 50, with their words, in the Cosmos document `system/notify_log`.
+Before that an alert went to your phone and nowhere else, so an alert sent
+before the change was deployed cannot be read again.
+
+1. Open the [Health page's Alerts tab](https://hybridcloudworks.com/admin/health?tab=alerts)
+   and scroll to **Sent to your phone**.
+
+   Success: a list of alerts, newest first, each with its time in UTC.
+   **None yet** means no alert has been sent since the change was deployed.
+2. Press **Show the text** under an alert to read all of it.
+3. To get it on your phone again, press **Send again**.
+
+   Success: a "Sent again" notice on the page, and a Telegram message whose
+   title reads "Sent again:" (after the warning or info sign) and that says
+   when the first one went. The same alert can be sent again once a minute;
+   a second press inside the minute says so and sends nothing.
+
+   If the page says "Telegram refused the message", open
+   [Platform Settings, Reminders](https://hybridcloudworks.com/admin/platform-settings?tab=reminders)
+   and press **Test Telegram**. It shows Telegram's own reason; a blocked bot
+   is the usual one. A refused resend also sets off the
+   `alert-telegram-delivery` alert below (SMS and mail), the same as any
+   refused alert, because the cause is the same.
+
+Koda can read the same list (Platform switch on the Koda tab), but it cannot
+send an alert again: that stays your choice.
+
+Both reading the list and "Send again" need the editor role, not viewer like
+the rest of the Health page: the list keeps the reminders sheet's notices,
+and the sheet is editor. Below editor the card is not shown. The routes
+are `GET /api/cms/alerts/recent` and `POST /api/cms/alerts/resend`
+(`functions/src/lib/alerts/handlers.js`).
+
 ### The delivery monitor speaks on Telegram
 
 Merging to `main` ships nothing here: the frontend and Functions deploys are
@@ -239,7 +275,7 @@ which is itself a manual deploy.
 | `alert-func-latency` | 2 | P95 request duration above 5 s over 30 min, evaluated every 5 min | A slow dependency, or cold starts dominating a low-traffic window | Application Insights → **Performance**, split by operation; then check whether a deploy landed in the window |
 | `alert-cosmos-throttle` | 2 | More than 10 Cosmos responses with `StatusCode = 429` in 15 min | Retries are no longer absorbing throttling | Cosmos → **Insights** → normalized RU consumption, to find the container and partition key range |
 | `alert-app-exceptions` | 1 | More than 5 `AppExceptions` rows in 15 min | Handlers are throwing | The `AppExceptions` table, grouped by `ProblemId` and `OperationName` |
-| `alert-telegram-delivery` | 2 | A `[notify] Telegram API error` or `[notify] notifyTelegram failed` trace in the last hour, evaluated every 15 min (stateful) | Telegram refused or failed a notification to the owner: the bot is blocked, or the chat id is stale. Every owner notification is silent until it is fixed, which is why this pages by SMS and mail instead | `AppTraces` for messages starting `[notify]` over the last two hours; then message the bot from the owner's Telegram account |
+| `alert-telegram-delivery` | 2 | A `[notify] Telegram API error` or `[notify] notifyTelegram failed` trace in the last hour, evaluated every 15 min (stateful) | Telegram refused or failed a notification to the owner: the bot is blocked, or the chat id is stale. Every owner notification is silent until it is fixed, which is why this pages by SMS and mail instead. A refused **Send again** from the Health page writes the same trace (`… on a resend`), on purpose | `AppTraces` for messages starting `[notify]` over the last two hours; then message the bot from the owner's Telegram account |
 | `alert-api-reachability` | 1 | Fewer than 3 `edge-api-health` successes in `availabilityResults` in 30 min, of the 6 expected, evaluated every 5 min (stateful). Gated on `availability_probe_alert_enabled`, armed 2026-09-01 (T-519) | The API is unreachable over the Cloudflare path, or the edge probe itself has stopped; from a visitor's seat they are the same incident | `AppAvailabilityResults` for `edge-api-health` over the last hour, then [Availability probe](availability-probe.md) |
 | `alert-cosmos-export-daily` | 2 | No `cosmosExportCompleted` event, full or delta, in the last 2 days, evaluated daily. **Stateless**: mails once a day until a run completes. Gated on `cosmos_export_enabled` | The 03:00 UTC exporter is not finishing, and the out-of-account copy is going stale | `AppEvents` for `cosmosExportCompleted`, and `AppExceptions` for the export timer and job; then [Cosmos restore](cosmos-restore.md) |
 | `alert-cosmos-export-full` | 2 | On a Monday, no full export completed in the trailing 2 days, evaluated daily. **Stateless**: one mail per missed Sunday. Gated on `cosmos_export_enabled` | Sunday's full did not land: deltas keep accumulating and deletes stay unreconciled until the next full | The same `AppEvents` rows, filtered to `mode` `full` |
