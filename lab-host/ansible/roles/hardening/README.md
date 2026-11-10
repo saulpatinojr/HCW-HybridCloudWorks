@@ -397,14 +397,16 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
      at the Coder role's secrets assertion, which every nightly run did from
      2026-10-16 to 2026-11-10 while these defaults named `/etc/hcw/vault.yml`.
      As in `bootstrap.sh`, one of the two files without the other fails the
-     check, so a host where the password exists and the vault does not yet
+     check (its warning, shipped to Log Analytics, names no path), so a host
+     where the password exists and the vault does not yet
      (the runbook's first-run state) pages until the first `hcw-vault-set`.
    - On a failure, the unit's output (the journal at `daemon.info`, which the
      data collection rule does not ship) names the failed task and Ansible's
-     one-line `[ERROR]:` message, then the last 25 lines (the recap and
-     timings). It never prints a `fatal:` or `failed:` result body, because a
-     looped result prints its whole item, and an item can hold a container's
-     environment. The `[ERROR]:` line is the task's own message, so a `fail`
+     one-line `[ERROR]:` message, then the recap line and the timing lines,
+     picked by their shape. It never prints a `fatal:` or `failed:` result
+     body, because a looped result prints its whole item, and an item can hold
+     a container's environment; a plain tail of the output would, when the
+     play fails early and the timing recap is short. The `[ERROR]:` line is the task's own message, so a `fail`
      or `assert` message here names keys, never values.
    - If changes would be applied, logs `playbook drift detected ...: <n> change(s) would be applied`
      at `daemon.warning` under the tag `hcw-playbook-drift`, exiting 2.

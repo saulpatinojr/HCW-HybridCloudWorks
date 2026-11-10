@@ -165,12 +165,6 @@ check "drift detected logs warning to syslog with change count and commit" \
 cat > "${work}/ansible-output" <<'EOF'
 PLAY [localhost] ***************************************************************
 
-TASK [privilege_checks : Assert each add-on container] *************************
-failed: [localhost] (item=hcw-addon-sample) => {
-    "ansible_loop_var": "item",
-    "item": {"Config": {"Env": ["TURNSTILE_SECRET=DUMMY-SECRET-0001"]}}
-}
-
 TASK [docker : Check service] **************************************************
 [ERROR]: Task failed: Action failed: Docker daemon failed
 Origin: /opt/hcw-src/lab-host/ansible/roles/docker/tasks/main.yml:12:3
@@ -183,12 +177,21 @@ fatal: [localhost]: FAILED! => {
     "msg": "Docker daemon failed"
 }
 
+TASK [privilege_checks : Assert each add-on container] *************************
+failed: [localhost] (item=hcw-addon-sample) => {
+    "ansible_loop_var": "item",
+    "item": {"Config": {"Env": ["TURNSTILE_SECRET=DUMMY-SECRET-0001"]}}
+}
+
 PLAY RECAP *********************************************************************
 localhost                  : ok=10   changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0
 EOF
-# A real run ends with the timing recap, longer than the 25 lines the script
-# tails: the failed task must still reach stderr (#1631).
-for i in $(seq 1 30); do echo "role : A task that took a while ---- 0.${i}s"; done >> "${work}/ansible-output"
+# A real run ends with the timing recap. profile_tasks prints at most 20
+# lines, one per task that ran, so a play that fails early has a short recap
+# and the failed result sits within the last 25 lines of output. It must still
+# not reach stderr (#1631).
+printf '\nTASKS RECAP ********************************************************************\n' >> "${work}/ansible-output"
+for i in $(seq 1 5); do echo "role : A task that took a while ---- 0.${i}s"; done >> "${work}/ansible-output"
 echo 2 > "${work}/ansible-rc"
 
 fail_status=0
@@ -198,7 +201,7 @@ check "playbook execution failure names the failed task and its message on stder
   "grep -qF 'TASK [docker : Check service]' '${work}/stderr' && grep -qxF '[ERROR]: Task failed: Action failed: Docker daemon failed' '${work}/stderr'" \
   "$(cat "${work}/stderr" 2>/dev/null || true)"
 check "a failed result's body, secrets in a looped item included, never reaches stderr (#1631)" \
-  "! grep -qF 'DUMMY-SECRET-0001' '${work}/stderr' && ! grep -qF 'FAILED! =>' '${work}/stderr'" \
+  "! grep -qF 'DUMMY-SECRET-0001' '${work}/stderr' && ! grep -qF 'FAILED! =>' '${work}/stderr' && ! grep -qF 'failed: [localhost]' '${work}/stderr' && grep -qF 'role : A task that took a while ---- 0.5s' '${work}/stderr' && grep -qE '^localhost +: ok=10 ' '${work}/stderr'" \
   "$(cat "${work}/stderr" 2>/dev/null || true)"
 check "playbook execution failure logs warning to syslog with rc and failed count" \
   "grep -qxF '${tag}|daemon.warning|playbook check failed (rc=2, failed=1, unreachable=0) on commit feedbeef1234567890abcdef1234567890abcdef' '${work}/log'" \
@@ -224,14 +227,14 @@ rm -f "${fake_pass}"
 half_status=0
 run >/dev/null 2>&1 || half_status=$?
 check "a vault file without its password file exits 1 and logs warning" \
-  "[ '${half_status}' -eq 1 ] && grep -qF 'daemon.warning|playbook drift check failed: one of ${fake_vault} and ${fake_pass} exists and the other does not' '${work}/log'" \
+  "[ '${half_status}' -eq 1 ] && grep -qxF '${tag}|daemon.warning|playbook drift check failed: the vault file or its password file exists without the other' '${work}/log'" \
   "$(cat "${work}/log" 2>/dev/null || true)"
 touch "${fake_pass}"
 rm -f "${fake_vault}"
 half_status=0
 run >/dev/null 2>&1 || half_status=$?
 check "a password file without its vault file exits 1 and logs warning" \
-  "[ '${half_status}' -eq 1 ] && grep -qF 'daemon.warning|playbook drift check failed: one of ${fake_vault} and ${fake_pass} exists and the other does not' '${work}/log'" \
+  "[ '${half_status}' -eq 1 ] && grep -qxF '${tag}|daemon.warning|playbook drift check failed: the vault file or its password file exists without the other' '${work}/log'" \
   "$(cat "${work}/log" 2>/dev/null || true)"
 touch "${fake_vault}"
 
