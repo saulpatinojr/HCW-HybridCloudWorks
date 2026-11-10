@@ -136,16 +136,17 @@ describe('Azure ids come from secrets, so public logs show ***', () => {
   });
 
   it.each([
-    ['CLIENT_ID', ['deploy-azure-frontend.yml', 'deploy-functions.yml']],
+    // The backend deploy alone since #1617, when the frontend deploy moved
+    // to its own identity (FRONTEND_DEPLOY_CLIENT_ID, below).
+    ['CLIENT_ID', ['deploy-functions.yml']],
     ['READER_CLIENT_ID', ['monitor-functions-registered.yml', 'monitor-unresolved-secrets.yml']],
     ['MANIFEST_WINDOW_CLIENT_ID', ['publish-content-manifest.yml', 'remove-ci-access-windows.yml']],
     ['COPILOT_REVIEW_CLIENT_ID', ['copilot-setup-steps.yml']],
     ['ARC_RUN_CLIENT_ID', ['lab-host-arc-run.yml']],
     ['ALERT_READER_CLIENT_ID', ['verify-alert-state.yml']],
-    // #1617: no workflow reads it until the second pull request moves
-    // deploy-azure-frontend.yml onto it (then CLIENT_ID's list above loses
-    // that file and this one gains it).
-    ['FRONTEND_DEPLOY_CLIENT_ID', []],
+    // #1617: the frontend deploy's own identity, which can only read the
+    // Static Web App's deployment token.
+    ['FRONTEND_DEPLOY_CLIENT_ID', ['deploy-azure-frontend.yml']],
   ])('%s is read from the secret by the workflows that sign in with it', (name, expected) => {
     expect(readersOf(name).sort()).toEqual(expected.sort());
   });

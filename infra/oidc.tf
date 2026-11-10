@@ -41,13 +41,12 @@ resource "azurerm_user_assigned_identity" "github_deploy" {
 # and immutable form below.
 #
 # They trusted a subject no workflow presents. Every job that signs in as
-# the deploy identity declares `environment: production`, so GitHub composes
-# the environment form. At the time the production reviewers gated that
-# sign-in; the owner removed them on 2026-11-09 (#1613), and the controls now
-# are the environment's main-only branch rule and each deploy workflow's
-# guard step that refuses any ref but `main`. #1617 restores a reviewed
-# environment for the backend and gives the frontend a least-privilege
-# identity of its own. The ref form was a way around those controls: any job
+# the deploy identity names an environment, so GitHub composes the
+# environment form. At the time that was `production`, whose reviewers gated
+# the sign-in; the owner removed them on 2026-11-09 (#1613). Since #1617 the
+# one job on this identity is the backend deploy, which names the reviewed
+# `production-backend` environment, and the frontend signs in as an identity
+# of its own. The ref form was a way around those controls: any job
 # on `main` holding `id-token: write` — ten workflows do, for Qlty, Pages and
 # the manifest — could have signed in as this identity without naming the
 # environment and deployed code that runs as the Function App's own identity.
@@ -150,7 +149,19 @@ locals {
 # carries.
 
 # ---------------------------------------------------------------------------
-# environment:production — the subject the Function App deploy actually presents
+# environment:production on THIS identity — RETIRED 2026-11-09 (#1617)
+#
+# Two credentials stood here, name form and immutable form,
+# `github_production` and `github_production_immutable`, until the second
+# pull request of #1617. Since then the backend deploy names
+# `production-backend` (the pair after this note) and the frontend deploy
+# signs in as github_frontend_deploy, which trusts `production` itself. So no
+# job that signs in as this identity names `production` any more, and a
+# `production` job, which no one approves since #1613, can no longer reach
+# the Function App's publishing rights. scripts/oidc-subjects.test.mjs pins
+# this identity to the two production-backend subjects exactly. The history
+# of why environment credentials exist at all is kept below, because it is
+# the same for production-backend.
 #
 # `de99aa0` put deploy-functions.yml behind `environment: production` to gate
 # production deploys. That is a good change with a consequence nothing here
@@ -179,29 +190,9 @@ locals {
 # since T-728, and the healer was deleted in #816 part 2, so no workflow on
 # THIS identity presents the ref subject, and on 2026-10-06 the owner retired
 # the pair (SEC-2). Environment credentials are the identity's only trust
-# now: a sign-in as the deploy identity comes from a job that names the
-# production environment, whose main-only branch rule admits main only, or
-# (since #1617) production-backend, below.
-# The environment's required reviewers were removed on 2026-11-09 (#1613);
-# #1617 restores a reviewed environment for the backend. PR 2 of #1617 deletes
-# THIS pair, once deploy-functions.yml names production-backend and the
-# frontend signs in as github_frontend_deploy.
-# ---------------------------------------------------------------------------
-resource "azurerm_federated_identity_credential" "github_production" {
-  name                      = "github-${var.github_repo}-env-production"
-  user_assigned_identity_id = azurerm_user_assigned_identity.github_deploy.id
-  audience                  = ["api://AzureADTokenExchange"]
-  issuer                    = "https://token.actions.githubusercontent.com"
-  subject                   = "repo:${var.github_org}/${var.github_repo}:environment:production"
-}
-
-resource "azurerm_federated_identity_credential" "github_production_immutable" {
-  name                      = "github-${var.github_repo}-env-production-immutable"
-  user_assigned_identity_id = azurerm_user_assigned_identity.github_deploy.id
-  audience                  = ["api://AzureADTokenExchange"]
-  issuer                    = "https://token.actions.githubusercontent.com"
-  subject                   = "${local.github_immutable_prefix}:environment:production"
-}
+# now. Until #1617 that was the `production` pair; since then it is the
+# `production-backend` pair below, whose environment admits main only and
+# waits for a reviewer.
 
 # ---------------------------------------------------------------------------
 # environment:production-backend — the backend deploy's own reviewed
@@ -210,23 +201,25 @@ resource "azurerm_federated_identity_credential" "github_production_immutable" {
 # Since 2026-11-09 the `production` environment has no required reviewers, so
 # a frontend change merged to main deploys by itself (#1613). The backend
 # deploy, deploy-functions.yml, named the same environment, so it lost its
-# approval step too. #1617 gives it an environment of its own,
+# approval step too. #1617 gave it an environment of its own,
 # `production-backend`, which keeps a main-only branch rule AND required
-# reviewers (saulpatinojr and hcw-architect). The owner creates it in GitHub
-# before confirming the apply that adds this trust: GitHub makes a missing
-# environment, with no protection at all, the first time a job on any branch
-# names it, and from this apply such a job could sign in as this identity.
+# reviewers (saulpatinojr and hcw-architect), with no administrator bypass.
+# The owner created it in GitHub on 2026-11-09, before confirming the apply
+# that added this trust: GitHub makes a missing environment, with no
+# protection at all, the first time a job on any branch names it, and from
+# that apply such a job could have signed in as this identity.
 #
 # A job that names `production-backend` presents this subject, in either form,
-# so this identity must trust it before the workflow moves. The work is in two
-# pull requests because HCP Terraform applies only from main:
+# so this identity had to trust it before the workflow moved. The work was in
+# two pull requests because HCP Terraform applies only from main:
 #
-#   PR 1 (this pair): github_deploy trusts production AND production-backend.
-#       Nothing changes for any running workflow.
+#   PR 1 (#1633, applied 2026-11-09): this pair, and the frontend's own
+#       identity below. github_deploy trusted production AND
+#       production-backend, so nothing changed for a running workflow.
 #   PR 2: deploy-functions.yml names `production-backend`, the frontend
 #       deploy signs in as github_frontend_deploy (below), and the two
-#       `production` credentials above and github_deploy_swa_token are deleted,
-#       so this identity trusts the reviewed environment only.
+#       `production` credentials that stood above and github_deploy_swa_token
+#       are deleted, so this identity trusts the reviewed environment only.
 #
 # Both forms, for the reasons given above the immutable block.
 # ---------------------------------------------------------------------------
@@ -297,11 +290,11 @@ resource "azurerm_role_assignment" "github_deploy_funcsa_network" {
 #
 # So the division is what the job DOES, not which team owns it:
 #
-#   github_deploy            writes something     deploy-functions,
-#                                                 deploy-azure-frontend
-#                                                 (until #1617's PR 2)
+#   github_deploy            writes something     deploy-functions
+#                                                 (deploy-azure-frontend too,
+#                                                 until #1617)
 #   github_frontend_deploy   the site's token     deploy-azure-frontend
-#                                                 (from #1617's PR 2)
+#                                                 (since #1617)
 #   github_reader            writes nothing       monitor-functions-registered,
 #                                                 monitor-unresolved-secrets
 #   github_manifest_window   one origin rule      publish-content-manifest
@@ -423,8 +416,10 @@ resource "azurerm_role_assignment" "github_reader_function_settings" {
 #     and cannot be removed while the resource is managed here. outputs.tf said
 #     this before the retirement and it is still true after it.
 #
-# The job now asks ARM for the token under the same federated identity it
-# already uses, and it lives for the length of one run.
+# The job now asks ARM for the token under a federated identity, and the
+# token lives for the length of one run. Since #1617 that identity is
+# github_frontend_deploy below, which holds this role and nothing else;
+# until then it was github_deploy.
 #
 # WHY A CUSTOM ROLE. Microsoft.Web/staticSites/listSecrets/action is an action,
 # not a read, so Reader cannot express it — the same shape as the function
@@ -437,18 +432,14 @@ data "azurerm_role_definition" "static_web_app_deployer" {
   scope = azurerm_resource_group.app["web"].id
 }
 
-# Scoped to the ONE site, not the resource group the definition is assignable
-# in. The definition has to be assignable at the group; the assignment does not
-# have to use that breadth, and a future second static site should not inherit
-# this by accident.
-#
-# PR 2 of #1617 deletes this grant, once deploy-azure-frontend.yml signs in as
-# github_frontend_deploy below, which holds the same role on the same site.
-resource "azurerm_role_assignment" "github_deploy_swa_token" {
-  scope              = azurerm_static_web_app.hcw.id
-  role_definition_id = data.azurerm_role_definition.static_web_app_deployer.id
-  principal_id       = azurerm_user_assigned_identity.github_deploy.principal_id
-}
+# REMOVED 2026-11-09 (#1617, second pull request):
+# azurerm_role_assignment.github_deploy_swa_token, this role on the one site
+# for github_deploy. deploy-azure-frontend.yml signs in as
+# github_frontend_deploy below since that pull request, and that identity
+# holds the same role on the same site (github_frontend_deploy_swa_token), so
+# the deploy identity, which no frontend job uses any more, does not need it.
+# scripts/oidc-subjects.test.mjs fails if any identity but the frontend
+# deploy's holds the role again.
 
 # ---------------------------------------------------------------------------
 # github_frontend_deploy — the frontend deploy, and nothing else (#1617)
@@ -463,14 +454,16 @@ resource "azurerm_role_assignment" "github_deploy_swa_token" {
 #
 # This identity holds the one role the frontend needs, HCW Static Web App
 # Deployer (the listSecrets action and nothing else; see the data source
-# above), on the one site. Same role and same scope as github_deploy_swa_token:
-# the site itself is the narrowest scope Azure has for it.
+# above), on the one site. Same role and same scope as github_deploy held
+# until #1617 (github_deploy_swa_token, removed above): the site itself is
+# the narrowest scope Azure has for it.
 #
 # What it cannot do: read the site (`az staticwebapp show`), change or delete
-# it, or touch anything else. The workflow's one `show` runs only when the
-# STATIC_WEB_APP_DEFAULT_HOSTNAME variable and its built-in default are both
-# empty, which they are not, and github_deploy cannot read the site either, so
-# nothing that works today stops working.
+# it, or touch anything else. The workflow's post-deploy probe had an
+# `az staticwebapp show` fallback for the site's address, which needed a read
+# neither deploy identity ever held and never ran, because the address has a
+# built-in default; #1617 removed it, and the probe fails with a clear message
+# if the address is ever empty.
 #
 # No Reader on the group, unlike github_manifest_window: a sign-in with
 # SUBSCRIPTION_ID pinned finds the subscription through a grant on one
@@ -480,11 +473,11 @@ resource "azurerm_role_assignment" "github_deploy_swa_token" {
 #
 # SUBJECT IS environment:production, both forms. That environment has no
 # required reviewers since #1613, so this identity is the control now: a job
-# that names `production` can reach the deployment token and no more. The
-# backend moves to `production-backend` in PR 2, and then github_deploy stops
-# trusting `production` (see the pair above). Until PR 2 merges, both
-# identities trust `production`, and a job's client id decides which it
-# reaches; scripts/oidc-subjects.test.mjs pins both states.
+# that names `production` can reach the deployment token and no more. Since
+# the second pull request of #1617 the backend deploy names
+# `production-backend` and github_deploy no longer trusts `production` (see
+# the note where its pair stood), so this is the only identity a `production`
+# job can reach. scripts/oidc-subjects.test.mjs pins both.
 #
 # principal_type is explicit because the identity is created in the same
 # apply, as for github_alert_reader.
@@ -623,10 +616,10 @@ resource "azurerm_role_assignment" "github_manifest_window_read" {
 # Function App half needs exactly what this identity already holds, Config
 # Refresh for the remove and Reader for the reads. It runs as this identity
 # and not as github_deploy because github_deploy trusts only the
-# `environment:production` subject, and that environment's required
-# reviewers would have held the hourly job for a person each time. They were
-# removed on 2026-11-09 (#1613), and #1617 brings a reviewed environment back
-# for the backend, so the reason stands.
+# `environment:production-backend` subject since #1617, and that
+# environment's required reviewers would hold the hourly job for a person
+# each time. (When this was written it trusted `production`, which had
+# required reviewers until 2026-11-09, #1613; the reason is the same.)
 #
 # The storage half is this grant: the account's read and write actions and
 # nothing else (infra/roles/storage-firewall-writer.json). The firewall is a
@@ -763,13 +756,16 @@ resource "azurerm_role_assignment" "github_alert_reader_mgmt" {
 # script in either would inherit root on the lab host. This identity holds the
 # Run Command role and nothing else.
 #
-# AND AN ENVIRONMENT OF ITS OWN, lab-host-arc, not production. Entra matches a
-# federated credential on issuer, subject and audience alone, and a client id
-# is public, so ANY job that presents a subject this identity trusts can sign
-# in as it, whatever client id it was written to send. Trusting
-# environment:production would have handed root on the lab host to every
-# production job (deploy-functions.yml and deploy-azure-frontend.yml both run
-# `npm ci` with package scripts). So the subject is
+# AND AN ENVIRONMENT OF ITS OWN, lab-host-arc, not a deploy environment.
+# Entra matches a federated credential on issuer, subject and audience alone,
+# and a client id is public, so ANY job that presents a subject this identity
+# trusts can sign in as it, whatever client id it was written to send.
+# Trusting environment:production would have handed root on the lab host to
+# every production job, and when this was written both deploys named it
+# (since #1617 deploy-azure-frontend.yml names `production` and
+# deploy-functions.yml names `production-backend`; the backend one runs
+# `npm ci` with package scripts, and the frontend one runs with no approval
+# since #1613). So the subject is
 # environment:lab-host-arc, in both forms, and nothing else. The control is
 # that environment: its required reviewers approve each run and its
 # deployment-branch policy admits main only. The owner creates it before the
@@ -1036,7 +1032,7 @@ resource "azurerm_role_assignment" "github_copilot_review_reader" {
 # repository secrets, only so that GitHub masks them in the public logs.
 # ---------------------------------------------------------------------------
 output "client_id" {
-  description = "CLIENT_ID for azure/login — a repository secret since #1618, kept secret only so the public logs mask it; an identifier, not a credential"
+  description = "CLIENT_ID for azure/login in deploy-functions.yml (the frontend deploy has its own since #1617) — a repository secret since #1618, kept secret only so the public logs mask it; an identifier, not a credential"
   value       = azurerm_user_assigned_identity.github_deploy.client_id
 }
 
@@ -1075,8 +1071,10 @@ output "deploy_principal_id" {
   value       = azurerm_user_assigned_identity.github_deploy.principal_id
 }
 
-# Sixteen entries since #1617, when the deploy identity's production-backend
-# pair and the frontend identity's production pair were added. Twelve since
+# Fourteen entries since the second pull request of #1617, when the deploy
+# identity's production pair was retired. Sixteen in between, from #1617's
+# first pull request, which added the deploy identity's production-backend
+# pair and the frontend identity's production pair. Twelve since
 # #1590, when the Run Command identity's lab-host-arc
 # environment pair was added. Ten since #1098, when the manifest window identity's ref pair was
 # added. Eight since 2026-10-11, when the alert reader identity's ref pair
@@ -1092,16 +1090,17 @@ output "deploy_principal_id" {
 # NOTE for anyone debugging AADSTS700213 against this list: since SEC-2 the
 # ref subject is trusted by the read-only identities only. A ref-form token
 # sent with CLIENT_ID (the deploy identity) fails here by design — a job that
-# needs the deploy identity names `environment: production` (or, from #1617's
-# PR 2, `production-backend`) and presents the environment form. Which
+# needs the deploy identity names `environment: production-backend` (since
+# #1617; `production` before) and presents the environment form. A job that
+# names `production` reaches only github_frontend_deploy, with
+# FRONTEND_DEPLOY_CLIENT_ID; sent with CLIENT_ID it fails here too. Which
 # identity a job reaches is decided by the client-id it presents, so check
 # whether it sent CLIENT_ID, FRONTEND_DEPLOY_CLIENT_ID, READER_CLIENT_ID,
-# ALERT_READER_CLIENT_ID, MANIFEST_WINDOW_CLIENT_ID or ARC_RUN_CLIENT_ID.
+# ALERT_READER_CLIENT_ID, MANIFEST_WINDOW_CLIENT_ID, COPILOT_REVIEW_CLIENT_ID
+# or ARC_RUN_CLIENT_ID.
 output "federated_subjects" {
   description = "Exact OIDC subject claims trusted by these identities — compare against a failing token"
   value = [
-    azurerm_federated_identity_credential.github_production.subject,
-    azurerm_federated_identity_credential.github_production_immutable.subject,
     azurerm_federated_identity_credential.github_production_backend.subject,
     azurerm_federated_identity_credential.github_production_backend_immutable.subject,
     azurerm_federated_identity_credential.github_frontend_deploy_env_production.subject,

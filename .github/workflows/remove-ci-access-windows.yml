@@ -23,11 +23,11 @@
 #
 # WHICH IDENTITY, AND WHY NOT THE DEPLOY ONE. The deploy identity
 # (github_deploy, CLIENT_ID) holds the write roles already, but it trusts
-# only the `environment:production` subject. When this was written that
-# environment had two required reviewers (read live 2026-11-03), so a job
-# naming it would have waited for a person every hour; the owner removed them
-# on 2026-11-09 (#1613). The deploy identity also holds far more than these
-# windows need (#1617), so a narrow identity is still the right one. So this runs
+# only the `environment:production-backend` subject since #1617, and that
+# environment has required reviewers, so a job naming it would wait for a
+# person every hour. (When this was written it trusted `production`, which
+# had the same reviewers until 2026-11-09, #1613.) The deploy identity also
+# holds far more than these windows need. So this runs
 # as github_manifest_window (MANIFEST_WINDOW_CLIENT_ID), the identity
 # publish-content-manifest.yml opens its own window with. It trusts the
 # ref-form subject (no `environment:` here, or the subject changes and

@@ -1223,13 +1223,27 @@ describe('DECLARED', () => {
     ]);
   });
 
-  it('declares #1617’s six creates and none of PR 2’s deletes, so the deploy identity keeps production until the workflows move', () => {
-    // PR 1 adds the frontend deploy identity and the deploy identity's
-    // production-backend pair. It removes nothing: github_deploy's production
-    // pair and its site role stay until PR 2 has moved both workflows, or a
-    // deploy in between would fail at sign-in. A declared delete of any of
-    // the three here would wave that destroy through the plan check.
+  it('declares #1617’s three deletes with their blocks gone from infra/, and prunes PR 1’s six applied creates with their blocks kept', () => {
+    // PR 2 deletes the deploy identity's production pair and its site role,
+    // now that deploy-functions.yml names production-backend and the
+    // frontend signs in as github_frontend_deploy. Each delete is declared,
+    // and its block is gone from the tree (a declared delete whose block
+    // still stood would match nothing and hide nothing, but it would say the
+    // wrong thing to whoever reads the plan).
     const byAction = (action) => DECLARED.filter((entry) => entry.action === action).map((entry) => entry.address);
+    const block = (address) => `resource "${address.split('.')[0]}" "${address.split('.')[1]}"`;
+    for (const address of [
+      'azurerm_federated_identity_credential.github_production',
+      'azurerm_federated_identity_credential.github_production_immutable',
+      'azurerm_role_assignment.github_deploy_swa_token',
+    ]) {
+      expect(byAction('delete'), address).toContain(address);
+      expect(infraSource, `${address} is still declared in infra/`).not.toContain(`${block(address)} {`);
+    }
+    // PR 1's six creates applied on 2026-11-09 (the commit status on
+    // 3ba8f791). Their declarations go; their resources stay, because a
+    // declaration pruned while its resource was also removed would hide a
+    // destroy of the frontend identity or the backend's trust.
     for (const address of [
       'azurerm_user_assigned_identity.github_frontend_deploy',
       'azurerm_federated_identity_credential.github_frontend_deploy_env_production',
@@ -1238,17 +1252,9 @@ describe('DECLARED', () => {
       'azurerm_federated_identity_credential.github_production_backend',
       'azurerm_federated_identity_credential.github_production_backend_immutable',
     ]) {
-      expect(byAction('create'), address).toContain(address);
-    }
-    for (const address of [
-      'azurerm_federated_identity_credential.github_production',
-      'azurerm_federated_identity_credential.github_production_immutable',
-      'azurerm_role_assignment.github_deploy_swa_token',
-    ]) {
+      expect(byAction('create'), address).not.toContain(address);
       expect(byAction('delete'), address).not.toContain(address);
-      expect(infraSource, `${address} is gone from infra/ before PR 2`).toContain(
-        `resource "${address.split('.')[0]}" "${address.split('.')[1]}"`
-      );
+      expect(infraSource, `${address} is gone from infra/`).toContain(`${block(address)} {`);
     }
   });
 
