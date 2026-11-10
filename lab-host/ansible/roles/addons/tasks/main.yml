@@ -277,10 +277,15 @@
     label: "{{ item.id }}: {{ item.image }}@{{ item.image_digest }}"
   when: not ansible_check_mode
 
+# pull: not_present, as the caddy role does: a digest names one image's exact
+# content, so an image already present by that digest is the one wanted.
+# With the default (always), check mode always reports a change, and the
+# nightly drift check reported every add-on as drift.
 - name: Pull each deployed add-on image by digest
   community.docker.docker_image_pull:
     name: "{{ item.image }}@{{ item.image_digest }}"
     platform: linux/amd64
+    pull: not_present
   loop: "{{ addons_deployed }}"
   loop_control:
     label: "{{ item.id }}: {{ item.image }}@{{ item.image_digest }}"
