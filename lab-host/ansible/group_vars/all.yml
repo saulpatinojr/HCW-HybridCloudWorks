@@ -265,8 +265,8 @@ coder_max_workspaces: 5
 # coder:latest no longer matches the newest numbered tag (seen 2026-11-08), so
 # the pin follows the numbered releases, not latest.
 coder_image: ghcr.io/coder/coder
-coder_image_tag: v2.39.0
-coder_image_digest: sha256:5fb8f624dc0d33be89c72c7b2e384cdc7c2c5ac0d5847348d3aa0edaf058605c
+coder_image_tag: v2.39.1
+coder_image_digest: sha256:77500de63a62f733bb1fbbf79da85e8ad4d6ca582e964f5d6021f46f6dc7fc29
 # PostgreSQL, a digest of the same kind. Read 2026-09-26: 18 is the newest major
 # (supported to November 2030), its newest numbered tag and postgres:18
 # resolved to the same index, and the registry's Docker-Content-Digest and the
