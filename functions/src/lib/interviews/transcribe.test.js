@@ -204,8 +204,8 @@ describe('transcribeInterview', () => {
     // Content-free logs: ids, counts, times. Never the guest, the URL, the file name or a segment.
     const lines = [...log.log.mock.calls, ...log.warn.mock.calls].map(([line]) => line);
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toMatch(/^interview-transcribe: int-1 v1 window 0 1 segments, 115200\+800 tokens, 1 attempt\(s\), \d+ ms$/);
-    expect(lines[2]).toMatch(/^interview-transcribe: int-1 v1 done: 2 window\(s\), 2 request\(s\), 2 segments, 230400\+1600 tokens, \$[\d.]+, \d+ ms$/);
+    expect(lines[0]).toMatch(/^interview-transcribe: v1 window 0 1 segments, 115200\+800 tokens, 1 attempt\(s\), \d+ ms$/);
+    expect(lines[2]).toMatch(/^interview-transcribe: v1 done: 2 window\(s\), 2 request\(s\), 2 segments, 230400\+1600 tokens, \$[\d.]+, \d+ ms$/);
     for (const line of lines) {
       for (const secret of [GUEST, 'secret.example', 'guest-voice', 'said something', 'audio/int-1.mp3', 'files/abc']) {
         expect(line, secret).not.toContain(secret);
@@ -298,7 +298,7 @@ describe('transcribeInterview', () => {
     });
     const log = { log: vi.fn(), warn: vi.fn() };
     await expect(run(world, makeGemini([{ segments: [], endOfAudio: true }]), { log })).resolves.toMatchObject({ windows: 1 });
-    expect(log.warn.mock.calls.map(([l]) => l)).toEqual(['interview-transcribe: int-1 v1 window 0 usage row not written']);
+    expect(log.warn.mock.calls.map(([l]) => l)).toEqual(['interview-transcribe: v1 window 0 usage row not written']);
   });
 
   it('refuses with BUDGET_EXCEEDED before the upload when the month plus this request would cross the ceiling, and records the failure on the document', async () => {
@@ -365,7 +365,7 @@ describe('transcribeInterview', () => {
     const log = { log: vi.fn(), warn: vi.fn() };
     await expect(run(world, gemini, { log })).rejects.toThrow(/secret-words/);
     expect(gemini.deleteFromGemini).toHaveBeenCalledTimes(1);
-    expect(log.warn.mock.calls.map(([l]) => l)).toEqual(['interview-transcribe: int-1 v1 Gemini file not deleted (GEMINI_HTTP_500)']);
+    expect(log.warn.mock.calls.map(([l]) => l)).toEqual(['interview-transcribe: v1 Gemini file not deleted (GEMINI_HTTP_500)']);
     const stored = world.store.patchDoc.mock.calls.at(-1)[2].interview;
     expect(stored.stage).toBe('failed');
     expect(stored.error).not.toContain('secret-words');

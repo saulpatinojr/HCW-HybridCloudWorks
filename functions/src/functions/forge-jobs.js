@@ -115,9 +115,8 @@ registerJobType('forge-article', {
               duplicateOf: outcome.duplicateOf,
             }
       );
-      context.log?.(
-        `[forge-article] ${contentId} → ${outcome.ok ? outcome.result.status : outcome.error}`
-      );
+      // The outcome only: no content id or failure text in a log line (#1635).
+      context.log?.(`[forge-article] forge ${outcome.ok ? `→ ${outcome.result.status}` : 'failed'}`);
     }
     // A single-document job that did not forge is a failed job, as upstream's
     // HTTP status was; a batch reports per document.

@@ -76,8 +76,9 @@ export async function runTranscriptGeneration(payload, { context, signal } = {})
   });
 
   context?.log?.(
-    `${TRANSCRIPT_JOB_TYPE}: ${report.id} drafted` +
-      (report.audioError ? ` without audio (${report.audioError})` : ` with ${report.audioBytes} B of audio`) +
+    // Counts only: no transcript id or failure sentence in a log line (#1635).
+    `${TRANSCRIPT_JOB_TYPE}: drafted` +
+      (report.audioError ? ' without audio' : ` with ${report.audioBytes} B of audio`) +
       `, $${report.costUsd} spent`
   );
 
@@ -144,9 +145,9 @@ export async function runTranscriptPublish(payload, { context, job, signal } = {
     signal,
   });
 
-  // Content-free: the outcome and the error code, keyed by the job id. The
-  // transcript id and the host's episode id are on the document and in the
-  // job result, not in the log.
+  // Content-free: the outcome and the error code only. The job id, the
+  // transcript id and the host's episode id are on the documents and in the
+  // job result, not in the log (#1635).
   const outcome = record.skipped
     ? `skipped (${record.skipped})`
     : record.error
@@ -221,8 +222,8 @@ export async function runRecordingGeneration(payload, { context, signal } = {}) 
   });
 
   context?.log?.(
-    `${RECORDING_JOB_TYPE}: ${report.id} drafted` +
-      (report.audioError ? ` without audio (${report.audioError})` : ` with ${report.audioBytes} B of audio`) +
+    `${RECORDING_JOB_TYPE}: drafted` +
+      (report.audioError ? ' without audio' : ` with ${report.audioBytes} B of audio`) +
       (report.attributionLeaks.length ? `, ${report.attributionLeaks.length} attribution leak(s) to review` : '') +
       `, $${report.costUsd} spent`
   );
@@ -263,8 +264,7 @@ export async function runUploadTranscription(payload, { context, signal } = {}) 
   });
 
   context?.log?.(
-    `${UPLOAD_JOB_TYPE}: recording ${report.id} stored from Plaud transcription ${report.transcriptionId} ` +
-      `(${report.segments} segments, upload ${report.uploadDeleted ? 'deleted' : 'kept'})`
+    `${UPLOAD_JOB_TYPE}: recording stored (${report.segments} segments, upload ${report.uploadDeleted ? 'deleted' : 'kept'})`
   );
 
   return report;

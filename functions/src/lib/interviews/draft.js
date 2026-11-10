@@ -508,7 +508,7 @@ async function draftFromSegments({ interviewId, transcriptVersion, doc, segments
     },
   });
   log?.log?.(
-    `${DRAFT_JOB_TYPE}: ${interviewId} v${transcriptVersion} ${guarded.qa.length} items, ${guarded.flagged} flagged, ` +
+    `${DRAFT_JOB_TYPE}: v${transcriptVersion} ${guarded.qa.length} items, ${guarded.flagged} flagged, ` +
       `${guarded.droppedQuotes} quotes dropped, ${passes.length} pass(es)${resumedFrom ? `, resumed after ${resumedFrom}` : ''}, ${drafting.provider || 'no provider'}/${drafting.model || 'no model'}${unsure ? ', speaker unsure' : ''}`
   );
   return {

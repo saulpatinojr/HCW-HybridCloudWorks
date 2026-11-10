@@ -284,10 +284,11 @@ export async function runListenAndLearnGeneration(payload, { context, job, signa
       actorId: job?.requestedBy?.oid || null,
       signal,
     });
-    // Exam code and counts only: the episode id is derived from the owner's
-    // title, which is content, and the log line is not the place for it.
+    // Counts only: the exam code is typed by an editor and is half of the
+    // set's document id, and the episode id comes from the owner's title,
+    // so neither belongs in a log line (#1635).
     context?.log?.(
-      `generate-listen-and-learn: ${report.examCode} — source-grounded episode drafted from ${report.sourceCount} sources${report.audioError ? ', without audio' : ''}, $${report.costUsd} spent`
+      `generate-listen-and-learn: source-grounded episode drafted from ${report.sourceCount} sources${report.audioError ? ', without audio' : ''}, $${report.costUsd} spent`
     );
     return report;
   }
@@ -312,7 +313,7 @@ export async function runListenAndLearnGeneration(payload, { context, job, signa
   // The model id is a setting, not content; naming it is what answers "why
   // does this run sound different" from the log alone.
   context?.log?.(
-    `generate-listen-and-learn: ${report.examCode} — ${report.generated} drafted, ${report.failed} failed, ${report.withoutAudio} without audio, $${report.costUsd} spent (speech model ${ttsModel || 'default'})`
+    `generate-listen-and-learn: ${report.generated} drafted, ${report.failed} failed, ${report.withoutAudio} without audio, $${report.costUsd} spent (speech model ${ttsModel || 'default'})`
   );
 
   return report;
@@ -450,7 +451,7 @@ export async function runSpeakChapter(payload, { context, job, signal } = {}) {
   await upsertDoc(EPISODE_CONTAINER, merged);
 
   context?.log?.(
-    `speak-listen-and-learn-chapter: ${id}/${chapterId} — ${audio.bytes} bytes, $${costUsd} spent (${audio.speechProvider} ${audio.speechModel || ''})`
+    `speak-listen-and-learn-chapter: ${audio.bytes} bytes, $${costUsd} spent (${audio.speechProvider} ${audio.speechModel || ''})`
   );
   return {
     chapterId,
