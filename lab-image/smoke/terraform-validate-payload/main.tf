@@ -13,10 +13,13 @@
 # evaluates; the spoke's is `>= 0.15.0` so that both vendored versions of
 # avm-res-network-virtualnetwork (0.15.0, a child of the connectivity
 # module, and the builder's pin) satisfy it and the highest must be chosen.
-# The alz block's exact pin is the builder's own, and update-avm-versions.yml
-# moves it with the pin (the other three are constraints a bump may outgrow,
-# which the static test says). sandbox-check.mjs validates the builder's
-# real default build as well.
+# update-avm-versions.yml moves each block with its module's pin, keeping
+# its operator: the alz block's exact pin (the builder's own), the
+# connectivity block's one-minor window and the management block's `~>`,
+# the last two only once a release has left them (#1658; `nextSmokeConstraint`
+# in frontend/scripts/avm-versions-edits.mjs). The spoke's `>= 0.15.0`
+# cannot be outgrown. sandbox-check.mjs validates the builder's real default
+# build as well.
 terraform {
   required_version = ">= 1.12"
 
