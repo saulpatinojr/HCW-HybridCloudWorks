@@ -35,7 +35,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
 import { Award, Loader2, GraduationCap, Plus, Trash2, Wand2 } from 'lucide-react';
-import { detectIssuer, getVendorForIssuer, getLearnUrl } from '@/lib/certIssuers';
+import { detectIssuer, getLearnUrl } from '@/lib/certIssuers';
 import {
   COLLECTION,
   emptyForm,
@@ -99,8 +99,10 @@ export function buildPayload(form) {
   return {
     name: s(form.name),
     code: s(form.code) || null,
+    // No `vendor`: the site works out the vendor from the issuer whenever it
+    // shows a cert (getVendorForIssuer), and the server refuses the field, so
+    // sending it failed every save (#1663).
     issuer: canonicalIssuer,
-    vendor: getVendorForIssuer(canonicalIssuer),
     issueDate: fromIso(form.issueDate),
     expDate: fromIso(form.expDate),
     renewalDate: fromIso(form.renewalDate),

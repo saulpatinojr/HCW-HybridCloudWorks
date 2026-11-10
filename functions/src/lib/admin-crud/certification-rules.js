@@ -90,6 +90,11 @@ export const CERTIFICATION_FIELDS = Object.freeze([
   'evidence',
   'relatedLearning',
   'renewalRequirements',
+  // The editor's "Description / story" box. It was missing from this list,
+  // so every save from the editor was refused (#1663). Kept in the admin
+  // document only: sanitizeCertification (snapshots-publish.js) does not
+  // publish it.
+  'description',
   'status',
   'notes',
 ]);
@@ -177,8 +182,8 @@ function cleanDisplayOrder(out) {
 function cleanCertLists(out) {
   if ('evidence' in out) out.evidence = cleanLinkList(out.evidence);
   if ('relatedLearning' in out) out.relatedLearning = cleanLinkList(out.relatedLearning);
-  if ('renewalRequirements' in out && out.renewalRequirements !== null) {
-    out.renewalRequirements = String(out.renewalRequirements).trim().slice(0, 4000);
+  for (const key of ['renewalRequirements', 'description']) {
+    if (key in out && out[key] !== null) out[key] = String(out[key]).trim().slice(0, 4000);
   }
   return null;
 }

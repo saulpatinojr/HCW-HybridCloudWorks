@@ -11,6 +11,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 
 import CertEditor, { buildPayload, initialForm, uploadedPathFromUrl } from './CertEditor';
+import {
+  CERTIFICATION_FIELDS,
+  validateCertification,
+} from '../../../../../functions/src/lib/admin-crud/certification-rules.js';
 import { ladderWindow, nextFreeOrder, siblingsOf, issuerOptionsFrom } from './editorFields';
 
 const postJSON = vi.fn();
@@ -41,6 +45,34 @@ const EXISTING = {
 };
 
 describe('payload', () => {
+  it('sends only fields the server accepts, so a save is never refused for its shape (#1663)', () => {
+    // The editor sent `vendor` and `description`, which CERTIFICATION_FIELDS
+    // did not list, and every save failed with "Unknown field(s)". The list
+    // is read from the server's own module, so the two cannot drift apart.
+    const full = buildPayload({
+      ...initialForm({}),
+      name: 'Cloud Architect',
+      issuer: 'Microsoft',
+      code: 'AZ-305',
+      issueDate: '2026-01-02',
+      expDate: '2027-01-02',
+      renewalDate: '2026-11-01',
+      renewalRequirements: 'Renew online',
+      verifyUrl: 'https://learn.microsoft.com/x',
+      learnUrl: 'https://learn.microsoft.com/y',
+      imageUrl: 'https://images.example/badge.png',
+      description: 'Why it matters',
+      evidence: [{ label: 'Transcript', url: 'https://t' }],
+      relatedLearning: [{ label: 'Path', url: 'https://p' }],
+      display_order: 3,
+    });
+    const unknown = Object.keys(full).filter((key) => !CERTIFICATION_FIELDS.includes(key));
+    expect(unknown).toEqual([]);
+    expect(full).not.toHaveProperty('vendor');
+    expect(validateCertification(full).error).toBeUndefined();
+    expect(validateCertification(full).value.description).toBe('Why it matters');
+  });
+
   it('trims, nulls empties, keeps dates as calendar days, keeps order 0 and defaults a blank order', () => {
     const payload = buildPayload({
       ...initialForm({}),
