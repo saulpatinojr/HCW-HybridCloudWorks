@@ -5,6 +5,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { AdminRoleProvider } from '@/hooks/useAdminRole';
 import SentAlertsCard, {
   ALERTS_RECENT_ROUTE,
   ALERTS_RESEND_ROUTE,
@@ -117,6 +118,28 @@ describe('SentAlertsCard', () => {
     expect(
       await screen.findByText(/The alert log could not be read: Failed to read the alert log/)
     ).toBeTruthy();
+  });
+});
+
+describe('who sees it', () => {
+  it('is not drawn, and reads nothing, below editor', async () => {
+    const { container } = render(
+      <AdminRoleProvider value="viewer">
+        <SentAlertsCard />
+      </AdminRoleProvider>
+    );
+    expect(container.textContent).toBe('');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(getJSON).not.toHaveBeenCalled();
+  });
+
+  it('is drawn for an editor and above', async () => {
+    render(
+      <AdminRoleProvider value="publisher">
+        <SentAlertsCard />
+      </AdminRoleProvider>
+    );
+    expect(await screen.findByRole('list', { name: 'Alerts sent to your phone' })).toBeTruthy();
   });
 });
 

@@ -189,16 +189,21 @@ Cost since [ADR 0039](0039-cost-page.md).
 - **One Search Console run** (`POST cms/search-console/run`). It is held to
   the same lease and daily budget of Google inspections as a person's press.
 - **The alerting:**
-  - **The new alert log** (`GET cms/alerts/recent`): what was sent to the
-    owner's phone. Until this change an alert went to Telegram only, and only
-    its time was kept.
+  - **The new alert log** (`GET cms/alerts/recent`, editor): what was sent
+    to the owner's phone. Until this change an alert went to Telegram only,
+    and only its time was kept. The log also keeps the reminders sheet's
+    notices, which is why it is editor, as the sheet is.
   - **The calendar alerts** (`GET cms/calendar-alerts`).
   - **Acknowledging, resolving or reopening a workflow alert**
     (`updateWorkflowAlert`, publisher, held by a body rule to those three
     actions).
   - **Job states and the review queue** (`getJob`, `getQueueSnapshot`), now
     also under Platform, so the Platform switch alone is enough to follow a
-    run.
+    run. This crosses section lines on purpose: with only Platform on, Koda
+    can read any job it is given the id of, including another section's (a
+    newsletter build, a forge job's brief), at the job type's own role. Job
+    ids cannot be guessed, so in practice it reads the jobs it started or
+    found in the queue.
 
 **What else changes:**
 - **The Telegram bot's commands map onto this,** except `/approve`, which
@@ -209,7 +214,8 @@ Cost since [ADR 0039](0039-cost-page.md).
   - `/ack` and `/resolve` are `updateWorkflowAlert`.
   - `/rss` is the `fetch-rss-feeds` job, now in `JOB_TYPES_ALLOWED` (under
     Pipeline, where enqueueing lives).
-  - `/inspect` and `/forge` were already allowed.
+  - `/inspect`, `/forge` and `/reject` (a review-state move, under
+    Pipeline) were already allowed.
 - **Still closed, by this session's reading of the request:**
   - **Every settings write:** Platform Settings decides autoposting, which
     publishes, and point 4 keeps publishing a human act.

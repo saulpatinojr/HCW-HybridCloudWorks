@@ -258,7 +258,10 @@ export const POLICY = Object.freeze(
     // Console and Platform Settings; one connection test and one Search
     // Console run; the alert log (what was sent to the owner's phone); the
     // calendar alerts; and acknowledging, resolving or reopening a workflow
-    // alert, as the Telegram bot's /ack and /resolve do. Still closed: every
+    // alert, as the Telegram bot's /ack and /resolve do. getJob and
+    // getQueueSnapshot (above) cross section lines on purpose: with only
+    // Platform on, Koda can read any job a run of its own or another
+    // section's queued. Still closed: every
     // settings write (Platform Settings decides autoposting, which publishes),
     // keys and secrets, sending an alert to the owner's phone again (a
     // person's choice, cms/alerts/resend), and every delete.
@@ -277,7 +280,8 @@ export const POLICY = Object.freeze(
     // Google inspections (lib/search-console/lease.js), so a press by Koda is
     // held to the same rules as a person's.
     ['POST', 'cms/search-console/run', H],
-    ['GET', 'cms/alerts/recent', H, { role: 'viewer' }],
+    // Editor, as the route asks: the log keeps the reminders sheet's notices.
+    ['GET', 'cms/alerts/recent', H],
     ['GET', 'cms/calendar-alerts', H],
     ['GET', 'cms/platform-settings/history', H],
     ['GET', 'cms/platform-settings/{setting}', H],

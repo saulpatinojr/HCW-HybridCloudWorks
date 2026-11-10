@@ -41,6 +41,11 @@ const post = (body) => ({
 const parse = (res) => JSON.parse(res.body);
 
 describe('GET cms/alerts/recent', () => {
+  it('reads at editor, like the reminders sheet whose notices the log keeps', () => {
+    expect(ALERTS_READ_ROLE).toBe('editor');
+    expect(ALERTS_RESEND_ROLE).toBe('editor');
+  });
+
   it('answers the log newest first, only the known fields, private and uncached', async () => {
     const res = await createAlertLogHandlers({
       guard: allow,
@@ -126,6 +131,7 @@ describe('POST cms/alerts/resend', () => {
   it('puts each refusal into words with its own status', async () => {
     const cases = [
       [{ sent: false, reason: 'not_found' }, 404],
+      [{ sent: false, reason: 'too_soon' }, 429],
       [{ sent: false, reason: 'not_configured' }, 409],
       [{ sent: false, reason: 'telegram_error', status: 403 }, 502],
       [{ sent: false, reason: 'exception' }, 502],

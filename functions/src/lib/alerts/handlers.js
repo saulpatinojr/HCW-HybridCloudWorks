@@ -1,7 +1,7 @@
 /**
  * alerts/handlers.js — the alert log's two routes (owner request 2026-11-10).
  *
- *   GET  cms/alerts/recent   the last alerts sent to Telegram, newest first   viewer
+ *   GET  cms/alerts/recent   the last alerts sent to Telegram, newest first   editor
  *   POST cms/alerts/resend   send one of them again, by its log id           editor
  *
  * Until now an alert went to the owner's phone and nowhere else, so one that
@@ -10,11 +10,14 @@
  * read that list for the Health page and Koda, and send one again on a
  * person's request.
  *
- * Viewer reads, like the rest of the Health page (the alerts say what broke,
- * not anything secret: a job failure's text is redacted before it is sent).
- * Sending again is editor, the role of Platform Settings' "Test Telegram",
- * and is not open to Koda's key (lib/agent-content/admin-access.js lists the
- * read only): a message to the owner's phone is a person's choice.
+ * Editor reads, not viewer like the rest of the Health page: the log keeps
+ * the reminders sheet's notices too (timers/reminders.js sends a reminder's
+ * title and up to 400 characters of its notes), and the sheet itself is
+ * editor (platform-settings.js). A job failure's text is redacted before it
+ * is sent. Sending again is editor too, the role of Platform Settings' "Test
+ * Telegram", and is not open to Koda's key (lib/agent-content/admin-access.js
+ * lists the read only): a message to the owner's phone is a person's choice.
+ * The notifier sends the same alert again at most once a minute.
  *
  * Answers are `Cache-Control: private, no-store`. An alert's words are never
  * logged: a failure is logged by its code with a correlation id
@@ -24,7 +27,7 @@ import { readJsonBodyWithin } from '../http/bounded-body.js';
 import { errorResponse } from '../http/error-response.js';
 import { readAlertLog } from '../notify.js';
 
-export const ALERTS_READ_ROLE = 'viewer';
+export const ALERTS_READ_ROLE = 'editor';
 export const ALERTS_RESEND_ROLE = 'editor';
 /** The resend body is one short id; anything larger is refused unread. */
 const RESEND_BODY_MAX_BYTES = 1024;
@@ -56,6 +59,7 @@ function present(entry) {
 /** Each refusal from notify.js resendLogged, as an answer. */
 const RESEND_REFUSALS = Object.freeze({
   not_found: [404, 'That alert is no longer in the log (it keeps the newest 50).'],
+  too_soon: [429, 'That alert was sent again less than a minute ago. Wait a minute and press Send again once more.'],
   not_configured: [409, 'Telegram is not set up on this app, so nothing can be sent.'],
   telegram_error: [502, 'Telegram refused the message. Platform Settings → Reminders → Test Telegram shows its reason.'],
   exception: [502, 'The message could not be sent. Try again in a minute.'],

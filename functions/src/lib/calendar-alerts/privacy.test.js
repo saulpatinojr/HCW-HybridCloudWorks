@@ -164,7 +164,7 @@ describe('nothing but the alerts module itself names the alerts', () => {
     // under its Platform switch (owner request 2026-11-10, "any alerting").
     // An admin-side grant through the same editor-gated route, never a
     // public path; the key acts as `koda (agent)` and every read is audited.
-    `lib${sep}agent-content${sep}admin-access`,
+    `lib${sep}agent-content${sep}admin-access.js`,
   ];
   const NAMES = /calendar[_-]?alerts?/i;
 

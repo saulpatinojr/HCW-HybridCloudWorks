@@ -2,12 +2,12 @@
  * alerts-http.js — the alert log's routes (owner request 2026-11-10).
  * Registration only; semantics in lib/alerts/handlers.js.
  *
- *   GET  cms/alerts/recent   the last alerts sent to Telegram (viewer; Koda may read)
+ *   GET  cms/alerts/recent   the last alerts sent to Telegram (editor; Koda may read)
  *   POST cms/alerts/resend   send one again by its log id (editor; not Koda)
  */
 import { httpRoute } from '../lib/auth/http-route.js';
 import { getDefaultGuard } from '../lib/auth/default-guard.js';
-import { patchDoc, readDoc, upsertDoc } from '../lib/cosmos-client.js';
+import { createDoc, patchDoc, readDoc, upsertDoc } from '../lib/cosmos-client.js';
 import { createNotifier } from '../lib/notify.js';
 import { createAlertLogHandlers } from '../lib/alerts/handlers.js';
 
@@ -18,7 +18,7 @@ const handlers = (context) =>
     guard: getDefaultGuard(),
     store: { readDoc },
     notifier: createNotifier({
-      store: { readDoc, upsertDoc, patchDoc },
+      store: { readDoc, upsertDoc, patchDoc, createDoc },
       log: context,
     }),
   });

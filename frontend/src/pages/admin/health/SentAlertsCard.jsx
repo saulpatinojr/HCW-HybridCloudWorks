@@ -5,8 +5,10 @@
  * Until then an alert went to the owner's phone and nowhere else, so one that
  * was missed could not be read again. The server now keeps the newest 50
  * (functions lib/notify.js, `system/notify_log`); this card reads them
- * (`GET cms/alerts/recent`, viewer) and sends one again on request
- * (`POST cms/alerts/resend`, editor). Koda reads the same list; it cannot
+ * (`GET cms/alerts/recent`) and sends one again on request
+ * (`POST cms/alerts/resend`), both at editor: the log keeps the reminders
+ * sheet's notices, and the sheet is editor. Below editor the card is not
+ * shown at all, rather than offering a list and a button that would refuse. Koda reads the same list; it cannot
  * send one again.
  *
  * Each alert shows when it was sent, its title, and its full text, folded
@@ -18,6 +20,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuthReady } from '@/hooks/useAuthReady';
+import { useAdminRole } from '@/hooks/useAdminRole';
+import { satisfiesRole } from '@/config/adminNav';
 import useGuardedLoad from '@/components/admin/shared/useGuardedLoad';
 import { getJSON, postJSON } from '@/lib/api';
 import { agoLabel } from '@/lib/cost';
@@ -106,7 +110,7 @@ const loadAlerts = async () => {
   return Array.isArray(answer?.alerts) ? answer.alerts : [];
 };
 
-export default function SentAlertsCard() {
+function SentAlertsList() {
   const { authReady } = useAuthReady();
   const { toast } = useToast();
   const guarded = useGuardedLoad(loadAlerts, {
@@ -203,4 +207,15 @@ export default function SentAlertsCard() {
       <CardContent>{body}</CardContent>
     </Card>
   );
+}
+
+/** The role both routes need; below it the card is not drawn. */
+export const SENT_ALERTS_ROLE = 'editor';
+
+export default function SentAlertsCard() {
+  const role = useAdminRole();
+  // null is "no role known here" (a page outside the guard, or a test), which
+  // RoleGate also lets through; the server still checks the role.
+  if (role !== null && !satisfiesRole(role, SENT_ALERTS_ROLE)) return null;
+  return <SentAlertsList />;
 }

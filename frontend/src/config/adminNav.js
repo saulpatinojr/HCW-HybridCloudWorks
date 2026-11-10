@@ -206,7 +206,7 @@ export function roleLabel(role) {
  *   Platform Settings  editor     cms/platform-settings/{setting} (platform-settings.js)
  *   Health             viewer     getOpsHealthSnapshot (ops-health.js), cms/health/probe-results (health/probe-results.js);
  *                                 updateWorkflowAlert is publisher (ops-health.js), gated
- *                                 cms/alerts/recent (alerts/handlers.js, viewer) lists what was sent to
+ *                                 cms/alerts/recent (alerts/handlers.js, editor) lists what was sent to
  *                                 Telegram; cms/alerts/resend is editor, gated
  *   Integrations       editor     connectionProbe (integrations/connection-probe.js), cms/integration-status
  *                                 (integrations/integration-status.js); the Keys tab's cms/secrets is super_admin (admin-secrets.js)

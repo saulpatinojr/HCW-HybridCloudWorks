@@ -5,7 +5,7 @@
  * Telegram's status travels in the result for the Test Telegram route.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { COOLDOWN_MS, NOTIFY_LOG_ID, NOTIFY_LOG_MAX, NOTIFY_STATE_ID, createNotifier, readAlertLog } from './notify.js';
+import { COOLDOWN_MS, NOTIFY_LOG_ID, NOTIFY_LOG_MAX, NOTIFY_STATE_ID, RESEND_MIN_GAP_MS, createNotifier, readAlertLog } from './notify.js';
 
 const NOW = new Date('2026-10-07T01:30:00.000Z');
 const now = () => NOW;
@@ -24,6 +24,13 @@ function stateStore(doc) {
   const store = {
     readDoc: vi.fn(async (_c, id) => docs.get(id) ?? null),
     upsertDoc: vi.fn(async (_c, d) => {
+      version += 1;
+      const next = { ...d, _etag: `"e${version}"` };
+      docs.set(d.id, next);
+      return next;
+    }),
+    createDoc: vi.fn(async (_c, d) => {
+      if (docs.has(d.id)) throw Object.assign(new Error('409'), { code: 409 });
       version += 1;
       const next = { ...d, _etag: `"e${version}"` };
       docs.set(d.id, next);
@@ -209,7 +216,7 @@ describe('the alert log', () => {
     expect((await readAlertLog(store)).map((e) => e.title)).toEqual(['t2', 't1']);
 
     const broken = stateStore({ id: NOTIFY_STATE_ID });
-    broken.upsertDoc.mockRejectedValue(Object.assign(new Error('down'), { code: 503 }));
+    broken.createDoc.mockRejectedValue(Object.assign(new Error('down'), { code: 503 }));
     expect(await send(createNotifier({ store: broken, env, fetch: ok(), now }), 1)).toEqual({ sent: true });
   });
 
@@ -236,5 +243,93 @@ describe('the alert log', () => {
     expect(await createNotifier({ store, env, fetch, now }).resendLogged('nope')).toEqual({ sent: false, reason: 'not_found' });
     expect(await createNotifier({ store, env: {}, fetch, now }).resendLogged('nope')).toEqual({ sent: false, reason: 'not_configured' });
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('the alert log under a race, and resends', () => {
+  const send = (n, i) => n.notifyTelegram({ title: `t${i}`, message: `m${i}`, severity: 'warning', source: `s${i}` });
+  const at = (iso) => () => new Date(iso);
+
+  it('creates the log with a create-only write, so a first alert racing another first alert keeps both', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const n = createNotifier({ store, env, fetch: ok(), now });
+    // This alert reads "no log yet"; another writer creates the log with its
+    // own first alert before this one's create lands.
+    const real = store.readDoc.getMockImplementation();
+    let raced = false;
+    store.readDoc.mockImplementation(async (c, id) => {
+      const doc = await real(c, id);
+      if (id === NOTIFY_LOG_ID && !raced) {
+        raced = true;
+        await store.createDoc('system', { id: NOTIFY_LOG_ID, entries: [{ id: 'other-1', title: 'other', message: '', at: NOW.toISOString() }] });
+        return null;
+      }
+      return doc;
+    });
+    await send(n, 1);
+    expect((await readAlertLog(store)).map((e) => e.title)).toEqual(['t1', 'other']);
+    expect(store.upserts(NOTIFY_LOG_ID)).toHaveLength(0);
+  });
+
+  it('reads again rather than write unconditionally when a read carries no ETag', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const n = createNotifier({ store, env, fetch: ok(), now });
+    await send(n, 1);
+    const real = store.readDoc.getMockImplementation();
+    let once = true;
+    store.readDoc.mockImplementation(async (c, id) => {
+      const doc = await real(c, id);
+      if (id !== NOTIFY_LOG_ID || !once) return doc;
+      once = false;
+      const { _etag, ...rest } = doc;
+      return rest;
+    });
+    await send(n, 2);
+    expect(store.calls(NOTIFY_LOG_ID).every((call) => call[3]?.ifMatch)).toBe(true);
+    expect((await readAlertLog(store)).map((e) => e.title)).toEqual(['t2', 't1']);
+  });
+
+  it('sends the same alert again at most once a minute', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const fetch = ok();
+    await send(createNotifier({ store, env, fetch, now }), 1);
+    const [first] = await readAlertLog(store);
+    const t0 = '2026-10-07T02:00:00.000Z';
+    expect(await createNotifier({ store, env, fetch, now: at(t0) }).resendLogged(first.id)).toEqual({ sent: true });
+    expect(await createNotifier({ store, env, fetch, now: at('2026-10-07T02:00:30.000Z') }).resendLogged(first.id)).toEqual({
+      sent: false,
+      reason: 'too_soon',
+    });
+    const later = new Date(Date.parse(t0) + RESEND_MIN_GAP_MS + 1000).toISOString();
+    expect(await createNotifier({ store, env, fetch, now: at(later) }).resendLogged(first.id)).toEqual({ sent: true });
+  });
+
+  it('repeats the first alert when a repeat is sent again, not "Sent again: Sent again:"', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const fetch = ok();
+    await send(createNotifier({ store, env, fetch, now }), 1);
+    const [first] = await readAlertLog(store);
+    await createNotifier({ store, env, fetch, now: at('2026-10-07T02:00:00.000Z') }).resendLogged(first.id);
+    const [repeat] = await readAlertLog(store);
+    expect(await createNotifier({ store, env, fetch, now: at('2026-10-07T03:00:00.000Z') }).resendLogged(repeat.id)).toEqual({ sent: true });
+    const text = JSON.parse(fetch.mock.calls.at(-1)[1].body).text;
+    expect(text).toContain('Sent again: t1');
+    expect(text).not.toContain('Sent again: Sent again:');
+    expect(text).toContain(`First sent ${first.at}`);
+    expect(text.match(/First sent/g)).toHaveLength(1);
+    expect((await readAlertLog(store))[0].resentOf).toBe(first.id);
+  });
+
+  it('cuts a long alert so the repeat still fits Telegram\'s 4,096 characters, keeping the marker', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const fetch = ok();
+    const long = 'x'.repeat(4080);
+    await createNotifier({ store, env, fetch, now }).notifyTelegram({ title: 'Long', message: long, source: 'big' });
+    const [first] = await readAlertLog(store);
+    await createNotifier({ store, env, fetch, now: at('2026-10-07T02:00:00.000Z') }).resendLogged(first.id);
+    const text = JSON.parse(fetch.mock.calls.at(-1)[1].body).text;
+    expect(text.length).toBeLessThanOrEqual(4096);
+    expect(text).toContain(`(First sent ${first.at}.)`);
+    expect(text).toContain('…');
   });
 });
