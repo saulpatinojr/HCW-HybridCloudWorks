@@ -869,6 +869,13 @@ describe('outputPathFor: every page lands inside the build folder', () => {
     );
   });
 
+  it('keeps a folder whose name only starts with two dots', () => {
+    expect(outputPathFor(dist, '/notes/..hidden')).toBe(
+      '/tmp/build/dist/notes/..hidden/index.html'
+    );
+    expect(outputPathFor(dist, '/..notes')).toBe('/tmp/build/dist/..notes/index.html');
+  });
+
   it('refuses a route that would write outside it', () => {
     for (const route of ['/azure/blog/../../../etc', '/..', '/azure/../../outside']) {
       expect(() => outputPathFor(dist, route), route).toThrow(/outside the build folder/);

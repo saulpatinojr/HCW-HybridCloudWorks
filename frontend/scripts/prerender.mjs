@@ -42,7 +42,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ENTRY = 'scripts/prerender-entry.jsx';
@@ -525,7 +525,8 @@ export function outputPathFor(dist, route) {
   const clean = route.replace(/^\/+|\/+$/g, '');
   const out = clean ? join(dist, clean, 'index.html') : join(dist, 'index.html');
   const inside = relative(resolve(dist), resolve(out));
-  if (!inside || inside.startsWith('..') || isAbsolute(inside)) {
+  // A `..` path segment, not any name that starts with two dots.
+  if (!inside || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
     throw new Error(`route ${JSON.stringify(route)} would be written outside the build folder`);
   }
   return out;
