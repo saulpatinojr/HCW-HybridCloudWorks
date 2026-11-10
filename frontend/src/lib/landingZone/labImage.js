@@ -53,7 +53,7 @@ export const LAB_IMAGE_BUILDER_AVM = Object.freeze(
 export const LAB_IMAGE_CHILD_AVM = Object.freeze([
   'avm-ptn-network-private-link-private-dns-zones@0.23.2',
   'avm-res-network-azurefirewall@0.4.0',
-  'avm-res-network-bastionhost@0.6.0',
+  'avm-res-network-bastionhost@0.9.0',
   'avm-res-network-ddosprotectionplan@0.3.0',
   'avm-res-network-dnsresolver@0.7.3',
   'avm-res-network-firewallpolicy@0.3.3',
@@ -62,7 +62,8 @@ export const LAB_IMAGE_CHILD_AVM = Object.freeze([
   'avm-res-network-publicipaddress@0.2.0',
   'avm-res-network-routetable@0.3.1',
   'avm-res-network-routetable@0.5.0',
-  'avm-res-network-virtualnetwork@0.15.0',
+  'avm-res-network-virtualnetwork@0.22.2',
+  'avm-utl-interfaces@0.10.0',
   'avm-utl-interfaces@0.2.0',
   'avm-utl-interfaces@0.5.0',
   'avm-utl-interfaces@0.6.0',
