@@ -229,7 +229,15 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     path: '/aws/architecture-designs/serverless-api',
     icon: 'cloud',
     badge: 'AWS',
-    keywords: ['aws', 'serverless', 'lambda', 'dynamodb', 'api gateway', 'multi-region'],
+    keywords: [
+      'aws',
+      'serverless',
+      'lambda',
+      'dynamodb',
+      'api gateway',
+      'event-driven',
+      'rest api',
+    ],
   },
   {
     id: 'blueprint-gcp-cloud-foundation',
@@ -240,7 +248,16 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     path: '/gcp/architecture-designs/global-load-balancing',
     icon: 'cloud_circle',
     badge: 'Google Cloud',
-    keywords: ['gcp', 'google cloud', 'load balancer', 'cloud cdn', 'cloud armor', 'foundation'],
+    keywords: [
+      'gcp',
+      'google cloud',
+      'load balancer',
+      'global load balancing',
+      'cloud cdn',
+      'cloud armor',
+      'ddos',
+      'multi-region',
+    ],
   },
   {
     id: 'blueprint-vmware-hybrid',
@@ -251,7 +268,16 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     path: '/azure/architecture-designs/azure-vmware-estate-migration',
     icon: 'lan',
     badge: 'VMware',
-    keywords: ['vmware', 'vcf', 'sddc', 'vsphere', 'nsx', 'hybrid cloud', 'private cloud'],
+    keywords: [
+      'vmware',
+      'azure',
+      'azure vmware solution',
+      'avs',
+      'azure migrate',
+      'migration',
+      'vsphere',
+      'hybrid cloud',
+    ],
   },
 
   // Interactive Tools & AddOns
