@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { HelmetProvider } from 'react-helmet-async';
 import ArchitectureDetailTemplate from './ArchitectureDetailTemplate';
 import { initialBlueprintForm } from '@/components/admin/ArchitectureReviewBoard';
+import { PrerenderDataContext } from '@/hooks/prerenderData';
 
 const mockFetchPublicContentItem = vi.fn();
 
@@ -380,5 +381,47 @@ describe('ArchitectureDetailTemplate — a provider shows only its own designs',
       await screen.findByRole('heading', { name: 'This page does not exist.' })
     ).toBeInTheDocument();
     expect(screen.queryByText('Legacy AWS Design')).not.toBeInTheDocument();
+  });
+});
+
+describe('ArchitectureDetailTemplate — a design built from the content manifest (#1628)', () => {
+  beforeEach(() => {
+    mockFetchPublicContentItem.mockReset();
+    mockFetchPublicContentItem.mockResolvedValue(null);
+  });
+
+  it('renders a design that exists only in the API whole from its seed, without asking the API again', async () => {
+    // The seed is what the manifest route sends for a design: the same
+    // fields public/content answers, so the built page is the whole design.
+    const seed = {
+      'architecture:zero-trust-edge': {
+        ...initialBlueprintForm,
+        type: 'architecture',
+        cloudProvider: 'Azure',
+        slug: 'zero-trust-edge',
+        title: 'Zero Trust Edge',
+        promise: 'Every request is inspected at the edge.',
+      },
+    };
+    render(
+      <HelmetProvider>
+        <PrerenderDataContext.Provider value={seed}>
+          <MemoryRouter initialEntries={['/azure/architecture-designs/zero-trust-edge']}>
+            <Routes>
+              <Route
+                path="/azure/architecture-designs/:slug"
+                element={<ArchitectureDetailTemplate provider="azure" />}
+              />
+            </Routes>
+          </MemoryRouter>
+        </PrerenderDataContext.Provider>
+      </HelmetProvider>
+    );
+
+    expect(screen.getByRole('heading', { name: 'Zero Trust Edge' })).toBeInTheDocument();
+    expect(screen.getByTestId('mini-landing-promise')).toHaveTextContent(
+      'Every request is inspected at the edge.'
+    );
+    expect(mockFetchPublicContentItem).not.toHaveBeenCalled();
   });
 });

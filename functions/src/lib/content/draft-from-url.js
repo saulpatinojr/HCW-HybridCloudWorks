@@ -24,7 +24,7 @@ import { normalizeSupportingDocuments, MAX_SUPPORTING_DOCUMENTS } from './drafti
 import { generateSlug } from '../rss/feeds.js';
 import { AFTER_MODEL_MARGIN_MS, startBudgetClock } from '../ai/time-budget.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
-import { AuthoredError, failureFields } from '../http/error-response.js';
+import { AuthoredError, errorCode, failureFields } from '../http/error-response.js';
 
 /** Beyond the primary URL, at most this many extra KB articles are scraped —
  * each is a network fetch plus markdown extraction inside the HTTP budget. */
@@ -149,7 +149,8 @@ async function fetchDocumentUrl(url, { fetchImpl = globalThis.fetch, resolve, lo
     if (!content.trim()) return null;
     return { name, textContent: content.slice(0, 18000) };
   } catch (error) {
-    log.warn?.(`[draft-from-url] document fetch failed for ${url}: ${error.message}`);
+    // The error's code only: no address and no provider's words in a log line (#1642).
+    log.warn?.(`[draft-from-url] document fetch failed: ${errorCode(error)}`);
     return null;
   }
 }
@@ -225,7 +226,7 @@ export function createUrlDrafter({
           textContent: extra.markdown,
         });
       } catch (error) {
-        log.warn?.(`[draft-from-url] extra scrape failed for ${extraUrl}: ${error.message}`);
+        log.warn?.(`[draft-from-url] extra scrape failed: ${errorCode(error)}`);
       }
     }
 

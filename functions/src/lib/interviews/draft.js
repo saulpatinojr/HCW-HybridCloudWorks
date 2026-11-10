@@ -395,7 +395,7 @@ export async function draftInterview({
     try {
       await store.patchDoc(container, interviewId, { interview: { ...interview, stage: 'failed', error: sentence } });
     } catch (writeError) {
-      log?.warn?.(`${DRAFT_JOB_TYPE}: ${interviewId} v${transcriptVersion} failure not recorded (${writeError?.code ?? 'unknown'})`);
+      log?.warn?.(`${DRAFT_JOB_TYPE}: v${transcriptVersion} failure not recorded (${writeError?.code ?? 'unknown'})`);
     }
     throw error;
   }

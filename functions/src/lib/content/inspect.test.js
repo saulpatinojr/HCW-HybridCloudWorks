@@ -314,9 +314,9 @@ describe('createInspector', () => {
     // The video is never posted to the vision model as an image.
     expect(d.ai.generateTextResponse).not.toHaveBeenCalled();
     expect(d.store.patchDoc.mock.calls[0][2].imageAltTexts).toBe(null);
-    expect(d.log.warn).toHaveBeenCalledWith(
-      '[alt-text] https://s/a.png: Content-Type video/mp4 is not an image'
-    );
+    // The refusal's code only: no image address or sentence in a log line (#1642).
+    expect(d.log.warn).toHaveBeenCalledWith('[alt-text] image skipped: not-an-image');
+    expect(JSON.stringify(d.log.warn.mock.calls)).not.toContain('https://s/a.png');
   });
 
   it('fails loudly for a missing URL, a failed scrape, and the unported architecture path', async () => {

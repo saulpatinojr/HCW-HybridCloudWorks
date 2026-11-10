@@ -220,8 +220,10 @@ export const AWS_PRESETS = Object.freeze([
     id: 'aws-regulated-firewall',
     label: 'AWS Network Firewall Inspection',
     badge: 'High Compliance',
-    blueprintSlug: '/aws/architecture-designs/event-driven-serverless',
-    blueprintTitle: 'Regulated Multi-VPC Architecture',
+    // No AWS inspection-VPC design is published yet, so this points at the
+    // catalogue, as the governance-only presets do (#1628).
+    blueprintSlug: '/aws/architecture-designs',
+    blueprintTitle: 'AWS Architecture Catalogue',
     summary:
       'Dedicated Inspection VPC with AWS Network Firewall and three isolated Corp workload VPCs.',
     state: normalizeState({

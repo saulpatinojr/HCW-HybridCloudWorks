@@ -481,11 +481,16 @@ export function injectIntoTemplate(template, { head, body }, route = '/', seeded
 /**
  * The query key a route's page reads, as `usePublicData` keys it, or null
  * for a route that needs no seed. `/azure` is the landing page, whose
- * Interviews card reads the interview list (ADR 0040, D6).
+ * Interviews card reads the interview list (ADR 0040, D6). A design page
+ * reads `architecture:<slug>` whatever its provider (#1628); a built-in
+ * design with no seed in the manifest gets null back and fetches in the
+ * browser, as before.
  */
 export function seedKeyFor(route) {
   const article = /\/blog\/([^/]+)$/.exec(route)?.[1];
   if (article) return `article:${article}`;
+  const design = /^\/[a-z]+\/architecture-designs\/([^/]+)$/.exec(route)?.[1];
+  if (design) return `architecture:${design}`;
   const interview = /^\/azure\/interviews\/([^/]+)$/.exec(route)?.[1];
   if (interview) return `interview:${interview}`;
   if (route === '/azure/interviews' || route === '/azure') return 'interviews:list';
