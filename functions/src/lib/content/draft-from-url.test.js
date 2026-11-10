@@ -203,6 +203,36 @@ describe('createUrlDrafter', () => {
     expect(Buffer.from(docs[0].base64Data, 'base64').toString()).toBe('PDFDATA');
   });
 
+  it('logs a failed document fetch or extra scrape by its code, never the address or the error text (#1642)', async () => {
+    const drafter = makeDrafter();
+    const log = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const scrape = vi.fn(async (url) => {
+      if (url.includes('broken')) throw Object.assign(new Error('upstream said: SECRET-ERR-91c at https://kb.example/broken'), { code: 'ECONNRESET' });
+      return goodScrape();
+    });
+    const fetchImpl = vi.fn(async () => {
+      throw Object.assign(new Error('getaddrinfo failed for SECRET-ERR-44a'), { code: 'ENOTFOUND' });
+    });
+    const resolve = async () => ({ address: '93.184.216.34' });
+    const { draftFromUrl } = createUrlDrafter({ drafter, scrape, fetch: fetchImpl, resolve, log });
+    await draftFromUrl({
+      url: 'https://a.example/x',
+      urls: ['https://kb.example/broken'],
+      documentUrls: ['https://kb.example/private-notes.txt'],
+    });
+    const lines = log.warn.mock.calls.map(([line]) => line);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        '[draft-from-url] document fetch failed: ENOTFOUND',
+        '[draft-from-url] extra scrape failed: ECONNRESET',
+      ])
+    );
+    const everything = JSON.stringify(log.warn.mock.calls);
+    for (const leak of ['SECRET-ERR-91c', 'SECRET-ERR-44a', 'kb.example', 'private-notes']) {
+      expect(everything).not.toContain(leak);
+    }
+  });
+
   it('never fetches a documentUrl on the private network, link-local, or localhost, and a redirect there is refused', async () => {
     const drafter = makeDrafter();
     const scrape = vi.fn(async () => goodScrape());
