@@ -332,4 +332,58 @@ describe('the alert log under a race, and resends', () => {
     expect(text).toContain(`(First sent ${first.at}.)`);
     expect(text).toContain('…');
   });
+
+  it('lets only one of two presses at the same moment through (the repeat\'s log entry is the claim)', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    const fetch = ok();
+    await send(createNotifier({ store, env, fetch, now }), 1);
+    const [first] = await readAlertLog(store);
+    const n = createNotifier({ store, env, fetch, now: at('2026-10-07T02:00:00.000Z') });
+    const results = await Promise.all([n.resendLogged(first.id), n.resendLogged(first.id)]);
+    expect(results.filter((r) => r.sent)).toHaveLength(1);
+    expect(results.filter((r) => r.reason === 'too_soon')).toHaveLength(1);
+    // The first send, and one repeat.
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect((await readAlertLog(store)).filter((e) => e.resentOf === first.id)).toHaveLength(1);
+  });
+
+  it('takes a refused resend\'s entry back out, so the next press is not told to wait', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    await send(createNotifier({ store, env, fetch: ok(), now }), 1);
+    const [first] = await readAlertLog(store);
+    const refused = vi.fn(async () => ({ ok: false, status: 403 }));
+    const t = at('2026-10-07T02:00:00.000Z');
+    expect(await createNotifier({ store, env, fetch: refused, now: t }).resendLogged(first.id)).toEqual({
+      sent: false,
+      reason: 'telegram_error',
+      status: 403,
+    });
+    expect((await readAlertLog(store)).some((e) => e.resentOf)).toBe(false);
+    expect(await createNotifier({ store, env, fetch: ok(), now: t }).resendLogged(first.id)).toEqual({ sent: true });
+  });
+
+  it('keeps the first-sent time when a repeat is sent again after its first alert left the log', async () => {
+    const store = stateStore({ id: NOTIFY_STATE_ID });
+    store.upsertDoc('system', {
+      id: NOTIFY_LOG_ID,
+      entries: [
+        {
+          id: 'r1-a',
+          at: '2026-10-07T01:00:00.000Z',
+          source: 's',
+          severity: 'warning',
+          title: 'Sent again: Lost',
+          message: 'body\n\n(First sent 2026-10-01T00:00:00.000Z.)',
+          resentOf: 'gone-1',
+        },
+      ],
+    });
+    const fetch = ok();
+    expect(await createNotifier({ store, env, fetch, now }).resendLogged('r1-a')).toEqual({ sent: true });
+    const text = JSON.parse(fetch.mock.calls.at(-1)[1].body).text;
+    expect(text).toContain('Sent again: Lost');
+    expect(text).not.toContain('Sent again: Sent again:');
+    expect(text.match(/First sent 2026-10-01T00:00:00\.000Z/g)).toHaveLength(1);
+  });
 });
+

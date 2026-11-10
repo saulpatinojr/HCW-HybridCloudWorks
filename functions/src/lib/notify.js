@@ -56,7 +56,7 @@ const LOG_WRITE_ATTEMPTS = 4;
 /** A logged alert may be sent again at most once in this long (a double press, a script). */
 export const RESEND_MIN_GAP_MS = 60 * 1000;
 /** The marker a resend adds after the text; stripped again when a resend is resent. */
-const RESEND_MARKER = /\n\n\(First sent [^)]*\.\)$/;
+const RESEND_MARKER = /\n\n\(First sent ([^)]*)\.\)$/;
 const RESEND_PREFIX = 'Sent again: ';
 /** Telegram refuses a message longer than this (characters). */
 const TELEGRAM_TEXT_MAX = 4096;
@@ -291,50 +291,136 @@ export function createNotifier({
       const token = readKey(env, 'TELEGRAM_BOT_TOKEN');
       const chatId = readKey(env, 'TELEGRAM_CHAT_ID');
       if (!token || !chatId) return { sent: false, reason: 'not_configured' };
-      const entries = await readAlertLog(store);
-      const picked = entries.find((entry) => entry?.id === entryId);
-      if (!picked) return { sent: false, reason: 'not_found' };
-      // A resend of a resend repeats the first alert, not the repeat: follow
-      // `resentOf` back while the earlier entries are still in the log, and
-      // strip the repeat's own title prefix and marker when they are not.
-      let original = picked;
-      for (let hops = 0; original.resentOf && hops < NOTIFY_LOG_MAX; hops += 1) {
-        const earlier = entries.find((entry) => entry?.id === original.resentOf);
-        if (!earlier) break;
-        original = earlier;
+
+      // THE REPEAT'S LOG ENTRY IS THE CLAIM (Copilot review of #1638). The
+      // once-a-minute check and the write that records the repeat are one
+      // conditional write on the log's ETag, made before the send: two
+      // presses at the same moment cannot both pass the check, because the
+      // second one's write fails with 412, reads again and finds the first
+      // one's entry. A send Telegram refuses takes its entry back out.
+      let claimed = null;
+      for (let attempt = 1; attempt <= LOG_WRITE_ATTEMPTS && !claimed; attempt += 1) {
+        const doc = await store.readDoc('system', NOTIFY_LOG_ID, NOTIFY_LOG_ID);
+        const stored = Array.isArray(doc?.entries) ? doc.entries : [];
+        const plan = planResend([...stored].reverse(), entryId);
+        if (plan.refused) return { sent: false, reason: plan.refused };
+        if (!doc?._etag) {
+          await jitter();
+          continue;
+        }
+        const entry = {
+          id: logEntryId(now()),
+          at: now().toISOString(),
+          source: clip(plan.source, 200),
+          severity: clip(plan.severity, 20),
+          title: clip(plan.title, 300),
+          message: clip(plan.message, LOG_TEXT_MAX),
+          resentOf: clip(plan.originalId, 40),
+        };
+        try {
+          await store.patchDoc(
+            'system',
+            NOTIFY_LOG_ID,
+            { entries: [...stored, entry].slice(-NOTIFY_LOG_MAX) },
+            { partitionKey: NOTIFY_LOG_ID, ifMatch: doc._etag }
+          );
+          claimed = { entry, plan };
+        } catch (error) {
+          if (error?.code !== 412) throw error;
+          await jitter();
+        }
       }
-      const baseTitle = String(original.title ?? '').replace(new RegExp(`^(${RESEND_PREFIX})+`), '');
-      const baseMessage = String(original.message ?? '').replace(RESEND_MARKER, '');
-      const firstAt = original.resentOf ? null : original.at;
-      // One resend of the same alert a minute, whoever asks: a double press
-      // or a script must not page the owner over and over.
-      const recent = entries.find(
-        (entry) =>
-          (entry?.resentOf === original.id || entry?.resentOf === picked.id) &&
-          now().getTime() - (Date.parse(entry.at) || 0) < RESEND_MIN_GAP_MS
-      );
-      if (recent) return { sent: false, reason: 'too_soon' };
-      const title = `${RESEND_PREFIX}${baseTitle}`;
-      const marker = firstAt ? `\n\n(First sent ${firstAt}.)` : '';
-      const { severity, source } = original;
-      // The repeat must fit Telegram's limit too: the marker and the title
-      // stay, and the original text is cut to make room (a refused resend
-      // would also page the owner through the delivery alert).
-      const frame = formatTelegramText({ title, message: marker, severity, source }).length;
-      const room = Math.max(0, TELEGRAM_TEXT_MAX - frame - 1);
-      const body = baseMessage.length > room ? `${baseMessage.slice(0, Math.max(0, room - 1))}…` : baseMessage;
-      const message = `${body}${marker}`;
-      const response = await post(token, chatId, formatTelegramText({ title, message, severity, source }));
+      if (!claimed) return { sent: false, reason: 'exception' };
+
+      const { entry, plan } = claimed;
+      let response;
+      try {
+        response = await post(
+          token,
+          chatId,
+          formatTelegramText({ title: plan.title, message: plan.message, severity: plan.severity, source: plan.source })
+        );
+      } catch (error) {
+        await releaseClaim(entry.id);
+        throw error;
+      }
       if (!response.ok) {
         log.error?.(`[notify] Telegram API error ${response.status} on a resend`);
+        await releaseClaim(entry.id);
         return { sent: false, reason: 'telegram_error', status: response.status };
       }
-      await remember({ title, message, severity, source, resentOf: original.id });
       return { sent: true };
     } catch (err) {
       log.error?.(`[notify] resend failed: ${err?.code ?? 'error'}`);
       return { sent: false, reason: 'exception' };
     }
+  }
+
+  /** Take a refused resend's entry back out of the log (conditional, best effort, never throws). */
+  async function releaseClaim(id) {
+    for (let attempt = 1; attempt <= LOG_WRITE_ATTEMPTS; attempt += 1) {
+      try {
+        const doc = await store.readDoc('system', NOTIFY_LOG_ID, NOTIFY_LOG_ID);
+        const stored = Array.isArray(doc?.entries) ? doc.entries : [];
+        if (!stored.some((entry) => entry?.id === id)) return;
+        if (!doc._etag) throw Object.assign(new Error('no etag'), { code: 412 });
+        await store.patchDoc(
+          'system',
+          NOTIFY_LOG_ID,
+          { entries: stored.filter((entry) => entry?.id !== id) },
+          { partitionKey: NOTIFY_LOG_ID, ifMatch: doc._etag }
+        );
+        return;
+      } catch (error) {
+        if (error?.code === 412 && attempt < LOG_WRITE_ATTEMPTS) {
+          await jitter();
+          continue;
+        }
+        log.warn?.(`[notify] could not take back a refused resend: ${error?.code ?? 'error'}`);
+        return;
+      }
+    }
+  }
+
+  /**
+   * What sending `entryId` again means, from the log (newest first): the
+   * words, or the reason not to. A resend of a resend repeats the first
+   * alert: `resentOf` is followed back while the earlier entries are still
+   * in the log; when they are not, the repeat's own title prefix and marker
+   * are stripped and the time in its marker is kept (Copilot review of
+   * #1638), so the repeat still says when the first one went.
+   */
+  function planResend(entries, entryId) {
+    const picked = entries.find((entry) => entry?.id === entryId);
+    if (!picked) return { refused: 'not_found' };
+    let original = picked;
+    for (let hops = 0; original.resentOf && hops < NOTIFY_LOG_MAX; hops += 1) {
+      const earlier = entries.find((entry) => entry?.id === original.resentOf);
+      if (!earlier) break;
+      original = earlier;
+    }
+    const storedMessage = String(original.message ?? '');
+    const baseTitle = String(original.title ?? '').replace(new RegExp(`^(${RESEND_PREFIX})+`), '');
+    const baseMessage = storedMessage.replace(RESEND_MARKER, '');
+    const firstAt = original.resentOf ? (RESEND_MARKER.exec(storedMessage)?.[1] ?? null) : original.at;
+    // One resend of the same alert a minute, whoever asks: a double press
+    // or a script must not page the owner over and over.
+    const recent = entries.find(
+      (entry) =>
+        (entry?.resentOf === original.id || entry?.resentOf === picked.id) &&
+        now().getTime() - (Date.parse(entry.at) || 0) < RESEND_MIN_GAP_MS
+    );
+    if (recent) return { refused: 'too_soon' };
+    const title = `${RESEND_PREFIX}${baseTitle}`;
+    const marker = firstAt ? `\n\n(First sent ${firstAt}.)` : '';
+    const { severity, source } = original;
+    // The repeat must fit Telegram's limit too: the marker and the title
+    // stay, and the original text is cut to make room (a refused resend
+    // would also page the owner through the delivery alert).
+    const frame = formatTelegramText({ title, message: marker, severity, source }).length;
+    const room = Math.max(0, TELEGRAM_TEXT_MAX - frame - 1);
+    const body = baseMessage.length > room ? `${baseMessage.slice(0, Math.max(0, room - 1))}…` : baseMessage;
+    return { title, message: `${body}${marker}`, severity, source, originalId: original.id };
   }
 
   return { notifyTelegram, resendLogged };
