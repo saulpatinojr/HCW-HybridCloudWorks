@@ -1053,9 +1053,15 @@ describe('monitor-deploy-drift.yml wiring', () => {
     expect(workflowsJob.some((l) => l.includes('TFC_TOKEN'))).toBe(false);
   });
 
-  it('grants nothing but reads', () => {
-    expect(lines.some((l) => /^\s+\w+:\s*write\b/.test(l))).toBe(false);
-    expect(lines.map((l) => l.trim())).toContain('contents: read # reads the commit log; writes nothing');
+  // The check job only reads. Since #1661 the workflows job also holds
+  // `issues: write`, for the one workflow-health issue, and nothing else
+  // writes; monitor-deploy-drift-steps.test.mjs pins that grant.
+  it('grants the check job nothing but reads', () => {
+    expect(checkJob.some((l) => /^\s+\w+:\s*write\b/.test(l))).toBe(false);
+    expect(checkJob.map((l) => l.trim())).toContain('contents: read # reads the commit log; writes nothing');
+    expect(workflowsJob.filter((l) => /^\s+\w+:\s*write\b/.test(l)).map((l) => l.trim().split(':')[0])).toEqual([
+      'issues',
+    ]);
   });
 });
 
