@@ -52,6 +52,9 @@ const renderAt = (url = '/admin/search-console') =>
     </MemoryRouter>
   );
 
+/** The page on its Indexing tab, which is no longer where it opens. */
+const INDEXING = '/admin/search-console?tab=indexing';
+
 const loaded = () =>
   waitFor(() =>
     expect(screen.queryByRole('status', { name: 'Reading the Search Console report' })).toBeNull()
@@ -94,8 +97,19 @@ describe('SearchConsolePage with a report', () => {
     );
   });
 
-  it('shows the indexing tiles and lists pages that are not indexed first', async () => {
+  it('opens on Performance, the first tab, with Indexing second', async () => {
     renderAt();
+    await loaded();
+    const tabs = within(screen.getByRole('tablist', { name: 'Search Console' })).getAllByRole(
+      'tab'
+    );
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Performance', 'Indexing', 'Sitemaps']);
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('table', { name: 'Performance by queries' })).toBeTruthy();
+  });
+
+  it('shows the indexing tiles and lists pages that are not indexed first', async () => {
+    renderAt(INDEXING);
     await loaded();
     expect(within(screen.getByTestId('tile-indexed')).getByText('2')).toBeTruthy();
     expect(within(screen.getByTestId('tile-excluded')).getByText('1')).toBeTruthy();
@@ -107,7 +121,7 @@ describe('SearchConsolePage with a report', () => {
   });
 
   it('says ACCESS_DENIED as "401 unauthorized" and flags a canonical Google chose differently', async () => {
-    renderAt();
+    renderAt(INDEXING);
     await loaded();
     const [locked] = screen.getAllByTestId('indexing-row');
     expect(within(locked).getByText('401 unauthorized')).toBeTruthy();
@@ -118,7 +132,7 @@ describe('SearchConsolePage with a report', () => {
   });
 
   it('filters by verdict chip and by the search box', async () => {
-    renderAt();
+    renderAt(INDEXING);
     await loaded();
     fireEvent.click(screen.getByRole('button', { name: 'Excluded' }));
     expect(screen.getAllByTestId('indexing-row')).toHaveLength(1);
@@ -137,7 +151,7 @@ describe('SearchConsolePage with a report', () => {
   });
 
   it('says where each page came from, shows a subdomain page in full, and filters by host', async () => {
-    renderAt();
+    renderAt(INDEXING);
     await loaded();
     const rows = screen.getAllByTestId('indexing-row');
     expect(rows.map((row) => row.dataset.source)).toEqual([
@@ -179,7 +193,7 @@ describe('SearchConsolePage with a report', () => {
         ],
       },
     });
-    renderAt();
+    renderAt(INDEXING);
     await loaded();
     const table = screen.getByRole('table', {
       name: 'Pages Google shows that are not in the sitemap',
@@ -202,7 +216,7 @@ describe('SearchConsolePage with a report', () => {
   });
 
   it('lists pages Google shows that are not in the sitemap', async () => {
-    renderAt();
+    renderAt(INDEXING);
     await loaded();
     const table = screen.getByRole('table', {
       name: 'Pages Google shows that are not in the sitemap',
@@ -264,7 +278,7 @@ describe('SearchConsolePage with a report', () => {
 
   it('draws a report with every list missing', async () => {
     getJSON.mockResolvedValueOnce({ status: 'ok' });
-    renderAt();
+    renderAt(INDEXING);
     await loaded();
     expect(screen.getByText('No pages were inspected in the last run.')).toBeTruthy();
     expect(within(screen.getByTestId('tile-indexed')).getByText('—')).toBeTruthy();
@@ -336,7 +350,7 @@ describe('SearchConsolePage states', () => {
         ],
       },
     });
-    renderAt();
+    renderAt(INDEXING);
     await loaded();
     const staleRows = screen
       .getAllByTestId('indexing-row')
@@ -370,7 +384,7 @@ describe('SearchConsolePage states', () => {
         ],
       },
     });
-    renderAt();
+    renderAt(INDEXING);
     await loaded();
     const rows = screen.getAllByTestId('indexing-row');
     const allLinks = rows.flatMap((row) => within(row).queryAllByRole('link'));
@@ -389,7 +403,7 @@ describe('SearchConsolePage states', () => {
 
   it('says when the report could not be read, and reads again on Try again', async () => {
     getJSON.mockRejectedValueOnce(new Error('HTTP 500: the store did not answer'));
-    renderAt();
+    renderAt(INDEXING);
     expect(await screen.findByText('The Search Console report could not be read')).toBeTruthy();
     expect(screen.getByText('HTTP 500: the store did not answer')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Try again/ }));
@@ -410,7 +424,7 @@ describe('Run now', () => {
     });
     expect(SEARCH_CONSOLE_RUN_ROUTE).toBe('cms/search-console/run');
     expect(toast.mock.calls[0][0].description).toBe(
-      'Queued; the page updates when the run finishes, usually a few minutes.'
+      'Queued; the page updates when the run finishes, usually in about ten minutes.'
     );
     expect(await screen.findByRole('button', { name: /Run in progress/ })).toBeTruthy();
   });
@@ -471,7 +485,7 @@ describe('Run now', () => {
   it('keeps the report on screen when a background read fails, and shows the new run when it lands', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     try {
-      renderAt();
+      renderAt(INDEXING);
       await loaded();
       fireEvent.click(screen.getByRole('button', { name: /Run now/ }));
       expect(await screen.findByRole('button', { name: /Run in progress/ })).toBeTruthy();
@@ -499,7 +513,9 @@ describe('Run now', () => {
     }
   });
 
-  it('stops waiting after fifteen minutes', async () => {
+  it('stops waiting after an hour', async () => {
+    // Pinned, so a shorter wait than a late, slow run needs fails here (useSearchConsole.js says why an hour).
+    expect(POLL_FOR_MS).toBe(60 * 60_000);
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     try {
       renderAt();
@@ -509,7 +525,7 @@ describe('Run now', () => {
       // The label changes when React commits, but the effect that starts the
       // polling timer runs a moment later. Let it run before moving the clock;
       // otherwise the timer can start after the jump, against the moved clock,
-      // and the fifteen minutes never pass (the test failed about one run in
+      // and the hour never passes (the test failed about one run in
       // five that way).
       await act(async () => {});
       getJSON.mockResolvedValue(REPORT);

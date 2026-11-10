@@ -30,7 +30,15 @@ import {
   fmtPosition,
   sortBreakdown,
 } from '@/lib/searchConsole';
-import { Section, TABLE_CLASS, TD_CLASS, TH_CLASS, Tile } from './shared';
+import {
+  Breakable,
+  Section,
+  TABLE_CLASS,
+  TD_CLASS,
+  TH_CLASS,
+  Tile,
+  URL_CELL_CLASS,
+} from './shared';
 
 /** Rows of a breakdown table shown before "Show all". */
 export const BREAKDOWN_ROWS = 25;
@@ -43,7 +51,11 @@ export const BREAKDOWNS = Object.freeze([
     label: 'Pages',
     heading: 'Page',
     // The whole address: the figures cover every subdomain, so the host matters.
-    show: (key) => <span className="break-all font-mono">{String(key ?? '')}</span>,
+    show: (key) => (
+      <span className="font-mono">
+        <Breakable text={key} />
+      </span>
+    ),
   },
   { id: 'countries', label: 'Countries', heading: 'Country', show: countryLabel },
   { id: 'devices', label: 'Devices', heading: 'Device', show: deviceLabel },
@@ -171,7 +183,7 @@ export function BreakdownTable({ breakdown, rows }) {
           <tbody>
             {shown.map((row, index) => (
               <tr key={`${row.key}-${index}`}>
-                <td className={`${TD_CLASS} break-all`}>{breakdown.show(row.key)}</td>
+                <td className={`${TD_CLASS} ${URL_CELL_CLASS}`}>{breakdown.show(row.key)}</td>
                 <td className={`${TD_CLASS} text-right tabular-nums`}>{fmtCount(row.clicks)}</td>
                 <td className={`${TD_CLASS} text-right tabular-nums`}>
                   {fmtCount(row.impressions)}
