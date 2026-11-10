@@ -67,6 +67,21 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Architecture designs that exist only in the API now get a pre-built page at their own address (second part of [#1628](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1628)).** Until now a design published from the admin screens, and not written into `frontend/src/data/architectures.js`, had no file at `/<provider>/architecture-designs/<slug>`, so that address answered 404 to a crawler. The content manifest (the list of published content the site build reads) carried such a design as an article: built at `/<provider>/blog/<slug>`, a page nothing links to, and with the article fields only.
+  - The manifest route (`functions/src/lib/public-content-manifest.js`) now sends published designs apart from the articles, as `designs`. Each one has exactly the fields `GET /api/public/content/<slug>` already answers for it, newest first, as that route picks among documents sharing a slug. So nothing new is published.
+  - The builder (`scripts/build-content-manifest.mjs`) lists each design at its design address, with its data under `architecture:<slug>`, the key the design page reads. It filters the design to the same field list again, and keeps only providers that have a design page and slugs made of lowercase words and hyphens.
+  - The pre-render (`frontend/scripts/prerender.mjs`) hands that data to the design page, so the built page is the whole design.
+  - Deploy order does not matter: while the deployed route sends no `designs`, the builder keeps designs among the articles as before.
+  - After the merge: Deploy Functions, then the content manifest refresh and its pull request, then the frontend deploy. The design `enterprise-hub-and-spoke-zero-trust-edge` then moves from `/azure/blog/…` to `/azure/architecture-designs/…`, and its old address gets a redirect in the same step.
+- **Six links to architecture designs that do not exist now go to real, pre-built design pages (first part of [#1628](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1628)).** The search palette (`frontend/src/data/searchIndex.js`) and one landing-zone preset (`frontend/src/lib/landingZone/presets.js`) linked to six designs that no list in the repository and nothing in the live API holds. Checked on 2026-11-10: each answered 404, to a crawler and to anyone opening the link directly. Now:
+  - `secure-2-tier` → `secure-2-tier-azure`;
+  - `hub-spoke-network` → `enterprise-hub-spoke-landing-zone`;
+  - `multi-region-serverless-api` → `serverless-api`, retitled "AWS Serverless API" because the design is not multi-region;
+  - `global-load-balancing-cdn` → `global-load-balancing`;
+  - the VMware entry → `azure-vmware-estate-migration`, the only VMware design, retitled to match;
+  - the "Regulated Multi-VPC" preset's link → the AWS architecture catalogue, as the governance-only presets already do, since no AWS inspection-VPC design is published.
+
+  A new test in `frontend/src/lib/not-found-routing.test.js` fails when the search index or any landing-zone preset links to a design address without a pre-built page. The second part of #1628, pre-building designs that exist only in the API, is the entry above.
 - **Warning and error lines in job code no longer log ids, addresses or raw error text ([#1642](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1642)).** These lines were already reaching Log Analytics; the audit for #1635 found them. Each now logs a code instead:
   - The interview audio and draft jobs' "failure not recorded" lines drop the interview id (`functions/src/lib/interviews/fetch-audio.js`, `draft.js`).
   - The inspector's alt-text lines log the refusal code (`not-an-image`) or the error's code instead of the image's address and the error's message (`functions/src/lib/content/inspect.js`).
