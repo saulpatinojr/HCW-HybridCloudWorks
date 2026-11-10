@@ -2,10 +2,12 @@
  * Search Console — the browser's side of the Search Console page
  * (`/admin/search-console`, #1612).
  *
- * The page shows what Google Search knows about the public site: which pages
- * Google has indexed, how people find the site in Google, and the sitemaps
- * Google has read. A timer on the server asks Google twice a day and saves one
- * report; this file reads that report and turns Google's codes into words.
+ * The page shows what Google Search knows about the public site,
+ * hybridcloudworks.com and every subdomain (docs., api-azure., the lab
+ * hosts): which pages Google has indexed, how people find the site in
+ * Google, and the sitemaps Google has read. A timer on the server asks
+ * Google twice a day and saves one report; this file reads that report and
+ * turns Google's codes into words.
  *
  * Everything here is defensive on purpose: any list in the report may be
  * missing or empty and any number may be absent, and the page must still draw.
@@ -38,12 +40,12 @@ export const URL_INSPECTION_RESULT_URL =
 
 /** The page's tabs. Deep links are `?tab=`. */
 export const TABS = Object.freeze([
-  { id: 'indexing', label: 'Indexing' },
   { id: 'performance', label: 'Performance' },
+  { id: 'indexing', label: 'Indexing' },
   { id: 'sitemaps', label: 'Sitemaps' },
 ]);
 
-export const DEFAULT_TAB = 'indexing';
+export const DEFAULT_TAB = 'performance';
 
 const TAB_IDS = new Set(TABS.map((tab) => tab.id));
 
@@ -57,7 +59,7 @@ export const MOVED_TABS = Object.freeze({
   sitemap: 'sitemaps',
 });
 
-/** The tab to show for a `?tab=` value: its own, where it moved, or Indexing. */
+/** The tab to show for a `?tab=` value: its own, where it moved, or Performance. */
 export function resolveTab(requested) {
   const id = Object.hasOwn(MOVED_TABS, requested ?? '') ? MOVED_TABS[requested] : requested;
   return TAB_IDS.has(id) ? id : DEFAULT_TAB;
@@ -152,19 +154,75 @@ export function canonicalMismatch(page) {
  * The addresses the page will turn into links. The report comes from the
  * server, but its links were written by Google and by the sitemap, so the
  * page only links to the two places they should point: Google's own
- * inspection screen and the public site. Anything else is shown as text.
+ * inspection screen and the public site (the domain and its subdomains).
+ * Anything else is shown as text.
  */
 export const GOOGLE_INSPECTION_PREFIX = 'https://search.google.com/';
-export const SITE_PAGE_PREFIX = 'https://hybridcloudworks.com/';
+
+/** The site's domain; the Search Console property covers it and every subdomain. */
+export const SITE_DOMAIN = 'hybridcloudworks.com';
 
 /** Google's "inspect this page" link, or null when it does not point at Google's Search Console. */
 export function inspectionHref(link) {
   return typeof link === 'string' && link.startsWith(GOOGLE_INSPECTION_PREFIX) ? link : null;
 }
 
-/** A page's own address as a link, or null when it is not on the public site. */
+/**
+ * An address as a URL when it is https on hybridcloudworks.com or one of its
+ * subdomains, else null. The check is on the host name the browser's own URL
+ * parser reads, which must be exactly the domain or end with
+ * `.hybridcloudworks.com`, never on the text, so a look-alike such as
+ * `hybridcloudworks.com.example.net` or `evilhybridcloudworks.com` fails.
+ */
+function siteUrl(value) {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') return null;
+    // Same rule as the backend: a page address carries no non-default port
+    // and no user name. An explicit :443 is HTTPS's default port and the
+    // same address, so the parser drops it and the link is to the same page.
+    if (url.port || url.username || url.password) return null;
+    const host = url.hostname.toLowerCase();
+    return host === SITE_DOMAIN || host.endsWith(`.${SITE_DOMAIN}`) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A page's own address as a link, or null when it is not on the public site or a subdomain. */
 export function sitePageHref(url) {
-  return typeof url === 'string' && url.startsWith(SITE_PAGE_PREFIX) ? url : null;
+  return siteUrl(url)?.href ?? null;
+}
+
+/** The host name of a page on the site ("docs.hybridcloudworks.com"), or null. */
+export function hostOf(url) {
+  return siteUrl(url)?.hostname.toLowerCase() ?? null;
+}
+
+/**
+ * How a page's address is shown in a table: just its path ("/blog/x") on the
+ * main site, which most pages are on, and the whole address on a subdomain,
+ * so the host is never hidden.
+ */
+export function pageLabel(url) {
+  const host = hostOf(url);
+  if (host === SITE_DOMAIN) return pathOf(url);
+  return String(url ?? '');
+}
+
+/** Where an inspected page came from: the sitemap, or Google's search figures (a "stray"). */
+export const SOURCES = Object.freeze({
+  sitemap: { label: 'Sitemap', note: 'Listed in the sitemap' },
+  search: {
+    label: 'Found in search',
+    note: 'Not in the sitemap; found because it got impressions in Google results',
+  },
+});
+
+/** A page's source, with anything unexpected (or a report from before the field) read as the sitemap. */
+export function sourceOf(page) {
+  return page?.source === 'search' ? 'search' : 'sitemap';
 }
 
 /** A number, or null when the value is missing or not a number. */
@@ -255,9 +313,17 @@ export function normalizeReport(raw) {
       },
       // `stale` is true only when the server says so: the page's answer is
       // from an earlier run because this run could not refresh it.
+      // `source` and `host` are always set, so the table can show and
+      // filter them; a report from before they existed reads as sitemap
+      // pages, with the host taken from the address.
       pages: list(indexing.pages)
         .filter((page) => page && typeof page === 'object')
-        .map((page) => ({ ...page, stale: page.stale === true })),
+        .map((page) => ({
+          ...page,
+          stale: page.stale === true,
+          source: sourceOf(page),
+          host: typeof page.host === 'string' && page.host ? page.host : hostOf(page.url),
+        })),
       strays: list(indexing.strays).filter((row) => row && typeof row === 'object'),
       history: list(indexing.history).filter((row) => row && typeof row === 'object'),
     },
@@ -293,7 +359,7 @@ export function sortBreakdown(rows) {
  */
 export const NOT_AVAILABLE_WORDS = Object.freeze({
   'Page indexing totals and reasons':
-    'Google publishes no API for its Page indexing screen (the total of indexed and not indexed pages, and the reasons), so the Indexing tab counts only the sitemap pages this page inspected. In Search Console, open Indexing, then Pages.',
+    'Google publishes no API for its Page indexing screen (the total of indexed and not indexed pages, and the reasons), so the Indexing tab counts only the pages this page inspected: the sitemap’s, and up to 150 found in search. In Search Console, open Indexing, then Pages.',
   'Links (internal and external)':
     'Google publishes no API for its Links screen (which sites and pages link here), so it is not shown. In Search Console, open Links.',
 });

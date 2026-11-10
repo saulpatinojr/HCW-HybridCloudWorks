@@ -1,11 +1,13 @@
 /**
- * Indexing — what Google says about each page in the site's sitemap.
+ * Indexing — what Google says about each page of the site.
  *
  * The server asks Google's URL Inspection API about every address in the live
- * sitemap and saves the answers. This tab shows the totals as tiles, how the
+ * sitemap, then about up to 150 "strays" (pages on hybridcloudworks.com or a
+ * subdomain that Google shows in search results but the sitemap does not
+ * list), and saves the answers. This tab shows the totals as tiles, how the
  * totals moved over past runs, and one row per page, with the pages that are
- * not indexed first. Under that, the "strays": pages Google shows in search
- * results that are not in the sitemap, so were not inspected.
+ * not indexed first, each saying its host and where it came from. Under that,
+ * the full list of strays with their search figures.
  *
  * Google's answer is about its saved (indexed) copy of a page, not a live test.
  */
@@ -15,24 +17,29 @@ import { AlertTriangle, ExternalLink, Search } from 'lucide-react';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import { Input } from '@/components/ui/input';
 import {
+  SOURCES,
   VERDICTS,
   canonicalMismatch,
   fetchFailed,
   fetchStateLabel,
   fmtCount,
   inspectionHref,
-  pathOf,
+  pageLabel,
   sitePageHref,
   sortPages,
+  sourceOf,
   utcText,
   verdictOf,
 } from '@/lib/searchConsole';
 import {
   ChipRow,
   Section,
+  Breakable,
+  NOWRAP_CELL_CLASS,
   TABLE_CLASS,
   TD_CLASS,
   TH_CLASS,
+  URL_CELL_CLASS,
   TONE_TEXT,
   Tile,
   WhenText,
@@ -62,16 +69,40 @@ export function coverageOptions(pages) {
   ];
 }
 
+/** What the host chips call a page whose address has no host on the site. */
+const NO_HOST = 'Other address';
+
+/** The hosts present on the pages, most pages first, then by name. */
+export function hostOptions(pages) {
+  const counts = new Map();
+  for (const page of pages) {
+    const key = page.host || NO_HOST;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [
+    { value: 'all', label: 'All' },
+    ...[...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([key, count]) => ({ value: key, label: `${key} (${count})` })),
+  ];
+}
+
 /** The pages left after the chips and the search box. */
-export function filterPages(pages, { verdict, coverage, query }) {
+export function filterPages(pages, { verdict, coverage, host = 'all', query }) {
   const needle = query.trim().toLowerCase();
   return pages.filter((page) => {
     if (verdict !== 'all' && verdictOf(page) !== verdict) return false;
     if (coverage !== 'all' && (page.coverageState || 'No status from Google') !== coverage) {
       return false;
     }
+    if (host !== 'all' && (page.host || NO_HOST) !== host) return false;
     if (!needle) return true;
-    return [page.url, page.coverageState, fetchStateLabel(page.pageFetchState)]
+    return [
+      page.url,
+      page.coverageState,
+      fetchStateLabel(page.pageFetchState),
+      SOURCES[sourceOf(page)].label,
+    ]
       .filter(Boolean)
       .some((text) => String(text).toLowerCase().includes(needle));
   });
@@ -169,7 +200,9 @@ function CanonicalCell({ page }) {
       <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
       <span>
         Google chose a different address:{' '}
-        <span className="font-mono">{pathOf(page.googleCanonical)}</span>
+        <span className="font-mono [overflow-wrap:anywhere]">
+          <Breakable text={pageLabel(page.googleCanonical)} />
+        </span>
       </span>
     </span>
   );
@@ -212,13 +245,15 @@ function PageRow({ page }) {
   const failedFetch = fetchFailed(page.pageFetchState);
   const pageHref = sitePageHref(page.url);
   const googleHref = inspectionHref(page.inspectionResultLink);
+  const source = SOURCES[sourceOf(page)];
   return (
     <tr
       data-testid="indexing-row"
       data-verdict={verdictOf(page)}
       data-stale={page.stale ? 'true' : 'false'}
+      data-source={sourceOf(page)}
     >
-      <td className={`${TD_CLASS} max-w-[18rem] break-all`}>
+      <td className={`${TD_CLASS} ${URL_CELL_CLASS} max-w-[24rem]`}>
         {pageHref ? (
           <a
             href={pageHref}
@@ -226,13 +261,22 @@ function PageRow({ page }) {
             rel="noopener noreferrer"
             className="font-mono text-primary hover:underline"
           >
-            {pathOf(page.url)}
+            <Breakable text={pageLabel(page.url)} />
           </a>
         ) : (
-          <span className="font-mono">{String(page.url ?? '')}</span>
+          <span className="font-mono">
+            <Breakable text={page.url} />
+          </span>
         )}
       </td>
-      <td className={TD_CLASS}>
+      <td
+        className={`${TD_CLASS} ${NOWRAP_CELL_CLASS}`}
+        data-testid="indexing-source"
+        title={source.note}
+      >
+        {source.label}
+      </td>
+      <td className={`${TD_CLASS} min-w-[8rem]`}>
         <span className={`font-medium ${TONE_TEXT[verdict.tone]}`}>{verdict.label}</span>
         {page.stale ? <StaleMarker page={page} /> : null}
         {page.coverageState ? (
@@ -243,21 +287,24 @@ function PageRow({ page }) {
       <td className={`${TD_CLASS} ${failedFetch ? TONE_TEXT.bad : ''}`}>
         {fetchStateLabel(page.pageFetchState)}
       </td>
-      <td className={TD_CLASS}>
+      <td className={`${TD_CLASS} ${NOWRAP_CELL_CLASS}`}>
         <WhenText iso={page.lastCrawlTime} fallback="Never crawled" stacked />
       </td>
-      <td className={TD_CLASS}>
+      <td className={`${TD_CLASS} min-w-[8rem]`}>
         <CanonicalCell page={page} />
       </td>
-      <td className={TD_CLASS}>
+      <td className={`${TD_CLASS} ${NOWRAP_CELL_CLASS}`}>
         {googleHref ? (
           <a
             href={googleHref}
             target="_blank"
             rel="noopener noreferrer"
+            aria-label="Inspect in Google"
+            title="Inspect in Google"
             className="inline-flex items-center gap-1 text-primary hover:underline"
           >
-            Inspect in Google
+            {/* "Inspect" on screen keeps the column narrow; aria-label gives the full name. */}
+            Inspect
             <ExternalLink className="h-3 w-3" aria-hidden="true" />
           </a>
         ) : (
@@ -271,10 +318,12 @@ function PageRow({ page }) {
 function PagesTable({ pages }) {
   const [verdict, setVerdict] = useState('all');
   const [coverage, setCoverage] = useState('all');
+  const [host, setHost] = useState('all');
   const [query, setQuery] = useState('');
   const sorted = useMemo(() => sortPages(pages), [pages]);
   const coverageChoices = useMemo(() => coverageOptions(pages), [pages]);
-  const shown = filterPages(sorted, { verdict, coverage, query });
+  const hostChoices = useMemo(() => hostOptions(pages), [pages]);
+  const shown = filterPages(sorted, { verdict, coverage, host, query });
 
   if (pages.length === 0) {
     return (
@@ -297,11 +346,12 @@ function PagesTable({ pages }) {
           id="search-console-pages-search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search by address, Google status or fetch result"
+          placeholder="Search by address, Google status, fetch result or source"
           className="pl-9"
         />
       </div>
       <ChipRow label="Verdict" options={VERDICT_OPTIONS} value={verdict} onChange={setVerdict} />
+      <ChipRow label="Host" options={hostChoices} value={host} onChange={setHost} />
       <ChipRow
         label="Google status"
         options={coverageChoices}
@@ -319,6 +369,7 @@ function PagesTable({ pages }) {
             <thead>
               <tr>
                 <th className={TH_CLASS}>Page</th>
+                <th className={TH_CLASS}>Source</th>
                 <th className={TH_CLASS}>Google status</th>
                 <th className={TH_CLASS}>Fetch</th>
                 <th className={TH_CLASS}>Last crawled</th>
@@ -362,7 +413,7 @@ function StraysTable({ strays }) {
         <tbody>
           {strays.map((row) => (
             <tr key={row.url}>
-              <td className={`${TD_CLASS} break-all`}>
+              <td className={`${TD_CLASS} ${URL_CELL_CLASS}`}>
                 {sitePageHref(row.url) ? (
                   <a
                     href={sitePageHref(row.url)}
@@ -370,10 +421,12 @@ function StraysTable({ strays }) {
                     rel="noopener noreferrer"
                     className="font-mono text-primary hover:underline"
                   >
-                    {pathOf(row.url)}
+                    <Breakable text={pageLabel(row.url)} />
                   </a>
                 ) : (
-                  <span className="font-mono">{String(row.url ?? '')}</span>
+                  <span className="font-mono">
+                    <Breakable text={row.url} />
+                  </span>
                 )}
               </td>
               <td className={`${TD_CLASS} text-right tabular-nums`}>{fmtCount(row.clicks)}</td>
@@ -393,19 +446,19 @@ export default function IndexingTab({ report }) {
       <IndexingTiles summary={summary} />
       <Section
         title="Over time"
-        description="Indexed and not indexed pages at each run, for the sitemap pages this page inspects."
+        description="Indexed and not indexed pages at each run, for the pages this page inspects."
       >
         <HistoryChart history={history} />
       </Section>
       <Section
         title="Inspected pages"
-        description="Google's answer for each page in the sitemap. This is Google's saved copy of the page, not a live test, so a fix shows here only after Google crawls the page again."
+        description="Google's answer for each page in the sitemap, and for up to 150 pages found in search that the sitemap does not list, on hybridcloudworks.com and its subdomains. This is Google's saved copy of the page, not a live test, so a fix shows here only after Google crawls the page again."
       >
         <PagesTable pages={pages} />
       </Section>
       <Section
         title="Pages Google shows that are not in the sitemap"
-        description="Addresses on hybridcloudworks.com that appeared in Google results in the Performance tab’s period but are not listed in the sitemap, so this page does not inspect them."
+        description="Addresses on hybridcloudworks.com and its subdomains that appeared in Google results in the Performance tab’s period but are not listed in the sitemap. The 150 with the most impressions are inspected too, and appear above as Found in search."
       >
         <StraysTable strays={strays} />
       </Section>

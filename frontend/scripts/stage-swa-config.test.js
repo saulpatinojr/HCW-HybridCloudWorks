@@ -13,7 +13,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,6 +21,7 @@ import {
   collectInlineStyles,
   decodeAttribute,
   filesUnder,
+  MAX_CONFIG_BYTES,
   htmlPages,
   sha256Source,
   stageConfig,
@@ -280,6 +281,28 @@ describe('staging into dist', () => {
     expect(policy).toContain(digest('\nbody { margin: 0; }\n'));
     expect(policy).toContain(digest('color:red;\nbackground:none'));
     expect(policy).not.toContain(digest('\r\nbody { margin: 0; }\r\n'));
+  });
+
+  // Static Web Apps refuses a config over 20 KB, and the staged file grows
+  // with every route rule and every distinct inline style. Failing the build
+  // here is cheaper than finding out from a refused deploy.
+  it('refuses to stage a config over the 20 KB limit, and writes nothing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hcw-stage-swa-size-'));
+    const source = join(root, 'staticwebapp.config.json');
+    const dist = join(root, 'dist');
+    mkdirSync(dist, { recursive: true });
+    const routes = Array.from({ length: 400 }, (_, i) => ({
+      route: `/section-${i}/*`,
+      rewrite: '/app-shell.html',
+    }));
+    writeFileSync(
+      source,
+      JSON.stringify({ globalHeaders: { 'Content-Security-Policy': POLICY }, routes }, null, 2)
+    );
+    expect(readFileSync(source).length).toBeGreaterThan(MAX_CONFIG_BYTES);
+
+    expect(() => stageConfig({ source, dist })).toThrow(/20 KB/);
+    expect(existsSync(join(dist, 'staticwebapp.config.json'))).toBe(false);
   });
 });
 

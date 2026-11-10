@@ -1223,6 +1223,41 @@ describe('DECLARED', () => {
     ]);
   });
 
+  it('declares #1617’s three deletes with their blocks gone from infra/, and prunes PR 1’s six applied creates with their blocks kept', () => {
+    // PR 2 deletes the deploy identity's production pair and its site role,
+    // now that deploy-functions.yml names production-backend and the
+    // frontend signs in as github_frontend_deploy. Each delete is declared,
+    // and its block is gone from the tree (a declared delete whose block
+    // still stood would match nothing and hide nothing, but it would say the
+    // wrong thing to whoever reads the plan).
+    const byAction = (action) => DECLARED.filter((entry) => entry.action === action).map((entry) => entry.address);
+    const block = (address) => `resource "${address.split('.')[0]}" "${address.split('.')[1]}"`;
+    for (const address of [
+      'azurerm_federated_identity_credential.github_production',
+      'azurerm_federated_identity_credential.github_production_immutable',
+      'azurerm_role_assignment.github_deploy_swa_token',
+    ]) {
+      expect(byAction('delete'), address).toContain(address);
+      expect(infraSource, `${address} is still declared in infra/`).not.toContain(`${block(address)} {`);
+    }
+    // PR 1's six creates applied on 2026-11-09 (the commit status on
+    // 3ba8f791). Their declarations go; their resources stay, because a
+    // declaration pruned while its resource was also removed would hide a
+    // destroy of the frontend identity or the backend's trust.
+    for (const address of [
+      'azurerm_user_assigned_identity.github_frontend_deploy',
+      'azurerm_federated_identity_credential.github_frontend_deploy_env_production',
+      'azurerm_federated_identity_credential.github_frontend_deploy_env_production_immutable',
+      'azurerm_role_assignment.github_frontend_deploy_swa_token',
+      'azurerm_federated_identity_credential.github_production_backend',
+      'azurerm_federated_identity_credential.github_production_backend_immutable',
+    ]) {
+      expect(byAction('create'), address).not.toContain(address);
+      expect(byAction('delete'), address).not.toContain(address);
+      expect(infraSource, `${address} is gone from infra/`).toContain(`${block(address)} {`);
+    }
+  });
+
   it('prunes the Cosmos request-log filter’s four entries once applied, with their resources still in infra/ and the azapi table gone (#1530, pruned 2026-11-04)', () => {
     // run-fQRFPxBy7CowV6zG applied the delete and the three creates on
     // 2026-11-04. The declarations go; the three resources stay in the tree

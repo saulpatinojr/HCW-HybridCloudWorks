@@ -7,6 +7,7 @@ import {
   budgetLeft,
   budgetSpentMessage,
   claimPendingJob,
+  clearPendingJob,
   createRunLease,
   dailyBudget,
   DEFAULT_DAILY_BUDGET,
@@ -15,9 +16,11 @@ import {
   leaseIsLive,
   nextPacificMidnight,
   pacificDay,
+  PENDING_WRITE_GRACE_MS,
   pendingJobIsLive,
   RUN_DEADLINE_MS,
   usedToday,
+  waitingMarkedJob,
 } from './lease.js';
 
 /** 2026-11-09 00:10 UTC is still 2026-11-08 in Pacific time (UTC-8). */
@@ -364,6 +367,37 @@ describe('the queued-job marker (Copilot review round 1, #1614)', () => {
     expect(other.replaceDocIfMatch).not.toHaveBeenCalled();
   });
 
+  it('is not taken when admit says the job is superseded, and the job clears its own marker (Copilot review of #1615)', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: null, pendingJob: { ...LIVE, jobId: 'job-1' } });
+    const admit = vi.fn(async () => false);
+    await expect(lease(store, { by: 'job', jobId: 'job-1' }).acquire({ admit })).resolves.toEqual({ ok: false, superseded: true });
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(store.doc).toMatchObject({ holder: null, pendingJob: null });
+  });
+
+  it('asks admit again when the document changes between its check and the write, so the two cannot be split', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: null, pendingJob: null });
+    // Superseded only once a different job's marker is on the document.
+    const admit = vi.fn(async (current) => !(current?.pendingJob && current.pendingJob.jobId !== 'job-1'));
+    const realReplace = store.replaceDocIfMatch.getMockImplementation();
+    store.replaceDocIfMatch.mockImplementationOnce(async (container, next, options) => {
+      // A Run now press claims the marker after admit read the document and
+      // before this write: the write fails on the changed ETag.
+      await realReplace(container, { ...store.doc, pendingJob: { ...LIVE, jobId: 'job-2' } }, options);
+      return realReplace(container, next, options);
+    });
+    await expect(lease(store, { by: 'job', jobId: 'job-1' }).acquire({ admit })).resolves.toEqual({ ok: false, superseded: true });
+    expect(admit).toHaveBeenCalledTimes(2);
+    expect(store.doc).toMatchObject({ holder: null, pendingJob: { jobId: 'job-2' } });
+  });
+
+  it('does not ask admit while another run holds the lease', async () => {
+    const store = memoryStore({ id: LEASE_DOC_ID, holder: 'run-b', expiresAt: '2026-11-09T00:40:00Z' });
+    const admit = vi.fn(async () => false);
+    await expect(lease(store, { by: 'job', jobId: 'job-1' }).acquire({ admit })).resolves.toEqual({ ok: false });
+    expect(admit).not.toHaveBeenCalled();
+  });
+
   it('retries clearing its marker after a lost race, and passes on other failures', async () => {
     const store = memoryStore({ id: LEASE_DOC_ID, holder: 'run-b', expiresAt: '2026-11-09T00:40:00Z', pendingJob: LIVE });
     const real = store.replaceDocIfMatch.getMockImplementation();
@@ -452,5 +486,60 @@ describe('renew, the check before a run writes its results (Copilot review round
       throw new Error('write refused');
     });
     await expect(lease(store).renew()).rejects.toThrow('write refused');
+  });
+});
+
+describe('clearPendingJob, for a job that will not run after all (Copilot review round 3, #1614)', () => {
+  const marker = (jobId) => ({ jobId, claimedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + LEASE_TTL_MS).toISOString() });
+
+  it('clears a marker naming the job and keeps every other field', async () => {
+    const store = memoryStore({ holder: null, budget: { day: '2026-11-08', used: 7 }, pendingJob: marker('job-1') });
+    await clearPendingJob(store, 'job-1');
+    expect(store.doc).toMatchObject({ pendingJob: null, budget: { day: '2026-11-08', used: 7 } });
+  });
+
+  it('does nothing when there is no document, or the marker names another job', async () => {
+    const empty = memoryStore();
+    await clearPendingJob(empty, 'job-1');
+    expect(empty.createDoc).not.toHaveBeenCalled();
+    const other = memoryStore({ holder: null, pendingJob: marker('job-2') });
+    await clearPendingJob(other, 'job-1');
+    expect(other.replaceDocIfMatch).not.toHaveBeenCalled();
+  });
+
+  it('gives up after three lost writes, and passes on any other failure', async () => {
+    const store = memoryStore({ holder: null, pendingJob: marker('job-1') });
+    store.replaceDocIfMatch.mockRejectedValue(conflict(412));
+    await clearPendingJob(store, 'job-1');
+    expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3);
+    store.replaceDocIfMatch.mockRejectedValue(new Error('cosmos is down'));
+    await expect(clearPendingJob(store, 'job-1')).rejects.toThrow('cosmos is down');
+  });
+});
+
+describe('waitingMarkedJob', () => {
+  const jobsStore = (jobs) => ({
+    readDoc: vi.fn(async (container, id, partitionKey) => (container === 'jobs' && id === partitionKey ? (jobs[id] ?? null) : null)),
+  });
+  const marked = (claimedAt = NOW.toISOString()) => ({
+    pendingJob: { jobId: 'job-1', claimedAt, expiresAt: new Date(NOW.getTime() + LEASE_TTL_MS).toISOString() },
+  });
+
+  it('names the marked job while it is queued or running, and not once it has finished', async () => {
+    await expect(waitingMarkedJob(jobsStore({ 'job-1': { status: 'queued' } }), marked(), NOW)).resolves.toEqual({ id: 'job-1', status: 'queued' });
+    await expect(waitingMarkedJob(jobsStore({ 'job-1': { status: 'running' } }), marked(), NOW)).resolves.toEqual({ id: 'job-1', status: 'running' });
+    await expect(waitingMarkedJob(jobsStore({ 'job-1': { status: 'failed' } }), marked(), NOW)).resolves.toBeNull();
+  });
+
+  it('counts a marker whose job is not written yet as queued for two minutes', async () => {
+    await expect(waitingMarkedJob(jobsStore({}), marked(), NOW)).resolves.toEqual({ id: 'job-1', status: 'queued' });
+    const old = new Date(NOW.getTime() - PENDING_WRITE_GRACE_MS).toISOString();
+    await expect(waitingMarkedJob(jobsStore({}), marked(old), NOW)).resolves.toBeNull();
+  });
+
+  it('reads nothing without a live marker', async () => {
+    const store = jobsStore({});
+    await expect(waitingMarkedJob(store, null, NOW)).resolves.toBeNull();
+    expect(store.readDoc).not.toHaveBeenCalled();
   });
 });

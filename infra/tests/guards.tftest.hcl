@@ -2,7 +2,10 @@
 #
 # Asserts plan-level guarantees:
 # 1. No keyless AzureWebJobsStorage connection string on the Function App.
-# 2. Deploy identity trusts environment-only subjects (SEC-2).
+# 2. Deploy identity trusts environment-only subjects (SEC-2): since #1617,
+#    the reviewed production-backend environment's pair.
+#    2b. The frontend deploy identity's production pair and site-scoped
+#    role (#1617).
 # 3. Cosmos DB built-in data role is granted to the Function App per database, never account-wide (#1469).
 # 4. Cosmos DB account enforces virtual network filtering and disables local keys (T-504).
 # 5. gsc_entra_app_id_uri is empty or an api:// URI with no trailing slash (#1612).
@@ -35,6 +38,16 @@ override_resource {
   }
 }
 
+# The site's id, known at plan time, so guard 2b can compare the frontend
+# deploy identity's role scope with it (#1617).
+override_resource {
+  target          = azurerm_static_web_app.hcw
+  override_during = plan
+  values = {
+    id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-web/providers/Microsoft.Web/staticSites/stapp-hcw"
+  }
+}
+
 variables {
   subscription_app     = "00000000-0000-0000-0000-000000000000"
   subscription_mgmt    = "00000000-0000-0000-0000-000000000000"
@@ -60,15 +73,35 @@ run "infrastructure_security_guards" {
     error_message = "Function App must use identity-based AzureWebJobsStorage__accountName."
   }
 
-  # 2. Environment-only subjects on deploy identity (SEC-2)
+  # 2. Environment-only subjects on the deploy identity (SEC-2). Since the
+  # second pull request of #1617 its only pair is the reviewed
+  # production-backend environment's; its production pair is deleted, and
+  # scripts/oidc-subjects.test.mjs checks that no other credential is on it.
   assert {
-    condition     = can(regex(":environment:production$", azurerm_federated_identity_credential.github_production.subject))
-    error_message = "Deploy identity must trust environment-gated subjects only (SEC-2)."
+    condition = alltrue([
+      for credential in [
+        azurerm_federated_identity_credential.github_production_backend,
+        azurerm_federated_identity_credential.github_production_backend_immutable,
+      ] : can(regex(":environment:production-backend$", credential.subject))
+    ])
+    error_message = "The deploy identity must trust the reviewed production-backend environment's subject only, both forms (SEC-2, #1617)."
+  }
+
+  # 2b. #1617: the frontend deploy's own identity on `production`.
+
+  assert {
+    condition = alltrue([
+      for credential in [
+        azurerm_federated_identity_credential.github_frontend_deploy_env_production,
+        azurerm_federated_identity_credential.github_frontend_deploy_env_production_immutable,
+      ] : can(regex(":environment:production$", credential.subject))
+    ])
+    error_message = "The frontend deploy identity must trust the production environment's subject only, both forms (#1617)."
   }
 
   assert {
-    condition     = can(regex(":environment:production$", azurerm_federated_identity_credential.github_production_immutable.subject))
-    error_message = "Deploy identity immutable credential must trust environment-gated subjects only."
+    condition     = azurerm_role_assignment.github_frontend_deploy_swa_token.scope == azurerm_static_web_app.hcw.id
+    error_message = "The frontend deploy identity's one role must be scoped to the one Static Web App, not its resource group (#1617)."
   }
 
   # 3. The Function App's Cosmos data-plane grants (#1469): one per database

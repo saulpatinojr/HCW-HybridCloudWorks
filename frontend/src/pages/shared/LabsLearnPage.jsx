@@ -26,7 +26,9 @@
  *     so a link to `/education/labs#agent-heading` still lands on a heading
  *     that says where the recipe went.
  *   - "Articles for these labs" lists the published articles the labs on
- *     the page point at (`articleSlugs`), and renders nothing when none do.
+ *     the page point at (`articleSlugs`, kept to the ones in the content
+ *     manifest by `publishedArticles`, #1616), and renders nothing when none
+ *     are.
  *   - Beside the intro on the index, `CoderCredit` says the labs are provided
  *     using Coder and links Coder's name to its site (owner request
  *     2026-09-28). The intro names Azure Arc only as what the estate card
@@ -75,6 +77,7 @@ import {
   labsForProvider,
   labsPath,
   providersWithLabs,
+  publishedArticles,
 } from '@/data/labs/catalogue';
 import { usePublicData } from '@/hooks/usePublicData';
 import { fetchCoderStatus, fetchLabsEstate } from '@/lib/publicApi';
@@ -97,17 +100,15 @@ function settle({ data, loading }) {
   return loading && data === null ? undefined : data;
 }
 
-/** The articles the labs on this page point at, once each. */
+/** The published articles the labs on this page point at, once each. */
 function articlesFor(labs) {
   const seen = new Set();
-  return labs
-    .flatMap((lab) => lab.articleSlugs)
-    .filter((entry) => {
-      const key = `${entry.provider}/${entry.slug}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  return publishedArticles(labs.flatMap((lab) => lab.articleSlugs)).filter((entry) => {
+    const key = `${entry.provider}/${entry.slug}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 const MUTED = 'text-slate-600 dark:text-slate-400';

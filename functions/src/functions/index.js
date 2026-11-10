@@ -26,6 +26,7 @@ import "./generate-article-draft-http.js";
 import "./forge-config-http.js";
 import "./gallery-images-http.js";
 import "./health-http.js";
+import "./alerts-http.js";
 import "./image-prompts-http.js";
 import "./inspect-jobs.js";
 import "./forge-jobs.js";

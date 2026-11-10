@@ -176,5 +176,10 @@ hardening_drift_src_dir: /opt/hcw-src
 # idle reboot (04:30), with up to 15 minutes of jitter from the timer.
 hardening_drift_on_calendar: "*-*-* 03:00:00"
 hardening_drift_ansible_playbook: /usr/local/bin/ansible-playbook
-hardening_drift_vault_file: /etc/hcw/vault.yml
-hardening_drift_vault_password_file: /etc/hcw/vault.pass
+# The vault bootstrap.sh uses (HCW_VAULT_FILE and HCW_VAULT_PASSWORD_FILE in
+# lab-host/bootstrap.sh). Until #1631 these named /etc/hcw/vault.yml and
+# /etc/hcw/vault.pass, which do not exist, so every nightly check ran without
+# the vault and stopped at the Coder role's secrets assertion.
+# scripts/lab-host-drift-vault-path.test.mjs keeps the two in step.
+hardening_drift_vault_file: /etc/hcw/ansible/vault.yml
+hardening_drift_vault_password_file: /etc/hcw/ansible/vault-password

@@ -43,7 +43,10 @@ import {
   labsPath,
   primaryProvider,
   providersWithLabs,
+  publishedArticles,
 } from './catalogue';
+import { PUBLISHED_ROUTES } from '@/data/publishedRoutes';
+import manifest from '../../../data/content-manifest.json';
 
 /** A lab-host file, as text: those files are lab-host's to change, and these tests say what the site relies on. */
 const labHostFile = (path) => readFileSync(join(process.cwd(), '..', 'lab-host', path), 'utf8');
@@ -309,8 +312,10 @@ describe('the lists the pages derive', () => {
     expect(primaryProvider(labById('terraform-validate-walkthrough'))).toBe('terraform');
   });
 
-  it('points at published articles once each', () => {
-    const articles = allLabArticles();
+  it('points at its articles once each, once they are published', () => {
+    // A set naming all three, as the manifest will once the owner publishes them.
+    const all = new Set(labs.flatMap((lab) => lab.articleSlugs).map(articlePath));
+    const articles = allLabArticles(all);
     expect(articles.map(articlePath)).toEqual([
       '/azure/blog/build-a-landing-zone-you-can-read',
       '/terraform/blog/follow-along-in-one-container',
@@ -321,6 +326,32 @@ describe('the lists the pages derive', () => {
       expect(entry.slug).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
       expect(isNonEmptyString(entry.title)).toBe(true);
     }
+  });
+});
+
+describe('publishedArticles (#1616)', () => {
+  const entries = labs.flatMap((lab) => lab.articleSlugs);
+
+  it('reads the published pages from the content manifest the build uses', () => {
+    expect([...PUBLISHED_ROUTES]).toEqual(manifest.routes);
+  });
+
+  it('keeps only the articles whose page the site builds', () => {
+    // Since #1613 an address with no page answers 404, so an unpublished
+    // article is left off rather than linked.
+    const one = new Set(['/terraform/blog/let-an-agent-explain-it']);
+    expect(publishedArticles(entries, one).map(articlePath)).toEqual(
+      entries.map(articlePath).filter((path) => path === '/terraform/blog/let-an-agent-explain-it')
+    );
+    expect(publishedArticles(entries, new Set())).toEqual([]);
+  });
+
+  it('lists exactly the ones the manifest has, by default', () => {
+    // Worked out from the manifest rather than written down, so the daily
+    // manifest pull request does not fail this test the day an article is
+    // published. On 2026-11-09 the manifest had none of the three.
+    const expected = entries.filter((entry) => manifest.routes.includes(articlePath(entry)));
+    expect(publishedArticles(entries)).toEqual(expected);
   });
 });
 
