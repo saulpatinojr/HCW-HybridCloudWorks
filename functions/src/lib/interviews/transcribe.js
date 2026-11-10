@@ -360,12 +360,12 @@ export async function transcribeInterview({
       );
       // recordAiUsage swallows a failed write by contract; the ceiling
       // reads the rows, so a missing one is said out loud.
-      if (!row) log?.warn?.(`${TRANSCRIBE_JOB_TYPE}: ${interviewId} v${transcriptVersion} window ${k} usage row not written`);
+      if (!row) log?.warn?.(`${TRANSCRIBE_JOB_TYPE}: v${transcriptVersion} window ${k} usage row not written`);
       const part = { segments: result.segments, endOfAudio: result.endOfAudio };
       await storage.uploadBlob(INTERVIEWS_AUDIO_CONTAINER, partPath, JSON.stringify(part), 'application/json');
       parts.push(part);
       log?.log?.(
-        `${TRANSCRIBE_JOB_TYPE}: ${interviewId} v${transcriptVersion} window ${k} ${result.segments.length} segments, ` +
+        `${TRANSCRIBE_JOB_TYPE}: v${transcriptVersion} window ${k} ${result.segments.length} segments, ` +
           `${result.usage.promptTokens}+${result.usage.completionTokens} tokens, ${result.attempts} attempt(s), ${Date.now() - windowStart} ms`
       );
       await patchStage('transcribing', { window: k + 1 });
@@ -408,7 +408,7 @@ export async function transcribeInterview({
     });
     const costUsd = parseFloat(jobTotalUsd.toFixed(6));
     log?.log?.(
-      `${TRANSCRIBE_JOB_TYPE}: ${interviewId} v${transcriptVersion} done: ${parts.length} window(s), ${requests} request(s), ` +
+      `${TRANSCRIBE_JOB_TYPE}: v${transcriptVersion} done: ${parts.length} window(s), ${requests} request(s), ` +
         `${segments.length} segments, ${promptTokensTotal}+${completionTokensTotal} tokens, $${costUsd}, ${Date.now() - startedAt} ms` +
         (resumedFrom ? `, resumed after ${resumedFrom} part(s)` : '')
     );
@@ -436,7 +436,7 @@ export async function transcribeInterview({
         interview: { ...interview, stage: 'failed', error: sentence },
       });
     } catch (writeError) {
-      log?.warn?.(`${TRANSCRIBE_JOB_TYPE}: ${interviewId} v${transcriptVersion} failure not recorded (${writeError?.code ?? 'unknown'})`);
+      log?.warn?.(`${TRANSCRIBE_JOB_TYPE}: v${transcriptVersion} failure not recorded (${writeError?.code ?? 'unknown'})`);
     }
     throw error;
   } finally {
@@ -444,7 +444,7 @@ export async function transcribeInterview({
       try {
         await gemini.deleteFromGemini({ name: geminiFile.name, apiKey, fetch: fetchImpl });
       } catch (deleteError) {
-        log?.warn?.(`${TRANSCRIBE_JOB_TYPE}: ${interviewId} v${transcriptVersion} Gemini file not deleted (${deleteError?.code ?? 'unknown'})`);
+        log?.warn?.(`${TRANSCRIBE_JOB_TYPE}: v${transcriptVersion} Gemini file not deleted (${deleteError?.code ?? 'unknown'})`);
       }
     }
   }

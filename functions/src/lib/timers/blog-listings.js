@@ -12,6 +12,7 @@ import { recordRun } from '../rss/source-run.js';
 import { randomUUID } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { buildRssContentDoc, truncateText } from '../rss/feeds.js';
+import { errorCode } from '../http/error-response.js';
 
 export const FIRECRAWL_SCRAPE_URL = 'https://api.firecrawl.dev/v1/scrape';
 export const MAX_ARTICLES_PER_SOURCE = 20;
@@ -200,7 +201,8 @@ export function createBlogListingsScrape({
     for (const source of sources) {
       if (signal?.aborted) throw signal.reason || new Error('aborted');
       try {
-        log.log?.(`[blogScraper] Scraping ${source.name} (${source.provider})`);
+        // The provider and counts only: a source's name is typed by an editor (#1635).
+        log.log?.(`[blogScraper] Scraping a ${source.provider} listing`);
         const articles = await scrapeListingPage({ apiKey, fetch: fetchImpl }, source.url, signal);
         results.scraped += 1;
         let newCount = 0;
@@ -210,13 +212,14 @@ export function createBlogListingsScrape({
         }
         results.newArticles += newCount;
         await recordRun(store, source, 'succeeded', { fetchedAt: now().toISOString(), itemCount: articles.length });
-        log.log?.(`[blogScraper] ${source.name}: ${articles.length} found, ${newCount} new`);
+        log.log?.(`[blogScraper] ${source.provider} listing: ${articles.length} found, ${newCount} new`);
       } catch (err) {
         if (signal?.aborted) throw signal.reason || err;
         await recordRun(store, source, 'failed', { fetchedAt: now().toISOString() });
         results.errors += 1;
         results.failures.push({ source: source.name, error: err?.message || String(err) });
-        log.error?.(`[blogScraper] Failed ${source.name}: ${err?.message || err}`);
+        // The provider and the error's code: no editor-typed name or raw error text (#1642).
+        log.error?.(`[blogScraper] ${source.provider} listing failed: ${errorCode(err)}`);
       }
     }
     return results;

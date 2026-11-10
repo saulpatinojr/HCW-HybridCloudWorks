@@ -157,7 +157,9 @@ describe('fetchAudioToContainer', () => {
     });
     expect(log.log).toHaveBeenCalledTimes(1);
     const line = log.log.mock.calls[0][0];
-    expect(line).toMatch(/^interview-fetch-audio: int-1 6 B audio\/mp4 in \d+ ms$/);
+    expect(line).toMatch(/^interview-fetch-audio: 6 B audio\/mp4 in \d+ ms$/);
+    // No interview id: the job worker's lines reach Log Analytics (#1635).
+    expect(line).not.toContain('int-1');
     expect(line).not.toContain('files.example');
     expect(line).not.toContain('guest-voice');
   });

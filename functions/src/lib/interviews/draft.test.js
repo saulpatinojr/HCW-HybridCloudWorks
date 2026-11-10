@@ -181,7 +181,7 @@ describe('draftInterview', () => {
     });
     expect(final.interview).toEqual({ stage: 'ready', error: null, speakers: { interviewer: 'Speaker 1', guest: 'Speaker 2', unsure: false } });
     const line = log.log.mock.calls[0][0];
-    expect(line).toBe('interview-draft: int-1 v1 2 items, 0 flagged, 1 quotes dropped, 1 pass(es), foundry/gpt-5-mini');
+    expect(line).toBe('interview-draft: v1 2 items, 0 flagged, 1 quotes dropped, 1 pass(es), foundry/gpt-5-mini');
     expect(line).not.toContain('Alex');
     expect(line).not.toContain('landing zones');
   });
