@@ -131,15 +131,16 @@ GitHub jobs sign in as, with no stored password) and their federated
 credentials (the records that say which GitHub job may sign in as each one)
 from `infra/oidc.tf`. Each subject below is trusted in two forms, the name form
 shown and the immutable-ID form with GitHub's numeric owner and repository ids:
-- `id-site-github-deploy-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:production`)
+- `id-site-github-deploy-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:production-backend`), the backend deploy
+- `id-site-github-frontend-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:production`), the frontend deploy, which can only read the Static Web App's deployment token ([#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617))
 - `id-site-github-reader-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:ref:refs/heads/main`)
 - `id-site-github-alerts-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:ref:refs/heads/main`)
 - `id-site-github-manifest-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:ref:refs/heads/main`)
 - `id-site-github-copilot-review-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:copilot`)
 - `id-site-github-arcrun-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:lab-host-arc`)
 
-The GitHub environments those subjects name (`production`, `copilot`,
-`lab-host-arc`) are settings in the repository, not in Terraform;
+The GitHub environments those subjects name (`production`,
+`production-backend`, `copilot`, `lab-host-arc`) are settings in the repository, not in Terraform;
 Required-Inputs §4.4 lists the rules each needs, and they must exist before
 the first workflow run that names them.
 

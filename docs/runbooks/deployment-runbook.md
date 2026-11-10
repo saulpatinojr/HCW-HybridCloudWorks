@@ -857,7 +857,7 @@ commit status on `3ba8f791` read Success at 23:39 UTC); the owner created
 `production-backend` and set `FRONTEND_DEPLOY_CLIENT_ID` the same day. A
 session cannot read either back (its API access to environments and to the
 secrets list is refused), so they are recorded as the owner reported them.
-Part 2 is the second pull request and the apply it queues (steps 4 to 7).
+Part 2 is the second pull request and the apply it queues; the owner's part is steps 5 to 9.
 
 The resources are in
 [`infra/oidc.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/oidc.tf).
@@ -929,7 +929,9 @@ Kept as written, for a rebuild of the estate, which repeats them.
    [`scripts/assert-expected-plan.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/assert-expected-plan.mjs),
    and a green
    [plan check](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml)
-   for it:
+   for it (the plan check runs only when started by hand; the session
+   starts it from `main` with the inputs blank and posts the run's link on
+   [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617), so the owner does not need to):
    - `azurerm_user_assigned_identity.github_frontend_deploy`
    - `azurerm_federated_identity_credential.github_frontend_deploy_env_production`
    - `azurerm_federated_identity_credential.github_frontend_deploy_env_production_immutable`
@@ -1024,20 +1026,27 @@ three things the apply deletes are the ones no workflow uses after the
 merge. That is also why the apply comes after the merge and not before: run
 first, it would take away the sign-in both deploys still used.
 
-5. **Optional, and harmless: check the frontend deploy on the new identity
-   now.** The merge changes no file under `frontend/`, so it starts no
-   frontend deploy by itself; the next frontend merge (often the daily
-   content-manifest pull request) does it anyway. To see it sooner, open
-   [Deploy Frontend](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml),
+5. **Optional, and harmless: check that the frontend deploy still works
+   after the merge.** The merge changes no file under `frontend/`, so it
+   starts no frontend deploy by itself; the next frontend merge (often the
+   daily content-manifest pull request) does it anyway. To see it sooner,
+   open [Deploy Frontend](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml),
    click **Run workflow**, leave the branch on `main` and the input blank,
    and click **Run workflow**. This redeploys the site as it is on `main`.
    Success is a green run whose **Mint the deployment token** step prints
-   `minted a deployment token for stapp-site-prod-cus-01`. If **Azure login
-   (OIDC)** fails with `AADSTS700213` or `AADSTS700016`, the secret does not
-   hold the new identity's client id: set it again with step 3 and re-run.
-   If **Mint the deployment token** fails with "Not authorized", the role
-   from Part 1 is missing: put the run's link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617) and do not
-   confirm the apply in step 6 yet.
+   `minted a deployment token for stapp-site-prod-cus-01`.
+
+   What a green run here does and does not prove: it proves the deploy
+   path works, but not yet that it signed in as the new identity. Until the
+   apply in step 6, the old deploy identity still trusts `production` and
+   still holds the site role, so a `FRONTEND_DEPLOY_CLIENT_ID` that wrongly
+   held the old identity's client id would also go green. Step 8 is the
+   real proof. If **Azure login (OIDC)** fails with `AADSTS700213` or
+   `AADSTS700016`, the secret holds no identity that trusts `production`:
+   set it again with step 3 and re-run. If **Mint the deployment token**
+   fails with "Not authorized", the role from Part 1 is missing: put the
+   run's link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617) and do not confirm the apply in step 6
+   yet.
 
    **Read this before step 6: it is an apply, and it deletes three things in
    Azure.** Confirming it cannot be undone by a click; putting them back
@@ -1060,8 +1069,12 @@ first, it would take away the sign-in both deploys still used.
    [`scripts/assert-expected-plan.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/assert-expected-plan.mjs),
    so the
    [plan check](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml)
-   for the run should be green. If the plan shows any other destroy, any
-   create, or anything the plan check marks UNEXPECTED, do not confirm it:
+   for the run should be green. The plan check runs only when started by
+   hand: the session starts it from `main`, with the inputs blank, and
+   posts the run's link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617), so the owner does not need to.
+   If the plan shows any other destroy, any create other than the three
+   `azapi` replacements, or anything the plan check marks UNEXPECTED, do
+   not confirm it:
    discard the run and put its link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617). Otherwise click
    **Confirm & Apply**. Success is the run ending **Applied**, with
    `Apply complete! Resources: 3 added, 1 changed, 6 destroyed`. If the
@@ -1075,24 +1088,68 @@ first, it would take away the sign-in both deploys still used.
    ([`az identity federated-credential list`](https://learn.microsoft.com/cli/azure/identity/federated-credential?view=azure-cli-latest)):
 
    ```powershell
-   az identity federated-credential list --identity-name id-site-github-deploy-prod-cus-01 --resource-group rg-web-site-prod-cus -o json | ConvertFrom-Json | Select-Object name, subject
+   az identity federated-credential list --identity-name id-site-github-deploy-prod-cus-01 --resource-group rg-web-site-prod-cus --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | Select-Object name, subject
    ```
 
    Success is exactly two rows, both ending `:environment:production-backend`
    (one starting `repo:saulpatinojr/`, one with the numeric ids). A row
    ending `:environment:production` means the apply did not delete it. The
-   second line lists what the deploy identity holds on the site:
+   second line lists every role the deploy identity holds in the
+   subscription (`--assignee-object-id` reads it without a Microsoft Graph
+   lookup; [`az role assignment list`](https://learn.microsoft.com/cli/azure/role/assignment?view=azure-cli-latest)):
 
    ```powershell
-   $p = az identity show --name id-site-github-deploy-prod-cus-01 --resource-group rg-web-site-prod-cus --query principalId -o tsv; az role assignment list --assignee $p --all -o json | ConvertFrom-Json | Select-Object roleDefinitionName, scope
+   $p = az identity show --name id-site-github-deploy-prod-cus-01 --resource-group rg-web-site-prod-cus --subscription sub-app-site-prod-cus --query principalId -o tsv; az role assignment list --assignee-object-id $p --all --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | Select-Object roleDefinitionName, scope
    ```
 
    Success is the deploy identity's three roles on the Function App and its
    storage account (`Website Contributor`, `Storage Blob Data Contributor`
    and `Storage Account Contributor`) and no `HCW Static Web App Deployer`
-   row. Then say so on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617), and the session closes it. These
-   two lines have not been run from a session, which has no Azure sign-in;
-   they use only reads.
+   row. Paste both outputs on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617). These two lines have not
+   been run from a session, which has no Azure sign-in; they use only
+   reads.
+
+8. **Prove the frontend deploy signs in as the new identity.** This is the
+   check step 5 could not make. After the apply in step 6 has finished, the
+   next frontend deploy is the proof: it starts by itself on the next merge
+   that changes `frontend/`, or start it now with **Run workflow** on
+   [Deploy Frontend](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml), branch `main`, input blank. Success is a
+   green run whose **Mint the deployment token** step prints
+   `minted a deployment token for stapp-site-prod-cus-01`. Now only the new
+   identity trusts `production` and holds the site role, so green means the
+   secret is right. If **Azure login (OIDC)** fails with `AADSTS700213`,
+   the `FRONTEND_DEPLOY_CLIENT_ID` secret holds the wrong client id (most
+   likely the old deploy identity's, which no longer trusts `production`):
+   set it again with the two-line command in Part 1, step 3, and re-run.
+   Put the green run's link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617).
+
+9. **Prove a backend deploy waits for an approval again.** First read the
+   environment back (PowerShell), the same two lines as Part 1, step 1,
+   and paste both outputs on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617), because a session cannot
+   read environments:
+
+   ```powershell
+   gh api repos/saulpatinojr/HCW-HybridCloudWorks/environments/production-backend --jq '.protection_rules[].type'
+   ```
+
+   ```powershell
+   gh api repos/saulpatinojr/HCW-HybridCloudWorks/environments/production-backend --jq '{bypass: .can_admins_bypass, reviewers: [.protection_rules[] | select(.type=="required_reviewers") | .reviewers[].reviewer.login]}'
+   ```
+
+   Success is the same as in Part 1, step 1: `required_reviewers` and
+   `branch_policy`, then `"bypass":false` with both `saulpatinojr` and
+   `hcw-architect`. Then open
+   [Deploy Functions](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-functions.yml), click **Run workflow**, leave the branch on
+   `main`, and click **Run workflow**. Open the run. Success is the run
+   showing **Waiting**, with a **Review deployments** button that names
+   `production-backend`. That is the acceptance check for #1617. Then
+   choose: **Approve and deploy** deploys the backend from `main` as a
+   normal deploy would (it refuses to start while a Terraform run is going
+   or waiting, so do this after step 6), and **Reject** deploys nothing. If
+   the run goes straight on to its steps without **Waiting**, the
+   environment has lost its reviewers: cancel the run at once (the
+   **Cancel workflow** button), and put its link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617). Once
+   steps 8 and 9 are on the ticket, the session closes it.
 
 **If something goes wrong after the apply.** A frontend deploy that fails at
 sign-in is fixed by the secret (step 3), not by giving the old identity its
