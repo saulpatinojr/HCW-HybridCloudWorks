@@ -11,7 +11,8 @@
  * Since 2026-11-09 (owner decision on #1613) a merge that changes `frontend/`
  * starts a frontend deploy by itself, with no approval step (the owner
  * removed the `production` environment's required reviewers the same day).
- * The functions deploy is still started by hand. This check reads the last
+ * The functions deploy is still started by hand, and since #1617 it waits for
+ * a reviewer in the `production-backend` environment. This check reads the last
  * SUCCESSFUL run of each workflow, whatever started it, so a frontend run that
  * failed still shows here as drift. What it does not see is a change outside
  * `frontend/` that the site still needs (a repository variable, the deploy
@@ -507,7 +508,8 @@ export function formatReport(results, thresholdHours) {
       '',
       failed
         ? '**Deploy the service(s) marked ❌.** The Function App deploy is started by hand ' +
-          '(deploy-functions.yml). The Static Web App deploys by itself when a merge changes ' +
+          '(deploy-functions.yml) and waits for a reviewer to approve it (the ' +
+          'production-backend environment). The Static Web App deploys by itself when a merge changes ' +
           'frontend/, so ❌ there means that run failed or did not finish: re-run it, or start ' +
           'deploy-azure-frontend.yml by hand. The Terraform Infrastructure apply is confirmed ' +
           'by hand in HCP Terraform. A ⚠️ means the check could not read the answer, which is ' +

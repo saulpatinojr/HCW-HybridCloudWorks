@@ -912,12 +912,23 @@ undoes exactly what it wrote down.
 test with the same account and address would both pass them, and one run's
 cleanup would undo the other's access. So run it with no other fire test from
 this page in progress, by you or anyone using the same account, and not during
-a `deploy-functions.yml` run, which opens and closes the same firewall. This
-prints nothing when no deploy is running:
+a `deploy-functions.yml` run, which opens and closes the same firewall. Since
+[#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617) a
+deploy run first sits in **Waiting** until a reviewer approves it in the
+`production-backend` environment, and an approval can start it in the middle
+of this test, so check for a waiting run as well as a running one. Each line
+prints nothing when there is none:
 
 ```powershell
 gh run list -R saulpatinojr/HCW-HybridCloudWorks -w deploy-functions.yml -s in_progress
 ```
+
+```powershell
+gh run list -R saulpatinojr/HCW-HybridCloudWorks -w deploy-functions.yml -s waiting
+```
+
+If the second line lists a run, reject it (or let it finish after approving
+it) before you start; do not approve one while this test is running.
 
 Four values next. `$sf` is where the test records what it owns, so a recovery
 in a new window undoes the same things:
