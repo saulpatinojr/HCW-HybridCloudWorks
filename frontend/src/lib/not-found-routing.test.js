@@ -227,6 +227,22 @@ describe('unknown addresses answer 404 (#1613)', () => {
       statusCode: 301,
     }));
 
+  /**
+   * The 301s from a design's old blog address to its own design address. A
+   * design that exists only in the API was pre-built as an article at
+   * `/<provider>/blog/<slug>` until #1628, and that address was in the
+   * sitemap; since then it is built at `/<provider>/architecture-designs/<slug>`
+   * and the blog address has no file. Listed by hand: only the designs that
+   * were published (and so in the sitemap) before the move.
+   */
+  const MOVED_DESIGNS = [['azure', 'enterprise-hub-and-spoke-zero-trust-edge']];
+  const designRedirects = () =>
+    MOVED_DESIGNS.map(([provider, slug]) => ({
+      route: `/${provider}/blog/${slug}`,
+      redirect: `/${provider}/architecture-designs/${slug}`,
+      statusCode: 301,
+    }));
+
   it("sends each AWS certification's old slug to its current page with a 301", () => {
     expect(certRedirects().length).toBeGreaterThan(0);
     expect(redirectRules().filter((rule) => rule.route.startsWith('/aws/education/'))).toEqual(
@@ -239,8 +255,14 @@ describe('unknown addresses answer 404 (#1613)', () => {
     expect(redirectRules().filter((rule) => rule.route.endsWith('/labs'))).toEqual(labsRedirects());
   });
 
-  it('has no redirect but those two kinds, each to a page the site builds', () => {
-    expect(redirectRules()).toEqual([...certRedirects(), ...labsRedirects()]);
+  it("sends each moved design's old blog address to its design page with a 301 (#1628)", () => {
+    for (const rule of designRedirects()) {
+      expect(redirectRules()).toContainEqual(rule);
+    }
+  });
+
+  it('has no redirect but those three kinds, each to a page the site builds', () => {
+    expect(redirectRules()).toEqual([...certRedirects(), ...labsRedirects(), ...designRedirects()]);
     const prerendered = new Set(routes(manifest));
     for (const rule of redirectRules()) {
       expect(prerendered.has(rule.redirect), `${rule.route} -> ${rule.redirect}`).toBe(true);
