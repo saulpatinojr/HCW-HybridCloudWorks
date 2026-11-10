@@ -58,6 +58,35 @@ describe('architecture examples name module versions the lab image carries (#160
 });
 
 describe('a design names no Terraform release of its own (#1656)', () => {
+  /**
+   * A Terraform release named in a label: any digit after the word
+   * "Terraform", before the next `+` that joins the next item. That catches
+   * `Terraform 1.9`, `Terraform v1.9`, `Terraform version 1.9` and
+   * `Terraform (1.9)`. "Terraform AWS Provider" or "Terraform + Azure Verified
+   * Modules" carry no digit there.
+   */
+  const NAMES_RELEASE = /\bTerraform\b[^+]*\d/i;
+
+  it('catches every spelling of a release, and none where there is no number', () => {
+    for (const label of [
+      'HashiCorp Terraform 1.9 + Azure Verified Modules (AVM)',
+      'HashiCorp Terraform v1.9 + Azure Verified Modules (AVM)',
+      'HashiCorp Terraform version 1.9 + AVM',
+      'HashiCorp Terraform (1.9)',
+      'terraform 1.17.1',
+    ]) {
+      expect(NAMES_RELEASE.test(label), label).toBe(true);
+    }
+    for (const label of [
+      'HashiCorp Terraform + Azure Verified Modules (AVM)',
+      'AWS Serverless Application Model (SAM) + Terraform AWS Provider',
+      'Google Cloud Foundation Fabric + Terraform Google Provider',
+      'FinOps Foundation FOCUS 1.4 BigQuery & DuckDB Analytics Engine',
+    ]) {
+      expect(NAMES_RELEASE.test(label), label).toBe(false);
+    }
+  });
+
   it('says "HashiCorp Terraform" without a version, which the lab and the builder would outgrow', () => {
     // Two Azure designs said "Terraform 1.9" while the lab ran 1.17 and the
     // builder required 1.12 or newer. The release is pinned in
@@ -65,7 +94,7 @@ describe('a design names no Terraform release of its own (#1656)', () => {
     const named = Object.entries(architecturesByProvider).flatMap(([provider, catalogue]) =>
       Object.entries(catalogue)
         .filter(([, design]) =>
-          /Terraform\s+\d/.test(design.ecosystemPartnerValidation?.validatedWith || '')
+          NAMES_RELEASE.test(design.ecosystemPartnerValidation?.validatedWith || '')
         )
         .map(([slug]) => `${provider}/${slug}`)
     );
