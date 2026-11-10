@@ -1,4 +1,4 @@
-import { AVM_MODULES } from '../lib/landingZone/avmVersions.js';
+import { AVM_MODULES } from '../lib/landingZone/avmVersions';
 
 // The example below calls avm-ptn-alz, and its "Verify in 15-Min Browser Lab"
 // button opens a lab whose image carries only the module versions the Landing

@@ -16,10 +16,13 @@
  *   host           lab-host/ansible/group_vars/all.yml, for every row
  *                  lab-pins-upstream.mjs reports BEHIND.
  *   image-base     lab-image/versions.env and the FROM lines it governs: the
- *                  newest digest of the base image's release line, and
- *                  ansible-core's newest release in its line with every
- *                  wheel's hash (the lines lab-host/bootstrap.sh installs
- *                  the lab host's ansible-core from, too).
+ *                  newest digest of the base image's release line, with the
+ *                  base tag and CPython release the Docker guide page
+ *                  (frontend/src/pages/docker/BuildingImagesPage.jsx) and
+ *                  lab-image/README.md name; and ansible-core's newest
+ *                  release in its line with every wheel's hash (the lines
+ *                  lab-host/bootstrap.sh installs the lab host's
+ *                  ansible-core from, too).
  *   image-digests  vps-agent/lib/capabilities.js and the Coder template: the
  *                  two digests a publish from main just pushed.
  *
@@ -794,6 +797,7 @@ async function planPythonBase(env, http, today) {
   const oldRef = `${env.BASE_IMAGE}@${env.BASE_DIGEST}`;
   const newImage = `${base.name}:${patchTag}`;
   const newRef = `${newImage}@${patch.digest}`;
+  const readmeBase = renderReadmeBaseProse({ BASE_IMAGE: newImage, BASE_PYTHON_VERSION: pythonVersion });
   const envEdit = (key, to) => ({ file: VERSIONS_ENV_PATH, where: key, to, apply: (t) => setEnvValue(t, key, to) });
   return {
     key: 'base',
@@ -826,15 +830,16 @@ async function planPythonBase(env, http, today) {
         to: today.toISOString().slice(0, 10),
         apply: (t) => setCheckedOn(t, today),
       },
-      // The lab image README names the same tag and CPython release in its
-      // first paragraph. Nothing moved it until #1604, so a bump left it on
-      // the old base; a test in lab-pin-bumps.test.mjs holds it to versions.env.
+      // The lab image README names the same tag and CPython release in the
+      // paragraph under its table of targets. Nothing moved it until #1604, so
+      // a bump left it on the old base; a test in lab-pin-bumps.test.mjs holds
+      // it to versions.env. `to` is the whole sentence, as `from` is, so a
+      // digest-only move shows the two the same.
       {
         file: README_PATH,
         where: 'the base tag and CPython release the README names',
-        to: newImage,
-        apply: (t) =>
-          replaceOne(t, README_BASE_RE, renderReadmeBaseProse({ BASE_IMAGE: newImage, BASE_PYTHON_VERSION: pythonVersion }), 'README base sentence'),
+        to: readmeBase,
+        apply: (t) => replaceOne(t, README_BASE_RE, readmeBase, 'README base sentence'),
       },
     ],
     evidence: [
@@ -1468,18 +1473,24 @@ export async function planImageDigests({ files, http, runner, full }) {
 
 // ── Reporting ──────────────────────────────────────────────────────────────
 
+/**
+ * A value on one line. A README sentence spans two lines in the file, and a
+ * line break inside a table cell would end the row (#1604).
+ */
+const oneLine = (s) => String(s).replace(/\s+/g, ' ');
+
 /** The planned edits, one line each, for the console and --dry-run. */
 export function renderPlan(applied) {
   if (applied.length === 0) return 'No pin to move.\n';
   const lines = [];
   for (const bump of applied) {
     lines.push(`${bump.label}: ${bump.from} -> ${bump.to}`);
-    for (const c of bump.changes) lines.push(`  ${c.file}: ${c.where}: ${c.from} -> ${c.to}`);
+    for (const c of bump.changes) lines.push(`  ${c.file}: ${c.where}: ${oneLine(c.from)} -> ${oneLine(c.to)}`);
   }
   return `${lines.join('\n')}\n`;
 }
 
-const code = (s) => `\`${String(s).replace(/`/g, "'")}\``;
+const code = (s) => `\`${oneLine(s).replace(/`/g, "'")}\``;
 
 /** The evidence section of the pull request body. */
 export function renderEvidence(applied, { set, date }) {

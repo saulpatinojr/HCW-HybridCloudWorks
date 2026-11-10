@@ -586,13 +586,51 @@ describe('the image base plan', () => {
     // And the day the page was last read against the files is the bump's day (CodeRabbit on #1123).
     expect(page).toContain("export const CHECKED_ON = Object.freeze({ iso: '2026-10-14', label: '14 October 2026' });");
     expect(base.changes.find((c) => c.where.startsWith('CHECKED_ON'))).toMatchObject({ to: '2026-10-14' });
-    // The lab image README's first paragraph names the same tag and CPython
-    // release, and nothing rewrote it until #1604; now it moves with them.
-    const readme = plan.files[README_PATH];
-    expect(readme).toContain(renderReadmeBaseProse({ BASE_IMAGE: `python:${next}${variant}`, BASE_PYTHON_VERSION: next }));
-    expect(readme).not.toContain(`\`${env.BASE_IMAGE}\``);
-    expect(readme).not.toContain(`CPython ${env.BASE_PYTHON_VERSION}`);
+    // The lab image README names the same tag and CPython release under its
+    // table of targets, and nothing rewrote it until #1604; now it moves with
+    // them. Only that sentence is read, so a dated note elsewhere in the
+    // README that names the old release cannot fail this.
+    const [sentence] = plan.files[README_PATH].match(README_BASE_RE);
+    expect(sentence).toBe(renderReadmeBaseProse({ BASE_IMAGE: `python:${next}${variant}`, BASE_PYTHON_VERSION: next }));
+    expect(sentence).not.toContain(env.BASE_IMAGE);
+    expect(sentence).not.toContain(`CPython ${env.BASE_PYTHON_VERSION}`);
     expect(base.changes.filter((c) => c.file === README_PATH)).toHaveLength(1);
+  });
+
+  // The README sentence spans two lines in the file. Its change must still be
+  // one row of the pull request's evidence table and one line of --dry-run.
+  it('writes the README change as one evidence row and one plan line, whole sentence to whole sentence (#1604)', async () => {
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(registry())), today: new Date('2026-10-14T12:00:00Z') });
+    const base = plan.applied.find((b) => b.key === 'base');
+    const flat = (text) => text.replace(/\s+/g, ' ');
+    const change = base.changes.find((c) => c.file === README_PATH);
+    expect(change.to).toBe(renderReadmeBaseProse({ BASE_IMAGE: `python:${next}${variant}`, BASE_PYTHON_VERSION: next }));
+    expect(change.from).toBe(files[README_PATH].match(README_BASE_RE)[0]);
+
+    const evidence = renderEvidence([base], { set: 'image-base', date: '2026-10-14' });
+    const rows = evidence.split('\n').filter((line) => line.includes(README_PATH));
+    // A backtick in a cell becomes a quote, as code() writes every cell.
+    const cell = (text) => `\`${flat(text).replace(/`/g, "'")}\``;
+    expect(rows).toEqual([`| ${cell(README_PATH)} | ${cell(change.where)} | ${cell(change.from)} | ${cell(change.to)} |`]);
+    // Every line of the edits table is a row: a line break inside a cell
+    // would have left half a sentence on a line of its own.
+    const table = evidence.slice(evidence.indexOf('| File | Pin | Was | Now |'));
+    const tableLines = table.slice(0, table.indexOf('\n\n')).split('\n');
+    for (const line of tableLines) expect(line).toMatch(/^\|.*\|$/);
+
+    const planLines = renderPlan([base]).split('\n').filter((line) => line.includes(README_PATH));
+    expect(planLines).toEqual([`  ${README_PATH}: ${change.where}: ${flat(change.from)} -> ${flat(change.to)}`]);
+  });
+
+  it('shows the README sentence unchanged, from equal to to, when only the digest moves (#1604)', async () => {
+    // The same CPython release, rebuilt: a new index digest under the same tag.
+    const routes = registry({ pythonVersion: env.BASE_PYTHON_VERSION });
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routes)), today: new Date('2026-10-14T12:00:00Z') });
+    const base = plan.applied.find((b) => b.key === 'base');
+    expect(readEnv(plan.files[VERSIONS_ENV_PATH]).BASE_DIGEST).toBe(sha(routes._index));
+    const change = base.changes.find((c) => c.file === README_PATH);
+    expect(change.from).toBe(change.to);
+    expect(plan.files[README_PATH]).toBe(files[README_PATH]);
   });
 
   it('setCheckedOn writes the ISO day and its en-GB label, and refuses a page without exactly one such line', () => {
