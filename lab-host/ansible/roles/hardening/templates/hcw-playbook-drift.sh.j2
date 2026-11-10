@@ -91,10 +91,12 @@ if [ "${play_rc}" -ne 0 ] || [ -z "${changed_count}" ] || [ -z "${failed_count}"
   # looped result prints its whole item, and an item can hold a container's
   # environment, secrets included.
   awk '/^TASK \[/ { task = $0 } /^(\[ERROR\]: |ERROR! )/ { print task; print }' "${output_file}" | cut -c1-500 >&2 || true
-  # Then the recap and the timings only, by their shape: a plain tail can
-  # reach back into the failed result, since profile_tasks prints only 20
-  # timing lines after it.
-  awk '/^localhost[[:space:]]+:[[:space:]]+ok=/ || / -+ [0-9]+\.[0-9]+s$/' "${output_file}" | cut -c1-500 >&2 || true
+  # Then the recap and the timings only, by their shape, and the timings
+  # only after the TASKS RECAP header: a plain tail can reach back into the
+  # failed result, since profile_tasks prints only 20 timing lines after it.
+  awk '/^TASKS RECAP / { timings = 1; next }
+       /^localhost[[:space:]]+:[[:space:]]+ok=/ { print; next }
+       timings && / -+ [0-9]+\.[0-9]+s$/ { print }' "${output_file}" | cut -c1-500 >&2 || true
   exit 1
 fi
 

@@ -402,8 +402,8 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
      (the runbook's first-run state) pages until the first `hcw-vault-set`.
    - On a failure, the unit's output (the journal at `daemon.info`, which the
      data collection rule does not ship) names the failed task and Ansible's
-     one-line `[ERROR]:` message, then the recap line and the timing lines,
-     picked by their shape. It never prints a `fatal:` or `failed:` result
+     one-line `[ERROR]:` message, then the recap line and the timing lines
+     after the `TASKS RECAP` header, picked by their shape. It never prints a `fatal:` or `failed:` result
      body, because a looped result prints its whole item, and an item can hold
      a container's environment. A plain tail of the output could reach back
      into that body when the play fails early and the timing recap is short. The `[ERROR]:` line is the task's own message, so a `fail`

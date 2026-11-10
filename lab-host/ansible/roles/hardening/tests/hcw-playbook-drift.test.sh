@@ -180,7 +180,10 @@ fatal: [localhost]: FAILED! => {
 TASK [privilege_checks : Assert each add-on container] *************************
 failed: [localhost] (item=hcw-addon-sample) => {
     "ansible_loop_var": "item",
-    "item": {"Config": {"Env": ["TURNSTILE_SECRET=DUMMY-SECRET-0001"]}}
+    "item": {"Config": {"Env": ["TURNSTILE_SECRET=DUMMY-SECRET-0001"]}},
+    "stdout_lines": [
+DUMMY-SECRET-0002 an output line shaped like a timing line ---- 1.25s
+    ]
 }
 
 PLAY RECAP *********************************************************************
@@ -201,7 +204,7 @@ check "playbook execution failure names the failed task and its message on stder
   "grep -qF 'TASK [docker : Check service]' '${work}/stderr' && grep -qxF '[ERROR]: Task failed: Action failed: Docker daemon failed' '${work}/stderr'" \
   "$(cat "${work}/stderr" 2>/dev/null || true)"
 check "a failed result's body, secrets in a looped item included, never reaches stderr (#1631)" \
-  "! grep -qF 'DUMMY-SECRET-0001' '${work}/stderr' && ! grep -qF 'FAILED! =>' '${work}/stderr' && ! grep -qF 'failed: [localhost]' '${work}/stderr' && grep -qF 'role : A task that took a while ---- 0.5s' '${work}/stderr' && grep -qE '^localhost +: ok=10 ' '${work}/stderr'" \
+  "! grep -qF 'DUMMY-SECRET-0001' '${work}/stderr' && ! grep -qF 'DUMMY-SECRET-0002' '${work}/stderr' && ! grep -qF 'FAILED! =>' '${work}/stderr' && ! grep -qF 'failed: [localhost]' '${work}/stderr' && grep -qF 'role : A task that took a while ---- 0.5s' '${work}/stderr' && grep -qE '^localhost +: ok=10 ' '${work}/stderr'" \
   "$(cat "${work}/stderr" 2>/dev/null || true)"
 check "playbook execution failure logs warning to syslog with rc and failed count" \
   "grep -qxF '${tag}|daemon.warning|playbook check failed (rc=2, failed=1, unreachable=0) on commit feedbeef1234567890abcdef1234567890abcdef' '${work}/log'" \
