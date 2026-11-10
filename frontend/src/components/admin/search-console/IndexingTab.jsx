@@ -200,7 +200,9 @@ function CanonicalCell({ page }) {
       <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
       <span>
         Google chose a different address:{' '}
-        <span className="font-mono">{pageLabel(page.googleCanonical)}</span>
+        <span className="font-mono [overflow-wrap:anywhere]">
+          <Breakable text={pageLabel(page.googleCanonical)} />
+        </span>
       </span>
     </span>
   );
@@ -298,6 +300,7 @@ function PageRow({ page }) {
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Inspect in Google"
+            title="Inspect in Google"
             className="inline-flex items-center gap-1 text-primary hover:underline"
           >
             {/* "Inspect" on screen keeps the column narrow; aria-label gives the full name. */}

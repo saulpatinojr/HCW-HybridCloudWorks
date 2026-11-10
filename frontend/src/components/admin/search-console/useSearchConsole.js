@@ -10,11 +10,13 @@
  * answers 202 at once and the run takes about ten minutes (about 400 pages,
  * each one a separate question to Google; the first real run on 2026-11-10
  * took 8 minutes 47 seconds). So after a queued run the report is read again
- * every 30 seconds, for up to 30 minutes, until it shows a newer run, and
- * then the page has the new figures without a reload. 30 minutes covers the
- * job's whole 28-minute budget (SYNC_JOB_TIMEOUT_MS in the functions'
- * lib/search-console/handlers.js); at 15 minutes a slow run could still be
- * going when the page stopped looking.
+ * every 30 seconds, for up to 40 minutes, until it shows a newer run, and
+ * then the page has the new figures without a reload. The 40 minutes count
+ * from the press: the job's queue message can wait up to 10 minutes before
+ * the jobs sweeper (functions lib/jobs.js, STALE_QUEUED_MS) sends it again,
+ * and the job then has its whole 28-minute budget (SYNC_JOB_TIMEOUT_MS in
+ * the functions' lib/search-console/handlers.js), so a late and slow run
+ * still lands while the page is looking. At 15 minutes it often did not.
  * Those background reads are quiet: one that fails leaves the report on
  * screen as it was and the next one tries again, because a dropped poll is
  * not a reason to blank a page the owner is reading.
@@ -32,7 +34,7 @@ import {
 
 /** How often, and for how long, the page re-reads after Run now. */
 export const POLL_EVERY_MS = 30_000;
-export const POLL_FOR_MS = 30 * 60_000;
+export const POLL_FOR_MS = 40 * 60_000;
 
 const describeError = (err) => err?.message || 'The Search Console report could not be read.';
 

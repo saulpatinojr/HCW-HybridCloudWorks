@@ -20,10 +20,11 @@ export const TABLE_CLASS = 'w-full text-xs';
 export const TH_CLASS = 'pb-1 pr-3 text-left font-medium text-muted-foreground';
 export const TD_CLASS = 'py-1.5 pr-3 align-top border-b border-border/60';
 /**
- * A cell holding a page address. It wraps at a hyphen or slash where it can
- * and mid-word only when a part is longer than the column, instead of
- * `break-all`, which split every address at the column edge
- * ("…/e/m" then "icrosoft-…").
+ * A cell holding long text: a page or sitemap address, or a search query in
+ * the same breakdown table. It wraps at a space, hyphen or (with Breakable)
+ * a slash where it can, and mid-word only when a part is longer than the
+ * column, instead of `break-all`, which split every address at the column
+ * edge ("…/e/m" then "icrosoft-…").
  */
 export const URL_CELL_CLASS = 'min-w-[13rem] [overflow-wrap:anywhere]';
 /** A short cell (a word or two, a link) that should not wrap. */
