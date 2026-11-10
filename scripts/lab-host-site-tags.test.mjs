@@ -42,7 +42,9 @@ describe('site.yml narrowed runs', () => {
     const post = site.slice(site.indexOf('  post_tasks:'));
     const record = post.slice(post.indexOf('- name: Record the commit this host converged from'));
     // `| list`: ansible-core 2.21 gives the tags as a tuple, which never equals a list.
-    expect(record).toContain("when: ansible_run_tags | list == ['all'] and ansible_skip_tags | length == 0");
+    // Not in check mode: the record holds the run's time, so a check (the
+    // nightly drift check) always saw it change (#1631).
+    expect(record).toContain("when: ansible_run_tags | list == ['all'] and ansible_skip_tags | length == 0 and not ansible_check_mode");
     expect(site).not.toMatch(/ansible_run_tags == \[/);
     expect(bootstrap).toContain('--tags | --tags=* | -t* | --skip-tags | --skip-tags=*) hcw_partial=1 ;;');
     expect(bootstrap).toContain('if [ -z "${hcw_check_mode}" ] && [ -z "${hcw_partial}" ]; then');
