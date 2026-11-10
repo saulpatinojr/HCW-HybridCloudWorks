@@ -569,8 +569,10 @@ and attests. Where each sum comes from:
   (repository `library/python`, tag `3.15-slim-trixie`), cross-checked with
   `docker buildx imagetools inspect python:3.15-slim-trixie`, whose
   `org.opencontainers.image.version` annotation names the patch release.
-  Update `BASE_IMAGE`, `BASE_DIGEST`, `BASE_PYTHON_VERSION` and every
-  external `FROM` line in the Dockerfile together; the sandbox template's
+  Update `BASE_IMAGE`, `BASE_DIGEST`, `BASE_PYTHON_VERSION`, every
+  external `FROM` line in the Dockerfile and the base tag and CPython
+  release in the paragraph under the table of targets at the top of this
+  README together; the sandbox template's
   base is `SANDBOX_BASE_IMAGE` / `SANDBOX_BASE_DIGEST` and its one `FROM`
   line, by the same method. This is automated within the release line
   (#949): every Tuesday `.github/workflows/lab-supply-chain.yml` runs
@@ -584,7 +586,9 @@ and attests. Where each sum comes from:
   `chore/lab-pins-image-base` pull request with all four edits, the base tag
   and CPython release the Docker guide page names
   (`frontend/src/pages/docker/BuildingImagesPage.jsx`, which
-  `DockerGuides.test.jsx` holds to this file), and that evidence. A new minor line (3.16) stays a hand bump, governed by
+  `DockerGuides.test.jsx` holds to `versions.env`), the same two in the
+  paragraph under this README's table of targets (which `scripts/lab-pin-bumps.test.mjs`
+  holds to `versions.env`, #1604), and that evidence. A new minor line (3.16) stays a hand bump, governed by
   `scripts/version-floors.json`. Merging it publishes from `main`, and the
   publish opens the `chore/lab-pins-image-digests` pull request for the
   consumers.

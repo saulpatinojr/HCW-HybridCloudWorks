@@ -60,7 +60,7 @@ describe('the pin sets', () => {
     // test's SHA512 and the Docker CLI fixture with the host pins, the guide
     // page with the image base.
     expect(SETS.host.paths).toEqual([GROUP_VARS_PATH, BOOTSTRAP_PATH, CADDY_TEST_PATH, DOCKER_CLI_FIXTURE_PATH]);
-    expect(SETS['image-base'].paths).toEqual([VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH]);
+    expect(SETS['image-base'].paths).toEqual([VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH, README_PATH]);
     expect(SETS['image-tools'].paths).toEqual([VERSIONS_ENV_PATH, README_PATH]);
     expect(SETS['image-digests'].paths).toEqual([CAPABILITIES_PATH, CODER_TEMPLATE_PATH]);
     expect(SETS[CLOUDFLARE_SET].paths).toEqual([VARIABLES_PATH]);
