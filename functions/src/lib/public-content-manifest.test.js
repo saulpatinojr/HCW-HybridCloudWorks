@@ -8,7 +8,10 @@ import { fileURLToPath } from 'node:url';
 
 import {
   ARTICLE_FIELDS,
+  DESIGN_FIELDS,
   INTERVIEW_FIELDS,
+  PUBLISHED_DESIGN_QUERY,
+  projectDesign,
   PUBLISHED_INTERVIEW_QUERY,
   projectInterview,
   OFF_SITE_STATUSES,
@@ -17,7 +20,12 @@ import {
   createPublicContentManifestHandlers,
   projectArticle,
 } from './public-content-manifest.js';
-import { SQL_NOT_SOFT_DELETED, SQL_PUBLIC_CLAUSE, isPublicDocument } from './public-reads.js';
+import {
+  PUBLIC_CONTENT_DETAIL_FIELDS,
+  SQL_NOT_SOFT_DELETED,
+  SQL_PUBLIC_CLAUSE,
+  isPublicDocument,
+} from './public-reads.js';
 import { buildStatusUpdateData } from './cms/content-status.js';
 import { evaluatePredicate } from '../../test/cosmos-predicate.js';
 
@@ -95,10 +103,30 @@ describe('getManifest', () => {
     // as the single source — a field added to ARTICLE_FIELDS updates both
     // sides — while still failing on any edit to the predicate or the shape.
     const projection = ARTICLE_FIELDS.map((f) => `c["${f}"]`).join(', ');
-    // The articles leave interviews out (ADR 0040, D6): they have their own
-    // page and their own query below. A document with no `type` stays in.
+    // The articles leave interviews (ADR 0040, D6) and designs (#1628) out:
+    // each has its own page and its own query below. A document with no
+    // `type` stays in.
     expect(PUBLISHED_QUERY).toBe(
-      `SELECT ${projection} FROM c WHERE ${PUBLISHED_PREDICATE} AND (NOT IS_STRING(c.type) OR LOWER(c.type) != "interview")`
+      `SELECT ${projection} FROM c WHERE ${PUBLISHED_PREDICATE}` +
+        ' AND (NOT IS_STRING(c.type) OR LOWER(c.type) != "interview")' +
+        ' AND (NOT IS_STRING(c.type) OR LOWER(c.type) != "architecture")'
+    );
+    // The designs, compared whole for the same reason, with the visibility
+    // fields riding along for the re-check in code.
+    const designProjection = [
+      ...new Set([
+        ...PUBLIC_CONTENT_DETAIL_FIELDS,
+        'Live',
+        'Status',
+        'contentStatus',
+        'softDeletedAt',
+        'softDeleteExpiresAt',
+      ]),
+    ]
+      .map((f) => `c["${f}"]`)
+      .join(', ');
+    expect(PUBLISHED_DESIGN_QUERY).toBe(
+      `SELECT ${designProjection} FROM c WHERE ${PUBLISHED_PREDICATE} AND LOWER(c.type) = "architecture"`
     );
     // The visibility fields ride along so isPublicDocument re-checks every
     // row in code, as the public route does; projectInterview drops them.
@@ -403,5 +431,92 @@ describe('the published interviews it carries (ADR 0040, D6)', () => {
     expect(evaluatePredicate(interviews, { ...live, type: 'interview' })).toBe(true);
     expect(evaluatePredicate(interviews, { ...live, type: 'blog' })).toBe(false);
     expect(evaluatePredicate(interviews, { type: 'interview', contentStatus: 'draft' })).toBe(false);
+  });
+});
+
+describe('the published architecture designs it carries (#1628)', () => {
+  const published = (fields) => ({ Live: true, contentStatus: 'published', ...fields });
+
+  it('answers designs beside the articles, each as public/content would answer it', async () => {
+    const stored = published({
+      id: 'd1',
+      type: 'architecture',
+      slug: 'hub-and-spoke',
+      title: 'Hub and spoke',
+      cloudProvider: 'Azure',
+      diagramXml: '<mxfile/>',
+      waf: { security: 4 },
+      estimatedCost: '$1,200 a month',
+      analysisPrompt: 'never public',
+      editorNotes: 'never public',
+    });
+    const queryDocs = vi.fn(async (container, query) => {
+      if (container !== 'content') return [];
+      if (query === PUBLISHED_DESIGN_QUERY) return [stored];
+      if (query === PUBLISHED_QUERY) return [published({ id: 'a1', slug: 'post', type: 'blog' })];
+      return [];
+    });
+    const res = await createPublicContentManifestHandlers({ store: { queryDocs } }).getManifest({}, {});
+    expect(res.status).toBe(200);
+    expect(res.jsonBody.count).toBe(1);
+    expect(queryDocs).toHaveBeenCalledWith('content', PUBLISHED_DESIGN_QUERY, []);
+    const [design] = res.jsonBody.designs;
+    // The fields the design page reads, which the article list never kept.
+    expect(design).toMatchObject({
+      slug: 'hub-and-spoke',
+      diagramXml: '<mxfile/>',
+      waf: { security: 4 },
+      estimatedCost: '$1,200 a month',
+    });
+    // Nothing the public detail route would not send.
+    expect(design.analysisPrompt).toBeUndefined();
+    expect(design.editorNotes).toBeUndefined();
+    expect(Object.keys(design).every((field) => PUBLIC_CONTENT_DETAIL_FIELDS.includes(field))).toBe(true);
+  });
+
+  it('keeps exactly the public detail allowlist', () => {
+    expect(DESIGN_FIELDS).toBe(PUBLIC_CONTENT_DETAIL_FIELDS);
+    expect(projectDesign({ slug: 's', diagramUrl: 'd', analysisPrompt: 'x', softDeletedAt: null })).toEqual({
+      slug: 's',
+      diagramUrl: 'd',
+    });
+    expect(projectDesign(null)).toEqual({});
+  });
+
+  it('re-checks every design row in code and drops one the SQL let through', async () => {
+    const queryDocs = vi.fn(async (_container, query) =>
+      query === PUBLISHED_DESIGN_QUERY
+        ? [
+            { slug: 'live', type: 'architecture', Live: true, contentStatus: 'published' },
+            { slug: 'drafting', type: 'architecture', Live: true, contentStatus: 'drafting' },
+          ]
+        : []
+    );
+    const res = await createPublicContentManifestHandlers({ store: { queryDocs } }).getManifest({}, {});
+    expect(res.jsonBody.designs.map((d) => d.slug)).toEqual(['live']);
+  });
+
+  it('answers an empty list when the store returns nothing', async () => {
+    for (const empty of [[], null, undefined]) {
+      const res = await createPublicContentManifestHandlers({
+        store: { queryDocs: vi.fn().mockResolvedValue(empty) },
+      }).getManifest({}, {});
+      expect(res.jsonBody.designs).toEqual([]);
+    }
+  });
+
+  it('leaves designs out of the article corpus by type, and carries them in their own query', () => {
+    const live = { Live: true, contentStatus: 'published' };
+    const articles = PUBLISHED_QUERY.slice(PUBLISHED_QUERY.indexOf('WHERE ') + 6);
+    const designs = PUBLISHED_DESIGN_QUERY.slice(PUBLISHED_DESIGN_QUERY.indexOf('WHERE ') + 6);
+    expect(evaluatePredicate(articles, { ...live, type: 'architecture' })).toBe(false);
+    expect(evaluatePredicate(articles, { ...live, type: 'Architecture' })).toBe(false);
+    expect(evaluatePredicate(articles, { ...live, type: 'framework' })).toBe(true);
+    expect(evaluatePredicate(designs, { ...live, type: 'architecture' })).toBe(true);
+    expect(evaluatePredicate(designs, { ...live, type: 'Architecture' })).toBe(true);
+    expect(evaluatePredicate(designs, { ...live, type: 'blog' })).toBe(false);
+    expect(evaluatePredicate(designs, { ...live })).toBe(false);
+    expect(evaluatePredicate(designs, { type: 'architecture', contentStatus: 'draft' })).toBe(false);
+    expect(evaluatePredicate(designs, { ...live, type: 'architecture', contentStatus: 'archived' })).toBe(false);
   });
 });

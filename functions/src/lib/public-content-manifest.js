@@ -23,9 +23,10 @@
  * ## Why it is safe to serve anonymously
  *
  * It returns published documents only — asserted in the query rather than
- * filtered afterwards — projected to `ARTICLE_FIELDS`, an explicit allowlist.
- * Every one of those fields is already served by `public/content` and rendered
- * on the public article page. There is no field here the site does not already
+ * filtered afterwards — projected to explicit allowlists: `ARTICLE_FIELDS`,
+ * `INTERVIEW_FIELDS` and `DESIGN_FIELDS` below. Every one of those fields is
+ * already served by the public routes (`public/content`, `public/interviews`)
+ * and rendered on a public page. There is no field here the site does not already
  * publish, and no unpublished document can reach it.
  *
  * What it *is* is a bulk endpoint: one request instead of ~120. That is a
@@ -49,14 +50,21 @@
  * It is computed here rather than in the builder because three of the five
  * sections read containers the builder cannot see; see
  * `public-section-counts.js`, which owns every rule.
+ *
+ * `interviews` and `designs` — the published interviews and architecture
+ * designs, each sent apart from the articles because each has a page of its
+ * own: `/azure/interviews/<slug>` (ADR 0040, D6) and
+ * `/<provider>/architecture-designs/<slug>` (#1628).
  */
 import {
   CONTENT_VISIBILITY_FIELDS,
   NEVER_PUBLIC_STATUSES,
+  PUBLIC_CONTENT_DETAIL_FIELDS,
   PUBLIC_INTERVIEW_DETAIL_FIELDS,
   SQL_NOT_SOFT_DELETED,
   SQL_PUBLIC_CLAUSE,
   isPublicDocument,
+  projectFields,
   projectInterview as projectPublicInterview,
 } from './public-reads.js';
 import { countSections } from './public-section-counts.js';
@@ -223,15 +231,25 @@ export const PUBLISHED_PREDICATE = `${SQL_PUBLIC_CLAUSE} AND ${SQL_NOT_SOFT_DELE
 const ARTICLE_PROJECTION = ARTICLE_FIELDS.map((field) => `c["${field}"]`).join(', ');
 
 /**
- * An interview is not an article (ADR 0040, D6): it has its own page at
- * /azure/interviews/<slug> and its own public routes, so the article corpus
- * leaves it out and the second query below carries it. A document with no
- * `type` is a blog post and stays in the articles.
+ * Interviews and architecture designs are not articles, so the article corpus
+ * leaves both out and a query of their own below carries each.
+ *
+ * - An interview has its own page at /azure/interviews/<slug> and its own
+ *   public routes (ADR 0040, D6).
+ * - A design has its own page at /<provider>/architecture-designs/<slug>
+ *   (#1628). As an article it was pre-built at /<provider>/blog/<slug>, a
+ *   page the blog list never links to (useBlogData leaves designs out),
+ *   while its real address had no page at all.
+ *
+ * A document with no `type` is a blog post and stays in the articles.
  */
-const SQL_NOT_INTERVIEW = '(NOT IS_STRING(c.type) OR LOWER(c.type) != "interview")';
+const SQL_NOT_OWN_PAGE =
+  '(NOT IS_STRING(c.type) OR LOWER(c.type) != "interview") AND ' +
+  '(NOT IS_STRING(c.type) OR LOWER(c.type) != "architecture")';
 const SQL_IS_INTERVIEW = 'LOWER(c.type) = "interview"';
+const SQL_IS_DESIGN = 'LOWER(c.type) = "architecture"';
 
-export const PUBLISHED_QUERY = `SELECT ${ARTICLE_PROJECTION} FROM c WHERE ${PUBLISHED_PREDICATE} AND ${SQL_NOT_INTERVIEW}`;
+export const PUBLISHED_QUERY = `SELECT ${ARTICLE_PROJECTION} FROM c WHERE ${PUBLISHED_PREDICATE} AND ${SQL_NOT_OWN_PAGE}`;
 
 /**
  * The fields the manifest keeps per interview: exactly the public detail
@@ -262,6 +280,40 @@ export function projectInterview(item) {
   return projectPublicInterview(item, INTERVIEW_FIELDS);
 }
 
+/**
+ * The fields the manifest keeps per design: exactly what `public/content`
+ * answers for one item (PUBLIC_CONTENT_DETAIL_FIELDS), so the pre-built
+ * design page holds what the design page fetches in the browser (#1628).
+ *
+ * The SAME LIST, not a narrower one, and that is the point. A page built
+ * from a seed does not fetch again in the browser (usePublicData), so a seed
+ * that kept fewer fields would show readers less than they see today: no
+ * diagram, no Well-Architected review, no costs. And it exposes nothing new:
+ * every field here is already served anonymously by `public/content`.
+ *
+ * Not duplicated in `scripts/build-content-manifest.mjs`, unlike the article
+ * and interview lists: the builder keeps a design as this route sends it,
+ * because a second copy of the list would be one more place for the seed to
+ * differ from the API's answer.
+ */
+export const DESIGN_FIELDS = PUBLIC_CONTENT_DETAIL_FIELDS;
+
+/**
+ * Projected with the visibility fields as well, so `isPublicDocument` can
+ * re-check every row in code the way the public route does; the visibility
+ * fields that are not on the detail list are dropped again by `projectDesign`.
+ */
+const DESIGN_PROJECTION = [...new Set([...DESIGN_FIELDS, ...CONTENT_VISIBILITY_FIELDS])]
+  .map((field) => `c["${field}"]`)
+  .join(', ');
+
+export const PUBLISHED_DESIGN_QUERY = `SELECT ${DESIGN_PROJECTION} FROM c WHERE ${PUBLISHED_PREDICATE} AND ${SQL_IS_DESIGN}`;
+
+/** Keep only the design allowlist: the projection `public/content` answers with. */
+export function projectDesign(item) {
+  return projectFields(item, DESIGN_FIELDS);
+}
+
 export function createPublicContentManifestHandlers({ store }) {
   return {
     /** GET /api/public/content-manifest */
@@ -277,15 +329,19 @@ export function createPublicContentManifestHandlers({ store }) {
         // next frontend deploy. A 500 fails `publish-content-manifest.yml`
         // loudly, leaves the committed manifest and its counts in place, and
         // is fixed by re-running.
-        const [rows, interviewRows, sections] = await Promise.all([
+        const [rows, interviewRows, designRows, sections] = await Promise.all([
           store.queryDocs('content', PUBLISHED_QUERY, []),
           store.queryDocs('content', PUBLISHED_INTERVIEW_QUERY, []),
+          store.queryDocs('content', PUBLISHED_DESIGN_QUERY, []),
           countSections({ store }),
         ]);
         const items = (Array.isArray(rows) ? rows : []).map(projectArticle);
         const interviews = (Array.isArray(interviewRows) ? interviewRows : [])
           .filter(isPublicDocument)
           .map(projectInterview);
+        const designs = (Array.isArray(designRows) ? designRows : [])
+          .filter(isPublicDocument)
+          .map(projectDesign);
         return {
           status: 200,
           // `sections` is null when a counting read filled its window; the
@@ -293,7 +349,9 @@ export function createPublicContentManifestHandlers({ store }) {
           // route" and falls back, which drops no route it would not have
           // dropped before. `interviews` are the published interviews
           // (ADR 0040, D6), for the /azure/interviews routes and seeds.
-          jsonBody: { success: true, items, count: items.length, interviews, sections },
+          // `designs` are the published architecture designs (#1628), for
+          // the /<provider>/architecture-designs routes and seeds.
+          jsonBody: { success: true, items, count: items.length, interviews, designs, sections },
           // The build reads this once a day and commits the result; a cached
           // copy would silently pre-render yesterday's corpus.
           headers: { 'Cache-Control': 'no-store' },

@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * An unknown address answers 404, and the app's own pages still load (#1613).
  *
@@ -36,10 +37,10 @@
  *   - an article published after the last deploy, until the next content
  *     manifest refresh is merged and the site is deployed again (publishing
  *     does not start a deploy);
- *   - a news, coder-corner, framework, code or architecture item that exists
- *     only in the API, because the manifest lists blog articles and
- *     interviews only. On 2026-11-09 the manifest counted none of those
- *     except one Azure architecture design.
+ *   - a news, coder-corner, framework or code item that exists only in the
+ *     API, because the manifest lists blog articles, interviews and
+ *     architecture designs only (designs since #1628). On 2026-11-09 the
+ *     manifest counted none of those.
  *
  * The rules are matched the way Static Web Apps matches them: in order, first
  * match wins, and a `*` is allowed only at the end ("Routes" and "Wildcard
@@ -49,6 +50,8 @@ import { describe, it, expect } from 'vitest';
 import config from '../../staticwebapp.config.json';
 import manifest from '../../data/content-manifest.json';
 import { routes } from '../../scripts/prerender-entry.jsx';
+import { seedFor, seedKeyFor } from '../../scripts/prerender.mjs';
+import { buildManifest } from '../../../scripts/build-content-manifest.mjs';
 import { certifications as awsCertifications } from '@/data/aws/certifications';
 import { architecturesByProvider } from '@/data/architectures';
 import { labsPath, providersWithLabs } from '@/data/labs/catalogue';
@@ -159,26 +162,45 @@ describe('unknown addresses answer 404 (#1613)', () => {
     expect([...designLinks].filter((link) => !prerendered.has(link))).toEqual([]);
   });
 
-  it('does not yet pre-render a design that exists only in the API (the known gap above)', () => {
+  it('pre-renders every design the manifest carries at its architecture address, seeded (#1628)', () => {
     // A design published through the admin screens but not written into
-    // `data/architectures.js` gets no page under /<provider>/architecture-designs/,
-    // so that address answers 404 to a crawler while the app still shows it to
-    // a reader. The content manifest carries such a design today, but only
-    // with the fields an article page reads (no diagram, Well-Architected or
-    // cost fields), and a page built from a seed does not fetch again in the
-    // browser, so building the page from it would show readers less than they
-    // see now. Closing the gap needs the API's manifest route to send those
-    // fields first. When it does, this test is the one to turn around.
-    const prerendered = new Set(routes(manifest));
-    const apiOnly = Object.values(manifest.data)
-      .filter((item) => String(item?.type || '').toLowerCase() === 'architecture')
-      .map((item) => ({
-        provider: String(item.cloudProvider || item['Cloud Provider'] || '').toLowerCase(),
-        slug: String(item.slug || item.Slug || ''),
-      }))
-      .filter(({ provider, slug }) => slug && !architecturesByProvider[provider]?.[slug])
-      .map(({ provider, slug }) => `/${provider}/architecture-designs/${slug}`);
-    expect(apiOnly.filter((page) => prerendered.has(page))).toEqual([]);
+    // `data/architectures.js` used to get no page under
+    // /<provider>/architecture-designs/, so that address answered 404 to a
+    // crawler. The manifest route now sends designs with every field the
+    // design page reads, and the builder lists each at that address with its
+    // seed. Checked twice: on the committed manifest, and on one the real
+    // builder makes from a sample design, so the check has something to hold
+    // even before the next manifest refresh brings the first design in.
+    const sample = buildManifest(
+      [{ id: 'a1', slug: 'a-post', cloudProvider: 'azure', type: 'blog' }],
+      null,
+      [],
+      [
+        {
+          id: 'd1',
+          slug: 'sample-design',
+          cloudProvider: 'Azure',
+          type: 'architecture',
+          diagramXml: '<mxfile/>',
+        },
+      ]
+    );
+    for (const built of [manifest, sample]) {
+      const pages = new Set(routes(built));
+      const designs = Object.entries(built.data).filter(([key]) => key.startsWith('architecture:'));
+      for (const [key, design] of designs) {
+        const provider = String(
+          design.cloudProvider || design['Cloud Provider'] || ''
+        ).toLowerCase();
+        const page = `/${provider}/architecture-designs/${key.slice('architecture:'.length)}`;
+        expect(pages.has(page), page).toBe(true);
+        expect(seedKeyFor(page), page).toBe(key);
+      }
+    }
+    expect(routes(sample)).toContain('/azure/architecture-designs/sample-design');
+    expect(seedFor(sample, '/azure/architecture-designs/sample-design')).toEqual({
+      'architecture:sample-design': sample.data['architecture:sample-design'],
+    });
   });
 
   /** The 301s for each AWS certification's old slug, in catalogue order. */

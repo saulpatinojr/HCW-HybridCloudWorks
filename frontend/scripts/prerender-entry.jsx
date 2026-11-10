@@ -149,11 +149,12 @@ const AWS_CERT_ROUTES = [
  * the design; that request starts in the browser, as on the Azure
  * certification pages, so the built page is the catalogue entry.
  *
- * Designs that exist only in the API have no catalogue entry and so no page
- * here: their address answers 404 to a crawler, and the app still shows the
- * design to a reader. The content manifest does carry such a design, but as an
- * article (at `/<provider>/blog/<slug>`, with the article fields only), so it
- * cannot build this page yet. not-found-routing.test.js pins this.
+ * Designs that exist only in the API come from the content manifest instead
+ * (#1628): scripts/build-content-manifest.mjs lists each published design at
+ * this same address, with its seed under `architecture:<slug>` holding what
+ * the API answers for it, so the built page is the whole design. A design in
+ * both places is listed twice and built once (`dedupeRoutes` in prerender.mjs).
+ * not-found-routing.test.js holds every design the manifest carries to a page.
  */
 const ARCHITECTURE_ROUTES = Object.entries(architecturesByProvider).flatMap(
   ([provider, catalogue]) =>

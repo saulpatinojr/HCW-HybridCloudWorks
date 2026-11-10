@@ -26,6 +26,7 @@ import {
   INTERVIEW_FIELDS,
   INTERVIEW_LIST_FIELDS,
   INTERVIEWS_ROUTE,
+  DESIGN_PROVIDERS,
 } from './build-content-manifest.mjs';
 
 // `dirname(fileURLToPath(...))` rather than `new URL('..', import.meta.url)`:
@@ -418,5 +419,90 @@ describe('interviews on the manifest (ADR 0040, D6)', () => {
     expect([...INTERVIEW_FIELDS].slice(0, INTERVIEW_LIST_FIELDS.length)).toEqual([...INTERVIEW_LIST_FIELDS]);
     expect(INTERVIEW_FIELDS).toContain('qa');
     expect(INTERVIEW_FIELDS).not.toContain('consent');
+  });
+});
+
+describe('designs on the manifest (#1628)', () => {
+  const design = (slug, over = {}) => ({
+    id: `d-${slug}`,
+    slug,
+    type: 'architecture',
+    cloudProvider: 'Azure',
+    title: `Design ${slug}`,
+    diagramXml: '<mxfile/>',
+    waf: { security: 4 },
+    ...over,
+  });
+
+  it('builds each design at its architecture address, seeded as the design page reads it', () => {
+    const manifest = buildManifest([], null, [], [design('hub-and-spoke'), design('serverless', { cloudProvider: 'aws' })]);
+    expect(manifest.routes).toEqual([
+      '/azure/architecture-designs/hub-and-spoke',
+      '/aws/architecture-designs/serverless',
+    ]);
+    // Kept whole, as the route sent it: the route already projected it to
+    // what public/content answers, and the page will not fetch it again.
+    expect(manifest.data['architecture:hub-and-spoke']).toEqual(design('hub-and-spoke'));
+    expect(manifest.data).not.toHaveProperty('article:hub-and-spoke');
+  });
+
+  it('never also builds a design as an article once the route sends designs', () => {
+    const manifest = buildManifest(
+      [
+        { id: 'd1', slug: 'hub-and-spoke', cloudProvider: 'azure', type: 'architecture' },
+        { id: 'a1', slug: 'a-post', cloudProvider: 'azure', type: 'blog' },
+      ],
+      null,
+      [],
+      [design('hub-and-spoke')]
+    );
+    expect(manifest.routes).toEqual(['/azure/blog/a-post', '/azure/architecture-designs/hub-and-spoke']);
+    expect(manifest.skipped).toEqual(['hub-and-spoke: a design, sent with the designs']);
+  });
+
+  it('keeps a design among the articles while the deployed route predates designs', () => {
+    // Merging this and deploying the Function App can happen in either order:
+    // an older route sends no `designs`, and the build stays as it was.
+    const manifest = buildManifest([
+      { id: 'd1', slug: 'hub-and-spoke', cloudProvider: 'azure', type: 'architecture' },
+    ]);
+    expect(manifest.routes).toEqual(['/azure/blog/hub-and-spoke']);
+    expect(manifest.data).toHaveProperty('article:hub-and-spoke');
+  });
+
+  it('skips a bad slug, a provider with no design page and a repeated slug, and says so', () => {
+    const manifest = buildManifest(
+      [],
+      null,
+      [],
+      [
+        design('first-one'),
+        design('first-one', { id: 'd-again', cloudProvider: 'aws' }),
+        design('../escape'),
+        design('Not A Slug'),
+        design('on-github', { cloudProvider: 'github' }),
+        design('nowhere', { cloudProvider: '' }),
+        { id: 'no-slug', type: 'architecture' },
+      ]
+    );
+    expect(manifest.routes).toEqual(['/azure/architecture-designs/first-one']);
+    expect(manifest.skipped).toEqual([
+      'design first-one: duplicate slug (item d-again); first occurrence kept',
+      'design d-../escape: no usable slug',
+      'design d-Not A Slug: no usable slug',
+      'design on-github: no design page for provider (github)',
+      'design nowhere: no design page for provider (unset)',
+      'design no-slug: no usable slug',
+    ]);
+  });
+
+  it('DESIGN_PROVIDERS is exactly the providers ProviderArchitectureDispatcher serves', () => {
+    // Read as text, as PROVIDERS is: App.jsx is JSX and imports React.
+    const source = readFileSync(join(REPO, 'frontend', 'src', 'App.jsx'), 'utf8');
+    const body = /function ProviderArchitectureDispatcher\(\) \{([\s\S]*?)\n\}/.exec(source);
+    expect(body, 'ProviderArchitectureDispatcher not found in App.jsx').not.toBeNull();
+    const served = [...body[1].matchAll(/provider === '([a-z]+)'/g)].map((match) => match[1]);
+    expect(served.length).toBeGreaterThan(3);
+    expect([...DESIGN_PROVIDERS].sort()).toEqual([...served].sort());
   });
 });
