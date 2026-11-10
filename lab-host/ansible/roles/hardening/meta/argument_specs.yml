@@ -323,12 +323,12 @@ argument_specs:
       hardening_drift_vault_file:
         type: str
         required: false
-        default: /etc/hcw/vault.yml
+        default: /etc/hcw/ansible/vault.yml
         description:
           - Path to Ansible vault file passed to check run when present.
       hardening_drift_vault_password_file:
         type: str
         required: false
-        default: /etc/hcw/vault.pass
+        default: /etc/hcw/ansible/vault-password
         description:
           - Path to Ansible vault password file passed to check run when present.

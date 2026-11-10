@@ -157,8 +157,8 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | `hardening_drift_src_dir` | `/opt/hcw-src` | Where the HCW source checkout lives |
 | `hardening_drift_on_calendar` | `*-*-* 03:00:00` | When drift detection runs (systemd `OnCalendar`) |
 | `hardening_drift_ansible_playbook` | `/usr/local/bin/ansible-playbook` | The ansible-playbook executable to run |
-| `hardening_drift_vault_file` | `/etc/hcw/vault.yml` | Vault file to include if present |
-| `hardening_drift_vault_password_file` | `/etc/hcw/vault.pass` | Vault password file if present |
+| `hardening_drift_vault_file` | `/etc/hcw/ansible/vault.yml` | Vault file to include, the one `bootstrap.sh` uses |
+| `hardening_drift_vault_password_file` | `/etc/hcw/ansible/vault-password` | Vault password file, the one `bootstrap.sh` uses |
 
 `meta/argument_specs.yml` is the contract; the table is a summary of it.
 

@@ -166,11 +166,17 @@ fatal: [localhost]: FAILED! => {"changed": false, "msg": "Docker daemon failed"}
 PLAY RECAP *********************************************************************
 localhost                  : ok=10   changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0
 EOF
+# A real run ends with the timing recap, longer than the 25 lines the script
+# tails: the failed task must still reach stderr (#1631).
+for i in $(seq 1 30); do echo "role : A task that took a while ---- 0.${i}s"; done >> "${work}/ansible-output"
 echo 2 > "${work}/ansible-rc"
 
 fail_status=0
-run >/dev/null 2>&1 || fail_status=$?
+run >/dev/null 2>"${work}/stderr" || fail_status=$?
 check "playbook execution failure exits non-zero (rc=1)" "[ '${fail_status}' -eq 1 ]"
+check "playbook execution failure names the failed task and its message on stderr (#1631)" \
+  "grep -qF 'TASK [docker : Check service]' '${work}/stderr' && grep -qF 'fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Docker daemon failed\"}' '${work}/stderr'" \
+  "$(cat "${work}/stderr" 2>/dev/null || true)"
 check "playbook execution failure logs warning to syslog with rc and failed count" \
   "grep -qxF '${tag}|daemon.warning|playbook check failed (rc=2, failed=1, unreachable=0) on commit feedbeef1234567890abcdef1234567890abcdef' '${work}/log'" \
   "$(cat "${work}/log" 2>/dev/null || true)"
@@ -189,6 +195,15 @@ echo 0 > "${work}/ansible-rc"
 run >/dev/null 2>&1
 check "vault arguments are passed to ansible-playbook when vault files exist" \
   "grep -qxF -- '--vault-password-file' '${work}/ansible-args' && grep -qxF -- '${fake_pass}' '${work}/ansible-args' && grep -qxF -- '-e' '${work}/ansible-args' && grep -qxF -- \"@${fake_vault}\" '${work}/ansible-args'"
+
+# --- Case 4b: Half a vault is refused, as bootstrap.sh refuses it (#1631).
+rm -f "${fake_pass}"
+half_status=0
+run >/dev/null 2>&1 || half_status=$?
+check "a vault file without its password file exits 1 and logs warning" \
+  "[ '${half_status}' -eq 1 ] && grep -qF 'daemon.warning|playbook drift check failed: one of ${fake_vault} and ${fake_pass} exists and the other does not' '${work}/log'" \
+  "$(cat "${work}/log" 2>/dev/null || true)"
+touch "${fake_pass}"
 
 # --- Case 5: Missing or unparseable recap line exits 1 with warning.
 cat > "${work}/ansible-output" <<EOF
