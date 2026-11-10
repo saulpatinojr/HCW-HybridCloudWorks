@@ -3,7 +3,11 @@ import { useParams, Link } from 'react-router';
 import { Helmet } from 'react-helmet-async';
 import { getProviderPath, routes } from '@/lib/routeFactory';
 
-const ALL_MICROCREDENTIALS = [
+// Exported so the pre-render step can write one page per microcredential
+// (scripts/prerender-entry.jsx). Without a page on disk the URL would answer
+// "not found" to a search engine, because the server no longer sends the app
+// to every unknown path (#1613).
+export const ALL_MICROCREDENTIALS = [
   {
     slug: 'aws-serverless-demonstrated',
     code: 'Serverless',

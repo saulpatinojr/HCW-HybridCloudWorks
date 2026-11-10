@@ -617,6 +617,40 @@ export const DECLARED = [
       "#1590: HCW Arc Run Command Operator on rg-lab-hybrid-prod-cus for lab-host-arc-run.yml; planned only once the owner has created the role and set lab_arc_run_command_enabled = true (Required-Inputs §4.6b)",
   },
 
+  // #1617, PR 1's six creates (github_frontend_deploy, its two `production`
+  // environment credentials and HCW Static Web App Deployer on the one site,
+  // and the deploy identity's two `production-backend` credentials) applied
+  // on 2026-11-09 from the merge of #1633 (HCP Terraform commit status
+  // Success on 3ba8f791 at 23:39Z) and were deleted here, as the header asks.
+  // The owner then set FRONTEND_DEPLOY_CLIENT_ID from the new identity.
+  //
+  // #1617, PR 2: the three deletes that finish it. This pull request moves
+  // deploy-azure-frontend.yml onto github_frontend_deploy and
+  // deploy-functions.yml onto the reviewed `production-backend`
+  // environment, so nothing signs in through these three any more: the
+  // deploy identity's two `production` credentials, and its HCW Static Web
+  // App Deployer grant on the site, which the frontend identity holds
+  // instead. Delete these three once they have applied, and with them the
+  // test in assert-expected-plan.test.mjs that asserts they are declared
+  // ("declares #1617's three deletes ..."), or it fails.
+  {
+    address: "azurerm_federated_identity_credential.github_production",
+    action: "delete",
+    reason:
+      "#1617: the deploy identity stops trusting the production environment; deploy-functions.yml names production-backend and the frontend signs in as github_frontend_deploy",
+  },
+  {
+    address: "azurerm_federated_identity_credential.github_production_immutable",
+    action: "delete",
+    reason: "#1617: the immutable-ID form of the same production subject, on the deploy identity",
+  },
+  {
+    address: "azurerm_role_assignment.github_deploy_swa_token",
+    action: "delete",
+    reason:
+      "#1617: HCW Static Web App Deployer on the site for the deploy identity; github_frontend_deploy holds it for the frontend deploy",
+  },
+
   // #1565 (ADR 0040 D10): the interviews-audio container and its retention
   // rule, slice A of the interviews feature. The rule is the policy's fifth
   // (index 4, after expire-recording-uploads); the -1 values are what the

@@ -89,7 +89,7 @@ Confusing these is the most common way to get stuck, because both are called
 | Identity | `id-plat-terraform-prod-cus-01` in `rg-mgmt-boot-prod-cus` | `id-site-github-deploy-prod-cus-01` in `rg-web-site-prod-cus` |
 | Issuer | `https://app.terraform.io` | `https://token.actions.githubusercontent.com` |
 | Exists when | After you run the script | After the first successful apply |
-| Consumed as | `TFC_AZURE_RUN_CLIENT_ID` in the workspace | `CLIENT_ID` repository variable |
+| Consumed as | `TFC_AZURE_RUN_CLIENT_ID` in the workspace | `CLIENT_ID` repository secret (a secret since [#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618), so the public logs show `***`) |
 
 If you are hunting for `CLIENT_ID` to give `azure/login`, it comes from the
 Terraform outputs **after** the left-hand column works. It does not exist
@@ -315,10 +315,10 @@ both take no arguments for the reasons given in section 0:
   are typed, and only when they cannot be discovered.
 - `scripts/set-github-variables.ps1` seeds the GitHub repository variables
   and secrets. Run it once **before** the first apply — that seeds only
-  `TENANT_ID` and `SUBSCRIPTION_ID` (a secret since 2026-11-09, #1610, so the
-  public logs mask it), the two values that are inputs *to*
+  `TENANT_ID` and `SUBSCRIPTION_ID`, the two values that are inputs *to*
   Terraform rather than products of it — and once **after**, when it reads
-  `CLIENT_ID`, `APP_HOSTNAME`, `FUNCTIONS_URL`, `RESOURCE_GROUP`,
+  the seven client ids (`CLIENT_ID`, `FRONTEND_DEPLOY_CLIENT_ID` and the
+  five below), `APP_HOSTNAME`, `FUNCTIONS_URL`, `RESOURCE_GROUP`,
   `FUNCTIONS_STORAGE_ACCOUNT` and the `COSMOS_ENDPOINT` secret straight from
   the workspace's state outputs over the HCP Terraform API. Outputs rather
   than hardcoded copies on purpose: a copy drifts silently when the code
@@ -327,7 +327,14 @@ both take no arguments for the reasons given in section 0:
   new hostname), or the GitHub-side copies go stale. The first post-apply
   run is also what arms the self-skipping workflows that sign in with
   `CLIENT_ID`, `READER_CLIENT_ID`, `ALERT_READER_CLIENT_ID` and
-  `MANIFEST_WINDOW_CLIENT_ID`.
+  `MANIFEST_WINDOW_CLIENT_ID`, and the two that sign in with
+  `COPILOT_REVIEW_CLIENT_ID` and `ARC_RUN_CLIENT_ID`. The tenant id, the
+  subscription id and the seven client ids are written as repository
+  **secrets** (#1610,
+  [#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)):
+  they grant nothing on their own, but GitHub masks a value as `***` in this
+  public repository's logs only when it came from a secret, and the script
+  never prints them.
 
 ### Verify
 
@@ -810,6 +817,346 @@ permanent diff plus exactly one create, `func_cosmos`. Access returns when
 the apply completes, a few minutes after the merge. Nothing in Step 1 needs
 a rollback: an extra grant on the same identity cannot take access away.
 
+### Give the frontend deploy its own identity and the backend deploy a reviewed environment (#1617)
+
+**Why.** On 2026-11-09 the owner removed the required reviewers from the
+GitHub `production` environment, so a frontend change merged to `main`
+deploys by itself ([#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)).
+Two things came with that, and
+[#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617)
+fixes both:
+
+- The backend deploy (`deploy-functions.yml`) named the same environment, so
+  it lost its approval step too. It moves to a new environment,
+  `production-backend`, which keeps required reviewers.
+- Both deploys signed in to Azure as the same identity, `github_deploy` (a
+  managed identity: an Azure account for a program, with no password, that
+  GitHub signs in as through OIDC, a trust between GitHub and Azure). That
+  identity can publish code into the Function App and read its storage
+  account's keys. The frontend only needs to read the Static Web App's
+  deployment token. So the frontend gets an identity of its own,
+  `github_frontend_deploy` (`id-site-github-frontend-prod-cus-01`), which
+  holds one role, *HCW Static Web App Deployer*, on the one site.
+
+**Two pull requests, because HCP Terraform applies only from `main`.** The
+first (Terraform, tests and these steps) adds the new identity and teaches
+`github_deploy` to trust `production-backend` as well as `production`. It
+changes nothing for any workflow that runs. The second moves the two
+workflows onto the new names and then removes `github_deploy`'s trust in
+`production` and its role on the site. Part 1's steps start before the
+first pull request's apply is confirmed (the new environment has to be
+protected before anything in Azure trusts its name), and the second pull
+request is opened only once they are all done, because a
+workflow that signs in with an identity Azure does not have yet, or names an
+environment GitHub does not have yet, fails or runs unprotected.
+
+**Where this stands.** Part 1 is done: the first pull request,
+[#1633](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1633),
+merged on 2026-11-09 and its apply finished that day (the HCP Terraform
+commit status on `3ba8f791` read Success at 23:39 UTC); the owner created
+`production-backend` and set `FRONTEND_DEPLOY_CLIENT_ID` the same day. A
+session cannot read either back (its API access to environments and to the
+secrets list is refused), so they are recorded as the owner reported them.
+Part 2 is the second pull request and the apply it queues; the owner's part is steps 5 to 9.
+
+The resources are in
+[`infra/oidc.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/oidc.tf).
+
+#### Part 1: the new identity and the new environment (done 2026-11-09)
+
+Kept as written, for a rebuild of the estate, which repeats them.
+
+1. **Create the `production-backend` environment first, before the apply.**
+   Once the apply in step 2 runs, the deploy identity trusts any job that
+   names `production-backend`, and if that environment does not exist yet,
+   GitHub creates it with no reviewers and no branch rule the first time a
+   job on any branch names it, so it must already be protected. This step
+   can be done now, even before the first pull request merges. Open
+   [New environment](https://github.com/saulpatinojr/HCW-HybridCloudWorks/settings/environments/new)
+   ([GitHub's page on environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)),
+   name it `production-backend`, and click **Configure environment**. Then:
+   - **Required reviewers**: ticked, and add `saulpatinojr` and
+     `hcw-architect` (either one approves).
+   - **Prevent self-review**: not ticked.
+   - **Allow administrators to bypass configured protection rules**: not
+     ticked.
+   - **Wait timer**: not ticked.
+   - **Deployment branches and tags**: choose **Selected branches and
+     tags**, **Add deployment branch or tag rule**, type **Branch**, name
+     pattern `main`, **Add rule**.
+   - **Environment secrets** and **Environment variables**: add none. The
+     backend deploy reads repository secrets and variables, which every
+     environment sees.
+
+   Click **Save protection rules**. Then read it back, PowerShell, two lines
+   run one after the other. The first lists the kinds of rule saved:
+
+   ```powershell
+   gh api repos/saulpatinojr/HCW-HybridCloudWorks/environments/production-backend --jq '.protection_rules[].type'
+   ```
+
+   Success is two lines, `required_reviewers` and `branch_policy` (in
+   either order). `HTTP 404` means the environment does not exist yet; one
+   line or none means a rule was not saved, so open the environment again
+   from [the environments list](https://github.com/saulpatinojr/HCW-HybridCloudWorks/settings/environments)
+   and save it. The second shows who the reviewers are and whether
+   administrators can skip them:
+
+   ```powershell
+   gh api repos/saulpatinojr/HCW-HybridCloudWorks/environments/production-backend --jq '{bypass: .can_admins_bypass, reviewers: [.protection_rules[] | select(.type=="required_reviewers") | .reviewers[].reviewer.login]}'
+   ```
+
+   Success is `"bypass":false` and both `saulpatinojr` and `hcw-architect`
+   in the reviewers list. `"bypass":true` means the administrator box is
+   still ticked; a missing login means that reviewer was not added. Open the
+   environment again and fix it. This line has not been run from a session,
+   because a session cannot read environments. The reviewer fields are as
+   GitHub's
+   [environments REST page](https://docs.github.com/en/rest/deployments/environments)
+   shows them in its example; `can_admins_bypass` is not in that page's
+   example, and was confirmed only from
+   [a go-github issue](https://github.com/google/go-github/issues/2722) that
+   reports the endpoint returning it. If it prints `"bypass":null`, check
+   the box on the environment page by eye instead.
+
+   Do not go on to step 2 until both lines show success.
+2. **Confirm the HCP Terraform run that the merge of the first pull request
+   queues.** *This is an apply: confirming it changes Azure.* It only adds
+   things, and it deletes nothing. Open
+   [the hcw-azure runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs)
+   and open the newest run. Success is a plan that shows the permanent
+   differences plus exactly these six creates, each declared in
+   [`scripts/assert-expected-plan.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/assert-expected-plan.mjs),
+   and a green
+   [plan check](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml)
+   for it (the plan check runs only when started by hand; the session
+   starts it from `main` with the inputs blank and posts the run's link on
+   [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617), so the owner does not need to):
+   - `azurerm_user_assigned_identity.github_frontend_deploy`
+   - `azurerm_federated_identity_credential.github_frontend_deploy_env_production`
+   - `azurerm_federated_identity_credential.github_frontend_deploy_env_production_immutable`
+   - `azurerm_role_assignment.github_frontend_deploy_swa_token`
+   - `azurerm_federated_identity_credential.github_production_backend`
+   - `azurerm_federated_identity_credential.github_production_backend_immutable`
+
+   Then click **Confirm & Apply**. Success is the run ending **Applied**. If
+   the plan shows a destroy, or anything the plan check marks UNEXPECTED,
+   do not confirm it: discard the run and put its link on #1617. If the
+   apply fails with `409 Conflict` on a federated credential, Azure refused
+   two writes on one identity at the same moment (Microsoft's
+   [considerations for federated identity credentials](https://learn.microsoft.com/entra/workload-id/workload-identity-federation-considerations),
+   section "Concurrent updates aren't supported"; the azurerm provider
+   normally writes them one at a time, so this is unlikely);
+   start a new run from the workspace (**New run**) and confirm it, and the
+   rest are created.
+3. **Copy the new identity's client id into the repository secret
+   `FRONTEND_DEPLOY_CLIENT_ID`.** A client id names the identity; it is not a
+   password, and it lets no one sign in by itself. It is kept as a secret
+   only so that GitHub shows `***` instead of it in this public repository's
+   logs. PowerShell, signed in with `az login`, two lines run one after the
+   other. The first reads the client id from Azure and shows it, so you can
+   see it is there:
+
+   ```powershell
+   az identity show --resource-group rg-web-site-prod-cus --name id-site-github-frontend-prod-cus-01 --query clientId -o tsv
+   ```
+
+   Success is one line shaped like `00000000-0000-0000-0000-000000000000`
+   (with real digits). An error such as `ResourceNotFound` means the apply in
+   step 2 has not finished, or `az` is signed in to another subscription:
+   run `az login`, then
+   `az account set --subscription sub-app-site-prod-cus`, and run the line
+   again. The second line reads the same id and hands it straight to `gh`,
+   which stores it as the secret without showing it:
+
+   ```powershell
+   az identity show --resource-group rg-web-site-prod-cus --name id-site-github-frontend-prod-cus-01 --query clientId -o tsv | gh secret set FRONTEND_DEPLOY_CLIENT_ID -R saulpatinojr/HCW-HybridCloudWorks
+   ```
+
+   Success is `✓ Set Actions secret FRONTEND_DEPLOY_CLIENT_ID for saulpatinojr/HCW-HybridCloudWorks`.
+   Then check it is listed (the list shows names and dates, never values):
+
+   ```powershell
+   gh secret list -R saulpatinojr/HCW-HybridCloudWorks
+   ```
+
+   Success is a `FRONTEND_DEPLOY_CLIENT_ID` row dated today.
+
+   The alternative is the seeding script,
+   [`scripts/set-github-variables.ps1`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/set-github-variables.ps1),
+   which reads the `frontend_deploy_client_id` output from HCP Terraform.
+   It does much more than this one secret, so use it only when you mean to
+   reseed everything: it needs PowerShell 7 (run it in `pwsh`); it needs
+   `az login` to the HCW tenant, because it writes `TENANT_ID` from the
+   current sign-in and picks the `sub-app-*` subscription for
+   `SUBSCRIPTION_ID` (if it shows a numbered list, choose
+   `sub-app-site-prod-cus`); it rewrites all seven client-id secrets and the
+   variables `APP_HOSTNAME`, `FUNCTIONS_URL`, `FUNCTION_APP_NAME`,
+   `RESOURCE_GROUP`, `FUNCTIONS_STORAGE_ACCOUNT`, `COSMOS_ENDPOINT`,
+   `COSMOS_RESOURCE_GROUP`, `STORAGE_ACCOUNT` and `STORAGE_RESOURCE_GROUP`
+   from the outputs; and it deletes a repository secret named
+   `COSMOS_ENDPOINT` if one is left over.
+4. **Tell the session the three steps are done**, with a comment on
+   [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617). Done on 2026-11-09; the session then opened the second
+   pull request.
+
+#### Part 2: move the workflows, then delete the old trust
+
+The second pull request changes three things at once when it merges, before
+any apply:
+
+- `deploy-azure-frontend.yml` signs in with `FRONTEND_DEPLOY_CLIENT_ID`, so
+  the next frontend deploy signs in as `github_frontend_deploy`, which can
+  read the Static Web App's deployment token and nothing else. The deploy
+  itself looks the same; nobody approves it, as since
+  [#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613).
+- `deploy-functions.yml` names `production-backend`, so the next backend
+  deploy, started by hand as always, stops at **Waiting** until
+  `saulpatinojr` or `hcw-architect` approves it (GitHub's
+  [page on required reviewers](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-required-reviews-in-workflows)
+  shows the **Review deployments** button).
+- `infra/oidc.tf` no longer declares `github_deploy`'s two `production`
+  credentials or its role on the site, so HCP Terraform queues a run that
+  deletes them.
+
+Nothing breaks between the merge and that apply. Each workflow's new sign-in
+was made ready by Part 1: `github_frontend_deploy` trusts `production` and
+holds the site role, and `github_deploy` trusts `production-backend`. The
+three things the apply deletes are the ones no workflow uses after the
+merge. That is also why the apply comes after the merge and not before: run
+first, it would take away the sign-in both deploys still used.
+
+5. **Optional, and harmless: check that the frontend deploy still works
+   after the merge.** The merge changes no file under `frontend/`, so it
+   starts no frontend deploy by itself; the next frontend merge (often the
+   daily content-manifest pull request) does it anyway. To see it sooner,
+   open [Deploy Frontend](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml),
+   click **Run workflow**, leave the branch on `main` and the input blank,
+   and click **Run workflow**. This redeploys the site as it is on `main`.
+   Success is a green run whose **Mint the deployment token** step prints
+   `minted a deployment token for stapp-site-prod-cus-01`.
+
+   What a green run here does and does not prove: it proves the deploy
+   path works, but not yet that it signed in as the new identity. Until the
+   apply in step 6, the old deploy identity still trusts `production` and
+   still holds the site role, so a `FRONTEND_DEPLOY_CLIENT_ID` that wrongly
+   held the old identity's client id would also go green. Step 8 is the
+   real proof. If **Azure login (OIDC)** fails with `AADSTS700213` or
+   `AADSTS700016`, the secret holds no identity that trusts `production`:
+   set it again with step 3 and re-run. If **Mint the deployment token**
+   fails with "Not authorized", the role from Part 1 is missing: put the
+   run's link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617) and do not confirm the apply in step 6
+   yet.
+
+   **Read this before step 6: it is an apply, and it deletes three things in
+   Azure.** Confirming it cannot be undone by a click; putting them back
+   takes a revert pull request and a new apply. What it deletes is unused
+   after the merge, which is the point.
+
+6. **Confirm the HCP Terraform run that the merge of the second pull request
+   queues.** Open
+   [the hcw-azure runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs)
+   and open the newest run. Success is a plan that shows the permanent
+   differences plus exactly these three destroys, and nothing else:
+   - `azurerm_federated_identity_credential.github_production`
+   - `azurerm_federated_identity_credential.github_production_immutable`
+   - `azurerm_role_assignment.github_deploy_swa_token`
+
+   With the permanent differences (the three `azapi` resources it replaces
+   on every run and the one Function App setting it rewrites), the plan line
+   reads `Plan: 3 to add, 1 to change, 6 to destroy`. Each of the three
+   destroys is declared in
+   [`scripts/assert-expected-plan.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/assert-expected-plan.mjs),
+   so the
+   [plan check](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml)
+   for the run should be green. The plan check runs only when started by
+   hand: the session starts it from `main`, with the inputs blank, and
+   posts the run's link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617), so the owner does not need to.
+   If the plan shows any other destroy, any create other than the three
+   `azapi` replacements, or anything the plan check marks UNEXPECTED, do
+   not confirm it:
+   discard the run and put its link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617). Otherwise click
+   **Confirm & Apply**. Success is the run ending **Applied**, with
+   `Apply complete! Resources: 3 added, 1 changed, 6 destroyed`. If the
+   apply fails with `409 Conflict` on a federated credential, Azure refused
+   two changes to one identity at the same moment (the note in step 2);
+   start a new run from the workspace (**New run**) and confirm it, and the
+   rest are deleted.
+
+7. **Read the result back** (PowerShell, signed in with `az login`). The
+   first line lists the deploy identity's federated credentials
+   ([`az identity federated-credential list`](https://learn.microsoft.com/cli/azure/identity/federated-credential?view=azure-cli-latest)):
+
+   ```powershell
+   az identity federated-credential list --identity-name id-site-github-deploy-prod-cus-01 --resource-group rg-web-site-prod-cus --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | Select-Object name, subject
+   ```
+
+   Success is exactly two rows, both ending `:environment:production-backend`
+   (one starting `repo:saulpatinojr/`, one with the numeric ids). A row
+   ending `:environment:production` means the apply did not delete it. The
+   second line lists every role the deploy identity holds in the
+   subscription (`--assignee-object-id` reads it without a Microsoft Graph
+   lookup; [`az role assignment list`](https://learn.microsoft.com/cli/azure/role/assignment?view=azure-cli-latest)):
+
+   ```powershell
+   $p = az identity show --name id-site-github-deploy-prod-cus-01 --resource-group rg-web-site-prod-cus --subscription sub-app-site-prod-cus --query principalId -o tsv; az role assignment list --assignee-object-id $p --all --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | Select-Object roleDefinitionName, scope
+   ```
+
+   Success is the deploy identity's three roles on the Function App and its
+   storage account (`Website Contributor`, `Storage Blob Data Contributor`
+   and `Storage Account Contributor`) and no `HCW Static Web App Deployer`
+   row. Paste both outputs on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617). These two lines have not
+   been run from a session, which has no Azure sign-in; they use only
+   reads.
+
+8. **Prove the frontend deploy signs in as the new identity.** This is the
+   check step 5 could not make. After the apply in step 6 has finished, the
+   next frontend deploy is the proof: it starts by itself on the next merge
+   that changes `frontend/`, or start it now with **Run workflow** on
+   [Deploy Frontend](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml), branch `main`, input blank. Success is a
+   green run whose **Mint the deployment token** step prints
+   `minted a deployment token for stapp-site-prod-cus-01`. Now only the new
+   identity trusts `production` and holds the site role, so green means the
+   secret is right. If **Azure login (OIDC)** fails with `AADSTS700213`,
+   the `FRONTEND_DEPLOY_CLIENT_ID` secret holds the wrong client id (most
+   likely the old deploy identity's, which no longer trusts `production`):
+   set it again with the two-line command in Part 1, step 3, and re-run.
+   Put the green run's link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617).
+
+9. **Prove a backend deploy waits for an approval again.** First read the
+   environment back (PowerShell), the same two lines as Part 1, step 1,
+   and paste both outputs on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617), because a session cannot
+   read environments:
+
+   ```powershell
+   gh api repos/saulpatinojr/HCW-HybridCloudWorks/environments/production-backend --jq '.protection_rules[].type'
+   ```
+
+   ```powershell
+   gh api repos/saulpatinojr/HCW-HybridCloudWorks/environments/production-backend --jq '{bypass: .can_admins_bypass, reviewers: [.protection_rules[] | select(.type=="required_reviewers") | .reviewers[].reviewer.login]}'
+   ```
+
+   Success is the same as in Part 1, step 1: `required_reviewers` and
+   `branch_policy`, then `"bypass":false` with both `saulpatinojr` and
+   `hcw-architect`. Then open
+   [Deploy Functions](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-functions.yml), click **Run workflow**, leave the branch on
+   `main`, and click **Run workflow**. Open the run. Success is the run
+   showing **Waiting**, with a **Review deployments** button that names
+   `production-backend`. That is the acceptance check for #1617. Then
+   choose: **Approve and deploy** deploys the backend from `main` as a
+   normal deploy would (it refuses to start while a Terraform run is going
+   or waiting, so do this after step 6), and **Reject** deploys nothing. If
+   the run goes straight on to its steps without **Waiting**, the
+   environment has lost its reviewers: cancel the run at once (the
+   **Cancel workflow** button), and put its link on [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617). Once
+   steps 8 and 9 are on the ticket, the session closes it.
+
+**If something goes wrong after the apply.** A frontend deploy that fails at
+sign-in is fixed by the secret (step 3), not by giving the old identity its
+trust back. To undo Part 2 entirely, revert the second pull request: its
+merge queues a run that creates the three again, and that run is an apply to
+confirm the same way.
+
 ## 5. Rollback
 
 ### 5.1 Infrastructure (Terraform) rollback
@@ -908,10 +1255,10 @@ The rollback recovery objective is **RTO under 15 minutes** (PLAT-5, #965). Roll
 
 ### 5.4 Azure Static Web Apps (Frontend) rollback & pull-request previews
 
-1. **Forward deploy:** The primary rollback mechanism for the Static Web App is reverting the commit on `main` and re-running `Deploy Frontend` (`deploy-azure-frontend.yml`), which builds and replaces the content root wholesale.
+1. **Forward deploy:** The primary rollback mechanism for the Static Web App is reverting the commit on `main` and re-running `Deploy Frontend` (`deploy-azure-frontend.yml`), which builds and replaces the content root wholesale. Since 2026-11-09 ([#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)) the workflow also starts by itself when a change under `frontend/` reaches `main`, so merging a revert of a frontend change starts the deploy, and it finishes by itself with nobody approving it (the owner removed the `production` environment's required reviewers the same day). A revert that touches nothing under `frontend/` starts no run, so dispatch it from `main`.
 2. **Break-glass DNS / routing:** In an emergency where the frontend is unserviceable, the Azure Portal or Cloudflare DNS can temporarily re-point or disable the custom domain to protect users while the forward deploy executes.
 3. **Pull-request preview environments:** To prevent defects reaching production in the first place, Azure Static Web Apps supports non-persistent pull-request preview environments (via `Azure/static-web-apps-deploy`). Each PR builds and stages to an ephemeral URL, providing preview isolation without violating the single persistent production workload state (ADR 0009).
-4. **Post-deploy probe:** Every frontend deploy automatically probes the default hostname (`https://<app>.azurestaticapps.net`) for root (`/`) and prerendered (`/news`) endpoints, failing the release if valid HTML is not served.
+4. **Post-deploy probe:** Every frontend deploy asks the site's default address (`https://<app>.azurestaticapps.net`, which skips Cloudflare) for three pages and fails the run if any answer is wrong: the home page (`/`) must answer 200; `/about` must answer 200 and be the pre-built page (its HTML carries `data-prerendered-route="/about"`, the mark the build's pre-render step puts on every page it writes); and a made-up address (`/__deploy-probe-<run id>`, using the run id GitHub gives each workflow run) must answer 404, which proves that an unknown address is a real "not found" and not an error page sent with 200 (a "Soft 404", fixed in [#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)). Until #1613 the probe asked for `/news`, which is not a page the site builds.
 
 ## 6. Day-2 operations
 

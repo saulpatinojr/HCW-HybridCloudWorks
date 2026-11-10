@@ -92,13 +92,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The self-arming test, as a job of its own (#1618). The client id is a
+  # repository SECRET, so the public log prints it as ***, and GitHub does not
+  # let a job's `if:` read `secrets` (GitHub Docs, workflow syntax, "Example:
+  # Using secrets"). This job reads it into `env`, answers only true or false,
+  # and the job below runs when the answer is true. It holds no token and
+  # checks nothing out.
+  armed:
+    name: Is ALERT_READER_CLIENT_ID set?
+    runs-on: ubuntu-26.04
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      armed: ${{ steps.armed.outputs.armed }}
+    steps:
+      - name: Is the ALERT_READER_CLIENT_ID secret set?
+        id: armed
+        timeout-minutes: 1
+        env:
+          ALERT_READER_CLIENT_ID: ${{ secrets.ALERT_READER_CLIENT_ID }}
+        run: |
+          if [ -n "${ALERT_READER_CLIENT_ID}" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The repository secret ALERT_READER_CLIENT_ID is not set, so the job that signs in to Azure is skipped (docs/standards/required-inputs.md, section 4.3)."
+          fi
+
   verify:
     name: Verify alert rule state
     # Same self-arming gate as monitor-functions-registered.yml: before the
-    # apply that creates github_alert_reader and the variable set from its
+    # apply that creates github_alert_reader and the secret set from its
     # client id, there is no identity to log in as, and a red run would read
-    # as a permissions bug while actually meaning "not deployed yet".
-    if: ${{ vars.ALERT_READER_CLIENT_ID != '' }}
+    # as a permissions bug while actually meaning "not deployed yet". The
+    # `armed` job above makes the test, since a job's `if:` cannot read a
+    # secret.
+    needs: armed
+    if: needs.armed.outputs.armed == 'true'
     permissions:
       contents: read # the checkout, nothing more
       id-token: write # exchanged by azure/login for an Azure access token
@@ -136,8 +166,8 @@ jobs:
       - name: Azure login (OIDC)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ vars.ALERT_READER_CLIENT_ID }}
-          tenant-id: ${{ vars.TENANT_ID }}
+          client-id: ${{ secrets.ALERT_READER_CLIENT_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
           allow-no-subscriptions: true
 
       # Exit 0: every rule it could read is live, enabled and wired (rules in

@@ -6,7 +6,7 @@
  * neither of which exists here. This renders the same tree with a static router
  * instead, and collects the head tags Helmet produces on the way.
  *
- * Everything else — providers, layout, the 42 pages that set their own title —
+ * Everything else — providers, layout, the pages that set their own title —
  * is imported from the real application, because a second copy of the tree
  * would pre-render a site that is not the site.
  */
@@ -18,6 +18,9 @@ import { App, AppProviders } from '@/App';
 import { VALID_PROVIDERS } from '@/context/ProviderContext';
 import { PrerenderDataContext } from '@/hooks/prerenderData';
 import { certifications as azureCertifications } from '@/data/azure/certifications';
+import { certifications as awsCertifications } from '@/data/aws/certifications';
+import { ALL_MICROCREDENTIALS as awsMicrocredentials } from '@/pages/aws/education/MicrocredentialDetailPage';
+import { architecturesByProvider } from '@/data/architectures';
 import { availableLabs, labPanePath, labsPath, providersWithLabs } from '@/data/labs/catalogue';
 import { addonPanePath, addons } from '@/data/addons/catalogue';
 
@@ -116,6 +119,48 @@ const STANDALONE_ROUTES = [
 const AZURE_CERT_ROUTES = azureCertifications.map((cert) => `/azure/education/${cert.slug}`);
 
 /**
+ * AWS certification and microcredential detail pages
+ * (`/aws/education/:certSlug`, `/aws/education/microcredentials/:mcSlug`),
+ * built the same way as the Azure ones above, from repository files.
+ *
+ * Added for #1613. Until then these pages had no file of their own and were
+ * answered by the server's catch-all (it sent the app to every unknown path),
+ * so they answered 200 and worked. That catch-all is gone, because it also
+ * answered 200 for pages that do not exist, which Google reports as "Soft
+ * 404". A page with no file now answers 404. These pages are linked from the
+ * AWS Learn page, so they need a file.
+ *
+ * Only the current slug of each certification gets a page. An old slug kept
+ * in `previousSlugs` is sent to the current page by a 301 redirect in
+ * staticwebapp.config.json, so the old link keeps working without a second
+ * copy of the page.
+ */
+const AWS_CERT_ROUTES = [
+  ...awsCertifications.map((cert) => `/aws/education/${cert.slug}`),
+  ...awsMicrocredentials.map((mc) => `/aws/education/microcredentials/${mc.slug}`),
+];
+
+/**
+ * The architecture designs the site ships in the repository
+ * (`/:provider/architecture-designs/:slug`, from `src/data/architectures.js`),
+ * one page per catalogue entry. For the same reason as the AWS pages above
+ * (#1613): they are linked from the provider pages and, with no file of their
+ * own, would now answer 404. The page also asks the API for a newer copy of
+ * the design; that request starts in the browser, as on the Azure
+ * certification pages, so the built page is the catalogue entry.
+ *
+ * Designs that exist only in the API have no catalogue entry and so no page
+ * here: their address answers 404 to a crawler, and the app still shows the
+ * design to a reader. The content manifest does carry such a design, but as an
+ * article (at `/<provider>/blog/<slug>`, with the article fields only), so it
+ * cannot build this page yet. not-found-routing.test.js pins this.
+ */
+const ARCHITECTURE_ROUTES = Object.entries(architecturesByProvider).flatMap(
+  ([provider, catalogue]) =>
+    Object.keys(catalogue).map((slug) => `/${provider}/architecture-designs/${slug}`)
+);
+
+/**
  * The labs under each provider's Learn section (ADR 0033 §3): one list per
  * provider that has a lab (`/:provider/education/labs`) and one page per lab
  * under each provider that lists it (`/:provider/education/labs/:labId`),
@@ -168,6 +213,8 @@ export function routes(manifest = null) {
     ]),
     ...STANDALONE_ROUTES,
     ...AZURE_CERT_ROUTES,
+    ...AWS_CERT_ROUTES,
+    ...ARCHITECTURE_ROUTES,
     ...LAB_ROUTES,
     ...ADDON_ROUTES,
     ...(manifest?.routes || []),

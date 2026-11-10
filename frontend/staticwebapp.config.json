@@ -1,15 +1,4 @@
 {
-  "navigationFallback": {
-    "rewrite": "/app-shell.html",
-    "exclude": [
-      "/assets/*.{js,css,map}",
-      "/images/*.{png,jpg,jpeg,gif,svg,webp,ico}",
-      "/data/*.json",
-      "/favicon.ico",
-      "/robots.txt",
-      "/sitemap.xml"
-    ]
-  },
   "globalHeaders": {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -20,19 +9,81 @@
   },
   "routes": [
     {
+      "route": "/aws/education/soa-c02",
+      "redirect": "/aws/education/soa-c03",
+      "statusCode": 301
+    },
+    {
+      "route": "/aws/education/scs-c02",
+      "redirect": "/aws/education/scs-c03",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/labs",
+      "redirect": "/azure/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/aws/labs",
+      "redirect": "/aws/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/gcp/labs",
+      "redirect": "/gcp/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/vmware/labs",
+      "redirect": "/vmware/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/terraform/labs",
+      "redirect": "/terraform/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/ansible/labs",
+      "redirect": "/ansible/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/docker/labs",
+      "redirect": "/docker/education/labs",
+      "statusCode": 301
+    },
+    {
+      "route": "/admin",
+      "rewrite": "/app-shell.html",
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow"
+      }
+    },
+    {
       "route": "/admin/*",
+      "rewrite": "/app-shell.html",
       "headers": {
         "X-Robots-Tag": "noindex, nofollow"
       }
     },
     {
       "route": "/preview/*",
+      "rewrite": "/app-shell.html",
       "headers": {
         "X-Robots-Tag": "noindex, nofollow"
       }
     },
     {
       "route": "/auth/*",
+      "rewrite": "/app-shell.html",
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow"
+      }
+    },
+    {
+      "route": "/newsletter/confirm",
+      "rewrite": "/app-shell.html",
       "headers": {
         "X-Robots-Tag": "noindex, nofollow"
       }

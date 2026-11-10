@@ -126,12 +126,23 @@ Run the Entra ID setup script or manually create the required service principals
   - `Role Based Access Control Administrator` on `sub-app-site-prod-cus` and `sub-plat-mgmt-prod-cus`
 
 ### 2.2 GitHub Actions identities (OIDC)
-Create application registrations and federated credentials matching `infra/oidc.tf`:
-- `id-site-github-deploy-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:production`)
-- `id-site-github-reader-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:production`)
-- `id-site-github-alert-reader-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:production`)
-- `id-site-github-manifest-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:production`)
-- `id-site-github-copilot-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:copilot`)
+The Terraform apply creates these managed identities (Azure identities that
+GitHub jobs sign in as, with no stored password) and their federated
+credentials (the records that say which GitHub job may sign in as each one)
+from `infra/oidc.tf`. Each subject below is trusted in two forms, the name form
+shown and the immutable-ID form with GitHub's numeric owner and repository ids:
+- `id-site-github-deploy-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:production-backend`), the backend deploy
+- `id-site-github-frontend-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:production`), the frontend deploy, which can only read the Static Web App's deployment token ([#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617))
+- `id-site-github-reader-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:ref:refs/heads/main`)
+- `id-site-github-alerts-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:ref:refs/heads/main`)
+- `id-site-github-manifest-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:ref:refs/heads/main`)
+- `id-site-github-copilot-review-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:copilot`)
+- `id-site-github-arcrun-prod-cus-01` (`repo:saulpatinojr/HCW-HybridCloudWorks:environment:lab-host-arc`)
+
+The GitHub environments those subjects name (`production`,
+`production-backend`, `copilot`, `lab-host-arc`) are settings in the repository, not in Terraform;
+Required-Inputs §4.4 lists the rules each needs, and they must exist before
+the first workflow run that names them.
 
 ### 2.3 HCWSite API and Lab Agent registration
 - **App Name**: `HCWSite API` (`api://<HCWSite-Client-ID>`)
@@ -209,8 +220,23 @@ Set the required repository secrets:
 - `MANIFEST_APP_PRIVATE_KEY`: Private PEM key of the repository GitHub App.
 
 Ensure GitHub Environment `production` is configured:
-- Required Reviewers: `saulpatinojr` and `hcw-architect` (either can approve).
+- Required Reviewers: none. The owner removed them on 2026-11-09 so the
+  frontend deploy, which starts by itself on a frontend merge, finishes without
+  an approval ([#1613](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1613)).
+  Only the frontend deploy names it since [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617).
 - Deployment branch policy: **Selected branches &rarr; `main` only**.
+
+Ensure GitHub Environment `production-backend` is configured, before the
+first apply (from that apply the backend deploy identity trusts its name,
+and GitHub creates a missing environment with no protection the first time a
+job names it). The backend deploy, `deploy-functions.yml`, names it
+([#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617)):
+- Required Reviewers: `saulpatinojr` and `hcw-architect`; administrators may
+  not bypass.
+- Deployment branch policy: **Selected branches &rarr; `main` only**.
+- The steps and the read-back are in the
+  [deployment runbook](deployment-runbook.md), the #1617 subsection, step 1;
+  Required-Inputs §4.4 lists the environment.
 
 ---
 
