@@ -67,6 +67,15 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Six links to architecture designs that do not exist now go to real, pre-built design pages (first part of [#1628](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1628)).** The search palette (`frontend/src/data/searchIndex.js`) and one landing-zone preset (`frontend/src/lib/landingZone/presets.js`) linked to six designs that no list in the repository and nothing in the live API holds. Checked on 2026-11-10: each answered 404, to a crawler and to anyone opening the link directly. Now:
+  - `secure-2-tier` → `secure-2-tier-azure`;
+  - `hub-spoke-network` → `enterprise-hub-spoke-landing-zone`;
+  - `multi-region-serverless-api` → `serverless-api`, retitled "AWS Serverless API" because the design is not multi-region;
+  - `global-load-balancing-cdn` → `global-load-balancing`;
+  - the VMware entry → `azure-vmware-estate-migration`, the only VMware design, retitled to match;
+  - the "Regulated Multi-VPC" preset's link → the AWS architecture catalogue, as the governance-only presets already do, since no AWS inspection-VPC design is published.
+
+  A new test in `frontend/src/lib/not-found-routing.test.js` fails when the search index or any landing-zone preset links to a design address without a pre-built page. The second part of #1628 (pre-building designs that exist only in the API) is still open.
 - **Warning and error lines in job code no longer log ids, addresses or raw error text ([#1642](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1642)).** These lines were already reaching Log Analytics; the audit for #1635 found them. Each now logs a code instead:
   - The interview audio and draft jobs' "failure not recorded" lines drop the interview id (`functions/src/lib/interviews/fetch-audio.js`, `draft.js`).
   - The inspector's alt-text lines log the refusal code (`not-an-image`) or the error's code instead of the image's address and the error's message (`functions/src/lib/content/inspect.js`).

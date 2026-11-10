@@ -52,6 +52,8 @@ import { routes } from '../../scripts/prerender-entry.jsx';
 import { certifications as awsCertifications } from '@/data/aws/certifications';
 import { architecturesByProvider } from '@/data/architectures';
 import { labsPath, providersWithLabs } from '@/data/labs/catalogue';
+import { STATIC_SEARCH_ITEMS } from '@/data/searchIndex';
+import * as landingZonePresets from '@/lib/landingZone/presets';
 
 const SHELL = '/app-shell.html';
 
@@ -134,6 +136,27 @@ describe('unknown addresses answer 404 (#1613)', () => {
     expect(
       [...prerendered].filter((page) => page.startsWith('/aws/education/microcredentials/'))
     ).not.toHaveLength(0);
+  });
+
+  it('links only to design addresses that have a pre-built page (#1628)', () => {
+    // The search palette and the landing-zone presets build their links in
+    // JavaScript, so nothing else checks them. On 2026-11-10 six of them
+    // pointed at designs no list or API held, which answer 404 to a crawler.
+    const prerendered = new Set(routes());
+    const designLinks = new Set();
+    const collect = (value) => {
+      if (typeof value === 'string') {
+        if (value.includes('/architecture-designs')) designLinks.add(value.replace(/[?#].*$/, ''));
+      } else if (Array.isArray(value)) {
+        value.forEach(collect);
+      } else if (value && typeof value === 'object') {
+        Object.values(value).forEach(collect);
+      }
+    };
+    collect(STATIC_SEARCH_ITEMS);
+    collect(Object.values(landingZonePresets).filter((v) => v && typeof v === 'object'));
+    expect(designLinks.size).toBeGreaterThan(10);
+    expect([...designLinks].filter((link) => !prerendered.has(link))).toEqual([]);
   });
 
   it('does not yet pre-render a design that exists only in the API (the known gap above)', () => {
