@@ -25,9 +25,17 @@
  *          out; cancelled and skipped runs say nothing) failed, and the owner
  *          has not been told about this red stretch. One message, titled
  *          "DELIVERY MONITOR RED", a title no other message uses, naming the
- *          jobs that failed and linking the run. Still red a day later, the
- *          same message goes again, marked as a reminder, so one missed
- *          notification does not mean silence for good.
+ *          jobs that failed and linking the run. Still red a day after the
+ *          last message about it, the same message goes again, marked as a
+ *          reminder, so one missed notification does not mean silence for good.
+ *   NEW    Still red, and a job is failing that no message in this red
+ *          stretch has named yet (#1666). The stretch might have begun with one
+ *          finding and a second, unrelated one arrives hours later: the owner
+ *          hears of it on the next hourly read, not with the day's reminder.
+ *          The jobs named so far are kept with the alert (`alertedJobs`, the
+ *          union for the whole stretch), so a job that recovers and fails
+ *          again in the same stretch is not news, and a set that shrinks
+ *          says nothing.
  *   GREEN  A run succeeded after the owner was told. One "back to green"
  *          message, then the record is cleared.
  *
@@ -38,8 +46,10 @@
  *
  * A READ, THEN A WRITE DECIDED FROM IT, so the record is ETag-guarded exactly
  * as labs/drift.js guards its own: a 412 or 409 means another instance wrote
- * first and this one leaves it. A second instance cannot double-send either:
- * the notifier's own per-source claim refuses it. A send that did not go is
+ * first and this one leaves it. Two instances reading at the same moment are
+ * unlikely (the timer runs on one instance at a time), and the notifier's own
+ * per-source claim refuses a second send within its cooldown; at worst the
+ * same alert goes once more an hour later. A send that did not go is
  * not recorded, so the next hourly read tries again. A failed GitHub read is
  * recorded and logged at warn with its code only, never thrown.
  */
@@ -51,7 +61,7 @@ import {
   RepoSourceError,
   fetchPinned,
 } from '../cms/repo-draft-source.js';
-import { isAuthoredError, storedFailure } from '../http/error-response.js';
+import { errorCode, isAuthoredError, storedFailure } from '../http/error-response.js';
 
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -82,6 +92,8 @@ export const REMINDER_AFTER_MS = 24 * HOUR_MS;
 export const RUNS_PER_READ = 10;
 const MAX_JOB_NAME_LENGTH = 80;
 const MAX_JOB_NAMES = 5;
+/** Job names kept with one alert. The monitor has a handful of jobs; this only bounds the record. */
+export const MAX_ALERTED_JOBS = 20;
 
 const GITHUB_JSON = 'application/vnd.github+json';
 const FAILED = new Set(['failure', 'timed_out']);
@@ -123,21 +135,38 @@ export function latestVerdictRun(rows) {
   return null;
 }
 
-/** The "red" message. `jobs` are the names of the jobs that failed; may be empty. */
-export function redMessage({ run, jobs = [], reminder = false, redForHours = 0 }) {
+/**
+ * The job names stored with an alert, or null when the record has none (one
+ * written before #1666): null means "not known", which is not the same as an
+ * empty list.
+ */
+export function storedJobs(value) {
+  if (!Array.isArray(value)) return null;
+  // Keep the newest, as the union in decide() does.
+  return value.filter((name) => typeof name === 'string' && name).slice(-MAX_ALERTED_JOBS);
+}
+
+/**
+ * The "red" message. `jobs` are the names of the jobs that failed; may be
+ * empty. `newJobs`, when given, are the ones no earlier message in this red
+ * stretch named.
+ */
+export function redMessage({ run, jobs = [], newJobs = [], reminder = false, redForHours = 0 }) {
   const which = jobs.length
     ? `Failed: ${jobs.join('; ')}.`
     : 'GitHub did not say which job failed; the run page does.';
-  const lead = reminder
-    ? `STILL RED, ${redForHours} hours after the first alert. Nothing has fixed it yet.`
-    : 'The "Monitor delivery health" check failed.';
+  let lead = 'The "Monitor delivery health" check failed.';
+  if (reminder) lead = `STILL RED, ${redForHours} hours after the last alert. Nothing has fixed it yet.`;
+  else if (newJobs.length) {
+    lead = `The "Monitor delivery health" check is still red, and another job has now failed too: ${newJobs.join('; ')}.`;
+  }
   return {
     title: reminder ? 'DELIVERY MONITOR STILL RED' : 'DELIVERY MONITOR RED',
     message:
       `${lead} It goes red when a deploy has waited too long behind main, or a workflow keeps failing.\n` +
       `${which}\n` +
       `Run${run.number ? ` #${run.number}` : ''}${run.completedAt ? ` finished ${run.completedAt}` : ''}: ${runUrl(run.id)}\n` +
-      'The frontend and functions deploys are started by hand and Terraform is confirmed in HCP Terraform, so merging ships none of them. ' +
+      'A merge that changes frontend/ deploys the site on its own; the functions deploy is started by hand, and Terraform is confirmed in HCP Terraform. ' +
       'The run page has a table with a red mark on each service that is behind.',
     severity: 'critical',
     source: DELIVERY_RED_SOURCE,
@@ -243,34 +272,54 @@ export function createDeliveryMonitorWatch({
       if (result?.sent === true) return true;
       log.warn?.(`[delivery-watch] message not sent (${result?.reason || 'no reason given'}); the next hourly read tries again`);
     } catch (error) {
-      log.warn?.(`[delivery-watch] notification failed: ${error?.message || error}`);
+      log.warn?.(`[delivery-watch] notification failed (${errorCode(error)}); the next hourly read tries again`);
     }
     return false;
   }
 
   /**
    * Decide from the newest verdict and the record. Returns the fields to
-   * store, or null to leave the alert state as it is.
+   * store, or null to leave the alert state as it is. `quiet: true` among
+   * them means fields changed but no message went.
    */
   async function decide(run, current, atMs) {
     const alertedAtMs = msOf(current?.alertedAt);
     const told = Number.isSafeInteger(current?.alertedRunId);
     if (run.conclusion === 'success') {
       if (!told) return null;
-      return (await say(greenMessage({ run }))) ? { alertedRunId: null, alertedAt: null } : null;
+      return (await say(greenMessage({ run }))) ? { alertedRunId: null, alertedAt: null, alertedJobs: null } : null;
     }
+    const alertedNow = (jobs) => ({ alertedRunId: run.id, alertedAt: new Date(atMs).toISOString(), alertedJobs: jobs });
     if (!told) {
       const jobs = await failedJobs(run.id);
-      return (await say(redMessage({ run, jobs })))
-        ? { alertedRunId: run.id, alertedAt: new Date(atMs).toISOString() }
-        : null;
+      return (await say(redMessage({ run, jobs }))) ? alertedNow(jobs) : null;
+    }
+
+    // Already told about this red stretch. Read the jobs on every hourly read,
+    // so a job that starts failing is heard of now, not with the reminder.
+    const jobs = await failedJobs(run.id);
+    const known = storedJobs(current?.alertedJobs);
+    // The jobs named so far plus today's, newest last, so the cap drops the oldest.
+    const seen = [...(known ?? []), ...jobs.filter((name) => !(known ?? []).includes(name))].slice(-MAX_ALERTED_JOBS);
+    // A new job goes first, even when the reminder is due on the same read: it
+    // leads with the new job and restarts the 24-hour clock, so the reminder
+    // waits a day rather than hide the news in its "Failed:" list (Copilot
+    // review of #1669). A record from before the jobs were kept names nothing new.
+    const added = known === null ? [] : jobs.filter((name) => !known.includes(name));
+    if (added.length) {
+      return (await say(redMessage({ run, jobs, newJobs: added }))) ? alertedNow(seen) : null;
     }
     if (Number.isFinite(alertedAtMs) && atMs - alertedAtMs >= REMINDER_AFTER_MS) {
-      const jobs = await failedJobs(run.id);
       const redForHours = Math.floor((atMs - alertedAtMs) / HOUR_MS);
       const sent = await say(redMessage({ run, jobs, reminder: true, redForHours }));
-      return sent ? { alertedRunId: run.id, alertedAt: new Date(atMs).toISOString() } : null;
+      // An old record with an unreadable job list stays "not known" (null),
+      // not "known empty", or the next read would call every job new.
+      return sent ? alertedNow(known === null && !jobs.length ? null : seen) : null;
     }
+    // A record from before the jobs were kept does not know what the owner was
+    // told: adopt today's set without a message rather than call every job new.
+    // An empty read (the jobs could not be read) adds nothing, so says nothing.
+    if (known === null && jobs.length) return { alertedJobs: jobs, quiet: true };
     return null;
   }
 
@@ -308,6 +357,7 @@ export function createDeliveryMonitorWatch({
       workflow: WATCHED_WORKFLOW,
       alertedRunId: current?.alertedRunId ?? null,
       alertedAt: current?.alertedAt ?? null,
+      alertedJobs: storedJobs(current?.alertedJobs),
       lastRunId: current?.lastRunId ?? null,
       lastSuccessAt: current?.lastSuccessAt ?? null,
       consecutiveUnread: current?.consecutiveUnread ?? 0,
@@ -324,17 +374,17 @@ export function createDeliveryMonitorWatch({
         next = { ...base, ...seeing, lastError: null, lastVerdict: 'none' };
         outcome = { checked: true, verdict: 'none', told: false };
       } else {
-        const changes = await decide(run, current, atMs);
+        const { quiet = false, ...changes } = (await decide(run, current, atMs)) ?? { quiet: true };
         next = {
           ...base,
           ...seeing,
-          ...(changes ?? {}),
+          ...changes,
           lastError: null,
           lastVerdict: run.conclusion === 'success' ? 'green' : 'red',
           lastRunId: run.id,
           lastSuccessAt: at.toISOString(),
         };
-        outcome = { checked: true, verdict: next.lastVerdict, told: changes !== null };
+        outcome = { checked: true, verdict: next.lastVerdict, told: !quiet };
       }
     } catch (error) {
       const unread = (Number.isSafeInteger(current?.consecutiveUnread) ? current.consecutiveUnread : 0) + 1;
