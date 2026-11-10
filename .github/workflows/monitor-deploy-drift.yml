@@ -90,6 +90,19 @@
 # Run against this repository on 2026-09-08 it named that one and nothing
 # else.
 #
+# Since #1661 it also names a scheduled workflow whose last two scheduled runs
+# both failed (`failing`), however recently. update-avm-versions.yml had
+# succeeded and then failed its weekly runs on 2026-11-03 and 2026-11-10
+# (#1658), and nobody heard: the check called it healthy, and a red job here
+# only reached whoever happened to open the run. So the job now keeps ONE
+# issue, titled "Workflow health: a workflow is broken or keeps failing its
+# scheduled runs" (the title is how the step finds it again, so it does not
+# change). It opens it on the first finding, comments when the findings
+# change, and closes it with a comment at the first clean check. The same
+# create-or-comment shape as check-drill-age.yml. A check that could not read
+# the history (exit 2) opens and closes nothing; the job just goes red, as
+# before.
+#
 # WHY IT LIVES HERE AND NOT IN A FILE OF ITS OWN. The owner's instruction on
 # 2026-09-08 was that there are too many workflows. This one already holds the
 # permissions the check needs (`actions: read`), already runs Node with no
@@ -118,10 +131,10 @@ on:
         description: 'Fail when a service has been behind for at least this many hours. Leave blank for the script default (8).'
         required: false
 
-# Reads the commit log and the run history. Writes nothing, anywhere.
-permissions:
-  contents: read # reads the commit log; writes nothing
-  actions: read # reads this repository's own run history
+# No workflow-level permissions: each job declares its own, so the one write
+# (`issues: write`, for the workflow-health issue) stays in the one job that
+# needs it (#1661).
+permissions: {}
 
 concurrency:
   group: deploy-drift
@@ -135,6 +148,9 @@ jobs:
     # For TFC_TOKEN, and nothing else — see the header. The `workflows` job
     # below reads only this repository's run history and stays outside it.
     environment: automation
+    permissions:
+      contents: read # reads the commit log; writes nothing
+      actions: read # reads this repository's own run history
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -188,6 +204,10 @@ jobs:
     name: Can every workflow still succeed?
     runs-on: ubuntu-26.04
     timeout-minutes: 10 # slowest 0.6 min, Oct 2026 (#1441)
+    permissions:
+      contents: read # checkout, and the list of workflow files on main
+      actions: read # reads this repository's own run history
+      issues: write # open, comment on or close the one workflow-health issue (#1661)
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -202,6 +222,7 @@ jobs:
       # No `npm ci`, for the same reason the job above gives: the script uses
       # global fetch and nothing else.
       - name: Read the run history
+        id: health
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -229,8 +250,91 @@ jobs:
           # first run wrote only the summary and could not be diagnosed without
           # opening a browser.
           echo "$report" | tee -a "$GITHUB_STEP_SUMMARY"
-          # Exit 2 means the history could not be read, which is NOT a verdict
-          # on any workflow. It still fails the job — an instrument that cannot
-          # see should say so loudly — but the report says which of the two
-          # happened.
-          exit $status
+          # Kept for the issue step, and the exit code handed on as an output,
+          # so this step itself passes and the two steps below decide (#1661):
+          # 1 opens or updates the issue, 0 closes it, and anything else
+          # fails the job at the last step. Exit 2 means the history could not
+          # be read, which is NOT a verdict on any workflow, so it touches no
+          # issue; it still fails the job, because an instrument that cannot
+          # see should say so loudly.
+          printf '%s\n' "$report" > "${RUNNER_TEMP}/health.md"
+          echo "exit=${status}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      # One issue, kept current, the way check-drill-age.yml keeps its
+      # drill-overdue one: created when none is open, commented on when one is,
+      # and here also closed at the first clean check. The title is how it is
+      # found again, so it does not change; the search narrows the list and the
+      # jq line keeps only an exact title match, so a similar title is never
+      # commented on or closed. Every value reaches the shell through `env:`,
+      # never `${{ }}` inside the script (zizmor's template-injection rule).
+      #
+      # The check runs every four hours and a weekly workflow stays failing
+      # for a week, so commenting on every run would post dozens of identical
+      # comments. The report ends with a hidden line naming the findings
+      # (`findingsKey` in the script); a comment is posted only when the
+      # issue's latest text does not already carry that exact line.
+      - name: Open, update or close the workflow-health issue
+        if: steps.health.outputs.exit == '0' || steps.health.outputs.exit == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEALTH_EXIT: ${{ steps.health.outputs.exit }}
+        run: |
+          set -euo pipefail
+          title="Workflow health: a workflow is broken or keeps failing its scheduled runs"
+          existing=$(gh issue list --repo "$REPO" --state open --search "\"${title}\" in:title" --json number,title | jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          if [ "${HEALTH_EXIT}" = "0" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$REPO" --reason completed --comment "Clean again: run ${RUN_URL} found no broken or failing workflow."
+              echo "Closed #${existing}."
+            else
+              echo "No workflow-health issue is open, and none is needed."
+            fi
+            exit 0
+          fi
+          # The hidden findings line the report ends with, or empty (then the
+          # issue is commented on). sed prints nothing when there is no such
+          # line and fails only when it cannot read the file, which stops the
+          # step instead of reading as "no line".
+          key=$(sed -n '/^<!-- workflow-health findings:/{p;q;}' "${RUNNER_TEMP}/health.md")
+          {
+            echo "Delivery-health check, run ${RUN_URL}, $(date -u +%Y-%m-%d)."
+            echo
+            cat "${RUNNER_TEMP}/health.md"
+            echo
+            echo "**What to do:** for each workflow named above, open the run it links (or its newest red run), fix what that run reports, or delete the workflow if nobody needs it. This issue gets a comment when the findings change and closes itself at the first check (every four hours) that finds none."
+          } > "${RUNNER_TEMP}/health-issue.md"
+          if [ -z "$existing" ]; then
+            gh issue create --repo "$REPO" --title "$title" --body-file "${RUNNER_TEMP}/health-issue.md"
+            exit 0
+          fi
+          latest=$(gh issue view "$existing" --repo "$REPO" --json body,comments --jq '([.body] + [.comments[].body]) | last')
+          # A plain text comparison (the quoted key is matched literally), not
+          # `if grep`, which this repository forbids in workflows because a
+          # grep error reads as "no match" (scripts/iac-workflow-steps.test.mjs).
+          if [ -n "$key" ] && [[ "$latest" == *"$key"* ]]; then
+            echo "#${existing} already reports these findings; no new comment."
+          else
+            gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/health-issue.md"
+            echo "Commented on #${existing}."
+          fi
+
+      # Last, so the issue is handled first and the job still goes red while a
+      # workflow is broken or failing (1) or the history could not be read
+      # (2). `!cancelled()` so it still runs, and says why, when the issue
+      # step itself failed; `outcome == 'success'` so it does not blame a
+      # workflow when the check never ran (a failed checkout already turns the
+      # job red on its own).
+      - name: Fail the job while a workflow is broken or failing, or unread
+        if: ${{ !cancelled() && steps.health.outcome == 'success' && steps.health.outputs.exit != '0' }}
+        env:
+          HEALTH_EXIT: ${{ steps.health.outputs.exit }}
+        run: |
+          if [ "${HEALTH_EXIT}" = "2" ]; then
+            echo "::error::The run history could not be read, so no workflow was judged; see the summary."
+          else
+            echo "::error::A workflow is broken or keeps failing its scheduled runs; see the summary and the workflow-health issue."
+          fi
+          exit "${HEALTH_EXIT:-1}"

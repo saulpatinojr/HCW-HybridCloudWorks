@@ -27,6 +27,11 @@ import {
   readTuning,
   treeRefusal,
   partitionByPresence,
+  FAILING_SCHEDULED_RUNS,
+  consecutiveScheduledFailures,
+  findingsKey,
+  hasFinding,
+  selfWorkflowPath,
 } from './check-workflow-health.mjs';
 
 const NOW = new Date('2026-09-08T05:00:00Z');
@@ -634,5 +639,249 @@ describe('treeRefusal', () => {
 
   it('names the branch it was asked for', () => {
     expect(treeRefusal(null, 'trunk')).toContain('on trunk');
+  });
+});
+
+/**
+ * The `failing` verdict (#1661): the last two scheduled runs both failed.
+ *
+ * The fixture is real, copied from the API on 2026-11-10 for
+ * `update-avm-versions.yml`, the weekly workflow that #1658 found red two
+ * weeks running. Until #1661 this file called it healthy (there is a success
+ * in its sample), and it could never have been `broken` either: a weekly
+ * workflow's newest run is never ten days old. Its history also holds an
+ * earlier pair of failures (2026-10-06 and 2026-10-13) that went just as
+ * unnoticed until a later run happened to pass.
+ */
+describe('a scheduled workflow that keeps failing (#1661)', () => {
+  const NOV10 = { now: new Date('2026-11-10T12:00:00Z'), staleDays: DEFAULT_STALE_DAYS };
+  const RUN = 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/';
+  const avm = (event, conclusion, created_at, id) => ({
+    workflow_id: 367129209,
+    event,
+    status: 'completed',
+    conclusion,
+    created_at,
+    html_url: `${RUN}${id}`,
+  });
+  /** Real: `GET /actions/workflows/367129209/runs?per_page=10` (it has 8 runs in all). */
+  const AVM_RUNS = [
+    avm('schedule', 'failure', '2026-11-10T06:38:22Z', 42769853620),
+    avm('schedule', 'failure', '2026-11-03T06:38:11Z', 41591128676),
+    avm('schedule', 'success', '2026-10-27T06:56:09Z', 40464057243),
+    avm('workflow_dispatch', 'success', '2026-10-20T09:14:35Z', 39399242636),
+    avm('schedule', 'success', '2026-10-20T06:53:21Z', 39383029293),
+    avm('schedule', 'failure', '2026-10-13T14:28:18Z', 38413631920),
+    avm('schedule', 'failure', '2026-10-06T13:30:32Z', 37471351063),
+    avm('schedule', 'success', '2026-09-29T13:12:45Z', 36573458178),
+  ];
+  /** Real: the same with `&event=schedule`, which drops the one dispatched run. */
+  const AVM = {
+    path: '.github/workflows/update-avm-versions.yml',
+    runs: AVM_RUNS,
+    scheduledRuns: AVM_RUNS.filter((r) => r.event === 'schedule'),
+  };
+  const sched = (conclusion, created_at, event = 'schedule') => ({
+    event,
+    conclusion,
+    created_at,
+    html_url: `${RUN}${created_at.slice(0, 10)}`,
+  });
+  const wf = (scheduledRuns, runs = scheduledRuns) => ({ path: '.github/workflows/weekly.yml', runs, scheduledRuns });
+
+  it('keeps the threshold at two, as a named constant', () => {
+    expect(FAILING_SCHEDULED_RUNS).toBe(2);
+  });
+
+  it('calls update-avm-versions.yml failing on 2026-11-10, despite the success two weeks before', () => {
+    const got = assessWorkflow(AVM, NOV10);
+    expect(got.verdict).toBe('failing');
+    // The line states its arithmetic and where to look, as the other verdicts do.
+    expect(got.why).toContain('last 2 scheduled runs failed (2026-11-10, 2026-11-03)');
+    expect(got.why).toContain('last success 2026-10-27');
+    expect(got.why).toContain(`newest failed run ${RUN}42769853620`);
+  });
+
+  it('would have called it failing on 2026-10-13 too, the earlier pair nobody saw', () => {
+    const before = AVM.scheduledRuns.filter((r) => r.created_at <= '2026-10-13T23:59:59Z');
+    const got = assessWorkflow(wf(before), { now: new Date('2026-10-14T00:00:00Z'), staleDays: 10 });
+    expect(got.verdict).toBe('failing');
+    expect(got.why).toContain('(2026-10-13, 2026-10-06)');
+  });
+
+  it('does not fire on one failure after a success', () => {
+    const got = assessWorkflow(
+      wf([sched('failure', '2026-11-10T06:00:00Z'), sched('success', '2026-11-03T06:00:00Z')]),
+      NOV10
+    );
+    expect(got.verdict).toBe('healthy');
+  });
+
+  it('does not fire on a single scheduled run, red or not', () => {
+    expect(consecutiveScheduledFailures([sched('failure', '2026-11-10T06:00:00Z')])).toBeNull();
+    expect(assessWorkflow(wf([sched('failure', '2026-11-10T06:00:00Z')]), NOV10).verdict).toBe('unproven');
+  });
+
+  it('steps over cancelled and skipped scheduled runs and still counts the two failures', () => {
+    const got = assessWorkflow(
+      wf([
+        sched('cancelled', '2026-11-10T06:00:00Z'),
+        sched('failure', '2026-11-09T06:00:00Z'),
+        sched('skipped', '2026-11-08T06:00:00Z'),
+        sched('cancelled', '2026-11-07T06:00:00Z'),
+        sched('failure', '2026-11-06T06:00:00Z'),
+        sched('success', '2026-11-05T06:00:00Z'),
+      ]),
+      NOV10
+    );
+    expect(got.verdict).toBe('failing');
+    expect(got.why).toContain('(2026-11-09, 2026-11-06)');
+    // The link is the newest FAILED run, not the newer cancelled one.
+    expect(got.why).toContain(`${RUN}2026-11-09`);
+  });
+
+  it('does not count a cancelled run as the second failure', () => {
+    const got = assessWorkflow(
+      wf([
+        sched('failure', '2026-11-10T06:00:00Z'),
+        sched('cancelled', '2026-11-03T06:00:00Z'),
+        sched('success', '2026-10-27T06:00:00Z'),
+      ]),
+      NOV10
+    );
+    expect(got.verdict).toBe('healthy');
+  });
+
+  it('does not count a failed run that was started by hand', () => {
+    const dispatched = sched('failure', '2026-11-10T09:00:00Z', 'workflow_dispatch');
+    const scheduled = [sched('failure', '2026-11-10T06:00:00Z'), sched('success', '2026-11-03T06:00:00Z')];
+    // From the filtered listing, which should not carry it at all...
+    expect(assessWorkflow(wf([dispatched, ...scheduled]), NOV10).verdict).toBe('healthy');
+    // ...and from the mixed sample alone, when no filtered listing is given.
+    expect(assessWorkflow({ path: 'x.yml', runs: [dispatched, ...scheduled] }, NOV10).verdict).toBe('healthy');
+  });
+
+  it('finds the pair in the mixed sample when no filtered listing is given', () => {
+    expect(assessWorkflow({ path: AVM.path, runs: AVM_RUNS }, NOV10).verdict).toBe('failing');
+  });
+
+  it('does not need staleness: two fresh failures of a workflow that never succeeded are failing, not work in progress', () => {
+    const got = assessWorkflow(
+      wf([sched('failure', '2026-11-10T06:00:00Z'), sched('failure', '2026-11-03T06:00:00Z')]),
+      NOV10
+    );
+    expect(got.verdict).toBe('failing');
+    expect(got.why).toContain('no success in the runs read');
+  });
+
+  it('reports a workflow that is also broken as broken, once', () => {
+    // Never succeeded, both scheduled runs failed, newest 20 days ago: both
+    // rules match, and `broken` is the stronger claim.
+    const got = assessWorkflow(
+      wf([sched('failure', '2026-10-21T06:00:00Z'), sched('failure', '2026-10-14T06:00:00Z')]),
+      NOV10
+    );
+    expect(got.verdict).toBe('broken');
+    expect(got.why).toContain('2 of 2 sampled run(s) failed, none succeeded');
+  });
+
+  it('makes the run exit 1, the same as broken', () => {
+    expect(hasFinding(assessAll([AVM], NOV10))).toBe(true);
+    expect(hasFinding(assessAll([DEPLOY_FRONTEND], OPTS))).toBe(false);
+    expect(hasFinding(assessAll([VALIDATE_DEPLOYED], OPTS))).toBe(true);
+  });
+
+  it('is listed in the report with its own heading, and the all-clear headline is not printed above it', () => {
+    const text = renderReport(assessAll([AVM, DEPLOY_FRONTEND], NOV10), { staleDays: DEFAULT_STALE_DAYS });
+    expect(text).toContain('**1 scheduled workflow(s) failed their last 2 scheduled runs in a row.**');
+    expect(text).toContain('- `.github/workflows/update-avm-versions.yml` — last 2 scheduled runs failed');
+    expect(text).not.toContain('No workflow is failing-and-abandoned');
+  });
+
+  it('prints both sections when one workflow is broken and another failing', () => {
+    const text = renderReport(assessAll([AVM, VALIDATE_DEPLOYED], NOV10), { staleDays: DEFAULT_STALE_DAYS });
+    expect(text).toContain('have never succeeded in the sampled window');
+    expect(text).toContain('failed their last 2 scheduled runs in a row');
+  });
+
+  it('does not judge the workflow running the check, which would keep it red for ever', () => {
+    const SELF = '.github/workflows/monitor-deploy-drift.yml';
+    const got = assessWorkflow({ ...AVM, path: SELF }, { ...NOV10, selfPath: SELF });
+    expect(got.verdict).toBe('healthy');
+    expect(hasFinding([got])).toBe(false);
+    const text = renderReport([got], { staleDays: DEFAULT_STALE_DAYS });
+    expect(text).toContain(`Not judged as failing because it is the workflow running this check: \`${SELF}\``);
+    // Any other workflow is still judged.
+    expect(assessWorkflow(AVM, { ...NOV10, selfPath: SELF }).verdict).toBe('failing');
+  });
+
+  it('every fixture run carries the fields this verdict reads, as the API gave them', () => {
+    for (const run of AVM_RUNS) {
+      expect(['schedule', 'workflow_dispatch']).toContain(run.event);
+      expect(run.html_url).toMatch(/^https:\/\/github\.com\/saulpatinojr\/HCW-HybridCloudWorks\/actions\/runs\/\d+$/);
+      expect(run.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    }
+  });
+});
+
+describe('findingsKey: what the monitor compares before commenting again (#1661)', () => {
+  it('is empty when there is no finding', () => {
+    expect(findingsKey([{ path: 'a.yml', verdict: 'healthy' }])).toBe('');
+  });
+
+  it('keys a broken workflow by path alone and a failing one by its newest failed run, sorted', () => {
+    const key = findingsKey([
+      { path: 'b.yml', verdict: 'failing', newestFailedRun: 'https://example.test/runs/2' },
+      { path: 'a.yml', verdict: 'broken', why: 'grows every day' },
+      { path: 'c.yml', verdict: 'unproven' },
+    ]);
+    expect(key).toBe('<!-- workflow-health findings: a.yml b.yml@https://example.test/runs/2 -->');
+  });
+
+  it('ends the report, hidden, only when there is a finding', () => {
+    const text = renderReport([{ path: 'a.yml', verdict: 'broken', why: 'x' }], { staleDays: 10 });
+    expect(text.split('\n').at(-1)).toBe('<!-- workflow-health findings: a.yml -->');
+    expect(renderReport([], { staleDays: 10 })).not.toContain('workflow-health findings');
+  });
+});
+
+describe('selfWorkflowPath', () => {
+  it('reads the workflow file out of GITHUB_WORKFLOW_REF', () => {
+    expect(
+      selfWorkflowPath({
+        GITHUB_REPOSITORY: 'saulpatinojr/HCW-HybridCloudWorks',
+        GITHUB_WORKFLOW_REF:
+          'saulpatinojr/HCW-HybridCloudWorks/.github/workflows/monitor-deploy-drift.yml@refs/heads/main',
+      })
+    ).toBe('.github/workflows/monitor-deploy-drift.yml');
+  });
+
+  it('is null outside Actions or for a ref from another repository', () => {
+    expect(selfWorkflowPath({})).toBeNull();
+    expect(selfWorkflowPath({ GITHUB_REPOSITORY: 'a/b' })).toBeNull();
+    expect(
+      selfWorkflowPath({ GITHUB_REPOSITORY: 'a/b', GITHUB_WORKFLOW_REF: 'c/d/.github/workflows/x.yml@refs/heads/main' })
+    ).toBeNull();
+  });
+});
+
+describe('runsRefusal with an event filter (#1661)', () => {
+  const W = { path: '.github/workflows/update-avm-versions.yml', id: 367129209 };
+
+  it('accepts a listing whose runs all came from the event asked for', () => {
+    expect(runsRefusal({ workflow_runs: [{ workflow_id: W.id, event: 'schedule' }] }, W, { event: 'schedule' })).toBeNull();
+    expect(runsRefusal({ workflow_runs: [] }, W, { event: 'schedule' })).toBeNull();
+  });
+
+  it('refuses a run from another event, or with none, rather than judging it as scheduled', () => {
+    for (const run of [{ workflow_id: W.id, event: 'workflow_dispatch' }, { workflow_id: W.id }]) {
+      const got = runsRefusal({ workflow_runs: [run] }, W, { event: 'schedule' });
+      expect(got, JSON.stringify(run)).toContain('asked for event schedule');
+      expect(got).toContain('nothing is asserted');
+    }
+  });
+
+  it('does not look at the event when none was asked for', () => {
+    expect(runsRefusal({ workflow_runs: [{ workflow_id: W.id, event: 'push' }] }, W)).toBeNull();
   });
 });

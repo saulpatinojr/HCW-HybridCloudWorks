@@ -248,6 +248,22 @@ leave production behind `main` without anything being broken. The GitHub check
 red when a deploy has waited more than **8 hours** behind `main` (it was 24
 until 2026-10-23), or when a workflow keeps failing.
 
+"Keeps failing" is decided by its second job, "Can every workflow still
+succeed?" (`scripts/check-workflow-health.mjs`). It names a workflow in two
+cases. **Broken**: none of its recent runs succeeded, at least one failed, and
+nobody has run it for ten days. **Failing**: the last two runs started by its
+own schedule both failed, however recent, since a scheduled job is sure to run
+again and two red runs in a row means nobody is fixing it
+([#1661](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1661);
+the case that showed the gap was
+[#1658](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1658),
+two weeks of red weekly runs nobody saw). While either holds, the job keeps one
+open issue titled "Workflow health: a workflow is broken or keeps failing its
+scheduled runs", with a link to each workflow's newest failed run. It comments
+on it when the findings change and closes it at the first clean check. To act
+on it, open the linked run, fix what it reports (or delete a workflow nobody
+needs), and let the workflow run again.
+
 Red used to reach the owner only as GitHub's failure email. On 2026-10-22 it
 sat red for a day among other mail. Now the Functions app also sends a
 Telegram message, from the hourly `checkAgentHealth` timer

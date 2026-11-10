@@ -23,6 +23,14 @@
  * Needs bash on the path. Where it is missing (Windows without Git Bash) the
  * shell tests are skipped and say so in their name; on GitHub Actions a test
  * fails instead, so they cannot be skipped there by accident.
+ *
+ * SINCE #1661 THE HEALTH STEP HANDS ITS EXIT CODE ON instead of exiting with
+ * it. It writes `exit=<code>` to its outputs and the report to a file, and
+ * passes; the step after it opens, comments on or closes the one
+ * workflow-health issue, and the last step fails the job on a non-zero code.
+ * So the health step's runs below expect the step to pass and the code to be
+ * in its outputs, and the issue and fail steps are run too, against a
+ * stand-in `gh` that records what it was asked to do.
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -36,11 +44,15 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOW = join(REPO, '.github', 'workflows', 'monitor-deploy-drift.yml');
 const JOBS = parseJobs(readFileSync(WORKFLOW, 'utf8').replace(/\r\n/g, '\n'));
 
-// [job key, step name, the script the step runs, whether stderr is part of the report]
+// [job key, step name, the script the step runs, whether stderr is part of the
+// report, whether the step hands the exit code on as an output (#1661)]
 const STEPS = [
-  ['check', 'Measure the drift', 'scripts/check-deploy-drift.mjs', false],
-  ['workflows', 'Read the run history', 'scripts/check-workflow-health.mjs', true],
+  ['check', 'Measure the drift', 'scripts/check-deploy-drift.mjs', false, false],
+  ['workflows', 'Read the run history', 'scripts/check-workflow-health.mjs', true, true],
 ];
+const ISSUE_STEP = 'Open, update or close the workflow-health issue';
+const FAIL_STEP = 'Fail the job while a workflow is broken or failing, or unread';
+const ISSUE_TITLE = 'Workflow health: a workflow is broken or keeps failing its scheduled runs';
 const stepOf = (jobKey, name) =>
   JOBS.find((job) => job.key === jobKey)?.steps.find((step) => step.name === name);
 
@@ -70,6 +82,46 @@ describe('monitor-deploy-drift.yml report steps: their shape', () => {
     expect(lines[capture - 1], 'status must start at 0, so a green run exits 0').toBe('status=0');
     expect(lines[capture + 1], 'a bare `status=$?` after the capture is the shape `-e` cuts short').not.toBe('status=$?');
     expect(lines.some((line) => /^set\s+-[a-z]*e/.test(line)), `${name} turns -e on explicitly`).toBe(false);
+  });
+});
+
+describe('monitor-deploy-drift.yml workflow-health issue (#1661): its shape', () => {
+  const job = JOBS.find((j) => j.key === 'workflows');
+  const names = job.steps.map((s) => s.name);
+
+  it('reads the history, then handles the issue, then fails the job, in that order and last', () => {
+    expect(names.slice(-3)).toEqual(['Read the run history', ISSUE_STEP, FAIL_STEP]);
+    expect(stepOf('workflows', 'Read the run history').id).toBe('health');
+  });
+
+  it('touches the issue only on a verdict (0 or 1), never when the history could not be read (2)', () => {
+    expect(stepOf('workflows', ISSUE_STEP).if).toBe("steps.health.outputs.exit == '0' || steps.health.outputs.exit == '1'");
+  });
+
+  it('fails the job on any non-zero code, after the issue step, even if that step failed', () => {
+    expect(stepOf('workflows', FAIL_STEP).if).toBe(
+      "${{ !cancelled() && steps.health.outcome == 'success' && steps.health.outputs.exit != '0' }}"
+    );
+  });
+
+  it.each([ISSUE_STEP, FAIL_STEP])('%s takes every value through env:, never an expression in the shell', (name) => {
+    const step = stepOf('workflows', name);
+    expect(step.run.includes('${{'), `${name}: an expression inside run: is the template-injection shape`).toBe(false);
+    expect(step.shell).toBeUndefined();
+  });
+
+  it('keys the issue on one fixed title', () => {
+    expect(stepOf('workflows', ISSUE_STEP).run).toContain(`title="${ISSUE_TITLE}"`);
+  });
+
+  it('grants issues: write to the workflows job only, and nothing at the top of the file', () => {
+    const text = readFileSync(WORKFLOW, 'utf8').replace(/\r\n/g, '\n');
+    expect(text).toMatch(/\npermissions: \{\}\n/);
+    const grants = (lines) => lines.filter((l) => /^\s+\w+:\s*write\b/.test(l)).map((l) => l.trim());
+    expect(grants(job.lines)).toEqual([
+      'issues: write # open, comment on or close the one workflow-health issue (#1661)',
+    ]);
+    expect(grants(JOBS.find((j) => j.key === 'check').lines)).toEqual([]);
   });
 });
 
@@ -105,24 +157,49 @@ describe.skipIf(!TOOLS.ready)(`monitor-deploy-drift.yml report steps: run with b
   /** Runs one step's shell the way a runner does (`bash -e`), with the stand-in node exiting `code`. */
   function run(jobKey, name, code) {
     const step = stepOf(jobKey, name);
-    const summary = `${work}/summary-${++runs}.md`;
+    const dir = `${work}/run-${++runs}`;
+    mkdirSync(dir);
+    const summary = `${dir}/summary.md`;
     writeFileSync(summary, '');
+    writeFileSync(`${dir}/output.txt`, '');
     const result = spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', step.run], {
       cwd: REPO,
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_EXIT: String(code), GITHUB_STEP_SUMMARY: summary },
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        FAKE_EXIT: String(code),
+        GITHUB_STEP_SUMMARY: summary,
+        GITHUB_OUTPUT: `${dir}/output.txt`,
+        RUNNER_TEMP: dir,
+      },
       encoding: 'utf8',
     });
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr, summary: readFileSync(summary, 'utf8') };
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      summary: readFileSync(summary, 'utf8'),
+      output: readFileSync(`${dir}/output.txt`, 'utf8'),
+      dir,
+    };
   }
 
-  const CASES = STEPS.flatMap(([jobKey, name, script, withStderr]) =>
-    [0, 1, 2].map((code) => [jobKey, name, code, script, withStderr])
+  const CASES = STEPS.flatMap(([jobKey, name, script, withStderr, handsOn]) =>
+    [0, 1, 2].map((code) => [jobKey, name, code, script, withStderr, handsOn])
   );
 
-  it.each(CASES)('%s / %s, script exits %i: the report reaches the log and the summary, and the step exits the same', (jobKey, name, code, script, withStderr) => {
+  it.each(CASES)('%s / %s, script exits %i: the report reaches the log and the summary, and the code is not lost', (jobKey, name, code, script, withStderr, handsOn) => {
     const result = run(jobKey, name, code);
     const report = `## Report from ${script}`;
-    expect(result.status, result.stderr).toBe(code);
+    if (handsOn) {
+      // The health step passes and hands the code to the two steps after it,
+      // with the report in a file for the issue (#1661).
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.output).toBe(`exit=${code}\n`);
+      expect(readFileSync(`${result.dir}/health.md`, 'utf8')).toContain(report);
+    } else {
+      expect(result.status, result.stderr).toBe(code);
+    }
     expect(result.stdout, 'the log is blank: the capture was cut short').toContain(report);
     expect(result.summary, 'the step summary is blank: the capture was cut short').toContain(report);
     expect(result.summary).toContain('| row | cell |');
@@ -145,5 +222,154 @@ describe.skipIf(!TOOLS.ready)(`monitor-deploy-drift.yml report steps: run with b
     expect(result.status).toBe(1);
     expect(result.stdout).toBe('');
     expect(readFileSync(summary, 'utf8')).toBe('');
+  });
+});
+
+/** The issue step pipes `gh issue list` through jq, which GitHub's runners have. */
+const JQ_READY = spawnSync('jq', ['--version'], { encoding: 'utf8' }).status === 0;
+const ISSUE_READY = TOOLS.ready && JQ_READY;
+const ISSUE_SKIPPED = ISSUE_READY ? '' : ` (SKIPPED here: ${TOOLS.ready ? 'jq is not on the path' : TOOLS.why}; they run on GitHub Actions)`;
+
+describe('monitor-deploy-drift.yml workflow-health issue: jq is there', () => {
+  it.skipIf(process.env.GITHUB_ACTIONS !== 'true')('on GitHub Actions jq is present, so the issue tests below run', () => {
+    expect(JQ_READY).toBe(true);
+  });
+});
+
+describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#1661): run with bash -e${ISSUE_SKIPPED}`, () => {
+  const RUN_URL = 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/1';
+  const KEY = '<!-- workflow-health findings: .github/workflows/update-avm-versions.yml@https://example.test/runs/42 -->';
+  const REPORT = `## Workflow health\n\n- \`.github/workflows/update-avm-versions.yml\` — last 2 scheduled runs failed\n\n${KEY}\n`;
+  let work;
+  let bin;
+  let runs = 0;
+
+  beforeAll(() => {
+    work = forward(mkdtempSync(join(tmpdir(), 'health-issue-')));
+    bin = `${work}/bin`;
+    mkdirSync(bin);
+    // A stand-in for gh: it records each call, one line of arguments joined by
+    // `|`, and answers `issue list` and `issue view` with what the test set.
+    // `issue view` is asked with --jq for the issue's latest text, so it
+    // answers that text directly.
+    writeFileSync(
+      `${bin}/gh`,
+      [
+        '#!/usr/bin/env bash',
+        '(IFS="|"; printf "%s\\n" "$*") >> "$GH_LOG"',
+        'case "$1 $2" in',
+        '  "issue list") printf "%s\\n" "$FAKE_LIST" ;;',
+        '  "issue view") printf "%s\\n" "$FAKE_LATEST" ;;',
+        'esac',
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+  });
+  afterAll(() => rmSync(work, { recursive: true, force: true }));
+
+  /** Runs the issue step with the health step's exit code and what `gh` should answer. */
+  function runIssue(healthExit, { list = '[]', latest = '' } = {}) {
+    const dir = `${work}/run-${++runs}`;
+    mkdirSync(dir);
+    writeFileSync(`${dir}/health.md`, REPORT);
+    writeFileSync(`${dir}/gh.log`, '');
+    const result = spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', stepOf('workflows', ISSUE_STEP).run], {
+      cwd: REPO,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        RUNNER_TEMP: dir,
+        GH_LOG: `${dir}/gh.log`,
+        FAKE_LIST: list,
+        FAKE_LATEST: latest,
+        GH_TOKEN: 'not-a-real-token',
+        REPO: 'saulpatinojr/HCW-HybridCloudWorks',
+        RUN_URL,
+        HEALTH_EXIT: String(healthExit),
+      },
+      encoding: 'utf8',
+    });
+    const calls = readFileSync(`${dir}/gh.log`, 'utf8').split('\n').filter(Boolean);
+    const writes = calls.filter((c) => !/^issue\|(list|view)\|/.test(c));
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls, writes, dir };
+  }
+
+  it('a finding and no open issue: creates it, with the report and the run in the body', () => {
+    const got = runIssue(1);
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([
+      `issue|create|--repo|saulpatinojr/HCW-HybridCloudWorks|--title|${ISSUE_TITLE}|--body-file|${got.dir}/health-issue.md`,
+    ]);
+    const body = readFileSync(`${got.dir}/health-issue.md`, 'utf8');
+    expect(body).toContain(RUN_URL);
+    expect(body).toContain('update-avm-versions.yml');
+    expect(body).toContain(KEY);
+  });
+
+  it('searches for the issue by its exact title', () => {
+    const got = runIssue(1);
+    expect(got.calls[0]).toBe(
+      `issue|list|--repo|saulpatinojr/HCW-HybridCloudWorks|--state|open|--search|"${ISSUE_TITLE}" in:title|--json|number,title`
+    );
+  });
+
+  it('an open issue with a similar but different title is left alone, and a new one created', () => {
+    const got = runIssue(1, { list: JSON.stringify([{ number: 7, title: `${ISSUE_TITLE} (old)` }]) });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toHaveLength(1);
+    expect(got.writes[0]).toMatch(/^issue\|create\|/);
+  });
+
+  it('a finding the open issue does not carry yet: comments on it', () => {
+    const got = runIssue(1, {
+      list: JSON.stringify([{ number: 12, title: ISSUE_TITLE }]),
+      latest: 'an earlier report\n<!-- workflow-health findings: .github/workflows/other.yml -->',
+    });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([
+      `issue|comment|12|--repo|saulpatinojr/HCW-HybridCloudWorks|--body-file|${got.dir}/health-issue.md`,
+    ]);
+  });
+
+  it('the same findings as the issue already reports: no new comment, so a four-hourly check does not repeat itself', () => {
+    const got = runIssue(1, { list: JSON.stringify([{ number: 12, title: ISSUE_TITLE }]), latest: `earlier\n${KEY}\n` });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([]);
+    expect(got.stdout).toContain('#12 already reports these findings');
+  });
+
+  it('clean, with the issue open: closes it with a comment naming the run', () => {
+    const got = runIssue(0, { list: JSON.stringify([{ number: 12, title: ISSUE_TITLE }]) });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([
+      `issue|close|12|--repo|saulpatinojr/HCW-HybridCloudWorks|--reason|completed|--comment|Clean again: run ${RUN_URL} found no broken or failing workflow.`,
+    ]);
+  });
+
+  it('clean, with no issue open: writes nothing', () => {
+    const got = runIssue(0);
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([]);
+  });
+
+  /** Runs the last step, which fails the job on a non-zero code. */
+  function runFail(healthExit) {
+    return spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', stepOf('workflows', FAIL_STEP).run], {
+      cwd: REPO,
+      env: { ...process.env, HEALTH_EXIT: healthExit },
+      encoding: 'utf8',
+    });
+  }
+
+  it('the last step keeps the job red with the code the check gave, and says which case it was', () => {
+    const one = runFail('1');
+    expect(one.status).toBe(1);
+    expect(one.stdout).toContain('broken or keeps failing');
+    const two = runFail('2');
+    expect(two.status).toBe(2);
+    expect(two.stdout).toContain('could not be read');
+    // An empty output (the step wrote none) is still a failure, not a pass.
+    expect(runFail('').status).toBe(1);
   });
 });
