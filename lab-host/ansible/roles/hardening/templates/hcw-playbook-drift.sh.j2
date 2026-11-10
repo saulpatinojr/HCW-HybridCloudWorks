@@ -84,9 +84,13 @@ fi
 
 if [ "${play_rc}" -ne 0 ] || [ -z "${changed_count}" ] || [ -z "${failed_count}" ] || [ -z "${unreachable_count}" ] || [ "${failed_count}" -gt 0 ] || [ "${unreachable_count}" -gt 0 ]; then
   say warning "playbook check failed (rc=${play_rc}, failed=${failed_count:-unknown}, unreachable=${unreachable_count:-unknown}) on commit ${applied_commit}"
-  # The task that failed and Ansible's own message for it, first: the tail
-  # alone is the recap and the timings, which name no failure (#1631).
-  grep -E -B2 '^(fatal|ERROR!)' "${output_file}" | cut -c1-500 >&2 || true
+  # The task that failed and Ansible's one-line message for it, first: the
+  # tail alone is the recap and the timings, which name no failure (#1631).
+  # Only the `[ERROR]:` line (ansible-core 2.19 and later; `ERROR!` before)
+  # and its TASK header, never the `fatal:` or `failed:` result body: a
+  # looped result prints its whole item, and an item can hold a container's
+  # environment, secrets included.
+  awk '/^TASK \[/ { task = $0 } /^(\[ERROR\]: |ERROR! )/ { print task; print }' "${output_file}" | cut -c1-500 >&2 || true
   tail -n 25 "${output_file}" >&2 || true
   exit 1
 fi
