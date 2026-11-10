@@ -130,6 +130,9 @@ describe('addons role tasks and specs', () => {
     expect(downloadIdx).toBeGreaterThan(-1);
     expect(verifyIdx).toBeGreaterThan(downloadIdx);
     expect(pullIdx).toBeGreaterThan(verifyIdx);
+    // Pulled only when missing, by digest: the default (always) is a change
+    // in every check run, which the nightly drift check reported (#1631).
+    expect(ADDONS_TASKS.slice(pullIdx, ADDONS_TASKS.indexOf('- name:', pullIdx + 10))).toContain('pull: not_present');
 
     expect(ADDONS_TASKS).toContain('verify-attestation');
     expect(ADDONS_TASKS).toContain('--type');
