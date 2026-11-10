@@ -349,6 +349,9 @@ module "connectivity" {
         virtual_network_gateway_express_route = false
         virtual_network_gateway_vpn           = false
       }
+      bastion = {
+        copy_paste_enabled = false
+      }
       firewall = {
         sku_tier = "Standard"
       }
