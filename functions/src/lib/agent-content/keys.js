@@ -92,9 +92,9 @@ export const CAPABILITIES = Object.freeze([
   },
   {
     id: 'admin.platform',
-    label: 'Platform (Health, Integrations and Cost)',
+    label: 'Platform (Health, Integrations, Cost, Search Console, Settings and alerts)',
     description:
-      'Read platform health, the integration status and the Cost page (what Azure, the AI providers and the subscriptions cost this month), and run a connection test. No settings, keys or secrets, and no change to the cost ledger.',
+      'Read every Platform page: health, the integration status, the Cost page, Search Console and Platform Settings; read the alerts sent to your phone, the calendar alerts, job states and the review queue; run a connection test or a Search Console run; and acknowledge, resolve or reopen a workflow alert. No settings writes, keys or secrets, no change to the cost ledger, no sending an alert to your phone again, and no deleting.',
   },
 ]);
 export const CAPABILITY_IDS = Object.freeze(CAPABILITIES.map((capability) => capability.id));

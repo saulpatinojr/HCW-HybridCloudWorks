@@ -30,6 +30,8 @@
     "cmsAiRouting",
     "cmsAiRoutingEffective",
     "cmsAiRoutingTest",
+    "cmsAlertsRecent",
+    "cmsAlertsResend",
     "cmsAmbassadorApplicationById",
     "cmsAmbassadorApplications",
     "cmsAmbassadorEvidence",

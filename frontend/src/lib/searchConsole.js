@@ -40,12 +40,12 @@ export const URL_INSPECTION_RESULT_URL =
 
 /** The page's tabs. Deep links are `?tab=`. */
 export const TABS = Object.freeze([
-  { id: 'indexing', label: 'Indexing' },
   { id: 'performance', label: 'Performance' },
+  { id: 'indexing', label: 'Indexing' },
   { id: 'sitemaps', label: 'Sitemaps' },
 ]);
 
-export const DEFAULT_TAB = 'indexing';
+export const DEFAULT_TAB = 'performance';
 
 const TAB_IDS = new Set(TABS.map((tab) => tab.id));
 
@@ -59,7 +59,7 @@ export const MOVED_TABS = Object.freeze({
   sitemap: 'sitemaps',
 });
 
-/** The tab to show for a `?tab=` value: its own, where it moved, or Indexing. */
+/** The tab to show for a `?tab=` value: its own, where it moved, or Performance. */
 export function resolveTab(requested) {
   const id = Object.hasOwn(MOVED_TABS, requested ?? '') ? MOVED_TABS[requested] : requested;
   return TAB_IDS.has(id) ? id : DEFAULT_TAB;

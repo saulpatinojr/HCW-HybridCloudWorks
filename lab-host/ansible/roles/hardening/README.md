@@ -157,8 +157,8 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | `hardening_drift_src_dir` | `/opt/hcw-src` | Where the HCW source checkout lives |
 | `hardening_drift_on_calendar` | `*-*-* 03:00:00` | When drift detection runs (systemd `OnCalendar`) |
 | `hardening_drift_ansible_playbook` | `/usr/local/bin/ansible-playbook` | The ansible-playbook executable to run |
-| `hardening_drift_vault_file` | `/etc/hcw/vault.yml` | Vault file to include if present |
-| `hardening_drift_vault_password_file` | `/etc/hcw/vault.pass` | Vault password file if present |
+| `hardening_drift_vault_file` | `/etc/hcw/ansible/vault.yml` | Vault file to include, the one `bootstrap.sh` uses |
+| `hardening_drift_vault_password_file` | `/etc/hcw/ansible/vault-password` | Vault password file, the one `bootstrap.sh` uses |
 
 `meta/argument_specs.yml` is the contract; the table is a summary of it.
 
@@ -392,6 +392,22 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    `ansible-playbook -i inventory/localhost.yml site.yml --check --diff` from
    the applied checkout (`/opt/hcw-src/lab-host/ansible`), before the Coder
    dump (03:30) and the idle reboot (04:30).
+   - It loads the same vault `bootstrap.sh` does, `/etc/hcw/ansible/vault.yml`
+     with `/etc/hcw/ansible/vault-password` (#1631). Without it the play stops
+     at the Coder role's secrets assertion, which every nightly run did from
+     2026-10-16 to 2026-11-10 while these defaults named `/etc/hcw/vault.yml`.
+     As in `bootstrap.sh`, one of the two files without the other fails the
+     check (its warning, shipped to Log Analytics, names no path), so a host
+     where the password exists and the vault does not yet
+     (the runbook's first-run state) pages until the first `hcw-vault-set`.
+   - On a failure, the unit's output (the journal at `daemon.info`, which the
+     data collection rule does not ship) names the failed task and Ansible's
+     one-line `[ERROR]:` message, then the recap line and the timing lines
+     after the `TASKS RECAP` header, picked by their shape. It never prints a `fatal:` or `failed:` result
+     body, because a looped result prints its whole item, and an item can hold
+     a container's environment. A plain tail of the output could reach back
+     into that body when the play fails early and the timing recap is short. The `[ERROR]:` line is the task's own message, so a `fail`
+     or `assert` message here names keys, never values.
    - If changes would be applied, logs `playbook drift detected ...: <n> change(s) would be applied`
      at `daemon.warning` under the tag `hcw-playbook-drift`, exiting 2.
    - If the playbook execution fails, logs `playbook check failed (rc=..., failed=...)`
@@ -536,8 +552,10 @@ before the reload, the pending-reload marker, and root's empty file.
 two units with the role's defaults and runs the script against stub
 `ansible-playbook` and `logger`: a notice line on a clean check run (ok,
 changed=0), a warning line and exit 2 on detected drift (changed>0), a warning
-line and exit 1 on playbook execution failure, and `--vault-password-file` and
-`-e` passed when vault files exist. Needs neither root nor Docker; CI runs it in
+line and exit 1 on playbook execution failure, with the failed task and its
+`[ERROR]:` line on stderr and never a result body (a looped item holding a
+dummy secret is checked absent), `--vault-password-file` and `-e` passed when
+both vault files exist, and exit 1 when only one of them does. Needs neither root nor Docker; CI runs it in
 the `lab-host role tests` job.
 
 `tests/unattended-upgrades.test.sh` renders `52hcw-unattended-upgrades.j2`
