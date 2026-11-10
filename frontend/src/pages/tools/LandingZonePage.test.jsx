@@ -662,7 +662,7 @@ describe('Multi-Cloud Target Cloud Selector and Architecture Previews (#Phase4)'
     expect(banner.textContent).toContain('AWS Network Firewall Inspection');
     // The preset links to the AWS catalogue: no inspection-VPC design is published (#1628).
     expect(banner.textContent).toContain('AWS Architecture Catalogue');
-    expect(banner.querySelector('a[href="/aws/architecture-designs"]')).not.toBeNull();
+    expect(banner.querySelector('a').getAttribute('href')).toBe('/aws/architecture-designs');
 
     // FOCUS 1.4 BOM rendered
     const bom = screen.getByTestId('lz-finops-bom');
