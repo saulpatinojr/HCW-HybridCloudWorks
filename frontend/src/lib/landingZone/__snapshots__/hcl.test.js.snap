@@ -259,9 +259,7 @@ module "spoke_corp_1" {
   }
 
   providers = {
-    azapi  = azapi.corp_1
-    modtm  = modtm
-    random = random
+    azapi = azapi.corp_1
   }
 }
 
@@ -301,9 +299,7 @@ module "spoke_online_1" {
   }
 
   providers = {
-    azapi  = azapi.online_1
-    modtm  = modtm
-    random = random
+    azapi = azapi.online_1
   }
 }
 "
@@ -432,9 +428,7 @@ module "spoke_identity" {
   }
 
   providers = {
-    azapi  = azapi.identity
-    modtm  = modtm
-    random = random
+    azapi = azapi.identity
   }
 }
 "
@@ -465,8 +459,6 @@ module "management" {
   providers = {
     azapi   = azapi.management
     azurerm = azurerm.management
-    modtm   = modtm
-    random  = random
   }
 }
 "

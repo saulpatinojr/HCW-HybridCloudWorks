@@ -67,6 +67,12 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The Landing Zone Builder's Azure Verified Modules move to their current releases, the first weekly update since 27 October ([#1658](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1658)).** The fix in #1662 let the weekly update open its pull request again. It moves management to 0.10.0, connectivity to 0.18.1 and virtual network to 0.23.0, and the lab image's smoke payload window to `>= 0.18.0, < 0.19.0`. It also rewrites the child module record the lab image vendors.
+  - The hand edits the update flags are made here. At their new tags, management requires azapi and azurerm only, and virtual network requires azapi only, so their `requiredProviders` in `frontend/src/lib/landingZone/avmVersions.js` drop modtm and random.
+  - The builder's output passes those modules only the providers they declare; the HCL snapshot and the spoke test follow.
+  - `PROVIDER_PINS` is unchanged, because avm-ptn-alz still needs modtm, random and time.
+  - The constraint table above `TERRAFORM_REQUIRED_VERSION` names the new tags. The child modules that changed (bastion host 0.9.0, virtual network 0.22.2, utl-interfaces 0.10.0) add no provider.
+  - The update's own summary now names a moved smoke payload window as a window. The first run called it "the exact version".
 - **Saving a certification in the admin works again ([#1663](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1663)).** Every save from the Certifications editor failed with "Unknown field(s) for certification: vendor, description". The editor (`buildPayload` in `frontend/src/components/admin/certifications/CertEditor.jsx`) sent two fields that the server's list (`CERTIFICATION_FIELDS` in `functions/src/lib/admin-crud/certification-rules.js`) did not have, and the server refuses any unknown field.
   - The server now accepts `description`, the editor's "Description / story" box, trimmed and capped at 4,000 characters. It stays admin-only: the public snapshot does not publish it.
   - The editor no longer sends `vendor`, which nothing read: the site works out the vendor from the issuer whenever it shows a certification.

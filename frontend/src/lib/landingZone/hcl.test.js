@@ -164,9 +164,9 @@ describe('emitFiles', () => {
     );
     expect(app).toContain('create_reverse_peering             = true');
     expect(app).toContain('reverse_name                       = "peer-hub-to-online-1"');
-    expect(app).toMatch(
-      /providers = \{\n    azapi  = azapi\.corp_1\n    modtm  = modtm\n    random = random\n  \}/
-    );
+    // avm-res-network-virtualnetwork 0.23.0 requires azapi alone, so the
+    // spoke passes only that provider (its modtm and random left at 0.23.0).
+    expect(app).toMatch(/providers = \{\n    azapi = azapi\.corp_1\n  \}/);
     expect(app).not.toContain('resource_group_name = "');
 
     const identity = full['identity.tf'];

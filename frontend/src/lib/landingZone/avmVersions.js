@@ -41,22 +41,13 @@ const avm = (name, version, requiredProviders) =>
 /** Keyed by module name; every `version` is a published release string. */
 export const AVM_MODULES = Object.freeze({
   'avm-ptn-alz': avm('avm-ptn-alz', '0.22.0', ['alz', 'azapi', 'modtm', 'random', 'time']),
-  'avm-ptn-alz-management': avm('avm-ptn-alz-management', '0.10.0', [
-    'azapi',
-    'azurerm',
-    'modtm',
-    'random',
-  ]),
+  'avm-ptn-alz-management': avm('avm-ptn-alz-management', '0.10.0', ['azapi', 'azurerm']),
   'avm-ptn-alz-connectivity-hub-and-spoke-vnet': avm(
     'avm-ptn-alz-connectivity-hub-and-spoke-vnet',
     '0.18.1',
     ['azapi', 'azurerm', 'modtm', 'random']
   ),
-  'avm-res-network-virtualnetwork': avm('avm-res-network-virtualnetwork', '0.23.0', [
-    'azapi',
-    'modtm',
-    'random',
-  ]),
+  'avm-res-network-virtualnetwork': avm('avm-res-network-virtualnetwork', '0.23.0', ['azapi']),
 });
 
 export const AVM_MODULE_NAMES = Object.freeze(Object.keys(AVM_MODULES));
@@ -83,12 +74,11 @@ export function isAvmSource(source) {
  *   avm-ptn-alz 0.22.0        terraform >= 1.12, < 2.0; alz ~> 0.21,
  *                             azapi ~> 2.12, modtm ~> 0.3, random ~> 3.6,
  *                             time ~> 0.9
- *   management 0.9.0          terraform >= 1.9, < 2.0; azapi ~> 2.4,
- *                             azurerm ~> 4.35, modtm ~> 0.3, random ~> 3.6
- *   connectivity 0.17.7       terraform ~> 1.12; azapi ~> 2.12,
+ *   management 0.10.0         terraform >= 1.9, < 2.0; azapi ~> 2.12,
+ *                             azurerm ~> 4.35
+ *   connectivity 0.18.1       terraform ~> 1.12; azapi ~> 2.12,
  *                             azurerm ~> 4.0, modtm ~> 0.3, random ~> 3.5
- *   virtual network 0.22.3    terraform >= 1.9, < 2.0; azapi ~> 2.12,
- *                             modtm ~> 0.3, random ~> 3.5
+ *   virtual network 0.23.0    terraform >= 1.9, < 2.0; azapi ~> 2.12
  *
  * The modules these call in turn add no provider and no tighter bound than
  * azurerm < 5.0. So the floor of 1.12 comes from avm-ptn-alz and

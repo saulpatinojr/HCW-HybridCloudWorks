@@ -928,8 +928,27 @@ describe('summarize', () => {
   it("says when the smoke payload's exact pin moved with the module", () => {
     const text = summarize({ results: [moved({ smokePinMoved: true })], today: '2026-10-20' });
     expect(text).toContain(
-      '- `lab-image/smoke/terraform-validate-payload/main.tf`: the exact `version = "0.21.0"` on its block for this module now reads `0.22.0`'
+      '- `lab-image/smoke/terraform-validate-payload/main.tf`: its block for this module read `version = "0.21.0"` and now reads `version = "0.22.0"`'
     );
+  });
+
+  it('names the window it moved, not the module versions, when the block was a window (#1658)', () => {
+    // The first run after #1658 said "the exact version = "0.17.7"" about a
+    // block that read ">= 0.17.0, < 0.18.0".
+    const text = summarize({
+      results: [
+        moved({
+          smokePinMoved: true,
+          smokeFrom: '>= 0.21.0, < 0.22.0',
+          smokeTo: '>= 0.22.0, < 0.23.0',
+        }),
+      ],
+      today: '2026-10-20',
+    });
+    expect(text).toContain(
+      'its block for this module read `version = ">= 0.21.0, < 0.22.0"` and now reads `version = ">= 0.22.0, < 0.23.0"`'
+    );
+    expect(text).not.toContain('the exact');
   });
 
   it('describes the regenerated child record, and whether the child list moved', () => {

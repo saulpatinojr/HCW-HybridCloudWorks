@@ -223,6 +223,8 @@ async function checkModule(module, fetchImpl) {
     vendored: null,
     sha256: null,
     smokePinMoved: null,
+    smokeFrom: null,
+    smokeTo: null,
   };
 }
 
@@ -255,6 +257,8 @@ async function applyBump(state, result, fetchImpl) {
     : state.envSource;
   const payload = rewriteSmokePin(state.payloadSource, result.name, result.from, result.to);
   result.smokePinMoved = payload.moved;
+  result.smokeFrom = payload.from ?? null;
+  result.smokeTo = payload.to ?? null;
   return { pinsSource, envSource, payloadSource: payload.source };
 }
 
