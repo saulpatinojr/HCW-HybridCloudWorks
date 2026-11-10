@@ -42,7 +42,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ENTRY = 'scripts/prerender-entry.jsx';
@@ -513,9 +513,22 @@ export function seedFor(manifest, route) {
     : null;
 }
 
-function outputPathFor(dist, route) {
+/**
+ * The file a route is written to, under `dist`.
+ *
+ * Refuses a route whose file would land outside `dist` (a `..` segment, for
+ * example). Routes from the content manifest come from published content,
+ * and the builder already skips an unsafe slug; this is the second layer, so
+ * that no route, whatever produced it, can write anywhere but the build.
+ */
+export function outputPathFor(dist, route) {
   const clean = route.replace(/^\/+|\/+$/g, '');
-  return clean ? join(dist, clean, 'index.html') : join(dist, 'index.html');
+  const out = clean ? join(dist, clean, 'index.html') : join(dist, 'index.html');
+  const inside = relative(resolve(dist), resolve(out));
+  if (!inside || inside.startsWith('..') || isAbsolute(inside)) {
+    throw new Error(`route ${JSON.stringify(route)} would be written outside the build folder`);
+  }
+  return out;
 }
 
 /**

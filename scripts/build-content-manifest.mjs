@@ -197,6 +197,21 @@ function slugOf(item) {
 }
 
 /**
+ * The address of one article: letters, digits, hyphens and underscores, and
+ * nothing else. The slug becomes a folder of the built site, so a slash, a
+ * dot, a space or `%`, `?` and `#` must never reach it.
+ *
+ * Looser than INTERVIEW_SLUG and DESIGN_SLUG on purpose. Published articles
+ * already carry uppercase letters and double hyphens: the publish step adds
+ * the first six characters of the document id, which mix cases, and a slug
+ * cut at 80 characters can end in a hyphen before that suffix
+ * (functions/src/lib/cms/publish.js). Five of the 23 articles in the manifest
+ * of 2026-11-10 look like that, so the strict pattern would have taken five
+ * live pages off the site.
+ */
+export const ARTICLE_SLUG = /^[A-Za-z0-9_-]+$/;
+
+/**
  * The fields the article page renders. Everything else is dropped.
  *
  * A manifest is build input, not a database dump. The first version stored whole
@@ -590,6 +605,11 @@ export function buildManifest(items, sectionsFromRoute = null, interviews = [], 
     }
     if (!slug) {
       skipped.push(`${item.id}: no slug`);
+      continue;
+    }
+    if (!ARTICLE_SLUG.test(slug)) {
+      // Named by id, not by the slug: the slug is the part that is wrong.
+      skipped.push(`${item.id}: slug is not a safe address`);
       continue;
     }
     if (!provider) {

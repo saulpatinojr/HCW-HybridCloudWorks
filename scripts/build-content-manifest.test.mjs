@@ -27,6 +27,7 @@ import {
   INTERVIEW_LIST_FIELDS,
   INTERVIEWS_ROUTE,
   DESIGN_PROVIDERS,
+  ARTICLE_SLUG,
 } from './build-content-manifest.mjs';
 
 // `dirname(fileURLToPath(...))` rather than `new URL('..', import.meta.url)`:
@@ -515,5 +516,37 @@ describe('designs on the manifest (#1628)', () => {
     const served = [...body[1].matchAll(/provider === '([a-z]+)'/g)].map((match) => match[1]);
     expect(served.length).toBeGreaterThan(3);
     expect([...DESIGN_PROVIDERS].sort()).toEqual([...served].sort());
+  });
+});
+
+describe('article slugs: only a safe address becomes a page', () => {
+  const article = (slug, over = {}) => ({ id: `a-${slug}`, slug, cloudProvider: 'azure', type: 'blog', ...over });
+
+  it('keeps the slugs the site makes today, mixed-case suffix and double hyphen included', () => {
+    const slugs = [
+      'nist-vs-microsoft-zero-trust-why-cloud-architects-should-care-LSzyB6',
+      'microsoft-sovereign-cloud-empowering-europe-with-unprecedented-data-control-and--ibDYCO',
+      'plain-lowercase-slug',
+      'with_underscore',
+    ];
+    const manifest = buildManifest(slugs.map((slug) => article(slug)));
+    expect(manifest.routes).toEqual(slugs.map((slug) => `/azure/blog/${slug}`));
+    expect(manifest.skipped).toEqual([]);
+  });
+
+  it('skips a slug that could change the folder it is written to, and names it by id', () => {
+    const bad = ['../escape', 'a/b', 'has space', 'dot.ted', 'query?x', 'hash#x', 'per%2Fcent'];
+    const manifest = buildManifest(bad.map((slug, i) => article(slug, { id: `bad-${i}` })));
+    expect(manifest.routes).toEqual([]);
+    expect(manifest.skipped).toEqual(bad.map((_, i) => `bad-${i}: slug is not a safe address`));
+  });
+
+  it('every article slug in the committed manifest passes, so no live page is dropped', () => {
+    const committed = JSON.parse(readFileSync(join(REPO, 'frontend', 'data', 'content-manifest.json'), 'utf8'));
+    const slugs = Object.keys(committed.data)
+      .filter((key) => key.startsWith('article:'))
+      .map((key) => key.slice('article:'.length));
+    expect(slugs.length).toBeGreaterThan(0);
+    expect(slugs.filter((slug) => !ARTICLE_SLUG.test(slug))).toEqual([]);
   });
 });

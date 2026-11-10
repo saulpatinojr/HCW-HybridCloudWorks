@@ -24,6 +24,7 @@ import {
   seedAttribute,
   seedFor,
   seedKeyFor,
+  outputPathFor,
   SEED_ATTRIBUTE,
   MOUNT_POINT_PATTERN,
 } from './prerender.mjs';
@@ -852,5 +853,25 @@ describe('seedFor: the one entry a route is handed (ADR 0040 added the interview
     expect(seedFor(manifest, '/aws/architecture-designs/serverless-api')).toBeNull();
     expect(seedFor(manifest, '/azure/frameworks')).toBeNull();
     expect(seedFor(null, '/azure')).toBeNull();
+  });
+});
+
+describe('outputPathFor: every page lands inside the build folder', () => {
+  const dist = '/tmp/build/dist';
+
+  it('writes a route to its folder index, and the home page to the root index', () => {
+    expect(outputPathFor(dist, '/')).toBe('/tmp/build/dist/index.html');
+    expect(outputPathFor(dist, '/azure/blog/a-post')).toBe(
+      '/tmp/build/dist/azure/blog/a-post/index.html'
+    );
+    expect(outputPathFor(dist, '/azure/blog/mixed-Case--6chars/')).toBe(
+      '/tmp/build/dist/azure/blog/mixed-Case--6chars/index.html'
+    );
+  });
+
+  it('refuses a route that would write outside it', () => {
+    for (const route of ['/azure/blog/../../../etc', '/..', '/azure/../../outside']) {
+      expect(() => outputPathFor(dist, route), route).toThrow(/outside the build folder/);
+    }
   });
 });
