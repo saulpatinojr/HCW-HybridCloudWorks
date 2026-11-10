@@ -834,6 +834,16 @@ describe('a scheduled workflow that keeps failing (#1661)', () => {
     expect(got.why).toContain('2026-11-10');
   });
 
+  it('is cleared by a newer default-branch success read on its own, after it fell out of the sample', () => {
+    // The mixed sample (AVM_RUNS) no longer holds FIX_PROVEN, as after many
+    // later runs; main hands it in from the separate success read.
+    const got = assessWorkflow({ ...AVM, defaultBranchSuccesses: [FIX_PROVEN] }, NOV10);
+    expect(got.verdict).toBe('healthy');
+    // That read is filtered to the default branch, but the check still holds.
+    const elsewhere = { ...FIX_PROVEN, head_branch: 'fix/avm-smoke-window' };
+    expect(assessWorkflow({ ...AVM, defaultBranchSuccesses: [elsewhere] }, NOV10).verdict).toBe('failing');
+  });
+
   it('is not cleared by a newer success on another branch, a pull request for example', () => {
     const elsewhere = { ...FIX_PROVEN, head_branch: 'fix/avm-smoke-window' };
     const got = assessWorkflow({ ...AVM, runs: [elsewhere, ...AVM_RUNS] }, NOV10);

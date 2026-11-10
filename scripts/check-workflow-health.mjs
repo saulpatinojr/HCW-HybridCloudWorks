@@ -252,7 +252,7 @@ export function selfWorkflowPath(env = {}) {
  * will never have a scheduled run to clear the finding, so it is set aside on
  * a note line rather than named for ever.
  *
- * @param {{path: string, state?: string, hasSchedule?: boolean, runs: Array<{event?: string, head_branch?: string, conclusion: string|null, created_at: string, html_url?: string}>, scheduledRuns?: Array}} workflow
+ * @param {{path: string, state?: string, hasSchedule?: boolean, runs: Array<{event?: string, head_branch?: string, conclusion: string|null, created_at: string, html_url?: string}>, scheduledRuns?: Array, defaultBranchSuccesses?: Array}} workflow
  * @param {{now: Date, staleDays: number, selfPath?: string|null, defaultBranch?: string}} options
  */
 export function assessWorkflow(workflow, { now, staleDays, selfPath = null, defaultBranch = 'main' }) {
@@ -266,7 +266,11 @@ export function assessWorkflow(workflow, { now, staleDays, selfPath = null, defa
   if (!failed) return base;
 
   const newestFailure = failed[0];
-  const clearedSince = [...runs, ...scheduled].some(
+  // `defaultBranchSuccesses` is set by `main` for a workflow that would be
+  // `failing`: its newest success on the default branch, read on its own
+  // because the mixed sample may no longer hold it.
+  const extra = Array.isArray(workflow.defaultBranchSuccesses) ? workflow.defaultBranchSuccesses : [];
+  const clearedSince = [...runs, ...scheduled, ...extra].some(
     (r) =>
       PASSING_CONCLUSIONS.has(r?.conclusion) &&
       r.head_branch === defaultBranch &&
@@ -274,7 +278,7 @@ export function assessWorkflow(workflow, { now, staleDays, selfPath = null, defa
   );
   if (clearedSince) return base;
 
-  const successes = [...runs, ...scheduled].filter((r) => PASSING_CONCLUSIONS.has(r?.conclusion));
+  const successes = [...runs, ...scheduled, ...extra].filter((r) => PASSING_CONCLUSIONS.has(r?.conclusion));
   const lastSuccess = successes.length
     ? successes.reduce((a, b) => (a.created_at > b.created_at ? a : b)).created_at.slice(0, 10)
     : null;
@@ -856,6 +860,7 @@ async function main() {
     }
 
     workflows.push({
+      id: w.id,
       path: w.path,
       state: w.state,
       runs: got.workflow_runs,
@@ -867,12 +872,24 @@ async function main() {
   const options = { now: new Date(), staleDays, selfPath, defaultBranch };
   let results = assessAll(workflows, options);
 
-  // Does each workflow that would be `failing` still have a schedule on the
-  // default branch? Read only for those, usually none, so it costs a request
-  // only when there is a finding. Fails closed like every read above.
+  // For each workflow that would be `failing`, two more reads, only for those
+  // (usually none), so they cost requests only when there is a finding. Both
+  // fail closed like every read above.
+  //   1. Its newest success on the default branch, wherever it sits in time.
+  //      The mixed sample holds only the newest few runs, so a run started by
+  //      hand that fixed the workflow can fall out of it behind later runs and
+  //      the finding would never clear (Copilot review of #1668).
+  //   2. Whether its file on the default branch still has a schedule.
   for (const [i, r] of results.entries()) {
     if (r.verdict !== 'failing') continue;
     try {
+      const passed = await api(
+        `/repos/${repo}/actions/workflows/${workflows[i].id}/runs?branch=${encodeURIComponent(defaultBranch)}&status=success&per_page=1`,
+        token
+      );
+      const passedWrong = runsRefusal(passed, workflows[i]);
+      if (passedWrong) throw new Error(passedWrong);
+      workflows[i].defaultBranchSuccesses = passed.workflow_runs;
       const file = await api(
         `/repos/${repo}/contents/${r.path}?ref=${encodeURIComponent(defaultBranch)}`,
         token
@@ -889,7 +906,11 @@ async function main() {
 
   const report = renderReport(results, { staleDays, absent, defaultBranch });
   console.log(report);
-  process.exit(hasFinding(results) ? 1 : 0);
+  // exitCode, not exit(): on Linux a write to a pipe is asynchronous, and
+  // exit() would drop whatever of a long report had not reached the pipe yet,
+  // findings marker included, so the issue step would see no findings line
+  // (Copilot review of #1668; https://nodejs.org/api/process.html#a-note-on-process-io).
+  process.exitCode = hasFinding(results) ? 1 : 0;
 }
 
 /**

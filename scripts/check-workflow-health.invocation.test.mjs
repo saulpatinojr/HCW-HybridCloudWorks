@@ -112,6 +112,60 @@ describe('an error the script did not expect', () => {
   });
 });
 
+/**
+ * A report longer than a pipe buffer arrives whole (Copilot review of #1668).
+ * On Linux a write to a pipe is asynchronous, so `process.exit()` straight
+ * after `console.log()` dropped the tail of a long report, findings marker
+ * included, and the issue step then read "no findings line" and did nothing
+ * (https://nodejs.org/api/process.html#a-note-on-process-io). A hundred
+ * failing workflows with long run links make the report several pipe buffers
+ * long; the last line must still be the marker.
+ */
+describe('a long report', () => {
+  it('reaches the pipe whole, ending with the findings marker, and exits 1', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'health-long-'));
+    try {
+      const stand = join(dir, 'fake-fetch.mjs');
+      writeFileSync(
+        stand,
+        [
+          'const N = 100;',
+          'const pad = "x".repeat(1500);',
+          'const W = Array.from({ length: N }, (_, i) => ({ id: i + 1, path: `.github/workflows/w${i}.yml`, state: "active" }));',
+          'const fail = (id, day) => ({ workflow_id: id, event: "schedule", head_branch: "main", conclusion: "failure",',
+          '  created_at: `2026-11-${day}T06:00:00Z`, html_url: `https://github.com/o/r/actions/runs/${id}${day}?${pad}` });',
+          'const yaml = Buffer.from("on:\\n  schedule:\\n    - cron: \\"0 6 * * 1\\"\\n").toString("base64");',
+          'globalThis.fetch = async (url) => {',
+          '  const u = String(url);',
+          '  const id = Number((u.match(/workflows\\/(\\d+)\\/runs/) ?? [])[1]);',
+          '  let body;',
+          '  if (u.includes("/actions/workflows?")) body = { total_count: N, workflows: W };',
+          '  else if (u.includes("/contents/.github/workflows?")) body = W.map((w) => ({ path: w.path }));',
+          '  else if (u.includes("/contents/")) body = { content: yaml };',
+          '  else if (u.includes("status=success")) body = { workflow_runs: [] };',
+          '  else if (u.includes("/runs?")) body = { workflow_runs: [fail(id, "09"), fail(id, "08")] };',
+          '  else body = { default_branch: "main" };',
+          '  return { ok: true, status: 200, json: async () => body };',
+          '};',
+          '',
+        ].join('\n')
+      );
+      const env = { ...process.env, GITHUB_TOKEN: 'not-a-real-token', GITHUB_REPOSITORY: 'o/r' };
+      delete env.GITHUB_WORKFLOW_REF;
+      const got = spawnSync(process.execPath, ['--import', pathToFileURL(stand).href, script], {
+        env,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      expect(got.status, got.stderr).toBe(1);
+      expect(got.stdout.length, `stderr: ${got.stderr.slice(0, 500)} error: ${got.error}`).toBeGreaterThan(2 * 65536);
+      expect(got.stdout.trimEnd().split('\n').at(-1)).toMatch(/^<!-- workflow-health findings: .*:failing -->$/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('the job captures what the script actually writes', () => {
   const lines = commandLines(readFileSync(WORKFLOW, 'utf8'));
   const index = lines.findIndex((line) => line.includes('check-workflow-health.mjs'));
