@@ -31,8 +31,8 @@ one; ADR 0035 decision 8 records them as the second permitted workload kind.
    `addons_attestation_oidc_issuer` (`https://token.actions.githubusercontent.com`)
    and the row's `attestation_identity_regexp` (failing closed on mismatch or
    unreachable transparency log; #1069), pulls `image@image_digest` when it
-   is not already present (`pull: not_present`, so a check run does not
-   report it as a change; #1631) and runs
+   is not already present (`pull: not_present`, so once it is present a
+   check run does not report it as a change; #1631) and runs
    `hcw-addon-<id>` with
    `127.0.0.1:<port>:8080`, `read_only`, `/tmp` on tmpfs, `cap_drop ALL`,
    `no-new-privileges`, the row's `memory` and `pids_limit`, one CPU,
