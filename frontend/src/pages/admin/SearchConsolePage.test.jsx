@@ -513,9 +513,9 @@ describe('Run now', () => {
     }
   });
 
-  it('stops waiting after forty minutes', async () => {
-    // Pinned, so a shorter wait than a late, slow run needs fails here (useSearchConsole.js says why 40).
-    expect(POLL_FOR_MS).toBe(40 * 60_000);
+  it('stops waiting after an hour', async () => {
+    // Pinned, so a shorter wait than a late, slow run needs fails here (useSearchConsole.js says why an hour).
+    expect(POLL_FOR_MS).toBe(60 * 60_000);
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     try {
       renderAt();
@@ -525,7 +525,7 @@ describe('Run now', () => {
       // The label changes when React commits, but the effect that starts the
       // polling timer runs a moment later. Let it run before moving the clock;
       // otherwise the timer can start after the jump, against the moved clock,
-      // and the forty minutes never pass (the test failed about one run in
+      // and the hour never passes (the test failed about one run in
       // five that way).
       await act(async () => {});
       getJSON.mockResolvedValue(REPORT);
