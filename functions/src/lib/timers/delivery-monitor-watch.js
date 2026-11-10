@@ -25,9 +25,9 @@
  *          out; cancelled and skipped runs say nothing) failed, and the owner
  *          has not been told about this red stretch. One message, titled
  *          "DELIVERY MONITOR RED", a title no other message uses, naming the
- *          jobs that failed and linking the run. Still red a day later, the
- *          same message goes again, marked as a reminder, so one missed
- *          notification does not mean silence for good.
+ *          jobs that failed and linking the run. Still red a day after the
+ *          last message about it, the same message goes again, marked as a
+ *          reminder, so one missed notification does not mean silence for good.
  *   NEW    Still red, and a job is failing that no message in this red
  *          stretch has named yet (#1666). The stretch might have begun with one
  *          finding and a second, unrelated one arrives hours later: the owner
@@ -46,8 +46,10 @@
  *
  * A READ, THEN A WRITE DECIDED FROM IT, so the record is ETag-guarded exactly
  * as labs/drift.js guards its own: a 412 or 409 means another instance wrote
- * first and this one leaves it. A second instance cannot double-send either:
- * the notifier's own per-source claim refuses it. A send that did not go is
+ * first and this one leaves it. Two instances reading at the same moment are
+ * unlikely (the timer runs on one instance at a time), and the notifier's own
+ * per-source claim refuses a second send within its cooldown; at worst the
+ * same alert goes once more an hour later. A send that did not go is
  * not recorded, so the next hourly read tries again. A failed GitHub read is
  * recorded and logged at warn with its code only, never thrown.
  */
@@ -140,7 +142,8 @@ export function latestVerdictRun(rows) {
  */
 export function storedJobs(value) {
   if (!Array.isArray(value)) return null;
-  return value.filter((name) => typeof name === 'string' && name).slice(0, MAX_ALERTED_JOBS);
+  // Keep the newest, as the union in decide() does.
+  return value.filter((name) => typeof name === 'string' && name).slice(-MAX_ALERTED_JOBS);
 }
 
 /**
@@ -155,7 +158,7 @@ export function redMessage({ run, jobs = [], newJobs = [], reminder = false, red
   let lead = 'The "Monitor delivery health" check failed.';
   if (reminder) lead = `STILL RED, ${redForHours} hours after the last alert. Nothing has fixed it yet.`;
   else if (newJobs.length) {
-    lead = `The "Monitor delivery health" check is still red, and a job no earlier alert named has failed: ${newJobs.join('; ')}.`;
+    lead = `The "Monitor delivery health" check is still red, and another job has now failed too: ${newJobs.join('; ')}.`;
   }
   return {
     title: reminder ? 'DELIVERY MONITOR STILL RED' : 'DELIVERY MONITOR RED',
@@ -300,7 +303,10 @@ export function createDeliveryMonitorWatch({
     const seen = [...(known ?? []), ...jobs.filter((name) => !(known ?? []).includes(name))].slice(-MAX_ALERTED_JOBS);
     if (Number.isFinite(alertedAtMs) && atMs - alertedAtMs >= REMINDER_AFTER_MS) {
       const redForHours = Math.floor((atMs - alertedAtMs) / HOUR_MS);
-      return (await say(redMessage({ run, jobs, reminder: true, redForHours }))) ? alertedNow(seen) : null;
+      const sent = await say(redMessage({ run, jobs, reminder: true, redForHours }));
+      // An old record with an unreadable job list stays "not known" (null),
+      // not "known empty", or the next read would call every job new.
+      return sent ? alertedNow(known === null && !jobs.length ? null : seen) : null;
     }
     // A record from before the jobs were kept does not know what the owner was
     // told: adopt today's set without a message rather than call every job new.

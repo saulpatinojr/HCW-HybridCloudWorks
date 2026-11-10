@@ -14,6 +14,7 @@ import {
   DELIVERY_BLIND_SOURCE,
   DELIVERY_GREEN_SOURCE,
   DELIVERY_RED_SOURCE,
+  MAX_ALERTED_JOBS,
   REMINDER_AFTER_MS,
   WATCH_INTERVAL_MS,
   WATCHED_WORKFLOW,
@@ -121,7 +122,7 @@ describe('the messages', () => {
   it('name the newly failing job first when the stretch was already red (#1666)', () => {
     const m = redMessage({ run: r, jobs: ['check', 'workflows'], newJobs: ['workflows'] });
     expect(m.title).toBe('DELIVERY MONITOR RED');
-    expect(m.message).toContain('still red, and a job no earlier alert named has failed: workflows.');
+    expect(m.message).toContain('still red, and another job has now failed too: workflows.');
     expect(m.message).toContain('Failed: check; workflows.');
   });
 
@@ -212,8 +213,11 @@ describe('checkIfDue', () => {
   });
 
   describe('a job that starts failing while the stretch is already red (#1666)', () => {
-    const check = { name: 'check', conclusion: 'failure' };
-    const workflows = { name: 'workflows', conclusion: 'failure' };
+    // The monitor's two real job names, so they pass through plainName as in production.
+    const CHECK = 'Is production behind main?';
+    const WORKFLOWS = 'Can every workflow still succeed?';
+    const check = { name: CHECK, conclusion: 'failure' };
+    const workflows = { name: WORKFLOWS, conclusion: 'failure' };
     const hours = (h) => new Date(NOW.getTime() + h * 60 * 60_000);
 
     async function toldAbout(jobs) {
@@ -225,7 +229,7 @@ describe('checkIfDue', () => {
 
     it('keeps the failed jobs with the first alert', async () => {
       const { store } = await toldAbout([workflows]);
-      expect(store.doc.alertedJobs).toEqual(['workflows']);
+      expect(store.doc.alertedJobs).toEqual([WORKFLOWS]);
     });
 
     it('sends a new red message on the next read when the set grows, naming the new job', async () => {
@@ -236,9 +240,9 @@ describe('checkIfDue', () => {
       expect(n.notifyTelegram).toHaveBeenCalledTimes(2);
       const second = n.notifyTelegram.mock.calls[1][0];
       expect(second).toMatchObject({ title: 'DELIVERY MONITOR RED', source: DELIVERY_RED_SOURCE });
-      expect(second.message).toContain('a job no earlier alert named has failed: check.');
+      expect(second.message).toContain('another job has now failed too: Is production behind main?.');
       expect(store.doc).toMatchObject({ alertedRunId: 1240, alertedAt: hours(1).toISOString() });
-      expect(store.doc.alertedJobs).toEqual(['workflows', 'check']);
+      expect(store.doc.alertedJobs).toEqual([WORKFLOWS, CHECK]);
     });
 
     it('says nothing when the same jobs are still failing', async () => {
@@ -254,7 +258,7 @@ describe('checkIfDue', () => {
       await watch({ store, gh: github({ runs: [run(1240, 'failure')], jobs: [workflows] }), n, now: hours(1) }).checkIfDue();
       await watch({ store, gh: github({ runs: [run(1250, 'failure')], jobs: [check, workflows] }), n, now: hours(5) }).checkIfDue();
       expect(n.notifyTelegram).toHaveBeenCalledTimes(1);
-      expect(store.doc.alertedJobs).toEqual(['check', 'workflows']);
+      expect(store.doc.alertedJobs).toEqual([CHECK, WORKFLOWS]);
     });
 
     it('does not call every job new when the jobs could not be read', async () => {
@@ -263,7 +267,7 @@ describe('checkIfDue', () => {
       const outcome = await watch({ store, gh, n, now: hours(1) }).checkIfDue();
       expect(outcome.told).toBe(false);
       expect(n.notifyTelegram).toHaveBeenCalledTimes(1);
-      expect(store.doc.alertedJobs).toEqual(['workflows']);
+      expect(store.doc.alertedJobs).toEqual([WORKFLOWS]);
     });
 
     it('names the jobs on the next read when the first alert could not', async () => {
@@ -273,7 +277,7 @@ describe('checkIfDue', () => {
       expect(store.doc.alertedJobs).toEqual([]);
       await watch({ store, gh: github({ runs: [run(1234, 'failure')], jobs: [check] }), n, now: hours(1) }).checkIfDue();
       expect(n.notifyTelegram).toHaveBeenCalledTimes(2);
-      expect(n.notifyTelegram.mock.calls[1][0].message).toContain('has failed: check.');
+      expect(n.notifyTelegram.mock.calls[1][0].message).toContain('failed too: Is production behind main?.');
     });
 
     it('adopts the set quietly when the record is older than the jobs list', async () => {
@@ -282,18 +286,19 @@ describe('checkIfDue', () => {
       const outcome = await watch({ store, gh: github({ runs: [run(1240, 'failure')], jobs: [check] }), n }).checkIfDue();
       expect(outcome).toMatchObject({ verdict: 'red', told: false, written: true });
       expect(n.notifyTelegram).not.toHaveBeenCalled();
-      expect(store.doc).toMatchObject({ alertedRunId: 1234, alertedJobs: ['check'] });
+      expect(store.doc).toMatchObject({ alertedRunId: 1234, alertedJobs: [CHECK] });
+      expect(store.doc).not.toHaveProperty('quiet');
     });
 
     it('records nothing when the new-job message did not go, so the next read tries again', async () => {
       const { store } = await toldAbout([workflows]);
       const gh = github({ runs: [run(1240, 'failure')], jobs: [check, workflows] });
       await watch({ store, gh, n: notifier({ sent: false, reason: 'cooldown' }), now: hours(1) }).checkIfDue();
-      expect(store.doc.alertedJobs).toEqual(['workflows']);
+      expect(store.doc.alertedJobs).toEqual([WORKFLOWS]);
       const working = notifier();
       await watch({ store, gh, n: working, now: hours(2) }).checkIfDue();
       expect(working.notifyTelegram).toHaveBeenCalledTimes(1);
-      expect(store.doc.alertedJobs).toEqual(['workflows', 'check']);
+      expect(store.doc.alertedJobs).toEqual([WORKFLOWS, CHECK]);
     });
 
     it('keeps the 24-hour reminder, which also remembers a job it names', async () => {
@@ -302,7 +307,29 @@ describe('checkIfDue', () => {
       await watch({ store, gh, n, now: hours(25) }).checkIfDue();
       expect(n.notifyTelegram).toHaveBeenCalledTimes(2);
       expect(n.notifyTelegram.mock.calls[1][0].title).toBe('DELIVERY MONITOR STILL RED');
-      expect(store.doc.alertedJobs).toEqual(['workflows', 'check']);
+      expect(store.doc.alertedJobs).toEqual([WORKFLOWS, CHECK]);
+    });
+
+    it('keeps an old record "not known" when the reminder goes and the jobs cannot be read', async () => {
+      const store = memoryStore({ id: 'delivery_monitor_watch', alertedRunId: 1234, alertedAt: iso(NOW - REMINDER_AFTER_MS) });
+      const n = notifier();
+      await watch({ store, gh: github({ runs: [run(1240, 'failure')], jobsStatus: 500 }), n }).checkIfDue();
+      expect(n.notifyTelegram.mock.calls[0][0].title).toBe('DELIVERY MONITOR STILL RED');
+      expect(store.doc.alertedJobs).toBeNull();
+      await watch({ store, gh: github({ runs: [run(1240, 'failure')], jobs: [check] }), n, now: hours(1) }).checkIfDue();
+      expect(n.notifyTelegram).toHaveBeenCalledTimes(1);
+      expect(store.doc.alertedJobs).toEqual([CHECK]);
+    });
+
+    it(`keeps at most ${MAX_ALERTED_JOBS} names, the newest`, async () => {
+      const many = Array.from({ length: MAX_ALERTED_JOBS }, (_, i) => `old job ${i}`);
+      const store = memoryStore({ id: 'delivery_monitor_watch', alertedRunId: 1234, alertedAt: iso(NOW - 3_600_000), alertedJobs: many });
+      const n = notifier();
+      await watch({ store, gh: github({ runs: [run(1240, 'failure')], jobs: [check] }), n }).checkIfDue();
+      expect(n.notifyTelegram).toHaveBeenCalledTimes(1);
+      expect(store.doc.alertedJobs).toHaveLength(MAX_ALERTED_JOBS);
+      expect(store.doc.alertedJobs.at(-1)).toBe(CHECK);
+      expect(store.doc.alertedJobs).not.toContain('old job 0');
     });
 
     it('forgets the jobs once it is green again', async () => {
