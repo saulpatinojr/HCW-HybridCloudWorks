@@ -25,7 +25,7 @@ for one extra run. A run takes about ten minutes, because each page is a
 separate question to Google: the first real run, on 2026-11-10, asked about
 roughly 400 pages and took 8 minutes 47 seconds. While it runs, the button
 reads **Run in progress** and the page checks for the new report every 30
-seconds for up to 40 minutes. The page opens on **Performance**; **Indexing**
+seconds for up to an hour. The page opens on **Performance**; **Indexing**
 is the second tab.
 
 | Part | What it shows | Where it comes from |
