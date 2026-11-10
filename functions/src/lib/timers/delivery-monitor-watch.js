@@ -301,6 +301,14 @@ export function createDeliveryMonitorWatch({
     const known = storedJobs(current?.alertedJobs);
     // The jobs named so far plus today's, newest last, so the cap drops the oldest.
     const seen = [...(known ?? []), ...jobs.filter((name) => !(known ?? []).includes(name))].slice(-MAX_ALERTED_JOBS);
+    // A new job goes first, even when the reminder is due on the same read: it
+    // leads with the new job and restarts the 24-hour clock, so the reminder
+    // waits a day rather than hide the news in its "Failed:" list (Copilot
+    // review of #1669). A record from before the jobs were kept names nothing new.
+    const added = known === null ? [] : jobs.filter((name) => !known.includes(name));
+    if (added.length) {
+      return (await say(redMessage({ run, jobs, newJobs: added }))) ? alertedNow(seen) : null;
+    }
     if (Number.isFinite(alertedAtMs) && atMs - alertedAtMs >= REMINDER_AFTER_MS) {
       const redForHours = Math.floor((atMs - alertedAtMs) / HOUR_MS);
       const sent = await say(redMessage({ run, jobs, reminder: true, redForHours }));
@@ -311,10 +319,8 @@ export function createDeliveryMonitorWatch({
     // A record from before the jobs were kept does not know what the owner was
     // told: adopt today's set without a message rather than call every job new.
     // An empty read (the jobs could not be read) adds nothing, so says nothing.
-    if (known === null) return jobs.length ? { alertedJobs: jobs, quiet: true } : null;
-    const added = jobs.filter((name) => !known.includes(name));
-    if (!added.length) return null;
-    return (await say(redMessage({ run, jobs, newJobs: added }))) ? alertedNow(seen) : null;
+    if (known === null && jobs.length) return { alertedJobs: jobs, quiet: true };
+    return null;
   }
 
   /**

@@ -301,13 +301,27 @@ describe('checkIfDue', () => {
       expect(store.doc.alertedJobs).toEqual([WORKFLOWS, CHECK]);
     });
 
-    it('keeps the 24-hour reminder, which also remembers a job it names', async () => {
+    it('keeps the 24-hour reminder while the same jobs are failing', async () => {
+      const { store, n } = await toldAbout([workflows]);
+      const gh = github({ runs: [run(1240, 'failure')], jobs: [workflows] });
+      await watch({ store, gh, n, now: hours(25) }).checkIfDue();
+      expect(n.notifyTelegram).toHaveBeenCalledTimes(2);
+      expect(n.notifyTelegram.mock.calls[1][0].title).toBe('DELIVERY MONITOR STILL RED');
+      expect(store.doc).toMatchObject({ alertedAt: hours(25).toISOString(), alertedJobs: [WORKFLOWS] });
+    });
+
+    it('sends the new-job alert, not the reminder, when both fall on one read (Copilot, #1669)', async () => {
       const { store, n } = await toldAbout([workflows]);
       const gh = github({ runs: [run(1240, 'failure')], jobs: [check, workflows] });
       await watch({ store, gh, n, now: hours(25) }).checkIfDue();
       expect(n.notifyTelegram).toHaveBeenCalledTimes(2);
-      expect(n.notifyTelegram.mock.calls[1][0].title).toBe('DELIVERY MONITOR STILL RED');
-      expect(store.doc.alertedJobs).toEqual([WORKFLOWS, CHECK]);
+      const second = n.notifyTelegram.mock.calls[1][0];
+      expect(second.title).toBe('DELIVERY MONITOR RED');
+      expect(second.message).toContain('another job has now failed too: Is production behind main?.');
+      // It restarts the clock: no reminder an hour later.
+      expect(store.doc).toMatchObject({ alertedAt: hours(25).toISOString(), alertedJobs: [WORKFLOWS, CHECK] });
+      await watch({ store, gh, n, now: hours(26) }).checkIfDue();
+      expect(n.notifyTelegram).toHaveBeenCalledTimes(2);
     });
 
     it('keeps an old record "not known" when the reminder goes and the jobs cannot be read', async () => {
