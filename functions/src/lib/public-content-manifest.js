@@ -311,6 +311,15 @@ const DESIGN_PROJECTION = [...new Set([...DESIGN_FIELDS, ...CONTENT_VISIBILITY_F
  * Newest first, as `public/content` picks among documents sharing a slug
  * (`ORDER BY c._ts DESC` in getContent): the builder keeps the first design
  * per slug, so the built page and the live page show the same one.
+ *
+ * `content` ONLY, although `public/content` also falls back to the legacy
+ * `blogs` container. Deliberate, and the same trade as the articles above:
+ * nothing creates documents in `blogs` any more (its only writes are patches
+ * to documents already there), and the section counts, which do read both
+ * containers (public-section-counts.js), counted no design in `blogs`, on
+ * 2026-09-07 and in the manifest of 2026-11-07. A design found there one day
+ * would get no built page and answer 404 to a crawler, as every design did
+ * before #1628; it would not break the build.
  */
 export const PUBLISHED_DESIGN_QUERY = `SELECT ${DESIGN_PROJECTION} FROM c WHERE ${PUBLISHED_PREDICATE} AND ${SQL_IS_DESIGN} ORDER BY c._ts DESC`;
 
