@@ -63,7 +63,7 @@ module "alz" {
 
 module "connectivity" {
   source  = "Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm"
-  version = ">= 0.17.0, < 0.18.0"
+  version = ">= 0.18.0, < 0.19.0"
 }
 
 module "spoke" {

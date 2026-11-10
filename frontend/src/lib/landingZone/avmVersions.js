@@ -22,7 +22,7 @@
  * that module requires, because once a block carries a `providers` argument
  * Terraform stops inheriting defaults for the providers it leaves out.
  */
-export const AVM_VERIFIED_ON = '2026-10-20';
+export const AVM_VERIFIED_ON = '2026-11-10';
 
 const registryUrl = (name) => `https://registry.terraform.io/modules/Azure/${name}/azurerm`;
 const repositoryUrl = (name) => `https://github.com/Azure/terraform-azurerm-${name}`;
@@ -41,7 +41,7 @@ const avm = (name, version, requiredProviders) =>
 /** Keyed by module name; every `version` is a published release string. */
 export const AVM_MODULES = Object.freeze({
   'avm-ptn-alz': avm('avm-ptn-alz', '0.22.0', ['alz', 'azapi', 'modtm', 'random', 'time']),
-  'avm-ptn-alz-management': avm('avm-ptn-alz-management', '0.9.0', [
+  'avm-ptn-alz-management': avm('avm-ptn-alz-management', '0.10.0', [
     'azapi',
     'azurerm',
     'modtm',
@@ -49,10 +49,10 @@ export const AVM_MODULES = Object.freeze({
   ]),
   'avm-ptn-alz-connectivity-hub-and-spoke-vnet': avm(
     'avm-ptn-alz-connectivity-hub-and-spoke-vnet',
-    '0.17.7',
+    '0.18.1',
     ['azapi', 'azurerm', 'modtm', 'random']
   ),
-  'avm-res-network-virtualnetwork': avm('avm-res-network-virtualnetwork', '0.22.3', [
+  'avm-res-network-virtualnetwork': avm('avm-res-network-virtualnetwork', '0.23.0', [
     'azapi',
     'modtm',
     'random',
