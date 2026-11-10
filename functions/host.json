@@ -10,8 +10,7 @@
     "logLevel": {
       "default": "Warning",
       "Function": "Warning",
-      "Function.admin": "Information",
-      "Function.jobs": "Information",
+      "Function.syncSearchConsole.User": "Information",
       "Host.Results": "Information",
       "Host.Aggregator": "Warning",
       "Azure.Core": "Warning",
