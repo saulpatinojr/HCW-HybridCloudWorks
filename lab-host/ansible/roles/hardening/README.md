@@ -405,8 +405,8 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
      one-line `[ERROR]:` message, then the recap line and the timing lines,
      picked by their shape. It never prints a `fatal:` or `failed:` result
      body, because a looped result prints its whole item, and an item can hold
-     a container's environment; a plain tail of the output would, when the
-     play fails early and the timing recap is short. The `[ERROR]:` line is the task's own message, so a `fail`
+     a container's environment. A plain tail of the output could reach back
+     into that body when the play fails early and the timing recap is short. The `[ERROR]:` line is the task's own message, so a `fail`
      or `assert` message here names keys, never values.
    - If changes would be applied, logs `playbook drift detected ...: <n> change(s) would be applied`
      at `daemon.warning` under the tag `hcw-playbook-drift`, exiting 2.
