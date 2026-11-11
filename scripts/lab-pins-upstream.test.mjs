@@ -32,6 +32,7 @@ import {
   readPins,
   renderMarkdown,
   scalar,
+  JSON_ACCEPT,
   sources,
 } from './lab-pins-upstream.mjs';
 import { renderNotes } from './lib/lab-pin-bumps.mjs';
@@ -343,6 +344,26 @@ describe('trying a failed read again', () => {
     const { retry } = noWait();
     expect(await sources({}, { fetchImpl: impl, retry }).vault()).toBe('2.2.1');
     expect(calls.map((c) => c.url)).toEqual([url, url]);
+  });
+
+  // #1677: some of HashiCorp's edges serve the index as a vendor JSON type and
+  // answer 406 to a request that accepts application/json alone. A server that
+  // behaves that way on every request must not stop either read.
+  it('asks for JSON first and any type after it, so an edge that refuses plain application/json still answers (#1677)', async () => {
+    const { retry } = noWait();
+    const seen = [];
+    const picky = async (requested, init = {}) => {
+      const accept = new Headers(init.headers).get('accept') ?? '';
+      seen.push(accept);
+      return accept.split(',').some((type) => type.trim().startsWith('*/*'))
+        ? new Response('{"versions":{"2.2.1":{},"2.3.0-rc1":{}}}', { status: 200 })
+        : new Response('', { status: 406 });
+    };
+    expect(JSON_ACCEPT).toBe('application/json, */*;q=0.8');
+    expect(await sources({}, { fetchImpl: picky, retry }).vault()).toBe('2.2.1');
+    expect(await makeHttp(picky, { retry }).json(url)).toEqual({ versions: { '2.2.1': {}, '2.3.0-rc1': {} } });
+    // One request each: the header, not a retry, is what got the answer.
+    expect(seen).toEqual([JSON_ACCEPT, JSON_ACCEPT]);
   });
 
   it('tries a connection dropped half way through the body again, in the check and in the bump reads', async () => {
