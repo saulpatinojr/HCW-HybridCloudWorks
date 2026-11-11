@@ -165,6 +165,15 @@ describe('validateAndNormalizeUpdateContentItemUpdates', () => {
   });
 });
 
+describe('the address topic (#1628)', () => {
+  it('accepts a word from the list, clears on null or empty, and refuses anything else', () => {
+    expect(validateAndNormalizeUpdateContentItemUpdates({ topic: 'hybrid' })).toMatchObject({ topic: 'hybrid' });
+    expect(validateAndNormalizeUpdateContentItemUpdates({ topic: null })).toMatchObject({ topic: null });
+    expect(validateAndNormalizeUpdateContentItemUpdates({ topic: '' })).toMatchObject({ topic: null });
+    expect(() => validateAndNormalizeUpdateContentItemUpdates({ topic: 'copilot' })).toThrow(/topic must be one of/);
+  });
+});
+
 describe('normalizeContentUpdatesForBlogOnly', () => {
   it('re-resolves publishTarget with the doc type fallback only when present', () => {
     expect(

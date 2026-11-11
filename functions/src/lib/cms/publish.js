@@ -62,6 +62,7 @@ import { authoredMessage, errorCode, errorResponse } from '../http/error-respons
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { buildContentQualityReport, buildImageReadinessReport } from './content-quality.js';
 import { normalizePublishTarget, SUPPORTED_PUBLISH_TARGETS } from './publish-targets.js';
+import { articleSlugFor } from './article-topics.js';
 import { buildInlineImageUpdate, findInlineImageUrls, resolveBodyFields } from './inline-images.js';
 import {
   interviewBodyText,
@@ -121,16 +122,33 @@ export const REHOST_IMAGES_REASON = 'rehost-images';
  */
 export const SET_SLUG_REASON = 'set-slug';
 
+/**
+ * Lowercase words joined by single hyphens, at most 80 characters. Runs of
+ * hyphens collapse and none is left at either end, including after the cut,
+ * so the result always passes the strict address rule (STRICT_SLUG in
+ * scripts/build-content-manifest.mjs). Before #1628 a title like `A - B`
+ * gave `a---b`, and a cut at 80 that landed on a hyphen left a `--` once the
+ * suffix was added.
+ */
 export function slugify(text = '') {
   return String(text)
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '')
     .trim()
-    .replace(/\s+/g, '-')
-    .slice(0, 80);
+    .replace(/[\s-]+/g, '-')
+    .slice(0, 80)
+    .replace(/^-+|-+$/g, '');
 }
 
-const slugSuffix = (id = '') => (id ? String(id).slice(0, 6) : Date.now().toString(36).slice(-6));
+// Lowercase, letters and digits only: a document id mixes cases, and an
+// address must not (#1628).
+const slugSuffix = (id = '') => {
+  const fromId = String(id || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 6);
+  return fromId || Date.now().toString(36).slice(-6);
+};
 
 /**
  * The slug a publish writes. Pure: the caller runs the probe, this decides.
@@ -945,7 +963,13 @@ export function createPublishHandlers({
       // and resolveSlug (which trims) then writes `shared-slug` onto a URL
       // another article already holds: the read says free, the write says
       // taken, and nothing in between notices.
-      const candidate = String((reuse ? existingSlug : slugify(rawTitle)) || '').trim();
+      // A first publish of an article gets `<topic>-<8 id characters>`
+      // (article-topics.js, #1628); other sections keep the title slug.
+      const firstSlug =
+        ctx.curatedSection === 'blog'
+          ? articleSlugFor({ contentData, contentId, provider: ctx.inferredProvider }) || slugify(rawTitle)
+          : slugify(rawTitle);
+      const candidate = String((reuse ? existingSlug : firstSlug) || '').trim();
       // Probed on EVERY publish, to answer one question: does another document
       // already hold this URL? Three did (#400), and the branch that reused a
       // stored slug never asked.

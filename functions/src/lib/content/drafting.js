@@ -15,6 +15,7 @@
  */
 import { pickNextFormat, buildVoiceAndFormatBlock } from './voice.js';
 import { startBudgetClock } from '../ai/time-budget.js';
+import { ARTICLE_TOPICS, isArticleTopic } from '../cms/article-topics.js';
 
 const DEFAULT_DRAFT_INSTRUCTION_PROMPT = `You are generating a high-quality technical draft article for Hybrid Cloud Works. Use the source URL as the primary source. If supporting documents are provided, incorporate them as additional context. Produce a publication-ready title, concise editorial summary, a markdown article draft following the Voice and Format instructions provided separately below, and image prompts tailored to the article.`;
 
@@ -49,6 +50,7 @@ Return strict JSON with keys:
 - summaryPrompt
 - detailsPrompt
 - keyTopics (array of strings)
+- topic (exactly one of: ${ARTICLE_TOPICS.join(', ')}; the single word that best names the article's main subject)
 - suggestedContentType (must be exactly one of: blog, framework, architecture, coder_corner based on the content style)
 
 Context:
@@ -162,6 +164,9 @@ export function createDrafter({ store, ai, env = process.env, signal: defaultSig
     return {
       ...parsed,
       postContent: parsed?.postContent,
+      // The address topic (#1628); anything off the list is dropped, and the
+      // publish step then picks one from keywords.
+      topic: isArticleTopic(parsed?.topic) ? parsed.topic : null,
       aiProvider,
       aiModel: modelOverride || undefined,
       format: format?.key || null,

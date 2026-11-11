@@ -72,6 +72,19 @@ function makeStore(doc = readyDoc(), over = {}) {
 }
 
 describe('pure helpers', () => {
+  it('slugify leaves no run of hyphens and none at either end, even after the cut (#1628)', () => {
+    expect(slugify('A - B')).toBe('a-b');
+    expect(slugify('  -Lead and trail-  ')).toBe('lead-and-trail');
+    // 79 characters then a space: the cut at 80 lands on the hyphen.
+    expect(slugify(`${'a'.repeat(79)} tail`)).toBe('a'.repeat(79));
+    expect(slugify('A - B')).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+  });
+
+  it('a clash suffix is lowercase, so a suffixed slug stays a valid address (#1628)', () => {
+    expect(resolveSlug({ candidate: 'a-title', contentId: 'LSzyB6gbiL', holders: ['other'] })).toBe('a-title-lszyb6');
+    expect(resolveSlug({ candidate: '', contentId: 'LSzyB6gbiL', holders: [] })).toBe('lszyb6');
+  });
+
   it('slugify/toPublicUrl/section mapping match the source', () => {
     expect(slugify('Designing a Hybrid Landing Zone!')).toBe('designing-a-hybrid-landing-zone');
     expect(toPublicUrl('azure/blog/x')).toBe('https://hybridcloudworks.com/azure/blog/x');
@@ -501,7 +514,7 @@ describe('publishContent', () => {
     ['Docker', 'docker'],
     ['VMware', 'vmware'],
     ['Ansible', 'ansible'],
-  ])('publishes a %s blog post at /%s/blog/<slug>', async (provider, segment) => {
+  ])('publishes a %s blog post at /%s/blog/<topic>-<id>', async (provider, segment) => {
     // Before the CMS derived its providers from the site's registry,
     // normalizeProviderName turned each of these into '' and
     // validatePublishMetadata refused the publish.
@@ -532,8 +545,10 @@ describe('publishContent', () => {
 
     const patch = store.patchDoc.mock.calls.find(([c]) => c === 'content')[2];
     const stored = segment.charAt(0).toUpperCase() + segment.slice(1);
-    expect(patch.curatedSubpagePath).toBe(`/${segment}/blog/compose-basics`);
-    expect(patch.publicUrl).toBe(`https://hybridcloudworks.com/${segment}/blog/compose-basics`);
+    // `<topic>-<id>` (#1628): no topic word in "Compose Basics", so the
+    // provider is the word, and the fixture's id is just `c1`.
+    expect(patch.curatedSubpagePath).toBe(`/${segment}/blog/${segment}-c1`);
+    expect(patch.publicUrl).toBe(`https://hybridcloudworks.com/${segment}/blog/${segment}-c1`);
     expect(patch['Cloud Provider']).toBe(stored);
     expect(patch.cloudProvider).toBe(stored);
   });

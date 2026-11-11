@@ -158,7 +158,7 @@ describe("validateDraftFields — an allow-list of the editor fields", () => {
     );
   });
 
-  it("names exactly the editor fields: the eight from the template plus kind and idea origin", () => {
+  it("names exactly the editor fields: the eight from the template plus kind, idea origin and topic", () => {
     expect(DRAFT_FIELDS).toEqual([
       "title",
       "subtitle",
@@ -170,7 +170,17 @@ describe("validateDraftFields — an allow-list of the editor fields", () => {
       "body",
       "kind",
       "ideaOrigin",
+      "topic",
     ]);
+  });
+
+  it("reads the address topic three ways: absent leaves it, empty clears it, a word sets it (#1628)", () => {
+    const base = { title: "T" };
+    expect(validateDraftFields(base).topic).toBeUndefined();
+    expect(validateDraftFields({ ...base, topic: "" }).topic).toBe("");
+    expect(validateDraftFields({ ...base, topic: null }).topic).toBe("");
+    expect(validateDraftFields({ ...base, topic: "hybrid" }).topic).toBe("hybrid");
+    expect(() => validateDraftFields({ ...base, topic: "copilot" })).toThrow(/topic must be one of/);
   });
 
   it.each([

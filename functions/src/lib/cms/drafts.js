@@ -54,6 +54,7 @@ import {
   statusOf,
 } from "./drafts-stage.js";
 import { resolveIdeaOrigin, resolveKind } from "./taxonomy.js";
+import { ARTICLE_TOPICS, isArticleTopic } from "./article-topics.js";
 
 // The stage half lives in ./drafts-stage.js; re-exported so callers import
 // the Drafts stage from one place.
@@ -85,6 +86,7 @@ export const DRAFT_FIELDS = Object.freeze([
   "body",
   "kind",
   "ideaOrigin",
+  "topic",
 ]);
 
 /** What a draft written on the page is until the owner says otherwise. */
@@ -211,7 +213,24 @@ export function validateDraftFields(input) {
     body,
     kind: readTaxonomyId(input.kind, "kind"),
     ideaOrigin: readTaxonomyId(input.ideaOrigin, "ideaOrigin"),
+    topic: readTopic(input.topic),
   };
+}
+
+/**
+ * The address topic (article-topics.js, #1628). Three answers on purpose:
+ * absent (an older page) leaves the stored topic alone, '' clears it so the
+ * publish step picks one, and a word from the list sets it.
+ *
+ * @returns {string|undefined} undefined = leave alone, '' = clear, else the word
+ */
+function readTopic(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return "";
+  if (!isArticleTopic(value)) {
+    fail(`topic must be one of: ${ARTICLE_TOPICS.join(", ")}`);
+  }
+  return value;
 }
 
 /** The document fields the eight editor fields map to — the repository import's names. */
@@ -232,6 +251,9 @@ function documentFields(fields) {
     // sends neither leaves the stored classification alone.
     ...(fields.kind && { kind: fields.kind }),
     ...(fields.ideaOrigin && { ideaOrigin: fields.ideaOrigin }),
+    // Stored as null when cleared, never undefined: patchDoc would delete the
+    // field, and null reads the same ("pick at publish").
+    ...(fields.topic !== undefined && { topic: fields.topic || null }),
     frontMatter: {
       title: fields.title,
       subtitle: fields.subtitle,
@@ -395,6 +417,7 @@ export function toDraftView(doc = {}) {
       body: getPrimaryContentBody(doc),
       kind: resolveKind(doc),
       ideaOrigin: resolveIdeaOrigin(doc),
+      topic: isArticleTopic(doc.topic) ? doc.topic : null,
     },
   };
 }

@@ -30,6 +30,7 @@ import {
   ARTICLE_SLUG,
   STRICT_SLUG,
 } from './build-content-manifest.mjs';
+import { articleSlugFor } from '../functions/src/lib/cms/article-topics.js';
 
 // `dirname(fileURLToPath(...))` rather than `new URL('..', import.meta.url)`:
 // this file declares its own `const URL` below, which shadows the global and
@@ -579,5 +580,20 @@ describe('article slugs: only a safe address becomes a page', () => {
       .map((key) => key.slice('article:'.length));
     expect(slugs.length).toBeGreaterThan(0);
     expect(slugs.filter((slug) => !ARTICLE_SLUG.test(slug))).toEqual([]);
+  });
+});
+
+describe('article addresses after the move to <topic>-<id> (#1628)', () => {
+  it('gives each live article a distinct new address that passes STRICT_SLUG', () => {
+    const committed = JSON.parse(readFileSync(join(REPO, 'frontend', 'data', 'content-manifest.json'), 'utf8'));
+    const articles = Object.entries(committed.data)
+      .filter(([key]) => key.startsWith('article:'))
+      .map(([, doc]) => doc);
+    expect(articles.length).toBeGreaterThan(0);
+    const slugs = articles.map((doc) =>
+      articleSlugFor({ contentData: doc, contentId: doc.id, provider: doc.cloudProvider })
+    );
+    expect(slugs.filter((slug) => !STRICT_SLUG.test(slug))).toEqual([]);
+    expect(new Set(slugs).size).toBe(slugs.length);
   });
 });

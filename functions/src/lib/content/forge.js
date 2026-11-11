@@ -44,6 +44,7 @@ import {
   repairModules,
   scrubDashes,
 } from './forge-pipeline.js';
+import { isArticleTopic } from '../cms/article-topics.js';
 
 /** The source fields a forge run reads, alias-coalesced; `{ error }` when it cannot run. */
 export function resolveForgeSource(contentId, data) {
@@ -423,6 +424,9 @@ export function createForge({
       blogDraft: forged.forgedContent,
       content: forged.forgedContent,
       keyTopics: Array.isArray(draft.keyTopics) ? draft.keyTopics.slice(0, 12) : [],
+      // The AI's address topic (#1628), only when it is on the list and no
+      // editor has chosen one already.
+      ...(isArticleTopic(draft.topic) && !isArticleTopic(data?.topic) && { topic: draft.topic }),
       // Series metadata (backlog #5): the published posts the appended
       // "Related reading" module links to; absent when nothing related.
       ...(Array.isArray(forged.relatedContentIds) && forged.relatedContentIds.length

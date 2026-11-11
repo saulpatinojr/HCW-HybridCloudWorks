@@ -5,7 +5,8 @@
  * relies on.
  */
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { createDrafter } from './drafting.js';
+import { buildDraftPrompt, createDrafter } from './drafting.js';
+import { ARTICLE_TOPICS } from '../cms/article-topics.js';
 
 const reply = { title: 'T', summary: 'S', postContent: '# P', keyTopics: [] };
 const aiReturning = () => ({
@@ -44,5 +45,28 @@ describe('createDrafter: time budget', () => {
       markdown: 'body',
     });
     expect(ai.generateJsonResponse.mock.calls[0][0].budgetMs).toBeUndefined();
+  });
+});
+
+describe('createDrafter: the address topic (#1628)', () => {
+  it('asks for one word from the list', () => {
+    const prompt = buildDraftPrompt({ url: 'https://a.example/x', instructionPrompt: '' });
+    expect(prompt).toContain(`topic (exactly one of: ${ARTICLE_TOPICS.join(', ')};`);
+  });
+
+  it.each([
+    ['hybrid', 'hybrid'],
+    ['Copilot', null],
+    [undefined, null],
+  ])('keeps a topic on the list and drops anything else (%s → %s)', async (given, kept) => {
+    const ai = {
+      generateJsonResponse: vi.fn(async () => ({ ...reply, topic: given })),
+      getActiveAiProvider: () => 'gemini',
+    };
+    const draft = await createDrafter({ store: { queryDocs: async () => [] }, ai, env: {} }).generateDraft({
+      url: 'https://a.example/x',
+      markdown: 'body',
+    });
+    expect(draft.topic).toBe(kept);
   });
 });

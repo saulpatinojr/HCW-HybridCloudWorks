@@ -27,6 +27,7 @@ import { AuthoredError } from "../http/error-response.js";
 import { PROVIDER_ALIASES } from "../public-reads.js";
 import { normalizePublishTarget } from "./publish-targets.js";
 import { checkInterviewFields } from "../interviews/sibling-modules.js";
+import { ARTICLE_TOPICS, isArticleTopic } from "./article-topics.js";
 
 /**
  * A refusal written here for the editor: every sentence this module throws.
@@ -385,6 +386,20 @@ function normalizeKeyTopicsField(normalized, _field, value) {
     .filter(Boolean);
 }
 
+/** The address topic (article-topics.js, #1628): a word from the list, or null to clear. */
+function normalizeTopicField(normalized, _field, value) {
+  if (value === null || value === "") {
+    normalized.topic = null;
+    return;
+  }
+  if (!isArticleTopic(value)) {
+    throw new ContentValidationError(
+      `topic must be one of: ${ARTICLE_TOPICS.join(", ")}`,
+    );
+  }
+  normalized.topic = value;
+}
+
 function normalizeFrameworkSourceUrlsField(normalized, _field, value) {
   const urls =
     assertStringArray(value, "frameworkSourceUrls", {
@@ -416,6 +431,7 @@ const KNOWN_FIELD_NORMALIZERS = [
   [isOneOf("kind", "ideaOrigin"), normalizeTaxonomyIdField],
   [isOneOf("tags", "Tags"), normalizeTagsField],
   [isOneOf("keyTopics"), normalizeKeyTopicsField],
+  [isOneOf("topic"), normalizeTopicField],
   [isOneOf("frameworkSourceUrls"), normalizeFrameworkSourceUrlsField],
 ];
 
