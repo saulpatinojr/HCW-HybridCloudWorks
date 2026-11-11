@@ -333,6 +333,9 @@ describe('hasPublishedAddress', () => {
     expect(
       hasPublishedAddress({ contentStatus: 'inspected', curatedSubpagePath: '/azure/blog/ai-c1' })
     ).toBe(true);
+    expect(hasPublishedAddress({ contentStatus: 'approved', Live: true })).toBe(true);
+    expect(hasPublishedAddress({ contentStatus: 'approved', Status: 'Live' })).toBe(true);
+    expect(hasPublishedAddress({ contentStatus: 'published_blog' })).toBe(true);
     expect(hasPublishedAddress({ contentStatus: 'inspected' })).toBe(false);
     expect(hasPublishedAddress(undefined)).toBe(false);
   });

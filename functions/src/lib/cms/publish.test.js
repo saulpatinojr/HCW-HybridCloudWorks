@@ -606,6 +606,9 @@ describe('publishContent', () => {
 
   it.each([
     ['an article published before, unpublished, then approved again', { curatedSubpagePath: '/azure/blog/old-title-LSzyB6' }, 'old-title-LSzyB6'],
+    ['a legacy article served as Live with no curated path', { Live: true }, 'old-title-LSzyB6'],
+    ["a legacy article served under Status 'Live'", { Status: 'Live' }, 'old-title-LSzyB6'],
+    ['a legacy article with a published_blog status', { contentStatus: 'published_blog' }, 'old-title-LSzyB6'],
     ['a first publish with a title Slug stored by ingest', {}, 'security-c1'],
   ])('%s (#1628)', async (_label, over, expected) => {
     // Unpublishing sets the status back to `inspected`, so the next publish is

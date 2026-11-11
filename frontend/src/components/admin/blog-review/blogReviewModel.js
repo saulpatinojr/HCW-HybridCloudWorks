@@ -184,12 +184,23 @@ export function deriveScheduleFields(blog) {
 }
 
 /**
- * True once the record has been published: the server keeps its stored
- * address from then on, even after an unpublish (#1628), and only a publish
- * writes `curatedSubpagePath`.
+ * True once the record is or has been public: the server then keeps its
+ * stored address for good (#1628). The same test as the server's publish
+ * step: a published or legacy `published_*` status, `Live: true` or
+ * `Status: 'Live'` (isPublicDocument in functions/src/lib/public-reads.js),
+ * or a `curatedSubpagePath`, which only a publish writes and an unpublish
+ * leaves in place.
  */
 export function hasPublishedAddress(blog) {
-  return blog?.contentStatus === 'published' || Boolean(blog?.curatedSubpagePath);
+  if (!blog) return false;
+  const status = String(blog.contentStatus || '');
+  return (
+    status === 'published' ||
+    status.startsWith('published_') ||
+    blog.Live === true ||
+    blog.Status === 'Live' ||
+    Boolean(blog.curatedSubpagePath)
+  );
 }
 
 /**

@@ -63,6 +63,7 @@ import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { buildContentQualityReport, buildImageReadinessReport } from './content-quality.js';
 import { normalizePublishTarget, SUPPORTED_PUBLISH_TARGETS } from './publish-targets.js';
 import { articleSlugFor } from './article-topics.js';
+import { isPublicDocument } from '../public-reads.js';
 import { buildInlineImageUpdate, findInlineImageUrls, resolveBodyFields } from './inline-images.js';
 import {
   interviewBodyText,
@@ -955,12 +956,16 @@ export function createPublishHandlers({
       // A republish keeps the URL it already serves; anything else is a first
       // assignment. `slug || Slug` because either field can be the one the
       // manifest routed on — see slugHolders.
-      // An article that was published once and then unpublished keeps its
-      // address too: unpublishing sets the status back to `inspected`, but
-      // only a publish writes `curatedSubpagePath`, and nothing clears it.
-      // Without this, publishing it again would build a new address and
-      // break every link to the old one (#1628 review).
-      const publishedBefore = isRepublish || Boolean(contentData.curatedSubpagePath);
+      // A document that is public now, or has been, keeps its address:
+      //  - unpublishing sets the status back to `inspected`, but only a publish
+      //    writes `curatedSubpagePath`, and nothing clears it;
+      //  - a legacy article can be served (`Live: true`, `Status: 'Live'`, a
+      //    `published_*` status: isPublicDocument, the public reads' own test)
+      //    with no curated path at all.
+      // Without this, its next publish would build a new address and break
+      // every link to the old one (#1628 reviews).
+      const publishedBefore =
+        isRepublish || Boolean(contentData.curatedSubpagePath) || isPublicDocument(contentData);
       const reuse = Boolean(publishedBefore && existingSlug);
       // NORMALISED ONCE, HERE, because the probe and the write have to be about
       // the same string. `slugify` already trims, but a STORED slug need not —
