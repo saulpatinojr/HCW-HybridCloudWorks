@@ -724,13 +724,19 @@ describe('the frontend unit suite and the browser suites run as two shards each 
     expect(test.run).toBe('npm run test:shard -- --shard="${SHARD}/2"');
     // The script holds the flags: coverage into a blob, and every threshold
     // off for the shard, because vitest checks a shard's coverage like any
-    // other run's and half a suite is always under the ratchet.
+    // other run's and half a suite is always under the ratchet. The `dot`
+    // reporter beside `blob` is what names a failing test in the job log:
+    // the blob reporter alone prints none, so a red shard said only "exit 1"
+    // (#1679).
     const scripts = JSON.parse(readFileSync(join(REPO, 'frontend', 'package.json'), 'utf8')).scripts;
     expect(scripts['test:shard']).toBe(
-      'vitest run --coverage --reporter=blob --coverage.thresholds.autoUpdate=false --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0 --testTimeout=30000 --hookTimeout=60000'
+      'vitest run --coverage --reporter=blob --reporter=dot --coverage.thresholds.autoUpdate=false --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0 --testTimeout=30000 --hookTimeout=60000'
     );
     expect(scripts['test:merge']).toBe('vitest run --merge-reports --coverage');
     const keep = unit.steps.find((step) => step.name === 'Keep the blob report for the merge');
+    // Kept when the tests failed too, so a red shard's results can still be
+    // downloaded and read (#1679).
+    expect(keep.lines).toContain('        if: ${{ !cancelled() }}');
     expect(keep.lines).toContain('          name: vitest-blob-${{ matrix.shard }}');
     expect(keep.lines).toContain('          path: frontend/.vitest/blob/');
     expect(keep.lines).toContain('          if-no-files-found: error');
