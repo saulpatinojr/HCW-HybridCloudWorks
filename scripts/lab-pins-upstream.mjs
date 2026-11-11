@@ -145,9 +145,10 @@ export const retryableStatus = (status) => status >= 500 || status === 406;
  * it. A 406 means "I cannot give you any type you said you accept".
  * releases.hashicorp.com serves its indexes as
  * `application/vnd+hashicorp.releases-api.v0+json`, and some of its edges
- * refuse a request that accepts `application/json` alone: on 2026-11-10 at
- * 23:59 UTC all three tries of Vault's index got 406 and the weekly run went
- * red, while a request that also accepted any type answered 200 (#1677). The
+ * (the content-delivery network's servers) refuse a request that accepts
+ * `application/json` alone: on 2026-11-10 at 23:59 UTC all three tries of
+ * Vault's index got 406 and a run of the weekly check went red, while the
+ * header below answered 200 (#1677). The
  * retries above stay for the other causes; this removes the reason to need
  * them here. The body is still parsed and checked as JSON (parseJsonFrom),
  * so accepting any type loosens nothing.
