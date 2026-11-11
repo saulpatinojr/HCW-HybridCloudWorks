@@ -52,6 +52,7 @@
  * CLOUDFLARE_CADDY_TOKEN_NAME and TFC_TOKEN (secret); ENV below says what each
  * one does.
  */
+import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
@@ -71,6 +72,8 @@ export const PAGE_LIMIT = 1000;
 export const MAX_PAGES = 20;
 /** The workflow's issue title starts with this; the date follows. */
 export const ISSUE_TITLE_PREFIX = 'Cloudflare DNS audit: unexpected record change';
+/** How the hidden line that ends a report with an UNEXPECTED change starts (#1681). */
+export const FINDINGS_MARKER = '<!-- cloudflare-dns-audit findings:';
 
 /** Environment variable names, and what each is for. */
 export const ENV = {
@@ -682,6 +685,26 @@ const cell = (text) =>
     .replace(/\r?\n/g, ' ')
     .replace(/`/g, "'");
 
+/**
+ * The hidden last line of a report with an UNEXPECTED change (#1681): one
+ * SHA-256 per unexpected change, of its audit-log entry id, sorted and
+ * space-separated. The workflow comments on the open issue only when one of
+ * these is in none of the reports the workflow already posted there. Two
+ * daily windows overlap by two hours, so one edit can be read by two runs,
+ * alone or beside edits the earlier run also saw; without this it would be
+ * reported twice. An entry with no id stands in as its time, action, type and
+ * name. Hashed, not listed, because a record name is text the actor chose and
+ * could close the HTML comment. Empty when nothing is UNEXPECTED.
+ */
+export function findingsLine(judged) {
+  const keys = judged
+    .filter((j) => j.verdict === 'UNEXPECTED')
+    .map((j) => j.id || [j.time, j.actionType, j.recordType, j.recordName].join('|'));
+  if (keys.length === 0) return '';
+  const hashes = [...new Set(keys.map((k) => createHash('sha256').update(k).digest('hex')))].sort();
+  return `${FINDINGS_MARKER} ${hashes.join(' ')} -->`;
+}
+
 /** The Markdown the workflow writes to the job summary and, on exit 2, the issue. */
 export function renderReport({ window, entries, pages, judged, settings }) {
   const unexpected = judged.filter((j) => j.verdict === 'UNEXPECTED');
@@ -732,6 +755,8 @@ export function renderReport({ window, entries, pages, judged, settings }) {
     lines.push('');
   }
   lines.push('Record contents are not read into this report by design; the dashboard entry has them.', '');
+  const findings = findingsLine(judged);
+  if (findings) lines.push(findings, '');
   return lines.join('\n');
 }
 

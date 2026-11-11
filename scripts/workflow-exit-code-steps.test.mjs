@@ -165,7 +165,13 @@ describe('the two fixed steps: their shape', () => {
     const drill = steps.find((step) => step.name === 'Read the Drills table');
     expect(drill.id).toBe('drill');
     const after = steps.slice(steps.indexOf(drill) + 1);
-    expect(after.map((step) => step.if)).toEqual(["steps.drill.outputs.exit != '0'", "steps.drill.outputs.exit != '0'"]);
+    // Since #1681 the issue step runs on every exit, so a current drill (0)
+    // can close the issue; it reads the exit from env, and its own runs are in
+    // check-drill-age-steps.test.mjs. The red run still keys on the output.
+    expect(after.map((step) => step.name)).toEqual(['Open, update or close the drill issue', 'Fail the run while the drill is overdue or unreadable']);
+    expect(after[0].if).toBeUndefined();
+    expect(after[0].env.DRILL_EXIT).toBe('${{ steps.drill.outputs.exit }}');
+    expect(after[1].if).toBe("steps.drill.outputs.exit != '0'");
   });
 });
 
