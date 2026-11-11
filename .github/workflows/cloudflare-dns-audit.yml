@@ -177,10 +177,15 @@ jobs:
           if [ -s "${RUNNER_TEMP}/dns-audit.md" ]; then cat "${RUNNER_TEMP}/dns-audit.md" >> "$GITHUB_STEP_SUMMARY"; fi
           exit 0
 
-      # One issue per unexpected change, kept current: created when none with
-      # the title prefix is open, commented on when one is. The prefix is the
-      # search key and the script exports it (ISSUE_TITLE_PREFIX); the date
-      # follows it in the title of a new issue.
+      # One issue per unexpected change, kept current: created when none is
+      # open, commented on when one is. It is found again by the `Security`
+      # label plus a title that starts with the exact prefix, read from the
+      # issue list rather than from search, which is fuzzy and could pick
+      # another issue with similar words (#1682). The date follows the prefix
+      # in the title of a new issue. The workflow never closes it, on purpose:
+      # an unexpected change is a possible token compromise, and a quiet day
+      # after it says nothing about what the change did. A person reads it
+      # and closes it.
       # A scheduled run always escalates; a manual run with `open_issue` off
       # only reports (the summary carries the table and the entries' shape).
       - name: Open or update the issue on an unexpected change
@@ -200,7 +205,7 @@ jobs:
             echo
             echo "**What this means:** a DNS record in \`hybridcloudworks.com\` was created, updated or deleted by an actor, or on a record, that the allowlist in \`scripts/cloudflare-dns-audit.mjs\` does not name. Treat it as the token compromise ADR 0032 accepted the risk of until shown otherwise: open the entry in the Cloudflare audit log, read what was written, and follow docs/runbooks/edge-dns-verification.md, \"The daily DNS audit\" (and docs/runbooks/dns-token-stolen.md when it was the Caddy or Terraform token). An edit that turns out to be legitimate is a new allowlist entry with its reason, in a reviewed pull request, never a widened one."
           } > "${RUNNER_TEMP}/issue.md"
-          existing=$(gh issue list --repo "$REPO" --state open --search "\"${prefix}\" in:title" --json number --jq '.[0].number // empty')
+          existing=$(gh issue list --repo "$REPO" --state open --label Security --limit 200 --json number,title | jq -r --arg prefix "$prefix" '[.[] | select(.title | startswith($prefix))][0].number // empty')
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/issue.md"
             echo "::warning::Unexpected DNS-record change; commented on #${existing}."

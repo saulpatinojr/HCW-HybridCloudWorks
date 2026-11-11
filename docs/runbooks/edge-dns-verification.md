@@ -397,7 +397,9 @@ says which: a missing secret or variable, an expired token (`HTTP 401` or
 **What an issue from it means.** The workflow opens
 `Cloudflare DNS audit: unexpected record change (<date>)`, labelled
 `Security` and `live-check`, and comments on it rather than opening another
-while one is open. Each UNEXPECTED row names the time, the actor (a token by
+while one is open (it finds that issue by the `Security` label and the title,
+#1682). It never closes the issue itself: close it by hand once the steps
+below are done. Each UNEXPECTED row names the time, the actor (a token by
 name, a dashboard user by masked e-mail, with the client address), the
 action, the record's type and name, and the audit log entry id. Record
 contents are not in the report by design. Then:

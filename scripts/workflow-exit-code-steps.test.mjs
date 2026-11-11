@@ -165,7 +165,8 @@ describe('the two fixed steps: their shape', () => {
     const drill = steps.find((step) => step.name === 'Read the Drills table');
     expect(drill.id).toBe('drill');
     const after = steps.slice(steps.indexOf(drill) + 1);
-    expect(after.map((step) => step.if)).toEqual(["steps.drill.outputs.exit != '0'", "steps.drill.outputs.exit != '0'"]);
+    // The issue step runs on every recorded exit, so a current drill closes the issue (#1682); the red run only on a non-zero one.
+    expect(after.map((step) => step.if)).toEqual(["steps.drill.outputs.exit != ''", "steps.drill.outputs.exit != '0'"]);
   });
 });
 
