@@ -77,6 +77,17 @@ trips. The session is the orchestrator of a team of agents and does the work.
   workflows, so the App repositories are added to the work board by
   `C:\Users\saulp\.hcw\Sync-AppTicketsToBoard.ps1`, run hourly by the
   `HCW-board-sync` scheduled task).
+  A cloud session (Claude Code on the web, claude.ai/code) has two more
+  limits, because it signs in through the Claude GitHub App rather than the
+  owner's own `gh` sign-in. Both were seen on 2026-11-11
+  ([#1683](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1683)).
+  First, GraphQL is refused: every GraphQL call, `gh pr view --json`
+  included, gets HTTP 403 "GitHub GraphQL is not available from Claude Code
+  sessions". Use the REST API instead, and for review threads the routes
+  that error names (`/pulls/{n}/ccr/review_threads`,
+  `/pulls/{n}/ccr/comments/{id}/resolve`). Second, code scanning alerts
+  cannot be read; see "Code scanning's alerts are read on `main`" below.
+  Sessions on the owner's computer have neither limit.
 - **Use the team.** Hand each ticket, review, build and test run to the
   matching agent (see "Use the specialist agents"), brief it fully, run
   independent ones in parallel, and check what comes back yourself before you
@@ -528,7 +539,18 @@ so it is recorded here, where every session reads it.
     then the line read `refs/pull/<n>/merge`, the ref the PR threads came
     from. The query goes in the URL: `-f state=open` beside `--paginate`
     silently returned nothing for Dependabot alerts on 2026-09-29, while
-    three were open.
+    three were open. **A cloud session cannot read the list**: the alerts
+    and analyses endpoints answer HTTP 403 "Resource not accessible by
+    integration", a push to `main` gets no code-scanning check run, and the
+    CodeQL run keeps no SARIF artifact (the results file), so there is no
+    other way in
+    ([#1683](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1683)).
+    There, check that all three `Analyze` jobs of the merge's run are
+    green, then put a line in the closing summary's "your next steps" that
+    links the
+    [code scanning page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/security/code-scanning)
+    and gives the merge time, so the owner can look for a newer alert. Do
+    not keep retrying the call.
 
   Then work the loop: fix every recommendation, push, reply on each thread
   naming the commit, resolve it, and ask for another review of the new head.
