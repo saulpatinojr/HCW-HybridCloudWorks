@@ -279,9 +279,9 @@ jobs:
       # week, so commenting on every run would post dozens of identical
       # comments. The report ends with a hidden line naming the findings
       # (`findingsKey` in the script, one `path:verdict` each); a comment is
-      # posted only when the newest text in the issue that carries such a line
-      # does not carry this exact one. A comment from a person in between does
-      # not count as the issue's last report.
+      # posted only when the newest report the workflow itself posted
+      # (`github-actions[bot]`) does not carry this exact one. Nobody else's
+      # text counts as the issue's last report (#1688).
       - name: Open, update or close the workflow-health issue
         if: steps.health.outputs.exit == '0' || steps.health.outputs.exit == '1'
         env:
@@ -326,9 +326,18 @@ jobs:
             gh issue create --repo "$REPO" --title "$title" --label "$label" --body-file "${RUNNER_TEMP}/health-issue.md"
             exit 0
           fi
-          # `strings` drops a null body (an issue opened by hand with none),
-          # which `contains` would otherwise fail on and turn this step red.
-          reported=$(gh issue view "$existing" --repo "$REPO" --json body,comments --jq '[.body, .comments[].body] | map(strings | select(contains("<!-- workflow-health findings:"))) | last // ""')
+          # The findings lines of the reports the workflow itself posted on
+          # the issue (#1688), newest last: its body if the workflow opened it,
+          # then its own comments, every page, read through REST, where the
+          # workflow is `github-actions[bot]`. The repository is public and
+          # anyone can comment, so a findings line copied into someone else's
+          # comment must not make these findings look reported already. Only
+          # whole lines that start with the marker count. If they cannot be
+          # read, the report is posted: a repeat costs less than a miss.
+          if ! reported=$( { gh api "repos/${REPO}/issues/${existing}" --jq 'select(.user.login == "github-actions[bot]") | (.body // "") | split("\n")[] | select(startswith("<!-- workflow-health findings:"))' && gh api "repos/${REPO}/issues/${existing}/comments?per_page=100" --paginate --jq '.[] | select(.user.login == "github-actions[bot]") | (.body // "") | split("\n")[] | select(startswith("<!-- workflow-health findings:"))'; } | tail -n 1 ); then
+            echo "::warning::The earlier reports on #${existing} could not be read, so this one is posted."
+            reported=""
+          fi
           # A plain text comparison (the quoted key is matched literally), not
           # `if grep`, which this repository forbids in workflows because a
           # grep error reads as "no match" (scripts/iac-workflow-steps.test.mjs).

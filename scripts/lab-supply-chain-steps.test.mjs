@@ -448,7 +448,7 @@ describe.skipIf(!runnable)('lab-supply-chain.yml, check: the pin check step reco
 // The weekly report issue (#1673): found by label and exact title, closed on a
 // clean week, and commented on only when the findings changed. The step runs
 // for real under `bash -e` (as GitHub runs it) against a stand-in `gh` that
-// records each call and answers `issue list` and `issue view` with what the
+// records each call and answers `issue list` and the REST reads of the issue with what the
 // test set, applying any --jq with the real jq.
 const jqReady = spawnSync('jq', ['--version'], { encoding: 'utf8' }).status === 0;
 
@@ -474,7 +474,8 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the report 
         'for i in "${!args[@]}"; do [ "${args[$i]}" = "--jq" ] && expr="${args[$((i + 1))]}"; done',
         'case "$1 $2" in',
         '  "issue list") [ -n "$FAKE_LIST_FAILS" ] && exit 1; answer="$FAKE_LIST" ;;',
-        '  "issue view") answer="$FAKE_VIEW" ;;',
+        '  "api "*/comments*) [ -n "$FAKE_VIEW_FAILS" ] && exit 1; answer=$(jq -c ".comments" <<< "$FAKE_VIEW") ;;',
+        '  "api "*/issues/*) [ -n "$FAKE_ISSUE_FAILS" ] && exit 1; answer="$FAKE_VIEW" ;;',
         '  *) exit 0 ;;',
         'esac',
         'if [ -n "$expr" ]; then jq -r "$expr" <<< "$answer"; else printf "%s\\n" "$answer"; fi',
@@ -485,10 +486,14 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the report 
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  const view = (body, ...comments) => JSON.stringify({ body, comments: comments.map((c) => ({ body: c })) });
+  // What the REST API answers for the open issue (#1688): the issue, with its
+  // body and who wrote it, and its comments, oldest first. A string is text
+  // the workflow posted (`github-actions[bot]`); `{ body, by }` is someone else's.
+  const post = (c) => (c !== null && typeof c === 'object' ? { body: c.body, user: { login: c.by } } : { body: c, user: { login: 'github-actions[bot]' } });
+  const view = (body, ...comments) => JSON.stringify({ ...post(body), comments: comments.map(post) });
 
   /** Runs the step; returns its status, output, the gh calls that write, and the report it wrote. */
-  function issueStep({ pins = '1', scan = '1', notes = 'false', list = '[]', viewed = view(''), runUrl = RUN_URL, scanText = SCAN, ref = 'refs/heads/main', listFails = false } = {}) {
+  function issueStep({ pins = '1', scan = '1', notes = 'false', list = '[]', viewed = view(''), runUrl = RUN_URL, scanText = SCAN, ref = 'refs/heads/main', listFails = false, viewFails = false, issueFails = false } = {}) {
     const temp = join(dir, `run-${++runs}`);
     mkdirSync(temp);
     writeFileSync(join(temp, 'pins.md'), '| Component | Pinned | Newest stable | Status |\n| --- | --- | --- | --- |\n| Coder | 2.39.0 | 2.39.1 | BEHIND |\n');
@@ -512,6 +517,8 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the report 
         BUMP_SETS: '["host"]',
         GITHUB_REF: ref,
         FAKE_LIST_FAILS: listFails ? '1' : '',
+        FAKE_VIEW_FAILS: viewFails ? '1' : '',
+        FAKE_ISSUE_FAILS: issueFails ? '1' : '',
       },
     });
     const calls = readFileSync(join(temp, 'gh.log'), 'utf8').split('\n').filter(Boolean);
@@ -560,6 +567,49 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the report 
     expect(same.writes).toEqual([]);
     const changed = issueStep({ list: OPEN, viewed: view(`first\n${key}`, 'later\n<!-- lab-supply-chain findings: ' + 'f'.repeat(64) + ' -->') });
     expect(changed.writes[0]).toMatch(/^issue\|comment\|12\|/);
+    expect(changed.stdout).not.toContain('could not be read');
+  });
+
+  it('a findings line copied into someone else\'s comment does not make the findings look reported (#1688)', () => {
+    const key = keyOf(issueStep().report);
+    const got = issueStep({ list: OPEN, viewed: view({ body: 'opened by hand', by: 'someone-else' }, { body: `copied\n${key}`, by: 'someone-else' }) });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('a key quoted inside a line of an earlier report, not on a line of its own, does not count (#1688)', () => {
+    const key = keyOf(issueStep().report);
+    const got = issueStep({ list: OPEN, viewed: view(`| note | ${key} |`) });
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('reads the earlier reports through REST, every page of comments (#1688)', () => {
+    const got = issueStep({ list: OPEN });
+    const reads = got.calls.filter((c) => c.startsWith('api|'));
+    expect(reads[0]).toMatch(/^api\|repos\/saulpatinojr\/HCW-HybridCloudWorks\/issues\/12\|--jq\|/);
+    expect(reads[1]).toMatch(/^api\|repos\/saulpatinojr\/HCW-HybridCloudWorks\/issues\/12\/comments\?per_page=100\|--paginate\|--jq\|/);
+    expect(got.calls.join('\n')).not.toContain('issue|view|');
+  });
+
+  it.each([
+    ['its comments', { viewFails: true }],
+    ['the issue itself', { issueFails: true }],
+  ])('earlier reports that cannot be read (%s): comments anyway, and says so (#1688)', (_what, fails) => {
+    const key = keyOf(issueStep().report);
+    const got = issueStep({ list: OPEN, viewed: view(`first\n${key}`), ...fails });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+    expect(got.stdout).toContain('could not be read, so this one is posted');
+  });
+
+  it('the same findings as the newest of several reports: no new comment, read without the fallback (#1688)', () => {
+    // An older report with other findings, then the newest with these: the
+    // step must compare with the newest, and say nothing.
+    const key = keyOf(issueStep().report);
+    const got = issueStep({ list: OPEN, viewed: view(`old\n<!-- lab-supply-chain findings: ${'0'.repeat(64)} -->`, `newest\n${key}`) });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([]);
+    expect(got.stdout).not.toContain('could not be read');
   });
 
   it('an issue opened by hand with no body (null) is read as no report yet', () => {

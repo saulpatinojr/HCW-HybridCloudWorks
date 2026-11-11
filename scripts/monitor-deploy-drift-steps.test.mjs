@@ -258,7 +258,7 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
     bin = `${work}/bin`;
     mkdirSync(bin);
     // A stand-in for gh: it records each call, one line of arguments joined by
-    // `|`, and answers `issue list` and `issue view` with what the test set.
+    // `|`, and answers `issue list` and the REST reads of the issue with what the test set.
     // When asked with --jq, it applies that expression with the real jq, so
     // the step's own filter is what is tested (gh uses gojq, which reads
     // these expressions the same way).
@@ -272,7 +272,8 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
         'for i in "${!args[@]}"; do [ "${args[$i]}" = "--jq" ] && expr="${args[$((i + 1))]}"; done',
         'case "$1 $2" in',
         '  "issue list") answer="$FAKE_LIST" ;;',
-        '  "issue view") answer="$FAKE_VIEW" ;;',
+        '  "api "*/comments*) [ -n "$FAKE_VIEW_FAILS" ] && exit 1; answer=$(jq -c ".comments" <<< "$FAKE_VIEW") ;;',
+        '  "api "*/issues/*) [ -n "$FAKE_ISSUE_FAILS" ] && exit 1; answer="$FAKE_VIEW" ;;',
         '  *) exit 0 ;;',
         'esac',
         'if [ -n "$expr" ]; then jq -r "$expr" <<< "$answer"; else printf "%s\\n" "$answer"; fi',
@@ -283,11 +284,14 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
   });
   afterAll(() => rmSync(work, { recursive: true, force: true }));
 
-  /** An `issue view --json body,comments` answer: the body, then the comments, oldest first. */
-  const view = (body, ...comments) => JSON.stringify({ body, comments: comments.map((c) => ({ body: c })) });
+  // What the REST API answers for the open issue (#1688): the issue, with its
+  // body and who wrote it, and its comments, oldest first. A string is text
+  // the workflow posted (`github-actions[bot]`); `{ body, by }` is someone else's.
+  const post = (c) => (c !== null && typeof c === 'object' ? { body: c.body, user: { login: c.by } } : { body: c, user: { login: 'github-actions[bot]' } });
+  const view = (body, ...comments) => JSON.stringify({ ...post(body), comments: comments.map(post) });
 
   /** Runs the issue step with the health step's exit code and what `gh` should answer. */
-  function runIssue(healthExit, { list = '[]', viewed = view(''), report = REPORT } = {}) {
+  function runIssue(healthExit, { list = '[]', viewed = view(''), report = REPORT, viewFails = false, issueFails = false } = {}) {
     const dir = `${work}/run-${++runs}`;
     mkdirSync(dir);
     writeFileSync(`${dir}/health.md`, report);
@@ -301,6 +305,8 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
         GH_LOG: `${dir}/gh.log`,
         FAKE_LIST: list,
         FAKE_VIEW: viewed,
+        FAKE_VIEW_FAILS: viewFails ? '1' : '',
+        FAKE_ISSUE_FAILS: issueFails ? '1' : '',
         GH_TOKEN: 'not-a-real-token',
         REPO: 'saulpatinojr/HCW-HybridCloudWorks',
         RUN_URL,
@@ -309,7 +315,7 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
       encoding: 'utf8',
     });
     const calls = readFileSync(`${dir}/gh.log`, 'utf8').split('\n').filter(Boolean);
-    const writes = calls.filter((c) => !/^issue\|(list|view)\|/.test(c));
+    const writes = calls.filter((c) => !/^issue\|list\|/.test(c) && !/^api\|repos\//.test(c));
     return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls, writes, dir };
   }
 
@@ -355,6 +361,7 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
     });
     expect(got.writes).toHaveLength(1);
     expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+    expect(got.stdout).not.toContain('could not be read');
   });
 
   it('an issue opened by hand with no body (null) is read as no report yet, not a failed step', () => {
@@ -369,6 +376,42 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
     expect(got.status, got.stderr).toBe(0);
     expect(got.writes).toHaveLength(1);
     expect(got.writes[0]).toMatch(/^issue\|create\|/);
+  });
+
+  it('a findings line copied into someone else\'s comment does not make the findings look reported (#1688)', () => {
+    const got = runIssue(1, { list: OPEN, viewed: view({ body: 'opened by hand', by: 'someone-else' }, { body: `copied\n${KEY}`, by: 'someone-else' }) });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toHaveLength(1);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('a key quoted inside a line of an earlier report, not on a line of its own, does not count (#1688)', () => {
+    const got = runIssue(1, { list: OPEN, viewed: view(`see ${KEY} above`) });
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('reads the earlier reports through REST, every page of comments (#1688)', () => {
+    const got = runIssue(1, { list: OPEN });
+    const reads = got.calls.filter((c) => c.startsWith('api|'));
+    expect(reads[0]).toMatch(/^api\|repos\/saulpatinojr\/HCW-HybridCloudWorks\/issues\/12\|--jq\|/);
+    expect(reads[1]).toMatch(/^api\|repos\/saulpatinojr\/HCW-HybridCloudWorks\/issues\/12\/comments\?per_page=100\|--paginate\|--jq\|/);
+  });
+
+  it.each([
+    ['its comments', { viewFails: true }],
+    ['the issue itself', { issueFails: true }],
+  ])('earlier reports that cannot be read (%s): comments anyway, and says so (#1688)', (_what, fails) => {
+    const got = runIssue(1, { list: OPEN, viewed: view(`first\n${KEY}`), ...fails });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+    expect(got.stdout).toContain('could not be read, so this one is posted');
+  });
+
+  it('the same findings as the newest of several reports: no new comment, read without the fallback (#1688)', () => {
+    const got = runIssue(1, { list: OPEN, viewed: view('old\n<!-- workflow-health findings: .github/workflows/other.yml:broken -->', `newest\n${KEY}`) });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([]);
+    expect(got.stdout).not.toContain('could not be read');
   });
 
   it('a finding the open issue does not carry yet: comments on it', () => {
