@@ -10,6 +10,7 @@
  */
 import { ADMIN_ROUTES } from '@/config/admin';
 import { postJSON } from '@/lib/api';
+import { isArticleTopic } from '@/lib/articleTopics';
 import { ensureTldrSectionAtEnd } from '@/lib/contentDraft';
 import { getPublishTargetForType, getPublicSectionForTarget } from '@/lib/contentModel';
 
@@ -101,6 +102,7 @@ export function buildContentCreatePayload({
   draftSummary,
   draftContent,
   draftTopics,
+  draftTopic,
   summaryPrompt,
   detailsPrompt,
   publishedDate,
@@ -145,6 +147,9 @@ export function buildContentCreatePayload({
     content: normalizedContent,
     postContent: normalizedContent,
     keyTopics: draftTopics,
+    // The address topic (#1628), only when it is one of the list; absent,
+    // the server picks one at publish.
+    ...(isArticleTopic(draftTopic) && { topic: draftTopic }),
     imagePromptSeed: summaryPrompt,
     imagePromptDetails: detailsPrompt,
     summaryPrompt,
@@ -193,6 +198,7 @@ export async function persistContentItem(state) {
       draftSummary: state.draftSummary,
       draftContent: state.draftContent,
       draftTopics: state.draftTopics,
+      draftTopic: state.draftTopic,
       summaryPrompt: state.summaryPrompt,
       detailsPrompt: state.detailsPrompt,
       publishedDate: state.publishedDate,

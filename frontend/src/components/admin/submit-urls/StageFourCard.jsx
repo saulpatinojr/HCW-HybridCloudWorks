@@ -213,6 +213,7 @@ export default function StageFourCard({
   draftReady,
   insertSectionBlock,
   draftTopics,
+  draftTopic = '',
   resolveSlotImage,
   previewPath,
   readinessChecks,
@@ -268,6 +269,11 @@ export default function StageFourCard({
         </div>
 
         <TopicBadges topics={draftTopics} />
+        {draftTopic && (
+          <p className="text-xs text-muted-foreground">
+            Address topic: {draftTopic}. It can be changed on the review board before publishing.
+          </p>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 border-t border-border pt-4">
           <div className="space-y-2">

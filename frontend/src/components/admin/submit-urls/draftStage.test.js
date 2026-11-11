@@ -51,6 +51,7 @@ function bag(overrides = {}) {
     setDraftSummary: vi.fn(),
     setDraftTitle: vi.fn(),
     setDraftTopics: vi.fn(),
+    setDraftTopic: vi.fn(),
     setError: vi.fn(),
     setKbArticleUrls: vi.fn(),
     setKbDocumentUrl: vi.fn(),
@@ -371,6 +372,14 @@ describe('normalizeDraft', () => {
     expect(next.topics).toEqual([]);
     expect(next.sourceUrls).toEqual(['https://a.com']);
   });
+
+  it('keeps a suggested address topic from the list and drops anything else (#1628)', () => {
+    expect(normalizeDraft({ topic: 'hybrid' }, bag(), []).topic).toBe('hybrid');
+    // Not on the list, wrong case, wrong type, or absent: '' lets the server pick.
+    for (const topic of ['kubernetes', 'Hybrid', 7, null, undefined]) {
+      expect(normalizeDraft({ topic }, bag(), []).topic).toBe('');
+    }
+  });
 });
 
 describe('applyDraftResponse', () => {
@@ -400,6 +409,16 @@ describe('applyDraftResponse', () => {
     const state = bag();
     applyDraftResponse(state, { keyTopics: 'not an array' }, []);
     expect(state.setDraftTopics).toHaveBeenCalledWith([]);
+  });
+
+  it('sets the suggested address topic, or clears it when the response has none', () => {
+    const suggested = bag();
+    applyDraftResponse(suggested, { topic: 'migration' }, []);
+    expect(suggested.setDraftTopic).toHaveBeenCalledWith('migration');
+
+    const none = bag();
+    applyDraftResponse(none, {}, []);
+    expect(none.setDraftTopic).toHaveBeenCalledWith('');
   });
 });
 

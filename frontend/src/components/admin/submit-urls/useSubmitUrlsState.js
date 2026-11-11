@@ -74,6 +74,7 @@ export function useSubmitUrlsState() {
   const [draftSummary, setDraftSummary] = useState('');
   const [draftContent, setDraftContent] = useState('');
   const [draftTopics, setDraftTopics] = useState([]);
+  const [draftTopic, setDraftTopic] = useState('');
   const [submittingDraft, setSubmittingDraft] = useState(false);
   const [draftReady, setDraftReady] = useState(false);
 
@@ -149,6 +150,7 @@ export function useSubmitUrlsState() {
         setDraftSummary,
         setDraftContent,
         setDraftTopics,
+        setDraftTopic,
         setDraftReady,
         setSummaryPrompt,
         setDetailsPrompt,
@@ -187,6 +189,7 @@ export function useSubmitUrlsState() {
       draftSummary,
       draftContent,
       draftTopics,
+      draftTopic,
       draftReady,
       summaryPrompt,
       detailsPrompt,
@@ -221,6 +224,7 @@ export function useSubmitUrlsState() {
     draftSummary,
     draftContent,
     draftTopics,
+    draftTopic,
     draftReady,
     summaryPrompt,
     detailsPrompt,
@@ -440,6 +444,7 @@ export function useSubmitUrlsState() {
     setDraftSummary,
     setDraftTitle,
     setDraftTopics,
+    setDraftTopic,
     setError,
     setKbArticleUrls,
     setKbDocumentUrl,
@@ -511,6 +516,7 @@ export function useSubmitUrlsState() {
     draftSummary,
     draftTitle,
     draftTopics,
+    draftTopic,
     detailsPrompt,
     frameworkConceptSeeds,
     frameworkDiagramPrompt,
@@ -637,6 +643,7 @@ export function useSubmitUrlsState() {
     setDraftContent,
     insertSectionBlock,
     draftTopics,
+    draftTopic,
     resolveSlotImage,
     previewPath,
     savedContentId,

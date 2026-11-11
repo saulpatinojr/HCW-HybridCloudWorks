@@ -34,6 +34,8 @@ export const INITIAL_REVIEW_STATE = Object.freeze({
   providerPickerOpen: false,
   newTopic: '',
   keyTopics: [],
+  // The address topic (#1628): a topic word, or '' to let the server pick.
+  topic: '',
 });
 
 const REDUCERS = Object.freeze({

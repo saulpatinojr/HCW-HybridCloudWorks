@@ -31,6 +31,7 @@ function setters() {
     'setDraftSummary',
     'setDraftContent',
     'setDraftTopics',
+    'setDraftTopic',
     'setDraftReady',
     'setSummaryPrompt',
     'setDetailsPrompt',
@@ -119,6 +120,20 @@ describe('applyBuilderSnapshot', () => {
     applyBuilderSnapshot({ kbArticleUrls: 'not an array', draftTopics: null }, s);
     expect(s.setKbArticleUrls).toHaveBeenCalledWith([]);
     expect(s.setDraftTopics).toHaveBeenCalledWith([]);
+  });
+
+  it('restores the address topic, and an older or bad snapshot to automatic (#1628)', () => {
+    const s = setters();
+    applyBuilderSnapshot({ draftTopic: 'finops' }, s);
+    expect(s.setDraftTopic).toHaveBeenCalledWith('finops');
+
+    const older = setters();
+    applyBuilderSnapshot({}, older);
+    expect(older.setDraftTopic).toHaveBeenCalledWith('');
+
+    const bad = setters();
+    applyBuilderSnapshot({ draftTopic: 'not-a-topic' }, bad);
+    expect(bad.setDraftTopic).toHaveBeenCalledWith('');
   });
 
   it('coerces a non-boolean draftReady', () => {

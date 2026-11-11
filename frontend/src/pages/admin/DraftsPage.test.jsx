@@ -141,13 +141,29 @@ describe('the form model', () => {
     expect(isDirty({ ...form, body: 'x' }, form)).toBe(true);
     // The classification always travels with the form: a draft that never
     // said is an article someone typed in (ADR 0033 §4).
-    expect(toPayload(form)).toEqual({ ...FIELDS, kind: 'article', ideaOrigin: 'manual' });
+    expect(toPayload(form)).toEqual({
+      ...FIELDS,
+      kind: 'article',
+      ideaOrigin: 'manual',
+      topic: '',
+    });
     expect(toPayload({ ...EMPTY_FORM, title: ' T ', tags: 'a, ,a, b' })).toMatchObject({
       title: 'T',
       tags: ['a', 'b'],
       reading: null,
       date: null,
     });
+  });
+
+  it("round-trips the address topic, and always sends it, as '' for automatic (#1628)", () => {
+    const form = fromDraft(view({ fields: { ...FIELDS, topic: 'hybrid' } }));
+    expect(form.topic).toBe('hybrid');
+    expect(toPayload(form).topic).toBe('hybrid');
+    expect(isDirty({ ...form, topic: '' }, form)).toBe(true);
+    // No stored topic reads as automatic, and automatic is sent as '' so a
+    // stored one is cleared rather than left alone.
+    expect(fromDraft(view()).topic).toBe('');
+    expect(toPayload(EMPTY_FORM)).toHaveProperty('topic', '');
   });
 
   it('names each save state', () => {
@@ -203,12 +219,40 @@ describe('DraftsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
     await waitFor(() =>
       expect(sendJSON).toHaveBeenCalledWith('cms/drafts/d1', 'PUT', {
-        fields: { ...FIELDS, body: 'New body', kind: 'article', ideaOrigin: 'manual' },
+        fields: {
+          ...FIELDS,
+          body: 'New body',
+          kind: 'article',
+          ideaOrigin: 'manual',
+          topic: '',
+        },
         etag: '"e1"',
       })
     );
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Saved'));
     expect(screen.getByRole('button', { name: /Send to In Review/ })).toBeEnabled();
+  });
+
+  it('saves the address topic chosen in the editor (#1628)', async () => {
+    respond();
+    sendJSON.mockResolvedValue({
+      ok: true,
+      draft: view({ etag: '"e2"', fields: { ...FIELDS, topic: 'governance' } }),
+    });
+    await openFirstDraft();
+    const select = screen.getByLabelText('Address topic');
+    expect(select).toHaveValue('');
+    fireEvent.change(select, { target: { value: 'governance' } });
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await waitFor(() =>
+      expect(sendJSON).toHaveBeenCalledWith('cms/drafts/d1', 'PUT', {
+        fields: expect.objectContaining({ topic: 'governance' }),
+        etag: '"e1"',
+      })
+    );
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Saved'));
+    expect(select).toHaveValue('governance');
   });
 
   it('keeps the text and offers a reload when another tab saved first', async () => {
