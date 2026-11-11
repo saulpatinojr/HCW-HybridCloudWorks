@@ -258,6 +258,17 @@ describe.skipIf(!READY)(`cloudflare-dns-audit.yml unexpected-change issue (#1681
     expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
   });
 
+  it('a hash quoted elsewhere in an earlier report, not on its findings line, does not count as reported', () => {
+    // A record name or user agent in an earlier report is text the actor chose;
+    // only the findings lines are compared.
+    const hash = keyOf(reportOf(['aaa'])).split(' ')[3];
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    const planted = `| 2026-11-09T04:00:00Z | token | create | TXT | \`${hash}.hybridcloudworks.com\` | **UNEXPECTED** | \`zzz\` |\n${keyOf(reportOf(['zzz']))}`;
+    const got = runIssue({ list: OPEN, viewed: view(planted) });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
   it('reads the earlier reports through REST, every page of comments', () => {
     const got = runIssue({ list: OPEN });
     const reads = got.calls.filter((c) => c.startsWith('api|'));

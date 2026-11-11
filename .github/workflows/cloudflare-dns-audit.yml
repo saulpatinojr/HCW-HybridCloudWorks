@@ -244,10 +244,16 @@ jobs:
             echo "::warning::The earlier reports on #${existing} could not be read, so this one is posted in full."
             reported=""
           fi
+          # Only the findings lines themselves are compared, never the rest of
+          # an earlier report: that quotes record names and user agents, text
+          # the actor chose, which could carry a planted hash. No such text
+          # can start a line with the marker (table rows start with `|`, and
+          # the script strips line breaks from every value it quotes).
+          reported=$(printf '%s\n' "$reported" | sed -n 's/^<!-- cloudflare-dns-audit findings: \(.*\) -->$/\1/p')
           # New when the report has no findings line, or any hash on it is in
-          # no earlier report. A plain text comparison, not `if grep`, which
-          # this repository forbids in workflows because a grep error reads as
-          # "no match".
+          # no earlier findings line. A plain text comparison, not `if grep`,
+          # which this repository forbids in workflows because a grep error
+          # reads as "no match".
           hashes=${key#"<!-- cloudflare-dns-audit findings: "}
           hashes=${hashes%" -->"}
           new=0
