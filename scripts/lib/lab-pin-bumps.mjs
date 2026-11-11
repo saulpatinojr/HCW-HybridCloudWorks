@@ -57,6 +57,7 @@
  */
 import { createHash } from 'node:crypto';
 import {
+  JSON_ACCEPT,
   coreVersion,
   compareVersions,
   fetchRetrying,
@@ -132,7 +133,8 @@ export function makeHttp(fetchImpl = fetch, { githubToken, retry } = {}) {
   return {
     raw,
     text: async (url, headers) => (await raw(url, headers)).body.toString('utf8'),
-    json: async (url, headers) => parseJsonFrom(url, (await raw(url, { Accept: 'application/json', ...headers })).body.toString('utf8')),
+    // JSON first, any type after it: lab-pins-upstream.mjs, JSON_ACCEPT, says why (#1677).
+    json: async (url, headers) => parseJsonFrom(url, (await raw(url, { Accept: JSON_ACCEPT, ...headers })).body.toString('utf8')),
   };
 }
 
