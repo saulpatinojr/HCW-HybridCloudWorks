@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read # checkout only
-      issues: write # open or comment on the one drill-overdue issue
+      issues: write # open, comment on or close the one drill-overdue issue
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -123,7 +123,7 @@ jobs:
             if [ "${DRILL_EXIT}" = "2" ]; then
               echo "**The table could not be read**, so the age was not evaluated. Fix the Drills table in docs/runbooks/cosmos-restore.md to the row format defined above it; the message above quotes the line."
             else
-              echo "**Owner step:** run the drill in docs/runbooks/cosmos-restore.md, section \"The drill\", from a desktop signed in to Azure as the owner. Before step 6 tears the target down, add one row to the Drills table at the end of that page, in the format defined there: the date, RTO measured (the elapsed time from step 5), RPO measured (hours from the newest applied run to the drill start), who, the applied runs, the document count, and notes. Merge that row; the next Monday run is then green and this issue can be closed."
+              echo "**Owner step:** run the drill in docs/runbooks/cosmos-restore.md, section \"The drill\", from a desktop signed in to Azure as the owner. Before step 6 tears the target down, add one row to the Drills table at the end of that page, in the format defined there: the date, RTO measured (the elapsed time from step 5), RPO measured (hours from the newest applied run to the drill start), who, the applied runs, the document count, and notes. Merge that row; the next Monday run of main is then green and closes this issue."
             fi
           } > "${RUNNER_TEMP}/issue.md"
           if [ -n "$existing" ]; then

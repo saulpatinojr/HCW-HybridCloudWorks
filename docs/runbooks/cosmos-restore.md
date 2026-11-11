@@ -495,7 +495,8 @@ runs `scripts/check-drill-age.mjs` over this table and fails, opening an
 issue (labelled `Platform`) or commenting on the open one, when the newest
 dated row is more than 100 days old or there is none: a quarter plus ten
 days' grace. The first Monday run of `main` after a new drill row closes
-that issue on its own (#1682). A Date cell it
+that issue on its own (#1682). Keep the `Platform` label on it: the check
+finds the issue by that label, so without it the next run opens a new one. A Date cell it
 cannot read as a real, past calendar date fails the check too, so a typo
 cannot pass as a drill, and so does a dated row with any cell but Notes left
 empty or `—`: a date alone is not evidence of a drill. Keep the columns

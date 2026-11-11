@@ -199,6 +199,12 @@ describe.skipIf(!runnable)('the two steps, run with bash -e against a stand-in g
       expect(got.writes[0]).toMatch(/^issue\|comment\|21\|/);
     });
 
+    it('an open Security issue that starts with the prefix but is not a dated report is left alone', () => {
+      const got = run(DNS, { list: JSON.stringify([{ number: 7, title: `${ISSUE_TITLE_PREFIX} rules need review` }]) });
+      expect(got.writes).toHaveLength(1);
+      expect(got.writes[0]).toMatch(/^issue\|create\|/);
+    });
+
     it('an open Security issue whose title only mentions the prefix is left alone, and a new one opened', () => {
       const got = run(DNS, { list: JSON.stringify([{ number: 5, title: `Follow-up to ${ISSUE_TITLE_PREFIX} (2026-10-27)` }]) });
       expect(got.writes).toHaveLength(1);
