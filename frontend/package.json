@@ -36,7 +36,7 @@
     "clean:all": "node -e \"const fs=require('fs');const rm=p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}};rm('dist');rm('node_modules');\"",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --testTimeout=30000 --hookTimeout=60000",
-    "test:shard": "vitest run --coverage --reporter=blob --reporter=dot --coverage.thresholds.autoUpdate=false --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0 --testTimeout=30000 --hookTimeout=60000",
+    "test:shard": "vitest run --coverage --reporter=blob --reporter=dot --reporter=github-actions --silent=passed-only --coverage.thresholds.autoUpdate=false --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0 --testTimeout=30000 --hookTimeout=60000",
     "test:merge": "vitest run --merge-reports --coverage",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
