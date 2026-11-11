@@ -37,8 +37,11 @@
 #
 #   0  every change is expected, or there was none: a green run and nothing else;
 #   2  an UNEXPECTED change: one issue, labelled `Security` and `live-check`,
-#      opened when none is open and commented on when one is; the run stays
-#      green, because the issue is the signal and the run's job is to read;
+#      opened when none is open and commented on when one is (only when its
+#      unexpected entries differ from the issue's last report); the run stays
+#      green, because the issue is the signal and the run's job is to read.
+#      The workflow never closes that issue: a person does, once the edit is
+#      explained (#1681; the step below says why);
 #   1  the log could not be read (no token, a non-200, a body that is not
 #      the `success: true` envelope): THE RUN FAILS. A failing daily run is
 #      the signal that the token or the API broke; a quiet run never means
@@ -177,10 +180,30 @@ jobs:
           if [ -s "${RUNNER_TEMP}/dns-audit.md" ]; then cat "${RUNNER_TEMP}/dns-audit.md" >> "$GITHUB_STEP_SUMMARY"; fi
           exit 0
 
-      # One issue per unexpected change, kept current: created when none with
-      # the title prefix is open, commented on when one is. The prefix is the
-      # search key and the script exports it (ISSUE_TITLE_PREFIX); the date
-      # follows it in the title of a new issue.
+      # One issue, kept current (#1681, the shape of lab-supply-chain.yml's
+      # report issue). It is labelled `Security` (and `live-check`), and found
+      # again by that label plus its title, read from the issue list itself
+      # rather than from search, which is fuzzy and whose index can lag behind
+      # a just-created issue. The title is the prefix the script exports
+      # (ISSUE_TITLE_PREFIX) and the date it was opened, so the match is that
+      # prefix, a space and `(YYYY-MM-DD)`, exactly; an issue with a similar
+      # title is never commented on. (If someone removes the label, the next
+      # unexpected change opens a second issue; that is the safe way to be
+      # wrong.)
+      #
+      # The report of an unexpected change ends with a hidden line holding a
+      # fingerprint of the unexpected entries (`findingsLine` in the script).
+      # A comment is posted only when the newest text in the issue that carries
+      # such a line does not carry this exact one: two daily windows overlap by
+      # two hours, so one edit can be read by two runs.
+      #
+      # NEVER CLOSED HERE, unlike the drill and lab supply-chain issues. Those
+      # checks read a state, which a later run can see has cleared. This one
+      # reads events in a window: a day with no unexpected edit says nothing
+      # about the edit already reported, which may be a stolen token. A person
+      # closes the issue once the edit is explained or reverted, as
+      # docs/runbooks/edge-dns-verification.md, "The daily DNS audit", says.
+      #
       # A scheduled run always escalates; a manual run with `open_issue` off
       # only reports (the summary carries the table and the entries' shape).
       - name: Open or update the issue on an unexpected change
@@ -193,20 +216,36 @@ jobs:
           set -euo pipefail
           prefix="Cloudflare DNS audit: unexpected record change"
           title="${prefix} ($(date -u +%Y-%m-%d))"
+          label="Security"
           {
             echo "Daily check, run ${RUN_URL}, $(date -u +%Y-%m-%dT%H:%MZ)."
             echo
             cat "${RUNNER_TEMP}/dns-audit.md"
             echo
-            echo "**What this means:** a DNS record in \`hybridcloudworks.com\` was created, updated or deleted by an actor, or on a record, that the allowlist in \`scripts/cloudflare-dns-audit.mjs\` does not name. Treat it as the token compromise ADR 0032 accepted the risk of until shown otherwise: open the entry in the Cloudflare audit log, read what was written, and follow docs/runbooks/edge-dns-verification.md, \"The daily DNS audit\" (and docs/runbooks/dns-token-stolen.md when it was the Caddy or Terraform token). An edit that turns out to be legitimate is a new allowlist entry with its reason, in a reviewed pull request, never a widened one."
+            echo "**What this means:** a DNS record in \`hybridcloudworks.com\` was created, updated or deleted by an actor, or on a record, that the allowlist in \`scripts/cloudflare-dns-audit.mjs\` does not name. Treat it as the token compromise ADR 0032 accepted the risk of until shown otherwise: open the entry in the Cloudflare audit log, read what was written, and follow docs/runbooks/edge-dns-verification.md, \"The daily DNS audit\" (and docs/runbooks/dns-token-stolen.md when it was the Caddy or Terraform token). An edit that turns out to be legitimate is a new allowlist entry with its reason, in a reviewed pull request, never a widened one. This issue is not closed by the audit; close it once the edit is explained."
           } > "${RUNNER_TEMP}/issue.md"
-          existing=$(gh issue list --repo "$REPO" --state open --search "\"${prefix}\" in:title" --json number --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
+          # The fingerprint line the report ends with. sed prints nothing when
+          # there is no such line and fails only when it cannot read the file.
+          key=$(sed -n '/^<!-- cloudflare-dns-audit findings:/{p;q;}' "${RUNNER_TEMP}/dns-audit.md")
+          existing=$(gh issue list --repo "$REPO" --state open --label "$label" --limit 200 --json number,title | jq -r --arg prefix "$prefix" '[.[] | select(.title | startswith($prefix + " (") and (ltrimstr($prefix + " (") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}\\)$")))][0].number // empty')
+          if [ -z "$existing" ]; then
+            url=$(gh issue create --repo "$REPO" --title "$title" --label "$label" --label live-check --body-file "${RUNNER_TEMP}/issue.md")
+            echo "::warning::Unexpected DNS-record change; opened ${url}."
+            exit 0
+          fi
+          # `strings` drops a null body (an issue opened by hand with none),
+          # which `contains` would otherwise fail on and turn this step red.
+          reported=$(gh issue view "$existing" --repo "$REPO" --json body,comments --jq '[.body, .comments[].body] | map(strings | select(contains("<!-- cloudflare-dns-audit findings:"))) | last // ""')
+          # A plain text comparison, not `if grep`, which this repository
+          # forbids in workflows because a grep error reads as "no match". An
+          # empty key (a report without the line) always comments: an empty
+          # pattern would match anything, and a missed edit costs more than a
+          # repeated one.
+          if [ -n "$key" ] && [[ "$reported" == *"$key"* ]]; then
+            echo "::warning::Unexpected DNS-record change; #${existing} already reports these entries, so no new comment."
+          else
             gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/issue.md"
             echo "::warning::Unexpected DNS-record change; commented on #${existing}."
-          else
-            url=$(gh issue create --repo "$REPO" --title "$title" --label Security --label live-check --body-file "${RUNNER_TEMP}/issue.md")
-            echo "::warning::Unexpected DNS-record change; opened ${url}."
           fi
 
       - name: Fail the run when the audit log could not be read

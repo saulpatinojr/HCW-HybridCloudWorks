@@ -12,7 +12,8 @@
 # ten days' grace), 1 when it is older or there is no dated row, and 2 when
 # the table cannot be read. On a non-zero exit it opens one issue, or
 # comments on the open one, telling the owner to run the drill, and the run
-# fails. A current drill is a green run and nothing else.
+# fails. A current drill is a green run, and on `main` it also closes that
+# issue if one is open (#1681).
 #
 # THE FIRST RUN FAILS, ON PURPOSE. The table was empty when this landed
 # (2026-10-07): the drill was approved on 2026-10-06 and has not been run.
@@ -41,7 +42,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read # checkout only
-      issues: write # open or comment on the one drill-overdue issue
+      issues: write # open, comment on or close the one drill-overdue issue (#1681)
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -80,10 +81,23 @@ jobs:
           cat "${RUNNER_TEMP}/drill.md" >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
-      # One issue, kept current: created when none is open, commented on when
-      # one is. The title is the search key, so it does not change.
-      - name: Open or update the issue when the drill is due
-        if: steps.drill.outputs.exit != '0'
+      # One issue, kept current (#1681, the same shape as lab-supply-chain.yml
+      # and monitor-deploy-drift.yml's workflow-health issue). It is labelled
+      # `Platform` and found again by that label plus its exact title, read
+      # from the issue list itself rather than from search, which is fuzzy
+      # and whose index can lag behind a just-created issue. So the title does
+      # not change, and an issue with a similar title is never commented on or
+      # closed. (If someone removes the label, the next overdue week opens a
+      # second issue; that is the safe way to be wrong.)
+      #
+      # Exit 0, a current drill, closes the open issue with a comment naming
+      # the run, and only on a run of `main`: a manual run of another branch
+      # reads that branch's Drills table, which is not the record. Any other
+      # exit, an unreadable table (2) or a missing output included, reports
+      # and never closes. While the drill is overdue every weekly run
+      # comments, on purpose: the age in the report moves each week, and the
+      # comment is the reminder.
+      - name: Open, update or close the drill issue
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -92,6 +106,19 @@ jobs:
         run: |
           set -euo pipefail
           title="Cosmos restore drill overdue: no drill recorded in the last 100 days"
+          label="Platform"
+          existing=$(gh issue list --repo "$REPO" --state open --label "$label" --limit 200 --json number,title | jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          if [ "${DRILL_EXIT}" = "0" ]; then
+            if [ -n "$existing" ] && [ "${GITHUB_REF:-}" != "refs/heads/main" ]; then
+              echo "The drill is current, but this run is of ${GITHUB_REF:-an unknown ref}, not main, so #${existing} is left open."
+            elif [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$REPO" --reason completed --comment "Drill current again: run ${RUN_URL} found a restore drill in the Drills table of docs/runbooks/cosmos-restore.md within the last 100 days."
+              echo "Closed #${existing}."
+            else
+              echo "The drill is current and no drill issue is open."
+            fi
+            exit 0
+          fi
           {
             echo "Weekly check, run ${RUN_URL}, $(date -u +%Y-%m-%d)."
             echo
@@ -100,15 +127,14 @@ jobs:
             if [ "${DRILL_EXIT}" = "2" ]; then
               echo "**The table could not be read**, so the age was not evaluated. Fix the Drills table in docs/runbooks/cosmos-restore.md to the row format defined above it; the message above quotes the line."
             else
-              echo "**Owner step:** run the drill in docs/runbooks/cosmos-restore.md, section \"The drill\", from a desktop signed in to Azure as the owner. Before step 6 tears the target down, add one row to the Drills table at the end of that page, in the format defined there: the date, RTO measured (the elapsed time from step 5), RPO measured (hours from the newest applied run to the drill start), who, the applied runs, the document count, and notes. Merge that row; the next Monday run is then green and this issue can be closed."
+              echo "**Owner step:** run the drill in docs/runbooks/cosmos-restore.md, section \"The drill\", from a desktop signed in to Azure as the owner. Before step 6 tears the target down, add one row to the Drills table at the end of that page, in the format defined there: the date, RTO measured (the elapsed time from step 5), RPO measured (hours from the newest applied run to the drill start), who, the applied runs, the document count, and notes. Merge that row; the next Monday run is then green and closes this issue."
             fi
           } > "${RUNNER_TEMP}/issue.md"
-          existing=$(gh issue list --repo "$REPO" --state open --search "\"${title}\" in:title" --json number --jq '.[0].number // empty')
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/issue.md"
             echo "Commented on #${existing}."
           else
-            gh issue create --repo "$REPO" --title "$title" --body-file "${RUNNER_TEMP}/issue.md"
+            gh issue create --repo "$REPO" --title "$title" --label "$label" --body-file "${RUNNER_TEMP}/issue.md"
           fi
 
       - name: Fail the run while the drill is overdue or unreadable

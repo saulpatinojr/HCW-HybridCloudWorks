@@ -397,7 +397,14 @@ says which: a missing secret or variable, an expired token (`HTTP 401` or
 **What an issue from it means.** The workflow opens
 `Cloudflare DNS audit: unexpected record change (<date>)`, labelled
 `Security` and `live-check`, and comments on it rather than opening another
-while one is open. Each UNEXPECTED row names the time, the actor (a token by
+while one is open. It finds that issue again by the `Security` label and a
+title of exactly that shape, so keep both. It comments only when the
+unexpected entries differ from the issue's last report: two daily windows
+overlap by two hours, so one edit can be read twice. **The workflow never
+closes the issue.** A quiet day means no new unexpected edit, not that the one
+reported was explained, so closing it is the last step of 2 and 3 below
+([#1681](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1681)).
+Each UNEXPECTED row names the time, the actor (a token by
 name, a dashboard user by masked e-mail, with the client address), the
 action, the record's type and name, and the audit log entry id. Record
 contents are not in the report by design. Then:
@@ -410,7 +417,8 @@ contents are not in the report by design. Then:
    the risk of. Roll the token first
    ([DNS token stolen](dns-token-stolen.md); the Caddy token is rotated through
    the lab host's Vault, [Labs host](labs-host.md)), then revert the record,
-   then run the four checks above and record the run below.
+   then run the four checks above, record the run below, and close the issue
+   naming what was rolled and reverted.
 3. **An edit you recognise and the allowlist does not name** (a new workflow's
    token, say): revert nothing, add the entry with its reason as described
    above, and close the issue naming the pull request.

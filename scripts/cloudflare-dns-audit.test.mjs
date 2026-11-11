@@ -14,6 +14,8 @@ import {
   ENV,
   HCP_TERRAFORM_TOKEN_NAME,
   ISSUE_TITLE_PREFIX,
+  FINDINGS_MARKER,
+  findingsLine,
   MAX_PAGES,
   ZONE_NAME,
   actionType,
@@ -747,6 +749,49 @@ describe('main', () => {
     const judged = [{ ...normalise(entry({ actor: TERRAFORM, record: { name: 'edge.hybridcloudworks.com', type: 'A' } })), verdict: 'EXPECTED', rule: 'hcp-terraform' }];
     const md = renderReport({ window: { since: 's', before: 'b', hours: 26 }, entries: 1, pages: 1, judged, settings: { ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, zoneId: ZONE } });
     expect(md).not.toContain('Shape of the unexpected entries');
+  });
+
+  // The hidden line the workflow compares against the issue's last report, so
+  // the overlap between two daily windows does not post the same edit twice (#1681).
+  const SETTINGS = { ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, zoneId: ZONE };
+  const judgedAs = (id, verdict, name = 'x.hybridcloudworks.com') => ({
+    ...normalise(entry({ actor: STRANGER, record: { name, type: 'TXT' } })),
+    id,
+    verdict,
+    rule: verdict === 'EXPECTED' ? 'owner-dashboard' : null,
+  });
+  const report = (judged) => renderReport({ window: { since: 's', before: 'b', hours: 26 }, entries: judged.length, pages: 1, judged, settings: SETTINGS });
+
+  it('ends a report with an unexpected change with one findings line', () => {
+    const md = report([judgedAs('aaa', 'UNEXPECTED')]);
+    const lines = md.trimEnd().split('\n');
+    expect(lines.at(-1)).toMatch(new RegExp(`^${FINDINGS_MARKER} [0-9a-f]{64} -->$`));
+    expect(md.split(FINDINGS_MARKER)).toHaveLength(2);
+  });
+
+  it('writes no findings line when nothing is unexpected', () => {
+    expect(report([judgedAs('aaa', 'EXPECTED')])).not.toContain(FINDINGS_MARKER);
+    expect(report([])).not.toContain(FINDINGS_MARKER);
+  });
+
+  it('gives the same line for the same unexpected entries, whatever the window, order or expected rows around them', () => {
+    const one = findingsLine([judgedAs('aaa', 'UNEXPECTED'), judgedAs('bbb', 'UNEXPECTED')]);
+    const two = findingsLine([judgedAs('zzz', 'EXPECTED'), judgedAs('bbb', 'UNEXPECTED'), judgedAs('aaa', 'UNEXPECTED')]);
+    expect(two).toBe(one);
+    expect(findingsLine([judgedAs('aaa', 'UNEXPECTED')])).not.toBe(one);
+    expect(findingsLine([judgedAs('aaa', 'UNEXPECTED'), judgedAs('ccc', 'UNEXPECTED')])).not.toBe(one);
+  });
+
+  it('tells two entries without an id apart by their record', () => {
+    expect(findingsLine([judgedAs('', 'UNEXPECTED', 'a.hybridcloudworks.com')])).not.toBe(
+      findingsLine([judgedAs('', 'UNEXPECTED', 'b.hybridcloudworks.com')])
+    );
+  });
+
+  it('never prints an entry id or record name in the line, so text the actor chose cannot close the comment', () => {
+    const line = findingsLine([judgedAs('id-->x', 'UNEXPECTED', '--><img src=x>.hybridcloudworks.com')]);
+    expect(line).not.toContain('img');
+    expect(line.match(/-->/g)).toHaveLength(1);
   });
 });
 
