@@ -15,7 +15,9 @@
  *      chosen on the admin Drafts page;
  *   2. the keyword table below, read from the title, key topics and tags,
  *      for content that arrived without one;
- *   3. the provider (`azure`, `aws` ...), so an address always has a word.
+ *   3. the provider (`azure`, `aws` ...), or `article` without one, so an
+ *      address always has a word. These two are the only words outside the
+ *      list that an address can start with.
  *
  * The frontend keeps a copy of the list in frontend/src/lib/articleTopics.js
  * for the Drafts page dropdown; article-topics.test.js holds the two equal.
@@ -61,12 +63,17 @@ const KEYWORD_TOPICS = Object.freeze([
     [
       "azure arc",
       "arc-enabled",
-      "hybrid",
+      // Not bare "hybrid" or "edge": "hybrid search", "hybrid work" and
+      // "cutting-edge" are not about hybrid cloud.
+      "hybrid cloud",
+      "hybrid multicloud",
+      "multicloud",
       "azure local",
+      "azure stack",
       "azure vmware solution",
       "on-prem",
       "on-premises",
-      "edge",
+      "edge computing",
     ],
   ],
   ["finops", ["finops", "cost optimization", "cost management", "tco"]],
@@ -94,7 +101,14 @@ const KEYWORD_TOPICS = Object.freeze([
   ],
   [
     "devops",
-    ["devops", "ansible", "terraform", "github actions", "ci/cd", "pipelines"],
+    [
+      "devops",
+      "ansible",
+      "terraform",
+      "github actions",
+      "ci/cd",
+      "azure pipelines",
+    ],
   ],
   [
     "ai",
@@ -123,7 +137,10 @@ const KEYWORD_TOPICS = Object.freeze([
     ],
   ],
   ["storage", ["storage", "blob", "azure files", "file share", "file shares"]],
-  ["data", ["database", "sql", "cosmos db", "fabric", "analytics", "data"]],
+  [
+    "data",
+    ["database", "sql", "cosmos db", "microsoft fabric", "analytics", "data"],
+  ],
   [
     "compute",
     [
@@ -180,9 +197,9 @@ export function suggestArticleTopic(doc = {}) {
 
 /**
  * The first ARTICLE_ID_CHARS of the document id, lowercase, letters and
- * digits only. Ids here are random base-62 strings (`LSzyB6gbiLyXtjQUcgGv`);
- * lowercasing keeps them unique enough at this size, and the publish probe
- * catches the rare clash.
+ * digits only. Older ids are random mixed-case strings (`LSzyB6gbiLyXtjQUcgGv`),
+ * newer ones are UUIDs (8 hex characters here); either way that is unique
+ * enough at this size, and the publish probe catches the rare clash.
  */
 export function articleIdPart(contentId = "") {
   return String(contentId)

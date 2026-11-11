@@ -32,7 +32,7 @@ import {
   getResolvedBlogLandingProvider,
   getResolvedProvider,
   inferProviderFromUrl,
-  slugifyTitle,
+  previewSlugFor,
 } from './pageMeta';
 import { SECTION_BLOCKS_BY_TYPE } from './contentBlocks';
 
@@ -289,7 +289,12 @@ export function useSubmitUrlsState() {
     () => getResolvedBlogLandingProvider(contentType, blogLandingProvider, resolvedProvider),
     [contentType, blogLandingProvider, resolvedProvider]
   );
-  const previewSlug = useMemo(() => slugifyTitle(draftTitle || title), [draftTitle, title]);
+  const previewSection = useMemo(() => getPreviewSection(contentType), [contentType]);
+  const previewSlug = useMemo(
+    () =>
+      previewSlugFor({ section: previewSection, topic: draftTopic, title: draftTitle || title }),
+    [previewSection, draftTopic, draftTitle, title]
+  );
   const previewProviderSegment = useMemo(
     () => (resolvedBlogLandingProvider ? resolvedBlogLandingProvider.toLowerCase() : 'provider'),
     [resolvedBlogLandingProvider]
@@ -298,7 +303,6 @@ export function useSubmitUrlsState() {
     () => SECTION_BLOCKS_BY_TYPE[contentType] || SECTION_BLOCKS_BY_TYPE.blog,
     [contentType]
   );
-  const previewSection = useMemo(() => getPreviewSection(contentType), [contentType]);
   const previewPath = useMemo(
     () => `/${previewProviderSegment}/${previewSection}/${previewSlug || 'draft-slug'}`,
     [previewProviderSegment, previewSection, previewSlug]

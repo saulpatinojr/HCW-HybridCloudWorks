@@ -187,7 +187,7 @@ function readText(value, name, max, { required = false } = {}) {
  * @param {unknown} input
  * @returns {{ title: string, subtitle: string, date: string|null, track: string|null,
  *   part: string|null, tags: string[], reading: number|null, body: string,
- *   kind: string|null, ideaOrigin: string|null }}
+ *   kind: string|null, ideaOrigin: string|null, topic: string|undefined }}
  */
 export function validateDraftFields(input) {
   if (!isPlainObject(input)) fail("A JSON object of draft fields is required.");

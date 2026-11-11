@@ -86,6 +86,15 @@ describe("suggestArticleTopic", () => {
     ).toBe("compute");
   });
 
+  it.each([
+    ["Cutting-edge AI agents in Microsoft Foundry", "ai"],
+    ["Hybrid search in Azure AI Search", "ai"],
+    ["Building data pipelines in Microsoft Fabric", "data"],
+    ["Azure Local for hybrid cloud branch offices", "hybrid"],
+  ])("does not misfile a broad word: %s → %s", (title, topic) => {
+    expect(suggestArticleTopic({ title })).toBe(topic);
+  });
+
   it('matches whole words, so "ai" does not hit inside "maintain" or "said"', () => {
     expect(
       suggestArticleTopic({ title: "How to maintain what was said" }),

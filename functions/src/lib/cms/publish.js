@@ -955,7 +955,13 @@ export function createPublishHandlers({
       // A republish keeps the URL it already serves; anything else is a first
       // assignment. `slug || Slug` because either field can be the one the
       // manifest routed on — see slugHolders.
-      const reuse = Boolean(isRepublish && existingSlug);
+      // An article that was published once and then unpublished keeps its
+      // address too: unpublishing sets the status back to `inspected`, but
+      // only a publish writes `curatedSubpagePath`, and nothing clears it.
+      // Without this, publishing it again would build a new address and
+      // break every link to the old one (#1628 review).
+      const publishedBefore = isRepublish || Boolean(contentData.curatedSubpagePath);
+      const reuse = Boolean(publishedBefore && existingSlug);
       // NORMALISED ONCE, HERE, because the probe and the write have to be about
       // the same string. `slugify` already trims, but a STORED slug need not —
       // this corpus is migrated and hand-edited, which is the corpus that

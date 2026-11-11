@@ -17,6 +17,7 @@ import {
   getResolvedProvider,
   inferProviderFromUrl,
   slugifyTitle,
+  previewSlugFor,
 } from './pageMeta';
 
 const TYPES = ['blog', 'framework', 'architecture', 'coder_corner'];
@@ -237,5 +238,22 @@ describe('buildReadinessChecks', () => {
 
   it('shows the detected provider in the hint when one was inferred', () => {
     expect(byKey(checks({ inferredProvider: 'Aws' }), 'provider').hint).toContain('Aws');
+  });
+});
+
+describe('previewSlugFor (#1628)', () => {
+  it('previews an article as <topic>-<id>, with x for the id not yet known', () => {
+    expect(previewSlugFor({ section: 'blog', topic: 'hybrid', title: 'Azure Arc at scale' })).toBe(
+      'hybrid-xxxxxxxx'
+    );
+    expect(previewSlugFor({ section: 'blog', topic: '', title: 'Azure Arc at scale' })).toBe(
+      'topic-xxxxxxxx'
+    );
+  });
+
+  it('keeps the title slug for other sections', () => {
+    expect(previewSlugFor({ section: 'frameworks', title: 'Azure Arc at scale' })).toBe(
+      'azure-arc-at-scale'
+    );
   });
 });

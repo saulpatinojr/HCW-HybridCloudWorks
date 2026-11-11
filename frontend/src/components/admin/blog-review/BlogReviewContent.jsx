@@ -26,7 +26,12 @@ import { ImageGalleryPicker } from '@/components/admin/ImageGalleryPicker';
 import { resolveMediaUrl } from '@/lib/functionsBase';
 import { safeUrl } from '@/lib/safeUrl';
 import ArticleTopicSelect from '@/components/admin/shared/ArticleTopicSelect';
-import { describeImageSlot, truncate, usesTopicAddress } from './blogReviewModel';
+import {
+  describeImageSlot,
+  hasPublishedAddress,
+  truncate,
+  usesTopicAddress,
+} from './blogReviewModel';
 
 /** An outbound link whose text is cut at `maxLength` characters. */
 export function ExternalAnchor({ href, maxLength }) {
@@ -112,6 +117,11 @@ function SummaryCard({ summary, expanded, onToggle }) {
   );
 }
 
+// Once an article has been published its address never changes (#1628), so
+// the dropdown is locked rather than offering a choice that does nothing.
+const PUBLISHED_ADDRESS_HINT =
+  'This article has been published, so its address is fixed and the topic no longer changes it.';
+
 function KeyTopicsCard({
   keyTopics,
   newTopic,
@@ -120,6 +130,7 @@ function KeyTopicsCard({
   onRemove,
   addressTopic,
   onAddressTopicChange,
+  addressFixed = false,
 }) {
   return (
     <Card>
@@ -149,6 +160,8 @@ function KeyTopicsCard({
           <ArticleTopicSelect
             value={addressTopic}
             onChange={onAddressTopicChange}
+            disabled={addressFixed}
+            hint={addressFixed ? PUBLISHED_ADDRESS_HINT : undefined}
             className="mt-4"
           />
         )}
@@ -369,6 +382,7 @@ export function BlogReviewContent({
           onAddressTopicChange={
             usesTopicAddress(blog) ? topics.handleSelectAddressTopic : undefined
           }
+          addressFixed={hasPublishedAddress(blog)}
         />
         <ImageSlotsCard
           blog={blog}

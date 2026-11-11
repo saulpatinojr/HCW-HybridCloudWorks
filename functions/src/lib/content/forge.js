@@ -424,8 +424,11 @@ export function createForge({
       blogDraft: forged.forgedContent,
       content: forged.forgedContent,
       keyTopics: Array.isArray(draft.keyTopics) ? draft.keyTopics.slice(0, 12) : [],
-      // The AI's address topic (#1628), only when it is on the list and no
-      // editor has chosen one already.
+      // The AI's address topic (#1628), only when it is on the list and the
+      // document had none when the forge read it. Like the rest of this patch
+      // it is not guarded against an edit made while the model ran, so a topic
+      // picked on the review board during a forge can be overwritten; pick it
+      // again after the forge finishes.
       ...(isArticleTopic(draft.topic) && !isArticleTopic(data?.topic) && { topic: draft.topic }),
       // Series metadata (backlog #5): the published posts the appended
       // "Related reading" module links to; absent when nothing related.

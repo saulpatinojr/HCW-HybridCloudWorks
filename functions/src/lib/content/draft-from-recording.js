@@ -31,6 +31,7 @@ import { randomUUID } from 'node:crypto';
 import { AuthoredError, authoredDetails, failureFields } from '../http/error-response.js';
 import { inferProviderFromUrl } from './draft-from-url.js';
 import { AFTER_MODEL_MARGIN_MS, startBudgetClock } from '../ai/time-budget.js';
+import { isArticleTopic } from '../cms/article-topics.js';
 
 /** Below this the model has nothing to work with; the UI has a transcript box. */
 export const MIN_TRANSCRIPT_CHARS = 200;
@@ -276,6 +277,8 @@ export function createRecordingDrafter({
         'Cloud Provider': cloudProvider,
         Tags: Array.isArray(parsed.keyTopics) ? parsed.keyTopics.slice(0, 12).map(String) : [],
         keyTopics: Array.isArray(parsed.keyTopics) ? parsed.keyTopics.slice(0, 12).map(String) : [],
+        // The AI's address topic (#1628); the drafter already dropped any word off the list.
+        ...(isArticleTopic(parsed.topic) && { topic: parsed.topic }),
         summaryPrompt: String(parsed.summaryPrompt || ''),
         detailsPrompt: String(parsed.detailsPrompt || ''),
         suggestedContentType: parsed.suggestedContentType || null,

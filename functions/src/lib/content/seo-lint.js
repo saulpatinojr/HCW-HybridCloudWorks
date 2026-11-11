@@ -7,8 +7,11 @@
  * grade, the staging decision, or any publish gate:
  *   1. Meta-description length — the summary doubles as the meta description;
  *      under ~70 chars search engines pad it, over ~160 they truncate it.
- *   2. Slug/keyword alignment — the slug is slugify(title) (cms/publish.js),
- *      so a title sharing no token with any key topic ranks for none of them.
+ *   2. Title/keyword alignment — a title sharing no token with any key topic
+ *      ranks for none of them. Until #1628 the article address was
+ *      slugify(title) too, hence the finding's key; now an article's address
+ *      is `<topic>-<id>` (cms/article-topics.js), so only the title carries
+ *      the keyword.
  *   3. Heading hierarchy — the page title renders as the H1, so body sections
  *      start at H2 and never skip a level.
  *
@@ -62,7 +65,7 @@ function lintSlugAlignment(title, keyTopics, findings) {
   if (!aligned) {
     findings.push({
       key: 'slug_keyword_mismatch',
-      message: `No key topic (${topics.join(', ')}) appears in the slug "${slug}" — retitle or retopic so the URL carries a keyword.`,
+      message: `No key topic (${topics.join(', ')}) appears in the title — retitle or retopic so the title carries a keyword.`,
     });
   }
 }

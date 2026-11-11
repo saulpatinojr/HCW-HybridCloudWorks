@@ -184,6 +184,15 @@ export function deriveScheduleFields(blog) {
 }
 
 /**
+ * True once the record has been published: the server keeps its stored
+ * address from then on, even after an unpublish (#1628), and only a publish
+ * writes `curatedSubpagePath`.
+ */
+export function hasPublishedAddress(blog) {
+  return blog?.contentStatus === 'published' || Boolean(blog?.curatedSubpagePath);
+}
+
+/**
  * Does this record's page address start with a topic word (#1628)? Only a
  * blog article's does; interviews and the other sections keep a title slug.
  */

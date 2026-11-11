@@ -385,9 +385,9 @@ export function parseRepoDraft(text) {
       tags,
       reading,
       body: articleBody,
-      // What the first publish will assign, absent a collision: processPublishContent
-      // takes slugify(title) on a first publish and ignores a stored slug. It is
-      // reported, not stored — see buildRepoDraftData.
+      // The title slug, reported, not stored (see buildRepoDraftData). Since
+      // #1628 a first publish of an article assigns `<topic>-<id>` instead
+      // (article-topics.js); other sections still get this slug.
       slug: slugify(title),
       provider: inferProviderFromTags(tags),
       embeds: countEmbedFences(articleBody),
@@ -441,7 +441,7 @@ function provenance({ path, source }) {
  *   - No `slug`/`Slug`. The slug-holders probe a publish runs is not filtered
  *     by status, so an unpublished document holding a slug would push any
  *     other article that wants the URL onto a suffix. A first publish assigns
- *     slugify(title) regardless (parseRepoDraft reports it).
+ *     the address regardless: `<topic>-<id>` for an article (#1628).
  *   - `inspectTrigger: false`: the change-feed inspector would rewrite a
  *     finished article with a model's summary of it.
  *   - The front-matter `date` is recorded, not mapped to a publish-date

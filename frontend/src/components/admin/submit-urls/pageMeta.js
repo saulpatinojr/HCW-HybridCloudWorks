@@ -50,6 +50,15 @@ export function getPromptLibraryPagePath(contentType, providerSegment) {
  * The cap can land mid-word; that is existing behaviour and the readiness
  * checklist only asks for eight characters, so it has never mattered.
  */
+/**
+ * The address a draft will publish at, for the preview. An article's is
+ * `<topic>-<8 id characters>` (#1628); the id is not known until the draft is
+ * saved, so x's stand in for it. Other sections keep the title slug.
+ */
+export function previewSlugFor({ section, topic = '', title = '' }) {
+  return section === 'blog' ? `${topic || 'topic'}-xxxxxxxx` : slugifyTitle(title);
+}
+
 export function slugifyTitle(value = '') {
   return String(value)
     .toLowerCase()

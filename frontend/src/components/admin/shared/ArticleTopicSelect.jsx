@@ -18,11 +18,19 @@ const SELECT_CLASS =
  *   value: string,                    a topic word, or '' for automatic
  *   onChange: (value: string) => void,
  *   disabled?: boolean,
+ *   hint?: string,                    replaces the standard line under the dropdown
  *   className?: string,
  * }} props
  */
-export default function ArticleTopicSelect({ value, onChange, disabled = false, className = '' }) {
+export default function ArticleTopicSelect({
+  value,
+  onChange,
+  disabled = false,
+  hint = ARTICLE_TOPIC_HINT,
+  className = '',
+}) {
   const id = useId();
+  const hintId = `${id}-hint`;
   const current = value || '';
   // A stored word not on the list is still shown, so the editor sees what
   // the record carries instead of a silently changed value.
@@ -37,6 +45,7 @@ export default function ArticleTopicSelect({ value, onChange, disabled = false, 
         value={current}
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
+        aria-describedby={hintId}
         className={SELECT_CLASS}
       >
         <option value="">Pick automatically</option>
@@ -46,7 +55,9 @@ export default function ArticleTopicSelect({ value, onChange, disabled = false, 
           </option>
         ))}
       </select>
-      <p className="mt-1 text-xs text-muted-foreground">{ARTICLE_TOPIC_HINT}</p>
+      <p id={hintId} className="mt-1 text-xs text-muted-foreground">
+        {hint}
+      </p>
     </div>
   );
 }

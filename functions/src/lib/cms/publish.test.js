@@ -604,6 +604,52 @@ describe('publishContent', () => {
     expect(ok.published).toBe(1);
   });
 
+  it.each([
+    ['an article published before, unpublished, then approved again', { curatedSubpagePath: '/azure/blog/old-title-LSzyB6' }, 'old-title-LSzyB6'],
+    ['a first publish with a title Slug stored by ingest', {}, 'security-c1'],
+  ])('%s (#1628)', async (_label, over, expected) => {
+    // Unpublishing sets the status back to `inspected`, so the next publish is
+    // not a "republish"; only `curatedSubpagePath`, which a publish alone
+    // writes, says the page has been live. Without it the article would move.
+    const store = makeStore(
+      readyDoc({
+        type: 'blog',
+        publishTarget: 'blog',
+        contentStatus: 'approved',
+        title: 'Zero Trust for cloud architects',
+        slug: 'old-title-LSzyB6',
+        ...over,
+      })
+    );
+    const h = createPublishHandlers({ guard: guardAs('publisher'), store, ...fixed });
+    const body = JSON.parse(
+      (
+        await h.publishContent(
+          makeRequest({ contentIds: ['c1'], publishTarget: 'blog', forceQualityBypass: true, forceImageBypass: true }),
+          context
+        )
+      ).body
+    );
+    expect(body.errors).toEqual([]);
+    expect(body.mappings[0].slug).toBe(expected);
+  });
+
+  it('a first publish of an article starts its address with a topic an editor stored (#1628)', async () => {
+    const store = makeStore(
+      readyDoc({ type: 'blog', publishTarget: 'blog', title: 'Zero Trust for cloud architects', topic: 'network' })
+    );
+    const h = createPublishHandlers({ guard: guardAs('publisher'), store, ...fixed });
+    const body = JSON.parse(
+      (
+        await h.publishContent(
+          makeRequest({ contentIds: ['c1'], publishTarget: 'blog', forceQualityBypass: true, forceImageBypass: true }),
+          context
+        )
+      ).body
+    );
+    expect(body.mappings[0].slug).toBe('network-c1');
+  });
+
   it('republish reuses the stored slug and counts as skipped', async () => {
     const store = makeStore(readyDoc({ contentStatus: 'published', slug: 'existing-slug' }));
     const h = createPublishHandlers({ guard: guardAs('publisher'), store, ...fixed });

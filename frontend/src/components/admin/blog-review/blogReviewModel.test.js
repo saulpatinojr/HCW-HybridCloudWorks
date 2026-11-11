@@ -21,6 +21,7 @@ import {
   toLocalDateInputValue,
   truncate,
   usesTopicAddress,
+  hasPublishedAddress,
 } from './blogReviewModel';
 
 describe('firstNonEmpty', () => {
@@ -323,5 +324,16 @@ describe('usesTopicAddress', () => {
   it('is false for the sections that keep a title address', () => {
     expect(usesTopicAddress({ type: 'interview' })).toBe(false);
     expect(usesTopicAddress({ publishTarget: 'interview' })).toBe(false);
+  });
+});
+
+describe('hasPublishedAddress', () => {
+  it('is true once a publish has written the address, even after an unpublish (#1628)', () => {
+    expect(hasPublishedAddress({ contentStatus: 'published' })).toBe(true);
+    expect(
+      hasPublishedAddress({ contentStatus: 'inspected', curatedSubpagePath: '/azure/blog/ai-c1' })
+    ).toBe(true);
+    expect(hasPublishedAddress({ contentStatus: 'inspected' })).toBe(false);
+    expect(hasPublishedAddress(undefined)).toBe(false);
   });
 });

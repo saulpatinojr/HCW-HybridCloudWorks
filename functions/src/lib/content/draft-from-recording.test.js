@@ -206,6 +206,21 @@ describe('createContentFromRecording', () => {
     });
   });
 
+  it.each([
+    ['hybrid', 'hybrid'],
+    [null, undefined],
+  ])('keeps the drafter\'s address topic on the document (%s) (#1628)', async (topic, stored) => {
+    const { store, handler } = build({ drafter: { generateDraft: vi.fn(async () => ({ ...goodDraft, topic })) } });
+    const res = parse(
+      await handler(
+        request({ recordingId: 'rec-1', transcript: TRANSCRIPT, title: 'Landing zones, live', contentType: 'technical_guide' }),
+        ctx
+      )
+    );
+    expect(res.status).toBe(200);
+    expect(store.data.content.get('content-uuid-1').topic).toBe(stored);
+  });
+
   it('falls back to the stored transcript and title when the request omits them', async () => {
     const { drafter, handler } = build();
     const res = parse(

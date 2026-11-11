@@ -121,6 +121,17 @@ describe('BlogReviewBoard address topic (#1628)', () => {
     expect(await screen.findByText(/Topic not saved\./)).toBeInTheDocument();
   });
 
+  it('is locked once the article has been published, because its address is fixed', () => {
+    renderBoard({
+      contentStatus: 'inspected',
+      topic: 'ai',
+      curatedSubpagePath: '/azure/blog/ai-c1',
+    });
+    const select = screen.getByLabelText('Address topic');
+    expect(select).toBeDisabled();
+    expect(select).toHaveAccessibleDescription(/its address is fixed/);
+  });
+
   it('is not offered for an interview, whose address keeps its title', () => {
     renderBoard({ contentStatus: 'inspected', type: 'interview' });
     expect(screen.queryByLabelText('Address topic')).not.toBeInTheDocument();
