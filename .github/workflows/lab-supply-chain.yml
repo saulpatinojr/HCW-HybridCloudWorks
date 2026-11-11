@@ -571,8 +571,8 @@ jobs:
       #   commented on when the findings differ from the last report. The
       #   report ends with a hidden line holding a fingerprint of its findings
       #   (the run link and date left out), and a comment is posted only when
-      #   the newest text in the issue that carries such a line holds a
-      #   different one. A person's comment in between does not count.
+      #   the newest report the workflow itself posted (`github-actions[bot]`)
+      #   holds a different one. Nobody else's text counts (#1688).
       # - Nothing due: the open issue is closed, with a comment naming the
       #   run. Only a run of main closes it, so a run started by hand on
       #   another branch cannot.
@@ -656,7 +656,18 @@ jobs:
             gh issue create --repo "$REPO" --title "$title" --label "$label" --body-file "${RUNNER_TEMP}/issue.md"
             exit 0
           fi
-          reported=$(gh issue view "$existing" --repo "$REPO" --json body,comments --jq '[.body, .comments[].body] | map(strings | select(contains("<!-- lab-supply-chain findings:"))) | last // ""')
+          # The findings lines of the reports the workflow itself posted on
+          # the issue (#1688), newest last: its body if the workflow opened it,
+          # then its own comments, every page, read through REST, where the
+          # workflow is `github-actions[bot]`. The repository is public and
+          # anyone can comment, so a findings line copied into someone else's
+          # comment must not make these findings look reported already. Only
+          # whole lines that start with the marker count. If they cannot be
+          # read, the report is posted: a repeat costs less than a miss.
+          if ! reported=$( { gh api "repos/${REPO}/issues/${existing}" --jq 'select(.user.login == "github-actions[bot]") | (.body // "") | split("\n")[] | select(startswith("<!-- lab-supply-chain findings:"))' && gh api "repos/${REPO}/issues/${existing}/comments?per_page=100" --paginate --jq '.[] | select(.user.login == "github-actions[bot]") | (.body // "") | split("\n")[] | select(startswith("<!-- lab-supply-chain findings:"))'; } | tail -n 1 ); then
+            echo "::warning::The earlier reports on #${existing} could not be read, so this one is posted."
+            reported=""
+          fi
           # A plain text comparison, not `if grep`, which this repository
           # forbids in workflows because a grep error reads as "no match".
           if [[ "$reported" == *"$key"* ]]; then
