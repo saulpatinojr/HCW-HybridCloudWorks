@@ -959,8 +959,9 @@ jobs:
   # `frontend` row and that row, at 280 s, set the pull request's time.
   # Vitest splits the test files between the shards (`--shard=1/2` and
   # `--shard=2/2`), each shard collects coverage for its half and writes a
-  # blob report (one file holding its results and its coverage) instead of
-  # the usual summary, and the `frontend-unit-merge` job below joins the two
+  # blob report (one file holding its results and its coverage) for the
+  # merge, printing only a line of dots, any failing tests and the totals
+  # (#1679), and the `frontend-unit-merge` job below joins the two
   # blobs into one run, where the coverage thresholds are checked once, on
   # the whole suite. A shard alone must not check them: half a suite is
   # always under the ratchet (shard 1 of 2 measured 48% of lines against the
@@ -1009,9 +1010,12 @@ jobs:
 
       # The blob is what the merge job joins; a shard that wrote none is a
       # failure here, not an empty merge later. Kept when the tests failed
-      # too: the blob reporter prints no test names, so the blob is the only
-      # place a failing test is named (`npx vitest run --merge-reports` on
-      # the downloaded folder lists it).
+      # too, so a red shard's full results can still be downloaded
+      # (`npx vitest run --merge-reports` on the downloaded folder lists
+      # them). The failing test's name and error are also in the step above's
+      # log, from the `dot` reporter that `test:shard` runs beside `blob`,
+      # and marked on the pull request by its `github-actions` reporter
+      # (#1679).
       - name: Keep the blob report for the merge
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
