@@ -28,6 +28,7 @@ import {
   INTERVIEWS_ROUTE,
   DESIGN_PROVIDERS,
   ARTICLE_SLUG,
+  STRICT_SLUG,
 } from './build-content-manifest.mjs';
 
 // `dirname(fileURLToPath(...))` rather than `new URL('..', import.meta.url)`:
@@ -516,6 +517,36 @@ describe('designs on the manifest (#1628)', () => {
     const served = [...body[1].matchAll(/provider === '([a-z]+)'/g)].map((match) => match[1]);
     expect(served.length).toBeGreaterThan(3);
     expect([...DESIGN_PROVIDERS].sort()).toEqual([...served].sort());
+  });
+});
+
+describe('interview and design slugs: one strict pattern', () => {
+  const interview = (slug) => ({ id: `i-${slug}`, slug, type: 'interview', date: '2026-11-01' });
+  const design = (slug) => ({ id: `d-${slug}`, slug, type: 'architecture', cloudProvider: 'azure' });
+  const unsafe = ['../escape', 'Upper-Case', 'under_score', 'double--hyphen', 'trailing-'];
+
+  it('skips an unsafe or uppercase interview slug and names it by id', () => {
+    const manifest = buildManifest([], null, unsafe.map(interview));
+    expect(manifest.routes).toEqual([]);
+    expect(manifest.skipped).toEqual(unsafe.map((slug) => `interview i-${slug}: no usable slug`));
+  });
+
+  it('skips an unsafe or uppercase design slug and names it by id', () => {
+    const manifest = buildManifest([], null, [], unsafe.map(design));
+    expect(manifest.routes).toEqual([]);
+    expect(manifest.skipped).toEqual(unsafe.map((slug) => `design d-${slug}: no usable slug`));
+  });
+
+  it('is the same pattern the interview API checks, so the build and the API agree', () => {
+    const schema = readFileSync(join(REPO, 'functions', 'src', 'lib', 'interviews', 'schema.js'), 'utf8');
+    const match = schema.match(/^export const SLUG = \/(.+)\/;$/m);
+    expect(match, 'export const SLUG not found in functions/src/lib/interviews/schema.js').not.toBeNull();
+    expect(STRICT_SLUG.source).toBe(match[1]);
+  });
+
+  it('is stricter than the article pattern, which keeps uppercase on purpose', () => {
+    expect(STRICT_SLUG.test('nist-vs-zero-trust-LSzyB6')).toBe(false);
+    expect(ARTICLE_SLUG.test('nist-vs-zero-trust-LSzyB6')).toBe(true);
   });
 });
 
