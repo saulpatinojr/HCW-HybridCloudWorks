@@ -801,9 +801,20 @@ describe('main', () => {
   });
 
   it('never prints an entry id or record name in the line, so text the actor chose cannot close the comment', () => {
-    const line = findingsLine([judgedAs('id-->x', 'UNEXPECTED', '--><img src=x>.hybridcloudworks.com')]);
-    expect(line).not.toContain('img');
-    expect(line.match(/-->/g)).toHaveLength(1);
+    const line = findingsLine([
+      judgedAs('id-->x', 'UNEXPECTED', '--><img src=x>.hybridcloudworks.com'),
+      judgedAs('', 'UNEXPECTED', '--!><img src=x>.hybridcloudworks.com'),
+    ]);
+    // The whole line, checked piece by piece rather than by searching it for
+    // a comment end (code scanning alert 1441: `--!>` ends a comment too, so
+    // counting `-->` proves less than it seems). Between the marker and the
+    // closing ` -->` there may be nothing but SHA-256 hashes, so no text the
+    // actor chose, in any spelling, can reach the issue.
+    expect(line.startsWith(`${FINDINGS_MARKER} `)).toBe(true);
+    expect(line.endsWith(' -->')).toBe(true);
+    const hashes = line.slice(FINDINGS_MARKER.length + 1, -' -->'.length).split(' ');
+    expect(hashes).toHaveLength(2);
+    for (const h of hashes) expect(h).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
