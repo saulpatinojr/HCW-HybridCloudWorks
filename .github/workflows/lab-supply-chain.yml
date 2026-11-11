@@ -571,8 +571,8 @@ jobs:
       #   commented on when the findings differ from the last report. The
       #   report ends with a hidden line holding a fingerprint of its findings
       #   (the run link and date left out), and a comment is posted only when
-      #   the newest text in the issue that carries such a line holds a
-      #   different one. A person's comment in between does not count.
+      #   the newest report the workflow itself posted (`github-actions[bot]`)
+      #   holds a different one. Nobody else's text counts (#1688).
       # - Nothing due: the open issue is closed, with a comment naming the
       #   run. Only a run of main closes it, so a run started by hand on
       #   another branch cannot.

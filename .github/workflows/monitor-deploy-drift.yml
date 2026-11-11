@@ -279,9 +279,9 @@ jobs:
       # week, so commenting on every run would post dozens of identical
       # comments. The report ends with a hidden line naming the findings
       # (`findingsKey` in the script, one `path:verdict` each); a comment is
-      # posted only when the newest text in the issue that carries such a line
-      # does not carry this exact one. A comment from a person in between does
-      # not count as the issue's last report.
+      # posted only when the newest report the workflow itself posted
+      # (`github-actions[bot]`) does not carry this exact one. Nobody else's
+      # text counts as the issue's last report (#1688).
       - name: Open, update or close the workflow-health issue
         if: steps.health.outputs.exit == '0' || steps.health.outputs.exit == '1'
         env:

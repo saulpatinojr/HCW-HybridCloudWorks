@@ -273,7 +273,7 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
         'case "$1 $2" in',
         '  "issue list") answer="$FAKE_LIST" ;;',
         '  "api "*/comments*) [ -n "$FAKE_VIEW_FAILS" ] && exit 1; answer=$(jq -c ".comments" <<< "$FAKE_VIEW") ;;',
-        '  "api "*/issues/*) answer="$FAKE_VIEW" ;;',
+        '  "api "*/issues/*) [ -n "$FAKE_ISSUE_FAILS" ] && exit 1; answer="$FAKE_VIEW" ;;',
         '  *) exit 0 ;;',
         'esac',
         'if [ -n "$expr" ]; then jq -r "$expr" <<< "$answer"; else printf "%s\\n" "$answer"; fi',
@@ -291,7 +291,7 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
   const view = (body, ...comments) => JSON.stringify({ ...post(body), comments: comments.map(post) });
 
   /** Runs the issue step with the health step's exit code and what `gh` should answer. */
-  function runIssue(healthExit, { list = '[]', viewed = view(''), report = REPORT, viewFails = false } = {}) {
+  function runIssue(healthExit, { list = '[]', viewed = view(''), report = REPORT, viewFails = false, issueFails = false } = {}) {
     const dir = `${work}/run-${++runs}`;
     mkdirSync(dir);
     writeFileSync(`${dir}/health.md`, report);
@@ -306,6 +306,7 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
         FAKE_LIST: list,
         FAKE_VIEW: viewed,
         FAKE_VIEW_FAILS: viewFails ? '1' : '',
+        FAKE_ISSUE_FAILS: issueFails ? '1' : '',
         GH_TOKEN: 'not-a-real-token',
         REPO: 'saulpatinojr/HCW-HybridCloudWorks',
         RUN_URL,
@@ -360,6 +361,7 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
     });
     expect(got.writes).toHaveLength(1);
     expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+    expect(got.stdout).not.toContain('could not be read');
   });
 
   it('an issue opened by hand with no body (null) is read as no report yet, not a failed step', () => {
@@ -395,11 +397,21 @@ describe.skipIf(!ISSUE_READY)(`monitor-deploy-drift.yml workflow-health issue (#
     expect(reads[1]).toMatch(/^api\|repos\/saulpatinojr\/HCW-HybridCloudWorks\/issues\/12\/comments\?per_page=100\|--paginate\|--jq\|/);
   });
 
-  it('earlier reports that cannot be read: comments anyway, and says so (#1688)', () => {
-    const got = runIssue(1, { list: OPEN, viewed: view(`first\n${KEY}`), viewFails: true });
+  it.each([
+    ['its comments', { viewFails: true }],
+    ['the issue itself', { issueFails: true }],
+  ])('earlier reports that cannot be read (%s): comments anyway, and says so (#1688)', (_what, fails) => {
+    const got = runIssue(1, { list: OPEN, viewed: view(`first\n${KEY}`), ...fails });
     expect(got.status, got.stderr).toBe(0);
     expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
     expect(got.stdout).toContain('could not be read, so this one is posted');
+  });
+
+  it('the same findings as the newest of several reports: no new comment, read without the fallback (#1688)', () => {
+    const got = runIssue(1, { list: OPEN, viewed: view('old\n<!-- workflow-health findings: .github/workflows/other.yml:broken -->', `newest\n${KEY}`) });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([]);
+    expect(got.stdout).not.toContain('could not be read');
   });
 
   it('a finding the open issue does not carry yet: comments on it', () => {
