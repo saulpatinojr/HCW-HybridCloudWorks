@@ -398,9 +398,9 @@ says which: a missing secret or variable, an expired token (`HTTP 401` or
 `Cloudflare DNS audit: unexpected record change (<date>)`, labelled
 `Security` and `live-check`, and comments on it rather than opening another
 while one is open. It finds that issue again by the `Security` label and a
-title of exactly that shape, so keep both. It comments only when the
-unexpected entries differ from the issue's last report: two daily windows
-overlap by two hours, so one edit can be read twice. **The workflow never
+title of exactly that shape, so keep both. It comments only when an
+unexpected entry is in none of the reports it already posted there: two daily
+windows overlap by two hours, so one edit can be read twice. **The workflow never
 closes the issue.** A quiet day means no new unexpected edit, not that the one
 reported was explained, so closing it is the last step of 2 and 3 below
 ([#1681](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1681)).

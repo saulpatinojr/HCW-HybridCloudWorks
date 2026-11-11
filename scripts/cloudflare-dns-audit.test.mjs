@@ -766,6 +766,9 @@ describe('main', () => {
     const md = report([judgedAs('aaa', 'UNEXPECTED')]);
     const lines = md.trimEnd().split('\n');
     expect(lines.at(-1)).toMatch(new RegExp(`^${FINDINGS_MARKER} [0-9a-f]{64} -->$`));
+    expect(report([judgedAs('aaa', 'UNEXPECTED'), judgedAs('bbb', 'UNEXPECTED')]).trimEnd().split('\n').at(-1)).toMatch(
+      new RegExp(`^${FINDINGS_MARKER} [0-9a-f]{64} [0-9a-f]{64} -->$`)
+    );
     expect(md.split(FINDINGS_MARKER)).toHaveLength(2);
   });
 
@@ -780,6 +783,15 @@ describe('main', () => {
     expect(two).toBe(one);
     expect(findingsLine([judgedAs('aaa', 'UNEXPECTED')])).not.toBe(one);
     expect(findingsLine([judgedAs('aaa', 'UNEXPECTED'), judgedAs('ccc', 'UNEXPECTED')])).not.toBe(one);
+  });
+
+  it('hashes each entry on its own, so an entry reported beside others is recognised alone', () => {
+    const hashesOf = (line) => line.replace(`${FINDINGS_MARKER} `, '').replace(' -->', '').split(' ');
+    const both = hashesOf(findingsLine([judgedAs('aaa', 'UNEXPECTED'), judgedAs('bbb', 'UNEXPECTED')]));
+    const alone = hashesOf(findingsLine([judgedAs('bbb', 'UNEXPECTED')]));
+    expect(alone).toHaveLength(1);
+    expect(both).toContain(alone[0]);
+    expect(findingsLine([judgedAs('aaa', 'UNEXPECTED'), judgedAs('aaa', 'UNEXPECTED')]).split(' ').filter((w) => /^[0-9a-f]{64}$/.test(w))).toHaveLength(1);
   });
 
   it('tells two entries without an id apart by their record', () => {

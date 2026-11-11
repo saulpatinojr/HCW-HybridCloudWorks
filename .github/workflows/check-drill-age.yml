@@ -96,7 +96,9 @@ jobs:
       # exit, an unreadable table (2) or a missing output included, reports
       # and never closes. While the drill is overdue every weekly run
       # comments, on purpose: the age in the report moves each week, and the
-      # comment is the reminder.
+      # comment is the reminder. The issue list is read on a current week too,
+      # so an outage of the GitHub API can turn that run red; this step's log
+      # then names the failing call, not an overdue drill.
       - name: Open, update or close the drill issue
         env:
           GH_TOKEN: ${{ github.token }}

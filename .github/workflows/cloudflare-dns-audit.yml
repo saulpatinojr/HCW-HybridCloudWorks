@@ -191,11 +191,16 @@ jobs:
       # unexpected change opens a second issue; that is the safe way to be
       # wrong.)
       #
-      # The report of an unexpected change ends with a hidden line holding a
-      # fingerprint of the unexpected entries (`findingsLine` in the script).
-      # A comment is posted only when the newest text in the issue that carries
-      # such a line does not carry this exact one: two daily windows overlap by
-      # two hours, so one edit can be read by two runs.
+      # The report of an unexpected change ends with a hidden line holding one
+      # hash per unexpected entry (`findingsLine` in the script). A comment is
+      # posted only when one of them is in none of the reports already on the
+      # issue: two daily windows overlap by two hours, so one edit can be read
+      # by two runs, alone or beside new ones. Only text the workflow posted
+      # counts (`github-actions[bot]`, read through REST, where that is the
+      # login). The repository is public and anyone can comment, so a copied
+      # line from someone else must not be able to silence a real report. If
+      # the earlier reports cannot be read, the step comments anyway: a
+      # repeated report costs less than a missed one.
       #
       # NEVER CLOSED HERE, unlike the drill and lab supply-chain issues. Those
       # checks read a state, which a later run can see has cleared. This one
@@ -233,16 +238,25 @@ jobs:
             echo "::warning::Unexpected DNS-record change; opened ${url}."
             exit 0
           fi
-          # `strings` drops a null body (an issue opened by hand with none),
-          # which `contains` would otherwise fail on and turn this step red.
-          reported=$(gh issue view "$existing" --repo "$REPO" --json body,comments --jq '[.body, .comments[].body] | map(strings | select(contains("<!-- cloudflare-dns-audit findings:"))) | last // ""')
-          # A plain text comparison, not `if grep`, which this repository
-          # forbids in workflows because a grep error reads as "no match". An
-          # empty key (a report without the line) always comments: an empty
-          # pattern would match anything, and a missed edit costs more than a
-          # repeated one.
-          if [ -n "$key" ] && [[ "$reported" == *"$key"* ]]; then
-            echo "::warning::Unexpected DNS-record change; #${existing} already reports these entries, so no new comment."
+          # Every report the workflow already posted on the issue: its body if
+          # the workflow opened it, and its own comments, every page.
+          if ! reported=$( { gh api "repos/${REPO}/issues/${existing}" --jq 'select(.user.login == "github-actions[bot]") | .body // empty' && gh api "repos/${REPO}/issues/${existing}/comments?per_page=100" --paginate --jq '.[] | select(.user.login == "github-actions[bot]") | .body // empty'; } ); then
+            echo "::warning::The earlier reports on #${existing} could not be read, so this one is posted in full."
+            reported=""
+          fi
+          # New when the report has no findings line, or any hash on it is in
+          # no earlier report. A plain text comparison, not `if grep`, which
+          # this repository forbids in workflows because a grep error reads as
+          # "no match".
+          hashes=${key#"<!-- cloudflare-dns-audit findings: "}
+          hashes=${hashes%" -->"}
+          new=0
+          if [ -z "$key" ] || [ -z "$hashes" ]; then new=1; fi
+          for h in $hashes; do
+            [[ "$reported" == *"$h"* ]] || new=1
+          done
+          if [ "$new" = "0" ]; then
+            echo "::warning::Unexpected DNS-record change; #${existing} already reports every one of these entries, so no new comment."
           else
             gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/issue.md"
             echo "::warning::Unexpected DNS-record change; commented on #${existing}."

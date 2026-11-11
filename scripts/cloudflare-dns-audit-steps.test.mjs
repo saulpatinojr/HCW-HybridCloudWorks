@@ -9,8 +9,8 @@
  * unexpected change commented, even when the two-hour overlap between daily
  * windows had read the same edit the day before. It now finds the issue by
  * the `Security` label and a title that is exactly the script's prefix and
- * ` (YYYY-MM-DD)`, and comments only when the report's hidden findings line
- * differs from the issue's last one.
+ * ` (YYYY-MM-DD)`, and comments only when an entry on the report's hidden
+ * findings line is in no earlier report the workflow posted on the issue.
  *
  * It never closes the issue. The audit reads events in a window, so a quiet
  * day says nothing about the edit already reported; a person closes it once
@@ -19,7 +19,7 @@
  *
  * The step's shell is taken out of the workflow and run with `bash -e`, as a
  * runner does, against a stand-in `gh` that records each call and answers
- * `issue list` and `issue view` with what the test set, applying any `--jq`
+ * `issue list` and the REST reads of the issue with what the test set, applying any `--jq`
  * with the real jq (gh uses gojq, which reads these expressions the same
  * way). The report it reads is the real script's `renderReport`, so the
  * findings line the workflow looks for is the one the script writes.
@@ -68,11 +68,14 @@ describe('cloudflare-dns-audit.yml unexpected-change issue (#1681): its shape', 
 
   it('looks for the findings line the script writes', () => {
     expect(step.run).toContain(`'/^${FINDINGS_MARKER}/{p;q;}'`);
-    expect(step.run).toContain(`contains("${FINDINGS_MARKER}")`);
+    expect(step.run).toContain(`hashes=\${key#"${FINDINGS_MARKER} "}`);
+    expect(step.run).toContain('select(.user.login == "github-actions[bot]")');
   });
 
   it('never closes the issue: a quiet day says nothing about the edit already reported', () => {
     expect(TEXT).not.toContain('gh issue close');
+    expect(TEXT).not.toMatch(/state[=:]\s*"?closed/);
+    expect(TEXT).not.toMatch(/-X\s+PATCH/);
   });
 
   it('does not widen the job: issues: write is the one write it holds', () => {
@@ -143,8 +146,9 @@ describe.skipIf(!READY)(`cloudflare-dns-audit.yml unexpected-change issue (#1681
         'for i in "${!args[@]}"; do [ "${args[$i]}" = "--jq" ] && expr="${args[$((i + 1))]}"; done',
         'case "$1 $2" in',
         '  "issue list") [ -n "$FAKE_LIST_FAILS" ] && exit 1; answer="$FAKE_LIST" ;;',
-        '  "issue view") answer="$FAKE_VIEW" ;;',
         '  "issue create") echo "https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/99"; exit 0 ;;',
+        '  "api "*/comments*) [ -n "$FAKE_API_FAILS" ] && exit 1; answer="$FAKE_COMMENTS" ;;',
+        '  "api "*/issues/*) answer="$FAKE_ISSUE" ;;',
         '  *) exit 0 ;;',
         'esac',
         'if [ -n "$expr" ]; then jq -r "$expr" <<< "$answer"; else printf "%s\\n" "$answer"; fi',
@@ -155,10 +159,18 @@ describe.skipIf(!READY)(`cloudflare-dns-audit.yml unexpected-change issue (#1681
   });
   afterAll(() => rmSync(work, { recursive: true, force: true }));
 
-  /** An `issue view --json body,comments` answer: the body, then the comments, oldest first. */
-  const view = (body, ...comments) => JSON.stringify({ body, comments: comments.map((c) => ({ body: c })) });
+  const BOT = 'github-actions[bot]';
+  /**
+   * What the REST API answers for the open issue: its body and author, then
+   * its comments, oldest first. Each comment is text the workflow posted, or
+   * `{ body, by }` for someone else's.
+   */
+  const view = (body, ...comments) => ({
+    issue: JSON.stringify({ body, user: { login: BOT } }),
+    comments: JSON.stringify(comments.map((c) => (typeof c === 'string' ? { body: c, user: { login: BOT } } : { body: c.body, user: { login: c.by } }))),
+  });
 
-  function runIssue({ report = reportOf(['aaa']), list = '[]', viewed = view(''), listFails = false } = {}) {
+  function runIssue({ report = reportOf(['aaa']), list = '[]', viewed = view(''), listFails = false, apiFails = false, issueBy = BOT } = {}) {
     const dir = `${work}/run-${++runs}`;
     mkdirSync(dir);
     writeFileSync(`${dir}/dns-audit.md`, report);
@@ -171,8 +183,10 @@ describe.skipIf(!READY)(`cloudflare-dns-audit.yml unexpected-change issue (#1681
         RUNNER_TEMP: dir,
         GH_LOG: `${dir}/gh.log`,
         FAKE_LIST: list,
-        FAKE_VIEW: viewed,
+        FAKE_ISSUE: issueBy === BOT ? viewed.issue : JSON.stringify({ ...JSON.parse(viewed.issue), user: { login: issueBy } }),
+        FAKE_COMMENTS: viewed.comments,
         FAKE_LIST_FAILS: listFails ? '1' : '',
+        FAKE_API_FAILS: apiFails ? '1' : '',
         GH_TOKEN: 'not-a-real-token',
         REPO: 'saulpatinojr/HCW-HybridCloudWorks',
         RUN_URL,
@@ -183,7 +197,7 @@ describe.skipIf(!READY)(`cloudflare-dns-audit.yml unexpected-change issue (#1681
       encoding: 'utf8',
     });
     const calls = readFileSync(`${dir}/gh.log`, 'utf8').split('\n').filter(Boolean);
-    const writes = calls.filter((c) => !/^issue\|(list|view)\|/.test(c));
+    const writes = calls.filter((c) => !/^issue\|list\|/.test(c) && !/^api\|repos\//.test(c));
     const body = existsSync(`${dir}/issue.md`) ? readFileSync(`${dir}/issue.md`, 'utf8') : '';
     return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls, writes, body, dir };
   }
@@ -218,14 +232,44 @@ describe.skipIf(!READY)(`cloudflare-dns-audit.yml unexpected-change issue (#1681
     const got = runIssue({ report: reportOf(['aaa'], '2026-11-10T03:50:00Z'), list: OPEN, viewed: view(`first\n${key}`) });
     expect(got.status, got.stderr).toBe(0);
     expect(got.writes).toEqual([]);
-    expect(got.stdout).toContain('#12 already reports these entries');
+    expect(got.stdout).toContain('#12 already reports every one of these entries');
   });
 
-  it('compares with the newest report, and a person\'s comment after it does not count', () => {
-    const a = keyOf(reportOf(['aaa']));
-    const b = keyOf(reportOf(['bbb']));
-    expect(runIssue({ list: OPEN, viewed: view(`first\n${a}`, 'Looking at it now.') }).writes).toEqual([]);
-    expect(runIssue({ list: OPEN, viewed: view(`first\n${a}`, `later\n${b}`) }).writes[0]).toMatch(/^issue\|comment\|12\|/);
+  it('one entry of an earlier report, read again alone in the overlap: no new comment', () => {
+    const got = runIssue({ report: reportOf(['bbb']), list: OPEN, viewed: view(`first\n${keyOf(reportOf(['aaa', 'bbb']))}`) });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes).toEqual([]);
+  });
+
+  it('an entry seen before beside one that is new: comments', () => {
+    const got = runIssue({ report: reportOf(['bbb', 'ccc']), list: OPEN, viewed: view(`first\n${keyOf(reportOf(['aaa', 'bbb']))}`) });
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('counts every earlier report the workflow posted, not only the newest', () => {
+    const got = runIssue({ report: reportOf(['aaa']), list: OPEN, viewed: view(`first\n${keyOf(reportOf(['aaa']))}`, `later\n${keyOf(reportOf(['bbb']))}`) });
+    expect(got.writes).toEqual([]);
+  });
+
+  it('a findings line copied into someone else\'s comment does not silence a real report', () => {
+    const key = keyOf(reportOf(['aaa']));
+    const got = runIssue({ list: OPEN, viewed: view('opened by hand', { body: `nothing to see\n${key}`, by: 'someone-else' }), issueBy: 'someone-else' });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+  });
+
+  it('reads the earlier reports through REST, every page of comments', () => {
+    const got = runIssue({ list: OPEN });
+    const reads = got.calls.filter((c) => c.startsWith('api|'));
+    expect(reads[0]).toMatch(/^api\|repos\/saulpatinojr\/HCW-HybridCloudWorks\/issues\/12\|--jq\|/);
+    expect(reads[1]).toMatch(/^api\|repos\/saulpatinojr\/HCW-HybridCloudWorks\/issues\/12\/comments\?per_page=100\|--paginate\|--jq\|/);
+  });
+
+  it('earlier reports that cannot be read: posts the report anyway, and says so', () => {
+    const got = runIssue({ list: OPEN, viewed: view(`first\n${keyOf(reportOf(['aaa']))}`), apiFails: true });
+    expect(got.status, got.stderr).toBe(0);
+    expect(got.writes[0]).toMatch(/^issue\|comment\|12\|/);
+    expect(got.stdout).toContain('could not be read, so this one is posted in full');
   });
 
   it('an issue opened by hand with no body (null) is read as no report yet', () => {
@@ -271,7 +315,7 @@ describe.skipIf(!READY)(`cloudflare-dns-audit.yml unexpected-change issue (#1681
 
   it('never closes the issue, whatever it is asked to report', () => {
     for (const opts of [{}, { list: OPEN }, { list: OPEN, viewed: view(`x\n${keyOf(reportOf(['aaa']))}`) }]) {
-      expect(runIssue(opts).writes.some((w) => w.startsWith('issue|close|'))).toBe(false);
+      expect(runIssue(opts).calls.some((c) => c.startsWith('issue|close|') || /state=closed|PATCH/.test(c))).toBe(false);
     }
   });
 });
