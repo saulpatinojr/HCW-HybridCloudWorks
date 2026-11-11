@@ -80,6 +80,16 @@ describe('StageFourCard', () => {
     expect(screen.queryByText('a')).not.toBeInTheDocument();
   });
 
+  it('shows the suggested address topic, and nothing when there is none (#1628)', () => {
+    renderCard({ draftTopic: 'hybrid' });
+    expect(screen.getByText(/Address topic: hybrid/)).toBeInTheDocument();
+  });
+
+  it('shows no address topic line when the server will pick one', () => {
+    renderCard({ draftTopic: '' });
+    expect(screen.queryByText(/Address topic/)).not.toBeInTheDocument();
+  });
+
   it('shows the hero image only when a slot resolves one', () => {
     const { container } = renderCard({ resolveSlotImage: () => '/m/hero.png' });
     expect(container.querySelector('img')?.getAttribute('src')).toBe('/m/hero.png');

@@ -22,6 +22,7 @@ import { claimRisingEdge, releaseRisingEdgeClaim } from './rising-edge-claim.js'
 import { evaluateActivationNotice, ACTIVATION_NOTIFIED_FIELD } from './activation-notice.js';
 import { markerForFields, shouldProcessValue } from './value-marker.js';
 import { generateSlug } from '../rss/feeds.js';
+import { articleSlugFor } from '../cms/article-topics.js';
 import { recordedFailure } from '../http/error-response.js';
 
 export const SLUG_PAGE_CLAIM_FIELDS = Object.freeze({
@@ -177,8 +178,16 @@ export function createFeedHandlers({
     const provider = String(
       data.landingProvider || data.cloudProvider || data['Cloud Provider'] || 'azure'
     ).toLowerCase();
-    const baseSlug = generateSlug(rawTitle) || `article-${doc.id.slice(0, 6)}`;
-    const slug = data.slug || data.Slug || `${baseSlug}-${doc.id.slice(0, 6)}`;
+    // A mirrored article with no slug of its own gets the same shape a first
+    // publish gives one, `<topic>-<8 id characters>`, always lowercase (#1628).
+    // Before, it was the title plus a mixed-case id slice, which failed the
+    // strict address rule.
+    const slug =
+      data.slug ||
+      data.Slug ||
+      articleSlugFor({ contentData: data, contentId: doc.id, provider }) ||
+      generateSlug(rawTitle) ||
+      'article';
     await store.patchDoc('blogs', doc.id, {
       ...releaseRisingEdgeClaim(SLUG_PAGE_CLAIM_FIELDS),
       slug,

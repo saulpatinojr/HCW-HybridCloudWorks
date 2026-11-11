@@ -165,7 +165,14 @@ export function useTopicActions({ blogId, state, patch, guarded }) {
     return persistTopics([...state.keyTopics, topic]);
   };
 
-  return { handleRemoveTopic, handleAddTopic };
+  // The address topic (#1628). "Pick automatically" ('') is stored as null,
+  // which tells the server to choose one at publish.
+  const handleSelectAddressTopic = guarded(async (value) => {
+    patch({ topic: value });
+    await postJSON('updateContentItem', { contentId: blogId, updates: { topic: value || null } });
+  });
+
+  return { handleRemoveTopic, handleAddTopic, handleSelectAddressTopic };
 }
 
 export function useReviewImageActions({ blogId, state, patch, updateImages, guarded }) {

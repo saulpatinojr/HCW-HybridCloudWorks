@@ -20,6 +20,8 @@ import {
   PUBLISHED_URL_KEYS,
   toLocalDateInputValue,
   truncate,
+  usesTopicAddress,
+  hasPublishedAddress,
 } from './blogReviewModel';
 
 describe('firstNonEmpty', () => {
@@ -181,6 +183,12 @@ describe('deriveBlogSyncPatch', () => {
     expect(patch.scheduledDate).toBe(toLocalDateInputValue(tomorrow));
   });
 
+  it('copies the address topic, and reads none as automatic (#1628)', () => {
+    expect(deriveBlogSyncPatch({ topic: 'identity' }).topic).toBe('identity');
+    expect(deriveBlogSyncPatch({ topic: null }).topic).toBe('');
+    expect(deriveBlogSyncPatch({}).topic).toBe('');
+  });
+
   it('ends a pending cover only once the record says generation finished', () => {
     expect(
       deriveBlogSyncPatch({ altCoverImageTrigger: true, altCoverImageGeneratedAt: 'x' })
@@ -191,7 +199,11 @@ describe('deriveBlogSyncPatch', () => {
   });
 
   it('tolerates a missing record', () => {
-    expect(deriveBlogSyncPatch(undefined)).toEqual({ reviewImages: [], keyTopics: [] });
+    expect(deriveBlogSyncPatch(undefined)).toEqual({
+      reviewImages: [],
+      keyTopics: [],
+      topic: '',
+    });
   });
 });
 
@@ -299,5 +311,32 @@ describe('truncate', () => {
   it('cuts long text with an ellipsis and leaves short text alone', () => {
     expect(truncate('abcdef', 3)).toBe('abc...');
     expect(truncate('abc', 3)).toBe('abc');
+  });
+});
+
+describe('usesTopicAddress', () => {
+  it('is true for a blog article or news item, whose address starts with a topic (#1628)', () => {
+    expect(usesTopicAddress({})).toBe(true);
+    expect(usesTopicAddress({ type: 'blog' })).toBe(true);
+    expect(usesTopicAddress({ type: 'news' })).toBe(true);
+  });
+
+  it('is false for the sections that keep a title address', () => {
+    expect(usesTopicAddress({ type: 'interview' })).toBe(false);
+    expect(usesTopicAddress({ publishTarget: 'interview' })).toBe(false);
+  });
+});
+
+describe('hasPublishedAddress', () => {
+  it('is true once a publish has written the address, even after an unpublish (#1628)', () => {
+    expect(hasPublishedAddress({ contentStatus: 'published' })).toBe(true);
+    expect(
+      hasPublishedAddress({ contentStatus: 'inspected', curatedSubpagePath: '/azure/blog/ai-c1' })
+    ).toBe(true);
+    expect(hasPublishedAddress({ contentStatus: 'approved', Live: true })).toBe(true);
+    expect(hasPublishedAddress({ contentStatus: 'approved', Status: 'Live' })).toBe(true);
+    expect(hasPublishedAddress({ contentStatus: 'published_blog' })).toBe(true);
+    expect(hasPublishedAddress({ contentStatus: 'inspected' })).toBe(false);
+    expect(hasPublishedAddress(undefined)).toBe(false);
   });
 });

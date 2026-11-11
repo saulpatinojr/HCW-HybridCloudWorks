@@ -8,6 +8,7 @@
  * Every read is defaulted, because the snapshot is whatever an older version of
  * this page happened to write — a missing field is normal, not a fault.
  */
+import { isArticleTopic } from '@/lib/articleTopics';
 import { ensureTldrSectionAtEnd } from '@/lib/contentDraft';
 
 import { DEFAULT_DRAFT_INSTRUCTION_PROMPT } from './draftStage';
@@ -80,6 +81,7 @@ function applyDraftBuilderSnapshot(saved, setters) {
     draftSummary = '',
     draftContent = '',
     draftTopics = [],
+    draftTopic = '',
     draftReady = false,
     summaryPrompt = '',
     detailsPrompt = '',
@@ -89,6 +91,7 @@ function applyDraftBuilderSnapshot(saved, setters) {
   setters.setDraftSummary(draftSummary);
   setters.setDraftContent(ensureTldrSectionAtEnd(draftContent));
   setters.setDraftTopics(toArray(draftTopics));
+  setters.setDraftTopic?.(isArticleTopic(draftTopic) ? draftTopic : '');
   setters.setDraftReady(Boolean(draftReady));
   setters.setSummaryPrompt(summaryPrompt);
   setters.setDetailsPrompt(detailsPrompt);

@@ -468,6 +468,73 @@ describe('runForgePipeline', () => {
   });
 });
 
+describe('runForgePipeline: the suggested address topic (#1628)', () => {
+  const run = (d) =>
+    createForge(d).runForgePipeline({ contentId: 'c-1', actor: { oid: 'o1' } });
+  const topicWrites = (d) =>
+    d.writes.patches.filter(([c, , u]) => c === 'content' && 'topic' in u);
+
+  it('saves the AI topic on its own, conditioned on a fresh read', async () => {
+    const d = makeDeps({
+      draft: draftOf({ topic: 'storage' }),
+      docs: {
+        'c-1': {
+          id: 'c-1',
+          Title: 'EBS gp3',
+          content: 'src',
+          'Cloud Provider': 'AWS',
+          sourceUrl: 'https://src/ebs',
+          _etag: "'e7'",
+        },
+      },
+    });
+    expect((await run(d)).ok).toBe(true);
+    expect(topicWrites(d)).toEqual([['content', 'c-1', { topic: 'storage' }]]);
+    const call = d.store.patchDoc.mock.calls.find(
+      ([c, , u]) => c === 'content' && 'topic' in u,
+    );
+    expect(call[3]).toEqual({ ifMatch: "'e7'" });
+    // The main forge patch no longer carries it.
+    expect(
+      d.writes.patches.filter(
+        ([c, , u]) => c === 'content' && 'Title' in u,
+      )[0][2],
+    ).not.toHaveProperty('topic');
+  });
+
+  it('leaves a topic an editor picked while the model ran', async () => {
+    const d = makeDeps({ draft: draftOf({ topic: 'storage' }) });
+    d.drafter.generateDraft.mockImplementation(async () => {
+      // The review board saves a topic mid-forge.
+      d.store.readDoc.mockImplementation(async (c, id) =>
+        c === 'content' && id === 'c-1'
+          ? { id: 'c-1', Title: 'EBS gp3', content: 'src', topic: 'network' }
+          : null,
+      );
+      return draftOf({ topic: 'storage' });
+    });
+    expect((await run(d)).ok).toBe(true);
+    expect(topicWrites(d)).toEqual([]);
+  });
+
+  it('skips the topic, and still forges, when the document changed between the read and the write', async () => {
+    const d = makeDeps({ draft: draftOf({ topic: 'storage' }) });
+    const patch = d.store.patchDoc.getMockImplementation();
+    d.store.patchDoc.mockImplementation(async (c, id, u, o) => {
+      if (c === 'content' && 'topic' in u)
+        throw Object.assign(new Error('cosmos 412'), { code: 412 });
+      return patch(c, id, u, o);
+    });
+    expect((await run(d)).ok).toBe(true);
+  });
+
+  it('writes nothing for a topic off the list', async () => {
+    const d = makeDeps({ draft: draftOf({ topic: 'copilot' }) });
+    expect((await run(d)).ok).toBe(true);
+    expect(topicWrites(d)).toEqual([]);
+  });
+});
+
 describe('drafter', () => {
   it('a caller-composed voiceBlock + format replaces the base block and skips the rotation query', async () => {
     const store = { queryDocs: vi.fn(async () => []) };

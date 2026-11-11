@@ -253,6 +253,7 @@ describe("create and read", () => {
       ...FIELDS,
       kind: "article",
       ideaOrigin: "manual",
+      topic: null,
     });
     const stored = store.docs.get("id-1");
     expect(stored).toMatchObject({
@@ -305,6 +306,25 @@ describe("create and read", () => {
       /kind "haiku" is not a known kind; allowed: article/,
     );
     expect(store.docs.size).toBe(1);
+  });
+
+  it("sets, keeps and clears the address topic, never storing undefined (#1628)", async () => {
+    const { handlers, store } = setup();
+    const draft = await created(handlers, { ...FIELDS, topic: "hybrid" });
+    expect(draft.fields.topic).toBe("hybrid");
+    expect(store.docs.get(draft.id).topic).toBe("hybrid");
+
+    const save = async (fields, etag) =>
+      parse(await handlers.update(request({ id: draft.id, body: { fields, etag } }), context)).body.draft;
+
+    // An older page that sends no topic leaves the stored one alone.
+    const kept = await save({ ...FIELDS }, draft.etag);
+    expect(kept.fields.topic).toBe("hybrid");
+
+    // '' clears it to null, so the publish step picks one.
+    const cleared = await save({ ...FIELDS, topic: "" }, kept.etag);
+    expect(cleared.fields.topic).toBeNull();
+    expect(store.docs.get(draft.id)).toHaveProperty("topic", null);
   });
 
   it("refuses a workflow field rather than storing it, and writes nothing", async () => {

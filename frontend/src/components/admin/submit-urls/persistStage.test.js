@@ -141,6 +141,15 @@ describe('buildContentCreatePayload', () => {
     expect('ideaOrigin' in unset).toBe(false);
   });
 
+  it('writes the address topic only when it is one of the list (#1628)', () => {
+    expect(buildContentCreatePayload(payloadInput({ draftTopic: 'hybrid' })).topic).toBe('hybrid');
+    // '' (pick automatically), a word not on the list, and no value at all
+    // leave the key out, so the server picks one at publish.
+    for (const draftTopic of ['', 'kubernetes', undefined, null]) {
+      expect('topic' in buildContentCreatePayload(payloadInput({ draftTopic }))).toBe(false);
+    }
+  });
+
   it('falls back from the generated title to the typed one', () => {
     const payload = buildContentCreatePayload(payloadInput({ draftTitle: '', title: 'Typed' }));
     expect(payload.title).toBe('Typed');
@@ -238,6 +247,12 @@ describe('persistContentItem', () => {
     expect(body.data.secondaryImageUrls).toEqual(['/m/s1.png']);
     // Only the generated one is reported as AI-made.
     expect(body.data.aiImageUrls).toEqual({ secondary1: '/m/s1.png' });
+  });
+
+  it('sends the address topic the drafting step suggested (#1628)', async () => {
+    await persistContentItem(persistBag({ draftTopic: 'security' }));
+    const [[, body]] = postJSON.mock.calls;
+    expect(body.data.topic).toBe('security');
   });
 });
 

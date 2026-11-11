@@ -84,3 +84,56 @@ describe('BlogReviewBoard provider picker', () => {
     expect(screen.getByRole('button', { name: 'Send to Publish Queue' })).toBeEnabled();
   });
 });
+
+describe('BlogReviewBoard address topic (#1628)', () => {
+  it('shows the stored topic, and saves "Pick automatically" as null', async () => {
+    renderBoard({ contentStatus: 'inspected', topic: 'hybrid' });
+    const select = await screen.findByLabelText('Address topic');
+    await waitFor(() => expect(select).toHaveValue('hybrid'));
+    expect(screen.getByText(/Sets the first word of the page address/)).toBeInTheDocument();
+
+    fireEvent.change(select, { target: { value: '' } });
+    await waitFor(() => expect(postJSON).toHaveBeenCalledTimes(1));
+    expect(postJSON).toHaveBeenCalledWith('updateContentItem', {
+      contentId: 'c1',
+      updates: { topic: null },
+    });
+    expect(select).toHaveValue('');
+  });
+
+  it('saves a chosen topic word as it is', async () => {
+    renderBoard({ contentStatus: 'inspected' });
+    const select = screen.getByLabelText('Address topic');
+    expect(select).toHaveValue('');
+    fireEvent.change(select, { target: { value: 'security' } });
+    await waitFor(() =>
+      expect(postJSON).toHaveBeenCalledWith('updateContentItem', {
+        contentId: 'c1',
+        updates: { topic: 'security' },
+      })
+    );
+  });
+
+  it('shows the save failure instead of swallowing it', async () => {
+    postJSON.mockRejectedValue(new Error('Topic not saved.'));
+    renderBoard({ contentStatus: 'inspected' });
+    fireEvent.change(screen.getByLabelText('Address topic'), { target: { value: 'data' } });
+    expect(await screen.findByText(/Topic not saved\./)).toBeInTheDocument();
+  });
+
+  it('is locked once the article has been published, because its address is fixed', () => {
+    renderBoard({
+      contentStatus: 'inspected',
+      topic: 'ai',
+      curatedSubpagePath: '/azure/blog/ai-c1',
+    });
+    const select = screen.getByLabelText('Address topic');
+    expect(select).toBeDisabled();
+    expect(select).toHaveAccessibleDescription(/its address is fixed/);
+  });
+
+  it('is not offered for an interview, whose address keeps its title', () => {
+    renderBoard({ contentStatus: 'inspected', type: 'interview' });
+    expect(screen.queryByLabelText('Address topic')).not.toBeInTheDocument();
+  });
+});

@@ -773,8 +773,9 @@ describe('feed handlers', () => {
     const [r] = await h.blogs([store.data.blogs.get('b1')], {});
     expect(r).toMatchObject({ mirrored: 'not_external_url', cover: 'no_title', slug: 'created' });
     expect(store.data.blogs.get('b1')).toMatchObject({
-      slug: 'hello-world-b1',
-      curatedSubpagePath: '/aws/blog/hello-world-b1',
+      // `<topic>-<id>` (#1628): no topic word in "Hello World", so the provider.
+      slug: 'aws-b1',
+      curatedSubpagePath: '/aws/blog/aws-b1',
       createSlugPageTrigger: false,
       createSlugPageRunId: null,
       curatedSubpage: true,

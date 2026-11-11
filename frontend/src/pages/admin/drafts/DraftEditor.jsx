@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import RichTextBody from '@/components/shared/RichTextBody';
 import TaxonomyPicker from '@/components/admin/shared/TaxonomyPicker';
+import ArticleTopicSelect from '@/components/admin/shared/ArticleTopicSelect';
 import { ARTICLE_PROSE_CLASS } from '@/lib/articleStyles';
 import { StageBadge } from './DraftList';
 import { TRACK_SUGGESTIONS, reviewPath } from './draftForm';
@@ -263,6 +264,11 @@ export default function DraftEditor({
               }}
             />
           </div>
+          <ArticleTopicSelect
+            value={form.topic}
+            onChange={(value) => onChange('topic', value)}
+            disabled={readOnly}
+          />
         </div>
 
         <div className="grid gap-4 xl:grid-cols-2">

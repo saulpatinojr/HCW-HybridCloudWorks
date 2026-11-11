@@ -1,7 +1,8 @@
 /**
  * The blog review board's content column (ADR 0033, PR #841): cover, source
- * URL, summary, key topics, image slots, the publish image manager and the
- * two markdown panes, plus the full-screen image overlay.
+ * URL, summary, key topics with the address topic (#1628), image slots, the
+ * publish image manager and the two markdown panes, plus the full-screen
+ * image overlay.
  */
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -24,7 +25,13 @@ import { ImageOrderManager } from '@/components/admin/ImageOrderManager';
 import { ImageGalleryPicker } from '@/components/admin/ImageGalleryPicker';
 import { resolveMediaUrl } from '@/lib/functionsBase';
 import { safeUrl } from '@/lib/safeUrl';
-import { describeImageSlot, truncate } from './blogReviewModel';
+import ArticleTopicSelect from '@/components/admin/shared/ArticleTopicSelect';
+import {
+  describeImageSlot,
+  hasPublishedAddress,
+  truncate,
+  usesTopicAddress,
+} from './blogReviewModel';
 
 /** An outbound link whose text is cut at `maxLength` characters. */
 export function ExternalAnchor({ href, maxLength }) {
@@ -110,7 +117,21 @@ function SummaryCard({ summary, expanded, onToggle }) {
   );
 }
 
-function KeyTopicsCard({ keyTopics, newTopic, onNewTopicChange, onAdd, onRemove }) {
+// Once an article has been published its address never changes (#1628), so
+// the dropdown is locked rather than offering a choice that does nothing.
+const PUBLISHED_ADDRESS_HINT =
+  'This article has been published, so its address is fixed and the topic no longer changes it.';
+
+function KeyTopicsCard({
+  keyTopics,
+  newTopic,
+  onNewTopicChange,
+  onAdd,
+  onRemove,
+  addressTopic,
+  onAddressTopicChange,
+  addressFixed = false,
+}) {
   return (
     <Card>
       <CardContent className="p-4">
@@ -135,6 +156,15 @@ function KeyTopicsCard({ keyTopics, newTopic, onNewTopicChange, onAdd, onRemove 
           placeholder="Add topic and press Enter"
           className="w-full px-3 py-2 text-sm border rounded-md bg-background"
         />
+        {onAddressTopicChange && (
+          <ArticleTopicSelect
+            value={addressTopic}
+            onChange={onAddressTopicChange}
+            disabled={addressFixed}
+            hint={addressFixed ? PUBLISHED_ADDRESS_HINT : undefined}
+            className="mt-4"
+          />
+        )}
       </CardContent>
     </Card>
   );
@@ -348,6 +378,11 @@ export function BlogReviewContent({
           onNewTopicChange={(value) => patch({ newTopic: value })}
           onAdd={topics.handleAddTopic}
           onRemove={topics.handleRemoveTopic}
+          addressTopic={state.topic}
+          onAddressTopicChange={
+            usesTopicAddress(blog) ? topics.handleSelectAddressTopic : undefined
+          }
+          addressFixed={hasPublishedAddress(blog)}
         />
         <ImageSlotsCard
           blog={blog}

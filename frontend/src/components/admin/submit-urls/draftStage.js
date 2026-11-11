@@ -9,6 +9,7 @@
  * Behaviour here is deliberately identical to the inline handlers it replaces.
  */
 import { postJSON } from '@/lib/api';
+import { isArticleTopic } from '@/lib/articleTopics';
 import { ensureTldrSectionAtEnd } from '@/lib/contentDraft';
 
 /**
@@ -288,7 +289,7 @@ const textOr = (value, fallback = '') => value || fallback;
 const listOr = (value, fallback) => (Array.isArray(value) && value.length > 0 ? value : fallback);
 
 /**
- * A draft response reduced to the seven values the page stores.
+ * A draft response reduced to the eight values the page stores.
  *
  * Pure, and separate from the writing below, because every one of these is a
  * fallback and a thin or malformed response is the normal failure — the
@@ -306,6 +307,9 @@ export function normalizeDraft(draft, state, sourceUrls) {
     // Any array, including an empty one — unlike sourceUrls, an empty topic
     // list is a legitimate answer rather than a missing one.
     topics: Array.isArray(draft.keyTopics) ? draft.keyTopics : [],
+    // The address topic the drafting step suggests (#1628); anything not on
+    // the list becomes '', which lets the server pick one at publish.
+    topic: isArticleTopic(draft.topic) ? draft.topic : '',
     summaryPrompt: textOr(draft.summaryPrompt),
     detailsPrompt: textOr(draft.detailsPrompt),
   };
@@ -320,6 +324,7 @@ export function applyDraftResponse(state, draft, sourceUrls) {
   state.setDraftSummary(next.summary);
   state.setDraftContent(next.content);
   state.setDraftTopics(next.topics);
+  state.setDraftTopic(next.topic);
   state.setSummaryPrompt(next.summaryPrompt);
   state.setDetailsPrompt(next.detailsPrompt);
   state.setDraftReady(true);

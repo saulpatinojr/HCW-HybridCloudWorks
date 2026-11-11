@@ -62,6 +62,8 @@ import { authoredMessage, errorCode, errorResponse } from '../http/error-respons
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { buildContentQualityReport, buildImageReadinessReport } from './content-quality.js';
 import { normalizePublishTarget, SUPPORTED_PUBLISH_TARGETS } from './publish-targets.js';
+import { articleSlugFor } from './article-topics.js';
+import { isPublicDocument } from '../public-reads.js';
 import { buildInlineImageUpdate, findInlineImageUrls, resolveBodyFields } from './inline-images.js';
 import {
   interviewBodyText,
@@ -121,16 +123,33 @@ export const REHOST_IMAGES_REASON = 'rehost-images';
  */
 export const SET_SLUG_REASON = 'set-slug';
 
+/**
+ * Lowercase words joined by single hyphens, at most 80 characters. Runs of
+ * hyphens collapse and none is left at either end, including after the cut,
+ * so the result always passes the strict address rule (STRICT_SLUG in
+ * scripts/build-content-manifest.mjs). Before #1628 a title like `A - B`
+ * gave `a---b`, and a cut at 80 that landed on a hyphen left a `--` once the
+ * suffix was added.
+ */
 export function slugify(text = '') {
   return String(text)
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '')
     .trim()
-    .replace(/\s+/g, '-')
-    .slice(0, 80);
+    .replace(/[\s-]+/g, '-')
+    .slice(0, 80)
+    .replace(/^-+|-+$/g, '');
 }
 
-const slugSuffix = (id = '') => (id ? String(id).slice(0, 6) : Date.now().toString(36).slice(-6));
+// Lowercase, letters and digits only: a document id mixes cases, and an
+// address must not (#1628).
+const slugSuffix = (id = '') => {
+  const fromId = String(id || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 6);
+  return fromId || Date.now().toString(36).slice(-6);
+};
 
 /**
  * The slug a publish writes. Pure: the caller runs the probe, this decides.
@@ -937,7 +956,17 @@ export function createPublishHandlers({
       // A republish keeps the URL it already serves; anything else is a first
       // assignment. `slug || Slug` because either field can be the one the
       // manifest routed on — see slugHolders.
-      const reuse = Boolean(isRepublish && existingSlug);
+      // A document that is public now, or has been, keeps its address:
+      //  - unpublishing sets the status back to `inspected`, but only a publish
+      //    writes `curatedSubpagePath`, and nothing clears it;
+      //  - a legacy article can be served (`Live: true`, `Status: 'Live'`, a
+      //    `published_*` status: isPublicDocument, the public reads' own test)
+      //    with no curated path at all.
+      // Without this, its next publish would build a new address and break
+      // every link to the old one (#1628 reviews).
+      const publishedBefore =
+        isRepublish || Boolean(contentData.curatedSubpagePath) || isPublicDocument(contentData);
+      const reuse = Boolean(publishedBefore && existingSlug);
       // NORMALISED ONCE, HERE, because the probe and the write have to be about
       // the same string. `slugify` already trims, but a STORED slug need not —
       // this corpus is migrated and hand-edited, which is the corpus that
@@ -945,7 +974,13 @@ export function createPublishHandlers({
       // and resolveSlug (which trims) then writes `shared-slug` onto a URL
       // another article already holds: the read says free, the write says
       // taken, and nothing in between notices.
-      const candidate = String((reuse ? existingSlug : slugify(rawTitle)) || '').trim();
+      // A first publish of an article gets `<topic>-<8 id characters>`
+      // (article-topics.js, #1628); other sections keep the title slug.
+      const firstSlug =
+        ctx.curatedSection === 'blog'
+          ? articleSlugFor({ contentData, contentId, provider: ctx.inferredProvider }) || slugify(rawTitle)
+          : slugify(rawTitle);
+      const candidate = String((reuse ? existingSlug : firstSlug) || '').trim();
       // Probed on EVERY publish, to answer one question: does another document
       // already hold this URL? Three did (#400), and the branch that reused a
       // stored slug never asked.

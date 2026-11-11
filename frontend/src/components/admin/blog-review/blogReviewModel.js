@@ -9,7 +9,11 @@
  */
 import { getCoverImageUrl } from '@/lib/blogUtils';
 import { toDate } from '@/lib/dateUtils';
-import { getContentPublicPath, getPublishTargetForItem } from '@/lib/contentModel';
+import {
+  getContentPublicPath,
+  getPublicSectionForTarget,
+  getPublishTargetForItem,
+} from '@/lib/contentModel';
 import { getOrderedContentImages } from '@/lib/contentImages';
 
 /** Where a published record's public URL may live, in the order the board trusts them. */
@@ -180,14 +184,44 @@ export function deriveScheduleFields(blog) {
 }
 
 /**
- * The local-state patch a fresh record implies: the images and topics it
- * carries, its schedule, its saved prompt override (only when it has one),
+ * True once the record is or has been public: the server then keeps its
+ * stored address for good (#1628). The same test as the server's publish
+ * step: a published or legacy `published_*` status, `Live: true` or
+ * `Status: 'Live'` (isPublicDocument in functions/src/lib/public-reads.js),
+ * or a `curatedSubpagePath`, which only a publish writes and an unpublish
+ * leaves in place.
+ */
+export function hasPublishedAddress(blog) {
+  if (!blog) return false;
+  const status = String(blog.contentStatus || '');
+  return (
+    status === 'published' ||
+    status.startsWith('published_') ||
+    blog.Live === true ||
+    blog.Status === 'Live' ||
+    Boolean(blog.curatedSubpagePath)
+  );
+}
+
+/**
+ * Does this record's page address start with a topic word (#1628)? Only a
+ * blog article's does; interviews and the other sections keep a title slug.
+ */
+export function usesTopicAddress(blog) {
+  return getPublicSectionForTarget(getPublishTargetForItem(blog || {})) === 'blog';
+}
+
+/**
+ * The local-state patch a fresh record implies: the images, topics and
+ * address topic it carries, its schedule, its saved prompt override (only when it has one),
  * and the end of a cover generation once the record says it finished.
  */
 export function deriveBlogSyncPatch(blog) {
   const patch = {
     reviewImages: getOrderedContentImages(blog),
     keyTopics: asArray(blog?.keyTopics),
+    // The address topic (#1628); '' means the server picks one at publish.
+    topic: typeof blog?.topic === 'string' ? blog.topic : '',
   };
   if (!blog) return patch;
   if (blog.altCoverImagePrompt) patch.imagePrompt = blog.altCoverImagePrompt;

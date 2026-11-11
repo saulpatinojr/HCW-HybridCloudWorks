@@ -30,6 +30,9 @@ export const EMPTY_FORM = Object.freeze({
   // typed in, until the owner says otherwise.
   kind: 'article',
   ideaOrigin: 'manual',
+  // The address topic (#1628): a topic word, or '' to let the server pick
+  // one at publish.
+  topic: '',
 });
 
 const FORM_KEYS = Object.keys(EMPTY_FORM);
@@ -77,6 +80,7 @@ export function fromDraft(draft) {
     body: String(fields.body ?? ''),
     kind: String(fields.kind || EMPTY_FORM.kind),
     ideaOrigin: String(fields.ideaOrigin || EMPTY_FORM.ideaOrigin),
+    topic: String(fields.topic || ''),
   };
 }
 
@@ -107,6 +111,8 @@ export function toPayload(form) {
     // Only when set: an unset value leaves the stored classification alone.
     ...(form.kind && { kind: String(form.kind).trim() }),
     ...(form.ideaOrigin && { ideaOrigin: String(form.ideaOrigin).trim() }),
+    // Always sent: '' clears a stored topic so the server picks one at publish.
+    topic: String(form.topic ?? '').trim(),
   };
 }
 

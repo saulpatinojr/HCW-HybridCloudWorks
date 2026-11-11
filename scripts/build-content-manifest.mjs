@@ -201,7 +201,9 @@ function slugOf(item) {
  * nothing else. The slug becomes a folder of the built site, so a slash, a
  * dot, a space or `%`, `?` and `#` must never reach it.
  *
- * Looser than INTERVIEW_SLUG and DESIGN_SLUG on purpose. Published articles
+ * Looser than STRICT_SLUG (interviews and designs) for now. The owner chose
+ * on 2026-11-11 to move articles to id-based lowercase addresses (#1628);
+ * this tightens to STRICT_SLUG once the live articles have moved. Published articles
  * already carry uppercase letters and double hyphens: the publish step adds
  * the first six characters of the document id, which mix cases, and a slug
  * cut at 80 characters can end in a hyphen before that suffix
@@ -324,8 +326,14 @@ export const INTERVIEW_FIELDS = Object.freeze([
 /** The list route's projection: what a card and the landing page read. */
 export const INTERVIEW_LIST_FIELDS = Object.freeze(INTERVIEW_FIELDS.slice(0, 7));
 
-/** The address of one interview; the frontend's validator spells it the same way. */
-const INTERVIEW_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/**
+ * The address of one interview or one design: lowercase words joined by
+ * single hyphens. The slug becomes a folder of the built site, so a slash, a
+ * dot or anything else that could change that folder never reaches it.
+ * One pattern for both, so the two cannot drift apart. It matches `SLUG` in
+ * functions/src/lib/interviews/schema.js, which the test holds it to.
+ */
+export const STRICT_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** The interview list page, Azure only (App.jsx: any other provider is a 404). */
 export const INTERVIEWS_ROUTE = '/azure/interviews';
@@ -357,7 +365,7 @@ function addInterviews(interviews, { routes, data, skipped }) {
   const seen = new Set();
   for (const item of interviews) {
     const slug = slugOf(item);
-    if (!slug || !INTERVIEW_SLUG.test(slug)) {
+    if (!slug || !STRICT_SLUG.test(slug)) {
       skipped.push(`interview ${item?.id || '(no id)'}: no usable slug`);
       continue;
     }
@@ -385,13 +393,6 @@ function addInterviews(interviews, { routes, data, skipped }) {
  * page, so a design there gets no page built.
  */
 export const DESIGN_PROVIDERS = Object.freeze(['aws', 'azure', 'gcp', 'finops', 'vmware']);
-
-/**
- * The address of one design. Strict for the same reason as INTERVIEW_SLUG:
- * the slug becomes a folder of the built site, so nothing but lowercase
- * words and hyphens may reach it.
- */
-const DESIGN_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const isDesignItem = (item) => String(item?.type || '').toLowerCase() === 'architecture';
 
@@ -426,7 +427,7 @@ function projectDesign(item) {
 function addDesigns(designs, { routes, data, skipped }) {
   for (const item of designs) {
     const slug = slugOf(item);
-    if (!slug || !DESIGN_SLUG.test(slug)) {
+    if (!slug || !STRICT_SLUG.test(slug)) {
       skipped.push(`design ${item?.id || '(no id)'}: no usable slug`);
       continue;
     }

@@ -28,7 +28,9 @@ import {
   INTERVIEWS_ROUTE,
   DESIGN_PROVIDERS,
   ARTICLE_SLUG,
+  STRICT_SLUG,
 } from './build-content-manifest.mjs';
+import { articleSlugFor } from '../functions/src/lib/cms/article-topics.js';
 
 // `dirname(fileURLToPath(...))` rather than `new URL('..', import.meta.url)`:
 // this file declares its own `const URL` below, which shadows the global and
@@ -519,6 +521,36 @@ describe('designs on the manifest (#1628)', () => {
   });
 });
 
+describe('interview and design slugs: one strict pattern', () => {
+  const interview = (slug) => ({ id: `i-${slug}`, slug, type: 'interview', date: '2026-11-01' });
+  const design = (slug) => ({ id: `d-${slug}`, slug, type: 'architecture', cloudProvider: 'azure' });
+  const unsafe = ['../escape', 'Upper-Case', 'under_score', 'double--hyphen', 'trailing-'];
+
+  it('skips an unsafe or uppercase interview slug and names it by id', () => {
+    const manifest = buildManifest([], null, unsafe.map(interview));
+    expect(manifest.routes).toEqual([]);
+    expect(manifest.skipped).toEqual(unsafe.map((slug) => `interview i-${slug}: no usable slug`));
+  });
+
+  it('skips an unsafe or uppercase design slug and names it by id', () => {
+    const manifest = buildManifest([], null, [], unsafe.map(design));
+    expect(manifest.routes).toEqual([]);
+    expect(manifest.skipped).toEqual(unsafe.map((slug) => `design d-${slug}: no usable slug`));
+  });
+
+  it('is the same pattern the interview API checks, so the build and the API agree', () => {
+    const schema = readFileSync(join(REPO, 'functions', 'src', 'lib', 'interviews', 'schema.js'), 'utf8');
+    const match = schema.match(/^export const SLUG = \/(.+)\/;$/m);
+    expect(match, 'export const SLUG not found in functions/src/lib/interviews/schema.js').not.toBeNull();
+    expect(STRICT_SLUG.source).toBe(match[1]);
+  });
+
+  it('is stricter than the article pattern, which keeps uppercase on purpose', () => {
+    expect(STRICT_SLUG.test('nist-vs-zero-trust-LSzyB6')).toBe(false);
+    expect(ARTICLE_SLUG.test('nist-vs-zero-trust-LSzyB6')).toBe(true);
+  });
+});
+
 describe('article slugs: only a safe address becomes a page', () => {
   const article = (slug, over = {}) => ({ id: `a-${slug}`, slug, cloudProvider: 'azure', type: 'blog', ...over });
 
@@ -548,5 +580,20 @@ describe('article slugs: only a safe address becomes a page', () => {
       .map((key) => key.slice('article:'.length));
     expect(slugs.length).toBeGreaterThan(0);
     expect(slugs.filter((slug) => !ARTICLE_SLUG.test(slug))).toEqual([]);
+  });
+});
+
+describe('article addresses after the move to <topic>-<id> (#1628)', () => {
+  it('gives each live article a distinct new address that passes STRICT_SLUG', () => {
+    const committed = JSON.parse(readFileSync(join(REPO, 'frontend', 'data', 'content-manifest.json'), 'utf8'));
+    const articles = Object.entries(committed.data)
+      .filter(([key]) => key.startsWith('article:'))
+      .map(([, doc]) => doc);
+    expect(articles.length).toBeGreaterThan(0);
+    const slugs = articles.map((doc) =>
+      articleSlugFor({ contentData: doc, contentId: doc.id, provider: doc.cloudProvider })
+    );
+    expect(slugs.filter((slug) => !STRICT_SLUG.test(slug))).toEqual([]);
+    expect(new Set(slugs).size).toBe(slugs.length);
   });
 });

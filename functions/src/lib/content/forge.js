@@ -44,6 +44,7 @@ import {
   repairModules,
   scrubDashes,
 } from './forge-pipeline.js';
+import { isArticleTopic } from '../cms/article-topics.js';
 
 /** The source fields a forge run reads, alias-coalesced; `{ error }` when it cannot run. */
 export function resolveForgeSource(contentId, data) {
@@ -402,6 +403,29 @@ export function createForge({
     }
   }
 
+  /**
+   * The AI's address topic (#1628), written on its own and guarded. The forge
+   * read the document before a model run of minutes, so that read cannot say
+   * whether an editor has picked a topic since. This reads again just before
+   * the write and makes the write conditional on that read (`ifMatch`): an
+   * editor's topic always wins, and a 412 (the document changed in between)
+   * or 404 (it was deleted) skips the suggestion. A skipped suggestion costs
+   * nothing: the publish step picks a topic from keywords. Never fails the
+   * forge.
+   */
+  async function saveSuggestedTopic(contentId, topic) {
+    if (!isArticleTopic(topic)) return;
+    try {
+      const fresh = await store.readDoc('content', contentId, contentId);
+      if (!fresh || isArticleTopic(fresh.topic)) return;
+      await store.patchDoc('content', contentId, { topic }, { ifMatch: fresh._etag });
+    } catch (err) {
+      if (err?.code !== 412 && err?.code !== 404) {
+        log.warn?.('forge: the suggested address topic was not saved');
+      }
+    }
+  }
+
   async function saveForgeOutcome({
     contentId,
     actor,
@@ -451,6 +475,7 @@ export function createForge({
     }
 
     await store.patchDoc('content', contentId, update);
+    await saveSuggestedTopic(contentId, draft.topic);
     await store.upsertDoc('content_versions', {
       id: uuid(),
       contentId,

@@ -120,6 +120,7 @@ export default function SubmitUrlsPage() {
     setDraftContent,
     insertSectionBlock,
     draftTopics,
+    draftTopic,
     resolveSlotImage,
     previewPath,
     savedContentId,
@@ -258,6 +259,7 @@ export default function SubmitUrlsPage() {
           draftReady={draftReady}
           insertSectionBlock={insertSectionBlock}
           draftTopics={draftTopics}
+          draftTopic={draftTopic}
           resolveSlotImage={resolveSlotImage}
           previewPath={previewPath}
           readinessChecks={readinessChecks}
