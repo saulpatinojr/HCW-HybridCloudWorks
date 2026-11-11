@@ -403,6 +403,29 @@ export function createForge({
     }
   }
 
+  /**
+   * The AI's address topic (#1628), written on its own and guarded. The forge
+   * read the document before a model run of minutes, so that read cannot say
+   * whether an editor has picked a topic since. This reads again just before
+   * the write and makes the write conditional on that read (`ifMatch`): an
+   * editor's topic always wins, and a 412 (the document changed in between)
+   * or 404 (it was deleted) skips the suggestion. A skipped suggestion costs
+   * nothing: the publish step picks a topic from keywords. Never fails the
+   * forge.
+   */
+  async function saveSuggestedTopic(contentId, topic) {
+    if (!isArticleTopic(topic)) return;
+    try {
+      const fresh = await store.readDoc('content', contentId, contentId);
+      if (!fresh || isArticleTopic(fresh.topic)) return;
+      await store.patchDoc('content', contentId, { topic }, { ifMatch: fresh._etag });
+    } catch (err) {
+      if (err?.code !== 412 && err?.code !== 404) {
+        log.warn?.('forge: the suggested address topic was not saved');
+      }
+    }
+  }
+
   async function saveForgeOutcome({
     contentId,
     actor,
@@ -424,12 +447,6 @@ export function createForge({
       blogDraft: forged.forgedContent,
       content: forged.forgedContent,
       keyTopics: Array.isArray(draft.keyTopics) ? draft.keyTopics.slice(0, 12) : [],
-      // The AI's address topic (#1628), only when it is on the list and the
-      // document had none when the forge read it. Like the rest of this patch
-      // it is not guarded against an edit made while the model ran, so a topic
-      // picked on the review board during a forge can be overwritten; pick it
-      // again after the forge finishes.
-      ...(isArticleTopic(draft.topic) && !isArticleTopic(data?.topic) && { topic: draft.topic }),
       // Series metadata (backlog #5): the published posts the appended
       // "Related reading" module links to; absent when nothing related.
       ...(Array.isArray(forged.relatedContentIds) && forged.relatedContentIds.length
@@ -458,6 +475,7 @@ export function createForge({
     }
 
     await store.patchDoc('content', contentId, update);
+    await saveSuggestedTopic(contentId, draft.topic);
     await store.upsertDoc('content_versions', {
       id: uuid(),
       contentId,
