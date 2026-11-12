@@ -59,6 +59,121 @@
       "statusCode": 301
     },
     {
+      "route": "/azure/blog/azure-foundry-hosted-agents-accelerating-ai-agent-deployment-optimization-featur",
+      "redirect": "/azure/blog/ai-0n8jwlc9",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/microsoft-foundry-end-to-end-observability-and-roi-for-production-ai-agents",
+      "redirect": "/azure/blog/ai-80th4hpu",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/a-developers-guide-to-managing-models-cost-and-quality-in-microsoft-foundry",
+      "redirect": "/azure/blog/ai-avb8ugpo",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/new-microsoft-certified-azure-ai-fundamentals-certification",
+      "redirect": "/azure/blog/certification-amsljuhn",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/new-microsoft-certified-sql-ai-developer-associate-certification",
+      "redirect": "/azure/blog/certification-bn4ejnai",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/announcing-the-new-microsoft-certified-azure-ai-apps-and-agents-developer-associ",
+      "redirect": "/azure/blog/certification-bpcasr5v",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/in-preview-public-preview-code-first-observability-for-foundry-agents-in-vs-code",
+      "redirect": "/azure/blog/governance-1k5ayjbe",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/operationalizing-azure-updates-with-microsoft-release-communications-and-proacti",
+      "redirect": "/azure/blog/governance-3lmh4mqz",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/launched-generally-available-azure-api-management-premium-v2-and-standard-v2-now",
+      "redirect": "/azure/blog/governance-7mckl1cs",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/launched-generally-available-agent-kit-for-azure-cosmos-db",
+      "redirect": "/azure/blog/governance-7zcmioei",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/leveraging-ai-for-efficient-azure-update-discovery-with-microsoft-release-commun",
+      "redirect": "/azure/blog/governance-8nxzy0yr",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/leveraging-ai-powered-discovery-for-azure-updates-with-microsoft-release-communi",
+      "redirect": "/azure/blog/governance-c3brws9d",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/announcing-private-preview-deploy-ansible-playbooks-using-azure-policy-via-machi",
+      "redirect": "/azure/blog/governance-cxju174v",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/autonomous-self-healing-for-azure-vmware-solution-private-clouds",
+      "redirect": "/azure/blog/hybrid-56bv3djx",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/unlocking-on-prem-genai-with-azure-arc-agentic-retrieval-in-foundry-local",
+      "redirect": "/azure/blog/hybrid-97iiobfb",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/ansible-azure-arc-use-ansible-modules-to-deploy-and-manage-azure-arc-machine-ext",
+      "redirect": "/azure/blog/hybrid-cpjhv5a3",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/automating-arc-enabled-sql-server-license-type-configuration-with-azure-policy",
+      "redirect": "/azure/blog/hybrid-d5h8ghmv",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/discover-and-assess-file-shares-for-migration-to-azure-files-with-azure-migrate",
+      "redirect": "/azure/blog/migration-9r8sqzqf",
+      "statusCode": 301
+    },
+    {
+      "route": "/aws/blog/aws-transform-enhances-migration-assessments-with-new-agentic-capabilities-IVrBFJ",
+      "redirect": "/aws/blog/migration-ivrbfj6y",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/unveiling-microsofts-secure-future-initiative-sfi-a-blueprint-for-next-generatio-91IWYg",
+      "redirect": "/azure/blog/security-91iwygpr",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/nist-vs-microsoft-zero-trust-why-cloud-architects-should-care-LSzyB6",
+      "redirect": "/azure/blog/security-lszyb6gb",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/microsoft-sovereign-cloud-empowering-europe-with-unprecedented-data-control-and--ibDYCO",
+      "redirect": "/azure/blog/sovereignty-ibdycon0",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/blog/microsoft-sovereign-cloud-unleashing-disconnected-operations-with-enhanced-gover-Ttt3Hv",
+      "redirect": "/azure/blog/sovereignty-ttt3hv8d",
+      "statusCode": 301
+    },
+    {
       "route": "/admin",
       "rewrite": "/app-shell.html",
       "headers": {

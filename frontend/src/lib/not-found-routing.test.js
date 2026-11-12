@@ -243,6 +243,138 @@ describe('unknown addresses answer 404 (#1613)', () => {
       statusCode: 301,
     }));
 
+  /**
+   * The 301s from each article's old title address to its `<topic>-<id>`
+   * address (#1628). The owner renamed the 23 live articles on 2026-11-12, and
+   * the old addresses were in the sitemap. Listed by hand: [provider, old, new].
+   */
+  const RENAMED_ARTICLES = [
+    [
+      'azure',
+      'azure-foundry-hosted-agents-accelerating-ai-agent-deployment-optimization-featur',
+      'ai-0n8jwlc9',
+    ],
+    [
+      'azure',
+      'microsoft-foundry-end-to-end-observability-and-roi-for-production-ai-agents',
+      'ai-80th4hpu',
+    ],
+    [
+      'azure',
+      'a-developers-guide-to-managing-models-cost-and-quality-in-microsoft-foundry',
+      'ai-avb8ugpo',
+    ],
+    [
+      'azure',
+      'new-microsoft-certified-azure-ai-fundamentals-certification',
+      'certification-amsljuhn',
+    ],
+    [
+      'azure',
+      'new-microsoft-certified-sql-ai-developer-associate-certification',
+      'certification-bn4ejnai',
+    ],
+    [
+      'azure',
+      'announcing-the-new-microsoft-certified-azure-ai-apps-and-agents-developer-associ',
+      'certification-bpcasr5v',
+    ],
+    [
+      'azure',
+      'in-preview-public-preview-code-first-observability-for-foundry-agents-in-vs-code',
+      'governance-1k5ayjbe',
+    ],
+    [
+      'azure',
+      'operationalizing-azure-updates-with-microsoft-release-communications-and-proacti',
+      'governance-3lmh4mqz',
+    ],
+    [
+      'azure',
+      'launched-generally-available-azure-api-management-premium-v2-and-standard-v2-now',
+      'governance-7mckl1cs',
+    ],
+    ['azure', 'launched-generally-available-agent-kit-for-azure-cosmos-db', 'governance-7zcmioei'],
+    [
+      'azure',
+      'leveraging-ai-for-efficient-azure-update-discovery-with-microsoft-release-commun',
+      'governance-8nxzy0yr',
+    ],
+    [
+      'azure',
+      'leveraging-ai-powered-discovery-for-azure-updates-with-microsoft-release-communi',
+      'governance-c3brws9d',
+    ],
+    [
+      'azure',
+      'announcing-private-preview-deploy-ansible-playbooks-using-azure-policy-via-machi',
+      'governance-cxju174v',
+    ],
+    [
+      'azure',
+      'autonomous-self-healing-for-azure-vmware-solution-private-clouds',
+      'hybrid-56bv3djx',
+    ],
+    [
+      'azure',
+      'unlocking-on-prem-genai-with-azure-arc-agentic-retrieval-in-foundry-local',
+      'hybrid-97iiobfb',
+    ],
+    [
+      'azure',
+      'ansible-azure-arc-use-ansible-modules-to-deploy-and-manage-azure-arc-machine-ext',
+      'hybrid-cpjhv5a3',
+    ],
+    [
+      'azure',
+      'automating-arc-enabled-sql-server-license-type-configuration-with-azure-policy',
+      'hybrid-d5h8ghmv',
+    ],
+    [
+      'azure',
+      'discover-and-assess-file-shares-for-migration-to-azure-files-with-azure-migrate',
+      'migration-9r8sqzqf',
+    ],
+    [
+      'aws',
+      'aws-transform-enhances-migration-assessments-with-new-agentic-capabilities-IVrBFJ',
+      'migration-ivrbfj6y',
+    ],
+    [
+      'azure',
+      'unveiling-microsofts-secure-future-initiative-sfi-a-blueprint-for-next-generatio-91IWYg',
+      'security-91iwygpr',
+    ],
+    [
+      'azure',
+      'nist-vs-microsoft-zero-trust-why-cloud-architects-should-care-LSzyB6',
+      'security-lszyb6gb',
+    ],
+    [
+      'azure',
+      'microsoft-sovereign-cloud-empowering-europe-with-unprecedented-data-control-and--ibDYCO',
+      'sovereignty-ibdycon0',
+    ],
+    [
+      'azure',
+      'microsoft-sovereign-cloud-unleashing-disconnected-operations-with-enhanced-gover-Ttt3Hv',
+      'sovereignty-ttt3hv8d',
+    ],
+  ];
+  const articleRedirects = () =>
+    RENAMED_ARTICLES.map(([provider, old, renamed]) => ({
+      route: `/${provider}/blog/${old}`,
+      redirect: `/${provider}/blog/${renamed}`,
+      statusCode: 301,
+    }));
+
+  it("sends each renamed article's old address to its new one with a 301 (#1628)", () => {
+    expect(articleRedirects()).toHaveLength(23);
+    for (const rule of articleRedirects()) {
+      expect(redirectRules()).toContainEqual(rule);
+    }
+  });
+
   it("sends each AWS certification's old slug to its current page with a 301", () => {
     expect(certRedirects().length).toBeGreaterThan(0);
     expect(redirectRules().filter((rule) => rule.route.startsWith('/aws/education/'))).toEqual(
@@ -261,8 +393,13 @@ describe('unknown addresses answer 404 (#1613)', () => {
     }
   });
 
-  it('has no redirect but those three kinds, each to a page the site builds', () => {
-    expect(redirectRules()).toEqual([...certRedirects(), ...labsRedirects(), ...designRedirects()]);
+  it('has no redirect but those four kinds, each to a page the site builds', () => {
+    expect(redirectRules()).toEqual([
+      ...certRedirects(),
+      ...labsRedirects(),
+      ...designRedirects(),
+      ...articleRedirects(),
+    ]);
     const prerendered = new Set(routes(manifest));
     for (const rule of redirectRules()) {
       expect(prerendered.has(rule.redirect), `${rule.route} -> ${rule.redirect}`).toBe(true);
