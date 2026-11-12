@@ -1,17 +1,21 @@
 /**
  * Every workflow job that runs Node.js or Python chooses its version (#1707).
  *
- * A job that runs `node`, `npm`, `npx`, `python3`, `pip` or `uv` without
- * actions/setup-node or actions/setup-python gets whatever the runner image
- * ships: on ubuntu-26.04 that was Node.js 24 and Python 3.14 in November 2026,
+ * A job that runs `node`, `npm`, `npx`, `python3`, `pip`, `uv` or `uvx`
+ * without actions/setup-node or actions/setup-python gets whatever the runner
+ * image ships: on ubuntu-26.04 that was Node.js 24 and Python 3.14 in November 2026,
  * both below the floors in scripts/version-floors.json (Node.js 26, Python
  * 3.15). Nothing else would notice, because the floors test reads only the
  * versions a file names, and a job that names none has nothing to read. Six
- * jobs were found that way on 2026-11-12.
+ * jobs were found that way on 2026-11-12. `uv` and `uvx` count as Python,
+ * because uv runs the interpreter it finds, the runner's own unless one was
+ * set up; so astral-sh/setup-uv counts as setting Python up only when it is
+ * given a `python-version` at or above the floor in version-floors.json.
  *
  * A command counts when it is in command position on a line of a `run:` step:
  * at the start, after `$(`, `<(`, a backtick, `(`, `{`, `|`, `&&`, `||` or `;`, after
- * leading `NAME=value` assignments, or after a word that runs the next one
+ * leading `NAME=value` assignments (the value plain text, a quoted string, or
+ * both run together), or after a word that runs the next one
  * (`env`, `sudo`, `xargs`, `exec`, `time`, `!`, `if`, `then`, `do` and the
  * like). It does not count inside a string, a heredoc's text or a
  * `docker run` argument. The set-up step must come before the first such
@@ -24,13 +28,24 @@
  * the set-up's condition joins with a top-level `||`. Otherwise the set-up
  * could be skipped while the command still runs (Copilot on
  * HCW-NetworkEyes_AddOn#100). A set-up step with no `if:` covers every later
- * step.
+ * step whose condition does not test the job's status.
+ *
+ * The job's status is compared on its own. Without `always()`, `failure()`,
+ * `cancelled()` or `success()` in it, a step's condition includes an
+ * unwritten `success()`, so a set-up step with no `if:` is skipped once an
+ * earlier step has failed, while a later `if: always()`, `failure()` or
+ * `!cancelled()` step still runs (Copilot on HCW-CloudCrawler_AddOn#73 and
+ * HCW-CloudAssessor_App#97). So the statuses a later step can run under
+ * (after success, after a failure, after a cancel) must all be ones its set-up
+ * step runs under too, and the rule above is applied to the conditions with
+ * their status-only `&&` terms taken out.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+import floors from './version-floors.json' with { type: 'json' };
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOWS = join(REPO, '.github', 'workflows');
@@ -47,14 +62,23 @@ const RUNNER_DEFAULT_ALLOWED = {
 };
 
 // Where a command may start: the line's start or an opening/joining
-// character, then any `NAME=value` assignments and words that run the next
-// word (`env FOO=1 node`, `sudo node`, `if node …; then`).
-const START = String.raw`(?:^|[$<]\(\s*|[\x60({|;&]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+|(?:env|sudo|xargs|exec|time|nice|command|if|then|else|elif|do|while|until|!)\s+)*`;
+// character, then any `NAME=value` assignments (the value plain text, a
+// quoted string, or both run together: `FOO="a b"`) and words that run the
+// next word (`env FOO=1 node`, `sudo node`, `if node …; then`).
+const ASSIGNMENT = String.raw`[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'])*\s+`;
+const START = String.raw`(?:^|[$<]\(\s*|[\x60({|;&]\s*)(?:${ASSIGNMENT}|(?:env|sudo|xargs|exec|time|nice|command|if|then|else|elif|do|while|until|!)\s+)*`;
 const COMMAND = {
   node: new RegExp(`${START}(?:node|npm|npx)(?=\\s|$)`),
   python: new RegExp(`${START}(?:python(?:3(?:\\.\\d+)?)?|pip3?|uvx?)(?=\\s|$)`),
 };
 const SETUP = { node: /^actions\/setup-node@/, python: /^actions\/setup-python@/ };
+// astral-sh/setup-uv sets Python up only when given a `python-version` at or above the floor (see `setsUp`).
+const SETUP_UV = /^astral-sh\/setup-uv@/;
+const PYTHON_FLOOR = floors.kinds.python.floor.split('.').map(Number);
+
+// The job statuses a step can run after, and the status functions that name them.
+const STATUSES = ['success', 'failure', 'cancelled'];
+const STATUS_CALL = /(!?)\s*\b(always|failure|cancelled|success)\(\s*\)/g;
 
 /**
  * A line with the text of its quoted strings taken out, so words in a message
@@ -96,8 +120,8 @@ const unwrap = (text) => {
   return text.slice(1, -1).trim();
 };
 
-/** The terms a condition joins with `||` at its top level (outside parentheses and quotes). */
-export function orTerms(text) {
+/** The terms a condition joins with `||` (or `&&`) at its top level (outside parentheses and quotes). */
+export function orTerms(text, operator = '||', unwrapEach = true) {
   const terms = [];
   let depth = 0;
   let quote = '';
@@ -109,18 +133,68 @@ export function orTerms(text) {
     } else if (c === "'" || c === '"') quote = c;
     else if (c === '(') depth++;
     else if (c === ')') depth--;
-    else if (depth === 0 && text.startsWith('||', i)) {
+    else if (depth === 0 && text.startsWith(operator, i)) {
       terms.push(text.slice(start, i).trim());
-      start = i + 2;
-      i++;
+      start = i + operator.length;
+      i += operator.length - 1;
     }
   }
   terms.push(text.slice(start).trim());
-  return terms.map(unwrap);
+  return unwrapEach ? terms.map(unwrap) : terms;
 }
 
+/**
+ * The job statuses a step with this condition can run after: `success` alone when it names no status function (the
+ * unwritten `success()`), all three for `always()`, `success` and `failure` for `!cancelled()`, and so on.
+ */
+export function statuses(text) {
+  const found = [...text.matchAll(STATUS_CALL)];
+  if (!found.length) return new Set(['success']);
+  const named = new Set();
+  for (const [, negated, call] of found) {
+    const meant = call === 'always' ? STATUSES : [call];
+    for (const status of STATUSES) if (meant.includes(status) !== Boolean(negated)) named.add(status);
+  }
+  return named;
+}
+
+/** The condition without its top-level `&&` terms that test only the job's status (`always()`, `!cancelled()`). */
+const withoutStatus = (text) => {
+  const terms = orTerms(text, '&&', false);
+  const kept = terms.filter((term) => term.replace(STATUS_CALL, '').replace(/[\s!()&|]/g, ''));
+  return kept.length === terms.length ? text : kept.join(' && ');
+};
+
 /** True when a set-up step with condition `setup` is sure to have run before a step with condition `step`. */
-export const setupCovers = (setup, step) => setup === '' || setup === step || orTerms(setup).includes(unwrap(step));
+export const setupCovers = (setup, step) => {
+  const given = statuses(setup);
+  if (![...statuses(step)].every((status) => given.has(status))) return false;
+  const [rest, wanted] = [withoutStatus(setup), withoutStatus(step)];
+  return rest === '' || rest === wanted || orTerms(rest).includes(unwrap(wanted));
+};
+
+/** True when a line-only version (`3.15`) or an exact one (`3.15.2`) is at or above the Python floor. */
+const meetsPythonFloor = (version) => {
+  const found = String(version).trim().match(/^v?(\d+(?:\.\d+)*)/);
+  if (!found) return false;
+  const numbers = found[1].split('.').map(Number).slice(0, 3);
+  for (let i = 0; i < numbers.length; i++) if (numbers[i] !== PYTHON_FLOOR[i]) return numbers[i] > PYTHON_FLOOR[i];
+  return true;
+};
+
+/**
+ * True when the step chooses the runtime for the steps after it: actions/setup-node or actions/setup-python, or, for
+ * Python, astral-sh/setup-uv given a literal `python-version` at or above the floor (without one, uv uses the
+ * runner's Python; scripts/version-floors.test.mjs reads the pins themselves).
+ */
+export function setsUp(step, kind) {
+  const uses = String(step?.uses ?? '');
+  if (kind === 'python' && SETUP_UV.test(uses)) {
+    const version = step.with?.['python-version'];
+    return version !== undefined && meetsPythonFloor(version);
+  }
+  return SETUP[kind].test(uses);
+}
 
 /** The steps of one workflow that run a runtime before (or without) setting it up: "file > job > step > kind". */
 export function unsetJobs(file, workflow) {
@@ -131,7 +205,7 @@ export function unsetJobs(file, workflow) {
       job.steps.forEach((step, i) => {
         if (!runsRuntime(step.run, kind)) return;
         // Covered by an earlier set-up step that always runs, or that runs under the same condition as this step.
-        const covered = job.steps.slice(0, i).some((earlier) => SETUP[kind].test(String(earlier.uses ?? '')) && setupCovers(condition(earlier), condition(step)));
+        const covered = job.steps.slice(0, i).some((earlier) => setsUp(earlier, kind) && setupCovers(condition(earlier), condition(step)));
         if (!covered) found.push(`${file} > ${name} > ${step.name ?? `step ${i + 1}`} > ${kind}`);
       });
     }
@@ -165,6 +239,13 @@ describe('runsRuntime and unsetJobs', () => {
     expect(runsRuntime('nodes=3 nodejs-check', 'node')).toBe(false);
     expect(runsRuntime('echo "the stage is wrong; if pip named the file differently, look"', 'python')).toBe(false);
     expect(runsRuntime('token="$(node scripts/github-app-token.mjs)"', 'node')).toBe(true);
+    // An assignment's value may be quoted (Copilot on HCW-MigrateOrchestrator_AddOn#72), and uv runs Python.
+    expect(runsRuntime('FOO="bar baz" python3 check.py', 'python')).toBe(true);
+    expect(runsRuntime("env FOO='bar baz' node x.js", 'node')).toBe(true);
+    expect(runsRuntime('STAMP="$(date +%s) run" python3 check.py', 'python')).toBe(true);
+    expect(runsRuntime('FOO="python3 x" true', 'python')).toBe(false);
+    expect(runsRuntime('uv run python scripts/check.py', 'python')).toBe(true);
+    expect(runsRuntime('uvx zizmor .github', 'python')).toBe(true);
   });
 
   it('flags a job that sets the runtime up after first using it, or not at all', () => {
@@ -173,11 +254,13 @@ describe('runsRuntime and unsetJobs', () => {
         late: { steps: [{ name: 'Early', run: 'node a.mjs' }, { uses: 'actions/setup-node@abc' }] },
         none: { steps: [{ run: 'python3 b.py' }] },
         uvOnly: { steps: [{ uses: 'astral-sh/setup-uv@abc' }, { name: 'Run', run: 'python3 c.py' }] },
+        uvNew: { steps: [{ uses: 'astral-sh/setup-uv@abc', with: { 'python-version': '3.15' } }, { name: 'Run', run: 'uv run pytest' }] },
+        uvOld: { steps: [{ uses: 'astral-sh/setup-uv@abc', with: { 'python-version': '3.14' } }, { name: 'Run', run: 'uv run pytest' }] },
         good: { steps: [{ uses: 'actions/setup-node@abc' }, { run: 'node a.mjs' }] },
         boxed: { container: 'node:26', steps: [{ run: 'node a.mjs' }] },
       },
     };
-    expect(unsetJobs('x.yml', wf)).toEqual(['x.yml > late > Early > node', 'x.yml > none > step 1 > python', 'x.yml > uvOnly > Run > python']);
+    expect(unsetJobs('x.yml', wf)).toEqual(['x.yml > late > Early > node', 'x.yml > none > step 1 > python', 'x.yml > uvOnly > Run > python', 'x.yml > uvOld > Run > python']);
   });
 
   it('counts a set-up step with its own condition only for steps under the same condition', () => {
@@ -186,16 +269,40 @@ describe('runsRuntime and unsetJobs', () => {
       jobs: {
         skipped: { steps: [{ ...py, if: false }, { name: 'Run', run: 'python3 a.py' }] },
         sameCondition: { steps: [{ ...py, if: '${{ !cancelled() }}' }, { name: 'Run', if: '!cancelled()', run: 'python3 a.py' }] },
-        unconditionalSetup: { steps: [py, { name: 'Run', if: 'failure()', run: 'python3 a.py' }] },
+        unconditionalSetup: { steps: [py, { name: 'Run', if: "github.ref == 'refs/heads/main'", run: 'python3 a.py' }] },
+        // The unwritten success(): a set-up step with no `if:` is skipped after a failure, an always() step is not.
+        afterAFailure: { steps: [py, { name: 'Run', if: 'always()', run: 'python3 a.py' }] },
+        afterAFailureSetUpToo: { steps: [{ ...py, if: 'always()' }, { name: 'Run', if: 'failure()', run: 'python3 a.py' }] },
         otherCondition: { steps: [{ ...py, if: "github.event_name == 'push'" }, { name: 'Run', if: 'failure()', run: 'python3 a.py' }] },
         // ci.yml's verify job: the set-up runs for either term, the step for the second.
         orTerm: { steps: [{ ...py, if: "matrix.relevant == 'true' || matrix.name == 'scripts (operations)'" }, { name: 'Run', if: "matrix.name == 'scripts (operations)'", run: 'python3 a.py' }] },
         andTerm: { steps: [{ ...py, if: "a == 'x' && b == 'y'" }, { name: 'Run', if: "b == 'y'", run: 'python3 a.py' }] },
       },
     };
-    expect(unsetJobs('x.yml', wf)).toEqual(['x.yml > skipped > Run > python', 'x.yml > otherCondition > Run > python', 'x.yml > andTerm > Run > python']);
+    expect(unsetJobs('x.yml', wf)).toEqual(['x.yml > skipped > Run > python', 'x.yml > afterAFailure > Run > python', 'x.yml > otherCondition > Run > python', 'x.yml > andTerm > Run > python']);
     expect(orTerms("(a || b) || c == 'x || y'")).toEqual(['a || b', "c == 'x || y'"]);
     expect(condition({ if: '${{  a &&   b }}' })).toBe('a && b');
+  });
+
+  it('compares the job status a set-up step runs after with the later step\'s', () => {
+    const cases = [
+      ['', '', true],
+      ['', 'always()', false],
+      ['', '!cancelled()', false],
+      ['', 'failure()', false],
+      ['!cancelled()', '!cancelled()', true],
+      ['always()', 'failure()', true],
+      ['always()', 'cancelled()', true],
+      ['!cancelled()', 'always()', false],
+      ['!cancelled()', 'cancelled()', false],
+      ['failure()', '', false],
+      ['always() && a', 'a', true],
+      ['always() && a', '!cancelled() && a', true],
+      ['a', 'failure() && a', false],
+      ['always()', 'a || b', true],
+      ['(a || b) && c', 'a', false],
+    ];
+    for (const [setup, step, covered] of cases) expect(setupCovers(setup, step), `${setup} / ${step}`).toBe(covered);
   });
 });
 

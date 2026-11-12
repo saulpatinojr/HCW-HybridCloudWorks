@@ -90,6 +90,9 @@ jobs:
       # package is built and its dependencies installed here, so the two
       # must agree; scripts/version-floors.json holds both at 24 (#715).
       - name: Setup Node.js
+        # !cancelled(), like "Assert the origin lock is enforcing" near the end of this job, which
+        # runs node even after an earlier step failed.
+        if: ${{ !cancelled() }}
         timeout-minutes: 2 # slowest 8 s
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:

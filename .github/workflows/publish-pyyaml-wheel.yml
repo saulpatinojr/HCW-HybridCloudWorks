@@ -487,6 +487,9 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
+        # always(), like the token's revoke step at the end of this job, which runs node
+        # even after an earlier step failed.
+        if: ${{ always() }}
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '26'
