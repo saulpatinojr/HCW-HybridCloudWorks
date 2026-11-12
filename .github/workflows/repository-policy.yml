@@ -52,9 +52,10 @@ jobs:
       # the only event with a base to compare against.
       # Node.js 26, the newest line, to match scripts/package.json's engines
       # declaration (scripts/version-floors.json, #715) — the gate is
-      # stdlib-only (no install, so no npm cache), but it uses Node.js language
-      # features the runner image's Node.js 24 may lack. (The redaction gate
-      # above stays on the runner's python3 on purpose; its comment says why.)
+      # stdlib-only (no install, so no npm cache), and scripts/package.json
+      # asks for Node.js 26.11.0 or newer, which the runner image does not
+      # ship. (The redaction gate above stays on the runner's python3 on
+      # purpose; its comment says why.)
       - name: Set up Node.js
         if: github.event_name == 'pull_request'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
