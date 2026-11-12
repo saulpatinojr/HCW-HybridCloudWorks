@@ -280,7 +280,7 @@ describe('slug assignment (#400)', () => {
     expect(resolveSlug({ candidate: 'x', contentId: 'aaaaaaaa1', holders: ['o'] })).toBe('x-1');
     expect(resolveSlug({ candidate: 'x', contentId: 'aaaaaaaa2', holders: ['o'] })).toBe('x-2');
     expect(
-      resolveSlug({ candidate: 'x', contentId: '2c1f7a9e-4b3d-4e8a-9c2f-1a2b3c4d5e6f', holders: ['o'] })
+      resolveSlug({ candidate: 'x', contentId: '11111111-4b3d-4e8a-9c2f-1a2b3c4d5e6f', holders: ['o'] })
     ).toBe('x-4b3d4e');
     expect(resolveSlug({ candidate: 'x', contentId: 'abcdef', holders: ['o'] })).toBe('x-abcdef');
   });
