@@ -35,7 +35,10 @@
  * the set-up's condition joins with a top-level `||`. Otherwise the set-up
  * could be skipped while the command still runs (Copilot on
  * HCW-NetworkEyes_AddOn#100). A set-up step with no `if:` covers every later
- * step whose condition does not test the job's status.
+ * step whose condition does not test the job's status. Equal text means equal
+ * value only for values that stay fixed during a job (`matrix`, `github`,
+ * `inputs`, `needs`, `vars`); a condition on `steps.*` or `env.*` set between
+ * the two steps could differ, so prefer those fixed values in such conditions.
  *
  * The job's status is compared on its own. Without `always()`, `failure()`,
  * `cancelled()` or `success()` in it, a step's condition includes an
