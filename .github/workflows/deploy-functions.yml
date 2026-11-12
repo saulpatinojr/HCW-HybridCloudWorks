@@ -86,7 +86,7 @@ jobs:
           persist-credentials: false
 
       # Node.js 24: the line the Function App runs (runtime_version in
-      # infra/functionapp.tf), the newest Flex Consumption supports. The
+      # infra/functionapp.tf), the newest Flex Consumption supports as GA. The
       # package is built and its dependencies installed here, so the two
       # must agree; scripts/version-floors.json holds both at 24 (#715).
       - name: Setup Node.js
