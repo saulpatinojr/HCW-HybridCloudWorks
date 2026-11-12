@@ -154,8 +154,9 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
   storage_container_endpoint  = "${azurerm_storage_account.functions.primary_blob_endpoint}${azurerm_storage_container.function_releases.name}"
   storage_authentication_type = "SystemAssignedIdentity" # no static storage key
 
-  # Node.js 24: the newest line Flex Consumption supports (22 and 24 are GA;
-  # 26 is not offered), held there by scripts/version-floors.json and its test.
+  # Node.js 24: the newest line Flex Consumption supports as GA (22 and 24
+  # are GA; 26 is preview only, not for production, #1707), held there by
+  # scripts/version-floors.json and its test.
   # An in-place update: runtime_version is not ForceNew in azurerm 5.6.0, and
   # the provider's Update writes functionAppConfig.runtime.version (#715).
   runtime_name    = "node"

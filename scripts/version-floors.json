@@ -25,7 +25,7 @@
       "platformCeilings": {
         "functions": {
           "platform": "Azure Functions Flex Consumption",
-          "rule": "Flex Consumption supports Node.js 22 and 24 (both GA) and does not offer 26, so functions/ runs the newest of those two, 24, and every pin that builds, tests, deploys or runs its code names 24 (update-learn-catalogue.yml imports functions/src and resolves functions/node_modules).",
+          "rule": "Flex Consumption supports Node.js 22 and 24 (both GA) and offers 26 only as a preview, which is not for production, so functions/ runs the newest GA line, 24, until 26 is GA (the weekly job skips preview lines and moves this ceiling when the table drops the word), and every pin that builds, tests, deploys or runs its code names 24 (update-learn-catalogue.yml imports functions/src and resolves functions/node_modules).",
           "line": "24",
           "newest": "24.22.2",
           "floor": "24.20.0",
