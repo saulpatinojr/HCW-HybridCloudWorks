@@ -712,6 +712,7 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
         '  waived) printf "%s" "$WAIVED" > "$out"; exit 0 ;;',
         '  broken) echo "FATAL unable to pull" >&2; exit 1 ;;',
         '  silent) exit 0 ;;',
+        '  garbled) printf "%s" "{\\"Results\\": [trunc" > "$out"; exit 0 ;;',
         '  *) printf "%s" "$CLEAN" > "$out"; exit 0 ;;',
         'esac',
         '',
@@ -795,6 +796,14 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
     expect(got.status, got.stdout + got.stderr).toBe(0);
     expect(got.failed).toBe('1');
     expect(got.compact).toContain('the scan did not complete:');
+  });
+
+  it('a report that is not readable JSON is a failed scan, never a clean one, even on exit 0 (#1701)', () => {
+    const got = scan({ runner: 'garbled' });
+    expect(got.status, got.stdout + got.stderr).toBe(0);
+    expect(got.failed).toBe('1');
+    expect(got.compact).toContain('the scan wrote a report that is not readable JSON, so nothing was judged:');
+    expect(got.compact).not.toMatch(/hcw-lab-runner[^\n]*`\n\nno HIGH or CRITICAL/);
   });
 
   it('says nothing is left after the waivers when a waiver set findings aside', () => {

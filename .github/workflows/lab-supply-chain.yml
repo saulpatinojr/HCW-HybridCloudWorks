@@ -557,13 +557,20 @@ jobs:
             trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed "${waive[@]}" --exit-code 1 --format json -o "$report" "$image" 2> "${RUNNER_TEMP}/scan-${n}.err" || code=$?
             # What a waiver set aside, which Trivy lists under
             # ExperimentalModifiedFindings because of --show-suppressed.
+            # A report jq cannot read is no evidence either (Copilot on #1701):
+            # it fails the scan below rather than reading as zero findings.
             waived=0
-            if [ -s "$report" ]; then
-              waived=$(jq '[.Results[]?.ExperimentalModifiedFindings[]?] | length' "$report") || waived=0
+            unreadable=0
+            if [ -s "$report" ] && ! waived=$(jq '[.Results[]?.ExperimentalModifiedFindings[]?] | length' "$report" 2> /dev/null); then
+              waived=0
+              unreadable=1
             fi
             # No report is no evidence, whatever the exit code (Copilot on
             # #1701): a clean line needs a report that says so.
-            if [ ! -s "$report" ]; then
+            if [ "$unreadable" = "1" ]; then
+              failed=1
+              { echo "the scan wrote a report that is not readable JSON, so nothing was judged:"; echo '```'; head -c 2000 "$report"; echo; cat "${RUNNER_TEMP}/scan-${n}.err"; echo '```'; } | tee -a "$table" >> "$compact"
+            elif [ ! -s "$report" ]; then
               failed=1
               { echo "the scan did not complete:"; echo '```'; cat "${RUNNER_TEMP}/scan-${n}.err"; echo '```'; } | tee -a "$table" >> "$compact"
             elif [ "$code" = "0" ] && [ "$waived" -gt 0 ]; then
