@@ -496,6 +496,17 @@ jobs:
       # for the two images ran past GitHub's 65,536-character issue body on
       # 2026-10-14 (run 38493246343, `Body is too long`) and the week's
       # findings were filed nowhere.
+      #
+      # .github/lab-image-scan-waivers.yaml sets aside findings that wait on another
+      # maker's release (owner decision 2026-11-12, #1650): one finding id in
+      # one named place each, with the maker in its statement and a date after
+      # which Trivy counts it again. Each image's report line says how many it
+      # set aside and until when, so a waived finding is never silent. They
+      # apply to the two lab images and the sandbox template only, never to
+      # an add-on image, which no waiver was reviewed for. A new
+      # finding, the same one elsewhere, or an expired waiver fails the scan
+      # as before. scripts/lab/scan-waivers.mjs writes the file from fresh
+      # scans; docs/runbooks/labs-host.md says how to renew it.
       - name: Scan the published lab images the host runs
         id: scan
         env:
@@ -511,6 +522,10 @@ jobs:
           addon_images="$(node scripts/lab/read-addon-pins.mjs | jq -r '.include[].image')"
           test -n "$addon_images"
           sandbox="hcw-lz-sandbox:scan"
+          waivers=".github/lab-image-scan-waivers.yaml"
+          test -s "$waivers"
+          # The soonest date any waiver lapses, for the report line.
+          until=$(sed -n 's/^ *expired_at: *//p' "$waivers" | sort | sed -n 1p)
           table="${RUNNER_TEMP}/scan.md"
           compact="${RUNNER_TEMP}/scan-summary.md"
           echo "## Lab, add-on and sandbox template images against the vulnerability database" | tee "$table" > "$compact"
@@ -527,11 +542,41 @@ jobs:
             report="${RUNNER_TEMP}/scan-${n}.json"
             echo "### \`${image}\`" | tee -a "$table" >> "$compact"
             echo | tee -a "$table" >> "$compact"
-            if trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format json -o "$report" "$image" 2> "${RUNNER_TEMP}/scan-${n}.err"; then
-              echo "no HIGH or CRITICAL vulnerability with a fix available" | tee -a "$table" >> "$compact"
+            # `|| code=$?`, not `if trivy`: the runner's shell is `bash -e`, and
+            # the exit code is needed again below, after the waived count.
+            # The waivers apply only to the three images they were written
+            # from (Copilot on #1701): Trivy does not tie a waiver to an image,
+            # so an add-on carrying the same program path or package version
+            # would otherwise be set aside without anyone reviewing it there.
+            # An add-on is scanned exactly as before the waivers existed.
+            waive=()
+            if [ "$image" = "$runner" ] || [ "$image" = "$full" ] || [ "$image" = "hcw-lz-sandbox:scan" ]; then
+              waive=(--ignorefile "$waivers" --show-suppressed)
+            fi
+            code=0
+            trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed "${waive[@]}" --exit-code 1 --format json -o "$report" "$image" 2> "${RUNNER_TEMP}/scan-${n}.err" || code=$?
+            # What a waiver set aside, which Trivy lists under
+            # ExperimentalModifiedFindings because of --show-suppressed.
+            # A report jq cannot read is no evidence either (Copilot on #1701):
+            # it fails the scan below rather than reading as zero findings.
+            waived=0
+            unreadable=0
+            if [ -s "$report" ] && ! waived=$(jq '[.Results[]?.ExperimentalModifiedFindings[]?] | length' "$report" 2> /dev/null); then
+              waived=0
+              unreadable=1
+            fi
+            # No report is no evidence, whatever the exit code (Copilot on
+            # #1701): a clean line needs a report that says so.
+            if [ "$unreadable" = "1" ]; then
+              failed=1
+              { echo "the scan wrote a report that is not readable JSON, so nothing was judged:"; echo '```'; head -c 2000 "$report"; echo; cat "${RUNNER_TEMP}/scan-${n}.err"; echo '```'; } | tee -a "$table" >> "$compact"
             elif [ ! -s "$report" ]; then
               failed=1
               { echo "the scan did not complete:"; echo '```'; cat "${RUNNER_TEMP}/scan-${n}.err"; echo '```'; } | tee -a "$table" >> "$compact"
+            elif [ "$code" = "0" ] && [ "$waived" -gt 0 ]; then
+              echo "no HIGH or CRITICAL vulnerability with a fix available left after the waivers" | tee -a "$table" >> "$compact"
+            elif [ "$code" = "0" ]; then
+              echo "no HIGH or CRITICAL vulnerability with a fix available" | tee -a "$table" >> "$compact"
             else
               failed=1
               { echo '```'; trivy convert --quiet --format table "$report" 2>&1; echo '```'; } >> "$table"
@@ -552,6 +597,9 @@ jobs:
                 printf '%s\n' "$rows" | head -40
                 if [ "$count" -gt 40 ]; then echo; echo "… and $((count - 40)) more installation(s), in the run summary."; fi
               } >> "$compact"
+            fi
+            if [ "$waived" -gt 0 ]; then
+              { echo; echo "${waived} finding(s) set aside until ${until} by \`${waivers}\`, each waiting on the maker its waiver names."; } | tee -a "$table" >> "$compact"
             fi
             echo | tee -a "$table" >> "$compact"
           done
@@ -603,7 +651,7 @@ jobs:
             if [ -n "$existing" ] && [ "${GITHUB_REF:-}" != "refs/heads/main" ]; then
               echo "Nothing is due, but this run is of ${GITHUB_REF:-an unknown ref}, not main, so #${existing} is left open."
             elif [ -n "$existing" ]; then
-              gh issue close "$existing" --repo "$REPO" --reason completed --comment "Clean again: run ${RUN_URL} found every lab host pin current, no pin it could not bump, and no HIGH or CRITICAL vulnerability with a fix available in the lab, add-on and sandbox template images."
+              gh issue close "$existing" --repo "$REPO" --reason completed --comment "Clean again: run ${RUN_URL} found every lab host pin current, no pin it could not bump, and no HIGH or CRITICAL vulnerability with a fix available in the lab, add-on and sandbox template images other than those .github/lab-image-scan-waivers.yaml sets aside until its dates, each waiting on the maker it names (the run summary counts them per image)."
               echo "Closed #${existing}."
             else
               echo "Nothing is due and no report issue is open."

@@ -681,3 +681,152 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the report 
     expect(keyOf(got.report)).toBeDefined();
   });
 });
+
+// The image scan with the waiver file (#1650): the step itself, under
+// `bash -e`, against a stand-in `trivy` that writes the JSON report the real
+// one would and exits as the real one does (0 when nothing is left after the
+// waivers, 1 otherwise), and a stand-in `docker` that says the sandbox
+// template built. The pins it reads (vps-agent, the Coder template, the
+// add-on pins) are the repository's own.
+describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image scan reads the waivers and says what they set aside (#1650)', () => {
+  const STEP = runBlock(CHECK, 'Scan the published lab images the host runs');
+  const LEFT = '{"Results":[{"Target":"usr/local/bin/new-tool","Type":"gobinary","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-1","PkgName":"stdlib","InstalledVersion":"v1.0.0","FixedVersion":"v1.0.1","Severity":"HIGH"}],"ExperimentalModifiedFindings":[{"Status":"ignored"}]}]}';
+  const WAIVED = '{"Results":[{"Target":"usr/local/bin/helm","Type":"gobinary","ExperimentalModifiedFindings":[{"Status":"ignored"},{"Status":"ignored"},{"Status":"ignored"}]}]}';
+  const CLEAN = '{"Results":[]}';
+  let dir;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'lab-scan-'));
+    mkdirSync(join(dir, 'bin'));
+    writeFileSync(
+      join(dir, 'bin', 'trivy'),
+      [
+        '#!/usr/bin/env bash',
+        'printf "%s\\n" "$*" >> "$TRIVY_LOG"',
+        '[ "$1" = convert ] && { echo "TABLE"; exit 0; }',
+        'args=("$@"); out=""',
+        'for i in "${!args[@]}"; do [ "${args[$i]}" = "-o" ] && out="${args[$((i + 1))]}"; done',
+        'case "${args[-1]}" in *hcw-lab-runner*) mode="$FAKE_RUNNER" ;; *) mode="$FAKE_OTHER" ;; esac',
+        'case "$mode" in',
+        '  left) printf "%s" "$LEFT" > "$out"; exit 1 ;;',
+        '  waived) printf "%s" "$WAIVED" > "$out"; exit 0 ;;',
+        '  broken) echo "FATAL unable to pull" >&2; exit 1 ;;',
+        '  silent) exit 0 ;;',
+        '  garbled) printf "%s" "{\\"Results\\": [trunc" > "$out"; exit 0 ;;',
+        '  *) printf "%s" "$CLEAN" > "$out"; exit 0 ;;',
+        'esac',
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    writeFileSync(join(dir, 'bin', 'docker'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  function scan({ runner = 'waived', other = 'waived', cwd = REPO } = {}) {
+    const temp = mkdtempSync(join(dir, 'run-'));
+    const output = join(temp, 'output.txt');
+    const summary = join(temp, 'summary.md');
+    writeFileSync(output, '');
+    writeFileSync(summary, '');
+    const r = spawnSync('bash', ['--noprofile', '--norc', '-e', '-c', STEP], {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${join(dir, 'bin')}:${process.env.PATH}`,
+        RUNNER_TEMP: temp,
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary,
+        RUN_URL: 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/1',
+        TRIVY_LOG: join(temp, 'trivy.log'),
+        FAKE_RUNNER: runner,
+        FAKE_OTHER: other,
+        LEFT,
+        WAIVED,
+        CLEAN,
+      },
+    });
+    const read = (f) => (existsSync(f) ? readFileSync(f, 'utf8') : '');
+    return { ...r, failed: read(output).match(/^failed=(.*)$/m)?.[1], compact: read(join(temp, 'scan-summary.md')), trivy: read(join(temp, 'trivy.log')) };
+  }
+
+  it('passes the waiver file to the two lab images and the sandbox template, and never to an add-on image (#1701)', () => {
+    const got = scan();
+    expect(got.status, got.stdout + got.stderr).toBe(0);
+    const scans = got.trivy.split('\n').filter((l) => l.startsWith('image '));
+    const waived = scans.filter((l) => /hcw-lab-runner:|hcw-lab@|hcw-lz-sandbox:scan$/.test(l));
+    const addons = scans.filter((l) => /lab-addon@/.test(l));
+    expect(waived).toHaveLength(3);
+    for (const l of waived) expect(l).toContain('--ignore-unfixed --ignorefile .github/lab-image-scan-waivers.yaml --show-suppressed --exit-code 1');
+    expect(addons.length).toBeGreaterThan(0);
+    for (const l of addons) {
+      expect(l).not.toContain('--ignorefile');
+      expect(l).toContain('--ignore-unfixed --exit-code 1');
+    }
+  });
+
+  it('everything waived: the scan passes, and each image says how many it set aside and until when', () => {
+    const got = scan();
+    expect(got.failed).toBe('0');
+    expect(got.compact).toContain('no HIGH or CRITICAL vulnerability with a fix available');
+    const until = readFileSync(join(REPO, '.github', 'lab-image-scan-waivers.yaml'), 'utf8').match(/expired_at: (\S+)/)[1];
+    expect(got.compact).toContain(`3 finding(s) set aside until ${until} by \`.github/lab-image-scan-waivers.yaml\``);
+  });
+
+  it('a finding no waiver covers fails the scan and is listed, beside the count it set aside', () => {
+    const got = scan({ runner: 'left' });
+    expect(got.status, got.stdout + got.stderr).toBe(0);
+    expect(got.failed).toBe('1');
+    expect(got.compact).toContain('**1 HIGH** with a fix available, in 1 installation(s).');
+    expect(got.compact).toContain('`stdlib` | v1.0.0 | v1.0.1 | HIGH | 1: CVE-2026-1 |');
+    expect(got.compact).toContain('1 finding(s) set aside until');
+  });
+
+  it('a scan that fails without writing a report is a failed scan, never a clean one', () => {
+    const got = scan({ runner: 'broken' });
+    expect(got.status, got.stdout + got.stderr).toBe(0);
+    expect(got.failed).toBe('1');
+    expect(got.compact).toContain('the scan did not complete:');
+    expect(got.compact).toContain('FATAL unable to pull');
+  });
+
+  it('a scan that exits 0 but writes no report is a failed scan, never a clean one (#1701)', () => {
+    const got = scan({ runner: 'silent' });
+    expect(got.status, got.stdout + got.stderr).toBe(0);
+    expect(got.failed).toBe('1');
+    expect(got.compact).toContain('the scan did not complete:');
+  });
+
+  it('a report that is not readable JSON is a failed scan, never a clean one, even on exit 0 (#1701)', () => {
+    const got = scan({ runner: 'garbled' });
+    expect(got.status, got.stdout + got.stderr).toBe(0);
+    expect(got.failed).toBe('1');
+    expect(got.compact).toContain('the scan wrote a report that is not readable JSON, so nothing was judged:');
+    expect(got.compact).not.toMatch(/hcw-lab-runner[^\n]*`\n\nno HIGH or CRITICAL/);
+  });
+
+  it('says nothing is left after the waivers when a waiver set findings aside', () => {
+    expect(scan().compact).toContain('no HIGH or CRITICAL vulnerability with a fix available left after the waivers');
+  });
+
+  it('a clean image says so and adds no waiver line', () => {
+    const got = scan({ runner: 'clean', other: 'clean' });
+    expect(got.failed).toBe('0');
+    expect(got.compact).not.toContain('set aside');
+    expect(got.compact).not.toContain('left after the waivers');
+  });
+
+  it('stops, rather than scanning without waivers, when the waiver file is missing', () => {
+    const elsewhere = mkdtempSync(join(dir, 'repo-'));
+    for (const f of ['vps-agent/lib/capabilities.js', 'lab-host/coder/templates/hcw-lab/main.tf']) {
+      mkdirSync(join(elsewhere, dirname(f)), { recursive: true });
+      writeFileSync(join(elsewhere, f), readFileSync(join(REPO, f), 'utf8'));
+    }
+    mkdirSync(join(elsewhere, 'scripts', 'lab'), { recursive: true });
+    writeFileSync(join(elsewhere, 'scripts', 'lab', 'read-addon-pins.mjs'), 'console.log(JSON.stringify({ include: [{ image: "docker.io/x/y@sha256:' + '0'.repeat(64) + '" }] }));\n');
+    const got = scan({ cwd: elsewhere });
+    expect(got.status).not.toBe(0);
+    expect(got.trivy).toBe('');
+  });
+});

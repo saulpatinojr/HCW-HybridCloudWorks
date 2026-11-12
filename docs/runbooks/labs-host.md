@@ -4284,7 +4284,9 @@ fix is installed.
   Helm, kubectl, the Azure CLI; azurerm, azapi, alz, random, modtm, time),
   each with the publisher's checksum, as `chore/lab-pins-image-tools`,
   scans the two published lab images, the add-on images and the Docker
-  Sandboxes template with Trivy, and keeps one issue (labelled `Platform`,
+  Sandboxes template with Trivy (setting aside the dated waivers in
+  `.github/lab-image-scan-waivers.yaml`; see "Image findings that wait on their
+  maker" below), and keeps one issue (labelled `Platform`,
   found by that label and its exact title) when anything is due, including
   any pin it could not move because the publisher served no checksum to
   verify it against. It comments on that issue only when the findings
@@ -4357,6 +4359,58 @@ next dispatch moves it.
 
 The hand procedure behind all of this, for a pin the workflow cannot move,
 is `lab-host/README.md`, "Bumping a pin".
+
+## Image findings that wait on their maker
+
+Most of what the weekly scan finds in the lab images is not in code this
+repository writes. It is in other people's software that the images carry:
+the Go code built into a Terraform provider, helm, kubeconform or kubectl;
+the Python libraries the Azure CLI ships; a Debian package in the base image;
+the programs Docker's sandbox base image comes with. When that software is
+already at its newest release, the fix waits on its maker, and nothing here
+can change it. Left as it was, the report issue could never close. On
+2026-11-12 the owner decided to set such findings aside for a fixed time
+([#1650](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1650)).
+
+**How it works.** [`.github/lab-image-scan-waivers.yaml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/lab-image-scan-waivers.yaml)
+is a waiver file that Trivy reads with `--ignorefile` when it scans the two lab images and the sandbox template (never an add-on image, which no waiver was reviewed for)
+([Trivy: Filtering, "By Finding IDs"](https://trivy.dev/docs/latest/configuration/filtering/)).
+Each entry is one finding id in the places named (a program's path, a Python
+package's `METADATA` file, or for a package with no path, its package URL at
+that exact version), a statement naming the maker the fix waits on, and an
+`expired_at` date. From that date (00:00 UTC) Trivy counts the finding again. Anything
+the file does not cover still fails the scan and keeps the issue open: a new
+finding, the same finding in another place, a newer provider (its path
+carries its version), or a package that moved. The weekly report says, per
+image, how many findings were set aside and until when, so a waived finding
+is never silent.
+
+**Renewing them, before the date in the file.** Bash (Git Bash or Linux), on
+a machine with Docker and Trivy at the version `lab-supply-chain.yml` pins,
+from the repository root on an up-to-date `main`. The first line scans the
+three images into a fresh folder, so no older scan is mixed in:
+
+```bash
+d=$(mktemp -d); runner=$(grep -oE "docker\.io/hybridcloudworks/hcw-lab-runner:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}" vps-agent/lib/capabilities.js | head -1); full="docker.io/hybridcloudworks/hcw-lab@$(grep -oE 'image_digest\s*=\s*"sha256:[0-9a-f]{64}"' lab-host/coder/templates/hcw-lab/main.tf | grep -oE 'sha256:[0-9a-f]{64}')"; docker build --no-cache --platform linux/amd64 -f lab-image/sandbox-template/Dockerfile -t hcw-lz-sandbox:scan lab-image && trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --format json -o "$d/runner.json" "$runner" && trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --format json -o "$d/full.json" "$full" && trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --format json -o "$d/sandbox.json" hcw-lz-sandbox:scan && echo "scans in $d"
+```
+
+Then, in the same terminal, write the file with today's date and a date 30
+days on, replacing the committed one only if the generator succeeds:
+
+```bash
+node scripts/lab/scan-waivers.mjs --checked "$(date -u +%F)" --expires "$(date -u -d '+30 days' +%F)" "$d/runner.json" "$d/full.json" "$d/sandbox.json" > "$d/waivers.yaml" && mv "$d/waivers.yaml" .github/lab-image-scan-waivers.yaml && git diff --stat
+```
+
+Success is exit code 0 and a diff to read. If it stops with `no maker is
+named for N finding(s)`, a finding is in software the rules in
+`scripts/lab/scan-waivers.mjs` do not cover: find out who must fix it, and
+add a rule with that reason, or fix it here, rather than waive it blind.
+Before committing, confirm in the newest weekly run (or the issue) that each
+maker really has no newer release: the `chore/lab-pins-image-base` and
+`chore/lab-pins-image-tools` pull requests are where a newer one shows up,
+and one that is open means merge it first and scan again. The tests in
+`scripts/lab/scan-waivers.test.mjs` refuse an entry with no place, no maker,
+or a date more than 31 days after the file was written.
 
 ## Arc onboarding
 
