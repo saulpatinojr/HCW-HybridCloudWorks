@@ -496,6 +496,15 @@ jobs:
       # for the two images ran past GitHub's 65,536-character issue body on
       # 2026-10-14 (run 38493246343, `Body is too long`) and the week's
       # findings were filed nowhere.
+      #
+      # .github/lab-image-scan-waivers.yaml sets aside findings that wait on another
+      # maker's release (owner decision 2026-11-12, #1650): one finding id in
+      # one named place each, with the maker in its statement and a date after
+      # which Trivy counts it again. Each image's report line says how many it
+      # set aside and until when, so a waived finding is never silent. A new
+      # finding, the same one elsewhere, or an expired waiver fails the scan
+      # as before. scripts/lab/scan-waivers.mjs writes the file from fresh
+      # scans; docs/runbooks/labs-host.md says how to renew it.
       - name: Scan the published lab images the host runs
         id: scan
         env:
@@ -511,6 +520,10 @@ jobs:
           addon_images="$(node scripts/lab/read-addon-pins.mjs | jq -r '.include[].image')"
           test -n "$addon_images"
           sandbox="hcw-lz-sandbox:scan"
+          waivers=".github/lab-image-scan-waivers.yaml"
+          test -s "$waivers"
+          # The soonest date any waiver lapses, for the report line.
+          until=$(sed -n 's/^ *expired_at: *//p' "$waivers" | sort | sed -n 1p)
           table="${RUNNER_TEMP}/scan.md"
           compact="${RUNNER_TEMP}/scan-summary.md"
           echo "## Lab, add-on and sandbox template images against the vulnerability database" | tee "$table" > "$compact"
@@ -527,7 +540,17 @@ jobs:
             report="${RUNNER_TEMP}/scan-${n}.json"
             echo "### \`${image}\`" | tee -a "$table" >> "$compact"
             echo | tee -a "$table" >> "$compact"
-            if trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format json -o "$report" "$image" 2> "${RUNNER_TEMP}/scan-${n}.err"; then
+            # `|| code=$?`, not `if trivy`: the runner's shell is `bash -e`, and
+            # the exit code is needed again below, after the waived count.
+            code=0
+            trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --ignorefile "$waivers" --show-suppressed --exit-code 1 --format json -o "$report" "$image" 2> "${RUNNER_TEMP}/scan-${n}.err" || code=$?
+            # What a waiver set aside, which Trivy lists under
+            # ExperimentalModifiedFindings because of --show-suppressed.
+            waived=0
+            if [ -s "$report" ]; then
+              waived=$(jq '[.Results[]?.ExperimentalModifiedFindings[]?] | length' "$report") || waived=0
+            fi
+            if [ "$code" = "0" ]; then
               echo "no HIGH or CRITICAL vulnerability with a fix available" | tee -a "$table" >> "$compact"
             elif [ ! -s "$report" ]; then
               failed=1
@@ -552,6 +575,9 @@ jobs:
                 printf '%s\n' "$rows" | head -40
                 if [ "$count" -gt 40 ]; then echo; echo "… and $((count - 40)) more installation(s), in the run summary."; fi
               } >> "$compact"
+            fi
+            if [ "$waived" -gt 0 ]; then
+              { echo; echo "${waived} finding(s) set aside until ${until} by \`${waivers}\`, each waiting on the maker its waiver names."; } | tee -a "$table" >> "$compact"
             fi
             echo | tee -a "$table" >> "$compact"
           done

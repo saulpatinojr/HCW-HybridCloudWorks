@@ -1,0 +1,872 @@
+# Reviewed waivers for the weekly lab image scan (.github/workflows/lab-supply-chain.yml, #1650).
+# Each entry sets aside one finding in the places listed, until expired_at, because the
+# fix waits on the software's maker (the statement names who). A new finding, the same
+# finding anywhere else, or a waiver past its date counts again and reopens the report issue.
+# Written by scripts/lab/scan-waivers.mjs on 2026-11-12; every entry expires 2026-12-12.
+# Renew by rerunning it on fresh scans and reading the diff: docs/runbooks/labs-host.md,
+# "Image findings that wait on their maker".
+vulnerabilities:
+  - id: "CVE-2025-47273"
+    purls:
+      - "pkg:pypi/setuptools@70.3.0"
+    statement: "Waits on pip: this setuptools is pip's own bundled copy, and no pip release newer than the pinned one carries a fixed copy yet. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2025-61726"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2025-61729"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2025-68121"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-111943"
+    paths:
+      - "usr/bin/pebble"
+    statement: "Waits on Docker: this program comes with the docker/sandbox-templates base image of the sandbox template, and the pinned base digest is Docker's newest. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-111943"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-111943"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/random/3.9.1/linux_amd64/terraform-provider-random_v3.9.1_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/random 3.9.1 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-111943"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/time/0.14.2/linux_amd64/terraform-provider-time_v0.14.2_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/time 0.14.2 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-111943"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-111943"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-111943"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-111943"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-111943"
+    paths:
+      - "usr/local/bin/helm"
+    statement: "Waits on the Helm project: the pinned helm is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-118669"
+    paths:
+      - "opt/az/lib/python3.14/site-packages/oauthlib-3.2.2.dist-info/METADATA"
+    statement: "Waits on Microsoft: the Azure CLI ships oauthlib itself, its pinned version is the newest CLI, and lab-image/versions.env explains why oauthlib cannot be replaced on its own. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-17106"
+    paths:
+      - "usr/libexec/docker/cli-plugins/docker-buildx"
+    statement: "Waits on Docker: this program comes with the docker/sandbox-templates base image of the sandbox template, and the pinned base digest is Docker's newest. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-25679"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-25679"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-25681"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-25681"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-27136"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-27136"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-27137"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-27145"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-27145"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-27145"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-27145"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-32280"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-32280"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-32280"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-32281"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-32281"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-32281"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-32283"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-32283"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-32283"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33810"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33811"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33811"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33811"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33814"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33814"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33814"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33818"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33818"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33818"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33818"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-33818"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39820"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39820"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39820"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39821"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39821"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39821"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39821"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39821"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39822"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39822"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39822"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39822"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39828"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39829"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39830"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39831"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39832"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39835"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39836"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39836"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-39836"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-42499"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-42499"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-42499"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-42504"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-42504"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-42504"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-42504"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-42508"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-46595"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-46597"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-46600"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-46600"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-46600"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-46600"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-46600"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56851"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56851"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56851"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56851"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56851"
+    paths:
+      - "usr/local/bin/kubectl"
+    statement: "Waits on the Kubernetes project: the pinned kubectl is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56852"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56852"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56852"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56853"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56853"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56853"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56853"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56853"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56854"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56854"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56858"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56858"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56858"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56858"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56858"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56859"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56859"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56859"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56859"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56859"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56860"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56860"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56860"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56860"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56860"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56862"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56862"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56862"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56862"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56862"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56864"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56864"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56865"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-56865"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-63209"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-69247"
+    paths:
+      - "opt/az/lib/python3.14/site-packages/cryptography-48.0.1.dist-info/METADATA"
+    statement: "Waits on Microsoft: the Azure CLI ships cryptography itself, its pinned version is the newest CLI, and lab-image/versions.env explains why cryptography cannot be replaced on its own. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-69249"
+    paths:
+      - "opt/az/lib/python3.14/site-packages/cryptography-48.0.1.dist-info/METADATA"
+    statement: "Waits on Microsoft: the Azure CLI ships cryptography itself, its pinned version is the newest CLI, and lab-image/versions.env explains why cryptography cannot be replaced on its own. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-76844"
+    purls:
+      - "pkg:deb/debian/zlib1g@1.3.dfsg%2Breally1.3.1-1%2Bb1"
+    statement: "Waits on Docker: Debian has fixed zlib1g, but the pinned python slim base has not been republished with it; the chore/lab-pins-image-base pull request picks it up when it is. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78661"
+    paths:
+      - "usr/bin/gh"
+      - "usr/libexec/docker/cli-plugins/docker-buildx"
+      - "usr/libexec/docker/cli-plugins/docker-compose"
+    statement: "Waits on Docker: this program comes with the docker/sandbox-templates base image of the sandbox template, and the pinned base digest is Docker's newest. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78661"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78661"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/random/3.9.1/linux_amd64/terraform-provider-random_v3.9.1_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/random 3.9.1 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78661"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/time/0.14.2/linux_amd64/terraform-provider-time_v0.14.2_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/time 0.14.2 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78661"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78661"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78661"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78661"
+    paths:
+      - "usr/local/bin/helm"
+    statement: "Waits on the Helm project: the pinned helm is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78661"
+    paths:
+      - "usr/local/bin/kubectl"
+    statement: "Waits on the Kubernetes project: the pinned kubectl is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78667"
+    paths:
+      - "usr/bin/pebble"
+    statement: "Waits on Docker: this program comes with the docker/sandbox-templates base image of the sandbox template, and the pinned base digest is Docker's newest. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78667"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78667"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/random/3.9.1/linux_amd64/terraform-provider-random_v3.9.1_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/random 3.9.1 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78667"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/time/0.14.2/linux_amd64/terraform-provider-time_v0.14.2_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/time 0.14.2 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78667"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78667"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78667"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78667"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78669"
+    paths:
+      - "usr/bin/pebble"
+      - "usr/libexec/docker/cli-plugins/docker-buildx"
+      - "usr/libexec/docker/cli-plugins/docker-compose"
+    statement: "Waits on Docker: this program comes with the docker/sandbox-templates base image of the sandbox template, and the pinned base digest is Docker's newest. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78669"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78669"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/random/3.9.1/linux_amd64/terraform-provider-random_v3.9.1_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/random 3.9.1 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78669"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/time/0.14.2/linux_amd64/terraform-provider-time_v0.14.2_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/time 0.14.2 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78669"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78669"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78669"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78669"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-78669"
+    paths:
+      - "usr/local/bin/kubectl"
+    statement: "Waits on the Kubernetes project: the pinned kubectl is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-84304"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-84304"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-84304"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-84304"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-84445"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-84445"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-84445"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-84445"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-85091"
+    purls:
+      - "pkg:deb/debian/zlib1g@1.3.dfsg%2Breally1.3.1-1%2Bb1"
+    statement: "Waits on Docker: Debian has fixed zlib1g, but the pinned python slim base has not been republished with it; the chore/lab-pins-image-base pull request picks it up when it is. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-97031"
+    paths:
+      - "usr/bin/pebble"
+    statement: "Waits on Docker: this program comes with the docker/sandbox-templates base image of the sandbox template, and the pinned base digest is Docker's newest. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-97031"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-97031"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/random/3.9.1/linux_amd64/terraform-provider-random_v3.9.1_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/random 3.9.1 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-97031"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/time/0.14.2/linux_amd64/terraform-provider-time_v0.14.2_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/time 0.14.2 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-97031"
+    paths:
+      - "usr/local/bin/kubeconform"
+    statement: "Waits on kubeconform: the pinned release is its newest and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-97031"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-97031"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/azapi/2.13.0/linux_amd64/terraform-provider-azapi_v2.13.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/azapi 2.13.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "CVE-2026-97031"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "GHSA-hrxh-6v49-42gf"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/hashicorp/azurerm/4.81.0/linux_amd64/terraform-provider-azurerm_v4.81.0_x5"
+    statement: "Waits on HashiCorp: Terraform provider hashicorp/azurerm 4.81.0 is the newest release of its line and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "GHSA-hrxh-6v49-42gf"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/alz/0.22.1/linux_amd64/terraform-provider-alz_v0.22.1"
+    statement: "Waits on Microsoft: Terraform provider Azure/alz 0.22.1 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
+  - id: "GHSA-hrxh-6v49-42gf"
+    paths:
+      - "opt/terraform/mirror/registry.terraform.io/azure/modtm/0.4.0/linux_amd64/terraform-provider-modtm_v0.4.0"
+    statement: "Waits on Microsoft: Terraform provider Azure/modtm 0.4.0 is its newest release and was built with these Go modules. Checked 2026-11-12."
+    expired_at: 2026-12-12
