@@ -17,8 +17,14 @@
  * `docker run` argument. The set-up step must come before the first such
  * step. Limits, on purpose: a job that runs in a `container:` uses that
  * image's runtime and is not checked; a script a step calls (a `.ps1` or
- * `.sh` file) is not read; and a set-up step with its own `if:` counts as
- * done, so give it the same condition as the steps that need it.
+ * `.sh` file) is not read.
+ *
+ * A set-up step with its own `if:` covers a later step only when that step's
+ * condition makes the set-up's true: the same condition, or one of the terms
+ * the set-up's condition joins with a top-level `||`. Otherwise the set-up
+ * could be skipped while the command still runs (Copilot on
+ * HCW-NetworkEyes_AddOn#100). A set-up step with no `if:` covers every later
+ * step.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -66,15 +72,63 @@ export function runsRuntime(run, kind) {
     .some((line) => COMMAND[kind].test(withoutQuotedText(line)));
 }
 
+/** A step's `if:` as one comparable expression: no `${{ }}` around it, whitespace collapsed; '' when it has none. */
+export const condition = (step) =>
+  String(step?.if ?? '')
+    .trim()
+    .replace(/^\$\{\{([\s\S]*)\}\}$/, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** Strips one pair of parentheses that wraps the whole expression. */
+const unwrap = (text) => {
+  if (!text.startsWith('(') || !text.endsWith(')')) return text;
+  let depth = 0;
+  for (let i = 0; i < text.length - 1; i++) {
+    if (text[i] === '(') depth++;
+    else if (text[i] === ')') depth--;
+    if (depth === 0) return text; // the opening parenthesis closes before the end
+  }
+  return text.slice(1, -1).trim();
+};
+
+/** The terms a condition joins with `||` at its top level (outside parentheses and quotes). */
+export function orTerms(text) {
+  const terms = [];
+  let depth = 0;
+  let quote = '';
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote) {
+      if (c === quote) quote = '';
+    } else if (c === "'" || c === '"') quote = c;
+    else if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (depth === 0 && text.startsWith('||', i)) {
+      terms.push(text.slice(start, i).trim());
+      start = i + 2;
+      i++;
+    }
+  }
+  terms.push(text.slice(start).trim());
+  return terms.map(unwrap);
+}
+
+/** True when a set-up step with condition `setup` is sure to have run before a step with condition `step`. */
+export const setupCovers = (setup, step) => setup === '' || setup === step || orTerms(setup).includes(unwrap(step));
+
 /** The steps of one workflow that run a runtime before (or without) setting it up: "file > job > step > kind". */
 export function unsetJobs(file, workflow) {
   const found = [];
   for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
     if (!Array.isArray(job?.steps) || job.container) continue;
     for (const kind of Object.keys(COMMAND)) {
-      const setup = job.steps.findIndex((step) => SETUP[kind].test(String(step.uses ?? '')));
       job.steps.forEach((step, i) => {
-        if ((setup === -1 || setup > i) && runsRuntime(step.run, kind)) found.push(`${file} > ${name} > ${step.name ?? `step ${i + 1}`} > ${kind}`);
+        if (!runsRuntime(step.run, kind)) return;
+        // Covered by an earlier set-up step that always runs, or that runs under the same condition as this step.
+        const covered = job.steps.slice(0, i).some((earlier) => SETUP[kind].test(String(earlier.uses ?? '')) && setupCovers(condition(earlier), condition(step)));
+        if (!covered) found.push(`${file} > ${name} > ${step.name ?? `step ${i + 1}`} > ${kind}`);
       });
     }
   }
@@ -113,6 +167,24 @@ describe('runsRuntime and unsetJobs', () => {
       },
     };
     expect(unsetJobs('x.yml', wf)).toEqual(['x.yml > late > Early > node', 'x.yml > none > step 1 > python', 'x.yml > uvOnly > Run > python']);
+  });
+
+  it('counts a set-up step with its own condition only for steps under the same condition', () => {
+    const py = { uses: 'actions/setup-python@abc' };
+    const wf = {
+      jobs: {
+        skipped: { steps: [{ ...py, if: false }, { name: 'Run', run: 'python3 a.py' }] },
+        sameCondition: { steps: [{ ...py, if: '${{ !cancelled() }}' }, { name: 'Run', if: '!cancelled()', run: 'python3 a.py' }] },
+        unconditionalSetup: { steps: [py, { name: 'Run', if: 'failure()', run: 'python3 a.py' }] },
+        otherCondition: { steps: [{ ...py, if: "github.event_name == 'push'" }, { name: 'Run', if: 'failure()', run: 'python3 a.py' }] },
+        // ci.yml's verify job: the set-up runs for either term, the step for the second.
+        orTerm: { steps: [{ ...py, if: "matrix.relevant == 'true' || matrix.name == 'scripts (operations)'" }, { name: 'Run', if: "matrix.name == 'scripts (operations)'", run: 'python3 a.py' }] },
+        andTerm: { steps: [{ ...py, if: "a == 'x' && b == 'y'" }, { name: 'Run', if: "b == 'y'", run: 'python3 a.py' }] },
+      },
+    };
+    expect(unsetJobs('x.yml', wf)).toEqual(['x.yml > skipped > Run > python', 'x.yml > otherCondition > Run > python', 'x.yml > andTerm > Run > python']);
+    expect(orTerms("(a || b) || c == 'x || y'")).toEqual(['a || b', "c == 'x || y'"]);
+    expect(condition({ if: '${{  a &&   b }}' })).toBe('a && b');
   });
 });
 
