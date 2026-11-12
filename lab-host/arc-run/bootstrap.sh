@@ -12,13 +12,19 @@
 # The exit status is bootstrap.sh's own, so a failed run fails the workflow.
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
-umask 077
+# The umask an SSH `sudo bootstrap.sh` runs with. It is set here, and the
+# strict one below applies to the log file alone: on 2026-11-12 a global
+# `umask 077` in this script made every file the run created or changed
+# without an explicit mode root-only, among them the labs agent's checkout
+# and node_modules, and the agent, which reads them as its own user, could
+# no longer start a job (#1706).
+umask 022
 
 logdir=/var/log/hcw-arc-run
 mkdir -p "$logdir"
 chmod 0700 "$logdir"
 log="$logdir/bootstrap-$(date -u +%Y%m%dT%H%M%SZ).log"
-: >"$log"
+(umask 077 && : >"$log")
 ln -sfn "$log" "$logdir/latest.log"
 
 /opt/hcw-src/lab-host/bootstrap.sh </dev/null >"$log" 2>&1
