@@ -260,20 +260,29 @@ describe('slug assignment (#400)', () => {
 
     // Another document holds it: suffixed with the document id, either path.
     expect(resolveSlug({ candidate: 'a-title', contentId: ID, holders: [ID, 'other'] })).toBe(
-      'a-title-abcdef'
+      'a-title-3' // the id's characters after the 8 an address carries (#1628)
     );
 
     // `holders: null` — the probe could not answer — is read differently by
     // the two paths, on purpose.
     expect(resolveSlug({ candidate: 'a-title', contentId: ID, holders: null })).toBe(
-      'a-title-abcdef' // first assignment: ugly but always unique, never blocked
+      'a-title-3' // first assignment: ugly but always unique, never blocked
     );
     expect(resolveSlug({ candidate: 'a-title', contentId: ID, reuse: true, holders: null })).toBe(
       'a-title' // republish: a failed lookup must not move a live URL
     );
 
     // No candidate at all: the id is the whole slug (unchanged behaviour).
-    expect(resolveSlug({ candidate: '', contentId: ID })).toBe('abcdef');
+    expect(resolveSlug({ candidate: '', contentId: ID })).toBe('3');
+
+    // The suffix is the id after its first 8 characters, so two ids that
+    // share those 8 differ in the suffix whatever their length (#1628).
+    expect(resolveSlug({ candidate: 'x', contentId: 'aaaaaaaa1', holders: ['o'] })).toBe('x-1');
+    expect(resolveSlug({ candidate: 'x', contentId: 'aaaaaaaa2', holders: ['o'] })).toBe('x-2');
+    expect(
+      resolveSlug({ candidate: 'x', contentId: '2c1f7a9e-4b3d-4e8a-9c2f-1a2b3c4d5e6f', holders: ['o'] })
+    ).toBe('x-4b3d4e');
+    expect(resolveSlug({ candidate: 'x', contentId: 'abcdef', holders: ['o'] })).toBe('x-abcdef');
   });
 
   it('a first publish keeps its bare slug when the probe finds no other holder', async () => {
@@ -635,6 +644,50 @@ describe('publishContent', () => {
     );
     expect(body.errors).toEqual([]);
     expect(body.mappings[0].slug).toBe(expected);
+  });
+
+  it.each([
+    ['a design', 'architecture', 'Enterprise Hub-and-Spoke network topology', 'network-c1'],
+    ['a code page', 'coder_corner', 'Terraform modules for landing zones', 'devops-c1'],
+  ])('a first publish of %s gets <topic>-<id> too (#1628)', async (_label, type, title, expected) => {
+    const store = makeStore(readyDoc({ type, publishTarget: type, title, Title: title }));
+    const h = createPublishHandlers({ guard: guardAs('publisher'), store, ...fixed });
+    const body = JSON.parse(
+      (
+        await h.publishContent(
+          makeRequest({ contentIds: ['c1'], publishTarget: type, forceQualityBypass: true, forceImageBypass: true }),
+          context
+        )
+      ).body
+    );
+    expect(body.errors).toEqual([]);
+    expect(body.mappings[0].slug).toBe(expected);
+  });
+
+  it.each([
+    ['a design served as Live', 'architecture', { Live: true }],
+    ['a framework with a curated path from an earlier publish', 'framework', { curatedSubpagePath: '/azure/frameworks/old-one' }],
+  ])('%s keeps its stored address (#1628)', async (_label, type, over) => {
+    const store = makeStore(readyDoc({ type, publishTarget: type, contentStatus: 'approved', slug: 'old-one', ...over }));
+    const h = createPublishHandlers({ guard: guardAs('publisher'), store, ...fixed });
+    const body = JSON.parse(
+      (
+        await h.publishContent(
+          makeRequest({ contentIds: ['c1'], publishTarget: type, forceQualityBypass: true, forceImageBypass: true }),
+          context
+        )
+      ).body
+    );
+    expect(body.mappings[0].slug).toBe('old-one');
+  });
+
+  it('a published page whose stored slug is only spaces gets a full <topic>-<id>, not a bare suffix (#1628)', async () => {
+    const store = makeStore(readyDoc({ contentStatus: 'published', slug: '   ' }));
+    const h = createPublishHandlers({ guard: guardAs('publisher'), store, ...fixed });
+    const body = JSON.parse(
+      (await h.publishContent(makeRequest({ contentIds: ['c1'], publishTarget: 'framework' }), context)).body
+    );
+    expect(body.mappings[0].slug).toBe('migration-c1');
   });
 
   it('a first publish of an article starts its address with a topic an editor stored (#1628)', async () => {

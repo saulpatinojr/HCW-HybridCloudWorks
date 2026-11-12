@@ -196,7 +196,8 @@ export const PUBLISHED_ADDRESS_HINT =
  * leaves in place.
  */
 export function hasPublishedAddress(blog) {
-  if (!blog) return false;
+  // The server keeps an address only when one is stored (publish.js `reuse`).
+  if (!blog || !(blog.slug || blog.Slug)) return false;
   const status = String(blog.contentStatus || '');
   return (
     status === 'published' ||

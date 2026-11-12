@@ -26,8 +26,10 @@ export function initialFrameworkForm(blog) {
     title: [['title', 'Title'], ''],
     summary: [['summary', 'Summary'], ''],
     cloudProvider: [['cloudProvider', 'Cloud Provider'], 'AWS'],
-    // The first word of the page address, `<topic>-<id>` (#1628); '' = pick automatically.
-    topic: [['topic'], ''],
+    // The first word of the page address, `<topic>-<id>` (#1628). No fallback:
+    // a form that never touches it sends no `topic`, so a save cannot clear a
+    // topic the forge stored while the board was open. '' = pick automatically.
+    topic: [['topic'], undefined],
     category: [['category'], 'Architecture'],
     complexity: [['complexity'], 'Foundation'],
     tags: [['tags', 'Tags'], []],

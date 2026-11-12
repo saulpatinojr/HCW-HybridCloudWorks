@@ -72,10 +72,11 @@ describe('board initial forms (PR #841)', () => {
 });
 
 describe('the address topic on the design and framework boards (#1628)', () => {
-  it('reads the stored topic into the form, or empty for "pick automatically"', () => {
+  it('reads the stored topic into the form, and leaves it out when there is none', () => {
+    // Left out, a save sends no `topic`, so it cannot clear one stored meanwhile.
     expect(initialBlueprintForm({ topic: 'network' }).topic).toBe('network');
-    expect(initialBlueprintForm({}).topic).toBe('');
+    expect(initialBlueprintForm({}).topic).toBeUndefined();
     expect(initialFrameworkForm({ topic: 'finops' }).topic).toBe('finops');
-    expect(initialFrameworkForm({ topic: null }).topic).toBe('');
+    expect(initialFrameworkForm({ topic: null }).topic).toBeUndefined();
   });
 });

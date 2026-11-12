@@ -315,14 +315,27 @@ describe('truncate', () => {
 
 describe('hasPublishedAddress', () => {
   it('is true once a publish has written the address, even after an unpublish (#1628)', () => {
-    expect(hasPublishedAddress({ contentStatus: 'published' })).toBe(true);
+    const slug = 'ai-c1';
+    expect(hasPublishedAddress({ slug, contentStatus: 'published' })).toBe(true);
     expect(
-      hasPublishedAddress({ contentStatus: 'inspected', curatedSubpagePath: '/azure/blog/ai-c1' })
+      hasPublishedAddress({
+        slug,
+        contentStatus: 'inspected',
+        curatedSubpagePath: '/azure/blog/ai-c1',
+      })
     ).toBe(true);
-    expect(hasPublishedAddress({ contentStatus: 'approved', Live: true })).toBe(true);
-    expect(hasPublishedAddress({ contentStatus: 'approved', Status: 'Live' })).toBe(true);
-    expect(hasPublishedAddress({ contentStatus: 'published_blog' })).toBe(true);
-    expect(hasPublishedAddress({ contentStatus: 'inspected' })).toBe(false);
+    expect(hasPublishedAddress({ slug, contentStatus: 'approved', Live: true })).toBe(true);
+    expect(hasPublishedAddress({ Slug: slug, contentStatus: 'approved', Status: 'Live' })).toBe(
+      true
+    );
+    expect(hasPublishedAddress({ slug, contentStatus: 'published_blog' })).toBe(true);
+    expect(hasPublishedAddress({ slug, contentStatus: 'inspected' })).toBe(false);
     expect(hasPublishedAddress(undefined)).toBe(false);
+  });
+
+  it('is false without a stored slug, because the server then builds a new address (#1628)', () => {
+    expect(
+      hasPublishedAddress({ contentStatus: 'published', curatedSubpagePath: '/azure/blog/x' })
+    ).toBe(false);
   });
 });

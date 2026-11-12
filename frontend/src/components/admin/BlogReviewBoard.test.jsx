@@ -125,6 +125,7 @@ describe('BlogReviewBoard address topic (#1628)', () => {
     renderBoard({
       contentStatus: 'inspected',
       topic: 'ai',
+      slug: 'ai-c1',
       curatedSubpagePath: '/azure/blog/ai-c1',
     });
     const select = screen.getByLabelText('Address topic');

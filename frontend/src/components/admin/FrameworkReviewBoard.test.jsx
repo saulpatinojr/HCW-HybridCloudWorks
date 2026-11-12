@@ -27,10 +27,17 @@ describe('FrameworkReviewBoard address topic (#1628)', () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ topic: 'governance' }));
   });
 
+  it('sends no topic when the editor did not touch it, so a save cannot clear one stored meanwhile', () => {
+    const onSave = vi.fn();
+    render(<FrameworkReviewBoard blog={framework()} onSave={onSave} onPublish={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    expect(onSave.mock.calls[0][0].topic).toBeUndefined();
+  });
+
   it('is locked once the page has been published', () => {
     render(
       <FrameworkReviewBoard
-        blog={framework({ contentStatus: 'published', topic: 'ai' })}
+        blog={framework({ contentStatus: 'published', topic: 'ai', slug: 'ai-f1' })}
         onSave={vi.fn()}
         onPublish={vi.fn()}
       />
