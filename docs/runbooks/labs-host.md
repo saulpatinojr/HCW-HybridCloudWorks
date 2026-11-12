@@ -4373,7 +4373,7 @@ can change it. Left as it was, the report issue could never close. On
 ([#1650](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1650)).
 
 **How it works.** [`.github/lab-image-scan-waivers.yaml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/lab-image-scan-waivers.yaml)
-is a waiver file that Trivy reads with `--ignorefile`
+is a waiver file that Trivy reads with `--ignorefile` when it scans the two lab images and the sandbox template (never an add-on image, which no waiver was reviewed for)
 ([Trivy: Filtering, "By Finding IDs"](https://trivy.dev/docs/latest/configuration/filtering/)).
 Each entry is one finding id in the places named (a program's path, a Python
 package's `METADATA` file, or for a package with no path, its package URL at

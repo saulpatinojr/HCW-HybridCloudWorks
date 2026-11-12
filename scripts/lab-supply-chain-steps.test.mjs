@@ -749,12 +749,19 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
     return { ...r, failed: read(output).match(/^failed=(.*)$/m)?.[1], compact: read(join(temp, 'scan-summary.md')), trivy: read(join(temp, 'trivy.log')) };
   }
 
-  it('passes the waiver file to every scan, and still fails on what it does not cover', () => {
+  it('passes the waiver file to the two lab images and the sandbox template, and never to an add-on image (#1701)', () => {
     const got = scan();
     expect(got.status, got.stdout + got.stderr).toBe(0);
     const scans = got.trivy.split('\n').filter((l) => l.startsWith('image '));
-    expect(scans.length).toBeGreaterThanOrEqual(3);
-    for (const l of scans) expect(l).toContain('--ignore-unfixed --ignorefile .github/lab-image-scan-waivers.yaml --show-suppressed --exit-code 1');
+    const waived = scans.filter((l) => /hcw-lab-runner:|hcw-lab@|hcw-lz-sandbox:scan$/.test(l));
+    const addons = scans.filter((l) => /lab-addon@/.test(l));
+    expect(waived).toHaveLength(3);
+    for (const l of waived) expect(l).toContain('--ignore-unfixed --ignorefile .github/lab-image-scan-waivers.yaml --show-suppressed --exit-code 1');
+    expect(addons.length).toBeGreaterThan(0);
+    for (const l of addons) {
+      expect(l).not.toContain('--ignorefile');
+      expect(l).toContain('--ignore-unfixed --exit-code 1');
+    }
   });
 
   it('everything waived: the scan passes, and each image says how many it set aside and until when', () => {

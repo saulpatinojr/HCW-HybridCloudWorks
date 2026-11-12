@@ -501,7 +501,9 @@ jobs:
       # maker's release (owner decision 2026-11-12, #1650): one finding id in
       # one named place each, with the maker in its statement and a date after
       # which Trivy counts it again. Each image's report line says how many it
-      # set aside and until when, so a waived finding is never silent. A new
+      # set aside and until when, so a waived finding is never silent. They
+      # apply to the two lab images and the sandbox template only, never to
+      # an add-on image, which no waiver was reviewed for. A new
       # finding, the same one elsewhere, or an expired waiver fails the scan
       # as before. scripts/lab/scan-waivers.mjs writes the file from fresh
       # scans; docs/runbooks/labs-host.md says how to renew it.
@@ -542,8 +544,17 @@ jobs:
             echo | tee -a "$table" >> "$compact"
             # `|| code=$?`, not `if trivy`: the runner's shell is `bash -e`, and
             # the exit code is needed again below, after the waived count.
+            # The waivers apply only to the three images they were written
+            # from (Copilot on #1701): Trivy does not tie a waiver to an image,
+            # so an add-on carrying the same program path or package version
+            # would otherwise be set aside without anyone reviewing it there.
+            # An add-on is scanned exactly as before the waivers existed.
+            waive=()
+            if [ "$image" = "$runner" ] || [ "$image" = "$full" ] || [ "$image" = "hcw-lz-sandbox:scan" ]; then
+              waive=(--ignorefile "$waivers" --show-suppressed)
+            fi
             code=0
-            trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --ignorefile "$waivers" --show-suppressed --exit-code 1 --format json -o "$report" "$image" 2> "${RUNNER_TEMP}/scan-${n}.err" || code=$?
+            trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed "${waive[@]}" --exit-code 1 --format json -o "$report" "$image" 2> "${RUNNER_TEMP}/scan-${n}.err" || code=$?
             # What a waiver set aside, which Trivy lists under
             # ExperimentalModifiedFindings because of --show-suppressed.
             waived=0

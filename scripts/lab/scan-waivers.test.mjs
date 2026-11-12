@@ -136,6 +136,7 @@ describe('.github/lab-image-scan-waivers.yaml, as committed', () => {
     const workflow = readFileSync(join(REPO, '.github', 'workflows', 'lab-supply-chain.yml'), 'utf8');
     expect(workflow).toContain('waivers=".github/lab-image-scan-waivers.yaml"');
     expect(workflow).toContain('test -s "$waivers"');
-    expect(workflow).toContain('--ignore-unfixed --ignorefile "$waivers" --show-suppressed --exit-code 1');
+    expect(workflow).toContain('waive=(--ignorefile "$waivers" --show-suppressed)');
+    expect(workflow).toContain('--ignore-unfixed "${waive[@]}" --exit-code 1');
   });
 });
