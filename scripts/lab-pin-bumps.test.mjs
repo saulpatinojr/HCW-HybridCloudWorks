@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
@@ -8,6 +8,7 @@ import {
   CADDY_TEST_PATH,
   CAPABILITIES_PATH,
   CODER_TEMPLATE_PATH,
+  CODER_TEMPLATE_PATHS,
   DOCKERFILE_PATH,
   DOCKER_GUIDE_PAGE_PATH,
   GROUP_VARS_PATH,
@@ -1205,7 +1206,7 @@ describe('the lab image tools and providers plan (image-tools)', () => {
 });
 
 describe('the consumers\' digest plan', () => {
-  const files = Object.fromEntries([CAPABILITIES_PATH, CODER_TEMPLATE_PATH].map((p) => [p, real(p)]));
+  const files = Object.fromEntries([CAPABILITIES_PATH, ...CODER_TEMPLATE_PATHS].map((p) => [p, real(p)]));
   const runnerManifest = JSON.stringify({ runner: 1 });
   const fullManifest = JSON.stringify({ full: 1 });
   const tag = 'f'.repeat(40);
@@ -1228,13 +1229,76 @@ describe('the consumers\' digest plan', () => {
     expect(plan.files[CODER_TEMPLATE_PATH].split('\n').filter((l, i) => l !== before[i])).toHaveLength(2);
   });
 
+  it('moves every template that runs hcw-lab, not only hcw-lab (#1704)', async () => {
+    const plan = await planImageDigests({ files, http: makeHttp(fakeFetch(routes())), runner, full });
+    expect(CODER_TEMPLATE_PATHS).toHaveLength(3);
+    for (const path of CODER_TEMPLATE_PATHS) {
+      expect(plan.files[path], path).toMatch(new RegExp(`image_tag\\s*=\\s*"${tag}"`));
+      expect(plan.files[path], path).toMatch(new RegExp(`image_digest\\s*=\\s*"${sha(fullManifest)}"`));
+      const before = files[path].split('\n');
+      expect(plan.files[path].split('\n').filter((l, i) => l !== before[i]), path).toHaveLength(2);
+    }
+  });
+
+  it('moves a guided template left behind even when hcw-lab is already on the digest (#1704)', async () => {
+    const digest = sha(fullManifest);
+    const behind = 'lab-host/coder/templates/amo-guided-lab/main.tf';
+    const onDigest = Object.fromEntries(
+      Object.entries(files).map(([p, t]) => [
+        p,
+        p === behind || p === CAPABILITIES_PATH ? t : t.replace(/(image_digest\s*=\s*")sha256:[0-9a-f]{64}/, `$1${digest}`),
+      ])
+    );
+    const plan = await planImageDigests({ files: onDigest, http: makeHttp(fakeFetch(routes())), runner, full });
+    expect(plan.notes).toEqual([]);
+    expect(plan.files[behind]).toMatch(new RegExp(`image_digest\\s*=\\s*"${digest}"`));
+    expect(plan.files[CODER_TEMPLATE_PATH]).toBe(onDigest[CODER_TEMPLATE_PATH]);
+  });
+
   it('pins neither image whose registry digest disagrees with the publish job, and says so', async () => {
     const plan = await planImageDigests({ files, http: makeHttp(fakeFetch(routes('{"other":1}'))), runner, full });
-    expect(plan.files[CODER_TEMPLATE_PATH]).toBe(files[CODER_TEMPLATE_PATH]);
+    for (const path of CODER_TEMPLATE_PATHS) expect(plan.files[path], path).toBe(files[path]);
     expect(plan.notes[0].reason).toMatch(/not the .* the publish job reported/);
   });
 
   it('refuses references that are not the two lab images', async () => {
     await expect(planImageDigests({ files, http: null, runner: 'alpine:3', full })).rejects.toThrow(/--runner must be/);
+  });
+});
+
+describe('the Coder templates that run hcw-lab (#1704)', () => {
+  const TEMPLATES_DIR = 'lab-host/coder/templates';
+  const pinsHcwLab = (text) => /docker\.io\/hybridcloudworks\/hcw-lab@/.test(text);
+
+  it('lists every template under lab-host/coder/templates that pins the hcw-lab image', () => {
+    const found = readdirSync(join(REPO, TEMPLATES_DIR), { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => `${TEMPLATES_DIR}/${d.name}/main.tf`)
+      .filter((p) => {
+        try {
+          return pinsHcwLab(real(p));
+        } catch {
+          return false;
+        }
+      });
+    expect(found.length).toBeGreaterThan(0);
+    expect([...found].sort()).toEqual([...CODER_TEMPLATE_PATHS].sort());
+  });
+
+  it('holds every such template to one image tag and digest', () => {
+    const pins = CODER_TEMPLATE_PATHS.map((p) => {
+      const text = real(p);
+      return {
+        p,
+        tag: text.match(/^[ \t]*image_tag[ \t]*=[ \t]*"([^"]+)"/m)?.[1],
+        digest: text.match(/^[ \t]*image_digest[ \t]*=[ \t]*"(sha256:[0-9a-f]{64})"/m)?.[1],
+      };
+    });
+    for (const pin of pins) {
+      expect(pin.tag, pin.p).toBeTruthy();
+      expect(pin.digest, pin.p).toBeTruthy();
+    }
+    expect(new Set(pins.map((x) => x.digest)).size).toBe(1);
+    expect(new Set(pins.map((x) => x.tag)).size).toBe(1);
   });
 });

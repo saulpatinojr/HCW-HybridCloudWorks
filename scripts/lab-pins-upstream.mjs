@@ -38,8 +38,8 @@
  *                         kubeconform, Helm, kubectl, Azure CLI) and of each
  *                         Terraform provider in the mirror, with the sum the
  *                         publisher serves where it serves one
- *   --bump image-digests  vps-agent/lib/capabilities.js and the Coder
- *                         template, to the two digests named by --runner and
+ *   --bump image-digests  vps-agent/lib/capabilities.js and every Coder
+ *                         template that runs hcw-lab, to the two digests named by --runner and
  *                         --full (publish-lab-image.yml passes what it pushed)
  *
  * Each edit carries the checksum or digest read from the publisher beside the
@@ -456,7 +456,7 @@ async function bumpMain(argv) {
     const files = Object.fromEntries([bump.VERSIONS_ENV_PATH, bump.README_PATH].map((p) => [p, read(p)]));
     plan = await bump.planImageTools({ files, http });
   } else {
-    const files = Object.fromEntries([bump.CAPABILITIES_PATH, bump.CODER_TEMPLATE_PATH].map((p) => [p, read(p)]));
+    const files = Object.fromEntries([bump.CAPABILITIES_PATH, ...bump.CODER_TEMPLATE_PATHS].map((p) => [p, read(p)]));
     plan = await bump.planImageDigests({ files, http, runner: flag(argv, '--runner'), full: flag(argv, '--full') });
   }
 

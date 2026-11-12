@@ -116,21 +116,26 @@ export const SETS = {
   'image-digests': {
     branch: 'chore/lab-pins-image-digests',
     workflow: '.github/workflows/publish-lab-image.yml',
-    paths: ['vps-agent/lib/capabilities.js', 'lab-host/coder/templates/hcw-lab/main.tf'],
+    paths: [
+      'vps-agent/lib/capabilities.js',
+      'lab-host/coder/templates/hcw-lab/main.tf',
+      'lab-host/coder/templates/amo-guided-lab/main.tf',
+      'lab-host/coder/templates/na-guided-lab/main.tf',
+    ],
     title: 'Lab images: pin the digests main just published',
     intro:
-      'A publish from `main` pushed and attested new hcw-lab images. They are consumed by digest, never by tag, so this pull request moves the two pins: the job image in `vps-agent/lib/capabilities.js` and the Coder workspace image in `lab-host/coder/templates/hcw-lab/main.tf`. It edits those two files and nothing else.',
+      'A publish from `main` pushed and attested new hcw-lab images. They are consumed by digest, never by tag, so this pull request moves the pins: the job image in `vps-agent/lib/capabilities.js` and the Coder workspace image in every template that runs it, `lab-host/coder/templates/hcw-lab/main.tf` and the two guided labs, `amo-guided-lab` and `na-guided-lab` (#1704). It edits those files and nothing else.',
     after: [
       `**The host pulls both on its next bootstrap.sh run** (the lab_images role pulls the job image and removes the one it replaced). After the merge, PowerShell: \`${BOOTSTRAP}\`. ${BOOTSTRAP_OK}`,
       "**The same run publishes the Coder templates; there is nothing to paste after it.** The coder role's **Publish the Coder templates with the rotation credential when they changed** publishes every template whose files changed with the host's own credential, before lab_images removes the image the old versions name. Good is that task `changed`, with a line `hcw-coder-automation: published <template> with the rotation credential; active version …` for each template this pin moved. A line saying there is no rotation credential, or that Coder refused it, means it must be seeded again (docs/runbooks/labs-host.md, \"Automatic renewal\"); that happens only after a host rebuild or a leak.",
     ],
     scope: [
-      '**Components:** the job image pin in `vps-agent/lib/capabilities.js` and the Coder workspace image pin in `lab-host/coder/templates/hcw-lab/main.tf`, both by digest.',
+      '**Components:** the job image pin in `vps-agent/lib/capabilities.js` and the Coder workspace image pin in the `hcw-lab`, `amo-guided-lab` and `na-guided-lab` templates under `lab-host/coder/templates/`, all by digest.',
       '**Rollback:** revert this pull request and run `bootstrap.sh` again; the host pulls the digests the revert names and removes the ones it replaced.',
     ],
     infrastructure: true,
     planNote:
-      'this digest-only update of the two consumers creates no Terraform or Coder plan or preview. The review is the publisher evidence above and the exact two-line diff, by a person; the next `bootstrap.sh` run is the post-merge operational check.',
+      'this digest-only update of the consumers creates no Terraform or Coder plan or preview. The review is the publisher evidence above and the exact digest and tag lines in the diff, by a person; the next `bootstrap.sh` run is the post-merge operational check.',
   },
   'cloudflare-ranges': {
     branch: 'chore/cloudflare-ranges',

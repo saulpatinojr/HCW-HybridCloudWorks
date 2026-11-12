@@ -14,7 +14,7 @@ import {
   BOOTSTRAP_PATH,
   CADDY_TEST_PATH,
   CAPABILITIES_PATH,
-  CODER_TEMPLATE_PATH,
+  CODER_TEMPLATE_PATHS,
   DOCKERFILE_PATH,
   DOCKER_CLI_FIXTURE_PATH,
   DOCKER_GUIDE_PAGE_PATH,
@@ -62,7 +62,7 @@ describe('the pin sets', () => {
     expect(SETS.host.paths).toEqual([GROUP_VARS_PATH, BOOTSTRAP_PATH, CADDY_TEST_PATH, DOCKER_CLI_FIXTURE_PATH]);
     expect(SETS['image-base'].paths).toEqual([VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH, README_PATH]);
     expect(SETS['image-tools'].paths).toEqual([VERSIONS_ENV_PATH, README_PATH]);
-    expect(SETS['image-digests'].paths).toEqual([CAPABILITIES_PATH, CODER_TEMPLATE_PATH]);
+    expect(SETS['image-digests'].paths).toEqual([CAPABILITIES_PATH, ...CODER_TEMPLATE_PATHS]);
     expect(SETS[CLOUDFLARE_SET].paths).toEqual([VARIABLES_PATH]);
     for (const s of Object.values(SETS)) for (const p of s.paths) expect(existsSync(join(REPO, p)), p).toBe(true);
   });
@@ -190,9 +190,9 @@ describe('the pin sets', () => {
     // the pull request (CodeRabbit on #1131).
     expect(body).toContain('- Evidence level: [ ] Static [ ] Local [ ] CI [ ] Staging [ ] Production — none ticked at opening');
     expect(body).toContain('- [ ] Plan or preview was reviewed; no unexpected destroy/recreate operations exist. *(Not ticked: no plan or preview exists for an Ansible pin move.');
-    // Each set says why in its own terms: the digest set updates two consumers, not Ansible pins.
+    // Each set says why in its own terms: the digest set updates the image consumers, not Ansible pins.
     const digestsBody = prBody({ set: 'image-digests', evidence: 'x', notes: '', runUrl: 'u' });
-    expect(digestsBody).toContain('*(Not ticked: this digest-only update of the two consumers creates no Terraform or Coder plan or preview.');
+    expect(digestsBody).toContain('*(Not ticked: this digest-only update of the consumers creates no Terraform or Coder plan or preview.');
     expect(digestsBody).not.toContain('Ansible pin move');
     expect(body).toContain('- [ ] No automated path can activate, approve, sign, file, or make an authoritative write unless explicitly approved. *(Not ticked:');
     expect(body).not.toMatch(/\[x\] Plan or preview|\[x\] No automated path|\[x\] CI/);
@@ -270,7 +270,7 @@ describe('lab-supply-chain.yml', () => {
     // The reader stops on a pin it cannot read and the step refuses an empty list, so a broken read is a failure and not a quiet pass.
     expect(scan).toContain('addon_images="$(node scripts/lab/read-addon-pins.mjs | jq -r \'.include[].image\')"');
     expect(scan).toContain('test -n "$addon_images"');
-    expect(scan).toContain('for image in "$runner" "$full" $addon_images $sandbox; do');
+    expect(scan).toContain('for image in "$runner" $fulls $addon_images $sandbox; do');
     // The issue says what an add-on finding needs, because the lab images' fix path does not apply to it.
     expect(check).toContain('For an add-on image the fix is a new release of that add-on');
   });

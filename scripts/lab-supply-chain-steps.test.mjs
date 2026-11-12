@@ -822,9 +822,37 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
     expect(got.compact).not.toContain('left after the waivers');
   });
 
+  it('scans every hcw-lab digest a template pins, each once, with the waivers (#1704)', () => {
+    const elsewhere = mkdtempSync(join(dir, 'repo-'));
+    const copy = (f, text = readFileSync(join(REPO, f), 'utf8')) => {
+      mkdirSync(join(elsewhere, dirname(f)), { recursive: true });
+      writeFileSync(join(elsewhere, f), text);
+    };
+    for (const f of ['vps-agent/lib/capabilities.js', '.github/lab-image-scan-waivers.yaml', 'lab-host/coder/templates/hcw-lab/main.tf', 'lab-host/coder/templates/na-guided-lab/main.tf']) copy(f);
+    // One guided lab left on an older build, as #1704 found them.
+    const older = 'sha256:' + 'a'.repeat(64);
+    copy(
+      'lab-host/coder/templates/amo-guided-lab/main.tf',
+      readFileSync(join(REPO, 'lab-host/coder/templates/amo-guided-lab/main.tf'), 'utf8').replace(/(image_digest\s*=\s*")sha256:[0-9a-f]{64}/, `$1${older}`)
+    );
+    mkdirSync(join(elsewhere, 'scripts', 'lab'), { recursive: true });
+    writeFileSync(join(elsewhere, 'scripts', 'lab', 'read-addon-pins.mjs'), 'console.log(JSON.stringify({ include: [{ image: "docker.io/x/lab-addon@sha256:' + '0'.repeat(64) + '" }] }));\n');
+    const got = scan({ cwd: elsewhere });
+    expect(got.status, got.stdout + got.stderr).toBe(0);
+    const fulls = got.trivy.split('\n').filter((l) => l.startsWith('image ') && l.includes('hybridcloudworks/hcw-lab@'));
+    expect(fulls).toHaveLength(2);
+    expect(fulls.some((l) => l.endsWith(`hcw-lab@${older}`))).toBe(true);
+    for (const l of fulls) expect(l).toContain('--ignorefile .github/lab-image-scan-waivers.yaml');
+  });
+
   it('stops, rather than scanning without waivers, when the waiver file is missing', () => {
     const elsewhere = mkdtempSync(join(dir, 'repo-'));
-    for (const f of ['vps-agent/lib/capabilities.js', 'lab-host/coder/templates/hcw-lab/main.tf']) {
+    for (const f of [
+      'vps-agent/lib/capabilities.js',
+      'lab-host/coder/templates/hcw-lab/main.tf',
+      'lab-host/coder/templates/amo-guided-lab/main.tf',
+      'lab-host/coder/templates/na-guided-lab/main.tf',
+    ]) {
       mkdirSync(join(elsewhere, dirname(f)), { recursive: true });
       writeFileSync(join(elsewhere, f), readFileSync(join(REPO, f), 'utf8'));
     }

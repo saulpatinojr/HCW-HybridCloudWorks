@@ -514,9 +514,13 @@ jobs:
         run: |
           set -uo pipefail
           runner=$(grep -oE "docker\.io/hybridcloudworks/hcw-lab-runner:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}" vps-agent/lib/capabilities.js | head -1)
-          full_digest=$(grep -oE 'image_digest\s*=\s*"sha256:[0-9a-f]{64}"' lab-host/coder/templates/hcw-lab/main.tf | grep -oE 'sha256:[0-9a-f]{64}')
-          full="docker.io/hybridcloudworks/hcw-lab@${full_digest}"
-          test -n "$runner" && test -n "$full_digest"
+          # Every hcw-lab digest a Coder template pins (#1704): the two guided
+          # labs run the image too, and once ran an older build than hcw-lab's
+          # that this scan never saw. Each distinct digest is scanned once.
+          full_digests=$(grep -lE 'docker\.io/hybridcloudworks/hcw-lab@' lab-host/coder/templates/*/main.tf | xargs grep -ohE 'image_digest\s*=\s*"sha256:[0-9a-f]{64}"' | grep -oE 'sha256:[0-9a-f]{64}' | sort -u)
+          test -n "$runner" && test -n "$full_digests"
+          fulls=""
+          for d in $full_digests; do fulls="${fulls} docker.io/hybridcloudworks/hcw-lab@${d}"; done
           # The tool add-ons the host runs, as <repository>@<digest>. The reader
           # stops, and so does this step's `test`, on a pin it cannot read.
           addon_images="$(node scripts/lab/read-addon-pins.mjs | jq -r '.include[].image')"
@@ -537,7 +541,7 @@ jobs:
             sandbox=""
             { echo "### \`hcw-lz-sandbox:scan\` (lab-image/sandbox-template)"; echo; echo "the Docker Sandboxes template did not build this week, so it was not scanned; the build step's log in this run says why (its Azure CLI downgrade guard or \`pip check\`, or the build itself)"; echo; } | tee -a "$table" >> "$compact"
           fi
-          for image in "$runner" "$full" $addon_images $sandbox; do
+          for image in "$runner" $fulls $addon_images $sandbox; do
             n=$((n+1))
             report="${RUNNER_TEMP}/scan-${n}.json"
             echo "### \`${image}\`" | tee -a "$table" >> "$compact"
@@ -550,7 +554,9 @@ jobs:
             # would otherwise be set aside without anyone reviewing it there.
             # An add-on is scanned exactly as before the waivers existed.
             waive=()
-            if [ "$image" = "$runner" ] || [ "$image" = "$full" ] || [ "$image" = "hcw-lz-sandbox:scan" ]; then
+            full_image=0
+            case " ${fulls} " in *" ${image} "*) full_image=1 ;; esac
+            if [ "$image" = "$runner" ] || [ "$full_image" = 1 ] || [ "$image" = "hcw-lz-sandbox:scan" ]; then
               waive=(--ignorefile "$waivers" --show-suppressed)
             fi
             code=0

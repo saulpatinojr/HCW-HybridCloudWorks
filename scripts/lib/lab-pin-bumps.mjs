@@ -78,6 +78,18 @@ export const SANDBOX_DOCKERFILE_PATH = 'lab-image/sandbox-template/Dockerfile';
 export const CAPABILITIES_PATH = 'vps-agent/lib/capabilities.js';
 export const CODER_TEMPLATE_PATH = 'lab-host/coder/templates/hcw-lab/main.tf';
 /**
+ * Every Coder template that runs the `hcw-lab` image, the one above first.
+ * The two guided labs pin the same image, and until #1704 the digest bump
+ * moved only `hcw-lab`, so they stayed on an older build through every
+ * publish. lab-pin-bumps.test.mjs fails if a template under
+ * lab-host/coder/templates/ pins `hcw-lab` and is missing here.
+ */
+export const CODER_TEMPLATE_PATHS = Object.freeze([
+  CODER_TEMPLATE_PATH,
+  'lab-host/coder/templates/amo-guided-lab/main.tf',
+  'lab-host/coder/templates/na-guided-lab/main.tf',
+]);
+/**
  * Files held to a pin that a bump must move with it, or the bump's own pull
  * request fails its checks (#1122 and #1123 did, on 2026-10-13): the caddy
  * test verifies the release it downloads against CADDY_SHA512; the Docker CLI
@@ -1437,12 +1449,17 @@ export async function planImageDigests({ files, http, runner, full }) {
 
   const currentRunner = files[CAPABILITIES_PATH].match(RUNNER_PIN)?.[1];
   const currentFullDigest = files[CODER_TEMPLATE_PATH].match(TEMPLATE_DIGEST)?.[1];
+  // Each template that pins `hcw-lab` and is not on the published digest yet
+  // (#1704): all of them move together, so none stays on an older build.
+  const templatesBehind = CODER_TEMPLATE_PATHS.filter(
+    (p) => files[p]?.match(TEMPLATE_DIGEST)?.[1] !== fullRef.digest
+  );
 
   for (const [ref, label, current] of [
     [runnerRef, 'hcw-lab-runner (vps-agent job image)', parseImageRef(currentRunner)?.digest],
-    [fullRef, 'hcw-lab (Coder workspace image)', currentFullDigest],
+    [fullRef, 'hcw-lab (Coder workspace images)', currentFullDigest],
   ]) {
-    if (current === ref.digest) continue;
+    if (ref === runnerRef ? current === ref.digest : templatesBehind.length === 0) continue;
     try {
       const read = await readManifest(http, ref.name, ref.tag);
       if (read.digest !== ref.digest) throw new Error(`${ref.name}:${ref.tag} is ${read.digest} on Docker Hub, not the ${ref.digest} the publish job reported`);
@@ -1450,10 +1467,10 @@ export async function planImageDigests({ files, http, runner, full }) {
       const edits =
         ref === runnerRef
           ? [{ file: CAPABILITIES_PATH, where: 'IMAGES.hcwLabRunner', to: pinned, apply: (t) => replaceOne(t, RUNNER_PIN, pinned, 'IMAGES.hcwLabRunner') }]
-          : [
-              { file: CODER_TEMPLATE_PATH, where: 'local.image_tag', to: ref.tag, apply: (t) => replaceOne(t, TEMPLATE_TAG, ref.tag, 'image_tag') },
-              { file: CODER_TEMPLATE_PATH, where: 'local.image_digest', to: ref.digest, apply: (t) => replaceOne(t, TEMPLATE_DIGEST, ref.digest, 'image_digest') },
-            ];
+          : templatesBehind.flatMap((file) => [
+              { file, where: 'local.image_tag', to: ref.tag, apply: (t) => replaceOne(t, TEMPLATE_TAG, ref.tag, 'image_tag') },
+              { file, where: 'local.image_digest', to: ref.digest, apply: (t) => replaceOne(t, TEMPLATE_DIGEST, ref.digest, 'image_digest') },
+            ]);
       bumps.push({
         key: ref === runnerRef ? 'runner' : 'full',
         label,
