@@ -80,9 +80,10 @@
  * **hcwLabRunner** is this repository's own image, built from lab-image/ and
  * published by .github/workflows/publish-lab-image.yml, which prints the
  * pushed digest in its job summary (`docker buildx imagetools inspect` of the
- * pushed tag). The pin below is the publish from main for 7c0a95b2 (#742,
- * run 36320771780): the image now vendors every module version the Landing
- * Zone Builder emits, each AVM_<KEY>_VERSION pair in lab-image/versions.env,
+ * pushed tag). The pin below is the newest publish from main; its tag is
+ * the commit it was built from, and the chore/lab-pins-image-digests pull
+ * request that publish opens is what moves it. Since #742 the image vendors
+ * every module version the Landing Zone Builder emits, each AVM_<KEY>_VERSION pair in lab-image/versions.env,
  * so avm-res-network-virtualnetwork@0.22.2, the version every spoke calls,
  * sits beside the three pattern modules, with its new child
  * avm-utl-interfaces@0.6.0. The builder's full default build, both landing
@@ -102,7 +103,7 @@
 export const IMAGES = {
   alpine: 'alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6',
   hcwLabRunner:
-    'docker.io/hybridcloudworks/hcw-lab-runner:d59470d0555c34000c1f4e7e44ff07ffab8dd095@sha256:c817938343c66949734cf651b33a9a75355c35cec1d37ba81cdab95eb36a85cc',
+    'docker.io/hybridcloudworks/hcw-lab-runner:36a63f34543c4234493ec70ec94619627c8d3aa0@sha256:42f21285537aa8a137d446a201b52870017738d17cb4c4ddd52e7b0b93906c2c',
 };
 
 /**
