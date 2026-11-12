@@ -828,7 +828,12 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
       mkdirSync(join(elsewhere, dirname(f)), { recursive: true });
       writeFileSync(join(elsewhere, f), text);
     };
-    for (const f of ['vps-agent/lib/capabilities.js', '.github/lab-image-scan-waivers.yaml', 'lab-host/coder/templates/hcw-lab/main.tf', 'lab-host/coder/templates/na-guided-lab/main.tf']) copy(f);
+    for (const f of ['vps-agent/lib/capabilities.js', '.github/lab-image-scan-waivers.yaml', 'lab-host/coder/templates/na-guided-lab/main.tf']) copy(f);
+    // A commented-out digest is not a pin, so it is not scanned.
+    copy(
+      'lab-host/coder/templates/hcw-lab/main.tf',
+      readFileSync(join(REPO, 'lab-host/coder/templates/hcw-lab/main.tf'), 'utf8') + `\n# image_digest = "sha256:${'b'.repeat(64)}"\n`
+    );
     // One guided lab left on an older build, as #1704 found them.
     const older = 'sha256:' + 'a'.repeat(64);
     copy(
@@ -841,6 +846,7 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
     expect(got.status, got.stdout + got.stderr).toBe(0);
     const fulls = got.trivy.split('\n').filter((l) => l.startsWith('image ') && l.includes('hybridcloudworks/hcw-lab@'));
     expect(fulls).toHaveLength(2);
+    expect(fulls.some((l) => l.includes('b'.repeat(64)))).toBe(false);
     expect(fulls.some((l) => l.endsWith(`hcw-lab@${older}`))).toBe(true);
     for (const l of fulls) expect(l).toContain('--ignorefile .github/lab-image-scan-waivers.yaml');
   });

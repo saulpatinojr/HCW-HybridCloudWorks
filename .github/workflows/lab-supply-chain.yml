@@ -68,7 +68,7 @@
 #      grant (scripts/workflow-write-permissions.test.mjs).
 #   3. `check` compares every pin with upstream, scans the published image
 #      digests the host actually runs — the two lab images, read from
-#      vps-agent/lib/capabilities.js and the Coder template, and the tool
+#      vps-agent/lib/capabilities.js and every Coder template, and the tool
 #      add-on images, read from `addons[]` in group_vars/all.yml by
 #      scripts/lab/read-addon-pins.mjs, not from a tag — and the Docker
 #      Sandboxes template (lab-image/sandbox-template), which is never
@@ -517,7 +517,7 @@ jobs:
           # Every hcw-lab digest a Coder template pins (#1704): the two guided
           # labs run the image too, and once ran an older build than hcw-lab's
           # that this scan never saw. Each distinct digest is scanned once.
-          full_digests=$(grep -lE 'docker\.io/hybridcloudworks/hcw-lab@' lab-host/coder/templates/*/main.tf | xargs grep -ohE 'image_digest\s*=\s*"sha256:[0-9a-f]{64}"' | grep -oE 'sha256:[0-9a-f]{64}' | sort -u)
+          full_digests=$(grep -lE 'docker\.io/hybridcloudworks/hcw-lab@' lab-host/coder/templates/*/main.tf | xargs grep -ohE '^\s*image_digest\s*=\s*"sha256:[0-9a-f]{64}"' | grep -oE 'sha256:[0-9a-f]{64}' | sort -u)
           test -n "$runner" && test -n "$full_digests"
           fulls=""
           for d in $full_digests; do fulls="${fulls} docker.io/hybridcloudworks/hcw-lab@${d}"; done

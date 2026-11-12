@@ -39,8 +39,9 @@
  *                         Terraform provider in the mirror, with the sum the
  *                         publisher serves where it serves one
  *   --bump image-digests  vps-agent/lib/capabilities.js and every Coder
- *                         template that runs hcw-lab, to the two digests named by --runner and
- *                         --full (publish-lab-image.yml passes what it pushed)
+ *                         template that runs hcw-lab, to the two digests
+ *                         named by --runner and --full (publish-lab-image.yml
+ *                         passes what it pushed)
  *
  * Each edit carries the checksum or digest read from the publisher beside the
  * version (scripts/lib/lab-pin-bumps.mjs says what is read from where); a pin

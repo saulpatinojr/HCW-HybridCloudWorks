@@ -66,10 +66,11 @@
 #   propose-pins, pin-pull-request
 #            after every publish (#949). The images are consumed by digest,
 #            never by tag, so a publish changes nothing a learner runs until
-#            the two consumers pin it: IMAGES.hcwLabRunner in
-#            vps-agent/lib/capabilities.js and the workspace image in
-#            lab-host/coder/templates/hcw-lab/main.tf. `propose-pins`
-#            (`contents: read`) edits both with the digests `publish` read
+#            its consumers pin it: IMAGES.hcwLabRunner in
+#            vps-agent/lib/capabilities.js and the workspace image in every
+#            Coder template that runs it (hcw-lab, amo-guided-lab and
+#            na-guided-lab under lab-host/coder/templates/, #1704). `propose-pins`
+#            (`contents: read`) edits them with the digests `publish` read
 #            back from Docker Hub, after reading each again from the registry by
 #            tag (scripts/lab-pins-upstream.mjs --bump image-digests); a
 #            disagreement fails it. `pin-pull-request` opens, or updates, the
@@ -673,7 +674,7 @@ jobs:
             exit 1
           fi
 
-      - name: The patch, over the two consumer files only
+      - name: The patch, over the consumer files only
         id: patch
         run: |
           set -euo pipefail
@@ -683,7 +684,7 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Both consumers already pin these digests." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "Every consumer already pins these digests." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload the patch and evidence
@@ -761,7 +762,7 @@ jobs:
           echo "::add-mask::${token}"
           echo "token=${token}" >> "$GITHUB_OUTPUT"
 
-      # Stages the two consumer files by name and refuses when anything else
+      # Stages the consumer files by name and refuses when anything else
       # changed; one branch, one open pull request.
       - name: Push the branch and open or update the pull request
         if: steps.app.outputs.armed == 'true'

@@ -27,8 +27,9 @@
  *                  baked into the lab images and the Terraform providers in
  *                  their mirror, each to its newest release with the
  *                  publisher's checksum.
- *   image-digests  vps-agent/lib/capabilities.js and the Coder template: the
- *                  two digests a publish from main just pushed.
+ *   image-digests  vps-agent/lib/capabilities.js and every Coder template
+ *                  that runs hcw-lab: the two digests a publish from main
+ *                  just pushed.
  *
  * What each value is read from, by kind:
  *
@@ -1423,7 +1424,7 @@ export async function planImageTools({ files, http }) {
   return { files: result.files, applied: result.applied, notes: [...notes, ...result.notes] };
 }
 
-// ── The consumers' digests (capabilities.js, the Coder template) ───────────
+// ── The consumers' digests (capabilities.js, the Coder templates) ──────────
 
 const RUNNER_PIN = /'(docker\.io\/hybridcloudworks\/hcw-lab-runner:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64})'/;
 const TEMPLATE_TAG = /^[ \t]*image_tag[ \t]*=[ \t]*"([^"]+)"/m;
@@ -1474,7 +1475,9 @@ export async function planImageDigests({ files, http, runner, full }) {
       bumps.push({
         key: ref === runnerRef ? 'runner' : 'full',
         label,
-        from: (current ?? '—').slice(0, 19),
+        // For the workspace image, the digest of the first template that is
+        // behind, so a line never reads `x -> x` when only a guided lab moved.
+        from: ((ref === runnerRef ? current : files[templatesBehind[0]]?.match(TEMPLATE_DIGEST)?.[1]) ?? '—').slice(0, 19),
         to: ref.digest.slice(0, 19),
         edits,
         evidence: [

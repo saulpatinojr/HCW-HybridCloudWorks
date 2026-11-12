@@ -1253,6 +1253,10 @@ describe('the consumers\' digest plan', () => {
     expect(plan.notes).toEqual([]);
     expect(plan.files[behind]).toMatch(new RegExp(`image_digest\\s*=\\s*"${digest}"`));
     expect(plan.files[CODER_TEMPLATE_PATH]).toBe(onDigest[CODER_TEMPLATE_PATH]);
+    // The summary line names the digest the guided lab moved from, not hcw-lab's.
+    const fullBump = plan.applied.find((b) => b.key === 'full');
+    expect(fullBump.from).toBe(files[behind].match(/image_digest\s*=\s*"(sha256:[0-9a-f]{64})"/)[1].slice(0, 19));
+    expect(fullBump.from).not.toBe(fullBump.to);
   });
 
   it('pins neither image whose registry digest disagrees with the publish job, and says so', async () => {
