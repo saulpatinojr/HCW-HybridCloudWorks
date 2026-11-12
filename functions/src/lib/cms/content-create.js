@@ -161,8 +161,9 @@ export async function createContentDocument({
     url: sourceUrl,
     canonicalUrl: normalizedData.canonicalUrl,
     title: normalizedData.Title || normalizedData.title,
-    // Without a date of its own, the item is judged as published now, by the
-    // clock this call was given, so the seven-day title window follows it.
+    // With no date of its own, the item is measured from this handler's
+    // clock, not the dedup module's Date.now(), so an injected `now` holds
+    // for the seven-day title window too. Same instant in production.
     publishedAt:
       normalizedData.publishedAt ||
       normalizedData.publishedDate ||
