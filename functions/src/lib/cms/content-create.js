@@ -161,10 +161,13 @@ export async function createContentDocument({
     url: sourceUrl,
     canonicalUrl: normalizedData.canonicalUrl,
     title: normalizedData.Title || normalizedData.title,
+    // Without a date of its own, the item is judged as published now, by the
+    // clock this call was given, so the seven-day title window follows it.
     publishedAt:
       normalizedData.publishedAt ||
       normalizedData.publishedDate ||
-      normalizedData["Published At"],
+      normalizedData["Published At"] ||
+      now(),
   });
   if (duplicate.duplicate) {
     return {
