@@ -125,6 +125,7 @@ describe('BlogReviewBoard address topic (#1628)', () => {
     renderBoard({
       contentStatus: 'inspected',
       topic: 'ai',
+      slug: 'ai-c1',
       curatedSubpagePath: '/azure/blog/ai-c1',
     });
     const select = screen.getByLabelText('Address topic');
@@ -132,8 +133,8 @@ describe('BlogReviewBoard address topic (#1628)', () => {
     expect(select).toHaveAccessibleDescription(/its address is fixed/);
   });
 
-  it('is not offered for an interview, whose address keeps its title', () => {
+  it('is offered for an interview too, since every page gets a topic address', () => {
     renderBoard({ contentStatus: 'inspected', type: 'interview' });
-    expect(screen.queryByLabelText('Address topic')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Address topic')).toBeEnabled();
   });
 });

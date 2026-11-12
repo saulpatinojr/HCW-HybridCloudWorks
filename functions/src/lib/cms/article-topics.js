@@ -1,7 +1,10 @@
 /**
- * An article's web address: one topic word and eight characters of its
- * document id, e.g. `/azure/blog/hybrid-cpjhv5a3` (owner decision of
- * 2026-11-11, #1628).
+ * The web address of every published page: one topic word and eight
+ * characters of its document id, e.g. `/azure/blog/hybrid-cpjhv5a3` or
+ * `/azure/architecture-designs/network-2loi8bh7`. Owner decisions of
+ * 2026-11-11 (articles) and 2026-11-12 (all published pages: designs,
+ * frameworks, code pages and interviews too), #1628. The names here still
+ * say "article" because that is where the rule started.
  *
  * WHY NOT THE TITLE. Title slugs were long, and the publish step's suffix (the
  * first characters of the document id) carried capital letters, so five live
@@ -209,7 +212,7 @@ export function articleIdPart(contentId = "") {
 }
 
 /**
- * The address a FIRST publish gives an article: `<topic>-<id part>`.
+ * The address a FIRST publish gives any page: `<topic>-<id part>`.
  *
  * @param {object} args
  * @param {object} args.contentData the document

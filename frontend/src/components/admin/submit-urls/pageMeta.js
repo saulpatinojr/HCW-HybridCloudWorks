@@ -51,12 +51,12 @@ export function getPromptLibraryPagePath(contentType, providerSegment) {
  * checklist only asks for eight characters, so it has never mattered.
  */
 /**
- * The address a draft will publish at, for the preview. An article's is
+ * The address a draft will publish at, for the preview. Every page's is
  * `<topic>-<8 id characters>` (#1628); the id is not known until the draft is
- * saved, so x's stand in for it. Other sections keep the title slug.
+ * saved, so x's stand in for it.
  */
-export function previewSlugFor({ section, topic = '', title = '' }) {
-  return section === 'blog' ? `${topic || 'topic'}-xxxxxxxx` : slugifyTitle(title);
+export function previewSlugFor({ topic = '' } = {}) {
+  return `${topic || 'topic'}-xxxxxxxx`;
 }
 
 export function slugifyTitle(value = '') {

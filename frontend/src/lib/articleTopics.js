@@ -15,4 +15,4 @@ export function isArticleTopic(value) {
 
 /** The one line under a topic dropdown, in plain words. */
 export const ARTICLE_TOPIC_HINT =
-  'Sets the first word of the page address, e.g. hybrid-cpjhv5a3. It is fixed when the article is first published.';
+  'Sets the first word of the page address, e.g. hybrid-cpjhv5a3. It is fixed when the page is first published.';
