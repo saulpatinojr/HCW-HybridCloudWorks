@@ -25,7 +25,7 @@
  * stop-commands guard are checked as they behave, not as they read.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -185,10 +185,59 @@ describe('the scripts it runs on the host', () => {
 
   it('bootstrap keeps the full log on the host, root-only, and prints only the recap and failed task names', () => {
     const bootstrap = read('bootstrap.sh');
-    expect(bootstrap).toContain('umask 077');
+    // The strict umask is the log file's alone (#1706): the bootstrap itself
+    // runs under 022, as an SSH sudo run does.
+    expect(bootstrap).toMatch(/^umask 022$/m);
+    expect(bootstrap).not.toMatch(/^umask 077$/m);
+    expect(bootstrap).toContain('(umask 077 && : >"$log")');
     expect(bootstrap).toContain('/opt/hcw-src/lab-host/bootstrap.sh </dev/null >"$log" 2>&1');
     expect(bootstrap).toContain('exit "$rc"');
     expect(bootstrap).not.toMatch(/^cat "\$log"/m);
+  });
+});
+
+describe('the labs_agent role keeps the agent\'s code readable, whatever umask wrote it (#1706)', () => {
+  const tasks = readFileSync(join(REPO, 'lab-host', 'ansible', 'roles', 'labs_agent', 'tasks', 'main.yml'), 'utf8');
+  const name = "- name: Keep the agent's code readable by the agent user, whatever umask wrote it";
+
+  it('restores read access on the whole agent tree after the checkout and the dependency install, and restarts the agent if it changed anything', () => {
+    const at = tasks.indexOf(name);
+    expect(at, 'the task is missing').toBeGreaterThan(-1);
+    expect(at).toBeGreaterThan(tasks.indexOf('- name: Check out the repository at labs_agent_repo_ref'));
+    expect(at).toBeGreaterThan(tasks.indexOf("- name: Install the agent's production dependencies for this commit"));
+    const task = tasks.slice(at, tasks.indexOf('\n- name:', at + 1));
+    expect(task).toContain('path: "{{ labs_agent_home }}"');
+    expect(task).toMatch(/recurse: true/);
+    expect(task).toContain('mode: "a+rX"');
+    // Without it the recursive walk changes the mode of whatever a symbolic link points to.
+    expect(task).toMatch(/follow: false/);
+    expect(task).toContain('notify: Restart hcw-labs-agent');
+  });
+});
+
+describe.skipIf(!findBashTools().ready)('bootstrap.sh under sh, against a stand-in bootstrap (#1706)', () => {
+  it('runs the bootstrap under umask 022, so what it writes stays readable, and keeps its own log root-only', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'arc-bootstrap-'));
+    try {
+      mkdirSync(join(dir, 'src', 'lab-host'), { recursive: true });
+      // A stand-in for /opt/hcw-src/lab-host/bootstrap.sh: it records the umask
+      // it was started with and writes one file the way git or npm would.
+      writeFileSync(join(dir, 'src', 'lab-host', 'bootstrap.sh'), `#!/bin/sh\numask > "${dir}/seen-umask"\n: > "${dir}/written-by-bootstrap"\necho "[bootstrap] done"\n`, { mode: 0o755 });
+      const script = readFileSync(join(REPO, 'lab-host', 'arc-run', 'bootstrap.sh'), 'utf8')
+        .replaceAll('/opt/hcw-src', `${dir}/src`)
+        .replaceAll('/var/log/hcw-arc-run', `${dir}/log`)
+        .replace('export HOME=/root', `export HOME=${dir}`);
+      const r = spawnSync('sh', ['-c', script], { encoding: 'utf8', env: { ...process.env } });
+      expect(r.status, r.stdout + r.stderr).toBe(0);
+      expect(readFileSync(join(dir, 'seen-umask'), 'utf8').trim()).toMatch(/^0?022$/);
+      expect(statSync(join(dir, 'written-by-bootstrap')).mode & 0o777).toBe(0o644);
+      const logs = readdirSync(join(dir, 'log')).filter((f) => f.startsWith('bootstrap-'));
+      expect(logs).toHaveLength(1);
+      expect(statSync(join(dir, 'log', logs[0])).mode & 0o777).toBe(0o600);
+      expect(statSync(join(dir, 'log')).mode & 0o777).toBe(0o700);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
