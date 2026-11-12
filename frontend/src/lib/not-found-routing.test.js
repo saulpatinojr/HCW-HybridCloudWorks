@@ -233,15 +233,25 @@ describe('unknown addresses answer 404 (#1613)', () => {
    * `/<provider>/blog/<slug>` until #1628, and that address was in the
    * sitemap; since then it is built at `/<provider>/architecture-designs/<slug>`
    * and the blog address has no file. Listed by hand: only the designs that
-   * were published (and so in the sitemap) before the move.
+   * were published (and so in the sitemap) before the move. On 2026-11-12 the
+   * owner renamed the design to its `<topic>-<id>` address (#1628), so both
+   * its old blog address and its old design address now go to the new one:
+   * [provider, old slug, current slug].
    */
-  const MOVED_DESIGNS = [['azure', 'enterprise-hub-and-spoke-zero-trust-edge']];
+  const MOVED_DESIGNS = [['azure', 'enterprise-hub-and-spoke-zero-trust-edge', 'network-2loi8bh7']];
   const designRedirects = () =>
-    MOVED_DESIGNS.map(([provider, slug]) => ({
-      route: `/${provider}/blog/${slug}`,
-      redirect: `/${provider}/architecture-designs/${slug}`,
-      statusCode: 301,
-    }));
+    MOVED_DESIGNS.flatMap(([provider, old, current]) => [
+      {
+        route: `/${provider}/blog/${old}`,
+        redirect: `/${provider}/architecture-designs/${current}`,
+        statusCode: 301,
+      },
+      {
+        route: `/${provider}/architecture-designs/${old}`,
+        redirect: `/${provider}/architecture-designs/${current}`,
+        statusCode: 301,
+      },
+    ]);
 
   /**
    * The 301s from each article's old title address to its `<topic>-<id>`

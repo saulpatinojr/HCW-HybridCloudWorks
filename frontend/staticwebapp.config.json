@@ -55,7 +55,12 @@
     },
     {
       "route": "/azure/blog/enterprise-hub-and-spoke-zero-trust-edge",
-      "redirect": "/azure/architecture-designs/enterprise-hub-and-spoke-zero-trust-edge",
+      "redirect": "/azure/architecture-designs/network-2loi8bh7",
+      "statusCode": 301
+    },
+    {
+      "route": "/azure/architecture-designs/enterprise-hub-and-spoke-zero-trust-edge",
+      "redirect": "/azure/architecture-designs/network-2loi8bh7",
       "statusCode": 301
     },
     {
