@@ -4378,25 +4378,27 @@ is a waiver file that Trivy reads with `--ignorefile`
 Each entry is one finding id in the places named (a program's path, a Python
 package's `METADATA` file, or for a package with no path, its package URL at
 that exact version), a statement naming the maker the fix waits on, and an
-`expired_at` date. After that date Trivy counts the finding again. Anything
+`expired_at` date. From that date (00:00 UTC) Trivy counts the finding again. Anything
 the file does not cover still fails the scan and keeps the issue open: a new
 finding, the same finding in another place, a newer provider (its path
 carries its version), or a package that moved. The weekly report says, per
 image, how many findings were set aside and until when, so a waived finding
 is never silent.
 
-**Renewing them, before the date in the file.** Bash, on a machine with
-Docker and Trivy at the version `lab-supply-chain.yml` pins, from the
-repository root on an up-to-date `main`:
+**Renewing them, before the date in the file.** Bash (Git Bash or Linux), on
+a machine with Docker and Trivy at the version `lab-supply-chain.yml` pins,
+from the repository root on an up-to-date `main`. The first line scans the
+three images into a fresh folder, so no older scan is mixed in:
 
 ```bash
-runner=$(grep -oE "docker\.io/hybridcloudworks/hcw-lab-runner:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}" vps-agent/lib/capabilities.js | head -1); full="docker.io/hybridcloudworks/hcw-lab@$(grep -oE 'image_digest\s*=\s*"sha256:[0-9a-f]{64}"' lab-host/coder/templates/hcw-lab/main.tf | grep -oE 'sha256:[0-9a-f]{64}')"; docker build --no-cache --platform linux/amd64 -f lab-image/sandbox-template/Dockerfile -t hcw-lz-sandbox:scan lab-image && for i in "$runner" "$full" hcw-lz-sandbox:scan; do trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --format json -o "/tmp/scan-$(echo "$i" | md5sum | cut -c1-8).json" "$i"; done
+d=$(mktemp -d); runner=$(grep -oE "docker\.io/hybridcloudworks/hcw-lab-runner:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}" vps-agent/lib/capabilities.js | head -1); full="docker.io/hybridcloudworks/hcw-lab@$(grep -oE 'image_digest\s*=\s*"sha256:[0-9a-f]{64}"' lab-host/coder/templates/hcw-lab/main.tf | grep -oE 'sha256:[0-9a-f]{64}')"; docker build --no-cache --platform linux/amd64 -f lab-image/sandbox-template/Dockerfile -t hcw-lz-sandbox:scan lab-image && trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --format json -o "$d/runner.json" "$runner" && trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --format json -o "$d/full.json" "$full" && trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --format json -o "$d/sandbox.json" hcw-lz-sandbox:scan && echo "scans in $d"
 ```
 
-Then write the file, with today's date and one 30 days later:
+Then, in the same terminal, write the file with today's date and a date 30
+days on, replacing the committed one only if the generator succeeds:
 
 ```bash
-node scripts/lab/scan-waivers.mjs --expires 2026-12-12 --checked 2026-11-12 /tmp/scan-*.json > .github/lab-image-scan-waivers.yaml
+node scripts/lab/scan-waivers.mjs --checked "$(date -u +%F)" --expires "$(date -u -d '+30 days' +%F)" "$d/runner.json" "$d/full.json" "$d/sandbox.json" > "$d/waivers.yaml" && mv "$d/waivers.yaml" .github/lab-image-scan-waivers.yaml && git diff --stat
 ```
 
 Success is exit code 0 and a diff to read. If it stops with `no maker is

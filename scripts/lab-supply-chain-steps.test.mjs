@@ -710,6 +710,7 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
         'case "$mode" in',
         '  left) printf "%s" "$LEFT" > "$out"; exit 1 ;;',
         '  waived) printf "%s" "$WAIVED" > "$out"; exit 0 ;;',
+        '  broken) echo "FATAL unable to pull" >&2; exit 1 ;;',
         '  *) printf "%s" "$CLEAN" > "$out"; exit 0 ;;',
         'esac',
         '',
@@ -773,10 +774,23 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
     expect(got.compact).toContain('1 finding(s) set aside until');
   });
 
+  it('a scan that fails without writing a report is a failed scan, never a clean one', () => {
+    const got = scan({ runner: 'broken' });
+    expect(got.status, got.stdout + got.stderr).toBe(0);
+    expect(got.failed).toBe('1');
+    expect(got.compact).toContain('the scan did not complete:');
+    expect(got.compact).toContain('FATAL unable to pull');
+  });
+
+  it('says nothing is left after the waivers when a waiver set findings aside', () => {
+    expect(scan().compact).toContain('no HIGH or CRITICAL vulnerability with a fix available left after the waivers');
+  });
+
   it('a clean image says so and adds no waiver line', () => {
     const got = scan({ runner: 'clean', other: 'clean' });
     expect(got.failed).toBe('0');
     expect(got.compact).not.toContain('set aside');
+    expect(got.compact).not.toContain('left after the waivers');
   });
 
   it('stops, rather than scanning without waivers, when the waiver file is missing', () => {

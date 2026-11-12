@@ -634,7 +634,7 @@ vulnerabilities:
   - id: "CVE-2026-76844"
     purls:
       - "pkg:deb/debian/zlib1g@1.3.dfsg%2Breally1.3.1-1%2Bb1"
-    statement: "Waits on Docker: Debian has fixed zlib1g, but the pinned python slim base has not been republished with it; the chore/lab-pins-image-base pull request picks it up when it is. Checked 2026-11-12."
+    statement: "Waits on Docker by choice: Debian has fixed zlib1g and the pinned python slim base has not been republished with it; the lab image could upgrade it itself, as the sandbox template does for four packages, and #1700 tracks doing that. Checked 2026-11-12."
     expired_at: 2026-12-12
   - id: "CVE-2026-78661"
     paths:
@@ -813,7 +813,7 @@ vulnerabilities:
   - id: "CVE-2026-85091"
     purls:
       - "pkg:deb/debian/zlib1g@1.3.dfsg%2Breally1.3.1-1%2Bb1"
-    statement: "Waits on Docker: Debian has fixed zlib1g, but the pinned python slim base has not been republished with it; the chore/lab-pins-image-base pull request picks it up when it is. Checked 2026-11-12."
+    statement: "Waits on Docker by choice: Debian has fixed zlib1g and the pinned python slim base has not been republished with it; the lab image could upgrade it itself, as the sandbox template does for four packages, and #1700 tracks doing that. Checked 2026-11-12."
     expired_at: 2026-12-12
   - id: "CVE-2026-97031"
     paths:
