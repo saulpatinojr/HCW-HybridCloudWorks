@@ -92,7 +92,8 @@
 #
 #   What a rebuild changes on its own: the packages the `full` target installs
 #   with apt from Debian (curl, git, jq, libatomic1, procps and their
-#   dependencies), which Debian patches in place, so a rebuild picks up their
+#   dependencies), and zlib1g, which the `runner` target upgrades from the
+#   base (#1700). Debian patches them in place, so a rebuild picks up their
 #   security fixes. That is all.
 #
 #   What it cannot change on its own: the base image, its CPython and every
@@ -103,8 +104,9 @@
 #   by pull request: lab-supply-chain.yml proposes the newest base digest
 #   weekly (`chore/lab-pins-image-base`) and the newest release of each tool
 #   and Terraform provider (`chore/lab-pins-image-tools`), and merging either
-#   is a push here, which rebuilds on it. The runner target installs nothing with apt, so a
-#   rebuild of it alone changes nothing a scan would see.
+#   is a push here, which rebuilds on it. The runner target's only apt step
+#   upgrades zlib1g, which `full` inherits, so the `full` comparison above
+#   sees a new zlib1g as well.
 #
 # Path-filtered on purpose, unlike ci.yml: this workflow is not a required
 # context on the main ruleset (a path-filtered required context is never
