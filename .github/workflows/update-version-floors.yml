@@ -159,6 +159,19 @@ jobs:
         with:
           persist-credentials: false
 
+      # Node.js 26, the line scripts/package.json requires, instead of the
+      # runner image's own (24 on ubuntu-26.04), which this job would
+      # otherwise run its node commands on (#1707). No cache: this job
+      # installs nothing, and it holds the App token.
+      - name: Set up Node.js
+        # always(), like the token's revoke step at the end of this job, which runs node
+        # even after an earlier step failed.
+        if: ${{ always() }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
       - name: Download the patch
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

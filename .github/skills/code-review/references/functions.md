@@ -1,7 +1,8 @@
 # Azure Functions review — `functions/`
 
 Single Azure Functions app (ADR-0019), Flex Consumption, Node 24 (the newest
-line Flex supports; `scripts/version-floors.json` holds it there), ESM
+line Flex supports as GA, 26 being preview only; `scripts/version-floors.json`
+holds it there), ESM
 (`"type": "module"`), programming model v4 (`@azure/functions`). Handlers
 live in `functions/src/functions/`, shared logic in `functions/src/lib/`
 (with `auth/`, `http/`, `cms/`, `content/`, `integrations/`, `timers/`,

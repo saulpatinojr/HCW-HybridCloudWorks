@@ -183,6 +183,16 @@ jobs:
         with:
           persist-credentials: false
 
+      # Node.js 26, the line the labs agent runs on the lab host
+      # (labs_agent_node_version), so the sandbox check runs docker-runner.js
+      # on the Node it meets in production instead of the runner image's own
+      # (24 on ubuntu-26.04) (#1707). No cache: nothing is installed.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
       # Every FROM in each Dockerfile is either an earlier stage of the same
       # file or exactly the image@digest versions.env records for that file
       # (the tag included, so the documentation beside the digest cannot
@@ -425,6 +435,16 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      # Node.js 26, the line the labs agent runs on the lab host
+      # (labs_agent_node_version), so the sandbox check runs docker-runner.js
+      # on the Node it meets in production instead of the runner image's own
+      # (24 on ubuntu-26.04) (#1707). No cache: nothing is installed.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
 
       # The commit sha, as always; a weekly rebuild of an unchanged commit
       # gets the date beside it, so `<sha>` keeps naming the bytes the commit's
@@ -716,6 +736,9 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
+        # always(), like the token's revoke step at the end of this job, which runs node
+        # even after an earlier step failed.
+        if: ${{ always() }}
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '26'
