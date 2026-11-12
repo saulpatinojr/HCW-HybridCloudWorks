@@ -81,7 +81,7 @@ const ASSIGNMENT = String.raw`[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\.)*"|'[^']*
 // the letters of the options that take an argument (`sudo -u nobody`,
 // `nice -n 10`), any other `-x`/`--long` flag, and the `--` that ends the
 // options (`env -- node`). `timeout` also takes its duration (`timeout 60
-// node`). `command` only with `-p`, because `command -v node` looks node up
+// node`). `command` only with `-p` or `--`, because `command -v node` looks node up
 // and runs nothing.
 const WRAPPER_OPTIONS = { env: 'uCS', sudo: 'ugCDhprtU', xargs: 'InPLdaEs', exec: 'a', time: 'of', nice: 'n', nohup: '', stdbuf: 'ioe', timeout: 'sk' };
 const optionsOf = (takes) =>
@@ -90,7 +90,7 @@ const WRAPPERS = [
   ...Object.entries(WRAPPER_OPTIONS).map(([word, takes]) =>
     word === 'timeout' ? String.raw`timeout${optionsOf(takes)}\s+\d+(?:\.\d+)?[smhd]?\s+` : String.raw`${word}${optionsOf(takes)}\s+`
   ),
-  String.raw`command(?:\s+-p)*\s+`,
+  String.raw`command(?:\s+(?:-p|--(?=\s)))*\s+`,
   String.raw`(?:if|then|else|elif|do|while|until|!)\s+`,
 ].join('|');
 // A `case` pattern that ends at the start of a line (`check)`, `a|b)`), after which a command may follow.
@@ -337,7 +337,7 @@ describe('runsRuntime and unsetJobs', () => {
     for (const line of ['/opt/az/bin/python3 -Im pip check', '/usr/bin/python3 -I check.py', './venv/bin/python x.py', "python3.15.2 -c 'print(1)'", "/usr/bin/python3 -c 'print(1)'", 'env -i python3 check.py', 'sudo -u nobody python3 check.py', 'sudo -u runner python3 check.py', 'time -p python3 check.py', 'sudo -- python3 check.py', 'timeout -k 5 1m python3 x.py', 'stdbuf -oL python3 x.py', 'check) python3 scripts/check.py ;;']) {
       expect(runsRuntime(line, 'python'), line).toBe(true);
     }
-    for (const line of ['/opt/node/bin/node x.js', 'env -i npm ci', 'nice -n 10 node x.js', 'env -- node script.mjs', 'sudo -u nobody -- node x.js', 'timeout 60 node x.js', 'nohup node x.js', 'xargs -n 1 node', 'a|b) node x.js ;;']) {
+    for (const line of ['/opt/node/bin/node x.js', 'env -i npm ci', 'nice -n 10 node x.js', 'env -- node script.mjs', 'command -- node scripts/x.mjs', 'command -p -- npm ci', 'sudo -u nobody -- node x.js', 'timeout 60 node x.js', 'nohup node x.js', 'xargs -n 1 node', 'a|b) node x.js ;;']) {
       expect(runsRuntime(line, 'node'), line).toBe(true);
     }
     // A container's script, a continued line's argument, a heredoc's body, a lookup and an assignment are not commands.
