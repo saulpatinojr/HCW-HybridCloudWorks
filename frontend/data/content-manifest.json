@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-12T04:07:31.425Z",
+  "generatedAt": "2026-11-12T04:30:30.736Z",
   "routes": [
     "/azure/blog/ai-0n8jwlc9",
     "/azure/blog/governance-1k5ayjbe",
@@ -24,7 +24,7 @@
     "/azure/blog/security-lszyb6gb",
     "/azure/blog/sovereignty-ttt3hv8d",
     "/azure/blog/sovereignty-ibdycon0",
-    "/azure/architecture-designs/enterprise-hub-and-spoke-zero-trust-edge"
+    "/azure/architecture-designs/network-2loi8bh7"
   ],
   "data": {
     "article:ai-0n8jwlc9": {
@@ -960,7 +960,7 @@
       "sourceUrl": "https://blogs.microsoft.com/blog/2025/06/16/announcing-comprehensive-sovereign-solutions-empowering-european-organizations/",
       "CD Url": "https://blogs.microsoft.com/blog/2025/06/16/announcing-comprehensive-sovereign-solutions-empowering-european-organizations/"
     },
-    "architecture:enterprise-hub-and-spoke-zero-trust-edge": {
+    "architecture:network-2loi8bh7": {
       "id": "2loI8BH7BqRnikYdfPYa",
       "type": "architecture",
       "publishTarget": "architecture",
@@ -969,7 +969,8 @@
       "Summary": "A production-grade Azure landing zone pattern that centralizes connectivity, policy, and security controls while enabling autonomous workload subscriptions at scale.",
       "summary": "A production-grade Azure landing zone pattern that centralizes connectivity, policy, and security controls while enabling autonomous workload subscriptions at scale.",
       "description": "A production-grade Azure landing zone pattern that centralizes connectivity, policy, and security controls while enabling autonomous workload subscriptions at scale.",
-      "slug": "enterprise-hub-and-spoke-zero-trust-edge",
+      "slug": "network-2loi8bh7",
+      "Slug": "network-2loi8bh7",
       "category": "Networking",
       "complexity": "Low",
       "level": "400",
@@ -990,8 +991,12 @@
       "featured": true,
       "Cloud Provider": "Azure",
       "cloudProvider": "Azure",
-      "updatedAt": "2026-11-10T14:17:58.230Z",
+      "updatedAt": "2026-11-12T04:28:26.309Z",
       "createdAt": "2026-07-31T02:17:38.313Z",
+      "slugPageUrl": "https://hybridcloudworks.com/azure/architecture-designs/network-2loi8bh7",
+      "publishedUrl": "https://hybridcloudworks.com/azure/architecture-designs/network-2loi8bh7",
+      "publicUrl": "https://hybridcloudworks.com/azure/architecture-designs/network-2loi8bh7",
+      "curatedSubpagePath": "/azure/architecture-designs/network-2loi8bh7",
       "cost": "$2.1k/mo",
       "costAnalysis": {
         "estimatedMonthly": "$1,350 - $1,750/mo",
