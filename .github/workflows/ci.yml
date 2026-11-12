@@ -778,9 +778,9 @@ jobs:
               # frontend pull request.
             # Node.js 24, not 26: 24 is the newest line Azure Functions Flex
             # Consumption runs as GA (26 is preview only, #1707), so the tests
-            # run on the line production runs. Every other
-            # row takes the step's default, the newest line. Both are held there
-            # by scripts/version-floors.json (#715).
+            # run on the line production runs. Every other row takes the
+            # step's default, the newest line. Both are held there by
+            # scripts/version-floors.json (#715).
             - name: functions (azure)
               id: functions
               dir: functions
