@@ -208,7 +208,9 @@ describe('the labs_agent role keeps the agent\'s code readable, whatever umask w
     const task = tasks.slice(at, tasks.indexOf('\n- name:', at + 1));
     expect(task).toContain('path: "{{ labs_agent_home }}"');
     expect(task).toMatch(/recurse: true/);
-    expect(task).toContain('mode: "u+rwX,go+rX"');
+    expect(task).toContain('mode: "a+rX"');
+    // Without it the recursive walk changes the mode of whatever a symbolic link points to.
+    expect(task).toMatch(/follow: false/);
     expect(task).toContain('notify: Restart hcw-labs-agent');
   });
 });
@@ -238,6 +240,7 @@ describe.skipIf(!findBashTools().ready)('bootstrap.sh under sh, against a stand-
     }
   });
 });
+
 const TOOLS = findBashTools();
 const SKIPPED = TOOLS.ready ? '' : ` (SKIPPED here: ${TOOLS.why}; they run on GitHub Actions)`;
 const forward = (path) => path.replace(/\\/g, '/');

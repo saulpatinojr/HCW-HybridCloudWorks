@@ -151,21 +151,26 @@
     creates: "{{ labs_agent_deps_stamp }}"
   notify: Restart hcw-labs-agent
 
-# The agent runs as {{ labs_agent_user }} and reads this tree (the checkout
-# and node_modules, both root's) through its "other" bits. git and npm write
+# The agent runs as its own user (hcw-labs-agent) and reads this tree (the
+# checkout and node_modules, both root's) through its "other" bits. git and npm write
 # with the run's umask, so a run under a strict one leaves what it changed
 # unreadable, and a later run does not repair it: git does not rewrite a file
 # whose content is right, and the install above is stamped as done. On
 # 2026-11-12 a bootstrap through Azure Arc ran under umask 077 and the agent
 # could no longer load capabilities.js (#1706). So read access is put back
 # on every run; nothing under labs_agent_home is private (the key and state
-# live under /etc/hcw and /var/lib/hcw-labs-agent).
+# live under /etc/hcw and /var/lib/hcw-labs-agent). The mode only adds read
+# access (and execute on folders and on files that already have it), so git's
+# read-only object files stay read-only and an unchanged tree reports ok.
+# follow: false, because a recursive walk otherwise follows a symbolic link
+# and changes the mode of what it points to, outside this tree.
 - name: Keep the agent's code readable by the agent user, whatever umask wrote it
   ansible.builtin.file:
     path: "{{ labs_agent_home }}"
     state: directory
     recurse: true
-    mode: "u+rwX,go+rX"
+    follow: false
+    mode: "a+rX"
   notify: Restart hcw-labs-agent
 
 - name: Generate the agent's private key and self-signed certificate on this host
