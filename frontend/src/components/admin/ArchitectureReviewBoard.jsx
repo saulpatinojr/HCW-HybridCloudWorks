@@ -13,6 +13,11 @@ import ReviewBoardShell, {
   initialFormFrom,
 } from '@/components/admin/ReviewBoardShell';
 import { useResolvedHotspots } from '@/hooks/useResolvedHotspots';
+import ArticleTopicSelect from '@/components/admin/shared/ArticleTopicSelect';
+import {
+  hasPublishedAddress,
+  PUBLISHED_ADDRESS_HINT,
+} from '@/components/admin/blog-review/blogReviewModel';
 
 /**
  * The blueprint's form from its record: each field, the record keys it may
@@ -24,6 +29,10 @@ export function initialBlueprintForm(blog) {
     title: [['title', 'Title'], ''],
     summary: [['summary', 'Summary'], ''],
     promise: [['promise'], ''],
+    // The first word of the page address, `<topic>-<id>` (#1628). No fallback:
+    // a form that never touches it sends no `topic`, so a save cannot clear a
+    // topic the forge stored while the board was open. '' = pick automatically.
+    topic: [['topic'], undefined],
     cloudProvider: [['cloudProvider', 'Cloud Provider'], 'AWS'],
     category: [['category'], 'Compute'],
     complexity: [['complexity'], 'Medium'],
@@ -292,6 +301,12 @@ export default function ArchitectureReviewBoard({ blog, onSave, onPublish, savin
               className="mt-1 h-8"
             />
           </div>
+          <ArticleTopicSelect
+            value={formData.topic}
+            onChange={(value) => handleChange('topic', value)}
+            disabled={hasPublishedAddress(blog)}
+            hint={hasPublishedAddress(blog) ? PUBLISHED_ADDRESS_HINT : undefined}
+          />
         </CardContent>
       </Card>
     </>

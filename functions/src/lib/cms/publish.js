@@ -142,12 +142,15 @@ export function slugify(text = '') {
 }
 
 // Lowercase, letters and digits only: a document id mixes cases, and an
-// address must not (#1628).
+// address must not (#1628). Taken from AFTER the 8 characters an address
+// already carries (article-topics.js), up to 6 of them, so two pages whose
+// ids share those 8 get different suffixes whatever the id's length. An id
+// of 8 characters or fewer has nothing after them and keeps its first 6.
 const slugSuffix = (id = '') => {
-  const fromId = String(id || '')
+  const clean = String(id || '')
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, '')
-    .slice(0, 6);
+    .replace(/[^a-z0-9]/g, '');
+  const fromId = clean.length > 8 ? clean.slice(8, 14) : clean.slice(0, 6);
   return fromId || Date.now().toString(36).slice(-6);
 };
 
@@ -974,13 +977,15 @@ export function createPublishHandlers({
       // and resolveSlug (which trims) then writes `shared-slug` onto a URL
       // another article already holds: the read says free, the write says
       // taken, and nothing in between notices.
-      // A first publish of an article gets `<topic>-<8 id characters>`
-      // (article-topics.js, #1628); other sections keep the title slug.
+      // A first publish of any page (article, design, framework, code page,
+      // interview) gets `<topic>-<8 id characters>` (article-topics.js; owner
+      // decision of 2026-11-12, #1628). The title slug is only the fallback
+      // for a document with no usable id.
       const firstSlug =
-        ctx.curatedSection === 'blog'
-          ? articleSlugFor({ contentData, contentId, provider: ctx.inferredProvider }) || slugify(rawTitle)
-          : slugify(rawTitle);
-      const candidate = String((reuse ? existingSlug : firstSlug) || '').trim();
+        articleSlugFor({ contentData, contentId, provider: ctx.inferredProvider }) || slugify(rawTitle);
+      // A stored slug of only spaces is no address: fall back to the one a
+      // first publish would build, rather than a bare id suffix.
+      const candidate = String((reuse ? existingSlug : firstSlug) || '').trim() || firstSlug;
       // Probed on EVERY publish, to answer one question: does another document
       // already hold this URL? Three did (#400), and the branch that reused a
       // stored slug never asked.

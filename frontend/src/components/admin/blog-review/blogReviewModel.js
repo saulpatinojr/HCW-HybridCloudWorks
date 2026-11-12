@@ -9,11 +9,7 @@
  */
 import { getCoverImageUrl } from '@/lib/blogUtils';
 import { toDate } from '@/lib/dateUtils';
-import {
-  getContentPublicPath,
-  getPublicSectionForTarget,
-  getPublishTargetForItem,
-} from '@/lib/contentModel';
+import { getContentPublicPath, getPublishTargetForItem } from '@/lib/contentModel';
 import { getOrderedContentImages } from '@/lib/contentImages';
 
 /** Where a published record's public URL may live, in the order the board trusts them. */
@@ -184,6 +180,14 @@ export function deriveScheduleFields(blog) {
 }
 
 /**
+ * The line under a locked topic dropdown. Once a page has been public its
+ * address never changes (#1628), so the dropdown is locked rather than
+ * offering a choice that does nothing.
+ */
+export const PUBLISHED_ADDRESS_HINT =
+  'This page has been published, so its address is fixed and the topic no longer changes it.';
+
+/**
  * True once the record is or has been public: the server then keeps its
  * stored address for good (#1628). The same test as the server's publish
  * step: a published or legacy `published_*` status, `Live: true` or
@@ -192,7 +196,8 @@ export function deriveScheduleFields(blog) {
  * leaves in place.
  */
 export function hasPublishedAddress(blog) {
-  if (!blog) return false;
+  // The server keeps an address only when one is stored (publish.js `reuse`).
+  if (!blog || !(blog.slug || blog.Slug)) return false;
   const status = String(blog.contentStatus || '');
   return (
     status === 'published' ||
@@ -201,14 +206,6 @@ export function hasPublishedAddress(blog) {
     blog.Status === 'Live' ||
     Boolean(blog.curatedSubpagePath)
   );
-}
-
-/**
- * Does this record's page address start with a topic word (#1628)? Only a
- * blog article's does; interviews and the other sections keep a title slug.
- */
-export function usesTopicAddress(blog) {
-  return getPublicSectionForTarget(getPublishTargetForItem(blog || {})) === 'blog';
 }
 
 /**

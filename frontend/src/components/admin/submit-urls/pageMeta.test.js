@@ -242,18 +242,9 @@ describe('buildReadinessChecks', () => {
 });
 
 describe('previewSlugFor (#1628)', () => {
-  it('previews an article as <topic>-<id>, with x for the id not yet known', () => {
-    expect(previewSlugFor({ section: 'blog', topic: 'hybrid', title: 'Azure Arc at scale' })).toBe(
-      'hybrid-xxxxxxxx'
-    );
-    expect(previewSlugFor({ section: 'blog', topic: '', title: 'Azure Arc at scale' })).toBe(
-      'topic-xxxxxxxx'
-    );
-  });
-
-  it('keeps the title slug for other sections', () => {
-    expect(previewSlugFor({ section: 'frameworks', title: 'Azure Arc at scale' })).toBe(
-      'azure-arc-at-scale'
-    );
+  it('previews every page as <topic>-<id>, with x for the id not yet known', () => {
+    expect(previewSlugFor({ topic: 'hybrid' })).toBe('hybrid-xxxxxxxx');
+    expect(previewSlugFor({ topic: '' })).toBe('topic-xxxxxxxx');
+    expect(previewSlugFor()).toBe('topic-xxxxxxxx');
   });
 });
