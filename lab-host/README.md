@@ -1943,7 +1943,7 @@ image's newest base digest and ansible-core's newest release in its line,
 which this host installs too (`chore/lab-pins-image-base`), and the newest
 release of each tool and Terraform provider in the lab images, each with its
 publisher's checksum (`chore/lab-pins-image-tools`). Each publish of
-the lab images proposes their new digests to the two places that pin them
+the lab images proposes their new digests to every place that pins them
 (`chore/lab-pins-image-digests`). Merging changes nothing on the host until
 `bootstrap.sh` runs. The dates in the comments beside each pin in
 `group_vars/all.yml` record the last read by hand; an automated bump's evidence

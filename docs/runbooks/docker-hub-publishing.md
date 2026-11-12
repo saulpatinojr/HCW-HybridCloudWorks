@@ -50,8 +50,9 @@ the repository variable `DOCKERHUB_ENABLED` is `true`:
 6. Writes the two references, with their digests, to the run summary.
 
 `propose-pins` then reads each digest again from Docker Hub by tag, and
-`pin-pull-request` opens the pull request that moves the two consumers to
-them.
+`pin-pull-request` opens the pull request that moves every consumer to
+them: the job image in `vps-agent/lib/capabilities.js` and the three Coder
+templates that run `hcw-lab`.
 
 ## How the sign-in works
 
