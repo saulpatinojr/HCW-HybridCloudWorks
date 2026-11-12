@@ -545,25 +545,24 @@ describe('interview and design slugs: one strict pattern', () => {
     expect(STRICT_SLUG.source).toBe(match[1]);
   });
 
-  it('is stricter than the article pattern, which keeps uppercase on purpose', () => {
-    expect(STRICT_SLUG.test('nist-vs-zero-trust-LSzyB6')).toBe(false);
-    expect(ARTICLE_SLUG.test('nist-vs-zero-trust-LSzyB6')).toBe(true);
+  it('is the article pattern too, since the live articles were renamed (#1628)', () => {
+    expect(ARTICLE_SLUG).toBe(STRICT_SLUG);
   });
 });
 
 describe('article slugs: only a safe address becomes a page', () => {
   const article = (slug, over = {}) => ({ id: `a-${slug}`, slug, cloudProvider: 'azure', type: 'blog', ...over });
 
-  it('keeps the slugs the site makes today, mixed-case suffix and double hyphen included', () => {
-    const slugs = [
+  it('keeps a topic-and-id address and skips the old mixed-case and double-hyphen shapes (#1628)', () => {
+    const kept = ['security-lszyb6gb', 'hybrid-cpjhv5a3', 'plain-lowercase-slug'];
+    const old = [
       'nist-vs-microsoft-zero-trust-why-cloud-architects-should-care-LSzyB6',
       'microsoft-sovereign-cloud-empowering-europe-with-unprecedented-data-control-and--ibDYCO',
-      'plain-lowercase-slug',
       'with_underscore',
     ];
-    const manifest = buildManifest(slugs.map((slug) => article(slug)));
-    expect(manifest.routes).toEqual(slugs.map((slug) => `/azure/blog/${slug}`));
-    expect(manifest.skipped).toEqual([]);
+    const manifest = buildManifest([...kept, ...old].map((slug) => article(slug)));
+    expect(manifest.routes).toEqual(kept.map((slug) => `/azure/blog/${slug}`));
+    expect(manifest.skipped).toEqual(old.map((slug) => `a-${slug}: slug is not a safe address`));
   });
 
   it('skips a slug that could change the folder it is written to, and names it by id', () => {

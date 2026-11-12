@@ -197,21 +197,20 @@ function slugOf(item) {
 }
 
 /**
- * The address of one article: letters, digits, hyphens and underscores, and
- * nothing else. The slug becomes a folder of the built site, so a slash, a
- * dot, a space or `%`, `?` and `#` must never reach it.
- *
- * Looser than STRICT_SLUG (interviews and designs) for now. The owner chose
- * on 2026-11-11 to move articles to id-based lowercase addresses (#1628);
- * this tightens to STRICT_SLUG once the live articles have moved. Published articles
- * already carry uppercase letters and double hyphens: the publish step adds
- * the first six characters of the document id, which mix cases, and a slug
- * cut at 80 characters can end in a hyphen before that suffix
- * (functions/src/lib/cms/publish.js). Five of the 23 articles in the manifest
- * of 2026-11-10 look like that, so the strict pattern would have taken five
- * live pages off the site.
+ * The address of every page the build writes (articles, interviews and
+ * designs): lowercase words joined by single hyphens. The slug becomes a folder of the built site, so a slash, a
+ * dot or anything else that could change that folder never reaches it.
+ * One pattern for all three, so they cannot drift apart. It matches `SLUG` in
+ * functions/src/lib/interviews/schema.js, which the test holds it to.
  */
-export const ARTICLE_SLUG = /^[A-Za-z0-9_-]+$/;
+export const STRICT_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * Articles follow STRICT_SLUG too since 2026-11-12 (#1628): the 23 live
+ * articles were renamed to `<topic>-<id>` addresses, the last mixed-case ones
+ * among them. Kept as its own name because callers and tests import it.
+ */
+export const ARTICLE_SLUG = STRICT_SLUG;
 
 /**
  * The fields the article page renders. Everything else is dropped.
@@ -325,15 +324,6 @@ export const INTERVIEW_FIELDS = Object.freeze([
 
 /** The list route's projection: what a card and the landing page read. */
 export const INTERVIEW_LIST_FIELDS = Object.freeze(INTERVIEW_FIELDS.slice(0, 7));
-
-/**
- * The address of one interview or one design: lowercase words joined by
- * single hyphens. The slug becomes a folder of the built site, so a slash, a
- * dot or anything else that could change that folder never reaches it.
- * One pattern for both, so the two cannot drift apart. It matches `SLUG` in
- * functions/src/lib/interviews/schema.js, which the test holds it to.
- */
-export const STRICT_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** The interview list page, Azure only (App.jsx: any other provider is a 404). */
 export const INTERVIEWS_ROUTE = '/azure/interviews';
