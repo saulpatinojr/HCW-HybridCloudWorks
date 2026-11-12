@@ -755,7 +755,12 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
     const got = scan();
     expect(got.status, got.stdout + got.stderr).toBe(0);
     const scans = got.trivy.split('\n').filter((l) => l.startsWith('image '));
-    const waived = scans.filter((l) => /hcw-lab-runner:|hcw-lab@|hcw-lz-sandbox:scan$/.test(l));
+    // Plain string checks, not one regex: an alternation with `$` on only
+    // its last branch reads as if all three were anchored (CodeQL
+    // js/regex/missing-regexp-anchor, alert 1442). Same matches as before.
+    const waived = scans.filter(
+      (l) => l.includes('hcw-lab-runner:') || l.includes('hcw-lab@') || l.endsWith('hcw-lz-sandbox:scan')
+    );
     const addons = scans.filter((l) => /lab-addon@/.test(l));
     expect(waived).toHaveLength(3);
     for (const l of waived) expect(l).toContain('--ignore-unfixed --ignorefile .github/lab-image-scan-waivers.yaml --show-suppressed --exit-code 1');
