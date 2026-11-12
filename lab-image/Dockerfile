@@ -363,9 +363,31 @@ FROM python:3.15.2-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c269
 # reads all of its input, so pipefail cannot fail a step that worked.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# No apt layer: the base already carries python3 (BASE_PYTHON_VERSION, at /usr/local/bin,
-# with ensurepip for the venv below), ca-certificates, bash and coreutils,
-# which is everything the runner needs. ansible-core's dependencies come from
+# zlib1g, from the base, is upgraded from Debian's own trixie-security (#1700):
+# Debian fixed CVE-2026-76844 and CVE-2026-85091 in 1:1.3.dfsg+really1.3.1-1+deb13u1
+# (DSA-6613-1, 2026-11-02), but the pinned python slim base had not been
+# republished with it. Done here, so `full` inherits it. The loop before it
+# fails the build if the name is not installed (dpkg status `installed`),
+# because --only-upgrade would skip a misspelt, renamed or removed package
+# without a word, and the check after it fails if the version installed is
+# still older than Debian's fix. Remove this RUN once the pinned base carries
+# the fixed version; the weekly scan says when. Not version-pinned (DL3008),
+# as in the fetch stage (#1575): Debian's index lists only the newest build.
+# hadolint ignore=DL3008
+RUN set -eu; \
+    for pkg in zlib1g; do \
+      [ "$(dpkg-query -W -f='${db:Status-Status}' "${pkg}" 2> /dev/null)" = installed ] \
+        || { echo "${pkg} is not installed in the base; edit the --only-upgrade line" >&2; exit 1; }; \
+    done; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends --only-upgrade zlib1g; \
+    dpkg --compare-versions "$(dpkg-query -W -f='${Version}' zlib1g)" ge '1:1.3.dfsg+really1.3.1-1+deb13u1' \
+      || { echo "zlib1g is still older than Debian's fix (DSA-6613-1); is trixie-security reachable?" >&2; exit 1; }; \
+    rm -rf /var/lib/apt/lists/*
+
+# Otherwise no apt layer: the base already carries python3 (BASE_PYTHON_VERSION,
+# at /usr/local/bin, with ensurepip for the venv below), ca-certificates, bash
+# and coreutils, which is everything the runner needs. ansible-core's dependencies come from
 # the hash-pinned wheels the fetch stage verified, not from Debian packages,
 # because Debian's python3-* packages are built for trixie's own python3.13.
 COPY --from=fetch /out/bin/ /usr/local/bin/

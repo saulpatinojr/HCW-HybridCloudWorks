@@ -107,7 +107,12 @@ describe('the Dockerfile around the block', () => {
 
   it('keeps the compiler and libyaml in the fetch stage only', () => {
     expect(fetch).toMatch(/apt-get install -y --no-install-recommends [^\n]*\bgcc\b[^\n]*\blibc6-dev\b[^\n]*\blibyaml-dev\b/);
-    expect(runner).not.toMatch(/apt-get|gcc|libyaml/);
+    // The runner's one apt step is the guarded zlib1g upgrade (#1700), which
+    // installs nothing new: no compiler, no libyaml.
+    expect(runner).not.toMatch(/gcc|libyaml/);
+    expect([...runner.matchAll(/apt-get install[^;\n]*/g)].map((m) => m[0])).toEqual([
+      'apt-get install -y --no-install-recommends --only-upgrade zlib1g',
+    ]);
     expect(DOCKERFILE.slice(DOCKERFILE.indexOf('FROM runner AS full'))).not.toMatch(/gcc|libyaml/);
   });
 

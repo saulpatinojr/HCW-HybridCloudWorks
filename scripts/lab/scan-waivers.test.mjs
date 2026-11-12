@@ -79,7 +79,6 @@ describe('scan-waivers.mjs', () => {
     'usr/local/bin/kubectl',
     'opt/az/lib/python3.14/site-packages/cryptography-48.0.1.dist-info/METADATA',
     'pkg:pypi/setuptools@70.3.0',
-    'pkg:deb/debian/zlib1g@1.3.dfsg%2Breally1.3.1-1%2Bb1',
     'usr/bin/pebble',
   ];
 

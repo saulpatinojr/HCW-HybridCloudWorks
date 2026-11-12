@@ -52,11 +52,6 @@ export const MAKERS = [
   },
   { match: /^pkg:pypi\/setuptools@/, reason: () => "Waits on pip: this setuptools is pip's own bundled copy, and no pip release newer than the pinned one carries a fixed copy yet." },
   {
-    match: /^pkg:deb\/debian\/zlib1g@/,
-    reason: () =>
-      'Waits on Docker by choice: Debian has fixed zlib1g and the pinned python slim base has not been republished with it; the lab image could upgrade it itself, as the sandbox template does for four packages, and #1700 tracks doing that.',
-  },
-  {
     match: /^(usr\/bin\/(gh|pebble)|usr\/libexec\/docker\/cli-plugins\/docker-(buildx|compose))$/,
     reason: () => "Waits on Docker: this program comes with the docker/sandbox-templates base image of the sandbox template, and the pinned base digest is Docker's newest.",
   },
