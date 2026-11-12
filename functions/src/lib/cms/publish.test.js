@@ -81,8 +81,9 @@ describe('pure helpers', () => {
   });
 
   it('a clash suffix is lowercase, so a suffixed slug stays a valid address (#1628)', () => {
-    expect(resolveSlug({ candidate: 'a-title', contentId: 'LSzyB6gbiL', holders: ['other'] })).toBe('a-title-lszyb6');
-    expect(resolveSlug({ candidate: '', contentId: 'LSzyB6gbiL', holders: [] })).toBe('lszyb6');
+    // Taken from after the 8 characters an address already carries.
+    expect(resolveSlug({ candidate: 'a-title', contentId: 'LSzyB6gbiLyXtj', holders: ['other'] })).toBe('a-title-ilyxtj');
+    expect(resolveSlug({ candidate: 'a-title', contentId: 'C1', holders: ['other'] })).toBe('a-title-c1');
   });
 
   it('slugify/toPublicUrl/section mapping match the source', () => {
@@ -283,36 +284,37 @@ describe('slug assignment (#400)', () => {
       context
     );
     expect(store.queryDocs).toHaveBeenCalledTimes(1);
-    expect(store.patchDoc.mock.calls.find(([c]) => c === 'content')[2].slug).toBe(
-      'migration-readiness-framework'
-    );
+    // `<topic>-<id>` for every page (#1628): "Migration" gives the topic.
+    expect(store.patchDoc.mock.calls.find(([c]) => c === 'content')[2].slug).toBe('migration-c1');
   });
 
-  it('a second document with the same title is suffixed, because the probe now sees the first', async () => {
-    // The shape of #400: the generator wrote one site title onto more than one
-    // article. The second publish probes, finds the first, and moves off.
+  it('a second document whose address would match the first is suffixed, because the probe sees the first', async () => {
+    // The shape of #400, in today's addresses (#1628): two ids that share
+    // their first 8 characters would get one `<topic>-<id>` address. The
+    // second publish probes, finds the first, and moves off with the id's
+    // NEXT characters, so the suffix differs too.
     const docs = [
-      readyDoc({ id: 'aaa111', Title: 'One Shared Title' }),
-      readyDoc({ id: 'bbb222', Title: 'One Shared Title' }),
+      readyDoc({ id: 'aaa111xxAAAA', Title: 'One Shared Title' }),
+      readyDoc({ id: 'aaa111xxBBBB', Title: 'One Shared Title' }),
     ];
     const taken = [];
     const store = makeStore(docs[0], {
       readDoc: vi.fn(async (c, id) => (c === 'content' ? docs.find((d) => d.id === id) : null)),
       queryDocs: vi.fn(async () => taken.map((id) => ({ id }))),
       patchDoc: vi.fn(async (c, id, u) => {
-        if (c === 'content' && u.slug === 'one-shared-title') taken.push(id);
+        if (c === 'content' && u.slug === 'azure-aaa111xx') taken.push(id);
         return { id, ...u };
       }),
     });
     const h = createPublishHandlers({ guard: guardAs('publisher'), store, ...fixed });
     await h.publishContent(
-      makeRequest({ contentIds: ['aaa111', 'bbb222'], publishTarget: 'framework' }),
+      makeRequest({ contentIds: ['aaa111xxAAAA', 'aaa111xxBBBB'], publishTarget: 'framework' }),
       context
     );
     const slugs = store.patchDoc.mock.calls
       .filter(([c]) => c === 'content')
       .map(([, , u]) => u.slug);
-    expect(slugs).toEqual(['one-shared-title', 'one-shared-title-bbb222']);
+    expect(slugs).toEqual(['azure-aaa111xx', 'azure-aaa111xx-bbbb']);
   });
 
   it('probes the same string it writes, so a padded stored slug still finds its holder', async () => {
@@ -357,7 +359,7 @@ describe('slug assignment (#400)', () => {
     );
     expect(body.published).toBe(1);
     expect(store.patchDoc.mock.calls.find(([c]) => c === 'content')[2].slug).toBe(
-      'migration-readiness-framework-c1'
+      'migration-c1-c1'
     );
   });
 
@@ -497,11 +499,9 @@ describe('publishContent', () => {
     expect(patch.Live).toBe(true); // markLive defaults true
     // A live publish arms the social-caption auto-queue trigger (backlog #1).
     expect(patch.socialCaptionTrigger).toBe(true);
-    expect(patch.slug).toBe('migration-readiness-framework');
-    expect(patch.curatedSubpagePath).toBe('/azure/frameworks/migration-readiness-framework');
-    expect(patch.publicUrl).toBe(
-      'https://hybridcloudworks.com/azure/frameworks/migration-readiness-framework'
-    );
+    expect(patch.slug).toBe('migration-c1');
+    expect(patch.curatedSubpagePath).toBe('/azure/frameworks/migration-c1');
+    expect(patch.publicUrl).toBe('https://hybridcloudworks.com/azure/frameworks/migration-c1');
     expect(patch['Published At']).toBe('2026-08-01T00:00:00.000Z');
     expect(patch['Cloud Provider']).toBe('Azure');
 
@@ -1383,14 +1383,15 @@ describe('publishing an interview (ADR 0040, D5 and D9)', async () => {
     return { body: JSON.parse(res.body), store };
   };
 
-  it('publishes a consented interview to /azure/interviews/<slug>, under the one status machine', async () => {
+  it('publishes a consented interview to /azure/interviews/<topic>-<id>, under the one status machine', async () => {
     const { body, store } = await publish(interviewDoc());
     expect(body.errors).toEqual([]);
     expect(body.published).toBe(1);
+    // Every page gets `<topic>-<id>` (#1628); no topic word in the title, so the provider.
     expect(body.mappings[0]).toMatchObject({
-      slug: 'a-conversation-about-landing-zones',
-      curatedSubpagePath: '/azure/interviews/a-conversation-about-landing-zones',
-      expectedPublicUrl: 'https://hybridcloudworks.com/azure/interviews/a-conversation-about-landing-zones',
+      slug: 'azure-i1',
+      curatedSubpagePath: '/azure/interviews/azure-i1',
+      expectedPublicUrl: 'https://hybridcloudworks.com/azure/interviews/azure-i1',
     });
     const patch = store.patchDoc.mock.calls.find(([, , u]) => u.contentStatus === 'published')[2];
     expect(patch).toMatchObject({ contentStatus: 'published', Live: true, publishTarget: 'interview' });

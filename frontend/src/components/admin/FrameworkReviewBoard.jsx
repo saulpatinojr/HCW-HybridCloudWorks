@@ -9,6 +9,11 @@ import ReviewBoardShell, {
   TextareaCard,
   initialFormFrom,
 } from '@/components/admin/ReviewBoardShell';
+import ArticleTopicSelect from '@/components/admin/shared/ArticleTopicSelect';
+import {
+  hasPublishedAddress,
+  PUBLISHED_ADDRESS_HINT,
+} from '@/components/admin/blog-review/blogReviewModel';
 const FrameworkRadar = lazy(() => import('@/components/widgets/FrameworkRadar'));
 
 /**
@@ -21,6 +26,8 @@ export function initialFrameworkForm(blog) {
     title: [['title', 'Title'], ''],
     summary: [['summary', 'Summary'], ''],
     cloudProvider: [['cloudProvider', 'Cloud Provider'], 'AWS'],
+    // The first word of the page address, `<topic>-<id>` (#1628); '' = pick automatically.
+    topic: [['topic'], ''],
     category: [['category'], 'Architecture'],
     complexity: [['complexity'], 'Foundation'],
     tags: [['tags', 'Tags'], []],
@@ -197,6 +204,12 @@ export default function FrameworkReviewBoard({ blog, onSave, onPublish, onDelete
               placeholder="Architecture, Security, FinOps..."
             />
           </div>
+          <ArticleTopicSelect
+            value={formData.topic}
+            onChange={(value) => handleChange('topic', value)}
+            disabled={hasPublishedAddress(blog)}
+            hint={hasPublishedAddress(blog) ? PUBLISHED_ADDRESS_HINT : undefined}
+          />
         </CardContent>
       </Card>
     </>

@@ -20,7 +20,6 @@ import {
   PUBLISHED_URL_KEYS,
   toLocalDateInputValue,
   truncate,
-  usesTopicAddress,
   hasPublishedAddress,
 } from './blogReviewModel';
 
@@ -311,19 +310,6 @@ describe('truncate', () => {
   it('cuts long text with an ellipsis and leaves short text alone', () => {
     expect(truncate('abcdef', 3)).toBe('abc...');
     expect(truncate('abc', 3)).toBe('abc');
-  });
-});
-
-describe('usesTopicAddress', () => {
-  it('is true for a blog article or news item, whose address starts with a topic (#1628)', () => {
-    expect(usesTopicAddress({})).toBe(true);
-    expect(usesTopicAddress({ type: 'blog' })).toBe(true);
-    expect(usesTopicAddress({ type: 'news' })).toBe(true);
-  });
-
-  it('is false for the sections that keep a title address', () => {
-    expect(usesTopicAddress({ type: 'interview' })).toBe(false);
-    expect(usesTopicAddress({ publishTarget: 'interview' })).toBe(false);
   });
 });
 

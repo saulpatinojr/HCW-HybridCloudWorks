@@ -70,3 +70,12 @@ describe('board initial forms (PR #841)', () => {
     });
   });
 });
+
+describe('the address topic on the design and framework boards (#1628)', () => {
+  it('reads the stored topic into the form, or empty for "pick automatically"', () => {
+    expect(initialBlueprintForm({ topic: 'network' }).topic).toBe('network');
+    expect(initialBlueprintForm({}).topic).toBe('');
+    expect(initialFrameworkForm({ topic: 'finops' }).topic).toBe('finops');
+    expect(initialFrameworkForm({ topic: null }).topic).toBe('');
+  });
+});
