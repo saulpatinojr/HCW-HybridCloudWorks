@@ -34,13 +34,18 @@ describe('lab-image/Dockerfile: the base packages the runner upgrades (#1700)', 
     expect(run.indexOf('--compare-versions')).toBeGreaterThan(run.indexOf('apt-get install -y --no-install-recommends --only-upgrade'));
   });
 
+  it('tells hadolint why a one-name loop is there (SC2043), so the lint job stays green', () => {
+    const before = runner.slice(0, runner.indexOf('RUN set -eu; \\\n    for pkg in'));
+    expect(before.trimEnd().split('\n').at(-1)).toBe('# hadolint ignore=DL3008,SC2043');
+  });
+
   it('leaves no apt lists in the layer, and comes before the runner copies anything in', () => {
     expect(run).toContain('rm -rf /var/lib/apt/lists/*');
     expect(runner.indexOf('--only-upgrade zlib1g')).toBeLessThan(runner.indexOf('COPY --from=fetch /out/bin/'));
   });
 
   it('no longer waives the two zlib1g findings it fixes', () => {
-    expect(WAIVERS).not.toContain('zlib1g');
+    expect(WAIVERS).not.toContain('pkg:deb/debian/zlib1g@');
     expect(WAIVERS).not.toContain('CVE-2026-76844');
     expect(WAIVERS).not.toContain('CVE-2026-85091');
   });

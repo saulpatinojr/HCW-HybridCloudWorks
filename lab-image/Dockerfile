@@ -371,9 +371,12 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # because --only-upgrade would skip a misspelt, renamed or removed package
 # without a word, and the check after it fails if the version installed is
 # still older than Debian's fix. Remove this RUN once the pinned base carries
-# the fixed version; the weekly scan says when. Not version-pinned (DL3008),
-# as in the fetch stage (#1575): Debian's index lists only the newest build.
-# hadolint ignore=DL3008
+# the fixed version: the weekly scan cannot say when, because it reads images
+# this RUN has already upgraded, so check the base's zlib1g at each
+# `chore/lab-pins-image-base` pull request. Not version-pinned (DL3008), as in
+# the fetch stage (#1575): Debian's index lists only the newest build. A loop
+# over one name (SC2043) on purpose: a second package joins the same list.
+# hadolint ignore=DL3008,SC2043
 RUN set -eu; \
     for pkg in zlib1g; do \
       [ "$(dpkg-query -W -f='${db:Status-Status}' "${pkg}" 2> /dev/null)" = installed ] \
