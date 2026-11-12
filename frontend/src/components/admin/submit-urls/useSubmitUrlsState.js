@@ -290,11 +290,7 @@ export function useSubmitUrlsState() {
     [contentType, blogLandingProvider, resolvedProvider]
   );
   const previewSection = useMemo(() => getPreviewSection(contentType), [contentType]);
-  const previewSlug = useMemo(
-    () =>
-      previewSlugFor({ section: previewSection, topic: draftTopic, title: draftTitle || title }),
-    [previewSection, draftTopic, draftTitle, title]
-  );
+  const previewSlug = useMemo(() => previewSlugFor({ topic: draftTopic }), [draftTopic]);
   const previewProviderSegment = useMemo(
     () => (resolvedBlogLandingProvider ? resolvedBlogLandingProvider.toLowerCase() : 'provider'),
     [resolvedBlogLandingProvider]

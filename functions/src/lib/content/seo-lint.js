@@ -9,7 +9,7 @@
  *      under ~70 chars search engines pad it, over ~160 they truncate it.
  *   2. Title/keyword alignment — a title sharing no token with any key topic
  *      ranks for none of them. Until #1628 the article address was
- *      slugify(title) too, hence the finding's key; now an article's address
+ *      slugify(title) too, hence the finding's key; now every page's address
  *      is `<topic>-<id>` (cms/article-topics.js), so only the title carries
  *      the keyword.
  *   3. Heading hierarchy — the page title renders as the H1, so body sections
