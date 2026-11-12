@@ -54,7 +54,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import floors from './version-floors.json' with { type: 'json' };
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOWS = join(REPO, '.github', 'workflows');
@@ -99,6 +98,7 @@ const COMMAND = {
 const SETUP = { node: /^actions\/setup-node@/, python: /^actions\/setup-python@/ };
 // astral-sh/setup-uv sets Python up only when given a `python-version` at or above the floor (see `setsUp`).
 const SETUP_UV = /^astral-sh\/setup-uv@/;
+const floors = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'version-floors.json'), 'utf8'));
 const PYTHON_FLOOR = floors.kinds.python.floor.split('.').map(Number);
 
 // The job statuses a step can run after, and the status functions that name them.
