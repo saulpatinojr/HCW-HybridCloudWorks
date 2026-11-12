@@ -1456,6 +1456,12 @@ export async function planImageDigests({ files, http, runner, full }) {
     (p) => files[p]?.match(TEMPLATE_DIGEST)?.[1] !== fullRef.digest
   );
 
+  // What a line says the pin moves from. For the workspace image, the digest
+  // of the first template that is behind, so a line or a note never reads
+  // `x -> x` when only a guided lab moved (Copilot on #1710).
+  const fromOf = (ref, current) =>
+    (ref === runnerRef ? current : files[templatesBehind[0]]?.match(TEMPLATE_DIGEST)?.[1]) ?? '—';
+
   for (const [ref, label, current] of [
     [runnerRef, 'hcw-lab-runner (vps-agent job image)', parseImageRef(currentRunner)?.digest],
     [fullRef, 'hcw-lab (Coder workspace images)', currentFullDigest],
@@ -1475,9 +1481,7 @@ export async function planImageDigests({ files, http, runner, full }) {
       bumps.push({
         key: ref === runnerRef ? 'runner' : 'full',
         label,
-        // For the workspace image, the digest of the first template that is
-        // behind, so a line never reads `x -> x` when only a guided lab moved.
-        from: ((ref === runnerRef ? current : files[templatesBehind[0]]?.match(TEMPLATE_DIGEST)?.[1]) ?? '—').slice(0, 19),
+        from: fromOf(ref, current).slice(0, 19),
         to: ref.digest.slice(0, 19),
         edits,
         evidence: [
@@ -1489,7 +1493,7 @@ export async function planImageDigests({ files, http, runner, full }) {
         ],
       });
     } catch (error) {
-      notes.push({ label, from: current ?? '—', to: ref.digest, reason: error?.message || String(error) });
+      notes.push({ label, from: fromOf(ref, current), to: ref.digest, reason: error?.message || String(error) });
     }
   }
 

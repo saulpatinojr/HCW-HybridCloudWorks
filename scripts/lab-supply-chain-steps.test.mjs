@@ -840,10 +840,17 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
       'lab-host/coder/templates/amo-guided-lab/main.tf',
       readFileSync(join(REPO, 'lab-host/coder/templates/amo-guided-lab/main.tf'), 'utf8').replace(/(image_digest\s*=\s*")sha256:[0-9a-f]{64}/, `$1${older}`)
     );
+    // A template that names hcw-lab only in a comment, and pins another
+    // image, is not an hcw-lab consumer (Copilot on #1710).
+    copy(
+      'lab-host/coder/templates/other/main.tf',
+      `# was docker.io/hybridcloudworks/hcw-lab@sha256:${'c'.repeat(64)}\nlocals {\n  image_digest = "sha256:${'d'.repeat(64)}"\n}\n`
+    );
     mkdirSync(join(elsewhere, 'scripts', 'lab'), { recursive: true });
     writeFileSync(join(elsewhere, 'scripts', 'lab', 'read-addon-pins.mjs'), 'console.log(JSON.stringify({ include: [{ image: "docker.io/x/lab-addon@sha256:' + '0'.repeat(64) + '" }] }));\n');
     const got = scan({ cwd: elsewhere });
     expect(got.status, got.stdout + got.stderr).toBe(0);
+    expect(got.trivy).not.toContain('d'.repeat(64));
     const fulls = got.trivy.split('\n').filter((l) => l.startsWith('image ') && l.includes('hybridcloudworks/hcw-lab@'));
     expect(fulls).toHaveLength(2);
     expect(fulls.some((l) => l.includes('b'.repeat(64)))).toBe(false);

@@ -1259,6 +1259,22 @@ describe('the consumers\' digest plan', () => {
     expect(fullBump.from).not.toBe(fullBump.to);
   });
 
+  it('a note for a guided lab left behind names its own digest, not hcw-lab\'s (Copilot on #1710)', async () => {
+    const digest = sha(fullManifest);
+    const behind = 'lab-host/coder/templates/na-guided-lab/main.tf';
+    const onDigest = Object.fromEntries(
+      Object.entries(files).map(([p, t]) => [
+        p,
+        p === behind || p === CAPABILITIES_PATH ? t : t.replace(/(image_digest\s*=\s*")sha256:[0-9a-f]{64}/, `$1${digest}`),
+      ])
+    );
+    // Docker Hub serves a different manifest, so the move becomes a note.
+    const plan = await planImageDigests({ files: onDigest, http: makeHttp(fakeFetch(routes('{"other":1}'))), runner, full });
+    const note = plan.notes.find((n) => n.label.startsWith('hcw-lab (Coder'));
+    expect(note.from).toBe(files[behind].match(/image_digest\s*=\s*"(sha256:[0-9a-f]{64})"/)[1]);
+    expect(note.from).not.toBe(note.to);
+  });
+
   it('pins neither image whose registry digest disagrees with the publish job, and says so', async () => {
     const plan = await planImageDigests({ files, http: makeHttp(fakeFetch(routes('{"other":1}'))), runner, full });
     for (const path of CODER_TEMPLATE_PATHS) expect(plan.files[path], path).toBe(files[path]);
