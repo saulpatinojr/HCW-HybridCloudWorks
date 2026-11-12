@@ -1,7 +1,7 @@
 /**
  * Every workflow job that runs Node.js or Python chooses its version (#1707).
  *
- * A job that runs `node`, `npm`, `npx`, `python3` or `pip` without
+ * A job that runs `node`, `npm`, `npx`, `python3`, `pip` or `uv` without
  * actions/setup-node or actions/setup-python gets whatever the runner image
  * ships: on ubuntu-26.04 that was Node.js 24 and Python 3.14 in November 2026,
  * both below the floors in scripts/version-floors.json (Node.js 26, Python
@@ -10,7 +10,7 @@
  * jobs were found that way on 2026-11-12.
  *
  * A command counts when it is in command position on a line of a `run:` step:
- * at the start, after `$(`, `<(`, `(`, `{`, `|`, `&&`, `||` or `;`, after
+ * at the start, after `$(`, `<(`, a backtick, `(`, `{`, `|`, `&&`, `||` or `;`, after
  * leading `NAME=value` assignments, or after a word that runs the next one
  * (`env`, `sudo`, `xargs`, `exec`, `time`, `!`, `if`, `then`, `do` and the
  * like). It does not count inside a string, a heredoc's text or a
@@ -49,10 +49,10 @@ const RUNNER_DEFAULT_ALLOWED = {
 // Where a command may start: the line's start or an opening/joining
 // character, then any `NAME=value` assignments and words that run the next
 // word (`env FOO=1 node`, `sudo node`, `if node …; then`).
-const START = String.raw`(?:^|[$<]\(\s*|[({|;&]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+|(?:env|sudo|xargs|exec|time|nice|command|if|then|else|elif|do|while|until|!)\s+)*`;
+const START = String.raw`(?:^|[$<]\(\s*|[\x60({|;&]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+|(?:env|sudo|xargs|exec|time|nice|command|if|then|else|elif|do|while|until|!)\s+)*`;
 const COMMAND = {
   node: new RegExp(`${START}(?:node|npm|npx)(?=\\s|$)`),
-  python: new RegExp(`${START}(?:python(?:3(?:\\.\\d+)?)?|pip3?)(?=\\s|$)`),
+  python: new RegExp(`${START}(?:python(?:3(?:\\.\\d+)?)?|pip3?|uvx?)(?=\\s|$)`),
 };
 const SETUP = { node: /^actions\/setup-node@/, python: /^actions\/setup-python@/ };
 
@@ -61,7 +61,11 @@ const SETUP = { node: /^actions\/setup-node@/, python: /^actions\/setup-python@/
  * (`echo "…; if pip named it…"`) do not count. A double-quoted string that
  * runs a command (`"$(node x)"`) is kept.
  */
-const withoutQuotedText = (line) => line.replace(/'[^']*'/g, "''").replace(/"(?:[^"\\]|\\.)*"/g, (q) => (/[$<]\(/.test(q) ? q : '""'));
+const withoutQuotedText = (line) =>
+  line
+    .replace(/\\`/g, '') // an escaped backtick is a literal character, not a command
+    .replace(/'[^']*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, (q) => (/[$<]\(|`/.test(q) ? q : '""'));
 
 /** True when a run step calls the runtime in command position on a line that is not a comment. */
 export function runsRuntime(run, kind) {
@@ -140,7 +144,8 @@ describe('runsRuntime and unsetJobs', () => {
     expect(runsRuntime('token=$(node scripts/github-app-token.mjs)', 'node')).toBe(true);
     expect(runsRuntime('npm ci --no-audit', 'node')).toBe(true);
     expect(runsRuntime('cat x | python3 -I check.py', 'python')).toBe(true);
-    expect(runsRuntime('echo "run `node scripts/x.mjs` by hand"', 'node')).toBe(false);
+    // Escaped backticks print as text (a Markdown summary line); unescaped ones run a command.
+    expect(runsRuntime('echo "run \\`node scripts/x.mjs\\` by hand"', 'node')).toBe(false);
     expect(runsRuntime('docker run --rm img python -c "import azure"', 'python')).toBe(false);
     expect(runsRuntime('/opt/az/bin/python3 -Im pip check', 'python')).toBe(false);
     expect(runsRuntime('# node is not run here', 'node')).toBe(false);
@@ -150,6 +155,12 @@ describe('runsRuntime and unsetJobs', () => {
       expect(runsRuntime(line, 'node'), line).toBe(true);
     }
     expect(runsRuntime('python3.15 -I x.py', 'python')).toBe(true);
+    expect(runsRuntime('uv sync --frozen', 'python')).toBe(true);
+    // Backtick command substitution, bare and inside double quotes; single quotes stay literal.
+    expect(runsRuntime('version=`python3 scripts/check.py`', 'python')).toBe(true);
+    expect(runsRuntime('echo "`node --version`"', 'node')).toBe(true);
+    expect(runsRuntime("echo 'literal `python3` text'", 'python')).toBe(false);
+    expect(runsRuntime('uvicorn app:main', 'python')).toBe(false);
     expect(runsRuntime('echo "$NODE_VERSION"', 'node')).toBe(false);
     expect(runsRuntime('nodes=3 nodejs-check', 'node')).toBe(false);
     expect(runsRuntime('echo "the stage is wrong; if pip named the file differently, look"', 'python')).toBe(false);
@@ -197,6 +208,10 @@ describe('.github/workflows', () => {
   });
 
   it('every allowed exception still exists, so the list cannot hide a job that has since changed', () => {
-    for (const entry of Object.keys(RUNNER_DEFAULT_ALLOWED)) expect(unset, entry).toContain(entry);
+    for (const [entry, reason] of Object.entries(RUNNER_DEFAULT_ALLOWED)) {
+      expect(unset, entry).toContain(entry);
+      // An exception without a reason a reviewer can check is not an exception (Copilot on HCW-CloudAssessor_AddOn#89).
+      expect(String(reason ?? '').trim(), `${entry} gives no reason`).not.toBe('');
+    }
   });
 });
