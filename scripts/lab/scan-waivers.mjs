@@ -89,13 +89,20 @@ export function reasonFor(place) {
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** A YYYY-MM-DD string that names a real calendar date (2026-02-31 does not), checked by round-tripping it through Date. */
+export function isCalendarDate(text) {
+  if (!DATE.test(text ?? '')) return false;
+  const d = new Date(`${text}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === text;
+}
+
 /**
  * The waiver entries for the findings in these Trivy reports: one per finding
  * id and reason, listing every place it waits on that maker in. Throws on a
  * finding no rule explains.
  */
 export function waiversFrom(reports, { expires, checked }) {
-  if (!DATE.test(expires ?? '') || !DATE.test(checked ?? '')) throw new Error('--expires and --checked must be YYYY-MM-DD dates');
+  if (!isCalendarDate(expires) || !isCalendarDate(checked)) throw new Error('--expires and --checked must be real YYYY-MM-DD dates');
   const entries = new Map();
   const unexplained = new Set();
   for (const report of reports) {

@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { MAKERS, parseArgs, placeOf, purlWithoutQualifiers, reasonFor, renderYaml, waiversFrom } from './scan-waivers.mjs';
+import { MAKERS, isCalendarDate, parseArgs, placeOf, purlWithoutQualifiers, reasonFor, renderYaml, waiversFrom } from './scan-waivers.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WAIVERS = join(REPO, '.github', 'lab-image-scan-waivers.yaml');
@@ -61,6 +61,12 @@ describe('scan-waivers.mjs', () => {
 
   it('refuses dates that are not YYYY-MM-DD, and a run with no report', () => {
     expect(() => waiversFrom([], { expires: 'next month', checked: '2026-11-12' })).toThrow(/YYYY-MM-DD/);
+    // The right shape but no such day (Copilot on #1701).
+    expect(() => waiversFrom([], { expires: '2026-02-31', checked: '2026-11-12' })).toThrow(/real YYYY-MM-DD/);
+    expect(() => waiversFrom([], { expires: '2026-12-12', checked: '2026-11-31' })).toThrow(/real YYYY-MM-DD/);
+    expect(isCalendarDate('2028-02-29')).toBe(true);
+    expect(isCalendarDate('2026-02-29')).toBe(false);
+    expect(isCalendarDate('2026-13-01')).toBe(false);
     expect(() => parseArgs(['--expires', '2026-12-12'])).toThrow(/at least one Trivy JSON report/);
   });
 

@@ -711,6 +711,7 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
         '  left) printf "%s" "$LEFT" > "$out"; exit 1 ;;',
         '  waived) printf "%s" "$WAIVED" > "$out"; exit 0 ;;',
         '  broken) echo "FATAL unable to pull" >&2; exit 1 ;;',
+        '  silent) exit 0 ;;',
         '  *) printf "%s" "$CLEAN" > "$out"; exit 0 ;;',
         'esac',
         '',
@@ -787,6 +788,13 @@ describe.skipIf(!runnable || !jqReady)('lab-supply-chain.yml, check: the image s
     expect(got.failed).toBe('1');
     expect(got.compact).toContain('the scan did not complete:');
     expect(got.compact).toContain('FATAL unable to pull');
+  });
+
+  it('a scan that exits 0 but writes no report is a failed scan, never a clean one (#1701)', () => {
+    const got = scan({ runner: 'silent' });
+    expect(got.status, got.stdout + got.stderr).toBe(0);
+    expect(got.failed).toBe('1');
+    expect(got.compact).toContain('the scan did not complete:');
   });
 
   it('says nothing is left after the waivers when a waiver set findings aside', () => {

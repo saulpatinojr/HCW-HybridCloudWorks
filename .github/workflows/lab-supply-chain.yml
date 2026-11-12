@@ -561,13 +561,15 @@ jobs:
             if [ -s "$report" ]; then
               waived=$(jq '[.Results[]?.ExperimentalModifiedFindings[]?] | length' "$report") || waived=0
             fi
-            if [ "$code" = "0" ] && [ "$waived" -gt 0 ]; then
+            # No report is no evidence, whatever the exit code (Copilot on
+            # #1701): a clean line needs a report that says so.
+            if [ ! -s "$report" ]; then
+              failed=1
+              { echo "the scan did not complete:"; echo '```'; cat "${RUNNER_TEMP}/scan-${n}.err"; echo '```'; } | tee -a "$table" >> "$compact"
+            elif [ "$code" = "0" ] && [ "$waived" -gt 0 ]; then
               echo "no HIGH or CRITICAL vulnerability with a fix available left after the waivers" | tee -a "$table" >> "$compact"
             elif [ "$code" = "0" ]; then
               echo "no HIGH or CRITICAL vulnerability with a fix available" | tee -a "$table" >> "$compact"
-            elif [ ! -s "$report" ]; then
-              failed=1
-              { echo "the scan did not complete:"; echo '```'; cat "${RUNNER_TEMP}/scan-${n}.err"; echo '```'; } | tee -a "$table" >> "$compact"
             else
               failed=1
               { echo '```'; trivy convert --quiet --format table "$report" 2>&1; echo '```'; } >> "$table"
