@@ -53,9 +53,12 @@
  * does. The set-up step must come before the first such step. Limits, on
  * purpose: a job that runs in a `container:` uses that image's runtime and is
  * not checked; a script a step calls (a `.ps1` or `.sh` file) is not read, so
- * a step that starts a runtime that way is listed in INDIRECT_RUNTIME; and a
- * `-c` script inside a double-quoted substitution (`echo "$(bash -c 'node
- * x')"`) is not read, because a double-quoted string is kept as text. The same check is
+ * a step that starts a runtime that way is listed in INDIRECT_RUNTIME. A
+ * command substitution inside a double-quoted string (`"$(…)"`, or a
+ * backtick pair) runs on the runner, so it is read like any other script, a
+ * `-c` script in it included (`echo "$(bash -c 'node x')"`); one that hands
+ * its script to a container (`"$(docker run img bash -c '…')"`) stays
+ * unread. The same check is
  * copied into the add-on and App repositories; keep the logic the same in
  * each copy and change only the lists and comments.
  *
@@ -201,12 +204,15 @@ const COMMAND = {
 // '…'`): the script runs on the runner too, so its commands count. The same words after `docker run image` are not
 // in command position, so a container's script stays unread.
 const SHELL_SCRIPT = new RegExp(`${START}${PATH}${SHELL_GIVEN_C}$`);
-// `pipx` in command position, with what comes before it (its assignments and wrappers) and its own words, up to the
-// end of the command (`;`, `&`, `|` or `)`). It has chosen its interpreter when `--python` is among those words or
-// `PIPX_DEFAULT_PYTHON=` is among the assignments in front of it.
+// `pipx` in command position, with what comes before it (its assignments and wrappers) and its words, up to the end
+// of the command (`;`, `&`, `|` or `)`). It has chosen its interpreter when `--python` is one of pipx's own options
+// (see `pipxOptionChoosesPython`) or `PIPX_DEFAULT_PYTHON` is one of the assignments in front of it.
 const PIPX = new RegExp(`(?<before>${START})${PATH}pipx(?=\\s|$)(?<words>[^;&|)]*)`, 'g');
-const PIPX_PYTHON_OPTION = /(?:^|\s)--python(?:=|\s|$)/;
-const PIPX_DEFAULT_ASSIGNMENT = /(?<![\w-])PIPX_DEFAULT_PYTHON=/;
+// An assignment word (`NAME=value`, the value plain, quoted or both) that starts a word, as ASSIGNMENT reads one: so in
+// `FOO=PIPX_DEFAULT_PYTHON=/p` the name is FOO, and the rest is FOO's value.
+const ASSIGNMENT_WORD = /(?:^|(?<=[\s;&|({`]))([A-Za-z_][A-Za-z0-9_]*)=(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'])*(?=\s|$)/g;
+// pipx's options that take a value as the next word, so that word is not read as an option or as the app's name.
+const PIPX_VALUE_OPTIONS = new Set(['--spec', '--python', '--index-url', '--pip-args', '--suffix', '--preinstall', '--backend', '--fetch-python']);
 // Where `((` opens an arithmetic command rather than two subshells: at the start of a command.
 const ARITHMETIC_COMMAND = /(?:^|[;&|({]|\b(?:then|else|do|if|elif|while|until|for))\s*$/;
 // The escapes `$'…'` turns into other characters; any other `\x` is left as it is.
@@ -237,6 +243,44 @@ const HAS_STATUS = /\b(?:always|failure|cancelled|success)\(\s*\)/;
  * line after it starts with `:` so that the words after the script (the inner
  * shell's `$0` and arguments) are still arguments.
  */
+/**
+ * The index of the `)` that closes the `$(` at `at`, or the end of the text: escapes, quoted strings and the
+ * substitutions inside them are skipped, so their quotes and parentheses do not count.
+ */
+function substitutionClose(run, at) {
+  const n = run.length;
+  let depth = 0;
+  let k = at + 1;
+  while (k < n) {
+    const char = run[k];
+    if (char === '\\') k += 2;
+    else if (char === "'") {
+      const end = run.indexOf("'", k + 1);
+      k = end === -1 ? n : end + 1;
+    } else if (char === '"') {
+      k += 1;
+      while (k < n && run[k] !== '"') {
+        if (run[k] === '\\') k += 2;
+        else if (run.startsWith('$(', k)) k = substitutionClose(run, k) + 1;
+        else k += 1;
+      }
+      k += 1;
+    } else {
+      depth += char === '(' ? 1 : char === ')' ? -1 : 0;
+      if (depth === 0) return k;
+      k += 1;
+    }
+  }
+  return n;
+}
+
+/** The index of the backtick that closes the one at `at` (an escaped one does not), or the end of the text. */
+function backtickClose(run, at) {
+  let k = at + 1;
+  while (k < run.length && run[k] !== '`') k += run[k] === '\\' ? 2 : 1;
+  return Math.min(k, run.length);
+}
+
 export function shellText(run) {
   const out = [];
   let heredocs = [];
@@ -267,11 +311,30 @@ export function shellText(run) {
       quoted(run.slice(i + 1, end), "''");
       i = end + 1;
     } else if (char === '"') {
+      // A command substitution in the string (`$(…)`, or a backtick pair) may hold quotes of its own, and it runs on
+      // the runner, so its script is read like any other. As text, an escaped backtick prints.
       let j = i + 1;
-      while (j < n && run[j] !== '"') j += run[j] === '\\' ? 2 : 1;
-      const raw = run.slice(i + 1, j);
-      // Read as text, an escaped backtick prints; given to `-c`, the inner shell runs it.
-      const text = raw.replace(/\\[\s\S]/g, (escape) => (escape === '\\`' ? '' : escape));
+      const parts = [];
+      while (j < n && run[j] !== '"') {
+        if (run[j] === '\\') {
+          parts.push(run.slice(j, j + 2) === '\\`' ? '' : run.slice(j, j + 2));
+          j += 2;
+        } else if (run.startsWith('$(', j) && !run.startsWith('$((', j)) {
+          const close = substitutionClose(run, j);
+          parts.push(`$(${shellText(run.slice(j + 2, close))})`);
+          j = close + 1;
+        } else if (run[j] === '`') {
+          const close = backtickClose(run, j);
+          parts.push(`\`${shellText(run.slice(j + 1, close))}\``);
+          j = close + 1;
+        } else {
+          parts.push(run[j]);
+          j += 1;
+        }
+      }
+      const raw = run.slice(i + 1, Math.min(j, n));
+      const text = parts.join('');
+      // Given to `-c`, the inner shell runs the script, an escaped backtick included.
       quoted(raw.replace(/\\([\\"$`\n])/g, (escape, c) => (c === '\n' ? '' : c)), /[$<]\(|`/.test(text) ? `"${text}"` : '""');
       i = j + 1;
     } else if (char === '#' && (i === 0 || ' \t\n;'.includes(run[i - 1]))) {
@@ -478,8 +541,30 @@ export function unsetSteps(file, jobs, indirect = INDIRECT_RUNTIME) {
 }
 
 /**
- * True when a run script runs `pipx` in command position without choosing its interpreter: no `--python` in its own
- * words, no `PIPX_DEFAULT_PYTHON=` in front of it, and none in `env` (the step's, job's and workflow's).
+ * True when `--python` (or `--python=…`) is one of pipx's own options among the words after `pipx`. Reading stops at a
+ * bare `--`, after which every word is the app's, and, for `pipx run`, at the app's name (the first word after `run`
+ * that is not an option or an option's value), after which every word is the app's argument (`pipx run tool --python
+ * x` gives `--python` to the tool).
+ */
+export function pipxOptionChoosesPython(words) {
+  let command = null;
+  let valueNext = false;
+  for (const word of words.split(/\s+/).filter(Boolean)) {
+    if (valueNext) valueNext = false;
+    else if (word === '--') return false;
+    else if (word === '--python' || word.startsWith('--python=')) return true;
+    else if (PIPX_VALUE_OPTIONS.has(word)) valueNext = true;
+    else if (word.startsWith('-')) continue;
+    else if (command === null) command = word;
+    else if (command === 'run') return false;
+  }
+  return false;
+}
+
+/**
+ * True when a run script runs `pipx` in command position without choosing its interpreter: no `--python` among pipx's
+ * own options, no `PIPX_DEFAULT_PYTHON` among the assignments in front of it (a whole assignment word, not a value that
+ * happens to hold the text), and none in `env` (the step's, job's and workflow's).
  */
 export function pipxWithoutPython(run, env = {}) {
   if (String(env?.PIPX_DEFAULT_PYTHON ?? '').trim()) return false;
@@ -487,7 +572,11 @@ export function pipxWithoutPython(run, env = {}) {
     .split('\n')
     .some((line) =>
       [...line.trim().matchAll(PIPX)].some(
-        (found) => !(PIPX_DEFAULT_ASSIGNMENT.test(found.groups.before) || PIPX_PYTHON_OPTION.test(found.groups.words))
+        (found) =>
+          !(
+            [...found.groups.before.matchAll(ASSIGNMENT_WORD)].some((m) => m[1] === 'PIPX_DEFAULT_PYTHON') ||
+            pipxOptionChoosesPython(found.groups.words)
+          )
       )
     );
 }
@@ -586,6 +675,13 @@ describe('runsRuntime and unsetSteps', () => {
       ["sh -c \"echo '`node x`' > v\"", 'node'],
       ['bash -c "x=1 # $(node y)"', 'node'],
       ['bash -c "cat <<EOF\n$(python3 v)\nEOF"', 'python'],
+      // A substitution inside double quotes runs on the runner, so a `-c` script in it is read (Copilot on #1716).
+      [`echo "$(bash -c 'node x')"`, 'node'],
+      [`FOO="$(sh -c 'node x')" true`, 'node'],
+      ['FOO="$(sh -c "node x")" true', 'node'],
+      ["v=`bash -c 'python3 y'`", 'python'],
+      ["echo \"`bash -c 'python3 y'`\"", 'python'],
+      [`x=$(echo "$(bash -c 'node x')")`, 'node'],
     ];
     const notRuns = [
       ["docker run --rm img bash -c 'node x.js'", 'node'],
@@ -596,6 +692,8 @@ describe('runsRuntime and unsetSteps', () => {
       ["bash -c 'echo \"$0\"' python3", 'python'],
       ["bash scripts/check.sh 'node x.js'", 'node'],
       ['bash -c echo node', 'node'],
+      [`echo "$(docker run img bash -c 'node x')"`, 'node'],
+      [`echo "$(echo 'node x')"`, 'node'],
       ['docker run img bash -c node x.js', 'node'],
     ];
     for (const [line, kind] of runs) expect(runsRuntime(line, kind), line).toBe(true);
@@ -611,6 +709,9 @@ describe('runsRuntime and unsetSteps', () => {
     // seconds; `sudo -uuu` repeated took minutes).
     expect(runsRuntime(`stdbuf${' -oL'.repeat(40)} -`, 'node')).toBe(false);
     expect(runsRuntime(`nice${' -n10'.repeat(40)} -`, 'node')).toBe(false);
+    // 200 nested substitutions, quoted and not, each read once per level.
+    expect(runsRuntime(`x="${'$(echo "'.repeat(200)}$(bash -c 'node y')${'")'.repeat(200)}"`, 'node')).toBe(true);
+    expect(runsRuntime(`${'$('.repeat(200)}node y${')'.repeat(200)}`, 'node')).toBe(true);
     expect(runsRuntime(`sudo${' -uuu'.repeat(40)} -`, 'node')).toBe(false);
     expect(performance.now() - started).toBeLessThan(1000);
   });
@@ -746,6 +847,19 @@ describe('pipx chooses its Python', () => {
       ['pipx run --python "$P" a && pipx run b', {}, true],
       ['MY_PIPX_DEFAULT_PYTHON=/p pipx run x', {}, true],
       ['pipx run x', { PIPX_DEFAULT_PYTHON: '' }, true],
+      // Only pipx's own options and assignments count (Copilot on HCW-NetworkEyes_App#394): after `--`, and after the
+      // app's name for `pipx run`, `--python` is the app's; a value holding the text sets nothing.
+      ['pipx run --spec tool -- tool --python', {}, true],
+      ['pipx run tool --python x', {}, true],
+      ['pipx run --pip-args "--python" tool', {}, true],
+      ['env FOO=PIPX_DEFAULT_PYTHON=/p pipx run x', {}, true],
+      ['FOO="PIPX_DEFAULT_PYTHON=/p" pipx run x', {}, true],
+      ['pipx run --python "$P" tool', {}, false],
+      ['pipx run --python=/p tool', {}, false],
+      ['pipx run --spec checkov==3.3.30 --python /p checkov -d .', {}, false],
+      ['pipx install --python /p tool', {}, false],
+      ['pipx install tool --python /p', {}, false],
+      ['FOO=1 PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
       ['pipx run --python "$P" --spec x x', {}, false],
       ['pipx run --python=/opt/py/bin/python3 x', {}, false],
       ['PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
