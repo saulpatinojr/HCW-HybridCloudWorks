@@ -98,10 +98,19 @@ const RUNNER_DEFAULT_ALLOWED = {
  * `node`, say). Each counts as running that runtime, so its set-up step must
  * come first. Same keys as above, each with a reason; a key that no longer
  * names a step fails the test, so a renamed or removed step cannot leave the
- * list pointing at nothing. None in this repository yet: every step here
- * names its runtime in its own `run:` text.
+ * list pointing at nothing. The `verify` job of `ci.yml` runs each matrix
+ * row's command (`npm run lint`, `npm test`, …) as `bash -eo pipefail -c
+ * "$COMMAND"`, with the command in the step's `env:` from the matrix, which
+ * the check cannot read, so those five steps are listed here.
  */
-const INDIRECT_RUNTIME = {};
+const VERIFY_COMMAND = "runs `bash -eo pipefail -c \"$COMMAND\"`, where `COMMAND` is the matrix row's npm command, which the check cannot read";
+const INDIRECT_RUNTIME = {
+  'ci.yml > verify > Lint > node': VERIFY_COMMAND,
+  'ci.yml > verify > Format check > node': VERIFY_COMMAND,
+  'ci.yml > verify > Route validation > node': VERIFY_COMMAND,
+  'ci.yml > verify > Build > node': VERIFY_COMMAND,
+  'ci.yml > verify > Test > node': VERIFY_COMMAND,
+};
 
 // Where a command may start: the line's start or an opening/joining
 // character, then any `NAME=value` assignments (the value plain text, a
@@ -141,9 +150,10 @@ const COMMAND = {
 // A shell in command position given a script with `-c` (`bash -c '…'`, `sh -euo pipefail -c "…"`, `sudo bash -lc
 // '…'`): the script runs on the runner too, so its commands count. The same words after `docker run image` are not
 // in command position, so a container's script stays unread.
-// An option (`-e`, `-o pipefail`, `--login`, the `--` that ends them): `-o`'s argument never starts with `-`, so an
+// An option (`-e`, `-o pipefail`, `-O extglob`, `--rcfile /tmp/rc`, `--login`, the `--` that ends them). The
+// options that take an argument (`-o`, `-O`, `--rcfile`, `--init-file`) never take one starting with `-`, so an
 // option can be read only one way (otherwise `-o -o -o …` makes the match try every split).
-const SHELL_OPTION = String.raw`(?:[-+][A-Za-z]*o\s+[^\s-][\w-]*|[-+][A-Za-z]+|--[\w-]+|--(?=\s))`;
+const SHELL_OPTION = String.raw`(?:[-+][A-Za-z]*[oO]\s+[^\s-][\w-]*|--(?:rcfile|init-file)\s+[^\s-]\S*|[-+][A-Za-z]+|--[\w-]+|--(?=\s))`;
 const SHELL_SCRIPT = new RegExp(
   String.raw`${START}${PATH}(?:ba|da|k|z)?sh(?:\s+${SHELL_OPTION})*?\s+-[A-Za-z]*c[A-Za-z]*(?:\s+${SHELL_OPTION})*\s+$`
 );
@@ -346,7 +356,12 @@ const withoutStatus = (text) => {
   return kept.length === terms.length ? text : kept.join(' && ');
 };
 
-/** True when a set-up step with condition `setup` is sure to have run before a step with condition `step`. */
+/**
+ * True when a set-up step with condition `setup` is sure to have run before a step with condition `step`. Apart from
+ * the job status, the set-up step covers the later step when the later condition is the same, is one of the set-up
+ * condition's `||` terms, or is joined by `&&` with one of them: a step that runs only when `a && b` holds can run only
+ * when `a` holds, so a set-up step under `a || c` has run.
+ */
 export const setupCovers = (setup, step) => {
   for (const status of [...STATUSES].sort()) {
     if (runsAfter(step, status) === false) continue;
@@ -354,7 +369,9 @@ export const setupCovers = (setup, step) => {
     if (runs === false) return false;
     if (runs === null) {
       const [rest, wanted] = [withoutStatus(setup), withoutStatus(step)];
-      if (!(rest === '' || rest === wanted || orTerms(rest).includes(unwrap(wanted)))) return false;
+      const setupTerms = new Set([rest, ...orTerms(rest)].map(unwrap));
+      const stepTerms = [wanted, ...orTerms(wanted, '&&')].map(unwrap);
+      if (!(rest === '' || stepTerms.some((term) => setupTerms.has(term)))) return false;
     }
   }
   return true;
@@ -462,6 +479,10 @@ describe('runsRuntime and unsetSteps', () => {
       ['sh -c "python3 x.py"', 'python'],
       ["bash -lc 'npm ci'", 'node'],
       ["bash -euo pipefail -c 'python3 x.py'", 'python'],
+      ["bash -O extglob -c 'node x'", 'node'],
+      ["bash +O nullglob -c 'node x'", 'node'],
+      ["bash --rcfile /tmp/empty -c 'node x'", 'node'],
+      ["bash --init-file ./rc.sh -eo pipefail -c 'python3 x.py'", 'python'],
       ["sudo -u runner bash -c 'python3 x.py'", 'python'],
       ['/bin/bash -c "cd app && npm test"', 'node'],
       ["version=$(sh -c 'node --version')", 'node'],
@@ -591,6 +612,15 @@ describe('runsRuntime and unsetSteps', () => {
       ['a', 'failure() && a', false],
       ['always()', 'a || b', true],
       ['(a || b) && c', 'a', false],
+      // A later step joined by `&&` with the set-up condition, or with one of its `||` terms, needs it to hold
+      // (Copilot on HCW-HybridCloudWorks#1716: ci.yml's verify job sets up Node under `relevant || operations` and
+      // runs `relevant && lint`).
+      ['a || b', 'a && c', true],
+      ['a', 'a && c', true],
+      ['a || b', 'c && (a)', true],
+      ['a || b', 'a || c', false],
+      ['a && b', 'a && c', false],
+      ['a || b', 'c && d', false],
       // Status functions joined by `&&` and `||` (Copilot on HCW-CloudAssessor_AddOn#89).
       ['always() && !cancelled()', 'cancelled()', false],
       ['always() && !cancelled()', 'failure()', true],
