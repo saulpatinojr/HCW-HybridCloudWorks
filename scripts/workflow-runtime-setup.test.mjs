@@ -16,10 +16,18 @@
  * `pipx` are Python programs and count as Python. pipx makes each tool's
  * virtual environment from the interpreter pipx itself runs on unless it is
  * given `--python` or `PIPX_DEFAULT_PYTHON`
- * (https://pipx.pypa.io/latest/reference/environment-variables.html), so a
- * `pipx` step should also pass `--python` with the interpreter the set-up
- * step installed (actions/setup-python's `python-path` output); the check
- * does not read that part.
+ * (https://pipx.pypa.io/latest/reference/environment-variables.html), and
+ * GitHub's Ubuntu runner images install pipx with the image's own python3
+ * (actions/runner-images#14654), so setting Python up is not enough. A step
+ * that runs `pipx` in command position must also choose its interpreter:
+ * `--python` among that pipx command's own words (`pipx run --python
+ * "$PYTHON_PATH" …`, with actions/setup-python's `python-path` output), or
+ * `PIPX_DEFAULT_PYTHON` set in front of it (`PIPX_DEFAULT_PYTHON=/p pipx …`)
+ * or in the step's, job's or workflow's `env:` (Copilot on
+ * HCW-NetworkEyes_App#393). A step that does not is reported, named; one
+ * kept that way on purpose is listed, with its reason, in PIPX_ALLOWED. An
+ * `export PIPX_DEFAULT_PYTHON=…` earlier in the script is not read; use
+ * `env:` instead.
  *
  * A command counts when it is in command position on a line of a `run:` step:
  * at the start, after `$(`, `<(`, a backtick, `(`, `{`, `|`, `&&`, `||` or `;`, after
@@ -39,7 +47,8 @@
  * and given `-c` (`bash -c 'node x'`, `sh -euo pipefail -c "…"`, `sudo bash
  * -lc '…'`, `bash -c -- '…'`). That script runs on the runner, so its
  * commands count, while the same words after `docker run image` stay a
- * container's. A double-quoted `-c` script is read both ways: as the outer
+ * container's; an unquoted script is the one word after `-c` (`bash -c node
+ * x.js` runs `node`, while `bash -c echo node` does not). A double-quoted `-c` script is read both ways: as the outer
  * shell reads it (its `$(…)` and backticks run first) and as the inner shell
  * does. The set-up step must come before the first such step. Limits, on
  * purpose: a job that runs in a `container:` uses that image's runtime and is
@@ -51,9 +60,12 @@
  * each copy and change only the lists and comments.
  *
  * A set-up step with its own `if:` covers a later step only when that step's
- * condition makes the set-up's true: the same condition, or one of the terms
- * the set-up's condition joins with a top-level `||`. Otherwise the set-up
- * could be skipped while the command still runs (Copilot on
+ * condition makes the set-up's true: the same condition, one of the terms
+ * the set-up's condition joins with a top-level `||`, or a condition that
+ * joins one of those with a top-level `&&` and has no top-level `||` of its
+ * own (`a && b` runs only when `a` holds; `a && b || d` can run through `d`
+ * alone, so it is not split; Copilot on HCW-NetworkEyes_App#393). Otherwise
+ * the set-up could be skipped while the command still runs (Copilot on
  * HCW-NetworkEyes_AddOn#100). A set-up step with no `if:` covers every later
  * step whose condition does not test the job's status. Equal text means equal
  * value only for values that stay fixed during a job (`matrix`, `github`,
@@ -101,7 +113,11 @@ const RUNNER_DEFAULT_ALLOWED = {
  * list pointing at nothing. The `verify` job of `ci.yml` runs each matrix
  * row's command (`npm run lint`, `npm test`, …) as `bash -eo pipefail -c
  * "$COMMAND"`, with the command in the step's `env:` from the matrix, which
- * the check cannot read, so those five steps are listed here.
+ * the check cannot read, so those five steps are listed here. The four
+ * `role-tests` entries run a test script that starts `node` or `python3`
+ * (found by reading every script a workflow step calls, 2026-11-13); the
+ * lab-images-role one was a live gap a review found (Copilot on #1716): its
+ * Node.js set-up step came long after it, so it ran the runner's own Node.js.
  */
 const VERIFY_COMMAND = "runs `bash -eo pipefail -c \"$COMMAND\"`, where `COMMAND` is the matrix row's npm command, which the check cannot read";
 const INDIRECT_RUNTIME = {
@@ -110,7 +126,22 @@ const INDIRECT_RUNTIME = {
   'ci.yml > verify > Route validation > node': VERIFY_COMMAND,
   'ci.yml > verify > Build > node': VERIFY_COMMAND,
   'ci.yml > verify > Test > node': VERIFY_COMMAND,
+  'ci.yml > role-tests > lab-images-role test > node':
+    '`bash roles/lab_images/tests/lab-images-role.test.sh` runs `node "${helper}"` on the role\'s plan helper and `node -e`',
+  'ci.yml > role-tests > hcw-docker-stale-bridges test > python':
+    '`bash roles/docker/tests/hcw-docker-stale-bridges.test.sh` runs `python3` on the role\'s stale-bridges helper',
+  'ci.yml > role-tests > hcw-docker-volume-carry test > python':
+    '`sudo bash roles/docker/tests/hcw-docker-volume-carry.test.sh` runs `python3` on the role\'s volume-carry helper',
+  'ci.yml > role-tests > ufw closed-ports test > python':
+    '`bash roles/hardening/tests/ufw-closed-ports.test.sh` runs `python3 "${work}/listen.py"`',
 };
+
+/**
+ * Steps that run `pipx` without choosing its interpreter (`--python` or
+ * PIPX_DEFAULT_PYTHON) on purpose, keyed by "file > job > step name > pipx",
+ * each with its reason. Empty: no workflow here runs pipx.
+ */
+const PIPX_ALLOWED = {};
 
 // Where a command may start: the line's start or an opening/joining
 // character, then any `NAME=value` assignments (the value plain text, a
@@ -132,12 +163,25 @@ const optionsOf = (takes) =>
   takes
     ? String.raw`(?:\s+(?:-(?:(?![${takes}])[A-Za-z])*[${takes}](?:\s+[^\s-]\S*|\S+)|--\w[\w-]*(?:=\S+)?|-(?:(?![${takes}])\w)+|--(?=\s)))*`
     : String.raw`(?:\s+(?:--\w[\w-]*(?:=\S+)?|-\w+|--(?=\s)))*`;
+// A shell option (`-e`, `-o pipefail`, `-O extglob`, `--rcfile /tmp/rc`, `--login`, the `--` that ends them),
+// `letters` being the letters a short option may hold. The options that take an argument (`-o`, `-O`, `--rcfile`,
+// `--init-file`) never take one starting with `-`, so an option can be read only one way (otherwise `-o -o -o …`
+// makes the match try every split).
+const shellOption = (letters) =>
+  String.raw`(?:[-+]${letters}*[oO]\s+[^\s-][\w-]*|--(?:rcfile|init-file)\s+[^\s-]\S*|[-+]${letters}+|--[\w-]+|--(?=\s))`;
+// A shell given `-c`, with its options. The options before it hold no `c`, so the first short option that holds one
+// is the `-c` (`-c`, `-lc`, `-ec`), and a long run of options can be read only one way.
+const SHELL_GIVEN_C = String.raw`(?:ba|da|k|z)?sh(?:\s+${shellOption('(?:(?!c)[A-Za-z])')})*\s+-(?:(?!c)[A-Za-z])*c[A-Za-z]*(?:\s+${shellOption('[A-Za-z]')})*\s+`;
+// A shell given `-c` is also a word that runs the next one: an unquoted script is that one word (`bash -c node x.js`
+// runs `node`, with `x.js` as its `$0`). A quoted script is read by `shellText` instead.
+const SHELL_C = String.raw`(?:[^\s=]*/)?${SHELL_GIVEN_C}`;
 const WRAPPERS = [
   ...Object.entries(WRAPPER_OPTIONS).map(([word, takes]) =>
     word === 'timeout' ? String.raw`timeout${optionsOf(takes)}\s+\d+(?:\.\d+)?[smhd]?\s+` : String.raw`${word}${optionsOf(takes)}\s+`
   ),
   String.raw`command(?:\s+(?:-p|--(?=\s)))*\s+`,
   String.raw`(?:if|then|else|elif|do|while|until|!)\s+`,
+  SHELL_C,
 ].join('|');
 // A `case` pattern that ends at the start of a line (`check)`, `a|b)`), after which a command may follow.
 const CASE_PATTERN = String.raw`^[^()\s|]+(?:\|[^()\s|]+)*\)\s*`;
@@ -156,13 +200,13 @@ const COMMAND = {
 // A shell in command position given a script with `-c` (`bash -c '…'`, `sh -euo pipefail -c "…"`, `sudo bash -lc
 // '…'`): the script runs on the runner too, so its commands count. The same words after `docker run image` are not
 // in command position, so a container's script stays unread.
-// An option (`-e`, `-o pipefail`, `-O extglob`, `--rcfile /tmp/rc`, `--login`, the `--` that ends them). The
-// options that take an argument (`-o`, `-O`, `--rcfile`, `--init-file`) never take one starting with `-`, so an
-// option can be read only one way (otherwise `-o -o -o …` makes the match try every split).
-const SHELL_OPTION = String.raw`(?:[-+][A-Za-z]*[oO]\s+[^\s-][\w-]*|--(?:rcfile|init-file)\s+[^\s-]\S*|[-+][A-Za-z]+|--[\w-]+|--(?=\s))`;
-const SHELL_SCRIPT = new RegExp(
-  String.raw`${START}${PATH}(?:ba|da|k|z)?sh(?:\s+${SHELL_OPTION})*?\s+-[A-Za-z]*c[A-Za-z]*(?:\s+${SHELL_OPTION})*\s+$`
-);
+const SHELL_SCRIPT = new RegExp(`${START}${PATH}${SHELL_GIVEN_C}$`);
+// `pipx` in command position, with what comes before it (its assignments and wrappers) and its own words, up to the
+// end of the command (`;`, `&`, `|` or `)`). It has chosen its interpreter when `--python` is among those words or
+// `PIPX_DEFAULT_PYTHON=` is among the assignments in front of it.
+const PIPX = new RegExp(`(?<before>${START})${PATH}pipx(?=\\s|$)(?<words>[^;&|)]*)`, 'g');
+const PIPX_PYTHON_OPTION = /(?:^|\s)--python(?:=|\s|$)/;
+const PIPX_DEFAULT_ASSIGNMENT = /(?<![\w-])PIPX_DEFAULT_PYTHON=/;
 // Where `((` opens an arithmetic command rather than two subshells: at the start of a command.
 const ARITHMETIC_COMMAND = /(?:^|[;&|({]|\b(?:then|else|do|if|elif|while|until|for))\s*$/;
 // The escapes `$'…'` turns into other characters; any other `\x` is left as it is.
@@ -365,8 +409,9 @@ const withoutStatus = (text) => {
 /**
  * True when a set-up step with condition `setup` is sure to have run before a step with condition `step`. Apart from
  * the job status, the set-up step covers the later step when the later condition is the same, is one of the set-up
- * condition's `||` terms, or is joined by `&&` with one of them: a step that runs only when `a && b` holds can run only
- * when `a` holds, so a set-up step under `a || c` has run.
+ * condition's `||` terms, or, when it has no top-level `||` of its own, is joined by `&&` with one of them: a step that
+ * runs only when `a && b` holds can run only when `a` holds, so a set-up step under `a || c` has run, while
+ * `a && b || d` can run through `d`.
  */
 export const setupCovers = (setup, step) => {
   for (const status of [...STATUSES].sort()) {
@@ -376,7 +421,9 @@ export const setupCovers = (setup, step) => {
     if (runs === null) {
       const [rest, wanted] = [withoutStatus(setup), withoutStatus(step)];
       const setupTerms = new Set([rest, ...orTerms(rest)].map(unwrap));
-      const stepTerms = [wanted, ...orTerms(wanted, '&&')].map(unwrap);
+      // Split on `&&` only when the later condition has no top-level `||`: `a && c || d` can run through `d`.
+      const andTerms = orTerms(wanted).length === 1 ? orTerms(wanted, '&&') : [];
+      const stepTerms = [wanted, ...andTerms].map(unwrap);
       if (!(rest === '' || stepTerms.some((term) => setupTerms.has(term)))) return false;
     }
   }
@@ -426,6 +473,37 @@ export function unsetSteps(file, jobs, indirect = INDIRECT_RUNTIME) {
         if (!covered) found.push(key);
       });
     }
+  }
+  return found;
+}
+
+/**
+ * True when a run script runs `pipx` in command position without choosing its interpreter: no `--python` in its own
+ * words, no `PIPX_DEFAULT_PYTHON=` in front of it, and none in `env` (the step's, job's and workflow's).
+ */
+export function pipxWithoutPython(run, env = {}) {
+  if (String(env?.PIPX_DEFAULT_PYTHON ?? '').trim()) return false;
+  return shellText(String(run ?? ''))
+    .split('\n')
+    .some((line) =>
+      [...line.trim().matchAll(PIPX)].some(
+        (found) => !(PIPX_DEFAULT_ASSIGNMENT.test(found.groups.before) || PIPX_PYTHON_OPTION.test(found.groups.words))
+      )
+    );
+}
+
+/**
+ * The steps of one workflow that run `pipx` without choosing its interpreter, by `stepKey` with the kind `pipx`. A job
+ * in a `container:` is skipped, as `unsetSteps` skips it.
+ */
+export function pipxProblems(file, workflow) {
+  const found = [];
+  for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
+    if (!Array.isArray(job?.steps) || job.container) continue;
+    job.steps.forEach((step, i) => {
+      const env = { ...(workflow?.env ?? {}), ...(job?.env ?? {}), ...(step?.env ?? {}) };
+      if (pipxWithoutPython(step?.run, env)) found.push(stepKey(file, name, step, i, 'pipx'));
+    });
   }
   return found;
 }
@@ -499,6 +577,10 @@ describe('runsRuntime and unsetSteps', () => {
       ["bash -c $'echo start\\nnode x.js'", 'node'],
       ["if true; then\n  bash -c 'node x.js'\nfi", 'node'],
       ["bash -c -- 'node x.js'", 'node'],
+      // An unquoted script is the one word after `-c` (Copilot on HCW-HybridCloudWorks#1716).
+      ['bash -c node x.js', 'node'],
+      ['sh -c python3 x.py', 'python'],
+      ['sudo bash -lc -e pytest', 'python'],
       // The outer shell runs `$(…)` and backticks in a double-quoted script first, whatever the inner one makes of them.
       ['bash -c "echo \'$(node x)\'"', 'node'],
       ["sh -c \"echo '`node x`' > v\"", 'node'],
@@ -513,6 +595,8 @@ describe('runsRuntime and unsetSteps', () => {
       // The word after the script is the inner shell's `$0`, an argument.
       ["bash -c 'echo \"$0\"' python3", 'python'],
       ["bash scripts/check.sh 'node x.js'", 'node'],
+      ['bash -c echo node', 'node'],
+      ['docker run img bash -c node x.js', 'node'],
     ];
     for (const [line, kind] of runs) expect(runsRuntime(line, kind), line).toBe(true);
     for (const [line, kind] of notRuns) expect(runsRuntime(line, kind), line).toBe(false);
@@ -633,6 +717,12 @@ describe('runsRuntime and unsetSteps', () => {
       ['a || b', 'a || c', false],
       ['a && b', 'a && c', false],
       ['a || b', 'c && d', false],
+      // The later condition is split on `&&` only when it has no top-level `||` (Copilot on HCW-NetworkEyes_App#393):
+      // `a && c || d` can run through `d` alone.
+      ['a || b', 'a && c || d', false],
+      ['a || b', 'd || a && c', false],
+      ['a || b', '(a && c) || d', false],
+      ['a || b', 'a && (c || d)', true],
       // Status functions joined by `&&` and `||` (Copilot on HCW-CloudAssessor_AddOn#89).
       ['always() && !cancelled()', 'cancelled()', false],
       ['always() && !cancelled()', 'failure()', true],
@@ -647,19 +737,66 @@ describe('runsRuntime and unsetSteps', () => {
   });
 });
 
+describe('pipx chooses its Python', () => {
+  it('reports a pipx command that names no interpreter, and not one that does', () => {
+    const cases = [
+      ['pipx run --spec checkov==3.3.30 checkov -d .', {}, true],
+      ['cd y && pipx install zizmor', {}, true],
+      ["bash -c 'pipx run x'", {}, true],
+      ['pipx run --python "$P" a && pipx run b', {}, true],
+      ['MY_PIPX_DEFAULT_PYTHON=/p pipx run x', {}, true],
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '' }, true],
+      ['pipx run --python "$P" --spec x x', {}, false],
+      ['pipx run --python=/opt/py/bin/python3 x', {}, false],
+      ['PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
+      ['env PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '/p' }, false],
+      ['echo pipx', {}, false],
+      ['docker run img pipx run x', {}, false],
+      ['python3 -m pip install pipx', {}, false],
+    ];
+    for (const [run, env, flagged] of cases) expect(pipxWithoutPython(run, env), run).toBe(flagged);
+  });
+
+  it("reads the step's, job's and workflow's env", () => {
+    const scan = 'pipx run checkov -d .';
+    const workflow = {
+      env: { FROM_WORKFLOW: '1' },
+      jobs: {
+        bare: { steps: [{ name: 'Scan', run: 'pipx run --spec checkov==3.3.30 checkov -d .' }] },
+        stepEnv: { steps: [{ name: 'Scan', env: { PIPX_DEFAULT_PYTHON: '${{ steps.python.outputs.python-path }}' }, run: scan }] },
+        jobEnv: { env: { PIPX_DEFAULT_PYTHON: '/opt/py/bin/python3' }, steps: [{ run: scan }] },
+        option: { steps: [{ name: 'Scan', env: { PYTHON_PATH: '${{ steps.python.outputs.python-path }}' }, run: 'pipx run --python "$PYTHON_PATH" --spec checkov==3.3.30 checkov -d .' }] },
+        boxed: { container: 'python:3.15', steps: [{ run: scan }] },
+      },
+    };
+    expect(pipxProblems('x.yml', workflow)).toEqual(['x.yml > bare > Scan > pipx']);
+    expect(pipxProblems('x.yml', { ...workflow, env: { PIPX_DEFAULT_PYTHON: '/opt/py/bin/python3' } })).toEqual([]);
+  });
+});
+
 describe('.github/workflows', () => {
   const files = readdirSync(WORKFLOWS).filter((name) => /\.ya?ml$/.test(name));
   const workflows = Object.fromEntries(files.map((file) => [file, parse(readFileSync(join(WORKFLOWS, file), 'utf8'))]));
   const unset = files.flatMap((file) => unsetSteps(file, workflows[file]?.jobs));
+  const pipx = files.flatMap((file) => pipxProblems(file, workflows[file]));
 
   it('every step that runs Node.js or Python comes after its version is set up, so the runner image never chooses it', () => {
     expect(unset.filter((entry) => !(entry in RUNNER_DEFAULT_ALLOWED))).toEqual([]);
+  });
+
+  it('every step that runs pipx chooses its Python, so pipx never falls back to the runner image\'s own', () => {
+    expect(pipx.filter((entry) => !(entry in PIPX_ALLOWED))).toEqual([]);
   });
 
   it('every allowed exception still exists, so the list cannot hide a job that has since changed', () => {
     for (const [entry, reason] of Object.entries(RUNNER_DEFAULT_ALLOWED)) {
       expect(unset, entry).toContain(entry);
       // An exception without a reason a reviewer can check is not an exception (Copilot on HCW-CloudAssessor_AddOn#89).
+      expect(String(reason ?? '').trim(), `${entry} gives no reason`).not.toBe('');
+    }
+    for (const [entry, reason] of Object.entries(PIPX_ALLOWED)) {
+      expect(pipx, entry).toContain(entry);
       expect(String(reason ?? '').trim(), `${entry} gives no reason`).not.toBe('');
     }
   });
