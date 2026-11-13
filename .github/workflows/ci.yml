@@ -1472,10 +1472,13 @@ jobs:
       # turns userns-remap on (LAB-5), so the file the docker role installs
       # is run here as it ships, against a tree shaped like that cluster:
       # owners shifted, modes and hard links kept, the source untouched, a
-      # non-empty destination refused. As root, because it chowns; env keeps
-      # this job's Python on PATH past sudo's secure_path.
+      # non-empty destination refused. As root, because it chowns. Plain sudo
+      # on purpose: its secure_path gives the test the runner's /usr/bin/python3,
+      # the interpreter the helper's shebang names and the lab host runs it on
+      # (the host-module exception in lab-host/ansible/inventory/localhost.yml),
+      # not this job's set-up Python like the control-side steps around it.
       - name: hcw-docker-volume-carry test
-        run: sudo env "PATH=$PATH" bash roles/docker/tests/hcw-docker-volume-carry.test.sh
+        run: sudo bash roles/docker/tests/hcw-docker-volume-carry.test.sh
 
       # /usr/local/libexec/hcw-docker-stale-bridges deletes the bridges a
       # data-root switch leaves in the kernel, whose routes shadowed the live
