@@ -15,10 +15,11 @@
  * `yarn` and `pnpm` are Node.js programs and count as Node.js; `pytest` and
  * `pipx` are Python programs and count as Python. pipx makes each tool's
  * virtual environment from the interpreter pipx itself runs on unless it is
- * given `--python` (https://pipx.pypa.io/latest/reference/environment-variables.html),
- * so a `pipx` step should also pass `--python` with the interpreter the
- * set-up step installed (actions/setup-python's `python-path` output); the
- * check does not read that part.
+ * given `--python` or `PIPX_DEFAULT_PYTHON`
+ * (https://pipx.pypa.io/latest/reference/environment-variables.html), so a
+ * `pipx` step should also pass `--python` with the interpreter the set-up
+ * step installed (actions/setup-python's `python-path` output); the check
+ * does not read that part.
  *
  * A command counts when it is in command position on a line of a `run:` step:
  * at the start, after `$(`, `<(`, a backtick, `(`, `{`, `|`, `&&`, `||` or `;`, after
@@ -33,15 +34,19 @@
  * (unless a double-quoted one runs a command with `$(`, `<(` or a backtick; a
  * single-quoted one may run over several lines, as the `bash -c '…'` script
  * of a `docker run` does) or as an argument (`docker run image python …`, or
- * the first word of a line that continues the one before it). The one quoted
- * string that is read is the script of a shell that is itself in command
- * position and given `-c` (`bash -c 'node x'`, `sh -euo pipefail -c "…"`,
- * `sudo bash -lc '…'`): that script runs on the runner, so its commands count,
- * while the same words after `docker run image` stay a container's. The
- * set-up step must come before the first such step. Limits, on purpose: a job
- * that runs in a `container:` uses that image's runtime and is not checked;
- * a script a step calls (a `.ps1` or `.sh` file) is not read, so a step that
- * starts a runtime that way is listed in INDIRECT_RUNTIME. The same check is
+ * the first word of a line that continues the one before it). One more quoted
+ * string is read: the script of a shell that is itself in command position
+ * and given `-c` (`bash -c 'node x'`, `sh -euo pipefail -c "…"`, `sudo bash
+ * -lc '…'`, `bash -c -- '…'`). That script runs on the runner, so its
+ * commands count, while the same words after `docker run image` stay a
+ * container's. A double-quoted `-c` script is read both ways: as the outer
+ * shell reads it (its `$(…)` and backticks run first) and as the inner shell
+ * does. The set-up step must come before the first such step. Limits, on
+ * purpose: a job that runs in a `container:` uses that image's runtime and is
+ * not checked; a script a step calls (a `.ps1` or `.sh` file) is not read, so
+ * a step that starts a runtime that way is listed in INDIRECT_RUNTIME; and a
+ * `-c` script inside a double-quoted substitution (`echo "$(bash -c 'node
+ * x')"`) is not read, because a double-quoted string is kept as text. The same check is
  * copied into the add-on and App repositories; keep the logic the same in
  * each copy and change only the lists and comments.
  *
@@ -136,12 +141,14 @@ const COMMAND = {
 // A shell in command position given a script with `-c` (`bash -c '…'`, `sh -euo pipefail -c "…"`, `sudo bash -lc
 // '…'`): the script runs on the runner too, so its commands count. The same words after `docker run image` are not
 // in command position, so a container's script stays unread.
-const SHELL_OPTION = String.raw`(?:[-+][A-Za-z]*o\s+[\w-]+|[-+][A-Za-z]+|--[\w-]+)`;
+// An option (`-e`, `-o pipefail`, `--login`, the `--` that ends them): `-o`'s argument never starts with `-`, so an
+// option can be read only one way (otherwise `-o -o -o …` makes the match try every split).
+const SHELL_OPTION = String.raw`(?:[-+][A-Za-z]*o\s+[^\s-][\w-]*|[-+][A-Za-z]+|--[\w-]+|--(?=\s))`;
 const SHELL_SCRIPT = new RegExp(
   String.raw`${START}${PATH}(?:ba|da|k|z)?sh(?:\s+${SHELL_OPTION})*?\s+-[A-Za-z]*c[A-Za-z]*(?:\s+${SHELL_OPTION})*\s+$`
 );
 // Where `((` opens an arithmetic command rather than two subshells: at the start of a command.
-const ARITHMETIC_COMMAND = /(?:^|[;&|({]|\b(?:then|else|do|if|elif|while|until))\s*$/;
+const ARITHMETIC_COMMAND = /(?:^|[;&|({]|\b(?:then|else|do|if|elif|while|until|for))\s*$/;
 // The escapes `$'…'` turns into other characters; any other `\x` is left as it is.
 const ANSI_C = { n: '\n', t: '\t', "'": "'", '"': '"', '\\': '\\' };
 const SETUP = { node: /^actions\/setup-node@/, python: /^actions\/setup-python@/ };
@@ -181,7 +188,9 @@ export function shellText(run) {
     const text = out.join('');
     return text.slice(text.lastIndexOf('\n') + 1);
   };
-  const quoted = (script, text) => out.push(SHELL_SCRIPT.test(line()) ? `''\n${shellText(script)}\n:` : text);
+  // A `-c` script keeps the outer reading too: the outer shell runs a `$(…)` or backtick in a double-quoted script
+  // before the inner shell starts (`bash -c "echo '$(node x)'"`).
+  const quoted = (script, text) => out.push(SHELL_SCRIPT.test(line().trimStart()) ? `${text}\n${shellText(script)}\n:` : text);
   while (i < n) {
     const char = run[i];
     if (char === '\\' && i + 1 < n) {
@@ -460,6 +469,13 @@ describe('runsRuntime and unsetSteps', () => {
       // Inside double quotes `\`` is a backtick the inner shell runs; `$'…'` turns `\n` into a new line.
       ['bash -c "echo \\`node --version\\`"', 'node'],
       ["bash -c $'echo start\\nnode x.js'", 'node'],
+      ["if true; then\n  bash -c 'node x.js'\nfi", 'node'],
+      ["bash -c -- 'node x.js'", 'node'],
+      // The outer shell runs `$(…)` and backticks in a double-quoted script first, whatever the inner one makes of them.
+      ['bash -c "echo \'$(node x)\'"', 'node'],
+      ["sh -c \"echo '`node x`' > v\"", 'node'],
+      ['bash -c "x=1 # $(node y)"', 'node'],
+      ['bash -c "cat <<EOF\n$(python3 v)\nEOF"', 'python'],
     ];
     const notRuns = [
       ["docker run --rm img bash -c 'node x.js'", 'node'],
@@ -472,6 +488,14 @@ describe('runsRuntime and unsetSteps', () => {
     ];
     for (const [line, kind] of runs) expect(runsRuntime(line, kind), line).toBe(true);
     for (const [line, kind] of notRuns) expect(runsRuntime(line, kind), line).toBe(false);
+  });
+
+  it('reads a long run of shell options quickly', () => {
+    // Each `-o -o` could once be split two ways, so 18 of them took seconds.
+    const started = performance.now();
+    expect(runsRuntime(`bash ${'-o -o '.repeat(200)}x'y'`, 'node')).toBe(false);
+    expect(runsRuntime(`bash ${'-c '.repeat(200)}x'node y'`, 'node')).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 
   it('counts yarn and pnpm as Node.js, and pytest and pipx as Python, only as whole words in command position', () => {
@@ -493,6 +517,7 @@ describe('runsRuntime and unsetSteps', () => {
     // `<<` inside `$((…))` or `((…))` is a shift, not a heredoc, so the next line is still read.
     expect(runsRuntime('size=$((1<<k))\nnode a.js', 'node')).toBe(true);
     expect(runsRuntime('(( n = 1 << k ))\nnode a.js', 'node')).toBe(true);
+    expect(runsRuntime('for ((i = 0; i < 1<<k; i++)); do echo "$i"; done\nnode a.js', 'node')).toBe(true);
     // `<<\EOF` is a heredoc whose body is not run.
     expect(runsRuntime('cat <<\\EOF\nnode is named here\nEOF', 'node')).toBe(false);
     expect(runsRuntime('cat <<\\EOF\ntext\nEOF\nnode a.js', 'node')).toBe(true);
