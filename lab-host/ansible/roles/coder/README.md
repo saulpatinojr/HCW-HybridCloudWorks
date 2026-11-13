@@ -585,7 +585,12 @@ where it runs was. Two alternatives were shown and not taken:
   compute alone (Azure retail prices API, read 2026-09-26), plus storage.
   Every query from the VPS would also cross the internet to Azure.
 
-### The version: 18.6
+### The version: 18.7
+
+**18.7** since 2026-11-13 ([#1714](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1714)), a minor release within 18, so the same
+cluster and no dump or restore. Its release notes asked for indexes to be
+rebuilt; "A minor release" below says how that is checked each time.
+The rest of this section is the move to 18 and still holds.
 
 PostgreSQL moved from 16.15 to **18.6**, the newest release of the newest
 major, on 2026-09-26, while the host held no Coder data, so there was
@@ -632,6 +637,16 @@ stand-ins for the three role-written files:
    `/api/v2/buildinfo` 200 reporting `v2.37.3+3a24816` and the source's
    deployment id, `/api/v2/users/first` 200 (the restored owner), the
    schema still at 585, and no error lines in its log.
+
+### A minor release: read its notes for REINDEX
+
+A new minor release (18.6 to 18.7, say) keeps the cluster, so the pin bump
+and a `bootstrap.sh` run are the whole upgrade, with one exception. When a
+release fixes a bug that could have damaged an index, its notes say to
+rebuild the affected indexes with `REINDEX`, and installing the release
+does not do that. The check and the commands are in
+`docs/runbooks/labs-host.md`, "After Coder's PostgreSQL moves: rebuild the
+indexes its notes name".
 
 ### The next major
 
