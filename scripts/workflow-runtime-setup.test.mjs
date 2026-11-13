@@ -122,10 +122,16 @@ const ASSIGNMENT = String.raw`[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\.)*"|'[^']*
 // `nice -n 10`), any other `-x`/`--long` flag, and the `--` that ends the
 // options (`env -- node`). `timeout` also takes its duration (`timeout 60
 // node`). `command` only with `-p` or `--`, because `command -v node` looks node up
-// and runs nothing.
+// and runs nothing. An option that takes an argument always takes the next
+// word (so `sudo -u node whoami` runs whoami, not node), and an option can be
+// read only one way: otherwise twenty `-oL`s make the match try every split
+// (the same pattern as the Python copies, HCW-NetworkEyes_App's
+// tests/security/test_workflow_runtime_setup.py).
 const WRAPPER_OPTIONS = { env: 'uCS', sudo: 'ugCDhprtU', xargs: 'InPLdaEs', exec: 'a', time: 'of', nice: 'n', nohup: '', stdbuf: 'ioe', timeout: 'sk' };
 const optionsOf = (takes) =>
-  String.raw`(?:\s+(?:${takes ? String.raw`-[A-Za-z]*[${takes}]\s*[^\s-]\S*|` : ''}--?\w[\w-]*(?:=\S+)?|--(?=\s)))*`;
+  takes
+    ? String.raw`(?:\s+(?:-(?:(?![${takes}])[A-Za-z])*[${takes}](?:\s+[^\s-]\S*|\S+)|--\w[\w-]*(?:=\S+)?|-(?:(?![${takes}])\w)+|--(?=\s)))*`
+    : String.raw`(?:\s+(?:--\w[\w-]*(?:=\S+)?|-\w+|--(?=\s)))*`;
 const WRAPPERS = [
   ...Object.entries(WRAPPER_OPTIONS).map(([word, takes]) =>
     word === 'timeout' ? String.raw`timeout${optionsOf(takes)}\s+\d+(?:\.\d+)?[smhd]?\s+` : String.raw`${word}${optionsOf(takes)}\s+`
@@ -444,6 +450,7 @@ describe('runsRuntime and unsetSteps', () => {
     expect(runsRuntime('docker run --rm img \\\n  /opt/az/bin/python3 -Im pip check', 'python')).toBe(false);
     expect(runsRuntime("cat > x.txt <<'EOF'\npython3 is named here\nEOF", 'python')).toBe(false);
     expect(runsRuntime('command -v node', 'node')).toBe(false);
+    expect(runsRuntime('sudo -u node whoami', 'node')).toBe(false);
     expect(runsRuntime('NODE_BIN=/opt/node/bin/node', 'node')).toBe(false);
     expect(runsRuntime('echo $(foo) python3 x', 'python')).toBe(false);
     expect(runsRuntime('echo x # node y', 'node')).toBe(false);
@@ -516,6 +523,11 @@ describe('runsRuntime and unsetSteps', () => {
     const started = performance.now();
     expect(runsRuntime(`bash ${'-o -o '.repeat(200)}x'y'`, 'node')).toBe(false);
     expect(runsRuntime(`bash ${'-c '.repeat(200)}x'node y'`, 'node')).toBe(false);
+    // The same for a wrapper's options, each of which could be read with or without an argument (twenty `-oL`s took
+    // seconds; `sudo -uuu` repeated took minutes).
+    expect(runsRuntime(`stdbuf${' -oL'.repeat(40)} -`, 'node')).toBe(false);
+    expect(runsRuntime(`nice${' -n10'.repeat(40)} -`, 'node')).toBe(false);
+    expect(runsRuntime(`sudo${' -uuu'.repeat(40)} -`, 'node')).toBe(false);
     expect(performance.now() - started).toBeLessThan(1000);
   });
 
