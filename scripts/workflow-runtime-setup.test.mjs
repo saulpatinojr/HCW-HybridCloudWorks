@@ -211,9 +211,6 @@ const PIPX = new RegExp(`(?<before>${START})${PATH}pipx(?=\\s|$)(?<words>[^;&|)]
 // An assignment word (`NAME=value`, the value plain, quoted or both) that starts a word, as ASSIGNMENT reads one: so in
 // `FOO=PIPX_DEFAULT_PYTHON=/p` the name is FOO, and the rest is FOO's value.
 const ASSIGNMENT_WORD = /(?:^|(?<=[\s;&|({`]))([A-Za-z_][A-Za-z0-9_]*)=((?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'])*)(?=\s|$)/g;
-// A non-empty quoted value for PIPX_DEFAULT_PYTHON in the raw `run:` text: the shell reading empties quoted text, so
-// `PIPX_DEFAULT_PYTHON="$P"` and `PIPX_DEFAULT_PYTHON=""` look alike after it, and only the raw text tells them apart.
-const PIPX_DEFAULT_QUOTED = /(?:^|(?<=[\s;&|({`]))PIPX_DEFAULT_PYTHON=(?:"(?:[^"\\]|\\.)+"|'[^']+')/;
 // pipx's options that take a value as the next word, so that word is not read as an option or as the app's name.
 const PIPX_VALUE_OPTIONS = new Set(['--spec', '--python', '--index-url', '--pip-args', '--suffix', '--preinstall', '--backend', '--fetch-python']);
 // Where `((` opens an arithmetic command rather than two subshells: at the start of a command.
@@ -307,11 +304,11 @@ export function shellText(run) {
       // `$'…'` may hold `\'`, which does not end it.
       let j = i + 2;
       while (j < n && run[j] !== "'") j += run[j] === '\\' ? 2 : 1;
-      quoted(run.slice(i + 2, j).replace(/\\([\s\S])/g, (escape, c) => ANSI_C[c] ?? escape), "''");
+      quoted(run.slice(i + 2, j).replace(/\\([\s\S])/g, (escape, c) => ANSI_C[c] ?? escape), j > i + 2 ? "'_'" : "''");
       i = j + 1;
     } else if (char === "'") {
       const end = run.indexOf("'", i + 1) === -1 ? n : run.indexOf("'", i + 1);
-      quoted(run.slice(i + 1, end), "''");
+      quoted(run.slice(i + 1, end), end > i + 1 ? "'_'" : "''");
       i = end + 1;
     } else if (char === '"') {
       // A command substitution in the string (`$(…)`, or a backtick pair) may hold quotes of its own, and it runs on
@@ -338,7 +335,7 @@ export function shellText(run) {
       const raw = run.slice(i + 1, Math.min(j, n));
       const text = parts.join('');
       // Given to `-c`, the inner shell runs the script, an escaped backtick included.
-      quoted(raw.replace(/\\([\\"$`\n])/g, (escape, c) => (c === '\n' ? '' : c)), /[$<]\(|`/.test(text) ? `"${text}"` : '""');
+      quoted(raw.replace(/\\([\\"$`\n])/g, (escape, c) => (c === '\n' ? '' : c)), /[$<]\(|`/.test(text) ? `"${text}"` : text ? '"_"' : '""');
       i = j + 1;
     } else if (char === '#' && (i === 0 || ' \t\n;'.includes(run[i - 1]))) {
       const end = run.indexOf('\n', i);
@@ -566,19 +563,16 @@ export function pipxOptionChoosesPython(words) {
 
 /**
  * Whether the assignments in front of `pipx` set PIPX_DEFAULT_PYTHON to something: an empty value
- * (`PIPX_DEFAULT_PYTHON= pipx`, `PIPX_DEFAULT_PYTHON='' pipx`) leaves pipx on its own interpreter. A quoted value is
- * emptied by the shell reading, so it counts only when the raw text quotes something non-empty.
+ * (`PIPX_DEFAULT_PYTHON= pipx`, `PIPX_DEFAULT_PYTHON='' pipx`, `PIPX_DEFAULT_PYTHON=''"" pipx`) leaves pipx on its own
+ * interpreter. `shellText` writes an empty quoted string as `''` or `""` and any other as `'_'` or `"_"`, so a value
+ * made only of empty quotes is empty. The last assignment of the name wins, as in the shell.
  */
-function choosesDefaultPython(before, run) {
+function choosesDefaultPython(before) {
+  let chosen = false;
   for (const m of before.matchAll(ASSIGNMENT_WORD)) {
-    if (m[1] !== 'PIPX_DEFAULT_PYTHON') continue;
-    if (m[2] === '' || m[2] === "''" || m[2] === '""') {
-      if (m[2] && PIPX_DEFAULT_QUOTED.test(run)) return true;
-      continue;
-    }
-    return true;
+    if (m[1] === 'PIPX_DEFAULT_PYTHON') chosen = m[2].replace(/''|""/g, '') !== '';
   }
-  return false;
+  return chosen;
 }
 
 /**
@@ -588,12 +582,11 @@ function choosesDefaultPython(before, run) {
  */
 export function pipxWithoutPython(run, env = {}) {
   if (String(env?.PIPX_DEFAULT_PYTHON ?? '').trim()) return false;
-  const raw = String(run ?? '');
-  return shellText(raw)
+  return shellText(String(run ?? ''))
     .split('\n')
     .some((line) =>
       [...line.trim().matchAll(PIPX)].some(
-        (found) => !(choosesDefaultPython(found.groups.before, raw) || pipxOptionChoosesPython(found.groups.words))
+        (found) => !(choosesDefaultPython(found.groups.before) || pipxOptionChoosesPython(found.groups.words))
       )
     );
 }
@@ -885,6 +878,15 @@ describe('pipx chooses its Python', () => {
       ['PIPX_DEFAULT_PYTHON="$P" pipx run x', {}, false],
       ["PIPX_DEFAULT_PYTHON='/opt/py/bin/python3' pipx run x", {}, false],
       ['env PIPX_DEFAULT_PYTHON= pipx run x', {}, true],
+      // Empty quotes run together are still empty, a quoted value elsewhere in the script does not vouch for this
+      // command's, and the last assignment of the name wins (Copilot on HCW-HybridCloudWorks#1718).
+      ['PIPX_DEFAULT_PYTHON=\'\'"" pipx run x', {}, true],
+      ['PIPX_DEFAULT_PYTHON=""\'\' pipx run x', {}, true],
+      ["PIPX_DEFAULT_PYTHON='' pipx run x; PIPX_DEFAULT_PYTHON=\"$P\" echo", {}, true],
+      ["PIPX_DEFAULT_PYTHON='' pipx a; PIPX_DEFAULT_PYTHON='/p' pipx b", {}, true],
+      ["PIPX_DEFAULT_PYTHON='/p' PIPX_DEFAULT_PYTHON= pipx run x", {}, true],
+      ["PIPX_DEFAULT_PYTHON= PIPX_DEFAULT_PYTHON='/p' pipx run x", {}, false],
+      ['PIPX_DEFAULT_PYTHON=""/p pipx run x', {}, false],
       ['pipx run --python "$P" --spec x x', {}, false],
       ['pipx run --python=/opt/py/bin/python3 x', {}, false],
       ['PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
