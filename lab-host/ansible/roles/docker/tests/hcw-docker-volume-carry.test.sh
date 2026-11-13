@@ -8,7 +8,7 @@
 #
 # Run as root, because the helper chowns. CI runs it in the
 # `lab-host role tests` job with sudo; on a workstation, bash, with Docker:
-#   docker run --rm -v "$PWD/lab-host/ansible/roles/docker:/r:ro" python:3.14-slim bash /r/tests/hcw-docker-volume-carry.test.sh
+#   docker run --rm -v "$PWD/lab-host/ansible/roles/docker:/r:ro" python:3.15-slim bash /r/tests/hcw-docker-volume-carry.test.sh
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
