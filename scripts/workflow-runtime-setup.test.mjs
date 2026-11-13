@@ -32,8 +32,8 @@
  * What pipx is given must also be the set-up Python. The runner's own Python
  * named by its path (`--python /usr/bin/python3`, `/usr/bin/python3.12`,
  * `/bin/python3` or the Azure CLI's `/opt/az/bin/python3`, the same as
- * `PIPX_DEFAULT_PYTHON`) chooses nothing, nor does a command substitution this
- * check cannot run (`"$(command -v python3)"`) or a `$` the shell passes on as
+ * `PIPX_DEFAULT_PYTHON`) chooses nothing, nor does a command or process
+ * substitution this check cannot run (`"$(command -v python3)"`, `<(…)`) or a `$` the shell passes on as
  * text (`'$P'`, `\$P`). A `${{ steps.<id>.outputs.python-path }}` value (only
  * that output: `cache-hit` and `python-version` are not a path), given
  * directly or through a variable of
@@ -140,7 +140,10 @@
  * set-up steps must ask for the floor or newer (`floorProblems`; the
  * website's workflows are held to the floors by scripts/version-floors.test.mjs
  * instead), and one whose version cannot be read (`${{ inputs.* }}`) is
- * reported unless BELOW_FLOOR_ALLOWED lists it.
+ * reported unless BELOW_FLOOR_ALLOWED lists it. A version file is read only
+ * when it is a `.python-version`, `.nvmrc` or `.node-version` file at a
+ * relative path inside the checkout with no `..` and no symbolic link on the
+ * way, and a composite action must have `runs: steps:`.
  *
  * A set-up step with its own `if:` covers a later step only when that step's
  * condition makes the set-up's true: the same condition, one of the terms
@@ -179,7 +182,7 @@
  * followed: `always() && !cancelled()` runs after success and failure, not
  * after a cancel.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -254,7 +257,7 @@ const BELOW_FLOOR_ALLOWED = {};
 // read from the `$(`, not as an assignment whose value runs into the
 // substitution, and no `;`, `&`, `|`, `<` or `>`, which end it (`P=/x; pipx
 // …` is two commands).
-const ASSIGNMENT = String.raw`[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\.)*"|'[^']*'|\$\(\([^()\x60]*\)\)|\$\([^()\x60]*\)|\x60[^\x60]*\x60|[^\s"'()\x60;&|<>])*\s+`;
+const ASSIGNMENT = String.raw`[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\.)*"|'[^']*'|\$\(\([^()\x60]*\)\)|[$<>]\([^()\x60]*\)|\x60[^\x60]*\x60|[^\s"'()\x60;&|<>])*\s+`;
 // Words that run the next word, each with the options it may take first:
 // the letters of the options that take an argument (`sudo -u nobody`,
 // `nice -n 10`), any other `-x`/`--long` flag, and the `--` that ends the
@@ -425,7 +428,7 @@ const SCRIPT_SET = Symbol('set by the script');
 // `$P` was read), `export`, `declare`, `local`, `readonly` or `typeset` with assignments, `for P in` or `select P in`,
 // and `read P` (`read -a P`); never an argument (`echo P=/x`), quoted text, a comment or a heredoc's body, which
 // `shellText` has already set apart. A name counts only for the commands after the one that sets it.
-const ASSIGNED_WORD = String.raw`([A-Za-z_][A-Za-z0-9_]*)\+?=(?:"(?:[^"\\]|\\.)*"|'[^']*'|\$\(\([^()\x60]*\)\)|\$\([^()\x60]*\)|\x60[^\x60]*\x60|[^\s"'()\x60;&|<>])*`;
+const ASSIGNED_WORD = String.raw`([A-Za-z_][A-Za-z0-9_]*)\+?=(?:"(?:[^"\\]|\\.)*"|'[^']*'|\$\(\([^()\x60]*\)\)|[$<>]\([^()\x60]*\)|\x60[^\x60]*\x60|[^\s"'()\x60;&|<>])*`;
 const ONE_ASSIGNMENT = new RegExp(String.raw`${ASSIGNED_WORD}\s*`, 'y');
 const NAMES_SET = new RegExp(
   String.raw`(?:^|[$<]\(|[\x60({|;&]|(?<![^\s])(?:then|do|else|elif|if|while|until|!))\s*` +
@@ -969,9 +972,35 @@ export function setsUp(step, kind, job = {}, workflowEnv = {}) {
 const isSetUp = (step, kind) =>
   kind === 'python' && SETUP_UV.test(String(step?.uses ?? '')) ? Object.hasOwn(step?.with ?? {}, 'python-version') : SETUP[kind].test(String(step?.uses ?? ''));
 
+// The version files this check reads: the names the `scripts (operations)` change filter matches wherever they are, so
+// a change to one runs this test (Copilot on HCW-HybridCloudWorks#1719). Any other name is not read, so its set-up step
+// is reported as asking for a version this check cannot work out, and needs an entry in BELOW_FLOOR_ALLOWED.
+const VERSION_FILE_NAMES = ['.python-version', '.nvmrc', '.node-version'];
+
 /**
- * The versions a set-up step asks for, read through `env`, `matrix` and a version file under `root`; null when
- * unreadable. The same rule as the Python copies' `requested_versions`.
+ * The version file a set-up step names, when this check may read it: a path relative to `root` with no `..` and no
+ * symbolic link on the way, to a regular file whose name is in VERSION_FILE_NAMES; null otherwise, so the step is
+ * reported (Copilot on HCW-HybridCloudWorks#1719: a composite action's `../../proc/self/environ` must not be read). The
+ * same rule as the Python copies' `_version_file`.
+ */
+function versionFile(root, given) {
+  const parts = given.replaceAll('\\', '/').split('/');
+  if (!given || given.startsWith('/') || parts.includes('..') || !VERSION_FILE_NAMES.includes(parts.at(-1))) return null;
+  let path = root;
+  for (const part of parts.filter((part) => part !== '' && part !== '.')) {
+    path = join(path, part);
+    try {
+      if (lstatSync(path).isSymbolicLink()) return null;
+    } catch {
+      return null;
+    }
+  }
+  return lstatSync(path).isFile() ? path : null;
+}
+
+/**
+ * The versions a set-up step asks for, read through `env`, `matrix` and a version file under `root` (see
+ * `versionFile`); null when unreadable. The same rule as the Python copies' `requested_versions`.
  */
 function requestedVersions(step, job, root, kind, workflowEnv) {
   const [direct, fromFile] = VERSION_INPUTS[kind];
@@ -979,8 +1008,9 @@ function requestedVersions(step, job, root, kind, workflowEnv) {
   if (Object.hasOwn(given, direct)) return resolved(given[direct], step, job, workflowEnv);
   if (!Object.hasOwn(given, fromFile)) return null;
   const paths = resolved(given[fromFile], step, job, workflowEnv) ?? [];
-  if (paths.length !== 1 || !existsSync(join(root, paths[0])) || !statSync(join(root, paths[0])).isFile()) return null;
-  const lines = readFileSync(join(root, paths[0]), 'utf8').split(/\r\n|\r|\n/).map((line) => line.trim());
+  const file = paths.length === 1 ? versionFile(root, paths[0]) : null;
+  if (file === null) return null;
+  const lines = readFileSync(file, 'utf8').split(/\r\n|\r|\n/).map((line) => line.trim());
   const versions = lines.filter((line) => line && !line.startsWith('#'));
   return versions.length ? versions : null;
 }
@@ -1086,9 +1116,10 @@ export function chooses(value, setupIds = new Set(), env = null) {
           return whole;
         })
   ).trim();
-  // A `$` passed on as text, or a command substitution this check cannot run (`"$(printf /usr/bin/python3)"`), is not a
-  // Python it can vouch for (Copilot on HCW-NetworkEyes_App#395).
-  const unreadable = text.includes(LITERAL_DOLLAR) || text.includes('$(') || text.includes('`');
+  // A `$` passed on as text, or a command or process substitution this check cannot run (`"$(printf
+  // /usr/bin/python3)"`, or `<(…)`, which the shell passes as `/dev/fd/N`), is not a Python it can vouch for (Copilot on
+  // HCW-NetworkEyes_App#395).
+  const unreadable = text.includes(LITERAL_DOLLAR) || ['$(', '<(', '>(', '`'].some((sign) => text.includes(sign));
   if (!text || unknown || unreadable || SYSTEM_PYTHON.test(text)) return false;
   const ids = [...text.matchAll(STEP_OUTPUT)].map((found) => found[1]);
   return ids.length === [...text.matchAll(STEPS)].length && ids.every((id) => setupIds.has(id));
@@ -1443,9 +1474,16 @@ export function pipxProblems(file, workflow) {
 
 /**
  * A composite action's steps (`runs: using: composite`, `runs: steps:`) as one job named `composite`, so they are read
- * the same way as a workflow's; {} for any other kind of action (`node24`, `docker`).
+ * the same way as a workflow's; {} for any other kind of action (`node24`, `docker`). A composite action without
+ * `runs: steps:` stops the check with an error.
  */
-export const actionJobs = (action) => (action?.runs?.using === 'composite' ? { composite: { steps: action.runs.steps } } : {});
+export function actionJobs(action) {
+  if (action?.runs?.using !== 'composite') return {};
+  // Without `runs: steps:` it would read as having no steps, so it stops the check instead (Copilot on
+  // HCW-HybridCloudWorks#1719).
+  if (action.runs.steps === undefined) throw new Error('a composite action has no runs: steps: list');
+  return { composite: { steps: action.runs.steps } };
+}
 
 /**
  * Everything this check reads under `root`, each with its label and parsed workflow: every workflow in
@@ -2551,6 +2589,103 @@ describe('round two, Copilot round two: names stay in the shell that set them an
       ['P=$(command -v python3); pipx run --python "$P" x', {}, [], true],
     ];
     for (const [run, env, ids, flagged] of cases) expect(pipxWithoutPython(run, env, new Set(ids)), `${run} / ${JSON.stringify(env)}`).toBe(flagged);
+  });
+});
+
+describe('round two, Copilot round three: process substitutions, version files, composite steps', () => {
+  // The same cases as HCW-NetworkEyes_App's tests/security/test_workflow_runtime_setup.py, in the same order.
+  it('reads a process substitution given as pipx\'s Python as choosing nothing', () => {
+    const cases = [
+      // A process substitution given as pipx's Python is `/dev/fd/N` to pipx, which this check cannot vouch for
+      // (Copilot on HCW-NetworkEyes_App#395).
+      ['pipx run --python <(printf /opt/py/bin/python3) x', {}, [], true],
+      ['PIPX_DEFAULT_PYTHON=<(printf /opt/py/bin/python3) pipx run x', {}, [], true],
+      ['P=<(printf /opt/py/bin/python3); pipx run --python "$P" x', {}, [], true],
+      ['pipx run --python >(cat) x', {}, [], true],
+    ];
+    for (const [run, env, ids, flagged] of cases) expect(pipxWithoutPython(run, env, new Set(ids)), run).toBe(flagged);
+    expect(runsRuntime('FOO=<(node v.js) true', 'node')).toBe(true);
+    expect(runsRuntime('FOO=<(x) node y', 'node')).toBe(true);
+  });
+
+  // Each job names a version file; only `.python-version`, `.nvmrc` or `.node-version` at a relative path inside the
+  // checkout, with no `..` and no symbolic link on the way, is read (Copilot on HCW-HybridCloudWorks#1719).
+  const VERSION_FILE_YAML = [
+    'on: push',
+    'jobs:',
+    '  plain:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version-file: .python-version }',
+    '  nested-old:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version-file: ./sub/.python-version }',
+    '  other-name:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-node@abc',
+    '        with: { node-version-file: ci/node-runtime.txt }',
+    '  escape:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version-file: ../../../../proc/self/.python-version }',
+    '  absolute:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version-file: /etc/.python-version }',
+    '  link:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-node@abc',
+    '        with: { node-version-file: .nvmrc }',
+    '  linked-folder:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version-file: linked/.python-version }',
+    '  missing:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-node@abc',
+    '        with: { node-version-file: .node-version }',
+    '',
+  ].join('\n');
+
+  it('reads a version file only inside the checkout and by its usual name', () => {
+    const base = mkdtempSync(join(tmpdir(), 'round2-version-files-'));
+    try {
+      const root = join(base, 'repo');
+      for (const dir of ['sub', 'ci', 'real']) mkdirSync(join(root, dir), { recursive: true });
+      writeFileSync(join(root, '.python-version'), '3.15\n');
+      writeFileSync(join(root, 'sub', '.python-version'), '3.14\n');
+      writeFileSync(join(root, 'ci', 'node-runtime.txt'), '26\n');
+      writeFileSync(join(root, 'real', '.nvmrc'), '26\n');
+      writeFileSync(join(root, 'real', '.python-version'), '3.15\n');
+      symlinkSync(join(root, 'real', '.nvmrc'), join(root, '.nvmrc'));
+      symlinkSync(join(root, 'real'), join(root, 'linked'), 'dir');
+      const label = 'x.yml';
+      expect(floorProblems(label, parse(VERSION_FILE_YAML).jobs, root)).toEqual([
+        `${label} > nested-old > step 1 > python: asks for 3.14, below the floor`,
+        `${label} > other-name > step 1 > node: cannot work out the version it asks for`,
+        `${label} > escape > step 1 > python: cannot work out the version it asks for`,
+        `${label} > absolute > step 1 > python: cannot work out the version it asks for`,
+        `${label} > link > step 1 > node: cannot work out the version it asks for`,
+        `${label} > linked-folder > step 1 > python: cannot work out the version it asks for`,
+        `${label} > missing > step 1 > node: cannot work out the version it asks for`,
+      ]);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('stops on a composite action without steps', () => {
+    // It would otherwise read as having no steps (Copilot on HCW-HybridCloudWorks#1719).
+    expect(() => actionJobs(parse('name: x\nruns:\n  using: composite\n'))).toThrow(/no runs: steps: list/);
   });
 });
 
