@@ -107,6 +107,28 @@ const WALKS_IMPORTS =
 
 const REVIEWED_READS = [
   {
+    file: 'scripts/workflow-runtime-setup.test.mjs',
+    expression: "readFileSync(file, 'utf8')",
+    reason:
+      'The composite-action version floor (floorProblems) reads the version file a set-up step names with ' +
+      'python-version-file or node-version-file, so its name is only known once the action is read. The website has no ' +
+      'composite action today, so nothing is read. The usual files (.python-version, .nvmrc, .node-version, anywhere) are ' +
+      'matched by the scripts filter by pattern, and so is .github/actions/, where the actions that name them live. ' +
+      'versionFile confines the path to the checkout: it reads only a file with one of those three names, at a relative ' +
+      'path with no .. and no symbolic link on the way, so no other file can be read.',
+  },
+  {
+    file: 'scripts/workflow-runtime-setup.test.mjs',
+    expression: 'lstatSync(path)',
+    reason:
+      'The composite-action version floor (floorProblems) reads the version file a set-up step names with ' +
+      'python-version-file or node-version-file, so its name is only known once the action is read. The website has no ' +
+      'composite action today, so nothing is read. The usual files (.python-version, .nvmrc, .node-version, anywhere) are ' +
+      'matched by the scripts filter by pattern, and so is .github/actions/, where the actions that name them live. ' +
+      'versionFile confines the path to the checkout: it reads only a file with one of those three names, at a relative ' +
+      'path with no .. and no symbolic link on the way, so no other file can be read.',
+  },
+  {
     file: 'scripts/lib/ci-filters.mjs',
     reason:
       'This is the guard itself. To find the tests it lists every package folder, so it depends on all of them. ' +
