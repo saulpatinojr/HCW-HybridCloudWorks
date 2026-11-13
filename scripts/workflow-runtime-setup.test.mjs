@@ -178,7 +178,7 @@ const WRAPPER_OPTIONS = { env: 'uCS', sudo: 'ugCDhprtU', xargs: 'InPLdaEs', exec
 const WRAPPER_LONG_OPTIONS = {
   env: ['unset', 'chdir', 'split-string'],
   sudo: ['user', 'group', 'close-from', 'chdir', 'host', 'prompt', 'role', 'type', 'other-user'],
-  xargs: ['max-args', 'max-procs', 'delimiter', 'arg-file', 'max-chars'],
+  xargs: ['max-args', 'max-procs', 'delimiter', 'arg-file', 'max-chars', 'process-slot-var'],
   time: ['output', 'format'],
   nice: ['adjustment'],
   stdbuf: ['input', 'output', 'error'],
@@ -503,9 +503,9 @@ const withoutStatus = (text) => {
 };
 
 // A name in a condition whose value is not fixed for the whole job: `env` (a step can write `$GITHUB_ENV`), `steps`,
-// `job`, `jobs`, `runner`, `strategy` and `hashFiles()`. Outside quoted strings and not after a `.`, so
+// `job`, `jobs` and `hashFiles()`. `runner` and `strategy` are fixed for the whole job, like `matrix`. Outside quoted strings and not after a `.`, so
 // `needs.build.outputs.env` and `'env.x'` are not one.
-const CHANGING = /(?<![\w.-])(?:env|steps|job|jobs|runner|strategy|hashfiles)(?![\w-])/i;
+const CHANGING = /(?<![\w.-])(?:env|steps|job|jobs|hashfiles)(?![\w-])/i;
 /**
  * True when a term reads only values fixed from the set-up step on, so equal text means an equal value: no name in
  * CHANGING, apart from `steps.<id>` of a step in `ran` (the ids of the steps before the set-up step, whose outputs,
@@ -697,6 +697,8 @@ describe('runsRuntime and unsetSteps', () => {
       ['env --chdir=/tmp python3 x.py', 'python'],
       ['nice --adjustment 5 node x', 'node'],
       ['xargs --max-args 1 node', 'node'],
+      ['xargs --process-slot-var SLOT node x', 'node'],
+      ['xargs --process-slot-var=SLOT node x', 'node'],
       ['stdbuf --output L node x', 'node'],
       ['time --output t.txt python3 x.py', 'python'],
     ]) {
@@ -935,6 +937,9 @@ describe('runsRuntime and unsetSteps', () => {
       // A term that reads something a step can change is never matched by its text (Copilot on
       // HCW-MigrateOrchestrator_AddOn#74): an earlier step can write `RUN=true` to `$GITHUB_ENV` after the set-up was
       // skipped.
+      ["runner.os == 'Linux'", "runner.os == 'Linux'", true],
+      ["strategy.job-index == 0", "strategy.job-index == 0", true],
+      ["job.status == 'success'", "job.status == 'success'", false],
       ["env.RUN == 'true'", "env.RUN == 'true'", false],
       ["steps.changes.outputs.py == 'true'", "steps.changes.outputs.py == 'true'", false],
       ["github.event_name == 'push' && env.RUN", "github.event_name == 'push' && env.RUN", false],
