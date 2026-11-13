@@ -45,8 +45,12 @@
  * (`steps['py'].outputs`), which names no id this check can read. A shell
  * variable the step's, job's or workflow's `env:` does not set chooses nothing
  * too, unless the script sets it itself before the command (`P=…;`, `for P
- * in`, `read P`, but not `echo P=…` or `P=/x pipx …`) or it is
- * `$pythonLocation` (setup-python sets it). A bare `python3.15` and a path under
+ * in`, `read P`, but not `echo P=…` or `P=/x pipx …`) in the same shell or
+ * it is `$pythonLocation` (setup-python sets it). A name set in a `-c` script,
+ * a shell fed a heredoc, a `$(…)` or a `( … )` subshell stays there, and one
+ * set outside reaches a child shell only when exported. A later assignment in
+ * the script wins over the `env:` value, and its value is read by the same
+ * rules (`P=/usr/bin/python3` chooses nothing). A bare `python3.15` and a path under
  * `${{ env.pythonLocation }}` still count. Settings travel the way the shell
  * passes them: `PIPX_DEFAULT_PYTHON=/p bash -c 'pipx run x'` and `env
  * PIPX_DEFAULT_PYTHON=/p env -S 'pipx run x'` give the inner script the
@@ -425,7 +429,7 @@ const ASSIGNED_WORD = String.raw`([A-Za-z_][A-Za-z0-9_]*)\+?=(?:"(?:[^"\\]|\\.)*
 const ONE_ASSIGNMENT = new RegExp(String.raw`${ASSIGNED_WORD}\s*`, 'y');
 const NAMES_SET = new RegExp(
   String.raw`(?:^|[$<]\(|[\x60({|;&]|(?<![^\s])(?:then|do|else|elif|if|while|until|!))\s*` +
-    String.raw`(?:(?:export|declare|local|readonly|typeset)(?![A-Za-z0-9_=])(?:\s+[-+][A-Za-z]+)*` +
+    String.raw`(?:(?<keyword>export|declare|local|readonly|typeset)(?![A-Za-z0-9_=])(?<flags>(?:\s+[-+][A-Za-z]+)*)` +
     String.raw`(?<declared>(?:\s+[^\s;&|)]+)*)` +
     String.raw`|(?:for|select)\s+(?<loop>[A-Za-z_][A-Za-z0-9_]*)` +
     String.raw`|read(?![A-Za-z0-9_=])(?<read>(?:[ \t]+[^\s;&|)]+)*)` +
@@ -1090,37 +1094,132 @@ export function chooses(value, setupIds = new Set(), env = null) {
   return ids.length === [...text.matchAll(STEPS)].length && ids.every((id) => setupIds.has(id));
 }
 
-/** The names one NAMES_SET match sets (see NAMES_SET), read from a line of `shellText` with values. */
+/**
+ * A value a script assigns, as `chooses` reads it in place of the variable: the text with its quotes taken off. So
+ * `/usr/bin/python3` chooses nothing, nor does a substitution (`$(command -v python3)`), as when it is given to pipx
+ * directly; a variable in it (`P="$X"`) is not followed further and counts.
+ */
+const literal = (value) => value.replace(/['"]/g, '');
+
+/**
+ * What one NAMES_SET match sets, read from a line of `shellText` with values: each name with its value (see `literal`;
+ * SCRIPT_SET, a value this check does not know but counts, for `for`, `read` and `+=`), whether the command exports
+ * them (`export`, `declare -x`, `typeset -x`), and the names it only exports (`export P`).
+ */
 function namesSet(found) {
-  const names = new Set();
-  const { declared, loop, read, assigned } = found.groups;
-  if (loop) names.add(loop);
+  const { keyword = '', flags = '', declared, loop, read, assigned } = found.groups;
+  const exported = keyword === 'export' || (['declare', 'typeset'].includes(keyword) && /(?:^|\s)-[A-Za-z]*x/.test(flags ?? ''));
+  const pairs = [];
+  const marks = [];
+  if (loop) pairs.push([loop, SCRIPT_SET]);
   for (const word of (declared ?? '').split(/\s+/).filter(Boolean)) {
-    const named = word.match(/^([A-Za-z_][A-Za-z0-9_]*)\+?=/);
-    if (named) names.add(named[1]);
+    const named = word.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?)=([\s\S]*)$/);
+    if (named) pairs.push([named[1], named[2] ? SCRIPT_SET : literal(named[3])]);
+    else if (exported && /^[A-Za-z_][A-Za-z0-9_]*$/.test(word)) marks.push(word);
   }
   for (let at = 0, one; ; at = ONE_ASSIGNMENT.lastIndex) {
     ONE_ASSIGNMENT.lastIndex = at;
     one = ONE_ASSIGNMENT.exec(assigned ?? '');
     if (!one || ONE_ASSIGNMENT.lastIndex <= at) break;
-    names.add(one[1]);
+    const value = one[0].trimEnd().slice(one[1].length);
+    pairs.push([one[1], value.startsWith('+') ? SCRIPT_SET : literal(value.slice(1))]);
   }
   let pending = '';
   for (const word of (read ?? '').split(/\s+/).filter(Boolean)) {
     if (pending) {
-      if (pending === 'a') names.add(word);
+      if (pending === 'a') pairs.push([word, SCRIPT_SET]);
       pending = '';
     } else if (word.startsWith('-') && word.length > 1) {
       for (let k = 1; k < word.length; k++) {
         if (READ_VALUE_OPTIONS.includes(word[k])) {
-          if (word.slice(k + 1) && word[k] === 'a') names.add(word.slice(k + 1));
+          if (word.slice(k + 1) && word[k] === 'a') pairs.push([word.slice(k + 1), SCRIPT_SET]);
           pending = word.slice(k + 1) ? '' : word[k];
           break;
         }
       }
-    } else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(word)) names.add(word);
+    } else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(word)) pairs.push([word, SCRIPT_SET]);
   }
-  return names;
+  return [pairs, exported, marks];
+}
+
+/**
+ * For each character of a `shellText` reading with values, the shells and subshells it runs in, innermost last, and
+ * what each one is: "child" for a shell the script starts with its own script (a `-c` or `env -S` script, a heredoc
+ * or here-string given to a shell: the lines between `\x01` and `\x02`), which sees only exported variables, and
+ * "sub" (or "tick") for a `$(…)`, `<(…)`, backtick pair or `( … )` subshell, which sees all of them. Neither hands the
+ * names it sets back out. `$((…))` and `((…))` are arithmetic, not a subshell; a `)` with nothing open (a `case`
+ * pattern) closes nothing. The same rule as the Python copies' `_scope_paths`.
+ */
+function scopePaths(text) {
+  const paths = [];
+  const kinds = new Map();
+  const stack = []; // [id or null, kind, open parentheses]
+  let current = [];
+  const settle = () => {
+    current = stack.filter((frame) => frame[0] !== null).map((frame) => frame[0]);
+  };
+  const push = (kind, depth = 0) => {
+    let ident = null;
+    if (kind !== 'arith') {
+      ident = kinds.size;
+      kinds.set(ident, kind);
+    }
+    stack.push([ident, kind, depth]);
+    settle();
+  };
+  const n = text.length;
+  for (let k = 0; k < n; ) {
+    const char = text[k];
+    const top = stack.at(-1);
+    let step = 1;
+    if (char === '\\') step = 2;
+    else if (char === '\x01') push('child');
+    else if (char === '\x02') {
+      while (stack.length && stack.pop()[1] !== 'child');
+      settle();
+    } else if (text.startsWith('$((', k) || (text.startsWith('((', k) && !(top && top[1] === 'arith'))) {
+      step = char === '$' ? 3 : 2;
+      push('arith', 2);
+    } else if ('$<>'.includes(char) && text.startsWith('(', k + 1)) {
+      step = 2;
+      push('sub');
+    } else if (char === '(') {
+      if (top && top[1] === 'arith') top[2] += 1;
+      else push('sub');
+    } else if (char === ')') {
+      if (top && top[1] === 'arith') {
+        top[2] -= 1;
+        if (top[2] === 0) stack.pop();
+      } else if (top && top[1] === 'sub') {
+        stack.pop();
+        settle();
+      }
+    } else if (char === '`') {
+      if (top && top[1] === 'tick') {
+        stack.pop();
+        settle();
+      } else push('tick');
+    }
+    for (let i = 0; i < Math.min(step, n - k); i++) paths.push(current);
+    k += step;
+  }
+  return [paths, kinds];
+}
+
+/**
+ * The variables a command at `here` sees: the step's, job's and workflow's `env:` (which GitHub exports), then every
+ * earlier assignment of the script in this shell or one around it, in order, the last one winning over `env:` too
+ * (Copilot on HCW-NetworkEyes_App#395); one made outside a child shell reaches into it only when exported (an `env:`
+ * name stays exported when the script assigns it). An assignment inside a subshell or child shell that has ended is not
+ * seen (Copilot on HCW-HybridCloudWorks#1719).
+ */
+function namesView(env, records, here, kinds) {
+  const view = { ...env };
+  for (const [name, value, at, exported] of records) {
+    if (at.some((id, i) => here[i] !== id) || here.length < at.length) continue;
+    if (exported || Object.hasOwn(env, name) || here.slice(at.length).every((id) => kinds.get(id) !== 'child')) view[name] = value;
+  }
+  return view;
 }
 
 /**
@@ -1264,29 +1363,47 @@ function localDefaultPython(before, setupIds = new Set(), env = null) {
 export function pipxWithoutPython(run, env = {}, setupIds = new Set()) {
   const stack = [chooses(ghaTokens(String(env?.PIPX_DEFAULT_PYTHON ?? '')), setupIds)];
   env = { ...(env ?? {}) };
-  for (const raw of shellText(ghaTokens(String(run ?? '')), true).split('\n')) {
+  const text = shellText(ghaTokens(String(run ?? '')), true);
+  const scopes = []; // `scopePaths(text)`, worked out the first time a script sets a name
+  const records = [];
+  // The variables a command at `index` of `text` sees (see `namesView`).
+  const viewAt = (index) => {
+    if (!records.length) return { ...env };
+    if (!scopes.length) scopes.push(...scopePaths(text));
+    return namesView(env, records, index >= 0 ? scopes[0][index] : [], scopes[1]);
+  };
+  let offset = 0;
+  for (const raw of text.split('\n')) {
     const line = raw.trim();
+    const lead = offset + raw.length - raw.trimStart().length;
+    offset += raw.length + 1;
     if (line.startsWith('\x01')) {
       // A `-c` script (or `env -S` value) starts: it inherits what the words in front of its shell make.
-      stack.push(localDefaultPython(line.slice(1), setupIds, env) ?? stack.at(-1));
+      stack.push(localDefaultPython(line.slice(1), setupIds, viewAt(lead - 1)) ?? stack.at(-1));
       continue;
     }
     if (line.startsWith('\x02')) {
       if (stack.length > 1) stack.pop();
       continue;
     }
-    // In the order the shell meets them: a name the script sets counts from the end of the command that sets it on
-    // (Copilot on HCW-HybridCloudWorks#1719); the step's `env:` stays first.
+    // In the order the shell meets them: a name the script sets counts from the end of the command that sets it on, in
+    // the shell that set it (see `namesView`); the step's `env:` comes first.
     const events = [
       ...[...line.matchAll(NAMES_SET)].map((found) => [found.index + found[0].length, 0, found]),
-      ...pipxCommands(line).map((found) => [found.index, 1, found]),
+      ...pipxCommands(line).map((found) => [found.index + found.groups.before.length, 1, found]),
     ].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    for (const [, kind, found] of events) {
+    for (const [at, kind, found] of events) {
       if (kind === 0) {
-        for (const name of namesSet(found)) if (!Object.hasOwn(env, name)) env[name] = SCRIPT_SET;
+        const [pairs, exported, marks] = namesSet(found);
+        if (!scopes.length && (pairs.length || marks.length)) scopes.push(...scopePaths(text));
+        const here = scopes.length ? scopes[0][lead + at - 1] : [];
+        for (const [name, value] of pairs) records.push([name, value, here, exported]);
+        const view = viewAt(lead + at - 1);
+        for (const name of marks) if (Object.hasOwn(view, name)) records.push([name, view[name], here, true]);
         continue;
       }
-      if (!(pipxOptionChoosesPython(found.groups.words, setupIds, env) || (localDefaultPython(found.groups.before, setupIds, env) ?? stack.at(-1)))) return true;
+      const view = viewAt(lead + at);
+      if (!(pipxOptionChoosesPython(found.groups.words, setupIds, view) || (localDefaultPython(found.groups.before, setupIds, view) ?? stack.at(-1)))) return true;
     }
   }
   return false;
@@ -2398,6 +2515,42 @@ describe('round two, Copilot round one: outputs, quoting, substitutions, option 
       `${label} > composite > step 2 > node: cannot work out the version it asks for`,
       `${label} > composite > step 3 > python: cannot work out the version it asks for`,
     ]);
+  });
+});
+
+describe('round two, Copilot round two: names stay in the shell that set them and win over env', () => {
+  // The same cases as HCW-NetworkEyes_App's tests/security/test_workflow_runtime_setup.py, in the same order.
+  it('reads a name the script sets only in its own shell, after it, and over env', () => {
+    const cases = [
+      // A name the script sets stays in the shell that set it: a `-c` script, a shell fed a heredoc, a `$(...)`,
+      // a backtick pair or a `( ... )` subshell hands nothing back; a child shell sees only exported names, a
+      // subshell sees them all (Copilot on HCW-HybridCloudWorks#1719).
+      ['bash -c \'P=/opt/py/bin/python3\' ; pipx run --python "$P" x', {}, [], true],
+      ['x=$(P=/opt/py/bin/python3; echo) ; pipx run --python "$P" x', {}, [], true],
+      ['(P=/opt/py/bin/python3); pipx run --python "$P" x', {}, [], true],
+      ['P=/opt/py/bin/python3; bash -c \'pipx run --python "$P" x\'', {}, [], true],
+      ['export P=/opt/py/bin/python3; bash -c \'pipx run --python "$P" x\'', {}, [], false],
+      ['P=/opt/py/bin/python3; x=$(pipx run --python "$P" x)', {}, [], false],
+      ['P=/opt/py/bin/python3; (pipx run --python "$P" x)', {}, [], false],
+      ['bash -c \'pipx run --python "$P" x\'', { P: '/opt/py/bin/python3' }, [], false],
+      ['bash -c \'P=/opt/py/bin/python3; pipx run --python "$P" x\'', {}, [], false],
+      ['bash <<\'EOF\'\nP=/opt/py/bin/python3\nEOF\npipx run --python "$P" x', {}, [], true],
+      ['P=/opt/py/bin/python3\nbash <<\'EOF\'\npipx run --python "$P" x\nEOF', {}, [], true],
+      ['declare -x P=/opt/py/bin/python3\nbash <<\'EOF\'\npipx run --python "$P" x\nEOF', {}, [], false],
+      ['echo "$(P=/opt/py/bin/python3; echo)"; pipx run --python "$P" x', {}, [], true],
+      ['x=`P=/opt/py/bin/python3; echo`; pipx run --python "$P" x', {}, [], true],
+      ['{ P=/opt/py/bin/python3; }; pipx run --python "$P" x', {}, [], false],
+      // A later assignment in the script wins over the step's, job's or workflow's `env:`, and its value is read
+      // the same way (Copilot on HCW-NetworkEyes_App#395).
+      ['P=/usr/bin/python3; pipx run --python "$P" x', { P: '/opt/py/bin/python3' }, [], true],
+      ['bash -c \'P=/usr/bin/python3\'; pipx run --python "$P" x', { P: '/opt/py/bin/python3' }, [], false],
+      ['pipx run --python "$P" x; P=/usr/bin/python3', { P: '/opt/py/bin/python3' }, [], false],
+      ['P=/usr/bin/python3\nbash -c \'pipx run --python "$P" x\'', { P: '/opt/py/bin/python3' }, [], true],
+      ['P=\nPIPX_DEFAULT_PYTHON="$P" pipx run x', { P: '/opt/py/bin/python3' }, [], true],
+      ['P=/opt/py/bin/python3; pipx run --python "$P" x', { P: '/usr/bin/python3' }, [], false],
+      ['P=$(command -v python3); pipx run --python "$P" x', {}, [], true],
+    ];
+    for (const [run, env, ids, flagged] of cases) expect(pipxWithoutPython(run, env, new Set(ids)), `${run} / ${JSON.stringify(env)}`).toBe(flagged);
   });
 });
 
