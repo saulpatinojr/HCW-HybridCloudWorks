@@ -590,7 +590,10 @@ where it runs was. Two alternatives were shown and not taken:
 **18.7** since 2026-11-13 ([#1714](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1714)), a minor release within 18, so the same
 cluster and no dump or restore. Its release notes asked for indexes to be
 rebuilt; "A minor release" below says how that is checked each time.
-The rest of this section is the move to 18 and still holds.
+
+**History: the move to 18, on 2026-09-26.** The rest of this section records
+that move. The version numbers in it (18.6) are the ones of that day; the
+facts about the 18 image, the data directory and the pin's floor still hold.
 
 PostgreSQL moved from 16.15 to **18.6**, the newest release of the newest
 major, on 2026-09-26, while the host held no Coder data, so there was

@@ -96,6 +96,9 @@ describe('the pin sets', () => {
     expect(reminder).toBeDefined();
     expect(reminder).toContain(`"${heading}"`);
     expect(reminder).toContain('https://www.postgresql.org/docs/release/');
+    // The list reaches the reader only through the generated body.
+    const body = prBody({ set: 'host', evidence: 'x', notes: '', runUrl: 'u' });
+    expect(body).toContain(reminder);
     const runbook = readFileSync(join(REPO, 'docs', 'runbooks', 'labs-host.md'), 'utf8');
     expect(runbook.split('\n')).toContain(`## ${heading}`);
   });

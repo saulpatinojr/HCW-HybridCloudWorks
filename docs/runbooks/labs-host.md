@@ -4439,8 +4439,8 @@ and a restore, not a pin bump; it is described in
 ([#1714](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1714)).
 The [18.7 notes](https://www.postgresql.org/docs/release/18.7/) (released
 2026-11-12) say several bugs could corrupt indexes, among them B-tree
-indexes (the ordinary kind) on `bpchar` columns (`char(n)`, fixed-length
-text padded with spaces), `gist_trgm_ops` indexes (used for fuzzy text
+indexes (the ordinary kind) on `bpchar` columns (`bpchar` is the type
+behind `char(n)` and `character`: text padded with spaces to its length), `gist_trgm_ops` indexes (used for fuzzy text
 search), and indexes on TOAST tables (where PostgreSQL stores large values)
 after `REINDEX CONCURRENTLY` (a rebuild that lets writes carry on). On 2026-11-13 the host reported `18.7 (Debian
 18.7-1.pgdg13+2)`, and `REINDEX DATABASE coder;` answered `REINDEX`.
