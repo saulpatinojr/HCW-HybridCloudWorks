@@ -46,12 +46,22 @@
  * variable the step's, job's or workflow's `env:` does not set chooses nothing
  * too, unless the script sets it itself before the command (`P=…;`, `for P
  * in`, `read P`, but not `echo P=…` or `P=/x pipx …`) in the same shell or
- * it is `$pythonLocation` (setup-python sets it). A name set in a `-c` script,
+ * it is `$pythonLocation` (setup-python sets it) once an actions/setup-python
+ * step, with or without an id, is sure to have run first. A name set in a `-c` script,
  * a shell fed a heredoc, a `$(…)` or a `( … )` subshell stays there, and one
  * set outside reaches a child shell only when exported. A later assignment in
  * the script wins over the `env:` value, and its value is read by the same
- * rules (`P=/usr/bin/python3` chooses nothing). A bare `python3.15` and a path under
- * `${{ env.pythonLocation }}` still count. Settings travel the way the shell
+ * rules (`P=/usr/bin/python3` chooses nothing). A bare `python3.15` still
+ * counts, and so does a path under `${{ env.pythonLocation }}`, by the same
+ * rule as `$pythonLocation`. Any other GitHub expression chooses nothing
+ * (`${{ github.workspace }}/.venv/bin/python`, `${{ inputs.python }}`,
+ * `${{ env.UNSET }}`), except `${{ env.X }}` and `${{ matrix.X }}`, which are
+ * read as GitHub replaces them, from the step's, job's or workflow's `env:` and
+ * from every entry of the job's matrix list, so they choose when the value they
+ * stand for does (Copilot on HCW-NetworkEyes_AddOn#109). A path is read as the
+ * shell resolves it before it is compared, so `/usr/bin/../bin/python3` and
+ * `/usr/./bin/python3` are the runner's own (Copilot on
+ * HCW-MigrateOrchestrator_AddOn#75). Settings travel the way the shell
  * passes them: `PIPX_DEFAULT_PYTHON=/p bash -c 'pipx run x'` and `env
  * PIPX_DEFAULT_PYTHON=/p env -S 'pipx run x'` give the inner script the
  * setting, and `sudo` drops every inherited setting (its default `env_reset`)
@@ -153,7 +163,10 @@
  * alone, so it is not split; Copilot on HCW-NetworkEyes_App#393), or, when the
  * set-up's condition has no top-level `||`, a condition with no top-level `||`
  * whose `&&` terms include every one of the set-up's (`a && b` covers `c && a
- * && b`; Copilot on HCW-MigrateOrchestrator_App#117). Otherwise
+ * && b`; Copilot on HCW-MigrateOrchestrator_App#117), an
+ * `&&` term of the set-up's that joins terms with `||` counting as included
+ * when one of those terms is (`(a || b) && c` covers `a && c`, not `d && c`;
+ * Copilot on HCW-MigrateOrchestrator_App#118). Otherwise
  * the set-up could be skipped while the command still runs (Copilot on
  * HCW-NetworkEyes_AddOn#100). A set-up step with no `if:` covers every later
  * step whose condition does not test the job's status. Equal text means equal
@@ -409,16 +422,25 @@ const LITERAL_DOLLAR = '\x03';
 // A shell variable in a value (`"$PYTHON_PATH"`, `${PYTHON_PATH}`), read from the step's, job's or workflow's `env:`.
 const VARIABLE = /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g;
 // A GitHub expression (`${{ steps.py.outputs.python-path }}`), which GitHub replaces before the shell starts. For the
-// pipx check it is written as one word, `__gha__` and the expression with every other character made `_`.
+// pipx check it is written as one word (see `ghaTokens`).
 const GHA_EXPRESSION = /\$\{\{([\s\S]*?)\}\}/g;
-// The id of each step whose outputs a value reads (`steps.py.outputs.python-path`).
-// The id of each step whose `python-path` output a value reads (`steps.py.outputs.python-path`, or
-// `steps.py.outputs['python-path']`, which `ghaTokens` writes `steps.py.outputs__python-path__`). One written another
-// way (`steps['py'].outputs`) or naming another output (`cache-hit`, or `python-version`, which is a version, not a
-// path) chooses nothing (`STEPS` is every mention of `steps` at all; Copilot on HCW-NetworkEyes_App#395).
-const STEP_OUTPUT = /(?<![A-Za-z0-9.-])steps\.([A-Za-z0-9_-]+)\.outputs(?:\.|__)python-path(?![A-Za-z0-9-])/gi;
-const STEPS = /(?<![A-Za-z0-9.-])steps(?![A-Za-z0-9-])/gi;
-// The variables a value may name without the step's `env:` setting them: actions/setup-python sets `pythonLocation`.
+// The two GitHub expressions a value given to pipx may hold and still choose its Python: setup-python's `python-path`
+// output (`steps.py.outputs.python-path`, or `steps.py.outputs['python-path']`) and `env.pythonLocation`. `ghaTokens`
+// writes each as one fixed word (STEP_OUTPUT, PYTHON_LOCATION) and any other expression as OTHER_EXPRESSION, which
+// chooses nothing: one written another way (`steps['py'].outputs`), naming another output (`cache-hit`, or
+// `python-version`, which is a version, not a path; Copilot on HCW-NetworkEyes_App#395) or any other context
+// (`github.workspace`, `inputs.python`; Copilot on HCW-NetworkEyes_AddOn#109). A plain mention of `steps` outside an
+// expression chooses nothing either.
+const PYTHON_PATH_EXPRESSION = /^steps\.([A-Za-z0-9_-]+)\.outputs(?:\.python-path|\[\s*(['"])python-path\2\s*\])$/i;
+const STEP_OUTPUT = /__gha__steps\.([A-Za-z0-9_-]+)\.outputs\.python-path__/g;
+const PYTHON_LOCATION = '__gha__env.pythonLocation__';
+const OTHER_EXPRESSION = '__gha__other__';
+const STEPS = /(?<![A-Za-z0-9.-])steps(?![A-Za-z0-9-])/i;
+// A GitHub expression that reads the step's, job's or workflow's `env:` or the job's matrix (`${{ env.PY }}`,
+// `${{ matrix.python }}`), which GitHub replaces with that value before the shell starts (see `expansions`).
+const ENV_OR_MATRIX = /\$\{\{\s*(env|matrix)\.([A-Za-z0-9_-]+)\s*\}\}/g;
+// The variables a value may name without the step's `env:` setting them: actions/setup-python sets `pythonLocation`,
+// so it counts only after an actions/setup-python step that is sure to have run (Copilot on HCW-NetworkEyes_AddOn#109).
 const SET_UP_VARIABLES = new Set(['pythonLocation']);
 // Stands for a value the script sets itself, in the names `chooses` reads.
 const SCRIPT_SET = Symbol('set by the script');
@@ -901,14 +923,25 @@ export const setupCovers = (setup, step, ran = new Set()) => {
       const stepTerms = [wanted, ...andTerms].map(unwrap);
       // A set-up condition with no top-level `||` holds whenever every one of its `&&` terms does, so a later step whose
       // `&&` terms include all of them is covered too (`a && b` covers `c && a && b`; Copilot on
-      // HCW-MigrateOrchestrator_App#117).
+      // HCW-MigrateOrchestrator_App#117), a term that joins terms with `||` being included when one of those is
+      // (`(a || b) && c` covers `a && c`; Copilot on HCW-MigrateOrchestrator_App#118).
       const wantedTerms = conjuncts(wanted);
-      const every = orTerms(rest).length === 1 && orTerms(wanted).length === 1 && conjuncts(rest).every((term) => wantedTerms.includes(term) && fixedTerm(term, ran));
+      const every = orTerms(rest).length === 1 && orTerms(wanted).length === 1 && conjuncts(rest).every((term) => termHolds(term, wantedTerms, ran));
       if (!(rest === '' || every || stepTerms.some((term) => setupTerms.has(term) && fixedTerm(term, ran)))) return false;
     }
   }
   return true;
 };
+
+/**
+ * True when the set-up condition's `&&` term `term` surely holds whenever every one of `terms` (the later condition's
+ * `&&` terms) does: it is one of them, or it joins terms with a top-level `||` and one of those is (`a || b` holds when
+ * `a` does; Copilot on HCW-MigrateOrchestrator_App#118). The term matched must read only values fixed from the set-up
+ * step on (`fixedTerm`). The same rule as the Python copies' `_term_holds`.
+ */
+function termHolds(term, terms, ran = new Set()) {
+  return [term, ...orTerms(term)].some((option) => terms.includes(option) && fixedTerm(option, ran));
+}
 
 /**
  * The terms a condition with no top-level `||` joins with `&&`, a term in parentheses that itself joins terms with `&&`
@@ -1087,8 +1120,35 @@ export function unsetSteps(file, jobs, indirect = INDIRECT_RUNTIME, workflowEnv 
   return found;
 }
 
-/** The text with each GitHub expression written as one word (see GHA_EXPRESSION). */
-export const ghaTokens = (text) => text.replace(GHA_EXPRESSION, (whole, inner) => `__gha__${inner.trim().replace(/[^A-Za-z0-9_.-]/gu, '_')}__`);
+/**
+ * The text with each GitHub expression written as one word: setup-python's `python-path` output as
+ * `__gha__steps.<id>.outputs.python-path__`, `env.pythonLocation` as PYTHON_LOCATION, and any other expression as
+ * OTHER_EXPRESSION (see STEP_OUTPUT). The same rule as the Python copies' `_gha_tokens`.
+ */
+export const ghaTokens = (text) =>
+  text.replace(GHA_EXPRESSION, (whole, inner) => {
+    const expression = inner.trim();
+    const output = expression.match(PYTHON_PATH_EXPRESSION);
+    if (output) return `__gha__steps.${output[1]}.outputs.python-path__`;
+    return expression === 'env.pythonLocation' ? PYTHON_LOCATION : OTHER_EXPRESSION;
+  });
+
+/**
+ * A path as the shell resolves it, for comparing with SYSTEM_PYTHON: `.` and empty parts dropped and `..` taking the
+ * part before it away, as Python's `posixpath.normpath` does, and any run of leading `/` written as one
+ * (`/usr/bin/../bin/python3` and `//usr/bin/python3` are `/usr/bin/python3`; Copilot on
+ * HCW-MigrateOrchestrator_AddOn#75).
+ */
+function resolvedPath(text) {
+  const absolute = text.startsWith('/');
+  const parts = [];
+  for (const part of text.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part !== '..' || (!absolute && !parts.length) || (parts.length && parts.at(-1) === '..')) parts.push(part);
+    else if (parts.length) parts.pop();
+  }
+  return (absolute ? '/' : '') + parts.join('/') || '.';
+}
 
 /**
  * True when a value given to pipx as its Python (`--python`, PIPX_DEFAULT_PYTHON) chooses the set-up one: it is not
@@ -1105,6 +1165,7 @@ export const ghaTokens = (text) => text.replace(GHA_EXPRESSION, (whole, inner) =
  */
 export function chooses(value, setupIds = new Set(), env = null) {
   let unknown = false;
+  let located = false;
   const quoteless = value.replace(/['"]/g, '');
   const text = (
     env === null
@@ -1113,6 +1174,7 @@ export function chooses(value, setupIds = new Set(), env = null) {
           const name = braced ?? plain;
           if (Object.hasOwn(env, name)) return env[name] === SCRIPT_SET ? whole : ghaTokens(String(env[name] ?? ''));
           unknown = unknown || !SET_UP_VARIABLES.has(name);
+          located = true;
           return whole;
         })
   ).trim();
@@ -1120,9 +1182,15 @@ export function chooses(value, setupIds = new Set(), env = null) {
   // /usr/bin/python3)"`, or `<(…)`, which the shell passes as `/dev/fd/N`), is not a Python it can vouch for (Copilot on
   // HCW-NetworkEyes_App#395).
   const unreadable = text.includes(LITERAL_DOLLAR) || ['$(', '<(', '>(', '`'].some((sign) => text.includes(sign));
-  if (!text || unknown || unreadable || SYSTEM_PYTHON.test(text)) return false;
+  // A path is compared as the shell resolves it (see `resolvedPath`).
+  if (!text || unknown || unreadable || SYSTEM_PYTHON.test(resolvedPath(text))) return false;
   const ids = [...text.matchAll(STEP_OUTPUT)].map((found) => found[1]);
-  return ids.length === [...text.matchAll(STEPS)].length && ids.every((id) => setupIds.has(id));
+  let rest = text.replace(STEP_OUTPUT, '');
+  located = located || rest.includes(PYTHON_LOCATION);
+  rest = rest.replaceAll(PYTHON_LOCATION, '');
+  // Any other expression, or a mention of `steps` outside one, chooses nothing; `$pythonLocation` and
+  // `${{ env.pythonLocation }}` count only after an actions/setup-python step that is sure to have run.
+  return !rest.includes('__gha__') && !STEPS.test(rest) && ids.every((id) => setupIds.has(id)) && (!located || setupIds.size > 0);
 }
 
 /**
@@ -1389,9 +1457,47 @@ function localDefaultPython(before, setupIds = new Set(), env = null) {
  * (https://github.com/actions/setup-python/blob/main/docs/advanced-usage.md#python-path), as is giving it through a
  * variable of the step's `env:` (`--python "$PYTHON_PATH"`), which is read the same way; a variable that neither the
  * `env:` nor the script sets chooses nothing. An inherited value is used as written, since GitHub does not expand a
- * variable in `env:`.
+ * shell variable in `env:`. `${{ env.X }}` and `${{ matrix.X }}` are read as GitHub replaces them, the script reported
+ * when any entry of the job's `matrix` it names leaves pipx without a Python (see `expansions`).
  */
-export function pipxWithoutPython(run, env = {}, setupIds = new Set()) {
+export function pipxWithoutPython(run, env = {}, setupIds = new Set(), matrix = null) {
+  return expansions(String(run ?? ''), env ?? {}, matrix).some(([text, values]) => pipxWithoutPythonOnce(text, values, setupIds));
+}
+
+/**
+ * The run script and `env` as GitHub hands them to the shell, once for each combination of the matrix entries the text
+ * names: each `${{ env.X }}` replaced by X's value in `env` and each `${{ matrix.X }}` by one entry of the job's matrix
+ * list X, read again where a value holds one (at most five rounds). An expression it cannot replace stays, and
+ * `ghaTokens` writes it as one that chooses nothing (Copilot on HCW-NetworkEyes_AddOn#109). The same rule as the Python
+ * copies' `_expansions`.
+ */
+function expansions(run, env, matrix) {
+  const lists = matrix ?? {};
+  const listed = (name) => Array.isArray(lists[name]) && lists[name].length > 0;
+  const texts = [run, ...Object.values(env).filter((value) => value !== null && value !== undefined).map(String)];
+  const names = [...new Set(texts.flatMap((text) => [...text.matchAll(ENV_OR_MATRIX)].filter((found) => found[1] === 'matrix' && listed(found[2])).map((found) => found[2])))].sort();
+  let entries = [{}];
+  for (const name of names) entries = entries.flatMap((entry) => lists[name].map((value) => ({ ...entry, [name]: value })));
+  return entries.map((entry) => {
+    const replace = (whole, source, name) => {
+      if (source === 'matrix') return Object.hasOwn(entry, name) ? String(entry[name]) : whole;
+      if (!Object.hasOwn(env, name)) return whole;
+      return env[name] === null || env[name] === undefined ? '' : String(env[name]);
+    };
+    const expand = (text) => {
+      for (let round = 0; round < 5; round++) {
+        const done = text.replace(ENV_OR_MATRIX, replace);
+        if (done === text) break;
+        text = done;
+      }
+      return text;
+    };
+    return [expand(run), Object.fromEntries(Object.entries(env).map(([name, given]) => [name, given === null || given === undefined ? given : expand(String(given))]))];
+  });
+}
+
+/** `pipxWithoutPython` for one script and `env` with no `${{ env.* }}` or `${{ matrix.* }}` left to replace. */
+function pipxWithoutPythonOnce(run, env, setupIds) {
   const stack = [chooses(ghaTokens(String(env?.PIPX_DEFAULT_PYTHON ?? '')), setupIds)];
   env = { ...(env ?? {}) };
   const text = shellText(ghaTokens(String(run ?? '')), true);
@@ -1442,15 +1548,16 @@ export function pipxWithoutPython(run, env = {}, setupIds = new Set()) {
 
 /**
  * The ids of the actions/setup-python steps before step `i` that are sure to have run before it (see `setupCovers`),
- * the only steps whose outputs choose pipx's Python.
+ * the only steps whose outputs choose pipx's Python; one without an id is `''`, which no output names but which lets
+ * `$pythonLocation` count (Copilot on HCW-NetworkEyes_AddOn#109).
  */
 export const pythonSetupIds = (steps, i) =>
   new Set(
     steps
       .slice(0, i)
       .flatMap((earlier, j) =>
-        earlier?.id !== undefined && earlier?.id !== null && SETUP.python.test(String(earlier?.uses ?? '')) && setupCovers(condition(earlier), condition(steps[i]), stepIds(steps.slice(0, j)))
-          ? [String(earlier.id)]
+        SETUP.python.test(String(earlier?.uses ?? '')) && setupCovers(condition(earlier), condition(steps[i]), stepIds(steps.slice(0, j)))
+          ? [earlier?.id === undefined || earlier?.id === null ? '' : String(earlier.id)]
           : []
       )
   );
@@ -1466,7 +1573,7 @@ export function pipxProblems(file, workflow) {
     if (job?.container) continue;
     steps.forEach((step, i) => {
       const env = { ...(workflow?.env ?? {}), ...(job?.env ?? {}), ...(step?.env ?? {}) };
-      if (pipxWithoutPython(step?.run, env, pythonSetupIds(steps, i))) found.push(stepKey(file, name, step, i, 'pipx'));
+      if (pipxWithoutPython(step?.run, env, pythonSetupIds(steps, i), job?.strategy?.matrix)) found.push(stepKey(file, name, step, i, 'pipx'));
     });
   }
   return found;
@@ -2071,7 +2178,8 @@ describe('round two: heredocs, attached -c scripts, $\'…\' strings, wrappers, 
       ['PIPX_DEFAULT_PYTHON=/usr/bin/python3 pipx run x', {}, [], true],
       ['pipx run x', { PIPX_DEFAULT_PYTHON: '/usr/bin/python3' }, [], true],
       ['pipx run --python python3.15 x', {}, [], false],
-      ['pipx run --python ${{ env.pythonLocation }}/bin/python x', {}, [], false],
+      ['pipx run --python ${{ env.pythonLocation }}/bin/python x', {}, [], true],
+      ['pipx run --python ${{ env.pythonLocation }}/bin/python x', {}, [''], false],
       ['pipx run --python /usr/bin/python3 --python /p x', {}, [], false],
       ['pipx run --python /opt/hostedtoolcache/Python/3.15.0/x64/bin/python3 x', {}, [], false],
       // `$'...'` is decoded before it is read.
@@ -2266,8 +2374,10 @@ describe('round two review: assignments, step references, heredocs and here-stri
       ['export P=/opt/py/bin/python3\npipx run --python "$P" x', {}, [], false],
       ['for P in /a /b; do pipx run --python "$P" x; done', {}, [], false],
       ['read -r P < p.txt; pipx run --python "$P" x', {}, [], false],
-      ['pipx run --python "$pythonLocation/bin/python" x', {}, [], false],
-      ['pipx run --python "${pythonLocation}/bin/python" x', {}, [], false],
+      ['pipx run --python "$pythonLocation/bin/python" x', {}, [], true],
+      ['pipx run --python "${pythonLocation}/bin/python" x', {}, [], true],
+      ['pipx run --python "$pythonLocation/bin/python" x', {}, [''], false],
+      ['pipx run --python "${pythonLocation}/bin/python" x', {}, ['py'], false],
       ['pipx run --python /usr/bin//python3 x', {}, [], true],
       // A heredoc or here-string given to a shell carries the settings in front of that shell.
       ['PIPX_DEFAULT_PYTHON=/p bash <<\'EOF\'\npipx run x\nEOF', {}, [], false],
@@ -2686,6 +2796,149 @@ describe('round two, Copilot round three: process substitutions, version files, 
   it('stops on a composite action without steps', () => {
     // It would otherwise read as having no steps (Copilot on HCW-HybridCloudWorks#1719).
     expect(() => actionJobs(parse('name: x\nruns:\n  using: composite\n'))).toThrow(/no runs: steps: list/);
+  });
+});
+
+describe('round two, Copilot round four: pipx expressions, pythonLocation, resolved paths, mixed conditions, block values', () => {
+  // The same cases as HCW-NetworkEyes_App's tests/security/test_workflow_runtime_setup.py, in the same order.
+  it('reads the Copilot round-four pipx values', () => {
+    const cases = [
+      // A: a GitHub expression other than setup-python's `python-path` output or `env.pythonLocation` chooses nothing
+      // (Copilot on HCW-NetworkEyes_AddOn#109, HCW-MigrateOrchestrator_AddOn#75 and HCW-CloudCrawler_App#85).
+      ['pipx run --python ${{ github.workspace }}/.venv/bin/python x', {}, ['py'], true],
+      ['pipx run --python ${{ inputs.python }} x', {}, ['py'], true],
+      ['pipx run --python ${{ env.UNSET }} x', {}, ['py'], true],
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '${{ inputs.python }}' }, ['py'], true],
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '${{ env.NOT_PYTHON_LOCATION }}' }, ['py'], true],
+      ['pipx run --python "$P" x', { P: '${{ github.workspace }}/py' }, ['py'], true],
+      ['pipx run --python ${{ steps.py.outputs.python-path }}${{ github.sha }} x', {}, ['py'], true],
+      ['pipx run --python steps.py.outputs.python-path x', {}, ['py'], true],
+      // `${{ env.X }}` is read as GitHub replaces it: it chooses when the value it stands for does.
+      ['pipx run --python ${{ env.PY }} x', { PY: '${{ steps.py.outputs.python-path }}' }, ['py'], false],
+      ['pipx run --python ${{ env.PY }} x', { PY: '${{ steps.py.outputs.python-path }}' }, [], true],
+      ['pipx run --python ${{ env.PY }} x', { PY: '/usr/bin/python3' }, ['py'], true],
+      ['pipx run --python ${{ env.PY }} x', { PY: '/opt/py/bin/python3' }, [], false],
+      ['pipx run --python ${{env.PY}} x', { PY: '${{ env.PY }}' }, ['py'], true],
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '${{ env.PY }}', PY: '/opt/py/bin/python3' }, [], false],
+      ['pipx run --python "$PYTHON_PATH" x', { PYTHON_PATH: '${{ steps.python.outputs.python-path }}' }, ['python'], false],
+      ['PY=/opt/py; pipx run --python ${{ env.PY }} x', { PY: '/usr/bin/python3' }, [], true],
+      // B: `$pythonLocation` and `${{ env.pythonLocation }}` count only after a set-up step, with or without an id.
+      ['pipx run --python ${{ env.pythonLocation }}/bin/python3 x', {}, ['py'], false],
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '${{ env.pythonLocation }}/bin/python3' }, [], true],
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '${{ env.pythonLocation }}/bin/python3' }, [''], false],
+      ['PIPX_DEFAULT_PYTHON=$pythonLocation/bin/python3 pipx run x', {}, [], true],
+      ['PIPX_DEFAULT_PYTHON=$pythonLocation/bin/python3 pipx run x', {}, [''], false],
+      ['pipx run --python ${{ env.pythonLocation }}/bin/python3 x', { pythonLocation: '/opt/py' }, [], false],
+      ['pipx run --python ${{ env.pythonLocation }}/bin/python3 x', { pythonLocation: '/usr' }, [''], true],
+      // C: a path is compared as the shell resolves it (Copilot on HCW-MigrateOrchestrator_AddOn#75).
+      ['pipx run --python /usr/bin/../bin/python3 x', {}, [], true],
+      ['pipx run --python /usr/./bin/python3 x', {}, [], true],
+      ['pipx run --python //usr/bin/python3 x', {}, [], true],
+      ['pipx run --python /opt/az/lib/../bin/python3 x', {}, [], true],
+      ['pipx run --python /usr/bin/python3/ x', {}, [], true],
+      ['PIPX_DEFAULT_PYTHON=/usr/local/../bin/python3 pipx run x', {}, [], true],
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '/bin/./python3' }, [], true],
+      ['pipx run --python /usr/bin/../local/bin/python3 x', {}, [], false],
+      ['pipx run --python /opt/py/../py/bin/python3 x', {}, [], false],
+    ];
+    for (const [run, env, ids, flagged] of cases) expect(pipxWithoutPython(run, env, new Set(ids)), `${run} / ${JSON.stringify(env)} / ${ids}`).toBe(flagged);
+  });
+
+  it('reads a matrix value given to pipx for every entry', () => {
+    // `${{ matrix.X }}` is read as GitHub replaces it, once for each entry of the job's matrix list (Copilot on
+    // HCW-NetworkEyes_AddOn#109): one entry naming the runner's Python is enough to report it.
+    const run = 'pipx run --python ${{ matrix.py }} x';
+    expect(pipxWithoutPython(run, {}, new Set(), { py: ['/opt/a/python3', '/opt/b/python3'] })).toBe(false);
+    expect(pipxWithoutPython(run, {}, new Set(), { py: ['/opt/a/python3', '/usr/bin/python3'] })).toBe(true);
+    expect(pipxWithoutPython(run, {}, new Set(), {})).toBe(true);
+    expect(pipxWithoutPython('pipx run x', { PIPX_DEFAULT_PYTHON: '${{ matrix.py }}' }, new Set(), { py: ['/opt/a/python3'] })).toBe(false);
+    const workflow = parse(
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        py: [/opt/a/python3, /bin/python3]\n    steps:\n      - name: Scan\n        run: pipx run --python ${{ matrix.py }} x\n'
+    );
+    expect(pipxProblems('x.yml', workflow)).toEqual(['x.yml > j > Scan > pipx']);
+  });
+
+  it('counts a python location only after a set-up step, one without an id too', () => {
+    // `pythonSetupIds` names a set-up step without an id as '' (Copilot on HCW-NetworkEyes_AddOn#109).
+    const workflow = parse(
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - name: Before\n' +
+        '        run: pipx run --python "$pythonLocation/bin/python3" x\n' +
+        "      - uses: actions/setup-python@abc\n        with:\n          python-version: '3.15'\n" +
+        '      - name: After\n' +
+        '        run: pipx run --python "$pythonLocation/bin/python3" x\n' +
+        '      - name: Skipped set-up\n        if: inputs.go\n        uses: actions/setup-python@abc\n'
+    );
+    expect([...pythonSetupIds(workflow.jobs.j.steps, 2)]).toEqual(['']);
+    expect(pipxProblems('x.yml', workflow)).toEqual(['x.yml > j > Before > pipx']);
+  });
+
+  it("counts a set-up term joined with || as holding when one of its terms does", () => {
+    const cases = [
+      // D: a set-up `&&` term that joins terms with `||` holds when one of those is among the later step's `&&` terms
+      // (Copilot on HCW-MigrateOrchestrator_App#118).
+      ['(a || b) && c', 'a && c', true],
+      ['(a || b) && c', 'c && b', true],
+      ['(a || b) && c', 'd && c', false],
+      ['(a || b) && c', 'a', false],
+      ['(a || b) && c', '(a || b) && c && d', true],
+      ['(a || env.B) && c', 'a && c', true],
+      ['(env.A || b) && c', 'env.A && c', false],
+      ['(a || b) && c', 'a && c || d', false],
+      ['a || b && c', 'a && c', true],
+      ['(a || (b && d)) && c', 'b && d && c', false],
+    ];
+    for (const [setup, step, covered] of cases) expect(setupCovers(condition({ if: setup }), condition({ if: step })), `${setup} / ${step}`).toBe(covered);
+  });
+
+  // A block value in `env:` or `with:` ends at the first line indented no further than its key; the `yaml` package
+  // reads it so already, and the Python copies' and the MigrateOrchestrator copies' line readers now do too.
+  const BLOCK_VALUE_YAML = [
+    'jobs:',
+    '  j:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - id: py',
+    '        uses: actions/setup-python@abc',
+    '        with:',
+    "          python-version: '3.15'",
+    '      - name: Comment after block',
+    '        env:',
+    '          PIPX_DEFAULT_PYTHON: |-',
+    '            /usr/bin/python3',
+    '# a comment at column 0',
+    '        run: pipx run x',
+    '      - name: Indented comment after block',
+    '        env:',
+    '          PIPX_DEFAULT_PYTHON: |-',
+    '            /usr/bin/python3',
+    "          # a comment at the key's indent",
+    '        run: pipx run x',
+    '      - name: Key after block',
+    '        env:',
+    '          A: |-',
+    '            /usr/bin/python3',
+    '          PIPX_DEFAULT_PYTHON: ${{ steps.py.outputs.python-path }}',
+    '        run: pipx run x',
+    '      - name: Blank and comment lines inside',
+    '        env:',
+    '          A: |',
+    '            a',
+    '',
+    '            # kept: indented like the value',
+    '            b',
+    '        run: echo "$A"',
+    '',
+  ].join('\n');
+
+  it('ends a block value at the first line indented no further than its key', () => {
+    const workflow = parse(BLOCK_VALUE_YAML);
+    expect(workflow.jobs.j.steps.slice(1).map((step) => step.env)).toEqual([
+      { PIPX_DEFAULT_PYTHON: '/usr/bin/python3' },
+      { PIPX_DEFAULT_PYTHON: '/usr/bin/python3' },
+      { A: '/usr/bin/python3', PIPX_DEFAULT_PYTHON: '${{ steps.py.outputs.python-path }}' },
+      { A: 'a\n\n# kept: indented like the value\nb\n' },
+    ]);
+    expect(pipxProblems('x.yml', workflow)).toEqual(['x.yml > j > Comment after block > pipx', 'x.yml > j > Indented comment after block > pipx']);
   });
 });
 
