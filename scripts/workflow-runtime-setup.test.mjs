@@ -170,13 +170,15 @@ const ASSIGNMENT = String.raw`[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\.)*"|'[^']*
 // read only one way: otherwise twenty `-oL`s make the match try every split
 // (the same pattern as the Python copies, HCW-NetworkEyes_App's
 // tests/security/test_workflow_runtime_setup.py).
-const WRAPPER_OPTIONS = { env: 'uCS', sudo: 'ugCDhprtU', xargs: 'InPLdaEs', exec: 'a', time: 'of', nice: 'n', nohup: '', stdbuf: 'ioe', timeout: 'sk' };
+// `env -S` (`--split-string`) is read as a flag, not as one that takes a value, because its value is the command it
+// runs: unquoted, the next word is in command position (`env -S node x.js`); quoted, see ENV_SPLIT_SCRIPT.
+const WRAPPER_OPTIONS = { env: 'uC', sudo: 'ugCDhprtU', xargs: 'InPLdaEs', exec: 'a', time: 'of', nice: 'n', nohup: '', stdbuf: 'ioe', timeout: 'sk' };
 // The long options of those words that take a value (`timeout --kill-after 5 10 node`, `sudo --user nobody node`),
 // the long forms of the letters above: the value follows `=` or is the next word, which never starts with `-`. Any
 // other `--long[=value]` is a flag, so each long option too can be read only one way (Copilot on
 // HCW-MigrateOrchestrator_AddOn#74).
 const WRAPPER_LONG_OPTIONS = {
-  env: ['unset', 'chdir', 'split-string'],
+  env: ['unset', 'chdir'],
   sudo: ['user', 'group', 'close-from', 'chdir', 'host', 'prompt', 'role', 'type', 'other-user'],
   xargs: ['max-args', 'max-procs', 'delimiter', 'arg-file', 'max-chars', 'process-slot-var'],
   time: ['output', 'format'],
@@ -232,13 +234,16 @@ const COMMAND = {
 // '…'`): the script runs on the runner too, so its commands count. The same words after `docker run image` are not
 // in command position, so a container's script stays unread.
 const SHELL_SCRIPT = new RegExp(`${START}${PATH}${SHELL_GIVEN_C}$`);
+// `env -S` (`--split-string`) in command position: env splits its value into words and runs them, so a quoted value
+// there is read as a script, like a `-c` shell's (`env -S 'node x.js'`, `env --split-string='python3 x.py'`; Copilot on
+// HCW-MigrateOrchestrator_AddOn#74). An unquoted value is the next word, which is in command position already.
+const ENV_SPLIT_SCRIPT = new RegExp(
+  String.raw`${START}${PATH}env${optionsOf(WRAPPER_OPTIONS.env, WRAPPER_LONG_OPTIONS.env)}\s+(?:-(?:(?![uCS])[A-Za-z])*S|--split-string=?)\s*$`
+);
 // `pipx` in command position, with what comes before it (its assignments and wrappers) and its words, up to the end
 // of the command (`;`, `&`, `|` or `)`). It has chosen its interpreter when `--python` is one of pipx's own options
 // (see `pipxOptionChoosesPython`) or `PIPX_DEFAULT_PYTHON` is one of the assignments in front of it.
 const PIPX = new RegExp(`(?<before>${START})${PATH}pipx(?=\\s|$)(?<words>[^;&|)]*)`, 'g');
-// An assignment word (`NAME=value`, the value plain, quoted or both) that starts a word, as ASSIGNMENT reads one: so in
-// `FOO=PIPX_DEFAULT_PYTHON=/p` the name is FOO, and the rest is FOO's value.
-const ASSIGNMENT_WORD = /(?:^|(?<=[\s;&|({`]))([A-Za-z_][A-Za-z0-9_]*)=((?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'])*)(?=\s|$)/g;
 // pipx's options that take a value as the next word, so that word is not read as an option or as the app's name.
 const PIPX_VALUE_OPTIONS = new Set(['--spec', '--python', '--index-url', '--pip-args', '--suffix', '--preinstall', '--backend', '--fetch-python']);
 // Where `((` opens an arithmetic command rather than two subshells: at the start of a command.
@@ -320,9 +325,12 @@ export function shellText(run) {
     const text = out.join('');
     return text.slice(text.lastIndexOf('\n') + 1);
   };
-  // A `-c` script keeps the outer reading too: the outer shell runs a `$(…)` or backtick in a double-quoted script
-  // before the inner shell starts (`bash -c "echo '$(node x)'"`).
-  const quoted = (script, text) => out.push(SHELL_SCRIPT.test(line().trimStart()) ? `${text}\n${shellText(script)}\n:` : text);
+  // A `-c` script (or an `env -S` value) keeps the outer reading too: the outer shell runs a `$(…)` or backtick in a
+  // double-quoted script before the inner shell starts (`bash -c "echo '$(node x)'"`).
+  const quoted = (script, text) => {
+    const isScript = SHELL_SCRIPT.test(line().trimStart()) || ENV_SPLIT_SCRIPT.test(line().trimStart());
+    out.push(isScript ? `${text}\n${shellText(script)}\n:` : text);
+  };
   while (i < n) {
     const char = run[i];
     if (char === '\\' && i + 1 < n) {
@@ -614,35 +622,70 @@ export function pipxOptionChoosesPython(words) {
   return false;
 }
 
+// One word of a command as `shellText` leaves it: plain text and quoted strings run together. The first word in front
+// of a command may start with what opened it (`(`, `$(`, `&&`, `;`), which is not part of the word.
+const WORD = /(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'])+/g;
+const OPENING = /^(?:[$<]?\(|[`{|;&])+/;
+
 /**
- * Whether the assignments in front of `pipx` set PIPX_DEFAULT_PYTHON to something: an empty value
- * (`PIPX_DEFAULT_PYTHON= pipx`, `PIPX_DEFAULT_PYTHON='' pipx`, `PIPX_DEFAULT_PYTHON=''"" pipx`) leaves pipx on its own
- * interpreter. `shellText` writes an empty quoted string as `''` or `""` and any other as `'_'` or `"_"`, so a value
- * made only of empty quotes is empty. The last assignment of the name wins, as in the shell.
+ * What the words in front of `pipx` do to PIPX_DEFAULT_PYTHON, read in order, the last one that touches it winning as
+ * in the shell: true when an assignment sets it to something; false when one sets it empty (`PIPX_DEFAULT_PYTHON=`,
+ * `PIPX_DEFAULT_PYTHON=''`, `PIPX_DEFAULT_PYTHON=''""`), or `env` unsets it (`-u`, `--unset`) or clears the whole
+ * environment (`-i`, `-`, `--ignore-environment`); null when none of them touches it, so the inherited value (the
+ * step's, job's or workflow's `env:`) applies (Copilot on HCW-NetworkEyes_App#394). `shellText` writes an empty quoted
+ * string as `''` or `""` and any other as `'_'` or `"_"`, so a value made only of empty quotes is empty.
  */
-function choosesDefaultPython(before) {
-  let chosen = false;
-  for (const m of before.matchAll(ASSIGNMENT_WORD)) {
-    if (m[1] === 'PIPX_DEFAULT_PYTHON') chosen = m[2].replace(/''|""/g, '') !== '';
+function localDefaultPython(before) {
+  let chosen = null;
+  let inEnv = false; // reading the options of an `env` word
+  let next = ''; // the next word is the value of `-u`/`--unset` ('unset') or of `-C`/`--chdir` ('skip')
+  for (const word of (before.match(WORD) ?? []).map((w) => w.replace(OPENING, ''))) {
+    // An assignment word (`NAME=value`): in `FOO=PIPX_DEFAULT_PYTHON=/p` the name is FOO, and the rest is its value.
+    const assignment = word.match(/^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/);
+    if (next) {
+      if (next === 'unset' && word === 'PIPX_DEFAULT_PYTHON') chosen = false;
+      next = '';
+    } else if (assignment) {
+      if (assignment[1] === 'PIPX_DEFAULT_PYTHON') chosen = assignment[2].replace(/''|""/g, '') !== '';
+      inEnv = false;
+    } else if (/^(?:\S*\/)?env$/.test(word)) inEnv = true;
+    else if (!inEnv || word === '--') inEnv = false;
+    else if (word === '-' || word === '--ignore-environment') chosen = false;
+    else if (word === '--unset' || word === '--chdir') next = word === '--unset' ? 'unset' : 'skip';
+    else if (word.startsWith('--')) {
+      if (word === '--unset=PIPX_DEFAULT_PYTHON') chosen = false;
+    } else if (word.startsWith('-')) {
+      for (let k = 1; k < word.length; k++) {
+        if (word[k] === 'i') chosen = false;
+        else if ('uCS'.includes(word[k])) {
+          const value = word.slice(k + 1);
+          if (word[k] !== 'S' && !value) next = word[k] === 'u' ? 'unset' : 'skip';
+          else if (word[k] === 'u' && value === 'PIPX_DEFAULT_PYTHON') chosen = false;
+          break;
+        }
+      }
+    } else inEnv = false;
   }
   return chosen;
 }
 
 /**
  * True when a run script runs `pipx` in command position without choosing its interpreter: no `--python` among pipx's
- * own options, no non-empty `PIPX_DEFAULT_PYTHON` among the assignments in front of it (a whole assignment word, not a
- * value that happens to hold the text), and none in `env` (the step's, job's and workflow's). A `${{ }}` expression
+ * own options, and no non-empty `PIPX_DEFAULT_PYTHON`, read first from the words in front of that `pipx` (a whole
+ * assignment word, not a value that happens to hold the text, and `env`'s unset and clear options, see
+ * `localDefaultPython`) and only when they leave it alone from `env` (the step's, job's and workflow's): a setting on
+ * the command overrides the inherited one (Copilot on HCW-NetworkEyes_App#394). A `${{ }}` expression
  * counts as a value on purpose (`PIPX_DEFAULT_PYTHON: ${{ steps.python.outputs.python-path }}`): passing
  * setup-python's `python-path` output that way is the documented way to point pipx at the Python it set up
  * (https://github.com/actions/setup-python/blob/main/docs/advanced-usage.md#python-path).
  */
 export function pipxWithoutPython(run, env = {}) {
-  if (String(env?.PIPX_DEFAULT_PYTHON ?? '').trim()) return false;
+  const inherited = String(env?.PIPX_DEFAULT_PYTHON ?? '').trim() !== '';
   return shellText(String(run ?? ''))
     .split('\n')
     .some((line) =>
       [...line.trim().matchAll(PIPX)].some(
-        (found) => !(choosesDefaultPython(found.groups.before) || pipxOptionChoosesPython(found.groups.words))
+        (found) => !(pipxOptionChoosesPython(found.groups.words) || (localDefaultPython(found.groups.before) ?? inherited))
       )
     );
 }
@@ -705,6 +748,24 @@ describe('runsRuntime and unsetSteps', () => {
       expect(runsRuntime(line, kind), line).toBe(true);
     }
     for (const line of ['sudo --user node whoami', 'timeout --signal node 10 x', 'env --unset node x', 'stdbuf --output node x']) {
+      expect(runsRuntime(line, 'node'), line).toBe(false);
+    }
+    // `env -S` runs its value as a command, so a quoted value is read like a `-c` script (Copilot on
+    // HCW-MigrateOrchestrator_AddOn#74).
+    for (const [line, kind] of [
+      ["env -S 'node x.js'", 'node'],
+      ['env -S "python3 x.py"', 'python'],
+      ["env --split-string='node x'", 'node'],
+      ["env --split-string 'node x'", 'node'],
+      ["env -S'node x'", 'node'],
+      ["env -iS 'python3 x.py'", 'python'],
+      ["sudo env -S 'FOO=1 node x'", 'node'],
+      ['env -S node x.js', 'node'],
+      ["env -S 'pipx run x'", 'python'],
+    ]) {
+      expect(runsRuntime(line, kind), line).toBe(true);
+    }
+    for (const line of ["env -S 'echo node'", 'env -S echo node', "echo env -S 'node x'", "docker run img env -S 'node x'"]) {
       expect(runsRuntime(line, 'node'), line).toBe(false);
     }
     expect(runsRuntime('NODE_BIN=/opt/node/bin/node', 'node')).toBe(false);
@@ -804,6 +865,8 @@ describe('runsRuntime and unsetSteps', () => {
     expect(runsRuntime(`sudo${' -uuu'.repeat(40)} -`, 'node')).toBe(false);
     expect(runsRuntime(`timeout${' --signal KILL --kill-after=5'.repeat(40)} -`, 'node')).toBe(false);
     expect(runsRuntime(`sudo${' --user u --user=u --userx'.repeat(40)} -`, 'node')).toBe(false);
+    expect(runsRuntime(`env${' -S -i -u X'.repeat(40)} -`, 'node')).toBe(false);
+    expect(runsRuntime(`env${" -S 'x'".repeat(40)} -`, 'node')).toBe(false);
     expect(performance.now() - started).toBeLessThan(1000);
   });
 
@@ -1003,6 +1066,29 @@ describe('pipx chooses its Python', () => {
       ['PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
       ['env PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
       ['pipx run x', { PIPX_DEFAULT_PYTHON: '/p' }, false],
+      // A setting on the command overrides the inherited one (Copilot on HCW-NetworkEyes_App#394): set empty, unset or
+      // cleared by `env`, it chooses nothing; `--python` still chooses.
+      ['PIPX_DEFAULT_PYTHON= pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ["PIPX_DEFAULT_PYTHON='' pipx run x", { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env -u PIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env -uPIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env --unset PIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env --unset=PIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env -i pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env --ignore-environment pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env --chdir /tmp -u PIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['PIPX_DEFAULT_PYTHON=/p env -u PIPX_DEFAULT_PYTHON pipx run x', {}, true],
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['env -u PIPX_DEFAULT_PYTHON pipx run --python /p x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['env -i PIPX_DEFAULT_PYTHON=/p pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['env -u OTHER pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['sudo -u PIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ["env -S 'pipx run x'", {}, true],
+      ["env -S 'pipx run x'", { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['(PIPX_DEFAULT_PYTHON=/p pipx run x)', {}, false],
+      ['cd y &&PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
+      ['(PIPX_DEFAULT_PYTHON= pipx run x)', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['x=$(env -i pipx run x)', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
       ['echo pipx', {}, false],
       ['docker run img pipx run x', {}, false],
       ['python3 -m pip install pipx', {}, false],
