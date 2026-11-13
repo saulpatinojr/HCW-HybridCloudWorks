@@ -1,16 +1,24 @@
 /**
  * Every workflow job that runs Node.js or Python chooses its version (#1707).
  *
- * A job that runs `node`, `npm`, `npx`, `python3`, `pip`, `uv` or `uvx`
- * without actions/setup-node or actions/setup-python gets whatever the runner
- * image ships: on ubuntu-26.04 that was Node.js 24 and Python 3.14 in November 2026,
- * both below the floors in scripts/version-floors.json (Node.js 26, Python
- * 3.15). Nothing else would notice, because the floors test reads only the
- * versions a file names, and a job that names none has nothing to read. Six
- * jobs were found that way on 2026-11-12. `uv` and `uvx` count as Python,
+ * A job that runs `node`, `npm`, `npx`, `yarn`, `pnpm`, `python3`, `pip`,
+ * `pipx`, `pytest`, `uv` or `uvx` without actions/setup-node or
+ * actions/setup-python gets whatever the runner image ships: on ubuntu-26.04
+ * that was Node.js 24 and Python 3.14 in November 2026, both below the
+ * floors in scripts/version-floors.json (Node.js 26, Python 3.15). Nothing
+ * else would notice, because the floors test reads only the versions a file
+ * names, and a job that names none has nothing to read. Six jobs were found
+ * that way on 2026-11-12. `uv` and `uvx` count as Python,
  * because uv runs the interpreter it finds, the runner's own unless one was
  * set up; so astral-sh/setup-uv counts as setting Python up only when it is
  * given a `python-version` at or above the floor in version-floors.json.
+ * `yarn` and `pnpm` are Node.js programs and count as Node.js; `pytest` and
+ * `pipx` are Python programs and count as Python. pipx makes each tool's
+ * virtual environment from the interpreter pipx itself runs on unless it is
+ * given `--python` (https://pipx.pypa.io/latest/reference/environment-variables.html),
+ * so a `pipx` step should also pass `--python` with the interpreter the
+ * set-up step installed (actions/setup-python's `python-path` output); the
+ * check does not read that part.
  *
  * A command counts when it is in command position on a line of a `run:` step:
  * at the start, after `$(`, `<(`, a backtick, `(`, `{`, `|`, `&&`, `||` or `;`, after
@@ -25,10 +33,17 @@
  * (unless a double-quoted one runs a command with `$(`, `<(` or a backtick; a
  * single-quoted one may run over several lines, as the `bash -c '…'` script
  * of a `docker run` does) or as an argument (`docker run image python …`, or
- * the first word of a line that continues the one before it). The set-up step must come before the first such
- * step. Limits, on purpose: a job that runs in a `container:` uses that
- * image's runtime and is not checked; a script a step calls (a `.ps1` or
- * `.sh` file) is not read.
+ * the first word of a line that continues the one before it). The one quoted
+ * string that is read is the script of a shell that is itself in command
+ * position and given `-c` (`bash -c 'node x'`, `sh -euo pipefail -c "…"`,
+ * `sudo bash -lc '…'`): that script runs on the runner, so its commands count,
+ * while the same words after `docker run image` stay a container's. The
+ * set-up step must come before the first such step. Limits, on purpose: a job
+ * that runs in a `container:` uses that image's runtime and is not checked;
+ * a script a step calls (a `.ps1` or `.sh` file) is not read, so a step that
+ * starts a runtime that way is listed in INDIRECT_RUNTIME. The same check is
+ * copied into the add-on and App repositories; keep the logic the same in
+ * each copy and change only the lists and comments.
  *
  * A set-up step with its own `if:` covers a later step only when that step's
  * condition makes the set-up's true: the same condition, or one of the terms
@@ -72,6 +87,17 @@ const RUNNER_DEFAULT_ALLOWED = {
     "the redaction gate is standard-library Python only, so the runner's python3 is enough (the comment above its step says so)",
 };
 
+/**
+ * Steps that start a runtime indirectly, through a script or program the
+ * check cannot read in the `run:` text (`bash scripts/build.sh` that runs
+ * `node`, say). Each counts as running that runtime, so its set-up step must
+ * come first. Same keys as above, each with a reason; a key that no longer
+ * names a step fails the test, so a renamed or removed step cannot leave the
+ * list pointing at nothing. None in this repository yet: every step here
+ * names its runtime in its own `run:` text.
+ */
+const INDIRECT_RUNTIME = {};
+
 // Where a command may start: the line's start or an opening/joining
 // character, then any `NAME=value` assignments (the value plain text, a
 // quoted string, or both run together: `FOO="a b"`) and words that run the
@@ -100,10 +126,24 @@ const START = String.raw`(?:^|[$<]\(\s*|[\x60({|;&]\s*|${CASE_PATTERN})(?:${ASSI
 // `./venv/bin/python`): a path to the runner's own interpreter is still the
 // runner's. The path holds no `=`, so an assignment (`NODE=/x/node`) is not a command.
 const PATH = String.raw`(?:[^\s=]*/)?`;
+// yarn and pnpm are Node.js programs; pytest and pipx are Python programs, so they run on the interpreter they were
+// installed with, which is the runner's own unless a set-up step came first (pipx also builds each tool's virtual
+// environment from that interpreter unless it is given `--python`).
 const COMMAND = {
-  node: new RegExp(`${START}${PATH}(?:node|npm|npx)(?=\\s|$)`),
-  python: new RegExp(`${START}${PATH}(?:python(?:3(?:\\.\\d+){0,2})?|pip3?|uvx?)(?=\\s|$)`),
+  node: new RegExp(`${START}${PATH}(?:node|npm|npx|yarn|pnpm)(?=\\s|$)`),
+  python: new RegExp(`${START}${PATH}(?:python(?:3(?:\\.\\d+){0,2})?|pip3?|pipx|pytest|uvx?)(?=\\s|$)`),
 };
+// A shell in command position given a script with `-c` (`bash -c '…'`, `sh -euo pipefail -c "…"`, `sudo bash -lc
+// '…'`): the script runs on the runner too, so its commands count. The same words after `docker run image` are not
+// in command position, so a container's script stays unread.
+const SHELL_OPTION = String.raw`(?:[-+][A-Za-z]*o\s+[\w-]+|[-+][A-Za-z]+|--[\w-]+)`;
+const SHELL_SCRIPT = new RegExp(
+  String.raw`${START}${PATH}(?:ba|da|k|z)?sh(?:\s+${SHELL_OPTION})*?\s+-[A-Za-z]*c[A-Za-z]*(?:\s+${SHELL_OPTION})*\s+$`
+);
+// Where `((` opens an arithmetic command rather than two subshells: at the start of a command.
+const ARITHMETIC_COMMAND = /(?:^|[;&|({]|\b(?:then|else|do|if|elif|while|until))\s*$/;
+// The escapes `$'…'` turns into other characters; any other `\x` is left as it is.
+const ANSI_C = { n: '\n', t: '\t', "'": "'", '"': '"', '\\': '\\' };
 const SETUP = { node: /^actions\/setup-node@/, python: /^actions\/setup-python@/ };
 // astral-sh/setup-uv sets Python up only when given a `python-version` at or above the floor (see `setsUp`).
 const SETUP_UV = /^astral-sh\/setup-uv@/;
@@ -117,43 +157,69 @@ const HAS_STATUS = /\b(?:always|failure|cancelled|success)\(\s*\)/;
 
 /**
  * The script as the shell reads it, for finding commands: comments and heredoc
- * bodies dropped, a line that ends in `\` joined to the next (so the next
- * line's first word is still an argument), single-quoted text emptied, and
- * double-quoted text emptied unless it runs a command (`"$(node x)"`, or the
- * older "`node x`"). An escaped backtick (`\``, a Markdown summary line) is a
- * plain character. A quoted string may run over several lines, as the script
- * of `docker run image bash -c '…'` does; what it runs is the container's.
+ * bodies dropped (`<<EOF`, `<<'EOF'`, `<<"EOF"`, `<<\EOF`, `<<-EOF`, but not
+ * the shift `<<` inside `$((…))` or `((…))`), a line that ends in `\` joined
+ * to the next (so the next line's first word is still an argument),
+ * single-quoted text and `$'…'` text emptied, and double-quoted text emptied
+ * unless it runs a command (`"$(node x)"`, or the older "`node x`"). An
+ * escaped backtick (`\``, a Markdown summary line) is a plain character. A
+ * quoted string may run over several lines, as the script of `docker run image
+ * bash -c '…'` does; what it runs is the container's. The one quoted string
+ * that is read is the script of a shell in command position given `-c`
+ * (`bash -c 'node x'`): it is read the same way, on lines of its own, and the
+ * line after it starts with `:` so that the words after the script (the inner
+ * shell's `$0` and arguments) are still arguments.
  */
 export function shellText(run) {
   const out = [];
   let heredocs = [];
+  // Open parentheses inside `$((…))` or `((…))`, where `<<` is a shift; 0 outside.
+  let arithmetic = 0;
   let i = 0;
   const n = run.length;
+  const line = () => {
+    const text = out.join('');
+    return text.slice(text.lastIndexOf('\n') + 1);
+  };
+  const quoted = (script, text) => out.push(SHELL_SCRIPT.test(line()) ? `''\n${shellText(script)}\n:` : text);
   while (i < n) {
     const char = run[i];
     if (char === '\\' && i + 1 < n) {
       out.push(run[i + 1] === '\n' ? ' ' : run[i + 1] === '`' ? '' : run.slice(i, i + 2));
       i += 2;
+    } else if (char === '$' && run[i + 1] === "'") {
+      // `$'…'` may hold `\'`, which does not end it.
+      let j = i + 2;
+      while (j < n && run[j] !== "'") j += run[j] === '\\' ? 2 : 1;
+      quoted(run.slice(i + 2, j).replace(/\\([\s\S])/g, (escape, c) => ANSI_C[c] ?? escape), "''");
+      i = j + 1;
     } else if (char === "'") {
-      const end = run.indexOf("'", i + 1);
-      out.push("''");
-      i = end === -1 ? n : end + 1;
+      const end = run.indexOf("'", i + 1) === -1 ? n : run.indexOf("'", i + 1);
+      quoted(run.slice(i + 1, end), "''");
+      i = end + 1;
     } else if (char === '"') {
       let j = i + 1;
-      let text = '';
-      while (j < n && run[j] !== '"') {
-        const step = run[j] === '\\' && j + 1 < n ? 2 : 1;
-        text += run.slice(j, j + 2) === '\\`' ? '' : run.slice(j, j + step);
-        j += step;
-      }
-      out.push(/[$<]\(|`/.test(text) ? `"${text}"` : '""');
+      while (j < n && run[j] !== '"') j += run[j] === '\\' ? 2 : 1;
+      const raw = run.slice(i + 1, j);
+      // Read as text, an escaped backtick prints; given to `-c`, the inner shell runs it.
+      const text = raw.replace(/\\[\s\S]/g, (escape) => (escape === '\\`' ? '' : escape));
+      quoted(raw.replace(/\\([\\"$`\n])/g, (escape, c) => (c === '\n' ? '' : c)), /[$<]\(|`/.test(text) ? `"${text}"` : '""');
       i = j + 1;
     } else if (char === '#' && (i === 0 || ' \t\n;'.includes(run[i - 1]))) {
       const end = run.indexOf('\n', i);
       i = end === -1 ? n : end;
-    } else if (run.startsWith('<<', i) && !run.startsWith('<<<', i)) {
-      const found = run.slice(i).match(/^<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/);
-      if (found) heredocs.push(found[2]);
+    } else if (!arithmetic && (run.startsWith('$((', i) || (run.startsWith('((', i) && ARITHMETIC_COMMAND.test(line())))) {
+      const open = char === '$' ? '$((' : '((';
+      out.push(open);
+      i += open.length;
+      arithmetic = 2;
+    } else if (arithmetic && (char === '(' || char === ')')) {
+      arithmetic += char === '(' ? 1 : -1;
+      out.push(char);
+      i += 1;
+    } else if (!arithmetic && run.startsWith('<<', i) && !run.startsWith('<<<', i)) {
+      const found = run.slice(i).match(/^<<-?\s*(\\?)(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/);
+      if (found) heredocs.push(found[3]);
       out.push('<<');
       i += found ? found[0].length : 2;
     } else if (char === '\n' && heredocs.length) {
@@ -162,9 +228,9 @@ export function shellText(run) {
       for (const delimiter of heredocs) {
         while (i < n) {
           const end = run.indexOf('\n', i) === -1 ? n : run.indexOf('\n', i);
-          const line = run.slice(i, end);
+          const text = run.slice(i, end);
           i = end + 1;
-          if (line.trim() === delimiter) break;
+          if (text.trim() === delimiter) break;
         }
       }
       heredocs = [];
@@ -308,24 +374,31 @@ export function setsUp(step, kind) {
   return SETUP[kind].test(uses);
 }
 
-/** The steps of one workflow that run a runtime before (or without) setting it up: "file > job > step > kind". */
-export function unsetJobs(file, workflow) {
+/** The key a step is named by in the lists above and in failures: "file > job > step > kind". */
+export const stepKey = (file, name, step, i, kind) => `${file} > ${name} > ${step?.name || `step ${i + 1}`} > ${kind}`;
+
+/**
+ * The steps of one workflow's `jobs` that run a runtime before (or without) setting it up, by `stepKey`. A step named
+ * in `indirect` counts as running its runtime even when its `run:` text does not show it.
+ */
+export function unsetSteps(file, jobs, indirect = INDIRECT_RUNTIME) {
   const found = [];
-  for (const [name, job] of Object.entries(workflow?.jobs ?? {})) {
+  for (const [name, job] of Object.entries(jobs ?? {})) {
     if (!Array.isArray(job?.steps) || job.container) continue;
     for (const kind of Object.keys(COMMAND)) {
       job.steps.forEach((step, i) => {
-        if (!runsRuntime(step.run, kind)) return;
+        const key = stepKey(file, name, step, i, kind);
+        if (!(runsRuntime(step?.run, kind) || key in indirect)) return;
         // Covered by an earlier set-up step that always runs, or that runs under the same condition as this step.
         const covered = job.steps.slice(0, i).some((earlier) => setsUp(earlier, kind) && setupCovers(condition(earlier), condition(step)));
-        if (!covered) found.push(`${file} > ${name} > ${step.name ?? `step ${i + 1}`} > ${kind}`);
+        if (!covered) found.push(key);
       });
     }
   }
   return found;
 }
 
-describe('runsRuntime and unsetJobs', () => {
+describe('runsRuntime and unsetSteps', () => {
   it('finds node and python in command position, not inside strings or arguments', () => {
     expect(runsRuntime('token=$(node scripts/github-app-token.mjs)', 'node')).toBe(true);
     expect(runsRuntime('npm ci --no-audit', 'node')).toBe(true);
@@ -374,6 +447,60 @@ describe('runsRuntime and unsetJobs', () => {
     expect(runsRuntime('uvx zizmor .github', 'python')).toBe(true);
   });
 
+  it('reads the script a shell is given with -c on the runner, and not one given to a container', () => {
+    const runs = [
+      ["bash -c 'node x.js'", 'node'],
+      ['sh -c "python3 x.py"', 'python'],
+      ["bash -lc 'npm ci'", 'node'],
+      ["bash -euo pipefail -c 'python3 x.py'", 'python'],
+      ["sudo -u runner bash -c 'python3 x.py'", 'python'],
+      ['/bin/bash -c "cd app && npm test"', 'node'],
+      ["version=$(sh -c 'node --version')", 'node'],
+      ["bash -c '\n  set -e\n  python3 x.py\n'", 'python'],
+      // Inside double quotes `\`` is a backtick the inner shell runs; `$'…'` turns `\n` into a new line.
+      ['bash -c "echo \\`node --version\\`"', 'node'],
+      ["bash -c $'echo start\\nnode x.js'", 'node'],
+    ];
+    const notRuns = [
+      ["docker run --rm img bash -c 'node x.js'", 'node'],
+      ['docker exec web sh -c "python3 x.py"', 'python'],
+      ["echo bash -c 'node x.js'", 'node'],
+      ["bash -c 'echo node is named here'", 'node'],
+      // The word after the script is the inner shell's `$0`, an argument.
+      ["bash -c 'echo \"$0\"' python3", 'python'],
+      ["bash scripts/check.sh 'node x.js'", 'node'],
+    ];
+    for (const [line, kind] of runs) expect(runsRuntime(line, kind), line).toBe(true);
+    for (const [line, kind] of notRuns) expect(runsRuntime(line, kind), line).toBe(false);
+  });
+
+  it('counts yarn and pnpm as Node.js, and pytest and pipx as Python, only as whole words in command position', () => {
+    for (const line of ['yarn install --frozen-lockfile', 'pnpm install', 'cd web && pnpm test', 'CI=1 yarn build']) {
+      expect(runsRuntime(line, 'node'), line).toBe(true);
+    }
+    for (const line of ['pytest -q', 'PYTHONPATH=src pytest tests', '/usr/local/bin/pytest -q', 'pipx run --spec checkov==3.3.30 checkov -d .']) {
+      expect(runsRuntime(line, 'python'), line).toBe(true);
+    }
+    for (const line of ['echo yarn', './scripts/yarn-audit.sh', 'myyarn install', 'docker run img pnpm test']) {
+      expect(runsRuntime(line, 'node'), line).toBe(false);
+    }
+    for (const line of ['echo pytest -q', 'grep pytest requirements.txt', 'pytest-runner --help', 'docker run img pytest']) {
+      expect(runsRuntime(line, 'python'), line).toBe(false);
+    }
+  });
+
+  it('reads arithmetic shifts, backslash-quoted heredocs and $\'…\' strings the way the shell does', () => {
+    // `<<` inside `$((…))` or `((…))` is a shift, not a heredoc, so the next line is still read.
+    expect(runsRuntime('size=$((1<<k))\nnode a.js', 'node')).toBe(true);
+    expect(runsRuntime('(( n = 1 << k ))\nnode a.js', 'node')).toBe(true);
+    // `<<\EOF` is a heredoc whose body is not run.
+    expect(runsRuntime('cat <<\\EOF\nnode is named here\nEOF', 'node')).toBe(false);
+    expect(runsRuntime('cat <<\\EOF\ntext\nEOF\nnode a.js', 'node')).toBe(true);
+    // `\'` inside `$'…'` does not end the string.
+    expect(runsRuntime("echo $'it\\'s'\nnode a.js", 'node')).toBe(true);
+    expect(runsRuntime("echo $'it\\'s' 'node x'", 'node')).toBe(false);
+  });
+
   it('flags a job that sets the runtime up after first using it, or not at all', () => {
     const wf = {
       jobs: {
@@ -386,7 +513,19 @@ describe('runsRuntime and unsetJobs', () => {
         boxed: { container: 'node:26', steps: [{ run: 'node a.mjs' }] },
       },
     };
-    expect(unsetJobs('x.yml', wf)).toEqual(['x.yml > late > Early > node', 'x.yml > none > step 1 > python', 'x.yml > uvOnly > Run > python', 'x.yml > uvOld > Run > python']);
+    expect(unsetSteps('x.yml', wf.jobs)).toEqual(['x.yml > late > Early > node', 'x.yml > none > step 1 > python', 'x.yml > uvOnly > Run > python', 'x.yml > uvOld > Run > python']);
+  });
+
+  it('counts a step listed as starting a runtime indirectly as running it', () => {
+    const jobs = {
+      scan: { steps: [{ name: 'Build', run: 'bash scripts/build.sh' }, { uses: 'actions/setup-node@abc' }] },
+      ready: { steps: [{ uses: 'actions/setup-node@abc' }, { name: 'Build', run: 'bash scripts/build.sh' }] },
+    };
+    const key = 'x.yml > scan > Build > node';
+    expect(unsetSteps('x.yml', jobs, { [key]: 'build.sh runs node', 'x.yml > ready > Build > node': 'build.sh runs node' })).toEqual([key]);
+    expect(unsetSteps('x.yml', jobs, {})).toEqual([]);
+    // A step with no name, or an empty one, is named by its place in the job.
+    expect(stepKey('x.yml', 'scan', { name: '' }, 2, 'python')).toBe('x.yml > scan > step 3 > python');
   });
 
   it('counts a set-up step with its own condition only for steps under the same condition', () => {
@@ -405,7 +544,7 @@ describe('runsRuntime and unsetJobs', () => {
         andTerm: { steps: [{ ...py, if: "a == 'x' && b == 'y'" }, { name: 'Run', if: "b == 'y'", run: 'python3 a.py' }] },
       },
     };
-    expect(unsetJobs('x.yml', wf)).toEqual(['x.yml > skipped > Run > python', 'x.yml > afterAFailure > Run > python', 'x.yml > otherCondition > Run > python', 'x.yml > andTerm > Run > python']);
+    expect(unsetSteps('x.yml', wf.jobs)).toEqual(['x.yml > skipped > Run > python', 'x.yml > afterAFailure > Run > python', 'x.yml > otherCondition > Run > python', 'x.yml > andTerm > Run > python']);
     expect(orTerms("(a || b) || c == 'x || y'")).toEqual(['a || b', "c == 'x || y'"]);
     expect(condition({ if: '${{  a &&   b }}' })).toBe('a && b');
   });
@@ -443,7 +582,8 @@ describe('runsRuntime and unsetJobs', () => {
 
 describe('.github/workflows', () => {
   const files = readdirSync(WORKFLOWS).filter((name) => /\.ya?ml$/.test(name));
-  const unset = files.flatMap((file) => unsetJobs(file, parse(readFileSync(join(WORKFLOWS, file), 'utf8'))));
+  const workflows = Object.fromEntries(files.map((file) => [file, parse(readFileSync(join(WORKFLOWS, file), 'utf8'))]));
+  const unset = files.flatMap((file) => unsetSteps(file, workflows[file]?.jobs));
 
   it('every step that runs Node.js or Python comes after its version is set up, so the runner image never chooses it', () => {
     expect(unset.filter((entry) => !(entry in RUNNER_DEFAULT_ALLOWED))).toEqual([]);
@@ -454,6 +594,20 @@ describe('.github/workflows', () => {
       expect(unset, entry).toContain(entry);
       // An exception without a reason a reviewer can check is not an exception (Copilot on HCW-CloudAssessor_AddOn#89).
       expect(String(reason ?? '').trim(), `${entry} gives no reason`).not.toBe('');
+    }
+  });
+
+  it('every indirect step still exists and says why, so a renamed or removed step cannot leave the list pointing at nothing', () => {
+    const keys = new Set(
+      files.flatMap((file) =>
+        Object.entries(workflows[file]?.jobs ?? {}).flatMap(([name, job]) =>
+          (Array.isArray(job?.steps) ? job.steps : []).flatMap((step, i) => Object.keys(COMMAND).map((kind) => stepKey(file, name, step, i, kind)))
+        )
+      )
+    );
+    for (const [entry, reason] of Object.entries(INDIRECT_RUNTIME)) {
+      expect(String(reason ?? '').trim(), `${entry} gives no reason`).not.toBe('');
+      expect(keys.has(entry), entry).toBe(true);
     }
   });
 });
