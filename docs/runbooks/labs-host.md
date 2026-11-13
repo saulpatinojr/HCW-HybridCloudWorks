@@ -4360,6 +4360,91 @@ next dispatch moves it.
 The hand procedure behind all of this, for a pin the workflow cannot move,
 is `lab-host/README.md`, "Bumping a pin".
 
+## After Coder's PostgreSQL moves: rebuild the indexes its notes name
+
+Coder (the lab's workspace server) keeps its data in a PostgreSQL database,
+the `coder-postgres` container on the lab host. Its version is the
+`coder_postgres_image_tag` pin in
+[`lab-host/ansible/group_vars/all.yml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/ansible/group_vars/all.yml),
+which the weekly `chore/lab-pins-host` pull request moves.
+
+A new PostgreSQL release fixes bugs, but it does not repair damage those
+bugs already did. Sometimes that damage is in an index (the lookup table a
+database keeps beside a table so it can find rows quickly). When that
+happens, the release notes say so by asking for `REINDEX` (PostgreSQL's
+command that rebuilds an index from the table's own rows). Search the whole
+page for `REINDEX`: the **Migration to Version …** section near the top
+usually points to the entries that ask for it, but some ask only in the list
+of changes below. Installing the release is not enough; the
+indexes it names have to be rebuilt once, by hand.
+
+So every time this pin moves, read the notes of the new release. The notes
+for each release are at `https://www.postgresql.org/docs/release/<version>/`,
+for example the
+[18.7 release notes](https://www.postgresql.org/docs/release/18.7/).
+
+**When the notes mention `REINDEX`, rebuild every index on Coder's
+tables.** Coder's database is small, so rebuilding all of it takes seconds,
+and it is quicker than working out which of its indexes the notes mean.
+While a table's indexes are rebuilt, almost every query on that table
+waits, reads as well as writes, so Coder can pause for a second or two.
+Nothing is lost. (`REINDEX DATABASE` skips PostgreSQL's own catalog tables,
+where it keeps its bookkeeping. A release whose notes name those would ask
+for `REINDEX SYSTEM` instead; 18.7 did not.)
+
+1. **Run the host's `bootstrap.sh` first**, so the new version is the one
+   running. PowerShell, the same line as **Install it** under "Runtime
+   advisories", "What the owner does", above:
+
+   ```powershell
+   ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+   ```
+
+   Good is a `PLAY RECAP` line for `localhost` with `failed=0` and
+   `unreachable=0`.
+
+2. **Check which version is running.** PowerShell:
+
+   ```powershell
+   ssh -t hcw-lab "sudo docker exec coder-postgres psql -U coder -d coder -tAc 'SHOW server_version;'"
+   ```
+
+   Good is the version the pull request moved to, for example
+   `18.7 (Debian 18.7-1.pgdg13+2)`. An older number means step 1 did not
+   finish: run it again and read the first failed task.
+
+3. **Rebuild the indexes.** PowerShell:
+
+   ```powershell
+   ssh -t hcw-lab "sudo docker exec coder-postgres psql -U coder -d coder -c 'REINDEX DATABASE coder;'"
+   ```
+
+   Good is one line, `REINDEX`. An `ERROR:` line names the index that could
+   not be rebuilt. `REINDEX` changed no table, and the tables before the
+   failing one are already rebuilt. Keep the output and open an issue with
+   it before running anything else: a failure such as a duplicate key can
+   mean the table already holds rows the damaged index let in.
+
+**Backup warnings in the notes do not apply here.** Notes sometimes say
+that incremental backups (backups that hold only what changed since the
+last one) can no longer be trusted. This host does not take those. Its
+nightly backup, `/usr/local/sbin/coder-postgres-backup`, is a full
+`pg_dump` (an export of the whole database) every night (see "Off-host backups", above).
+
+**A new major version is a different job.** A move from 18 to 19 is a dump
+and a restore, not a pin bump; it is described in
+[`lab-host/ansible/roles/coder/README.md`, "The next major"](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/ansible/roles/coder/README.md#the-next-major).
+
+**Done so far.** 18.6 → 18.7, merged on 2026-11-13
+([#1714](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1714)).
+The [18.7 notes](https://www.postgresql.org/docs/release/18.7/) (released
+2026-11-12) say several bugs could corrupt indexes, among them B-tree
+indexes (the ordinary kind) on `bpchar` columns (`bpchar` is the type
+behind `char(n)` and `character`: text padded with spaces to its length), `gist_trgm_ops` indexes (used for fuzzy text
+search), and indexes on TOAST tables (where PostgreSQL stores large values)
+after `REINDEX CONCURRENTLY` (a rebuild that lets writes carry on). On 2026-11-13 the host reported `18.7 (Debian
+18.7-1.pgdg13+2)`, and `REINDEX DATABASE coder;` answered `REINDEX`.
+
 ## Image findings that wait on their maker
 
 Most of what the weekly scan finds in the lab images is not in code this

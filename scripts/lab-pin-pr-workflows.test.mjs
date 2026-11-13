@@ -87,6 +87,22 @@ describe('the pin sets', () => {
     }
   });
 
+  // A PostgreSQL release can ask for REINDEX in its notes (18.7 did, #1714),
+  // and installing it does not rebuild anything. The host body says so and
+  // names the runbook section that holds the commands, which must exist.
+  it('reminds the host pull request to read PostgreSQL notes for REINDEX, naming a runbook section that exists', () => {
+    const heading = "After Coder's PostgreSQL moves: rebuild the indexes its notes name";
+    const reminder = SETS.host.after.find((line) => line.includes('REINDEX'));
+    expect(reminder).toBeDefined();
+    expect(reminder).toContain(`"${heading}"`);
+    expect(reminder).toContain('https://www.postgresql.org/docs/release/');
+    // The list reaches the reader only through the generated body.
+    const body = prBody({ set: 'host', evidence: 'x', notes: '', runUrl: 'u' });
+    expect(body).toContain(reminder);
+    const runbook = readFileSync(join(REPO, 'docs', 'runbooks', 'labs-host.md'), 'utf8');
+    expect(runbook.split('\n')).toContain(`## ${heading}`);
+  });
+
   it('writes the Cloudflare ranges body in its own terms, with no lab-pin claim in it, and leaves the lab sets theirs', () => {
     const body = prBody({ set: CLOUDFLARE_SET, evidence: '| `198.51.100.0/24` | published, not declared | the apply adds its Allow rule |\n', notes: '', runUrl: 'https://example/run/2' });
     expect(body).toContain('node scripts/cloudflare-ranges.mjs --bump');
