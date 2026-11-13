@@ -210,7 +210,10 @@ const SHELL_SCRIPT = new RegExp(`${START}${PATH}${SHELL_GIVEN_C}$`);
 const PIPX = new RegExp(`(?<before>${START})${PATH}pipx(?=\\s|$)(?<words>[^;&|)]*)`, 'g');
 // An assignment word (`NAME=value`, the value plain, quoted or both) that starts a word, as ASSIGNMENT reads one: so in
 // `FOO=PIPX_DEFAULT_PYTHON=/p` the name is FOO, and the rest is FOO's value.
-const ASSIGNMENT_WORD = /(?:^|(?<=[\s;&|({`]))([A-Za-z_][A-Za-z0-9_]*)=(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'])*(?=\s|$)/g;
+const ASSIGNMENT_WORD = /(?:^|(?<=[\s;&|({`]))([A-Za-z_][A-Za-z0-9_]*)=((?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'])*)(?=\s|$)/g;
+// A non-empty quoted value for PIPX_DEFAULT_PYTHON in the raw `run:` text: the shell reading empties quoted text, so
+// `PIPX_DEFAULT_PYTHON="$P"` and `PIPX_DEFAULT_PYTHON=""` look alike after it, and only the raw text tells them apart.
+const PIPX_DEFAULT_QUOTED = /(?:^|(?<=[\s;&|({`]))PIPX_DEFAULT_PYTHON=(?:"(?:[^"\\]|\\.)+"|'[^']+')/;
 // pipx's options that take a value as the next word, so that word is not read as an option or as the app's name.
 const PIPX_VALUE_OPTIONS = new Set(['--spec', '--python', '--index-url', '--pip-args', '--suffix', '--preinstall', '--backend', '--fetch-python']);
 // Where `((` opens an arithmetic command rather than two subshells: at the start of a command.
@@ -562,21 +565,35 @@ export function pipxOptionChoosesPython(words) {
 }
 
 /**
+ * Whether the assignments in front of `pipx` set PIPX_DEFAULT_PYTHON to something: an empty value
+ * (`PIPX_DEFAULT_PYTHON= pipx`, `PIPX_DEFAULT_PYTHON='' pipx`) leaves pipx on its own interpreter. A quoted value is
+ * emptied by the shell reading, so it counts only when the raw text quotes something non-empty.
+ */
+function choosesDefaultPython(before, run) {
+  for (const m of before.matchAll(ASSIGNMENT_WORD)) {
+    if (m[1] !== 'PIPX_DEFAULT_PYTHON') continue;
+    if (m[2] === '' || m[2] === "''" || m[2] === '""') {
+      if (m[2] && PIPX_DEFAULT_QUOTED.test(run)) return true;
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
  * True when a run script runs `pipx` in command position without choosing its interpreter: no `--python` among pipx's
- * own options, no `PIPX_DEFAULT_PYTHON` among the assignments in front of it (a whole assignment word, not a value that
- * happens to hold the text), and none in `env` (the step's, job's and workflow's).
+ * own options, no non-empty `PIPX_DEFAULT_PYTHON` among the assignments in front of it (a whole assignment word, not a
+ * value that happens to hold the text), and none in `env` (the step's, job's and workflow's).
  */
 export function pipxWithoutPython(run, env = {}) {
   if (String(env?.PIPX_DEFAULT_PYTHON ?? '').trim()) return false;
-  return shellText(String(run ?? ''))
+  const raw = String(run ?? '');
+  return shellText(raw)
     .split('\n')
     .some((line) =>
       [...line.trim().matchAll(PIPX)].some(
-        (found) =>
-          !(
-            [...found.groups.before.matchAll(ASSIGNMENT_WORD)].some((m) => m[1] === 'PIPX_DEFAULT_PYTHON') ||
-            pipxOptionChoosesPython(found.groups.words)
-          )
+        (found) => !(choosesDefaultPython(found.groups.before, raw) || pipxOptionChoosesPython(found.groups.words))
       )
     );
 }
@@ -860,6 +877,14 @@ describe('pipx chooses its Python', () => {
       ['pipx install --python /p tool', {}, false],
       ['pipx install tool --python /p', {}, false],
       ['FOO=1 PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
+      // An empty value leaves pipx on its own interpreter (Copilot on HCW-NetworkEyes_App#394); a quoted non-empty one
+      // still counts, though the shell reading empties it.
+      ['PIPX_DEFAULT_PYTHON= pipx run x', {}, true],
+      ["PIPX_DEFAULT_PYTHON='' pipx run x", {}, true],
+      ['PIPX_DEFAULT_PYTHON="" pipx run x', {}, true],
+      ['PIPX_DEFAULT_PYTHON="$P" pipx run x', {}, false],
+      ["PIPX_DEFAULT_PYTHON='/opt/py/bin/python3' pipx run x", {}, false],
+      ['env PIPX_DEFAULT_PYTHON= pipx run x', {}, true],
       ['pipx run --python "$P" --spec x x', {}, false],
       ['pipx run --python=/opt/py/bin/python3 x', {}, false],
       ['PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
