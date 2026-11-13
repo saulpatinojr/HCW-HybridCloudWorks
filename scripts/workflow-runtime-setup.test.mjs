@@ -72,8 +72,14 @@
  * HCW-NetworkEyes_AddOn#100). A set-up step with no `if:` covers every later
  * step whose condition does not test the job's status. Equal text means equal
  * value only for values that stay fixed during a job (`matrix`, `github`,
- * `inputs`, `needs`, `vars`); a condition on `steps.*` or `env.*` set between
- * the two steps could differ, so prefer those fixed values in such conditions.
+ * `inputs`, `needs`, `vars`, `secrets`); a term that reads anything else
+ * (`env.*`, which a step can change through `$GITHUB_ENV`, `steps.*`, `job`,
+ * `runner`, `hashFiles()`) is never matched by its text, so its step is
+ * reported (Copilot on HCW-MigrateOrchestrator_AddOn#74). The one exception
+ * is `steps.<id>` of a step that comes before the set-up step: its outputs,
+ * outcome and conclusion are fixed once it has run (the `core-update.yml`
+ * jobs' `steps.refs.outputs.changed`). Prefer the fixed values in such
+ * conditions.
  *
  * The job's status is compared on its own. Without `always()`, `failure()`,
  * `cancelled()` or `success()` in it, a step's condition includes an
@@ -83,7 +89,10 @@
  * HCW-CloudAssessor_App#97). So the statuses a later step can run under
  * (after success, after a failure, after a cancel) must all be ones its set-up
  * step runs under too, and the rule above is applied to the conditions with
- * their status-only `&&` terms taken out. `||`, `&&`, `!` and parentheses are
+ * their status-only `&&` terms taken out, but only from a condition with no
+ * top-level `||`: `failure() && a || b` is `(failure() && a) || b`, so taking
+ * `failure()` out would change it (Copilot on HCW-MigrateOrchestrator_AddOn#74).
+ * `||`, `&&`, `!` and parentheses are
  * followed: `always() && !cancelled()` runs after success and failure, not
  * after a cancel.
  */
@@ -161,11 +170,30 @@ const ASSIGNMENT = String.raw`[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\.)*"|'[^']*
 // read only one way: otherwise twenty `-oL`s make the match try every split
 // (the same pattern as the Python copies, HCW-NetworkEyes_App's
 // tests/security/test_workflow_runtime_setup.py).
-const WRAPPER_OPTIONS = { env: 'uCS', sudo: 'ugCDhprtU', xargs: 'InPLdaEs', exec: 'a', time: 'of', nice: 'n', nohup: '', stdbuf: 'ioe', timeout: 'sk' };
-const optionsOf = (takes) =>
+// `env -S` (`--split-string`) is read as a flag, not as one that takes a value, because its value is the command it
+// runs: unquoted, the next word is in command position (`env -S node x.js`); quoted, see ENV_SPLIT_SCRIPT.
+const WRAPPER_OPTIONS = { env: 'uC', sudo: 'ugCDhprtU', xargs: 'InPLdaEs', exec: 'a', time: 'of', nice: 'n', nohup: '', stdbuf: 'ioe', timeout: 'sk' };
+// The long options of those words that take a value (`timeout --kill-after 5 10 node`, `sudo --user nobody node`),
+// the long forms of the letters above: the value follows `=` or is the next word, which never starts with `-`. Any
+// other `--long[=value]` is a flag, so each long option too can be read only one way (Copilot on
+// HCW-MigrateOrchestrator_AddOn#74).
+const WRAPPER_LONG_OPTIONS = {
+  env: ['unset', 'chdir'],
+  sudo: ['user', 'group', 'close-from', 'chdir', 'host', 'prompt', 'role', 'type', 'other-user'],
+  xargs: ['max-args', 'max-procs', 'delimiter', 'arg-file', 'max-chars', 'process-slot-var'],
+  time: ['output', 'format'],
+  nice: ['adjustment'],
+  stdbuf: ['input', 'output', 'error'],
+  timeout: ['signal', 'kill-after'],
+};
+const longOptionsOf = (names) =>
+  names.length
+    ? String.raw`--(?:${names.join('|')})(?:=\S*|\s+[^\s-]\S*)|--(?!(?:${names.join('|')})(?![\w-]))\w[\w-]*(?:=\S+)?`
+    : String.raw`--\w[\w-]*(?:=\S+)?`;
+const optionsOf = (takes, long = []) =>
   takes
-    ? String.raw`(?:\s+(?:-(?:(?![${takes}])[A-Za-z])*[${takes}](?:\s+[^\s-]\S*|\S+)|--\w[\w-]*(?:=\S+)?|-(?:(?![${takes}])\w)+|--(?=\s)))*`
-    : String.raw`(?:\s+(?:--\w[\w-]*(?:=\S+)?|-\w+|--(?=\s)))*`;
+    ? String.raw`(?:\s+(?:-(?:(?![${takes}])[A-Za-z])*[${takes}](?:\s+[^\s-]\S*|\S+)|${longOptionsOf(long)}|-(?:(?![${takes}])\w)+|--(?=\s)))*`
+    : String.raw`(?:\s+(?:${longOptionsOf(long)}|-\w+|--(?=\s)))*`;
 // A shell option (`-e`, `-o pipefail`, `-O extglob`, `--rcfile /tmp/rc`, `--login`, the `--` that ends them),
 // `letters` being the letters a short option may hold. The options that take an argument (`-o`, `-O`, `--rcfile`,
 // `--init-file`) never take one starting with `-`, so an option can be read only one way (otherwise `-o -o -o …`
@@ -180,7 +208,9 @@ const SHELL_GIVEN_C = String.raw`(?:ba|da|k|z)?sh(?:\s+${shellOption('(?:(?!c)[A
 const SHELL_C = String.raw`(?:[^\s=]*/)?${SHELL_GIVEN_C}`;
 const WRAPPERS = [
   ...Object.entries(WRAPPER_OPTIONS).map(([word, takes]) =>
-    word === 'timeout' ? String.raw`timeout${optionsOf(takes)}\s+\d+(?:\.\d+)?[smhd]?\s+` : String.raw`${word}${optionsOf(takes)}\s+`
+    word === 'timeout'
+      ? String.raw`timeout${optionsOf(takes, WRAPPER_LONG_OPTIONS[word])}\s+\d+(?:\.\d+)?[smhd]?\s+`
+      : String.raw`${word}${optionsOf(takes, WRAPPER_LONG_OPTIONS[word])}\s+`
   ),
   String.raw`command(?:\s+(?:-p|--(?=\s)))*\s+`,
   String.raw`(?:if|then|else|elif|do|while|until|!)\s+`,
@@ -204,13 +234,16 @@ const COMMAND = {
 // '…'`): the script runs on the runner too, so its commands count. The same words after `docker run image` are not
 // in command position, so a container's script stays unread.
 const SHELL_SCRIPT = new RegExp(`${START}${PATH}${SHELL_GIVEN_C}$`);
+// `env -S` (`--split-string`) in command position: env splits its value into words and runs them, so a quoted value
+// there is read as a script, like a `-c` shell's (`env -S 'node x.js'`, `env --split-string='python3 x.py'`; Copilot on
+// HCW-MigrateOrchestrator_AddOn#74). An unquoted value is the next word, which is in command position already.
+const ENV_SPLIT_SCRIPT = new RegExp(
+  String.raw`${START}${PATH}env${optionsOf(WRAPPER_OPTIONS.env, WRAPPER_LONG_OPTIONS.env)}\s+(?:-(?:(?![uCS])[A-Za-z])*S|--split-string=?)\s*$`
+);
 // `pipx` in command position, with what comes before it (its assignments and wrappers) and its words, up to the end
 // of the command (`;`, `&`, `|` or `)`). It has chosen its interpreter when `--python` is one of pipx's own options
 // (see `pipxOptionChoosesPython`) or `PIPX_DEFAULT_PYTHON` is one of the assignments in front of it.
 const PIPX = new RegExp(`(?<before>${START})${PATH}pipx(?=\\s|$)(?<words>[^;&|)]*)`, 'g');
-// An assignment word (`NAME=value`, the value plain, quoted or both) that starts a word, as ASSIGNMENT reads one: so in
-// `FOO=PIPX_DEFAULT_PYTHON=/p` the name is FOO, and the rest is FOO's value.
-const ASSIGNMENT_WORD = /(?:^|(?<=[\s;&|({`]))([A-Za-z_][A-Za-z0-9_]*)=(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'])*(?=\s|$)/g;
 // pipx's options that take a value as the next word, so that word is not read as an option or as the app's name.
 const PIPX_VALUE_OPTIONS = new Set(['--spec', '--python', '--index-url', '--pip-args', '--suffix', '--preinstall', '--backend', '--fetch-python']);
 // Where `((` opens an arithmetic command rather than two subshells: at the start of a command.
@@ -233,7 +266,7 @@ const HAS_STATUS = /\b(?:always|failure|cancelled|success)\(\s*\)/;
  * bodies dropped (`<<EOF`, `<<'EOF'`, `<<"EOF"`, `<<\EOF`, `<<-EOF`, but not
  * the shift `<<` inside `$((…))` or `((…))`), a line that ends in `\` joined
  * to the next (so the next line's first word is still an argument),
- * single-quoted text and `$'…'` text emptied, and double-quoted text emptied
+ * single-quoted text and `$'…'` text written as `'_'` (`''` when empty), and double-quoted text as `"_"` (`""` when empty)
  * unless it runs a command (`"$(node x)"`, or the older "`node x`"). An
  * escaped backtick (`\``, a Markdown summary line) is a plain character. A
  * quoted string may run over several lines, as the script of `docker run image
@@ -292,9 +325,12 @@ export function shellText(run) {
     const text = out.join('');
     return text.slice(text.lastIndexOf('\n') + 1);
   };
-  // A `-c` script keeps the outer reading too: the outer shell runs a `$(…)` or backtick in a double-quoted script
-  // before the inner shell starts (`bash -c "echo '$(node x)'"`).
-  const quoted = (script, text) => out.push(SHELL_SCRIPT.test(line().trimStart()) ? `${text}\n${shellText(script)}\n:` : text);
+  // A `-c` script (or an `env -S` value) keeps the outer reading too: the outer shell runs a `$(…)` or backtick in a
+  // double-quoted script before the inner shell starts (`bash -c "echo '$(node x)'"`).
+  const quoted = (script, text) => {
+    const isScript = SHELL_SCRIPT.test(line().trimStart()) || ENV_SPLIT_SCRIPT.test(line().trimStart());
+    out.push(isScript ? `${text}\n${shellText(script)}\n:` : text);
+  };
   while (i < n) {
     const char = run[i];
     if (char === '\\' && i + 1 < n) {
@@ -304,11 +340,11 @@ export function shellText(run) {
       // `$'…'` may hold `\'`, which does not end it.
       let j = i + 2;
       while (j < n && run[j] !== "'") j += run[j] === '\\' ? 2 : 1;
-      quoted(run.slice(i + 2, j).replace(/\\([\s\S])/g, (escape, c) => ANSI_C[c] ?? escape), "''");
+      quoted(run.slice(i + 2, j).replace(/\\([\s\S])/g, (escape, c) => ANSI_C[c] ?? escape), j > i + 2 ? "'_'" : "''");
       i = j + 1;
     } else if (char === "'") {
       const end = run.indexOf("'", i + 1) === -1 ? n : run.indexOf("'", i + 1);
-      quoted(run.slice(i + 1, end), "''");
+      quoted(run.slice(i + 1, end), end > i + 1 ? "'_'" : "''");
       i = end + 1;
     } else if (char === '"') {
       // A command substitution in the string (`$(…)`, or a backtick pair) may hold quotes of its own, and it runs on
@@ -335,7 +371,7 @@ export function shellText(run) {
       const raw = run.slice(i + 1, Math.min(j, n));
       const text = parts.join('');
       // Given to `-c`, the inner shell runs the script, an escaped backtick included.
-      quoted(raw.replace(/\\([\\"$`\n])/g, (escape, c) => (c === '\n' ? '' : c)), /[$<]\(|`/.test(text) ? `"${text}"` : '""');
+      quoted(raw.replace(/\\([\\"$`\n])/g, (escape, c) => (c === '\n' ? '' : c)), /[$<]\(|`/.test(text) ? `"${text}"` : text ? '"_"' : '""');
       i = j + 1;
     } else if (char === '#' && (i === 0 || ' \t\n;'.includes(run[i - 1]))) {
       const end = run.indexOf('\n', i);
@@ -462,21 +498,44 @@ function runsAfter(expression, status) {
   return expression ? statusValue(expression, status) : true;
 }
 
-/** The condition without its top-level `&&` terms that test only the job's status (`always()`, `!cancelled()`). */
+/**
+ * The condition without its top-level `&&` terms that test only the job's status (`always()`, `!cancelled()`), when
+ * it has no top-level `||`: `failure() && a || b` is `(failure() && a) || b`, and `a || b` holds when it does not
+ * (Copilot on HCW-MigrateOrchestrator_AddOn#74).
+ */
 const withoutStatus = (text) => {
+  if (orTerms(text).length > 1) return text;
   const terms = orTerms(text, '&&', false);
   const kept = terms.filter((term) => term.replace(STATUS_CALL, '').replace(/[\s!()&|]/g, ''));
   return kept.length === terms.length ? text : kept.join(' && ');
 };
+
+// A name in a condition whose value is not fixed for the whole job: `env` (a step can write `$GITHUB_ENV`), `steps`,
+// `job`, `jobs` and `hashFiles()`. `runner` and `strategy` are fixed for the whole job, like `matrix`. Outside quoted strings and not after a `.`, so
+// `needs.build.outputs.env` and `'env.x'` are not one.
+const CHANGING = /(?<![\w.-])(?:env|steps|job|jobs|hashfiles)(?![\w-])/i;
+/**
+ * True when a term reads only values fixed from the set-up step on, so equal text means an equal value: no name in
+ * CHANGING, apart from `steps.<id>` of a step in `ran` (the ids of the steps before the set-up step, whose outputs,
+ * outcome and conclusion no longer change).
+ */
+const fixedTerm = (term, ran = new Set()) =>
+  !CHANGING.test(
+    term.replace(/'(?:[^']|'')*'/g, "''").replace(/(?<![\w.-])steps\.([\w-]+)/gi, (whole, id) => (ran.has(id) ? 'ran' : whole))
+  );
+/** The ids of these steps, for `setupCovers`. */
+export const stepIds = (steps) => new Set((steps ?? []).map((step) => step?.id).filter((id) => id !== undefined && id !== null).map(String));
 
 /**
  * True when a set-up step with condition `setup` is sure to have run before a step with condition `step`. Apart from
  * the job status, the set-up step covers the later step when the later condition is the same, is one of the set-up
  * condition's `||` terms, or, when it has no top-level `||` of its own, is joined by `&&` with one of them: a step that
  * runs only when `a && b` holds can run only when `a` holds, so a set-up step under `a || c` has run, while
- * `a && b || d` can run through `d`.
+ * `a && b || d` can run through `d`. The term matched must read only values fixed from the set-up step on
+ * (`fixedTerm`, with `ran` the ids of the steps before it): `env.RUN == 'true'` can be false at the set-up step and
+ * true later.
  */
-export const setupCovers = (setup, step) => {
+export const setupCovers = (setup, step, ran = new Set()) => {
   for (const status of [...STATUSES].sort()) {
     if (runsAfter(step, status) === false) continue;
     const runs = runsAfter(setup, status);
@@ -487,7 +546,7 @@ export const setupCovers = (setup, step) => {
       // Split on `&&` only when the later condition has no top-level `||`: `a && c || d` can run through `d`.
       const andTerms = orTerms(wanted).length === 1 ? orTerms(wanted, '&&') : [];
       const stepTerms = [wanted, ...andTerms].map(unwrap);
-      if (!(rest === '' || stepTerms.some((term) => setupTerms.has(term)))) return false;
+      if (!(rest === '' || stepTerms.some((term) => setupTerms.has(term) && fixedTerm(term, ran)))) return false;
     }
   }
   return true;
@@ -532,7 +591,9 @@ export function unsetSteps(file, jobs, indirect = INDIRECT_RUNTIME) {
         const key = stepKey(file, name, step, i, kind);
         if (!(runsRuntime(step?.run, kind) || key in indirect)) return;
         // Covered by an earlier set-up step that always runs, or that runs under the same condition as this step.
-        const covered = job.steps.slice(0, i).some((earlier) => setsUp(earlier, kind) && setupCovers(condition(earlier), condition(step)));
+        const covered = job.steps
+          .slice(0, i)
+          .some((earlier, j) => setsUp(earlier, kind) && setupCovers(condition(earlier), condition(step), stepIds(job.steps.slice(0, j))));
         if (!covered) found.push(key);
       });
     }
@@ -561,22 +622,70 @@ export function pipxOptionChoosesPython(words) {
   return false;
 }
 
+// One word of a command as `shellText` leaves it: plain text and quoted strings run together. The first word in front
+// of a command may start with what opened it (`(`, `$(`, `&&`, `;`), which is not part of the word.
+const WORD = /(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'])+/g;
+const OPENING = /^(?:[$<]?\(|[`{|;&])+/;
+
+/**
+ * What the words in front of `pipx` do to PIPX_DEFAULT_PYTHON, read in order, the last one that touches it winning as
+ * in the shell: true when an assignment sets it to something; false when one sets it empty (`PIPX_DEFAULT_PYTHON=`,
+ * `PIPX_DEFAULT_PYTHON=''`, `PIPX_DEFAULT_PYTHON=''""`), or `env` unsets it (`-u`, `--unset`) or clears the whole
+ * environment (`-i`, `-`, `--ignore-environment`); null when none of them touches it, so the inherited value (the
+ * step's, job's or workflow's `env:`) applies (Copilot on HCW-NetworkEyes_App#394). `shellText` writes an empty quoted
+ * string as `''` or `""` and any other as `'_'` or `"_"`, so a value made only of empty quotes is empty.
+ */
+function localDefaultPython(before) {
+  let chosen = null;
+  let inEnv = false; // reading the options of an `env` word
+  let next = ''; // the next word is the value of `-u`/`--unset` ('unset') or of `-C`/`--chdir` ('skip')
+  for (const word of (before.match(WORD) ?? []).map((w) => w.replace(OPENING, ''))) {
+    // An assignment word (`NAME=value`): in `FOO=PIPX_DEFAULT_PYTHON=/p` the name is FOO, and the rest is its value.
+    const assignment = word.match(/^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/);
+    if (next) {
+      if (next === 'unset' && word === 'PIPX_DEFAULT_PYTHON') chosen = false;
+      next = '';
+    } else if (assignment) {
+      if (assignment[1] === 'PIPX_DEFAULT_PYTHON') chosen = assignment[2].replace(/''|""/g, '') !== '';
+      inEnv = false;
+    } else if (/^(?:\S*\/)?env$/.test(word)) inEnv = true;
+    else if (!inEnv || word === '--') inEnv = false;
+    else if (word === '-' || word === '--ignore-environment') chosen = false;
+    else if (word === '--unset' || word === '--chdir') next = word === '--unset' ? 'unset' : 'skip';
+    else if (word.startsWith('--')) {
+      if (word === '--unset=PIPX_DEFAULT_PYTHON') chosen = false;
+    } else if (word.startsWith('-')) {
+      for (let k = 1; k < word.length; k++) {
+        if (word[k] === 'i') chosen = false;
+        else if ('uCS'.includes(word[k])) {
+          const value = word.slice(k + 1);
+          if (word[k] !== 'S' && !value) next = word[k] === 'u' ? 'unset' : 'skip';
+          else if (word[k] === 'u' && value === 'PIPX_DEFAULT_PYTHON') chosen = false;
+          break;
+        }
+      }
+    } else inEnv = false;
+  }
+  return chosen;
+}
+
 /**
  * True when a run script runs `pipx` in command position without choosing its interpreter: no `--python` among pipx's
- * own options, no `PIPX_DEFAULT_PYTHON` among the assignments in front of it (a whole assignment word, not a value that
- * happens to hold the text), and none in `env` (the step's, job's and workflow's).
+ * own options, and no non-empty `PIPX_DEFAULT_PYTHON`, read first from the words in front of that `pipx` (a whole
+ * assignment word, not a value that happens to hold the text, and `env`'s unset and clear options, see
+ * `localDefaultPython`) and only when they leave it alone from `env` (the step's, job's and workflow's): a setting on
+ * the command overrides the inherited one (Copilot on HCW-NetworkEyes_App#394). A `${{ }}` expression
+ * counts as a value on purpose (`PIPX_DEFAULT_PYTHON: ${{ steps.python.outputs.python-path }}`): passing
+ * setup-python's `python-path` output that way is the documented way to point pipx at the Python it set up
+ * (https://github.com/actions/setup-python/blob/main/docs/advanced-usage.md#python-path).
  */
 export function pipxWithoutPython(run, env = {}) {
-  if (String(env?.PIPX_DEFAULT_PYTHON ?? '').trim()) return false;
+  const inherited = String(env?.PIPX_DEFAULT_PYTHON ?? '').trim() !== '';
   return shellText(String(run ?? ''))
     .split('\n')
     .some((line) =>
       [...line.trim().matchAll(PIPX)].some(
-        (found) =>
-          !(
-            [...found.groups.before.matchAll(ASSIGNMENT_WORD)].some((m) => m[1] === 'PIPX_DEFAULT_PYTHON') ||
-            pipxOptionChoosesPython(found.groups.words)
-          )
+        (found) => !(pipxOptionChoosesPython(found.groups.words) || (localDefaultPython(found.groups.before) ?? inherited))
       )
     );
 }
@@ -618,6 +727,47 @@ describe('runsRuntime and unsetSteps', () => {
     expect(runsRuntime("cat > x.txt <<'EOF'\npython3 is named here\nEOF", 'python')).toBe(false);
     expect(runsRuntime('command -v node', 'node')).toBe(false);
     expect(runsRuntime('sudo -u node whoami', 'node')).toBe(false);
+    // Long options that take a value, after `=` or as the next word (Copilot on HCW-MigrateOrchestrator_AddOn#74).
+    for (const [line, kind] of [
+      ['timeout --kill-after 5 10 python3 check.py', 'python'],
+      ['timeout --kill-after=5 10 node x', 'node'],
+      ['timeout --signal KILL 10 node x', 'node'],
+      ['timeout -s KILL 10 node x', 'node'],
+      ['timeout --foreground --signal=TERM 1m python3 x.py', 'python'],
+      ['sudo --user nobody node x', 'node'],
+      ['sudo --user=nobody -- python3 x.py', 'python'],
+      ['env --unset FOO node x', 'node'],
+      ['env --chdir=/tmp python3 x.py', 'python'],
+      ['nice --adjustment 5 node x', 'node'],
+      ['xargs --max-args 1 node', 'node'],
+      ['xargs --process-slot-var SLOT node x', 'node'],
+      ['xargs --process-slot-var=SLOT node x', 'node'],
+      ['stdbuf --output L node x', 'node'],
+      ['time --output t.txt python3 x.py', 'python'],
+    ]) {
+      expect(runsRuntime(line, kind), line).toBe(true);
+    }
+    for (const line of ['sudo --user node whoami', 'timeout --signal node 10 x', 'env --unset node x', 'stdbuf --output node x']) {
+      expect(runsRuntime(line, 'node'), line).toBe(false);
+    }
+    // `env -S` runs its value as a command, so a quoted value is read like a `-c` script (Copilot on
+    // HCW-MigrateOrchestrator_AddOn#74).
+    for (const [line, kind] of [
+      ["env -S 'node x.js'", 'node'],
+      ['env -S "python3 x.py"', 'python'],
+      ["env --split-string='node x'", 'node'],
+      ["env --split-string 'node x'", 'node'],
+      ["env -S'node x'", 'node'],
+      ["env -iS 'python3 x.py'", 'python'],
+      ["sudo env -S 'FOO=1 node x'", 'node'],
+      ['env -S node x.js', 'node'],
+      ["env -S 'pipx run x'", 'python'],
+    ]) {
+      expect(runsRuntime(line, kind), line).toBe(true);
+    }
+    for (const line of ["env -S 'echo node'", 'env -S echo node', "echo env -S 'node x'", "docker run img env -S 'node x'"]) {
+      expect(runsRuntime(line, 'node'), line).toBe(false);
+    }
     expect(runsRuntime('NODE_BIN=/opt/node/bin/node', 'node')).toBe(false);
     expect(runsRuntime('echo $(foo) python3 x', 'python')).toBe(false);
     expect(runsRuntime('echo x # node y', 'node')).toBe(false);
@@ -713,6 +863,10 @@ describe('runsRuntime and unsetSteps', () => {
     expect(runsRuntime(`x="${'$(echo "'.repeat(200)}$(bash -c 'node y')${'")'.repeat(200)}"`, 'node')).toBe(true);
     expect(runsRuntime(`${'$('.repeat(200)}node y${')'.repeat(200)}`, 'node')).toBe(true);
     expect(runsRuntime(`sudo${' -uuu'.repeat(40)} -`, 'node')).toBe(false);
+    expect(runsRuntime(`timeout${' --signal KILL --kill-after=5'.repeat(40)} -`, 'node')).toBe(false);
+    expect(runsRuntime(`sudo${' --user u --user=u --userx'.repeat(40)} -`, 'node')).toBe(false);
+    expect(runsRuntime(`env${' -S -i -u X'.repeat(40)} -`, 'node')).toBe(false);
+    expect(runsRuntime(`env${" -S 'x'".repeat(40)} -`, 'node')).toBe(false);
     expect(performance.now() - started).toBeLessThan(1000);
   });
 
@@ -785,9 +939,18 @@ describe('runsRuntime and unsetSteps', () => {
         // ci.yml's verify job: the set-up runs for either term, the step for the second.
         orTerm: { steps: [{ ...py, if: "matrix.relevant == 'true' || matrix.name == 'scripts (operations)'" }, { name: 'Run', if: "matrix.name == 'scripts (operations)'", run: 'python3 a.py' }] },
         andTerm: { steps: [{ ...py, if: "a == 'x' && b == 'y'" }, { name: 'Run', if: "b == 'y'", run: 'python3 a.py' }] },
+        // A condition on `env` proves nothing; one on a step's outputs does once that step has run before the set-up
+        // step (Copilot on HCW-MigrateOrchestrator_AddOn#74).
+        envCondition: { steps: [{ ...py, if: "env.RUN == 'true'" }, { name: 'Run', if: "env.RUN == 'true'", run: 'python3 a.py' }] },
+        stepRanFirst: {
+          steps: [{ id: 'refs', run: 'echo x' }, { ...py, if: "steps.refs.outputs.changed == 'true'" }, { name: 'Run', if: "steps.refs.outputs.changed == 'true'", run: 'python3 a.py' }],
+        },
+        stepRanLater: {
+          steps: [{ ...py, if: "steps.refs.outputs.changed == 'true'" }, { id: 'refs', run: 'echo x' }, { name: 'Run', if: "steps.refs.outputs.changed == 'true'", run: 'python3 a.py' }],
+        },
       },
     };
-    expect(unsetSteps('x.yml', wf.jobs)).toEqual(['x.yml > skipped > Run > python', 'x.yml > afterAFailure > Run > python', 'x.yml > otherCondition > Run > python', 'x.yml > andTerm > Run > python']);
+    expect(unsetSteps('x.yml', wf.jobs)).toEqual(['x.yml > skipped > Run > python', 'x.yml > afterAFailure > Run > python', 'x.yml > otherCondition > Run > python', 'x.yml > andTerm > Run > python', 'x.yml > envCondition > Run > python', 'x.yml > stepRanLater > Run > python']);
     expect(orTerms("(a || b) || c == 'x || y'")).toEqual(['a || b', "c == 'x || y'"]);
     expect(condition({ if: '${{  a &&   b }}' })).toBe('a && b');
   });
@@ -830,8 +993,29 @@ describe('runsRuntime and unsetSteps', () => {
       ['failure() || cancelled()', 'cancelled()', true],
       ['failure() || cancelled()', '', false],
       ['success() || failure()', '!cancelled()', true],
+      // Status terms come out only of a condition with no top-level `||` (Copilot on HCW-MigrateOrchestrator_AddOn#74):
+      // after success with `a` true and `b` false, `failure() && a || b` is false while `a` is true.
+      ['failure() && a || b', 'a', false],
+      ['always() && a || b', 'b', true],
+      // A term that reads something a step can change is never matched by its text (Copilot on
+      // HCW-MigrateOrchestrator_AddOn#74): an earlier step can write `RUN=true` to `$GITHUB_ENV` after the set-up was
+      // skipped.
+      ["runner.os == 'Linux'", "runner.os == 'Linux'", true],
+      ["strategy.job-index == 0", "strategy.job-index == 0", true],
+      ["job.status == 'success'", "job.status == 'success'", false],
+      ["env.RUN == 'true'", "env.RUN == 'true'", false],
+      ["steps.changes.outputs.py == 'true'", "steps.changes.outputs.py == 'true'", false],
+      ["github.event_name == 'push' && env.RUN", "github.event_name == 'push' && env.RUN", false],
+      ["matrix.os == 'linux' || env.RUN == 'true'", "matrix.os == 'linux'", true],
+      ["matrix.os == 'linux'", "matrix.os == 'linux' && env.RUN == 'true'", true],
+      ["needs.build.outputs.env == 'x'", "needs.build.outputs.env == 'x'", true],
+      ["inputs.mode == 'env.RUN'", "inputs.mode == 'env.RUN'", true],
+      // `steps.<id>` is fixed once that step has run before the set-up step; the fourth item is those steps' ids.
+      ["steps.refs.outputs.changed == 'true'", "steps.refs.outputs.changed == 'true'", true, ['refs']],
+      ["steps.refs.outputs.changed == 'true'", "steps.refs.outputs.changed == 'true'", false, ['other']],
+      ["steps.refs.outputs.changed == 'true' && env.RUN", "steps.refs.outputs.changed == 'true' && env.RUN", false, ['refs']],
     ];
-    for (const [setup, step, covered] of cases) expect(setupCovers(setup, step), `${setup} / ${step}`).toBe(covered);
+    for (const [setup, step, covered, ran = []] of cases) expect(setupCovers(setup, step, new Set(ran)), `${setup} / ${step}`).toBe(covered);
     expect([...statuses('always() && !cancelled()')].sort()).toEqual(['failure', 'success']);
     expect([...statuses('failure() || cancelled()')].sort()).toEqual(['cancelled', 'failure']);
     expect([...statuses('!(failure() || cancelled())')]).toEqual(['success']);
@@ -860,11 +1044,51 @@ describe('pipx chooses its Python', () => {
       ['pipx install --python /p tool', {}, false],
       ['pipx install tool --python /p', {}, false],
       ['FOO=1 PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
+      // An empty value leaves pipx on its own interpreter (Copilot on HCW-NetworkEyes_App#394); a quoted non-empty one
+      // still counts, though the shell reading empties it.
+      ['PIPX_DEFAULT_PYTHON= pipx run x', {}, true],
+      ["PIPX_DEFAULT_PYTHON='' pipx run x", {}, true],
+      ['PIPX_DEFAULT_PYTHON="" pipx run x', {}, true],
+      ['PIPX_DEFAULT_PYTHON="$P" pipx run x', {}, false],
+      ["PIPX_DEFAULT_PYTHON='/opt/py/bin/python3' pipx run x", {}, false],
+      ['env PIPX_DEFAULT_PYTHON= pipx run x', {}, true],
+      // Empty quotes run together are still empty, a quoted value elsewhere in the script does not vouch for this
+      // command's, and the last assignment of the name wins (Copilot on HCW-HybridCloudWorks#1718).
+      ['PIPX_DEFAULT_PYTHON=\'\'"" pipx run x', {}, true],
+      ['PIPX_DEFAULT_PYTHON=""\'\' pipx run x', {}, true],
+      ["PIPX_DEFAULT_PYTHON='' pipx run x; PIPX_DEFAULT_PYTHON=\"$P\" echo", {}, true],
+      ["PIPX_DEFAULT_PYTHON='' pipx a; PIPX_DEFAULT_PYTHON='/p' pipx b", {}, true],
+      ["PIPX_DEFAULT_PYTHON='/p' PIPX_DEFAULT_PYTHON= pipx run x", {}, true],
+      ["PIPX_DEFAULT_PYTHON= PIPX_DEFAULT_PYTHON='/p' pipx run x", {}, false],
+      ['PIPX_DEFAULT_PYTHON=""/p pipx run x', {}, false],
       ['pipx run --python "$P" --spec x x', {}, false],
       ['pipx run --python=/opt/py/bin/python3 x', {}, false],
       ['PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
       ['env PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
       ['pipx run x', { PIPX_DEFAULT_PYTHON: '/p' }, false],
+      // A setting on the command overrides the inherited one (Copilot on HCW-NetworkEyes_App#394): set empty, unset or
+      // cleared by `env`, it chooses nothing; `--python` still chooses.
+      ['PIPX_DEFAULT_PYTHON= pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ["PIPX_DEFAULT_PYTHON='' pipx run x", { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env -u PIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env -uPIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env --unset PIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env --unset=PIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env -i pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env --ignore-environment pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['env --chdir /tmp -u PIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['PIPX_DEFAULT_PYTHON=/p env -u PIPX_DEFAULT_PYTHON pipx run x', {}, true],
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['env -u PIPX_DEFAULT_PYTHON pipx run --python /p x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['env -i PIPX_DEFAULT_PYTHON=/p pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['env -u OTHER pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['sudo -u PIPX_DEFAULT_PYTHON pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ["env -S 'pipx run x'", {}, true],
+      ["env -S 'pipx run x'", { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['(PIPX_DEFAULT_PYTHON=/p pipx run x)', {}, false],
+      ['cd y &&PIPX_DEFAULT_PYTHON=/p pipx run x', {}, false],
+      ['(PIPX_DEFAULT_PYTHON= pipx run x)', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['x=$(env -i pipx run x)', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
       ['echo pipx', {}, false],
       ['docker run img pipx run x', {}, false],
       ['python3 -m pip install pipx', {}, false],
