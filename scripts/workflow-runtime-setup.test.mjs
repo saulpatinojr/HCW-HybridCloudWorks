@@ -228,8 +228,12 @@
  * shell of its own, so the step uses the job's `defaults.run.shell`, else
  * the workflow's, the same as a step with no `shell:` at all (actions/runner
  * src/Runner.Worker/Handlers/ScriptHandler.cs, lines 70-79 at 8cfa1049; see
- * `givenShell`). A job's own `defaults.run.shell: ''` still counts as the
- * job's own empty shell.
+ * `givenShell`). A job's own `defaults.run.shell` that is null (`shell:`,
+ * `~`, a comment alone) is no shell either, so the workflow's applies, as
+ * the YAML library reads it (the Python copies read it as the job's own empty
+ * shell until round 5), while a quoted `''` still counts as the job's own
+ * empty shell: GitHub merges the job's defaults over the workflow's before
+ * the runner sees them, and that merge is not visible here.
  *
  * When this check changes. Owner decision 2026-11-14: round five is the last
  * planned round. After it, this check changes only when (1) a real HCW
@@ -5733,6 +5737,15 @@ describe('round 5 (#1707): a step whose shell: is empty falls back to the defaul
   it("reads pipx under the job's default when the step's shell: is ''", () => {
     const text = 'on: push\njobs:\n  empty-shell-pipx:\n    runs-on: ubuntu-26.04\n    env:\n      PIPX_DEFAULT_PYTHON: /opt/py/bin/python3\n    defaults:\n      run:\n        shell: env PIPX_DEFAULT_PYTHON=/usr/bin/python3 bash -e {0}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Scan\n        shell: \'\'\n        run: pipx run x\n';
     expect(pipxProblems('x.yml', readWorkflow(text))).toEqual(['x.yml > empty-shell-pipx > Scan > pipx']);
+  });
+
+  // A job's own `defaults.run.shell` that is null (every form above but the quoted two) is no shell either, so the job
+  // uses the workflow's; a quoted `''` or `""` stays the job's own empty shell (as in HCW-MigrateOrchestrator_AddOn#80;
+  // the Python copy read every form as the job's own empty shell until round 5).
+  it("reads a job's null defaults.run.shell as none, so the workflow's applies, and a quoted '' as the job's own", () => {
+    const jobs = EMPTY_STEP_SHELLS.map((form, i) => `  job-${i}:\n    runs-on: ubuntu-26.04\n    defaults:\n      run:\n        shell:${form ? ` ${form}` : ''}\n    steps:\n${ROUND5_SET_UP_PYTHON}      - name: Run\n        run: python3 x\n`).join('');
+    const reported = EMPTY_STEP_SHELLS.flatMap((form, i) => (form === "''" || form === '""' ? [] : [`x.yml > job-${i} > Run > python`]));
+    expect(unsetIn(`on: push\ndefaults:\n  run:\n    shell: sudo python3 {0}\njobs:\n${jobs}`)).toEqual(reported);
   });
 });
 
