@@ -223,12 +223,28 @@
  * `shellChoices`); pipx is read under each matrix value, and a step that runs
  * pipx under a `shell:` this check cannot read is reported.
  *
- * Limits, known and kept: a composite action whose set-up step takes its
- * version from `${{ inputs.* }}` cannot be read, so it fails closed and needs
- * an entry in BELOW_FLOOR_ALLOWED; these are reported though they need not be,
- * which can only add findings: a `shell: python` step's text is still read as
- * shell too; an `eval` script is read as a child shell (a name set but not
- * exported before it is not seen); a `$PATH` written inside double quotes or an
+ * Round 5 (#1707) reads a step's `shell:` that is written but empty
+ * (`shell:`, `~`, `null`, a comment alone, `''`) as the runner does: as no
+ * shell of its own, so the step uses the job's `defaults.run.shell`, else
+ * the workflow's, the same as a step with no `shell:` at all (actions/runner
+ * src/Runner.Worker/Handlers/ScriptHandler.cs, lines 70-79 at 8cfa1049; see
+ * `givenShell`). A job's own `defaults.run.shell: ''` still counts as the
+ * job's own empty shell.
+ *
+ * When this check changes. Owner decision 2026-11-14: round five is the last
+ * planned round. After it, this check changes only when (1) a real HCW
+ * workflow trips it or would get past it, or (2) a reviewer shows a way past
+ * it that a workflow could plausibly be written with. Any other edge case a
+ * reviewer raises is added to the known-limits list in this header, not to
+ * a new round.
+ *
+ * Known limits (the list later edge cases are added to): a composite
+ * action whose set-up step takes its version from `${{ inputs.* }}` cannot be
+ * read, so it fails closed and needs an entry in BELOW_FLOOR_ALLOWED; these
+ * are reported though they need not be, which can only add findings: a
+ * `shell: python` step's text is still read as shell too; an `eval` script
+ * is read as a child shell (a name set but not exported before it is not
+ * seen); a `$PATH` written inside double quotes or an
  * unquoted heredoc in a nested script is read as the inner script's, so `sudo
  * bash -c "sudo env PATH=$PATH node x"` is reported though the outer shell
  * fills it in first; a folder put in front of `$PATH`, even the set-up one
@@ -1631,9 +1647,19 @@ export function stepShell(step, job, defaults = {}) {
   return literalShell(givenShell(step, job, defaults));
 }
 
-/** A step's `shell:` as written: the step's own, else the job's or the workflow's `defaults.run.shell`; '' for none. */
+/**
+ * A step's `shell:` as written: the step's own, else the job's or the workflow's `defaults.run.shell`; '' for none. A
+ * step's `shell:` that is there but null or empty (`shell:`, `~`, `null`, a comment alone, `''`) counts as missing,
+ * as the runner reads it: it falls back to the job's defaults when the step's shell is null or empty (round 5, #1707;
+ * actions/runner src/Runner.Worker/Handlers/ScriptHandler.cs, lines 70-79 at 8cfa1049). A job's own
+ * `defaults.run.shell: ''` stays the job's own empty shell: GitHub merges the job's defaults over the workflow's
+ * before the runner sees them, and that merge is not visible here. The same rule as the Python copies' `_given_shell`.
+ */
 const givenShell = (step, job, defaults = {}) =>
-  String((step && Object.hasOwn(step, 'shell') ? step.shell : job?.defaults?.run?.shell ?? defaults?.run?.shell) ?? '');
+  String((ownShell(step) ? step.shell : job?.defaults?.run?.shell ?? defaults?.run?.shell) ?? '');
+
+/** Whether a step names a `shell:` of its own: one that is there and neither null nor empty (see `givenShell`). */
+const ownShell = (step) => Boolean(step) && Object.hasOwn(step, 'shell') && step.shell !== null && step.shell !== undefined && step.shell !== '';
 
 // A matrix value in a job's `defaults.run.shell` (`${{ matrix.shell }}`), which GitHub fills in before the
 // runner sees it.
@@ -1655,7 +1681,7 @@ const MATRIX_IN_SHELL = /\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}/g;
 export function shellChoices(step, job, defaults = {}) {
   const given = givenShell(step, job, defaults);
   if (!given.includes('${{')) return [literalShell(given)];
-  const fromJob = !(step && Object.hasOwn(step, 'shell')) && job?.defaults?.run?.shell !== undefined && job?.defaults?.run?.shell !== null;
+  const fromJob = !ownShell(step) && job?.defaults?.run?.shell !== undefined && job?.defaults?.run?.shell !== null;
   if (!fromJob) return null;
   const names = [...new Set([...given.matchAll(MATRIX_IN_SHELL)].map((found) => found[1]))].sort();
   const matrix = job?.strategy?.matrix;
@@ -5670,6 +5696,43 @@ describe('round 4 (#1707): coproc, a shell: read as the runner passes it, and Py
   it('reads a matrix shell as unreadable when the matrix has an include', () => {
     const workflow = readWorkflow(MATRIX_INCLUDE_SHELL_YAML);
     expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > include-sudo > Run > node', 'x.yml > include-sudo > Run > python', 'x.yml > include-python > Run > node', 'x.yml > include-python > Run > python']);
+  });
+});
+
+describe('round 5 (#1707): a step whose shell: is empty falls back to the defaults, as a missing one does', () => {
+  // A step's `shell:` that is there but null or empty is no shell of its own: the runner falls back to the job's
+  // `defaults.run.shell`, else the workflow's (actions/runner src/Runner.Worker/Handlers/ScriptHandler.cs, lines 70-79
+  // at 8cfa1049). Until round 5 every form below read as the runner's default shell, so a `sudo python3 {0}` default
+  // went unreported. Each test builds one job per form, in this order.
+  const EMPTY_STEP_SHELLS = ['', '~', 'null', 'Null', 'NULL', '# no shell of its own', "''", '""'];
+  const ROUND5_SET_UP_PYTHON = '      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n';
+  const emptyShellWorkflow = (top, head, steps = ROUND5_SET_UP_PYTHON) =>
+    `on: push\n${top}jobs:\n${EMPTY_STEP_SHELLS.map((form, i) => `  empty-${i}:\n    runs-on: ubuntu-26.04\n${head}    steps:\n${steps}      - name: Run\n        shell:${form ? ` ${form}` : ''}\n        run: python3 x\n`).join('')}`;
+  const EMPTY_SHELL_REPORTED = EMPTY_STEP_SHELLS.map((form, i) => `x.yml > empty-${i} > Run > python`);
+  const unsetIn = (text) => {
+    const workflow = readWorkflow(text);
+    return unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults);
+  };
+
+  it("falls back to the job's defaults.run.shell, and a step's own shell: bash still wins", () => {
+    const head = '    defaults:\n      run:\n        shell: sudo python3 {0}\n';
+    const ownBash = `  own-bash:\n    runs-on: ubuntu-26.04\n${head}    steps:\n${ROUND5_SET_UP_PYTHON}      - name: Run\n        shell: bash\n        run: python3 x\n`;
+    expect(unsetIn(emptyShellWorkflow('', head) + ownBash)).toEqual(EMPTY_SHELL_REPORTED);
+  });
+
+  it("falls back to a job's ${{ matrix.shell }} default, read under each matrix value", () => {
+    const head = '    strategy:\n      matrix:\n        shell: [bash, "sudo python3 {0}"]\n    defaults:\n      run:\n        shell: ${{ matrix.shell }}\n';
+    expect(unsetIn(emptyShellWorkflow('', head))).toEqual(EMPTY_SHELL_REPORTED);
+  });
+
+  it("falls back to the workflow's defaults.run.shell, and with no default anywhere to the runner's default shell", () => {
+    expect(unsetIn(emptyShellWorkflow('defaults:\n  run:\n    shell: sudo python3 {0}\n', ''))).toEqual(EMPTY_SHELL_REPORTED);
+    expect(unsetIn(emptyShellWorkflow('', ''))).toEqual([]);
+  });
+
+  it("reads pipx under the job's default when the step's shell: is ''", () => {
+    const text = 'on: push\njobs:\n  empty-shell-pipx:\n    runs-on: ubuntu-26.04\n    env:\n      PIPX_DEFAULT_PYTHON: /opt/py/bin/python3\n    defaults:\n      run:\n        shell: env PIPX_DEFAULT_PYTHON=/usr/bin/python3 bash -e {0}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Scan\n        shell: \'\'\n        run: pipx run x\n';
+    expect(pipxProblems('x.yml', readWorkflow(text))).toEqual(['x.yml > empty-shell-pipx > Scan > pipx']);
   });
 });
 
