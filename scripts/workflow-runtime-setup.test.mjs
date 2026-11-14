@@ -490,6 +490,11 @@ const SHELL_C = `${PATH}${SHELL_GIVEN_C}`;
 const SHELL_READS_INPUT = String.raw`${PATH}(?:ba|da|k|z)?sh(?:\s+${shellOption('(?:(?!c)[A-Za-z])')})*`;
 // A here-string given to such a shell (`bash <<< node`) is its script; unquoted, that is the one word after `<<<`.
 const SHELL_HERE_STRING = String.raw`${SHELL_READS_INPUT}\s*<<<\s*`;
+// A NAME `coproc` takes before a compound command, as bash 5.2 reads it (Copilot's round 2 on #1725, checked with
+// bash 5.2.21): before `{` or `[[` and a space, `(` or `((` (with or without a space), or `for`, `case`, `select`,
+// `while`, `until` or `if`. A NAME is a shell name (bash refuses `coproc node-x { …; }`), and `coproc node{ x; }` is a
+// syntax error, not a NAME.
+const COPROC_NAME = String.raw`[A-Za-z_][A-Za-z0-9_]*(?=\s*\(|\s+(?:\{|\[\[)(?=\s)|\s+(?:for|case|select|while|until|if)(?=\s|$))`;
 // After env's options, a lone `-` (the same as `-i`) may come before its assignments and command (`env - node x`;
 // Copilot's second round on the ports, #1707).
 const ENV_DASH = String.raw`(?:\s+-(?=\s))?`;
@@ -501,9 +506,10 @@ const WRAPPERS = [
   ),
   String.raw`command(?:\s+(?:-p|--(?=\s)))*\s+`,
   // `coproc` runs the command after it in the background (round 4, #1707: Copilot on HCW-MigrateOrchestrator_AddOn#77).
-  // A NAME may come first only before a compound command (bash's manual, Coprocesses): `coproc NAME while node x`; before
-  // a simple command the first word is the command, so `coproc NAME node x` runs NAME. `{` and `(` open a command anyway.
-  String.raw`coproc(?:\s+[A-Za-z_][A-Za-z0-9_]*(?=\s+(?:while|until|if)\s))?\s+`,
+  // A NAME may come first only before a compound command (bash's manual, Coprocesses), and is then taken as the NAME,
+  // never as a command: `coproc node { echo; }` runs no node (COPROC_NAME). Before anything else the first word is the
+  // command, so `coproc NAME node x` runs NAME and `coproc node node x` runs node. `{` and `(` open a command anyway.
+  String.raw`coproc\s+(?:${COPROC_NAME}\s*|(?!${COPROC_NAME}))`,
   String.raw`(?:if|then|else|elif|do|while|until|!)\s+`,
   // `eval` runs its arguments as a script (round 3, #1707): an unquoted first argument is in command position.
   // `builtin` runs the builtin named next (`builtin eval node x`).
@@ -5500,6 +5506,23 @@ describe('round 4 (#1707): coproc, a shell: read as the runner passes it, and Py
       ['coproc NAME for x in y; do python3 x; done', 'python', true],
       ['coproc NAME case $k in a) python3 x ;; esac', 'python', true],
       ['coproc NAME select x in y; do python3 x; done', 'python', true],
+      // Copilot's round 2 on HCW-HybridCloudWorks#1725: bash takes `coproc NAME` before every compound command (`{`,
+      // `(`, `[[`, `((`, `for`, `case`, `select`, `while`, `until`, `if`), so these run no runtime, while a NAME before
+      // anything else is the command (`coproc node node x` runs node). Checked with bash 5.2.21; `coproc node{ x; }` is
+      // a syntax error there.
+      ['coproc node { echo done; }', 'node', false],
+      ['coproc python3 ( echo x )', 'python', false],
+      ['coproc node(echo x)', 'node', false],
+      ['coproc node for x in y; do echo; done', 'node', false],
+      ['coproc node case a in a) echo ;; esac', 'node', false],
+      ['coproc node select x in y; do echo; done', 'node', false],
+      ['coproc node while true; do echo; done', 'node', false],
+      ['coproc python3 [[ -n x ]]', 'python', false],
+      ['coproc node (( 1 ))', 'node', false],
+      ['coproc node node x', 'node', true],
+      ['coproc node time echo t', 'node', true],
+      ['coproc node [ -n x ]', 'node', true],
+      ['coproc node{ x; }', 'node', false],
     ];
     for (const [line, kind, found] of cases) expect(runsRuntime(line, kind), `${line} / ${kind}`).toBe(found);
     const sudo = [
@@ -5623,11 +5646,11 @@ describe('round 4 (#1707): coproc, a shell: read as the runner passes it, and Py
   // Copilot's second round on HCW-NetworkEyes_App#403: pipx is read under each `shell:` a step may be handed to, so a
   // job's `${{ matrix.shell }}` whose value sets PIPX_DEFAULT_PYTHON to the runner's own Python is reported, and a step
   // that runs pipx under a `shell:` this check cannot read (`${{ vars.RUN_SHELL }}`) is reported too.
-  const EXPRESSION_SHELL_PIPX_YAML = 'on: push\njobs:\n  matrix-runner-python:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        shell:\n          - env PIPX_DEFAULT_PYTHON=/usr/bin/python3 bash -e {0}\n    env:\n      PIPX_DEFAULT_PYTHON: /opt/py/bin/python3\n    defaults:\n      run:\n        shell: ${{ matrix.shell }}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Scan\n        run: pipx run x\n  vars-shell:\n    runs-on: ubuntu-26.04\n    env:\n      PIPX_DEFAULT_PYTHON: /opt/py/bin/python3\n    defaults:\n      run:\n        shell: ${{ vars.RUN_SHELL }}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - uses: actions/setup-node@abc\n        with: { node-version: "26" }\n      - name: Scan\n        run: pipx run x\n  vars-shell-no-pipx:\n    runs-on: ubuntu-26.04\n    defaults:\n      run:\n        shell: ${{ vars.RUN_SHELL }}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - uses: actions/setup-node@abc\n        with: { node-version: "26" }\n      - name: Scan\n        run: echo hi\n  matrix-bash:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        shell: [bash]\n    defaults:\n      run:\n        shell: ${{ matrix.shell }} -e {0}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Scan\n        run: pipx run --python "${{ steps.py.outputs.python-path }}" x\n';
+  const EXPRESSION_SHELL_PIPX_YAML = 'on: push\njobs:\n  matrix-runner-python:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        shell:\n          - env PIPX_DEFAULT_PYTHON=/usr/bin/python3 bash -e {0}\n    env:\n      PIPX_DEFAULT_PYTHON: /opt/py/bin/python3\n    defaults:\n      run:\n        shell: ${{ matrix.shell }}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Scan\n        run: pipx run x\n  vars-shell:\n    runs-on: ubuntu-26.04\n    env:\n      PIPX_DEFAULT_PYTHON: /opt/py/bin/python3\n    defaults:\n      run:\n        shell: ${{ vars.RUN_SHELL }}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - uses: actions/setup-node@abc\n        with: { node-version: "26" }\n      - name: Scan\n        run: pipx run x\n  vars-shell-no-pipx:\n    runs-on: ubuntu-26.04\n    defaults:\n      run:\n        shell: ${{ vars.RUN_SHELL }}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - uses: actions/setup-node@abc\n        with: { node-version: "26" }\n      - name: Scan\n        run: echo hi\n  matrix-bash:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        shell: [bash]\n    defaults:\n      run:\n        shell: ${{ matrix.shell }} -e {0}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Scan\n        run: pipx run --python "${{ steps.py.outputs.python-path }}" x\n  matrix-unset:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        shell:\n          - env -u PIPX_DEFAULT_PYTHON bash -e {0}\n    defaults:\n      run:\n        shell: ${{ matrix.shell }}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Scan\n        env:\n          PIPX_DEFAULT_PYTHON: /opt/py/bin/python3\n        run: pipx run x\n';
 
   it('reads pipx under each shell: a step may be handed to, and reports it under one this check cannot read', () => {
     const workflow = readWorkflow(EXPRESSION_SHELL_PIPX_YAML);
-    expect(pipxProblems('x.yml', workflow)).toEqual(['x.yml > matrix-runner-python > Scan > pipx', 'x.yml > vars-shell > Scan > pipx']);
+    expect(pipxProblems('x.yml', workflow)).toEqual(['x.yml > matrix-runner-python > Scan > pipx', 'x.yml > vars-shell > Scan > pipx', 'x.yml > matrix-unset > Scan > pipx']);
   });
 });
 
