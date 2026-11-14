@@ -4,30 +4,30 @@
  * A job that runs `node`, `npm`, `npx`, `yarn`, `pnpm`, `python3`, `pip`,
  * `pipx`, `pytest`, `uv` or `uvx` without actions/setup-node or
  * actions/setup-python gets whatever the runner image ships: on ubuntu-26.04
- * that was Node.js 24 and Python 3.14 in November 2026, both below the
- * floors in scripts/version-floors.json (Node.js 26, Python 3.15). Nothing
- * else would notice, because the floors test reads only the versions a file
- * names, and a job that names none has nothing to read. Six jobs were found
- * that way on 2026-11-12. `uv` and `uvx` count as Python,
- * because uv runs the interpreter it finds, the runner's own unless one was
- * set up; so astral-sh/setup-uv counts as setting Python up only when it is
- * given a `python-version` at or above the floor in version-floors.json.
- * `yarn` and `pnpm` are Node.js programs and count as Node.js; `pytest` and
- * `pipx` are Python programs and count as Python. pipx makes each tool's
- * virtual environment from the interpreter pipx itself runs on unless it is
- * given `--python` or `PIPX_DEFAULT_PYTHON`
+ * that was Node.js 24 and Python 3.14 in November 2026, both below the floors
+ * in scripts/version-floors.json (Node.js 26, Python 3.15). Nothing else would
+ * notice, because the floors test reads only the versions a file names, and a
+ * job that names none has nothing to read. Six jobs were found that way on
+ * 2026-11-12. `uv` and `uvx` count as Python, because uv runs the interpreter
+ * it finds, the runner's own unless one was set up; so astral-sh/setup-uv
+ * counts as setting Python up only when it is given a `python-version` at or
+ * above the floor in version-floors.json. `yarn` and `pnpm` are Node.js
+ * programs and count as Node.js; `pytest` and `pipx` are Python programs and
+ * count as Python. pipx makes each tool's virtual environment from the
+ * interpreter pipx itself runs on unless it is given `--python` or
+ * `PIPX_DEFAULT_PYTHON`
  * (https://pipx.pypa.io/latest/reference/environment-variables.html), and
  * GitHub's Ubuntu runner images install pipx with the image's own python3
  * (actions/runner-images#14654), so setting Python up is not enough. A step
  * that runs `pipx` in command position must also choose its interpreter:
  * `--python` among that pipx command's own words (`pipx run --python
  * "$PYTHON_PATH" …`, with actions/setup-python's `python-path` output), or
- * `PIPX_DEFAULT_PYTHON` set in front of it (`PIPX_DEFAULT_PYTHON=/p pipx …`)
- * or in the step's, job's or workflow's `env:` (Copilot on
- * HCW-NetworkEyes_App#393). A step that does not is reported, named; one
- * kept that way on purpose is listed, with its reason, in PIPX_ALLOWED. An
- * `export PIPX_DEFAULT_PYTHON=…` earlier in the script is not read; use
- * `env:` instead.
+ * `PIPX_DEFAULT_PYTHON` set in front of it (`PIPX_DEFAULT_PYTHON=/p pipx …`) or
+ * in the step's, job's or workflow's `env:` (Copilot on
+ * HCW-NetworkEyes_App#393). A step that does not is reported, named; one kept
+ * that way on purpose is listed, with its reason, in PIPX_ALLOWED. The script's
+ * own `unset`, `export` and assignments of it are read too, the last in a shell
+ * winning.
  *
  * What pipx is given must also be the set-up Python. The runner's own Python
  * named by its path (`--python /usr/bin/python3`, `/usr/bin/python3.12`,
@@ -131,15 +131,16 @@
  * string, so `bash -c "x; pipx run y $(true)"` runs no `pipx` outside. `unset`,
  * `export -n` (which takes a name's export away) and `declare +x` are read, and
  * so is a script line that sets PIPX_DEFAULT_PYTHON to a value that chooses
- * nothing (one that chooses is still not read: use `env:`). sudo refuses `-i`
- * together with `-E` outright, so `sudo -iE pipx` counts as having no Python
- * chosen. A value given to pipx chooses nothing when it is a bare name other
- * than the floor's own `python3.15` (PATH would find the runner's), a path
- * under /usr/local/bin, a path with a `..` after a part this check cannot see,
- * or a pattern or `~` the shell would still expand; a `\` in it is dropped
- * first. `${{ env.X }}` is read as GitHub evaluates it, level by level, and
- * `${{ env.pythonLocation }}` stays setup-python's word, which chooses nothing
- * when an `env:` sets `pythonLocation` itself or the script unsets it.
+ * nothing (and, since Copilot's third review, one that chooses, the latest
+ * change in a shell winning). sudo refuses `-i` together with `-E` outright, so
+ * `sudo -iE pipx` counts as having no Python chosen. A value given to pipx
+ * chooses nothing when it is a bare name other than the floor's own
+ * `python3.15` (PATH would find the runner's), a path under /usr/local/bin, a
+ * path with a `..` after a part this check cannot see, or a pattern or `~` the
+ * shell would still expand; a `\` in it is dropped first. `${{ env.X }}` is
+ * read as GitHub evaluates it, level by level, and `${{ env.pythonLocation }}`
+ * stays setup-python's word, which chooses nothing when an `env:` sets
+ * `pythonLocation` itself or the script unsets it.
  *
  * Limits, known and kept: a composite action whose set-up step takes its
  * version from `${{ inputs.* }}` cannot be read, so it fails closed and needs
@@ -1776,10 +1777,10 @@ function pipxWithoutPythonOnce(run, env, setupIds) {
   const text = shellText(ghaTokens(String(run ?? '')), true);
   const scopes = []; // `scopePaths(text)`, worked out the first time a script sets a name
   const records = new Map(); // name -> [value, scope path, exported], in the order the script sets them
-  // Where the script unsets, unexports or sets to a value that chooses nothing PIPX_DEFAULT_PYTHON (`unset
-  // PIPX_DEFAULT_PYTHON`, `export -n …`, `PIPX_DEFAULT_PYTHON=/usr/bin/python3`): the scope path of each (round 3,
-  // #1707). One that sets it to a value that chooses is not read, as before: use `env:` for that.
-  const removals = [];
+  // Each change the script makes to PIPX_DEFAULT_PYTHON, in order (see `inherited`): its scope path, what it does
+  // ('unset', 'unexport', 'export' or 'assign'), and whether the value it gives chooses the set-up Python (null when it
+  // gives none: `export -n PIPX_DEFAULT_PYTHON`). A value this check does not follow (`read`, `+=`) chooses nothing.
+  const changes = [];
   // The variables a command at `index` of `text` sees, of those in `names` (see `namesView`).
   const viewAt = (index, names) => {
     if (!records.size) return { ...env };
@@ -1790,15 +1791,29 @@ function pipxWithoutPythonOnce(run, env, setupIds) {
     if (!records.has(name)) records.set(name, []);
     records.get(name).push([name, value, here, exported]);
   };
-  // What a command at `index` inherits for PIPX_DEFAULT_PYTHON: false once the shell it runs in (the innermost child
-  // shell, or a subshell of it that is still open) has removed it, else what that shell was started with.
+  // What a command at `index` inherits for PIPX_DEFAULT_PYTHON: what the shell it runs in (the innermost child shell)
+  // was started with, then each change the script made to it in that shell, or in a subshell of it that is still open,
+  // in order, the latest winning (Copilot on HCW-NetworkEyes_App#399): `unset` removes it, `export -n` keeps it from the
+  // commands the shell starts, `export` gives it to them again, and an assignment changes its value. pipx sees the value
+  // only while it is exported: in the outermost shell when the step's, job's or workflow's `env:` sets it or the script
+  // exports it, in a child shell when it was handed one that chooses.
   const inherited = (index) => {
-    if (removals.length) {
+    let state = stack.at(-1);
+    let exported = stack.length === 1 ? Object.hasOwn(env, 'PIPX_DEFAULT_PYTHON') : state;
+    if (changes.length) {
       const here = index >= 0 ? scopes[0][index] : [];
       const child = here.findLastIndex((id) => scopes[1].get(id) === 'child');
-      if (removals.some((at) => at.length > child && at.every((id, i) => here[i] === id))) return false;
+      for (const [at, change, choice] of changes) {
+        if (at.length <= child || at.some((id, i) => here[i] !== id)) continue;
+        if (change === 'unset') {
+          [state, exported] = [false, false];
+          continue;
+        }
+        exported = change === 'unexport' ? false : change === 'export' ? true : exported;
+        state = choice === null ? state : choice;
+      }
     }
-    return stack.at(-1);
+    return state && exported;
   };
   let offset = 0;
   for (const raw of text.split('\n')) {
@@ -1827,13 +1842,20 @@ function pipxWithoutPythonOnce(run, env, setupIds) {
         const [pairs, exported, marks] = namesSet(found);
         if (!scopes.length && (pairs.length || marks.length)) scopes.push(...scopePaths(text));
         const here = scopes.length ? scopes[0][lead + at - 1] : [];
+        const change = exported === 'unexport' ? 'unexport' : exported === true ? 'export' : 'assign';
         for (const [name, value] of pairs) {
-          if (name === 'PIPX_DEFAULT_PYTHON' && (exported === 'unexport' || typeof value !== 'string' || !chooses(value, setupIds, viewAt(lead + at - 1, namesIn(value))))) removals.push(here);
+          if (name === 'PIPX_DEFAULT_PYTHON') {
+            changes.push(
+              value === UNSET
+                ? [here, 'unset', null]
+                : [here, change, typeof value === 'string' && chooses(value, setupIds, viewAt(lead + at - 1, namesIn(value)))]
+            );
+          }
           record(name, value, here, exported);
         }
         const view = marks.length ? viewAt(lead + at - 1, marks) : {};
         for (const name of marks) {
-          if (name === 'PIPX_DEFAULT_PYTHON' && exported === 'unexport') removals.push(here);
+          if (name === 'PIPX_DEFAULT_PYTHON') changes.push([here, change, null]);
           if (Object.hasOwn(view, name)) record(name, view[name], here, exported);
         }
         continue;
@@ -3369,7 +3391,8 @@ describe('round three: wrappers, quoted words, sudo, shells, env levels, pipx va
       ["bash -c 'unset PIPX_DEFAULT_PYTHON'; pipx run x", { PIPX_DEFAULT_PYTHON: '/opt/py' }, [], false],
       ['unset P; pipx run --python "$P" x', { P: '/opt/py/bin/python3' }, [], true],
       ['PIPX_DEFAULT_PYTHON=/usr/bin/python3; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, [], true],
-      ['export PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; pipx run x', {}, [], true],
+      // An export in the script that chooses is read too since Copilot's third review of HCW-NetworkEyes_App#399.
+      ['export PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; pipx run x', {}, [], false],
       // 5: the outer shell runs only the substitutions of a double-quoted string, not the rest of its text.
       ['PIPX_DEFAULT_PYTHON=/p bash -c "x; pipx run y $(true)"', {}, [], false],
       ['bash -c "x; pipx run y $(true)"', {}, [], true],
@@ -4171,6 +4194,68 @@ describe('round three, Copilot round two: pipx at an operator, sudo through env,
       'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        py: ["3.15"]\n        oops\n    steps:\n      - run: echo\n',
     ];
     for (const text of refused) expect(() => readWorkflow(text), text).toThrow();
+  });
+});
+
+describe('round three, Copilot round three: the latest change to PIPX_DEFAULT_PYTHON wins; quoted # in one-line values', () => {
+  // The same cases as HCW-NetworkEyes_App's tests/security/test_workflow_runtime_setup.py, in the same order (Copilot on
+  // HCW-NetworkEyes_App#399).
+  it('reads the latest change the script makes to PIPX_DEFAULT_PYTHON in each shell', () => {
+    const cases = [
+      ['PIPX_DEFAULT_PYTHON=/usr/bin/python3; PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['PIPX_DEFAULT_PYTHON=/usr/bin/python3; PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; bash -c \'pipx run x\'', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['PIPX_DEFAULT_PYTHON=/usr/bin/python3; PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; pipx run x', {}, true],
+      ['export PIPX_DEFAULT_PYTHON=/usr/bin/python3; export PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; pipx run x', {}, false],
+      ['PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; PIPX_DEFAULT_PYTHON=/usr/bin/python3; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; unset PIPX_DEFAULT_PYTHON; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['unset PIPX_DEFAULT_PYTHON; export PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['unset PIPX_DEFAULT_PYTHON; PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['export -n PIPX_DEFAULT_PYTHON; export PIPX_DEFAULT_PYTHON; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['export -n PIPX_DEFAULT_PYTHON; export PIPX_DEFAULT_PYTHON; bash -c \'pipx run x\'', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['export -n PIPX_DEFAULT_PYTHON; bash -c \'pipx run x\'', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['(export PIPX_DEFAULT_PYTHON=/opt/py/bin/python3); pipx run x', {}, true],
+      ['bash -c \'export PIPX_DEFAULT_PYTHON=/opt/py/bin/python3; pipx run x\'', {}, false],
+    ];
+    for (const [run, env, flagged] of cases) expect(pipxWithoutPython(run, env), `${run} / ${JSON.stringify(env)}`).toBe(flagged);
+  });
+
+  // A `#` inside quotes in a one-line `[ ]` or `{ }` is part of the value, not a comment.
+  const COPILOT_THREE_YAML = [
+    'on: push',
+    'jobs:',
+    '  matrix-hash:',
+    '    runs-on: ubuntu-26.04',
+    '    strategy:',
+    '      matrix:',
+    '        py: ["3.15 # floor"] # a comment',
+    '    steps:',
+    '      - uses: astral-sh/setup-uv@abc',
+    '        with:',
+    '          python-version: ${{ matrix.py }}',
+    '      - name: Run',
+    '        run: uv run x.py',
+    '  flow-env-hash:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Scan',
+    '        env: { NOTE: "a # b", PIPX_DEFAULT_PYTHON: /opt/py/bin/python3 } # c',
+    '        run: pipx run x',
+    '  flow-with-quote:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: astral-sh/setup-uv@abc',
+    '        with: { note: \'it\'\'s # x\', python-version: "3.15" }',
+    '      - name: Run',
+    '        run: uv run x.py',
+    '',
+  ].join('\n');
+
+  it('keeps a # inside quotes in a one-line value', () => {
+    const workflow = readWorkflow(COPILOT_THREE_YAML);
+    expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > matrix-hash > Run > python']);
+    expect(pipxProblems('x.yml', workflow)).toEqual([]);
   });
 });
 
