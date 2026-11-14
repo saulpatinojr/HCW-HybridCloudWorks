@@ -82,7 +82,8 @@
  * when it starts with `-` (`timeout --kill-after -5`, `nice -n -5`). It counts
  * with a path in front too (`/usr/bin/python3`, `./venv/bin/python`,
  * `/usr/bin/env node`), because a path to the runner's interpreter is still
- * the runner's, and `python3.15.2` counts like `python3`. A `$'…'` string is
+ * the runner's, and a versioned name at or above the floor (`python3.15`, or
+ * the floor's own patch) counts like `python3`. A `$'…'` string is
  * decoded as the shell decodes it (`\xHH`, `\uHHHH`, `\UHHHHHHHH`, octal
  * `\NNN`, `\n` and the like) and read as one word, so `$'\x70ython3'` is
  * `python3` while `$'node\x20x'` is the one word `node x`. A heredoc's body is
@@ -192,16 +193,28 @@
  * the rest to .NET, which drops double quotes and fills nothing in
  * (actions/runner ScriptHandler.cs and ScriptHandlerHelpers.cs
  * `ParseShellOptionString`, dotnet/runtime ProcessUtils.Unix.cs
- * `GetNextArgument`), so `shell: sudo env PATH="$PATH" bash -e {0}` gives
- * env the text `PATH=$PATH`, which replaces PATH, and a `$X` in a
- * `PIPX_DEFAULT_PYTHON=` there chooses nothing (Copilot on
- * HCW-MigrateOrchestrator_AddOn#77; see `literalShell`). Python's floor is
- * the newest patch of its line, 3.15.2, by the owner's decision of
- * 2026-11-14, so a set-up step that asks for 3.15.0 or 3.15.1, and a
- * command named `python3.15.1`, are below it, while a line-only `3.15`
- * still stands for the newest and passes. A GitHub expression in `shell:`
- * is read as one word, as GitHub would fill it in, which no page of
- * GitHub's documentation was found to confirm for `shell:`.
+ * `GetNextArgument`; see `literalShell`). So `shell: sudo env
+ * PATH="$PATH:/usr/bin" bash -e {0}` gives env the text `$PATH:/usr/bin`,
+ * and the step's `python3` is the runner's own from /usr/bin, while a `$X`
+ * in a `PIPX_DEFAULT_PYTHON=` there chooses nothing (Copilot on
+ * HCW-MigrateOrchestrator_AddOn#77). The plain `env PATH="$PATH" bash -e
+ * {0}` is reported too, conservatively: env cannot find bash on the PATH
+ * `$PATH` and the step stops (`env: 'bash': No such file or directory`, exit
+ * 127) before anything runs. Python's floor is the newest patch of its line
+ * (3.15.2 on 2026-11-14), by the owner's decision of 2026-11-14, so a set-up
+ * step that asks for an earlier patch of the line, or a command named by one
+ * (`python3.15.1` that day), is below it, while a line-only `3.15` still
+ * stands for the newest and passes; the tests build those cases from the
+ * floor in scripts/version-floors.json, which moves with every Python patch
+ * release now. A GitHub expression in `shell:` is read as one word, as
+ * GitHub fills it in. GitHub's contexts reference
+ * (https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)
+ * lists contexts for `jobs.<job_id>.defaults.run` only (github, needs,
+ * strategy, matrix, env, vars, inputs); a step's `shell:` and the
+ * workflow-level `defaults.run` allow none, and the workflow schema
+ * (actions/languageservices, workflow-v1.0.json) refuses an expression there,
+ * so only a job's `defaults.run.shell` is filled in before the runner sees
+ * it.
  *
  * Limits, known and kept: a composite action whose set-up step takes its
  * version from `${{ inputs.* }}` cannot be read, so it fails closed and needs
@@ -227,7 +240,11 @@
  * has a subject `$(…)` with spaces or `in` on the next line; and a set-up
  * version `3` or `3.x` (a major line only), which reads as at the floor.
  * `unset -n P` is read as unsetting P, which is what bash does unless P is a
- * name reference.
+ * name reference. A job's `defaults.run.shell` whose expression GitHub fills
+ * in with a value holding spaces is split there by the runner, but read here
+ * as one word. The runner fills `{0}` in with .NET's `string.Format`, where
+ * `{{` and `}}` stand for one brace and any other `{…}` stops the step; this
+ * check only replaces `{0}`.
  *
  * The website reads YAML with the `yaml` library and refuses (`readWorkflow`)
  * the forms the other copies' line readers refuse: `jobs`, a job, `steps`, a
@@ -2395,6 +2412,18 @@ export function sources(root) {
   return [...workflows, ...actions];
 }
 
+// The Python floor's boundary versions, for the tests below: its line, the floor itself, the patch below it and the one
+// above it. Python's floor is its line's newest patch since 2026-11-14 (#1707), so it moves with every Python patch
+// release, and these cases are built from the floor scripts/version-floors.json holds rather than written out (on
+// 2026-11-14: 3.15, 3.15.2, 3.15.1 and 3.15.3). The Python copies write them out, and move them with PYTHON_FLOOR.
+const [FLOOR_MAJOR, FLOOR_MINOR, FLOOR_PATCH] = PYTHON_FLOOR;
+const FLOOR_LINE = `${FLOOR_MAJOR}.${FLOOR_MINOR}`;
+const FLOOR_AT = `${FLOOR_LINE}.${FLOOR_PATCH}`;
+const FLOOR_BELOW = `${FLOOR_LINE}.${FLOOR_PATCH - 1}`;
+const FLOOR_ABOVE = `${FLOOR_LINE}.${FLOOR_PATCH + 1}`;
+const NEXT_LINE = `${FLOOR_MAJOR}.${FLOOR_MINOR + 1}.0`;
+const EARLIER_LINE = `${FLOOR_MAJOR}.${FLOOR_MINOR - 1}`;
+
 describe('runsRuntime and unsetSteps', () => {
   it('finds node and python in command position, not inside strings or arguments', () => {
     expect(runsRuntime('token=$(node scripts/github-app-token.mjs)', 'node')).toBe(true);
@@ -4397,17 +4426,19 @@ describe('round three review: quoted assignments, sudo PATH, shells, YAML anchor
 
   it('reads the round-three review sudo workflow', () => {
     const workflow = readWorkflow(ROUND_THREE_REVIEW_SUDO_YAML);
-    // Since round 4 (#1707) `sudo-path-shell` is reported: its `shell:` gives env the text `PATH=$PATH`, since the runner
-    // fills nothing in (see `literalShell`), so env replaces PATH and the set-up Python is not found.
+    // Since round 4 (#1707) `sudo-path-shell` is reported, conservatively: its `shell:` gives env the text `PATH=$PATH`,
+    // since the runner fills nothing in (see `literalShell`), so env replaces PATH, cannot find bash on it and stops the
+    // step (exit 127).
     expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > quoted-no-set-up > Run > python', 'x.yml > env-quoted-no-set-up > Run > python', 'x.yml > sudo-shell > Run > python', 'x.yml > sudo-default-shell > Run > python', 'x.yml > sudo-path-shell > Run > python']);
     expect(pipxProblems('x.yml', workflow)).toEqual([]);
   });
 
   // Copilot on the round-3 ports (#1707): under a `shell:` run through sudo the step's `$PATH` is sudo's `secure_path`,
   // so a `sudo env "PATH=$PATH"` in its text passes that on, not the set-up Python. The `path-shell` job is reported
-  // too since round 4 (#1707): the runner starts the shell command directly and passes `$PATH` on as text
-  // (actions/runner ScriptHandler.cs, see `literalShell`), so env sets PATH to the text `$PATH` and the set-up Python
-  // is not on it. Until round 4 the check read it as passing on the PATH the step started with, and did not report it.
+  // too since round 4 (#1707), conservatively: the runner starts the shell command directly and passes `$PATH` on as
+  // text (actions/runner ScriptHandler.cs, see `literalShell`), so env sets PATH to the text `$PATH`, cannot find bash
+  // on it and stops the step (exit 127). Until round 4 the check read it as passing on the PATH the step started with,
+  // and did not report it.
   const COPILOT_PORTS_SUDO_YAML = [
     'on: push',
     'jobs:',
@@ -4735,7 +4766,7 @@ describe("Copilot's review of the round-3 ports (#1707): a replaced PATH, runner
       ['env PATH=$PATH python3.14 x', 'python', true],
       ["bash -c '/usr/bin/python3 x'", 'python', true],
       ['python3.15 x', 'python', false],
-      ['python3.15.2 x', 'python', false],
+      [`python${FLOOR_AT} x`, 'python', false],
       ['python3 x', 'python', false],
       ['.venv/bin/python x', 'python', false],
       ['$pythonLocation/bin/python3 x', 'python', false],
@@ -5459,50 +5490,57 @@ describe('round 4 (#1707): coproc, a shell: read as the runner passes it, and Py
     for (const [shell, words] of cases) expect(stepShell({ shell, run: 'x' }, {}), shell).toBe(words);
   });
 
-  const LITERAL_SHELL_YAML = `on: push\njobs:\n  path-shell:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: sudo env PATH="$PATH" bash -e {0}\n        run: python3 x\n  env-path-shell:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: env PATH="$PATH" bash -e {0}\n        run: python3 x\n  plain-shell:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: bash -e {0}\n        run: python3 x\n  location-pipx:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: env PIPX_DEFAULT_PYTHON=$pythonLocation/bin/python3 bash -e {0}\n        run: pipx run x\n  double-quoted-pipx:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: env PIPX_DEFAULT_PYTHON="/opt/py/bin/python3" bash -e {0}\n        run: pipx run x\n  single-quoted-pipx:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: env 'PIPX_DEFAULT_PYTHON=/opt/py/bin/python3' bash -e {0}\n        run: pipx run x\n`;
+  const LITERAL_SHELL_YAML = `on: push\njobs:\n  path-shell:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: sudo env PATH="$PATH" bash -e {0}\n        run: python3 x\n  env-path-shell:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: env PATH="$PATH" bash -e {0}\n        run: python3 x\n  plain-shell:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: bash -e {0}\n        run: python3 x\n  location-pipx:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: env PIPX_DEFAULT_PYTHON=$pythonLocation/bin/python3 bash -e {0}\n        run: pipx run x\n  double-quoted-pipx:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: env PIPX_DEFAULT_PYTHON="/opt/py/bin/python3" bash -e {0}\n        run: pipx run x\n  single-quoted-pipx:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: env 'PIPX_DEFAULT_PYTHON=/opt/py/bin/python3' bash -e {0}\n        run: pipx run x\n  appended-path-shell:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: sudo env PATH="$PATH:/usr/bin" bash -e {0}\n        run: python3 x\n`;
 
+  // `appended-path-shell` is the real risk: env gets the text `$PATH:/usr/bin`, finds bash in /usr/bin, and the step's
+  // python3 is the runner's own. `path-shell` and `env-path-shell` are reported conservatively: env cannot find bash on
+  // the PATH `$PATH`, so the step stops (exit 127) before anything runs.
   it('reads a shell: whose PATH= or PIPX_DEFAULT_PYTHON= is literal text as replacing PATH or choosing nothing', () => {
     const workflow = readWorkflow(LITERAL_SHELL_YAML);
-    expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > path-shell > Run > python', 'x.yml > env-path-shell > Run > python']);
+    expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > path-shell > Run > python', 'x.yml > env-path-shell > Run > python', 'x.yml > appended-path-shell > Run > python']);
     expect(pipxProblems('x.yml', workflow)).toEqual(['x.yml > location-pipx > Run > pipx', 'x.yml > single-quoted-pipx > Run > pipx']);
   });
 
-  // Owner decision 2026-11-14: Python's floor is the newest patch of the newest line (3.15.2), not N-2 (3.15.0).
+  // Owner decision 2026-11-14: Python's floor is the newest patch of the newest line (3.15.2 that day), not N-2
+  // (3.15.0). The cases are built from the floor (FLOOR_AT and the rest), so they hold at the next patch too.
   it('holds Python to the newest patch of its line', () => {
     const floors = [
-      ['3.15.0', 'python', true],
-      ['3.15.1', 'python', true],
-      ['3.15.2', 'python', false],
-      ['3.15.3', 'python', false],
-      ['3.15', 'python', false],
-      ['3.15.x', 'python', false],
-      ['3.16.0', 'python', false],
-      ['3.15.1t', 'python', true],
-      ['3.15.2t', 'python', false],
-      ['3.14', 'python', true],
+      [`${FLOOR_LINE}.0`, 'python', true],
+      [FLOOR_BELOW, 'python', true],
+      [FLOOR_AT, 'python', false],
+      [FLOOR_ABOVE, 'python', false],
+      [FLOOR_LINE, 'python', false],
+      [`${FLOOR_LINE}.x`, 'python', false],
+      [NEXT_LINE, 'python', false],
+      [`${FLOOR_BELOW}t`, 'python', true],
+      [`${FLOOR_AT}t`, 'python', false],
+      [EARLIER_LINE, 'python', true],
     ];
     for (const [version, kind, below] of floors) expect(belowFloor(version, kind), `${version} / ${kind}`).toBe(below);
     const sudo = [
-      ['python3.15.0 x', 'python', true],
-      ['python3.15.1 x', 'python', true],
-      ['python3.15.2 x', 'python', false],
-      ['python3.15.3 x', 'python', false],
-      ['python3.15 x', 'python', false],
-      ['python3.16.0 x', 'python', false],
+      [`python${FLOOR_LINE}.0 x`, 'python', true],
+      [`python${FLOOR_BELOW} x`, 'python', true],
+      [`python${FLOOR_AT} x`, 'python', false],
+      [`python${FLOOR_ABOVE} x`, 'python', false],
+      [`python${FLOOR_LINE} x`, 'python', false],
+      [`python${NEXT_LINE} x`, 'python', false],
     ];
     for (const [line, kind, found] of sudo) expect(runsThroughSudo(line, kind), `${line} / ${kind}`).toBe(found);
     const pipx = [
-      ['pipx run --python python3.15 x', {}, false],
-      ['pipx run --python python3.15.2 x', {}, true],
+      [`pipx run --python python${FLOOR_LINE} x`, {}, false],
+      [`pipx run --python python${FLOOR_AT} x`, {}, true],
     ];
     for (const [run, env, flagged] of pipx) expect(pipxWithoutPython(run, env), run).toBe(flagged);
   });
 
-  const FLOOR_YAML = 'on: push\njobs:\n  exact-below:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15.1" }\n      - name: Run\n        run: python3 x\n  exact-at:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15.2" }\n      - name: Run\n        run: python3 x\n  line:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        run: python3 x\n  uv-below:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: astral-sh/setup-uv@abc\n        with: { python-version: "3.15.1" }\n      - name: Run\n        run: uv run x.py\n  uv-at:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: astral-sh/setup-uv@abc\n        with: { python-version: "3.15.2" }\n      - name: Run\n        run: uv run x.py\n';
+  const FLOOR_YAML = `on: push\njobs:\n  exact-below:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "${FLOOR_BELOW}" }\n      - name: Run\n        run: python3 x\n  exact-at:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "${FLOOR_AT}" }\n      - name: Run\n        run: python3 x\n  line:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "${FLOOR_LINE}" }\n      - name: Run\n        run: python3 x\n  uv-below:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: astral-sh/setup-uv@abc\n        with: { python-version: "${FLOOR_BELOW}" }\n      - name: Run\n        run: uv run x.py\n  uv-at:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: astral-sh/setup-uv@abc\n        with: { python-version: "${FLOOR_AT}" }\n      - name: Run\n        run: uv run x.py\n`;
 
   it('reports a set-up step that asks for an earlier patch of the floor\'s line', () => {
     const workflow = readWorkflow(FLOOR_YAML);
-    expect(floorProblems('x.yml', workflow.jobs, REPO, workflow.env)).toEqual(['x.yml > exact-below > step 1 > python: asks for 3.15.1, below the floor', 'x.yml > uv-below > step 1 > python: asks for 3.15.1, below the floor']);
+    expect(floorProblems('x.yml', workflow.jobs, REPO, workflow.env)).toEqual([
+      `x.yml > exact-below > step 1 > python: asks for ${FLOOR_BELOW}, below the floor`,
+      `x.yml > uv-below > step 1 > python: asks for ${FLOOR_BELOW}, below the floor`,
+    ]);
     expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > uv-below > Run > python']);
   });
 });
