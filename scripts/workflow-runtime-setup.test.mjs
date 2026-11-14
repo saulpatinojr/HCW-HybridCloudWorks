@@ -218,7 +218,9 @@
  * list, and any other expression, or one in a step's `shell:` or the
  * workflow's default, counts as running both runtimes, so the step needs
  * Node.js and Python set up before it (Copilot on HCW-NetworkEyes_App#403
- * and HCW-HybridCloudWorks#1725; see `shellChoices`).
+ * and HCW-HybridCloudWorks#1725; see `shellChoices`); pipx is read under each
+ * matrix value, and a step that runs pipx under a `shell:` this check cannot
+ * read is reported.
  *
  * Limits, known and kept: a composite action whose set-up step takes its
  * version from `${{ inputs.* }}` cannot be read, so it fails closed and needs
@@ -244,10 +246,9 @@
  * has a subject `$(…)` with spaces or `in` on the next line; and a set-up
  * version `3` or `3.x` (a major line only), which reads as at the floor.
  * `unset -n P` is read as unsetting P, which is what bash does unless P is a
- * name reference. For pipx, an expression left in `shell:` is still read as
- * one word, as before. The runner fills `{0}` in with .NET's
- * `string.Format`, where `{{` and `}}` stand for one brace and any other
- * `{…}` stops the step; this check only replaces `{0}`.
+ * name reference. The runner fills `{0}` in with .NET's `string.Format`,
+ * where `{{` and `}}` stand for one brace and any other `{…}` stops the
+ * step; this check only replaces `{0}`.
  *
  * The website reads YAML with the `yaml` library and refuses (`readWorkflow`)
  * the forms the other copies' line readers refuse: `jobs`, a job, `steps`, a
@@ -2331,9 +2332,18 @@ export const pythonSetupIds = (steps, i) =>
       )
   );
 
+/** True when a run script runs `pipx` in command position anywhere (see `pipxCommands`). */
+const runsPipx = (run) =>
+  shellText(String(run ?? ''))
+    .split('\n')
+    .some((line) => pipxCommands(withoutCasePatterns(line.trim())).length > 0);
+
 /**
  * The steps of one workflow that run `pipx` without choosing its interpreter, by `stepKey` with the kind `pipx`, read
- * with the step's `shell:` (see `pipxWithoutPython`). A job in a `container:` is skipped, as `unsetSteps` skips it.
+ * under each `shell:` the step may be handed to (see `shellChoices` and `pipxWithoutPython`). A step that runs pipx
+ * under a `shell:` holding an expression this check cannot read is reported too, since that shell may set or clear
+ * PIPX_DEFAULT_PYTHON (Copilot's second round on HCW-NetworkEyes_App#403). A job in a `container:` is skipped, as
+ * `unsetSteps` skips it.
  */
 export function pipxProblems(file, workflow) {
   const found = [];
@@ -2342,8 +2352,12 @@ export function pipxProblems(file, workflow) {
     if (job?.container) continue;
     steps.forEach((step, i) => {
       const env = stepEnv(workflow?.env, job?.env, step?.env);
-      const shell = Object.hasOwn(step, 'run') ? stepShell(step, job, workflow?.defaults) : '';
-      if (pipxWithoutPython(step?.run, env, pythonSetupIds(steps, i), job?.strategy?.matrix, shell)) found.push(stepKey(file, name, step, i, 'pipx'));
+      const choices = Object.hasOwn(step, 'run') ? shellChoices(step, job, workflow?.defaults) : [''];
+      const reported =
+        choices === null
+          ? runsPipx(step?.run)
+          : choices.some((shell) => pipxWithoutPython(step?.run, env, pythonSetupIds(steps, i), job?.strategy?.matrix, shell));
+      if (reported) found.push(stepKey(file, name, step, i, 'pipx'));
     });
   }
   return found;
@@ -5604,6 +5618,16 @@ describe('round 4 (#1707): coproc, a shell: read as the runner passes it, and Py
     expect(pipxProblems('x.yml', workflow)).toEqual([]);
     const inherited = readWorkflow(WORKFLOW_EXPRESSION_SHELL_YAML);
     expect(unsetSteps('x.yml', inherited.jobs, {}, inherited.env, inherited.defaults)).toEqual(['x.yml > inherits > Run > node', 'x.yml > inherits > Run > python']);
+  });
+
+  // Copilot's second round on HCW-NetworkEyes_App#403: pipx is read under each `shell:` a step may be handed to, so a
+  // job's `${{ matrix.shell }}` whose value sets PIPX_DEFAULT_PYTHON to the runner's own Python is reported, and a step
+  // that runs pipx under a `shell:` this check cannot read (`${{ vars.RUN_SHELL }}`) is reported too.
+  const EXPRESSION_SHELL_PIPX_YAML = 'on: push\njobs:\n  matrix-runner-python:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        shell:\n          - env PIPX_DEFAULT_PYTHON=/usr/bin/python3 bash -e {0}\n    env:\n      PIPX_DEFAULT_PYTHON: /opt/py/bin/python3\n    defaults:\n      run:\n        shell: ${{ matrix.shell }}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Scan\n        run: pipx run x\n  vars-shell:\n    runs-on: ubuntu-26.04\n    env:\n      PIPX_DEFAULT_PYTHON: /opt/py/bin/python3\n    defaults:\n      run:\n        shell: ${{ vars.RUN_SHELL }}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - uses: actions/setup-node@abc\n        with: { node-version: "26" }\n      - name: Scan\n        run: pipx run x\n  vars-shell-no-pipx:\n    runs-on: ubuntu-26.04\n    defaults:\n      run:\n        shell: ${{ vars.RUN_SHELL }}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - uses: actions/setup-node@abc\n        with: { node-version: "26" }\n      - name: Scan\n        run: echo hi\n  matrix-bash:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        shell: [bash]\n    defaults:\n      run:\n        shell: ${{ matrix.shell }} -e {0}\n    steps:\n      - id: py\n        uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Scan\n        run: pipx run --python "${{ steps.py.outputs.python-path }}" x\n';
+
+  it('reads pipx under each shell: a step may be handed to, and reports it under one this check cannot read', () => {
+    const workflow = readWorkflow(EXPRESSION_SHELL_PIPX_YAML);
+    expect(pipxProblems('x.yml', workflow)).toEqual(['x.yml > matrix-runner-python > Scan > pipx', 'x.yml > vars-shell > Scan > pipx']);
   });
 });
 
