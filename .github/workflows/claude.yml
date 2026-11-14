@@ -56,9 +56,13 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
-      contents: write # Claude commits to the branch it works on
-      pull-requests: write # Claude comments on and updates pull requests
-      issues: write # Claude comments on issues
+      # Read only, where the official example has write. These lines limit
+      # the job's own token, and the action does not write with that token:
+      # it commits and comments with the Claude GitHub App's token (see
+      # `id-token` below), whose rights come from the app's installation.
+      contents: read
+      pull-requests: read
+      issues: read
       id-token: write # exchanged for the Claude GitHub App's token
       actions: read # Claude reads CI results on pull requests
     steps:
