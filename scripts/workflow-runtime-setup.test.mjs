@@ -1275,6 +1275,17 @@ function sudoPath(before) {
 const PASSES_PATH = /^PATH=(?:\$PATH|\$\{PATH\})(?::|$)/;
 
 /**
+ * The PATH a command finds its runtime on, from what the words in front of it do (`local`, see `sudoPath`) and the PATH
+ * of the script it is in (`outer`). `$PATH` in `env PATH=$PATH` is that script's PATH, so passing it on under a sudo'd
+ * script still passes sudo's `secure_path`: `sudo bash -c 'sudo env PATH=$PATH node x'` runs the runner's own Node.js
+ * (Copilot on the round-3 ports, #1707).
+ */
+function underPath(local, outer) {
+  if (local === null) return outer;
+  return local || outer === true;
+}
+
+/**
  * True when a run script runs the runtime through `sudo` without passing PATH on (see `sudoPath`): `sudo python3 x.py`,
  * `sudo -E node x`, `sudo bash -c 'node x'`. sudo's `secure_path` holds the runner's own Node.js and Python (Ubuntu's
  * and Debian's sudoers set it, and actions/runner-images does not change it), not the set-up ones in
@@ -1287,14 +1298,14 @@ export function runsThroughSudo(run, kind, inherited = null) {
   for (const raw of shellText(String(run ?? ''), true).split('\n')) {
     const line = raw.trim();
     if (line.startsWith('\x01')) {
-      stack.push(sudoPath(line.slice(1)) ?? stack.at(-1));
+      stack.push(underPath(sudoPath(line.slice(1)), stack.at(-1)));
       continue;
     }
     if (line.startsWith('\x02')) {
       if (stack.length > 1) stack.pop();
       continue;
     }
-    if (runtimeCommands(line, kind).some((found) => (sudoPath(found.groups.before) ?? stack.at(-1)) === true)) return true;
+    if (runtimeCommands(line, kind).some((found) => underPath(sudoPath(found.groups.before), stack.at(-1)) === true)) return true;
   }
   return false;
 }
@@ -3922,7 +3933,13 @@ describe('round three review: quoted assignments, sudo PATH, shells, YAML anchor
       ['sudo env PATH=/usr/bin:$PATH python3 x', 'python', true],
       ['sudo env PATH=/usr/bin python3 x', 'python', true],
       ["sudo bash -c 'env PATH=$PATH node x'", 'node', true],
-      ["sudo bash -c 'sudo env PATH=$PATH node x'", 'node', false],
+      // Copilot on the round-3 ports: inside a sudo'd script `$PATH` is already sudo's `secure_path`.
+      ["sudo bash -c 'sudo env PATH=$PATH node x'", 'node', true],
+      ["sudo bash -c 'sudo env PATH=$PATH python3 x'", 'python', true],
+      ["sudo bash -c 'env PATH=$PATH sudo env PATH=$PATH node x'", 'node', true],
+      ['sudo bash -c \'bash -c "sudo env PATH=$PATH node x"\'', 'node', true],
+      ["sudo env PATH=$PATH bash -c 'sudo env PATH=$PATH node x'", 'node', false],
+      ['sudo env PATH=$PATH bash -c \'sudo bash -c "sudo env PATH=$PATH node x"\'', 'node', true],
       ['env PATH=$PATH sudo python3 x', 'python', true],
       ['env PATH=/usr/bin node x', 'node', false],
     ];
@@ -3999,6 +4016,35 @@ describe('round three review: quoted assignments, sudo PATH, shells, YAML anchor
     const workflow = readWorkflow(ROUND_THREE_REVIEW_SUDO_YAML);
     expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > quoted-no-set-up > Run > python', 'x.yml > env-quoted-no-set-up > Run > python', 'x.yml > sudo-shell > Run > python', 'x.yml > sudo-default-shell > Run > python']);
     expect(pipxProblems('x.yml', workflow)).toEqual([]);
+  });
+
+  // Copilot on the round-3 ports (#1707): under a `shell:` run through sudo the step's `$PATH` is sudo's `secure_path`,
+  // so a `sudo env "PATH=$PATH"` in its text passes that on, not the set-up Python.
+  const COPILOT_PORTS_SUDO_YAML = [
+    'on: push',
+    'jobs:',
+    '  sudo-shell:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Run',
+    '        shell: sudo bash -e {0}',
+    '        run: sudo env "PATH=$PATH" python3 x',
+    '  path-shell:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Run',
+    '        shell: sudo env PATH="$PATH" bash -e {0}',
+    '        run: sudo env "PATH=$PATH" python3 x',
+    '',
+  ].join('\n');
+
+  it('passes on only its own secure_path under a sudo shell', () => {
+    const workflow = readWorkflow(COPILOT_PORTS_SUDO_YAML);
+    expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > sudo-shell > Run > python']);
   });
 
   // reader alignment: a step's keys after `-   `, and a matrix list at its key's indent.
