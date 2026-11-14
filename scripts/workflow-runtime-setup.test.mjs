@@ -505,17 +505,19 @@ const UNSET = Symbol('unset by the script');
 // are read only where the shell sets a variable (Copilot on HCW-NetworkEyes_App#395 and HCW-HybridCloudWorks#1719), at
 // the start of a command: a command made only of assignments (`P=/x;`; `P=/x pipx …` sets P for pipx alone, after
 // `$P` was read), `export`, `declare`, `local`, `readonly` or `typeset` with assignments, `for P in` or `select P in`,
-// `read P` (`read -a P`) and `unset P` (round 3, #1707); never an argument (`echo P=/x`), quoted text, a comment or a heredoc's body, which
+// `read P` (`read -a P`) and `unset P` (round 3, #1707), those builtins with assignments in front of them too (`FOO=1
+// unset P`: bash still runs the builtin, and, outside POSIX mode, keeps FOO for that one command only, so FOO is not
+// read as set; Copilot on #1722); never an argument (`echo P=/x`), quoted text, a comment or a heredoc's body, which
 // `shellText` has already set apart. A name counts only for the commands after the one that sets it.
 const ASSIGNED_WORD = String.raw`([A-Za-z_][A-Za-z0-9_]*)\+?=(?:"(?:[^"\\]|\\.)*"|'[^']*'|\$\(\([^()\x60]*\)\)|[$<>]\([^()\x60]*\)|\x60[^\x60]*\x60|[^\s"'()\x60;&|<>])*`;
 const ONE_ASSIGNMENT = new RegExp(String.raw`${ASSIGNED_WORD}\s*`, 'y');
 const NAMES_SET = new RegExp(
   String.raw`(?:^|[$<]\(|[\x60({|;&]|(?<![^\s])(?:then|do|else|elif|if|while|until|!))\s*` +
-    String.raw`(?:(?<keyword>export|declare|local|readonly|typeset)(?![A-Za-z0-9_=])(?<flags>(?:\s+[-+][A-Za-z]+)*)` +
+    String.raw`(?:(?:${ASSIGNMENT})*(?:(?<keyword>export|declare|local|readonly|typeset)(?![A-Za-z0-9_=])(?<flags>(?:\s+[-+][A-Za-z]+)*)` +
     String.raw`(?<declared>(?:\s+[^\s;&|)]+)*)` +
     String.raw`|(?:for|select)\s+(?<loop>[A-Za-z_][A-Za-z0-9_]*)` +
     String.raw`|read(?![A-Za-z0-9_=])(?<read>(?:[ \t]+[^\s;&|)]+)*)` +
-    String.raw`|unset(?![A-Za-z0-9_=])(?<unset>(?:[ \t]+[^\s;&|)]+)*)` +
+    String.raw`|unset(?![A-Za-z0-9_=])(?<unset>(?:[ \t]+[^\s;&|)]+)*))` +
     String.raw`|(?<assigned>(?:${ASSIGNED_WORD.replace('(', '(?:')}\s*)+)(?=$|[;&|)}]))`,
   'g'
 );
@@ -4029,6 +4031,26 @@ const UNSET_HELP =
   'under the same if: as the step. Or it runs the runtime through sudo, which looks commands up on its own fixed list ' +
   'of folders (secure_path) and so finds the runner\'s: write `sudo env "PATH=$PATH" …` so the set-up version is ' +
   'found. A step kept that way on purpose goes in RUNNER_DEFAULT_ALLOWED with its reason.';
+
+describe('round three, Copilot round one: builtins with assignments in front of them', () => {
+  // The same cases as HCW-NetworkEyes_App's tests/security/test_workflow_runtime_setup.py, in the same order. Bash runs
+  // `FOO=1 unset P`, `FOO=1 export -n P` and `FOO=1 declare +x P` like the builtin alone (Copilot on #1722).
+  it('reads unset, export and declare with assignments in front of them', () => {
+    const cases = [
+      ['FOO=1 unset PIPX_DEFAULT_PYTHON; bash -c \'pipx run x\'', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['FOO=1 unset PIPX_DEFAULT_PYTHON; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['FOO=1 export -n PIPX_DEFAULT_PYTHON; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['FOO=1 declare +x PIPX_DEFAULT_PYTHON; bash -c \'pipx run x\'', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['A=1 B="x y" export -n P; bash -c \'pipx run --python "$P" x\'', { P: '/opt/py/bin/python3' }, true],
+      ['FOO=1 unset P; pipx run --python "$P" x', { P: '/opt/py/bin/python3' }, true],
+      ['FOO=1 export P=/opt/py/bin/python3; bash -c \'pipx run --python "$P" x\'', {}, false],
+      ['FOO=1 read P < p.txt; pipx run --python "$P" x', {}, false],
+      ['FOO=1 unset -f PIPX_DEFAULT_PYTHON; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['echo unset PIPX_DEFAULT_PYTHON; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+    ];
+    for (const [run, env, flagged] of cases) expect(pipxWithoutPython(run, env), `${run} / ${JSON.stringify(env)}`).toBe(flagged);
+  });
+});
 
 describe('.github/workflows and .github/actions', () => {
   // The workflows and the composite actions (see `sources`), read once for every test below.
