@@ -3828,6 +3828,8 @@ describe('round three: wrappers, quoted words, sudo, shells, env levels, pipx va
       'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: echo a\n          node x\n',
       'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: "echo a\n          node x"\n',
       'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - env:\n          A: one\n            two\n        run: echo\n',
+      // A matrix item continued on the next line (Copilot on HCW-NetworkEyes_App#399).
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        py:\n          - /usr/bin/python3\n            --x\n    steps:\n      - run: echo\n',
     ];
     for (const text of refused) expect(() => readWorkflow(text), text).toThrow();
   });
