@@ -117,31 +117,52 @@
  * runs it; the same body given to `cat` is text.
  *
  * Round 3 (#1707) reads more forms the way the shell and GitHub do. A command
- * named in quotes (`'node' x.js`, `"node" x.js`) is that command, and `eval`
- * runs its arguments as a script. A runtime run through `sudo` counts as the
- * runner's own even after a set-up step, because sudo looks its command up on
- * its `secure_path`; only `sudo env "PATH=$PATH" …` passes the set-up PATH
- * on. A step whose `shell:` (or `defaults.run.shell`) is a runtime (`python`,
- * `node {0}`) runs it. The outer shell runs only the `$(…)` and backticks of a
- * double-quoted string, so `bash -c "x; pipx run y $(true)"` runs no `pipx`
- * outside. `unset`, `export -n` and `declare +x` are read, and so is a script
- * line that sets PIPX_DEFAULT_PYTHON to a value that chooses nothing (one that
- * chooses is still not read: use `env:`); `sudo -i` resets the environment
- * whatever `-E` says. A value given to pipx chooses nothing when it is a bare
- * name other than the floor's own `python3.15` (PATH would find the runner's),
- * a path under /usr/local/bin, a path with a `..` after a part this check
- * cannot see, or a glob, brace or leading `~`; a `\` in it is dropped first.
- * `${{ env.X }}` is read as GitHub evaluates it, level by level, and
+ * named in quotes (`'node' x.js`, `"node" x.js`, `''node x`) or with a `\` in
+ * it (`\node x`) is that command, a command's name ends at an operator as well
+ * as a space (`node;`, `x=$(node)`), and `eval` and `builtin` run the words
+ * after them. A quoted `"NAME=…"` given to `env` or `sudo` is an assignment, as
+ * env and sudo read it. A runtime run through `sudo` counts as the runner's own
+ * even after a set-up step, because sudo looks its command up on its own fixed
+ * list of folders (`secure_path`); only `sudo env "PATH=$PATH" …`, which passes
+ * the PATH the shell already has, keeps the set-up one, and a step whose
+ * `shell:` runs through sudo runs its whole text that way. A step whose
+ * `shell:` (or `defaults.run.shell`) is a runtime (`python`, `node {0}`) runs
+ * it. The outer shell runs only the `$(…)` and backticks of a double-quoted
+ * string, so `bash -c "x; pipx run y $(true)"` runs no `pipx` outside. `unset`,
+ * `export -n` (which takes a name's export away) and `declare +x` are read, and
+ * so is a script line that sets PIPX_DEFAULT_PYTHON to a value that chooses
+ * nothing (one that chooses is still not read: use `env:`). sudo refuses `-i`
+ * together with `-E` outright, so `sudo -iE pipx` counts as having no Python
+ * chosen. A value given to pipx chooses nothing when it is a bare name other
+ * than the floor's own `python3.15` (PATH would find the runner's), a path
+ * under /usr/local/bin, a path with a `..` after a part this check cannot see,
+ * or a pattern or `~` the shell would still expand; a `\` in it is dropped
+ * first. `${{ env.X }}` is read as GitHub evaluates it, level by level, and
  * `${{ env.pythonLocation }}` stays setup-python's word, which chooses nothing
- * when an `env:` sets `pythonLocation` itself.
+ * when an `env:` sets `pythonLocation` itself or the script unsets it.
  *
  * Limits, known and kept: a composite action whose set-up step takes its
  * version from `${{ inputs.* }}` cannot be read, so it fails closed and needs
  * an entry in BELOW_FLOOR_ALLOWED; a `shell: python` step's text is still read
  * as shell too, and an `eval` script is read as a child shell (a name set but
- * not exported before it is not seen), both of which can only add findings;
- * and `env -i python3` after a set-up step, which looks `python3` up on the
- * system's default path, is not reported.
+ * not exported before it is not seen), both of which can only add findings; and
+ * these are not reported: `env -i python3` after a set-up step (env empties
+ * PATH, so `python3` is looked up on the system's default folders); a
+ * `--python` path to a Python outside the folders of RUNNER_PYTHON_FOLDERS
+ * (`/opt/hostedtoolcache/Python/3.12…`, `/usr/share/miniconda/bin/python3`); a
+ * relative path after `cd` (`cd /usr/bin && pipx run --python ./python3 x`); a
+ * value a `for` loop or `read` sets (`for P in /usr/bin/python3; do …`), which
+ * counts as chosen; a PATH or setting written to `$GITHUB_PATH` or
+ * `$GITHUB_ENV` by an earlier step; and a set-up version `3` or `3.x` (a major
+ * line only), which reads as at the floor. `unset -n P` is read as unsetting P,
+ * which is what bash does unless P is a name reference.
+ *
+ * The website reads YAML with the `yaml` library and refuses (`readWorkflow`)
+ * the forms the other copies' line readers refuse: `jobs`, a job, `steps`, a
+ * step, `strategy` or `matrix` written on one line, a plain or quoted value
+ * that runs over more than one line or starts on the line after its key, a
+ * quoted key (`'run': x`), a space before a key's colon (`run : x`), and an
+ * anchor, alias or tag (`&a`, `*a`, `!!str`).
  *
  * The same check is
  * copied into the add-on and App repositories; keep the logic the same in
@@ -155,10 +176,8 @@
  * findings go into the same lists as a workflow's, and an exception for one
  * goes in the same lists too. A job whose `steps:` is not a list, or a step
  * that is not a mapping, stops the check with an error rather than being read
- * as having no steps, and so do the forms the other copies' line readers
- * refuse (`readWorkflow`): `jobs`, a job, `steps`, a step, `strategy` or
- * `matrix` written on one line, and a value that runs over several lines. A
- * heredoc's delimiter is its whole word (`<<EOF-1`,
+ * as having no steps (see `readWorkflow` above for the other forms it
+ * refuses). A heredoc's delimiter is its whole word (`<<EOF-1`,
  * `<<E"OF"`), its body ending only at a line that is exactly that word (after
  * leading tabs for `<<-`), and astral-sh/setup-uv's `python-version` is read
  * through `${{ env.* }}` and `${{ matrix.* }}` in the forms the Python copies
@@ -216,7 +235,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { isMap, isSeq, parse, parseDocument, visit } from 'yaml';
+import { isAlias, isMap, isScalar, isSeq, parse, parseDocument, visit } from 'yaml';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -387,20 +406,25 @@ const WRAPPERS = [
   String.raw`command(?:\s+(?:-p|--(?=\s)))*\s+`,
   String.raw`(?:if|then|else|elif|do|while|until|!)\s+`,
   // `eval` runs its arguments as a script (round 3, #1707): an unquoted first argument is in command position.
-  String.raw`eval(?:\s+--(?=\s))?\s+`,
+  // `builtin` runs the builtin named next (`builtin eval node x`).
+  String.raw`(?:eval(?:\s+--(?=\s))?|builtin)\s+`,
   SHELL_C,
   SHELL_HERE_STRING,
 ].join('|');
 // A `case` pattern that ends at the start of a line (`check)`, `a|b)`), after which a command may follow.
 const CASE_PATTERN = String.raw`^[^()\s|]+(?:\|[^()\s|]+)*\)\s*`;
 const START = String.raw`(?:^|[$<]\(\s*|[\x60({|;&]\s*|${CASE_PATTERN})(?:${ASSIGNMENT}|${WRAPPERS})*`;
-// yarn and pnpm are Node.js programs; pytest and pipx are Python programs, so they run on the interpreter they were
-// installed with, which is the runner's own unless a set-up step came first (pipx also builds each tool's virtual
-// environment from that interpreter unless it is given `--python`).
-const COMMAND = {
-  node: new RegExp(`${START}${PATH}(?:node|npm|npx|yarn|pnpm)(?=\\s|$)`),
-  python: new RegExp(`${START}${PATH}(?:python(?:3(?:\\.\\d+){0,2})?|pip3?|pipx|pytest|uvx?)(?=\\s|$)`),
-};
+// A runtime's command names. yarn and pnpm are Node.js programs; pytest and pipx are Python programs, so they run on
+// the interpreter they were installed with, which is the runner's own unless a set-up step came first (pipx also builds
+// each tool's virtual environment from that interpreter unless it is given `--python`).
+const RUNTIME_NAMES = { node: '(?:node|npm|npx|yarn|pnpm)', python: String.raw`(?:python(?:3(?:\.\d+){0,2})?|pip3?|pipx|pytest|uvx?)` };
+// Where a command's name ends: a space, the end of the line, or an operator (`node;`, `x=$(node)`, `python3<<EOF`,
+// `'npx'|cat`; round 3 review, #1707).
+const NAME_END = String.raw`(?=[\s;&|()<>]|$)`;
+// A runtime command in command position, with the words in front of it (see `runtimeCommands`).
+const RUNTIME = Object.fromEntries(Object.entries(RUNTIME_NAMES).map(([kind, names]) => [kind, new RegExp(`(?<before>${START})${PATH}${names}${NAME_END}`, 'g')]));
+// The runtimes this check reads, by kind.
+const COMMAND = RUNTIME;
 // A shell in command position given a script with `-c` (`bash -c '…'`, `sh -euo pipefail -c "…"`, `sudo bash -lc
 // '…'`, `bash -ec'…'`): the script runs on the runner too, so its commands count. The same words after `docker run
 // image` are not in command position, so a container's script stays unread.
@@ -419,10 +443,16 @@ const ENV_SPLIT_SCRIPT = new RegExp(
 // `eval` in command position, with any arguments before this one: eval joins its arguments and runs them as a script,
 // so a quoted argument is read like a `-c` script (`eval 'node x'`, `eval echo 'a; node x'`; round 3, #1707).
 const EVAL_SCRIPT = new RegExp(String.raw`${START}eval(?:\s+[^\s;&|()<>]+)*\s+$`);
-// A runtime's command names, for COMMAND and RUNTIME.
-const RUNTIME_NAMES = { node: '(?:node|npm|npx|yarn|pnpm)', python: String.raw`(?:python(?:3(?:\.\d+){0,2})?|pip3?|pipx|pytest|uvx?)` };
-// A runtime command in command position with the words in front of it, for `runsThroughSudo`.
-const RUNTIME = Object.fromEntries(Object.entries(RUNTIME_NAMES).map(([kind, names]) => [kind, new RegExp(`(?<before>${START})${PATH}${names}(?=\\s|$)`, 'g')]));
+// The words after `env` or `sudo` (with their options and assignments), where a quoted `"NAME=…"` is still an
+// assignment: env and sudo read their arguments after the shell has taken the quotes off, so `sudo env "PATH=$PATH"
+// python3` runs python3 with that PATH (round 3 review, #1707). At the start of a command a quoted `"NAME=…"` is the
+// command's name, not an assignment, and `PREFIX_ONLY` (the line ends in the words in front of a command) tells the two
+// apart.
+const AFTER_ENV_OR_SUDO = new RegExp(
+  String.raw`(?:^|[\s;&|(\x60])${PATH}(?:env${optionsOf(WRAPPER_OPTIONS.env, 'env')}|sudo${optionsOf(WRAPPER_OPTIONS.sudo, 'sudo')})\s+(?:${ASSIGNMENT})*$`
+);
+const PREFIX_ONLY = new RegExp(`${START}$`);
+const QUOTED_NAME = /^[A-Za-z_][A-Za-z0-9_]*=/;
 // `pipx` in command position, with what comes before it (its assignments and wrappers) and its words, up to the end
 // of the command (`;`, `&`, `|` or `)`). It has chosen its interpreter when `--python` is one of pipx's own options
 // (see `pipxOptionChoosesPython`) or `PIPX_DEFAULT_PYTHON` is one of the assignments in front of it.
@@ -646,13 +676,14 @@ function quotedText(content, mark, values) {
 }
 
 /**
- * How `shellText` writes the text between the substitutions of a double-quoted string that runs one: `_`, or, when
- * asked for values, the text with every character VALUE_UNSAFE names made `_` (see `quotedText`); '' when there is none
- * (round 3, #1707).
+ * How `shellText` writes the text between the substitutions of a double-quoted string that runs one: ` _ ` ('' when
+ * there is none), with or without values. The text runs nothing, and a value that holds a substitution chooses nothing
+ * whatever its text (see `chooses`). The spaces keep a long string from being one long word, which PATH (a run of
+ * characters up to a `/`) read again from every place it could start (round 3 review, #1707: 3,000 substitutions took
+ * seconds).
  */
-function textPart(literal, values) {
-  if (!literal) return '';
-  return values ? literal.replace(VARIABLE, (whole, braced, plain) => `$${braced ?? plain}`).replace(VALUE_UNSAFE, '_') : '_';
+function textPart(literal) {
+  return literal ? ' _ ' : '';
 }
 
 /**
@@ -721,38 +752,63 @@ export function shellText(run, values = false) {
   };
   // A `-c` script (or an `env -S` value) keeps the outer reading too: the outer shell runs a `$(…)` or backtick in a
   // double-quoted script before the inner shell starts (`bash -c "echo '$(node x)'"`).
-  const quoted = (script, text) => {
+  // An empty quoted string run together with other text adds nothing to its word (`''node x` runs node; round 3
+  // review, #1707); on its own it is an empty word, and stays one.
+  const quoted = (script, text, next = '') => {
     const head = line().trimStart();
+    if ((text === "''" || text === '""') && (/[^\s;&|()<>]$/.test(head) || /^[^\s;&|()<>]/.test(next))) return;
     const found = SHELL_SCRIPT.exec(head) ?? ENV_SPLIT_SCRIPT.exec(head) ?? HERE_STRING_SCRIPT.exec(head) ?? EVAL_SCRIPT.exec(head);
     if (!found) out.push(text);
     else if (values) out.push(`${text}\n\x01${found[0]}\n${shellText(script, values)}\n\x02\n:`);
     else out.push(`${text}\n${shellText(script)}\n:`);
   };
+  // The `NAME=` of a quoted assignment given to `env` or `sudo` (see AFTER_ENV_OR_SUDO), which is written in front of
+  // the quotes (`PATH="$PATH"`) so that it reads as the assignment it is; '' for any other quoted string.
+  const assigned = (at) => {
+    const name = QUOTED_NAME.exec(run.slice(at, at + 256));
+    if (!name) return '';
+    const head = line().trimStart();
+    // `env -S 'A=1 node x'` is a script to split, not an assignment.
+    return AFTER_ENV_OR_SUDO.test(head) && PREFIX_ONLY.test(head) && !ENV_SPLIT_SCRIPT.test(head) ? name[0] : '';
+  };
   while (i < n) {
     const char = run[i];
     if (char === '\\' && i + 1 < n) {
       const escaped = run[i + 1];
-      out.push(escaped === '\n' ? ' ' : escaped === '`' ? '' : values && escaped === '$' ? LITERAL_DOLLAR : run.slice(i, i + 2));
+      // A `\` in front of an ordinary character only stands for that character (`\node` is `node`; round 3 review).
+      out.push(
+        escaped === '\n'
+          ? ' '
+          : escaped === '`'
+            ? ''
+            : values && escaped === '$'
+              ? LITERAL_DOLLAR
+              : /[A-Za-z0-9_.\/:@%+,=-]/.test(escaped)
+                ? escaped
+                : run.slice(i, i + 2)
+      );
       i += 2;
     } else if (char === '$' && run[i + 1] === "'") {
       // `$'…'` may hold `\'`, which does not end it.
       let j = i + 2;
       while (j < n && run[j] !== "'") j += run[j] === '\\' ? 2 : 1;
       const body = ansiC(run.slice(i + 2, j));
-      quoted(body, PLAIN_WORD.test(body) ? body : quotedText(body, "'", values));
+      quoted(body, PLAIN_WORD.test(body) ? body : quotedText(body, "'", values), run[j + 1]);
       i = j + 1;
     } else if (char === "'") {
       const end = run.indexOf("'", i + 1) === -1 ? n : run.indexOf("'", i + 1);
-      const body = run.slice(i + 1, end);
+      const name = assigned(i + 1);
+      const body = run.slice(i + 1 + name.length, end);
       // A quoted plain word is that word to the shell, so `'node' x` runs node (round 3, #1707).
-      quoted(body, PLAIN_WORD.test(body) ? body : quotedText(body, "'", values));
+      quoted(body, name + (PLAIN_WORD.test(body) ? body : quotedText(body, "'", values)), run[end + 1]);
       i = end + 1;
     } else if (char === '"') {
+      const name = assigned(i + 1);
       // A command substitution in the string (`$(…)`, or a backtick pair) may hold quotes of its own, and it runs on
       // the runner, so its script is read like any other. Everything else in the string is text to the outer shell,
       // written as quotedText writes text, so that a `;`, `|` or word in it is not read as a command (round 3,
       // #1707: `bash -c "x; pipx run y $(true)"` runs no pipx in the outer shell). As text, an escaped backtick prints.
-      let j = i + 1;
+      let j = i + 1 + name.length;
       const parts = [];
       let literal = '';
       let runs = false;
@@ -763,13 +819,13 @@ export function shellText(run, values = false) {
           j += 2;
         } else if (run.startsWith('$(', j) && !run.startsWith('$((', j)) {
           const close = substitutionClose(run, j);
-          parts.push(textPart(literal, values) + `$(${shellText(run.slice(j + 2, close), values)})`);
+          parts.push(textPart(literal) + `$(${shellText(run.slice(j + 2, close), values)})`);
           literal = '';
           runs = true;
           j = close + 1;
         } else if (run[j] === '`') {
           const close = backtickClose(run, j);
-          parts.push(textPart(literal, values) + `\`${shellText(run.slice(j + 1, close), values)}\``);
+          parts.push(textPart(literal) + `\`${shellText(run.slice(j + 1, close), values)}\``);
           literal = '';
           runs = true;
           j = close + 1;
@@ -778,12 +834,12 @@ export function shellText(run, values = false) {
           j += 1;
         }
       }
-      const raw = run.slice(i + 1, Math.min(j, n));
+      const raw = run.slice(i + 1 + name.length, Math.min(j, n));
       const text = literal;
-      parts.push(textPart(literal, values));
+      parts.push(textPart(literal));
       // Given to `-c`, the inner shell runs the script, an escaped backtick included.
       const script = raw.replace(/\\([\\"$`\n])/g, (escape, c) => (c === '\n' ? '' : c));
-      quoted(script, runs ? `"${parts.join('')}"` : PLAIN_WORD.test(raw) ? raw : quotedText(text, '"', values));
+      quoted(script, name + (runs ? `"${parts.join('')}"` : PLAIN_WORD.test(raw) ? raw : quotedText(text, '"', values)), run[j + 1]);
       i = j + 1;
     } else if (char === '#' && (i === 0 || ' \t\n;'.includes(run[i - 1]))) {
       const end = run.indexOf('\n', i);
@@ -841,11 +897,23 @@ export function shellText(run, values = false) {
   return out.join('');
 }
 
+// A `case` pattern at the start of a line, whose words are patterns, not commands (`node|npm) …`).
+const CASE_PREFIX = new RegExp(CASE_PATTERN);
+
+/**
+ * Every runtime command of `kind` in command position on a line (see `pipxCommands`), each with the words in front of
+ * it. A line that starts with a `case` pattern is read after the pattern, so `node)` names no command now that a name
+ * may end at `)`.
+ */
+function runtimeCommands(line, kind) {
+  return pipxCommands(line.replace(CASE_PREFIX, ''), RUNTIME[kind]);
+}
+
 /** True when a run step calls the runtime in command position (see `shellText` for what is left out). */
 export function runsRuntime(run, kind) {
   return shellText(String(run ?? ''))
     .split('\n')
-    .some((line) => COMMAND[kind].test(line.trim()));
+    .some((line) => runtimeCommands(line.trim(), kind).length > 0);
 }
 
 /** A step's `if:` as one comparable expression: no `${{ }}` around it, whitespace collapsed; '' when it has none. */
@@ -1192,21 +1260,27 @@ function sudoPath(before) {
   let env = false; // an `env` came after the `sudo`, so a `PATH=` word is its assignment
   for (const word of (before.match(WORD) ?? []).map((w) => w.replace(OPENING, ''))) {
     if (/^(?:\S*\/)?sudo$/.test(word)) [state, env] = [true, false];
-    else if (/^(?:\S*\/)?env$/.test(word)) env = true;
-    else if (env && /^PATH=/.test(word.replace(/['"]/g, ''))) state = false;
+    else if (state !== null && /^(?:\S*\/)?env$/.test(word)) env = true;
+    // Only the PATH the outer shell had (`PATH=$PATH`, `PATH="$PATH":/x`): `PATH=/usr/bin` finds the runner's own
+    // (round 3 review, #1707). Words with no `sudo` in front of them leave the state to the script around them, whose
+    // `$PATH` is sudo's `secure_path` when it runs under sudo.
+    else if (env && state !== null && PASSES_PATH.test(word.replace(/['"]/g, ''))) state = false;
   }
   return state;
 }
+// A `PATH=` that passes on the PATH the shell already has.
+const PASSES_PATH = /^PATH=(?:\$PATH|\$\{PATH\})(?::|$)/;
 
 /**
  * True when a run script runs the runtime through `sudo` without passing PATH on (see `sudoPath`): `sudo python3 x.py`,
  * `sudo -E node x`, `sudo bash -c 'node x'`. sudo's `secure_path` holds the runner's own Node.js and Python (Ubuntu's
  * and Debian's sudoers set it, and actions/runner-images does not change it), not the set-up ones in
  * /opt/hostedtoolcache, so such a step runs the runner's own runtime even after a set-up step (round 3, #1707). A
- * script a sudo'd shell runs (`-c`, a heredoc, `env -S`, `eval`) carries the sudo in front of it.
+ * script a sudo'd shell runs (`-c`, a heredoc, `env -S`, `eval`) carries the sudo in front of it, and so does a step's
+ * whole text when its `shell:` is run through sudo (`inherited`, see `stepShell`).
  */
-export function runsThroughSudo(run, kind) {
-  const stack = [null];
+export function runsThroughSudo(run, kind, inherited = null) {
+  const stack = [inherited];
   for (const raw of shellText(String(run ?? ''), true).split('\n')) {
     const line = raw.trim();
     if (line.startsWith('\x01')) {
@@ -1217,7 +1291,7 @@ export function runsThroughSudo(run, kind) {
       if (stack.length > 1) stack.pop();
       continue;
     }
-    if (pipxCommands(line, RUNTIME[kind]).some((found) => (sudoPath(found.groups.before) ?? stack.at(-1)) === true)) return true;
+    if (runtimeCommands(line, kind).some((found) => (sudoPath(found.groups.before) ?? stack.at(-1)) === true)) return true;
   }
   return false;
 }
@@ -1254,7 +1328,7 @@ export function unsetSteps(file, jobs, indirect = INDIRECT_RUNTIME, workflowEnv 
         const covered = steps
           .slice(0, i)
           .some((earlier, j) => setsUp(earlier, kind, job, workflowEnv) && setupCovers(condition(earlier), condition(step), stepIds(steps.slice(0, j))));
-        if (!covered || runsThroughSudo(step?.run, kind) || runsThroughSudo(shell, kind)) found.push(key);
+        if (!covered || runsThroughSudo(step?.run, kind, sudoPath(shell)) || runsThroughSudo(shell, kind)) found.push(key);
       });
     }
   }
@@ -1315,7 +1389,8 @@ export function chooses(value, setupIds = new Set(), env = null) {
       ? quoteless
       : quoteless.replace(VARIABLE, (whole, braced, plain) => {
           const name = braced ?? plain;
-          if (Object.hasOwn(env, name)) return env[name] === SCRIPT_SET ? whole : ghaTokens(String(env[name] ?? ''));
+          if (env[name] === UNSET) unknown = true;
+          if (Object.hasOwn(env, name)) return env[name] === SCRIPT_SET || env[name] === UNSET ? whole : ghaTokens(String(env[name] ?? ''));
           unknown = unknown || !SET_UP_VARIABLES.has(name);
           located = true;
           return whole;
@@ -1474,17 +1549,22 @@ function scopePaths(text) {
  * earlier assignment of the script in this shell or one around it, in order, the last one winning over `env:` too
  * (Copilot on HCW-NetworkEyes_App#395); one made outside a child shell reaches into it only when exported (an `env:`
  * name stays exported when the script assigns it). An assignment inside a subshell or child shell that has ended is not
- * seen (Copilot on HCW-HybridCloudWorks#1719).
+ * seen (Copilot on HCW-HybridCloudWorks#1719). `records` holds the script's assignments by name, and only the names in
+ * `names` are worked out; any other name keeps its `env:` value.
  */
-function namesView(env, records, here, kinds) {
+function namesView(env, records, here, kinds, names) {
   const view = { ...env };
   // Names the script has unset or unexported since, so an `env:` name no longer reaches a child shell (round 3, #1707).
   const unexported = new Set();
-  for (const [name, value, at, exported] of records) {
+  // Only the names the command reads (`names`), each from its own records, so a long script is not read again in full
+  // for every command (round 3 review, #1707: 4,000 lines took seconds).
+  for (const [name, value, at, exported] of [...names].flatMap((one) => records.get(one) ?? [])) {
     if (at.some((id, i) => here[i] !== id) || here.length < at.length) continue;
     const crosses = here.slice(at.length).some((id) => kinds.get(id) === 'child');
     if (value === UNSET || (exported === 'unexport' && crosses)) {
-      delete view[name];
+      // An unset `pythonLocation` is no longer the one setup-python set, so it is kept as UNSET for `chooses`.
+      if (SET_UP_VARIABLES.has(name) && value === UNSET) view[name] = UNSET;
+      else delete view[name];
       unexported.add(name);
       continue;
     }
@@ -1681,22 +1761,29 @@ function expansions(run, env, matrix) {
   });
 }
 
+/** The shell variables a text names (`$P`, `${P}`), the only ones `chooses` reads from a view. */
+const namesIn = (text) => new Set([...text.matchAll(VARIABLE)].map((found) => found[1] ?? found[2]));
+
 /** `pipxWithoutPython` for one script and `env` with no `${{ env.* }}` or `${{ matrix.* }}` left to replace. */
 function pipxWithoutPythonOnce(run, env, setupIds) {
   const stack = [chooses(ghaTokens(String(env?.PIPX_DEFAULT_PYTHON ?? '')), setupIds)];
   env = { ...(env ?? {}) };
   const text = shellText(ghaTokens(String(run ?? '')), true);
   const scopes = []; // `scopePaths(text)`, worked out the first time a script sets a name
-  const records = [];
+  const records = new Map(); // name -> [value, scope path, exported], in the order the script sets them
   // Where the script unsets, unexports or sets to a value that chooses nothing PIPX_DEFAULT_PYTHON (`unset
   // PIPX_DEFAULT_PYTHON`, `export -n …`, `PIPX_DEFAULT_PYTHON=/usr/bin/python3`): the scope path of each (round 3,
   // #1707). One that sets it to a value that chooses is not read, as before: use `env:` for that.
   const removals = [];
-  // The variables a command at `index` of `text` sees (see `namesView`).
-  const viewAt = (index) => {
-    if (!records.length) return { ...env };
+  // The variables a command at `index` of `text` sees, of those in `names` (see `namesView`).
+  const viewAt = (index, names) => {
+    if (!records.size) return { ...env };
     if (!scopes.length) scopes.push(...scopePaths(text));
-    return namesView(env, records, index >= 0 ? scopes[0][index] : [], scopes[1]);
+    return namesView(env, records, index >= 0 ? scopes[0][index] : [], scopes[1], names);
+  };
+  const record = (name, value, here, exported) => {
+    if (!records.has(name)) records.set(name, []);
+    records.get(name).push([name, value, here, exported]);
   };
   // What a command at `index` inherits for PIPX_DEFAULT_PYTHON: false once the shell it runs in (the innermost child
   // shell, or a subshell of it that is still open) has removed it, else what that shell was started with.
@@ -1715,7 +1802,7 @@ function pipxWithoutPythonOnce(run, env, setupIds) {
     offset += raw.length + 1;
     if (line.startsWith('\x01')) {
       // A `-c` script (or `env -S` value) starts: it inherits what the words in front of its shell make.
-      stack.push(localDefaultPython(line.slice(1), setupIds, viewAt(lead - 1)) ?? inherited(lead - 1));
+      stack.push(localDefaultPython(line.slice(1), setupIds, viewAt(lead - 1, namesIn(line))) ?? inherited(lead - 1));
       continue;
     }
     if (line.startsWith('\x02')) {
@@ -1733,19 +1820,18 @@ function pipxWithoutPythonOnce(run, env, setupIds) {
         const [pairs, exported, marks] = namesSet(found);
         if (!scopes.length && (pairs.length || marks.length)) scopes.push(...scopePaths(text));
         const here = scopes.length ? scopes[0][lead + at - 1] : [];
-        const before = viewAt(lead + at - 1);
         for (const [name, value] of pairs) {
-          if (name === 'PIPX_DEFAULT_PYTHON' && (exported === 'unexport' || typeof value !== 'string' || !chooses(value, setupIds, before))) removals.push(here);
-          records.push([name, value, here, exported]);
+          if (name === 'PIPX_DEFAULT_PYTHON' && (exported === 'unexport' || typeof value !== 'string' || !chooses(value, setupIds, viewAt(lead + at - 1, namesIn(value))))) removals.push(here);
+          record(name, value, here, exported);
         }
-        const view = viewAt(lead + at - 1);
+        const view = marks.length ? viewAt(lead + at - 1, marks) : {};
         for (const name of marks) {
           if (name === 'PIPX_DEFAULT_PYTHON' && exported === 'unexport') removals.push(here);
-          if (Object.hasOwn(view, name)) records.push([name, view[name], here, exported]);
+          if (Object.hasOwn(view, name)) record(name, view[name], here, exported);
         }
         continue;
       }
-      const view = viewAt(lead + at);
+      const view = viewAt(lead + at, namesIn(found[0]));
       if (!(pipxOptionChoosesPython(found.groups.words, setupIds, view) || (localDefaultPython(found.groups.before, setupIds, view) ?? inherited(lead + at)))) return true;
     }
   }
@@ -1809,6 +1895,12 @@ export function actionJobs(action) {
 export function readWorkflow(text, label = 'workflow') {
   const document = parseDocument(text);
   if (document.errors.length) throw new Error(`${label}: ${document.errors[0].message}`);
+  // An anchor (`&a`), an alias (`*a`) or a tag (`!!str`): the line readers would read them as text (round 3 review).
+  visit(document, {
+    Node(key, node) {
+      if (isAlias(node) || node.anchor || node.tag) throw new Error(`${label}: an anchor, alias or tag (&, *, !); write the value out`);
+    },
+  });
   const flow = (node, what) => {
     if ((isMap(node) || isSeq(node)) && node.flow) throw new Error(`${label}: ${what} is written on one line ({…} or […]); write it as a block`);
   };
@@ -1830,6 +1922,17 @@ export function readWorkflow(text, label = 'workflow') {
   for (const node of [jobs, runs, document.get('env', true), document.get('defaults', true)]) {
     if (!isMap(node)) continue;
     visit(node, {
+      // Forms the line readers refuse (round 3 review, #1707): a quoted key (`'run': x`), a space before a block key's
+      // colon (`run : x`), and a plain or quoted value that starts on the line after its key (`run:` with `node x` below).
+      Pair(key, pair, path) {
+        if (!isScalar(pair.key) || !pair.key.range) return;
+        if (pair.key.type !== 'PLAIN') throw new Error(`${label}: a quoted key (${JSON.stringify(String(pair.key.value))}); write it plain`);
+        if (!path.at(-1)?.flow && text[pair.key.range[1]] !== ':') throw new Error(`${label}: a space before the colon of ${pair.key.value}`);
+        const value = pair.value;
+        if (isScalar(value) && value.range && ['PLAIN', 'QUOTE_DOUBLE', 'QUOTE_SINGLE'].includes(value.type) && text.slice(pair.key.range[0], value.range[0]).includes('\n')) {
+          throw new Error(`${label}: the value of ${pair.key.value} starts on the next line; write it on the key's line or as a block (|) value`);
+        }
+      },
       Scalar(key, scalar) {
         const source = scalar.range ? text.slice(scalar.range[0], scalar.range[1]) : '';
         if (['PLAIN', 'QUOTE_DOUBLE', 'QUOTE_SINGLE'].includes(scalar.type) && source.includes('\n')) {
@@ -3730,6 +3833,201 @@ describe('round three: wrappers, quoted words, sudo, shells, env levels, pipx va
   });
 });
 
+describe('round three review: quoted assignments, sudo PATH, shells, YAML anchors, quoting, operators, speed', () => {
+  // The same cases as HCW-NetworkEyes_App's tests/security/test_workflow_runtime_setup.py, in the same order (the
+  // pre-PR review of round 3, #1707).
+  it('reads the round-three review forms as the shell reads them', () => {
+    const cases = [
+      // 1: a quoted assignment given to env or sudo is still an assignment.
+      ['env "PATH=$PATH" python3 x', 'python', true],
+      ['sudo env "PATH=$PATH" python3 x', 'python', true],
+      ["env 'A=1' node x", 'node', true],
+      ["sudo -E 'A=1' node x", 'node', true],
+      ['"A=1" node x', 'node', false],
+      ["env -S 'A=1 node x'", 'node', true],
+      ["echo env 'A=1' node x", 'node', false],
+      // 5: empty quotes, escapes, builtin and a name that ends at an operator.
+      ["''node x", 'node', true],
+      ['""node x', 'node', true],
+      ['n""ode x', 'node', true],
+      ['\\node x', 'node', true],
+      ['n\\ode x', 'node', true],
+      ["'' node x", 'node', false],
+      ["'node'&& echo", 'node', true],
+      ["'npx'|cat", 'node', true],
+      ["'node';", 'node', true],
+      ['builtin eval node x', 'node', true],
+      ['\\eval node x', 'node', true],
+      ['python3<<EOF\nx\nEOF', 'python', true],
+      ['(cd a && npm)', 'node', true],
+      ['x=$(node)', 'node', true],
+      ['node;', 'node', true],
+      ['python3>log', 'python', true],
+      ['case "$k" in node) echo ;; esac', 'node', false],
+      ['node|npm) echo hi ;;', 'node', false],
+      ['node) node x ;;', 'node', true],
+      ['nodejs x', 'node', false],
+      ['echo node;', 'node', false],
+    ];
+    for (const [line, kind, found] of cases) expect(runsRuntime(line, kind), `${line} / ${kind}`).toBe(found);
+  });
+
+  it('passes the set-up runtime through sudo only with the outer PATH', () => {
+    const cases = [
+      // 2: only the outer PATH, passed on by env after sudo, keeps the set-up runtime.
+      ['sudo env PATH=$PATH python3 x', 'python', false],
+      ['sudo env "PATH=$PATH" python3 x', 'python', false],
+      ['sudo env PATH="${PATH}" python3 x', 'python', false],
+      ['sudo env PATH=$PATH:/usr/bin python3 x', 'python', false],
+      ['sudo env PATH=/usr/bin:$PATH python3 x', 'python', true],
+      ['sudo env PATH=/usr/bin python3 x', 'python', true],
+      ["sudo bash -c 'env PATH=$PATH node x'", 'node', true],
+      ["sudo bash -c 'sudo env PATH=$PATH node x'", 'node', false],
+      ['env PATH=$PATH sudo python3 x', 'python', true],
+      ['env PATH=/usr/bin node x', 'node', false],
+    ];
+    for (const [line, kind, found] of cases) expect(runsThroughSudo(line, kind), `${line} / ${kind}`).toBe(found);
+  });
+
+  it('reads the round-three review pipx forms', () => {
+    const cases = [
+      // 1: a quoted assignment given to env or sudo is still an assignment.
+      ['env "A=1" pipx run x', {}, [], true],
+      ['env "PIPX_DEFAULT_PYTHON=/usr/bin/python3" pipx run x', {}, [], true],
+      ['env "PIPX_DEFAULT_PYTHON=/opt/py/bin/python3" pipx run x', {}, [], false],
+      ['sudo env "PIPX_DEFAULT_PYTHON=/opt/py/bin/python3" pipx run x', {}, [], false],
+      ["env 'PIPX_DEFAULT_PYTHON=' pipx run x", { PIPX_DEFAULT_PYTHON: '/opt/py' }, [], true],
+      // 4: an unset pythonLocation is not setup-python's any more.
+      ['unset pythonLocation; pipx run --python "$pythonLocation/bin/python3" x', {}, [''], true],
+      ['(unset pythonLocation); pipx run --python "$pythonLocation/bin/python3" x', {}, [''], false],
+      ['pipx run --python "$pythonLocation/bin/python3" x', {}, [''], false],
+    ];
+    for (const [run, env, ids, flagged] of cases) expect(pipxWithoutPython(run, env, new Set(ids)), `${run} / ${JSON.stringify(env)} / ${ids}`).toBe(flagged);
+  });
+
+  // 1 and 7: a quoted assignment given to env does not hide the command after it, and a step whose shell is run through sudo runs its text under sudo.
+  const ROUND_THREE_REVIEW_SUDO_YAML = [
+    'on: push',
+    'jobs:',
+    '  quoted-no-set-up:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - name: Run',
+    '        run: sudo env "PATH=$PATH" python3 x',
+    '  env-quoted-no-set-up:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - name: Run',
+    '        run: env "PATH=$PATH" python3 x',
+    '  quoted-set-up:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Run',
+    '        run: sudo env "PATH=$PATH" python3 x',
+    '  sudo-shell:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Run',
+    '        shell: sudo bash -e {0}',
+    '        run: python3 x',
+    '  sudo-default-shell:',
+    '    runs-on: ubuntu-26.04',
+    '    defaults:',
+    '      run:',
+    '        shell: sudo bash -e {0}',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Run',
+    '        run: python3 x',
+    '  sudo-path-shell:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Run',
+    '        shell: sudo env PATH="$PATH" bash -e {0}',
+    '        run: python3 x',
+    '',
+  ].join('\n');
+
+  it('reads the round-three review sudo workflow', () => {
+    const workflow = readWorkflow(ROUND_THREE_REVIEW_SUDO_YAML);
+    expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > quoted-no-set-up > Run > python', 'x.yml > env-quoted-no-set-up > Run > python', 'x.yml > sudo-shell > Run > python', 'x.yml > sudo-default-shell > Run > python']);
+    expect(pipxProblems('x.yml', workflow)).toEqual([]);
+  });
+
+  // reader alignment: a step's keys after `-   `, and a matrix list at its key's indent.
+  const ROUND_THREE_REVIEW_YAML_YAML = [
+    'on: push',
+    'jobs:',
+    '  spaced-dash:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      -   name: Run',
+    '          run: node x',
+    '  matrix-at-key:',
+    '    runs-on: ubuntu-26.04',
+    '    strategy:',
+    '      matrix:',
+    '        py:',
+    '        - "3.15"',
+    '    steps:',
+    '      - uses: astral-sh/setup-uv@abc',
+    '        with:',
+    '          python-version: ${{ matrix.py }}',
+    '      - name: Run',
+    '        run: uv run x.py',
+    '',
+  ].join('\n');
+
+  it('reads the round-three review yaml workflow', () => {
+    const workflow = readWorkflow(ROUND_THREE_REVIEW_YAML_YAML);
+    expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > spaced-dash > Run > node']);
+    expect(pipxProblems('x.yml', workflow)).toEqual([]);
+  });
+
+  it('refuses YAML anchors, aliases, tags and the forms the line readers cannot read', () => {
+    const refused = [
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: &a node x\n      - run: *a\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: !!str node x\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - env:\n          P: &p /usr/bin/python3\n        run: echo\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - env:\n          P: !!str /usr/bin/python3\n        run: echo\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - \'run\': x\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - run : x\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - run:\n          node x\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - env: {\'A\': x}\n        run: echo\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        py:\n          - "3.15"#x\n    steps:\n      - run: echo\n',
+    ];
+    for (const text of refused) expect(() => readWorkflow(text), text).toThrow();
+  });
+
+  it('reads a long double-quoted string and a long script of unset, export -n and eval quickly', () => {
+    // The review found 3,000 substitutions in one string took 8 seconds, and 4,000 such lines 5 seconds.
+    const started = performance.now();
+    const quoted = `echo "${'$(true) x; '.repeat(3000)}"`;
+    const lines = `${Array.from({ length: 4000 }, (_, i) => `unset P${i}; export -n Q${i}; eval 'echo ${i}'`).join('\n')}\npipx run x`;
+    for (const run of [quoted, lines]) {
+      runsRuntime(run, 'node');
+      runsThroughSudo(run, 'python');
+      pipxWithoutPython(run, { PIPX_DEFAULT_PYTHON: '/opt/py/bin/python3' });
+    }
+    expect(performance.now() - started).toBeLessThan(5000);
+  });
+});
+
+// What a reported step needs, for either of the two reasons a step is reported (round 3 review, #1707).
+const UNSET_HELP =
+  'Each step listed runs Node.js or Python on the runner\'s own version. Either no set-up step is sure to have run ' +
+  'before it: add actions/setup-node or actions/setup-python (or astral-sh/setup-uv with a python-version) before it, ' +
+  'under the same if: as the step. Or it runs the runtime through sudo, which looks commands up on its own fixed list ' +
+  'of folders (secure_path) and so finds the runner\'s: write `sudo env "PATH=$PATH" …` so the set-up version is ' +
+  'found. A step kept that way on purpose goes in RUNNER_DEFAULT_ALLOWED with its reason.';
+
 describe('.github/workflows and .github/actions', () => {
   // The workflows and the composite actions (see `sources`), read once for every test below.
   const found = sources(REPO);
@@ -3746,7 +4044,7 @@ describe('.github/workflows and .github/actions', () => {
   });
 
   it('every step that runs Node.js or Python comes after its version is set up, so the runner image never chooses it', () => {
-    expect(unset.filter((entry) => !(entry in RUNNER_DEFAULT_ALLOWED))).toEqual([]);
+    expect(unset.filter((entry) => !(entry in RUNNER_DEFAULT_ALLOWED)), UNSET_HELP).toEqual([]);
   });
 
   it('every step that runs pipx chooses its Python, so pipx never falls back to the runner image\'s own', () => {
