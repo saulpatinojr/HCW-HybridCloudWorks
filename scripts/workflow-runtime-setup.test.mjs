@@ -5265,6 +5265,9 @@ describe("Copilot's second round on the round-3 ports (#1707): python3t, env -i,
       'on: push\ndefaults: {run: {shell: "python {0}"}\njobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: echo\n',
       'on: push\njobs:\n  j:\n    runs-on: ubuntu-26.04\n    defaults:\n      run: { shell: python {0} }\n    steps:\n      - run: echo\n',
       "on: push\njobs:\n  j:\n    runs-on: ubuntu-26.04\n    defaults: {run: {shell: 'python {0}}}\n    steps:\n      - run: echo\n",
+      // A closer that does not match its opener (Copilot on HCW-NetworkEyes_App#402).
+      'on: push\ndefaults: {run: {shell: "python {0}"]}\njobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: echo\n',
+      'on: push\ndefaults: {run: {shell: "python {0}"}]\njobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: echo\n',
     ];
     for (const text of refused) expect(() => readWorkflow(text), text).toThrow();
   });
