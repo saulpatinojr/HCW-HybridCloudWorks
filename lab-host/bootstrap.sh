@@ -22,7 +22,8 @@
 # Python. Ansible's control side (ansible-playbook, templating, the vault)
 # runs on CPython from uv, not on the distribution's python3. Owner rule
 # 2026-09-26: Python is on the newest release line and no more than two patch
-# releases behind that line's newest (3.14.7 that day, so a 3.14.5 floor), and
+# releases behind that line's newest (3.14.7 that day, so a 3.14.5 floor;
+# since 2026-11-14 the floor is the line's newest patch itself, #1707), and
 # Ubuntu 26.04's /usr/bin/python3 is 3.14.4 (python3.14 3.14.4, package
 # python3 3.14.3), below that floor. uv comes from its GitHub release asset, checked against
 # UV_SHA256 before it runs (no curl | sh), and uv checks the interpreter it

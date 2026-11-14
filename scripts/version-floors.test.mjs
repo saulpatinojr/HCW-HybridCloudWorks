@@ -690,7 +690,8 @@ describe('scripts/version-floors.json', () => {
   });
 
   it('derives each floor from its newest release by the rule the entry states', () => {
-    expect(kinds.python.floor).toBe(patchFloor(kinds.python.newest));
+    // Python's floor is its newest patch (N-0) since the owner's decision of 2026-11-14 (#1707), not N-2.
+    expect(kinds.python.floor).toBe(kinds.python.newest);
     expect(kinds.python.newest.startsWith(`${kinds.python.line}.`)).toBe(true);
     expect(kinds.terraform.floor).toBe(patchFloor(kinds.terraform.newest));
     expect(kinds.terraform.newest.startsWith(`${kinds.terraform.line}.`)).toBe(true);

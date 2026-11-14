@@ -87,7 +87,19 @@ function sourcesToday() {
  * still checked against serialise() below.
  */
 const FROZEN_FLOORS = join(ROOT, 'scripts', 'fixtures', 'version-floors-2026-09-25.json');
-const current = () => JSON.parse(readFileSync(FROZEN_FLOORS, 'utf8'));
+/**
+ * The frozen file, with its Python floor restated by the rule of
+ * 2026-11-14: the newest patch of the line (N-0), which the owner chose that
+ * day in place of N-2 for Python only (#1707). Under the new rule the same
+ * sources put that day's floor at 3.14.7, not the 3.14.5 the file recorded
+ * under the old one, so without this every test below would see Python move.
+ * The fixture itself stays a byte copy of the file as it stood.
+ */
+const current = () => {
+  const floors = JSON.parse(readFileSync(FROZEN_FLOORS, 'utf8'));
+  floors.kinds.python.floor = floors.kinds.python.newest;
+  return floors;
+};
 
 describe('proposeFloors', () => {
   it('moves nothing when the sources say what the file already records', () => {
@@ -97,13 +109,14 @@ describe('proposeFloors', () => {
     expect(next).toEqual(current());
   });
 
-  it('moves the newest patch and the N-2 floor with it, and dates only that entry', () => {
+  it("moves Python's newest patch and its floor to that same patch, and dates only that entry", () => {
     const sources = sourcesToday();
     sources.eol.python.result.releases[0].latest.name = '3.14.9';
     const { changes, next } = proposeFloors(current(), sources, TODAY);
+    // N-0 for Python since 2026-11-14 (#1707): the floor is the newest patch, 3.14.9, not 3.14.7.
     expect(changes).toEqual([
       { kind: 'python', field: 'newest', from: '3.14.7', to: '3.14.9' },
-      { kind: 'python', field: 'floor', from: '3.14.5', to: '3.14.7' },
+      { kind: 'python', field: 'floor', from: '3.14.7', to: '3.14.9' },
     ]);
     expect(next.kinds.python.checkedOn).toBe(TODAY);
     expect(next.kinds.node.checkedOn).toBe(current().kinds.node.checkedOn);
@@ -117,7 +130,20 @@ describe('proposeFloors', () => {
     const ready = sourcesToday();
     ready.eol.python.result.releases.unshift(rel('3.15', '3.15.2'));
     const { next } = proposeFloors(current(), ready, TODAY);
-    expect([next.kinds.python.line, next.kinds.python.newest, next.kinds.python.floor]).toEqual(['3.15', '3.15.2', '3.15.0']);
+    // The line still waits for its N-2 patch, but the floor is then that newest patch (N-0, owner decision
+    // 2026-11-14, #1707), so 3.15.2 rather than the N-2 rule's 3.15.0.
+    expect([next.kinds.python.line, next.kinds.python.newest, next.kinds.python.floor]).toEqual(['3.15', '3.15.2', '3.15.2']);
+  });
+
+  it('keeps N-2 for Terraform and Alpine while Python moves to its newest patch', () => {
+    const sources = sourcesToday();
+    sources.eol.python.result.releases[0].latest.name = '3.14.8';
+    sources.eol.terraform.result.releases[0].latest.name = '1.16.6';
+    sources.eol.alpine.result.releases[0].latest.name = '3.24.5';
+    const { next } = proposeFloors(current(), sources, TODAY);
+    expect([next.kinds.python.newest, next.kinds.python.floor]).toEqual(['3.14.8', '3.14.8']);
+    expect([next.kinds.terraform.newest, next.kinds.terraform.floor]).toEqual(['1.16.6', '1.16.4']);
+    expect([next.kinds.alpine.newest, next.kinds.alpine.floor]).toEqual(['3.24.5', '3.24.3']);
   });
 
   it('moves Alpine to a newer patch release with its N-2 floor, and dates only that entry', () => {
