@@ -8,11 +8,11 @@
   ],
   "kinds": {
     "python": {
-      "rule": "The newest release line, no more than two patch releases behind that line's newest (N-2 patches). A new line is adopted once its N-2 patch exists (3.15.2 for 3.15). A pin that names the line only (actions/setup-python '3.14') resolves to the newest patch when it runs. Owner rule 2026-09-26 (#714).",
+      "rule": "The newest release line, at that line's newest patch release (N-0): an exact pin names the newest patch. A new line is still adopted only once its N-2 patch exists (3.15.2 for 3.15), so a new line's first releases (3.16.0, 3.16.1) are never forced on the day they ship; from then on the floor is that line's newest patch. A pin that names the line only (actions/setup-python '3.15') resolves to the newest patch when it runs. Owner decision 2026-11-14 (#1707): all should be the latest GA version of 3.15, so the floor moved from 3.15.0 to 3.15.2; it replaces, for Python only, the N-2 patch floor of the owner rule of 2026-09-26 (#714), which the other kinds keep.",
       "line": "3.15",
       "newest": "3.15.2",
-      "floor": "3.15.0",
-      "checkedOn": "2026-10-28",
+      "floor": "3.15.2",
+      "checkedOn": "2026-11-14",
       "source": "https://endoflife.date/api/v1/products/python/"
     },
     "node": {
@@ -78,7 +78,7 @@
       "source": "https://endoflife.date/api/v1/products/debian/"
     },
     "alpine": {
-      "rule": "Alpine Linux's newest release line, no more than two patch releases behind that line's newest (N-2 patches), the same rule as Python and Terraform; a new line is adopted once its N-2 patch exists (3.25.2 for 3.25). An image pinned by digest must name the exact release its digest is, MAJOR.MINOR.PATCH, because a digest does not float: alpine:3.24@sha256:... would meet the floor at line precision whatever patch it holds. The pins are the lab job images in vps-agent/lib/capabilities.js (IMAGES) and any FROM alpine in a tracked Dockerfile. shell-echo ran alpine:3.20, past its end of life on 2026-04-01, until 2026-09-28, with nothing reading that map. Owner rule 2026-09-26 (#714): every runtime, OS and base image on its newest supported release.",
+      "rule": "Alpine Linux's newest release line, no more than two patch releases behind that line's newest (N-2 patches), the same rule as Terraform (and Python's until 2026-11-14); a new line is adopted once its N-2 patch exists (3.25.2 for 3.25). An image pinned by digest must name the exact release its digest is, MAJOR.MINOR.PATCH, because a digest does not float: alpine:3.24@sha256:... would meet the floor at line precision whatever patch it holds. The pins are the lab job images in vps-agent/lib/capabilities.js (IMAGES) and any FROM alpine in a tracked Dockerfile. shell-echo ran alpine:3.20, past its end of life on 2026-04-01, until 2026-09-28, with nothing reading that map. Owner rule 2026-09-26 (#714): every runtime, OS and base image on its newest supported release.",
       "line": "3.24",
       "newest": "3.24.4",
       "floor": "3.24.2",

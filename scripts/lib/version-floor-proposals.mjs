@@ -50,8 +50,10 @@ function latestOf(r, product) {
  * The newest line that has shipped its N-2 release. A line is adopted once
  * its latest release is two steps past .0 at the rule's precision (3.15.2
  * for Python, 28.2.0 for Node.js), so the floor names a release two behind
- * rather than the first one out (#714: "after its N-2 patch exists"). Until
- * then the previous line stays, and its own newest release still counts.
+ * rather than the first one out (#714: "after its N-2 patch exists"); for
+ * Python, since 2026-11-14, the floor is that newest release itself (see
+ * proposePython). Until then the previous line stays, and its own newest
+ * release still counts.
  */
 export function adoptLine(releases, { today, step, eligible = () => true, product }) {
   const index = step === 'patch' ? 2 : 1;
@@ -138,11 +140,24 @@ function applyLine(record, label, entry, picked, floorOf) {
   record.set(label, entry, 'floor', floorOf(picked.newest));
 }
 
-/** Python, Terraform and Alpine: newest line, N-2 patches. */
+/** Terraform and Alpine: newest line, N-2 patches. */
 function proposePatchKind(run, kind) {
   const product = PRODUCTS[kind];
   const picked = adoptLine(releasesOf(run.sources.eol[kind], product), { today: run.today, step: 'patch', product });
   applyLine(run.record, kind, run.next.kinds[kind], picked, patchFloor);
+}
+
+/**
+ * Python: the newest line, adopted once its N-2 patch exists as for the
+ * other patch kinds, so 3.16.0 is never proposed the day it ships; but its
+ * floor is that line's newest patch release (N-0), not two behind it. Owner
+ * decision 2026-11-14 (#1707): every Python pin on the latest GA release of
+ * its line. It replaces the N-2 floor of #714 for Python only.
+ */
+function proposePython(run) {
+  const product = PRODUCTS.python;
+  const picked = adoptLine(releasesOf(run.sources.eol.python, product), { today: run.today, step: 'patch', product });
+  applyLine(run.record, 'python', run.next.kinds.python, picked, (newest) => newest);
 }
 
 /**
@@ -332,7 +347,7 @@ export function proposeFloors(current, sources, today) {
     notes: [],
     nodeReleases: releasesOf(sources.eol.node, PRODUCTS.node),
   };
-  proposePatchKind(run, 'python');
+  proposePython(run);
   proposePatchKind(run, 'terraform');
   proposePatchKind(run, 'alpine');
   proposeNode(run);
