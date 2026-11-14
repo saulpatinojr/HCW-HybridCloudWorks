@@ -456,7 +456,7 @@ const QUOTED_NAME = /^[A-Za-z_][A-Za-z0-9_]*=/;
 // `pipx` in command position, with what comes before it (its assignments and wrappers) and its words, up to the end
 // of the command (`;`, `&`, `|` or `)`). It has chosen its interpreter when `--python` is one of pipx's own options
 // (see `pipxOptionChoosesPython`) or `PIPX_DEFAULT_PYTHON` is one of the assignments in front of it.
-const PIPX = new RegExp(`(?<before>${START})${PATH}pipx(?=\\s|$)(?<words>[^;&|)]*)`, 'g');
+const PIPX = new RegExp(`(?<before>${START})${PATH}pipx${NAME_END}(?<words>[^;&|)]*)`, 'g');
 // pipx's options that take a value as the next word, so that word is not read as an option or as the app's name.
 const PIPX_VALUE_OPTIONS = new Set(['--spec', '--python', '--index-url', '--pip-args', '--suffix', '--preinstall', '--backend', '--fetch-python']);
 // Where `((` opens an arithmetic command rather than two subshells: at the start of a command.
@@ -1412,7 +1412,10 @@ export function chooses(value, setupIds = new Set(), env = null) {
   const dynamic = parts.findIndex((part) => part.includes('__gha__') || part.includes('$'));
   const climbs = dynamic !== -1 && parts.slice(dynamic + 1).includes('..');
   // A path is compared as the shell resolves it (see `resolvedPath`).
-  if (!text || unknown || unreadable || expands || climbs || SYSTEM_PYTHON.test(resolvedPath(text))) return false;
+  // A value over more than one line (a block value with a `#` line in it, which YAML reads as part of the value) is no
+  // interpreter's path (Copilot on HCW-NetworkEyes_App#399).
+  const several = /[\r\n]/.test(text);
+  if (!text || unknown || unreadable || expands || climbs || several || SYSTEM_PYTHON.test(resolvedPath(text))) return false;
   // A bare name is looked up on PATH, which finds the runner's own Python before a set-up step has run, so only the
   // floor's own name counts (FLOOR_PYTHON_NAME; round 3, #1707).
   if (!text.includes('/') && !text.includes('$') && !text.includes('__gha__')) return text === FLOOR_PYTHON_NAME;
@@ -1812,10 +1815,12 @@ function pipxWithoutPythonOnce(run, env, setupIds) {
       continue;
     }
     // In the order the shell meets them: a name the script sets counts from the end of the command that sets it on, in
-    // the shell that set it (see `namesView`); the step's `env:` comes first.
+    // the shell that set it (see `namesView`); the step's `env:` comes first. A `case` pattern at the start of the line
+    // (`pipx) …`) names no command, so `pipx` is looked for after it.
+    const skip = CASE_PREFIX.exec(line)?.[0].length ?? 0;
     const events = [
       ...[...line.matchAll(NAMES_SET)].map((found) => [found.index + found[0].length, 0, found]),
-      ...pipxCommands(line).map((found) => [found.index + found.groups.before.length, 1, found]),
+      ...pipxCommands(line.slice(skip)).map((found) => [skip + found.index + found.groups.before.length, 1, found]),
     ].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     for (const [at, kind, found] of events) {
       if (kind === 0) {
@@ -1916,7 +1921,15 @@ export function readWorkflow(text, label = 'workflow') {
     if (!isMap(job)) continue;
     const strategy = job.get('strategy', true);
     flow(strategy, `job ${name}: strategy:`);
-    if (isMap(strategy)) flow(strategy.get('matrix', true), `job ${name}: matrix:`);
+    if (isMap(strategy)) {
+      const matrix = strategy.get('matrix', true);
+      flow(matrix, `job ${name}: matrix:`);
+      // A matrix is a block of lists or a `${{ … }}` expression (read as no lists); any other value is refused, as the
+      // line readers refuse it (Copilot on HCW-NetworkEyes_App#399).
+      if (isScalar(matrix) && matrix.value !== null && !/^\$\{\{[\s\S]*\}\}$/.test(String(matrix.value).trim())) {
+        throw new Error(`${label}: job ${name}: matrix: is written on one line`);
+      }
+    }
     const steps = job.get('steps', true);
     flow(steps, `job ${name}: steps:`);
     for (const step of isSeq(steps) ? steps.items : []) flow(step, `job ${name}: a step`);
@@ -4049,6 +4062,115 @@ describe('round three, Copilot round one: builtins with assignments in front of 
       ['echo unset PIPX_DEFAULT_PYTHON; pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
     ];
     for (const [run, env, flagged] of cases) expect(pipxWithoutPython(run, env), `${run} / ${JSON.stringify(env)}`).toBe(flagged);
+  });
+});
+
+describe('round three, Copilot round two: pipx at an operator, sudo through env, block values, matrices, flow quotes', () => {
+  // The same cases as HCW-NetworkEyes_App's tests/security/test_workflow_runtime_setup.py, in the same order (Copilot on
+  // #1722 and HCW-NetworkEyes_App#399).
+  it('reads the Copilot round-two pipx forms', () => {
+    const cases = [
+      // 5: `pipx` ends at an operator, as a runtime's name does, and not inside a `case` pattern.
+      ['pipx;', {}, true],
+      ['pipx | cat', {}, true],
+      ['pipx &', {}, true],
+      ['(pipx)', {}, true],
+      ['pipx>log', {}, true],
+      ['x=$(pipx)', {}, true],
+      ['pipx run x;', {}, true],
+      ['PIPX_DEFAULT_PYTHON=/p pipx;', {}, false],
+      ['pipx) echo ;;', {}, false],
+      ['pipx) pipx run x ;;', {}, true],
+      // 6: sudo's reset of the environment holds through a later `env`, unless sudo keeps the variable.
+      ['sudo env PATH="$PATH" pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['sudo env -S \'pipx run x\'', { PIPX_DEFAULT_PYTHON: '/opt/py' }, true],
+      ['sudo -E env PATH="$PATH" pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['sudo --preserve-env=PIPX_DEFAULT_PYTHON env PATH="$PATH" pipx run x', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      ['sudo -E env -S \'pipx run x\'', { PIPX_DEFAULT_PYTHON: '/opt/py' }, false],
+      // 1: a `#` line at a block value's content indentation is part of the value, so a value over two lines chooses nothing.
+      ['pipx run x', { PIPX_DEFAULT_PYTHON: '# note\n/opt/py/bin/python3' }, true],
+    ];
+    for (const [run, env, flagged] of cases) expect(pipxWithoutPython(run, env), `${run} / ${JSON.stringify(env)}`).toBe(flagged);
+  });
+
+  // 1, 2 and 4: block values, matrices and quotes, read as YAML reads them.
+  const COPILOT_TWO_YAML = [
+    'on: push',
+    'jobs:',
+    '  comment-first-version:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: astral-sh/setup-uv@abc',
+    '        with:',
+    '          python-version: |-',
+    '            # note',
+    '            3.15',
+    '      - name: Run',
+    '        run: uv run x.py',
+    '  comment-first-pipx:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Scan',
+    '        env:',
+    '          PIPX_DEFAULT_PYTHON: |-',
+    '            # note',
+    '            /usr/bin/python3',
+    '        run: pipx run x',
+    '  matrix-expression:',
+    '    runs-on: ubuntu-26.04',
+    '    strategy:',
+    '      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}',
+    '    steps:',
+    '      - uses: astral-sh/setup-uv@abc',
+    '        with:',
+    '          python-version: ${{ matrix.py }}',
+    '      - name: Run',
+    '        run: uv run x.py',
+    '  escaped-quote:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: astral-sh/setup-uv@abc',
+    '        with: { note: "a\\"b,c", python-version: "3.15" }',
+    '      - name: Run',
+    '        run: uv run x.py',
+    '  single-quote:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: astral-sh/setup-uv@abc',
+    '        with: { note: \'a\'\'b,c\', python-version: "3.15" }',
+    '      - name: Run',
+    '        run: uv run x.py',
+    '  matrix-quoted-comma:',
+    '    runs-on: ubuntu-26.04',
+    '    strategy:',
+    '      matrix:',
+    '        py: ["3.15", "3.14,x"]',
+    '    steps:',
+    '      - uses: astral-sh/setup-uv@abc',
+    '        with:',
+    '          python-version: ${{ matrix.py }}',
+    '      - name: Run',
+    '        run: uv run x.py',
+    '',
+  ].join('\n');
+
+  it('reads block values, matrix expressions and quoted one-line values as YAML reads them', () => {
+    const workflow = readWorkflow(COPILOT_TWO_YAML);
+    expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > comment-first-version > Run > python', 'x.yml > matrix-expression > Run > python', 'x.yml > matrix-quoted-comma > Run > python']);
+    expect(pipxProblems('x.yml', workflow)).toEqual(['x.yml > comment-first-pipx > Scan > pipx']);
+  });
+
+  it('refuses a more-indented leading blank line, an inline matrix and an unreadable matrix line', () => {
+    // 1, 2 and 3: the forms YAML or the line readers refuse.
+    const refused = [
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    steps:\n      - env:\n          P: |-\n                \n            x\n        run: echo\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix: [3.14]\n    steps:\n      - run: echo\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix: foo\n    steps:\n      - run: echo\n',
+      'jobs:\n  j:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        py: ["3.15"]\n        oops\n    steps:\n      - run: echo\n',
+    ];
+    for (const text of refused) expect(() => readWorkflow(text), text).toThrow();
   });
 });
 
