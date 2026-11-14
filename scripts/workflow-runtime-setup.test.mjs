@@ -214,7 +214,11 @@
  * workflow-level `defaults.run` allow none, and the workflow schema
  * (actions/languageservices, workflow-v1.0.json) refuses an expression there,
  * so only a job's `defaults.run.shell` is filled in before the runner sees
- * it.
+ * it. There a `${{ matrix.X }}` is read as each value of the job's matrix
+ * list, and any other expression, or one in a step's `shell:` or the
+ * workflow's default, counts as running both runtimes, so the step needs
+ * Node.js and Python set up before it (Copilot on HCW-NetworkEyes_App#403
+ * and HCW-HybridCloudWorks#1725; see `shellChoices`).
  *
  * Limits, known and kept: a composite action whose set-up step takes its
  * version from `${{ inputs.* }}` cannot be read, so it fails closed and needs
@@ -240,11 +244,10 @@
  * has a subject `$(…)` with spaces or `in` on the next line; and a set-up
  * version `3` or `3.x` (a major line only), which reads as at the floor.
  * `unset -n P` is read as unsetting P, which is what bash does unless P is a
- * name reference. A job's `defaults.run.shell` whose expression GitHub fills
- * in with a value holding spaces is split there by the runner, but read here
- * as one word. The runner fills `{0}` in with .NET's `string.Format`, where
- * `{{` and `}}` stand for one brace and any other `{…}` stops the step; this
- * check only replaces `{0}`.
+ * name reference. For pipx, an expression left in `shell:` is still read as
+ * one word, as before. The runner fills `{0}` in with .NET's
+ * `string.Format`, where `{{` and `}}` stand for one brace and any other
+ * `{…}` stops the step; this check only replaces `{0}`.
  *
  * The website reads YAML with the `yaml` library and refuses (`readWorkflow`)
  * the forms the other copies' line readers refuse: `jobs`, a job, `steps`, a
@@ -1617,8 +1620,41 @@ export function runsThroughSudo(run, kind, inherited = null) {
  * default shell. The same rule as the Python copies' `step_shell`.
  */
 export function stepShell(step, job, defaults = {}) {
-  const shell = step && Object.hasOwn(step, 'shell') ? step.shell : job?.defaults?.run?.shell ?? defaults?.run?.shell;
-  return literalShell(String(shell ?? ''));
+  return literalShell(givenShell(step, job, defaults));
+}
+
+/** A step's `shell:` as written: the step's own, else the job's or the workflow's `defaults.run.shell`; '' for none. */
+const givenShell = (step, job, defaults = {}) =>
+  String((step && Object.hasOwn(step, 'shell') ? step.shell : job?.defaults?.run?.shell ?? defaults?.run?.shell) ?? '');
+
+// A matrix value in a job's `defaults.run.shell` (`${{ matrix.shell }}`), which GitHub fills in before the
+// runner sees it.
+const MATRIX_IN_SHELL = /\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}/g;
+
+/**
+ * The `shell:` commands a step that runs a script may be handed to, each as `literalShell` writes it; null when its
+ * `shell:` holds a GitHub expression this check cannot read (Copilot on HCW-NetworkEyes_App#403 and
+ * HCW-HybridCloudWorks#1725). A job's `defaults.run.shell` may hold one (github, needs, strategy, matrix, env, vars,
+ * inputs: https://docs.github.com/en/actions/reference/workflows-and-actions/contexts): a `${{ matrix.X }}` there is
+ * read as each value of the job's matrix list X, every combination of them, and any other expression, a matrix list
+ * that is missing or empty, or a value that is not plain text gives null. A step's `shell:` and the workflow's
+ * `defaults.run.shell` allow no expression, so GitHub refuses one there, and it gives null too. `unsetSteps` counts a
+ * step with null as running both runtimes. The same rule as the Python copies' `shell_choices`.
+ */
+export function shellChoices(step, job, defaults = {}) {
+  const given = givenShell(step, job, defaults);
+  if (!given.includes('${{')) return [literalShell(given)];
+  const fromJob = !(step && Object.hasOwn(step, 'shell')) && job?.defaults?.run?.shell !== undefined && job?.defaults?.run?.shell !== null;
+  if (!fromJob) return null;
+  const names = [...new Set([...given.matchAll(MATRIX_IN_SHELL)].map((found) => found[1]))].sort();
+  let entries = [{}];
+  for (const name of names) {
+    const list = job?.strategy?.matrix?.[name];
+    if (!Array.isArray(list) || !list.length || list.some((value) => value !== null && typeof value === 'object')) return null;
+    entries = entries.flatMap((entry) => list.map((value) => ({ ...entry, [name]: String(value ?? '') })));
+  }
+  const texts = entries.map((entry) => given.replace(MATRIX_IN_SHELL, (whole, name) => entry[name]));
+  return texts.some((text) => text.includes('${{')) ? null : texts.map(literalShell);
 }
 
 // A word of a `shell:` command that reads the same to a shell as the text it is: no quote, space, `\`, pattern, operator
@@ -1720,8 +1756,11 @@ export function unsetSteps(file, jobs, indirect = INDIRECT_RUNTIME, workflowEnv 
     for (const kind of Object.keys(COMMAND)) {
       steps.forEach((step, i) => {
         const key = stepKey(file, name, step, i, kind);
-        const shell = Object.hasOwn(step, 'run') ? stepShell(step, job, defaults) : '';
-        if (!(runsRuntime(step?.run, kind) || runsRuntime(shell, kind) || key in indirect)) return;
+        // Each `shell:` the step may be handed to; null for one holding an expression this check cannot read, which
+        // may be either runtime, so the step needs both set up (see `shellChoices`) and is read as having no `shell:`.
+        const choices = Object.hasOwn(step, 'run') ? shellChoices(step, job, defaults) : [''];
+        const shells = choices ?? [''];
+        if (!(runsRuntime(step?.run, kind) || choices === null || shells.some((shell) => runsRuntime(shell, kind)) || key in indirect)) return;
         // Covered by an earlier set-up step that always runs, or that runs under the same condition as this step.
         const covered = steps
           .slice(0, i)
@@ -1729,7 +1768,8 @@ export function unsetSteps(file, jobs, indirect = INDIRECT_RUNTIME, workflowEnv 
         // A step named in `indirect` runs its runtime from a script this check does not read, so a `shell:` that runs
         // it through sudo or with a replaced PATH runs that runtime too (Copilot's second round on the ports, #1707:
         // HCW-CloudCrawler_AddOn#79).
-        if (!covered || runsThroughSudo(step?.run, kind, sudoPath(shell)) || runsThroughSudo(shell, kind) || (key in indirect && sudoPath(shell) === true)) {
+        const underShell = (shell) => runsThroughSudo(step?.run, kind, sudoPath(shell)) || runsThroughSudo(shell, kind) || (key in indirect && sudoPath(shell) === true);
+        if (!covered || shells.some(underShell)) {
           found.push(key);
         }
       });
@@ -5441,6 +5481,11 @@ describe('round 4 (#1707): coproc, a shell: read as the runner passes it, and Py
       ["echo 'coproc node x'", 'node', false],
       ['echo "coproc python3 x"', 'python', false],
       ['coprocnode x', 'node', false],
+      // Copilot on HCW-NetworkEyes_App#403 asked about a NAME before `for`, `case` and `select`: the command inside the
+      // clause is found on its own, so these were already read (regression cases).
+      ['coproc NAME for x in y; do python3 x; done', 'python', true],
+      ['coproc NAME case $k in a) python3 x ;; esac', 'python', true],
+      ['coproc NAME select x in y; do python3 x; done', 'python', true],
     ];
     for (const [line, kind, found] of cases) expect(runsRuntime(line, kind), `${line} / ${kind}`).toBe(found);
     const sudo = [
@@ -5542,6 +5587,23 @@ describe('round 4 (#1707): coproc, a shell: read as the runner passes it, and Py
       `x.yml > uv-below > step 1 > python: asks for ${FLOOR_BELOW}, below the floor`,
     ]);
     expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > uv-below > Run > python']);
+  });
+
+  // Copilot on HCW-NetworkEyes_App#403 and HCW-HybridCloudWorks#1725: a job's `defaults.run.shell` may hold an
+  // expression (github, needs, strategy, matrix, env, vars, inputs). A `${{ matrix.X }}` there is read as each value
+  // of the job's matrix list X, so `matrix-sudo-path` (sudo with a PATH that ends in /usr/bin) and `matrix-python` are
+  // reported; any other expression, or a matrix value this check cannot read, may be either runtime, so such a step
+  // needs both set up before it, as does an expression in a step's `shell:` or the workflow's `defaults.run.shell`,
+  // which GitHub refuses. A step without `run:` uses no shell.
+  const EXPRESSION_SHELL_YAML = 'on: push\njobs:\n  literal-python:\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        shell: python {0}\n        run: print(1)\n  vars-no-set-up:\n    runs-on: ubuntu-26.04\n    defaults:\n      run:\n        shell: ${{ vars.RUN_SHELL }}\n    steps:\n      - name: Run\n        run: echo hi\n  vars-python-only:\n    runs-on: ubuntu-26.04\n    defaults:\n      run:\n        shell: ${{ vars.RUN_SHELL }}\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        run: echo hi\n  vars-both:\n    runs-on: ubuntu-26.04\n    defaults:\n      run:\n        shell: ${{ vars.RUN_SHELL }}\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - uses: actions/setup-node@abc\n        with: { node-version: "26" }\n      - name: Run\n        run: echo hi\n  matrix-sudo-path:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        shell:\n          - \'sudo env PATH="$PATH:/usr/bin" bash -e {0}\'\n    defaults:\n      run:\n        shell: ${{ matrix.shell }}\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        run: python3 x\n  matrix-bash:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        shell:\n          - bash\n    defaults:\n      run:\n        shell: ${{ matrix.shell }} -e {0}\n    steps:\n      - uses: actions/setup-python@abc\n        with: { python-version: "3.15" }\n      - name: Run\n        run: python3 x\n  matrix-python:\n    runs-on: ubuntu-26.04\n    strategy:\n      matrix:\n        shell:\n          - python\n    defaults:\n      run:\n        shell: ${{ matrix.shell }} {0}\n    steps:\n      - name: Run\n        run: print(1)\n  matrix-missing:\n    runs-on: ubuntu-26.04\n    defaults:\n      run:\n        shell: ${{ matrix.missing }}\n    steps:\n      - name: Run\n        run: echo hi\n  step-expression:\n    runs-on: ubuntu-26.04\n    steps:\n      - name: Run\n        shell: ${{ inputs.shell }}\n        run: echo hi\n  no-run:\n    runs-on: ubuntu-26.04\n    defaults:\n      run:\n        shell: ${{ vars.RUN_SHELL }}\n    steps:\n      - uses: actions/checkout@abc\n';
+  const WORKFLOW_EXPRESSION_SHELL_YAML = 'on: push\ndefaults:\n  run:\n    shell: ${{ vars.RUN_SHELL }}\njobs:\n  inherits:\n    runs-on: ubuntu-26.04\n    steps:\n      - name: Run\n        run: echo hi\n  own-shell:\n    runs-on: ubuntu-26.04\n    defaults:\n      run:\n        shell: bash -e {0}\n    steps:\n      - name: Run\n        run: echo hi\n';
+
+  it('reads a shell: holding a matrix value as each value, and any other expression as running both runtimes', () => {
+    const workflow = readWorkflow(EXPRESSION_SHELL_YAML);
+    expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > vars-no-set-up > Run > node', 'x.yml > vars-no-set-up > Run > python', 'x.yml > vars-python-only > Run > node', 'x.yml > matrix-sudo-path > Run > python', 'x.yml > matrix-python > Run > python', 'x.yml > matrix-missing > Run > node', 'x.yml > matrix-missing > Run > python', 'x.yml > step-expression > Run > node', 'x.yml > step-expression > Run > python']);
+    expect(pipxProblems('x.yml', workflow)).toEqual([]);
+    const inherited = readWorkflow(WORKFLOW_EXPRESSION_SHELL_YAML);
+    expect(unsetSteps('x.yml', inherited.jobs, {}, inherited.env, inherited.defaults)).toEqual(['x.yml > inherits > Run > node', 'x.yml > inherits > Run > python']);
   });
 });
 
