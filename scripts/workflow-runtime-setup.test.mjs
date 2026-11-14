@@ -143,46 +143,64 @@
  * stays setup-python's word, which chooses nothing when an `env:` sets
  * `pythonLocation` itself or the script unsets it.
  *
- * Copilot's review of the round-3 ports (#1707) reads five more forms. A
- * `PATH=` in front of a command, as its assignment or an argument of `env`
- * (`PATH=/usr/bin python3`, `env PATH=/usr/bin node`), that does not start with
- * the PATH the shell already has (`$PATH`, `${PATH}`) makes the command be
- * looked up on other folders, so it counts as the runner's own even after a
- * set-up step; `PATH=/x:$PATH` puts /x first and counts the same. So does an
- * interpreter named by a path in one of the folders of RUNNER_PYTHON_FOLDERS,
- * which hold the runner image's Node.js too (`/usr/bin/python3`,
- * `/usr/local/bin/node`), or a Python named by a version below the floor
- * (`python3.14`), in `run:` or `shell:`, whatever came before it. The commands
- * of each clause of a one-line `case` are read (`case "$k" in a) node x ;;
- * esac`), the pattern after `case WORD in`, `;;`, `;&` or `;;&` set apart. A
- * `${{ matrix.X }}` in the workflow-level `env:` is never the matrix value,
- * since GitHub allows only `github`, `secrets`, `inputs` and `vars` there, so
- * it chooses nothing and sets nothing up; one in a job's or a step's `env:` is
- * read as before. The words of a step's `shell:` in front of its shell program
- * act on PIPX_DEFAULT_PYTHON as the words in front of a `-c` shell do (`shell:
- * env -u PIPX_DEFAULT_PYTHON bash -e {0}` leaves pipx without the step's
- * setting).
+ * Copilot's review of the round-3 ports (#1707) reads five more forms, and the
+ * pre-PR review of those fixes three more. A `PATH=` in front of a command, as
+ * its assignment or an argument of `env` (`PATH=/usr/bin python3`, `env
+ * PATH=/usr/bin node`), that does not start with the PATH the shell already has
+ * (`$PATH`, `${PATH}`) makes the command be looked up on other folders, so it
+ * counts as the runner's own even after a set-up step; `PATH=/x:$PATH` puts /x
+ * first and counts the same. So do `env -u PATH` (`--unset PATH`) and `command
+ * -p`, which look the command up on the system's default folders. So does a
+ * runtime named by a path in one of the folders of RUNNER_PYTHON_FOLDERS, which
+ * hold the runner image's Node.js too (`/usr/bin/python3`,
+ * `/usr/local/bin/node`), in `run:` or `shell:`, whatever came before it. That
+ * rule covers every runtime name, not only interpreters: `/usr/bin/pipx`,
+ * `/usr/local/bin/uv` and `/usr/local/bin/npm` are reported after a set-up step
+ * though `pipx`, `uv` and `npm` are not, because a program in those folders is
+ * the runner's own copy or runs on the runner's own interpreter, and reporting
+ * the rare one that is not errs on the safe side. A Python named by a version
+ * below the floor counts the same (`python3.14`); a free-threaded name
+ * (`python3.14t`, `python3.15t`) is Python too, its version read by its number.
+ * The commands of each clause of a one-line `case` are read (`case "$k" in a)
+ * node x ;; esac`), the pattern after `case WORD in`, `;;`, `;&` or `;;&` set
+ * apart. A `${{ matrix.X }}` in the workflow-level `env:` is never the matrix
+ * value, since GitHub allows only `github`, `secrets`, `inputs` and `vars`
+ * there, so it chooses nothing and sets nothing up; one in a job's or a step's
+ * `env:` is read as before. The words of a step's `shell:` in front of its
+ * shell program act on PIPX_DEFAULT_PYTHON as the words in front of a `-c`
+ * shell do (`shell: env -u PIPX_DEFAULT_PYTHON bash -e {0}` leaves pipx without
+ * the step's setting).
  *
  * Limits, known and kept: a composite action whose set-up step takes its
  * version from `${{ inputs.* }}` cannot be read, so it fails closed and needs
- * an entry in BELOW_FLOOR_ALLOWED; a `shell: python` step's text is still read
- * as shell too, an `eval` script is read as a child shell (a name set but not
- * exported before it is not seen), and a `$PATH` written inside double quotes
- * in a nested script is read as the inner script's, so `sudo bash -c "sudo env
- * PATH=$PATH node x"` is reported though the outer shell fills it in first, all
- * of which can only add findings; and these are not reported: `eval` of a word
- * joined from quoted parts (`eval no'de x'`); `env -i python3` after a set-up
- * step (env empties PATH, so `python3` is looked up on the system's default
- * folders); a `--python` path to a Python outside the folders of
- * RUNNER_PYTHON_FOLDERS (`/opt/hostedtoolcache/Python/3.12…`,
- * `/usr/share/miniconda/bin/python3`); a relative path after `cd` (`cd /usr/bin
- * && pipx run --python ./python3 x`); a value a `for` loop or `read` sets (`for
- * P in /usr/bin/python3; do …`), which counts as chosen; a PATH the script sets
- * on an earlier line (`export PATH=/usr/bin; python3 x`); a PATH or setting
- * written to `$GITHUB_PATH` or `$GITHUB_ENV` by an earlier step; and a set-up
- * version `3` or `3.x` (a major line only), which reads as at the floor.
- * `unset -n P` is read as unsetting P, which is what bash does unless P is a
- * name reference.
+ * an entry in BELOW_FLOOR_ALLOWED; these are reported though they need not be,
+ * which can only add findings: a `shell: python` step's text is still read as
+ * shell too; an `eval` script is read as a child shell (a name set but not
+ * exported before it is not seen); a `$PATH` written inside double quotes or an
+ * unquoted heredoc in a nested script is read as the inner script's, so `sudo
+ * bash -c "sudo env PATH=$PATH node x"` is reported though the outer shell
+ * fills it in first; a later `PATH=$PATH` after a replacing `PATH=` or `-u
+ * PATH` in the same `env` (`env PATH=/usr/bin PATH=$PATH node x`, though env
+ * uses the last one); a folder put in front of `$PATH`, even the set-up one
+ * (`PATH=$pythonLocation/bin:$PATH python3 x`), on purpose; and a version named
+ * below the floor (`python3.14`), even where BELOW_FLOOR_ALLOWED lets the job
+ * set that version up. These are not reported: `eval` of a word joined from
+ * quoted parts (`eval no'de x'`); `env -i python3` after a set-up step (env
+ * empties PATH, so `python3` is looked up on the system's default folders); a
+ * `--python` path to a Python outside the folders of RUNNER_PYTHON_FOLDERS
+ * (`/opt/hostedtoolcache/Python/3.12…`, `/usr/share/miniconda/bin/python3`); a
+ * relative path after `cd` (`cd /usr/bin && pipx run --python ./python3 x`); a
+ * value a `for` loop or `read` sets (`for P in /usr/bin/python3; do …`), which
+ * counts as chosen; a PATH the script sets in an earlier command (`export
+ * PATH=/usr/bin; python3 x`, or `PATH=/usr/bin; python3 x`); a PATH or setting
+ * written to `$GITHUB_PATH` or `$GITHUB_ENV` by an earlier step; the commands
+ * of a `case` clause whose pattern holds parentheses (`@(a|b))`, `?(a))`) or an
+ * escaped `)` (`a\))`, or whose `case` has a subject `$(…)` with spaces or `in`
+ * on the next line; and a set-up version `3` or `3.x` (a major line only),
+ * which reads as at the floor. `$VAR` in `shell:` is read as if a shell filled
+ * it in, though the runner starts the shell command directly and passes it on
+ * literally (actions/runner ScriptHandler.cs). `unset -n P` is read as
+ * unsetting P, which is what bash does unless P is a name reference.
  *
  * The website reads YAML with the `yaml` library and refuses (`readWorkflow`)
  * the forms the other copies' line readers refuse: `jobs`, a job, `steps`, a
@@ -444,7 +462,7 @@ const START = String.raw`(?:^|[$<]\(\s*|[\x60({|;&]\s*|${CASE_PATTERN})(?:${ASSI
 // A runtime's command names. yarn and pnpm are Node.js programs; pytest and pipx are Python programs, so they run on
 // the interpreter they were installed with, which is the runner's own unless a set-up step came first (pipx also builds
 // each tool's virtual environment from that interpreter unless it is given `--python`).
-const RUNTIME_NAMES = { node: '(?:node|npm|npx|yarn|pnpm)', python: String.raw`(?:python(?:3(?:\.\d+){0,2})?|pip3?|pipx|pytest|uvx?)` };
+const RUNTIME_NAMES = { node: '(?:node|npm|npx|yarn|pnpm)', python: String.raw`(?:python(?:3(?:\.\d+){0,2}t?)?|pip3?|pipx|pytest|uvx?)` };
 // Where a command's name ends: a space, the end of the line, or an operator (`node;`, `x=$(node)`, `python3<<EOF`,
 // `'npx'|cat`; round 3 review, #1707).
 const NAME_END = String.raw`(?=[\s;&|()<>]|$)`;
@@ -479,6 +497,24 @@ const AFTER_ENV_OR_SUDO = new RegExp(
   String.raw`(?:^|[\s;&|(\x60])${PATH}(?:env${optionsOf(WRAPPER_OPTIONS.env, 'env')}|sudo${optionsOf(WRAPPER_OPTIONS.sudo, 'sudo')})\s+(?:${ASSIGNMENT})*$`
 );
 const PREFIX_ONLY = new RegExp(`${START}$`);
+// What a line must hold for each form `shellText` reads a quoted script or assignment after, so that a line without it
+// is not searched for that form: `sh` for a shell given `-c`, a here-string or a heredoc (SHELL_SCRIPT,
+// HERE_STRING_SCRIPT, HEREDOC_SCRIPT); `env` and a last word starting with `-` for ENV_SPLIT_SCRIPT, whose `-S` or
+// `--split-string` ends it; `eval` for EVAL_SCRIPT; and `env` or `sudo` for AFTER_ENV_OR_SUDO. Each is a word or an
+// ending the form itself needs, and setting `case` patterns apart only writes `;` and spaces, so skipping a line
+// without it changes nothing found, while a long line of quoted words stays fast (pre-PR review of Copilot's round-3
+// port fixes, #1707: a one-line `case` of 1,000 clauses took 8 seconds).
+const SHELL_WORD = /sh/;
+const EVAL_WORD = /eval/;
+const ASSIGNMENT_WORDS = /env|sudo/;
+/** True when the last word of `text` (a run of characters that are not `\s`) starts with `-` (see SHELL_WORD). */
+function lastWordIsOption(text) {
+  let end = text.length;
+  while (end > 0 && /\s/.test(text[end - 1])) end--;
+  let begin = end;
+  while (begin > 0 && !/\s/.test(text[begin - 1])) begin--;
+  return text[begin] === '-' && begin < end;
+}
 const QUOTED_NAME = /^[A-Za-z_][A-Za-z0-9_]*=/;
 // `pipx` in command position, with what comes before it (its assignments and wrappers) and its words, up to the end
 // of the command (`;`, `&`, `|` or `)`). It has chosen its interpreter when `--python` is one of pipx's own options
@@ -557,7 +593,7 @@ const READ_VALUE_OPTIONS = 'adinNptu';
 // makes the folder writable by every user (images/ubuntu/scripts/build/install-python.sh and install-nodejs.sh in
 // actions/runner-images).
 const RUNNER_PYTHON_FOLDERS = ['/usr/bin', '/bin', '/opt/az/bin', '/usr/local/bin'];
-const SYSTEM_PYTHON = new RegExp(`^(?:${RUNNER_PYTHON_FOLDERS.map((folder) => folder.replaceAll('/', '/+')).join('|')})/+python(?:3(?:\\.\\d+)*)?$`);
+const SYSTEM_PYTHON = new RegExp(`^(?:${RUNNER_PYTHON_FOLDERS.map((folder) => folder.replaceAll('/', '/+')).join('|')})/+python(?:3(?:\\.\\d+)*t?)?$`);
 const SETUP = { node: /^actions\/setup-node@/, python: /^actions\/setup-python@/ };
 // astral-sh/setup-uv sets Python up only when given a `python-version` at or above the floor (see `setsUp`).
 const SETUP_UV = /^astral-sh\/setup-uv@/;
@@ -766,29 +802,36 @@ export function shellText(run, values = false) {
   let i = 0;
   const n = run.length;
   // The text so far on the current line, read back only to the last new line (rejoining everything each time made a
-  // long script take a minute).
+  // long script take a minute). `out` only grows, so each part is looked at once for a new line: `start` is the part
+  // and the offset in it where the current line starts, and `seen` the parts looked at so far (a line of 20,000
+  // characters read back part by part for each quoted word took seconds; pre-PR review of Copilot's round-3 port
+  // fixes, #1707).
+  let start = [0, 0];
+  let seen = 0;
   const line = () => {
-    const tail = [];
-    for (let k = out.length - 1; k >= 0; k--) {
-      const at = out[k].lastIndexOf('\n');
-      if (at !== -1) {
-        tail.push(out[k].slice(at + 1));
-        break;
-      }
-      tail.push(out[k]);
+    for (; seen < out.length; seen++) {
+      const at = out[seen].lastIndexOf('\n');
+      if (at !== -1) start = [seen, at + 1];
     }
-    return tail.reverse().join('');
+    const [k, at] = start;
+    return k < out.length ? out[k].slice(at) + out.slice(k + 1).join('') : '';
   };
   // A `-c` script (or an `env -S` value) keeps the outer reading too: the outer shell runs a `$(…)` or backtick in a
   // double-quoted script before the inner shell starts (`bash -c "echo '$(node x)'"`).
   // An empty quoted string run together with other text adds nothing to its word (`''node x` runs node; round 3
   // review, #1707); on its own it is an empty word, and stays one.
   const quoted = (script, text, next = '') => {
+    const raw = line().trimStart();
+    if ((text === "''" || text === '""') && (/[^\s;&|()<>]$/.test(raw) || /^[^\s;&|()<>]/.test(next))) return;
     // Read with the line's `case` patterns set apart, so a clause's commands are in command position (see
-    // `withoutCasePatterns`; Copilot's review of the round-3 ports, HCW-NetworkEyes_AddOn#114).
-    const head = withoutCasePatterns(line().trimStart());
-    if ((text === "''" || text === '""') && (/[^\s;&|()<>]$/.test(head) || /^[^\s;&|()<>]/.test(next))) return;
-    const found = SHELL_SCRIPT.exec(head) ?? ENV_SPLIT_SCRIPT.exec(head) ?? HERE_STRING_SCRIPT.exec(head) ?? EVAL_SCRIPT.exec(head);
+    // `withoutCasePatterns`; Copilot's review of the round-3 ports, HCW-NetworkEyes_AddOn#114), and only for the forms
+    // whose words the line holds (see SHELL_WORD).
+    const shell = SHELL_WORD.test(raw);
+    const split = raw.includes('env') && lastWordIsOption(raw);
+    const evaluated = EVAL_WORD.test(raw);
+    const head = shell || split || evaluated ? withoutCasePatterns(raw) : '';
+    const found =
+      (shell && (SHELL_SCRIPT.exec(head) ?? HERE_STRING_SCRIPT.exec(head))) || (split && ENV_SPLIT_SCRIPT.exec(head)) || (evaluated && EVAL_SCRIPT.exec(head));
     if (!found) out.push(text);
     else if (values) out.push(`${text}\n\x01${found[0]}\n${shellText(script, values)}\n\x02\n:`);
     else out.push(`${text}\n${shellText(script)}\n:`);
@@ -798,7 +841,9 @@ export function shellText(run, values = false) {
   const assigned = (at) => {
     const name = QUOTED_NAME.exec(run.slice(at, at + 256));
     if (!name) return '';
-    const head = withoutCasePatterns(line().trimStart());
+    const raw = line().trimStart();
+    if (!ASSIGNMENT_WORDS.test(raw)) return '';
+    const head = withoutCasePatterns(raw);
     // `env -S 'A=1 node x'` is a script to split, not an assignment.
     return AFTER_ENV_OR_SUDO.test(head) && PREFIX_ONLY.test(head) && !ENV_SPLIT_SCRIPT.test(head) ? name[0] : '';
   };
@@ -891,7 +936,8 @@ export function shellText(run, values = false) {
       const word = heredocWord(run, i);
       if (word) {
         // The body is expanded only when no part of the delimiter is quoted or escaped.
-        const shell = HEREDOC_SCRIPT.exec(withoutCasePatterns(line().trimStart()));
+        const raw = line().trimStart();
+        const shell = SHELL_WORD.test(raw) ? HEREDOC_SCRIPT.exec(withoutCasePatterns(raw)) : null;
         heredocs.push([word[0], !word[1], shell ? shell[0] : null, word[3]]);
       }
       out.push('<<');
@@ -946,6 +992,8 @@ const CLAUSE_PATTERN = new RegExp(String.raw`\s*\(?\s*${CASE_WORD}(?:\s*\|\s*${C
  * ends no clause.
  */
 export function withoutCasePatterns(line) {
+  // Every pattern ends at a `)`, so a line without one has none (pre-PR review of Copilot's round-3 port fixes, #1707).
+  if (!line.includes(')')) return line;
   let text = line;
   const blank = (from, to) => {
     text = `${text.slice(0, from)};${' '.repeat(to - from - 1)}${text.slice(to)}`;
@@ -1173,7 +1221,10 @@ function conjuncts(expression) {
  * rule as the Python copies' `_below_floor`.
  */
 export function belowFloor(version, kind = 'python') {
-  const found = String(version).trim().match(/^v?(\d+)(?:\.x|\.(\d+)(?:\.x|\.(\d+))?)?$/);
+  // A free-threaded Python (`3.14t`, `3.15.1t`) is compared by its number (pre-PR review of Copilot's round-3 port
+  // fixes, #1707).
+  const text = String(version).trim();
+  const found = (kind === 'python' ? text.replace(/(\d)t$/, '$1') : text).match(/^v?(\d+)(?:\.x|\.(\d+)(?:\.x|\.(\d+))?)?$/);
   if (!found) return null;
   const numbers = found.slice(1).filter((number) => number !== undefined).map(Number);
   for (let i = 0; i < numbers.length; i++) if (numbers[i] !== FLOORS[kind][i]) return numbers[i] < FLOORS[kind][i];
@@ -1365,20 +1416,66 @@ function stepsOf(file, name, job) {
  * given PATH, and then looks the command up itself, passes the set-up PATH on (round 3, #1707). A `PATH=` in front of
  * the command (`PATH=/usr/bin python3`, `env PATH=/usr/bin python3`) that does not start with the PATH the shell
  * already has (`PASSES_PATH`) replaces it, so the command is looked up on the runner's folders; `PATH=/x:$PATH` puts /x
- * first, so it counts as replaced too. A command named by a path in one of the runner's folders, or a Python named by a
- * version below the floor, is not the set-up runtime whatever came before it (see `runnerRuntime`; Copilot's review of
- * the round-3 ports, #1707: HCW-CloudCrawler_App#90, HCW-CloudCrawler_AddOn#79 and HCW-NetworkEyes_AddOn#114).
+ * first, so it counts as replaced too. `env -u PATH` (`--unset PATH`) and `command -p` look the command up on the
+ * system's default folders, so they replace it as well (pre-PR review of Copilot's round-3 port fixes, #1707). A
+ * command named by a path in one of the runner's folders, or a Python named by a version below the floor, is not the
+ * set-up runtime whatever came before it (see `runnerRuntime`; Copilot's review of the round-3 ports, #1707:
+ * HCW-CloudCrawler_App#90, HCW-CloudCrawler_AddOn#79 and HCW-NetworkEyes_AddOn#114).
  */
 function sudoPath(before, command = '') {
   let state = null;
   let env = false; // an `env` came after the `sudo`, so a `PATH=` word is its assignment
+  let options = ''; // 'env' or 'command' while reading that word's options
+  let following = ''; // the next word is the value of env's `-u` ('unset') or of another of its options ('skip')
   for (const word of (before.match(WORD) ?? []).map((w) => w.replace(OPENING, ''))) {
     const bare = word.replace(/['"]/g, '');
-    if (/^(?:\S*\/)?sudo$/.test(word)) [state, env] = [true, false];
-    else if (state !== null && /^(?:\S*\/)?env$/.test(word)) env = true;
+    if (following) {
+      // `env -u PATH` (`--unset PATH`) leaves the command to be looked up on the system's default folders.
+      if (following === 'unset' && bare === 'PATH') state = true;
+      following = '';
+      continue;
+    }
+    if (/^(?:\S*\/)?sudo$/.test(word)) {
+      [state, env, options] = [true, false, ''];
+      continue;
+    }
+    if (/^(?:\S*\/)?env$/.test(word)) {
+      if (state !== null) env = true;
+      options = 'env';
+      continue;
+    }
+    if (word === 'command') {
+      options = 'command';
+      continue;
+    }
+    // env's options (see `localDefaultPython`), and `command -p`, which looks the command up on the system's default
+    // folders (pre-PR review of Copilot's round-3 port fixes, #1707).
+    if (options === 'env' && bare.startsWith('-') && bare !== '-' && bare !== '--') {
+      if (bare.startsWith('--')) {
+        const [name, ...rest] = bare.slice(2).split('=');
+        const option = longOption(name, 'env');
+        if (option === 'unset' && rest.length) state = rest.join('=') === 'PATH' ? true : state;
+        else if ((option === 'unset' || option === 'chdir') && !rest.length) following = option === 'unset' ? 'unset' : 'skip';
+      } else {
+        for (let k = 1; k < bare.length; k++) {
+          if ('uCS'.includes(bare[k])) {
+            const value = bare.slice(k + 1);
+            if (bare[k] !== 'S' && !value) following = bare[k] === 'u' ? 'unset' : 'skip';
+            else if (bare[k] === 'u' && value === 'PATH') state = true;
+            break;
+          }
+        }
+      }
+      continue;
+    }
+    if (options === 'command' && /^-[A-Za-z]+$/.test(bare)) {
+      if (bare.includes('p')) state = true;
+      continue;
+    }
+    options = '';
     // A `PATH=` that does not start with the PATH the shell already has replaces it (Copilot's review of the round-3
     // ports, HCW-CloudCrawler_App#90).
-    else if (bare.startsWith('PATH=') && !PASSES_PATH.test(bare)) state = true;
+    if (bare.startsWith('PATH=') && !PASSES_PATH.test(bare)) state = true;
     // Only the PATH the outer shell had (`PATH=$PATH`, `PATH="$PATH":/x`): `PATH=/usr/bin` finds the runner's own
     // (round 3 review, #1707). Words with no `sudo` in front of them leave the state to the script around them, whose
     // `$PATH` is sudo's `secure_path` when it runs under sudo.
@@ -1401,7 +1498,7 @@ function runnerRuntime(command) {
   const path = resolvedPath(command.replace(/['"]/g, ''));
   const slash = path.lastIndexOf('/');
   if (slash !== -1 && path.startsWith('/') && RUNNER_PYTHON_FOLDERS.includes(path.slice(0, slash) || '/')) return true;
-  const version = path.slice(slash + 1).match(/^python(3(?:\.\d+){1,2})$/);
+  const version = path.slice(slash + 1).match(/^python(3(?:\.\d+){1,2})t?$/);
   return version !== null && belowFloor(version[1], 'python') === true;
 }
 
@@ -1562,7 +1659,7 @@ export function chooses(value, setupIds = new Set(), env = null) {
   if (!text || unknown || unreadable || expands || climbs || several || SYSTEM_PYTHON.test(resolvedPath(text))) return false;
   // A bare name is looked up on PATH, which finds the runner's own Python before a set-up step has run, so only the
   // floor's own name counts (FLOOR_PYTHON_NAME; round 3, #1707).
-  if (!text.includes('/') && !text.includes('$') && !text.includes('__gha__')) return text === FLOOR_PYTHON_NAME;
+  if (!text.includes('/') && !text.includes('$') && !text.includes('__gha__')) return text === FLOOR_PYTHON_NAME || text === `${FLOOR_PYTHON_NAME}t`;
   const ids = [...text.matchAll(STEP_OUTPUT)].map((found) => found[1]);
   let rest = text.replace(STEP_OUTPUT, '');
   located = located || rest.includes(PYTHON_LOCATION);
@@ -4162,7 +4259,10 @@ describe('round three review: quoted assignments, sudo PATH, shells, YAML anchor
   });
 
   // Copilot on the round-3 ports (#1707): under a `shell:` run through sudo the step's `$PATH` is sudo's `secure_path`,
-  // so a `sudo env "PATH=$PATH"` in its text passes that on, not the set-up Python.
+  // so a `sudo env "PATH=$PATH"` in its text passes that on, not the set-up Python. The `path-shell` job shows how the
+  // check reads a `shell:`, not what the runner does: the check reads `env PATH="$PATH"` there as passing on the PATH
+  // the step started with, so the step is not reported, while the runner starts the shell command directly and passes
+  // `$PATH` on as text (actions/runner ScriptHandler.cs), so env sets PATH to `$PATH` (see the known limits above).
   const COPILOT_PORTS_SUDO_YAML = [
     'on: push',
     'jobs:',
@@ -4236,11 +4336,13 @@ describe('round three review: quoted assignments, sudo PATH, shells, YAML anchor
   });
 
   it('reads a long double-quoted string and a long script of unset, export -n and eval quickly', () => {
-    // The review found 3,000 substitutions in one string took 8 seconds, and 4,000 such lines 5 seconds.
+    // The review found 3,000 substitutions in one string took 8 seconds, and 4,000 such lines 5 seconds. The pre-PR
+    // review of Copilot's round-3 port fixes (#1707) found a one-line `case` of 1,000 clauses with quoted words took 8.
     const started = performance.now();
     const quoted = `echo "${'$(true) x; '.repeat(3000)}"`;
     const lines = `${Array.from({ length: 4000 }, (_, i) => `unset P${i}; export -n Q${i}; eval 'echo ${i}'`).join('\n')}\npipx run x`;
-    for (const run of [quoted, lines]) {
+    const clauses = `case $k in ${'b) env A="x" B="y" ;; '.repeat(1000)}esac`;
+    for (const run of [quoted, lines, clauses]) {
       runsRuntime(run, 'node');
       runsThroughSudo(run, 'python');
       pipxWithoutPython(run, { PIPX_DEFAULT_PYTHON: '/opt/py/bin/python3' });
@@ -4840,6 +4942,121 @@ describe("Copilot's review of the round-3 ports (#1707): a replaced PATH, runner
     const workflow = readWorkflow(PORTS_SHELL_YAML);
     expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual([]);
     expect(pipxProblems('x.yml', workflow)).toEqual(['x.yml > unset > Scan > pipx', 'x.yml > clear > Scan > pipx', 'x.yml > runner > Scan > pipx', 'x.yml > job-default > Scan > pipx']);
+  });
+});
+
+describe("Copilot's review of the round-3 ports (#1707), pre-PR review: an unset PATH, command -p and free-threaded names", () => {
+  // The same cases as HCW-NetworkEyes_App's tests/security/test_workflow_runtime_setup.py, in the same order.
+  it('reports a runtime looked up on the default PATH, after env -u PATH or command -p', () => {
+    const cases = [
+      ['env -u PATH node x', 'node', true],
+      ['env --unset=PATH node x', 'node', true],
+      ['env --unset PATH node x', 'node', true],
+      ['env -uPATH python3 x', 'python', true],
+      ['env --un PATH python3 x', 'python', true],
+      ['env -i -u PATH node x', 'node', true],
+      ['sudo env -u PATH node x', 'node', true],
+      ['command -p python3 x', 'python', true],
+      ['command -p -- node x', 'node', true],
+      ['env -u PATH PATH=$PATH node x', 'node', true],
+      ['env -u FOO node x', 'node', false],
+      ['env --unset=FOO python3 x', 'python', false],
+      ['env -C /tmp node x', 'node', false],
+      ['env -u FOO PATH=$PATH node x', 'node', false],
+      ['command python3 x', 'python', false],
+      ['command -v python3', 'python', false],
+      ['command -- node x', 'node', false],
+    ];
+    for (const [line, kind, found] of cases) expect(runsThroughSudo(line, kind), `${line} / ${kind}`).toBe(found);
+  });
+
+  it('reads free-threaded Python names and their versions', () => {
+    const runs = [
+      ['python3.14t x', 'python', true],
+      ['python3.15t x', 'python', true],
+      ['python3t x', 'python', true],
+      ['/usr/bin/python3.15t x', 'python', true],
+      ['python3.15tx x', 'python', false],
+      ['echo python3.14t', 'python', false],
+    ];
+    for (const [line, kind, found] of runs) expect(runsRuntime(line, kind), `${line} / ${kind}`).toBe(found);
+    const sudo = [
+      ['python3.14t x', 'python', true],
+      ['python3.15t x', 'python', false],
+      ['python3.15.1t x', 'python', false],
+      ['python3.9t x', 'python', true],
+      ['/usr/bin/python3.15t x', 'python', true],
+      ['.venv/bin/python3.15t x', 'python', false],
+    ];
+    for (const [line, kind, found] of sudo) expect(runsThroughSudo(line, kind), `${line} / ${kind}`).toBe(found);
+    const floors = [
+      ['3.14t', 'python', true],
+      ['3.15t', 'python', false],
+      ['3.15.1t', 'python', false],
+      ['3.16t', 'python', false],
+      ['3.x', 'python', false],
+      ['26t', 'node', null],
+    ];
+    for (const [version, kind, below] of floors) expect(belowFloor(version, kind), `${version} / ${kind}`).toBe(below);
+    const pipx = [
+      ['pipx run --python /usr/bin/python3.15t x', {}, true],
+      ['pipx run --python /usr/local/bin/python3.14t x', {}, true],
+      ['pipx run --python python3.15t x', {}, false],
+      ['pipx run --python python3.14t x', {}, true],
+    ];
+    for (const [run, env, flagged] of pipx) expect(pipxWithoutPython(run, env), run).toBe(flagged);
+  });
+
+  const PRE_PR_YAML = [
+    'on: push',
+    'jobs:',
+    '  below:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Run',
+    '        run: python3.14t x',
+    '  floor:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Run',
+    '        run: python3.15t x',
+    '  no-set-up:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - name: Run',
+    '        run: python3.15t x',
+    '  unset-path:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-python@abc',
+    '        with: { python-version: "3.15" }',
+    '      - name: Run',
+    '        run: env -u PATH python3 x',
+    '  command-p:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-node@abc',
+    '        with: { node-version: "26" }',
+    '      - name: Run',
+    '        run: command -p node x',
+    '  unset-other:',
+    '    runs-on: ubuntu-26.04',
+    '    steps:',
+    '      - uses: actions/setup-node@abc',
+    '        with: { node-version: "26" }',
+    '      - name: Run',
+    '        run: env -u FOO node x',
+    '',
+  ].join('\n');
+
+  it('reports free-threaded names below the floor, an unset PATH and command -p in a workflow', () => {
+    const workflow = readWorkflow(PRE_PR_YAML);
+    expect(unsetSteps('x.yml', workflow.jobs, {}, workflow.env, workflow.defaults)).toEqual(['x.yml > below > Run > python', 'x.yml > no-set-up > Run > python', 'x.yml > unset-path > Run > python', 'x.yml > command-p > Run > node']);
+    expect(pipxProblems('x.yml', workflow)).toEqual([]);
   });
 });
 
