@@ -1,0 +1,79 @@
+# Lets a person with write access ask Claude Code for help by writing
+# `@claude` in an issue, a pull request comment or a review. Without this
+# file an `@claude` comment does nothing (owner request, 2026-11-14).
+#
+# Based on the official example,
+# https://github.com/anthropics/claude-code-action/blob/main/examples/claude.yml
+# with these changes to match this repository's other workflows: both actions
+# are pinned to a full commit sha (Dependabot's github-actions updates move
+# them), the runner is ubuntu-26.04, the job has a time limit, and the
+# checkout does not leave its token in the working folder (the action sets up
+# its own sign-in for git, so it does not need it).
+#
+# This repository is public, so anyone can write a comment that starts this
+# workflow. Two things keep a stranger from using it. The job's `if:` only
+# lets it start for the owner, a member or a collaborator (GitHub's
+# `author_association` for the comment, review or issue), so for anyone else
+# no runner starts and the secret is never read. The action then checks again
+# that the person has write access. That is why the linter's warning about
+# the `issue_comment` trigger is switched off on its line below.
+#
+# Sign-in is the CLAUDE_CODE_OAUTH_TOKEN repository secret, made with
+# `claude setup-token`, so runs count against the owner's Claude subscription.
+# It is not an Anthropic API key. The job also needs the Claude GitHub App
+# (https://github.com/apps/claude) installed on this repository: `id-token:
+# write` is how the action asks that app for a short-lived token to comment
+# and push with. The action itself ignores a mention from anyone without
+# write access to the repository.
+#
+# GitHub starts `issue_comment`, `issues` and review events only from the copy
+# of this file on the default branch, so it does nothing until it is on `main`.
+name: Claude Code
+
+on:
+  issue_comment: # zizmor: ignore[dangerous-triggers] gated on author_association, see the header
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+permissions: {}
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association))
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      # Read only, where the official example has write. These lines limit
+      # the job's own token, and the action does not write with that token:
+      # it commits and comments with the Claude GitHub App's token (see
+      # `id-token` below), whose rights come from the app's installation.
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write # exchanged for the Claude GitHub App's token
+      actions: read # Claude reads CI results on pull requests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
