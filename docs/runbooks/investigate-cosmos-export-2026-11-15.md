@@ -6,7 +6,7 @@ Date: 2026-11-15. Status: investigating (draft PR).
 
 - **Sev2 `alert-cosmos-export-full-prod-cus`** on `appi-site-prod-cus-01`
   (`rg-web-site-prod-cus`) fired **01:14 UTC Nov 16** (5:14 PM PT Nov 15),
-  Alert ID `5ce4b928-aade-3a87-3be6-2253e3920002`.
+  alert ID not copied here, as this repository is public; the portal's alert history has it.
 - **First time this alert type has fired.** No full Cosmos export completed on
   Sunday. The alert is stateless — one mail per missed Sunday — so it will
   **not auto-resolve**.
