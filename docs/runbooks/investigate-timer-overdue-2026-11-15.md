@@ -6,7 +6,7 @@ Date: 2026-11-15. Status: investigating (draft PR).
 
 - **Sev2 `alert-timer-overdue-prod-cus`** on `appi-site-prod-cus-01`
   (`rg-web-site-prod-cus`), dimension "more than five timers at once", fired
-  **08:07 UTC Nov 15** (Alert ID `fa091ccf-8b6b-1500-bfc8-dae9364e0002).
+  **08:07 UTC Nov 15** (alert ID not copied here, as this repository is public; the portal's alert history has it).
   Still firing, no resolution email as of Nov 15 evening.
 - It fired **7 minutes after the 08:00 UTC daily log-cap reset**, right after
   the Sev1 overquota alert (fired 03:00 UTC Nov 15) had been dropping logs
