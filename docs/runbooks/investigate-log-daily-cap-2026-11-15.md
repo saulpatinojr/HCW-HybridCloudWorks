@@ -6,7 +6,7 @@ Date: 2026-11-15. Status: investigating (draft PR).
 
 - **Sev2 `alert-logs-capacity-prod-cus`** (80%-of-cap early warning) on
   `log-plat-prod-cus-01` (`rg-mgmt-plat-prod-cus`) fired **23:47 UTC Nov 15**
-  (Alert ID `7cec9734-5148-6225-800c-d7a512aa0002`). Metric: **0.208 GB
+  (alert ID not copied here, as this repository is public; the portal's alert history has it). Metric: **0.208 GB
   ingested vs the 0.2 GB warning threshold** (80% of the ~0.25 GB/day daily
   cap). Still firing as of Nov 15 evening.
 - **Sev1 `alert-logs-overquota-prod-cus`** on the same workspace fired **twice**
