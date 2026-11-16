@@ -6,7 +6,7 @@ Date: 2026-11-15. Status: investigating (draft PR).
 
 - **Sev2 `alert-lab-backup-missing-coder-prod-cus`** on `log-plat-prod-cus-01`
   (`rg-mgmt-plat-prod-cus`) fired **04:23 UTC Nov 16** (8:23 PM PT Nov 15),
-  Alert ID `27b623e0-7105-f149-83fb-410412450002`.
+  alert ID not copied here, as this repository is public; the portal's alert history has it.
 - **First time this alert has ever fired.** The lab host wrote no Coder
   PostgreSQL dump to `stlabhybridprodcus01/host-backups/coder/` in two days.
 - Alert's own description: "The lab host wrote no Coder PostgreSQL dump to
