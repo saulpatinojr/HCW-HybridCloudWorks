@@ -163,8 +163,9 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 `meta/argument_specs.yml` is the contract; the table is a summary of it.
 
 6. `hcw-unit-failed@.service`, a template unit the other roles name in
-   `OnFailure=` on the units that matter (the Coder backup, the labs agent,
-   Caddy, Vault). When one of them enters the failed state it logs one line
+   `OnFailure=` on the units that matter (twelve today; the row for
+   `alert-lab-unit-failed` in `docs/runbooks/alerting-and-support.md` lists
+   them). When one of them enters the failed state it logs one line
    at `daemon.err`, which the Arc data collection rule ships and
    `alert-lab-unit-failed` pages on (LAB-2, 2026-10-06).
 7. `hcw-held-upgradable`, a daily timer (LAB-3, #949). The docker,
