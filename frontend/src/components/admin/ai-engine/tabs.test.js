@@ -19,5 +19,7 @@ describeTabResolver(tabs, {
     servers: 'mcp',
     agent: 'koda',
     muse: 'koda',
+    developer: 'developer-api',
+    'organizer-keys': 'developer-api',
   },
 });

@@ -95,8 +95,8 @@ describe('createBackupStatusReader', () => {
       complete: true,
       startedAt: '2026-11-04T03:00:01.000Z',
       completedAt: '2026-11-04T03:41:00.000Z',
-      containerCount: 57,
-      expectedCount: 57,
+      containerCount: 58,
+      expectedCount: 58,
       authored: { expected: AUTHORED.length, present: AUTHORED.length, missing: [] },
       watched: { container: WATCHED_CONTAINER, present: true, docs: 3, partitionKey: '/ownerId' },
     });
@@ -121,7 +121,7 @@ describe('createBackupStatusReader', () => {
       })
     );
     const { lastCompleted } = await reader(blobs).read();
-    expect(lastCompleted.containerCount).toBe(56);
+    expect(lastCompleted.containerCount).toBe(57);
     expect(lastCompleted.authored).toEqual({
       expected: AUTHORED.length,
       present: AUTHORED.length - 1,
@@ -164,7 +164,7 @@ describe('createBackupStatusReader', () => {
       runId: '2026-11-04',
       mode: 'delta',
       startedAt: '2026-11-04T03:00:01.000Z',
-      expectedCount: 57,
+      expectedCount: 58,
       complete: false,
       completedAt: null,
       markers: 2,
