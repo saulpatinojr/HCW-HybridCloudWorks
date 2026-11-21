@@ -124,6 +124,14 @@ describe('an error the script did not expect', () => {
 describe('a long report', () => {
   it('reaches the pipe whole, ending with the findings marker, and exits 1', () => {
     const dir = mkdtempSync(join(tmpdir(), 'health-long-'));
+    // Fake run dates are relative to now, not fixed: the monitor treats a
+    // failure as in-progress only while the newest run is inside the 10-day
+    // staleness window (DEFAULT_STALE_DAYS), so the fixed 2026-11-08/09 dates
+    // this test used went stale on 2026-11-19, the verdict flipped, and the
+    // report shrank below the pipe-buffer threshold this test pins.
+    const fmtDay = (d) => d.toISOString().slice(0, 10);
+    const recentDay = fmtDay(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    const olderDay = fmtDay(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000));
     try {
       const stand = join(dir, 'fake-fetch.mjs');
       writeFileSync(
@@ -133,7 +141,7 @@ describe('a long report', () => {
           'const pad = "x".repeat(1500);',
           'const W = Array.from({ length: N }, (_, i) => ({ id: i + 1, path: `.github/workflows/w${i}.yml`, state: "active" }));',
           'const fail = (id, day) => ({ workflow_id: id, event: "schedule", head_branch: "main", conclusion: "failure",',
-          '  created_at: `2026-11-${day}T06:00:00Z`, html_url: `https://github.com/o/r/actions/runs/${id}${day}?${pad}` });',
+          '  created_at: `${day}T06:00:00Z`, html_url: `https://github.com/o/r/actions/runs/${id}${day}?${pad}` });',
           'const yaml = Buffer.from("on:\\n  schedule:\\n    - cron: \\"0 6 * * 1\\"\\n").toString("base64");',
           'globalThis.fetch = async (url) => {',
           '  const u = String(url);',
@@ -143,7 +151,7 @@ describe('a long report', () => {
           '  else if (u.includes("/contents/.github/workflows?")) body = W.map((w) => ({ path: w.path }));',
           '  else if (u.includes("/contents/")) body = { content: yaml };',
           '  else if (u.includes("status=success")) body = { workflow_runs: [] };',
-          '  else if (u.includes("/runs?")) body = { workflow_runs: [fail(id, "09"), fail(id, "08")] };',
+          '  else if (u.includes("/runs?")) body = { workflow_runs: [fail(id, "' + recentDay + '"), fail(id, "' + olderDay + '")] };',
           '  else body = { default_branch: "main" };',
           '  return { ok: true, status: 200, json: async () => body };',
           '};',
