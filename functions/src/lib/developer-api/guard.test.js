@@ -56,12 +56,12 @@ describe('the organizer key guard (ADR 0042)', () => {
     expect(JSON.stringify(auditDenial.mock.calls)).not.toContain(wrong);
   });
 
-  it('refuses an unknown id as no-key', async () => {
+  it('refuses an id that names no record with 401 and no audit row (shaped values are free to make)', async () => {
     const { guard, auditDenial } = setup();
     const other = generateKey();
     const auth = await guard.authenticate(makeRequest({ headers: { Authorization: `Bearer ${other.secret}` } }));
     expect(auth.error.status).toBe(401);
-    expect(auditDenial).toHaveBeenCalledWith(expect.objectContaining({ reason: 'no-key' }));
+    expect(auditDenial).not.toHaveBeenCalled();
   });
 
   it('refuses a revoked key on the very next request (no cache)', async () => {
@@ -123,8 +123,11 @@ describe('the organizer key guard (ADR 0042)', () => {
       },
       () => Promise.reject(new Error('sink')),
     ]) {
+      const { keyId, secret } = generateKey();
+      const record = buildKeyRecord({ keyId, secret, actor: 'o', organizer: { organizerName: 'O', scopes: ['cfs:manage'] } });
+      store.put('admin_config', record, ADMIN_CONFIG_PARTITION);
       const guard = createDeveloperApiGuard({ store, auditDenial });
-      const auth = await guard.authenticate(makeRequest({ headers: { 'X-API-Key': generateKey().secret } }));
+      const auth = await guard.authenticate(makeRequest({ headers: { 'X-API-Key': generateKey({ keyId }).secret } }));
       expect(auth.error.status).toBe(401);
     }
   });

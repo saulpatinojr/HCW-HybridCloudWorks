@@ -21,8 +21,8 @@
  *
  * Then the scope the route needs must be on the key.
  *
- * Every refusal of a presented organizer-shaped key (wrong, revoked, over the
- * limit, or without the scope) is one `admin_audit_logs` row of kind
+ * Every refusal of a presented key whose id names a real record (wrong,
+ * revoked, over the limit, or without the scope) is one `admin_audit_logs` row of kind
  * developer-api-denial, with the reason and the key id, never the key. A
  * request with no key, or a value not shaped like one, is refused without a
  * row: internet probes would otherwise be a write each. 401 for a missing,
@@ -121,7 +121,10 @@ export function createDeveloperApiGuard({
 
     const record = await store.readDoc('admin_config', keyRecordId(parsed.keyId), ADMIN_CONFIG_PARTITION);
     if (!isUsable(record)) {
-      audit({ outcome: 'denied', reason: record ? 'revoked-key' : 'no-key', keyId: parsed.keyId });
+      // An id that names no record gets no row: anyone can make a value of the
+      // right shape, and a row each would let one caller turn requests into
+      // audit writes. A revoked key is a real key still in use, worth a row.
+      if (record) audit({ outcome: 'denied', reason: 'revoked-key', keyId: parsed.keyId });
       return unauthenticated();
     }
     if (!hashMatches(secret, record.keyHash)) {

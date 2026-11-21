@@ -14,8 +14,11 @@
  * 2), so the call is what ties an event id to an organizer: the key that
  * first opens a call on an id owns it, and every other key is answered 404 on
  * that id, the same answer as an id with no call, so a key cannot tell
- * another organizer's event from an empty id. Phase 2 will require the event
- * record to exist and belong to the key before a call can be opened.
+ * another organizer's event from an empty id. The ids of the site's own
+ * published events are refused (handlers.js setCall), so no key can collect
+ * proposals under one of them. What remains, accepted for Phase 1 and written
+ * in the runbook: one organizer can take an id another meant to use first.
+ * Phase 2 will require the event record to exist and belong to the key.
  *
  * NOTHING HERE PUBLISHES (ADR 0042 decision 6). An open call takes proposals;
  * accepting a proposal records the decision for the organizer and makes
@@ -94,7 +97,9 @@ const isObject = (value) => Boolean(value) && typeof value === 'object' && !Arra
 
 /**
  * POST .../call-for-speakers: `{ action: 'open' | 'close', title?, description?, closesAt? }`.
- * Only these fields are read.
+ * Only these fields are read. On an open, a field that is left out keeps its
+ * stored value, and a field sent as null or '' is cleared, so reopening a
+ * call does not quietly drop its deadline.
  */
 export function validateCallChange(body, nowMs) {
   if (!isObject(body)) throw new DeveloperApiInputError('Send a JSON object with action "open" or "close".');
@@ -102,12 +107,13 @@ export function validateCallChange(body, nowMs) {
     throw new DeveloperApiInputError('action must be "open" or "close".');
   }
   if (body.action === 'close') return { action: 'close' };
-  return {
-    action: 'open',
-    title: text(body.title, 'title', CALL_LIMITS.title),
-    description: text(body.description, 'description', CALL_LIMITS.description, { multiline: true }),
-    closesAt: futureInstant(body.closesAt, 'closesAt', nowMs),
-  };
+  const change = { action: 'open' };
+  if (Object.hasOwn(body, 'title')) change.title = text(body.title, 'title', CALL_LIMITS.title);
+  if (Object.hasOwn(body, 'description')) {
+    change.description = text(body.description, 'description', CALL_LIMITS.description, { multiline: true });
+  }
+  if (Object.hasOwn(body, 'closesAt')) change.closesAt = futureInstant(body.closesAt, 'closesAt', nowMs);
+  return change;
 }
 
 /** The call document after a change, from the stored one (or none) and the validated change. */
@@ -128,14 +134,16 @@ export function composeCall({ eventId, existing, change, user, nowIso }) {
   if (change.action === 'close') {
     return { ...base, status: 'closed', closedAt: nowIso, updatedAt: nowIso, updatedBy: user.oid };
   }
+  const keep = (field) => (Object.hasOwn(change, field) ? change[field] : (base[field] ?? null));
+  const alreadyOpen = base.status === 'open';
   return {
     ...base,
     status: 'open',
-    title: change.title ?? base.title ?? null,
-    description: change.description ?? base.description ?? null,
-    closesAt: change.closesAt,
-    openedAt: nowIso,
-    closedAt: null,
+    title: keep('title'),
+    description: keep('description'),
+    closesAt: keep('closesAt'),
+    openedAt: alreadyOpen ? base.openedAt : nowIso,
+    closedAt: alreadyOpen ? base.closedAt : null,
     updatedAt: nowIso,
     updatedBy: user.oid,
   };
@@ -154,11 +162,16 @@ export function isCallOpen(call, nowMs) {
   return Number.isFinite(closes) && nowMs < closes;
 }
 
-/** What the organizer is told about their call. */
-export function presentCall(call) {
+/**
+ * What the organizer is told about their call. `status` is what the organizer
+ * set; `acceptingProposals` is whether the public route takes a proposal now,
+ * which is false once `closesAt` has passed even while `status` is `open`.
+ */
+export function presentCall(call, nowMs) {
   return {
     eventId: call.eventId,
     status: call.status,
+    acceptingProposals: isCallOpen(call, nowMs),
     title: call.title || null,
     description: call.description || null,
     closesAt: call.closesAt || null,

@@ -63,15 +63,16 @@ You need the `super_admin` role. An editor can see the list but not change it.
 
 1. Open the AI Engine's **Developer API** tab:
    <https://hybridcloudworks.com/admin/ai-engine?tab=developer-api>.
-2. Fill in the organizer's name (it is what the audit log and the list show),
-   optionally a contact (an email or a line of text, seen only in the admin),
-   and tick the scopes. For Phase 1 that is `cfs:manage`.
-3. Press **Generate key**. A box shows the key, starting `hcdk_`. This is the
-   only time it is shown. Copy it.
+2. On the **Make a key for an organizer** card, fill in the organizer's name
+   (it is what the audit log and the list show), optionally a contact (an
+   email or a line of text, seen only in the admin), and switch on the
+   scopes. For Phase 1 that is `cfs:manage`.
+3. Press **Make key**. A box shows the key, starting `hcdk_`. This is the
+   only time it is shown. Press **Copy key**.
 4. Give it to the organizer through a private channel (a password manager
    share, for example). Never paste it into chat, an email thread, a ticket or
    an issue.
-5. Press the button that hides the key. It cannot be shown again.
+5. Press **I have handed it over, hide the key**. It cannot be shown again.
 
 The same thing through the API is
 `POST /api/cms/developer-api/keys` with
@@ -115,13 +116,20 @@ $eventId = Read-Host 'Event id'; $base = 'https://api-azure.hybridcloudworks.com
 ```
 
 Open a call (the key needs `cfs:manage`). The first key to open a call on an
-event id owns that id; any other key gets `404` on it.
+event id owns that id; any other key gets `404` on it. The ids of the site's
+own published events are refused with `409` `EVENT_ID_RESERVED`, so nobody
+can collect proposals under one of the owner's events.
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri "$base/events/$eventId/call-for-speakers" -Headers $auth -ContentType 'application/json' -Body '{"action":"open","title":"Call for speakers"}' | ConvertTo-Json -Depth 4
 ```
 
-Good: `call.status` is `open`. Send a test proposal, with no key, as a
+Good: `call.status` is `open` and `call.acceptingProposals` is `True`.
+Opening an open call again changes only the fields you send; send
+`"closesAt": null` (or `"title": null`) to clear one. Once `closesAt` has
+passed, `status` still reads `open` (it is what the organizer set) but
+`acceptingProposals` reads `False` and proposals are refused. Send a test
+proposal, with no key, as a
 speaker would:
 
 ```powershell
@@ -158,7 +166,7 @@ Remove-Variable plain, key, ptr, auth, list
 Rotate when the organizer's handling of the key is in doubt, or on the
 [credential rotation schedule](../security/credential-rotation-schedule.md).
 
-1. On the tab, press **Rotate** on the organizer's row and confirm. A new key
+1. On the tab, press **Rotate key** on the organizer's row and confirm. A new key
    is shown once; the old one stops working on its very next request.
 2. Hand the new key over as in part 1, step 4.
 3. Hide it.
@@ -174,10 +182,15 @@ naming the scope. The change is written to the audit log.
 
 ## 6. Revoke a key
 
-Press **Revoke** on the organizer's row and confirm. The stored fingerprint is
+Press **Revoke key** on the organizer's row and confirm. The stored fingerprint is
 deleted, and the key's next request is refused with `401`. There is no cache in
 front of the check, so "next request" means the very next one. The row stays
 in the list, marked revoked, with who revoked it and when.
+
+A revoked key cannot be rotated back to life (the API answers `409`
+`KEY_REVOKED`). To give the organizer access again, press **Make a new key**
+on the revoked row: it makes a new key, with a new id, for the same name,
+contact and scopes. The new key does not own the old key's calls.
 
 The calls the organizer owned stay as they were (open calls still take
 proposals). To stop a revoked organizer's open call taking proposals, a
@@ -191,7 +204,7 @@ used to close it; a close route for the admin is a Phase 2 follow-up.
 | `401` | The key is missing, wrong or revoked (one sentence for all three, on purpose). |
 | `403` | The key lacks the scope the route needs. On the public proposal route: the request did not come through Cloudflare. |
 | `404` | No call on that event for this key, or no open call (proposal route). |
-| `409` | The call or proposal changed between reading and writing. Read again and retry. |
+| `409` | The call or proposal changed between reading and writing (read again and retry); or `EVENT_ID_RESERVED` (the id is one of the site's own events) or `KEY_REVOKED` (rotate on a revoked key). |
 | `413` | A proposal over 16 KB. |
 | `429` | Over a limit; the answer has a `Retry-After` header with the seconds to wait. |
 
@@ -203,11 +216,11 @@ the request came through Cloudflare, and a proposal that fills the hidden
 
 ## Refused calls and the audit log
 
-Every refusal of a value shaped like an organizer key (wrong, revoked, over the
-limit, or missing a scope) writes one row to the `admin_audit_logs` container
+Every refusal of a key whose id names a real key record (wrong secret,
+revoked, over the limit, or missing a scope) writes one row to the `admin_audit_logs` container
 with `kind` (and `action`) `developer-api-denial`, the reason and the key's id,
-never the key. A request with no key, or with a value of another shape, is
-refused without a row, so internet probes do not cost a write each.
+never the key. A request with no key, a value of another shape, or an id that names no
+key is refused without a row, so internet probes do not cost a write each.
 
 Every keyed write writes a row too: `developer_cfs_opened`,
 `developer_cfs_closed`, `developer_cfs_submission_reviewed` (with the status
@@ -222,6 +235,17 @@ and for keys `developer_api_key_generated`, `_rotated`, `_changed`, `_revoked`
    (part 6).
 3. Raise an issue with the time window so the limits can be reviewed (ADR
    0042's "revisit if CfS spam overwhelms review").
+
+## Accepted risks in Phase 1
+
+- **The first key to open a call on an id owns it.** One organizer can take an
+  id another meant to use. Organizers are people the owner gave a key to, and
+  the loser simply picks another id. Phase 2 ties a call to an event record
+  the key made.
+- **The per-call cap can be filled.** 100 proposals an hour per call is
+  shared by every visitor, so about twenty different addresses could fill it
+  and hold the call shut for the rest of the hour. ADR 0042 accepts spam as
+  a risk; if it happens, see "If spam proposals arrive" above.
 
 ## Personal data
 

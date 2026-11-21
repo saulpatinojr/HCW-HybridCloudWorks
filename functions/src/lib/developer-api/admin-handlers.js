@@ -188,11 +188,27 @@ export function createDeveloperApiAdminHandlers({
     /** POST cms/developer-api/keys/{keyId}/rotate — a new secret; the old one stops at once. */
     rotateKey: route(WRITE_ROLE, 'rotate the organizer key', async ({ request, user }) => {
       const keyId = keyIdOf(request);
+      // A revoked key stays revoked: rotating it would quietly bring back its
+      // scopes and its calls. A new key is a deliberate act with its own row.
+      const current = await readRecord(keyId);
+      if (!current || current.kind !== 'developer_api_key') throw NO_KEY();
+      if (current.revokedAt) {
+        return json(409, {
+          ok: false,
+          code: 'KEY_REVOKED',
+          error: 'This key is revoked and cannot be rotated. Make a new key for the organizer instead.',
+        });
+      }
       const { secret } = generate({ keyId });
-      const written = await rewrite(keyId, (current) => ({
-        ...current,
-        ...buildKeyRecord({ keyId, secret, actor: actorOf(user), organizer: current, now, previous: current }),
-      }));
+      const written = await rewrite(keyId, (latest) => {
+        if (latest.revokedAt) {
+          throw new Answer(json(409, { ok: false, code: 'KEY_REVOKED', error: 'This key was revoked meanwhile.' }));
+        }
+        return {
+          ...latest,
+          ...buildKeyRecord({ keyId, secret, actor: actorOf(user), organizer: latest, now, previous: latest }),
+        };
+      });
       await audit('developer_api_key_rotated', { user, request, keyId, details: { keyHint: written.keyHint } });
       return json(200, { ok: true, key: presentKeyRecord(written), secret, shownOnce: true });
     }),

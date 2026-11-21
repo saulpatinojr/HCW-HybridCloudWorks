@@ -206,6 +206,53 @@ describe('Developer API v1 handlers (ADR 0042, Phase 1)', () => {
       expect(list.status).toBe(404);
     });
 
+    it("refuses to open a call on one of the site's own published event ids", async () => {
+      const { handlers, org, keyed } = setup();
+      const res = await handlers.setCall(
+        keyed(org.secret, { method: 'POST', params: { eventId: 'e1x' }, body: { action: 'open' } }),
+        ctx,
+      );
+      expect(res.status).toBe(201);
+      const env = setup();
+      env.store.put('_snapshots', { ...SNAPSHOT, items: [{ id: 'azure-day-2026', name: 'A', display: true }] });
+      const reserved = await env.handlers.setCall(
+        env.keyed(env.org.secret, { method: 'POST', params: { eventId: 'azure-day-2026' }, body: { action: 'open' } }),
+        ctx,
+      );
+      expect(reserved.status).toBe(409);
+      expect(body(reserved).code).toBe('EVENT_ID_RESERVED');
+    });
+
+    it('keeps the deadline and opening time on a reopen unless sent, and clears a field sent as null', async () => {
+      let clock = NOW;
+      const env = setup({ now: () => clock });
+      const call = (payload) =>
+        env.handlers.setCall(env.keyed(env.org.secret, { method: 'POST', params: { eventId: EVENT }, body: payload }), ctx);
+      const first = body(await call({ action: 'open', title: 'T', closesAt: '2026-12-01T00:00:00Z' })).call;
+      clock += 1000;
+      const again = body(await call({ action: 'open' })).call;
+      expect(again).toMatchObject({ title: 'T', closesAt: '2026-12-01T00:00:00.000Z', openedAt: first.openedAt });
+      const cleared = body(await call({ action: 'open', title: null, closesAt: null })).call;
+      expect(cleared).toMatchObject({ title: null, closesAt: null });
+    });
+
+    it('reports a call past its deadline as not accepting proposals', async () => {
+      let clock = NOW;
+      const env = setup({ now: () => clock });
+      await env.handlers.setCall(
+        env.keyed(env.org.secret, {
+          method: 'POST',
+          params: { eventId: EVENT },
+          body: { action: 'open', closesAt: '2026-11-22T00:00:00Z' },
+        }),
+        ctx,
+      );
+      const list = () => env.handlers.listSubmissions(env.keyed(env.org.secret, { params: { eventId: EVENT } }), ctx);
+      expect(body(await list()).call).toMatchObject({ status: 'open', acceptingProposals: true });
+      clock = Date.parse('2026-11-23T00:00:00Z');
+      expect(body(await list()).call).toMatchObject({ status: 'open', acceptingProposals: false });
+    });
+
     it('answers 409 when the call changed between the read and the write', async () => {
       const { handlers, org, keyed, store } = setup();
       const open = () =>

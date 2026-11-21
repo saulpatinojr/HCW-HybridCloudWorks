@@ -206,6 +206,19 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
       const existing = await readCall(eventId);
       if (existing && !ownsCall(existing, auth.user)) return notFound(NO_CALL);
       if (!existing && change.action === 'close') return notFound(NO_CALL);
+      // The site's own published events are not an organizer's to claim: a
+      // call on one would collect speakers' details under the owner's event.
+      if (!existing) {
+        const snapshot = await readSnapshot();
+        const reserved = Array.isArray(snapshot?.items) && snapshot.items.some((item) => String(item?.id) === eventId);
+        if (reserved) {
+          return json(409, {
+            ok: false,
+            code: 'EVENT_ID_RESERVED',
+            error: 'That event id belongs to one of the site\'s own events. Choose another id for your event.',
+          });
+        }
+      }
 
       const nowIso = new Date(now()).toISOString();
       const next = composeCall({ eventId, existing, change, user: auth.user, nowIso });
@@ -221,11 +234,11 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
       const call = written || next;
       await audit(context, change.action === 'open' ? 'developer_cfs_opened' : 'developer_cfs_closed', auth.user, {
         resource: `${CFS_CONTAINER}:${callDocId(eventId)}`,
-        before: existing ? presentCall(existing) : null,
-        after: presentCall(call),
+        before: existing ? presentCall(existing, now()) : null,
+        after: presentCall(call, now()),
         details: { eventId },
       });
-      return json(existing ? 200 : 201, { ok: true, call: presentCall(call) });
+      return json(existing ? 200 : 201, { ok: true, call: presentCall(call, now()) });
     }),
 
     /**
@@ -312,7 +325,7 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
         { partitionKey: eventId },
       );
       const submissions = (rows || []).map(presentSubmission);
-      return json(200, { ok: true, call: presentCall(call), submissions, count: submissions.length });
+      return json(200, { ok: true, call: presentCall(call, now()), submissions, count: submissions.length });
     }),
 
     /** PUT events/{eventId}/call-for-speakers/submissions/{submissionId} — cfs:manage. Records a decision; publishes nothing. */

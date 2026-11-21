@@ -107,6 +107,31 @@ describe('the organizer key admin routes (ADR 0042)', () => {
     expect(store.all('admin_audit_logs').filter((a) => a.action === 'developer_api_key_revoked')).toHaveLength(1);
   });
 
+  it('refuses to rotate a revoked key, before or during the write', async () => {
+    const { handlers, store, works } = setup();
+    const made = body(await create(handlers));
+    const params = { keyId: made.key.keyId };
+    await handlers.revokeKey(makeRequest({ method: 'DELETE', params }), ctx);
+    const res = await handlers.rotateKey(makeRequest({ method: 'POST', params }), ctx);
+    expect(res.status).toBe(409);
+    expect(body(res).code).toBe('KEY_REVOKED');
+    expect(res.body).not.toContain('hcdk_');
+
+    // Revoked between the first read and the rewrite.
+    const other = body(await create(handlers, { organizerName: 'Org B', scopes: ['cfs:manage'] }));
+    const read = store.readDoc;
+    let reads = 0;
+    store.readDoc = async (...args) => {
+      const doc = await read(...args);
+      reads += 1;
+      return reads === 2 && doc ? { ...doc, revokedAt: 'now' } : doc;
+    };
+    const raced = await handlers.rotateKey(makeRequest({ method: 'POST', params: { keyId: other.key.keyId } }), ctx);
+    expect(raced.status).toBe(409);
+    store.readDoc = read;
+    expect(await works(other.secret)).toBe(true);
+  });
+
   it('answers 404 for an unknown or malformed key id', async () => {
     const { handlers, store } = setup();
     for (const keyId of ['0123456789abcdef', 'nope']) {
