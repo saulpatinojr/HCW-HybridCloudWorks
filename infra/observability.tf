@@ -14,8 +14,9 @@
 # would have shown it. Both halves are fixed here.
 #
 # Ingestion from every diagnostic setting here lands in the Log Analytics
-# workspace, which carries a daily cap (`logs_daily_quota_gb`, variables.tf; main.tf). The cap is the cost
-# ceiling for this whole file. It is no longer a ceiling anyone has to
+# workspace, which carries a daily cap (logs_daily_quota_gb in variables.tf,
+# set on the workspace in main.tf). The cap is the cost ceiling for this whole
+# file. It is no longer a ceiling anyone has to
 # remember: `logs_daily_cap` below fires at 80% of whatever the cap is set to,
 # derived from the workspace resource so the two cannot drift.
 #

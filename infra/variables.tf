@@ -715,7 +715,7 @@ variable "logs_daily_quota_gb" {
     03:00 UTC on Nov 15, and every log alert was blind until the 08:00 UTC reset,
     which raised false timer-overdue, Cosmos-export and backup-missing alerts.
     Ingestion is billed on what arrives, not on the cap: at ~0.3 GB/day that is
-    about USD 13/month with retention, and 0.5 GB/day every day is the ceiling,
+    about USD 11-13/month with retention, and 0.5 GB/day every day is the ceiling,
     about USD 26/month (USD 2.30/GB after 5 GB/month free per billing account,
     plus USD 0.10/GB/month beyond 31 days of retention; Azure Monitor pricing
     page, read 2026-11-22). The 80% warning moves to 0.4 GB/day with it.
@@ -735,7 +735,8 @@ variable "logs_retention_in_days" {
 
     30 days is the Azure PerGB2018 included minimum. 90 days satisfies the compliance
     audit finding for retaining security logs, audit events, syslog, and diagnostics.
-    At the 0.5 GB/day daily cap, 90 days retention costs about $3/mo at most (59 days beyond the 31 included, $0.10/GB/month).
+    At the 0.5 GB/day daily cap, 90 days retention costs about $3/mo at most
+    (59 days beyond the 31 included, at $0.10/GB/month).
   EOT
   type        = number
   default     = 90
