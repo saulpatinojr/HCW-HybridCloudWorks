@@ -57,13 +57,13 @@ const byId = (rows) => Object.fromEntries(rows.map((row) => [row.id, row]));
 const credential = (credentials, id) => credentials.find((c) => c.id === id);
 
 describe('wantedReminders', () => {
-  it('wants a reminder for EVERY hand credential with a rule: the issue’s eight, dated or not', () => {
+  it('wants a reminder for EVERY hand credential with a rule: the issue’s eight and the Claude Code token (#1758), dated or not', () => {
     const undated = wantedReminders(view(), { today: TODAY });
     const dated = wantedReminders(view(ALL_RECORDED), { today: TODAY });
     const ids = RULED.map((entry) => reminderIdFor(entry.id)).sort();
     expect(undated.map((row) => row.id).sort()).toEqual(ids);
     expect(dated.map((row) => row.id).sort()).toEqual(ids);
-    expect(ids).toHaveLength(8);
+    expect(ids).toHaveLength(9);
   });
 
   it('fits within the rows the sheet keeps for the register, so an editor-filled sheet still takes them (review of #1039)', () => {
@@ -220,14 +220,14 @@ describe('syncCredentialReminders', () => {
 
   it('creates the sheet when there is none, with a row per reminder-bearing credential', async () => {
     const store = seeded(null);
-    expect(await syncCredentialReminders({ store, now })).toEqual({ synced: true, changed: true, reminders: 8 });
+    expect(await syncCredentialReminders({ store, now })).toEqual({ synced: true, changed: true, reminders: 9 });
     expect(sheet(store)).toMatchObject({ id: 'reminders', configScope: 'admin_config' });
-    expect(readStoredReminders(sheet(store)).reminders).toHaveLength(8);
+    expect(readStoredReminders(sheet(store)).reminders).toHaveLength(9);
   });
 
   it('gives every undated one a RECORD row due today, and turns it into the rotation row once a date is recorded', async () => {
     const store = seeded(null, {});
-    expect(await syncCredentialReminders({ store, now })).toMatchObject({ synced: true, reminders: 8 });
+    expect(await syncCredentialReminders({ store, now })).toMatchObject({ synced: true, reminders: 9 });
     const first = rowsOf(store)['credential-lab-agent-certificate'];
     expect(first).toMatchObject({ title: recordTitle({ name: '/etc/hcw/labs-agent.pem (sp-labs-agent-lab-hybrid-prod-cus-01)' }), dueDate: TODAY, leadDays: 0 });
 
@@ -265,7 +265,7 @@ describe('syncCredentialReminders', () => {
     const stored = sheet(store);
     expect(stored.updatedBy).toBe('oid-9');
     expect(stored.reminders.slice(0, 2)).toEqual(owners);
-    expect(stored.reminders).toHaveLength(10);
+    expect(stored.reminders).toHaveLength(11);
     expect(store.replaceDocIfMatch).toHaveBeenCalledWith(
       'admin_config',
       expect.objectContaining({ _etag: expect.any(String) }),
@@ -278,7 +278,7 @@ describe('syncCredentialReminders', () => {
     await syncCredentialReminders({ store, now });
     store.replaceDocIfMatch.mockClear();
     store.createDoc.mockClear();
-    expect(await syncCredentialReminders({ store, now })).toEqual({ synced: true, changed: false, reminders: 8 });
+    expect(await syncCredentialReminders({ store, now })).toEqual({ synced: true, changed: false, reminders: 9 });
     expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
     expect(store.createDoc).not.toHaveBeenCalled();
   });
@@ -301,7 +301,7 @@ describe('syncCredentialReminders', () => {
     expect(result).toMatchObject({ synced: true, changed: true });
     const ids = sheet(store).reminders.map((row) => row.id);
     expect(ids.slice(0, 2)).toEqual(['a', 'c']);
-    expect(ids).toHaveLength(10);
+    expect(ids).toHaveLength(11);
   });
 
   it('a rotation recorded mid-sync is never overwritten by its old due date (review of #1039)', async () => {
@@ -377,7 +377,7 @@ describe('syncCredentialReminders', () => {
     const store = seeded(null);
     store.fail('mcp_servers', '*', 'queryDocs', Object.assign(new Error('x'), { code: 503 }));
     store.fail('admin_config', 'coder_automation', 'readDoc', Object.assign(new Error('x'), { code: 503 }));
-    expect(await syncCredentialReminders({ store, now })).toMatchObject({ synced: true, reminders: 8 });
+    expect(await syncCredentialReminders({ store, now })).toMatchObject({ synced: true, reminders: 9 });
   });
 
   it('gives up after its attempts when the sheet keeps changing', async () => {

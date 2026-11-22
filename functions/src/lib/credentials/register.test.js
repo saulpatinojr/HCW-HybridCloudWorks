@@ -8,6 +8,7 @@ import { SECRET_CATALOG } from '../secret-catalog.js';
 import { MAX_LEAD_DAYS } from '../reminders/settings.js';
 import {
   HAND_ROTATION_DAYS,
+  CLAUDE_CODE_OAUTH_TOKEN_DAYS,
   CREDENTIAL_REGISTER,
   CREDENTIAL_STORES,
   KEY_VAULT_METADATA_NAMES,
@@ -143,6 +144,7 @@ describe('the issue’s list', () => {
         'kv-anthropic-api-key',
         'kv-telegram-bot-token',
         'gh-manifest-app-private-key',
+        'gh-claude-code-oauth-token',
         'gh-copilot-review-app-private-key',
         'lab-coder-github-oauth-secret',
         'azure-swa-deployment-token',
@@ -158,6 +160,9 @@ describe('the issue’s list', () => {
     expect(findCredential('lab-agent-certificate').lifetimeDays).toBe(LAB_CERTIFICATE_DAYS);
     expect(findCredential('lab-vault-tls-certificate').lifetimeDays).toBe(LAB_CERTIFICATE_DAYS);
     expect(LAB_CERTIFICATE_DAYS).toBe(180);
+    // The issuer's own expiry: a `claude setup-token` token lasts a year.
+    expect(findCredential('gh-claude-code-oauth-token').lifetimeDays).toBe(CLAUDE_CODE_OAUTH_TOKEN_DAYS);
+    expect(CLAUDE_CODE_OAUTH_TOKEN_DAYS).toBe(365);
     // The owner's rule for the hand-only ones that never expire (2026-10-09).
     expect(HAND_ROTATION_DAYS).toBe(180);
     for (const id of [
