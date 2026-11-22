@@ -387,7 +387,7 @@ resource "azurerm_role_assignment" "lab_hybrid_vault_seal" {
 # call with the caller's identity and IP address, so an unwrap from anywhere
 # but the lab host shows up as a row, which is the check the open network above
 # relies on. About 300 rows a day from the 10-minute health check, well under
-# a megabyte a day against the workspace's 0.25 GB/day cap. Logs only, as on
+# a megabyte a day against the workspace's daily cap. Logs only, as on
 # the Cosmos and content-queue settings in observability.tf: the vault's
 # metrics would add rows and answer nothing the audit log does not.
 resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_key_vault" {
