@@ -123,6 +123,14 @@ export const LAB_CERTIFICATE_DAYS = 180;
 export const CODER_STATUS_TOKEN_DAYS = 90;
 export const CODER_ROTATION_CREDENTIAL_DAYS = 365;
 
+/**
+ * How long a `claude setup-token` token lasts: one year, the issuer's own
+ * expiry (https://code.claude.com/docs/en/authentication.md, "Generate a
+ * long-lived token", read 2026-11-14). After it, every `@claude` run fails
+ * at sign-in, so this one is a deadline, not a rotation habit.
+ */
+export const CLAUDE_CODE_OAUTH_TOKEN_DAYS = 365;
+
 const KEYS_TAB_ROTATION =
   "Mint a new one from the issuer, paste it on Integrations → Keys, then revoke the old one.";
 
@@ -406,6 +414,21 @@ const OTHER_ENTRIES = [
     lifetimeDays: HAND_ROTATION_DAYS,
     rotate:
       "Generate a new private key on the GitHub App’s settings page, set it as MANIFEST_APP_PRIVATE_KEY, then delete the old key there.",
+  },
+  {
+    // One token, saved under the same name in five repositories: this one
+    // and the four add-ons. One row, because one `claude setup-token` run
+    // replaces all five and they fall due together (#1727, #1758).
+    id: "gh-claude-code-oauth-token",
+    name: "CLAUDE_CODE_OAUTH_TOKEN",
+    store: "github-actions",
+    consumer:
+      "claude.yml, here and in the four add-on repositories: an @claude mention starts Claude Code",
+    issuer: "Anthropic (claude setup-token, the owner’s Claude subscription)",
+    renewal: "hand",
+    lifetimeDays: CLAUDE_CODE_OAUTH_TOKEN_DAYS,
+    rotate:
+      "Run claude setup-token on the owner’s computer, then set the new token as the CLAUDE_CODE_OAUTH_TOKEN secret in this repository and the four add-ons (gh secret set, once per repository).",
   },
   {
     id: "gh-copilot-review-app-private-key",
