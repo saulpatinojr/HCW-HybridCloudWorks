@@ -192,6 +192,68 @@ never does on its own.
   those bullets (its approval and its boxes) are paused; the merge signal that
   replaces them is the first bullet of "Pull requests open ready for review" below.
 
+## A new credential arrives with its register row, its test and its reminder
+
+Owner instruction 2026-11-22, given after a session set up the `@claude`
+workflow ([#1727](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1727))
+with a new one-year token and added none of the parts the admin portal
+already has for keeping track of one. The token worked, but nothing in the
+portal knew it existed or when it would run out; the owner noticed, not the
+session.
+
+A credential is anything that signs something in: a token, an API key, a
+password, a client secret, a private key or a certificate. When a change adds
+one, replaces one, or adds a workflow or feature that reads one, the **same
+pull request** does every part below, or says in its description which part
+does not apply and why. In an add-on or App repository the workflow change is
+made there, and these parts are a pull request in this repository opened
+alongside it.
+
+- **The credential register gets a row.** The register is the one list of
+  every credential the estate uses, by name only and never by value:
+  [`functions/src/lib/credentials/register.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/credentials/register.js).
+  It is what [Admin → Integrations → Credentials](https://hybridcloudworks.com/admin/integrations?tab=credentials)
+  shows. A row says where the credential is stored, what uses it, who issues
+  it, whether anything renews it, and how long it lasts. A credential used in
+  more than one repository under one name is one row that names them all.
+- **The reminder comes from that row.** A row with `renewal: "hand"` (only
+  the owner can renew it) and a `lifetimeDays` number gets a line on the
+  reminders sheet by itself, so the owner is told before it runs out. Use the
+  issuer's real expiry where there is one, and link the page that states it
+  in the comment beside the number; where the issuer sets none, use
+  `HAND_ROTATION_DAYS`. Do not open an issue with a date in place of this:
+  an issue does not remind anyone.
+- **Where it is stored is a decision, written in the row.** A value the
+  *site's own code* reads goes in Key Vault through
+  [Integrations → Keys](https://hybridcloudworks.com/admin/integrations?tab=keys),
+  which needs its entry in
+  [`secret-catalog.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/secret-catalog.js)
+  and the matching app setting in `infra/` (a test holds the two together).
+  A value only a workflow reads stays a GitHub Actions secret and is **not**
+  also put in Key Vault: a vault secret nothing reads is an orphan.
+- **It gets a test the owner can run.** A service whose key the site holds
+  gets a Test on its card in
+  [`serviceRegistry.jsx`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/components/admin/integrations/serviceRegistry.jsx),
+  which the [Health page](https://hybridcloudworks.com/admin/health) then
+  probes with the same function. The site cannot read a GitHub Actions
+  secret, so for one of those the row's `rotate` sentence and the standards
+  row say what the test is instead (for the Claude token: write an `@claude`
+  comment and see a reply).
+- **The two standards pages get their rows.**
+  [`docs/standards/required-inputs.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/standards/required-inputs.md)
+  (what must be set, and whether it is) and
+  [`docs/standards/variables-and-secrets.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/standards/variables-and-secrets.md)
+  (why a stored secret is justified here and not a keyless sign-in).
+- **The closing summary tells the owner the one step that is theirs:** to
+  record the date the credential was made on the Credentials tab, because a
+  session can neither read a secret nor know when the owner made it.
+
+The same habit applies beyond credentials. Before calling a feature done, ask
+what the admin portal already has for that kind of thing (a register, a
+health probe, a reminder, a settings page) and add the new thing to each, in
+the same pull request. If it is not clear whether one applies, say so and ask
+rather than leave it out quietly.
+
 ## Everything named to the owner carries its link
 
 Owner instruction 2026-10-25, given after being told to decide "the copyleft
