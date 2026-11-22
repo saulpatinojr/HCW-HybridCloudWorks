@@ -305,6 +305,24 @@ in Key Vault that nothing reads makes an orphan, so that is done only when
 the site is also given a use for it (a test, or passing it on), and the pull
 request says which.
 
+**Not every place fits every key, and that is said, not hidden.** Owner
+instruction 2026-11-22. Some keys can be tested and cost nothing; some cost
+money and cannot be tested; some have neither. For each key, the card says
+which of these it has, in plain words: how it is **tested** (or that it
+cannot be, and what to do instead), what it **costs** (a bill per call, a
+subscription's limits, or nothing), how it is **replaced**, and when it
+**expires**. A line that does not apply says so; it is not left out.
+
+**Never add exposure to make a tab work.** A key that only GitHub reads stays
+only in GitHub. Do not copy it into Key Vault, and do not give the site a way
+to write GitHub's secrets, just so the Keys tab or a Test button has
+something to do. List it instead: its box on the vendor's card says where it
+is stored, gives the one line that replaces it, and links where to check it
+(the Claude Code box on the Anthropic card is the example,
+[`ClaudeCodeNote.jsx`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/components/admin/integrations/ClaudeCodeNote.jsx)).
+Giving the site a new power over another system is the owner's decision,
+asked for on its own, never a side effect of adding a key.
+
 The same habit applies beyond credentials. Before calling a feature done, ask
 what the admin portal already has for that kind of thing (a register, a
 health probe, a reminder, a settings page, a directory entry) and add the new
