@@ -46,7 +46,7 @@ export const CLAUDE_CODE_TOKEN_DOCS_URL =
  * on screen or in the shell's history.
  */
 export const CLAUDE_CODE_ROTATE_COMMAND = `foreach ($r in '${CLAUDE_CODE_REPOSITORIES.join(
-  "','"
+  "', '"
 )}') { gh secret set ${CLAUDE_CODE_SECRET} --repo "saulpatinojr/$r" }`;
 
 const LINK = 'underline underline-offset-2 hover:text-foreground';
@@ -96,7 +96,7 @@ export default function ClaudeCodeNote() {
           On your own computer, run <code>claude setup-token</code> (
           <External href={CLAUDE_CODE_TOKEN_DOCS_URL}>how it works</External>), then this one
           PowerShell line, pasting the new token each time it asks:
-          <code className="mt-1 block select-all whitespace-pre-wrap break-all rounded bg-muted px-2 py-1 text-[11px] text-foreground">
+          <code className="mt-1 block select-all whitespace-pre-wrap break-words rounded bg-muted px-2 py-1 text-[11px] text-foreground">
             {CLAUDE_CODE_ROTATE_COMMAND}
           </code>
         </Fact>

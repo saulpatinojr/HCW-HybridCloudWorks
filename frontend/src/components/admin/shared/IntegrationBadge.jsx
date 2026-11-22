@@ -49,6 +49,7 @@ export const BRANDS = Object.freeze({
   'google-developer': { name: 'Google', color: '#4285F4', site: 'https://developers.google.com' },
   nvidia: { name: 'NVIDIA', color: '#76B900', site: 'https://www.nvidia.com' },
   foundry: { name: 'Microsoft Foundry', color: '#0078D4', site: 'https://ai.azure.com' },
+  foundry: { name: 'Microsoft Foundry', color: '#0078D4', site: 'https://ai.azure.com' },
   azure: { name: 'Microsoft Azure', color: '#0078D4', site: 'https://azure.microsoft.com' },
   'azure-speech': {
     name: 'Azure AI Speech',

@@ -188,7 +188,9 @@ describe('Test all', () => {
         'telegram',
         'podbean',
         'mcpProxy',
-        // ADR 0033: the four language models, then the two AI-service probes.
+        // ADR 0033: the language models (five since Foundry got its card,
+        // 2026-11-22), then the two AI-service probes.
+        'testAiProvider',
         'testAiProvider',
         'testAiProvider',
         'testAiProvider',

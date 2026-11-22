@@ -53,6 +53,8 @@ describe('the service registry', () => {
       'Anthropic',
       'OpenAI',
       'NVIDIA API',
+      // 2026-11-22: the keyless provider the router has called since #849.
+      'Microsoft Foundry (Azure OpenAI)',
       'ElevenLabs',
       'Azure AI Speech',
       'Firecrawl',
@@ -82,6 +84,23 @@ describe('the service registry', () => {
     // The token is GitHub's alone, so it is never a key this card stores.
     expect(anthropic.secrets).toEqual(['ANTHROPIC-API-KEY']);
     expect(SERVICES.filter((service) => /claude/i.test(service.name))).toEqual([]);
+  });
+
+  it('gives the keyless Foundry provider a card with a test and no key, and says there is no key', () => {
+    const foundry = SERVICES.find((service) => service.id === 'foundry');
+    expect(foundry.group).toBe('gen-ai');
+    expect(foundry.secrets).toEqual([]);
+    expect(typeof foundry.test).toBe('function');
+    expect(foundry.securityNote).toMatch(/No key exists/);
+  });
+
+  it('says what every language model costs, and that the Anthropic button is the API key’s', () => {
+    for (const service of SERVICES.filter((s) => s.group === 'gen-ai')) {
+      expect(service.cost, `${service.name} does not say what it costs`).toMatch(/\w/);
+    }
+    const anthropic = SERVICES.find((service) => service.id === 'anthropic');
+    expect(anthropic.rotateLabel).toBe('Rotate or replace the API key');
+    expect(anthropic.rotateNote).toMatch(/Claude Code token/);
   });
 
   it('only groups keys a card actually uses, each once, and only names panels the Services tab draws', () => {
