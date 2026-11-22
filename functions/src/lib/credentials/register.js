@@ -507,6 +507,25 @@ const OTHER_ENTRIES = [
     lifetimeDays: null,
   },
   {
+    // Muse's read-only Azure access (#1763, infra/muse-reader.tf, ADR 0042).
+    // Terraform mints it and keeps it in this workspace's state; the owner
+    // copies it into Muse's own vault. A new one is made on the first apply
+    // after 180 days (time_rotating), but nothing reaches Muse until the
+    // owner copies it, so it is renewed by hand.
+    id: "tfc-azure-muse-reader-secret",
+    name: "muse_reader_client_secret (Terraform output; sp-muse-reader-plat-prod-cus-01)",
+    store: "tfc-azure",
+    consumer:
+      "Muse (Koda's runtime): Reader on the application, management and connectivity subscriptions, for alert investigations",
+    issuer: "Entra, created by Terraform (azuread_application_password)",
+    renewal: "hand",
+    // muse_reader_secret_days in infra/muse-reader.tf: the secret's own
+    // expiry, set to the estate's hand-rotation rule.
+    lifetimeDays: HAND_ROTATION_DAYS,
+    rotate:
+      "Run a plan and apply in hcw-azure (after 180 days it replaces the secret; raise muse_reader_secret_generation to do it sooner), then copy muse_reader_client_secret into Muse's vault: docs/runbooks/muse-azure-reader.md.",
+  },
+  {
     id: "tfc-lab-hostinger-api-token",
     name: "hostinger_api_token",
     store: "tfc-lab",

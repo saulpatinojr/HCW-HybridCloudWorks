@@ -432,8 +432,54 @@ function withoutSubscriptionWatch(value) {
   return `[${items.join(', ')}]`;
 }
 
+/**
+ * The only role assignments allowed at a WHOLE subscription: Muse's built-in
+ * Reader on each of the three, by owner request (#1763, ADR 0042). Muse (the
+ * runtime of Koda, the content agent) investigates alerts and must read the
+ * whole estate; github_reader, which could not read the Management
+ * subscription, is the gap the owner named. RBAC Administrator holds the
+ * assignment write at subscription scope and its condition does not refuse
+ * Reader, so this is a real widening of what infra/ grants, made on purpose.
+ * It is exactly these three labels, each Reader, each on its own
+ * subscription through that subscription's provider; the check below holds
+ * all of that, and every other block still goes through the scope checks.
+ */
+const SUBSCRIPTION_READ_GRANTS = {
+  muse_reader_app: 'app',
+  muse_reader_mgmt: 'mgmt',
+  muse_reader_conn: 'conn',
+};
+
+const isSubscriptionReadGrant = (b) => b.key === 'azurerm_role_assignment' && b.label in SUBSCRIPTION_READ_GRANTS;
+
+describe('the whole-subscription Reader grants (#1763)', () => {
+  const grantsFound = allBlocks(source).filter(isSubscriptionReadGrant);
+
+  it('are exactly the three Muse grants, one per subscription', () => {
+    expect(grantsFound.map((b) => b.label).sort()).toEqual(Object.keys(SUBSCRIPTION_READ_GRANTS).sort());
+  });
+
+  it('are built-in Reader on their own whole subscription, through that subscription\'s provider', () => {
+    for (const { label, body } of grantsFound) {
+      const slot = SUBSCRIPTION_READ_GRANTS[label];
+      const code = withoutComments(body);
+      expect(code, `${label} role`).toMatch(/^\s*role_definition_name\s*=\s*"Reader"\s*$/m);
+      expect(code, `${label} role`).not.toMatch(/role_definition_id/);
+      const scopeLine = new RegExp(`^\\s*scope\\s*=\\s*"/subscriptions/\\$\\{var\\.subscription_${slot}\\}"\\s*$`, 'm');
+      expect(code, `${label} scope`).toMatch(scopeLine);
+      const alias = code.match(/^\s*provider\s*=\s*azurerm\.(\w+)/m)?.[1] ?? '';
+      expect(SLOT_BY_PROVIDER[alias], `${label} provider`).toBe(slot);
+      expect(code, `${label} principal`).toMatch(/principal_id\s*=\s*azuread_service_principal\.muse_reader\[0\]\.object_id/);
+    }
+  });
+});
+
 describe('what infra/ does once subscription Contributor is gone (SEC-1 step two)', () => {
-  const blocks = allBlocks(source).filter((b) => /^(data\.)?(azurerm|azapi)_/.test(b.key));
+  // The three whole-subscription Reader grants are held by the describe
+  // above and are the only blocks left out of the scope checks below.
+  const blocks = allBlocks(source)
+    .filter((b) => /^(data\.)?(azurerm|azapi)_/.test(b.key))
+    .filter((b) => !isSubscriptionReadGrant(b));
   const declared = Object.values(declaredResourceGroups()).flat();
   const values = {
     'var.workload_name': stringDefault('workload_name'),

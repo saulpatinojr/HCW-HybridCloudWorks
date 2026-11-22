@@ -29,6 +29,12 @@
 # resource this module manages. Removing the output removed its exposure on the
 # HCP Terraform Outputs tab and the long-lived GitHub secret beside it. It did
 # not remove the credential from state, and no output block ever could.
+#
+# A SECOND EXCEPTION, NOT IN THIS FILE: muse_reader_client_secret in
+# muse-reader.tf (#1763). It is a real credential, kept in state and output
+# on purpose, because the owner asked for it and Muse cannot sign in without a
+# stored secret (ADR 0042). It is Reader only, and it is null until
+# muse_reader_enabled is true.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
