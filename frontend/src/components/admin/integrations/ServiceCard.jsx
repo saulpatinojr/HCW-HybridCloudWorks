@@ -194,12 +194,15 @@ function KeyNames({ items, groups, panels }) {
   );
 }
 
-/** What the service is for, as four short facts (ADR 0033 Platform). */
+/** What the service is for, as short facts (ADR 0033 Platform), with what it costs where that is written. */
 function ServiceFacts({ service }) {
   const rows = [
     ['Can do', service.capabilities?.length ? service.capabilities.join(' · ') : null],
     ['Used in', service.usedIn?.length ? service.usedIn.join(', ') : null],
     ['Data flow', service.dataDirection || null],
+    // What using it costs, in words: a bill per call, a plan's limits, or
+    // nothing (owner instruction 2026-11-22). Absent where not yet written.
+    ['Cost', service.cost || null],
     ['Key reach', service.securityNote || null],
   ].filter(([, value]) => value);
   if (rows.length === 0) return null;
@@ -233,11 +236,14 @@ function ConnectionActions({ service, onOpenKeys }) {
         <>
           {onOpenKeys ? (
             <Button size="sm" variant="outline" onClick={onOpenKeys}>
-              <KeyRound className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Rotate or replace the
-              key
+              <KeyRound className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />{' '}
+              {service.rotateLabel || 'Rotate or replace the key'}
             </Button>
           ) : null}
-          <span className="min-w-0 flex-1 text-muted-foreground">{DISCONNECT_NOTE}</span>
+          <span className="min-w-0 flex-1 text-muted-foreground">
+            {service.rotateNote ? `${service.rotateNote} ` : null}
+            {DISCONNECT_NOTE}
+          </span>
         </>
       ) : null}
     </div>

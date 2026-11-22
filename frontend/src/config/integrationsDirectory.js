@@ -169,6 +169,14 @@ export const DIRECTORY = Object.freeze([
     docsUrl: 'https://docs.api.nvidia.com',
   },
   {
+    id: 'foundry',
+    category: 'ai',
+    summary: 'OpenAI models hosted in this site’s own Azure subscription, reached without a key.',
+    powers:
+      'Drafting, summarising and grading content, and answering questions from private notes in Second Brain.',
+    docsUrl: 'https://learn.microsoft.com/azure/foundry/foundry-models/how-to/configure-entra-id',
+  },
+  {
     id: 'elevenlabs',
     category: 'ai',
     summary: 'Text-to-speech voices.',
