@@ -1074,12 +1074,13 @@ describe('DECLARED', () => {
     // declared the rule again (three rows more); those applied and were
     // deleted on 2026-11-01. It left it again for #1612's one row
     // (syncSearchConsole); put it back once that declaration is deleted.
+    // logs_daily_cap left it for #1729's cap raise (its threshold follows the
+    // cap); put it back once that declaration is deleted.
     const addresses = DECLARED.map((entry) => entry.address);
     for (const name of [
       'lab_hybrid_backup_missing_coder',
       'lab_hybrid_backup_missing_vault',
       'lab_hybrid_disk_used',
-      'logs_daily_cap',
       'export_window_latency',
     ]) {
       expect(addresses, name).not.toContain(`azurerm_monitor_scheduled_query_rules_alert_v2.${name}`);

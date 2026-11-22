@@ -770,6 +770,23 @@ export const DECLARED = [
     after: "sc-domain:hybridcloudworks.com",
     reason: "#1612: the Search Console property the page reads",
   },
+  // #1729: the owner raised the workspace's daily cap on 2026-11-22. The 80%
+  // warning reads the cap from the workspace, so its threshold moves with it.
+  // Delete both once the plan shows them applied.
+  {
+    address: "azurerm_log_analytics_workspace.hcw",
+    path: "daily_quota_gb",
+    before: 0.25,
+    after: 0.5,
+    reason: "#1729: owner decision 2026-11-22, the daily cap 0.25 -> 0.5 GB",
+  },
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.logs_daily_cap",
+    path: "criteria[0].threshold",
+    before: 0.2,
+    after: 0.4,
+    reason: "#1729: the 80% capacity warning follows the cap, 0.2 -> 0.4 GB",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
