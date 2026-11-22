@@ -14,7 +14,7 @@
 # would have shown it. Both halves are fixed here.
 #
 # Ingestion from every diagnostic setting here lands in the Log Analytics
-# workspace, which carries a 0.25 GB/day cap (main.tf). The cap is the cost
+# workspace, which carries a daily cap (`logs_daily_quota_gb`, variables.tf; main.tf). The cap is the cost
 # ceiling for this whole file. It is no longer a ceiling anyone has to
 # remember: `logs_daily_cap` below fires at 80% of whatever the cap is set to,
 # derived from the workspace resource so the two cannot drift.
@@ -1610,7 +1610,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "cosmos_export_full_mi
 # configuration, vault data writes, failed vault calls. Every rule below reads
 # data the estate ALREADY collects (the diagnostic settings above, the
 # Application Insights component, the Activity Log), so none of them adds a
-# byte of ingestion against the 0.25 GB/day cap.
+# byte of ingestion against the workspace's daily cap.
 #
 # Two shapes, chosen per condition for cost:
 #
