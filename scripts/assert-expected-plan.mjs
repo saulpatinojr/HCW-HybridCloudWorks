@@ -358,6 +358,10 @@ export const DECLARED = [
   //   Terraform only reads that role.
   // - #970's alert-export-window-latency create, read OK by
   //   verify-alert-state.yml.
+  // - #1729's daily cap, daily_quota_gb 0.25 -> 0.5, and the logs_daily_cap
+  //   threshold it drives, 0.2 -> 0.4. Applied 2026-11-22 in
+  //   run-KDU2GZ8ngCB55t67, which the owner confirmed; both entries deleted
+  //   here the same day.
   //
   // The weekly AI provider probe's timer flag (#701): the key applied disarmed
   // ('false', present in state since the 2026-10-06 runs); adding
@@ -769,23 +773,6 @@ export const DECLARED = [
     before: undefined,
     after: "sc-domain:hybridcloudworks.com",
     reason: "#1612: the Search Console property the page reads",
-  },
-  // #1729: the owner raised the workspace's daily cap on 2026-11-22. The 80%
-  // warning reads the cap from the workspace, so its threshold moves with it.
-  // Delete both once the plan shows them applied.
-  {
-    address: "azurerm_log_analytics_workspace.hcw",
-    path: "daily_quota_gb",
-    before: 0.25,
-    after: 0.5,
-    reason: "#1729: owner decision 2026-11-22, the daily cap 0.25 -> 0.5 GB",
-  },
-  {
-    address: "azurerm_monitor_scheduled_query_rules_alert_v2.logs_daily_cap",
-    path: "criteria[0].threshold",
-    before: 0.2,
-    after: 0.4,
-    reason: "#1729: the 80% capacity warning follows the cap, 0.2 -> 0.4 GB",
   },
 ];
 
