@@ -358,6 +358,10 @@ export const DECLARED = [
   //   Terraform only reads that role.
   // - #970's alert-export-window-latency create, read OK by
   //   verify-alert-state.yml.
+  // - #1729's daily cap, daily_quota_gb 0.25 -> 0.5, and the logs_daily_cap
+  //   threshold it drives, 0.2 -> 0.4. Applied 2026-11-22 in
+  //   run-KDU2GZ8ngCB55t67, which the owner confirmed; both entries deleted
+  //   here the same day.
   //
   // The weekly AI provider probe's timer flag (#701): the key applied disarmed
   // ('false', present in state since the 2026-10-06 runs); adding

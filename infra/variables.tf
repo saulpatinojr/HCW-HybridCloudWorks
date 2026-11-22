@@ -553,10 +553,11 @@ variable "budget_amount_usd" {
 # The application budget watches sub-app-site-prod-cus. Log Analytics bills in
 # sub-plat-mgmt-prod-cus, which had no budget at all — so the one line that
 # actually varies with load (ingestion, at roughly USD 2.30-2.76/GB) was the
-# one line nothing was watching. A 0.25 GB/day cap is about 7.5 GB/month, so
-# 25 is a ceiling the workspace should never reach while the cap holds, and one
-# that fires early if the cap is ever raised without the spend being thought
-# about.
+# one line nothing was watching. The 0.5 GB/day cap (since 2026-11-22) is at most
+# about 15 GB/month, roughly USD 26 with retention if the cap were hit every
+# day, so 25 is reached only when the cap is, and it fires early if the cap is
+# ever raised again without the spend being thought about. At the ~0.3 GB/day
+# measured then, the expected spend is about half of it.
 variable "budget_amount_mgmt_usd" {
   description = "Monthly budget ceiling in USD for the Platform Management subscription — Log Analytics ingestion and retention"
   type        = number
@@ -708,9 +709,19 @@ variable "logs_daily_quota_gb" {
     NEGATIVE threshold and it would fire on every evaluation, forever, about a
     cap that does not exist. Raising the number keeps the alert meaningful at
     the new level; removing the cap silently turns a guard into a mail rule.
+
+    0.5 SINCE 2026-11-22 (owner decision, PR #1729's investigation). Demand had
+    grown to about 0.3 GB/day: the 0.25 cap was hit at 04:15 UTC on Nov 14 and
+    03:00 UTC on Nov 15, and every log alert was blind until the 08:00 UTC reset,
+    which raised false timer-overdue, Cosmos-export and backup-missing alerts.
+    Ingestion is billed on what arrives, not on the cap: at ~0.3 GB/day that is
+    about USD 11-13/month with retention, and 0.5 GB/day every day is the ceiling,
+    about USD 26/month (USD 2.30/GB after 5 GB/month free per billing account,
+    plus USD 0.10/GB/month beyond 31 days of retention; Azure Monitor pricing
+    page, read 2026-11-22). The 80% warning moves to 0.4 GB/day with it.
   EOT
   type        = number
-  default     = 0.25
+  default     = 0.5
 
   validation {
     condition     = var.logs_daily_quota_gb > 0
@@ -724,7 +735,8 @@ variable "logs_retention_in_days" {
 
     30 days is the Azure PerGB2018 included minimum. 90 days satisfies the compliance
     audit finding for retaining security logs, audit events, syslog, and diagnostics.
-    At the 0.25 GB/day daily cap, 90 days retention incurs negligible additional cost (~$1.50/mo).
+    At the 0.5 GB/day daily cap, 90 days retention costs about $3/mo at most
+    (59 days beyond the 31 included, at $0.10/GB/month).
   EOT
   type        = number
   default     = 90
