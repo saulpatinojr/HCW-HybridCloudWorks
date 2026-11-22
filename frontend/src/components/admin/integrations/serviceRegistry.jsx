@@ -711,12 +711,26 @@ export const SERVICES = Object.freeze([
     description:
       'One of the models the site writes with, tried in the order set on the AI Engine page.',
     url: 'https://console.anthropic.com/settings/keys',
+    // The Test is the API key's: the site holds that one and can ask.
     test: testAiProvider('anthropic', 'Anthropic'),
     secrets: ['ANTHROPIC-API-KEY'],
-    capabilities: ['Draft, summarise and grade content'],
-    usedIn: ['Forge Studio', 'Review Queue (inspector)', 'AI Engine'],
-    dataDirection: 'Outbound: article text and prompts go to Anthropic; drafts come back.',
-    securityNote: LLM_SECURITY_NOTE,
+    // Two credentials from one vendor, so one card with a box each (owner
+    // instruction 2026-11-22). The API key is the site's and is replaced on
+    // the Keys tab. The Claude Code token is GitHub's alone: the site never
+    // holds it, so its box lists it (stored where, cost, how to check and
+    // replace it, when it expires) and has no key row and no test of its own.
+    keyGroups: [
+      { title: 'API key (the site writes with it)', secrets: ['ANTHROPIC-API-KEY'] },
+      { title: 'Claude Code (answers @claude on GitHub)', panel: 'claudeCode' },
+    ],
+    capabilities: [
+      'Draft, summarise and grade content',
+      'Answer @claude comments on GitHub (Claude Code)',
+    ],
+    usedIn: ['Forge Studio', 'Review Queue (inspector)', 'AI Engine', 'GitHub (@claude comments)'],
+    dataDirection:
+      'Outbound: article text and prompts go to Anthropic; drafts come back. On GitHub, a run sends the repository’s code and the comment to Anthropic.',
+    securityNote: `${LLM_SECURITY_NOTE} The Claude Code token is a separate credential held only by GitHub; this site cannot read or write it.`,
   },
   {
     id: 'openai',

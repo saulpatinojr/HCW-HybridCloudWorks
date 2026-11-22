@@ -148,8 +148,10 @@ export const DIRECTORY = Object.freeze([
   {
     id: 'anthropic',
     category: 'ai',
-    summary: 'The Claude family of language models.',
-    powers: 'Drafting, summarising and grading content, in the order set on AI Engine.',
+    summary:
+      'The Claude family of language models, and Claude Code, which works on the repositories.',
+    powers:
+      'Drafting, summarising and grading content, in the order set on AI Engine. Separately, answering @claude comments on GitHub in five repositories.',
     docsUrl: 'https://docs.anthropic.com',
   },
   {
