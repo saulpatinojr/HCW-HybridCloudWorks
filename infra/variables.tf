@@ -1707,9 +1707,9 @@ variable "muse_reader_secret_generation" {
   description = <<-EOT
     Raise by one to replace Muse's client secret on the next apply, for
     example after a suspected leak (docs/runbooks/muse-azure-reader.md,
-    "Rotate the secret now"). The secret is also replaced by itself every
-    180 days; this is the on-demand lever. The old secret stops working in
-    the same apply.
+    "Rotate the secret"). This is the only thing that replaces the secret:
+    each one works for 210 days, and the reminder asks for a rotation at
+    day 180. The old secret stops working in the same apply.
   EOT
   type        = number
   default     = 1

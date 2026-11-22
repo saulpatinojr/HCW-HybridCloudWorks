@@ -509,9 +509,9 @@ const OTHER_ENTRIES = [
   {
     // Muse's read-only Azure access (#1763, infra/muse-reader.tf, ADR 0042).
     // Terraform mints it and keeps it in this workspace's state; the owner
-    // copies it into Muse's own vault. A new one is made on the first apply
-    // after 180 days (time_rotating), but nothing reaches Muse until the
-    // owner copies it, so it is renewed by hand.
+    // copies it into Muse's own vault. Each secret works for 210 days; a new
+    // one is made only when the owner raises muse_reader_secret_generation,
+    // and nothing reaches Muse until the owner copies it: renewed by hand.
     id: "tfc-azure-muse-reader-secret",
     name: "muse_reader_client_secret (Terraform output; sp-muse-reader-plat-prod-cus-01)",
     store: "tfc-azure",
@@ -523,7 +523,7 @@ const OTHER_ENTRIES = [
     // expiry, set to the estate's hand-rotation rule.
     lifetimeDays: HAND_ROTATION_DAYS,
     rotate:
-      "Run a plan and apply in hcw-azure (after 180 days it replaces the secret; raise muse_reader_secret_generation to do it sooner), then copy muse_reader_client_secret into Muse's vault: docs/runbooks/muse-azure-reader.md.",
+      "Raise muse_reader_secret_generation by one in hcw-azure, plan and apply, then copy muse_reader_client_secret into Muse's vault; it stops working 30 days after this reminder: docs/runbooks/muse-azure-reader.md.",
   },
   {
     id: "tfc-lab-hostinger-api-token",

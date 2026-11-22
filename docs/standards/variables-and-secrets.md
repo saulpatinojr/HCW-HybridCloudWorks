@@ -390,7 +390,7 @@ acceptable is what the secret can do: built-in Reader, no data action, no
 `listKeys`, no Key Vault secret value. It still widens who can read the
 estate to whoever can read the `hcw-azure` state, and that is written down in
 the ADR as the accepted risk. The value is copied once into Muse's own vault
-and renewed every 180 days ([runbook](../runbooks/muse-azure-reader.md)).
+and rotated on a 180-day reminder ([runbook](../runbooks/muse-azure-reader.md)).
 The alternative the ADR records, if the owner later wants the value out of
 state, is Terraform keeping the app and its grants while the owner mints the
 secret with `az ad app credential reset`.

@@ -51,6 +51,7 @@ Reader is "look, don't touch": it allows every read and no change
 | Read a Key Vault secret's value | That is a data action; Reader has none |
 | Read storage blobs, Cosmos DB documents, or a storage account's keys | Data actions, or a `listKeys` action, not reads |
 | Read the Function App's setting values | Listing them is an action (`config/list`), not a read |
+| Use most resource settings to act | It **can** read settings that are ordinary properties, which includes Application Insights connection strings (enough to send made-up telemetry, not to read any) and the inputs of past deployments. Nothing in this estate keeps a secret there: Key Vault holds them |
 | Read a Log Analytics table marked "protected" | Protected tables need a separate data role ([protected tables](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/manage-access)); none is set up in this estate today |
 
 One thing to be aware of: logs can carry what visitors sent (IP addresses,
@@ -74,7 +75,7 @@ yourself first (`az login`). You need to be able to assign Entra roles
    it.
 
    ```powershell
-   $sp = @(az ad sp list --display-name id-plat-terraform-prod-cus-01 -o json | ConvertFrom-Json); if ($sp.Count -ne 1) { Write-Error "Expected one identity named id-plat-terraform-prod-cus-01, found $($sp.Count)" } else { @{ principalId = $sp[0].id; roleDefinitionId = 'cf1c38e5-3621-4004-a7cb-879624dced7c'; directoryScopeId = '/' } | ConvertTo-Json -Compress | Set-Content -Encoding utf8NoBOM "$env:TEMP\hcw-app-developer.json"; az rest --method POST --url https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments --body "@$env:TEMP\hcw-app-developer.json" }
+   $sp = @(az ad sp list --display-name id-plat-terraform-prod-cus-01 -o json | ConvertFrom-Json); if ($sp.Count -ne 1) { Write-Error "Expected one identity named id-plat-terraform-prod-cus-01, found $($sp.Count)" } else { @{ principalId = $sp[0].id; roleDefinitionId = 'cf1c38e5-3621-4004-a7cb-879624dced7c'; directoryScopeId = '/' } | ConvertTo-Json -Compress | Set-Content -Encoding ascii "$env:TEMP\hcw-app-developer.json"; az rest --method POST --url https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments --body "@$env:TEMP\hcw-app-developer.json" }
    ```
 
    **Worked:** a block of JSON that includes
@@ -96,7 +97,7 @@ yourself first (`az login`). You need to be able to assign Entra roles
    **7 to add** for these, and nothing else from this change:
    `azuread_application.muse_reader[0]`,
    `azuread_service_principal.muse_reader[0]`,
-   `time_rotating.muse_reader_secret[0]`,
+   `time_static.muse_reader_secret[0]`,
    `azuread_application_password.muse_reader[0]`, and
    `azurerm_role_assignment.muse_reader_app[0]`, `_mgmt[0]` and `_conn[0]`,
    each with `role_definition_name = "Reader"`. **If you see** anything
@@ -113,8 +114,11 @@ yourself first (`az login`). You need to be able to assign Entra roles
    (`terraform login`, once).
 
    ```powershell
-   Set-Location infra; terraform init -input=false | Out-Null; terraform output -raw muse_reader_client_secret | Set-Clipboard; terraform output -raw muse_reader_client_id; terraform output -raw muse_reader_tenant_id; terraform output -raw muse_reader_secret_expires; Set-Location ..
+   Set-Location infra; terraform init -input=false | Out-Null; terraform output -raw muse_reader_client_secret | Set-Clipboard; terraform output -raw muse_reader_client_id; terraform output -raw muse_reader_tenant_id; terraform output -raw muse_reader_secret_expires; git checkout -- .terraform.lock.hcl; Set-Location ..
    ```
+
+   The `git checkout` puts back the provider lock file, which `terraform init`
+   may have added Windows entries to.
 
    **Worked:** three lines print: the client id, the tenant id (both are
    identifiers, not secrets) and the date the secret stops working; the
@@ -128,12 +132,12 @@ yourself first (`az login`). You need to be able to assign Entra roles
 6. **Record the date on the Credentials tab.** Open
    [Admin → Integrations → Credentials](https://hybridcloudworks.com/admin/integrations?tab=credentials),
    find `muse_reader_client_secret` under **HCP Terraform hcw/hcw-azure**,
-   and record today as the date it was made. That sets the 180-day reminder.
+   and record today as the date it was made. That sets the reminder, due 180 days later.
 
 7. **Check the three grants.**
 
    ```powershell
-   $app = @(az ad app list --display-name sp-muse-reader-plat-prod-cus-01 -o json | ConvertFrom-Json); foreach ($s in 'sub-app-site-prod-cus', 'sub-plat-mgmt-prod-cus', 'sub-plat-conn-prod-cus') { az role assignment list --assignee $app[0].appId --subscription $s -o json | ConvertFrom-Json | Select-Object roleDefinitionName, scope }
+   $app = @(az ad app list --display-name sp-muse-reader-plat-prod-cus-01 -o json | ConvertFrom-Json); if ($app.Count -ne 1) { Write-Error "Expected one app named sp-muse-reader-plat-prod-cus-01, found $($app.Count)" } else { foreach ($s in 'sub-app-site-prod-cus', 'sub-plat-mgmt-prod-cus', 'sub-plat-conn-prod-cus') { az role assignment list --assignee $app[0].appId --subscription $s -o json | ConvertFrom-Json | Select-Object roleDefinitionName, scope } }
    ```
 
    **Worked:** three rows, each `Reader`, each with a scope of
@@ -141,21 +145,25 @@ yourself first (`az login`). You need to be able to assign Entra roles
 
 ## Rotate the secret
 
-**On schedule (every 180 days).** The reminders sheet raises it. Run a plan
-and apply on
-[hcw-azure → Runs](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs):
-from day 180 the plan replaces `time_rotating.muse_reader_secret[0]` and
-`azuread_application_password.muse_reader[0]`. Then do step 5 and step 6 of
-"Turn it on" again. The old secret stops working in that same apply, so have
-Muse's vault open. If no apply happens, the old secret keeps working for 30
-more days, then stops.
+Each secret works for **210 days**. The reminders sheet asks for a rotation at
+day 180, which leaves 30 days of slack. Nothing replaces the secret by itself:
+only the steps below do, so an unrelated merge can never cut Muse off.
+Rotate on the reminder, or at once after a suspected leak.
 
-**Now (for example after a suspected leak).** On
-[hcw-azure → Variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables)
-set `muse_reader_secret_generation` one higher than it is (add it with value
-`2`, HCL ticked, if it is not there yet). Run a plan and apply; the plan
-replaces the same two resources and nothing else. Then do steps 5 and 6
-again. The leaked secret stops working when the apply finishes.
+1. On
+   [hcw-azure → Variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables)
+   set `muse_reader_secret_generation` one higher than it is. If it is not
+   there yet, add it as a Terraform variable with value `2`, **HCL** ticked.
+2. Start a run on
+   [hcw-azure → Runs](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
+   **Worked:** the plan replaces exactly two resources,
+   `time_static.muse_reader_secret[0]` and
+   `azuread_application_password.muse_reader[0]`. **If you see** anything
+   else from this file changing, stop and do not confirm.
+3. ⚠️ Confirm the apply, with Muse's vault open: the old secret stops working
+   in this apply.
+4. Do steps 5 and 6 of "Turn it on" again: copy the new secret into Muse's
+   vault, and record today on the Credentials tab.
 
 ## Revoke it
 
@@ -163,7 +171,9 @@ again. The leaked secret stops working when the apply finishes.
 [hcw-azure → Variables](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables)
 set `muse_reader_enabled` to `false`, then run a plan and apply. ⚠️ The plan
 **destroys** the app registration, its secret and the three Reader grants
-(seven resources); this cannot be undone, and turning it back on later makes
+(seven resources). Terraform will not bring them back (Entra keeps a deleted
+app restorable for 30 days, but restoring it by hand is not this runbook's
+path), and turning it back on later makes
 a new app with a new client id. **Worked:** the run ends **Applied** with 7
 destroyed, and step 7 above finds nothing.
 
@@ -171,7 +181,7 @@ destroyed, and step 7 above finds nothing.
 new sign-in token:
 
 ```powershell
-$app = @(az ad app list --display-name sp-muse-reader-plat-prod-cus-01 -o json | ConvertFrom-Json); az ad sp update --id $app[0].appId --set accountEnabled=false
+$app = @(az ad app list --display-name sp-muse-reader-plat-prod-cus-01 -o json | ConvertFrom-Json); if ($app.Count -ne 1) { Write-Error "Expected one app named sp-muse-reader-plat-prod-cus-01, found $($app.Count)" } else { az ad sp update --id $app[0].appId --set accountEnabled=false }
 ```
 
 **Worked:** no output. A token Muse already holds keeps working until it

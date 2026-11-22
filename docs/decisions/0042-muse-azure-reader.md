@@ -73,9 +73,10 @@ repository had settled the other way:
    That is narrower than Application Administrator or Cloud Application
    Administrator, which reach every app in the tenant. Setting the switch
    back to `false` destroys all of it: the revoke.
-3. **The secret lasts 180 days plus 30 days' grace**, by `time_rotating`. The
-   first plan after day 180 makes a new one, and raising
-   `muse_reader_secret_generation` makes a new one on demand. 180 is the
+3. **Each secret works for 210 days**, and is replaced only when the owner
+   raises `muse_reader_secret_generation` (a `time_static` start date keyed
+   on it), so no unrelated apply can replace it and cut Muse off. The
+   reminder is due at day 180, leaving 30 days' slack. 180 is the
    estate's hand-rotation rule (`HAND_ROTATION_DAYS`) and within Microsoft's
    "less than 12 months". The credential register carries it
    (`tfc-azure-muse-reader-secret`), so it is on Admin → Integrations →
@@ -102,6 +103,9 @@ repository had settled the other way:
   Key Vault secret value, no blob, no Cosmos document, no storage key, no
   Function App setting value. It is not bounded on logs: every log the
   estate keeps, including visitor IP addresses in request logs, is readable.
+  It also reads ordinary resource properties, which include Application
+  Insights connection strings (enough to send made-up telemetry) and the
+  inputs of past ARM deployments.
 - **The run identity gains a lasting Entra role.** Application Developer is
   the smallest built-in role that creates app registrations; it includes
   `oAuth2PermissionGrants/createAsOwner`, which Microsoft marks privileged.

@@ -450,7 +450,8 @@ const SUBSCRIPTION_READ_GRANTS = {
   muse_reader_conn: 'conn',
 };
 
-const isSubscriptionReadGrant = (b) => b.key === 'azurerm_role_assignment' && b.label in SUBSCRIPTION_READ_GRANTS;
+const isSubscriptionReadGrant = (b) =>
+  b.key === 'azurerm_role_assignment' && Object.hasOwn(SUBSCRIPTION_READ_GRANTS, b.label);
 
 describe('the whole-subscription Reader grants (#1763)', () => {
   const grantsFound = allBlocks(source).filter(isSubscriptionReadGrant);
@@ -461,7 +462,7 @@ describe('the whole-subscription Reader grants (#1763)', () => {
 
   it('are built-in Reader on their own whole subscription, through that subscription\'s provider', () => {
     for (const { label, body } of grantsFound) {
-      const slot = SUBSCRIPTION_READ_GRANTS[label];
+      const slot = Object.hasOwn(SUBSCRIPTION_READ_GRANTS, label) ? SUBSCRIPTION_READ_GRANTS[label] : undefined;
       const code = withoutComments(body);
       expect(code, `${label} role`).toMatch(/^\s*role_definition_name\s*=\s*"Reader"\s*$/m);
       expect(code, `${label} role`).not.toMatch(/role_definition_id/);

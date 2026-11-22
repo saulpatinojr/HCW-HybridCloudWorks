@@ -63,7 +63,7 @@ locals {
   # https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials
   muse_reader_secret_days = 180
 
-  # How long a secret outlives its rotation date (see time_rotating below).
+  # How long a secret outlives its rotation date (see time_static below).
   muse_reader_secret_grace_days = 30
 
   muse_reader_name = "sp-muse-reader-plat-${var.environment}-${var.region_abbreviation}-${var.instance}"
@@ -92,33 +92,32 @@ resource "azuread_service_principal" "muse_reader" {
   owners    = [data.azuread_client_config.current[0].object_id]
 }
 
-# A new secret every muse_reader_secret_days. Once that date has passed, the
-# next plan replaces time_rotating, which replaces the password below; the
-# old password is deleted in the same apply, so Muse needs the new value at
-# once. Raising var.muse_reader_secret_generation replaces it the same way on
-# demand (a suspected leak), and starts a fresh 180 days.
-#
-# The secret itself lasts 30 days longer than the rotation date, so a quiet
-# month with no apply after day 180 does not lock Muse out; the credential
-# register's reminder, due at day 180, is the prompt to rotate in that window.
-resource "time_rotating" "muse_reader_secret" {
+# The secret's start date. It changes only when the owner raises
+# var.muse_reader_secret_generation, so the secret is replaced only on a run
+# the owner chose, never by an unrelated merge's apply. (A time_rotating here
+# would drop out of state after 180 days and make the next estate-wide apply,
+# whoever started it, delete the secret Muse is using.)
+resource "time_static" "muse_reader_secret" {
   count = var.muse_reader_enabled ? 1 : 0
 
-  rotation_days = local.muse_reader_secret_days
   triggers = {
     generation = tostring(var.muse_reader_secret_generation)
   }
 }
 
+# The secret works for 180 + 30 days. The credential register's reminder is
+# due at day 180 and asks for a rotation (raise the generation, apply, copy
+# the new value to Muse); the 30 days are the slack before Muse is locked
+# out. A rotation deletes the old secret in the same apply.
 resource "azuread_application_password" "muse_reader" {
   count = var.muse_reader_enabled ? 1 : 0
 
   application_id = azuread_application.muse_reader[0].id
   display_name   = "muse-reader-${var.muse_reader_secret_generation}"
-  end_date       = timeadd(time_rotating.muse_reader_secret[0].rotation_rfc3339, "${local.muse_reader_secret_grace_days * 24}h")
+  end_date       = timeadd(time_static.muse_reader_secret[0].rfc3339, "${(local.muse_reader_secret_days + local.muse_reader_secret_grace_days) * 24}h")
 
   rotate_when_changed = {
-    rotation = time_rotating.muse_reader_secret[0].id
+    generation = time_static.muse_reader_secret[0].id
   }
 }
 
@@ -178,6 +177,6 @@ output "muse_reader_client_secret" {
 }
 
 output "muse_reader_secret_expires" {
-  description = "When the current Muse secret stops working (RFC 3339); any plan from 30 days before this date replaces it"
+  description = "When the current Muse secret stops working (RFC 3339); rotate before it by raising muse_reader_secret_generation"
   value       = var.muse_reader_enabled ? azuread_application_password.muse_reader[0].end_date : null
 }
