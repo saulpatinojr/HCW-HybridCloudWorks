@@ -1,4 +1,4 @@
-# ADR 0042: Muse reads the whole Azure estate through a Terraform-made app registration with a client secret
+# ADR 0043: Muse reads the whole Azure estate through a Terraform-made app registration with a client secret
 
 **Status:** Proposed (owner request of 2026-11-22; accepted when the owner merges
 [#1763](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1763)'s pull request)

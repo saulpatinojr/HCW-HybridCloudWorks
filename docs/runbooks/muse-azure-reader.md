@@ -5,7 +5,7 @@
 > The Terraform is in
 > [`infra/muse-reader.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/muse-reader.tf);
 > nothing is created until you do "Turn it on" below. The decision and its
-> trade-offs are in [ADR 0042](../decisions/0042-muse-azure-reader.md).
+> trade-offs are in [ADR 0043](../decisions/0043-muse-azure-reader.md).
 
 **Scope:** what Muse can read in Azure, the one-time setup, how to hand the
 secret to Muse, how to rotate it, and how to take the access away.
@@ -71,7 +71,7 @@ yourself first (`az login`). You need to be able to assign Entra roles
    Entra entries. Application Developer lets it create app registrations and
    change only the ones it created; it cannot touch any other app, user or
    group ([role reference](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference#application-developer)).
-   This is a lasting extra permission for the run identity; ADR 0042 records
+   This is a lasting extra permission for the run identity; ADR 0043 records
    it.
 
    ```powershell
@@ -191,7 +191,7 @@ because Terraform manages that setting.
 
 ## Related
 
-- [ADR 0042](../decisions/0042-muse-azure-reader.md): why an app registration
+- [ADR 0043](../decisions/0043-muse-azure-reader.md): why an app registration
   with a secret, why Reader on whole subscriptions, and the risks accepted.
 - [Required inputs §4.1 and §4.10](../standards/required-inputs.md): the two
   workspace variables and the four outputs.

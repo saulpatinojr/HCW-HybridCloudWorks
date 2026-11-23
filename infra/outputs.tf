@@ -33,7 +33,7 @@
 # A SECOND EXCEPTION, NOT IN THIS FILE: muse_reader_client_secret in
 # muse-reader.tf (#1763). It is a real credential, kept in state and output
 # on purpose, because the owner asked for it and Muse cannot sign in without a
-# stored secret (ADR 0042). It is Reader only, and it is null until
+# stored secret (ADR 0043). It is Reader only, and it is null until
 # muse_reader_enabled is true.
 # =============================================================================
 

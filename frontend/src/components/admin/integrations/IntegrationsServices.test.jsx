@@ -9,6 +9,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
+import { MemoryRouter } from 'react-router';
 import IntegrationsServices from './IntegrationsServices';
 import useServiceTests from './useServiceTests';
 
@@ -61,13 +62,17 @@ const onOpenKeys = vi.fn();
 
 function Harness({ group }) {
   const tests = useServiceTests();
+  // Inside a router, as the page is: the boxes that list a credential the
+  // hub does not hold link to other admin tabs.
   return (
-    <IntegrationsServices
-      group={group}
-      onGroupChange={onGroupChange}
-      onOpenKeys={onOpenKeys}
-      tests={tests}
-    />
+    <MemoryRouter>
+      <IntegrationsServices
+        group={group}
+        onGroupChange={onGroupChange}
+        onOpenKeys={onOpenKeys}
+        tests={tests}
+      />
+    </MemoryRouter>
   );
 }
 

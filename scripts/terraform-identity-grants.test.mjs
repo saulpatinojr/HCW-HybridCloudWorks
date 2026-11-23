@@ -434,7 +434,7 @@ function withoutSubscriptionWatch(value) {
 
 /**
  * The only role assignments allowed at a WHOLE subscription: Muse's built-in
- * Reader on each of the three, by owner request (#1763, ADR 0042). Muse (the
+ * Reader on each of the three, by owner request (#1763, ADR 0043). Muse (the
  * runtime of Koda, the content agent) investigates alerts and must read the
  * whole estate; github_reader, which could not read the Management
  * subscription, is the gap the owner named. RBAC Administrator holds the

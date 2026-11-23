@@ -377,7 +377,7 @@ file there. From the split of `main.tf` (#269) until 2026-09-29 it read
 runs its tests, so a file move cannot break it silently again.
 
 **One secret is made by Terraform and kept in state, by the owner's decision
-(#1763, [ADR 0042](../decisions/0042-muse-azure-reader.md)).** Muse's
+(#1763, [ADR 0043](../decisions/0043-muse-azure-reader.md)).** Muse's
 read-only Azure sign-in, `azuread_application_password.muse_reader` in
 `infra/muse-reader.tf`, exported as the sensitive output
 `muse_reader_client_secret`. It is an exception to the rule above, made with

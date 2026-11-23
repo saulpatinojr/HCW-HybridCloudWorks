@@ -67,10 +67,11 @@ describe('the registry', () => {
 
   it('covers every hub and every testable Integrations service, by the same test function', () => {
     expect(probesByHub().map((group) => group.id)).toEqual(Object.keys(HUBS));
-    // The four language models are one probe here — `ai-providers` asks every
+    // The five language models are one probe here — `ai-providers` asks every
     // ENABLED provider, which is the question Health has — so their cards'
-    // tests are covered by it rather than by four more cards.
-    const coveredByAiProviders = new Set(['gemini', 'anthropic', 'openai', 'nvidia']);
+    // tests are covered by it rather than by five more cards. Foundry, the
+    // keyless one, is a provider like the rest and got its card on 2026-11-22.
+    const coveredByAiProviders = new Set(['gemini', 'anthropic', 'openai', 'nvidia', 'foundry']);
     const testable = SERVICES.filter((service) => service.test).map((service) => service.id);
     for (const id of testable) {
       if (coveredByAiProviders.has(id)) continue;

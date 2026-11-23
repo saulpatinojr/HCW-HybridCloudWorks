@@ -7,7 +7,7 @@
 # Koda has so far worked from the alert email alone. This file gives Muse an
 # identity of its own that can READ the whole estate: query Application
 # Insights and the Log Analytics workspaces, list alert rules, read costs and
-# resource health. It can change nothing. ADR 0042 records the decision; the
+# resource health. It can change nothing. ADR 0043 records the decision; the
 # runbook docs/runbooks/muse-azure-reader.md says what it can read and how to
 # rotate and revoke its secret.
 #

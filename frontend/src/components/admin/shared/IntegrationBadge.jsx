@@ -111,6 +111,18 @@ export const BRANDS = Object.freeze({
   coder: { name: 'Coder', color: '#000000', onDark: '#FFFFFF', site: 'https://coder.com' },
   linkie: { name: 'Linkie', color: '#7C3AED', site: 'https://linkie.app', approximate: true },
   qlty: { name: 'Qlty', color: '#3B82F6', site: 'https://qlty.sh', approximate: true },
+  'copilot-review': {
+    name: 'GitHub Copilot',
+    color: '#24292F',
+    onDark: '#F0F6FC',
+    site: 'https://github.com',
+  },
+  hostinger: {
+    name: 'Hostinger',
+    color: '#673DE6',
+    site: 'https://www.hostinger.com',
+    approximate: true,
+  },
 });
 
 /**
