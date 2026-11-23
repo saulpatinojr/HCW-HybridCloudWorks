@@ -207,6 +207,133 @@ follow at around USD 6 each; Key Vault and the rest are small; and telemetry
 ingestion, which this page used to call the largest controllable line, billed
 nothing in September.
 
+## November 2026: what tripled the bill (#1772)
+
+**Status:** worked out from the repository on 2026-11-23, against the Cost
+page's snapshot of 2026-11-23 01:45 UTC. **Not yet measured against Azure:**
+the session that wrote this had no Azure access (the read-only sign-in for
+that is [#1764](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1764)).
+Every dollar figure below that is not on the Cost page is an estimate, and
+the queries that confirm or correct it are on
+[#1772](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1772).
+
+### The numbers
+
+| | September (measured, 30 days) | November to the 22nd (Cost page) | Per day, Sep → Nov |
+| --- | ---: | ---: | --- |
+| Application subscription | $34.32 | $82.46 (forecast $110.82) | $1.14 → $3.75 |
+| Cosmos DB | $5.71 | $35.74 | $0.19 → $1.62 (about 8×) |
+| Functions | $6.09 | $28.95 | $0.20 → $1.32 (about 6×) |
+| Storage | $12.40 | $9.49 | $0.41 → $0.43 (flat) |
+| Azure Monitor (app subscription) | $5.86 | $5.34 | flat |
+
+October closed at $70.42. Cosmos DB and Functions are $64.69 of November's
+$82.46, and everything else is flat, so the question is only those two.
+
+### The main driver: the Second Brain search index is rebuilt from scratch every 15 minutes
+
+Second Brain (the owner's private notes workspace, added 2026-10-26 in
+[#1395](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1395))
+keeps a search index, the `brain_search` container, built from the owner's
+notes and from seven site containers (`content`, `frameworks`, `designs`,
+`newsletters`, `social_posts`, `recordings`, `podcast_transcripts`).
+
+- **The timer starts a full rebuild, not just a resume.** `brainIndexReconcile`
+  runs every 15 minutes (`functions/src/functions/brain-http.js`). It calls
+  `start()` in `functions/src/lib/brain/indexing.js`, which returns early only
+  when a rebuild is already `queued` or `running`. When the last one is
+  `complete`, it creates a new one from the first container. So a full pass
+  starts 96 times a day.
+- **Each pass reads everything and writes everything.** A queue worker,
+  `brainIndexWorker`, takes 30 documents per run, writes each one to
+  `brain_search` with an unconditional upsert (a write that replaces the
+  document whether or not it changed), and queues itself again. After the
+  seven site containers, a reconcile step reads every index entry, reads its
+  source again, and writes it again.
+- **The writes are expensive.** `brain_search` indexes every field
+  (`infra/cosmos-containers.json`), and each entry carries the source text
+  up to 128 KB twice (`body` and a lower-case `searchable` copy) plus a word
+  list (`indexDocument` in `functions/src/lib/brain/sources.js`). Microsoft
+  says write cost grows with item size and with the number of indexed
+  properties ([Request Units](https://learn.microsoft.com/azure/cosmos-db/request-units#request-unit-considerations)).
+- **The volume is already measured.** `infra/observability.tf` records, from
+  seven days of logs read on 2026-11-03, "about 140,000 Create rows a day" on
+  `brain_search`, which is why that container's logs were filtered out of
+  Log Analytics.
+
+What that costs, as an estimate. Cosmos DB serverless bills **$0.282 per
+million request units** in Central US (Azure Retail Prices API, read
+2026-11-23; this page used $0.25 in September). November's Cosmos pace is
+$1.43 a day above September's, about 5.1 million extra request units a day.
+At 20 to 40 request units per indexed item (its write plus its share of the
+reads and checkpoint writes), 140,000 items a day is **$0.79 to $1.58 a day,
+$24 to $47 a month**: most or all of the Cosmos increase.
+
+On the Functions side, 140,000 items in runs of 30 is about **4,700 worker
+runs a day**. Flex Consumption bills each run for at least one second at the
+app's 2,048 MB, then in 100 ms steps
+([Flex Consumption billing](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#billing)),
+at $0.000026 per GB-second after a free 100,000 a month (Retail Prices API,
+read 2026-11-23). At one to three seconds a run that is **$7 to $22 a
+month**, a large part of the Functions increase.
+
+**The design said the timer refreshes; the cost was never stated.**
+[`docs/architecture/second-brain.md`](second-brain.md) says "A 15-minute
+reconciliation timer resumes interrupted checkpoints and refreshes
+updates/deletions", so a regular refresh was intended. What no page said is
+that every refresh rewrites the whole index.
+
+### Smaller contributors found on the way
+
+- **Every timer is billed at least one second each time it fires, even when
+  its switch is off.** A timer that is not armed still starts, reads its
+  switch and returns. About 1,950 timer firings a day at 2 GB-seconds each is
+  about 117,000 GB-seconds a month, which on its own uses up the free 100,000.
+  The largest single share is `sweepVisitorSessions`, every two minutes since
+  2026-10-26 (720 firings a day, about $1.10 a month whether it is armed or
+  not).
+- **`healthPulse`, every five minutes since 2026-10-08**
+  ([#1023](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1023)),
+  runs about six counting queries on `content`, reads up to 2,000
+  `generated_content_images` rows and checks them against `content` 100 at a
+  time, then writes one result per check. Estimated at $1 to $3 a month of
+  Cosmos DB.
+- **The Cosmos export is not a driver.** It costs about $3 a month on this
+  page's own model (a weekly full read of 2.39 GB, daily changes only), and
+  it does not copy `brain_search` (`REGENERABLE` in
+  `functions/src/lib/backup/export-classification.js`). The missed Sunday
+  full of 2026-11-15 ([#1732](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1732))
+  could repeat a container's full read on each retry; the live queries will
+  show whether it did.
+- **The AI inspector is not driven by Second Brain.** The inspector runs from
+  the `content` change feed (`processContentChanges` in
+  `functions/src/functions/change-feed.js`), and the indexer only reads
+  `content`; it never writes it.
+
+### October is only partly explained
+
+October closed at $70.42, $36 above September, but Second Brain arrived on
+2026-10-26, so at most about five days of October carried it. Foundry's
+first month (estimated at $8 to $11 above) explains part of the rest. The
+repository alone cannot say what made up the remaining $15 to $25. The daily
+Cost Management query on #1772 answers it.
+
+### What can be saved
+
+| Rank | Change | Saves a month (estimate) | What it trades off | Safe? |
+| --- | --- | ---: | --- | --- |
+| 1 | The 15-minute timer resumes an unfinished rebuild only, and starts a new full rebuild once a day (for example, when the last `completedAt` is over 24 hours old). Keep the schedule, so the overdue alert does not change | $30 to $68 | A site article, social post or recording reaches Second Brain search up to a day later instead of within 15 minutes. Notes are unaffected (they are indexed when saved), the **Index creator content** button still rebuilds on demand, and removed text still never shows, because search re-reads the source | Yes. `brain_search` is a rebuildable copy, not exported, and the change is code only |
+| 2 | Skip the write when the index entry has not changed (compare a hash of the text before the upsert) | $15 to $35 if done alone; little on top of 1 | Each item is still read on every pass; a little more code | Yes |
+| 3 | Stop indexing the large text fields of `brain_search` (`body`, `searchable`, the word list) in its indexing policy | $7 to $25 if done alone; under $1 on top of 1 | Owner-only searches read more; it is a Terraform change | Probably; measure search cost first |
+| 4 | `sweepVisitorSessions` every five minutes instead of two | About $0.70 | Clean-up retries land up to five minutes late; ADR 0032 chose two minutes for that reason | Not worth it unless visitor sessions stay unused |
+| 5 | `healthPulse` every ten minutes instead of five | About $1 to $2 | The Health page notices a fault up to ten minutes later | Not recommended |
+
+The host storage line (about $12.50 a month, unchanged since September) is
+not part of this jump and stays on the open-items list below.
+
+Nothing in this section has been changed in the estate. It is a
+recommendation; the change is for a follow-up ticket.
+
 ## What bills, and what holds it down
 
 | Cost area | Control in code | Where |
@@ -475,7 +602,7 @@ FINOPS: Measured September 2026 (read 2026-10-03, Cost Management ActualCost by 
 IMPLEMENTATION: Two subscription budgets with 50/75/90/100 actual plus forecast; Log Analytics daily cap and an 80%-of-cap alert; storage lifecycle and bounded versioning; zero always-ready instances; bounded maximum instance count; required allocation tags applied from one map.
 VALIDATION: Done for September 2026 (#822): the full month replaced the five-day reading and the USD 15–20 estimate; the application subscription came in at about twice the estimate (host storage transactions, Functions, Azure Monitor, Cosmos) and Platform Management at about an eighth; the retired-resource tail has cleared. Still open: confirm ingestion after a full uncapped day.
 RISK_GATES: Arming the availability test (14,400 executions/month); adding fixed-cost networking; always-ready or zone-redundant compute; provisioned Cosmos throughput; multi-region replication; Defender plans; raising the Log Analytics daily cap (passed once, owner decision 2026-11-22: 0.25 -> 0.5 GB/day, #1729).
-OPEN_ITEMS: Cloudflare plan cost; Hostinger billed cost; what drives the Functions host storage reads (the largest line) and whether stsitefuncprodcus01 needs GRS; exact Azure Monitor alert-rule and web-test unit prices.
+OPEN_ITEMS: Second Brain's full rebuild every 15 minutes, the estimated main driver of November's Cosmos DB and Functions jump (#1772), to be measured and then changed; Cloudflare plan cost; Hostinger billed cost; what drives the Functions host storage reads (the largest line) and whether stsitefuncprodcus01 needs GRS; exact Azure Monitor alert-rule and web-test unit prices.
 NEXT_OWNER: Workload owner for post-apply cost measurement.
 ```
 
