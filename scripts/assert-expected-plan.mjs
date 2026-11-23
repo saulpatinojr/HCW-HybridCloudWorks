@@ -362,6 +362,8 @@ export const DECLARED = [
   //   threshold it drives, 0.2 -> 0.4. Applied 2026-11-22 in
   //   run-KDU2GZ8ngCB55t67, which the owner confirmed; both entries deleted
   //   here the same day.
+  // - #1768's Platform Management budget amount, 25 -> 35. Applied 2026-11-23,
+  //   owner confirmed; deleted here the same day.
   //
   // The weekly AI provider probe's timer flag (#701): the key applied disarmed
   // ('false', present in state since the 2026-10-06 runs); adding
@@ -773,16 +775,6 @@ export const DECLARED = [
     before: undefined,
     after: "sc-domain:hybridcloudworks.com",
     reason: "#1612: the Search Console property the page reads",
-  },
-  // The owner raised the Platform Management budget on 2026-11-22, after the
-  // 0.5 GB/day log cap (#1759) put expected spend near its old 50% mail.
-  // Delete once the plan shows it applied.
-  {
-    address: "azurerm_consumption_budget_subscription.platform_mgmt",
-    path: "amount",
-    before: 25,
-    after: 35,
-    reason: "owner decision 2026-11-22: Platform Management budget USD 25 -> 35",
   },
 ];
 
