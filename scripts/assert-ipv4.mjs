@@ -12,7 +12,15 @@
  * so a failed deploy says what the third party returned rather than what `az`
  * made of it.
  *
- *   RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org | node scripts/assert-ipv4.mjs)
+ *   RUNNER_IP_RAW=$(curl -sS --max-time 10 https://api.ipify.org)
+ *   RUNNER_IP=$(node scripts/assert-ipv4.mjs <<<"${RUNNER_IP_RAW}")
+ *
+ * Two lines, not `curl ... | node ...`: the answer is kept in a variable and
+ * then handed to this check, so nothing fetched from the internet is piped
+ * straight into a program that runs it. The old one-line form was safe (this
+ * script only reads the text), but supply-chain scanners such as OpenSSF
+ * Scorecard cannot tell that and report it as a download piped to an
+ * interpreter.
  *
  * No dependencies: the deploy job holds an OIDC token, and the rule there is
  * that nothing third-party runs in it that does not have to.

@@ -136,6 +136,18 @@
 //     https://learn.microsoft.com/en-us/credentials/certifications/exams/pl-400/
 // Only these rows were re-read, so `DATA_AS_OF` and the sync line above are
 // deliberately unchanged.
+//
+// RE-READ 2026-11-23 of MS-102, the Azure row #1737 named (due to fire on
+// 2026-12-01), stored ahead of its day the same way, with `statusReadDate`
+// 2026-11-23.
+//   MS-102 — `retired`, `expiryDate` 2026-11-30 kept; shows "Retiring" through
+//     then. Exam page (updated_at 2026-10-30), the date unchanged: "This exam
+//     will retire on November 30, 2026, at 11:59 PM Central Standard Time."
+//     The same page's "Schedule exam" box still prints "Retirement date:
+//     none" and still offers booking; the warning at the top is the dated
+//     statement, so the stored date follows it.
+//     https://learn.microsoft.com/en-us/credentials/certifications/exams/ms-102/
+// Only this row was re-read, so `DATA_AS_OF` is unchanged.
 
 export const DATA_AS_OF = '2026-11-23';
 
@@ -1877,9 +1889,10 @@ export const certifications = [
     officialCode: 'MS-102',
     title: 'Microsoft 365 Administrator Expert',
     level: 'Expert',
-    status: 'expiring',
+    status: 'retired',
     expiryDate: '2026-11-30',
     replacedBy: 'ab-650',
+    statusReadDate: '2026-11-23',
     description: 'Administer Microsoft 365 tenants, including identity, compliance, and security.',
     longDescription:
       'Validate expertise administering Microsoft 365 environments — tenant management, identity, security, compliance, and Microsoft 365 service integration. Retires November 30, 2026; Microsoft recommends AB-650 (Microsoft 365 and AI Services Administrator Associate) in its place.',

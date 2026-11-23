@@ -31,12 +31,12 @@ function provisioned() {
 }
 
 describe('export classification against infra/cosmos-containers.json', () => {
-  it('the spec provisions 78 classified containers including Second Brain and Doc Vault', () => {
+  it('the spec provisions 79 classified containers including Second Brain and Doc Vault', () => {
     // 72 at the ADR's writing; podcast_transcripts (#435) made it 73,
     // tool_price_history (#613 Phase 3) 74 and ambassador (ADR 0033 §4) 75.
     // Doc Vault adds one authored container. Second Brain adds authored
     // brain_records and regenerable brain_search.
-    expect(provisioned()).toHaveLength(78);
+    expect(provisioned()).toHaveLength(79);
   });
 
   it('every provisioned container is classified exactly once', () => {
@@ -59,9 +59,9 @@ describe('export classification against infra/cosmos-containers.json', () => {
     expect(phantom, 'classified but not provisioned — remove it or provision it').toEqual([]);
   });
 
-  it('classifies 47 authored, 10 configuration, 7 operational, 14 excluded', () => {
+  it('classifies 48 authored, 10 configuration, 7 operational, 14 excluded', () => {
     // 44 at the ADR's writing; ambassador, Doc Vault and brain_records add three.
-    expect(AUTHORED).toHaveLength(47);
+    expect(AUTHORED).toHaveLength(48);
     expect(CONFIGURATION).toHaveLength(10);
     expect(OPERATIONAL).toHaveLength(7);
     const excluded = ['regenerable', 'seed', 'transient'].flatMap(
@@ -85,14 +85,14 @@ describe('export classification against infra/cosmos-containers.json', () => {
 });
 
 describe('exportPlanFor', () => {
-  it('full is A + B + C (64), delta is A + B (57), both sorted and duplicate-free', () => {
+  it('full is A + B + C (65), delta is A + B (58), both sorted and duplicate-free', () => {
     const full = exportPlanFor('full');
     const delta = exportPlanFor('delta');
-    expect(full).toHaveLength(64);
-    expect(delta).toHaveLength(57);
+    expect(full).toHaveLength(65);
+    expect(delta).toHaveLength(58);
     expect(full).toEqual([...full].sort());
     expect(delta).toEqual([...delta].sort());
-    expect(new Set(full).size).toBe(64);
+    expect(new Set(full).size).toBe(65);
     // Class C is exported on full runs only (owner decision, #231).
     for (const name of OPERATIONAL) {
       expect(full).toContain(name);

@@ -160,6 +160,39 @@
  *
  * Only these rows were re-read, so `DATA_AS_OF` stays.
  *
+ * RE-READ 2026-11-23 of DVA-C02 and DVA-C03, the two AWS rows #1737 named (due
+ * to fire on 2026-12-01), stored ahead of their days the same way, with
+ * `statusReadDate` 2026-11-23. Three pages read, and none moved a date:
+ *
+ *   The September blog (/blogs/training-and-certification/september-2026-
+ *     new-offerings/, last modified 2026-09-01) is unchanged. Its DVA Key
+ *     dates still read "October 27, 2026 – Registration opens (all languages)
+ *     / November 30, 2026 – Last day to take DVA-C02 / December 1, 2026 –
+ *     DVA-C03 GA delivery begins", and its body "Registration for the updated
+ *     exam (DVA-C03) will open on October 27, 2026, with GA delivery beginning
+ *     December 1, 2026. The last day to take the current version of the exam
+ *     (DVA-C02) will be November 30, 2026."
+ *   The DVA-C03 exam guide (docs.aws.amazon.com/aws-certification/latest/
+ *     developer-associate-03/developer-associate-03.html) now reads
+ *     "Registration for the updated version of the exam (DVA-C03) opened on
+ *     October 27, 2026. The last day to take the current version of the exam
+ *     (DVA-C02) is November 30, 2026." On 2026-11-03 the same note gave
+ *     December 1 for registration; AWS has corrected it to the blog's date,
+ *     so the two-date question recorded above is closed and DVA-C03's
+ *     `longDescription` names October 27 alone again.
+ *   The DVA exam page (/certification/certified-developer-associate/, updated
+ *     2026-11-17) no longer mentions DVA-C02 or a last test day. It links the
+ *     DVA-C03 exam prep plan and the DVA-C03 exam guide, and lists 65
+ *     questions in 130 minutes for USD 150. It says nothing that contradicts
+ *     the blog, so the blog's dates stay (the rule above).
+ *
+ *   DVA-C02 — `retired`, `expiryDate` 2026-11-30 kept, `retiredDate`
+ *     2026-11-30; shows "Retiring" through 2026-11-30.
+ *   DVA-C03 — `active`, `availableDate` 2026-12-01 kept; shows "Coming" until
+ *     then.
+ *
+ * Only these rows were re-read, so `DATA_AS_OF` stays.
+ *
  * Field notes: `expiryDate` is the last day the exam can be taken;
  * `availableDate` the first GA day of a new version; `previousSlugs` keeps
  * old detail-page links resolving after a version bump.
@@ -385,8 +418,10 @@ export const certifications = [
     code: 'DVA-C02',
     title: 'AWS Certified Developer – Associate',
     level: 'Associate',
-    status: 'expiring',
+    status: 'retired',
     expiryDate: '2026-11-30',
+    retiredDate: '2026-11-30',
+    statusReadDate: '2026-11-23',
     replacement: { code: 'DVA-C03', slug: 'dva-c03' },
     description:
       'Develop and maintain applications on AWS with a focus on serverless and CI/CD patterns.',
@@ -429,13 +464,14 @@ export const certifications = [
     code: 'DVA-C03',
     title: 'AWS Certified Developer – Associate',
     level: 'Associate',
-    status: 'upcoming',
+    status: 'active',
     availableDate: '2026-12-01',
     registrationOpens: '2026-10-27',
+    statusReadDate: '2026-11-23',
     description:
       'The updated Developer – Associate exam, adding generative AI and agentic development to serverless and CI/CD patterns.',
     longDescription:
-      'The next version of the Developer – Associate exam. Delivery begins December 1, 2026, the day after DVA-C02 retires. AWS gives two dates for registration: its September announcement says October 27, 2026, and the DVA-C03 exam guide says December 1, 2026, so check the exam page before booking. AWS has said the update reflects AI-related competencies alongside the existing serverless, CI/CD, and application development domains.',
+      'The next version of the Developer – Associate exam. Registration opened October 27, 2026 and delivery begins December 1, 2026, the day after DVA-C02 retires. AWS has said the update reflects AI-related competencies alongside the existing serverless, CI/CD, and application development domains.',
     topics: ['Lambda & Serverless', 'API Gateway', 'DynamoDB', 'CI/CD', 'Generative AI'],
     hours: 40,
     prepTime: '~3 months',

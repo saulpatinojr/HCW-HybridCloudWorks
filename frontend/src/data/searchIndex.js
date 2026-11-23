@@ -11,6 +11,7 @@ import { ALL_TIER_PROVIDERS } from './providerTiers';
 import { availableLabs, labPanePath, labsPath } from './labs/catalogue';
 import { addonPanePath, availableAddons } from './addons/catalogue';
 import { certifications as azureCertifications } from './azure/certifications';
+import { deriveStatus } from '../lib/certStatus';
 
 export const SEARCH_CATEGORIES = Object.freeze({
   PROVIDERS: 'Providers',
@@ -520,8 +521,11 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     badge: 'FOCUS 1.4',
     keywords: ['fofa', 'focus analyst', 'focus 1.4', 'billing data', 'usage datasets', 'exam'],
   },
+  // The status a visitor sees today, not the stored one: a row stored
+  // `retired` ahead of its last exam day (MS-102, #1737) is still bookable
+  // and stays in search until that day has passed.
   ...azureCertifications
-    .filter((cert) => cert.status !== 'retired' && !CURATED_AZURE_CERT_SLUGS.has(cert.slug))
+    .filter((cert) => deriveStatus(cert) !== 'retired' && !CURATED_AZURE_CERT_SLUGS.has(cert.slug))
     .map((cert) => ({
       id: `cert-azure-${cert.slug}`,
       title: `${cert.title} (${cert.code})`,

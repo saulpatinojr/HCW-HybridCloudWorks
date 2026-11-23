@@ -150,6 +150,7 @@ describe('the issue’s list', () => {
         'azure-swa-deployment-token',
         'lab-agent-certificate',
         'lab-vault-tls-certificate',
+        'tfc-azure-muse-reader-secret',
       ].sort()
     );
   });

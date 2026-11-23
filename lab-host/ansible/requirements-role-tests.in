@@ -1,0 +1,14 @@
+# What the `lab-host role tests` job in .github/workflows/ci.yml installs.
+# This is the file a person edits. requirements-role-tests.txt beside it is
+# the lock file made from it: the same version plus everything it depends on,
+# each with the SHA256 checksums pip must see before it installs the file.
+#
+# ansible-core here is the release lab-host/bootstrap.sh puts on the host
+# (ANSIBLE_CORE_VERSION in lab-image/versions.env). Move the three together:
+# that line, this file and requirements-lint.in.
+#
+# After changing the line, rebuild the lock from this folder, on the Python
+# the job uses (3.15):
+#
+#   pip-compile --allow-unsafe --generate-hashes --output-file=requirements-role-tests.txt requirements-role-tests.in
+ansible-core==2.22.0

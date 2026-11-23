@@ -218,7 +218,10 @@ jobs:
 
       # The role tests (the `role-tests` job): the roles, with their tasks,
       # templates, defaults and tests, the group_vars the tests render with,
-      # and the inventory the syntax check and tests load. The rest are the
+      # the inventory the syntax check and tests load, and
+      # requirements-role-tests.txt, the lock file the job installs its
+      # ansible-core from (a change to what is installed is a reason to run
+      # the tests on it). The rest are the
       # files the tests assert on outside lab-host/ansible/, each named in
       # ROLE_TEST_READS in scripts/ci-workflow-steps.test.mjs with the test
       # that reads it: lab-host/coder/ (the templates' workspace label and
@@ -233,7 +236,7 @@ jobs:
         id: roletests
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^lab-host/(ansible/(roles|group_vars|inventory)/|coder/|bootstrap\.sh$|README\.md$)|^infra/lab-hybrid\.tf$|^infra-lab/variables\.tf$|^docs/runbooks/labs-host\.md$|^vps-agent/lib/(docker-runner|capabilities)\.js$|^vps-agent/bin/report-host-check\.js$'
+          FILTER: '^lab-host/(ansible/(roles|group_vars|inventory)/|ansible/requirements-role-tests\.txt$|coder/|bootstrap\.sh$|README\.md$)|^infra/lab-hybrid\.tf$|^infra-lab/variables\.tf$|^docs/runbooks/labs-host\.md$|^vps-agent/lib/(docker-runner|capabilities)\.js$|^vps-agent/bin/report-host-check\.js$'
           # Nine minutes of runner, and no test reads this file (the one that
           # did, hcw-portainer-check.test.py, hands that check to
           # scripts/ci-workflow-steps.test.mjs since 2026-11-04).
@@ -1215,7 +1218,10 @@ jobs:
   # collections. Runs only when the `changes` job saw a lab-host change
   # (#1545); the tool versions are pinned to what lab-host/bootstrap.sh
   # installs on the host, and the `role-tests` job below pins the same
-  # ansible-core: move both together.
+  # ansible-core: move both together. The pins are in
+  # lab-host/ansible/requirements-lint.in (this job) and
+  # requirements-role-tests.in (that one); the .txt file beside each is its
+  # lock file, with a SHA256 checksum for every package pip installs.
   #
   # Lint only, about a minute. Until 2026-11-04 this job also ran every role
   # test, one after the other on the same runner, which made it nine minutes
@@ -1242,7 +1248,11 @@ jobs:
           python-version: '3.15'
 
       - name: Install ansible-lint and ansible-core
-        run: python -m pip install --disable-pip-version-check 'ansible-lint==26.9.0' 'ansible-core==2.22.0'
+        # requirements-lint.txt is a lock file: it lists these two tools and
+        # everything they depend on, each with its SHA256 checksum, and
+        # --require-hashes makes pip refuse any file whose checksum differs.
+        # The versions are chosen in requirements-lint.in beside it.
+        run: python -m pip install --disable-pip-version-check --require-hashes -r requirements-lint.txt
 
       - name: Install the pinned collections
         run: ansible-galaxy collection install -r requirements.yml
@@ -1303,7 +1313,9 @@ jobs:
           node-version: '26'
 
       - name: Install ansible-core
-        run: python -m pip install --disable-pip-version-check 'ansible-core==2.22.0'
+        # A lock file with a SHA256 checksum for every package, as in the lint
+        # job above; the version is chosen in requirements-role-tests.in.
+        run: python -m pip install --disable-pip-version-check --require-hashes -r requirements-role-tests.txt
 
       - name: Install the pinned collections
         run: ansible-galaxy collection install -r requirements.yml
@@ -1913,9 +1925,12 @@ jobs:
 
       # Pinned, not floating. A tokenizer change between lizard releases moves
       # every number this check compares, which would read as a pull request
-      # that added complexity on the day the release landed.
+      # that added complexity on the day the release landed. The version is
+      # chosen in scripts/complexity/requirements.in; requirements.txt is the
+      # lock file made from it, with a SHA256 checksum for every package, and
+      # --require-hashes makes pip refuse any file whose checksum differs.
       - name: Install lizard
-        run: pip install --disable-pip-version-check lizard==1.24.0
+        run: pip install --disable-pip-version-check --require-hashes -r scripts/complexity/requirements.txt
 
       # The gate's own comparison logic, before it is used to judge anything.
       - name: Self-test
