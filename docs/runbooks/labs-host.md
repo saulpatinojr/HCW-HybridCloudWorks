@@ -3588,19 +3588,19 @@ Success looks like: one line, `hcw-vault-set: set vault_addon_migration_turnstil
 appears on a command line or in output. The `addons` role refuses to start
 the container while this key is unset, naming the key and this line.
 
-**2. Write the digest in.** The add-on's `v0.3.4` release prints
+**2. Write the digest in.** The add-on's `v0.3.5` release prints
 `docker.io/hybridcloudworks/img-mo-lab-addon@sha256:…` in its
 `publish-images` run summary; the same value, read from the registry.
 PowerShell, anywhere with Docker:
 
 ```powershell
-docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.4
+docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.5
 ```
 
 The `Digest:` line is the value for `image_digest` of the `migration` row in
-`lab-host/ansible/group_vars/all.yml`: for `v0.3.4`,
-`sha256:41d8ce05c164b40527f438dcfdccce56a6575842ce2bc5c8d693051940a0a61d`,
-read from the registry on 2026-11-09. A row whose digest is empty deploys nothing and
+`lab-host/ansible/group_vars/all.yml`: for `v0.3.5`,
+`sha256:0b7ef06dde10b88c3a3301abbf9a3c85bc744fcb9604f085945364e4b686ca50`,
+read from Docker Hub's tag record on 2026-11-23. A row whose digest is empty deploys nothing and
 says so.
 Merge, then run the playbook as after any merge. PowerShell:
 
@@ -3618,7 +3618,7 @@ ssh hcw-lab "curl -s http://127.0.0.1:18081/api/health"
 ```
 
 Success looks like a JSON body with `"ok":true`, `"id":"migration"` and a
-`"version"` matching the pinned tag without its `v` (`0.3.4`). From outside, the name answers
+`"version"` matching the pinned tag without its `v` (`0.3.5`). From outside, the name answers
 with the site-only `frame-ancestors` and the add-on's own headers. PowerShell:
 
 ```powershell
