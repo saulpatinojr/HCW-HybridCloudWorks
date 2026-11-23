@@ -11,7 +11,7 @@ to carry described resources that were never created; see *Corrected
 **Currency:** USD
 
 **Budgets:** three. Two are **subscription**-scoped — USD 150 on the
-application subscription (live) and USD 25 on Platform Management — and
+application subscription (live) and USD 35 on Platform Management (USD 25 until 2026-11-22) — and
 since #849 one sits on the `rg-ai-site-prod-cus` resource group at USD 75 for
 the Microsoft Foundry account (declared 2026-10-04; read live on 2026-10-20 as
 `site-foundry-monthly-budget`, with its first month estimated below under
@@ -147,7 +147,7 @@ Platform Management subscription: **USD 2.49**.
 | **Total** | | **$2.49** |
 
 **Combined: USD 36.81 a month**, about a quarter of the USD 150 application
-ceiling, with Platform Management at about a tenth of its USD 25.
+ceiling, with Platform Management at about a tenth of the USD 25 budget it had then (USD 35 since 2026-11-22).
 
 ### The gap against the estimate, and what drives it
 
@@ -277,7 +277,7 @@ same API before arming the web test.
 | Budget | Scope | Amount | What it watches |
 | --- | --- | ---: | --- |
 | `site-monthly-budget` | Subscription `sub-app-site-prod-cus` | USD 150 | The workload — Static Web Apps, Functions, Cosmos, storage, Key Vault. (This row read `hcw-monthly-budget` until 2026-10-20; the live name follows `var.workload_name`, which is `site`) |
-| `plat-mgmt-monthly-budget` | Subscription `sub-plat-mgmt-prod-cus` | USD 25 | Log Analytics ingestion and retention. Applied: `az consumption budget list` on the Management subscription read it on 2026-10-14 at USD 25 with the month's spend under USD 1 (PLAT-9, #969; this cell said "declared, not applied" after the apply had landed) |
+| `plat-mgmt-monthly-budget` | Subscription `sub-plat-mgmt-prod-cus` | USD 35 | Log Analytics ingestion and retention. Raised from USD 25 on 2026-11-22 with the 0.5 GB/day log cap, so the 50% mail stays meaningful (owner decision). Applied at USD 25: `az consumption budget list` on the Management subscription read it on 2026-10-14 at USD 25 with the month's spend under USD 1 (PLAT-9, #969; this cell said "declared, not applied" after the apply had landed) |
 | `site-foundry-monthly-budget` | Resource group `rg-ai-site-prod-cus` | USD 75 | The Microsoft Foundry account and its deployments (#849). Declared 2026-10-04 and applied; read live on 2026-10-20 at USD 75 monthly with the month's spend at USD 5.36 and Azure's forecast at USD 10.60. First month estimated below |
 
 ### Foundry — first measured month (October 2026, read 2026-10-20)
@@ -467,7 +467,7 @@ has no throughput to reserve, and Flex Consumption bills on execution.
 
 ```text
 TYPE: FINOPS_ASSESSMENT
-GOAL: Keep the production Azure workload below USD 150/month on the application subscription and USD 25/month on Platform Management, without violating the approved security and recovery baseline.
+GOAL: Keep the production Azure workload below USD 150/month on the application subscription and USD 35/month on Platform Management, without violating the approved security and recovery baseline.
 SCOPE: Three subscriptions (app, Platform Management, Platform Connectivity); one region, centralus. Cloudflare, Hostinger and external AI provider APIs are tracked separately because no Azure budget can see them.
 CONSTRAINTS: Single primary region; anonymous public site; Entra admin only; static-first delivery; no destructive optimization.
 DECISIONS: Consumption/serverless compute with zero always-ready; Cosmos Serverless; capped telemetry at 0.25 GB/day; Cloudflare retained; no Front Door, Firewall, Bastion, VPN Gateway, NAT, APIM, DDoS plan or private endpoints; no Azure OpenAI account.

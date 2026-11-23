@@ -555,13 +555,15 @@ variable "budget_amount_usd" {
 # actually varies with load (ingestion, at roughly USD 2.30-2.76/GB) was the
 # one line nothing was watching. The 0.5 GB/day cap (since 2026-11-22) is at most
 # about 15 GB/month, roughly USD 26 with retention if the cap were hit every
-# day, so 25 is reached only when the cap is, and it fires early if the cap is
-# ever raised again without the spend being thought about. At the ~0.3 GB/day
-# measured then, the expected spend is about half of it.
+# day. 35 since 2026-11-22 (owner decision, from 25): at the ~0.3 GB/day
+# measured then the expected spend is USD 11-13, which crossed the 50% mail of
+# a 25 budget most months and taught the inbox to ignore it. At 35 the 50%
+# mail (17.50) means more than today's volume, and 100% is still reached only
+# if the cap is raised again without the spend being thought about.
 variable "budget_amount_mgmt_usd" {
   description = "Monthly budget ceiling in USD for the Platform Management subscription — Log Analytics ingestion and retention"
   type        = number
-  default     = 25
+  default     = 35
 }
 
 variable "budget_alert_email" {
@@ -1683,4 +1685,39 @@ variable "gsc_site_url" {
   description = "The Search Console property the page reads: sc-domain:hybridcloudworks.com is the Domain property the owner chose on #1612"
   type        = string
   default     = "sc-domain:hybridcloudworks.com"
+}
+
+variable "muse_reader_enabled" {
+  description = <<-EOT
+    Create Muse's read-only app registration (muse-reader.tf, #1763): the
+    app registration, its service principal, a client secret and Reader on
+    the application, management and connectivity subscriptions.
+
+    False until the owner has given the HCP Terraform run identity
+    (id-plat-terraform-prod-cus-01) the Entra role Application Developer.
+    Without it the plan is clean and the apply fails at the first Entra
+    create, halfway through an estate-wide run. Flip it in the workspace
+    after that grant (docs/runbooks/muse-azure-reader.md, "Turn it on"); the
+    next run plans seven creates. Setting it back to false deletes the app
+    registration and all three grants: that is the full revoke.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "muse_reader_secret_generation" {
+  description = <<-EOT
+    Raise by one to replace Muse's client secret on the next apply, for
+    example after a suspected leak (docs/runbooks/muse-azure-reader.md,
+    "Rotate the secret"). This is the only thing that replaces the secret:
+    each one works for 210 days, and the reminder asks for a rotation at
+    day 180. The old secret stops working in the same apply.
+  EOT
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.muse_reader_secret_generation >= 1 && floor(var.muse_reader_secret_generation) == var.muse_reader_secret_generation
+    error_message = "muse_reader_secret_generation must be a whole number, 1 or more."
+  }
 }

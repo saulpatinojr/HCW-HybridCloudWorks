@@ -219,11 +219,26 @@ export const DIRECTORY = Object.freeze([
     docsUrl: 'https://docs.qlty.sh',
   },
   {
+    id: 'copilot-review',
+    category: 'analytics',
+    summary: 'GitHub Copilot’s automatic review of each pull request.',
+    powers:
+      'Review comments on pull requests, written with the repository’s CI results and security alerts in view.',
+    docsUrl: 'https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-code-review',
+  },
+  {
     id: 'hybrid-lab',
     category: 'cloud',
     summary: 'Browser workspaces on the lab host, behind a human check.',
     powers: 'The labs learners open from the labs page.',
     docsUrl: 'https://coder.com/docs',
+  },
+  {
+    id: 'hostinger',
+    category: 'cloud',
+    summary: 'The hosting company the lab host is rented from.',
+    powers: 'Tools the AI Engine’s assistant can use on the hosting account.',
+    docsUrl: null,
   },
   {
     id: 'migration-addon',

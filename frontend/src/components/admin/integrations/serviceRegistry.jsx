@@ -460,6 +460,14 @@ const LLM_SECURITY_NOTE =
  * (CoderAutomation). All are names, not components, so this file stays free
  * of React state and the registry test can read them as data.
  *
+ * `cost` says what using the service costs, in words, on every card (owner
+ * instruction 2026-11-22): a bill per call, a plan, a free allowance, or
+ * nothing. It names the KIND of bill, never an amount the owner pays, because
+ * the plan and its price are the owner's to keep and already have a home: the
+ * subscriptions ledger on the Cost page (Cost → Services, ADR 0039).
+ * `costOnLedger: true` marks a card whose bill is a subscription, and the card
+ * then links that ledger after the sentence.
+ *
  * DESCRIPTIONS ARE FOR SOMEONE WHO HAS NEVER SEEN THIS REPOSITORY. One line,
  * saying what the service is and what it does for the site. No issue numbers,
  * no function names, no file paths.
@@ -477,6 +485,8 @@ export const SERVICES = Object.freeze([
     secrets: ['PUBLER-API-KEY', 'PUBLER-WORKSPACE-ID'],
     capabilities: ['List connected social accounts', 'Schedule and publish posts'],
     usedIn: ['Social Hub', 'Platform Settings (Social automation)'],
+    cost: 'A subscription on the Publer account, billed by the month or the year.',
+    costOnLedger: true,
     dataDirection: 'Outbound: captions and links for live content go to Publer.',
     securityNote:
       'Both values are read on the server only. Publer answers 403 for a wrong key and 401 for a wrong workspace id, and each has its own light.',
@@ -494,6 +504,8 @@ export const SERVICES = Object.freeze([
     secrets: ['RESEND-API-KEY'],
     capabilities: ['Manage contacts', 'Create and send broadcasts', 'Send the confirmation email'],
     usedIn: ['Newsletter Hub'],
+    cost: 'Free up to 1,000 newsletter contacts. Above that, a monthly plan (USD 40 for 5,000 when the provider was chosen).',
+    costOnLedger: true,
     dataDirection: 'Outbound: subscriber addresses and issue HTML go to Resend.',
     securityNote:
       'A Full access key, read on the server only; the test refuses a key minted with sending access alone.',
@@ -509,6 +521,8 @@ export const SERVICES = Object.freeze([
     secrets: ['LINKIE-API-KEY'],
     capabilities: ['List pages', 'Add, reorder and remove links'],
     usedIn: ['Linkie Hub'],
+    cost: 'A plan on the Linkie account.',
+    costOnLedger: true,
     dataDirection: 'Outbound: live page titles and URLs go to Linkie.',
     securityNote: 'Read on the server only, through the Linkie proxy.',
   },
@@ -527,6 +541,7 @@ export const SERVICES = Object.freeze([
     secrets: ['TELEGRAM-BOT-TOKEN', 'TELEGRAM-CHAT-ID'],
     capabilities: ['Send review notices', 'Answer approve / reject replies', 'Alert on failures'],
     usedIn: ['Review Queue', 'Health (alerts)', 'Forge Studio'],
+    cost: 'Nothing: bot messages are free.',
     dataDirection: 'Two-way: notices go out; approve / reject commands come back on the webhook.',
     securityNote:
       'The token sits in the request path, so no probe ever quotes its URL; the chat id is never tested, only used.',
@@ -547,6 +562,8 @@ export const SERVICES = Object.freeze([
     secrets: ['PODBEAN-CLIENT-ID', 'PODBEAN-CLIENT-SECRET'],
     capabilities: ['Read the show', 'Publish an episode'],
     usedIn: ['Recording Hub (Distribution)'],
+    cost: 'A podcast hosting subscription on the Podbean account.',
+    costOnLedger: true,
     dataDirection: 'Outbound: episode audio and show notes go to Podbean.',
     securityNote:
       'Read on the server only. The client ID is an identifier; the secret never leaves the server.',
@@ -568,6 +585,8 @@ export const SERVICES = Object.freeze([
       'Notify Telegram on new registrations and live or on-demand attendance',
     ],
     usedIn: ['Newsletter Hub', 'Telegram Alerts', 'Public Webinar Registration'],
+    cost: 'A subscription on the StreamYard account.',
+    costOnLedger: true,
     dataDirection:
       'Two-way: webinar registrations come in from StreamYard or the site; confirmation emails and Telegram alerts go out.',
     securityNote:
@@ -591,6 +610,7 @@ export const SERVICES = Object.freeze([
     secrets: ['YOUTUBE-API-KEY'],
     capabilities: ['Search for related videos'],
     usedIn: ['Listen & Learn'],
+    cost: 'No money: the key has a free daily allowance of 10,000 units, and each lookup spends about 100.',
     dataDirection: 'Inbound: video titles and ids come from YouTube.',
     securityNote:
       'Read on the server only; the key travels in the query string, so no probe quotes its URL.',
@@ -610,6 +630,8 @@ export const SERVICES = Object.freeze([
     reconnectHref: '/admin/recording-hub?tab=settings',
     capabilities: ['List recordings', 'Download audio', 'Transcribe an upload'],
     usedIn: ['Recording Hub'],
+    cost: 'A plan on the Plaud account, separate from the recorder itself.',
+    costOnLedger: true,
     dataDirection:
       'Inbound: recordings and transcripts come from Plaud; uploads go to it for transcription.',
     securityNote:
@@ -629,6 +651,7 @@ export const SERVICES = Object.freeze([
     setting: 'sessionizeSpeakerId',
     capabilities: ['Read the public speaker profile and its events'],
     usedIn: ['Speaking'],
+    cost: 'Nothing for the site: it reads a public list without a key.',
     dataDirection: 'Inbound: a public JSON feed, read by the browser directly.',
     securityNote: 'No credential. The speaker id is public and stored in admin settings.',
   },
@@ -645,6 +668,7 @@ export const SERVICES = Object.freeze([
     untestedReason: 'A public profile page a browser cannot fetch from another origin.',
     secrets: [],
     usedIn: ['Certifications'],
+    cost: 'Nothing: a public profile page, read without a key.',
     dataDirection: 'Inbound: badge images and links, copied by hand.',
   },
   {
@@ -658,6 +682,7 @@ export const SERVICES = Object.freeze([
     untestedReason: 'A public profile page a browser cannot fetch from another origin.',
     secrets: [],
     usedIn: ['Certifications'],
+    cost: 'Nothing: a public profile page, read without a key.',
     dataDirection: 'Inbound: transcript entries, copied by hand.',
   },
   {
@@ -671,6 +696,7 @@ export const SERVICES = Object.freeze([
     untestedReason: 'A public profile page a browser cannot fetch from another origin.',
     secrets: [],
     usedIn: ['Certifications'],
+    cost: 'Nothing: a public profile page, read without a key.',
     dataDirection: 'Inbound: badge images and links, copied by hand.',
   },
   {
@@ -684,6 +710,7 @@ export const SERVICES = Object.freeze([
     untestedReason: 'A public profile page a browser cannot fetch from another origin.',
     secrets: [],
     usedIn: ['Certifications'],
+    cost: 'Nothing: a public profile page, read without a key.',
     dataDirection: 'Inbound: profile badges, copied by hand.',
   },
 
@@ -732,6 +759,7 @@ export const SERVICES = Object.freeze([
     dataDirection:
       'Outbound: article text and prompts go to Anthropic; drafts come back. On GitHub, a run sends the repository’s code and the comment to Anthropic.',
     cost: 'The API key is billed per token to the Anthropic account. Claude Code is separate: it uses the Claude subscription’s limits, with no bill per call.',
+    costOnLedger: true,
     // The button below the boxes opens the Keys tab, which holds the API key
     // only. Said on the button and beside it, because it sits right under
     // the Claude Code box and read as if it replaced that token (owner’s
@@ -831,6 +859,7 @@ export const SERVICES = Object.freeze([
     secrets: ['AZURE-SPEECH-KEY'],
     capabilities: ['Text to speech (standby)'],
     usedIn: [],
+    cost: 'Nothing today: the spare narrator is not set up in Azure. If it is, Azure bills per character read.',
     dataDirection: 'None today.',
     securityNote: 'Read on the server only, once provisioned.',
   },
@@ -845,6 +874,7 @@ export const SERVICES = Object.freeze([
     secrets: ['FIRECRAWL-API-KEY'],
     capabilities: ['Scrape a page to clean text'],
     usedIn: ['New Content (submit a URL)', 'Review Queue (inspector)'],
+    cost: 'Credits on the Firecrawl account, one or more per page read; the Test shows how many are left.',
     dataDirection: 'Outbound: a public URL goes to Firecrawl; the page text comes back.',
     securityNote: 'Read on the server only. The test reads the credit balance and scrapes nothing.',
   },
@@ -858,8 +888,18 @@ export const SERVICES = Object.freeze([
     url: 'https://replicate.com/account/api-tokens',
     test: testReplicate,
     secrets: ['REPLICATE-API-KEY'],
+    // Two sign-ins from one vendor, so one card with a box each (the rule
+    // the Anthropic card set, 2026-11-22). The MCP connection is the AI
+    // Engine's own and is listed, not held as a key.
+    keyGroups: [
+      { title: 'API key (makes cover images)', secrets: ['REPLICATE-API-KEY'] },
+      { title: 'MCP connection (tools for the AI Engine’s assistant)', panel: 'replicateMcp' },
+    ],
+    rotateLabel: 'Rotate or replace the API key',
+    rotateNote: 'For the API key only; the MCP connection is reconnected on the AI Engine page.',
     capabilities: ['Run an image model for a cover'],
     usedIn: ['Image Prompts', 'Image Gallery', 'Editor (AI cover)'],
+    cost: 'Billed per image made to the Replicate account. The Test reads the account and makes nothing.',
     dataDirection:
       'Outbound: a prompt goes to Replicate; the image comes back and is stored in Blob.',
     securityNote: 'Read on the server only. The test reads the account and starts no prediction.',
@@ -885,6 +925,7 @@ export const SERVICES = Object.freeze([
     action: 'refreshCloudPricing',
     capabilities: ['Read three public price lists', 'Refresh the cached comparison'],
     usedIn: ['Public pricing comparison'],
+    cost: 'Nothing: these are public price lists, and none of them bills this site for reading it.',
     dataDirection: 'Inbound: list prices come from the providers; nothing of ours goes out.',
     securityNote: 'Read on the server only. Scope the AWS policy to pricing:GetProducts.',
   },
@@ -904,8 +945,34 @@ export const SERVICES = Object.freeze([
     secrets: ['QLTY-API-TOKEN'],
     capabilities: ['Read grades and open findings'],
     usedIn: ['Health (Code and Security)'],
+    cost: 'A plan on the Qlty account.',
+    costOnLedger: true,
     dataDirection: 'Inbound: findings come from Qlty; nothing goes out.',
     securityNote: 'A personal token read on the server only.',
+  },
+  {
+    // Listed, not held (2026-11-22): the key is GitHub's alone. Until now
+    // it showed only on the Credentials tab.
+    id: 'copilot-review',
+    group: 'code-quality',
+    icon: ShieldCheck,
+    name: 'GitHub Copilot code review',
+    description:
+      'Reviews every pull request. A small GitHub App lets it read the repository’s CI results and security alerts while it does.',
+    url: 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/copilot-code-review-mcp.md',
+    test: null,
+    untestedReason:
+      'The site does not hold this key, so it cannot test it. A Copilot review on a pull request is the test.',
+    secrets: [],
+    keyGroups: [{ title: 'Review App key (held by GitHub)', panel: 'copilotReview' }],
+    capabilities: ['Read CI results, code scanning and dependency alerts during a review'],
+    usedIn: ['GitHub (pull request reviews)'],
+    dataDirection:
+      'Inside GitHub: the App reads this repository’s results for Copilot. Nothing comes to this site.',
+    cost: 'Nothing for the key. Copilot code review comes with the GitHub Copilot subscription.',
+    costOnLedger: true,
+    securityNote:
+      'Read-only, this repository only, and held only by GitHub. This site cannot read or write it.',
   },
 
   // ── Hybrid Lab (ADR 0033) ────────────────────────────────────────────────
@@ -929,10 +996,38 @@ export const SERVICES = Object.freeze([
     ],
     capabilities: ['List lab templates', 'Count running workspaces', 'Verify a browser check'],
     usedIn: ['Labs', 'Public labs page', 'Landing Zone Builder'],
+    cost: 'No charge per use. The workspaces run on the lab host, which is rented from Hostinger, and the browser check is a free service.',
+    costOnLedger: true,
     dataDirection:
       'Inbound: workspace status comes from Coder, and the lab host hands over a renewed status token; a Turnstile token goes to Cloudflare to verify.',
     securityNote:
       'The status token is read-only in Coder and never reaches a browser; a renewed one from the lab host is stored only after Coder shows it is a working, read-only key of the status user. The Turnstile secret goes to Cloudflare siteverify and nowhere else.',
+  },
+  {
+    // Listed, not held (2026-11-22): the AI Engine keeps this connection.
+    // Until now it showed only on the Credentials tab.
+    id: 'hostinger',
+    group: 'labs',
+    icon: Cloud,
+    name: 'Hostinger',
+    description:
+      'The company the lab host is rented from. The AI Engine’s assistant can use its tools through a connection it keeps itself.',
+    url: 'https://www.hostinger.com/',
+    test: null,
+    untestedReason:
+      'Its connection is tested on the AI Engine page (MCP Servers), not from this card.',
+    secrets: [],
+    keyGroups: [
+      { title: 'MCP connection (tools for the AI Engine’s assistant)', panel: 'hostingerMcp' },
+    ],
+    capabilities: ['Let the AI Engine’s assistant use Hostinger’s tools'],
+    usedIn: ['AI Engine (MCP Servers)'],
+    dataDirection:
+      'Outbound: the assistant’s tool calls go to Hostinger; the answers come back to the AI Engine.',
+    cost: 'Nothing for the connection. The lab host itself is rented from Hostinger.',
+    costOnLedger: true,
+    securityNote:
+      'A sign-in the AI Engine makes and renews, kept in the site’s database and never sent to a browser. Only a super admin can connect it.',
   },
 
   // ── Tool add-ons (ADR 0035) ─────────────────────────────────────────────
@@ -952,6 +1047,7 @@ export const SERVICES = Object.freeze([
     secrets: [],
     capabilities: ['Read the add-on version and edition', 'Decide whether the pane opens'],
     usedIn: ['Tools (Migration Hub)'],
+    cost: 'Nothing extra: it runs on the rented lab host with the other lab tools.',
     dataDirection:
       'Inbound only: the Function App reads the add-on’s health; the add-on holds no site credential and nothing goes out to it.',
     securityNote:

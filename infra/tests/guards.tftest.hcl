@@ -9,6 +9,9 @@
 # 3. Cosmos DB built-in data role is granted to the Function App per database, never account-wide (#1469).
 # 4. Cosmos DB account enforces virtual network filtering and disables local keys (T-504).
 # 5. gsc_entra_app_id_uri is empty or an api:// URI with no trailing slash (#1612).
+# 6. Muse's read-only app registration (#1763): absent while its switch is
+#    off; when on, built-in Reader on each of the three whole subscriptions
+#    and nothing else, and a secret that expires.
 
 mock_provider "azurerm" {}
 mock_provider "azurerm" {
@@ -19,6 +22,8 @@ mock_provider "azurerm" {
 }
 mock_provider "azapi" {}
 mock_provider "cloudflare" {}
+mock_provider "azuread" {}
+mock_provider "time" {}
 
 override_data {
   target = data.azurerm_client_config.current
@@ -27,6 +32,17 @@ override_data {
     subscription_id = "00000000-0000-0000-0000-000000000000"
     client_id       = "00000000-0000-0000-0000-000000000000"
     object_id       = "00000000-0000-0000-0000-000000000000"
+  }
+}
+
+# Muse's app registration (#1763) names the run identity as its owner, and
+# azuread checks the id is a UUID even in a mocked plan.
+override_data {
+  target = data.azuread_client_config.current
+  values = {
+    tenant_id = "00000000-0000-0000-0000-000000000000"
+    client_id = "00000000-0000-0000-0000-000000000000"
+    object_id = "00000000-0000-0000-0000-000000000000"
   }
 }
 
@@ -179,4 +195,58 @@ run "gsc_entra_app_id_uri_refuses_another_scheme" {
   }
 
   expect_failures = [var.gsc_entra_app_id_uri]
+}
+
+# 6. Muse's read-only access (#1763). Off by default: the run identity needs
+# an Entra role before the first create, so nothing is planned until the
+# owner flips the switch.
+run "muse_reader_is_off_by_default" {
+  command = plan
+
+  assert {
+    condition = (
+      length(azuread_application.muse_reader) == 0 &&
+      length(azuread_application_password.muse_reader) == 0 &&
+      length(azurerm_role_assignment.muse_reader_app) == 0 &&
+      length(azurerm_role_assignment.muse_reader_mgmt) == 0 &&
+      length(azurerm_role_assignment.muse_reader_conn) == 0
+    )
+    error_message = "Muse's app registration must not be planned until muse_reader_enabled is true (#1763)."
+  }
+}
+
+run "muse_reader_reads_every_subscription_and_writes_nothing" {
+  command = plan
+
+  variables {
+    muse_reader_enabled = true
+    subscription_app    = "00000000-0000-0000-0000-00000000000a"
+    subscription_mgmt   = "00000000-0000-0000-0000-00000000000b"
+    subscription_conn   = "00000000-0000-0000-0000-00000000000c"
+  }
+
+  assert {
+    condition = alltrue([
+      for grant in [
+        azurerm_role_assignment.muse_reader_app[0],
+        azurerm_role_assignment.muse_reader_mgmt[0],
+        azurerm_role_assignment.muse_reader_conn[0],
+      ] : grant.role_definition_name == "Reader"
+    ])
+    error_message = "Muse's grants must be the built-in Reader role and nothing wider (#1763)."
+  }
+
+  assert {
+    condition = (
+      azurerm_role_assignment.muse_reader_app[0].scope == "/subscriptions/00000000-0000-0000-0000-00000000000a" &&
+      azurerm_role_assignment.muse_reader_mgmt[0].scope == "/subscriptions/00000000-0000-0000-0000-00000000000b" &&
+      azurerm_role_assignment.muse_reader_conn[0].scope == "/subscriptions/00000000-0000-0000-0000-00000000000c"
+    )
+    error_message = "Muse must read the application, management and connectivity subscriptions, each as a whole; the github_reader gap (no Management read) must not come back (#1763)."
+  }
+
+  assert {
+    condition     = azuread_application.muse_reader[0].sign_in_audience == "AzureADMyOrg"
+    error_message = "Muse's app registration must be single-tenant (#1763)."
+  }
 }
