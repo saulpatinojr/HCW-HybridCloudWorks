@@ -9,6 +9,7 @@
  *                                                            (the call's own key may relay them, see submitProposal)
  *   GET  events/{eventId}/call-for-speakers/submissions      key, cfs:manage   list proposals
  *   PUT  events/{eventId}/call-for-speakers/submissions/{submissionId}   key, cfs:manage   accept or reject
+ *   DELETE events/{eventId}/call-for-speakers/submissions/{submissionId} key, cfs:manage   delete one proposal
  *
  * No route here publishes, unpublishes or schedules anything (ADR 0042
  * decision 6): the public reads serve the snapshot a human published, and the
@@ -20,12 +21,14 @@
  * or bodies.
  *
  * A write decided from an earlier read is conditional on what was read
- * (createDoc for a first call, replaceDocIfMatch otherwise) and a lost race
- * answers 409 rather than writing over a change it did not see.
+ * (createDoc for a first call, replaceDocIfMatch otherwise, deleteDocIfMatch
+ * for a delete) and a lost race answers 409 rather than writing over a change
+ * it did not see.
  */
 import { randomUUID } from 'node:crypto';
 import { recordMutationAudit } from '../audit.js';
 import { ORIGIN_NOT_VERIFIED, assertClientIdentity } from '../auth/client-identity.js';
+import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { authoredMessage, errorResponse, isAuthoredError } from '../http/error-response.js';
 import { enforceSubmissionQuota } from '../submissions.js';
 import {
@@ -40,18 +43,30 @@ import {
   clientQuotaKey,
   composeCall,
   composeSubmission,
+  encodeListCursor,
   isCallOpen,
   isEventId,
   isSubmissionId,
   ownsCall,
   presentCall,
   presentSubmission,
+  readListPaging,
   validateCallChange,
   validateReview,
   validateSubmission,
 } from './cfs.js';
 import { listPublishedEvents, listSpeakers, readEventFilters, readSearch } from './directory.js';
-import { API_BASE_PATH, REQUESTS_PER_MINUTE, SCOPES, developerKeyFrom, looksLikeKey, scopesOf } from './keys.js';
+import {
+  API_BASE_PATH,
+  REQUESTS_PER_MINUTE,
+  SCOPES,
+  developerKeyFrom,
+  isKeyId,
+  isUsable,
+  keyRecordId,
+  looksLikeKey,
+  scopesOf,
+} from './keys.js';
 
 /** What the admin and the status route show about the limits. */
 export const LIMITS = Object.freeze({
@@ -59,6 +74,7 @@ export const LIMITS = Object.freeze({
   submissionsPerClientPerHour: SUBMISSIONS_PER_CLIENT_PER_HOUR,
   submissionsPerCallPerHour: SUBMISSIONS_PER_CALL_PER_HOUR,
   maxSubmissionBytes: MAX_SUBMISSION_BYTES,
+  maxListedProposals: MAX_LISTED,
 });
 
 /** [method, path under the base, who] — what the admin and the status route list. */
@@ -70,6 +86,7 @@ export const ENDPOINTS = Object.freeze([
   ['POST', 'events/{eventId}/call-for-speakers/submissions', 'public'],
   ['GET', 'events/{eventId}/call-for-speakers/submissions', 'cfs:manage'],
   ['PUT', 'events/{eventId}/call-for-speakers/submissions/{submissionId}', 'cfs:manage'],
+  ['DELETE', 'events/{eventId}/call-for-speakers/submissions/{submissionId}', 'cfs:manage'],
 ]);
 
 const PUBLIC_CACHE_SECONDS = 300;
@@ -95,13 +112,16 @@ class Answer extends Error {
 }
 
 const isConflict = (error) => error?.code === 409 || error?.code === 412;
+/** How many times a delete reads the proposal again after losing a race, before it answers 409. */
+const DELETE_ATTEMPTS = 2;
 
 /**
  * @param {object} deps
  * @param {{ authenticate: Function, requireScope: Function }} deps.guard the organizer key guard
- * @param {{ readDoc: Function, createDoc: Function, replaceDocIfMatch: Function, queryDocs: Function,
- *   upsertDoc: Function, incrementIf: Function }} deps.store `upsertDoc` writes audit rows only;
- *   `incrementIf`, `createDoc`, `replaceDocIfMatch` and `readDoc` also serve the public quota
+ * @param {{ readDoc: Function, createDoc: Function, replaceDocIfMatch: Function, queryDocsPage: Function,
+ *   deleteDocIfMatch: Function, upsertDoc: Function, incrementIf: Function }} deps.store `upsertDoc`
+ *   writes audit rows only; `incrementIf`, `createDoc`, `replaceDocIfMatch` and `readDoc` also
+ *   serve the public quota; `readDoc` also reads the key record that owns a call (submitProposal)
  * @param {{ readDoc: Function }} deps.publicStore reads `_snapshots`
  * @param {{ anonymousKey: Function }} deps.identity lib/auth/client-identity.js
  * @param {() => number} [deps.now] epoch milliseconds
@@ -113,6 +133,17 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
 
   const readSnapshot = () => publicStore.readDoc('_snapshots', 'speakerevents', 'speakerevents');
   const readCall = (eventId) => store.readDoc(CFS_CONTAINER, callDocId(eventId), eventId);
+
+  /**
+   * Is the key that owns this call still a working key? One point read of its
+   * record, with no cache, the same read the guard makes: a key revoked a
+   * moment ago is seen as revoked by the very next proposal.
+   */
+  const ownerKeyWorks = async (call) => {
+    if (!isKeyId(call?.organizerKeyId)) return false;
+    const record = await store.readDoc('admin_config', keyRecordId(call.organizerKeyId), ADMIN_CONFIG_PARTITION);
+    return isUsable(record);
+  };
 
   const audit = (context, action, user, { resource, before = null, after = null, details = {} }) =>
     recordMutationAudit(store, {
@@ -259,6 +290,18 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
      * working key that does not own the call, or lacks the scope, gets no
      * favour and is counted like any visitor. A key that is wrong or revoked
      * is answered 401 by the guard, so a relay with a dead key finds out.
+     *
+     * A REVOKED KEY'S CALL TAKES NOTHING (#1777). A call belongs to the key
+     * that opened it, and once that key is revoked nobody holds a key that
+     * can list, review, delete or close what arrives. So an open call is only
+     * open while its key still works: before a proposal is counted against
+     * the call or stored, the owning key's record is read (one point read),
+     * and a revoked or missing one is answered the same 404 as a closed call.
+     * Checked on every proposal rather than by closing the calls at revoke
+     * time, so there is no moment between the revoke and the close in which a
+     * proposal can still land, and a failed close cannot leave a call open.
+     * The owning key relaying its own form was authenticated a few lines up,
+     * so that path costs no second read.
      */
     submitProposal: route('send the proposal', async (request, context) => {
       let clientHash;
@@ -324,6 +367,7 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
 
       if (!relay) call = await readCall(eventId);
       if (!isCallOpen(call, nowMs)) return notFound(NOT_OPEN);
+      if (!ownerRelay && !(await ownerKeyWorks(call))) return notFound(NOT_OPEN);
 
       try {
         await enforceSubmissionQuota(store, callQuotaKey(eventId), { now: nowMs, limit: SUBMISSIONS_PER_CALL_PER_HOUR });
@@ -338,7 +382,16 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
       return json(201, { ok: true, id: doc.id, status: 'pending' });
     }),
 
-    /** GET events/{eventId}/call-for-speakers/submissions?status= — cfs:manage. */
+    /**
+     * GET events/{eventId}/call-for-speakers/submissions?status=&limit=&cursor= — cfs:manage.
+     *
+     * Newest first, one page at a time. With no `limit` the answer carries up
+     * to MAX_LISTED proposals, as it always did. `nextCursor` is null on the
+     * last page; otherwise send it back as `cursor` (with the same `status`)
+     * for the next page. `count` is the number in THIS answer, and a page can
+     * hold fewer than `limit` while `nextCursor` is still set, so the cursor,
+     * not the count, says whether there is more.
+     */
     listSubmissions: route('list the proposals', async (request) => {
       const auth = await guard.requireScope(request, 'cfs:manage');
       if (auth.error) return auth.error;
@@ -347,6 +400,7 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
       if (status !== null && !REVIEW_DECISIONS.includes(status)) {
         return json(400, { ok: false, code: 'INVALID', error: `status must be one of: ${REVIEW_DECISIONS.join(', ')}.` });
       }
+      const { limit, continuationToken } = readListPaging(request.query, status);
       const call = await ownedCall(eventId, auth.user);
       const parameters = [{ name: '@eventId', value: eventId }];
       let where = "c.docType = 'cfs-submission' AND c.eventId = @eventId";
@@ -354,14 +408,34 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
         where += ' AND c.status = @status';
         parameters.push({ name: '@status', value: status });
       }
-      const rows = await store.queryDocs(
-        CFS_CONTAINER,
-        `SELECT TOP ${MAX_LISTED} * FROM c WHERE ${where} ORDER BY c.submittedAt DESC`,
-        parameters,
-        { partitionKey: eventId },
-      );
-      const submissions = (rows || []).map(presentSubmission);
-      return json(200, { ok: true, call: presentCall(call, now()), submissions, count: submissions.length });
+      let page;
+      try {
+        page = await store.queryDocsPage(
+          CFS_CONTAINER,
+          `SELECT * FROM c WHERE ${where} ORDER BY c.submittedAt DESC`,
+          parameters,
+          { partitionKey: eventId, maxItemCount: limit, continuationToken: continuationToken || undefined },
+        );
+      } catch (error) {
+        // A cursor that decodes but that the database does not recognise (an
+        // old one, or one made by hand) is the caller's to correct, not a fault.
+        if (continuationToken && error?.code === 400) {
+          return json(400, {
+            ok: false,
+            code: 'INVALID',
+            error: 'cursor is no longer valid. Start the list again without a cursor.',
+          });
+        }
+        throw error;
+      }
+      const submissions = (page?.resources || []).map(presentSubmission);
+      return json(200, {
+        ok: true,
+        call: presentCall(call, now()),
+        submissions,
+        count: submissions.length,
+        nextCursor: encodeListCursor({ token: page?.continuationToken, status }),
+      });
     }),
 
     /** PUT events/{eventId}/call-for-speakers/submissions/{submissionId} — cfs:manage. Records a decision; publishes nothing. */
@@ -403,6 +477,51 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
         details: { eventId, submissionId },
       });
       return json(200, { ok: true, submission: presentSubmission(written || next) });
+    }),
+
+    /**
+     * DELETE events/{eventId}/call-for-speakers/submissions/{submissionId} — cfs:manage.
+     *
+     * Removes one proposal of this key's own call for good: the speaker's
+     * name, email, bio and talk leave the database (#1777; a speaker may ask
+     * for that). Another organizer's event is the same 404 as no call at all.
+     * Asking twice is safe: a proposal that is already gone answers 200 with
+     * `deleted: false`. The delete is conditional on the version that was
+     * read; a proposal that changed in between (a review landing) is read
+     * again and deleted, and only a second lost race answers 409.
+     */
+    deleteSubmission: route('delete the proposal', async (request, context) => {
+      const auth = await guard.requireScope(request, 'cfs:manage');
+      if (auth.error) return auth.error;
+      const eventId = eventIdOf(request);
+      const submissionId = request.params?.submissionId;
+      if (!isSubmissionId(submissionId)) {
+        return json(400, { ok: false, code: 'INVALID', error: 'The submission id must be a UUID.' });
+      }
+      await ownedCall(eventId, auth.user);
+
+      for (let attempt = 0; attempt < DELETE_ATTEMPTS; attempt += 1) {
+        const existing = await store.readDoc(CFS_CONTAINER, submissionId, eventId);
+        if (!existing || existing.docType !== 'cfs-submission' || existing.eventId !== eventId) {
+          return json(200, { ok: true, id: submissionId, deleted: false });
+        }
+        try {
+          await store.deleteDocIfMatch(CFS_CONTAINER, submissionId, existing._etag, eventId);
+        } catch (error) {
+          if (error?.code === 404) return json(200, { ok: true, id: submissionId, deleted: false });
+          if (error?.code === 412) continue;
+          throw error;
+        }
+        await audit(context, 'developer_cfs_submission_deleted', auth.user, {
+          resource: `${CFS_CONTAINER}:${submissionId}`,
+          // Status only, as for a review: nothing the speaker typed reaches the audit trail.
+          before: { status: existing.status },
+          after: null,
+          details: { eventId, submissionId },
+        });
+        return json(200, { ok: true, id: submissionId, deleted: true });
+      }
+      return json(409, { ok: false, code: 'CONFLICT', error: CHANGED });
     }),
   };
 }

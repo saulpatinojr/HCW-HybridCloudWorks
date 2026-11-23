@@ -29,6 +29,17 @@
  * wrong or revoked key (one sentence for all three, so the answer does not say
  * whether a key exists), 403 for a scope that is off, 429 with Retry-After for
  * the limit.
+ *
+ * THE ROWS ARE CAPPED PER KEY ID (#1777). A key's id is the first part of the
+ * key and is not secret, so a caller who has seen one can send wrong keys
+ * under it as fast as they like, and the per-minute limit above never counts
+ * them (it counts only a key that was right). Wrong, revoked and over-the-limit
+ * refusals are therefore counted per key id per minute, through the same
+ * counter, and after REFUSAL_ROWS_PER_MINUTE of them the refusal is still
+ * answered but writes no row until the next minute. The answer does not
+ * change (still 401, or 429 for the limit), so it does not say whether the
+ * id is real, and the organizer's own right key is never slowed by someone
+ * else's wrong ones: a right key under its own limit never reaches this counter.
  */
 import { writeDenialAudit } from '../auth/denial-audit.js';
 import {
@@ -50,12 +61,15 @@ import {
   organizerUser,
   parseKey,
   quotaKeyFor,
+  refusalQuotaKeyFor,
   scopesOf,
   secondsToNextMinute,
 } from './keys.js';
 
 /** How often lastUsedAt is written: a stamp per call would be a write per call. */
 export const LAST_USED_EVERY_MS = 5 * 60 * 1000;
+/** Audit rows a minute for wrong, revoked or over-the-limit refusals on one key id. Past it: refused, no row. */
+export const REFUSAL_ROWS_PER_MINUTE = 10;
 
 const UNAUTHENTICATED =
   'Authentication required: send your organizer key as a Bearer token. The key is missing, wrong or revoked.';
@@ -75,12 +89,14 @@ const labelOf = (scope) => SCOPES.find((entry) => entry.id === scope)?.label || 
  * @param {() => number} [deps.now] epoch milliseconds
  * @param {(entry: object) => unknown} [deps.auditDenial] never awaited; must not throw
  * @param {number} [deps.requestsPerMinute]
+ * @param {number} [deps.refusalRowsPerMinute]
  */
 export function createDeveloperApiGuard({
   store,
   now = Date.now,
   auditDenial = null,
   requestsPerMinute = REQUESTS_PER_MINUTE,
+  refusalRowsPerMinute = REFUSAL_ROWS_PER_MINUTE,
 }) {
   if (!store) throw new Error('createDeveloperApiGuard requires a store');
 
@@ -91,6 +107,24 @@ export function createDeveloperApiGuard({
     } catch {
       // The denial answer is unchanged when the audit sink fails.
     }
+  };
+
+  /**
+   * The row for a refusal that costs the caller nothing to repeat: counted
+   * per key id per minute, and written only while under the cap. A fault in
+   * the counter (not the cap itself) still writes the row: losing the cap for
+   * a moment is better than losing the record of a refusal.
+   */
+  const auditRefusal = async (keyId, reason, nowMs) => {
+    try {
+      await enforceSubmissionQuota(store, refusalQuotaKeyFor(keyId, nowMs), {
+        now: nowMs,
+        limit: refusalRowsPerMinute,
+      });
+    } catch (error) {
+      if (error?.code === 'SUBMISSION_RATE_LIMIT') return;
+    }
+    audit({ outcome: 'denied', reason, keyId });
   };
 
   /** lastUsedAt, at most once per LAST_USED_EVERY_MS, best effort and never awaited. */
@@ -120,19 +154,19 @@ export function createDeveloperApiGuard({
     if (!parsed) return unauthenticated();
 
     const record = await store.readDoc('admin_config', keyRecordId(parsed.keyId), ADMIN_CONFIG_PARTITION);
+    const nowMs = now();
     if (!isUsable(record)) {
       // An id that names no record gets no row: anyone can make a value of the
       // right shape, and a row each would let one caller turn requests into
       // audit writes. A revoked key is a real key still in use, worth a row.
-      if (record) audit({ outcome: 'denied', reason: 'revoked-key', keyId: parsed.keyId });
+      if (record) await auditRefusal(parsed.keyId, 'revoked-key', nowMs);
       return unauthenticated();
     }
     if (!hashMatches(secret, record.keyHash)) {
-      audit({ outcome: 'denied', reason: 'wrong-key', keyId: parsed.keyId });
+      await auditRefusal(parsed.keyId, 'wrong-key', nowMs);
       return unauthenticated();
     }
 
-    const nowMs = now();
     try {
       await enforceSubmissionQuota(store, quotaKeyFor(record.keyId, nowMs), {
         now: nowMs,
@@ -140,7 +174,7 @@ export function createDeveloperApiGuard({
       });
     } catch (error) {
       if (error?.code !== 'SUBMISSION_RATE_LIMIT') throw error;
-      audit({ outcome: 'denied', reason: 'rate-limited', keyId: record.keyId });
+      await auditRefusal(record.keyId, 'rate-limited', nowMs);
       return {
         record: null,
         user: null,

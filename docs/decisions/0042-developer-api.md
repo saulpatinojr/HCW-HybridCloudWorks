@@ -70,6 +70,7 @@ applies that pattern to a second machine caller: event organizers.
    | POST | `/v1/events/{id}/call-for-speakers/submissions` | public, rate-limited | Submit a talk proposal |
    | GET | `/v1/events/{id}/call-for-speakers/submissions` | key, `cfs:manage` | List proposals for review |
    | PUT | `/v1/events/{id}/call-for-speakers/submissions/{submissionId}` | key, `cfs:manage` | Accept or reject a proposal |
+   | DELETE | `/v1/events/{id}/call-for-speakers/submissions/{submissionId}` | key, `cfs:manage` | Delete a proposal (added by #1777, see "Changes after Phase 1") |
 4. **Delivery in two phases.** Phase 1: keys + guard + published-events +
    speakers + the CfS flow (open, submit, list, review). Phase 2: the event
    management writes (create, program, sponsors, duplicate). Phase 1 is the
@@ -115,6 +116,72 @@ applies that pattern to a second machine caller: event organizers.
 - **Two-phase delivery.** The poster-style writes land in Phase 2, not Phase 1;
   the PR that implements this ADR delivers Phase 1 and records Phase 2 as
   follow-ups.
+
+## Changes after Phase 1 (#1777)
+
+The review before Phase 1 merged left seven gaps on
+[#1777](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1777).
+Four are closed by these changes, which stay inside the decision above: no
+new container, setting or secret, and still no route that publishes.
+
+- **A proposal can be deleted.** A proposal holds a speaker's name, email and
+  bio, and a speaker may ask for it to be erased. The organizer who owns the
+  call deletes one with `DELETE .../submissions/{submissionId}` (`cfs:manage`;
+  another organizer's event is the same `404` as no call). The owner deletes
+  one on any call from the admin, where a search by the speaker's email
+  address answers the proposals' ids, events, statuses and dates only
+  (`POST cms/developer-api/proposal-search` and
+  `DELETE cms/developer-api/proposals/{submissionId}`, both super_admin). The
+  address travels in the request body, never in a URL. Every delete is under
+  the version that was read, is safe to repeat, and writes an audit row with
+  the status and no personal data. **Still open, the owner's decision:** how
+  long a proposal is kept after its call closes. Nothing expires today.
+- **A call takes proposals only while its key works.** Before a proposal is
+  counted against a call or stored, the record of the key that owns the call
+  is read, and a revoked or missing key is answered the same `404` as a
+  closed call. The other design, closing a key's open calls when it is
+  revoked, was rejected: finding the calls needs a query across every event,
+  and between the revoke and the last close (or for good, if a close fails) a
+  proposal could still land. Checking on each proposal has no such moment and
+  no second write to fail. It costs one small extra read per proposal, after
+  the per-visitor limit, so a caller over that limit never reaches it; the
+  organizer's own relay skips it because its key was just checked. Accepted:
+  the call's record still says `open` after a revoke, and no key can list or
+  hand over what it already holds (Phase 2).
+- **The proposal list is paged.** `GET .../submissions` takes `limit` (1 to
+  500, 500 when left out, so an existing caller sees what it saw before) and
+  `cursor`, and answers `nextCursor`, which is null on the last page. The
+  cursor wraps the database's own continuation value with the status filter
+  it was made for; a cursor that is malformed, was made for another filter or
+  is no longer recognised is a `400`, never a `500`.
+- **Refusals that cost nothing to repeat are capped.** A wrong secret under a
+  real key id, a revoked key and a key over its limit each wrote an audit row
+  per request, with no limit, and a key id is not secret. They are now
+  counted per key id per minute and write at most 10 rows a minute; past that
+  the answer is unchanged (so it does not say whether the id is real) and no
+  row is written. The right key never reaches that counter, so an organizer
+  cannot be locked out by someone else's wrong keys. Accepted: each refusal
+  still costs the read of the key record and a counter check, so this bounds
+  the audit log, not the request count; a bound on requests would have to
+  count every caller before the key is read, which Phase 1 does not do. The
+  Koda key's guard (ADR 0037) has the same gap and is not changed here.
+
+Left as they were, on purpose:
+
+- **Ids of unpublished site events are not reserved.** Accepted in the
+  runbook's "Accepted risks in Phase 1"; Phase 2's event records settle it.
+- **This ADR's status.** Whether it moves from Proposed to Accepted is the
+  owner's decision.
+- **The credential register.** Neither site-issued key (Koda's `hcwk_`, the
+  organizers' `hcdk_`) has a row in
+  `functions/src/lib/credentials/register.js`, so neither gets a reminder at
+  180 days. They do not fit the register as it is: a row is one named
+  credential in a store the register knows, with one date, and the register
+  has no store for "issued by this site, hash in `admin_config`" and no live
+  source that reads a key record's own rotation date. Organizer keys are also
+  many, each with its own date. Whether to extend the register (a new store
+  and a source for Koda's key; a per-key reminder for organizers) is the
+  owner's decision on #1777.
 
 ## Alternatives considered
 

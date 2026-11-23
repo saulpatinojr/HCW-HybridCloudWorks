@@ -1,18 +1,23 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
-import { createDeveloperApiGuard, getDeveloperApiGuard, resetDeveloperApiGuard } from './guard.js';
-import { buildKeyRecord, generateKey, keyRecordId } from './keys.js';
+import {
+  REFUSAL_ROWS_PER_MINUTE,
+  createDeveloperApiGuard,
+  getDeveloperApiGuard,
+  resetDeveloperApiGuard,
+} from './guard.js';
+import { buildKeyRecord, generateKey, keyRecordId, quotaKeyFor, refusalQuotaKeyFor } from './keys.js';
 import { createTestStore, makeRequest } from './test-store.test-helper.js';
 
 const NOW = Date.parse('2026-11-21T10:00:30Z');
 
-function setup({ scopes = ['cfs:manage'], requestsPerMinute } = {}) {
+function setup({ scopes = ['cfs:manage'], requestsPerMinute, refusalRowsPerMinute, now = () => NOW } = {}) {
   const store = createTestStore();
   const { keyId, secret } = generateKey();
   const record = buildKeyRecord({ keyId, secret, actor: 'owner', organizer: { organizerName: 'Org', scopes } });
   store.put('admin_config', record, ADMIN_CONFIG_PARTITION);
   const auditDenial = vi.fn();
-  const guard = createDeveloperApiGuard({ store, now: () => NOW, auditDenial, requestsPerMinute });
+  const guard = createDeveloperApiGuard({ store, now, auditDenial, requestsPerMinute, refusalRowsPerMinute });
   const withKey = (key = secret) => makeRequest({ headers: { Authorization: `Bearer ${key}` } });
   return { store, keyId, secret, record, guard, auditDenial, withKey };
 }
@@ -93,6 +98,113 @@ describe('the organizer key guard (ADR 0042)', () => {
     expect(limited.error.status).toBe(429);
     expect(limited.error.headers['Retry-After']).toBe('30');
     expect(auditDenial).toHaveBeenCalledWith(expect.objectContaining({ reason: 'rate-limited' }));
+  });
+
+  describe('refusals that cost the caller nothing to repeat are capped per key id (#1777)', () => {
+    const wrongOf = (secret) => `${secret.slice(0, -4)}${secret.endsWith('AAAA') ? 'BBBB' : 'AAAA'}`;
+    const revoke = ({ store, record }) => {
+      const { keyHash: _removed, ...rest } = record;
+      store.put('admin_config', { ...rest, revokedAt: '2026-11-21T10:00:31Z' }, ADMIN_CONFIG_PARTITION);
+    };
+
+    it('writes a row for each wrong key up to the cap, then keeps refusing with 401 and no row', async () => {
+      const env = setup();
+      const wrong = env.withKey(wrongOf(env.secret));
+      for (let i = 0; i < REFUSAL_ROWS_PER_MINUTE + 15; i += 1) {
+        const auth = await env.guard.authenticate(wrong);
+        expect(auth.error.status).toBe(401);
+        expect(auth.error.headers['Retry-After']).toBeUndefined();
+      }
+      expect(env.auditDenial).toHaveBeenCalledTimes(REFUSAL_ROWS_PER_MINUTE);
+      // One counter for the minute, stopped at the cap: nothing grows with the requests.
+      const counters = env.store.all('submission_quota');
+      expect(counters.map((doc) => doc.id)).toEqual([refusalQuotaKeyFor(env.keyId, NOW)]);
+      expect(counters[0].count).toBe(REFUSAL_ROWS_PER_MINUTE);
+    });
+
+    it('answers the capped refusal exactly as the first one, so the answer says nothing about the id', async () => {
+      const env = setup({ refusalRowsPerMinute: 1 });
+      const wrong = env.withKey(wrongOf(env.secret));
+      const first = await env.guard.authenticate(wrong);
+      const capped = await env.guard.authenticate(wrong);
+      expect(capped.error).toEqual(first.error);
+      const unknown = await env.guard.authenticate(env.withKey(generateKey().secret));
+      expect(unknown.error).toEqual(first.error);
+      expect(env.auditDenial).toHaveBeenCalledTimes(1);
+    });
+
+    it("never slows the organizer's own right key, and does not use up its per-minute limit", async () => {
+      const env = setup({ refusalRowsPerMinute: 2, requestsPerMinute: 3 });
+      const wrong = env.withKey(wrongOf(env.secret));
+      for (let i = 0; i < 20; i += 1) await env.guard.authenticate(wrong);
+      for (let i = 0; i < 3; i += 1) expect((await env.guard.authenticate(env.withKey())).error).toBeNull();
+      const byId = Object.fromEntries(env.store.all('submission_quota').map((doc) => [doc.id, doc.count]));
+      expect(byId).toEqual({ [refusalQuotaKeyFor(env.keyId, NOW)]: 2, [quotaKeyFor(env.keyId, NOW)]: 3 });
+    });
+
+    it('caps a revoked key the same way, on the same counter as wrong keys', async () => {
+      const env = setup({ refusalRowsPerMinute: 3 });
+      await env.guard.authenticate(env.withKey(wrongOf(env.secret)));
+      revoke(env);
+      for (let i = 0; i < 6; i += 1) expect((await env.guard.authenticate(env.withKey())).error.status).toBe(401);
+      expect(env.auditDenial.mock.calls.map(([entry]) => entry.reason)).toEqual(['wrong-key', 'revoked-key', 'revoked-key']);
+    });
+
+    it('caps the rows of a key over its per-minute limit, which is still answered 429', async () => {
+      const env = setup({ requestsPerMinute: 1, refusalRowsPerMinute: 2 });
+      expect((await env.guard.authenticate(env.withKey())).error).toBeNull();
+      for (let i = 0; i < 5; i += 1) {
+        const limited = await env.guard.authenticate(env.withKey());
+        expect(limited.error.status).toBe(429);
+        expect(limited.error.headers['Retry-After']).toBe('30');
+      }
+      expect(env.auditDenial).toHaveBeenCalledTimes(2);
+    });
+
+    it('counts each key id on its own, and starts again the next minute', async () => {
+      let clock = NOW;
+      const env = setup({ refusalRowsPerMinute: 1, now: () => clock });
+      const other = generateKey();
+      env.store.put(
+        'admin_config',
+        buildKeyRecord({ keyId: other.keyId, secret: other.secret, actor: 'owner', organizer: { organizerName: 'B', scopes: ['cfs:manage'] } }),
+        ADMIN_CONFIG_PARTITION,
+      );
+      const wrong = env.withKey(wrongOf(env.secret));
+      await env.guard.authenticate(wrong);
+      await env.guard.authenticate(wrong);
+      await env.guard.authenticate(env.withKey(wrongOf(other.secret)));
+      expect(env.auditDenial.mock.calls.map(([entry]) => entry.keyId)).toEqual([env.keyId, other.keyId]);
+      clock = NOW + 60_000;
+      await env.guard.authenticate(wrong);
+      expect(env.auditDenial).toHaveBeenCalledTimes(3);
+    });
+
+    it('writes no counter and no row for an id that names no record', async () => {
+      const env = setup();
+      for (let i = 0; i < 5; i += 1) await env.guard.authenticate(env.withKey(generateKey().secret));
+      expect(env.store.all('submission_quota')).toEqual([]);
+      expect(env.auditDenial).not.toHaveBeenCalled();
+    });
+
+    it('still refuses with 401, and still writes the row, when the counter itself fails', async () => {
+      const env = setup();
+      env.store.incrementIf = async () => {
+        throw Object.assign(new Error('boom'), { code: 503 });
+      };
+      const auth = await env.guard.authenticate(env.withKey(wrongOf(env.secret)));
+      expect(auth.error.status).toBe(401);
+      expect(env.auditDenial).toHaveBeenCalledWith(expect.objectContaining({ reason: 'wrong-key' }));
+    });
+
+    it('never puts the presented key in a counter id or a row', async () => {
+      const env = setup();
+      const wrong = wrongOf(env.secret);
+      await env.guard.authenticate(env.withKey(wrong));
+      const secretPart = wrong.split('_')[2];
+      expect(JSON.stringify(env.store.all('submission_quota'))).not.toContain(secretPart);
+      expect(JSON.stringify(env.auditDenial.mock.calls)).not.toContain(secretPart);
+    });
   });
 
   it('lets a quota fault that is not the limit through as a fault', async () => {
