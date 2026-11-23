@@ -11,4 +11,4 @@
 # the job uses (3.15):
 #
 #   pip-compile --allow-unsafe --generate-hashes --output-file=requirements.txt requirements.in
-lizard==1.24.0
+lizard==1.26.1

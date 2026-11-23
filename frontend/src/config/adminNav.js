@@ -190,6 +190,9 @@ export function roleLabel(role) {
  *                                 routes are super_admin (ai/mcp-oauth-handlers.js); the Koda tab reads
  *                                 cms/agent-content/key at editor and its writes (generate, switch, revoke) are
  *                                 super_admin (agent-content/admin-handlers.js, ADR 0037)
+ *                                 the Developer API tab reads cms/developer-api/keys at editor and its
+ *                                 writes (make, rotate, re-scope, revoke) are super_admin
+ *                                 (developer-api/admin-handlers.js, ADR 0042)
  *   Image Prompts      editor     cms/image-prompts (cms/image-prompts/handlers.js)
  *   Image Gallery      editor     cms/images (admin-integrations.js), cms/images/bulk (gallery-images.js)
  *   Calendar           editor     cms/calendar (calendar.js); saveContentSchedule and unscheduleContent are publisher
