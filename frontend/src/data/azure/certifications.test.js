@@ -46,7 +46,9 @@ describe('Azure certification data', () => {
     // (retired 2026-06-30), SC-730 (withdrawn after its beta, no date), and
     // AZ-800 and AZ-801 (retired 2026-09-30, re-read 2026-10-01 for #770),
     // and PL-400, stored ahead of its 2026-10-30 last day (statusReadDate
-    // 2026-10-12, #1091) and shown as retiring until then.
+    // 2026-10-12, #1091) and shown as retiring until then, and MS-102, stored
+    // the same way ahead of its 2026-11-30 last day (statusReadDate
+    // 2026-11-23, #1737).
     expect(retired.map((c) => c.code).sort()).toEqual([
       'AI-102',
       'AI-900',
@@ -58,6 +60,7 @@ describe('Azure certification data', () => {
       'MB-280',
       'MB-335',
       'MB-700',
+      'MS-102',
       'PL-200',
       'PL-400',
       'PL-500',
