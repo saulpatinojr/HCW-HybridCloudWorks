@@ -306,8 +306,9 @@ describe('the facts the 2026-09-09 audit asked for (#461 items 5–9)', () => {
     // re-read (#1497); the describe block for that re-read holds them.
     expect(a['SAP-C02']).toMatchObject({ status: 'retired', expiryDate: '2026-11-16' });
     expect(a['SAP-C03']).toMatchObject({ status: 'active', availableDate: '2026-11-17' });
-    expect(a['DVA-C02']).toMatchObject({ status: 'expiring', expiryDate: '2026-11-30' });
-    expect(a['DVA-C03']).toMatchObject({ status: 'upcoming', availableDate: '2026-12-01' });
+    // DVA-C02 and DVA-C03 likewise since the 2026-11-23 re-read (#1737).
+    expect(a['DVA-C02']).toMatchObject({ status: 'retired', expiryDate: '2026-11-30' });
+    expect(a['DVA-C03']).toMatchObject({ status: 'active', availableDate: '2026-12-01' });
     expect(a['ANS-C01']).toMatchObject({ status: 'expiring', expiryDate: '2026-12-31' });
     expect(a['AIB-C01']).toMatchObject({ status: 'beta', level: 'Business' });
   });
@@ -427,7 +428,8 @@ describe('the 2026-10-05 re-read', () => {
     // SAP-C02's stored status moved to `retired` on 2026-11-03 (#1497); its
     // last day did not.
     expect(rowFor(aws, 'SAP-C02')).toMatchObject({ expiryDate: '2026-11-16' });
-    expect(rowFor(aws, 'DVA-C02')).toMatchObject({ status: 'expiring', expiryDate: '2026-11-30' });
+    // DVA-C02's did the same on 2026-11-23 (#1737).
+    expect(rowFor(aws, 'DVA-C02')).toMatchObject({ expiryDate: '2026-11-30' });
     expect(rowFor(aws, 'MLA-C02')).toMatchObject({ status: 'beta', gaDate: '2027-01-14' });
   });
 });
@@ -505,6 +507,68 @@ describe('the 2026-11-03 re-read', () => {
   it('leaves the alarm nothing to name on the day either row turns', () => {
     const rows = [rowFor('SAP-C02'), rowFor('SAP-C03')];
     for (const day of ['2026-11-16', '2026-11-17', '2026-11-18']) {
+      expect(findStaleStatuses(rows, day), day).toEqual([]);
+    }
+  });
+});
+
+/**
+ * The 2026-11-23 re-read of DVA-C02, DVA-C03 and MS-102, the three rows #1737
+ * named. All are stored ahead of the vendor's day under rule 2 of
+ * `deriveStatus`: DVA-C02 and MS-102 show "Retiring" through 2026-11-30 and
+ * DVA-C03 "Coming" until 2026-12-01, and the alarm above has nothing to fire
+ * on that day. The vendor sentences are quoted in the AWS and Azure headers.
+ */
+describe('the 2026-11-23 re-read', () => {
+  /** The row with this exam code, as that catalogue's file stores it. */
+  const rowFor = (catalogue, code) => catalogue.certifications.find((c) => c.code === code);
+
+  it('stores DVA-C02 retired and DVA-C03 active, each showing its old badge until its day', () => {
+    const dvaC02 = rowFor(aws, 'DVA-C02');
+    expect(dvaC02).toMatchObject({
+      status: 'retired',
+      expiryDate: '2026-11-30',
+      retiredDate: '2026-11-30',
+      statusReadDate: '2026-11-23',
+    });
+    expect(deriveStatus(dvaC02, '2026-11-23')).toBe('expiring');
+    expect(deriveStatus(dvaC02, '2026-11-30')).toBe('expiring');
+    expect(deriveStatus(dvaC02, '2026-12-01')).toBe('retired');
+
+    const dvaC03 = rowFor(aws, 'DVA-C03');
+    expect(dvaC03).toMatchObject({
+      status: 'active',
+      availableDate: '2026-12-01',
+      registrationOpens: '2026-10-27',
+      statusReadDate: '2026-11-23',
+    });
+    expect(deriveStatus(dvaC03, '2026-11-23')).toBe('upcoming');
+    expect(deriveStatus(dvaC03, '2026-11-30')).toBe('upcoming');
+    expect(deriveStatus(dvaC03, '2026-12-01')).toBe('active');
+  });
+
+  it('stores MS-102 retired, showing "Retiring" through its last day', () => {
+    const ms102 = rowFor(azure, 'MS-102');
+    expect(ms102).toMatchObject({
+      status: 'retired',
+      expiryDate: '2026-11-30',
+      replacedBy: 'ab-650',
+      statusReadDate: '2026-11-23',
+    });
+    expect(deriveStatus(ms102, '2026-11-23')).toBe('expiring');
+    expect(deriveStatus(ms102, '2026-11-30')).toBe('expiring');
+    expect(deriveStatus(ms102, '2026-12-01')).toBe('retired');
+  });
+
+  it('tells a visitor one registration date for DVA-C03, now that AWS gives one', () => {
+    const text = rowFor(aws, 'DVA-C03').longDescription;
+    expect(text).toMatch(/October 27, 2026/);
+    expect(text).not.toMatch(/two dates/);
+  });
+
+  it('leaves the alarm nothing to name on the day the rows turn', () => {
+    const rows = [rowFor(aws, 'DVA-C02'), rowFor(aws, 'DVA-C03'), rowFor(azure, 'MS-102')];
+    for (const day of ['2026-11-30', '2026-12-01', '2026-12-02']) {
       expect(findStaleStatuses(rows, day), day).toEqual([]);
     }
   });

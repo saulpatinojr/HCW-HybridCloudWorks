@@ -32,12 +32,13 @@ before any plan or apply.
 | File | Holds |
 | --- | --- |
 | `backend.tf` | HCP Terraform Cloud backend declaration |
-| `providers.tf` | Required providers and provider configuration (`azurerm ~> 5.0`, `azapi ~> 2.0`, `cloudflare ~> 4.0`) |
+| `providers.tf` | Required providers and provider configuration (`azurerm ~> 5.0`, `azapi ~> 2.0`, `cloudflare ~> 5.24`, and since #1763 `azuread ~> 3.0` and `time ~> 0.13`) |
 | `variables.tf` | All inputs; names must match TFC workspace variable keys exactly |
 | `main.tf` | Core workload: resource group, Static Web App, Cosmos DB (serverless), storage, Functions (Flex Consumption), Key Vault, Log Analytics + Application Insights, budgets, DNS |
 | `hub.tf` | Platform Connectivity: hub VNet, NSG, route table, and the peering to the workload spoke |
 | `observability.tf` | Action group, diagnostic settings, every alert rule, and the two user-assigned identities the log alert rules query as |
 | `oidc.tf` | The three GitHub-facing identities — deploy, read-only monitor, and the Reader-only identity Copilot code review signs in as — each a user-assigned managed identity with federated credentials and least-privilege role assignments |
+| `muse-reader.tf` | Muse's read-only Entra app registration (#1763): service principal, a 180-day client secret kept in state, and built-in Reader on the application, management and connectivity subscriptions; behind `muse_reader_enabled`, off by default |
 | `scratch.tf` | Removal record for the retired rehearsal estate — no resources |
 | `outputs.tf` | Root outputs |
 | `cosmos-containers.json` | Generated Cosmos container manifest — regenerate with `scripts/generate-cosmos-container-spec.mjs`, do not hand-edit |

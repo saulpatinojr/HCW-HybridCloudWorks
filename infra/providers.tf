@@ -43,6 +43,18 @@ terraform {
       source  = "cloudflare/cloudflare"
       version = "~> 5.24"
     }
+    # azuread and time arrived with Muse's read-only app registration
+    # (muse-reader.tf, #1763): the first Entra object infra/ creates. Both
+    # are HashiCorp's own providers. Nothing uses them until
+    # var.muse_reader_enabled is true.
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 3.0"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.13"
+    }
   }
 }
 
@@ -134,6 +146,14 @@ provider "azurerm" {
 provider "azapi" {
   subscription_id = var.subscription_app
 }
+
+# Same dynamic credentials as azurerm: HCP Terraform's Azure dynamic
+# provider credentials cover the Entra ID provider too, from the same
+# workspace variables and the same ARM_* environment, with no HCL
+# (https://developer.hashicorp.com/terraform/cloud-docs/workspaces/dynamic-provider-credentials/azure-configuration).
+# The tenant comes from ARM_TENANT_ID. What the run identity may DO in Entra
+# is decided by its directory role, not here: see muse-reader.tf.
+provider "azuread" {}
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
