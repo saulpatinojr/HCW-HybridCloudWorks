@@ -77,7 +77,7 @@ trips. The session is the orchestrator of a team of agents and does the work.
   workflows, so the App repositories are added to the work board by
   `C:\Users\saulp\.hcw\Sync-AppTicketsToBoard.ps1`, run hourly by the
   `HCW-board-sync` scheduled task).
-  A cloud session (Claude Code on the web, claude.ai/code) has three more
+  A cloud session (Claude Code on the web, claude.ai/code) has four more
   limits, because its GitHub calls go through the Claude GitHub App (the
   app installed on the owner's GitHub account for web sessions) and a
   proxy (a go-between that checks each request before it reaches GitHub),
@@ -85,7 +85,9 @@ trips. The session is the orchestrator of a team of agents and does the work.
   2026-11-11
   ([#1683](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1683)),
   the third on 2026-11-22 on the App's
-  [`Protect main` ruleset](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/rules/25778324).
+  [`Protect main` ruleset](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/rules/25778324),
+  and the fourth on 2026-11-23 while cutting the App's
+  [v0.4.3 release](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/releases/tag/v0.4.3).
   - **GraphQL is refused.** GraphQL is GitHub's second API, which many `gh`
     commands use under the hood; `gh api graphql`, `gh pr view --json` and
     `gh pr list` were all refused with HTTP 403 (not allowed) "GitHub
@@ -110,9 +112,25 @@ trips. The session is the orchestrator of a team of agents and does the work.
     ruleset's link, the exact boxes and values to change, and the values to
     leave alone, then reads the ruleset back from the API to confirm the
     change once the owner says it is done.
+  - **Tags cannot be pushed.** A tag is a permanent name on a commit; in
+    the App and add-on repositories a `v*` tag starts the release and
+    image workflows. On 2026-11-23 `git push origin v0.4.2` from a cloud
+    session was refused with HTTP 403 by the proxy, and nothing reached
+    GitHub. Everything before the tag still works from a cloud session:
+    the version pull request, its merge, and the dry runs (`gh api -X
+    POST repos/{owner}/{repo}/actions/workflows/{file}/dispatches -f
+    ref=main` was accepted). So a cloud session does those, then gives
+    the owner one guarded PowerShell line that fetches, refuses to tag
+    unless `origin/main` is still the exact commit the dry runs passed
+    on, and otherwise creates the annotated tag with the owner's GitHub
+    no-reply address and pushes it. The guard matters: on 2026-11-23 the
+    owner's `v0.4.2` tag landed on the dry-run commit after another pull
+    request had changed `.github/workflows` on `main`, the release
+    `check` job refused it, nothing was published, and since a pushed
+    tag cannot be moved the release went out as `v0.4.3`.
 
   Sessions on the owner's own computer use the owner's `gh` sign-in and
-  have none of these three cloud-session limits.
+  have none of these four cloud-session limits.
 - **Use the team.** Hand each ticket, review, build and test run to the
   matching agent (see "Use the specialist agents"), brief it fully, run
   independent ones in parallel, and check what comes back yourself before you
