@@ -376,6 +376,25 @@ file there. From the split of `main.tf` (#269) until 2026-09-29 it read
 `main.tf` alone, found none, and stopped before doing anything (#814). CI now
 runs its tests, so a file move cannot break it silently again.
 
+**One secret is made by Terraform and kept in state, by the owner's decision
+(#1763, [ADR 0043](../decisions/0043-muse-azure-reader.md)).** Muse's
+read-only Azure sign-in, `azuread_application_password.muse_reader` in
+`infra/muse-reader.tf`, exported as the sensitive output
+`muse_reader_client_secret`. It is an exception to the rule above, made with
+the rule in view: the rule keeps *Key Vault* values out of state because the
+site reads them and a human can own them; this secret is read by nothing in
+the estate, only by Muse, which runs outside Azure and GitHub Actions and
+cannot use a federated (OIDC) sign-in, so there is no keyless path and no
+vault of ours it belongs in. What keeps the wider disclosure boundary
+acceptable is what the secret can do: built-in Reader, no data action, no
+`listKeys`, no Key Vault secret value. It still widens who can read the
+estate to whoever can read the `hcw-azure` state, and that is written down in
+the ADR as the accepted risk. The value is copied once into Muse's own vault
+and rotated on a 180-day reminder ([runbook](../runbooks/muse-azure-reader.md)).
+The alternative the ADR records, if the owner later wants the value out of
+state, is Terraform keeping the app and its grants while the owner mints the
+secret with `az ad app credential reset`.
+
 ### Multi-line and oversized secrets
 
 **There are none left, and the run-time read path was deleted with them
