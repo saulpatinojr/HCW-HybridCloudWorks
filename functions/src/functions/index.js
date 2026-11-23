@@ -21,6 +21,7 @@ import "./cms-http.js";
 import "./code-quality-http.js";
 import "./drafts-http.js";
 import "./agent-content-http.js";
+import "./developer-api-http.js";
 import "./content-workflow-http.js";
 import "./generate-article-draft-http.js";
 import "./forge-config-http.js";
