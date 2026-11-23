@@ -108,6 +108,28 @@ describe('the service registry', () => {
     expect(anthropic.rotateNote).toMatch(/Claude Code token/);
   });
 
+  it('never guesses a price: a subscription card points at the Cost page’s ledger instead', () => {
+    for (const service of SERVICES) {
+      expect(service.cost, `${service.name} says “not recorded”`).not.toMatch(/not recorded/i);
+    }
+    const onLedger = SERVICES.filter((service) => service.costOnLedger).map(
+      (service) => service.id
+    );
+    expect(onLedger).toEqual([
+      'publer',
+      'resend',
+      'linkie',
+      'podbean',
+      'streamyard',
+      'plaud',
+      'anthropic',
+      'qlty',
+      'copilot-review',
+      'hybrid-lab',
+      'hostinger',
+    ]);
+  });
+
   it('lists the sign-ins the hub does not hold as boxes on their vendor’s card, with no key row', () => {
     const byId = (id) => SERVICES.find((service) => service.id === id);
     // A second sign-in from a vendor with a card joins that card.

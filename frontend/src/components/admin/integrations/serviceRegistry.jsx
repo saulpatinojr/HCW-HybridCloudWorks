@@ -460,6 +460,14 @@ const LLM_SECURITY_NOTE =
  * (CoderAutomation). All are names, not components, so this file stays free
  * of React state and the registry test can read them as data.
  *
+ * `cost` says what using the service costs, in words, on every card (owner
+ * instruction 2026-11-22): a bill per call, a plan, a free allowance, or
+ * nothing. It names the KIND of bill, never an amount the owner pays, because
+ * the plan and its price are the owner's to keep and already have a home: the
+ * subscriptions ledger on the Cost page (Cost → Services, ADR 0039).
+ * `costOnLedger: true` marks a card whose bill is a subscription, and the card
+ * then links that ledger after the sentence.
+ *
  * DESCRIPTIONS ARE FOR SOMEONE WHO HAS NEVER SEEN THIS REPOSITORY. One line,
  * saying what the service is and what it does for the site. No issue numbers,
  * no function names, no file paths.
@@ -477,7 +485,8 @@ export const SERVICES = Object.freeze([
     secrets: ['PUBLER-API-KEY', 'PUBLER-WORKSPACE-ID'],
     capabilities: ['List connected social accounts', 'Schedule and publish posts'],
     usedIn: ['Social Hub', 'Platform Settings (Social automation)'],
-    cost: 'A plan on the Publer account. Which plan, and its price, are not recorded in this portal yet.',
+    cost: 'A subscription on the Publer account, billed by the month or the year.',
+    costOnLedger: true,
     dataDirection: 'Outbound: captions and links for live content go to Publer.',
     securityNote:
       'Both values are read on the server only. Publer answers 403 for a wrong key and 401 for a wrong workspace id, and each has its own light.',
@@ -495,7 +504,8 @@ export const SERVICES = Object.freeze([
     secrets: ['RESEND-API-KEY'],
     capabilities: ['Manage contacts', 'Create and send broadcasts', 'Send the confirmation email'],
     usedIn: ['Newsletter Hub'],
-    cost: 'A plan on the Resend account. Which plan, and its price, are not recorded in this portal yet.',
+    cost: 'Free up to 1,000 newsletter contacts. Above that, a monthly plan (USD 40 for 5,000 when the provider was chosen).',
+    costOnLedger: true,
     dataDirection: 'Outbound: subscriber addresses and issue HTML go to Resend.',
     securityNote:
       'A Full access key, read on the server only; the test refuses a key minted with sending access alone.',
@@ -511,7 +521,8 @@ export const SERVICES = Object.freeze([
     secrets: ['LINKIE-API-KEY'],
     capabilities: ['List pages', 'Add, reorder and remove links'],
     usedIn: ['Linkie Hub'],
-    cost: 'A plan on the Linkie account. Which plan, and its price, are not recorded in this portal yet.',
+    cost: 'A plan on the Linkie account.',
+    costOnLedger: true,
     dataDirection: 'Outbound: live page titles and URLs go to Linkie.',
     securityNote: 'Read on the server only, through the Linkie proxy.',
   },
@@ -551,7 +562,8 @@ export const SERVICES = Object.freeze([
     secrets: ['PODBEAN-CLIENT-ID', 'PODBEAN-CLIENT-SECRET'],
     capabilities: ['Read the show', 'Publish an episode'],
     usedIn: ['Recording Hub (Distribution)'],
-    cost: 'A plan on the Podbean account. Which plan, and its price, are not recorded in this portal yet.',
+    cost: 'A podcast hosting subscription on the Podbean account.',
+    costOnLedger: true,
     dataDirection: 'Outbound: episode audio and show notes go to Podbean.',
     securityNote:
       'Read on the server only. The client ID is an identifier; the secret never leaves the server.',
@@ -573,7 +585,8 @@ export const SERVICES = Object.freeze([
       'Notify Telegram on new registrations and live or on-demand attendance',
     ],
     usedIn: ['Newsletter Hub', 'Telegram Alerts', 'Public Webinar Registration'],
-    cost: 'A plan on the StreamYard account. Which plan, and its price, are not recorded in this portal yet.',
+    cost: 'A subscription on the StreamYard account.',
+    costOnLedger: true,
     dataDirection:
       'Two-way: webinar registrations come in from StreamYard or the site; confirmation emails and Telegram alerts go out.',
     securityNote:
@@ -617,7 +630,8 @@ export const SERVICES = Object.freeze([
     reconnectHref: '/admin/recording-hub?tab=settings',
     capabilities: ['List recordings', 'Download audio', 'Transcribe an upload'],
     usedIn: ['Recording Hub'],
-    cost: 'A plan on the Plaud account. Which plan, and its price, are not recorded in this portal yet.',
+    cost: 'A plan on the Plaud account, separate from the recorder itself.',
+    costOnLedger: true,
     dataDirection:
       'Inbound: recordings and transcripts come from Plaud; uploads go to it for transcription.',
     securityNote:
@@ -745,6 +759,7 @@ export const SERVICES = Object.freeze([
     dataDirection:
       'Outbound: article text and prompts go to Anthropic; drafts come back. On GitHub, a run sends the repository’s code and the comment to Anthropic.',
     cost: 'The API key is billed per token to the Anthropic account. Claude Code is separate: it uses the Claude subscription’s limits, with no bill per call.',
+    costOnLedger: true,
     // The button below the boxes opens the Keys tab, which holds the API key
     // only. Said on the button and beside it, because it sits right under
     // the Claude Code box and read as if it replaced that token (owner’s
@@ -910,7 +925,7 @@ export const SERVICES = Object.freeze([
     action: 'refreshCloudPricing',
     capabilities: ['Read three public price lists', 'Refresh the cached comparison'],
     usedIn: ['Public pricing comparison'],
-    cost: 'Not recorded in this portal yet. The refresh makes a few calls a day to public price lists.',
+    cost: 'Nothing: these are public price lists, and none of them bills this site for reading it.',
     dataDirection: 'Inbound: list prices come from the providers; nothing of ours goes out.',
     securityNote: 'Read on the server only. Scope the AWS policy to pricing:GetProducts.',
   },
@@ -930,7 +945,8 @@ export const SERVICES = Object.freeze([
     secrets: ['QLTY-API-TOKEN'],
     capabilities: ['Read grades and open findings'],
     usedIn: ['Health (Code and Security)'],
-    cost: 'A plan on the Qlty account. Which plan, and its price, are not recorded in this portal yet.',
+    cost: 'A plan on the Qlty account.',
+    costOnLedger: true,
     dataDirection: 'Inbound: findings come from Qlty; nothing goes out.',
     securityNote: 'A personal token read on the server only.',
   },
@@ -954,6 +970,7 @@ export const SERVICES = Object.freeze([
     dataDirection:
       'Inside GitHub: the App reads this repository’s results for Copilot. Nothing comes to this site.',
     cost: 'Nothing for the key. Copilot code review comes with the GitHub Copilot subscription.',
+    costOnLedger: true,
     securityNote:
       'Read-only, this repository only, and held only by GitHub. This site cannot read or write it.',
   },
@@ -979,7 +996,8 @@ export const SERVICES = Object.freeze([
     ],
     capabilities: ['List lab templates', 'Count running workspaces', 'Verify a browser check'],
     usedIn: ['Labs', 'Public labs page', 'Landing Zone Builder'],
-    cost: 'No charge per use. The workspaces run on the rented lab host, and the browser check is a free service.',
+    cost: 'No charge per use. The workspaces run on the lab host, which is rented from Hostinger, and the browser check is a free service.',
+    costOnLedger: true,
     dataDirection:
       'Inbound: workspace status comes from Coder, and the lab host hands over a renewed status token; a Turnstile token goes to Cloudflare to verify.',
     securityNote:
@@ -1006,7 +1024,8 @@ export const SERVICES = Object.freeze([
     usedIn: ['AI Engine (MCP Servers)'],
     dataDirection:
       'Outbound: the assistant’s tool calls go to Hostinger; the answers come back to the AI Engine.',
-    cost: 'Nothing for the connection. The lab host itself is rented from Hostinger; the price is not recorded in this portal yet.',
+    cost: 'Nothing for the connection. The lab host itself is rented from Hostinger.',
+    costOnLedger: true,
     securityNote:
       'A sign-in the AI Engine makes and renews, kept in the site’s database and never sent to a browser. Only a super admin can connect it.',
   },
