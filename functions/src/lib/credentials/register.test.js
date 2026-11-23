@@ -2,6 +2,9 @@
  * The register's shape, and the pin that keeps its Key Vault part and the
  * Keys tab's catalogue one list (#1026).
  */
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import { describe, it, expect } from 'vitest';
 
 import { SECRET_CATALOG } from '../secret-catalog.js';
@@ -254,5 +257,25 @@ describe('lookups', () => {
   it('lists every store an entry uses, and no unused one', () => {
     const used = new Set(CREDENTIAL_REGISTER.map((entry) => entry.store));
     expect(CREDENTIAL_STORES.map((store) => store.id).filter((id) => !used.has(id))).toEqual([]);
+  });
+});
+
+describe('a GitHub Actions secret names every workflow that reads it', () => {
+  // The row said four workflows while seven read the key (#1778, found while
+  // retiring the PyYAML wheel workflow). A workflow that starts reading the
+  // key, or stops, now fails here until the row and the two standards pages
+  // (docs/standards/required-inputs.md, variables-and-secrets.md) say so.
+  const workflowsDir = fileURLToPath(new URL('../../../../.github/workflows/', import.meta.url));
+  const readers = readdirSync(workflowsDir)
+    .filter((file) => /\.ya?ml$/.test(file))
+    .filter((file) => readFileSync(workflowsDir + file, 'utf8').includes('secrets.MANIFEST_APP_PRIVATE_KEY'))
+    .sort();
+
+  it('MANIFEST_APP_PRIVATE_KEY lists exactly the workflows that use it', () => {
+    const row = findCredential('gh-manifest-app-private-key');
+    const listed = row.consumer.split(', ').sort();
+
+    expect(readers.length).toBeGreaterThan(0);
+    expect(listed).toEqual(readers);
   });
 });
