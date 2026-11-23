@@ -93,7 +93,21 @@ const agentKeyGuard = vi.fn(async () => ({
   user: null,
   error: { status: 401, headers: {}, body: JSON.stringify({ ok: false, error: "Unauthorized" }) },
 }));
-const GUARDS = [requireRole, requireUser, requireAgent, syncRequireRole, agentKeyGuard];
+// The Developer API's organizer key guard (ADR 0042): an organizer's own key,
+// never a token and never Koda's key. Same reasoning as the agent key above.
+const developerKeyGuard = vi.fn(async () => ({
+  record: null,
+  user: null,
+  error: { status: 401, headers: {}, body: JSON.stringify({ ok: false, error: "Unauthorized" }) },
+}));
+const GUARDS = [requireRole, requireUser, requireAgent, syncRequireRole, agentKeyGuard, developerKeyGuard];
+vi.mock("../lib/developer-api/guard.js", () => ({
+  getDeveloperApiGuard: () => ({
+    authenticate: developerKeyGuard,
+    requireScope: developerKeyGuard,
+  }),
+  resetDeveloperApiGuard: () => {},
+}));
 vi.mock("../lib/agent-content/guard.js", () => ({
   getAgentContentGuard: () => ({
     authenticate: agentKeyGuard,
@@ -304,7 +318,34 @@ const PUBLIC_ROUTES = new Set([
   // checked, Cloudflare-origin-verified and quota-limited per caller and per
   // address in submission_quota (lib/streamyard/onair.js).
   "public/webinars/register",
+  // The Developer API's public reads (ADR 0042). Both serve the speakerevents
+  // snapshot a human published, already public at public/snapshots/
+  // speakerevents, narrowed further by lib/developer-api/directory.js. No
+  // write, no id from the caller reaches a read, and nothing here publishes.
+  "developer/v1/published-events",
+  "developer/v1/speakers",
 ]);
+
+/**
+ * Routes where SOME verbs are public and the rest are guarded: one template,
+ * because the Functions host keys its route table on the template alone
+ * (http-route.js httpRouteByMethod). Only the verbs listed here skip the guard
+ * check; every other verb on the same route is held to property 1 as usual.
+ * Adding a verb here is the same security decision as adding a route above.
+ */
+const PUBLIC_ROUTE_METHODS = new Map([
+  // Sending a talk proposal to an open call for speakers (ADR 0042). POST
+  // only: listing the proposals (GET) takes an organizer key with cfs:manage.
+  // Refused unless the request came through Cloudflare (client-identity.js),
+  // a 16 KB body cap read before parsing, a honeypot field, 5 an hour per
+  // Cloudflare-verified client and 100 an hour per call through the same
+  // counter as public/submissions, and only while the call is open. Stored
+  // pending; nothing a caller sends is ever shown publicly —
+  // lib/developer-api/handlers.js submitProposal.
+  ["developer/v1/events/{eventId}/call-for-speakers/submissions", new Set(["POST"])],
+]);
+const isPublicVerb = (route, method) =>
+  PUBLIC_ROUTES.has(route) || Boolean(PUBLIC_ROUTE_METHODS.get(route)?.has(method));
 
 const ALLOWED_ORIGIN = "https://hybridcloudworks.com";
 
@@ -375,6 +416,17 @@ describe("route inventory", () => {
     );
     expect(missing).toEqual([]);
   });
+
+  it("every public verb in the per-verb allowlist is registered on its route", () => {
+    const missing = [];
+    for (const [route, verbs] of PUBLIC_ROUTE_METHODS) {
+      const options = [...httpRegistrations.values()].find((o) => o.route === route);
+      for (const verb of verbs) {
+        if (!options?.methods.includes(verb)) missing.push(`${verb} ${route}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
 });
 
 describe("property 1 — every route is guarded or explicitly public", () => {
@@ -391,6 +443,7 @@ describe("property 1 — every route is guarded or explicitly public", () => {
       // widened, but this test is the replacement for the firestore.rules
       // default-deny catch-all, and that catch-all had no per-verb blind spot.
       for (const method of options.methods.filter((m) => m !== "OPTIONS")) {
+        if (isPublicVerb(options.route, method)) continue;
         clearGuards();
         await invoke(options, makeRequest({ method }));
 
@@ -419,6 +472,15 @@ describe("property 1 — every route is guarded or explicitly public", () => {
       }
     }
 
+    for (const [route, verbs] of PUBLIC_ROUTE_METHODS) {
+      const options = [...httpRegistrations.values()].find((o) => o.route === route);
+      for (const method of verbs) {
+        clearGuards();
+        await invoke(options, makeRequest({ method }));
+        if (guardCalls() > 0) surprising.push(`${method} ${route}`);
+      }
+    }
+
     // Not a vulnerability if it happens — a guarded "public" route is merely
     // wrong about being public — but it means the allowlist is lying.
     expect(surprising).toEqual([]);
@@ -431,6 +493,7 @@ describe("property 1 — every route is guarded or explicitly public", () => {
       if (PUBLIC_ROUTES.has(options.route)) continue;
 
       for (const method of options.methods.filter((m) => m !== "OPTIONS")) {
+        if (isPublicVerb(options.route, method)) continue;
         clearGuards();
         const res = await invoke(options, makeRequest({ method }));
         if (!res || (res.status !== 401 && res.status !== 403)) {
@@ -952,5 +1015,89 @@ describe("the Doc Vault routes", () => {
       .map((o) => o.route)
       .filter((route) => route.startsWith("cms/doc-vault"));
     expect(routes.sort()).toEqual(Object.keys(VERBS).sort());
+  });
+});
+
+/**
+ * The Developer API (ADR 0042). Property 1 proves each keyed verb reaches a
+ * guard; this pins WHICH one. The v1 routes take the organizer key and never
+ * the admin guard or Koda's key; the key routes take the admin guard and
+ * never the organizer key, so a key cannot make, change or revoke a key. And
+ * no verb on the v1 surface publishes anything: the verbs are pinned here, so
+ * adding one is a visible change to this list.
+ */
+describe("the Developer API routes (ADR 0042)", () => {
+  const V1 = {
+    "developer/v1/status": ["GET"],
+    "developer/v1/published-events": ["GET"],
+    "developer/v1/speakers": ["GET"],
+    "developer/v1/events/{eventId}/call-for-speakers": ["POST"],
+    "developer/v1/events/{eventId}/call-for-speakers/submissions": ["GET", "POST"],
+    "developer/v1/events/{eventId}/call-for-speakers/submissions/{submissionId}": ["PUT"],
+  };
+  const ADMIN = {
+    "cms/developer-api/keys": { GET: "editor", POST: "super_admin" },
+    "cms/developer-api/keys/{keyId}": { PATCH: "super_admin", DELETE: "super_admin" },
+    "cms/developer-api/keys/{keyId}/rotate": { POST: "super_admin" },
+  };
+  const find = (route) => [...httpRegistrations.values()].filter((o) => o.route === route);
+
+  it("registers exactly these v1 routes and verbs, and nothing else under developer/", () => {
+    const registered = Object.fromEntries(
+      [...httpRegistrations.values()]
+        .filter((o) => o.route.startsWith("developer/"))
+        .map((o) => [o.route, o.methods.filter((m) => m !== "OPTIONS")]),
+    );
+    expect(registered).toEqual(V1);
+  });
+
+  it("no v1 route names publishing as an action", () => {
+    const publishing = Object.keys(V1).filter((route) =>
+      /\/(publish|unpublish|schedule)(\/|$)/.test(route),
+    );
+    expect(publishing).toEqual([]);
+  });
+
+  it.each(
+    Object.entries(V1).flatMap(([route, verbs]) =>
+      verbs.filter((verb) => !isPublicVerb(route, verb)).map((verb) => [route, verb]),
+    ),
+  )("%s %s answers through the organizer key guard only", async (route, method) => {
+    const [options] = find(route);
+    clearGuards();
+    const res = await invoke(options, makeRequest({ method }));
+    expect(developerKeyGuard).toHaveBeenCalledTimes(1);
+    expect(requireRole).not.toHaveBeenCalled();
+    expect(agentKeyGuard).not.toHaveBeenCalled();
+    expect(res?.status).toBe(401);
+  });
+
+  // A page on an organizer's own site cannot call the API from the visitor's
+  // browser: an Origin that is not this site's is refused before the handler
+  // runs, on the public routes too. Organizers call from their own server
+  // (docs/runbooks/developer-api.md, "How an organizer connects").
+  it.each(
+    Object.entries(V1).flatMap(([route, verbs]) => verbs.map((verb) => [route, verb])),
+  )("%s %s refuses another site's Origin with 403 before any guard or handler", async (route, method) => {
+    const [options] = find(route);
+    clearGuards();
+    const res = await invoke(options, makeRequest({ method, origin: "https://organizer.example" }));
+    expect(res?.status).toBe(403);
+    expect(guardCalls()).toBe(0);
+    expect(res.headers?.["Access-Control-Allow-Origin"]).toBeUndefined();
+  });
+
+  it.each(
+    Object.entries(ADMIN).flatMap(([route, verbs]) =>
+      Object.entries(verbs).map(([verb, role]) => [route, verb, role]),
+    ),
+  )("%s %s answers through requireRole at %s, never the organizer key", async (route, method, role) => {
+    const registrations = find(route);
+    expect(registrations).toHaveLength(1);
+    clearGuards();
+    await invoke(registrations[0], makeRequest({ method }));
+    expect(requireRole).toHaveBeenCalledTimes(1);
+    expect(requireRole.mock.calls[0][1]).toBe(role);
+    expect(developerKeyGuard).not.toHaveBeenCalled();
   });
 });

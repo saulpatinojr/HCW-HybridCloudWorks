@@ -137,19 +137,20 @@ describe('createExportScheduler', () => {
   }
 
   // Ambassador and Doc Vault each added one authored container; Second Brain
-  // adds brain_records, bringing the full/delta plans to 64/57 containers.
-  it('Sunday: one job document and one queue message per container of the full plan, 64 of them', async () => {
+  // adds brain_records, bringing the full/delta plans to 64/57 containers; developer_events
+  // (ADR 0042) brings them to 65/58.
+  it('Sunday: one job document and one queue message per container of the full plan, 65 of them', async () => {
     const { s, store, messages, blobs } = scheduler(SUNDAY);
     const result = await s.run();
     expect(result).toEqual({
       runId: '2026-09-13',
       mode: 'full',
-      containers: 64,
-      enqueued: 64,
+      containers: 65,
+      enqueued: 65,
       skipped: false,
     });
-    expect(store.upsertDoc).toHaveBeenCalledTimes(64);
-    expect(messages).toHaveLength(64);
+    expect(store.upsertDoc).toHaveBeenCalledTimes(65);
+    expect(messages).toHaveLength(65);
     expect(messages[0]).toEqual({ jobId: 'job-1', type: EXPORT_JOB_TYPE });
 
     const [container, doc] = store.upsertDoc.mock.calls[0];
@@ -175,9 +176,9 @@ describe('createExportScheduler', () => {
     });
   });
 
-  it('a weekday: the delta plan, 57 containers, without class C', async () => {
+  it('a weekday: the delta plan, 58 containers, without class C', async () => {
     const { s, store } = scheduler(MONDAY);
-    expect(await s.run()).toMatchObject({ mode: 'delta', containers: 57, enqueued: 57 });
+    expect(await s.run()).toMatchObject({ mode: 'delta', containers: 58, enqueued: 58 });
     const containers = store.upsertDoc.mock.calls.map(([, d]) => d.payload.container);
     for (const name of OPERATIONAL) expect(containers).not.toContain(name);
   });
@@ -190,7 +191,7 @@ describe('createExportScheduler', () => {
     expect(await second.s.run()).toEqual({
       runId: '2026-09-14',
       mode: 'delta',
-      containers: 57,
+      containers: 58,
       enqueued: 0,
       skipped: true,
     });
@@ -537,6 +538,6 @@ describe('run completion', () => {
     });
     const result = await exporter.completeRunIfLast(run);
     expect(result).toEqual({ written: true, tracked: true });
-    expect((await blobs.readJson('delta/2026-09-14/manifest.json')).containers).toHaveLength(57);
+    expect((await blobs.readJson('delta/2026-09-14/manifest.json')).containers).toHaveLength(58);
   });
 });
