@@ -79,6 +79,8 @@
     "cmsDeveloperApiKey",
     "cmsDeveloperApiKeyRotate",
     "cmsDeveloperApiKeys",
+    "cmsDeveloperApiProposal",
+    "cmsDeveloperApiProposalSearch",
     "cmsDocVault",
     "cmsDocVaultItem",
     "cmsDocVaultRestoreVersion",

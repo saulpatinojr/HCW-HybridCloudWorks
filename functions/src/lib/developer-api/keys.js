@@ -302,6 +302,15 @@ export function quotaKeyFor(keyId, nowMs) {
   return `developer-api:${keyId}:${minuteBucket(nowMs)}`;
 }
 
+/**
+ * The counter document for refusals on this key id in this minute (guard.js
+ * auditRefusal). A different name from the request counter above, so wrong
+ * keys sent under an organizer's id never use up that organizer's own limit.
+ */
+export function refusalQuotaKeyFor(keyId, nowMs) {
+  return `developer-api-refused:${keyId}:${minuteBucket(nowMs)}`;
+}
+
 /** Seconds until the next minute starts, for Retry-After (at least 1). */
 export function secondsToNextMinute(nowMs) {
   return Math.max(1, Math.ceil((60_000 - (nowMs % 60_000)) / 1000));

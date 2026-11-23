@@ -20,8 +20,10 @@ import { getDefaultGuard } from '../lib/auth/default-guard.js';
 import { createClientIdentity } from '../lib/auth/client-identity.js';
 import {
   createDoc,
+  deleteDocIfMatch,
   incrementIf,
   queryDocs,
+  queryDocsPage,
   readDoc,
   replaceDocIfMatch,
   upsertDoc,
@@ -37,7 +39,7 @@ const clientIdentity = () => (identity ||= createClientIdentity());
 const api = () =>
   createDeveloperApiHandlers({
     guard: getDeveloperApiGuard(),
-    store: { readDoc, createDoc, replaceDocIfMatch, queryDocs, upsertDoc, incrementIf },
+    store: { readDoc, createDoc, replaceDocIfMatch, queryDocsPage, deleteDocIfMatch, upsertDoc, incrementIf },
     publicStore: { readDoc },
     identity: clientIdentity(),
   });
@@ -45,7 +47,7 @@ const api = () =>
 const admin = (context) =>
   createDeveloperApiAdminHandlers({
     guard: getDefaultGuard(),
-    store: { readDoc, createDoc, replaceDocIfMatch, queryDocs, upsertDoc },
+    store: { readDoc, createDoc, replaceDocIfMatch, queryDocs, deleteDocIfMatch, upsertDoc },
     log: context,
   });
 
@@ -63,7 +65,7 @@ export const DEVELOPER_API_ROUTES = Object.freeze([
   [
     'developerApiCfsSubmission',
     'events/{eventId}/call-for-speakers/submissions/{submissionId}',
-    { PUT: 'reviewSubmission' },
+    { PUT: 'reviewSubmission', DELETE: 'deleteSubmission' },
   ],
 ]);
 
@@ -103,5 +105,23 @@ httpRouteByMethod('cmsDeveloperApiKeyRotate', {
   route: 'cms/developer-api/keys/{keyId}/rotate',
   handlers: {
     POST: (request, context) => admin(context).rotateKey(request, context),
+  },
+});
+
+// A speaker's erasure request (#1777): find where an address has proposals,
+// then delete each one. The address travels in the body, so it is a POST.
+httpRouteByMethod('cmsDeveloperApiProposalSearch', {
+  authLevel: 'anonymous',
+  route: 'cms/developer-api/proposal-search',
+  handlers: {
+    POST: (request, context) => admin(context).findProposals(request, context),
+  },
+});
+
+httpRouteByMethod('cmsDeveloperApiProposal', {
+  authLevel: 'anonymous',
+  route: 'cms/developer-api/proposals/{submissionId}',
+  handlers: {
+    DELETE: (request, context) => admin(context).eraseProposal(request, context),
   },
 });

@@ -50,8 +50,14 @@ export const MAX_SUBMISSION_BYTES = 16 * 1024;
 export const SUBMISSION_LEVELS = Object.freeze(['beginner', 'intermediate', 'advanced']);
 export const REVIEW_DECISIONS = Object.freeze(['pending', 'accepted', 'rejected']);
 export const MAX_REVIEW_NOTE = 2000;
-/** The most proposals one list answer carries. */
+/**
+ * The most proposals one list answer carries, and how many it carries when
+ * the caller sends no `limit`. A call with more is read page by page, with
+ * the `nextCursor` each answer gives (readListPaging below).
+ */
 export const MAX_LISTED = 500;
+/** The longest `cursor` read. A real one is a few hundred characters. */
+export const MAX_CURSOR_CHARS = 4096;
 
 /** Proposals per Cloudflare-verified caller per hour, across every call. */
 export const SUBMISSIONS_PER_CLIENT_PER_HOUR = 5;
@@ -61,6 +67,60 @@ export const SUBMISSIONS_PER_CALL_PER_HOUR = 100;
 export const callDocId = (eventId) => `cfs-call:${eventId}`;
 export const isEventId = (value) => typeof value === 'string' && EVENT_ID_RE.test(value);
 export const isSubmissionId = (value) => typeof value === 'string' && UUID_RE.test(value);
+
+const CURSOR_RE = /^[A-Za-z0-9_-]+$/;
+const BAD_CURSOR = 'cursor is not valid. Send the nextCursor of the previous answer unchanged, with the same status filter.';
+
+/**
+ * The `nextCursor` of a list answer: where the next page starts. It wraps the
+ * database's own continuation value (the marker Cosmos DB gives back with a
+ * page) together with the status filter the list was read with, so a cursor
+ * cannot be replayed against a different filter. It holds no proposal data.
+ */
+export function encodeListCursor({ token, status = null }) {
+  if (typeof token !== 'string' || !token) return null;
+  return Buffer.from(JSON.stringify({ v: 1, s: status, t: token }), 'utf8').toString('base64url');
+}
+
+/** The continuation value inside a cursor, or a 400 sentence for anything this module did not make. */
+export function decodeListCursor(value, status = null) {
+  if (typeof value !== 'string' || value.length > MAX_CURSOR_CHARS || !CURSOR_RE.test(value)) {
+    throw new DeveloperApiInputError(BAD_CURSOR);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+  } catch {
+    throw new DeveloperApiInputError(BAD_CURSOR);
+  }
+  if (!isObject(parsed) || parsed.v !== 1 || typeof parsed.t !== 'string' || !parsed.t || (parsed.s ?? null) !== status) {
+    throw new DeveloperApiInputError(BAD_CURSOR);
+  }
+  return parsed.t;
+}
+
+/**
+ * GET .../submissions?limit=&cursor=: how many proposals this answer may
+ * carry (1 to MAX_LISTED, MAX_LISTED when left out) and where it starts.
+ *
+ * @param {{ get?: (name: string) => string | null }} query
+ * @param {string | null} status the status filter already validated
+ * @returns {{ limit: number, continuationToken: string | null }}
+ */
+export function readListPaging(query, status = null) {
+  const rawLimit = query?.get?.('limit');
+  let limit = MAX_LISTED;
+  if (rawLimit !== undefined && rawLimit !== null && rawLimit !== '') {
+    if (!/^\d{1,4}$/.test(String(rawLimit)) || Number(rawLimit) < 1 || Number(rawLimit) > MAX_LISTED) {
+      throw new DeveloperApiInputError(`limit must be a whole number from 1 to ${MAX_LISTED}.`);
+    }
+    limit = Number(rawLimit);
+  }
+  const rawCursor = query?.get?.('cursor');
+  const continuationToken =
+    rawCursor === undefined || rawCursor === null || rawCursor === '' ? null : decodeListCursor(rawCursor, status);
+  return { limit, continuationToken };
+}
 
 /** The counter keys in submission_quota, namespaced so they never share a bucket with other routes. */
 export const clientQuotaKey = (clientHash) => `developer-cfs:client:${clientHash}`;
@@ -182,6 +242,18 @@ export function presentCall(call, nowMs) {
 }
 
 /**
+ * A speaker's email the way a proposal stores it (trimmed, lower-case), or a
+ * 400 sentence. Used when a proposal is stored and when the owner searches
+ * for one address's proposals (admin-handlers.js findProposals), so the
+ * search looks for exactly what was stored.
+ */
+export function normalizeSpeakerEmail(value) {
+  const speakerEmail = text(value, 'speakerEmail', SUBMISSION_LIMITS.speakerEmail, { required: true });
+  if (!EMAIL_RE.test(speakerEmail)) throw new DeveloperApiInputError('speakerEmail must be an email address.');
+  return speakerEmail.toLowerCase();
+}
+
+/**
  * POST .../call-for-speakers/submissions (public). Only the listed fields are
  * read. `website` is a honeypot: a field a person never sees on a form, so a
  * value there is a bot.
@@ -191,8 +263,7 @@ export function validateSubmission(body) {
   if (body.website !== undefined && body.website !== null && body.website !== '') {
     throw new DeveloperApiInputError('The proposal could not be accepted.');
   }
-  const speakerEmail = text(body.speakerEmail, 'speakerEmail', SUBMISSION_LIMITS.speakerEmail, { required: true });
-  if (!EMAIL_RE.test(speakerEmail)) throw new DeveloperApiInputError('speakerEmail must be an email address.');
+  const speakerEmail = normalizeSpeakerEmail(body.speakerEmail);
   let level = null;
   if (body.level !== undefined && body.level !== null && body.level !== '') {
     if (!SUBMISSION_LEVELS.includes(body.level)) {
@@ -202,7 +273,7 @@ export function validateSubmission(body) {
   }
   return {
     speakerName: text(body.speakerName, 'speakerName', SUBMISSION_LIMITS.speakerName, { required: true }),
-    speakerEmail: speakerEmail.toLowerCase(),
+    speakerEmail,
     speakerBio: text(body.speakerBio, 'speakerBio', SUBMISSION_LIMITS.speakerBio, { multiline: true }),
     title: text(body.title, 'title', SUBMISSION_LIMITS.title, { required: true }),
     abstract: text(body.abstract, 'abstract', SUBMISSION_LIMITS.abstract, { required: true, multiline: true }),

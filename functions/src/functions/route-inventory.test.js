@@ -1033,12 +1033,17 @@ describe("the Developer API routes (ADR 0042)", () => {
     "developer/v1/speakers": ["GET"],
     "developer/v1/events/{eventId}/call-for-speakers": ["POST"],
     "developer/v1/events/{eventId}/call-for-speakers/submissions": ["GET", "POST"],
-    "developer/v1/events/{eventId}/call-for-speakers/submissions/{submissionId}": ["PUT"],
+    "developer/v1/events/{eventId}/call-for-speakers/submissions/{submissionId}": ["PUT", "DELETE"],
   };
   const ADMIN = {
     "cms/developer-api/keys": { GET: "editor", POST: "super_admin" },
     "cms/developer-api/keys/{keyId}": { PATCH: "super_admin", DELETE: "super_admin" },
     "cms/developer-api/keys/{keyId}/rotate": { POST: "super_admin" },
+    // A speaker's erasure request (#1777): find an address's proposals, then
+    // delete each. super_admin for both, the search included, because its
+    // input is a person's email address.
+    "cms/developer-api/proposal-search": { POST: "super_admin" },
+    "cms/developer-api/proposals/{submissionId}": { DELETE: "super_admin" },
   };
   const find = (route) => [...httpRegistrations.values()].filter((o) => o.route === route);
 
@@ -1049,6 +1054,17 @@ describe("the Developer API routes (ADR 0042)", () => {
         .map((o) => [o.route, o.methods.filter((m) => m !== "OPTIONS")]),
     );
     expect(registered).toEqual(V1);
+  });
+
+  it("registers exactly these admin routes and verbs, and nothing else under cms/developer-api/", () => {
+    const registered = Object.fromEntries(
+      [...httpRegistrations.values()]
+        .filter((o) => o.route.startsWith("cms/developer-api/"))
+        .map((o) => [o.route, o.methods.filter((m) => m !== "OPTIONS").sort()]),
+    );
+    expect(registered).toEqual(
+      Object.fromEntries(Object.entries(ADMIN).map(([route, verbs]) => [route, Object.keys(verbs).sort()])),
+    );
   });
 
   it("no v1 route names publishing as an action", () => {

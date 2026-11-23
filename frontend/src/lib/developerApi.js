@@ -12,6 +12,15 @@
  *   revokeDeveloperKey(keyId)         DELETE  the next request with the key is
  *                                             refused                               super_admin
  *
+ * and the two calls of a speaker's erasure request (#1777):
+ *
+ *   findProposalsByEmail(email)       POST    where an address has talk proposals:
+ *                                             ids, events, statuses, dates only     super_admin
+ *   eraseProposal(submissionId)       DELETE  delete one proposal for good          super_admin
+ *
+ * The address goes in the request body, never in the path or the query: an
+ * address in a URL ends up in logs.
+ *
  * The secret in a create or rotate answer goes to the screen once, for the
  * owner to hand to the organizer through a secure channel, and nowhere else:
  * not to storage, not to the console, not to a toast, not to the address.
@@ -47,4 +56,17 @@ export function updateDeveloperKey(keyId, change) {
 
 export function revokeDeveloperKey(keyId) {
   return sendJSON(developerKeyRoute(keyId), 'DELETE');
+}
+
+export const PROPOSAL_SEARCH_ROUTE = 'cms/developer-api/proposal-search';
+export const PROPOSALS_ROUTE = 'cms/developer-api/proposals';
+
+/** @param {string} speakerEmail */
+export function findProposalsByEmail(speakerEmail) {
+  return postJSON(PROPOSAL_SEARCH_ROUTE, { speakerEmail });
+}
+
+/** The id is encoded, so a bad id cannot reach another path. */
+export function eraseProposal(submissionId) {
+  return sendJSON(`${PROPOSALS_ROUTE}/${encodeURIComponent(String(submissionId ?? ''))}`, 'DELETE');
 }
