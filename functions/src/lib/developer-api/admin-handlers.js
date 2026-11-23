@@ -9,6 +9,21 @@
  *   DELETE cms/developer-api/keys/{keyId}          revoke: the hash is removed at once       super_admin
  *   POST   cms/developer-api/keys/{keyId}/rotate   a new secret for the same organizer; once super_admin
  *
+ * and the two routes the owner answers a speaker's erasure request with
+ * (#1777; a talk proposal holds the speaker's name, email and bio):
+ *
+ *   POST   cms/developer-api/proposal-search       { speakerEmail } -> where that address has proposals  super_admin
+ *   DELETE cms/developer-api/proposals/{submissionId}   delete one proposal, whoever's call it is on     super_admin
+ *
+ * The search takes the address in the body, never the query string (addresses
+ * end up in logs), and answers ids, event ids, statuses and dates only: enough
+ * to delete, nothing of what the speaker wrote. Each search and each delete
+ * writes one audit row (owner decision 2026-11-23 for the search: a record of
+ * who looked a person up). Neither route's audit row or log line carries the
+ * address, any part of it or a hash of it, and the search's row does not carry
+ * the proposal ids either: it says who searched, when, how many were found
+ * and whether the list was cut short.
+ *
  * THE PLAINTEXT IS ANSWERED ONCE, to the super_admin who pressed Generate or
  * Rotate, so they can hand it to the organizer through a secure channel. It is
  * not stored (keys.js keeps the hash), not logged (the audit row carries the
@@ -21,6 +36,7 @@
 import { randomUUID } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { authoredMessage, errorResponse, isAuthoredError } from '../http/error-response.js';
+import { CFS_CONTAINER, isSubmissionId, normalizeSpeakerEmail } from './cfs.js';
 import { ENDPOINTS, LIMITS } from './handlers.js';
 import {
   API_BASE_PATH,
@@ -42,6 +58,11 @@ export const WRITE_ROLE = 'super_admin';
 /** The most organizer keys the list reads. Far above any real count; a cap so the read is bounded. */
 export const MAX_KEYS = 500;
 const WRITE_ATTEMPTS = 2;
+/** The most proposals one erasure search answers. One speaker has a handful; past this the answer says so. */
+export const MAX_PROPOSALS_FOUND = 200;
+
+const NO_EVENT_ID =
+  'This proposal record is malformed: it has no event id, so it cannot be deleted from here. Remove it by hand in the database (the developer_events container).';
 
 const json = (status, body) => ({
   status,
@@ -71,7 +92,8 @@ const optionalText = (value, name, max) => {
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard the admin role guard
  * @param {{ readDoc: Function, createDoc: Function, replaceDocIfMatch: Function, queryDocs: Function,
- *   upsertDoc: Function }} deps.store `upsertDoc` writes audit rows only
+ *   deleteDocIfMatch: Function, upsertDoc: Function }} deps.store `upsertDoc` writes audit rows only;
+ *   `deleteDocIfMatch` deletes a proposal for an erasure request
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
  * @param {(options?: object) => { keyId: string, secret: string }} [deps.generate]
@@ -87,7 +109,7 @@ export function createDeveloperApiAdminHandlers({
 }) {
   const readRecord = (keyId) => store.readDoc('admin_config', keyRecordId(keyId), ADMIN_CONFIG_PARTITION);
 
-  async function audit(action, { user, request, keyId, details = {} }) {
+  async function audit(action, { user, request, keyId, details = {}, resourceType = 'developer_api_key', resourceId = keyId }) {
     try {
       await store.upsertDoc('admin_audit_logs', {
         id: uuid(),
@@ -95,8 +117,8 @@ export function createDeveloperApiAdminHandlers({
         action,
         userId: user.oid || user.sub || null,
         userEmail: user.email || null,
-        resourceType: 'developer_api_key',
-        resourceId: keyId,
+        resourceType,
+        resourceId,
         details,
         userAgent: request.headers?.get?.('user-agent') || null,
         compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true },
@@ -260,6 +282,95 @@ export function createDeveloperApiAdminHandlers({
       });
       await audit('developer_api_key_revoked', { user, request, keyId, details: { keyHint: written.keyHint } });
       return json(200, { ok: true, key: presentKeyRecord(written) });
+    }),
+
+    /**
+     * POST cms/developer-api/proposal-search — { speakerEmail }. Where one
+     * address has proposals, across every organizer's calls: the first step
+     * of an erasure request. Ids, event ids, statuses and dates only.
+     *
+     * Each search that runs writes one audit row, so there is a record of who
+     * looked a person up. A search refused before it runs (no role, a bad
+     * address) writes none, like every other refused admin call here. If the
+     * row cannot be written the search still answers: `audit` logs a line
+     * with no details and carries on, as it does for every other row.
+     */
+    findProposals: route(WRITE_ROLE, 'search the proposals', async ({ request, user }) => {
+      const input = await body(request);
+      const speakerEmail = normalizeSpeakerEmail(input?.speakerEmail);
+      // One more than the cap, so an answer that was cut short can say so.
+      const rows = await store.queryDocs(
+        CFS_CONTAINER,
+        `SELECT TOP ${MAX_PROPOSALS_FOUND + 1} c.id, c.eventId, c.status, c.submittedAt FROM c WHERE c.docType = 'cfs-submission' AND c.speakerEmail = @speakerEmail`,
+        [{ name: '@speakerEmail', value: speakerEmail }],
+      );
+      const found = (rows || []).slice(0, MAX_PROPOSALS_FOUND).map((row) => ({
+        id: row.id,
+        eventId: row.eventId || null,
+        status: row.status || null,
+        submittedAt: row.submittedAt || null,
+      }));
+      const truncated = (rows || []).length > MAX_PROPOSALS_FOUND;
+      await audit('developer_cfs_proposal_search', {
+        user,
+        request,
+        resourceType: 'developer_cfs_submission',
+        // A search is about no single record, and the address is the one thing that must not be here.
+        resourceId: null,
+        // Two numbers-and-flags only: not the address, a part of it or a hash of it (a hash of an
+        // address can be guessed back), and not the ids, which would point at the person's proposals.
+        details: { count: found.length, truncated },
+      });
+      return json(200, { ok: true, proposals: found, count: found.length, truncated });
+    }),
+
+    /**
+     * DELETE cms/developer-api/proposals/{submissionId} — delete one proposal
+     * for an erasure request, on any organizer's call. The id is found across
+     * events, then the delete is conditional on the version that was found.
+     * Asking twice is safe: an id that is not there answers 200 with
+     * `deleted: false`.
+     */
+    eraseProposal: route(WRITE_ROLE, 'delete the proposal', async ({ request, user }) => {
+      const submissionId = request.params?.submissionId;
+      if (!isSubmissionId(submissionId)) {
+        throw new DeveloperApiInputError('The proposal id must be a UUID.');
+      }
+      for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+        const rows = await store.queryDocs(
+          CFS_CONTAINER,
+          "SELECT TOP 1 c.id, c.eventId, c.status, c._etag FROM c WHERE c.docType = 'cfs-submission' AND c.id = @id",
+          [{ name: '@id', value: submissionId }],
+        );
+        const found = (rows || [])[0];
+        if (!found) return json(200, { ok: true, id: submissionId, deleted: false });
+        // A proposal is stored under its event's id, and the delete needs it to find the record. Every
+        // proposal the API writes has one, so a row without it was edited by hand.
+        if (typeof found.eventId !== 'string' || !found.eventId) {
+          return json(409, { ok: false, code: 'MALFORMED_RECORD', error: NO_EVENT_ID });
+        }
+        try {
+          await store.deleteDocIfMatch(CFS_CONTAINER, submissionId, found._etag, found.eventId);
+        } catch (error) {
+          if (error?.code === 404) return json(200, { ok: true, id: submissionId, deleted: false });
+          if (error?.code === 412) continue;
+          throw error;
+        }
+        await audit('developer_cfs_submission_erased', {
+          user,
+          request,
+          resourceType: 'developer_cfs_submission',
+          resourceId: submissionId,
+          // The event and the status only: nothing the speaker typed, and not the address.
+          details: { eventId: found.eventId || null, status: found.status || null },
+        });
+        return json(200, { ok: true, id: submissionId, eventId: found.eventId || null, deleted: true });
+      }
+      return json(409, {
+        ok: false,
+        code: 'CONFLICT',
+        error: 'The proposal changed while it was being deleted. Try again.',
+      });
     }),
   };
 }

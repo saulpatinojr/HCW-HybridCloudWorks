@@ -23,7 +23,7 @@ A key carries one or more **scopes** (switches for what it may do):
 
 | Scope | What it opens today |
 | --- | --- |
-| `cfs:manage` | Open and close a call for speakers on the organizer's own events, list the proposals sent to it, and accept or reject them. |
+| `cfs:manage` | Open and close a call for speakers on the organizer's own events, list the proposals sent to it, accept or reject them, and delete one. |
 | `events:read` | Nothing yet. Reserved for Phase 2 (reading the organizer's own draft events). |
 | `events:write` | Nothing yet. Reserved for Phase 2 (creating events in draft). |
 
@@ -199,12 +199,44 @@ Good: the same answer, `status` `pending` and an `id`. List the proposals:
 $list = Invoke-RestMethod -Uri "$base/events/$eventId/call-for-speakers/submissions" -Headers $auth; $list.submissions | Select-Object id, status, title, speakerName
 ```
 
+The list comes newest first, up to 500 in one answer. A call with more is read
+a page at a time: each answer has a `nextCursor` (a marker for where the next
+page starts), which is empty on the last page. This line asks for one proposal
+per page and shows whether there is more:
+
+```powershell
+$page = Invoke-RestMethod -Uri "$base/events/$eventId/call-for-speakers/submissions?limit=1" -Headers $auth; $page | Select-Object count, nextCursor
+```
+
+Good: `count` is `1`, and `nextCursor` is a long run of letters because the
+second test proposal is still to come. This line reads that next page:
+
+```powershell
+$page = Invoke-RestMethod -Uri "$base/events/$eventId/call-for-speakers/submissions?limit=1&cursor=$($page.nextCursor)" -Headers $auth; $page | Select-Object count, nextCursor
+```
+
+Good: `count` is `1`, and `nextCursor` is empty because that was the last
+page. (The database may now and then hand back one more cursor that leads to
+an empty page, `count` `0`; that also means the end.) If you see `400`
+instead, the cursor was changed or used with a different
+`status` filter; start again without `cursor`.
+
 Accept the newest one (this records a decision for the organizer and makes
 nothing public):
 
 ```powershell
 Invoke-RestMethod -Method Put -Uri "$base/events/$eventId/call-for-speakers/submissions/$($list.submissions[0].id)" -Headers $auth -ContentType 'application/json' -Body '{"decision":"accepted"}' | ConvertTo-Json -Depth 4
 ```
+
+Delete the other test proposal. **This cannot be undone**: the proposal, with
+the speaker's name, email and bio, is removed from the database.
+
+```powershell
+Invoke-RestMethod -Method Delete -Uri "$base/events/$eventId/call-for-speakers/submissions/$($list.submissions[1].id)" -Headers $auth | ConvertTo-Json
+```
+
+Good: `"ok": true` and `"deleted": true`. Running the same line again answers
+`"deleted": false`, which means it was already gone; that is not an error.
 
 Close the call when done:
 
@@ -215,7 +247,7 @@ Invoke-RestMethod -Method Post -Uri "$base/events/$eventId/call-for-speakers" -H
 When you finish, drop the variables and close the window:
 
 ```powershell
-Remove-Variable plain, key, ptr, auth, list
+Remove-Variable plain, key, ptr, auth, list, page
 ```
 
 ## 4. Rotate a key
@@ -249,10 +281,18 @@ A revoked key cannot be rotated back to life (the API answers `409`
 on the revoked row: it makes a new key, with a new id, for the same name,
 contact and scopes. The new key does not own the old key's calls.
 
-The calls the organizer owned stay as they were (open calls still take
-proposals). To stop a revoked organizer's open call taking proposals, a
-super_admin closes it in Cosmos, or a new key is made for that organizer and
-used to close it; a close route for the admin is a Phase 2 follow-up.
+**Revoking a key also stops its calls taking proposals, at once.** A call
+belongs to the key that opened it. Each time a proposal arrives, the API checks
+that the call's key still works, and when it does not, the proposal is refused
+with the same `404` as a closed call. There is nothing to close by hand. The
+proposals already sent stay stored, and so does the call's record (it still
+says `open`, but nothing can be sent to it).
+
+Nobody holds a key that can list or review those stored proposals any more,
+because the new key does not own the old key's calls. If a speaker asks for
+theirs to be deleted, use "Delete a speaker's proposals" below, which does not
+need the organizer's key. Handing an old call over to a new key is not built;
+it is a Phase 2 follow-up.
 
 ## Answers and limits
 
@@ -260,7 +300,8 @@ used to close it; a close route for the admin is a Phase 2 follow-up.
 | --- | --- |
 | `401` | The key is missing, wrong or revoked (one sentence for all three, on purpose). On the public proposal route a key is optional, but one that is sent and is wrong or revoked is still answered `401`. |
 | `403` | The key lacks the scope the route needs. On any route: the call came from a browser on another site (see "How an organizer connects"). On the public proposal route: the request did not come through Cloudflare. |
-| `404` | No call on that event for this key, or no open call (proposal route). |
+| `400` | Something in the request is not valid; the answer's `error` sentence says what. On the list: a `limit` that is not 1 to 500, or a `cursor` that was changed, was made for a different `status` filter, or is too old. |
+| `404` | No call on that event for this key, or no open call (proposal route). A call whose key was revoked answers this too. |
 | `409` | The call or proposal changed between reading and writing (read again and retry); or `EVENT_ID_RESERVED` (the id is one of the site's own events) or `KEY_REVOKED` (rotate on a revoked key). |
 | `413` | A proposal over 16 KB. Refused from the size the request declares where it declares one, before the body is read, and measured again once read. |
 | `429` | Over a limit; the answer has a `Retry-After` header with the seconds to wait. |
@@ -271,7 +312,9 @@ proposals an hour per call across all visitors. The per-visitor limit is not
 applied to a proposal sent with the key that owns the call (the organizer's
 server relaying its own form); every other limit still is. Proposals are
 refused unless the request came through Cloudflare, and a proposal that fills
-the hidden `website` field (a trap for bots) is refused.
+the hidden `website` field (a trap for bots) is refused. One list answer
+carries at most 500 proposals; `limit` asks for fewer and `nextCursor` reads
+on (part 3).
 
 ## Refused calls and the audit log
 
@@ -281,9 +324,30 @@ with `kind` (and `action`) `developer-api-denial`, the reason and the key's id,
 never the key. A request with no key, a value of another shape, or an id that names no
 key is refused without a row, so internet probes do not cost a write each.
 
+Refusals for a wrong secret, a revoked key or a key over its limit are capped
+at **10 rows a minute for each key id**. A key's id is the first part of the
+key and is not secret, so without the cap anyone who had seen one could fill
+the audit log by sending wrong keys. Past the cap the request is still
+refused, with the same answer, and no row is written until the next minute,
+with one exception: the first refusal past the cap writes a single row with
+`kind` (and `action`) `developer_api_refusal_cap_reached` and the key's id.
+So ten `developer-api-denial` rows for one key in the same minute, followed
+by that row, means "ten or more", and the refusals after the tenth could be
+of any of the three kinds: someone sending wrong keys under a known id can
+use up the minute's rows, and a revoked key or a key over its limit in the
+same minute then leaves no row of its own. The `developer_api_refusal_cap_reached`
+row is how you know that happened. The organizer's own working key is not
+slowed by this.
+
 Every keyed write writes a row too: `developer_cfs_opened`,
-`developer_cfs_closed`, `developer_cfs_submission_reviewed` (with the status
-only; the proposal's text and the speaker's email stay out of the audit log),
+`developer_cfs_closed`, `developer_cfs_submission_reviewed` and
+`developer_cfs_submission_deleted` (with the status only; the proposal's text
+and the speaker's email stay out of the audit log), `developer_cfs_submission_erased`
+when the owner deletes one from the admin (the event and the status only),
+`developer_cfs_proposal_search` when the owner searches for a speaker's
+proposals from the admin (the number found and whether the list was cut
+short; never the address searched for, see
+[Delete a speaker's proposals](#delete-a-speakers-proposals-an-erasure-request)),
 and for keys `developer_api_key_generated`, `_rotated`, `_changed`, `_revoked`
 (with the key's hint, never its value).
 
@@ -316,14 +380,115 @@ and for keys `developer_api_key_generated`, `_rotated`, `_changed`, `_revoked`
   to 5. It reaches no other call, the per-call cap still holds, and rotating
   or revoking the key (parts 4 and 6) ends it on the next request.
 
+- **A refusal takes longer when the key id is real.** A wrong, missing or
+  revoked key gets the same `401` and the same sentence, so the answer itself
+  does not say whether a key id exists. The time it takes is not made equal:
+  a refusal on a real id also waits for its counter and its audit row. So
+  someone measuring response times could tell a real id from a made-up one.
+  That is accepted: a key id is 64 random bits, cannot be guessed in
+  practice, and is not treated as a secret (it is the first part of the key
+  and is written to the audit log).
+- **One caller can use up a key id's audit rows for the minute.** See
+  "Refused calls and the audit log" above: past ten refusals a minute only
+  the single "cap reached" row is written.
+
 ## Personal data
 
 A proposal holds the speaker's name, email and bio, typed by that speaker. It
 is stored in the `developer_events` container and shown only to the key that
 owns the call. It is backed up with the authored data (class A in
-`functions/src/lib/backup/export-classification.js`). For an access or erasure
-request, search that container for the email as well as the places in the
-[data-subject requests runbook](data-subject-requests.md).
+`functions/src/lib/backup/export-classification.js`).
+
+A proposal is kept until someone deletes it. There is no time limit yet: how
+long to keep proposals after a call closes is the owner's decision, still open
+on [#1777](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1777).
+
+## Delete a speaker's proposals (an erasure request)
+
+An erasure request is a person asking for their personal data to be deleted,
+which privacy law (GDPR Article 17, for example) gives them the right to do.
+For a speaker, that means every talk proposal sent from their email address.
+The other places a person's data can be are in the
+[data-subject requests runbook](data-subject-requests.md); this section covers
+proposals only. Check the request really comes from that address first (that
+runbook, section 2).
+
+There are two ways. Use the first unless the organizer is doing it themselves.
+
+### From the admin (the owner, any organizer's call)
+
+**Step 3 cannot be undone.** A deleted proposal is gone from the database and
+from the organizer's list.
+
+1. Open the Developer API tab:
+   <https://hybridcloudworks.com/admin/ai-engine?tab=developer-api>. Scroll to
+   the last card, **Erase a speaker's proposals**. You need the super_admin
+   role; without it the buttons are greyed out and say so.
+2. Type the speaker's email address and press **Find proposals**. You should
+   see one line per proposal, with the event's id, its status and the date it
+   was sent, or "No proposals are stored for that address." If you see a red
+   sentence instead, it says what is wrong with the address.
+3. Press **Delete** on a line, then **Delete proposal** in the box that asks
+   you to confirm. You should see a "Proposal deleted" note and the line
+   disappears. Repeat for each line. If you see "Nothing was deleted", press
+   **Find proposals** again and retry; the proposal changed while it was
+   being deleted. If the note says the record "is malformed: it has no event
+   id", the row was edited by hand in the database and cannot be deleted
+   from this page: it has to be removed by hand in the `developer_events`
+   container (the route answers `409` with the code `MALFORMED_RECORD`).
+4. Press **Find proposals** once more. You should see "No proposals are
+   stored for that address." That is the proof the request is done.
+
+Each delete writes one row to the audit log, `developer_cfs_submission_erased`,
+with the proposal's id, the event's id and its status. The speaker's address
+and what they wrote are not in the row.
+
+Each search writes one row too, `developer_cfs_proposal_search` (owner
+decision 2026-11-23), so there is a record of who looked a person up. The row
+says who searched (the signed-in admin, as on every admin row), when, how many
+proposals were found (`details.count`) and whether the list was cut short at
+200 (`details.truncated`). It does not hold the address that was searched for,
+any part of it or a hash of it (a hash is a scrambled form of a value, and one
+made from an email address can be guessed back), and it does not hold the
+proposals' ids. So the audit log can show that a search happened, not whom it
+was for; keep the speaker's request itself as the record of that. A search
+that is refused before it runs (no super_admin role, or an address that is not
+an email address) writes no row. If the row cannot be written, the search
+still answers and the function log gets the line
+`[developer-api] audit row developer_cfs_proposal_search failed`; the same is
+true of every row in this section.
+
+### With the organizer's key (their own call only)
+
+The organizer who owns the call can delete a proposal from their own code.
+This is the same PowerShell window as part 3, with `$base`, `$auth` and
+`$eventId` already set. The first line asks for the speaker's address and
+lists their proposals on this event; the second deletes them. **The second
+line cannot be undone.**
+
+```powershell
+$speaker = (Read-Host 'Speaker email').Trim().ToLower(); $mine = (Invoke-RestMethod -Uri "$base/events/$eventId/call-for-speakers/submissions" -Headers $auth).submissions | Where-Object { $_.speakerEmail -eq $speaker }; $mine | Select-Object id, status, title
+```
+
+```powershell
+$mine | ForEach-Object { Invoke-RestMethod -Method Delete -Uri "$base/events/$eventId/call-for-speakers/submissions/$($_.id)" -Headers $auth } | Select-Object id, deleted
+```
+
+Good: one line per proposal with `deleted` `True`. Running the first line
+again should then list nothing. `deleted` `False` means that proposal was
+already gone. A `404` means the key does not own a call on that event. On a
+call with more than 500 proposals the first line reads only the newest 500;
+use the admin card instead, which searches every call.
+
+Each delete writes one audit row, `developer_cfs_submission_deleted`, with the
+status only.
+
+### What a delete does not reach
+
+The backups. A copy of the database is kept for 35 days and cannot be edited;
+the proposal leaves it when that copy expires. The data-subject requests
+runbook has the sentence to tell the speaker
+([step 4 there](data-subject-requests.md#step-4-immutable-backup-lifecycle-disclosure)).
 
 ## What Phase 2 adds
 
@@ -336,5 +501,7 @@ Not built yet, and tracked as follow-ups to ADR 0042:
   opened on an event that exists and belongs to the key (today the first
   opener owns the id).
 - A human screen in the admin to publish an organizer's draft event, and to
-  close or delete a call on the organizer's behalf.
+  close, delete or hand over a call on the organizer's behalf. (Since #1777 a
+  revoked key's call already takes no proposals, and the owner can delete a
+  speaker's proposals from the admin.)
 - Accepted speakers joining the public speakers list, if the owner wants that.

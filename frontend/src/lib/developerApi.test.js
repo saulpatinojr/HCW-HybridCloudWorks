@@ -18,6 +18,8 @@ const {
   DEVELOPER_KEYS_ROUTE,
   createDeveloperKey,
   developerKeyRoute,
+  eraseProposal,
+  findProposalsByEmail,
   listDeveloperKeys,
   revokeDeveloperKey,
   rotateDeveloperKey,
@@ -71,5 +73,30 @@ describe('the calls', () => {
 
   it('encodes a key id, so it cannot reach another path', () => {
     expect(developerKeyRoute('../x?y')).toBe('cms/developer-api/keys/..%2Fx%3Fy');
+  });
+});
+
+describe("a speaker's erasure request (#1777)", () => {
+  it('sends the address in the body, never in the path', async () => {
+    await findProposalsByEmail('grace@example.com');
+    expect(postJSON).toHaveBeenCalledWith('cms/developer-api/proposal-search', {
+      speakerEmail: 'grace@example.com',
+    });
+    expect(postJSON.mock.calls[0][0]).not.toContain('grace');
+  });
+
+  it('deletes one proposal by id, with the id encoded into the path', async () => {
+    await eraseProposal('00000000-0000-4000-8000-000000000001');
+    expect(sendJSON).toHaveBeenCalledWith(
+      'cms/developer-api/proposals/00000000-0000-4000-8000-000000000001',
+      'DELETE'
+    );
+    await eraseProposal('../keys/x');
+    expect(sendJSON).toHaveBeenLastCalledWith(
+      'cms/developer-api/proposals/..%2Fkeys%2Fx',
+      'DELETE'
+    );
+    await eraseProposal(undefined);
+    expect(sendJSON).toHaveBeenLastCalledWith('cms/developer-api/proposals/', 'DELETE');
   });
 });

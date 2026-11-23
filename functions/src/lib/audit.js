@@ -9,6 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { errorCode } from './http/error-response.js';
 
 export const AUDIT_CONTAINER = 'admin_audit_logs';
 export const AUDIT_TTL_SECONDS = 90 * 86400; // 90 days in seconds
@@ -125,7 +126,8 @@ export async function recordMutationAudit(store, {
   try {
     await store.upsertDoc(AUDIT_CONTAINER, doc);
   } catch (err) {
-    context?.warn?.(`recordMutationAudit: failed to record audit row for ${action}: ${err?.message || err}`);
+    // Content-free on purpose: the error's code, never its message (a database message can carry ids and values).
+    context?.warn?.(`recordMutationAudit: failed to record audit row for ${action} (${errorCode(err)})`);
   }
 
   return doc;
