@@ -182,3 +182,37 @@ updates:
     open-pull-requests-limit: 2
     cooldown:
       default-days: 3
+
+  # The Python tools three CI jobs install with pip, each from a lock file
+  # that carries a SHA256 checksum for every package (pip's --require-hashes):
+  # ansible-lint and ansible-core for the lab-host lint and role tests,
+  # lizard for the complexity check, MkDocs for the documentation site. Each
+  # folder has a short .in file a person edits and the .txt lock file made
+  # from it with pip-compile; Dependabot rebuilds the lock, checksums
+  # included, when it raises a version.
+  #
+  # ansible-core is left out on purpose: CI lints and tests with the release
+  # lab-host/bootstrap.sh installs on the host (ANSIBLE_CORE_VERSION in
+  # lab-image/versions.env), and lab-supply-chain.yml proposes that move.
+  # The two .in files in lab-host/ansible follow it by hand.
+  - package-ecosystem: pip
+    directories:
+      - /lab-host/ansible
+      - /scripts/complexity
+      - /scripts/docs
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
+    ignore:
+      - dependency-name: ansible-core
+    groups:
+      ci-python-tools-minor-patch:
+        update-types:
+          - minor
+          - patch
+      ci-python-tools-major:
+        update-types:
+          - major

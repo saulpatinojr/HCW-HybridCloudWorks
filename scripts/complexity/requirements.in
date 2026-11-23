@@ -1,0 +1,14 @@
+# What the `complexity delta` job in .github/workflows/ci.yml installs.
+# This is the file a person edits. requirements.txt beside it is the lock
+# file made from it: the same version plus everything it depends on, each
+# with the SHA256 checksums pip must see before it installs the file.
+#
+# Pinned, not floating. A tokenizer change between lizard releases moves
+# every number the check compares, which would read as a pull request that
+# added complexity on the day the release landed.
+#
+# After changing the line, rebuild the lock from this folder, on the Python
+# the job uses (3.15):
+#
+#   pip-compile --allow-unsafe --generate-hashes --output-file=requirements.txt requirements.in
+lizard==1.24.0

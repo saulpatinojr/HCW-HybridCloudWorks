@@ -1,0 +1,14 @@
+# Documentation site build (mkdocs.yml, .github/workflows/docs-pages.yml).
+# This is the file a person edits. requirements.txt beside it is the lock
+# file made from it: the same versions plus everything they depend on, each
+# with the SHA256 checksums pip must see before it installs the file.
+#
+# Exact pins: the site is built in CI on every merge, and an unpinned theme
+# upgrade would change the published site without a reviewed change.
+#
+# After changing a line, rebuild the lock from this folder, on the Python the
+# workflow uses (3.15):
+#
+#   pip-compile --allow-unsafe --generate-hashes --output-file=requirements.txt requirements.in
+mkdocs==1.6.1
+mkdocs-material==9.7.7

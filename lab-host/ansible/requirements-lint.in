@@ -1,0 +1,15 @@
+# What the `ansible-lint (lab-host)` job in .github/workflows/ci.yml installs.
+# This is the file a person edits. requirements-lint.txt beside it is the
+# lock file made from it: the same versions plus everything they depend on,
+# each with the SHA256 checksums pip must see before it installs the file.
+#
+# ansible-core here is the release lab-host/bootstrap.sh puts on the host
+# (ANSIBLE_CORE_VERSION in lab-image/versions.env). Move the three together:
+# that line, this file and requirements-role-tests.in.
+#
+# After changing a line, rebuild the lock from this folder, on the Python the
+# job uses (3.15):
+#
+#   pip-compile --allow-unsafe --generate-hashes --output-file=requirements-lint.txt requirements-lint.in
+ansible-lint==26.9.0
+ansible-core==2.22.0
