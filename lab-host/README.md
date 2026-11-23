@@ -1779,8 +1779,8 @@ A passing result prints `Passed: 0 failure(s), 0 warning(s) in N files
 processed of M encountered. Profile 'production' was required, and it
 passed.` followed by `playbook: site.yml`. That digest is
 `community-ansible-dev-tools:latest` as of 2026-09-23 (ansible-lint 26.9.0,
-ansible-core 2.21.4); when the pins in `ci.yml` move, move this digest with
-them. Since 2026-11-02 CI's pins are ahead of it: the `ansible-lint
+ansible-core 2.21.4); when CI's pins move (they are in
+`lab-host/ansible/requirements-lint.in`), move this digest with them. Since 2026-11-02 CI's pins are ahead of it: the `ansible-lint
 (lab-host)` job installs ansible-lint 26.9.0 with ansible-core 2.22.0 on
 Python 3.15, and no dev-tools image carried 2.22.0 that day (the newest
 tag, v26.10.1, locks ansible-core 2.19.13 in its `uv.lock`), so the
