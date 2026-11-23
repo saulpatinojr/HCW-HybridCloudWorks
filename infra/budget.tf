@@ -170,7 +170,10 @@ resource "azurerm_consumption_budget_subscription" "platform_mgmt" {
 # above a declared resource group: its RBAC Administrator condition refuses
 # only Owner, Contributor and the Key Vault officer roles, so a subscription
 # grant from this module would be a widening the condition does not stop
-# (scripts/terraform-identity-grants.test.mjs holds that). The owner makes the
+# (scripts/terraform-identity-grants.test.mjs holds that). The one exception
+# since #1763 is Muse's built-in Reader on the three subscriptions
+# (muse-reader.tf, ADR 0043), which the owner asked for in Terraform and the
+# test allows by name and role; it does not cover this grant. The owner makes the
 # two assignments once, by hand, as for the custom reader roles in
 # infra/roles/: the commands are in docs/runbooks/cost.md. Until they exist the
 # page says the Azure figures cannot be read and names the missing role.

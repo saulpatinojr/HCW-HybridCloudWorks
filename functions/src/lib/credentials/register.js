@@ -123,6 +123,14 @@ export const LAB_CERTIFICATE_DAYS = 180;
 export const CODER_STATUS_TOKEN_DAYS = 90;
 export const CODER_ROTATION_CREDENTIAL_DAYS = 365;
 
+/**
+ * How long a `claude setup-token` token lasts: one year, the issuer's own
+ * expiry (https://code.claude.com/docs/en/authentication.md, "Generate a
+ * long-lived token", read 2026-11-14). After it, every `@claude` run fails
+ * at sign-in, so this one is a deadline, not a rotation habit.
+ */
+export const CLAUDE_CODE_OAUTH_TOKEN_DAYS = 365;
+
 const KEYS_TAB_ROTATION =
   "Mint a new one from the issuer, paste it on Integrations → Keys, then revoke the old one.";
 
@@ -408,6 +416,21 @@ const OTHER_ENTRIES = [
       "Generate a new private key on the GitHub App’s settings page, set it as MANIFEST_APP_PRIVATE_KEY, then delete the old key there.",
   },
   {
+    // One token, saved under the same name in five repositories: this one
+    // and the four add-ons. One row, because one `claude setup-token` run
+    // replaces all five and they fall due together (#1727, #1758).
+    id: "gh-claude-code-oauth-token",
+    name: "CLAUDE_CODE_OAUTH_TOKEN",
+    store: "github-actions",
+    consumer:
+      "claude.yml, here and in the four add-on repositories: an @claude mention starts Claude Code",
+    issuer: "Anthropic (claude setup-token, the owner’s Claude subscription)",
+    renewal: "hand",
+    lifetimeDays: CLAUDE_CODE_OAUTH_TOKEN_DAYS,
+    rotate:
+      "Run claude setup-token on the owner’s computer, then the one PowerShell line on Integrations → Services → Gen AI → Anthropic → Claude Code, which sets the CLAUDE_CODE_OAUTH_TOKEN secret in this repository and the four add-ons. Test it with an @claude comment.",
+  },
+  {
     id: "gh-copilot-review-app-private-key",
     name: "COPILOT_REVIEW_APP_PRIVATE_KEY",
     store: "github-agents",
@@ -482,6 +505,25 @@ const OTHER_ENTRIES = [
       "HCP Terraform OIDC, trusted by Entra (id-plat-terraform-prod-cus-01)",
     renewal: "self",
     lifetimeDays: null,
+  },
+  {
+    // Muse's read-only Azure access (#1763, infra/muse-reader.tf, ADR 0043).
+    // Terraform mints it and keeps it in this workspace's state; the owner
+    // copies it into Muse's own vault. Each secret works for 210 days; a new
+    // one is made only when the owner raises muse_reader_secret_generation,
+    // and nothing reaches Muse until the owner copies it: renewed by hand.
+    id: "tfc-azure-muse-reader-secret",
+    name: "muse_reader_client_secret (Terraform output; sp-muse-reader-plat-prod-cus-01)",
+    store: "tfc-azure",
+    consumer:
+      "Muse (Koda's runtime): Reader on the application, management and connectivity subscriptions, for alert investigations",
+    issuer: "Entra, created by Terraform (azuread_application_password)",
+    renewal: "hand",
+    // muse_reader_secret_days in infra/muse-reader.tf: the secret's own
+    // expiry, set to the estate's hand-rotation rule.
+    lifetimeDays: HAND_ROTATION_DAYS,
+    rotate:
+      "Raise muse_reader_secret_generation by one in hcw-azure, plan and apply, then copy muse_reader_client_secret into Muse's vault; it stops working 30 days after this reminder: docs/runbooks/muse-azure-reader.md.",
   },
   {
     id: "tfc-lab-hostinger-api-token",

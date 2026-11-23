@@ -53,13 +53,18 @@ describe('the service registry', () => {
       'Anthropic',
       'OpenAI',
       'NVIDIA API',
+      // 2026-11-22: the keyless provider the router has called since #849.
+      'Microsoft Foundry (Azure OpenAI)',
       'ElevenLabs',
       'Azure AI Speech',
       'Firecrawl',
       'Replicate',
       'Cloud pricing cache',
       'Qlty',
+      // 2026-11-22: two sign-ins the hub lists and does not hold.
+      'GitHub Copilot code review',
       'Hybrid Lab (Coder and Turnstile)',
+      'Hostinger',
       // ADR 0035: the first tool add-on, read through the status proxy.
       'Migration add-on',
     ]);
@@ -73,10 +78,88 @@ describe('the service registry', () => {
     ]);
   });
 
+  it('lists both Anthropic credentials on the one Anthropic card: the API key with its key row, and Claude Code as a box of its own', () => {
+    const anthropic = SERVICES.find((service) => service.id === 'anthropic');
+    expect(anthropic.keyGroups).toEqual([
+      { title: 'API key (the site writes with it)', secrets: ['ANTHROPIC-API-KEY'] },
+      { title: 'Claude Code (answers @claude on GitHub)', panel: 'claudeCode' },
+    ]);
+    // The token is GitHub's alone, so it is never a key this card stores.
+    expect(anthropic.secrets).toEqual(['ANTHROPIC-API-KEY']);
+    expect(SERVICES.filter((service) => /claude/i.test(service.name))).toEqual([]);
+  });
+
+  it('gives the keyless Foundry provider a card with a test and no key, and says there is no key', () => {
+    const foundry = SERVICES.find((service) => service.id === 'foundry');
+    expect(foundry.group).toBe('gen-ai');
+    expect(foundry.secrets).toEqual([]);
+    expect(typeof foundry.test).toBe('function');
+    expect(foundry.securityNote).toMatch(/No key exists/);
+  });
+
+  it('says what every service costs, and that the Anthropic button is the API key’s', () => {
+    // Every card, not only the language models: a card with no bill says
+    // “Nothing”, and one whose plan is not known yet says that in words.
+    for (const service of SERVICES) {
+      expect(service.cost, `${service.name} does not say what it costs`).toMatch(/\w{6,}/);
+    }
+    const anthropic = SERVICES.find((service) => service.id === 'anthropic');
+    expect(anthropic.rotateLabel).toBe('Rotate or replace the API key');
+    expect(anthropic.rotateNote).toMatch(/Claude Code token/);
+  });
+
+  it('never guesses a price: a subscription card points at the Cost page’s ledger instead', () => {
+    for (const service of SERVICES) {
+      expect(service.cost, `${service.name} says “not recorded”`).not.toMatch(/not recorded/i);
+    }
+    const onLedger = SERVICES.filter((service) => service.costOnLedger).map(
+      (service) => service.id
+    );
+    expect(onLedger).toEqual([
+      'publer',
+      'resend',
+      'linkie',
+      'podbean',
+      'streamyard',
+      'plaud',
+      'anthropic',
+      'qlty',
+      'copilot-review',
+      'hybrid-lab',
+      'hostinger',
+    ]);
+  });
+
+  it('lists the sign-ins the hub does not hold as boxes on their vendor’s card, with no key row', () => {
+    const byId = (id) => SERVICES.find((service) => service.id === id);
+    // A second sign-in from a vendor with a card joins that card.
+    expect(byId('replicate').keyGroups.map((group) => group.panel ?? null)).toEqual([
+      null,
+      'replicateMcp',
+    ]);
+    expect(byId('replicate').secrets).toEqual(['REPLICATE-API-KEY']);
+    // A vendor with no card gets one, holding nothing.
+    for (const [id, panel] of [
+      ['hostinger', 'hostingerMcp'],
+      ['copilot-review', 'copilotReview'],
+    ]) {
+      expect(byId(id).secrets, `${id} must hold no key`).toEqual([]);
+      expect(byId(id).keyGroups.map((group) => group.panel)).toEqual([panel]);
+      expect(byId(id).test).toBeNull();
+      expect(byId(id).untestedReason).toMatch(/\w.{20,}/);
+    }
+  });
+
   it('only groups keys a card actually uses, each once, and only names panels the Services tab draws', () => {
     // IntegrationsServices.jsx KEY_GROUP_PANELS: a name not there would draw
     // an empty box; a grouped key the card does not use would never show.
-    const KNOWN_PANELS = ['coderAutomation'];
+    const KNOWN_PANELS = [
+      'coderAutomation',
+      'claudeCode',
+      'replicateMcp',
+      'hostingerMcp',
+      'copilotReview',
+    ];
     for (const service of SERVICES.filter((s) => s.keyGroups)) {
       const grouped = service.keyGroups.flatMap((group) => group.secrets ?? []);
       expect(new Set(grouped).size, `${service.name} groups a key twice`).toBe(grouped.length);

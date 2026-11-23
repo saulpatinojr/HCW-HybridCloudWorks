@@ -77,11 +77,15 @@ trips. The session is the orchestrator of a team of agents and does the work.
   workflows, so the App repositories are added to the work board by
   `C:\Users\saulp\.hcw\Sync-AppTicketsToBoard.ps1`, run hourly by the
   `HCW-board-sync` scheduled task).
-  A cloud session (Claude Code on the web, claude.ai/code) has two more
-  limits, because it acts through the Claude GitHub App (the app installed
-  on the owner's GitHub account for web sessions) rather than the owner's
-  own `gh` sign-in. Both were seen on 2026-11-11
-  ([#1683](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1683)).
+  A cloud session (Claude Code on the web, claude.ai/code) has three more
+  limits, because its GitHub calls go through the Claude GitHub App (the
+  app installed on the owner's GitHub account for web sessions) and a
+  proxy (a go-between that checks each request before it reaches GitHub),
+  rather than the owner's own `gh` sign-in. The first two were seen on
+  2026-11-11
+  ([#1683](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1683)),
+  the third on 2026-11-22 on the App's
+  [`Protect main` ruleset](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/rules/25778324).
   - **GraphQL is refused.** GraphQL is GitHub's second API, which many `gh`
     commands use under the hood; `gh api graphql`, `gh pr view --json` and
     `gh pr list` were all refused with HTTP 403 (not allowed) "GitHub
@@ -97,9 +101,18 @@ trips. The session is the orchestrator of a team of agents and does the work.
     session: editing the work board, which is GraphQL only.
   - **Code scanning alerts cannot be read**; see "Code scanning's alerts
     are read on `main`" below.
+  - **Rulesets (a repository's merge rules) cannot be changed.** Reading
+    a ruleset works, but changing one does not: on 2026-11-22 `gh api -X PUT
+    repos/saulpatinojr/HCW-MigrateOrchestrator_App/rulesets/25778324` was
+    refused with HTTP 403 "Write access to this GitHub API path is not
+    permitted through this proxy", and the ruleset was left as it was. So
+    a cloud session does not retry the call. It gives the owner the
+    ruleset's link, the exact boxes and values to change, and the values to
+    leave alone, then reads the ruleset back from the API to confirm the
+    change once the owner says it is done.
 
   Sessions on the owner's own computer use the owner's `gh` sign-in and
-  have neither limit.
+  have none of these three cloud-session limits.
 - **Use the team.** Hand each ticket, review, build and test run to the
   matching agent (see "Use the specialist agents"), brief it fully, run
   independent ones in parallel, and check what comes back yourself before you
@@ -191,6 +204,156 @@ never does on its own.
   end). CodeRabbit is removed until further notice, so the CodeRabbit parts of
   those bullets (its approval and its boxes) are paused; the merge signal that
   replaces them is the first bullet of "Pull requests open ready for review" below.
+
+## A new credential arrives with its register row, its test and its reminder
+
+Owner instructions 2026-11-22. A session set up the `@claude` workflow
+([#1727](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1727))
+with a new one-year token and added none of the parts the admin portal
+already has for keeping track of one. The token worked, but nothing in the
+portal knew it existed or when it would run out; the owner noticed, not the
+session. The first fix
+([#1760](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1760))
+then covered the register and the reminder and still missed the Keys tab and
+the Services tab, and the owner had to point at those too. So this is a
+checklist to go down every time, not a principle to remember.
+
+**When it applies.** A credential is anything that signs something in: a
+token, an API key, a password, a client secret, a private key or a
+certificate. Go down the checklist whenever a change **adds** one, **changes**
+one (a new value, a new name, a new place it is stored, a new thing that
+reads it, a new expiry), or **removes** one, and whenever a change adds,
+changes or removes an API or outside service the site or a workflow calls.
+In an add-on or App repository the workflow change is made there, and the
+checklist is a pull request in this repository opened alongside it.
+
+**How it is recorded.** The pull request description carries the checklist as
+a table: one row per place below, saying *done* (with the file), *already
+correct* (checked, nothing to change) or *does not apply* (with the reason in
+one sentence). A place left off the table has not been checked. If it is not
+clear whether a place applies, say so and ask the owner; do not leave it out
+quietly.
+
+**The places, in the order the owner meets them in the portal**
+([Admin → Integrations](https://hybridcloudworks.com/admin/integrations)):
+
+1. **Keys tab: where the value is stored and replaced.**
+   [Integrations → Keys](https://hybridcloudworks.com/admin/integrations?tab=keys)
+   is where the owner pastes a new value in one step. It lists what
+   [`secret-catalog.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/secret-catalog.js)
+   declares, and a test holds that list to the Key Vault references in
+   `infra/`, so a new row there is a Terraform change too. The owner expects
+   to be able to rotate a credential here. If a credential cannot be put on
+   this tab (for example it lives in GitHub, which the site cannot write to),
+   say that in the table **and give the owner the shortest other way to
+   rotate it**, as one command or one page; never leave the owner with a list
+   of manual steps and no explanation.
+2. **Services tab: the card that explains and tests it.**
+   [Integrations → Services](https://hybridcloudworks.com/admin/integrations?tab=services)
+   draws one card per service from
+   [`serviceRegistry.jsx`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/components/admin/integrations/serviceRegistry.jsx).
+   A card says what the service is, what it does here, which pages use it,
+   which way data flows and what the key can reach, and it has a **Test**
+   button. **Add to the vendor's existing card before making a new one:** a
+   second credential from a vendor that already has a card goes in that card
+   as its own titled box (`keyGroups`), with its own description and its own
+   test, so everything from one vendor is in one place (the
+   [Gen AI group](https://hybridcloudworks.com/admin/integrations?tab=services&group=gen-ai)
+   holds the Anthropic card, for example). A test that needs the stored value
+   runs on the server, in
+   [`connection-probe.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/integrations/connection-probe.js),
+   so the value never reaches a browser. Where no test is possible, the card
+   says why (`untestedReason`).
+3. **Overview tab.**
+   [Integrations → Overview](https://hybridcloudworks.com/admin/integrations)
+   is built from the same registry, so a correct card appears there by
+   itself. Check that it does and that its light means what the card says.
+4. **Directory tab.**
+   [Integrations → Directory](https://hybridcloudworks.com/admin/integrations?tab=directory)
+   explains each service to a reader, from
+   [`integrationsDirectory.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/config/integrationsDirectory.js)
+   merged with the registry. Update the vendor's existing entry (what it
+   powers, its documentation link) before adding a new one.
+5. **Credentials tab: the register row.**
+   [Integrations → Credentials](https://hybridcloudworks.com/admin/integrations?tab=credentials)
+   shows the one list of every credential the estate uses, by name only and
+   never by value:
+   [`register.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/credentials/register.js).
+   A row says where the credential is stored, what uses it, who issues it,
+   whether anything renews it and how long it lasts. A credential used in
+   more than one repository under one name is one row that names them all.
+6. **The reminder.** A register row with `renewal: "hand"` (only the owner
+   can renew it) and a `lifetimeDays` number gets a line on the reminders
+   sheet by itself. Use the issuer's real expiry where there is one, and link
+   the page that states it in the comment beside the number; where the
+   issuer sets none, use `HAND_ROTATION_DAYS`. Do not open an issue with a
+   date in place of this: an issue does not remind anyone.
+7. **The Health page.** The [Health page](https://hybridcloudworks.com/admin/health)
+   probes every service that has a Test with the same function, so a card
+   with a test is covered. Check that the new probe shows there.
+8. **The two standards pages.**
+   [`required-inputs.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/standards/required-inputs.md)
+   (what must be set, and whether it is) and
+   [`variables-and-secrets.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/standards/variables-and-secrets.md)
+   (why a stored secret is justified here and not a keyless sign-in).
+9. **The Cost page: what it costs, and the subscriptions ledger.** Every
+   card has a **Cost** line saying the kind of bill in plain words: per call,
+   a plan, a free allowance, or nothing (a test fails a card without one).
+   Never write an amount the owner pays or guess a plan: those are the
+   owner's, and they are kept on the ledger at
+   [Cost → Services](https://hybridcloudworks.com/admin/cost?tab=services),
+   a sheet the owner fills in by hand
+   ([`cost/services.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/cost/services.js)).
+   For a paid subscription, set `costOnLedger: true` on the card so it links
+   the ledger, and check the vendor is among the ledger's suggestions
+   (`SUGGESTED_VENDORS`): one with a Key Vault key is suggested by itself,
+   and one without (a subscription only GitHub or the owner uses) is added to
+   `SUGGESTED_SUBSCRIPTIONS`. Then tell the owner to add the row.
+10. **The owner's own step, in the closing summary.** Say what only the owner
+    can do: paste the value in the secure field, record the date it was made
+    on the Credentials tab, and add the plan and price to the Cost page's
+    ledger, because a session can neither read a secret nor know what the
+    owner pays.
+
+**Changing one** means going down the same list and correcting each place it
+appears: a renamed secret is renamed in the catalogue, the card, the register
+and both standards pages in one pull request; a new expiry changes
+`lifetimeDays`.
+
+**Removing one** means taking it out of every place above in the same pull
+request, and telling the owner to revoke the old value at the issuer (with
+the link), because deleting our copy does not switch the credential off. The
+register's reminder row goes away by itself once the row is gone.
+
+**Where the value is stored is a decision, and it is written in the register
+row.** A value the *site's own code* reads goes in Key Vault through the Keys
+tab. A value only a workflow reads is a GitHub Actions secret; putting a copy
+in Key Vault that nothing reads makes an orphan, so that is done only when
+the site is also given a use for it (a test, or passing it on), and the pull
+request says which.
+
+**Not every place fits every key, and that is said, not hidden.** Owner
+instruction 2026-11-22. Some keys can be tested and cost nothing; some cost
+money and cannot be tested; some have neither. For each key, the card says
+which of these it has, in plain words: how it is **tested** (or that it
+cannot be, and what to do instead), what it **costs** (a bill per call, a
+subscription's limits, or nothing), how it is **replaced**, and when it
+**expires**. A line that does not apply says so; it is not left out.
+
+**Never add exposure to make a tab work.** A key that only GitHub reads stays
+only in GitHub. Do not copy it into Key Vault, and do not give the site a way
+to write GitHub's secrets, just so the Keys tab or a Test button has
+something to do. List it instead: its box on the vendor's card says where it
+is stored, gives the one line that replaces it, and links where to check it
+(the Claude Code box on the Anthropic card is the example,
+[`ClaudeCodeNote.jsx`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/components/admin/integrations/ClaudeCodeNote.jsx)).
+Giving the site a new power over another system is the owner's decision,
+asked for on its own, never a side effect of adding a key.
+
+The same habit applies beyond credentials. Before calling a feature done, ask
+what the admin portal already has for that kind of thing (a register, a
+health probe, a reminder, a settings page, a directory entry) and add the new
+thing to each, in the same pull request.
 
 ## Everything named to the owner carries its link
 

@@ -133,6 +133,7 @@ nav:
       - 0040 Interviews from the admin: decisions/0040-interviews-from-the-admin.md
       - 0041 Native Terraform only: decisions/0041-native-terraform-only.md
       - 0042 Developer API v1 (events and call for speakers): decisions/0042-developer-api.md
+      - 0043 Muse reads Azure: decisions/0043-muse-azure-reader.md
   - Runbooks:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md
@@ -148,6 +149,7 @@ nav:
       - Private Second Brain: runbooks/second-brain.md
       - Agent Content API (Koda): runbooks/agent-content-api.md
       - Developer API (organizer keys and calls for speakers): runbooks/developer-api.md
+      - Muse's read-only Azure access: runbooks/muse-azure-reader.md
       - Labs host access and Arc onboarding: runbooks/labs-host.md
       - Docker Hub publishing (OIDC connection): runbooks/docker-hub-publishing.md
       - Copilot code review MCP servers: runbooks/copilot-code-review-mcp.md

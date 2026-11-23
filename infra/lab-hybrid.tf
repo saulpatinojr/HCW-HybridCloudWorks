@@ -387,7 +387,7 @@ resource "azurerm_role_assignment" "lab_hybrid_vault_seal" {
 # call with the caller's identity and IP address, so an unwrap from anywhere
 # but the lab host shows up as a row, which is the check the open network above
 # relies on. About 300 rows a day from the 10-minute health check, well under
-# a megabyte a day against the workspace's 0.25 GB/day cap. Logs only, as on
+# a megabyte a day against the workspace's daily cap. Logs only, as on
 # the Cosmos and content-queue settings in observability.tf: the vault's
 # metrics would add rows and answer nothing the audit log does not.
 resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_key_vault" {
@@ -482,7 +482,8 @@ resource "azapi_resource" "lab_hybrid_arc_ssh_service_configuration" {
 #     while the disk stayed full and left every alert open after it was
 #     pruned (ADR 0022 decision 6).
 #   - unit_failed: `hcw-unit-failed@` logged a failure for a unit it watches
-#     (the Coder backup, the labs agent, Caddy, Vault). The notifier writes one
+#     (every unit naming it in `OnFailure=`; the alerting runbook's row for
+#     alert-lab-unit-failed lists them). The notifier writes one
 #     line at daemon.err; the DCR ships daemon at Warning and above. Stateless
 #     and muted for six hours, deliberately: the line is an event, not a state.
 #     A stateful form would report Resolved two clear 15-minute evaluations
@@ -600,7 +601,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_unit_faile
   resource_group_name = azurerm_resource_group.platform_mgmt.name
   location            = azurerm_resource_group.platform_mgmt.location
   scopes              = [azurerm_log_analytics_workspace.hcw.id]
-  description         = "A watched systemd unit on the lab host entered the failed state: the nightly Coder backup, the labs agent, Caddy or Vault. The line names the unit. LAB-2."
+  description         = "A watched systemd unit on the lab host entered the failed state; the syslog line names it. One of twelve: Caddy, Vault, the labs agent, the host firewall, the Coder backup, Coder automation, the Vault backup, the playbook drift check, the idle reboot, the held-package report, the Portainer check or the workspace reach check. What each is and how to check it: docs/runbooks/alerting-and-support.md, alert-lab-unit-failed. LAB-2."
   severity            = 2
 
   evaluation_frequency = "PT15M"

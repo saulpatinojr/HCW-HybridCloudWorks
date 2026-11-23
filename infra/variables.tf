@@ -553,14 +553,17 @@ variable "budget_amount_usd" {
 # The application budget watches sub-app-site-prod-cus. Log Analytics bills in
 # sub-plat-mgmt-prod-cus, which had no budget at all — so the one line that
 # actually varies with load (ingestion, at roughly USD 2.30-2.76/GB) was the
-# one line nothing was watching. A 0.25 GB/day cap is about 7.5 GB/month, so
-# 25 is a ceiling the workspace should never reach while the cap holds, and one
-# that fires early if the cap is ever raised without the spend being thought
-# about.
+# one line nothing was watching. The 0.5 GB/day cap (since 2026-11-22) is at most
+# about 15 GB/month, roughly USD 26 with retention if the cap were hit every
+# day. 35 since 2026-11-22 (owner decision, from 25): at the ~0.3 GB/day
+# measured then the expected spend is USD 11-13, which crossed the 50% mail of
+# a 25 budget most months and taught the inbox to ignore it. At 35 the 50%
+# mail (17.50) means more than today's volume, and 100% is still reached only
+# if the cap is raised again without the spend being thought about.
 variable "budget_amount_mgmt_usd" {
   description = "Monthly budget ceiling in USD for the Platform Management subscription — Log Analytics ingestion and retention"
   type        = number
-  default     = 25
+  default     = 35
 }
 
 variable "budget_alert_email" {
@@ -708,9 +711,19 @@ variable "logs_daily_quota_gb" {
     NEGATIVE threshold and it would fire on every evaluation, forever, about a
     cap that does not exist. Raising the number keeps the alert meaningful at
     the new level; removing the cap silently turns a guard into a mail rule.
+
+    0.5 SINCE 2026-11-22 (owner decision, PR #1729's investigation). Demand had
+    grown to about 0.3 GB/day: the 0.25 cap was hit at 04:15 UTC on Nov 14 and
+    03:00 UTC on Nov 15, and every log alert was blind until the 08:00 UTC reset,
+    which raised false timer-overdue, Cosmos-export and backup-missing alerts.
+    Ingestion is billed on what arrives, not on the cap: at ~0.3 GB/day that is
+    about USD 11-13/month with retention, and 0.5 GB/day every day is the ceiling,
+    about USD 26/month (USD 2.30/GB after 5 GB/month free per billing account,
+    plus USD 0.10/GB/month beyond 31 days of retention; Azure Monitor pricing
+    page, read 2026-11-22). The 80% warning moves to 0.4 GB/day with it.
   EOT
   type        = number
-  default     = 0.25
+  default     = 0.5
 
   validation {
     condition     = var.logs_daily_quota_gb > 0
@@ -724,7 +737,8 @@ variable "logs_retention_in_days" {
 
     30 days is the Azure PerGB2018 included minimum. 90 days satisfies the compliance
     audit finding for retaining security logs, audit events, syslog, and diagnostics.
-    At the 0.25 GB/day daily cap, 90 days retention incurs negligible additional cost (~$1.50/mo).
+    At the 0.5 GB/day daily cap, 90 days retention costs about $3/mo at most
+    (59 days beyond the 31 included, at $0.10/GB/month).
   EOT
   type        = number
   default     = 90
@@ -1671,4 +1685,39 @@ variable "gsc_site_url" {
   description = "The Search Console property the page reads: sc-domain:hybridcloudworks.com is the Domain property the owner chose on #1612"
   type        = string
   default     = "sc-domain:hybridcloudworks.com"
+}
+
+variable "muse_reader_enabled" {
+  description = <<-EOT
+    Create Muse's read-only app registration (muse-reader.tf, #1763): the
+    app registration, its service principal, a client secret and Reader on
+    the application, management and connectivity subscriptions.
+
+    False until the owner has given the HCP Terraform run identity
+    (id-plat-terraform-prod-cus-01) the Entra role Application Developer.
+    Without it the plan is clean and the apply fails at the first Entra
+    create, halfway through an estate-wide run. Flip it in the workspace
+    after that grant (docs/runbooks/muse-azure-reader.md, "Turn it on"); the
+    next run plans seven creates. Setting it back to false deletes the app
+    registration and all three grants: that is the full revoke.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "muse_reader_secret_generation" {
+  description = <<-EOT
+    Raise by one to replace Muse's client secret on the next apply, for
+    example after a suspected leak (docs/runbooks/muse-azure-reader.md,
+    "Rotate the secret"). This is the only thing that replaces the secret:
+    each one works for 210 days, and the reminder asks for a rotation at
+    day 180. The old secret stops working in the same apply.
+  EOT
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.muse_reader_secret_generation >= 1 && floor(var.muse_reader_secret_generation) == var.muse_reader_secret_generation
+    error_message = "muse_reader_secret_generation must be a whole number, 1 or more."
+  }
 }

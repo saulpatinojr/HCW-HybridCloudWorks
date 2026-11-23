@@ -376,6 +376,25 @@ file there. From the split of `main.tf` (#269) until 2026-09-29 it read
 `main.tf` alone, found none, and stopped before doing anything (#814). CI now
 runs its tests, so a file move cannot break it silently again.
 
+**One secret is made by Terraform and kept in state, by the owner's decision
+(#1763, [ADR 0043](../decisions/0043-muse-azure-reader.md)).** Muse's
+read-only Azure sign-in, `azuread_application_password.muse_reader` in
+`infra/muse-reader.tf`, exported as the sensitive output
+`muse_reader_client_secret`. It is an exception to the rule above, made with
+the rule in view: the rule keeps *Key Vault* values out of state because the
+site reads them and a human can own them; this secret is read by nothing in
+the estate, only by Muse, which runs outside Azure and GitHub Actions and
+cannot use a federated (OIDC) sign-in, so there is no keyless path and no
+vault of ours it belongs in. What keeps the wider disclosure boundary
+acceptable is what the secret can do: built-in Reader, no data action, no
+`listKeys`, no Key Vault secret value. It still widens who can read the
+estate to whoever can read the `hcw-azure` state, and that is written down in
+the ADR as the accepted risk. The value is copied once into Muse's own vault
+and rotated on a 180-day reminder ([runbook](../runbooks/muse-azure-reader.md)).
+The alternative the ADR records, if the owner later wants the value out of
+state, is Terraform keeping the app and its grants while the owner mints the
+secret with `az ad app credential reset`.
+
 ### Multi-line and oversized secrets
 
 **There are none left, and the run-time read path was deleted with them
@@ -549,6 +568,7 @@ available. An entry that cannot answer both belongs in store 3 or nowhere.
 | `CLIENT_ID`, `FRONTEND_DEPLOY_CLIENT_ID`, `READER_CLIENT_ID`, `ALERT_READER_CLIENT_ID`, `COPILOT_REVIEW_CLIENT_ID`, `MANIFEST_WINDOW_CLIENT_ID`, `ARC_RUN_CLIENT_ID` | §7 | Azure (names a managed identity; authenticates nothing under WIF, which needs a token matching a federated subject) | Same as the rows above ([#1618](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618)). The identities: `github_deploy` (the backend deploy; both deploys until #1617), `github_frontend_deploy` (the frontend deploy since #1617, the Static Web App's deployment token and nothing else), `github_reader` (the two monitors), `github_alert_reader` (alert rules), `github_copilot_review` (Copilot code review), `github_manifest_window` (`publish-content-manifest.yml`'s origin window and `remove-ci-access-windows.yml`, #1098, #1463) and `github_arc_run` (`lab-host-arc-run.yml`, whose control is the `lab-host-arc` environment's reviewers and main-only branch rule, #1590). Seeded from the Terraform outputs by `scripts/set-github-variables.ps1`, which never prints them | Justified, for the masking alone |
 | `TFC_TOKEN` | §7 | HCP Terraform | Authenticates GitHub → *Terraform*, the reverse direction from §8. The HCP Terraform API has no inbound GitHub OIDC path. Read by `tfc-plan-check.yml`, which holds a plan to the permanent diff, and by `deploy-functions.yml`, which refuses to deploy while an apply is in flight (#454). Use a **team** token, not a user token, so it survives the user leaving | Justified |
 | `MANIFEST_APP_PRIVATE_KEY` | — | GitHub, this repository | A GitHub App's key, with `vars.MANIFEST_APP_ID`. `scripts/github-app-token.mjs` mints a one-hour installation token from it and revokes it after use, for the four workflows that push a branch and open a pull request. The App is what lets those pull requests run CI, which a `GITHUB_TOKEN`-opened one does not | Justified |
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | Anthropic (Claude Code) | Authenticates GitHub → *Claude Code* for `claude.yml`, the `@claude` mention workflow (#1727). A subscription token from `claude setup-token`, not an API key: there is no federated (OIDC) path from GitHub to a Claude subscription, so a stored secret is the only way. It expires a year after it is made, and the credential register carries the date and the reminder. The workflow's own job token is read-only and the job starts only for the owner, a member or a collaborator, so a stranger's comment never reads it | Justified |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | §7 | Google Cloud | Source-side credential for the one-shot Firestore export, for a system being decommissioned | **Deleted** — the migration completed and `migrate-data.yml` went with it (`59e471b`); the repository holds no such secret |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | §7 | **Azure** | None needed — see below | **Resolved 2026-08-30** — minted from ARM per run, secret deleted 2026-08-31 (T-727) |
 | `AZURE_FUNCTIONS_URL` | §7 | — | A public API base URL | **Resolved 2026-08-18** — now `vars.FUNCTIONS_URL`, store 3 |

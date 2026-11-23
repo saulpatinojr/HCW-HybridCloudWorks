@@ -135,6 +135,8 @@ Google side:
 | `lab_hybrid_policy_enabled` | `false` | Creates the audit-only Linux security baseline policy assignment on `rg-lab-hybrid-prod-cus` (#663). **MISSING.** Set `true` (HCL on): ADR 0032 decision 3 makes machine configuration audit only, and #663's acceptance is a compliance state. The first run of `scripts/lab/Register-LabArc.ps1` grants the run identity Resource Policy Contributor on that group and then prints this variable; true before that grant fails the apply with `AuthorizationFailed`. [Labs host runbook](../runbooks/labs-host.md), "Arc onboarding", steps 2 and 3 |
 | `storage_firewall_remover_enabled` | `false` | **MISSING** (2026-11-04, #1463). Creates the *HCW Storage Firewall Writer* assignment for the hourly window remover, and the lookup of that role. Set `true` only AFTER the role exists (§4.6b): a lookup of a role that does not exist hung the workspace's one plan slot for over twelve minutes on 2026-11-04 with every other run queued behind it, which is why the lookup is gated rather than always on. Until then the remover's Function App half runs and its storage half reports `AuthorizationFailed` |
 | `lab_arc_run_command_enabled` | `false` | **MISSING** (2026-11-09, #1590). Creates the *HCW Arc Run Command Operator* assignment on `rg-lab-hybrid-prod-cus` for `github_arc_run`, the identity `lab-host-arc-run.yml` signs in as, and the lookup of that role. Set `true` only AFTER the role exists (§4.6b), for the reason given on `storage_firewall_remover_enabled` above. Until then the workflow signs in and its Run Command step fails with `AuthorizationFailed`. Setting it back to `false` is how to take Run Command away from CI without touching the host ([ADR 0032, amendment of 2026-11-09](../decisions/0032-learner-labs-platform.md)) |
+| `muse_reader_enabled` | `false` | **MISSING** (2026-11-22, #1763). Creates Muse's read-only app registration `sp-muse-reader-plat-prod-cus-01` (`infra/muse-reader.tf`): the app, its service principal, a client secret that works for 210 days (rotation reminder at 180) and built-in Reader on the application, management and connectivity subscriptions. Set `true` only AFTER the run identity `id-plat-terraform-prod-cus-01` holds the Entra role **Application Developer**: infra/ had no Entra objects before this, and without the role the apply fails at the first Entra create. Setting it back to `false` deletes the app and all three grants, which is the full revoke. [Muse Azure reader runbook](../runbooks/muse-azure-reader.md), "Turn it on"; [ADR 0043](../decisions/0043-muse-azure-reader.md) |
+| `muse_reader_secret_generation` | `1` | Raise by one to replace Muse's client secret on the next apply (#1763), for example after a suspected leak; the old one stops working in the same apply. It is the only thing that replaces the secret, so do it on the 180-day reminder too. Same runbook, "Rotate the secret" |
 | `cloudflare_origin_secret` | — (sensitive) | Must match Key Vault `CF-ORIGIN-SECRET` exactly; a mismatch throws on every anonymous request |
 | `arc_onboarding_principal_id` | `null` | **MISSING.** Object id (not the appId) of `sp-arc-onboarding-lab-hybrid-prod-cus`, which the first run of `scripts/lab/Register-LabArc.ps1` creates and prints this value for; set, it plans the principal's only grant, Azure Connected Machine Onboarding on `rg-lab-hybrid-prod-cus` (#663). Not sensitive, HCL off, lower case. [Labs host runbook](../runbooks/labs-host.md), "Arc onboarding", steps 2 and 3 |
 | `cloudflare_account_id` | `null` | **MISSING** (2026-10-20, #1302). The Cloudflare account that owns the zone: 32 lowercase hex characters, an identifier and not a credential, the same value the `CLOUDFLARE_ACCOUNT_ID` repository variable holds (§4.2) and the dashboard shows under API on the zone's Overview page. Set, it creates `cloudflare_web_analytics_site.hcw[0]` for `hybridcloudworks.com` with Cloudflare's lite option — which asks Cloudflare not to measure visitors in the EU; documented for the snippet Cloudflare's proxy injects, unverified for the hand-placed one this site carries, so the figure is aggregate page views, read as a floor. **EU option not yet confirmed**: after the apply the owner opens the site's Manage page in the Web Analytics dashboard, `https://dash.cloudflare.com/?to=/:account/web-analytics`, checks that the EU option shows as applied, and records the date in this row — fills the `web_analytics_site_token` and `web_analytics_site_tag` outputs (§4.10) and the `CF_WEB_ANALYTICS_SITE_TAG` and `CF_ACCOUNT_ID` app settings (§4.5). Null on purpose rather than required: the site serves no visitor-facing path, and a required variable would fail every plan — the merge's queued run, the speculative plans, `tfc-plan-check` — until the owner had typed the value in. Not sensitive, HCL off. Add Account → Account Settings → Write to `cloudflare_api_token` (above) before the apply that follows; a value of the wrong shape fails the plan on the variable's validation rather than the apply as a 404 |
@@ -228,6 +230,7 @@ Overview page in the portal for a client id).
 | `ARC_RUN_CLIENT_ID` | **SET 2026-11-09** by the owner with `scripts/Set-SubscriptionSecrets.ps1`, copied from the variable of the same name, which was then deleted ([#1618 closing note](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1618#issuecomment-6751598449)). Not read back by a session, which can neither read a secret nor list them; the owner's Arc `status` run after the merge printed `client-id: ***`, which is this secret resolving | OIDC login for `lab-host-arc-run.yml` alone: `github_arc_run`, which holds *HCW Arc Run Command Operator* (`infra/roles/arc-run-command-operator.json`) on `rg-lab-hybrid-prod-cus` and nothing else. It signs in with the OIDC subject of the `lab-host-arc` environment (§4.4), so the control on who uses it is that environment's reviewers and `main`-only branch rule, not this identifier, which grants nothing by itself. Seeded as a secret by `scripts/set-github-variables.ps1` from the `arc_run_client_id` output once an apply has created the identity. The workflow refuses to start while it is unset, naming it |
 | `TFC_TOKEN` | **SET 2026-08-30** | An HCP Terraform API token for the `hcw-azure` workspace. Not an Azure credential. `tfc-plan-check.yml` reads a run's JSON plan with it and holds the plan to the permanent diff (`scripts/assert-expected-plan.mjs`). `cloudflare-dns-audit.yml` reads the workspace's runs with it (read-only; every run whose apply began, whether it ended applied, errored or cancelled), so a Terraform-looking DNS edit is EXPECTED only while an apply was in progress (#948). `deploy-functions.yml` asks the workspace whether an apply is in flight before deploying, because a deploy and an apply that write the app-settings map minutes apart lose settings (#454); that guard fails closed without the token (PLAT-3, #963). `monitor-deploy-drift.yml` reads the workspace's last applied run with it, as the Terraform row's deployed baseline; without the token that row reads ⚠️ and the job fails, never ✅ |
 | `MANIFEST_APP_PRIVATE_KEY` | **SET 2026-09-01** | Private key of the repository's GitHub App, with `MANIFEST_APP_ID` (§4.2). `scripts/github-app-token.mjs` mints a one-hour installation token from it, and revokes it after use, for the jobs that push a branch and open a pull request: `publish-content-manifest.yml`, `update-avm-versions.yml`, `update-learn-catalogue.yml` and `update-version-floors.yml`. Each job holds it for the length of two API calls and installs nothing, and each self-arms while it is unset |
+| `CLAUDE_CODE_OAUTH_TOKEN` | **SET 2026-11-15** by the owner. Not read back by a session, which can neither read a secret nor list them; the first `@claude` run that day signed in with it ([run](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/43667233025)) | The sign-in for `claude.yml` (#1727): an `@claude` mention in an issue, a pull request comment or a review starts Claude Code, and this token ties the run to the owner's Claude subscription. It is not an Anthropic API key and is unrelated to the `ANTHROPIC-API-KEY` in Key Vault (§4.5), which the site's own AI router reads. Made with `claude setup-token` on the owner's computer; it **expires one year after it is made** ([Claude Code authentication](https://code.claude.com/docs/en/authentication.md#generate-a-long-lived-token)), and every `@claude` run then fails at sign-in. The same token is saved under the same name in the four add-on repositories, so one renewal sets it in five places. Its renewal date is on Admin → Integrations → Credentials (`gh-claude-code-oauth-token` in the credential register), which also puts it on the reminders sheet. It is listed, with the one line that replaces it in all five repositories, in the Claude Code box of the Anthropic card (Admin → Integrations → Services → Gen AI). It is not on the Keys tab and the site holds no copy, on purpose: only GitHub reads it (owner instruction 2026-11-22) |
 | `CLOUDFLARE_AUDIT_LOG_TOKEN` | **SET 2026-10-18** (owner, #948) | A Cloudflare API token with *Account → Account Settings → Read* on the HybridCloudWorks account only, with an end date at most a year out: the one permission the Audit Logs v2 endpoint accepts (the token catalogue has no separate audit-log read; *Access: Audit Logs Read* is Zero Trust's and not this). `cloudflare-dns-audit.yml` hands it to `scripts/cloudflare-dns-audit.mjs` for one daily read of the account audit log ([Edge and DNS verification](../runbooks/edge-dns-verification.md), "The daily DNS audit"). Read-only, so a leak reads the audit log and changes nothing; roll it in the dashboard and set the secret again. While it is unset the daily run fails, on purpose. **Re-created 2026-10-18 evening**: the first token had been revoked by mistake during the LAB-1 cut-over (its name read like the Caddy token's) and the run answered HTTP 401 until the new one was set; a report-only run then read 284 entries, 0 unexpected. **Cloudflare token names** (owner decision 2026-10-18, after that mistake) say *where the token lives, what uses it, what it reaches*: `lab-host-caddy-hybridcloudinsights` for Caddy's, `hcp-terraform-cloudflare-dns` for the workspace's, and for this one `github-automation-dns-audit-account` (created as `lab-host-caddy-cloudflare`; rename pending, the value is unchanged by a rename) |
 
 **No stored Azure credential is in this repository's secrets.** The Qlty
@@ -551,8 +554,11 @@ writes the repository variables; nothing there is set by hand, except
 `CF_WEB_ANALYTICS_TOKEN`, which the script does not seed yet (#1302) and the
 owner copies from the `web_analytics_site_token` output.
 
-**Twenty-nine, and they live in two files.** Twenty-two in `infra/outputs.tf`
-and seven in `infra/oidc.tf`.
+**Thirty-five, and they live in three files.** Twenty-two in
+`infra/outputs.tf`, nine in `infra/oidc.tf` and four in
+`infra/muse-reader.tf`. (It read twenty-nine, with seven in `oidc.tf`, from
+#1617 until #1763 counted again and found nine there before adding the
+third file.)
 
 **This count has now been wrong four times, each in the same way**, so the
 method matters more than the number. It said twenty-three when first written,
@@ -575,7 +581,7 @@ line here, until #1302 ran the command and found twenty before adding two.
 **Count by reading the files, never by adjusting the previous number:**
 
 ```bash
-grep -c '^output "' infra/outputs.tf infra/oidc.tf
+grep -c '^output "' infra/outputs.tf infra/oidc.tf infra/muse-reader.tf
 ```
 
 It prints one line per file, not a total — which is what this section needs,
@@ -583,7 +589,8 @@ because it quotes both numbers:
 
 ```
 infra/outputs.tf:22
-infra/oidc.tf:7
+infra/oidc.tf:9
+infra/muse-reader.tf:4
 ```
 
 The total is their sum. Said explicitly because "the command that produces the
@@ -649,6 +656,20 @@ run a command on the lab host through Azure Arc (`ARC_RUN_CLIENT_ID`, a secret i
 identity that can only read the Static Web App's deployment token
 (`FRONTEND_DEPLOY_CLIENT_ID`, a secret in §4.3); `client_id` is
 `deploy-functions.yml`'s alone since then.
+
+From `infra/muse-reader.tf` (4, #1763): `muse_reader_client_id` ·
+`muse_reader_tenant_id` · `muse_reader_client_secret` ·
+`muse_reader_secret_expires`. All four read `null` until
+`muse_reader_enabled` (§4.1) is `true`. **`muse_reader_client_secret` is the
+one sensitive credential output in the configuration, on purpose**: Muse runs
+outside Azure and GitHub and cannot use a federated sign-in, so the owner asked
+for a client secret kept in Terraform state and copied once into Muse's own
+vault ([ADR 0043](../decisions/0043-muse-azure-reader.md)). It is never
+printed; the [runbook](../runbooks/muse-azure-reader.md) copies it straight to
+the clipboard. The client id and tenant id are identifiers, not secrets. Its
+renewal date is on Admin → Integrations → Credentials
+(`tfc-azure-muse-reader-secret` in the credential register), which also puts
+it on the reminders sheet.
 
 The four scratch outputs that fed §4.2's three now-deleted variables are gone
 from `infra/outputs.tf`.

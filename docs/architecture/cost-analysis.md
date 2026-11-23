@@ -11,7 +11,7 @@ to carry described resources that were never created; see *Corrected
 **Currency:** USD
 
 **Budgets:** three. Two are **subscription**-scoped — USD 150 on the
-application subscription (live) and USD 25 on Platform Management — and
+application subscription (live) and USD 35 on Platform Management (USD 25 until 2026-11-22) — and
 since #849 one sits on the `rg-ai-site-prod-cus` resource group at USD 75 for
 the Microsoft Foundry account (declared 2026-10-04; read live on 2026-10-20 as
 `site-foundry-monthly-budget`, with its first month estimated below under
@@ -147,7 +147,7 @@ Platform Management subscription: **USD 2.49**.
 | **Total** | | **$2.49** |
 
 **Combined: USD 36.81 a month**, about a quarter of the USD 150 application
-ceiling, with Platform Management at about a tenth of its USD 25.
+ceiling, with Platform Management at about a tenth of the USD 25 budget it had then (USD 35 since 2026-11-22).
 
 ### The gap against the estimate, and what drives it
 
@@ -216,7 +216,7 @@ nothing in September.
 | Cosmos DB | Serverless capability, no provisioned throughput block anywhere, and a per-container `indexing_policy` with explicit included/excluded paths — indexing is RU spend on every write | `azurerm_cosmosdb_account.hcw`, `azurerm_cosmosdb_sql_container.hcw` |
 | Blob storage | Lifecycle deletes scraped article images after 90 days. Versioning on the content account — declared, not yet applied — is bounded by a 30-day non-current-version expiry in the same change, which is what stops versioning becoming an unbounded bill | `azurerm_storage_management_policy.cleanup` |
 | Key Vault | Standard SKU, no HSM; runtime reads come from cached secret clients | `azurerm_key_vault.hcw` |
-| Log Analytics / App Insights | **0.25 GB/day cap** plus 30-day retention, both live. Pruning the Cosmos diagnostic to `ControlPlaneRequests` — two data-plane categories were most of the cap — is declared and not yet applied. Ingestion sampling deliberately **not** enabled ([ADR 0022](../decisions/0022-alerting-fabric.md)) | `azurerm_log_analytics_workspace.hcw`, `infra/observability.tf` |
+| Log Analytics / App Insights | **0.5 GB/day cap** since 2026-11-22 (0.25 until then; raised by the owner after it bound on Nov 14 and 15, [#1729](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1729)) plus 90-day retention: about USD 11–13/month at the ~0.3 GB/day measured then, USD 26 at most. Pruning the Cosmos diagnostic to `ControlPlaneRequests` — two data-plane categories were most of the cap — is declared and not yet applied. Ingestion sampling deliberately **not** enabled ([ADR 0022](../decisions/0022-alerting-fabric.md)) | `azurerm_log_analytics_workspace.hcw`, `infra/observability.tf` |
 | Hub networking | Everything in `hub.tf` is hourly-free by design. Azure Firewall (~$288–912), Bastion (~$138), VPN Gateway (~$138) and DDoS Protection (~$2,944) are absent and the file says why — any one of them is between one and twenty times this whole budget | `infra/hub.tf` |
 | AI generation | Not an Azure cost. Providers are on when their key is present; Listen & Learn audio bills against `ELEVENLABS-API-KEY` at about $0.10 per 1,000 characters — up to $0.90 an episode and roughly $4 a certification (ADR 0029 §2a) — or, when that key is absent or out of credit, against `GEMINI-API-KEY` at roughly $0.17 an episode. Logged per run in the AI Engine usage tab, and the expected spend is stated when a run is requested | `functions/src/lib/ai/` |
 
@@ -277,7 +277,7 @@ same API before arming the web test.
 | Budget | Scope | Amount | What it watches |
 | --- | --- | ---: | --- |
 | `site-monthly-budget` | Subscription `sub-app-site-prod-cus` | USD 150 | The workload — Static Web Apps, Functions, Cosmos, storage, Key Vault. (This row read `hcw-monthly-budget` until 2026-10-20; the live name follows `var.workload_name`, which is `site`) |
-| `plat-mgmt-monthly-budget` | Subscription `sub-plat-mgmt-prod-cus` | USD 25 | Log Analytics ingestion and retention. Applied: `az consumption budget list` on the Management subscription read it on 2026-10-14 at USD 25 with the month's spend under USD 1 (PLAT-9, #969; this cell said "declared, not applied" after the apply had landed) |
+| `plat-mgmt-monthly-budget` | Subscription `sub-plat-mgmt-prod-cus` | USD 35 | Log Analytics ingestion and retention. Raised from USD 25 on 2026-11-22 with the 0.5 GB/day log cap, so the 50% mail stays meaningful (owner decision). Applied at USD 25: `az consumption budget list` on the Management subscription read it on 2026-10-14 at USD 25 with the month's spend under USD 1 (PLAT-9, #969; this cell said "declared, not applied" after the apply had landed) |
 | `site-foundry-monthly-budget` | Resource group `rg-ai-site-prod-cus` | USD 75 | The Microsoft Foundry account and its deployments (#849). Declared 2026-10-04 and applied; read live on 2026-10-20 at USD 75 monthly with the month's spend at USD 5.36 and Azure's forecast at USD 10.60. First month estimated below |
 
 ### Foundry — first measured month (October 2026, read 2026-10-20)
@@ -467,14 +467,14 @@ has no throughput to reserve, and Flex Consumption bills on execution.
 
 ```text
 TYPE: FINOPS_ASSESSMENT
-GOAL: Keep the production Azure workload below USD 150/month on the application subscription and USD 25/month on Platform Management, without violating the approved security and recovery baseline.
+GOAL: Keep the production Azure workload below USD 150/month on the application subscription and USD 35/month on Platform Management, without violating the approved security and recovery baseline.
 SCOPE: Three subscriptions (app, Platform Management, Platform Connectivity); one region, centralus. Cloudflare, Hostinger and external AI provider APIs are tracked separately because no Azure budget can see them.
 CONSTRAINTS: Single primary region; anonymous public site; Entra admin only; static-first delivery; no destructive optimization.
 DECISIONS: Consumption/serverless compute with zero always-ready; Cosmos Serverless; capped telemetry at 0.25 GB/day; Cloudflare retained; no Front Door, Firewall, Bastion, VPN Gateway, NAT, APIM, DDoS plan or private endpoints; no Azure OpenAI account.
 FINOPS: Measured September 2026 (read 2026-10-03, Cost Management ActualCost by resource group and service) — USD 34.32 application subscription plus USD 2.49 Platform Management, USD 36.81 combined. Largest line: rg-web-site-prod-cus Storage USD 12.40 (stsitefuncprodcus01, 17.3 M host-storage transactions, 0.64 GB stored). Log Analytics ingestion billed USD 0.00.
 IMPLEMENTATION: Two subscription budgets with 50/75/90/100 actual plus forecast; Log Analytics daily cap and an 80%-of-cap alert; storage lifecycle and bounded versioning; zero always-ready instances; bounded maximum instance count; required allocation tags applied from one map.
 VALIDATION: Done for September 2026 (#822): the full month replaced the five-day reading and the USD 15–20 estimate; the application subscription came in at about twice the estimate (host storage transactions, Functions, Azure Monitor, Cosmos) and Platform Management at about an eighth; the retired-resource tail has cleared. Still open: confirm ingestion after a full uncapped day.
-RISK_GATES: Arming the availability test (14,400 executions/month); adding fixed-cost networking; always-ready or zone-redundant compute; provisioned Cosmos throughput; multi-region replication; Defender plans; raising the Log Analytics daily cap.
+RISK_GATES: Arming the availability test (14,400 executions/month); adding fixed-cost networking; always-ready or zone-redundant compute; provisioned Cosmos throughput; multi-region replication; Defender plans; raising the Log Analytics daily cap (passed once, owner decision 2026-11-22: 0.25 -> 0.5 GB/day, #1729).
 OPEN_ITEMS: Cloudflare plan cost; Hostinger billed cost; what drives the Functions host storage reads (the largest line) and whether stsitefuncprodcus01 needs GRS; exact Azure Monitor alert-rule and web-test unit prices.
 NEXT_OWNER: Workload owner for post-apply cost measurement.
 ```
