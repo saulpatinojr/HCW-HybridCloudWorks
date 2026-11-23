@@ -224,6 +224,11 @@ export const CONTAINER_TTL_SECONDS = Object.freeze({
 export const COLLECTIONS = [
   { name: 'brain_records', disposition: 'azure-only', partitionKey: '/ownerId', note: 'Private authored notes, relationships, revisions and sync events; atomic owner partition.' },
   { name: 'brain_search', disposition: 'regenerate', partitionKey: '/ownerId', note: 'Rebuildable private creator-content lexical index. Never public.' },
+  // The Developer API's calls for speakers and the talk proposals sent to them
+  // (ADR 0042), one logical partition per event so listing an event's
+  // proposals is a single-partition query. Proposals hold a speaker's name and
+  // email, typed by that person, and are recoverable from nowhere else.
+  { name: 'developer_events', disposition: 'azure-only', partitionKey: '/eventId', note: 'Developer API calls for speakers and talk proposals (ADR 0042); one partition per event. Azure-only, no Firestore source.' },
   // --- Content -------------------------------------------------------------
   {
     name: 'content',

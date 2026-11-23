@@ -18,27 +18,26 @@ export default {
     {
       name: 'Plan the architecture and solution design',
       slug: 'plan-the-architecture-and-solution-design',
-      anchor: 'plan-the-architecture-and-solution-design-510',
-      weightLabel: '5–10%',
-      weightLow: 5,
-      weightHigh: 10,
+      anchor: 'plan-the-architecture-and-solution-design-1015',
+      weightLabel: '10–15%',
+      weightLow: 10,
+      weightHigh: 15,
       sections: [
         {
           title: 'Plan for the major components of finance and operations apps',
           objectives: [
             'Differentiate between the cloud and on-premises versions of finance and operations apps',
-            'Extend the functionality of finance and operations apps into the Microsoft ecosystem',
+            'Differentiate AI development tools used to extend finance and operations apps',
           ],
         },
         {
           title: 'Implement application lifecycle management (ALM)',
           objectives: [
             'Manage environments by using Lifecycle Services tools and components',
-            'Research and resolve issues by using Issue Search',
             'Perform activities that require asset libraries',
             'Manage package deployments between environments',
-            'Manage Unified Developer Experience (UDE) developer environments in Power Platform admin center',
-            'Manage environments by using the Implementation portal',
+            'Manage UDE developer environments in Power Platform admin center',
+            'Manage environments by using the Implementation Portal',
           ],
         },
       ],
@@ -47,30 +46,28 @@ export default {
     {
       name: 'Apply developer tools',
       slug: 'apply-developer-tools',
-      anchor: 'apply-developer-tools-510',
-      weightLabel: '5–10%',
-      weightLow: 5,
-      weightHigh: 10,
+      anchor: 'apply-developer-tools-1015',
+      weightLabel: '10–15%',
+      weightLow: 10,
+      weightHigh: 15,
       sections: [
         {
           title: 'Customize finance and operations apps by using Visual Studio',
           objectives: [
             'Create and manage extension models',
             'Manage metadata by using Application Explorer',
-            'Synchronize data dictionary changes with the application database',
+            'Synchronize and troubleshoot data dictionary changes with the application database',
             'Create elements by using element designers',
             'Perform debugging activities',
           ],
         },
         {
-          title: 'Manage source code and artifacts by using Microsoft Azure DevOps version control',
+          title:
+            'Manage source code and artifacts by using Microsoft Azure DevOps and GitHub version control',
           objectives: [
             'Create, check out, review, and check in code',
             'Maintain project artifacts',
-            'Branch and merge code',
             'Compare code and resolve version conflicts',
-            'Choose a version control system',
-            'Implement continuous integration and continuous delivery (CI/CD)',
           ],
         },
       ],
@@ -79,10 +76,10 @@ export default {
     {
       name: 'Design and develop AOT elements',
       slug: 'design-and-develop-aot-elements',
-      anchor: 'design-and-develop-aot-elements-1520',
-      weightLabel: '15–20%',
-      weightLow: 15,
-      weightHigh: 20,
+      anchor: 'design-and-develop-aot-elements-1015',
+      weightLabel: '10–15%',
+      weightLow: 10,
+      weightHigh: 15,
       sections: [
         {
           title: 'Create and extend UI elements',
@@ -90,6 +87,8 @@ export default {
             'Create and extend forms',
             'Create and extend menus and menu items',
             'Create and use label files',
+            'Create custom controls and style sheets',
+            'Create and extend operational workspaces',
           ],
         },
         {
@@ -98,14 +97,7 @@ export default {
             'Create and extend tables',
             'Create and extend views, queries, and maps',
             'Create and extend data entities',
-          ],
-        },
-        {
-          title: 'Create classes and extend AOT elements',
-          objectives: [
-            'Create and extend classes',
-            'Add event handler methods to a class',
-            'Add attributes or modifiers to a class',
+            'Differentiate between tables, maps, views, queries, and data entities',
           ],
         },
       ],
@@ -124,19 +116,22 @@ export default {
           objectives: [
             'Implement common structured programming constructs of X++',
             'Create, read, update, and delete (CRUD) data',
+            'Implement transaction scope, including by using exception handling',
             'Implement global functions in X++',
             'Resolve best practice warnings',
+            'Assess the extensibility of code and apply design patterns',
           ],
         },
         {
-          title: 'Develop object-oriented code',
+          title: 'Develop object-oriented code and implement code extensions',
           objectives: [
+            'Create and extend classes',
+            'Add methods to a class',
+            'Add attributes or modifiers to a class',
             'Implement variable scoping',
             'Implement inheritance and abstraction concept',
-            'Implement query objects and the QueryBuilder class',
             'Implement attribute classes',
             'Implement Chain of Command (CoC)',
-            'Assess the extensibility of code and avoid breaking changes',
             'Implement event handler classes and delegates',
           ],
         },
@@ -144,8 +139,10 @@ export default {
           title: 'Implement finance and operations app framework functionality',
           objectives: [
             'Implement the SysOperation framework',
-            'Implement the workflow framework',
             'Implement the SysExtensionSerializer framework',
+            'Implement query objects and the QueryBuilder class',
+            'Implement the batch framework',
+            'Implement the workflow framework',
           ],
         },
         {
@@ -161,10 +158,10 @@ export default {
     {
       name: 'Implement reporting',
       slug: 'implement-reporting',
-      anchor: 'implement-reporting-1015',
-      weightLabel: '10–15%',
-      weightLow: 10,
-      weightHigh: 15,
+      anchor: 'implement-reporting-510',
+      weightLabel: '5–10%',
+      weightLow: 5,
+      weightHigh: 10,
       sections: [
         {
           title: 'Select reporting tools in finance and operations apps',
@@ -179,17 +176,7 @@ export default {
           objectives: [
             'Determine when to use a specific reporting tool or platform',
             'Create, modify, and deploy reports in finance and operations apps by using SSRS',
-            'Create and modify finance and operations apps reports by using Power BI',
             'Create and modify finance and operations apps reports by using Microsoft Excel',
-            'Create and modify finance and operations apps reports by using Electronic reporting',
-          ],
-        },
-        {
-          title: 'Design, create, and revise Dynamics 365 workspaces',
-          objectives: [
-            'Design and implement key performance indicators (KPIs)',
-            'Create drill-through workspace elements',
-            'Implement Power BI visualizations',
           ],
         },
       ],
@@ -215,7 +202,6 @@ export default {
           title: 'Implement data integration concepts and solutions',
           objectives: [
             'Consume external web services by using RESTful APIs and Simple Object Access Protocol (SOAP)',
-            'Implement Electronic reporting integrations',
             'Implement custom services',
             'Implement Batch OData API',
           ],
@@ -223,12 +209,12 @@ export default {
         {
           title: 'Implement data management',
           objectives: [
+            'Set up a data project, including entity sequencing and recurring data jobs',
+            'Generate and modify field mapping between source, staging, and target',
             'Import and export data using entities between finance and operations apps and other systems',
             'Import and export data using composite and aggregate data entities',
             'Monitor the status and availability of entities',
             'Enable change tracking for entities',
-            'Set up a data project, including entity sequencing and recurring data jobs',
-            'Generate and modify field mapping between source, staging, and target',
           ],
         },
         {
@@ -236,9 +222,8 @@ export default {
           objectives: [
             'Integrate Microsoft Dataverse with finance and operations apps by using dual-write',
             'Integrate Microsoft Dataverse with finance and operations apps by using virtual entities',
-            'Integrate Power Platform with finance and operations apps',
+            'Integrate Microsoft Power Platform with finance and operations apps',
             'Integrate finance and operations apps with Microsoft Excel by using OData',
-            'Implement business events',
             'Implement Azure Key Vault',
           ],
         },
@@ -256,9 +241,9 @@ export default {
         {
           title: 'Implement security policies and requirements',
           objectives: [
-            'Create and extend duties and roles',
             'Create privileges and add permissions',
-            'Enforce security policies',
+            'Create and extend duties and roles',
+            'Implement security policies',
             'Implement Extensible Data Security (XDS) policies',
           ],
         },
@@ -270,17 +255,15 @@ export default {
             'Create and modify temporary tables for optimization purposes',
             'Assess when to use set-based queries or row-based queries',
             'Modify queries to optimize performance',
-            'Modify variable scope to optimize performance',
-            'Analyze and optimize concurrency',
           ],
         },
         {
           title: 'Optimize performance',
           objectives: [
-            'Capture traces, and analyze traces by using Trace Parser',
-            'Optimize performance for data entities, data source queries, batch processes, and reports',
-            'Implement Async and Sandbox frameworks',
             'Create and modify indexes for tables and views',
+            'Capture traces, and analyze traces by using Trace Parser',
+            'Optimize performance for data entities, data source queries, and reports',
+            'Implement Async and Sandbox frameworks',
           ],
         },
       ],

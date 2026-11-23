@@ -29,8 +29,8 @@ let database = null;
  * Containers whose partition key is NOT `/id`.
  *
  * `readDoc`, `patchDoc` and `deleteDoc` default the partition key to the
- * document id, which is correct for 69 of the 74 containers and silently wrong
- * for these five. Wrong in the worst way: a point read against the wrong
+ * document id, which is correct for most containers and silently wrong
+ * for these. Wrong in the worst way: a point read against the wrong
  * logical partition does not error, it returns nothing — and `readDoc` maps
  * that to `null`. The first person to write a `content_versions` reader would
  * have got `null` forever with no indication why (T-313).
@@ -49,6 +49,7 @@ export const PARTITION_KEY_PATHS = Object.freeze({
   brain_search: '/ownerId',
   admin_config: '/configScope',
   content_versions: '/contentId',
+  developer_events: '/eventId',
   image_prompt_sets_prompts: '/setName',
   image_prompts_sets: '/pageId',
   listen_and_learn_episodes: '/setId',
@@ -67,7 +68,7 @@ export const ADMIN_CONFIG_PARTITION = 'admin_config';
 /**
  * Resolve the partition key for a point operation.
  *
- * Throws rather than guessing for the five containers above: an explicit
+ * Throws rather than guessing for the containers above: an explicit
  * failure at the call site is recoverable, a silent `null` is not.
  *
  * @param {string} containerName
