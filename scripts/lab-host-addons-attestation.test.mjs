@@ -59,19 +59,19 @@ describe('group_vars/all.yml add-on attestation configuration', () => {
         repo: 'saulpatinojr/HCW-MigrateOrchestrator_AddOn',
         // Images built before the 2026-10-24 rename carry the old name in their attestation and are refused.
         refuses: ['saulpatinojr/HCW-AzMigrateOrchestrator_Addon'],
-        tag: 'v0.3.4',
+        tag: 'v0.3.5',
       },
       'network-assessment': {
         repo: 'saulpatinojr/HCW-NetworkEyes_AddOn',
-        tag: 'v0.1.3',
+        tag: 'v0.1.4',
       },
       'cloud-assessment': {
         repo: 'saulpatinojr/HCW-CloudAssessor_AddOn',
-        tag: 'v0.1.3',
+        tag: 'v0.1.4',
       },
       'cloud-crawler': {
         repo: 'saulpatinojr/HCW-CloudCrawler_AddOn',
-        tag: 'v0.3.1',
+        tag: 'v0.3.2',
       },
     };
 
