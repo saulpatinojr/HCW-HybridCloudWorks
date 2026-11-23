@@ -17,8 +17,12 @@
  *
  * The search takes the address in the body, never the query string (addresses
  * end up in logs), and answers ids, event ids, statuses and dates only: enough
- * to delete, nothing of what the speaker wrote. Neither route's audit row or
- * log line carries the address.
+ * to delete, nothing of what the speaker wrote. Each search and each delete
+ * writes one audit row (owner decision 2026-11-23 for the search: a record of
+ * who looked a person up). Neither route's audit row or log line carries the
+ * address, any part of it or a hash of it, and the search's row does not carry
+ * the proposal ids either: it says who searched, when, how many were found
+ * and whether the list was cut short.
  *
  * THE PLAINTEXT IS ANSWERED ONCE, to the super_admin who pressed Generate or
  * Rotate, so they can hand it to the organizer through a secure channel. It is
@@ -284,8 +288,14 @@ export function createDeveloperApiAdminHandlers({
      * POST cms/developer-api/proposal-search — { speakerEmail }. Where one
      * address has proposals, across every organizer's calls: the first step
      * of an erasure request. Ids, event ids, statuses and dates only.
+     *
+     * Each search that runs writes one audit row, so there is a record of who
+     * looked a person up. A search refused before it runs (no role, a bad
+     * address) writes none, like every other refused admin call here. If the
+     * row cannot be written the search still answers: `audit` logs a line
+     * with no details and carries on, as it does for every other row.
      */
-    findProposals: route(WRITE_ROLE, 'search the proposals', async ({ request }) => {
+    findProposals: route(WRITE_ROLE, 'search the proposals', async ({ request, user }) => {
       const input = await body(request);
       const speakerEmail = normalizeSpeakerEmail(input?.speakerEmail);
       // One more than the cap, so an answer that was cut short can say so.
@@ -300,12 +310,18 @@ export function createDeveloperApiAdminHandlers({
         status: row.status || null,
         submittedAt: row.submittedAt || null,
       }));
-      return json(200, {
-        ok: true,
-        proposals: found,
-        count: found.length,
-        truncated: (rows || []).length > MAX_PROPOSALS_FOUND,
+      const truncated = (rows || []).length > MAX_PROPOSALS_FOUND;
+      await audit('developer_cfs_proposal_search', {
+        user,
+        request,
+        resourceType: 'developer_cfs_submission',
+        // A search is about no single record, and the address is the one thing that must not be here.
+        resourceId: null,
+        // Two numbers-and-flags only: not the address, a part of it or a hash of it (a hash of an
+        // address can be guessed back), and not the ids, which would point at the person's proposals.
+        details: { count: found.length, truncated },
       });
+      return json(200, { ok: true, proposals: found, count: found.length, truncated });
     }),
 
     /**
