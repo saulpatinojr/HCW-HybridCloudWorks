@@ -1,7 +1,7 @@
 /**
  * AI Engine — Admin Page  (/admin/ai-engine)
  *
- * Six tabs (components/admin/ai-engine/tabs.js), selected by `?tab=`:
+ * Seven tabs (components/admin/ai-engine/tabs.js), selected by `?tab=`:
  *   1. AI Services   — the Priority list (ADR 0034 §4), feature switches,
  *                      provider cards with status, enable toggle, the
  *                      catalogue's model list, Test
@@ -16,6 +16,9 @@
  *   6. Koda          — the content agent's API key, what it may do, and how
  *                      the Muse connector reaches the site (ADR 0037;
  *                      components/admin/ai-engine/KodaTab.jsx)
+ *   7. Developer API — event organizers' keys for the Developer API: make,
+ *                      re-scope, rotate, revoke, and what a key can reach
+ *                      (ADR 0042; components/admin/ai-engine/DeveloperApiTab.jsx)
  *
  * The model catalogue drawer (CatalogDrawer) opens from the first two tabs.
  * The "Site Services" tab that sat between them until ADR 0033 was a
@@ -55,6 +58,7 @@ import ServicesTab, {
 import McpTab, { McpServerCard } from '@/components/admin/ai-engine/McpTab';
 import PlaygroundTab from '@/components/admin/ai-engine/PlaygroundTab';
 import KodaTab from '@/components/admin/ai-engine/KodaTab';
+import DeveloperApiTab from '@/components/admin/ai-engine/DeveloperApiTab';
 
 export {
   FeatureSwitches,
@@ -76,6 +80,7 @@ const HELP = [
   'MCP Servers are tool servers the Playground and the bots can call; keys stay in app settings named MCP_* and are never sent to the browser.',
   'Usage & Cost lists every recorded call. Since ADR 0033 every call through the router records one row, sourced to its task.',
   'Koda is the content agent (run by Muse) that drafts and reviews posts through its own API key. The tab makes, rotates and revokes that key, switches what it may do, and lists every address it can call; the key works on the Drafts stage and the published reads only, never on publishing or settings.',
+  'Developer API holds the keys event organizers use to manage their calls for speakers from their own code. Each organizer gets one key with only the scopes they need; a key is shown once when it is made or rotated, and revoking it cuts access on its next request. No key can publish anything: publishing stays in the admin.',
 ];
 
 /**
@@ -269,6 +274,7 @@ export default function AIEnginePage() {
     mcp: () => <McpTab servers={servers} />,
     playground: () => <PlaygroundTab providers={providersWithModels} servers={servers} />,
     koda: () => <KodaTab />,
+    'developer-api': () => <DeveloperApiTab />,
     usage: () => (
       <Suspense
         fallback={

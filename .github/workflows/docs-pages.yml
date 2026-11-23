@@ -61,7 +61,10 @@ jobs:
           cache-dependency-path: scripts/docs/requirements.txt
 
       - name: Install MkDocs
-        run: python -m pip install -r scripts/docs/requirements.txt
+        # requirements.txt is a lock file made from requirements.in beside it:
+        # every package the site build needs, each with its SHA256 checksum.
+        # --require-hashes makes pip refuse any file whose checksum differs.
+        run: python -m pip install --require-hashes -r scripts/docs/requirements.txt
 
       # Publication gate, before the build: no links back to the retired Wiki,
       # no non-placeholder GUIDs (tenant, subscription, client, resource ids),

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { STATIC_SEARCH_ITEMS, SEARCH_CATEGORIES, filterSearchItems } from './searchIndex';
 import { availableLabs } from './labs/catalogue';
 import { availableAddons } from './addons/catalogue';
+import { certifications as azureCertifications } from './azure/certifications';
+import { deriveStatus } from '../lib/certStatus';
 
 describe('searchIndex', () => {
   it('contains entries across all major categories including Hubs & Sections', () => {
@@ -58,6 +60,18 @@ describe('searchIndex', () => {
     expect(filterSearchItems('az-900').some((r) => r.path === '/azure/education/az-900')).toBe(
       true
     );
+  });
+
+  it('lists an Azure exam until the day it retires, whatever status is stored ahead of it', () => {
+    // A row can be stored `retired` before its last exam day (#1737); search
+    // follows the status the badge shows today. az-104 and az-305 have
+    // hand-written entries of their own, so they are not checked here.
+    const paths = new Set(STATIC_SEARCH_ITEMS.map((item) => item.path));
+    for (const cert of azureCertifications) {
+      if (cert.slug === 'az-104' || cert.slug === 'az-305') continue;
+      const listed = paths.has(`/azure/education/${cert.slug}`);
+      expect(listed, cert.code).toBe(deriveStatus(cert) !== 'retired');
+    }
   });
 
   it('indexes FinOps with FOCUS 1.4 specification', () => {
