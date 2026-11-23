@@ -696,7 +696,7 @@ This project has not cut a tagged release; entries are grouped under
 
 - **The Python tools CI installs are now checked against a checksum before
   they run, and three lines a security scanner misread are rewritten
-  ([#1774](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1774)).**
+  ([#1775](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1775)).**
   [OpenSSF Scorecard](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
   (a tool that scores a repository's supply-chain habits) gave
   Pinned-Dependencies 9 out of 10 with eight warnings. Four were `pip
