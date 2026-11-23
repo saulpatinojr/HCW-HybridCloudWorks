@@ -738,6 +738,26 @@ describe('Developer API v1 handlers (ADR 0042, Phase 1)', () => {
       expect(failed.status).toBe(500);
     });
 
+    it('answers 404, not 500, when the proposal is deleted between the read and the write', async () => {
+      const env = await withProposals();
+      // The read finds the proposal; a delete lands; the database then answers the write with 404.
+      env.store.replaceDocIfMatch = async () => {
+        throw Object.assign(new Error('gone'), { code: 404 });
+      };
+      const res = await env.handlers.reviewSubmission(
+        env.keyed(env.org.secret, {
+          method: 'PUT',
+          params: { eventId: EVENT, submissionId: env.first.id },
+          body: { decision: 'accepted' },
+        }),
+        ctx,
+      );
+      expect(res.status).toBe(404);
+      expect(body(res)).toEqual({ ok: false, code: 'NOT_FOUND', error: 'There is no such proposal on this event.' });
+      // Nothing was reviewed, so no review row.
+      expect(env.store.all('admin_audit_logs').filter((row) => row.action === 'developer_cfs_submission_reviewed')).toEqual([]);
+    });
+
     it("answers 404 when a second organizer's key reviews or lists another organizer's proposals", async () => {
       const env = await withProposals();
       const other = env.make('Org B');
@@ -852,6 +872,8 @@ describe('Developer API v1 handlers (ADR 0042, Phase 1)', () => {
         ['another version', Buffer.from(JSON.stringify({ v: 2, s: null, t: 'skip:1' })).toString('base64url')],
         ['no token inside', Buffer.from(JSON.stringify({ v: 1, s: null, t: '' })).toString('base64url')],
         ['too long', 'a'.repeat(MAX_CURSOR_CHARS + 1)],
+        ['a line break in the token', Buffer.from(JSON.stringify({ v: 1, s: null, t: 'skip:1\nx-injected: 1' })).toString('base64url')],
+        ['a non-ASCII character in the token', Buffer.from(JSON.stringify({ v: 1, s: null, t: 'skip:1\u2603' })).toString('base64url')],
       ])('refuses a malformed cursor (%s) with 400, before any query', async (_name, cursor) => {
         const env = await withMany(1);
         let asked = 0;

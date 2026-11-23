@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import {
+  REFUSAL_CAP_REACHED,
   REFUSAL_ROWS_PER_MINUTE,
   createDeveloperApiGuard,
   getDeveloperApiGuard,
@@ -102,6 +103,8 @@ describe('the organizer key guard (ADR 0042)', () => {
 
   describe('refusals that cost the caller nothing to repeat are capped per key id (#1777)', () => {
     const wrongOf = (secret) => `${secret.slice(0, -4)}${secret.endsWith('AAAA') ? 'BBBB' : 'AAAA'}`;
+    const denials = (env) => env.auditDenial.mock.calls.filter(([entry]) => entry.kind === 'developer-api-denial');
+    const capRows = (env) => env.auditDenial.mock.calls.filter(([entry]) => entry.kind === REFUSAL_CAP_REACHED);
     const revoke = ({ store, record }) => {
       const { keyHash: _removed, ...rest } = record;
       store.put('admin_config', { ...rest, revokedAt: '2026-11-21T10:00:31Z' }, ADMIN_CONFIG_PARTITION);
@@ -115,11 +118,49 @@ describe('the organizer key guard (ADR 0042)', () => {
         expect(auth.error.status).toBe(401);
         expect(auth.error.headers['Retry-After']).toBeUndefined();
       }
-      expect(env.auditDenial).toHaveBeenCalledTimes(REFUSAL_ROWS_PER_MINUTE);
-      // One counter for the minute, stopped at the cap: nothing grows with the requests.
+      // A row for each refusal up to the cap, then one row saying the cap was reached, then nothing.
+      expect(env.auditDenial).toHaveBeenCalledTimes(REFUSAL_ROWS_PER_MINUTE + 1);
+      expect(denials(env)).toHaveLength(REFUSAL_ROWS_PER_MINUTE);
+      // One counter for the minute, stopped one past the cap: nothing grows with the requests.
       const counters = env.store.all('submission_quota');
       expect(counters.map((doc) => doc.id)).toEqual([refusalQuotaKeyFor(env.keyId, NOW)]);
-      expect(counters[0].count).toBe(REFUSAL_ROWS_PER_MINUTE);
+      expect(counters[0].count).toBe(REFUSAL_ROWS_PER_MINUTE + 1);
+    });
+
+    it('writes exactly one "cap reached" row a minute, with the key id and nothing else, so held-back refusals are visible', async () => {
+      const env = setup({ refusalRowsPerMinute: 2 });
+      const wrong = env.withKey(wrongOf(env.secret));
+      // Wrong keys use up the minute's rows, then the real key is revoked: its refusals get no row of their own.
+      for (let i = 0; i < 6; i += 1) await env.guard.authenticate(wrong);
+      revoke(env);
+      for (let i = 0; i < 4; i += 1) expect((await env.guard.authenticate(env.withKey())).error.status).toBe(401);
+      const entries = env.auditDenial.mock.calls.map(([entry]) => entry);
+      expect(entries.map((entry) => entry.reason ?? entry.kind)).toEqual(['wrong-key', 'wrong-key', REFUSAL_CAP_REACHED]);
+      expect(entries[2]).toEqual({ kind: REFUSAL_CAP_REACHED, outcome: 'rows-held-back', keyId: env.keyId });
+      expect(JSON.stringify(entries[2])).not.toContain(env.secret);
+    });
+
+    it('writes the "cap reached" row once even when many refusals arrive together', async () => {
+      const env = setup({ refusalRowsPerMinute: 3 });
+      const wrong = env.withKey(wrongOf(env.secret));
+      await Promise.all(Array.from({ length: 25 }, () => env.guard.authenticate(wrong)));
+      expect(denials(env)).toHaveLength(3);
+      expect(capRows(env)).toHaveLength(1);
+    });
+
+    it('stays silent past the cap when the counter fails on the second look', async () => {
+      const env = setup({ refusalRowsPerMinute: 1 });
+      const wrong = env.withKey(wrongOf(env.secret));
+      await env.guard.authenticate(wrong);
+      const incrementIf = env.store.incrementIf;
+      let calls = 0;
+      env.store.incrementIf = async (...args) => {
+        calls += 1;
+        if (calls === 2) throw Object.assign(new Error('down'), { code: 503 });
+        return incrementIf(...args);
+      };
+      expect((await env.guard.authenticate(wrong)).error.status).toBe(401);
+      expect(env.auditDenial).toHaveBeenCalledTimes(1);
     });
 
     it('answers the capped refusal exactly as the first one, so the answer says nothing about the id', async () => {
@@ -130,7 +171,8 @@ describe('the organizer key guard (ADR 0042)', () => {
       expect(capped.error).toEqual(first.error);
       const unknown = await env.guard.authenticate(env.withKey(generateKey().secret));
       expect(unknown.error).toEqual(first.error);
-      expect(env.auditDenial).toHaveBeenCalledTimes(1);
+      expect(denials(env)).toHaveLength(1);
+      expect(capRows(env)).toHaveLength(1);
     });
 
     it("never slows the organizer's own right key, and does not use up its per-minute limit", async () => {
@@ -139,7 +181,7 @@ describe('the organizer key guard (ADR 0042)', () => {
       for (let i = 0; i < 20; i += 1) await env.guard.authenticate(wrong);
       for (let i = 0; i < 3; i += 1) expect((await env.guard.authenticate(env.withKey())).error).toBeNull();
       const byId = Object.fromEntries(env.store.all('submission_quota').map((doc) => [doc.id, doc.count]));
-      expect(byId).toEqual({ [refusalQuotaKeyFor(env.keyId, NOW)]: 2, [quotaKeyFor(env.keyId, NOW)]: 3 });
+      expect(byId).toEqual({ [refusalQuotaKeyFor(env.keyId, NOW)]: 3, [quotaKeyFor(env.keyId, NOW)]: 3 });
     });
 
     it('caps a revoked key the same way, on the same counter as wrong keys', async () => {
@@ -147,7 +189,8 @@ describe('the organizer key guard (ADR 0042)', () => {
       await env.guard.authenticate(env.withKey(wrongOf(env.secret)));
       revoke(env);
       for (let i = 0; i < 6; i += 1) expect((await env.guard.authenticate(env.withKey())).error.status).toBe(401);
-      expect(env.auditDenial.mock.calls.map(([entry]) => entry.reason)).toEqual(['wrong-key', 'revoked-key', 'revoked-key']);
+      expect(denials(env).map(([entry]) => entry.reason)).toEqual(['wrong-key', 'revoked-key', 'revoked-key']);
+      expect(capRows(env)).toHaveLength(1);
     });
 
     it('caps the rows of a key over its per-minute limit, which is still answered 429', async () => {
@@ -158,7 +201,8 @@ describe('the organizer key guard (ADR 0042)', () => {
         expect(limited.error.status).toBe(429);
         expect(limited.error.headers['Retry-After']).toBe('30');
       }
-      expect(env.auditDenial).toHaveBeenCalledTimes(2);
+      expect(denials(env)).toHaveLength(2);
+      expect(capRows(env)).toHaveLength(1);
     });
 
     it('counts each key id on its own, and starts again the next minute', async () => {
@@ -174,10 +218,11 @@ describe('the organizer key guard (ADR 0042)', () => {
       await env.guard.authenticate(wrong);
       await env.guard.authenticate(wrong);
       await env.guard.authenticate(env.withKey(wrongOf(other.secret)));
-      expect(env.auditDenial.mock.calls.map(([entry]) => entry.keyId)).toEqual([env.keyId, other.keyId]);
+      expect(denials(env).map(([entry]) => entry.keyId)).toEqual([env.keyId, other.keyId]);
+      expect(capRows(env).map(([entry]) => entry.keyId)).toEqual([env.keyId]);
       clock = NOW + 60_000;
       await env.guard.authenticate(wrong);
-      expect(env.auditDenial).toHaveBeenCalledTimes(3);
+      expect(denials(env)).toHaveLength(3);
     });
 
     it('writes no counter and no row for an id that names no record', async () => {

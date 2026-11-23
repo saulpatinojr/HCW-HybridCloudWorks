@@ -328,9 +328,16 @@ Refusals for a wrong secret, a revoked key or a key over its limit are capped
 at **10 rows a minute for each key id**. A key's id is the first part of the
 key and is not secret, so without the cap anyone who had seen one could fill
 the audit log by sending wrong keys. Past the cap the request is still
-refused, with the same answer, and no row is written until the next minute.
-So ten `developer-api-denial` rows for one key in the same minute means "ten
-or more". The organizer's own working key is not slowed by this.
+refused, with the same answer, and no row is written until the next minute,
+with one exception: the first refusal past the cap writes a single row with
+`kind` (and `action`) `developer_api_refusal_cap_reached` and the key's id.
+So ten `developer-api-denial` rows for one key in the same minute, followed
+by that row, means "ten or more", and the refusals after the tenth could be
+of any of the three kinds: someone sending wrong keys under a known id can
+use up the minute's rows, and a revoked key or a key over its limit in the
+same minute then leaves no row of its own. The `developer_api_refusal_cap_reached`
+row is how you know that happened. The organizer's own working key is not
+slowed by this.
 
 Every keyed write writes a row too: `developer_cfs_opened`,
 `developer_cfs_closed`, `developer_cfs_submission_reviewed` and
@@ -368,6 +375,18 @@ and for keys `developer_api_key_generated`, `_rotated`, `_changed`, `_revoked`
   proposals an hour on that organizer's call, where a keyless sender is held
   to 5. It reaches no other call, the per-call cap still holds, and rotating
   or revoking the key (parts 4 and 6) ends it on the next request.
+
+- **A refusal takes longer when the key id is real.** A wrong, missing or
+  revoked key gets the same `401` and the same sentence, so the answer itself
+  does not say whether a key id exists. The time it takes is not made equal:
+  a refusal on a real id also waits for its counter and its audit row. So
+  someone measuring response times could tell a real id from a made-up one.
+  That is accepted: a key id is 64 random bits, cannot be guessed in
+  practice, and is not treated as a secret (it is the first part of the key
+  and is written to the audit log).
+- **One caller can use up a key id's audit rows for the minute.** See
+  "Refused calls and the audit log" above: past ten refusals a minute only
+  the single "cap reached" row is written.
 
 ## Personal data
 
@@ -409,7 +428,10 @@ from the organizer's list.
    you to confirm. You should see a "Proposal deleted" note and the line
    disappears. Repeat for each line. If you see "Nothing was deleted", press
    **Find proposals** again and retry; the proposal changed while it was
-   being deleted.
+   being deleted. If the note says the record "is malformed: it has no event
+   id", the row was edited by hand in the database and cannot be deleted
+   from this page: it has to be removed by hand in the `developer_events`
+   container (the route answers `409` with the code `MALFORMED_RECORD`).
 4. Press **Find proposals** once more. You should see "No proposals are
    stored for that address." That is the proof the request is done.
 
