@@ -324,13 +324,31 @@ export function summarizeServices(items, { upcomingDays = UPCOMING_DAYS } = {}) 
 }
 
 /**
- * Vendors the site is configured with (the API-keys catalogue) that the
- * ledger does not list yet, as one-click suggestions. Vendor is the word
+ * Vendors the site is configured with (the API-keys catalogue, and the
+ * subscriptions above that hold no key there) that the ledger does not list
+ * yet, as one-click suggestions. Vendor is the word
  * before any dash or em dash in the catalogue label ("Publer — API key" is
  * Publer), matched case-insensitively against the ledger's vendor and name.
  */
+/**
+ * Subscriptions the estate pays for that hold no key in the catalogue, so the
+ * catalogue alone would never suggest them (2026-11-22): the Claude
+ * subscription the `@claude` workflow runs on, GitHub Copilot, whose code
+ * review reads every pull request, and Hostinger, which rents out the lab
+ * host. Each has a card on Integrations → Services that points here for its
+ * plan and price.
+ */
+export const SUGGESTED_SUBSCRIPTIONS = Object.freeze(
+  [
+    { name: 'Claude subscription', vendor: 'Claude', category: 'ai', link: '' },
+    { name: 'GitHub Copilot', vendor: 'GitHub Copilot', category: 'developer', link: '' },
+    { name: 'Hostinger (lab host)', vendor: 'Hostinger', category: 'infrastructure', link: '' },
+  ].map(Object.freeze)
+);
+
 export const SUGGESTED_VENDORS = Object.freeze(
   [
+    ...SUGGESTED_SUBSCRIPTIONS,
     ...new Map(
       SECRET_CATALOG.filter((entry) => !['cloud', 'platform', 'labs'].includes(entry.section)).map(
         (entry) => {

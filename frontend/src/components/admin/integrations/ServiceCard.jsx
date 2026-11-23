@@ -40,6 +40,10 @@ import { STATE_PRESENTATION, StateDot, relativeTime } from './StateDot';
 import { resultStatus } from './integrationView';
 import { persistedVerdict } from './integrationStatus';
 import { DISCONNECT_NOTE } from './serviceRegistry';
+import { tabHref as costTabHref } from '@/components/admin/cost/tabs';
+
+/** The subscriptions ledger (ADR 0039), where a plan and its price are kept. */
+export const COST_LEDGER_HREF = costTabHref('services');
 
 export function TestResultLine({ result }) {
   if (!result) return null;
@@ -201,8 +205,26 @@ function ServiceFacts({ service }) {
     ['Used in', service.usedIn?.length ? service.usedIn.join(', ') : null],
     ['Data flow', service.dataDirection || null],
     // What using it costs, in words: a bill per call, a plan's limits, or
-    // nothing (owner instruction 2026-11-22). Absent where not yet written.
-    ['Cost', service.cost || null],
+    // nothing (owner instruction 2026-11-22). A subscription's plan and price
+    // are the owner's, kept on the Cost page's ledger, so the card links it.
+    [
+      'Cost',
+      service.cost ? (
+        <>
+          {service.cost}
+          {service.costOnLedger ? (
+            <>
+              {' '}
+              The plan and its price are kept on{' '}
+              <a href={COST_LEDGER_HREF} className="underline underline-offset-2">
+                Cost → Services
+              </a>
+              .
+            </>
+          ) : null}
+        </>
+      ) : null,
+    ],
     ['Key reach', service.securityNote || null],
   ].filter(([, value]) => value);
   if (rows.length === 0) return null;

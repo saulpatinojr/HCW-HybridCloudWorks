@@ -283,10 +283,24 @@ quietly.
    (what must be set, and whether it is) and
    [`variables-and-secrets.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/standards/variables-and-secrets.md)
    (why a stored secret is justified here and not a keyless sign-in).
-9. **The owner's own step, in the closing summary.** Say what only the owner
-   can do: paste the value in the secure field, and record the date it was
-   made on the Credentials tab, because a session can neither read a secret
-   nor know when the owner made it.
+9. **The Cost page: what it costs, and the subscriptions ledger.** Every
+   card has a **Cost** line saying the kind of bill in plain words: per call,
+   a plan, a free allowance, or nothing (a test fails a card without one).
+   Never write an amount the owner pays or guess a plan: those are the
+   owner's, and they are kept on the ledger at
+   [Cost → Services](https://hybridcloudworks.com/admin/cost?tab=services),
+   a sheet the owner fills in by hand
+   ([`cost/services.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/cost/services.js)).
+   For a paid subscription, set `costOnLedger: true` on the card so it links
+   the ledger, and check the vendor is among the ledger's suggestions
+   (`SUGGESTED_VENDORS`): one with a Key Vault key is suggested by itself,
+   and one without (a subscription only GitHub or the owner uses) is added to
+   `SUGGESTED_SUBSCRIPTIONS`. Then tell the owner to add the row.
+10. **The owner's own step, in the closing summary.** Say what only the owner
+    can do: paste the value in the secure field, record the date it was made
+    on the Credentials tab, and add the plan and price to the Cost page's
+    ledger, because a session can neither read a secret nor know what the
+    owner pays.
 
 **Changing one** means going down the same list and correcting each place it
 appears: a renamed secret is renamed in the catalogue, the card, the register
