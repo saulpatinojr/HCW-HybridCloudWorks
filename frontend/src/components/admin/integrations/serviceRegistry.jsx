@@ -701,6 +701,7 @@ export const SERVICES = Object.freeze([
     capabilities: ['Draft, summarise and grade content', 'Text to speech for Listen & Learn'],
     usedIn: ['Forge Studio', 'Review Queue (inspector)', 'Listen & Learn', 'AI Engine'],
     dataDirection: 'Outbound: article text and prompts go to Google; drafts and audio come back.',
+    cost: 'Billed per token and per second of speech to the Google account; the AI Engine page shows what each call cost.',
     securityNote: LLM_SECURITY_NOTE,
   },
   {
@@ -711,12 +712,33 @@ export const SERVICES = Object.freeze([
     description:
       'One of the models the site writes with, tried in the order set on the AI Engine page.',
     url: 'https://console.anthropic.com/settings/keys',
+    // The Test is the API key's: the site holds that one and can ask.
     test: testAiProvider('anthropic', 'Anthropic'),
     secrets: ['ANTHROPIC-API-KEY'],
-    capabilities: ['Draft, summarise and grade content'],
-    usedIn: ['Forge Studio', 'Review Queue (inspector)', 'AI Engine'],
-    dataDirection: 'Outbound: article text and prompts go to Anthropic; drafts come back.',
-    securityNote: LLM_SECURITY_NOTE,
+    // Two credentials from one vendor, so one card with a box each (owner
+    // instruction 2026-11-22). The API key is the site's and is replaced on
+    // the Keys tab. The Claude Code token is GitHub's alone: the site never
+    // holds it, so its box lists it (stored where, cost, how to check and
+    // replace it, when it expires) and has no key row and no test of its own.
+    keyGroups: [
+      { title: 'API key (the site writes with it)', secrets: ['ANTHROPIC-API-KEY'] },
+      { title: 'Claude Code (answers @claude on GitHub)', panel: 'claudeCode' },
+    ],
+    capabilities: [
+      'Draft, summarise and grade content',
+      'Answer @claude comments on GitHub (Claude Code)',
+    ],
+    usedIn: ['Forge Studio', 'Review Queue (inspector)', 'AI Engine', 'GitHub (@claude comments)'],
+    dataDirection:
+      'Outbound: article text and prompts go to Anthropic; drafts come back. On GitHub, a run sends the repository’s code and the comment to Anthropic.',
+    cost: 'The API key is billed per token to the Anthropic account. Claude Code is separate: it uses the Claude subscription’s limits, with no bill per call.',
+    // The button below the boxes opens the Keys tab, which holds the API key
+    // only. Said on the button and beside it, because it sits right under
+    // the Claude Code box and read as if it replaced that token (owner’s
+    // screenshot, 2026-11-22).
+    rotateLabel: 'Rotate or replace the API key',
+    rotateNote: 'For the API key only; the Claude Code token is replaced with the line in its box.',
+    securityNote: `${LLM_SECURITY_NOTE} The Claude Code token is a separate credential held only by GitHub; this site cannot read or write it.`,
   },
   {
     id: 'openai',
@@ -731,6 +753,7 @@ export const SERVICES = Object.freeze([
     capabilities: ['Draft, summarise and grade content'],
     usedIn: ['Forge Studio', 'Review Queue (inspector)', 'AI Engine'],
     dataDirection: 'Outbound: article text and prompts go to OpenAI; drafts come back.',
+    cost: 'Billed per token against prepaid credits on the OpenAI account; with no credits left, every call is refused.',
     securityNote: LLM_SECURITY_NOTE,
   },
   {
@@ -746,7 +769,33 @@ export const SERVICES = Object.freeze([
     capabilities: ['Draft, summarise and grade content (backup)'],
     usedIn: ['Forge Studio', 'AI Engine'],
     dataDirection: 'Outbound: article text and prompts go to NVIDIA; drafts come back.',
+    cost: 'Free, with a limit on how many calls it takes per minute.',
     securityNote: `${LLM_SECURITY_NOTE} Locked off for the anonymous public explain routes.`,
+  },
+  {
+    // The one language-model provider with no key (2026-11-22): the router
+    // has called it since #849 and it had no card here, because every other
+    // card arrived with a Key Vault secret and this one has none.
+    id: 'foundry',
+    group: 'gen-ai',
+    icon: Cloud,
+    name: 'Microsoft Foundry (Azure OpenAI)',
+    description:
+      'OpenAI models hosted in this site’s own Azure subscription. One of the models the site writes with, and the only one used for private notes.',
+    // The portal where the account and its model deployments are managed.
+    url: 'https://ai.azure.com/',
+    test: testAiProvider('foundry', 'Microsoft Foundry'),
+    secrets: [],
+    capabilities: [
+      'Draft, summarise and grade content',
+      'Answer questions from private notes, with citations',
+    ],
+    usedIn: ['Forge Studio', 'Second Brain (Ask)', 'AI Engine'],
+    dataDirection:
+      'Outbound: article text, prompts and private note excerpts go to the model deployments in this Azure subscription; drafts and answers come back.',
+    cost: 'Billed per token to the Azure subscription; the AI Engine page shows what each call cost.',
+    securityNote:
+      'No key exists, so there is nothing to store, rotate or leak. The Function App signs in as itself (its managed identity) and holds one role on the account, set by Terraform. A refusal means a missing role, not a bad key.',
   },
 
   // ── AI services (ADR 0033) ───────────────────────────────────────────────
@@ -756,6 +805,7 @@ export const SERVICES = Object.freeze([
     icon: Volume2,
     name: 'ElevenLabs',
     description: 'Reads podcast episodes aloud.',
+    cost: 'A monthly plan with a credit allowance; the Test shows how many credits are left.',
     url: 'https://elevenlabs.io/app/settings/api-keys',
     // The Audio tab's status read: plan and credits, no synthesis.
     test: testElevenLabs,

@@ -18,18 +18,18 @@
     "node": {
       "rule": "The newest line the platform that runs it allows, among lines that are or will become LTS; within a line, no more than two minor releases behind that line's newest (N-2 minors), and a new line is adopted once its N-2 minor exists. A component whose platform caps the line is held exactly at that ceiling. A pin that names the line only (actions/setup-node '26') resolves to the newest release when it runs; an engines.node range's lowest admitted version must meet the floor and the range must admit the newest release. Owner direction 2026-09-25: the latest current release line.",
       "line": "26",
-      "newest": "26.13.0",
+      "newest": "26.13.1",
       "floor": "26.11.0",
-      "checkedOn": "2026-11-04",
+      "checkedOn": "2026-11-18",
       "source": "https://endoflife.date/api/v1/products/nodejs/",
       "platformCeilings": {
         "functions": {
           "platform": "Azure Functions Flex Consumption",
           "rule": "Flex Consumption supports Node.js 22 and 24 (both GA) and offers 26 only as a preview, which is not for production, so functions/ runs the newest GA line, 24, until 26 is GA (the weekly job skips preview lines and moves this ceiling when the table drops the word), and every pin that builds, tests, deploys or runs its code names 24 (update-learn-catalogue.yml imports functions/src and resolves functions/node_modules).",
           "line": "24",
-          "newest": "24.22.2",
+          "newest": "24.22.3",
           "floor": "24.20.0",
-          "checkedOn": "2026-11-04",
+          "checkedOn": "2026-11-18",
           "source": "https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#supported-language-stack-versions",
           "appliesTo": [
             "functions/.nvmrc",
@@ -87,26 +87,26 @@
     },
     "terraform": {
       "rule": "The newest minor line, no more than two patch releases behind its newest (N-2 patches), for an exact pin; a new line is adopted once its N-2 patch exists. Every required_version constraint must admit the newest release.",
-      "line": "1.16",
-      "newest": "1.16.7",
-      "floor": "1.16.5",
-      "checkedOn": "2026-10-28",
+      "line": "1.17",
+      "newest": "1.17.2",
+      "floor": "1.17.0",
+      "checkedOn": "2026-11-18",
       "source": "https://endoflife.date/api/v1/products/terraform/"
     },
     "postgresql": {
       "rule": "The newest major, no more than two minor releases behind that major's newest (N-2 minors; PostgreSQL numbers its releases MAJOR.MINOR, so 18.6 is minor release 6 of major 18). A new major is adopted once its N-2 minor exists (19.2 for 19). General releases only: the source lists a major from its general release, and the updater also skips any latest release that is not MAJOR.MINOR, so a beta or release candidate (19beta4 was on Docker Hub on 2026-09-26) is never proposed. The pin is coder_postgres_image_tag in lab-host/ansible/group_vars/all.yml, the release Coder's database digest was read from; a major-only tag (18) moves and is refused. https://www.postgresql.org/versions.json agreed on 2026-09-26 (18 current, latestMinor 6). Owner instruction 2026-09-26: the newest general release of PostgreSQL.",
       "line": "18",
-      "newest": "18.6",
-      "floor": "18.4",
-      "checkedOn": "2026-09-26",
+      "newest": "18.7",
+      "floor": "18.5",
+      "checkedOn": "2026-11-18",
       "source": "https://endoflife.date/api/v1/products/postgresql/"
     },
     "vault": {
       "rule": "HashiCorp Vault's newest release line, no more than two patch releases behind that line's newest (N-2 patches). A new line is adopted the day it is released, with no wait for its N-2 patch: HashiCorp ends the previous community line then (endoflife.date dates the end of life of 2.0 and 1.21 to 2026-08-31 and 2026-04-13, the dates it gives for the releases of 2.1 and 2.0), so waiting would hold the pin on an unsupported line. A line whose latest release is not MAJOR.MINOR.PATCH is skipped. The pin is vault_version in lab-host/ansible/group_vars/all.yml, which must be exactly MAJOR.MINOR.PATCH because the vault role builds the download and SHA256SUMS names from it. api.releases.hashicorp.com agreed on 2026-09-26 (2.1.1, 2026-09-16, the newest community release). Owner decision 2026-09-26: Vault on the lab host.",
       "line": "2.2",
-      "newest": "2.2.1",
+      "newest": "2.2.2",
       "floor": "2.2.0",
-      "checkedOn": "2026-11-04",
+      "checkedOn": "2026-11-18",
       "source": "https://endoflife.date/api/v1/products/hashicorp-vault/"
     }
   },

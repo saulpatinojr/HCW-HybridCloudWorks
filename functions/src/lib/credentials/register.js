@@ -428,7 +428,7 @@ const OTHER_ENTRIES = [
     renewal: "hand",
     lifetimeDays: CLAUDE_CODE_OAUTH_TOKEN_DAYS,
     rotate:
-      "Run claude setup-token on the owner’s computer, then set the new token as the CLAUDE_CODE_OAUTH_TOKEN secret in this repository and the four add-ons (gh secret set, once per repository).",
+      "Run claude setup-token on the owner’s computer, then the one PowerShell line on Integrations → Services → Gen AI → Anthropic → Claude Code, which sets the CLAUDE_CODE_OAUTH_TOKEN secret in this repository and the four add-ons. Test it with an @claude comment.",
   },
   {
     id: "gh-copilot-review-app-private-key",
