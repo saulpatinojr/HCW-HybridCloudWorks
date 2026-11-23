@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { createDeveloperApiAdminHandlers, READ_ROLE, WRITE_ROLE } from './admin-handlers.js';
 import { createDeveloperApiGuard } from './guard.js';
+import { CFS_CONTAINER, callDocId } from './cfs.js';
 import { hashKey, keyRecordId } from './keys.js';
 import { createTestStore, makeRequest, testContext } from './test-store.test-helper.js';
 
@@ -208,5 +209,176 @@ describe('the organizer key admin routes (ADR 0042)', () => {
     expect(body(res).key.organizerName).toBe('Org');
     store.queryDocs = async () => undefined;
     expect(body(await handlers.listKeys(makeRequest(), ctx)).keys).toEqual([]);
+  });
+
+  describe("a speaker's erasure request (#1777)", () => {
+    const UUID = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const seeded = (options) => {
+      const env = setup(options);
+      const put = (n, eventId, speakerEmail, extra = {}) =>
+        env.store.put(
+          CFS_CONTAINER,
+          {
+            id: UUID(n),
+            eventId,
+            docType: 'cfs-submission',
+            speakerName: 'Grace Hopper',
+            speakerEmail,
+            speakerBio: 'A bio.',
+            title: 'Running Arc at home',
+            abstract: 'A lab story.',
+            status: 'pending',
+            submittedAt: `2026-11-2${n}T10:00:00.000Z`,
+            ...extra,
+          },
+          eventId,
+        );
+      put(1, 'cloud-day-2027', 'grace@example.com');
+      put(2, 'other-day-2027', 'grace@example.com', { status: 'accepted' });
+      put(3, 'cloud-day-2027', 'ada@example.com');
+      env.store.put(
+        CFS_CONTAINER,
+        { id: callDocId('cloud-day-2027'), eventId: 'cloud-day-2027', docType: 'cfs-call', status: 'open' },
+        'cloud-day-2027',
+      );
+      const find = (speakerEmail) =>
+        env.handlers.findProposals(makeRequest({ method: 'POST', body: { speakerEmail } }), ctx);
+      const erase = (submissionId) =>
+        env.handlers.eraseProposal(makeRequest({ method: 'DELETE', params: { submissionId } }), ctx);
+      const proposals = () => env.store.all(CFS_CONTAINER).filter((doc) => doc.docType === 'cfs-submission');
+      return { ...env, find, erase, proposals, UUID };
+    };
+
+    it("finds one address's proposals across every organizer's calls, with ids and dates only", async () => {
+      const env = seeded();
+      const res = await env.find('  Grace@Example.com ');
+      expect(res.status).toBe(200);
+      expect(env.requireRole.mock.calls.at(-1)[1]).toBe(WRITE_ROLE);
+      const answer = body(res);
+      expect(answer).toMatchObject({ ok: true, count: 2, truncated: false });
+      expect(answer.proposals.sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+        { id: UUID(1), eventId: 'cloud-day-2027', status: 'pending', submittedAt: '2026-11-21T10:00:00.000Z' },
+        { id: UUID(2), eventId: 'other-day-2027', status: 'accepted', submittedAt: '2026-11-22T10:00:00.000Z' },
+      ]);
+      // Nothing the speaker wrote, and not the address, comes back.
+      for (const text of ['grace@example.com', 'Grace Hopper', 'A bio.', 'Running Arc', 'A lab story.']) {
+        expect(res.body).not.toContain(text);
+      }
+      // A read: no audit row, and nothing deleted.
+      expect(env.store.all('admin_audit_logs')).toEqual([]);
+      expect(env.proposals()).toHaveLength(3);
+    });
+
+    it('answers an empty list for an address with no proposals, and 400 for a bad or missing address', async () => {
+      const env = seeded();
+      expect(body(await env.find('nobody@example.com'))).toMatchObject({ proposals: [], count: 0 });
+      expect((await env.find('not-an-address')).status).toBe(400);
+      expect((await env.find(undefined)).status).toBe(400);
+      expect((await env.handlers.findProposals(makeRequest({ method: 'POST', body: 'not json' }), ctx)).status).toBe(400);
+      env.store.queryDocs = async () => undefined;
+      expect(body(await env.find('grace@example.com'))).toMatchObject({ proposals: [], count: 0, truncated: false });
+    });
+
+    it('says so when there are more than it answers', async () => {
+      const env = seeded();
+      env.store.queryDocs = async (_name, query) => {
+        expect(query).toContain('TOP 201');
+        return Array.from({ length: 201 }, (_, i) => ({ id: UUID(i), eventId: 'e' }));
+      };
+      const answer = body(await env.find('grace@example.com'));
+      expect(answer.count).toBe(200);
+      expect(answer.truncated).toBe(true);
+    });
+
+    it('deletes one proposal by id, whoever owns the call, and leaves the rest and the call', async () => {
+      const env = seeded();
+      const res = await env.erase(UUID(2));
+      expect(res.status).toBe(200);
+      expect(env.requireRole.mock.calls.at(-1)[1]).toBe(WRITE_ROLE);
+      expect(body(res)).toEqual({ ok: true, id: UUID(2), eventId: 'other-day-2027', deleted: true });
+      expect(env.proposals().map((doc) => doc.id).sort()).toEqual([UUID(1), UUID(3)]);
+      expect(await env.store.readDoc(CFS_CONTAINER, callDocId('cloud-day-2027'), 'cloud-day-2027')).not.toBeNull();
+    });
+
+    it('writes one audit row with the event and status only: no name, address or text', async () => {
+      const env = seeded();
+      await env.erase(UUID(1));
+      const rows = env.store.all('admin_audit_logs');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        action: 'developer_cfs_submission_erased',
+        resourceType: 'developer_cfs_submission',
+        resourceId: UUID(1),
+        userId: ADMIN.oid,
+        details: { eventId: 'cloud-day-2027', status: 'pending' },
+      });
+      const text = JSON.stringify(rows[0].details) + rows[0].resourceId;
+      for (const secret of ['grace@example.com', 'Grace Hopper', 'A bio.', 'Running Arc', 'A lab story.']) {
+        expect(text).not.toContain(secret);
+      }
+    });
+
+    it('is safe to ask twice, and for an id that never existed: 200 with deleted false and no row', async () => {
+      const env = seeded();
+      await env.erase(UUID(1));
+      expect(body(await env.erase(UUID(1)))).toEqual({ ok: true, id: UUID(1), deleted: false });
+      expect(body(await env.erase(UUID(9)))).toEqual({ ok: true, id: UUID(9), deleted: false });
+      expect(env.store.all('admin_audit_logs')).toHaveLength(1);
+    });
+
+    it('refuses an id that is not a UUID before any read, so a call cannot be deleted here', async () => {
+      const env = seeded();
+      const query = vi.spyOn(env.store, 'queryDocs');
+      expect((await env.erase(callDocId('cloud-day-2027'))).status).toBe(400);
+      expect((await env.erase(undefined)).status).toBe(400);
+      expect(query).not.toHaveBeenCalled();
+      expect(env.store.all(CFS_CONTAINER)).toHaveLength(4);
+    });
+
+    it('deletes under the version it found, reads again after one lost race, and answers 409 after two', async () => {
+      const env = seeded();
+      const real = env.store.deleteDocIfMatch;
+      const etags = [];
+      let raced = false;
+      env.store.deleteDocIfMatch = async (name, id, etag, pk) => {
+        etags.push([etag, pk]);
+        if (!raced) {
+          raced = true;
+          const current = await env.store.readDoc(name, id, pk);
+          env.store.put(name, { ...current, status: 'rejected' }, pk);
+        }
+        return real(name, id, etag, pk);
+      };
+      expect(body(await env.erase(UUID(1))).deleted).toBe(true);
+      expect(etags).toHaveLength(2);
+      expect(etags[0][0]).not.toBe(etags[1][0]);
+      expect(etags[0][1]).toBe('cloud-day-2027');
+      expect(env.store.all('admin_audit_logs')[0].details.status).toBe('rejected');
+
+      const fail = (code) => {
+        env.store.deleteDocIfMatch = async () => {
+          throw Object.assign(new Error('cosmos said: detail'), { code });
+        };
+      };
+      fail(412);
+      const conflict = await env.erase(UUID(3));
+      expect(conflict.status).toBe(409);
+      fail(404);
+      expect(body(await env.erase(UUID(3)))).toEqual({ ok: true, id: UUID(3), deleted: false });
+      fail(503);
+      const failed = await env.erase(UUID(3));
+      expect(failed.status).toBe(500);
+      expect(failed.body).not.toContain('detail');
+      expect(env.proposals().map((doc) => doc.id)).toContain(UUID(3));
+    });
+
+    it('is refused without the role, on both routes, before anything is read', async () => {
+      const env = seeded({ refuse: true });
+      const query = vi.spyOn(env.store, 'queryDocs');
+      expect((await env.find('grace@example.com')).status).toBe(403);
+      expect((await env.erase(UUID(1))).status).toBe(403);
+      expect(query).not.toHaveBeenCalled();
+      expect(env.proposals()).toHaveLength(3);
+    });
   });
 });

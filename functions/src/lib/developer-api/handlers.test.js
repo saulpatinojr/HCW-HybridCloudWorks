@@ -3,8 +3,17 @@ import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { createClientIdentity } from '../auth/client-identity.js';
 import { createDeveloperApiGuard } from './guard.js';
 import { createDeveloperApiHandlers, ENDPOINTS } from './handlers.js';
-import { buildKeyRecord, generateKey } from './keys.js';
-import { CFS_CONTAINER, MAX_SUBMISSION_BYTES, SUBMISSIONS_PER_CLIENT_PER_HOUR, callDocId } from './cfs.js';
+import { buildKeyRecord, generateKey, keyRecordId } from './keys.js';
+import {
+  CFS_CONTAINER,
+  MAX_CURSOR_CHARS,
+  MAX_LISTED,
+  MAX_SUBMISSION_BYTES,
+  SUBMISSIONS_PER_CLIENT_PER_HOUR,
+  callDocId,
+  decodeListCursor,
+  encodeListCursor,
+} from './cfs.js';
 import { createTestStore, makeRequest, testContext } from './test-store.test-helper.js';
 
 const NOW = Date.parse('2026-11-21T10:00:00Z');
@@ -416,6 +425,107 @@ describe('Developer API v1 handlers (ADR 0042, Phase 1)', () => {
     });
   });
 
+  describe('a call whose key was revoked (#1777)', () => {
+    const open = (env, key = env.org, eventId = EVENT) =>
+      env.handlers.setCall(
+        env.keyed(key.secret, { method: 'POST', params: { eventId }, body: { action: 'open' } }),
+        ctx,
+      );
+    const revoke = (env, key = env.org) => {
+      const { keyHash: _removed, ...rest } = key.record;
+      env.store.put('admin_config', { ...rest, revokedAt: '2026-11-21T10:00:00Z' }, ADMIN_CONFIG_PARTITION);
+    };
+    const proposals = (env) => env.store.all(CFS_CONTAINER).filter((doc) => doc.docType === 'cfs-submission');
+
+    it('takes proposals while the key works, and none from the very next request after the revoke', async () => {
+      const env = setup();
+      await open(env);
+      expect((await submit(env.handlers, proposal())).status).toBe(201);
+
+      revoke(env);
+      const refused = await submit(env.handlers, proposal(), { ip: '198.51.100.9' });
+      expect(refused.status).toBe(404);
+      // The same answer as a closed call: a visitor is not told why.
+      expect(body(refused)).toEqual({ ok: false, code: 'NOT_FOUND', error: 'This event has no open call for speakers.' });
+      expect(proposals(env)).toHaveLength(1);
+      // The call itself was not rewritten: it is refused on every request, not closed once.
+      expect((await env.store.readDoc(CFS_CONTAINER, callDocId(EVENT), EVENT)).status).toBe('open');
+    });
+
+    it('does not count a refused proposal against the call', async () => {
+      const env = setup();
+      await open(env);
+      revoke(env);
+      await submit(env.handlers, proposal());
+      expect(env.store.all('submission_quota').map((doc) => doc.id)).not.toContain(`developer-cfs:call:${EVENT}`);
+    });
+
+    it('refuses when the key record is gone, or the call names no key', async () => {
+      const env = setup();
+      await open(env);
+      env.store.containers.get('admin_config').clear();
+      expect((await submit(env.handlers, proposal())).status).toBe(404);
+
+      const orphan = setup();
+      orphan.store.put(
+        CFS_CONTAINER,
+        { id: callDocId(EVENT), eventId: EVENT, docType: 'cfs-call', status: 'open', organizerKeyId: 'not-a-key-id' },
+        EVENT,
+      );
+      const reads = [];
+      const real = orphan.store.readDoc;
+      orphan.store.readDoc = async (name, ...rest) => {
+        reads.push(name);
+        return real(name, ...rest);
+      };
+      expect((await submit(orphan.handlers, proposal())).status).toBe(404);
+      // An owner that is not shaped like a key id never reaches a read.
+      expect(reads).not.toContain('admin_config');
+    });
+
+    it("leaves another organizer's call open when one key is revoked", async () => {
+      const env = setup();
+      const other = env.make('Org B');
+      await open(env);
+      await open(env, other, 'other-day-2027');
+      revoke(env);
+      expect((await submit(env.handlers, proposal())).status).toBe(404);
+      expect((await submit(env.handlers, proposal(), { eventId: 'other-day-2027' })).status).toBe(201);
+    });
+
+    it('keeps taking proposals after a rotation, which keeps the key id', async () => {
+      const env = setup();
+      await open(env);
+      const { secret } = generateKey({ keyId: env.org.keyId });
+      env.store.put(
+        'admin_config',
+        buildKeyRecord({
+          keyId: env.org.keyId,
+          secret,
+          actor: 'owner',
+          organizer: env.org.record,
+          previous: env.org.record,
+        }),
+        ADMIN_CONFIG_PARTITION,
+      );
+      expect((await submit(env.handlers, proposal())).status).toBe(201);
+    });
+
+    it('answers a sanitized 500, and stores nothing, when the key record cannot be read', async () => {
+      const env = setup();
+      await open(env);
+      const real = env.store.readDoc;
+      env.store.readDoc = async (name, ...rest) => {
+        if (name === 'admin_config') throw new Error('cosmos down: secret-detail');
+        return real(name, ...rest);
+      };
+      const res = await submit(env.handlers, proposal());
+      expect(res.status).toBe(500);
+      expect(res.body).not.toContain('secret-detail');
+      expect(proposals(env)).toEqual([]);
+    });
+  });
+
   describe("sending proposals through the organizer's own server (the relay)", () => {
     // One server, one address: what an organizer's backend looks like to the limit.
     const RELAY_IP = '192.0.2.50';
@@ -524,12 +634,16 @@ describe('Developer API v1 handlers (ADR 0042, Phase 1)', () => {
       await open(env);
       const reads = [];
       const real = env.store.readDoc;
-      env.store.readDoc = async (name, ...rest) => {
-        reads.push(name);
-        return real(name, ...rest);
+      env.store.readDoc = async (name, id, ...rest) => {
+        reads.push([name, id]);
+        return real(name, id, ...rest);
       };
       expect((await relay(env, 'some-other-token')).status).toBe(201);
-      expect(reads).not.toContain('admin_config');
+      // The one key record read is the call's owner (is its key still
+      // working?), never a lookup of the value that was presented.
+      expect(reads.filter(([name]) => name === 'admin_config')).toEqual([
+        ['admin_config', keyRecordId(env.org.keyId)],
+      ]);
       expect(clientCounters(env)).toHaveLength(1);
     });
 
@@ -646,6 +760,291 @@ describe('Developer API v1 handlers (ADR 0042, Phase 1)', () => {
       const listed = await env.handlers.listSubmissions(env.keyed(other.secret, { params: { eventId: EVENT } }), ctx);
       expect(listed.status).toBe(404);
       expect(listed.body).not.toContain('grace@example.com');
+    });
+
+    describe('paging the list (#1777)', () => {
+      async function withMany(count) {
+        let clock = NOW;
+        const env = setup({ now: () => clock });
+        await env.handlers.setCall(
+          env.keyed(env.org.secret, { method: 'POST', params: { eventId: EVENT }, body: { action: 'open' } }),
+          ctx,
+        );
+        for (let i = 0; i < count; i += 1) {
+          clock = NOW + i * 1000;
+          const sent = await submit(env.handlers, proposal({ title: `Talk ${i}` }), { ip: `198.51.100.${i + 1}` });
+          expect(sent.status).toBe(201);
+        }
+        const list = (query = {}) =>
+          env.handlers.listSubmissions(env.keyed(env.org.secret, { params: { eventId: EVENT }, query }), ctx);
+        return { ...env, list };
+      }
+
+      it('answers everything with a null nextCursor when no limit is sent, as before', async () => {
+        const env = await withMany(3);
+        const listed = body(await env.list());
+        expect(listed).toMatchObject({ ok: true, count: 3, nextCursor: null });
+        expect(listed.submissions.map((s) => s.title)).toEqual(['Talk 2', 'Talk 1', 'Talk 0']);
+        expect(Object.keys(listed).sort()).toEqual(['call', 'count', 'nextCursor', 'ok', 'submissions']);
+      });
+
+      it('asks the database for at most MAX_LISTED when no limit is sent', async () => {
+        const env = await withMany(1);
+        const asked = [];
+        const real = env.store.queryDocsPage;
+        env.store.queryDocsPage = async (name, query, parameters, options) => {
+          asked.push({ query, options });
+          return real(name, query, parameters, options);
+        };
+        await env.list();
+        expect(asked[0].options).toMatchObject({ partitionKey: EVENT, maxItemCount: MAX_LISTED });
+        expect(asked[0].options.continuationToken).toBeUndefined();
+        expect(asked[0].query).not.toMatch(/TOP/);
+      });
+
+      it('walks every proposal once, newest first, page by page', async () => {
+        const env = await withMany(5);
+        const seen = [];
+        let cursor;
+        let pages = 0;
+        do {
+          const page = body(await env.list(cursor ? { limit: '2', cursor } : { limit: '2' }));
+          expect(page.count).toBe(page.submissions.length);
+          expect(page.count).toBeLessThanOrEqual(2);
+          seen.push(...page.submissions.map((s) => s.title));
+          cursor = page.nextCursor;
+          pages += 1;
+        } while (cursor && pages < 10);
+        expect(pages).toBe(3);
+        expect(seen).toEqual(['Talk 4', 'Talk 3', 'Talk 2', 'Talk 1', 'Talk 0']);
+      });
+
+      it('pages inside a status filter, and refuses a cursor made for another filter', async () => {
+        const env = await withMany(3);
+        const first = body(await env.list({ limit: '1', status: 'pending' }));
+        expect(first.nextCursor).toEqual(expect.any(String));
+        const next = body(await env.list({ limit: '1', status: 'pending', cursor: first.nextCursor }));
+        expect(next.submissions[0].title).toBe('Talk 1');
+        expect((await env.list({ limit: '1', cursor: first.nextCursor })).status).toBe(400);
+        expect((await env.list({ limit: '1', status: 'accepted', cursor: first.nextCursor })).status).toBe(400);
+      });
+
+      it.each([['0'], ['-1'], ['501'], ['1.5'], ['ten'], ['1e2'], [' 5'], ['99999']])(
+        'refuses limit=%s with 400',
+        async (limit) => {
+          const env = await withMany(1);
+          const res = await env.list({ limit });
+          expect(res.status).toBe(400);
+          expect(body(res).error).toMatch(/limit must be a whole number from 1 to 500/);
+        },
+      );
+
+      it('accepts the smallest and the largest limit', async () => {
+        const env = await withMany(2);
+        expect(body(await env.list({ limit: '1' })).count).toBe(1);
+        expect(body(await env.list({ limit: String(MAX_LISTED) })).count).toBe(2);
+      });
+
+      it.each([
+        ['not base64url', 'a b+c/='],
+        ['not JSON inside', Buffer.from('nope').toString('base64url')],
+        ['JSON of another shape', Buffer.from(JSON.stringify(['x'])).toString('base64url')],
+        ['another version', Buffer.from(JSON.stringify({ v: 2, s: null, t: 'skip:1' })).toString('base64url')],
+        ['no token inside', Buffer.from(JSON.stringify({ v: 1, s: null, t: '' })).toString('base64url')],
+        ['too long', 'a'.repeat(MAX_CURSOR_CHARS + 1)],
+      ])('refuses a malformed cursor (%s) with 400, before any query', async (_name, cursor) => {
+        const env = await withMany(1);
+        let asked = 0;
+        env.store.queryDocsPage = async () => {
+          asked += 1;
+          return { resources: [], continuationToken: null };
+        };
+        const res = await env.list({ cursor });
+        expect(res.status).toBe(400);
+        expect(body(res)).toMatchObject({ ok: false, code: 'INVALID' });
+        expect(asked).toBe(0);
+      });
+
+      it('answers 400 for a well-formed cursor the database does not recognise, and 500 for any other fault', async () => {
+        const env = await withMany(1);
+        const stale = encodeListCursor({ token: 'made-by-hand', status: null });
+        const res = await env.list({ cursor: stale });
+        expect(res.status).toBe(400);
+        expect(body(res).error).toMatch(/Start the list again/);
+
+        // The same database answer WITHOUT a cursor is a fault of ours, not the caller's.
+        env.store.queryDocsPage = async () => {
+          throw Object.assign(new Error('bad query: detail'), { code: 400 });
+        };
+        const failed = await env.list();
+        expect(failed.status).toBe(500);
+        expect(failed.body).not.toContain('detail');
+      });
+
+      it('makes a cursor that holds only the filter and the database marker', async () => {
+        const cursor = encodeListCursor({ token: 'skip:2', status: 'pending' });
+        expect(JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))).toEqual({ v: 1, s: 'pending', t: 'skip:2' });
+        expect(decodeListCursor(cursor, 'pending')).toBe('skip:2');
+        expect(encodeListCursor({ token: null })).toBeNull();
+        expect(encodeListCursor({ token: '' })).toBeNull();
+      });
+
+      it("cannot be used to read another organizer's proposals", async () => {
+        const env = await withMany(3);
+        const other = env.make('Org B');
+        const first = body(await env.list({ limit: '1' }));
+        const res = await env.handlers.listSubmissions(
+          env.keyed(other.secret, { params: { eventId: EVENT }, query: { cursor: first.nextCursor } }),
+          ctx,
+        );
+        expect(res.status).toBe(404);
+      });
+
+      it('reads an empty page from a store that answers nothing', async () => {
+        const env = await withMany(1);
+        env.store.queryDocsPage = async () => undefined;
+        expect(body(await env.list())).toMatchObject({ submissions: [], count: 0, nextCursor: null });
+      });
+    });
+
+    describe('deleting a proposal (#1777)', () => {
+      const del = (env, { key = env.org, eventId = EVENT, submissionId = env.first.id } = {}) =>
+        env.handlers.deleteSubmission(
+          env.keyed(key.secret, { method: 'DELETE', params: { eventId, submissionId } }),
+          ctx,
+        );
+      const stored = (env) => env.store.all(CFS_CONTAINER).filter((doc) => doc.docType === 'cfs-submission');
+
+      it('removes the proposal for good and leaves the others', async () => {
+        const env = await withProposals();
+        const res = await del(env);
+        expect(res.status).toBe(200);
+        expect(body(res)).toEqual({ ok: true, id: env.first.id, deleted: true });
+        expect(stored(env).map((doc) => doc.id)).toEqual([env.second.id]);
+        expect(JSON.stringify(env.store.all(CFS_CONTAINER))).not.toContain('Running Arc at home');
+      });
+
+      it('writes one audit row with the status only: no name, email, title or abstract', async () => {
+        const env = await withProposals();
+        await del(env);
+        const rows = env.store.all('admin_audit_logs').filter((row) => row.action === 'developer_cfs_submission_deleted');
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          resource: `${CFS_CONTAINER}:${env.first.id}`,
+          before: { status: 'pending' },
+          after: null,
+          details: { eventId: EVENT, submissionId: env.first.id, developerKeyId: env.org.keyId },
+        });
+        const text = JSON.stringify(rows);
+        for (const secret of ['grace@example.com', 'Grace', 'Running Arc at home', 'A lab story.']) {
+          expect(text).not.toContain(secret);
+        }
+      });
+
+      it('is safe to ask twice: the second answer is 200 with deleted false and no second row', async () => {
+        const env = await withProposals();
+        await del(env);
+        const again = await del(env);
+        expect(again.status).toBe(200);
+        expect(body(again)).toEqual({ ok: true, id: env.first.id, deleted: false });
+        expect(
+          env.store.all('admin_audit_logs').filter((row) => row.action === 'developer_cfs_submission_deleted'),
+        ).toHaveLength(1);
+      });
+
+      it('needs cfs:manage, a real event id and a UUID', async () => {
+        const env = await withProposals();
+        const reader = env.make('Reader', ['events:read']);
+        expect((await del(env, { key: reader })).status).toBe(403);
+        expect((await del(env, { eventId: 'X' })).status).toBe(400);
+        expect((await del(env, { submissionId: 'nope' })).status).toBe(400);
+        expect((await env.handlers.deleteSubmission(makeRequest({ method: 'DELETE', params: { eventId: EVENT } }), ctx)).status).toBe(401);
+        expect(stored(env)).toHaveLength(2);
+      });
+
+      it("answers another organizer's key 404, the same as the review route, and deletes nothing", async () => {
+        const env = await withProposals();
+        const other = env.make('Org B');
+        const res = await del(env, { key: other });
+        const reviewed = await env.handlers.reviewSubmission(
+          env.keyed(other.secret, {
+            method: 'PUT',
+            params: { eventId: EVENT, submissionId: env.first.id },
+            body: { decision: 'rejected' },
+          }),
+          ctx,
+        );
+        expect(res.status).toBe(404);
+        expect(res.body).toBe(reviewed.body);
+        expect(stored(env)).toHaveLength(2);
+        expect(env.store.all('admin_audit_logs').map((row) => row.action)).not.toContain(
+          'developer_cfs_submission_deleted',
+        );
+        // An event with no call at all reads the same.
+        expect((await del(env, { key: other, eventId: 'no-such-event' })).body).toBe(res.body);
+      });
+
+      it("cannot delete the call itself, or a proposal filed under another event's id", async () => {
+        const env = await withProposals();
+        const other = env.make('Org B');
+        await env.handlers.setCall(
+          env.keyed(other.secret, { method: 'POST', params: { eventId: 'other-day-2027' }, body: { action: 'open' } }),
+          ctx,
+        );
+        // Org B asks for Org A's proposal through its own event: not found there, so nothing is deleted.
+        const res = await del(env, { key: other, eventId: 'other-day-2027' });
+        expect(body(res)).toEqual({ ok: true, id: env.first.id, deleted: false });
+        expect(stored(env)).toHaveLength(2);
+        // The call's own id is not a UUID, so it is refused before any read.
+        expect((await del(env, { submissionId: callDocId(EVENT) })).status).toBe(400);
+        expect(await env.store.readDoc(CFS_CONTAINER, callDocId(EVENT), EVENT)).not.toBeNull();
+      });
+
+      it('deletes under the version it read: a review landing in between is read again, then deleted', async () => {
+        const env = await withProposals();
+        const real = env.store.deleteDocIfMatch;
+        const etags = [];
+        let raced = false;
+        env.store.deleteDocIfMatch = async (name, id, etag, pk) => {
+          etags.push(etag);
+          if (!raced) {
+            raced = true;
+            const current = await env.store.readDoc(name, id, pk);
+            env.store.put(name, { ...current, status: 'accepted' }, pk);
+          }
+          return real(name, id, etag, pk);
+        };
+        const res = await del(env);
+        expect(body(res)).toEqual({ ok: true, id: env.first.id, deleted: true });
+        expect(etags).toHaveLength(2);
+        expect(etags[0]).not.toBe(etags[1]);
+        // The row records the status that was deleted, not the one first read.
+        const [row] = env.store.all('admin_audit_logs').filter((r) => r.action === 'developer_cfs_submission_deleted');
+        expect(row.before).toEqual({ status: 'accepted' });
+      });
+
+      it('answers 409 when it loses the race twice, 200 when another delete won, and 500 on a fault', async () => {
+        const env = await withProposals();
+        const fail = (code) => {
+          env.store.deleteDocIfMatch = async () => {
+            throw Object.assign(new Error('cosmos said: detail'), { code });
+          };
+        };
+        fail(412);
+        const conflict = await del(env);
+        expect(conflict.status).toBe(409);
+        expect(body(conflict).code).toBe('CONFLICT');
+        fail(404);
+        expect(body(await del(env))).toEqual({ ok: true, id: env.first.id, deleted: false });
+        fail(503);
+        const failed = await del(env);
+        expect(failed.status).toBe(500);
+        expect(failed.body).not.toContain('detail');
+        expect(stored(env)).toHaveLength(2);
+        expect(env.store.all('admin_audit_logs').map((row) => row.action)).not.toContain(
+          'developer_cfs_submission_deleted',
+        );
+      });
     });
 
     it('stores the call under its event partition', async () => {
