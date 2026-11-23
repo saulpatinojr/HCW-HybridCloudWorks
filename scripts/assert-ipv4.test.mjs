@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isIpv4, judge } from './assert-ipv4.mjs';
 
 describe('isIpv4', () => {
@@ -34,5 +37,38 @@ describe('judge', () => {
 
   it('refuses an empty body, which is what a timed-out curl leaves behind', () => {
     expect(judge('')).toEqual({ ok: false, reason: "not one IPv4 address: ''" });
+  });
+});
+
+/**
+ * Every workflow that asks the internet for the runner's address uses this
+ * check (#1778). publish-content-manifest.yml had its own inline pattern,
+ * which accepted numbers above 255 (999.1.1.1 passed). A new fetch that skips
+ * the shared check, or pipes curl straight into a program, fails here.
+ */
+describe('workflows that fetch the runner address', () => {
+  const dir = join(dirname(fileURLToPath(import.meta.url)), '..', '.github', 'workflows');
+  const fetches = [];
+  for (const file of readdirSync(dir).filter((name) => /\.ya?ml$/.test(name))) {
+    const lines = readFileSync(join(dir, file), 'utf8')
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*#/.test(line));
+    lines.forEach((line, index) => {
+      if (/ipify|ifconfig\.me|icanhazip|checkip/.test(line)) {
+        fetches.push({ file, line: line.trim(), next: (lines[index + 1] ?? '').trim() });
+      }
+    });
+  }
+
+  it('finds the fetches it is meant to guard', () => {
+    const files = [...new Set(fetches.map((f) => f.file))].sort();
+    expect(files).toEqual(['deploy-functions.yml', 'publish-content-manifest.yml']);
+  });
+
+  it('stores the answer in a variable, then hands it to assert-ipv4.mjs on the next line', () => {
+    for (const { file, line, next } of fetches) {
+      expect(line, file).toBe('RUNNER_IP_RAW=$(curl -sS --max-time 10 https://api.ipify.org)');
+      expect(next, file).toBe('RUNNER_IP=$(node scripts/assert-ipv4.mjs <<<"${RUNNER_IP_RAW}")');
+    }
   });
 });
