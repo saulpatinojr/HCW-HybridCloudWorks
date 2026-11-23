@@ -77,11 +77,15 @@ trips. The session is the orchestrator of a team of agents and does the work.
   workflows, so the App repositories are added to the work board by
   `C:\Users\saulp\.hcw\Sync-AppTicketsToBoard.ps1`, run hourly by the
   `HCW-board-sync` scheduled task).
-  A cloud session (Claude Code on the web, claude.ai/code) has two more
-  limits, because it acts through the Claude GitHub App (the app installed
-  on the owner's GitHub account for web sessions) rather than the owner's
-  own `gh` sign-in. Both were seen on 2026-11-11
-  ([#1683](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1683)).
+  A cloud session (Claude Code on the web, claude.ai/code) has three more
+  limits, because its GitHub calls go through the Claude GitHub App (the
+  app installed on the owner's GitHub account for web sessions) and a
+  proxy (a go-between that checks each request before it reaches GitHub),
+  rather than the owner's own `gh` sign-in. The first two were seen on
+  2026-11-11
+  ([#1683](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1683)),
+  the third on 2026-11-22 on the App's
+  [`Protect main` ruleset](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/rules/25778324).
   - **GraphQL is refused.** GraphQL is GitHub's second API, which many `gh`
     commands use under the hood; `gh api graphql`, `gh pr view --json` and
     `gh pr list` were all refused with HTTP 403 (not allowed) "GitHub
@@ -97,9 +101,18 @@ trips. The session is the orchestrator of a team of agents and does the work.
     session: editing the work board, which is GraphQL only.
   - **Code scanning alerts cannot be read**; see "Code scanning's alerts
     are read on `main`" below.
+  - **Rulesets (a repository's merge rules) cannot be changed.** Reading
+    a ruleset works, but changing one does not: on 2026-11-22 `gh api -X PUT
+    repos/saulpatinojr/HCW-MigrateOrchestrator_App/rulesets/25778324` was
+    refused with HTTP 403 "Write access to this GitHub API path is not
+    permitted through this proxy", and the ruleset was left as it was. So
+    a cloud session does not retry the call. It gives the owner the
+    ruleset's link, the exact boxes and values to change, and the values to
+    leave alone, then reads the ruleset back from the API to confirm the
+    change once the owner says it is done.
 
   Sessions on the owner's own computer use the owner's `gh` sign-in and
-  have neither limit.
+  have none of these three cloud-session limits.
 - **Use the team.** Hand each ticket, review, build and test run to the
   matching agent (see "Use the specialist agents"), brief it fully, run
   independent ones in parallel, and check what comes back yourself before you
