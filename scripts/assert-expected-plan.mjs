@@ -774,6 +774,16 @@ export const DECLARED = [
     after: "sc-domain:hybridcloudworks.com",
     reason: "#1612: the Search Console property the page reads",
   },
+  // The owner raised the Platform Management budget on 2026-11-22, after the
+  // 0.5 GB/day log cap (#1759) put expected spend near its old 50% mail.
+  // Delete once the plan shows it applied.
+  {
+    address: "azurerm_consumption_budget_subscription.platform_mgmt",
+    path: "amount",
+    before: 25,
+    after: 35,
+    reason: "owner decision 2026-11-22: Platform Management budget USD 25 -> 35",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
