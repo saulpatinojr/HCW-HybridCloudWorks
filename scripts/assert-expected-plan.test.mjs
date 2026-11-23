@@ -1115,6 +1115,17 @@ describe('DECLARED', () => {
     expect(creates).toContain('cloudflare_web_analytics_site.hcw[0]');
   });
 
+  it('declares the Developer API container’s create, and only for a container the spec has (#1754, ADR 0042)', () => {
+    // Delete this test with the declaration, once the create has applied.
+    const address = 'azurerm_cosmosdb_sql_container.hcw["developer_events"]';
+    expect(DECLARED.filter((entry) => entry.address === address).map((entry) => entry.action)).toEqual(['create']);
+    const spec = JSON.parse(readFileSync(join(HERE, '..', 'infra', 'cosmos-containers.json'), 'utf8'));
+    const container = spec.containers.find((entry) => entry.name === 'developer_events');
+    expect(container, 'developer_events is not in infra/cosmos-containers.json').toBeDefined();
+    // No computed properties, so no azapi_update_resource is planned beside the create.
+    expect(container.computedProperties ?? []).toEqual([]);
+  });
+
   it('prunes alert-kv-config-write’s provider entries once applied (#1216)', () => {
     const addresses = DECLARED.map((entry) => entry.address);
     expect(addresses).not.toContain('azurerm_monitor_activity_log_alert.key_vault_config_writes');
