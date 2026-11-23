@@ -100,6 +100,7 @@ const publicJson = (body) => json(200, body, { 'Cache-Control': `public, max-age
 const invalid = (error, fallback) => json(400, { ok: false, code: 'INVALID', error: authoredMessage(error, fallback) });
 const notFound = (error) => json(404, { ok: false, code: 'NOT_FOUND', error });
 const NO_CALL = 'There is no call for speakers on this event for this key.';
+const NO_PROPOSAL = 'There is no such proposal on this event.';
 const NOT_OPEN = 'This event has no open call for speakers.';
 const CHANGED = 'The record changed while this request was being made. Read it again and retry.';
 
@@ -452,7 +453,7 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
 
       const existing = await store.readDoc(CFS_CONTAINER, submissionId, eventId);
       if (!existing || existing.docType !== 'cfs-submission' || existing.eventId !== eventId) {
-        return notFound('There is no such proposal on this event.');
+        return notFound(NO_PROPOSAL);
       }
       const nowIso = new Date(now()).toISOString();
       const next = {
@@ -467,6 +468,8 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
         written = await store.replaceDocIfMatch(CFS_CONTAINER, next, { partitionKey: eventId });
       } catch (error) {
         if (isConflict(error)) return json(409, { ok: false, code: 'CONFLICT', error: CHANGED });
+        // Deleted between the read and the write: the same answer as a proposal that was never there.
+        if (error?.code === 404) return notFound(NO_PROPOSAL);
         throw error;
       }
       await audit(context, 'developer_cfs_submission_reviewed', auth.user, {
