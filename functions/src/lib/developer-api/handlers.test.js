@@ -383,6 +383,162 @@ describe('Developer API v1 handlers (ADR 0042, Phase 1)', () => {
       delete request.text;
       expect((await env.handlers.submitProposal(request, ctx)).status).toBe(400);
     });
+
+    it('refuses a body the client declares as too large before reading it', async () => {
+      const env = setup();
+      await openCall(env);
+      let read = false;
+      const request = makeRequest({
+        method: 'POST',
+        params: { eventId: EVENT },
+        headers: { 'cf-connecting-ip': '203.0.113.7', 'content-length': String(MAX_SUBMISSION_BYTES + 1) },
+        body: proposal(),
+      });
+      request.text = async () => {
+        read = true;
+        return '';
+      };
+      expect((await env.handlers.submitProposal(request, ctx)).status).toBe(413);
+      expect(read).toBe(false);
+      // A size at the cap, and a header that is not a number, are read and measured as before.
+      const sized = (length) =>
+        env.handlers.submitProposal(
+          makeRequest({
+            method: 'POST',
+            params: { eventId: EVENT },
+            headers: { 'cf-connecting-ip': '203.0.113.7', 'content-length': length },
+            body: proposal(),
+          }),
+          ctx,
+        );
+      expect((await sized(String(MAX_SUBMISSION_BYTES))).status).toBe(201);
+      expect((await sized('nope')).status).toBe(201);
+    });
+  });
+
+  describe("sending proposals through the organizer's own server (the relay)", () => {
+    // One server, one address: what an organizer's backend looks like to the limit.
+    const RELAY_IP = '192.0.2.50';
+    const open = (env, key = env.org, eventId = EVENT) =>
+      env.handlers.setCall(
+        env.keyed(key.secret, { method: 'POST', params: { eventId }, body: { action: 'open' } }),
+        ctx,
+      );
+    const relay = (env, secret, { eventId = EVENT, headers = {} } = {}) =>
+      env.handlers.submitProposal(
+        makeRequest({
+          method: 'POST',
+          params: { eventId },
+          headers: { 'cf-connecting-ip': RELAY_IP, ...(secret ? { Authorization: `Bearer ${secret}` } : {}), ...headers },
+          body: proposal(),
+        }),
+        ctx,
+      );
+    const clientCounters = (env) =>
+      env.store.all('submission_quota').filter((doc) => doc.id.startsWith('developer-cfs:client:'));
+
+    it('lets the key that owns the call send more than the per-visitor limit from one address', async () => {
+      const env = setup();
+      await open(env);
+      for (let i = 0; i < SUBMISSIONS_PER_CLIENT_PER_HOUR + 1; i += 1) {
+        expect((await relay(env, env.org.secret)).status).toBe(201);
+      }
+      // The per-visitor counter was never touched; the per-call one counted every proposal.
+      expect(clientCounters(env)).toEqual([]);
+      const perCall = env.store.all('submission_quota').find((doc) => doc.id === `developer-cfs:call:${EVENT}`);
+      expect(perCall.count).toBe(SUBMISSIONS_PER_CLIENT_PER_HOUR + 1);
+      // Each one is stored as an ordinary pending proposal, with nothing of the key on it.
+      const stored = env.store.all(CFS_CONTAINER).filter((doc) => doc.docType === 'cfs-submission');
+      expect(stored).toHaveLength(SUBMISSIONS_PER_CLIENT_PER_HOUR + 1);
+      expect(stored.every((doc) => doc.status === 'pending')).toBe(true);
+      expect(JSON.stringify(stored)).not.toContain(env.org.keyId);
+    });
+
+    it('still stops the sixth proposal in the hour from one address with no key', async () => {
+      const env = setup();
+      await open(env);
+      for (let i = 0; i < SUBMISSIONS_PER_CLIENT_PER_HOUR; i += 1) {
+        expect((await relay(env, null)).status).toBe(201);
+      }
+      expect((await relay(env, null)).status).toBe(429);
+      // The owner's key, from that same address, is still let through.
+      expect((await relay(env, env.org.secret)).status).toBe(201);
+    });
+
+    it('still holds the owning key to the per-call limit, the open-call check and the checks on the body', async () => {
+      const env = setup();
+      // No call yet: the same 404 a visitor gets.
+      expect((await relay(env, env.org.secret)).status).toBe(404);
+      await open(env);
+      const bad = makeRequest({
+        method: 'POST',
+        params: { eventId: EVENT },
+        headers: { 'cf-connecting-ip': RELAY_IP, Authorization: `Bearer ${env.org.secret}` },
+        body: proposal({ website: 'http://spam' }),
+      });
+      expect((await env.handlers.submitProposal(bad, ctx)).status).toBe(400);
+      env.store.put('submission_quota', { id: `developer-cfs:call:${EVENT}`, windowStartMs: NOW, count: 100 });
+      const limited = await relay(env, env.org.secret);
+      expect(limited.status).toBe(429);
+      expect(limited.headers['Retry-After']).toBe('3600');
+    });
+
+    it("gives a key that does not own the call no way past the per-visitor limit", async () => {
+      const env = setup();
+      await open(env);
+      const other = env.make('Org B');
+      for (let i = 0; i < SUBMISSIONS_PER_CLIENT_PER_HOUR; i += 1) {
+        expect((await relay(env, other.secret)).status).toBe(201);
+      }
+      expect((await relay(env, other.secret)).status).toBe(429);
+      expect(clientCounters(env)).toHaveLength(1);
+    });
+
+    it('gives a key without cfs:manage no way past it either, and writes no refusal row', async () => {
+      const env = setup();
+      await open(env);
+      // The same key record, with the scope taken away after it opened the call.
+      const [record] = env.store.all('admin_config');
+      env.store.put('admin_config', { ...record, scopes: ['events:read'] }, ADMIN_CONFIG_PARTITION);
+      for (let i = 0; i < SUBMISSIONS_PER_CLIENT_PER_HOUR; i += 1) {
+        expect((await relay(env, env.org.secret)).status).toBe(201);
+      }
+      expect((await relay(env, env.org.secret)).status).toBe(429);
+      expect(env.store.all('admin_audit_logs').filter((row) => row.kind === 'developer-api-denial')).toEqual([]);
+    });
+
+    it('answers 401 to a wrong or revoked key, and stores nothing', async () => {
+      const env = setup();
+      await open(env);
+      const wrong = `${env.org.secret.slice(0, -4)}${env.org.secret.endsWith('AAAA') ? 'BBBB' : 'AAAA'}`;
+      expect((await relay(env, wrong)).status).toBe(401);
+      const [record] = env.store.all('admin_config');
+      const { keyHash: _removed, ...rest } = record;
+      env.store.put('admin_config', { ...rest, revokedAt: 'now' }, ADMIN_CONFIG_PARTITION);
+      expect((await relay(env, env.org.secret)).status).toBe(401);
+      expect(env.store.all(CFS_CONTAINER).filter((doc) => doc.docType === 'cfs-submission')).toEqual([]);
+    });
+
+    it('treats a bearer value that is not an organizer key as no key at all', async () => {
+      const env = setup();
+      await open(env);
+      const reads = [];
+      const real = env.store.readDoc;
+      env.store.readDoc = async (name, ...rest) => {
+        reads.push(name);
+        return real(name, ...rest);
+      };
+      expect((await relay(env, 'some-other-token')).status).toBe(201);
+      expect(reads).not.toContain('admin_config');
+      expect(clientCounters(env)).toHaveLength(1);
+    });
+
+    it('still refuses an unverified origin before the key is looked at', async () => {
+      const identity = createClientIdentity({ allowUnverifiedOrigin: false, originSecret: 'x', ipSalt: 's' });
+      const env = setup({ identity });
+      await open(env);
+      expect((await relay(env, env.org.secret)).status).toBe(403);
+    });
   });
 
   describe('listing and reviewing proposals', () => {
@@ -466,6 +622,30 @@ describe('Developer API v1 handlers (ADR 0042, Phase 1)', () => {
         ctx,
       );
       expect(failed.status).toBe(500);
+    });
+
+    it("answers 404 when a second organizer's key reviews or lists another organizer's proposals", async () => {
+      const env = await withProposals();
+      const other = env.make('Org B');
+      const reviewed = await env.handlers.reviewSubmission(
+        env.keyed(other.secret, {
+          method: 'PUT',
+          params: { eventId: EVENT, submissionId: env.first.id },
+          body: { decision: 'rejected', note: 'Not yours' },
+        }),
+        ctx,
+      );
+      expect(reviewed.status).toBe(404);
+      expect(reviewed.body).not.toContain('grace@example.com');
+      // The proposal is as it was, and no review was recorded.
+      const stored = await env.store.readDoc(CFS_CONTAINER, env.first.id, EVENT);
+      expect(stored).toMatchObject({ status: 'pending', reviewNote: null, reviewedBy: null });
+      expect(env.store.all('admin_audit_logs').map((row) => row.action)).not.toContain(
+        'developer_cfs_submission_reviewed',
+      );
+      const listed = await env.handlers.listSubmissions(env.keyed(other.secret, { params: { eventId: EVENT } }), ctx);
+      expect(listed.status).toBe(404);
+      expect(listed.body).not.toContain('grace@example.com');
     });
 
     it('stores the call under its event partition', async () => {

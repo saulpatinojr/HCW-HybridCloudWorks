@@ -34,16 +34,65 @@ Publishing stays a human action in the admin (ADR 0042, decision 6).
 Three things need no key at all, on purpose: reading published events,
 finding speakers, and sending a talk proposal to an open call.
 
+## How an organizer connects: from their server, not from a browser
+
+An organizer's code calls the API **from their own server**. A web page on
+the organizer's site cannot call it straight from a visitor's browser, and
+that is on purpose.
+
+- **Why a browser on another site is refused.** A browser tells the API which
+  site the page came from (the `Origin` header). The API answers `403` to any
+  `Origin` that is not this site's own (`https://hybridcloudworks.com` and
+  `https://www.hybridcloudworks.com`), on every route, the public ones
+  included. The list is in
+  [`functions/src/lib/auth/cors.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/auth/cors.js)
+  and is not widened for organizers: opening it to sites the owner does not
+  run would let any page on those sites call the API from a visitor's
+  browser. MDN explains the browser rule behind this under
+  [Cross-Origin Resource Sharing](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS).
+  A call from a server sends no `Origin` and is let through to the checks
+  below.
+- **What the organizer builds.** Their "submit a talk" form posts to their own
+  server, and that server sends the proposal on to
+  `POST /api/developer/v1/events/{eventId}/call-for-speakers/submissions`
+  **with the organizer's key** in the `Authorization: Bearer` header. Part 3
+  below has the exact calls.
+- **Why the key matters on that call.** Without a key, the API counts
+  proposals per visitor address, 5 an hour. Every proposal relayed by the
+  organizer's server arrives from that one server's address, so without the
+  key a whole event would be held to 5 proposals an hour. A request that
+  carries the key that **owns** the call (the key that opened it, with
+  `cfs:manage`) is not counted per visitor. It is still held to everything
+  else: 100 proposals an hour per call, 120 calls a minute per key, the 16 KB
+  size cap, the bot trap, and the call being open.
+- **What the key does not buy.** A working key that does not own the call, or
+  has no `cfs:manage`, is counted per visitor like anyone else. A key that is
+  wrong or revoked gets `401`, so a server holding a dead key finds out
+  instead of quietly being limited.
+- **The organizer's side of the bargain.** With the key, the organizer's
+  server is what stands between the internet and their call, so stopping
+  floods from their own form (a limit per visitor, a CAPTCHA) is theirs to
+  do. The key must stay on the server and never be put in a web page.
+
+The two public reads (`published-events` and `speakers`) work the same way:
+from a server, with or without a key.
+
 ## Before the first use: the database container
 
 Calls and proposals are stored in a new Cosmos DB container (a table in the
 site's database), `developer_events`, partitioned on `/eventId` (each event's
 call and proposals are kept together). It is declared in
-[`infra/cosmos-containers.json`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/feature/developer-api-v1/infra/cosmos-containers.json)
-on the `feature/developer-api-v1` branch, and Terraform creates it on the next
-apply after this change merges. That apply is the owner's to run. Until the
-container exists, the published-events, speakers and key routes work, and the
-call-for-speakers routes answer `500`.
+[`infra/cosmos-containers.json`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos-containers.json),
+and Terraform creates it on the next apply. That apply is the owner's to run.
+Until the container exists, the published-events, speakers and key routes
+work, and the call-for-speakers routes answer `500`.
+
+The plan for that apply should show one thing to add for this feature,
+`azurerm_cosmosdb_sql_container.hcw["developer_events"]`. The plan check (the
+script that reads each Terraform plan and names anything it was not told to
+expect) has that create declared in
+[`scripts/assert-expected-plan.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/assert-expected-plan.mjs),
+so it reads as expected and not as drift.
 
 To check whether it exists yet (read-only; **PowerShell**):
 
@@ -136,7 +185,15 @@ speaker would:
 Invoke-RestMethod -Method Post -Uri "$base/events/$eventId/call-for-speakers/submissions" -ContentType 'application/json' -Body '{"speakerName":"Test Speaker","speakerEmail":"test@example.com","title":"Test talk","abstract":"A test proposal."}' | ConvertTo-Json
 ```
 
-Good: `status` is `pending` and an `id` comes back. List the proposals:
+Good: `status` is `pending` and an `id` comes back. Then send one the way the
+organizer's server does, with the key (see "How an organizer connects" above;
+this one is not counted against the 5 an hour per visitor):
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "$base/events/$eventId/call-for-speakers/submissions" -Headers $auth -ContentType 'application/json' -Body '{"speakerName":"Relay Speaker","speakerEmail":"relay@example.com","title":"Relayed talk","abstract":"A proposal sent on by the organizer server."}' | ConvertTo-Json
+```
+
+Good: the same answer, `status` `pending` and an `id`. List the proposals:
 
 ```powershell
 $list = Invoke-RestMethod -Uri "$base/events/$eventId/call-for-speakers/submissions" -Headers $auth; $list.submissions | Select-Object id, status, title, speakerName
@@ -163,7 +220,7 @@ Remove-Variable plain, key, ptr, auth, list
 
 ## 4. Rotate a key
 
-Rotate when the organizer's handling of the key is in doubt, or on the
+Rotate when the organizer's handling of the key is in doubt, or every 180 days per the
 [credential rotation schedule](../security/credential-rotation-schedule.md).
 
 1. On the tab, press **Rotate key** on the organizer's row and confirm. A new key
@@ -201,18 +258,20 @@ used to close it; a close route for the admin is a Phase 2 follow-up.
 
 | Answer | Meaning |
 | --- | --- |
-| `401` | The key is missing, wrong or revoked (one sentence for all three, on purpose). |
-| `403` | The key lacks the scope the route needs. On the public proposal route: the request did not come through Cloudflare. |
+| `401` | The key is missing, wrong or revoked (one sentence for all three, on purpose). On the public proposal route a key is optional, but one that is sent and is wrong or revoked is still answered `401`. |
+| `403` | The key lacks the scope the route needs. On any route: the call came from a browser on another site (see "How an organizer connects"). On the public proposal route: the request did not come through Cloudflare. |
 | `404` | No call on that event for this key, or no open call (proposal route). |
 | `409` | The call or proposal changed between reading and writing (read again and retry); or `EVENT_ID_RESERVED` (the id is one of the site's own events) or `KEY_REVOKED` (rotate on a revoked key). |
-| `413` | A proposal over 16 KB. |
+| `413` | A proposal over 16 KB. Refused from the size the request declares where it declares one, before the body is read, and measured again once read. |
 | `429` | Over a limit; the answer has a `Retry-After` header with the seconds to wait. |
 
 Limits: 120 keyed calls a minute per key; 5 proposals an hour from one
 visitor (counted by a salted hash of their address, never the address); 100
-proposals an hour per call across all visitors. Proposals are refused unless
-the request came through Cloudflare, and a proposal that fills the hidden
-`website` field (a trap for bots) is refused.
+proposals an hour per call across all visitors. The per-visitor limit is not
+applied to a proposal sent with the key that owns the call (the organizer's
+server relaying its own form); every other limit still is. Proposals are
+refused unless the request came through Cloudflare, and a proposal that fills
+the hidden `website` field (a trap for bots) is refused.
 
 ## Refused calls and the audit log
 
@@ -246,6 +305,16 @@ and for keys `developer_api_key_generated`, `_rotated`, `_changed`, `_revoked`
   shared by every visitor, so about twenty different addresses could fill it
   and hold the call shut for the rest of the hour. ADR 0042 accepts spam as
   a risk; if it happens, see "If spam proposals arrive" above.
+- **No browser on another site can call the API.** An organizer cannot put a
+  form on their site that posts straight to the API; they need a server of
+  their own to send proposals on. That is more work for the organizer, and
+  it is accepted so the list of sites allowed to call the API from a browser
+  stays the site's own two addresses ("How an organizer connects" above).
+- **The owning key takes the per-visitor limit off its own call.** A leaked
+  key, or an organizer's form with no limit of its own, can put up to 100
+  proposals an hour on that organizer's call, where a keyless sender is held
+  to 5. It reaches no other call, the per-call cap still holds, and rotating
+  or revoking the key (parts 4 and 6) ends it on the next request.
 
 ## Personal data
 

@@ -6,6 +6,7 @@
  *   GET  speakers?q=                                         public
  *   POST events/{eventId}/call-for-speakers                  key, cfs:manage   open or close a call
  *   POST events/{eventId}/call-for-speakers/submissions      public, rate-limited   send a proposal
+ *                                                            (the call's own key may relay them, see submitProposal)
  *   GET  events/{eventId}/call-for-speakers/submissions      key, cfs:manage   list proposals
  *   PUT  events/{eventId}/call-for-speakers/submissions/{submissionId}   key, cfs:manage   accept or reject
  *
@@ -50,7 +51,7 @@ import {
   validateSubmission,
 } from './cfs.js';
 import { listPublishedEvents, listSpeakers, readEventFilters, readSearch } from './directory.js';
-import { API_BASE_PATH, REQUESTS_PER_MINUTE, SCOPES, scopesOf } from './keys.js';
+import { API_BASE_PATH, REQUESTS_PER_MINUTE, SCOPES, developerKeyFrom, looksLikeKey, scopesOf } from './keys.js';
 
 /** What the admin and the status route show about the limits. */
 export const LIMITS = Object.freeze({
@@ -245,6 +246,19 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
      * POST events/{eventId}/call-for-speakers/submissions — public.
      * Origin verified (Cloudflare), body capped, then two limits: per caller
      * and per call, both hourly, through the same counter as public/submissions.
+     *
+     * THE ORGANIZER'S RELAY (#1754 review). A browser on the organizer's own
+     * site cannot call this route (lib/auth/cors.js answers 403 to an Origin
+     * that is not this site's), so the organizer's form posts to their own
+     * server and that server sends the proposal on. Every proposal then comes
+     * from one address, and the per-caller limit would hold a whole event to
+     * five an hour. So a request that carries the key that OWNS this call,
+     * with `cfs:manage`, skips the per-caller limit and no other check: the
+     * origin check, the body cap, the open-call check and the per-call limit
+     * all still apply. A request with no key is handled exactly as before. A
+     * working key that does not own the call, or lacks the scope, gets no
+     * favour and is counted like any visitor. A key that is wrong or revoked
+     * is answered 401 by the guard, so a relay with a dead key finds out.
      */
     submitProposal: route('send the proposal', async (request, context) => {
       let clientHash;
@@ -257,14 +271,29 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
       }
       const eventId = eventIdOf(request);
 
-      const raw = typeof request.text === 'function' ? await request.text() : '';
-      if (Buffer.byteLength(raw || '', 'utf8') > MAX_SUBMISSION_BYTES) {
-        return json(413, {
+      const tooLarge = () =>
+        json(413, {
           ok: false,
           code: 'TOO_LARGE',
           error: `The proposal is too large: at most ${MAX_SUBMISSION_BYTES} bytes.`,
         });
+      // What the client says the size is, before any of it is read. A client
+      // can leave the header out or understate it, so the bytes are measured
+      // again below.
+      const declared = Number(request.headers?.get?.('content-length'));
+      if (Number.isFinite(declared) && declared > MAX_SUBMISSION_BYTES) return tooLarge();
+
+      // The relay: only a value shaped like an organizer key is looked up, so
+      // an anonymous request costs no key read.
+      let relay = null;
+      if (looksLikeKey(developerKeyFrom(request))) {
+        const auth = await guard.authenticate(request);
+        if (auth.error) return auth.error;
+        if (scopesOf(auth.record).includes('cfs:manage')) relay = auth.user;
       }
+
+      const raw = typeof request.text === 'function' ? await request.text() : '';
+      if (Buffer.byteLength(raw || '', 'utf8') > MAX_SUBMISSION_BYTES) return tooLarge();
       let body;
       try {
         body = JSON.parse(raw);
@@ -276,17 +305,24 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
       const nowMs = now();
       const limited = () =>
         json(429, { ok: false, code: 'RATE_LIMITED', error: 'Too many proposals. Try again later.' }, { 'Retry-After': '3600' });
-      try {
-        await enforceSubmissionQuota(store, clientQuotaKey(clientHash), {
-          now: nowMs,
-          limit: SUBMISSIONS_PER_CLIENT_PER_HOUR,
-        });
-      } catch (error) {
-        if (error?.code === 'SUBMISSION_RATE_LIMIT') return limited();
-        throw error;
+      // A keyed request reads the call first, to learn whether the key owns
+      // it. An anonymous one is counted first, as before, so a caller over
+      // the limit costs no read of the call.
+      let call = relay ? await readCall(eventId) : null;
+      const ownerRelay = Boolean(relay) && ownsCall(call, relay);
+      if (!ownerRelay) {
+        try {
+          await enforceSubmissionQuota(store, clientQuotaKey(clientHash), {
+            now: nowMs,
+            limit: SUBMISSIONS_PER_CLIENT_PER_HOUR,
+          });
+        } catch (error) {
+          if (error?.code === 'SUBMISSION_RATE_LIMIT') return limited();
+          throw error;
+        }
       }
 
-      const call = await readCall(eventId);
+      if (!relay) call = await readCall(eventId);
       if (!isCallOpen(call, nowMs)) return notFound(NOT_OPEN);
 
       try {

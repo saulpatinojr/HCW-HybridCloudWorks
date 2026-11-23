@@ -1072,6 +1072,21 @@ describe("the Developer API routes (ADR 0042)", () => {
     expect(res?.status).toBe(401);
   });
 
+  // A page on an organizer's own site cannot call the API from the visitor's
+  // browser: an Origin that is not this site's is refused before the handler
+  // runs, on the public routes too. Organizers call from their own server
+  // (docs/runbooks/developer-api.md, "How an organizer connects").
+  it.each(
+    Object.entries(V1).flatMap(([route, verbs]) => verbs.map((verb) => [route, verb])),
+  )("%s %s refuses another site's Origin with 403 before any guard or handler", async (route, method) => {
+    const [options] = find(route);
+    clearGuards();
+    const res = await invoke(options, makeRequest({ method, origin: "https://organizer.example" }));
+    expect(res?.status).toBe(403);
+    expect(guardCalls()).toBe(0);
+    expect(res.headers?.["Access-Control-Allow-Origin"]).toBeUndefined();
+  });
+
   it.each(
     Object.entries(ADMIN).flatMap(([route, verbs]) =>
       Object.entries(verbs).map(([verb, role]) => [route, verb, role]),

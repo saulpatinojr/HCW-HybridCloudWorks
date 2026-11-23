@@ -90,6 +90,23 @@ applies that pattern to a second machine caller: event organizers.
 - **A new public surface.** The public CfS submit endpoint needs rate limiting
   and abuse controls; spam proposals are the known risk, mitigated by per-IP
   and per-call limits rather than by requiring a key.
+- **Organizers call from a server, never from a browser on their own site
+  (added in the pre-merge review of #1754).** The API refuses, with `403`, a
+  browser request whose `Origin` (the site the page came from) is not this
+  site's own; that is the site-wide rule in `functions/src/lib/auth/cors.js`
+  and this decision does not widen it. So an organizer's "submit a talk" form
+  posts to the organizer's own server, which sends the proposal on. Accepted:
+  an organizer needs a server; a static page alone cannot use the API.
+- **The key that owns a call is not counted per visitor on that call (same
+  review).** A relaying server sends every proposal from one address, and the
+  per-IP limit of 5 an hour would hold a whole event to 5. A proposal sent
+  with the key that opened the call, holding `cfs:manage`, skips the per-IP
+  limit only; the per-call limit (100 an hour), the per-key limit, the size
+  cap, the origin check and the open-call check still apply. A request with
+  no key is handled as before, and a key that does not own the call gets
+  nothing. Accepted: a leaked key, or an organizer's form with no limit of
+  its own, can put up to 100 proposals an hour on that organizer's own call.
+  It reaches no other call, and rotating or revoking the key stops it.
 - **Key leak blast radius is one organizer's own events.** A leaked key cannot
   publish, cannot reach settings or secrets, and cannot touch another
   organizer's data.
