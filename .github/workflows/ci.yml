@@ -502,11 +502,15 @@ jobs:
       # and scripts/ideas/idea-notes.mjs named above redundant; they stay so
       # each one keeps its reason beside it. The other entries (onboard.yml,
       # the .azure files and the docs/content/ folder) are not redundant.
+      # .github/workflows/ is listed whole (#1795): credentials/register.test.js
+      # reads every workflow to hold the register's list of who uses the
+      # GitHub App key to the files, so a workflow that starts or stops
+      # reading the key runs this row.
       - name: Detect changes for the functions (azure) row
         id: functions
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|docs/content/|scripts/ideas/idea-notes\.mjs$|scripts/|frontend/(src|scripts|public)/|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
+          FILTER: '^(functions/|\.github/workflows/|\.azure/(api-surface|agent-protocol)\.json|infra/|docs/content/|scripts/ideas/idea-notes\.mjs$|scripts/|frontend/(src|scripts|public)/|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
           # As for the frontend row.
           WORKFLOW_SELF_TRIGGER: 'true'
         run: |
