@@ -57,6 +57,9 @@ const WRITE_ATTEMPTS = 2;
 /** The most proposals one erasure search answers. One speaker has a handful; past this the answer says so. */
 export const MAX_PROPOSALS_FOUND = 200;
 
+const NO_EVENT_ID =
+  'This proposal record is malformed: it has no event id, so it cannot be deleted from here. Remove it by hand in the database (the developer_events container).';
+
 const json = (status, body) => ({
   status,
   headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
@@ -325,6 +328,11 @@ export function createDeveloperApiAdminHandlers({
         );
         const found = (rows || [])[0];
         if (!found) return json(200, { ok: true, id: submissionId, deleted: false });
+        // A proposal is stored under its event's id, and the delete needs it to find the record. Every
+        // proposal the API writes has one, so a row without it was edited by hand.
+        if (typeof found.eventId !== 'string' || !found.eventId) {
+          return json(409, { ok: false, code: 'MALFORMED_RECORD', error: NO_EVENT_ID });
+        }
         try {
           await store.deleteDocIfMatch(CFS_CONTAINER, submissionId, found._etag, found.eventId);
         } catch (error) {

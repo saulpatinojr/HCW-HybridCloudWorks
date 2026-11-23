@@ -69,6 +69,9 @@ export const isEventId = (value) => typeof value === 'string' && EVENT_ID_RE.tes
 export const isSubmissionId = (value) => typeof value === 'string' && UUID_RE.test(value);
 
 const CURSOR_RE = /^[A-Za-z0-9_-]+$/;
+// The database's continuation value travels back to it in a request header, and Node refuses a header value
+// with a line break or a character outside Latin-1 by throwing. Printable ASCII only keeps that a 400 here.
+const TOKEN_RE = /^[\x20-\x7E]+$/;
 const BAD_CURSOR = 'cursor is not valid. Send the nextCursor of the previous answer unchanged, with the same status filter.';
 
 /**
@@ -93,7 +96,7 @@ export function decodeListCursor(value, status = null) {
   } catch {
     throw new DeveloperApiInputError(BAD_CURSOR);
   }
-  if (!isObject(parsed) || parsed.v !== 1 || typeof parsed.t !== 'string' || !parsed.t || (parsed.s ?? null) !== status) {
+  if (!isObject(parsed) || parsed.v !== 1 || typeof parsed.t !== 'string' || !TOKEN_RE.test(parsed.t) || (parsed.s ?? null) !== status) {
     throw new DeveloperApiInputError(BAD_CURSOR);
   }
   return parsed.t;

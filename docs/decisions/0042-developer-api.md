@@ -153,7 +153,11 @@ new container, setting or secret, and still no route that publishes.
   `cursor`, and answers `nextCursor`, which is null on the last page. The
   cursor wraps the database's own continuation value with the status filter
   it was made for; a cursor that is malformed, was made for another filter or
-  is no longer recognised is a `400`, never a `500`.
+  is no longer recognised is a `400`, never a `500`. The value inside a
+  cursor must be printable ASCII (letters, digits, punctuation and spaces):
+  it is sent back to the database in a request header, and a line break or
+  other character there would be refused by the runtime with an error that
+  is not a `400`.
 - **Refusals that cost nothing to repeat are capped.** A wrong secret under a
   real key id, a revoked key and a key over its limit each wrote an audit row
   per request, with no limit, and a key id is not secret. They are now
@@ -165,6 +169,18 @@ new container, setting or secret, and still no route that publishes.
   the audit log, not the request count; a bound on requests would have to
   count every caller before the key is read, which Phase 1 does not do. The
   Koda key's guard (ADR 0037) has the same gap and is not changed here.
+  Accepted too: the three kinds of refusal share the one counter, so ten
+  wrong keys sent under a known id use up that minute's rows, and a revoked
+  key or a key over its limit in the same minute gets no row of its own. So
+  that this is visible, the first refusal past the cap writes one row,
+  `developer_api_refusal_cap_reached`, with the key id only; after it the
+  minute is silent.
+- **Timing is not equalised.** A missing, wrong or revoked key gets the same
+  status and the same sentence, so the answer itself does not say whether a
+  key id exists. A refusal on a real id also waits for its counter and its
+  audit row, so it takes longer than one on an id that names nothing, and a
+  caller who measures response times could tell the two apart. Accepted: a
+  key id is 64 random bits and is not treated as a secret.
 
 Left as they were, on purpose:
 

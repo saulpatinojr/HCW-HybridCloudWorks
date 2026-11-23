@@ -123,8 +123,9 @@ describe('audit.js (AP-B4, #939)', () => {
       expect(doc.id).toBe('audit-uuid-1');
     });
 
-    it('catches store errors gracefully and warns rather than throwing', async () => {
-      const store = { upsertDoc: vi.fn(async () => { throw new Error('Cosmos unavailable'); }) };
+    it('catches store errors gracefully and warns rather than throwing, with the error code and never its message', async () => {
+      const failure = Object.assign(new Error('Cosmos unavailable for document secret-id-123'), { code: 503 });
+      const store = { upsertDoc: vi.fn(async () => { throw failure; }) };
       const warn = vi.fn();
       await expect(
         recordMutationAudit(store, {
@@ -133,7 +134,10 @@ describe('audit.js (AP-B4, #939)', () => {
           context: { warn },
         })
       ).resolves.toBeDefined();
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Cosmos unavailable'));
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith('recordMutationAudit: failed to record audit row for social_post_deleted (503)');
+      expect(warn.mock.calls[0][0]).not.toContain('Cosmos unavailable');
+      expect(warn.mock.calls[0][0]).not.toContain('secret-id-123');
     });
   });
 });

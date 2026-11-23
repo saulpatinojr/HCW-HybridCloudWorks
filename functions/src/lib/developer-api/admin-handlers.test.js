@@ -326,6 +326,19 @@ describe('the organizer key admin routes (ADR 0042)', () => {
       expect(env.store.all('admin_audit_logs')).toHaveLength(1);
     });
 
+    it('answers 409 with a plain sentence for a hand-edited row that has no event id, and deletes nothing', async () => {
+      const env = seeded();
+      env.store.put(CFS_CONTAINER, { id: UUID(7), docType: 'cfs-submission', status: 'pending' });
+      const deleteDocIfMatch = vi.spyOn(env.store, 'deleteDocIfMatch');
+      const res = await env.erase(UUID(7));
+      expect(res.status).toBe(409);
+      expect(body(res)).toMatchObject({ ok: false, code: 'MALFORMED_RECORD' });
+      expect(body(res).error).toMatch(/malformed.*no event id.*by hand in the database/);
+      expect(deleteDocIfMatch).not.toHaveBeenCalled();
+      expect(env.proposals().map((doc) => doc.id)).toContain(UUID(7));
+      expect(env.store.all('admin_audit_logs')).toEqual([]);
+    });
+
     it('refuses an id that is not a UUID before any read, so a call cannot be deleted here', async () => {
       const env = seeded();
       const query = vi.spyOn(env.store, 'queryDocs');
