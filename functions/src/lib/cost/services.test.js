@@ -191,6 +191,11 @@ describe('suggestions', () => {
     expect(SUGGESTED_VENDORS.map((s) => s.name)).toContain('Publer');
     expect(SUGGESTED_VENDORS.map((s) => s.name)).toContain('ElevenLabs');
     expect(SUGGESTED_VENDORS.map((s) => s.name)).not.toContain('AWS');
+    // Paid subscriptions with no key in the catalogue are suggested too.
+    for (const name of ['Claude subscription', 'GitHub Copilot', 'Hostinger (lab host)']) {
+      expect(SUGGESTED_VENDORS.map((s) => s.name)).toContain(name);
+    }
+    expect(new Set(SUGGESTED_VENDORS.map((s) => s.vendor.toLowerCase())).size).toBe(SUGGESTED_VENDORS.length);
     expect(SUGGESTED_VENDORS.every((s) => CATEGORY_IDS.includes(s.category))).toBe(true);
     const left = suggestionsFor([{ name: 'Publer Pro', vendor: 'publer' }, { name: 'ElevenLabs', vendor: '' }]);
     expect(left.map((s) => s.name)).not.toContain('Publer');

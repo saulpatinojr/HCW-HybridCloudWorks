@@ -362,6 +362,8 @@ export const DECLARED = [
   //   threshold it drives, 0.2 -> 0.4. Applied 2026-11-22 in
   //   run-KDU2GZ8ngCB55t67, which the owner confirmed; both entries deleted
   //   here the same day.
+  // - #1768's Platform Management budget amount, 25 -> 35. Applied 2026-11-23,
+  //   owner confirmed; deleted here the same day.
   //
   // The weekly AI provider probe's timer flag (#701): the key applied disarmed
   // ('false', present in state since the 2026-10-06 runs); adding
