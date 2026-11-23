@@ -11,17 +11,17 @@
 export default {
   examCode: 'AB-620',
   title:
-    'Study guide for Exam AB-620: Designing and Building Integrated AI Agent Solutions in Copilot Studio',
+    'Study guide for Exam AB-620: Designing and Building Integrated AI Solutions in Copilot Studio',
   sourceUrl:
     'https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/ab-620',
   areas: [
     {
       name: 'Plan and configure agent solutions',
       slug: 'plan-and-configure-agent-solutions',
-      anchor: 'plan-and-configure-agent-solutions-3035',
-      weightLabel: '30–35%',
-      weightLow: 30,
-      weightHigh: 35,
+      anchor: 'plan-and-configure-agent-solutions-5055',
+      weightLabel: '50–55%',
+      weightLow: 50,
+      weightHigh: 55,
       sections: [
         {
           title: 'Plan an agent solution',
@@ -31,33 +31,36 @@ export default {
             'Plan channels and deployment',
             'Plan responsible AI strategy',
             'Evaluate security and governance considerations',
-            'Plan reuseable agent components',
+            'Plan reusable agent components',
             'Design agents for internal or external audiences',
           ],
         },
         {
-          title: 'Create and monitor agent flows in Copilot Studio',
+          title: 'Create and configure workflows',
           objectives: [
-            'Create an agent flow',
-            'Create a human-in-the-loop agent flow',
+            'Create a workflow',
+            'Create a human-in-the-loop workflow',
             'Configure actions and connectors',
-            'Monitor agent flows',
+            'Monitor workflow runs',
             'Add input and output parameters',
-            'Implement error handling in agent flows',
+            'Implement error handling in workflows',
           ],
         },
         {
-          title: 'Configure topics',
+          title: 'Create and manage skills',
           objectives: [
-            'Add agent flows to a topic',
-            'Configure agent response formatting',
-            'Add tools to a topic',
-            'Configure advanced agent responses with custom prompts',
-            'Configure advanced agent responses with custom knowledge sources',
-            'Configure advanced agent responses with API and Send HTTP requests',
-            'Configure generative answers node',
-            'Configure adaptive cards',
-            'Manage variables',
+            'Create a new skill',
+            'Upload a skill',
+            'Reference tools and connected agents from within skill instructions',
+          ],
+        },
+        {
+          title: 'Configure agent identity, instructions, and behavior',
+          objectives: [
+            'Reference skills, tools, and connected agents from within agent instructions',
+            'Configure safety and access settings',
+            'Enable and manage memory for user-specific context',
+            'Select and configure AI models',
           ],
         },
       ],
@@ -66,44 +69,27 @@ export default {
     {
       name: 'Integrate and extend agents in Copilot Studio',
       slug: 'integrate-and-extend-agents-in-copilot-studio',
-      anchor: 'integrate-and-extend-agents-in-copilot-studio-4045',
-      weightLabel: '40–45%',
-      weightLow: 40,
-      weightHigh: 45,
+      anchor: 'integrate-and-extend-agents-in-copilot-studio-2025',
+      weightLabel: '20–25%',
+      weightLow: 20,
+      weightHigh: 25,
       sections: [
         {
-          title: 'Connect to enterprise knowledge sources',
+          title: 'Extend agents by using tools and enterprise data',
           objectives: [
             'Connect to Copilot connectors',
-            'Connect to Microsoft Power Platform connectors',
-            'Connect to Azure AI Search',
+            'Configure MCP servers as tools',
+            'Configure connectors as tools',
+            'Configure workflows as tools',
+            'Connect to Foundry IQ',
+            'Connect to Fabric IQ',
           ],
         },
         {
-          title: 'Add tools to agents',
-          objectives: [
-            'Configure and monitor computer use for an agent',
-            'Configure MCP tools',
-            'Add a tool by using an existing custom connector',
-            'Add REST APIs to an agent',
-          ],
-        },
-        {
-          title: 'Configure multi-agent collaboration from Copilot Studio',
+          title: 'Configure multi-agent collaboration in Copilot Studio',
           objectives: [
             'Design multi-agent solutions in Copilot Studio',
-            'Integrate a Foundry agent',
-            'Integrate an existing agent in Copilot Studio',
-            'Integrate a Fabric data agent',
-            'Create a multi-agent solution by using A2A protocol',
-          ],
-        },
-        {
-          title: 'Integrate agents with Azure',
-          objectives: [
-            'Configure generative answers by using Azure AI Search with Foundry',
-            'Configure custom prompts to use the Foundry model catalog',
-            'Monitor agents by using Application Insights',
+            'Integrate an existing Copilot Studio agent',
           ],
         },
       ],
@@ -112,14 +98,19 @@ export default {
     {
       name: 'Test and manage agents',
       slug: 'test-and-manage-agents',
-      anchor: 'test-and-manage-agents-2025',
-      weightLabel: '20–25%',
-      weightLow: 20,
-      weightHigh: 25,
+      anchor: 'test-and-manage-agents-2530',
+      weightLabel: '25–30%',
+      weightLow: 25,
+      weightHigh: 30,
       sections: [
         {
           title: 'Evaluate agent performance',
-          objectives: ['Create a test set', 'Choose an evaluation method', 'Review test results'],
+          objectives: [
+            'Create a test set',
+            'Choose an evaluation method',
+            'Review test results',
+            'Evaluate AI model candidates for an agent',
+          ],
         },
         {
           title: 'Implement application lifecycle management (ALM) for agents in Copilot Studio',
@@ -127,7 +118,7 @@ export default {
             'Create a solution',
             'Add existing agents to a solution',
             'Create and use environment variables',
-            'Implement and extend Microsoft Power Platform Pipelines',
+            'Implement and extend Pipelines in Microsoft Power Platform',
           ],
         },
       ],
