@@ -444,35 +444,23 @@ and attests. Where each sum comes from:
   a note in the weekly issue instead, and a hand bump by this section. The
   `ansible-lint (lab-host)` and `lab-host role tests` jobs in `.github/workflows/ci.yml` pin their own
   ansible-core (the same line in both) and move by hand.
-- PyYAML is the one exception to "wheels only", for now
-  ([#1505](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1505)).
-  PyYAML 6.0.3 publishes no wheel for CPython 3.15, and PyPI no longer
-  accepts new files on an old release
-  ([yaml/pyyaml#951](https://github.com/yaml/pyyaml/issues/951)), so the
-  fetch stage builds the wheel itself from PyPI's source archive, verified
-  by `PYYAML_SDIST_SHA256`, with the build tools in `PYYAML_BUILD_DEPS`
-  installed as hash-checked wheels first (pip checks them against the
-  archive's own build requirements with `--check-build-dependencies`) and
-  the build step run with no network at all (`RUN --network=none`,
-  `pip wheel --no-build-isolation --no-index`). libyaml, the C
-  library behind PyYAML's fast loader, is linked in statically from
-  Debian's `libyaml-dev`, because the runner carries no libyaml shared
-  library. The built wheel's own SHA256 replaces the `pyyaml` line in the
-  runner's requirements file, so the runner's offline `--require-hashes`
-  install is unchanged; the `pyyaml` line in `ANSIBLE_CORE_DEPS` stays for
-  the lab host, which installs PyPI's wheel. The build fails if the wheel is
-  not a compiled `cp3xx` wheel, if its extension links libyaml dynamically,
-  or if `yaml.__with_libyaml__` is false, and the smoke test checks the
-  shipped image the same way. A separate `pyyaml-wheel` stage holds only the
-  built wheel, so `docker build --target pyyaml-wheel --output
-  type=local,dest=<dir> lab-image` writes the file to a directory for the
-  host side. To bump PyYAML, move `PYYAML_VERSION` and the `pyyaml` line in
-  `ANSIBLE_CORE_DEPS` together (the build stops when they differ) and read
-  `PYYAML_SDIST_SHA256` from the `sdist` file in
-  `https://pypi.org/pypi/pyyaml/<version>/json`. All of this is temporary
-  and goes the day PyYAML publishes a wheel for the base's Python; the one
-  list of what to delete is in the
-  [PyYAML wheel runbook](../docs/runbooks/pyyaml-wheel.md#deleting-it-when-pyyaml-ships-a-wheel).
+- PyYAML is one of those `ANSIBLE_CORE_DEPS` lines, and one to look at
+  twice when it moves. The image has no libyaml (the C library behind
+  PyYAML's fast loader), so the wheel must carry it inside. PyPI's
+  `manylinux` wheels do: for 6.0.4, `readelf -d` on the wheel's
+  `yaml/_yaml*.so` listed only libc and libpthread (checked 2026-11-23,
+  [#1778](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1778)).
+  `smoke.sh` proves it on every build with its
+  `PyYAML <version> with the libyaml C loader` line, which fails when the
+  installed PyYAML is another version or has no C loader. ansible-core asks
+  for `PyYAML>=5.1`, a range, so the weekly pin bot checks this line's hash
+  against PyPI but does not move it; a newer PyYAML is a hand bump by the
+  bullet above, taking the `cp3NN-cp3NN-manylinux…x86_64` wheel's hash for
+  the base's Python. Until 2026-11-23 the image built PyYAML 6.0.3 from
+  source, because that release had no wheel for CPython 3.15
+  ([#1505](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1505));
+  the [PyYAML wheel page](../docs/runbooks/pyyaml-wheel.md) keeps that
+  history.
 - Azure CLI: `AZURE_CLI_VERSION` is the upstream release, the newest package
   `Version` in
   `https://packages.microsoft.com/repos/azure-cli/dists/bookworm/main/binary-amd64/Packages`
