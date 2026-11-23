@@ -408,7 +408,7 @@ const OTHER_ENTRIES = [
     name: "MANIFEST_APP_PRIVATE_KEY",
     store: "github-actions",
     consumer:
-      "publish-content-manifest.yml, update-avm-versions.yml, update-learn-catalogue.yml, update-version-floors.yml",
+      "cloudflare-ranges.yml, lab-supply-chain.yml, publish-content-manifest.yml, publish-lab-image.yml, update-avm-versions.yml, update-learn-catalogue.yml, update-version-floors.yml",
     issuer: "GitHub App (MANIFEST_APP_ID)",
     renewal: "hand",
     lifetimeDays: HAND_ROTATION_DAYS,
