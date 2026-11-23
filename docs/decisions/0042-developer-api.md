@@ -136,6 +136,32 @@ new container, setting or secret, and still no route that publishes.
   the version that was read, is safe to repeat, and writes an audit row with
   the status and no personal data. **Still open, the owner's decision:** how
   long a proposal is kept after its call closes. Nothing expires today.
+- **The admin search leaves an audit row (owner decision, 2026-11-23).** As
+  first built, the search by a speaker's email address wrote nothing, so
+  nothing recorded who had looked a person up. The owner decided it should.
+  Each search that runs now writes one row to `admin_audit_logs`, with the
+  same helper and shape as the delete's row: action
+  `developer_cfs_proposal_search`, the signed-in admin as the actor, and
+  `details: { count, truncated }` (how many proposals were found, and whether
+  the list was cut short at 200). **What is left out, and why:** the address
+  searched for, any part of it, and any hash of it (a hash is a scrambled form
+  of a value; one made from an email address can be guessed back by hashing
+  likely addresses, so it is still personal data), because an audit row is
+  written to be kept, and an erasure request must not leave the person's
+  address behind in the log of the request; and the proposals' ids, because they point
+  straight at that person's records. The row's `resourceId` is `null` for the
+  same reason. The cost is that the log shows that a search happened and by
+  whom, not whom it was for; the speaker's request is the record of that.
+  **A search refused before it runs** (no super_admin role, a malformed
+  address) writes no row, the same as every other refused admin call; no
+  second mechanism was added. **If the row cannot be written,** the search
+  still answers: the shared `audit` helper in `admin-handlers.js` catches the
+  failure and logs one line with no details, as it does for the key routes and
+  the delete. Failing the search instead was rejected: every neighbouring
+  route treats the audit row as best effort, and an erasure request that
+  cannot start because the audit container is briefly unavailable is the
+  worse outcome. A missing row therefore shows as that log line, not as a
+  refused search.
 - **A call takes proposals only while its key works.** Before a proposal is
   counted against a call or stored, the record of the key that owns the call
   is read, and a revoked or missing key is answered the same `404` as a

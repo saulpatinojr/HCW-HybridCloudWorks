@@ -344,6 +344,10 @@ Every keyed write writes a row too: `developer_cfs_opened`,
 `developer_cfs_submission_deleted` (with the status only; the proposal's text
 and the speaker's email stay out of the audit log), `developer_cfs_submission_erased`
 when the owner deletes one from the admin (the event and the status only),
+`developer_cfs_proposal_search` when the owner searches for a speaker's
+proposals from the admin (the number found and whether the list was cut
+short; never the address searched for, see
+[Delete a speaker's proposals](#delete-a-speakers-proposals-an-erasure-request)),
 and for keys `developer_api_key_generated`, `_rotated`, `_changed`, `_revoked`
 (with the key's hint, never its value).
 
@@ -437,7 +441,22 @@ from the organizer's list.
 
 Each delete writes one row to the audit log, `developer_cfs_submission_erased`,
 with the proposal's id, the event's id and its status. The speaker's address
-and what they wrote are not in the row. The search writes nothing.
+and what they wrote are not in the row.
+
+Each search writes one row too, `developer_cfs_proposal_search` (owner
+decision 2026-11-23), so there is a record of who looked a person up. The row
+says who searched (the signed-in admin, as on every admin row), when, how many
+proposals were found (`details.count`) and whether the list was cut short at
+200 (`details.truncated`). It does not hold the address that was searched for,
+any part of it or a hash of it (a hash is a scrambled form of a value, and one
+made from an email address can be guessed back), and it does not hold the
+proposals' ids. So the audit log can show that a search happened, not whom it
+was for; keep the speaker's request itself as the record of that. A search
+that is refused before it runs (no super_admin role, or an address that is not
+an email address) writes no row. If the row cannot be written, the search
+still answers and the function log gets the line
+`[developer-api] audit row developer_cfs_proposal_search failed`; the same is
+true of every row in this section.
 
 ### With the organizer's key (their own call only)
 

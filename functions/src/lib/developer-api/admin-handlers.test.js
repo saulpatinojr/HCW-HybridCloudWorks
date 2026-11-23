@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { createDeveloperApiAdminHandlers, READ_ROLE, WRITE_ROLE } from './admin-handlers.js';
@@ -264,17 +265,79 @@ describe('the organizer key admin routes (ADR 0042)', () => {
       for (const text of ['grace@example.com', 'Grace Hopper', 'A bio.', 'Running Arc', 'A lab story.']) {
         expect(res.body).not.toContain(text);
       }
-      // A read: no audit row, and nothing deleted.
-      expect(env.store.all('admin_audit_logs')).toEqual([]);
+      // A read: nothing deleted.
       expect(env.proposals()).toHaveLength(3);
+    });
+
+    it('writes one audit row per search: who, how many, cut short or not, and nothing else', async () => {
+      const env = seeded();
+      await env.find('grace@example.com');
+      const rows = env.store.all('admin_audit_logs');
+      expect(rows).toHaveLength(1);
+      const { _etag, ...row } = rows[0];
+      expect(row).toEqual({
+        id: expect.any(String),
+        timestamp: '2026-11-21T10:00:00.000Z',
+        action: 'developer_cfs_proposal_search',
+        userId: ADMIN.oid,
+        userEmail: ADMIN.email,
+        resourceType: 'developer_cfs_submission',
+        resourceId: null,
+        details: { count: 2, truncated: false },
+        userAgent: null,
+        compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true },
+      });
+      // A search that finds nothing is still a look-up, so it is recorded too.
+      await env.find('nobody@example.com');
+      expect(env.store.all('admin_audit_logs').map((doc) => doc.details)).toEqual(
+        expect.arrayContaining([{ count: 0, truncated: false }]),
+      );
+      expect(env.store.all('admin_audit_logs')).toHaveLength(2);
+    });
+
+    it('keeps the address, every part of it, its hash and the proposal ids out of the audit call', async () => {
+      const env = seeded();
+      const upsertDoc = vi.spyOn(env.store, 'upsertDoc');
+      const address = 'grace@example.com';
+      await env.find(`  ${address.toUpperCase()} `);
+      const auditCalls = upsertDoc.mock.calls.filter(([container]) => container === 'admin_audit_logs');
+      expect(auditCalls).toHaveLength(1);
+      const text = JSON.stringify(auditCalls[0]).toLowerCase();
+      const hashes = ['sha256', 'sha1', 'md5'].flatMap((algorithm) =>
+        ['hex', 'base64', 'base64url'].map((encoding) =>
+          createHash(algorithm).update(address).digest(encoding).toLowerCase(),
+        ),
+      );
+      // The local part stands for "any part": the domain is also the test admin's own, which the row holds as the actor.
+      for (const banned of [address, 'grace', ...hashes, UUID(1), UUID(2), 'cloud-day-2027', 'other-day-2027']) {
+        expect(text).not.toContain(banned);
+      }
+      // Only these two facts about the search are in the row.
+      expect(Object.keys(auditCalls[0][1].details).sort()).toEqual(['count', 'truncated']);
+    });
+
+    it('still answers the search when the audit row cannot be written, and logs a line with no details', async () => {
+      const env = seeded();
+      const upsertDoc = env.store.upsertDoc;
+      env.store.upsertDoc = async (container, ...rest) => {
+        if (container === 'admin_audit_logs') throw new Error('cosmos down for grace@example.com');
+        return upsertDoc(container, ...rest);
+      };
+      const res = await env.find('grace@example.com');
+      expect(res.status).toBe(200);
+      expect(body(res)).toMatchObject({ ok: true, count: 2, truncated: false });
+      expect(env.log.error.mock.calls).toEqual([['[developer-api] audit row developer_cfs_proposal_search failed']]);
     });
 
     it('answers an empty list for an address with no proposals, and 400 for a bad or missing address', async () => {
       const env = seeded();
       expect(body(await env.find('nobody@example.com'))).toMatchObject({ proposals: [], count: 0 });
+      expect(env.store.all('admin_audit_logs')).toHaveLength(1);
       expect((await env.find('not-an-address')).status).toBe(400);
       expect((await env.find(undefined)).status).toBe(400);
       expect((await env.handlers.findProposals(makeRequest({ method: 'POST', body: 'not json' }), ctx)).status).toBe(400);
+      // A search refused for its input never ran, so it leaves no row.
+      expect(env.store.all('admin_audit_logs')).toHaveLength(1);
       env.store.queryDocs = async () => undefined;
       expect(body(await env.find('grace@example.com'))).toMatchObject({ proposals: [], count: 0, truncated: false });
     });
@@ -288,6 +351,7 @@ describe('the organizer key admin routes (ADR 0042)', () => {
       const answer = body(await env.find('grace@example.com'));
       expect(answer.count).toBe(200);
       expect(answer.truncated).toBe(true);
+      expect(env.store.all('admin_audit_logs').map((doc) => doc.details)).toEqual([{ count: 200, truncated: true }]);
     });
 
     it('deletes one proposal by id, whoever owns the call, and leaves the rest and the call', async () => {
@@ -392,6 +456,7 @@ describe('the organizer key admin routes (ADR 0042)', () => {
       expect((await env.erase(UUID(1))).status).toBe(403);
       expect(query).not.toHaveBeenCalled();
       expect(env.proposals()).toHaveLength(3);
+      expect(env.store.all('admin_audit_logs')).toEqual([]);
     });
   });
 });
