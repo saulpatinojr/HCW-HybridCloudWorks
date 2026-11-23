@@ -31,12 +31,12 @@ export default {
             'Configure embedded Dynamics 365 Contact Center mode',
             'Configure Copilot for third-party CCaaS solutions',
             'Enable agent simulation to evaluate journeys',
-            'Enable the Health Agent to proactively investigate issues',
+            'Enable the Diagnose Dashboard to proactively investigate issues',
             'Enable agents to perform transformation, environment migration, and configuration',
           ],
         },
         {
-          title: 'Deploy Dynamics 365 Contact Center',
+          title: 'Administer Dynamics 365 Contact Center',
           objectives: [
             'Manage and roll out agents by using the Agent hub',
             'Create solutions for Dynamics 365 Contact Center deployments',
@@ -256,6 +256,7 @@ export default {
           objectives: [
             'Configure supervisor settings',
             'Configure the Quality Evaluation agent',
+            'Configure the Quality Assurance agent',
             'Configure access to analytics and dashboards',
             'Perform supervisor actions for conversations',
             'Configure the supervisor app',

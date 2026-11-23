@@ -29,7 +29,7 @@ export default {
             'Evaluate built-in agents to include in the business solution',
             'Recommend extensibility options',
             'Recommend environment types',
-            'Apply a Microsoft Power Platform solution and ALM strategy',
+            'Deploy a Microsoft Power Platform solution and ALM strategy',
           ],
         },
         {
