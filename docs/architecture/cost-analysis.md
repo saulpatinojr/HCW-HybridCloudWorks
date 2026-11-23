@@ -147,7 +147,7 @@ Platform Management subscription: **USD 2.49**.
 | **Total** | | **$2.49** |
 
 **Combined: USD 36.81 a month**, about a quarter of the USD 150 application
-ceiling, with Platform Management at about a tenth of its USD 25.
+ceiling, with Platform Management at about a tenth of the USD 25 budget it had then (USD 35 since 2026-11-22).
 
 ### The gap against the estimate, and what drives it
 
