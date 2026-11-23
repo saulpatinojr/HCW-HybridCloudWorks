@@ -555,13 +555,15 @@ variable "budget_amount_usd" {
 # actually varies with load (ingestion, at roughly USD 2.30-2.76/GB) was the
 # one line nothing was watching. The 0.5 GB/day cap (since 2026-11-22) is at most
 # about 15 GB/month, roughly USD 26 with retention if the cap were hit every
-# day, so 25 is reached only when the cap is, and it fires early if the cap is
-# ever raised again without the spend being thought about. At the ~0.3 GB/day
-# measured then, the expected spend is about half of it.
+# day. 35 since 2026-11-22 (owner decision, from 25): at the ~0.3 GB/day
+# measured then the expected spend is USD 11-13, which crossed the 50% mail of
+# a 25 budget most months and taught the inbox to ignore it. At 35 the 50%
+# mail (17.50) means more than today's volume, and 100% is still reached only
+# if the cap is raised again without the spend being thought about.
 variable "budget_amount_mgmt_usd" {
   description = "Monthly budget ceiling in USD for the Platform Management subscription — Log Analytics ingestion and retention"
   type        = number
-  default     = 25
+  default     = 35
 }
 
 variable "budget_alert_email" {
