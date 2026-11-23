@@ -229,11 +229,14 @@ jobs:
           RG: ${{ vars.RESOURCE_GROUP }}
         run: |
           set -euo pipefail
-          RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org)
-          if [[ ! "${RUNNER_IP}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "::error::ipify.org returned invalid IPv4: '${RUNNER_IP}' (PLAT-10, #970)"
-            exit 1
-          fi
+          # The runner asks a third party for its own public address, and the
+          # answer goes into a firewall rule below. scripts/assert-ipv4.mjs is
+          # the one shared check (deploy-functions.yml uses it too): it prints
+          # the address back only when it is four numbers from 0 to 255, and
+          # otherwise fails this step with what arrived. Two lines, never
+          # `curl | node`; the script's header says why (PLAT-10, #970, #1778).
+          RUNNER_IP_RAW=$(curl -sS --max-time 10 https://api.ipify.org)
+          RUNNER_IP=$(node scripts/assert-ipv4.mjs <<<"${RUNNER_IP_RAW}")
           RULE="ci-manifest-${GITHUB_RUN_ID}"
           # Written before the add, so the close step knows the rule's name even
           # if the add succeeds in Azure and this step is then stopped by its
