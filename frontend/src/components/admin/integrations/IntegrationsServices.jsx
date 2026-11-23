@@ -21,6 +21,7 @@ import ServiceCard from './ServiceCard';
 import CloudPricingRefresh from './CloudPricingRefresh';
 import CoderAutomation from './CoderAutomation';
 import ClaudeCodeNote from './ClaudeCodeNote';
+import { CopilotReviewNote, HostingerMcpNote, ReplicateMcpNote } from './ListedCredential';
 import SessionizeSetting, { useSpeakerId } from './SessionizeSetting';
 import StreamYardOnAirPanel from './StreamYardOnAirPanel';
 import useSecretStatus from './useSecretStatus';
@@ -58,7 +59,13 @@ function GroupPicker({ groups, active, onChange }) {
  * box (ServiceCard). Built only for a card that names one, so a card
  * without key groups never loads what it would not show.
  */
-const KEY_GROUP_PANELS = { coderAutomation: CoderAutomation, claudeCode: ClaudeCodeNote };
+const KEY_GROUP_PANELS = {
+  coderAutomation: CoderAutomation,
+  claudeCode: ClaudeCodeNote,
+  replicateMcp: ReplicateMcpNote,
+  hostingerMcp: HostingerMcpNote,
+  copilotReview: CopilotReviewNote,
+};
 
 function panelsFor(service) {
   const names = (service.keyGroups ?? []).map((group) => group.panel).filter(Boolean);

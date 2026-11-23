@@ -49,7 +49,6 @@ export const BRANDS = Object.freeze({
   'google-developer': { name: 'Google', color: '#4285F4', site: 'https://developers.google.com' },
   nvidia: { name: 'NVIDIA', color: '#76B900', site: 'https://www.nvidia.com' },
   foundry: { name: 'Microsoft Foundry', color: '#0078D4', site: 'https://ai.azure.com' },
-  foundry: { name: 'Microsoft Foundry', color: '#0078D4', site: 'https://ai.azure.com' },
   azure: { name: 'Microsoft Azure', color: '#0078D4', site: 'https://azure.microsoft.com' },
   'azure-speech': {
     name: 'Azure AI Speech',
@@ -112,6 +111,18 @@ export const BRANDS = Object.freeze({
   coder: { name: 'Coder', color: '#000000', onDark: '#FFFFFF', site: 'https://coder.com' },
   linkie: { name: 'Linkie', color: '#7C3AED', site: 'https://linkie.app', approximate: true },
   qlty: { name: 'Qlty', color: '#3B82F6', site: 'https://qlty.sh', approximate: true },
+  'copilot-review': {
+    name: 'GitHub Copilot',
+    color: '#24292F',
+    onDark: '#F0F6FC',
+    site: 'https://github.com',
+  },
+  hostinger: {
+    name: 'Hostinger',
+    color: '#673DE6',
+    site: 'https://www.hostinger.com',
+    approximate: true,
+  },
 });
 
 /**
