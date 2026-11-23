@@ -135,6 +135,8 @@ Google side:
 | `lab_hybrid_policy_enabled` | `false` | Creates the audit-only Linux security baseline policy assignment on `rg-lab-hybrid-prod-cus` (#663). **MISSING.** Set `true` (HCL on): ADR 0032 decision 3 makes machine configuration audit only, and #663's acceptance is a compliance state. The first run of `scripts/lab/Register-LabArc.ps1` grants the run identity Resource Policy Contributor on that group and then prints this variable; true before that grant fails the apply with `AuthorizationFailed`. [Labs host runbook](../runbooks/labs-host.md), "Arc onboarding", steps 2 and 3 |
 | `storage_firewall_remover_enabled` | `false` | **MISSING** (2026-11-04, #1463). Creates the *HCW Storage Firewall Writer* assignment for the hourly window remover, and the lookup of that role. Set `true` only AFTER the role exists (§4.6b): a lookup of a role that does not exist hung the workspace's one plan slot for over twelve minutes on 2026-11-04 with every other run queued behind it, which is why the lookup is gated rather than always on. Until then the remover's Function App half runs and its storage half reports `AuthorizationFailed` |
 | `lab_arc_run_command_enabled` | `false` | **MISSING** (2026-11-09, #1590). Creates the *HCW Arc Run Command Operator* assignment on `rg-lab-hybrid-prod-cus` for `github_arc_run`, the identity `lab-host-arc-run.yml` signs in as, and the lookup of that role. Set `true` only AFTER the role exists (§4.6b), for the reason given on `storage_firewall_remover_enabled` above. Until then the workflow signs in and its Run Command step fails with `AuthorizationFailed`. Setting it back to `false` is how to take Run Command away from CI without touching the host ([ADR 0032, amendment of 2026-11-09](../decisions/0032-learner-labs-platform.md)) |
+| `muse_reader_enabled` | `false` | **MISSING** (2026-11-22, #1763). Creates Muse's read-only app registration `sp-muse-reader-plat-prod-cus-01` (`infra/muse-reader.tf`): the app, its service principal, a client secret that works for 210 days (rotation reminder at 180) and built-in Reader on the application, management and connectivity subscriptions. Set `true` only AFTER the run identity `id-plat-terraform-prod-cus-01` holds the Entra role **Application Developer**: infra/ had no Entra objects before this, and without the role the apply fails at the first Entra create. Setting it back to `false` deletes the app and all three grants, which is the full revoke. [Muse Azure reader runbook](../runbooks/muse-azure-reader.md), "Turn it on"; [ADR 0043](../decisions/0043-muse-azure-reader.md) |
+| `muse_reader_secret_generation` | `1` | Raise by one to replace Muse's client secret on the next apply (#1763), for example after a suspected leak; the old one stops working in the same apply. It is the only thing that replaces the secret, so do it on the 180-day reminder too. Same runbook, "Rotate the secret" |
 | `cloudflare_origin_secret` | — (sensitive) | Must match Key Vault `CF-ORIGIN-SECRET` exactly; a mismatch throws on every anonymous request |
 | `arc_onboarding_principal_id` | `null` | **MISSING.** Object id (not the appId) of `sp-arc-onboarding-lab-hybrid-prod-cus`, which the first run of `scripts/lab/Register-LabArc.ps1` creates and prints this value for; set, it plans the principal's only grant, Azure Connected Machine Onboarding on `rg-lab-hybrid-prod-cus` (#663). Not sensitive, HCL off, lower case. [Labs host runbook](../runbooks/labs-host.md), "Arc onboarding", steps 2 and 3 |
 | `cloudflare_account_id` | `null` | **MISSING** (2026-10-20, #1302). The Cloudflare account that owns the zone: 32 lowercase hex characters, an identifier and not a credential, the same value the `CLOUDFLARE_ACCOUNT_ID` repository variable holds (§4.2) and the dashboard shows under API on the zone's Overview page. Set, it creates `cloudflare_web_analytics_site.hcw[0]` for `hybridcloudworks.com` with Cloudflare's lite option — which asks Cloudflare not to measure visitors in the EU; documented for the snippet Cloudflare's proxy injects, unverified for the hand-placed one this site carries, so the figure is aggregate page views, read as a floor. **EU option not yet confirmed**: after the apply the owner opens the site's Manage page in the Web Analytics dashboard, `https://dash.cloudflare.com/?to=/:account/web-analytics`, checks that the EU option shows as applied, and records the date in this row — fills the `web_analytics_site_token` and `web_analytics_site_tag` outputs (§4.10) and the `CF_WEB_ANALYTICS_SITE_TAG` and `CF_ACCOUNT_ID` app settings (§4.5). Null on purpose rather than required: the site serves no visitor-facing path, and a required variable would fail every plan — the merge's queued run, the speculative plans, `tfc-plan-check` — until the owner had typed the value in. Not sensitive, HCL off. Add Account → Account Settings → Write to `cloudflare_api_token` (above) before the apply that follows; a value of the wrong shape fails the plan on the variable's validation rather than the apply as a 404 |
@@ -552,8 +554,11 @@ writes the repository variables; nothing there is set by hand, except
 `CF_WEB_ANALYTICS_TOKEN`, which the script does not seed yet (#1302) and the
 owner copies from the `web_analytics_site_token` output.
 
-**Twenty-nine, and they live in two files.** Twenty-two in `infra/outputs.tf`
-and seven in `infra/oidc.tf`.
+**Thirty-five, and they live in three files.** Twenty-two in
+`infra/outputs.tf`, nine in `infra/oidc.tf` and four in
+`infra/muse-reader.tf`. (It read twenty-nine, with seven in `oidc.tf`, from
+#1617 until #1763 counted again and found nine there before adding the
+third file.)
 
 **This count has now been wrong four times, each in the same way**, so the
 method matters more than the number. It said twenty-three when first written,
@@ -576,7 +581,7 @@ line here, until #1302 ran the command and found twenty before adding two.
 **Count by reading the files, never by adjusting the previous number:**
 
 ```bash
-grep -c '^output "' infra/outputs.tf infra/oidc.tf
+grep -c '^output "' infra/outputs.tf infra/oidc.tf infra/muse-reader.tf
 ```
 
 It prints one line per file, not a total — which is what this section needs,
@@ -584,7 +589,8 @@ because it quotes both numbers:
 
 ```
 infra/outputs.tf:22
-infra/oidc.tf:7
+infra/oidc.tf:9
+infra/muse-reader.tf:4
 ```
 
 The total is their sum. Said explicitly because "the command that produces the
@@ -650,6 +656,20 @@ run a command on the lab host through Azure Arc (`ARC_RUN_CLIENT_ID`, a secret i
 identity that can only read the Static Web App's deployment token
 (`FRONTEND_DEPLOY_CLIENT_ID`, a secret in §4.3); `client_id` is
 `deploy-functions.yml`'s alone since then.
+
+From `infra/muse-reader.tf` (4, #1763): `muse_reader_client_id` ·
+`muse_reader_tenant_id` · `muse_reader_client_secret` ·
+`muse_reader_secret_expires`. All four read `null` until
+`muse_reader_enabled` (§4.1) is `true`. **`muse_reader_client_secret` is the
+one sensitive credential output in the configuration, on purpose**: Muse runs
+outside Azure and GitHub and cannot use a federated sign-in, so the owner asked
+for a client secret kept in Terraform state and copied once into Muse's own
+vault ([ADR 0043](../decisions/0043-muse-azure-reader.md)). It is never
+printed; the [runbook](../runbooks/muse-azure-reader.md) copies it straight to
+the clipboard. The client id and tenant id are identifiers, not secrets. Its
+renewal date is on Admin → Integrations → Credentials
+(`tfc-azure-muse-reader-secret` in the credential register), which also puts
+it on the reminders sheet.
 
 The four scratch outputs that fed §4.2's three now-deleted variables are gone
 from `infra/outputs.tf`.
