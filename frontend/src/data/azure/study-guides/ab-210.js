@@ -31,7 +31,7 @@ export default {
             'Configure the timeline',
             'Evaluate options for importing and exporting data',
             'Examine the Sales security model',
-            'Configure Microsoft 365 functionality, including Microsoft Teams, SharePoint, Outlook, and OneDrive',
+            'Configure Microsoft 365 functionality, including Microsoft Teams, SharePoint, OneNote, Outlook, and OneDrive',
           ],
         },
         {
@@ -47,10 +47,10 @@ export default {
     {
       name: 'Optimize AI-driven sales',
       slug: 'optimize-ai-driven-sales',
-      anchor: 'optimize-ai-driven-sales-2025',
-      weightLabel: '20–25%',
-      weightLow: 20,
-      weightHigh: 25,
+      anchor: 'optimize-ai-driven-sales-2530',
+      weightLabel: '25–30%',
+      weightLow: 25,
+      weightHigh: 30,
       sections: [
         {
           title: 'Design an AI-first sales strategy',
@@ -72,8 +72,8 @@ export default {
           title: 'Configure AI-powered intelligence and insights features',
           objectives: [
             'Configure the Sales accelerator',
-            'Configure work assignment and distribution',
-            'Set up conversational intelligence',
+            'Configure work assignment',
+            'Set up Conversation Intelligence',
             'Configure predictive scoring',
             'Set up relationship intelligence',
             'Configure Copilot features, including record summarization',
@@ -114,27 +114,18 @@ export default {
     {
       name: 'Develop deals by using intelligent opportunity research',
       slug: 'develop-deals-by-using-intelligent-opportunity-research',
-      anchor: 'develop-deals-by-using-intelligent-opportunity-research-2530',
-      weightLabel: '25–30%',
-      weightLow: 25,
-      weightHigh: 30,
+      anchor: 'develop-deals-by-using-intelligent-opportunity-research-1520',
+      weightLabel: '15–20%',
+      weightLow: 15,
+      weightHigh: 20,
       sections: [
         {
           title: 'Optimize opportunity management',
           objectives: [
-            'Coordinate opportunity management with the Sales Close Agent',
-            'Add Opportunity Products, and configure pricing',
+            'Coordinate sales outreach and prospect management with the Sales Development Agent',
+            'Add Opportunity Products and configure pricing',
             'Configure the opportunity pipeline view',
             'Set up and configure the Sales Opportunity Agent',
-          ],
-        },
-        {
-          title: 'Automate deal closing by using the Sales Close Agent',
-          objectives: [
-            'Set up and configure the Sales Close Agent',
-            'Interpret the actions of the Sales Close Agent',
-            'Monitor the Sales Close Agent',
-            'Collaborate with the Sales Close Agent',
           ],
         },
         {
@@ -151,10 +142,10 @@ export default {
     {
       name: 'Extend and enhance Sales',
       slug: 'extend-and-enhance-sales',
-      anchor: 'extend-and-enhance-sales-1015',
-      weightLabel: '10–15%',
-      weightLow: 10,
-      weightHigh: 15,
+      anchor: 'extend-and-enhance-sales-1520',
+      weightLabel: '15–20%',
+      weightLow: 15,
+      weightHigh: 20,
       sections: [
         {
           title: 'Configure supporting apps and services',

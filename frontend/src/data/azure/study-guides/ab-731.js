@@ -60,19 +60,18 @@ export default {
       weightHigh: 40,
       sections: [
         {
-          title:
-            'Identify benefits and capabilities of Microsoft 365 Copilot and Microsoft Copilot',
+          title: 'Identify benefits and capabilities of Microsoft Copilot',
           objectives: [
             'Map business processes and use cases to Copilot',
             'Understand differences in capabilities between versions of Copilot',
-            'Understand capabilities of Microsoft 365 Copilot Chat web and mobile experiences',
+            'Understand capabilities of Microsoft Copilot Chat web and mobile experiences',
             'Understand capabilities of the Copilot experience in various Microsoft 365 apps',
             'Understand capabilities of Microsoft Copilot Studio',
             'Understand capabilities of Microsoft Graph',
             'Identify benefits and capabilities of an integrated Microsoft AI solution, including risk mitigation and safety benefits',
             'Map business processes and use cases to Microsoft’s AI apps and services',
             'Identify when to use Researcher or Analyst in Copilot',
-            'Identify when to build, buy, or extend, including the Microsoft 365 Copilot extensibility framework',
+            'Identify when to build, buy, or extend, including the Microsoft Copilot extensibility framework',
           ],
         },
         {
@@ -112,7 +111,7 @@ export default {
             'Identify common barriers to adoption',
             'Establish an AI champions program',
             'Understand potential impacts to data, security, privacy, and cost',
-            'Understand Copilot license types, including pay-as-you go, monthly, and included with Microsoft 365 subscription',
+            'Understand Copilot licensing and billing options, including pay-as-you-go for agents, paid subscriptions, and chat included with eligible Microsoft 365 subscriptions',
             'Understand Foundry Tools subscription models, including pay-as-you-go and commitment tiers',
           ],
         },

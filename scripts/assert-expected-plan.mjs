@@ -776,6 +776,19 @@ export const DECLARED = [
     after: "sc-domain:hybridcloudworks.com",
     reason: "#1612: the Search Console property the page reads",
   },
+
+  // #1754 (ADR 0042): the Developer API's container, developer_events, added
+  // to infra/cosmos-containers.json. It holds the calls for speakers and the
+  // talk proposals sent to them, one partition per event. It has no computed
+  // properties, so the plan shows this one create and no azapi update beside
+  // it. Until it has applied, the call-for-speakers routes answer 500.
+  // Delete this entry once the run has applied.
+  {
+    address: 'azurerm_cosmosdb_sql_container.hcw["developer_events"]',
+    action: "create",
+    reason:
+      "#1754 ADR 0042: the developer_events container for calls for speakers and their proposals",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

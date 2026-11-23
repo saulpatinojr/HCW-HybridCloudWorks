@@ -51,6 +51,9 @@ export const AUTHORED = freeze([
   // applications and letters, with their earlier versions. The site is their
   // primary home, so this is recoverable from nowhere else.
   'doc_vault',
+  // The Developer API's calls for speakers and the talk proposals sent to
+  // them (ADR 0042): typed by speakers and organizers, kept nowhere else.
+  'developer_events',
   'podcasts',
   'episodes',
   'youtubevideos',

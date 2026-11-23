@@ -32,6 +32,9 @@ export const TABS = Object.freeze([
   // do, and how the Muse connector reaches the site. The one place the key is
   // made, switched and revoked.
   { id: 'koda', label: 'Koda' },
+  // The Developer API's organizer keys (ADR 0042): make, re-scope, rotate and
+  // revoke one key per event organizer, and what each key can reach.
+  { id: 'developer-api', label: 'Developer API' },
 ]);
 
 export const DEFAULT_TAB = 'services';
@@ -57,6 +60,9 @@ export const MOVED_TABS = Object.freeze({
   agents: 'koda',
   muse: 'koda',
   'agent-content': 'koda',
+  developer: 'developer-api',
+  'developer-keys': 'developer-api',
+  'organizer-keys': 'developer-api',
 });
 
 /** The tab to show for a `?tab=` value: its own, where it moved, or AI Services. */
