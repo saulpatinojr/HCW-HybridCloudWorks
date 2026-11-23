@@ -148,10 +148,15 @@ A few packages need more than that:
 ### This documentation site
 
 The site builds from `docs/` with the pinned MkDocs in
-`scripts/docs/requirements.txt`. From the repository root, in PowerShell:
+`scripts/docs/requirements.txt`. That file is a lock file (a list of every
+package the build needs, each with its SHA256 checksum), made from the two
+versions chosen in `scripts/docs/requirements.in`; `--require-hashes` makes
+pip refuse any download whose checksum differs
+([pip's secure installs page](https://pip.pypa.io/en/stable/topics/secure-installs/)).
+From the repository root, in PowerShell:
 
 ```powershell
-python -m pip install -r scripts/docs/requirements.txt
+python -m pip install --require-hashes -r scripts/docs/requirements.txt
 ```
 
 ```powershell

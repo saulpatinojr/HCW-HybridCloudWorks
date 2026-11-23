@@ -694,6 +694,35 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **The Python tools CI installs are now checked against a checksum before
+  they run, and three lines a security scanner misread are rewritten
+  ([#1774](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1774)).**
+  [OpenSSF Scorecard](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+  (a tool that scores a repository's supply-chain habits) gave
+  Pinned-Dependencies 9 out of 10 with eight warnings. Four were `pip
+  install` lines that named an exact version but no checksum, so pip would
+  have accepted a different file published under the same version. Each now
+  installs from a lock file (a list of every package needed, each with its
+  SHA256 checksum) with `--require-hashes`, which makes pip refuse a file
+  whose checksum differs: `lab-host/ansible/requirements-lint.txt`
+  (ansible-lint and ansible-core, the `ansible-lint (lab-host)` job),
+  `lab-host/ansible/requirements-role-tests.txt` (ansible-core, the
+  `lab-host role tests` job), `scripts/complexity/requirements.txt` (lizard,
+  the `complexity delta` job) and `scripts/docs/requirements.txt` (MkDocs,
+  the documentation site build, which had versions and no checksums). The
+  versions are still chosen in a short `.in` file beside each lock, the
+  versions are the ones CI already used, and Dependabot now keeps the locks
+  current (ansible-core is left to follow `lab-image/versions.env` by hand,
+  as before). A change to the role tests' lock file now runs the role tests.
+  Three more warnings were the same line in `deploy-functions.yml`, which
+  piped the runner's public address from `curl` into
+  `scripts/assert-ipv4.mjs`; the scanner reads any download piped into a
+  program as "run what was downloaded". The address is now kept in a
+  variable and then handed to the same check, so the step passes and fails
+  on the same inputs. The eighth warning is accepted as it is: the lab
+  image's Dockerfile installs a wheel the build made itself, with the
+  network off, and the scanner cannot see that.
+
 - **Lab image: a newer Azure CLI can no longer be quietly downgraded, and the
   review findings on [#1466](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1466)
   are tidied ([#1426](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1426)).**

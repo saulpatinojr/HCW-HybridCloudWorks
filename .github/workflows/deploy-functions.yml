@@ -186,7 +186,8 @@ jobs:
           OPEN_DEFAULT_ACTION: ${{ vars.FUNCTIONS_STORAGE_OPEN_DEFAULT_ACTION }}
         run: |
           set -euo pipefail
-          RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org | node scripts/assert-ipv4.mjs)
+          RUNNER_IP_RAW=$(curl -sS --max-time 10 https://api.ipify.org)
+          RUNNER_IP=$(node scripts/assert-ipv4.mjs <<<"${RUNNER_IP_RAW}")
           echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
           # The window's name tag, written BEFORE the rule is added (#1463). The
           # account's IP rules carry no names, so this tag is what says which
@@ -246,7 +247,8 @@ jobs:
           RG: ${{ vars.RESOURCE_GROUP }}
         run: |
           set -euo pipefail
-          RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org | node scripts/assert-ipv4.mjs)
+          RUNNER_IP_RAW=$(curl -sS --max-time 10 https://api.ipify.org)
+          RUNNER_IP=$(node scripts/assert-ipv4.mjs <<<"${RUNNER_IP_RAW}")
           RULE="ci-deploy-scm-${GITHUB_RUN_ID}"
           # Written before the add, so the close step knows the rule's name even
           # if the add succeeds in Azure and this step is then stopped by its
@@ -659,7 +661,8 @@ jobs:
           RG: ${{ vars.RESOURCE_GROUP }}
         run: |
           set -euo pipefail
-          RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org | node scripts/assert-ipv4.mjs)
+          RUNNER_IP_RAW=$(curl -sS --max-time 10 https://api.ipify.org)
+          RUNNER_IP=$(node scripts/assert-ipv4.mjs <<<"${RUNNER_IP_RAW}")
           echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
           az functionapp config access-restriction add \
             --resource-group "${RG}" \
