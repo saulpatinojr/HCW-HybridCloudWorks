@@ -30,10 +30,19 @@ import {
   parseReportPayload,
   readLatestReport,
   reportContainers,
+  reportGate,
   reportIdFor,
   reportNames,
 } from './archive-report.js';
-import { AI_PROVIDER_KEEP, MCP_SERVER_KEEP, SENSITIVE_KEPT_ON_PURPOSE, archiveDocumentLabel, archivePlan, UNCLASSIFIED } from './archive-classification.js';
+import {
+  AI_PROVIDER_KEEP,
+  MCP_SERVER_KEEP,
+  SENSITIVE_KEPT_ON_PURPOSE,
+  archiveDocumentLabel,
+  archivePlan,
+  classificationFingerprint,
+  UNCLASSIFIED,
+} from './archive-classification.js';
 import { createArchiveHandlers, DRY_RUN_AUDIT_ACTION } from './archive-handlers.js';
 
 const ndjson = (docs) => gzipSync(Buffer.from(docs.map((doc) => (typeof doc === 'string' ? doc : JSON.stringify(doc))).join('\n') + '\n'));
@@ -87,6 +96,10 @@ function archiveStore({ exists = true, manifests = [], failExists = null, failRe
       if (failRead) throw failRead;
       return exists && manifests.includes(name) ? {} : null;
     },
+    async listDetails() {
+      if (failRead) throw failRead;
+      return exists ? manifests.map((name) => ({ name, size: 2, tier: 'Hot' })) : [];
+    },
   };
 }
 
@@ -101,10 +114,10 @@ const backupSeed = (containers) => ({
 });
 
 describe('archiveStartDecision: once a year, never in January, only when switched on', () => {
-  const on = { [ARCHIVE_SETTING]: 'true' };
-  const facts = (over = {}) => ({ env: on, now: new Date('2027-02-08T04:00:00Z'), containerExists: true, manifestExists: false, backupRunId: '2027-02-07', ...over });
+  const on = { [ARCHIVE_SETTING]: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' };
+  const facts = (over = {}) => ({ env: on, now: new Date('2027-02-08T04:00:00Z'), containerExists: true, manifestExists: false, backupRunId: '2027-02-07', reportBlockers: [], ...over });
 
-  it('starts when all four conditions hold, for the year before', () => {
+  it('starts when every condition holds, for the year before', () => {
     expect(archiveStartDecision(facts())).toEqual({ start: true, year: 2026, earliestBackup: '2027-02-02', blockers: [] });
     expect(archiveYearFor(new Date('2027-12-31T23:59:59Z'))).toBe(2026);
     expect(archiveYearFor(new Date('2028-01-01T00:00:00Z'))).toBe(2027);
@@ -112,7 +125,7 @@ describe('archiveStartDecision: once a year, never in January, only when switche
 
   it('does not start while the switch is off, absent, or anything but the exact text true', () => {
     for (const value of [undefined, 'false', '', 'TRUE', '1', 'true ']) {
-      const decision = archiveStartDecision(facts({ env: { [ARCHIVE_SETTING]: value } }));
+      const decision = archiveStartDecision(facts({ env: { ...on, [ARCHIVE_SETTING]: value } }));
       expect(decision.start, String(value)).toBe(false);
       expect(decision.blockers).toEqual(['switch-off']);
     }
@@ -156,9 +169,15 @@ describe('archiveStartDecision: once a year, never in January, only when switche
     }
   });
 
+  it('does not start while the nightly export is off: its timer makes the daily check, and its backup is what is read', () => {
+    for (const env of [{ ...on, FEATURE_FLAG_COSMOS_EXPORT: 'false' }, { [ARCHIVE_SETTING]: 'true' }, { ...on, FEATURE_FLAG_SCHEDULERS: 'false' }]) {
+      expect(archiveStartDecision(facts({ env }))).toMatchObject({ start: false, blockers: ['export-off'] });
+    }
+  });
+
   it('lists every blocker at once', () => {
     const decision = archiveStartDecision({ env: {}, now: new Date('2027-01-15T00:00:00Z'), containerExists: true, manifestExists: true, backupRunId: null });
-    expect(decision.blockers).toEqual(['switch-off', 'before-1-february', 'already-archived', 'no-backup']);
+    expect(decision.blockers).toEqual(['switch-off', 'export-off', 'before-1-february', 'already-archived', 'no-backup', 'report-missing']);
   });
 });
 
@@ -579,7 +598,7 @@ describe('the two admin routes', () => {
     expect(blobs.writes).toEqual([]);
   });
 
-  it('GET: switch off, the job not built, the blockers and the classification in numbers', async () => {
+  it('GET: switch off, the blockers and the classification in numbers', async () => {
     const response = await make().handlers.getStatus({}, {});
     expect(response.status).toBe(200);
     expect(response.headers['Cache-Control']).toBe('private, no-store');
@@ -587,12 +606,16 @@ describe('the two admin routes', () => {
       ok: true,
       setting: 'CONTENT_ARCHIVE_ENABLED',
       switchOn: false,
-      jobBuilt: false,
+      jobBuilt: true,
+      exportOn: false,
       year: 2026,
       archiveContainerExists: true,
       archived: false,
       wouldStart: false,
-      blockers: ['switch-off'],
+      blockers: ['switch-off', 'export-off', 'report-missing'],
+      progressKnown: true,
+      lastArchive: null,
+      run: null,
       latestBackup: { runId: SUNDAY, containers: 1 },
       classification: { asIs: 54, leftOut: 19, unclassified: [], ownerAccepted: { date: '2026-11-24', wereWaiting: 21 } },
       latest: null,
@@ -606,7 +629,23 @@ describe('the two admin routes', () => {
     // The realistic case: storage answers "not found" for the manifest, exactly as it would for a year with no archive.
     const missing = archiveStore({ exists: false });
     expect(await missing.readJson('2026/manifest.json')).toBeNull();
-    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs: missing });
+    // A finished dry-run report of the same backup that shows nothing to decide.
+    const withReport = () => {
+      const blobs = memoryBlobs(backupSeed({ blogs: [{ id: 'b1' }] }));
+      const id = '20270207T2000Z';
+      blobs.files.set(reportNames(id).latest, { reportId: id });
+      blobs.files.set(reportNames(id).report, {
+        reportId: id,
+        sourceBackup: { runId: SUNDAY },
+        rules: classificationFingerprint(),
+        totals: {},
+        // One part for the one container the backup holds that an archive would write.
+        containers: [{ container: 'blogs', decision: 'archive', reason: null, read: 1, matchesBackup: true, sensitive: { remaining: [], flagged: 0, cutShort: 0 } }],
+        leftOutWhole: [],
+      });
+      return blobs;
+    };
+    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs: missing, blobs: withReport() });
     expect(body(await handlers.getStatus({}, {}))).toMatchObject({
       switchOn: true,
       archiveContainerExists: false,
@@ -615,7 +654,10 @@ describe('the two admin routes', () => {
       blockers: ['archive-container-missing'],
     });
     // The same facts with the container there: the year really is not archived, and only then could a run start.
-    const there = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs: archiveStore({ exists: true }) });
+    const there = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs: archiveStore({ exists: true }), blobs: withReport() });
+    // Without that report, the same facts do not start: the report is its own condition.
+    const noReport = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs: archiveStore({ exists: true }) });
+    expect(body(await noReport.handlers.getStatus({}, {}))).toMatchObject({ wouldStart: false, blockers: ['report-missing'] });
     expect(body(await there.handlers.getStatus({}, {}))).toMatchObject({ archiveContainerExists: true, archived: false, wouldStart: true, blockers: [] });
   });
 
@@ -623,17 +665,17 @@ describe('the two admin routes', () => {
     const refused = Object.assign(new Error('secret words'), { code: 'AuthorizationFailure' });
     for (const archiveBlobs of [archiveStore({ failExists: refused }), archiveStore({ failRead: refused })]) {
       const warn = vi.fn();
-      const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs });
+      const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs });
       const answer = body(await handlers.getStatus({}, { warn }));
-      expect(answer).toMatchObject({ switchOn: true, archived: null, wouldStart: false, blockers: ['archive-not-readable'] });
+      expect(answer).toMatchObject({ switchOn: true, archived: null, wouldStart: false, blockers: ['archive-not-readable', 'report-missing'] });
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls.flat().join(' ')).not.toContain('secret words');
     }
   });
 
   it('GET: a year that has its manifest is archived', async () => {
-    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs: archiveStore({ manifests: ['2026/manifest.json'] }) });
-    expect(body(await handlers.getStatus({}, {}))).toMatchObject({ archived: true, blockers: ['already-archived'] });
+    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs: archiveStore({ manifests: ['2026/manifest.json'] }) });
+    expect(body(await handlers.getStatus({}, {}))).toMatchObject({ archived: true, blockers: ['already-archived', 'report-missing'] });
   });
 
   it('POST: queues the jobs in one message list and writes one audit row of numbers', async () => {
@@ -998,5 +1040,116 @@ describe('after the owner’s decision of 2026-11-24: nothing is waiting, and a 
     expect(part.sensitive.takenOut).toEqual([{ name: 'apiKey', records: 1 }]);
     expect(part.sensitive.remaining).toEqual([]);
     expect(report.leftOutWhole).toEqual([]);
+  });
+});
+
+describe('reportGate: an archive never starts from a state no finished report describes', () => {
+  // The backup holds two containers an archive would write, and one it leaves out.
+  const BACKUP = ['blogs', 'newsletters', 'admins'];
+  const clean = { remaining: [], flagged: 0, keptRecords: 0, cutShort: 0 };
+  const part = (container, over = {}) => ({ container, decision: 'archive', reason: null, read: 3, matchesBackup: true, unreadable: 0, sensitive: clean, ...over });
+  /** A finished report as a real clean one is: today's rules, and a part for each container the archive would write. */
+  const done = (report = {}) => ({
+    reportId: 'x',
+    complete: true,
+    report: { sourceBackup: { runId: SUNDAY }, rules: classificationFingerprint(), totals: {}, containers: [part('blogs'), part('newsletters')], leftOutWhole: [], ...report },
+  });
+  const gate = (latest, backupRunId = SUNDAY, backupContainers = BACKUP) => reportGate({ latest, backupRunId, backupContainers });
+  const flaggedOnce = { remaining: [{ path: 'authorEmail', flagged: true }], flagged: 1, keptRecords: 1, cutShort: 0 };
+
+  it('lets a finished, clean report of the same backup and the same rules through', () => {
+    expect(gate(done())).toEqual([]);
+  });
+
+  it('stops when there is no report, one is still reading, or the newest did not finish', () => {
+    expect(gate(null)).toEqual(['report-missing']);
+    expect(gate(undefined)).toEqual(['report-missing']);
+    expect(gate({ reportId: 'x', complete: false, stalled: false })).toEqual(['report-running']);
+    expect(gate({ reportId: 'x', complete: false, stalled: true })).toEqual(['report-stalled']);
+  });
+
+  it('stops when the report was made from another backup than the one the archive would read', () => {
+    expect(gate(done(), '2027-02-14')).toEqual(['report-older-than-backup']);
+    expect(gate(done({ sourceBackup: {} }))).toEqual(['report-older-than-backup']);
+    expect(gate(done(), null)).toEqual(['report-older-than-backup']);
+  });
+
+  it('stops when the report was made under other rules than today’s, or does not say which', () => {
+    expect(gate(done({ rules: 'the-rules-of-last-week' }))).toEqual(['report-older-rules']);
+    expect(gate(done({ rules: undefined }))).toEqual(['report-older-rules']);
+    expect(gate(done({ rules: null }))).toEqual(['report-older-rules']);
+  });
+
+  it('stops when the report does not cover every container the archive would write', () => {
+    // A finished report with no containers at all says nothing: it is not "nothing to decide".
+    expect(gate(done({ containers: [] }))).toEqual(['report-incomplete']);
+    expect(gate(done({ containers: [part('blogs')] }))).toEqual(['report-incomplete']);
+    // In the report, but with another decision than the list gives it today.
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { decision: 'leave-out', reason: 'unclassified' })] }))).toContain('report-incomplete');
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { decision: 'archive-changed' })] }))).toEqual(['report-incomplete']);
+    // Without the backup's own list of containers, no report can be called complete.
+    expect(reportGate({ latest: done(), backupRunId: SUNDAY })).toEqual(['report-incomplete']);
+    // A container the backup does not hold is not asked for.
+    expect(gate(done({ containers: [part('blogs')] }), SUNDAY, ['blogs', 'admins'])).toEqual([]);
+  });
+
+  it('stops when a container the archive would write was not read whole', () => {
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { matchesBackup: false })] }))).toEqual(['report-mismatch']);
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { matchesBackup: null })] }))).toEqual(['report-mismatch']);
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { unreadable: 1 })] }))).toEqual(['report-mismatch']);
+    expect(gate(done({ totals: { unreadable: 2 } }))).toEqual(['report-mismatch']);
+  });
+
+  it('stops when a record was too large to be searched whole for names that look like a secret', () => {
+    expect(gate(done({ containers: [part('blogs', { sensitive: { ...clean, cutShort: 1 } }), part('newsletters')] }))).toEqual(['report-cut-short']);
+  });
+
+  it('stops for a flagged container no owner decision covers, and not for one the decision covers', () => {
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { sensitive: flaggedOnce })] }))).toEqual(['report-flagged']);
+    // blogs is on the owner's list of 2026-11-24.
+    expect(gate(done({ containers: [part('blogs', { sensitive: flaggedOnce }), part('newsletters')] }))).toEqual([]);
+    // What the report stored does not decide it: the list as it is now does.
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { sensitive: flaggedOnce, ownerAccepted: '2026-11-24' })] }))).toEqual(['report-flagged']);
+    // A report from before the lists were split cannot say what would remain, so a kept record with such a name counts.
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { sensitive: { records: 2, keptRecords: 2, names: [] } })] }))).toEqual(['report-flagged']);
+    // A container that is left out is never a reason: nothing of it would be archived.
+    expect(gate(done({ containers: [part('blogs'), part('newsletters'), { container: 'admins', decision: 'leave-out', reason: 'access-list', sensitive: flaggedOnce }] }))).toEqual([]);
+  });
+
+  it('stops while a container is waiting for the owner, read or not, and stops stopping once the list has an answer for it', () => {
+    const base = [part('blogs'), part('newsletters')];
+    expect(gate(done({ containers: [...base, { container: 'a_new_container', decision: 'leave-out', reason: 'unclassified' }] }))).toEqual(['report-waiting']);
+    expect(gate(done({ leftOutWhole: [{ container: 'a_new_container', reason: 'unclassified', backupDocs: 3 }] }))).toEqual(['report-waiting']);
+    // The report called it waiting, and the list has since been given an answer for it: it is no longer waiting.
+    expect(gate(done({ leftOutWhole: [{ container: 'admins', reason: 'unclassified', backupDocs: 3 }] }))).toEqual([]);
+    expect(gate(done({ leftOutWhole: [{ container: 'tool_exports', reason: 'unclassified', backupDocs: 0 }] }))).toEqual([]);
+  });
+
+  it('lists every reason at once', () => {
+    expect(
+      gate(
+        done({
+          containers: [part('blogs', { matchesBackup: false }), part('newsletters', { sensitive: { ...flaggedOnce, cutShort: 2 } }), { container: 'a_new_container', decision: 'leave-out', reason: 'unclassified' }],
+        })
+      )
+    ).toEqual(['report-mismatch', 'report-cut-short', 'report-flagged', 'report-waiting']);
+  });
+
+  it('a real dry run of a clean backup passes the gate, and says which rules it was made under', async () => {
+    const at = new Date('2027-02-08T04:00:30Z');
+    const blobs = memoryBlobs(backupSeed({ blogs: [{ id: 'b1' }], newsletters: [{ id: 'n1' }], admins: [{ id: 'a1' }] }));
+    const jobs = [];
+    await createReportScheduler({ store: { upsertDoc: async (_c, doc) => jobs.push(doc) }, blobs, enqueue: () => {}, now: () => at }).start();
+    for (const job of jobs) await createReportWorker({ blobs, now: () => at }).readContainer(parseReportPayload(job.payload));
+    const latest = await readLatestReport({ blobs, now: at });
+    expect(latest.report.rules).toBe(classificationFingerprint());
+    expect(gate(latest)).toEqual([]);
+  });
+
+  it('the start rule adds the gate’s answer to its own, and counts a gate that was not asked as "no report"', () => {
+    const facts = { env: { [ARCHIVE_SETTING]: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, now: new Date('2027-02-08T04:00:00Z'), containerExists: true, manifestExists: false, backupRunId: SUNDAY };
+    expect(archiveStartDecision({ ...facts, reportBlockers: [] }).start).toBe(true);
+    expect(archiveStartDecision({ ...facts, reportBlockers: ['report-flagged'] })).toMatchObject({ start: false, blockers: ['report-flagged'] });
+    expect(archiveStartDecision(facts)).toMatchObject({ start: false, blockers: ['report-missing'] });
   });
 });

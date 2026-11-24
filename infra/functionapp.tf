@@ -961,12 +961,15 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
 
     # #1811, ADR 0046, owner decision 2026-11-24: the yearly content archive
     # (a long-term copy of the site's content in the content-archive
-    # container, storage.tf). Once the archive job exists (phase 3 of the
-    # ADR), a daily check starts one archive a year, on or after 1 February,
-    # only while this reads exactly "true". Until then the admin's Archive
-    # card (Health, Overview) reports it as off, and the dry run, which
-    # writes no archive, works either way. Flip it in a pull request of its
-    # own, after the owner has read a dry-run report and said yes
+    # container, storage.tf). While this reads exactly "true", a daily check
+    # (it rides the nightly export's 03:00 UTC timer, so
+    # FEATURE_FLAG_COSMOS_EXPORT below has to be on as well) starts one
+    # archive a year, on or after 1 February, and the archive job writes it
+    # (functions/src/lib/backup/archive-job.js). While it reads anything
+    # else nothing is read or written, the admin's Archive card (Health,
+    # Overview) reports it as off, and the dry run, which writes no archive,
+    # works either way. Flip it in a pull request of its own, after the
+    # owner has read a dry-run report and said yes
     # (docs/runbooks/content-archive.md).
     "CONTENT_ARCHIVE_ENABLED" = "false"
 

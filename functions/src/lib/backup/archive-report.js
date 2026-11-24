@@ -49,9 +49,9 @@
  * create-only, so two jobs finishing together cannot both write it.
  *
  * THE START RULE. `archiveStartDecision` is the whole of "once a year, never
- * in January, only when switched on" (ADR 0046 section 4). Nothing calls it
- * to start an archive yet: the job that writes one is phase 3. The status
- * route uses it to tell the owner what would happen today.
+ * in January, only when switched on" (ADR 0046 section 4). The daily check
+ * that starts an archive (archive-job.js) asks it, and the status route uses
+ * it to tell the owner what would happen today.
  */
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
@@ -60,7 +60,7 @@ import { createGunzip } from 'node:zlib';
 
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
 import { withStatus } from '../http/error-response.js';
-import { blobNames } from './cosmos-export.js';
+import { blobNames, exportEnabled } from './cosmos-export.js';
 import {
   DECISIONS,
   REASONS,
@@ -71,6 +71,7 @@ import {
   archiveDocumentLabel,
   archivePlan,
   archiveRecord,
+  classificationFingerprint,
   ownerAcceptedOn,
   createContentIndex,
   looksSensitive,
@@ -314,14 +315,107 @@ export function archiveYearFor(now) {
 }
 
 /**
- * May the yearly archive start now? All five must hold:
+ * What the newest dry-run report says against starting an archive from one
+ * backup. An archive is never started from a state no finished report
+ * describes: the report has to exist, be finished, be made from the very
+ * backup the archive would read and under today's rules, cover every
+ * container the archive would write, and show nothing still to decide.
+ *
+ *   report-missing             no dry run has been made
+ *   report-running             one is reading the backup now
+ *   report-stalled             the newest one did not finish
+ *   report-older-than-backup   it was made from another backup than the one
+ *                              the archive would read
+ *   report-older-rules         it was made under other rules than today's
+ *                              (the list of what is kept has changed since)
+ *   report-incomplete          a container the archive would write is not in
+ *                              it, or is in it with another decision than
+ *                              today's
+ *   report-mismatch            for a container the archive would write it
+ *                              did not count the number of records the
+ *                              backup's own list says, or it met a line it
+ *                              could not read
+ *   report-cut-short           a record was too large or too deep to be
+ *                              searched whole for names that look like a
+ *                              secret, so the report cannot vouch for it
+ *   report-flagged             a container an archive keeps has a field that
+ *                              would remain, is named like a secret or
+ *                              contact details, and no owner decision covers
+ *                              the container
+ *   report-waiting             a container is waiting for the owner
+ *
+ * The first five end the reading: such a report says nothing about today.
+ * The rest are listed together.
+ *
+ * Whether the owner's decision covers a container, and whether a container
+ * is still waiting, are read from the list as it is now, not from what the
+ * report stored.
+ *
+ * @param {object} facts
+ * @param {Awaited<ReturnType<typeof readLatestReport>>} facts.latest
+ * @param {string|null} facts.backupRunId - the backup the archive would read
+ * @param {string[]|null} [facts.backupContainers] - the containers that
+ *   backup holds; without it no report is enough
+ * @returns {string[]} blockers; empty when the report allows a start
+ */
+export function reportGate({ latest, backupRunId, backupContainers = null }) {
+  if (!latest) return ['report-missing'];
+  if (!latest.complete) return [latest.stalled ? 'report-stalled' : 'report-running'];
+  const report = latest.report || {};
+  if (typeof backupRunId !== 'string' || report.sourceBackup?.runId !== backupRunId) return ['report-older-than-backup'];
+  if (report.rules !== classificationFingerprint()) return ['report-older-rules'];
+  const containers = Array.isArray(report.containers) ? report.containers : [];
+  const leftOutWhole = Array.isArray(report.leftOutWhole) ? report.leftOutWhole : [];
+  const blockers = [];
+
+  // Every container the archive would write must be in the report, read
+  // whole, with the decision the list gives it today.
+  const byName = new Map(containers.map((part) => [part?.container, part]));
+  const inBackup = new Set(Array.isArray(backupContainers) ? backupContainers : []);
+  const wanted = Array.isArray(backupContainers) ? archivePlan().filter((name) => inBackup.has(name)) : null;
+  const covered = wanted !== null && wanted.every((name) => byName.get(name)?.decision === archiveDecisionFor(name).decision);
+  if (!covered) blockers.push('report-incomplete');
+  const planned = (wanted || []).map((name) => byName.get(name)).filter(Boolean);
+  if (count(report.totals?.unreadable) > 0 || planned.some((part) => part.matchesBackup !== true || count(part.unreadable) > 0)) {
+    blockers.push('report-mismatch');
+  }
+
+  const kept = containers.filter((part) => part?.decision !== DECISIONS.leaveOut);
+  if (kept.some((part) => count(part.sensitive?.cutShort) > 0)) blockers.push('report-cut-short');
+  const flagged = kept.filter((part) => {
+    if (ownerAcceptedOn(part.container)) return false;
+    // A report from before the lists were split cannot say what would remain: count any kept record that carries a name.
+    return Array.isArray(part.sensitive?.remaining) ? count(part.sensitive.flagged) > 0 : count(part.sensitive?.keptRecords) > 0;
+  });
+  if (flagged.length) blockers.push('report-flagged');
+  // Waiting: the report called it unclassified, and the list still has no
+  // other answer for it today.
+  const waiting = [...containers, ...leftOutWhole].filter((part) => {
+    if (part?.reason !== REASONS.unclassified) return false;
+    const today = archiveDecisionFor(part.container);
+    return !today || today.reason === REASONS.unclassified;
+  });
+  if (waiting.length) blockers.push('report-waiting');
+  return blockers;
+}
+
+/**
+ * May the yearly archive start now? All seven must hold:
  *
  *   1. the switch `CONTENT_ARCHIVE_ENABLED` is exactly `true`;
  *   2. today is on or after 1 February (UTC), so January is the month of grace;
  *   3. the `content-archive` container exists;
  *   4. last year's `manifest.json` does not exist (a year is archived once);
  *   5. a complete full backup dated on or after 2 February exists (the day
- *      after the yearly clean-up of talk proposals runs).
+ *      after the yearly clean-up of talk proposals runs);
+ *   6. the nightly export is switched on (`exportEnabled`). The archive is
+ *      made from its weekly backup and its daily check rides the export's
+ *      timer, so with the export off nothing looks and nothing starts
+ *      ("no backup, no archive", ADR 0046 section 4);
+ *   7. the newest dry-run report allows it (`reportGate`): it is finished,
+ *      was made from that same backup, and shows nothing still to decide.
+ *      `reportBlockers` is that function's answer; when it is not handed in
+ *      at all, the report counts as missing.
  *
  * `containerExists`, `manifestExists` and `backupRunId` are `null` when they
  * could not be read; not known is never read as "go". A container that is
@@ -337,15 +431,17 @@ export function archiveYearFor(now) {
  * @param {boolean|null} facts.containerExists
  * @param {boolean|null} facts.manifestExists
  * @param {string|null} facts.backupRunId - the newest complete full backup's date, `YYYY-MM-DD`
+ * @param {string[]} [facts.reportBlockers] - what `reportGate` answered for that backup
  * @returns {{ start: boolean, year: number, earliestBackup: string, blockers: string[] }}
  */
-export function archiveStartDecision({ env = process.env, now, containerExists, manifestExists, backupRunId }) {
+export function archiveStartDecision({ env = process.env, now, containerExists, manifestExists, backupRunId, reportBlockers }) {
   const at = new Date(now);
   const year = archiveYearFor(at);
   const opens = Date.UTC(year + 1, 1, 1); // 1 February of the year after
   const earliestBackup = `${year + 1}-02-02`;
   const blockers = [];
   if (env?.[ARCHIVE_SETTING] !== 'true') blockers.push('switch-off');
+  if (!exportEnabled(env || {})) blockers.push('export-off');
   if (at.getTime() < opens) blockers.push('before-1-february');
   if (containerExists === false) blockers.push('archive-container-missing');
   else if (containerExists !== true) blockers.push('archive-not-readable');
@@ -353,6 +449,7 @@ export function archiveStartDecision({ env = process.env, now, containerExists, 
   else if (manifestExists !== false) blockers.push('archive-not-readable');
   if (typeof backupRunId !== 'string' || !RUN_ID.test(backupRunId)) blockers.push('no-backup');
   else if (backupRunId < earliestBackup) blockers.push('backup-too-early');
+  blockers.push(...(Array.isArray(reportBlockers) ? reportBlockers : ['report-missing']));
   return { start: blockers.length === 0, year, earliestBackup, blockers };
 }
 
@@ -704,6 +801,10 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
     const report = {
       reportId,
       sourceBackup: { mode: 'full', runId: run.backup?.runId || null },
+      // The fingerprint of the rules the run was started under. When a
+      // deploy changed the rules half-way, the parts were read under two
+      // sets of rules, and the report says so by carrying neither.
+      rules: run.rules === classificationFingerprint() ? run.rules : null,
       startedAt: run.startedAt || null,
       completedAt: now().toISOString(),
       totals: {
@@ -793,6 +894,8 @@ export function createReportScheduler({ store, blobs, enqueue, now = () => new D
       {
         reportId,
         startedAt: at.toISOString(),
+        // Which rules this run reads the backup under (archive-classification.js).
+        rules: classificationFingerprint(),
         backup: { runId: backup.runId, containers: backup.containers.map((row) => ({ container: row.container, docs: docsOf.get(row.container) })) },
         containers,
         leftOutWhole,

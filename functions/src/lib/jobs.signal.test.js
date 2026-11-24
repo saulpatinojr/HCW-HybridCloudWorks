@@ -239,10 +239,11 @@ function passesSignalOn(worker) {
   return false;
 }
 
-/** Every job type the registry must hold, today twenty plus noop. */
+/** Every job type the registry must hold, today twenty-one plus noop. */
 const EXPECTED_TYPES = [
   'batch-inspect',
   'build-newsletter-issue',
+  'content-archive-container',
   'content-archive-dry-run',
   'cosmos-export-container',
   'fetch-rss-feeds',

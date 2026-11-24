@@ -71,9 +71,21 @@ export function createCosmosReader({ getContainer = defaultGetContainer } = {}) 
   };
 }
 
-/** `BlobAlreadyExists` from an `If-None-Match: *` upload. */
+/**
+ * Did storage refuse a conditional write because its condition did not hold?
+ * For "create only" (`If-None-Match: *`) that means the blob already exists.
+ * Storage answers either 409 `BlobAlreadyExists` or 412 `ConditionNotMet`,
+ * depending on the operation
+ * (https://learn.microsoft.com/rest/api/storageservices/specifying-conditional-headers-for-blob-service-operations),
+ * so both are read as the same answer.
+ */
 function isAlreadyExists(error) {
-  return error?.statusCode === 409 || error?.code === 'BlobAlreadyExists';
+  return (
+    error?.statusCode === 409 ||
+    error?.statusCode === 412 ||
+    error?.code === 'BlobAlreadyExists' ||
+    error?.code === 'ConditionNotMet'
+  );
 }
 
 /**
@@ -103,18 +115,31 @@ export function createExportBlobStore({
   }
 
   return {
-    async uploadGzipStream(name, stream, { tier, metadata } = {}) {
-      await storage.uploadBlobFromStream(
-        targetContainer(name),
-        name,
-        stream,
-        UPLOAD_BUFFER_BYTES,
-        'application/gzip',
-        {
-          tier,
-          metadata,
-        }
-      );
+    /**
+     * Upload a gzip stream. With `conditions` the write is conditional (see
+     * blob-storage.js uploadBlobFromStream) and the answer is `false` when
+     * storage refused it because the condition did not hold; without, it is
+     * always `true` or a throw.
+     */
+    async uploadGzipStream(name, stream, { tier, metadata, conditions } = {}) {
+      try {
+        await storage.uploadBlobFromStream(
+          targetContainer(name),
+          name,
+          stream,
+          UPLOAD_BUFFER_BYTES,
+          'application/gzip',
+          {
+            tier,
+            metadata,
+            ...(conditions ? { conditions } : {}),
+          }
+        );
+        return true;
+      } catch (error) {
+        if (conditions && isAlreadyExists(error)) return false;
+        throw error;
+      }
     },
 
     async putJson(name, value, { overwrite = true } = {}) {
@@ -152,6 +177,34 @@ export function createExportBlobStore({
     async listNames(prefix) {
       const blobs = await storage.listBlobs(targetContainer(prefix), prefix);
       return blobs.map((b) => b.name);
+    },
+
+    /**
+     * Name, size in bytes, access tier and version stamp (ETag) of every
+     * file under a prefix. For the yearly archive (archive-job.js), which
+     * checks that each data file is there, in the very version it checked,
+     * before the manifest names it, and which files are already in the
+     * Archive tier.
+     */
+    async listDetails(prefix) {
+      const blobs = await storage.listBlobs(targetContainer(prefix), prefix);
+      return blobs.map((b) => ({ name: b.name, size: Number(b.size) || 0, tier: b.tier ?? null, etag: b.etag ?? null }));
+    },
+
+    /**
+     * Move one data file of a yearly archive to the Archive tier. Only a
+     * name shaped exactly like `<year>/cosmos/<file>.ndjson.gz` is accepted,
+     * so this can never be pointed at a backup file, a bookmark or a
+     * manifest (the manifest stays online on purpose: ADR 0046 section 4).
+     * Only the tier 'Archive' is accepted: nothing here ever brings a file
+     * back online, which costs money and is the owner's to do.
+     */
+    async setTier(name, tier) {
+      if (typeof name !== 'string' || !/^\d{4}\/cosmos\/[A-Za-z0-9_]+\.ndjson\.gz$/.test(name)) {
+        throw new Error('only a data file of a yearly archive can change tier here');
+      }
+      if (tier !== 'Archive') throw new Error('a data file of a yearly archive can only be moved to the Archive tier here');
+      await storage.setBlobAccessTier(container, name, tier);
     },
 
     /** Does the store's main container exist? A failure to ask is a throw, never `false`. */

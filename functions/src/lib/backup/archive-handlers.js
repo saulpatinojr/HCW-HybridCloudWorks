@@ -11,10 +11,14 @@
  *
  * WHAT THE GET ANSWERS. The switch (on or off), the year an archive taken
  * today would be of, whether one could start today and what stands in the
- * way (archive-report.js archiveStartDecision), the classification in
- * numbers, and the newest dry-run report or how far it has got. It also says
- * plainly that the job that writes an archive is not built yet: until phase
- * 3 of ADR 0046 the switch starts nothing.
+ * way (archive-report.js archiveStartDecision), the newest archive that was
+ * written (year, when, files, records, bytes, how many files are in the
+ * Archive tier), a run that is in progress and what it is still missing
+ * (archive-job.js readArchiveProgress), the classification in numbers, and
+ * the newest dry-run report or how far it has got.
+ *
+ * There is no route that starts an archive. It starts by itself, from the
+ * nightly export's timer, when the switch is on (archive-job.js).
  *
  * WHAT IS NEVER IN AN ANSWER OR A LOG. A record, an id of a record, or a
  * field's value. Answers are `Cache-Control: private, no-store`; a failure is
@@ -32,6 +36,8 @@ import {
   OWNER_ACCEPTED,
   UNCLASSIFIED,
 } from './archive-classification.js';
+import { exportEnabled } from './cosmos-export.js';
+import { ARCHIVE_LATE_HOURS, readArchiveProgress } from './archive-job.js';
 import {
   ARCHIVE_CONTAINER,
   ARCHIVE_SETTING,
@@ -41,6 +47,7 @@ import {
   createReportScheduler,
   findLatestFullBackup,
   readLatestReport,
+  reportGate,
   REPORT_KEEP_DAYS,
   RUN_STALE_MINUTES,
 } from './archive-report.js';
@@ -79,7 +86,7 @@ function classificationSummary() {
  * @param {{ requireRole: Function }} deps.guard
  * @param {{ upsertDoc: Function }} deps.store
  * @param {object} deps.blobs - the export blob store (the backup, and the reports)
- * @param {{ readJson: Function, containerExists: Function }} deps.archiveBlobs - a blob store on `content-archive`
+ * @param {{ readJson: Function, containerExists: Function, listDetails: Function }} deps.archiveBlobs - a blob store on `content-archive`
  * @param {Record<string, string|undefined>} [deps.env]
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
@@ -130,19 +137,42 @@ export function createArchiveHandlers({ guard, store, blobs, archiveBlobs, env =
           readLatestReport({ blobs, now: at }),
         ]);
         const { archived, containerExists } = state;
+        // The newest archive and a run in progress. Read only when the
+        // container is there and could be read just now; a failure to read
+        // is "not known", not "none".
+        let progress = { lastArchive: null, run: null };
+        let progressKnown = containerExists === true && archived !== null;
+        if (progressKnown) {
+          try {
+            progress = await readArchiveProgress({ backupBlobs: blobs, archiveBlobs, year, archived, now: at });
+          } catch (error) {
+            context?.warn?.(`contentArchive: the archive's progress could not be read (${errorCode(error)})`);
+            progressKnown = false;
+          }
+        }
         const decision = archiveStartDecision({
           env,
           now: at,
           containerExists,
           manifestExists: archived,
           backupRunId: backup?.runId ?? null,
+          // An archive never starts from a state no finished report describes.
+          reportBlockers: reportGate({ latest, backupRunId: backup?.runId ?? null, backupContainers: backup ? backup.containers.map((row) => row.container) : null }),
         });
         return privateJson(200, {
           ok: true,
           setting: ARCHIVE_SETTING,
           switchOn: env?.[ARCHIVE_SETTING] === 'true',
-          // Phase 3 of ADR 0046 builds the job. Until then the switch starts nothing.
-          jobBuilt: false,
+          // The job that writes an archive exists (archive-job.js). It starts
+          // from the nightly export's timer, so that has to be on as well.
+          jobBuilt: true,
+          exportOn: exportEnabled(env || {}),
+          // The newest finished archive, a run in progress, or null for each.
+          // progressKnown false: they could not be read, so null says nothing.
+          progressKnown,
+          lastArchive: progress.lastArchive,
+          run: progress.run,
+          lateAfterHours: ARCHIVE_LATE_HOURS,
           archiveContainer: ARCHIVE_CONTAINER,
           year,
           archiveContainerExists: containerExists,

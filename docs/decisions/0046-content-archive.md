@@ -13,8 +13,11 @@ build on 2026-11-24 moved several decisions to the safe side; they are under
 and the inventory table below shows the result. After the first dry run the
 owner chose to keep everything it listed, the 21 waiting containers
 included; that is under
-[The owner's decision after the first dry run](#the-owners-decision-after-the-first-dry-run-2026-11-24). No archive has been written:
-the job that writes one is phase 3.
+[The owner's decision after the first dry run](#the-owners-decision-after-the-first-dry-run-2026-11-24).
+Phase 3 is built too, in part (the job that writes an archive, its daily
+check, the admin card and the runbooks); what it settled, and what it left
+for later, is under [What phase 3 settled](#what-phase-3-settled). No archive
+has been written: the switch ships off.
 **Decision date:** 2026-11-24
 **Owners:** Workload owner and architecture owner
 
@@ -233,11 +236,11 @@ run, the owner chose to keep all 21 that were waiting (54, 6, 19, 0); see
 | `doc_vault` | The owner's private templates, applications and letters, with earlier versions, and one `salt` item (a random secret that document ids are made from) | The owner's own; a letter can name someone else | None | Archive in part: only items of the kind `document` or `version` are kept. The one item `vault-id-salt` is the only other kind today and is left out, because it is a secret; a kind added later is left out too. Phase 2 checked in `doc-vault/model.js` that a restore works without it |
 | `ambassador` | The owner's Ambassador hub: programs, the owner's applications and their evidence | The owner's own; free-text fields and attachments can hold someone else's details (data-subject runbook, section 1) | None | Archive as is |
 | `developer_events` | Calls for speakers that organizers opened, and the talk proposals speakers sent to them | **Yes, speakers' and organizers'**: a proposal has the speaker's name, email and bio, the organizer's review note and the id of who reviewed it; a call has the organizer's name, the id of the organizer's key and the id of who last changed it | A proposal that was not accepted loses the speaker's four fields after the yearly cycle (#1777) | Archive in part, by a keep list for each kind of record. From a **call**: `id`, `eventId`, `docType`, `status`, `title`, `description`, `closesAt`, `openedAt`, `closedAt`, `createdAt`, `updatedAt`. From a **proposal**, accepted or not (question 2 below): `id`, `eventId`, `docType`, `status`, `title`, `abstract`, `format`, `level`, `submittedAt`, `reviewedAt`, `strippedAt`, `strippedReason`. Nothing else, and a record of any other kind is left out. **The abstract is free text the speaker typed, and it is kept**: it is the talk, and the owner's answer "STRIP" keeps the talk. A speaker who put their own name inside their abstract is therefore in the archive |
-| `tool_workspaces` | Saved work from the Cloud Tools of the earlier site. No code names it today | **Not known**: it may hold what a visitor typed, under a visitor id | None known | Archive as is, by the owner's decision of 2026-11-24 ([below](#the-owners-decision-after-the-first-dry-run-2026-11-24)). **Three of the five `tool_` containers hold the email address and session id of whoever used the tool** (the dry-run report shows which, by their field names; this record was not told); the session recommended leaving those three out and the owner chose to keep them. Was "owner to say" |
-| `tool_migration_workspaces` | As `tool_workspaces` | **Not known** | None known | Archive as is, by the owner's decision of 2026-11-24 ([below](#the-owners-decision-after-the-first-dry-run-2026-11-24)). **Three of the five `tool_` containers hold the email address and session id of whoever used the tool** (the dry-run report shows which, by their field names; this record was not told); the session recommended leaving those three out and the owner chose to keep them. Was "owner to say" |
-| `tool_assessment_sessions` | As `tool_workspaces` | **Not known** | None known | Archive as is, by the owner's decision of 2026-11-24 ([below](#the-owners-decision-after-the-first-dry-run-2026-11-24)). **Three of the five `tool_` containers hold the email address and session id of whoever used the tool** (the dry-run report shows which, by their field names; this record was not told); the session recommended leaving those three out and the owner chose to keep them. Was "owner to say" |
-| `tool_architecture_plans` | As `tool_workspaces` | **Not known** | None known | Archive as is, by the owner's decision of 2026-11-24 ([below](#the-owners-decision-after-the-first-dry-run-2026-11-24)). **Three of the five `tool_` containers hold the email address and session id of whoever used the tool** (the dry-run report shows which, by their field names; this record was not told); the session recommended leaving those three out and the owner chose to keep them. Was "owner to say" |
-| `tool_exports` | As `tool_workspaces` | **Not known** | None known | Archive as is, by the owner's decision of 2026-11-24 ([below](#the-owners-decision-after-the-first-dry-run-2026-11-24)). **Three of the five `tool_` containers hold the email address and session id of whoever used the tool** (the dry-run report shows which, by their field names; this record was not told); the session recommended leaving those three out and the owner chose to keep them. Was "owner to say" |
+| `tool_workspaces` | Saved work from the Cloud Tools of the earlier site. No code names it today | **Not known**: it may hold what a visitor typed, under a visitor id | None known | Archive as is, by the owner's decision of 2026-11-24 ([below](#the-owners-decision-after-the-first-dry-run-2026-11-24)). **It holds the email address of whoever used the tool** (`ownerEmail`, by the first dry run's field names); the session recommended leaving it out and the owner chose to keep it. Was "owner to say" |
+| `tool_migration_workspaces` | As `tool_workspaces` | **Not known** | None known | Archive as is, by the owner's decision of 2026-11-24 ([below](#the-owners-decision-after-the-first-dry-run-2026-11-24)). It held no record in the first dry run. Was "owner to say" |
+| `tool_assessment_sessions` | As `tool_workspaces` | **Not known** | None known | Archive as is, by the owner's decision of 2026-11-24 ([below](#the-owners-decision-after-the-first-dry-run-2026-11-24)). **It holds the email address and account id of whoever used the tool** (`ownerEmail`, `requestedByEmail`, `ownerUid`); the session recommended leaving it out and the owner chose to keep it. Was "owner to say" |
+| `tool_architecture_plans` | As `tool_workspaces` | **Not known** | None known | Archive as is, by the owner's decision of 2026-11-24 ([below](#the-owners-decision-after-the-first-dry-run-2026-11-24)). **It holds the email address, account id and session id of whoever used the tool** (`requestedByEmail`, `ownerUid`, `sessionId`); the session recommended leaving it out and the owner chose to keep it. Was "owner to say" |
+| `tool_exports` | As `tool_workspaces` | **Not known** | None known | Archive as is, by the owner's decision of 2026-11-24 ([below](#the-owners-decision-after-the-first-dry-run-2026-11-24)). It held no record in the first dry run. Was "owner to say" |
 | `mcp_servers` | The outside tool servers the site can call (MCP servers), with their sign-in state | No | None; but it holds **secrets**: access tokens, refresh tokens, a client secret, and a free-form `headers` field that can carry `Authorization: Bearer …` | Archive in part, by a keep list: `id`, `name`, `transport`, `enabled`, `order`, `authType`, `description`, `notes`, `createdAt`, `updatedAt`; `apiKeyEnvVar` only when it is shaped like a setting's name; `allowedTools` as a list of names; `tools` as name and description only; and `url` without its query string, fragment or user name (an address that cannot be read is dropped). Every `oauth…` field, `headers`, the last test's result and any field added later are not kept |
 | `lab_agents` | The list of lab machines allowed to report in: each record ties an agent id to the object id of a service principal (the identity a program signs in with), with the id of the admin who registered it and the machine's host name | Identifiers of an administrator and of machines | None | Leave out: it is an access list, like `admins`. Was "archive as is"; moved on 2026-11-24 |
 | `admins` | Who may sign in to the admin, and with which role | **Yes, administrators'**: sign-in id, email, role | None | Leave out: it is the access list, not content. Putting back a years-old access list would be a mistake, and the live one is in the nightly backup |
@@ -513,7 +516,7 @@ What is in the archive:
 | The owner's own data (notes, applications, talks, bot log) | It is the owner's | Nothing: the owner is the one asking |
 | Someone named in the owner's free text or attachments (a note, a letter, an Ambassador entry) | The code cannot see inside free text | The archive must be rewritten if such a request is upheld |
 | Speakers who sent proposals | **Not there**: only the talk's own fields are kept (title, abstract, format, level, dates, status). A speaker who wrote their own name into the abstract is the exception | Nothing to do in the archive, unless the request names an abstract |
-| Someone who used one of the earlier site's Cloud Tools: their email address and session id, in three of the five `tool_` containers | **No agreement covers it.** The owner chose on 2026-11-24 to keep these containers whole, against the session's recommendation | The archive must be rewritten (below) for each year that holds the person's record |
+| Someone who used one of the earlier site's Cloud Tools: their email address, account id and session id, in `tool_workspaces`, `tool_assessment_sessions` and `tool_architecture_plans` | **No agreement covers it.** The owner chose on 2026-11-24 to keep these containers whole, against the session's recommendation | The archive must be rewritten (below) for each year that holds the person's record |
 | Whatever a person typed into the other containers kept by that decision | Nobody has read those containers' records; the dry run showed their field names only | The archive must be rewritten if such a request is upheld |
 | Administrators, audit rows, subscribers, recordings | **Not there**: left out | Nothing to do in the archive |
 
@@ -765,13 +768,14 @@ What that means in the list
   nothing in this repository says what their records hold; the owner chose
   on the dry run's record counts, field names and flagged names.
 - **Three of the five `tool_` containers hold the email address and the
-  session id of whoever used the tool.** The owner's decision says "the
-  three `tool_` containers" without naming them, and the session that wrote
-  this could not read the report, so which three is not written here: the
-  dry-run report on the admin shows it, by the field names of each
-  container. All five are kept either way. An email address is another
-  person's contact detail, and no agreement to keep it is recorded
-  anywhere. **The session pointed this out and recommended leaving those
+  session id of whoever used the tool.** By the field names the first dry
+  run showed (names only, never a value): `tool_workspaces` (`ownerEmail`),
+  `tool_assessment_sessions` (`ownerEmail`, `requestedByEmail`, `ownerUid`)
+  and `tool_architecture_plans` (`requestedByEmail`, `ownerUid`,
+  `sessionId`); `ownerUid` is the id of the person's account. The other
+  two, `tool_migration_workspaces` and `tool_exports`, held no record that
+  day. All five are kept. An email address is another person's contact
+  detail, and no agreement to keep it is recorded anywhere. **The session pointed this out and recommended leaving those
   three out. The owner chose to keep them**, on the grounds that the archive
   is private and readable by the owner only. This is an exception, made by
   the owner, to the rule under "Keep lists, not remove lists" that nothing
@@ -905,13 +909,182 @@ to the list the later job will use.
 | Earlier versions of a public interview were kept, drafts included | None is kept; open question above |
 | The Doc Vault's salt was left out by its id and kind | Only the two content kinds are kept |
 
+## What phase 3 settled
+
+Phase 3 was built on 2026-11-24: the job that writes an archive
+([`archive-job.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/archive-job.js)).
+It ships switched off. Section 4 left some details open; these are the
+answers, and the places where the build differs from the words above. Where
+it differs, this section is what the code does.
+
+- **No new timer: the daily check rides the nightly export's timer. This is
+  a decision of this build, not of the owner.** Section 4 says "a daily
+  timer". The session that built the job chose not to add one: the check is
+  made by the timer the nightly export already has (`cosmosExportScheduler`,
+  03:00 UTC), after it has queued the export.
+    - *Why.* The archive is made from that export's backup, and section 4
+      already says "if the nightly export is switched off, the archive job
+      does nothing"; this makes that literally true. It adds no timer flag,
+      no row on the overdue-timer alert and no Terraform change, and it
+      leaves one switch, `CONTENT_ARCHIVE_ENABLED`, as the owner's answer
+      `AUTO` describes.
+    - *What it costs.* The start rule has one more condition, shown on the
+      card as its own reason ("the nightly export is off"): with the export
+      switched off nothing even looks, where a timer of its own would have
+      looked and reported "no backup". A Sunday backup is read on Monday at
+      the earliest, because on Sunday at 03:00 that day's backup has only
+      just been queued. And the archive's check shares the export timer's
+      run: a fault in the check is caught and logged so that it cannot fail
+      the export, but the two are no longer independent.
+    - *How to undo it.* Give the check its own timer in the catalogue
+      (`enabled_timers`); the check itself is one function call and does not
+      change.
+- **An archive never starts from a state no finished dry-run report
+  describes. Asked for after the owner's decision of 2026-11-24, and not in
+  section 4**, whose step 1 lists four conditions and no report. The reason:
+  that decision made the card's red block quiet for 31 containers, so the
+  dry run is now the only place a new container, or a new flagged field in a
+  container nobody decided about, would be seen. The start rule therefore
+  has a seventh condition: the newest dry-run report is finished, was made
+  from the very backup the archive would read, and shows no container
+  waiting, no flagged field in a container the owner has not decided about,
+  and no count that disagrees with the backup. **To keep the owner's answer
+  `AUTO`**, the daily check makes that dry run itself when a report is the
+  only thing missing, and the archive starts at the next check if the report
+  is clean; when it is not, nothing starts and the owner is told. So the
+  first archive starts a day later than section 4 implies (a Tuesday, not a
+  Monday), and a report with something to decide holds the archive until it
+  is answered and a fresh report is clean. A report existing does not prove
+  the owner read it; what the rule guarantees is that nothing new for the
+  owner to see was in it.
+- **The backup read is the newest complete one, and it is written down.**
+  Section 4 says "the first complete Sunday copy dated on or after
+  2 February". With the switch on before February those are the same backup.
+  Switched on later in the year, the first one may already be deleted
+  (backups are kept 35 days), so the job reads the newest. The first check
+  records which backup it chose, and every job of that archive reads that
+  one. If it is deleted before the run finishes, the run starts again from
+  the newest; files written from the old one are not counted and are
+  replaced.
+- **A run in progress asks the keep list again, and so does the report**
+  (added after an independent review of this build, 2026-11-24). The list
+  can change while an archive is half written, or between a dry run and the
+  archive it allows. So the code computes a **fingerprint of the rules**: a
+  sha256 over every list that decides what is kept and the code that applies
+  them. It is written into the pinned run, into the note of each finished
+  file, and into each dry-run report.
+    - A run pinned under other rules than today's is not carried on. It
+      starts again through the same conditions as a first start, and every
+      file is written again.
+    - A file whose note carries other rules than its run's does not count.
+    - Before the manifest is written, every container of the run must still
+      be on the list of what is kept, by name.
+    - The year's folder must hold no file the manifest would not name. A
+      container taken off the list mid-run leaves such a file; the archive
+      then does not finish, the owner is told once, and the file is removed
+      by hand (the runbook has the steps). **The code has no way to delete a
+      file from the archive, on purpose**, so it cannot clear one itself.
+    - A dry-run report made under other rules does not allow a start; nor
+      does one that lacks a part for any container the archive would write,
+      has a part whose count did not match the backup, or met a record too
+      large to search whole. An empty report is not a clean report.
+- **One writer per file, and the exact version is what is listed.** A job
+  writes its file only when no file has that name, or only over the exact
+  version it saw when it started (storage checks this), so of two jobs for
+  one container only one can finish, and a late job cannot write over a file
+  that has since been checked. Each note records the file's version stamp
+  (its ETag), and the manifest is written only when each file in storage
+  still carries the stamp that was checked.
+- **A file that fails a check is not left in the archive where that can be
+  helped.** The two checks that need only the backup (no unreadable line,
+  the count matches the backup's list) are made while the upload is still
+  open, so such a file is never stored. The third, reading the stored file
+  back, needs the file to exist; one that fails it stays under its name,
+  uncounted, and the next job for that container replaces it. The simpler
+  of the two ways the review offered: no second place to write to, and no
+  copy step.
+- **The export's messages go to the queue before the archive's check is
+  called, and the check has two minutes.** This closes the one way riding
+  the export's timer could have cost a night's backup: a check that hung.
+- **The automatic dry run is capped, and the owner is told once, not
+  daily.** At most one automatic dry run per backup and set of rules; if it
+  does not finish the owner is told once and no other is started for that
+  backup; after three in a row (one a week) none is started until one has
+  finished. "Waiting for you" is said once per report. Each kind of message
+  (written, not finished, waiting, blocked) has its own source, so the
+  notifier's 15-minute limit per source cannot make one swallow another.
+- **The plan check now expects the arming change in advance.**
+  `scripts/assert-expected-plan.mjs` declares `CONTENT_ARCHIVE_ENABLED`
+  going from `"false"` to `"true"`, so that the owner's arming run passes.
+  The cost, said plainly: the check will not flag that change if it appears
+  in a run nobody asked for. The runbook tells the owner to read the plan
+  for it.
+- **Working notes are kept outside the archive.** The record of which backup
+  a run reads, and one small note per finished file, are in the private
+  `cosmos-export-state` container under `state/archive-run/<year>/`, beside
+  the dry run's reports. They hold names, counts, sizes and fingerprints.
+  `content-archive` holds only the data files and the manifest, as the
+  layout in section 1 shows.
+- **Three checks before a file counts**, where step 3 names one: no line of
+  the backup was unreadable; the job read as many records as the backup's own
+  list says the container holds; and the file read back from storage has the
+  sha256, the size and the record count of what was written. The sha256 is of
+  the file's bytes as stored, compressed.
+- **A job reads the switch again.** Switching the archive off stops the daily
+  check and also stops a job that was already waiting in the queue.
+- **What the manifest holds.** The year, when it was written, which backup it
+  was made from, and for each file its name, container, decision, record
+  count, size, sha256, how many records the backup held, how many were left
+  out and why, and the names of the fields removed (only names the list
+  itself writes; any other shows as "(other fields)"). Also the containers on
+  the archive list that the backup did not hold. **Not "the version of the
+  code"** that step 4 asks for: the running code has no build number to
+  read. The manifest carries a format number instead (`format: 1`), raised
+  when its layout changes.
+- **The Archive tier comes after the manifest, and is retried.** Moving a
+  file can fail. The next daily check moves whatever is still online, and
+  the card says how many files are in the tier.
+- **The alert for a run that did not finish is a message from the next daily
+  check, not an Azure alert rule.** Section 4 says "six hours". A job that
+  fails tells the owner's phone at once, as every background job does. A run
+  that is more than six hours old with no manifest is said by the next
+  daily check, so up to a day later, and shown in red on the card from the
+  sixth hour. An alert rule in Azure Monitor would be a Terraform resource
+  with a monthly price for something that can happen once a year; it can be
+  added if the owner wants it.
+- **One file per container; no numbered parts yet.** Section 4 says phase 3
+  "measures its job and splits the file if it comes close" to the 30-minute
+  limit. Nothing can be measured before a real archive is written, so no
+  splitting is built. Each finished file's note records how long its job
+  took, and so does each line of a dry-run report. A job that runs out of
+  time fails, tells the owner, and leaves nothing half-archived; the fix
+  would be numbered part files, which the file names leave room for.
+- **A run still unfinished when the next January comes is left.** Its year
+  is not made up later, as section 4 says. Its files stay online without a
+  manifest; they are not an archive, and removing them is by hand.
+- **Built in this phase beside the job:** the card's lines for the last
+  archive and a run in progress; the runbook's sections on switching on,
+  what a run does, a run that does not finish, and reading a file back by
+  hand; and the three changes to the data-subject requests runbook that
+  section 5 lists.
+- **Not built in this phase, though the phases table lists it:** the
+  read-back button of section 6 (the runbook has by-hand steps instead,
+  written from Microsoft's pages and not yet run), and the `trial/` archive
+  the table mentions. Both wait for a first real archive to try them on.
+- **Unchanged:** no earlier version of an interview is kept (the open
+  question above stays `NONE` until the owner answers). A container that is
+  left out, is waiting for a decision, or is not named by the list is never
+  written; a job for one is refused. The 21 containers the owner chose to
+  keep on 2026-11-24 are written whole, like any other kept as it is, so an
+  archive has 60 files at most.
+
 ## Phases
 
 | Phase | What the pull request contains | The owner's steps |
 | --- | --- | --- |
 | **1. Design** (this record) | This decision record, the note on ADR 0028, the changelog entry. No code, no Terraform, no workflow | Read it; answer the five questions; reply `ACCEPT` on #1811 |
 | **2. Storage and the list** (built 2026-11-24) | Terraform: the private `content-archive` container with `prevent_destroy`, and the app setting `CONTENT_ARCHIVE_ENABLED = "false"`. No lifecycle rule, no immutability policy, no new role. Code with no effect on its own: the archive list (every container and its decision, with the test that fails on an unclassified one), the keep lists with their "no secret comes out" test, and the report-only dry run | Confirm the Terraform run in HCP Terraform (it adds one empty container and one setting; nothing is replaced or destroyed). Run the dry run from the admin, answer for the 21 leftover containers, and answer the open question about interview versions |
-| **3. The job and the runbook** | The timer, the per-container job, the check-then-archive step, the manifest, the alert for a run that did not finish, a line on the admin Health page, the read-back button, a new runbook `docs/runbooks/content-archive.md`, and the changes to the data-subject requests runbook from section 5. No new credential, so the credential checklist has nothing to add; the pull request says so row by row | Switch `CONTENT_ARCHIVE_ENABLED` on. The first run happens on the first day the conditions are true (for the archive of 2026: the first Sunday backup on or after 2 February 2027; the owner can ask for an earlier trial archive under a `trial/` folder to prove the read-back sooner). Then do the read-back and write the result on #1811 |
+| **3. The job and the runbook** (the job built 2026-11-24; the read-back button and the `trial/` archive are not, see [What phase 3 settled](#what-phase-3-settled)) | The timer, the per-container job, the check-then-archive step, the manifest, the alert for a run that did not finish, a line on the admin Health page, the read-back button, a new runbook `docs/runbooks/content-archive.md`, and the changes to the data-subject requests runbook from section 5. No new credential, so the credential checklist has nothing to add; the pull request says so row by row | Switch `CONTENT_ARCHIVE_ENABLED` on. The first run happens on the first day the conditions are true (for the archive of 2026: the first Sunday backup on or after 2 February 2027; the owner can ask for an earlier trial archive under a `trial/` folder to prove the read-back sooner). Then do the read-back and write the result on #1811 |
 | **4. Images and audio** (if question 1 is `LATER` or `NOW`) | Sizes from section 3, the choice between this account and a single-region one, the copy job, and its manifest | Run the sizing lines; confirm any Terraform run; read back a sample |
 | **5. A lock, if wanted** | Only after the read-back: an unlocked time-based policy on the container | Decide; confirm the Terraform run |
 

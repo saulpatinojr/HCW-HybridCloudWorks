@@ -852,11 +852,16 @@ export const DECLARED = [
   // #1811 (ADR 0046): the yearly content archive, storage and switch. The
   // plan after the merge creates one empty private container on the content
   // storage account and adds one app setting, off. No lifecycle rule, no
-  // immutability policy and no role assignment is added. Arming the switch
-  // ("false" -> "true") is deliberately NOT declared here: the job that
-  // reads it is not built yet, and its pull request declares that plan.
-  // Delete both entries once the run has applied, and their test in
-  // assert-expected-plan.test.mjs with them.
+  // immutability policy and no role assignment is added. Delete the first two
+  // entries once the run has applied. The third is the arming plan
+  // ("false" -> "true"), declared by the pull request that built the job
+  // that reads the switch (functions/src/lib/backup/archive-job.js): a
+  // one-line pull request made after the owner has read a dry-run report
+  // and said yes. It stays until that has applied. Absent straight to "true"
+  // is not declared: the switch is armed only after it has applied as off.
+  // The job adds no Terraform of its own: it rides the nightly export's
+  // timer, so there is no new timer flag and no new row on
+  // alert-timer-overdue.
   {
     address: "azurerm_storage_container.content_archive",
     action: "create",
@@ -868,6 +873,13 @@ export const DECLARED = [
     before: undefined,
     after: "false",
     reason: "#1811 ADR 0046: the yearly content archive's switch declared, off",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.CONTENT_ARCHIVE_ENABLED",
+    before: "false",
+    after: "true",
+    reason: "#1811 ADR 0046: the owner armed the yearly content archive",
   },
 
   // #1823 (ADR 0045): the Community Days developer key's app setting, a Key

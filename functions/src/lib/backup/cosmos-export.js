@@ -66,6 +66,15 @@ export const PAGE_SIZE = 500;
 
 const RUN_ID = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * Is the nightly export switched on? "1" or "true" arms it; the schedulers
+ * master switch still holds it off. Here, not beside the timer, because the
+ * yearly content archive asks the same question: it is made from the weekly
+ * backup and its daily check rides the export's timer (archive-job.js).
+ */
+export const exportEnabled = (env = process.env) =>
+  env.FEATURE_FLAG_SCHEDULERS !== 'false' && ['1', 'true'].includes(env.FEATURE_FLAG_COSMOS_EXPORT);
+
 // ── Naming ───────────────────────────────────────────────────────────────────
 
 /** UTC calendar date, `YYYY-MM-DD` — the run id. */

@@ -213,6 +213,87 @@ describe('createExportBlobStore', () => {
     await expect(store.containerExists()).rejects.toThrow(/AuthorizationFailure/);
   });
 
+  it('listDetails gives each file’s name, size, access tier and version stamp', async () => {
+    const storage = fakeStorage();
+    storage.listBlobs = vi.fn(async () => [
+      { name: '2026/cosmos/blogs.ndjson.gz', size: 120, tier: 'Archive', etag: '"0x1"' },
+      { name: '2026/manifest.json', size: '40' },
+    ]);
+    const store = createExportBlobStore({ container: 'content-archive', stateContainer: 'content-archive', storage });
+    expect(await store.listDetails('2026/')).toEqual([
+      { name: '2026/cosmos/blogs.ndjson.gz', size: 120, tier: 'Archive', etag: '"0x1"' },
+      { name: '2026/manifest.json', size: 40, tier: null, etag: null },
+    ]);
+    expect(storage.listBlobs).toHaveBeenCalledWith('content-archive', '2026/');
+  });
+
+  it('create-only reads both of storage’s refusals, 409 and 412, as "it is already there"', async () => {
+    // https://learn.microsoft.com/rest/api/storageservices/specifying-conditional-headers-for-blob-service-operations
+    for (const refusal of [
+      { statusCode: 409, code: 'BlobAlreadyExists' },
+      { statusCode: 412, code: 'ConditionNotMet' },
+      { code: 'ConditionNotMet' },
+      { statusCode: 412 },
+    ]) {
+      const storage = fakeStorage();
+      storage.uploadBlob = vi.fn(async () => {
+        throw Object.assign(new Error('refused'), refusal);
+      });
+      const store = createExportBlobStore({ storage });
+      expect(await store.putJson('2026/manifest.json', { a: 1 }, { overwrite: false }), JSON.stringify(refusal)).toBe(false);
+      // Without the condition the same answer is a real failure, not "already there".
+      await expect(store.putJson('2026/manifest.json', { a: 1 })).rejects.toThrow('refused');
+    }
+    // Anything else is a failure either way.
+    const storage = fakeStorage();
+    storage.uploadBlob = vi.fn(async () => {
+      throw Object.assign(new Error('AuthorizationFailure'), { statusCode: 403 });
+    });
+    await expect(createExportBlobStore({ storage }).putJson('x.json', {}, { overwrite: false })).rejects.toThrow('AuthorizationFailure');
+  });
+
+  it('a conditional stream upload answers false when storage refuses the condition, and passes the condition on', async () => {
+    const storage = fakeStorage();
+    const store = createExportBlobStore({ container: 'content-archive', stateContainer: 'content-archive', storage });
+    expect(await store.uploadGzipStream('2026/cosmos/blogs.ndjson.gz', Readable.from([]), { conditions: { ifNoneMatch: '*' } })).toBe(true);
+    expect(storage.uploadBlobFromStream.mock.calls[0][5]).toMatchObject({ conditions: { ifNoneMatch: '*' } });
+    for (const refusal of [{ statusCode: 409, code: 'BlobAlreadyExists' }, { statusCode: 412, code: 'ConditionNotMet' }]) {
+      storage.uploadBlobFromStream = vi.fn(async () => {
+        throw Object.assign(new Error('refused'), refusal);
+      });
+      expect(await store.uploadGzipStream('2026/cosmos/blogs.ndjson.gz', Readable.from([]), { conditions: { ifMatch: '"0x1"' } })).toBe(false);
+      // An unconditional upload that is refused is a failure.
+      await expect(store.uploadGzipStream('2026/cosmos/blogs.ndjson.gz', Readable.from([]))).rejects.toThrow('refused');
+    }
+  });
+
+  it('setTier moves only a data file of a yearly archive, never a manifest, a backup file or a bookmark', async () => {
+    const storage = fakeStorage();
+    storage.setBlobAccessTier = vi.fn(async () => {});
+    const store = createExportBlobStore({ container: 'content-archive', stateContainer: 'content-archive', storage });
+    await store.setTier('2026/cosmos/certEvents.ndjson.gz', 'Archive');
+    expect(storage.setBlobAccessTier).toHaveBeenCalledWith('content-archive', '2026/cosmos/certEvents.ndjson.gz', 'Archive');
+    for (const name of [
+      '2026/manifest.json',
+      'full/2026-09-13/content.ndjson.gz',
+      'state/content.json',
+      '2026/cosmos/../manifest.json',
+      '2026/cosmos/a/b.ndjson.gz',
+      // The pattern is exact about case: these are not names the job writes.
+      '2026/COSMOS/blogs.ndjson.gz',
+      '2026/cosmos/blogs.NDJSON.GZ',
+      '',
+      undefined,
+    ]) {
+      await expect(store.setTier(name, 'Archive'), String(name)).rejects.toThrow(/only a data file of a yearly archive/);
+    }
+    // Only to the Archive tier: nothing here brings a file back online.
+    for (const tier of ['Hot', 'Cool', 'Cold', 'archive', undefined]) {
+      await expect(store.setTier('2026/cosmos/blogs.ndjson.gz', tier), String(tier)).rejects.toThrow(/only be moved to the Archive tier/);
+    }
+    expect(storage.setBlobAccessTier).toHaveBeenCalledTimes(1);
+  });
+
   it('deleteReportFile deletes only a file of an archive dry-run report, from the state container', async () => {
     const storage = fakeStorage();
     storage.deleteBlob = vi.fn(async () => {});

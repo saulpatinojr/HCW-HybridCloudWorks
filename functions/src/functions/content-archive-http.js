@@ -1,21 +1,24 @@
 /**
  * content-archive-http.js — the yearly content archive's admin routes and
- * the job a dry run queues (ADR 0046, issue #1811). Registration only;
- * semantics in lib/backup/archive-handlers.js and lib/backup/archive-report.js.
+ * its two job types (ADR 0046, issue #1811). Registration only; semantics in
+ * lib/backup/archive-handlers.js, archive-report.js and archive-job.js.
  *
  *   GET  cms/content-archive           where the archive stands, and the newest dry-run report
  *   POST cms/content-archive/dry-run   start a dry run
  *
- * There is NO timer here and nothing that writes an archive: that job is
- * phase 3 of ADR 0046. The app setting CONTENT_ARCHIVE_ENABLED is read only
- * to report whether it is on. So this file is safe to deploy before or after
- * the Terraform run that adds the setting and the `content-archive`
- * container: with the setting absent the switch reads as off, and with the
- * container absent the status says "the container does not exist yet" and
- * the year's archive is "not known" (never "not archived": a missing
- * container must not look like a year that is safe to start). A dry run needs
- * neither; it reads the backup and writes its report beside the backup's own
- * working state.
+ * There is NO timer here and NO route that starts an archive. An archive
+ * starts by itself: the nightly export's timer (cosmos-export.js) makes the
+ * daily check, which queues one `content-archive-container` job per
+ * container when the app setting CONTENT_ARCHIVE_ENABLED is "true" and the
+ * start rule allows it. This file only registers what those jobs run.
+ *
+ * Safe to deploy before or after the Terraform run that adds the setting and
+ * the `content-archive` container: with the setting absent the switch reads
+ * as off and nothing is written, and with the container absent the status
+ * says "the container does not exist yet" and the year's archive is "not
+ * known" (never "not archived": a missing container must not look like a
+ * year that is safe to start). A dry run needs neither; it reads the backup
+ * and writes its report beside the backup's own working state.
  */
 import { output } from '@azure/functions';
 import { httpRoute } from '../lib/auth/http-route.js';
@@ -25,6 +28,8 @@ import { JOBS_QUEUE, registerJobType } from '../lib/jobs.js';
 import { createJobFailureOnComplete } from '../lib/job-failure-notify.js';
 import { createExportBlobStore } from '../lib/backup/cosmos-export-edges.js';
 import { createArchiveHandlers } from '../lib/backup/archive-handlers.js';
+import { ARCHIVE_JOB_TYPE, createArchiveWorker, parseArchivePayload } from '../lib/backup/archive-job.js';
+import { createNotifier } from '../lib/notify.js';
 import {
   ARCHIVE_CONTAINER,
   REPORT_JOB_TYPE,
@@ -37,6 +42,10 @@ const queueOutput = output.storageQueue({
   connection: 'AzureWebJobsStorage',
 });
 
+/** A blob store on the archive's own container. The routes only read it; the archive job writes it. */
+const archiveBlobStore = () =>
+  createExportBlobStore({ container: ARCHIVE_CONTAINER, stateContainer: ARCHIVE_CONTAINER });
+
 // Built per request: the guard is resolved lazily so this module stays
 // importable without one (the route inventory imports every module).
 const handlers = () =>
@@ -44,8 +53,7 @@ const handlers = () =>
     guard: getDefaultGuard(),
     store: { upsertDoc: store.upsertDoc },
     blobs: createExportBlobStore(),
-    // Its own store on the archive's container: only ever read here.
-    archiveBlobs: createExportBlobStore({ container: ARCHIVE_CONTAINER, stateContainer: ARCHIVE_CONTAINER }),
+    archiveBlobs: archiveBlobStore(),
   });
 
 httpRoute('cmsContentArchive', {
@@ -79,5 +87,31 @@ registerJobType(REPORT_JOB_TYPE, {
     const job = parseReportPayload(payload);
     return createReportWorker({ blobs: createExportBlobStore(), log: context }).readContainer({ ...job, signal });
   },
+  onComplete: createJobFailureOnComplete({ store }),
+});
+
+registerJobType(ARCHIVE_JOB_TYPE, {
+  // No HTTP route queues this; the daily check on the nightly export's timer
+  // is its only intended caller. The worker writes one file of the long-term
+  // archive, so a hand-queued job is a super_admin act. It still writes
+  // nothing unless CONTENT_ARCHIVE_ENABLED is "true", the year has no
+  // manifest yet and the payload matches the run that is in progress.
+  role: 'super_admin',
+  description:
+    'Yearly content archive (ADR 0046): read one container’s file from the pinned weekly full backup in the private cosmos-export blob container, a line at a time, keep only the records and fields the archive classification keeps, and write them as gzip NDJSON to <year>/cosmos/ in the private content-archive container; read the file back and check its sha256 and record count; note the result under state/archive-run/ in cosmos-export-state. The job that finds every file checked writes <year>/manifest.json, create-only, and only then moves the data files to the Archive tier. Writes nothing when CONTENT_ARCHIVE_ENABLED is not "true" or the year already has a manifest. Queued by the daily check on cosmosExportScheduler.',
+  maxPayloadBytes: 1024,
+  // Under the 30-minute non-HTTP host limit, with room for the terminal write.
+  timeoutMs: 28 * 60 * 1000,
+  worker: async (payload, { context, signal }) => {
+    const job = parseArchivePayload(payload);
+    return createArchiveWorker({
+      backupBlobs: createExportBlobStore(),
+      archiveBlobs: archiveBlobStore(),
+      notifier: createNotifier({ store, log: context }),
+      log: context,
+    }).archiveContainer({ ...job, signal });
+  },
+  // A container whose file could not be written or checked is said on the
+  // phone now; the next daily check queues it again.
   onComplete: createJobFailureOnComplete({ store }),
 });
