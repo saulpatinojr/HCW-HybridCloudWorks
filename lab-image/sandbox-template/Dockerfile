@@ -96,14 +96,21 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # files, so reinstalling the CLI with apt would put the old packages back;
 # nothing after this RUN runs apt again, and the agent user cannot.
 #
-# Four of the base's own Ubuntu packages are upgraded in the same RUN
-# (#1650): Docker's template, at the digest pinned in versions.env, was built
-# on 2026-10-21 and still carries linux-libc-dev, apt, libapt-pkg7.0 and
-# libbrotli1 with HIGH and CRITICAL fixes that Ubuntu has since published in
-# resolute-security. linux-libc-dev stays (libc6-dev and build-essential
-# need it; the template is meant to compile). Remove a name once the pinned
-# base carries the fixed version; the weekly scan says when. The loop
-# before it fails the build if a name is not installed (dpkg status
+# Eight packages that come with the base are upgraded in the same RUN
+# (#1650, #1749): Docker's template, at the digest pinned in versions.env,
+# was built on 2026-10-21 and still carries older builds with HIGH and
+# CRITICAL fixes published since. Six are Ubuntu's, fixed in
+# resolute-security: linux-libc-dev, apt, libapt-pkg7.0, libbrotli1 and
+# OpenJDK 25 (openjdk-25-jdk-headless and openjdk-25-jre-headless, which the
+# base's default-jdk-headless installs). Two are Docker's own, from the apt
+# source for download.docker.com that the base already has: the
+# docker-buildx-plugin and docker-compose-plugin programs were built with
+# containerd 2.4.1, and Docker's 0.39.1 and 5.8.0 packages for Ubuntu 26.04
+# are built with the fixed 2.4.2 (read from the two programs' Go build
+# information on 2026-11-24). linux-libc-dev stays (libc6-dev and
+# build-essential need it; the template is meant to compile). Remove a name
+# once the pinned base carries the fixed version; the weekly scan says when.
+# The loop before it fails the build if a name is not installed (dpkg status
 # `installed`, not merely known to dpkg), because --only-upgrade would skip
 # a misspelt, renamed or removed package without a word. The two lists name
 # the same packages; scripts/lab-image-azure-cli-overrides.test.mjs holds that.
@@ -130,11 +137,11 @@ RUN set -eu; . /tmp/versions.env; . /etc/os-release; \
       'Signed-By: /etc/apt/keyrings/microsoft.asc' > /etc/apt/sources.list.d/azure-cli.sources; \
     apt-get update; \
     apt-get install -y --no-install-recommends "azure-cli=${AZURE_CLI_VERSION}-1~${VERSION_CODENAME}"; \
-    for pkg in linux-libc-dev apt libapt-pkg7.0 libbrotli1; do \
+    for pkg in linux-libc-dev apt libapt-pkg7.0 libbrotli1 openjdk-25-jdk-headless openjdk-25-jre-headless docker-buildx-plugin docker-compose-plugin; do \
       [ "$(dpkg-query -W -f='${db:Status-Status}' "${pkg}" 2> /dev/null)" = installed ] \
         || { echo "${pkg} is not installed in the base; edit the --only-upgrade line" >&2; exit 1; }; \
     done; \
-    apt-get install -y --no-install-recommends --only-upgrade linux-libc-dev apt libapt-pkg7.0 libbrotli1; \
+    apt-get install -y --no-install-recommends --only-upgrade linux-libc-dev apt libapt-pkg7.0 libbrotli1 openjdk-25-jdk-headless openjdk-25-jre-headless docker-buildx-plugin docker-compose-plugin; \
     mkdir -p /tmp/az-wheels; \
     printf '%s\n' "${AZURE_CLI_PYTHON_OVERRIDES-}" | sed '/^[[:space:]]*$/d' > /tmp/az-wheels/requirements.txt; \
     while read -r spec _; do \

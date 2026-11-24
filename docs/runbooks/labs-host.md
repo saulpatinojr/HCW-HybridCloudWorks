@@ -4497,6 +4497,17 @@ and one that is open means merge it first and scan again. The tests in
 `scripts/lab/scan-waivers.test.mjs` refuse an entry with no place, no maker,
 or a date more than 31 days after the file was written.
 
+**When a provider's version moves, its waivers do not follow by themselves.**
+A Terraform provider's path holds its version number, so the weekly
+`chore/lab-pins-image-tools` pull request that moves a provider leaves that
+provider's waivers pointing at a file that is no longer in the image, and the
+next scan reports whatever the new release still carries. That is what kept
+[#1749](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1749)
+open on 2026-11-24: Azure/azapi moved from 2.13.0 to 2.14.0, which was built
+with the same Go release. After merging a provider move, renew the file as
+above, so each finding the new release fixed drops out and each one it still
+carries is written down against the new path.
+
 ## Arc onboarding
 
 **State: not yet run.** The Terraform half is in `infra/lab-hybrid.tf` and the

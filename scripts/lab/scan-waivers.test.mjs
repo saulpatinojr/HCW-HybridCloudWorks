@@ -47,11 +47,11 @@ describe('scan-waivers.mjs', () => {
 
   it('groups one finding id into one entry per maker, listing every place', () => {
     const entries = waiversFrom(
-      [report(go('usr/bin/gh', 'CVE-2026-78661')), report(go('usr/libexec/docker/cli-plugins/docker-buildx', 'CVE-2026-78661')), report(go('usr/local/bin/helm', 'CVE-2026-78661'))],
+      [report(go('usr/bin/gh', 'CVE-2026-78661')), report(go('usr/bin/pebble', 'CVE-2026-78661')), report(go('usr/local/bin/helm', 'CVE-2026-78661'))],
       DATES
     );
     expect(entries).toHaveLength(2);
-    expect(entries.find((e) => e.statement.startsWith('Waits on Docker')).paths).toEqual(['usr/bin/gh', 'usr/libexec/docker/cli-plugins/docker-buildx']);
+    expect(entries.find((e) => e.statement.startsWith('Waits on Docker')).paths).toEqual(['usr/bin/gh', 'usr/bin/pebble']);
     expect(entries.find((e) => e.statement.startsWith('Waits on the Helm project')).paths).toEqual(['usr/local/bin/helm']);
   });
 
@@ -80,6 +80,7 @@ describe('scan-waivers.mjs', () => {
     'opt/az/lib/python3.14/site-packages/cryptography-48.0.1.dist-info/METADATA',
     'pkg:pypi/setuptools@70.3.0',
     'usr/bin/pebble',
+    'usr/libexec/docker/cli-plugins/docker-compose',
   ];
 
   it('every rule matches its own sample place and names who the fix waits on', () => {

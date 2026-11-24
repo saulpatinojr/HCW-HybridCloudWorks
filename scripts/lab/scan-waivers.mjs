@@ -52,8 +52,15 @@ export const MAKERS = [
   },
   { match: /^pkg:pypi\/setuptools@/, reason: () => "Waits on pip: this setuptools is pip's own bundled copy, and no pip release newer than the pinned one carries a fixed copy yet." },
   {
-    match: /^(usr\/bin\/(gh|pebble)|usr\/libexec\/docker\/cli-plugins\/docker-(buildx|compose))$/,
+    match: /^usr\/bin\/(gh|pebble)$/,
     reason: () => "Waits on Docker: this program comes with the docker/sandbox-templates base image of the sandbox template, and the pinned base digest is Docker's newest.",
+  },
+  // The two plugins come with that base too, but since #1749 the sandbox
+  // template upgrades them from Docker's own apt source, so what is left in
+  // them waits on Docker's next package, not on the next base image.
+  {
+    match: /^usr\/libexec\/docker\/cli-plugins\/docker-(buildx|compose)$/,
+    reason: (m) => `Waits on Docker: the sandbox template upgrades docker-${m[1]}-plugin to the newest package in Docker's apt source for Ubuntu, and that newest package was built with these Go modules.`,
   },
 ];
 

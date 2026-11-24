@@ -128,7 +128,7 @@ describe('the sandbox template around the block', () => {
     expect(SANDBOX_DOCKERFILE).toContain('--require-hashes -r /tmp/az-wheels/requirements.txt');
   });
 
-  // #1650: base packages Ubuntu fixed after Docker built the template. The
+  // #1650, #1749: packages Ubuntu or Docker fixed after Docker built the template. The
   // guard loop fails the build for a name that is not installed, so it must
   // name exactly the packages the upgrade line does, inside the same RUN.
   it('upgrades the base packages it guards, and only those, after apt-get update', () => {
@@ -138,7 +138,16 @@ describe('the sandbox template around the block', () => {
     expect(upgrade).not.toBeNull();
     const names = (m) => m[1].trim().split(/\s+/).sort();
     expect(names(upgrade)).toEqual(names(loop));
-    expect(names(upgrade)).toEqual(['apt', 'libapt-pkg7.0', 'libbrotli1', 'linux-libc-dev']);
+    expect(names(upgrade)).toEqual([
+      'apt',
+      'docker-buildx-plugin',
+      'docker-compose-plugin',
+      'libapt-pkg7.0',
+      'libbrotli1',
+      'linux-libc-dev',
+      'openjdk-25-jdk-headless',
+      'openjdk-25-jre-headless',
+    ]);
     expect(SANDBOX_DOCKERFILE).toContain(`[ "$(dpkg-query -W -f='\${db:Status-Status}' "\${pkg}" 2> /dev/null)" = installed ]`);
     // Located by the commands themselves: the comment above the RUN names --only-upgrade too.
     const update = at('apt-get update;');
