@@ -13,6 +13,7 @@ import {
 import { SyncEngine } from "./engine.js";
 import { createAuth } from "./auth.js";
 import { createMsalNetworkClient } from "./auth-network.js";
+import { describeError, failureText } from "./errors.js";
 import { join } from "node:path";
 
 const DEFAULTS = {
@@ -126,7 +127,11 @@ class EnrollModal extends Modal {
             await this.plugin.engine.enroll([...this.selected]);
             this.close();
             await this.plugin.sync(true);
-          } catch {
+          } catch (error) {
+            console.error(
+              "HCW Second Brain: enrollment paused.",
+              describeError(error),
+            );
             new Notice(
               "Enrollment paused. Check settings, sign in, and retry. Original notes are retained.",
             );
@@ -173,10 +178,14 @@ class HCWSettings extends PluginSettingTab {
             await this.plugin.auth.token(true);
             await this.plugin.persist();
             new Notice("Signed in. Choose notes or run Sync now.");
-          } catch {
-            new Notice(
-              "Sign-in failed. Check the tenant, desktop client, and brain_sync permission.",
+          } catch (error) {
+            // Show and log the step and Microsoft's reason. describeError
+            // hides tokens and device codes; the raw error is not logged.
+            console.error(
+              "HCW Second Brain: sign-in failed.",
+              describeError(error),
             );
+            new Notice(`Sign-in failed. ${failureText(error)}`, 20000);
           }
         }),
       )

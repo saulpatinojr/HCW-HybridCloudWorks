@@ -133,13 +133,13 @@ docker_release_pins:
   resolute:
     engine: "5:29.10.0-1~ubuntu.26.04~resolute"
     containerd: "2.4.2-4~ubuntu.26.04~resolute"
-    buildx: "0.39.0-1~ubuntu.26.04~resolute"
-    compose: "5.7.1-1~ubuntu.26.04~resolute"
+    buildx: "0.39.1-1~ubuntu.26.04~resolute"
+    compose: "5.8.0-1~ubuntu.26.04~resolute"
   noble:
     engine: "5:29.10.0-1~ubuntu.24.04~noble"
     containerd: "2.4.2-4~ubuntu.24.04~noble"
-    buildx: "0.39.0-1~ubuntu.24.04~noble"
-    compose: "5.7.1-1~ubuntu.24.04~noble"
+    buildx: "0.39.1-1~ubuntu.24.04~noble"
+    compose: "5.8.0-1~ubuntu.24.04~noble"
 docker_version: "{{ docker_release_pins[ansible_facts['distribution_release']].engine }}"
 docker_containerd_version: "{{ docker_release_pins[ansible_facts['distribution_release']].containerd }}"
 docker_buildx_version: "{{ docker_release_pins[ansible_facts['distribution_release']].buildx }}"
@@ -179,7 +179,7 @@ caddy_version: v2.11.9
 caddy_cloudflare_module_version: v0.2.4
 caddy_builder_image: caddy
 caddy_builder_image_tag: 2.11.9-builder
-caddy_builder_image_digest: sha256:f9beaa5ddbe7df6f26ebbcf9cbf44e05a1917b9bba464f0c3229038d7e2e6e13
+caddy_builder_image_digest: sha256:cda07fe9d82728c7ac44d844306d435e98131423dc7b114f05a8a8ecfff94707
 caddy_site_domain: "{{ lab_host_domain }}"
 # The three names ADR 0032 puts on the certificate. DNS-01 for each is answered
 # through the CNAME delegation of _acme-challenge.lab and _acme-challenge.coder.lab
@@ -277,7 +277,7 @@ coder_image_digest: sha256:2ce6b2ab5b78afe05da8b62184efc7950bb0e53a32dcefab4ef1c
 # /var/lib/postgresql.
 coder_postgres_image: postgres
 coder_postgres_image_tag: "18.7"
-coder_postgres_image_digest: sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+coder_postgres_image_digest: sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b
 # The Docker socket proxy the coder server reaches the daemon through
 # (LAB-5, 2026-10-06): HAProxy with one allow rule per API section, written
 # in lab-host/coder/docker-proxy.haproxy.cfg. Until 2026-11-07 it was
@@ -359,8 +359,8 @@ labs_agent_docker_proxy_image_tag: "3.4.7-trixie"
 labs_agent_docker_proxy_image_digest: sha256:f6d2ee87b47192d9cc8c22e88fef405122ff339859644883edc2a7d1827f87b3
 
 # node_exporter release tarball, linux-amd64, from the release's sha256sums.txt.
-node_exporter_version: 1.12.1
-node_exporter_checksum: sha256:b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63
+node_exporter_version: 1.13.1
+node_exporter_checksum: sha256:5c00c5234f1ee45900b25539a5a0ab82146a098c15c16a4ec3bc855b597a6477
 
 # Portainer (owner decision 2026-09-26: Portainer and Vault on the reinstalled
 # host, loopback only; ADR 0032, amendment of that date). Business Edition,
@@ -377,8 +377,8 @@ node_exporter_checksum: sha256:b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e83
 # pin's index.
 portainer_enabled: true
 portainer_image: portainer/portainer-ee
-portainer_image_tag: "2.45.3"
-portainer_image_digest: sha256:8166e2376756d1ad3194e336cd1707c28a5764af7acc8bb9f21a5f28d1903566
+portainer_image_tag: "2.45.4"
+portainer_image_digest: sha256:273e2d4ca3394c20cc6b2e2f3696ebe7dd4f6bb98e7fc15f1d8ba90d8476dae4
 
 # Sigstore cosign (LAB-X, #1069): verifies SLSA build provenance attestations
 # on add-on images before docker_image_pull. Pinned release from

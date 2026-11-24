@@ -10,11 +10,45 @@ import {
 import { join, isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
 
+const STAGE = "token cache (Windows encryption)";
+const cacheError = (message, code) =>
+  Object.assign(new Error(message), { stage: STAGE, ...(code && { code }) });
+
+/** Explains a helper failure from its exit code and a pattern match on what
+ * PowerShell wrote to stderr. The stderr text itself is never shown or logged:
+ * the helper reads token data, so only these fixed sentences leave here.
+ * dpapi.ps1 exits 3 when Windows' encryption call itself fails; any other
+ * non-zero code means PowerShell did not run the script. */
+export function helperFailure(exitCode, stderr = "") {
+  if (/running scripts is disabled|execution ?polic/i.test(stderr))
+    return cacheError(
+      "PowerShell's execution policy blocked the cache helper (dpapi.ps1). No plaintext cache was written.",
+      "helper_execution_policy",
+    );
+  if (/not digitally signed|cannot be loaded|is blocked|Zone\.Identifier/i.test(stderr))
+    return cacheError(
+      "Windows blocked the cache helper (dpapi.ps1) as unsigned or downloaded. No plaintext cache was written.",
+      "helper_blocked",
+    );
+  if (exitCode === 3)
+    return cacheError(
+      "Windows refused encrypted token storage (DPAPI). No plaintext cache was written.",
+      "dpapi_refused",
+    );
+  return cacheError(
+    `The cache helper (dpapi.ps1) did not run; PowerShell exit code ${Number.isInteger(exitCode) ? exitCode : "none"}. No plaintext cache was written.`,
+    "helper_failed",
+  );
+}
+
 /** Fixed, packaged helper; secrets travel on stdin/stdout, never in arguments.
  * No execution-policy override, native unsigned addon, or plaintext fallback. */
 export function dpapi(mode, input, helperPath) {
   if (!isAbsolute(helperPath || "") || !["Protect", "Unprotect"].includes(mode))
-    throw new Error("The packaged Windows cache helper is required.");
+    throw cacheError(
+      "The packaged Windows cache helper is required.",
+      "helper_missing",
+    );
   return new Promise((resolve, reject) => {
     const child = spawn(
       join(
@@ -29,30 +63,45 @@ export function dpapi(mode, input, helperPath) {
     );
     const chunks = [];
     let bytes = 0;
+    let stderr = "";
     const timeout = setTimeout(() => {
       child.kill();
-      reject(new Error("Encrypted cache helper timed out."));
+      reject(
+        cacheError(
+          "The encrypted cache helper (dpapi.ps1) timed out after 15 seconds.",
+          "helper_timeout",
+        ),
+      );
     }, 15000);
-    child.on("error", () => {
+    child.on("error", (error) => {
       clearTimeout(timeout);
-      reject(new Error("Windows encrypted cache is unavailable."));
+      reject(
+        cacheError(
+          `Windows PowerShell could not be started (${error?.code || "unknown"}).`,
+          "helper_spawn",
+        ),
+      );
     });
     child.stdout.on("data", (chunk) => {
       bytes += chunk.length;
       if (bytes > 4 * 1024 * 1024) child.kill();
       else chunks.push(chunk);
     });
-    // Drain without logging: helper failures must never disclose token data.
-    child.stderr.on("data", () => {});
+    // Kept only to classify the failure (see helperFailure); never logged.
+    child.stderr.on("data", (chunk) => {
+      if (stderr.length < 8192) stderr += chunk.toString("utf8");
+    });
     child.stdin.on("error", () => {});
     child.on("close", (code) => {
       clearTimeout(timeout);
-      if (code !== 0 || bytes > 4 * 1024 * 1024)
+      if (bytes > 4 * 1024 * 1024)
         reject(
-          new Error(
-            "Windows refused encrypted token storage. No plaintext cache was written.",
+          cacheError(
+            "The cache helper returned too much data. No plaintext cache was written.",
+            "helper_oversize",
           ),
         );
+      else if (code !== 0) reject(helperFailure(code, stderr));
       else resolve(Buffer.concat(chunks).toString("utf8"));
     });
     child.stdin.end(input);
@@ -83,8 +132,9 @@ export function encryptedCache(cachePath, helperPath) {
         }
       }
       if (!lock)
-        throw new Error(
-          "Another HCW sign-in is using the encrypted cache. Retry.",
+        throw cacheError(
+          `Another HCW sign-in is using the encrypted cache (${cachePath}.lock). Retry, or delete that file if Obsidian is the only program using it.`,
+          "cache_locked",
         );
       try {
         const encrypted = await readFile(cachePath, "utf8").catch((error) => {
