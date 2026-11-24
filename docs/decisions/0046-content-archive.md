@@ -799,6 +799,15 @@ above.
   names of its common, plain top-level fields, and a count of the records
   that carry a field, at any depth, whose *name* looks like a secret or
   someone's contact details, with those names. Never a value.
+- **Names that look sensitive are reported in two lists** (added on
+  2026-11-24, after the owner's first dry run could not be acted on): the
+  names taken out before archiving, and the names that would remain. For a
+  name that would remain the report gives where the field sits, in how many
+  records, and the kind of value it holds (number, true/false, date-like
+  text, short or long text, list, object, empty), never a value. Only a
+  remaining name that holds more than numbers or yes/no, and is not on the
+  short list of names kept on purpose with a reason in the code, is flagged.
+  This changed what the report says, not what an archive keeps.
 - **A field name can be an id, so not every name is shown.** A record that is
   a list keyed by visitor id has ids for field names, and a report is kept
   for weeks. A name is shown only when at least 2 records of the container

@@ -9,10 +9,15 @@
  * that backup WOULD hold: per container, how many records would be kept,
  * how many would have fields taken out, how many would be left out and why.
  * For EVERY container it reads it also lists the NAMES of the top-level
- * fields, and counts the records that carry a field, at any depth, whose
- * name looks like a secret or someone's contact details. That is how the
- * owner sees "container X: 3 records have a field named like a secret"
- * before anything is archived.
+ * fields, and looks, at any depth, for fields whose name looks like a secret
+ * or someone's contact details. It reports those in two separate lists: the
+ * names that are TAKEN OUT before archiving, and the names that WOULD REMAIN
+ * in the archive. For each name that would remain it says where it sits (the
+ * names of the fields above it), in how many records, and what KIND of value
+ * it holds (a number, true/false, a date, short or long text, a list, an
+ * object), so the owner can tell a token count from a token. Only a name
+ * that would remain, is not kept on purpose, and holds something other than
+ * numbers and true/false is flagged.
  *
  * WHAT IT NEVER DOES. It writes nothing into `content-archive`, changes no
  * record and no backup file, and keeps no record, no id and no field value:
@@ -59,9 +64,11 @@ import { blobNames } from './cosmos-export.js';
 import {
   DECISIONS,
   REASONS,
+  SENSITIVE_KEPT_ON_PURPOSE,
   UNCLASSIFIED,
   archiveClassifiedContainers,
   archiveDecisionFor,
+  archiveDocumentLabel,
   archivePlan,
   archiveRecord,
   createContentIndex,
@@ -194,6 +201,86 @@ export function sensitiveNamesIn(doc) {
     }
   }
   return { names, cutShort };
+}
+
+/** What a path shows in place of a field name that is not plain (it may be an id). */
+export const ID_PART = '(id)';
+
+/** The kinds of value the report tells apart. Words, never the value. */
+export const VALUE_KINDS = Object.freeze(['number', 'yes-no', 'date', 'short-text', 'long-text', 'list', 'object', 'empty']);
+/** Text shorter than this is "short text". A key or a token is usually shorter; a paragraph is longer. */
+export const SHORT_TEXT_LENGTH = 64;
+/** A field whose every value is one of these cannot hold a secret or an address: a count, or a yes/no. */
+const HARMLESS_KINDS = new Set(['number', 'yes-no']);
+
+const DATE_LIKE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
+/**
+ * The kind of one value: `number`, `yes-no` (true or false), `date` (text
+ * shaped like a date or a date and time), `short-text` (under
+ * SHORT_TEXT_LENGTH characters), `long-text`, `list`, `object` or `empty`
+ * (null, or text with nothing in it). The value itself is never returned.
+ * @param {unknown} value
+ */
+export function valueKind(value) {
+  if (value === null || value === undefined || value === '') return 'empty';
+  if (typeof value === 'number' || typeof value === 'bigint') return 'number';
+  if (typeof value === 'boolean') return 'yes-no';
+  if (Array.isArray(value)) return 'list';
+  if (typeof value === 'object') return 'object';
+  if (typeof value !== 'string') return 'empty';
+  if (DATE_LIKE.test(value)) return 'date';
+  return value.length < SHORT_TEXT_LENGTH ? 'short-text' : 'long-text';
+}
+
+/**
+ * Every field in one record, at any depth, whose name looks like a secret or
+ * someone's contact details: where it sits and what kind of value it holds.
+ *
+ * `path` is the names of the fields above it and its own name, joined with
+ * dots (`speakerProfile.email`). A part that is not a plain name
+ * (`isPlainName`) shows as `(id)`, because a field name can itself be an id.
+ * A position in a list adds no part. `plain` says whether the field's own
+ * name may be printed. Bounded like `sensitiveNamesIn`.
+ *
+ * @param {unknown} doc
+ * @returns {{ fields: Map<string, { name: string, path: string, plain: boolean, kinds: Record<string, number> }>, cutShort: boolean }}
+ */
+export function sensitiveFieldsIn(doc) {
+  const fields = new Map();
+  let nodes = 0;
+  let cutShort = false;
+  const stack = [[doc, 0, '']];
+  while (stack.length) {
+    const [value, depth, above] = stack.pop();
+    if (value === null || typeof value !== 'object') continue;
+    nodes += 1;
+    if (depth > SENSITIVE_MAX_DEPTH || nodes > SENSITIVE_MAX_NODES) {
+      cutShort = true;
+      continue;
+    }
+    const push = (inner, path) => {
+      if (inner === null || typeof inner !== 'object') return;
+      if (stack.length >= SENSITIVE_MAX_NODES) cutShort = true;
+      else stack.push([inner, depth + 1, path]);
+    };
+    if (Array.isArray(value)) {
+      for (const item of value) push(item, above);
+      continue;
+    }
+    for (const [key, inner] of Object.entries(value)) {
+      const plain = isPlainName(key);
+      const path = `${above ? `${above}.` : ''}${plain ? key : ID_PART}`;
+      if (looksSensitive(key)) {
+        const field = fields.get(path) || { name: key, path, plain, kinds: {} };
+        const kind = valueKind(inner);
+        field.kinds[kind] = (field.kinds[kind] || 0) + 1;
+        fields.set(path, field);
+      }
+      push(inner, path);
+    }
+  }
+  return { fields, cutShort };
 }
 
 // ── Names ────────────────────────────────────────────────────────────────────
@@ -414,14 +501,50 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
     let nameUses = 0;
     // Names that look sensitive, at any depth, in the records as read.
     const sensitive = { records: 0, keptRecords: 0, cutShort: 0, tally: new Map(), otherNames: 0 };
-    const noteSensitive = (found) => {
-      for (const name of found.names) {
-        if (!isPlainName(name)) sensitive.otherNames += 1;
-        else if (sensitive.tally.has(name)) sensitive.tally.set(name, sensitive.tally.get(name) + 1);
-        else if (sensitive.tally.size < MAX_TALLIED_NAMES) sensitive.tally.set(name, 1);
-        else sensitive.otherNames += 1;
+    const tallyName = (tally, name) => {
+      if (tally.has(name)) tally.set(name, tally.get(name) + 1);
+      else if (tally.size < MAX_TALLIED_NAMES) tally.set(name, 1);
+      else return false;
+      return true;
+    };
+    const noteSensitive = (names) => {
+      for (const name of names) {
+        if (!isPlainName(name) || !tallyName(sensitive.tally, name)) sensitive.otherNames += 1;
       }
     };
+    // The same names, split by what happens to them: taken out before
+    // archiving, or still there in what an archive would keep.
+    const takenOut = { tally: new Map(), notPlain: 0, tooMany: 0 };
+    const remaining = { entries: new Map(), notPlain: 0, tooMany: 0 };
+    const onPurpose = SENSITIVE_KEPT_ON_PURPOSE[container] || {};
+    const noteTakenOut = (names) => {
+      for (const name of names) {
+        if (!isPlainName(name)) takenOut.notPlain += 1;
+        else if (!tallyName(takenOut.tally, name)) takenOut.tooMany += 1;
+      }
+    };
+    const noteRemaining = (fields, document) => {
+      for (const field of fields.values()) {
+        // A name that is not plain may be an id or text someone typed: counted, never printed.
+        if (!field.plain) {
+          remaining.notPlain += 1;
+          continue;
+        }
+        const key = `${document ?? ''}\u0000${field.path}`;
+        let entry = remaining.entries.get(key);
+        if (!entry) {
+          if (remaining.entries.size >= MAX_TALLIED_NAMES) {
+            remaining.tooMany += 1;
+            continue;
+          }
+          entry = { document, path: field.path, name: field.name, records: 0, kinds: {} };
+          remaining.entries.set(key, entry);
+        }
+        entry.records += 1;
+        for (const [kind, n] of Object.entries(field.kinds)) entry.kinds[kind] = (entry.kinds[kind] || 0) + n;
+      }
+    };
+    const namesOf = (fields) => new Set([...fields.values()].map((field) => field.name));
 
     const exists = (await blobs.listNames(blobNames({ mode: 'full', runId, container }).data)).length > 0;
     if (!exists) {
@@ -443,18 +566,24 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
             if (tally.has(key)) tally.set(key, tally.get(key) + 1);
             else if (tally.size < MAX_TALLIED_NAMES) tally.set(key, 1);
           }
-          found = sensitiveNamesIn(doc);
+          found = sensitiveFieldsIn(doc);
           if (found.cutShort) sensitive.cutShort += 1;
-          if (found.names.size) {
+          if (found.fields.size) {
             sensitive.records += 1;
-            noteSensitive(found);
+            noteSensitive(namesOf(found.fields));
           }
         }
         const result = archiveRecord(container, doc, { contentIndex });
         // The same question about what an archive would actually keep.
-        if (result.keep) {
-          const kept = result.doc === doc && found ? found : sensitiveNamesIn(result.doc);
-          if (kept.names.size) sensitive.keptRecords += 1;
+        const kept = !result.keep ? null : result.doc === doc && found ? found : sensitiveFieldsIn(result.doc);
+        if (kept?.fields.size) {
+          sensitive.keptRecords += 1;
+          noteRemaining(kept.fields, archiveDocumentLabel(container, doc?.id));
+        }
+        if (found?.fields.size) {
+          // Taken out: a name the record carried that what is kept no longer carries.
+          const still = kept ? namesOf(kept.fields) : new Set();
+          noteTakenOut([...namesOf(found.fields)].filter((name) => !still.has(name)));
         }
         if (!result.keep) {
           part.leftOut += 1;
@@ -480,11 +609,35 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
     const sensitiveNames = [...sensitive.tally]
       .map(([name, records]) => ({ name, records }))
       .sort((a, b) => b.records - a.records || a.name.localeCompare(b.name));
+    // What would remain, one line per place a name sits. `quiet`: every value
+    // seen was a number or true/false (a token COUNT, an "email verified"
+    // switch), so it cannot be a secret or an address. `keptOnPurpose`: the
+    // classification keeps it deliberately and says why. Neither is flagged.
+    const remainingList = [...remaining.entries.values()]
+      .map((entry) => {
+        const kinds = Object.keys(entry.kinds).filter((kind) => kind !== 'empty');
+        const quiet = kinds.length > 0 && kinds.every((kind) => HARMLESS_KINDS.has(kind));
+        const keptOnPurpose = entry.path === entry.name && Object.hasOwn(onPurpose, entry.name) ? onPurpose[entry.name] : null;
+        return { ...entry, quiet, keptOnPurpose, flagged: !quiet && !keptOnPurpose };
+      })
+      .sort((a, b) => Number(b.flagged) - Number(a.flagged) || b.records - a.records || a.path.localeCompare(b.path) || String(a.document).localeCompare(String(b.document)));
     part.sensitive = {
       records: sensitive.records,
       keptRecords: sensitive.keptRecords,
+      // The names as read, before anything is taken out (what earlier reports listed).
       names: sensitiveNames.slice(0, MAX_SENSITIVE_NAMES),
       namesNotShown: sensitive.otherNames + Math.max(0, sensitiveNames.length - MAX_SENSITIVE_NAMES),
+      // Taken out before archiving: the record is left out, or the field is dropped.
+      takenOut: [...takenOut.tally].map(([name, records]) => ({ name, records })).sort((a, b) => b.records - a.records || a.name.localeCompare(b.name)),
+      // Uses of a name that is not printed, and why: it is shaped like an id
+      // or typed text (`notPlain`), or the container has more different
+      // names than one report tallies (`tooMany`).
+      takenOutNotShown: { notPlain: takenOut.notPlain, tooMany: takenOut.tooMany },
+      remaining: remainingList,
+      remainingNotShown: { notPlain: remaining.notPlain, tooMany: remaining.tooMany },
+      // What the red block is driven by: names that would remain and are not
+      // explained, plus any that would remain and cannot be printed.
+      flagged: remainingList.filter((entry) => entry.flagged).length + (remaining.notPlain || remaining.tooMany ? 1 : 0),
       cutShort: sensitive.cutShort,
     };
     part.durationMs = now().getTime() - startedAt.getTime();
@@ -545,6 +698,8 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
         unreadable: sum('unreadable'),
         sensitiveRecords: containers.reduce((n, c) => n + count(c.sensitive?.records), 0),
         sensitiveKeptRecords: containers.reduce((n, c) => n + count(c.sensitive?.keptRecords), 0),
+        // Containers an archive would keep that hold a name to look at (see `flagged` in a part).
+        flaggedContainers: containers.filter((c) => c.decision !== DECISIONS.leaveOut && count(c.sensitive?.flagged) > 0).length,
         mismatched: containers.filter((c) => c.matchesBackup === false).length,
       },
       containers,

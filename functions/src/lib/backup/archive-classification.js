@@ -791,6 +791,56 @@ export function adminSettingsDecision(id) {
   return out(REASONS.unlisted);
 }
 
+// ── For the dry-run report: names kept on purpose, and which document ────────
+
+/**
+ * Field names that LOOK like a secret (`looksSensitive`) and are kept on
+ * purpose, with the reason. The dry-run report shows each as "kept on
+ * purpose" instead of flagging it red. This list changes nothing about what
+ * is kept; it only explains it. Add a name here only with a reason the code
+ * shows; a name that is merely probably harmless is the owner's to decide
+ * from the report.
+ *
+ * Only a top-level field of the named container counts.
+ */
+export const SENSITIVE_KEPT_ON_PURPOSE = Object.freeze({
+  // The keep list copies this field with the kind `name` (KINDS.name): it is
+  // kept only when it is shaped like the NAME of an app setting
+  // (SOME_SETTING_NAME), which says where a key is read from and is never
+  // the key. Anything else in the field is dropped. The test beside this
+  // file holds both keep lists to that kind.
+  mcp_servers: Object.freeze({
+    apiKeyEnvVar: 'the name of the setting a key is read from, never the key itself; anything not shaped like a setting’s name is dropped',
+  }),
+  ai_providers: Object.freeze({
+    apiKeyEnvVar: 'the name of the setting a key is read from, never the key itself; anything not shaped like a setting’s name is dropped',
+  }),
+});
+
+/** What the report calls a document whose id the code does not name. */
+export const OTHER_DOCUMENT = '(other)';
+
+/**
+ * A printable name for one document of `admin_config` or `admin_settings`,
+ * so the dry-run report can say which settings document a field is in. Only
+ * an id the keep lists above name is printed, as it is written there; an id
+ * that matches a kept prefix prints as the prefix and `*` (what follows the
+ * prefix can be an id); anything else is `(other)`. `null` for every other
+ * container: their record ids are never printed.
+ *
+ * @param {string} container
+ * @param {unknown} id
+ * @returns {string|null}
+ */
+export function archiveDocumentLabel(container, id) {
+  const lists = container === 'admin_config' ? { ids: ADMIN_CONFIG_KEEP.ids, prefixes: ADMIN_CONFIG_KEEP.prefixes } : container === 'admin_settings' ? { ids: Object.keys(ADMIN_SETTINGS_KEEP.ids), prefixes: ADMIN_SETTINGS_KEEP.prefixes } : null;
+  if (!lists) return null;
+  if (typeof id !== 'string' || !id) return OTHER_DOCUMENT;
+  if (lists.ids.includes(id)) return id;
+  const prefix = lists.prefixes.find((start) => id.startsWith(start));
+  return prefix ? `${prefix}*` : OTHER_DOCUMENT;
+}
+
 // ── One record ───────────────────────────────────────────────────────────────
 
 const left = (reason) => ({ keep: false, doc: null, removed: [], reason });

@@ -17,7 +17,9 @@ import {
   listableNames,
   nameThreshold,
   reportIdTime,
+  sensitiveFieldsIn,
   sensitiveNamesIn,
+  valueKind,
   archiveStartDecision,
   archiveYearFor,
   createReportScheduler,
@@ -30,7 +32,7 @@ import {
   reportIdFor,
   reportNames,
 } from './archive-report.js';
-import { archivePlan, UNCLASSIFIED } from './archive-classification.js';
+import { AI_PROVIDER_KEEP, MCP_SERVER_KEEP, SENSITIVE_KEPT_ON_PURPOSE, archiveDocumentLabel, archivePlan, UNCLASSIFIED } from './archive-classification.js';
 import { createArchiveHandlers, DRY_RUN_AUDIT_ACTION } from './archive-handlers.js';
 
 const ndjson = (docs) => gzipSync(Buffer.from(docs.map((doc) => (typeof doc === 'string' ? doc : JSON.stringify(doc))).join('\n') + '\n'));
@@ -747,6 +749,15 @@ describe('sensitiveNamesIn: names that look like a secret, at any depth, and nev
         { name: 'token', records: 1 },
       ],
       namesNotShown: 1,
+      // The container is left out, so every name is taken out and none remains.
+      takenOut: [
+        { name: 'password', records: 1 },
+        { name: 'token', records: 1 },
+      ],
+      takenOutNotShown: { notPlain: 1, tooMany: 0 },
+      remaining: [],
+      remainingNotShown: { notPlain: 0, tooMany: 0 },
+      flagged: 0,
       cutShort: 0,
     });
     expect(report.totals.sensitiveRecords).toBe(2);
@@ -764,5 +775,167 @@ describe('sensitiveNamesIn: names that look like a secret, at any depth, and nev
     const { report } = await readLatestReport({ blobs, now: at });
     expect(report.containers[0].sensitive).toMatchObject({ records: 1, keptRecords: 1, names: [{ name: 'authorEmail', records: 1 }] });
     expect(report.totals.sensitiveKeptRecords).toBe(1);
+  });
+});
+
+describe('names that look like a secret: which are taken out, which would remain, and what kind of value they hold', () => {
+  const at = new Date('2027-02-08T04:00:30Z');
+  /** The dry run's part for one container, and everything the run stored. */
+  async function partFor(container, docs) {
+    const blobs = memoryBlobs(backupSeed({ [container]: docs }));
+    const jobs = [];
+    await createReportScheduler({ store: { upsertDoc: async (_c, doc) => jobs.push(doc) }, blobs, enqueue: () => {}, now: () => at }).start();
+    await createReportWorker({ blobs, now: () => at }).readContainer(parseReportPayload(jobs[0].payload));
+    const { report } = await readLatestReport({ blobs, now: at });
+    const stored = JSON.stringify([...blobs.files].filter(([name]) => name.startsWith('state/')));
+    return { part: report.containers[0], report, stored };
+  }
+  const entry = (part, path, document) => part.sensitive.remaining.find((e) => e.path === path && (document === undefined || e.document === document));
+
+  it('valueKind names the kind and never the value', () => {
+    expect(valueKind(12)).toBe('number');
+    expect(valueKind(true)).toBe('yes-no');
+    expect(valueKind('2026-11-24')).toBe('date');
+    expect(valueKind('2026-11-24T10:00:00.000Z')).toBe('date');
+    expect(valueKind('x'.repeat(63))).toBe('short-text');
+    expect(valueKind('x'.repeat(64))).toBe('long-text');
+    expect(valueKind([1])).toBe('list');
+    expect(valueKind({ a: 1 })).toBe('object');
+    for (const nothing of [null, undefined, '']) expect(valueKind(nothing)).toBe('empty');
+  });
+
+  it('sensitiveFieldsIn gives the path as parent field names, with (id) for a part that is not a plain name', () => {
+    const { fields } = sensitiveFieldsIn({
+      email: 'made-up@example.com',
+      profile: { contact: { phone: 'made-up-phone' } },
+      people: [{ email: 'made-up-1@example.com' }, { email: 7 }],
+      'visitor_12345678': { token: 'made-up-token' },
+      byVisitor: { '11111111-0000-0000-0000-000000000001': { apiKey: 'made-up-key' } },
+      note: 'the word password in a value is not a field name',
+    });
+    expect([...fields.values()]).toEqual([
+      { name: 'email', path: 'email', plain: true, kinds: { 'short-text': 1 } },
+      { name: 'apiKey', path: 'byVisitor.(id).apiKey', plain: true, kinds: { 'short-text': 1 } },
+      { name: 'token', path: '(id).token', plain: true, kinds: { 'short-text': 1 } },
+      { name: 'email', path: 'people.email', plain: true, kinds: { 'short-text': 1, number: 1 } },
+      { name: 'phone', path: 'profile.contact.phone', plain: true, kinds: { 'short-text': 1 } },
+    ]);
+    const text = JSON.stringify([...fields.values()]);
+    for (const leaked of ['made-up', 'visitor_12345678', '11111111']) expect(text).not.toContain(leaked);
+    // A sensitive name that is itself shaped like an id is marked, so the report counts it and does not print it.
+    expect([...sensitiveFieldsIn({ token_12345678: 'x' }).fields.values()]).toEqual([{ name: 'token_12345678', path: '(id)', plain: false, kinds: { 'short-text': 1 } }]);
+  });
+
+  it('a kept container: names that would remain come with their path, record count and kinds, and drive the flag', async () => {
+    const { part, report, stored } = await partFor('blogs', [
+      { id: 'b1', email: 'made-up-1@example.com', emailVerified: true, usage: { totalTokens: 12 }, author: { requestHash: 'made-up-hash' } },
+      { id: 'b2', email: 'made-up-2@example.com', emailVerified: false, usage: { totalTokens: 40 }, author: { requestHash: 'x'.repeat(80) } },
+      { id: 'b3', emailVerified: null },
+    ]);
+    expect(part.sensitive.takenOut).toEqual([]);
+    expect(entry(part, 'email')).toEqual({ document: null, path: 'email', name: 'email', records: 2, kinds: { 'short-text': 2 }, quiet: false, keptOnPurpose: null, flagged: true });
+    expect(entry(part, 'author.requestHash')).toMatchObject({ records: 2, kinds: { 'short-text': 1, 'long-text': 1 }, flagged: true });
+    // Only numbers, or only true/false (an empty one beside them does not change that): listed, not flagged.
+    expect(entry(part, 'usage.totalTokens')).toMatchObject({ records: 2, kinds: { number: 2 }, quiet: true, flagged: false });
+    expect(entry(part, 'emailVerified')).toMatchObject({ records: 3, kinds: { 'yes-no': 2, empty: 1 }, quiet: true, flagged: false });
+    expect(part.sensitive.flagged).toBe(2);
+    // Flagged names come first.
+    expect(part.sensitive.remaining.slice(0, 2).every((e) => e.flagged)).toBe(true);
+    expect(report.totals.flaggedContainers).toBe(1);
+    for (const leaked of ['made-up', 'xxxxxxxx']) expect(stored).not.toContain(leaked);
+  });
+
+  it('a kept container whose only such names hold numbers or true/false is not flagged at all', async () => {
+    const { part, report } = await partFor('ai_usage', [
+      { id: 'u1', promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      { id: 'u2', promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+    ]);
+    expect(part.sensitive.keptRecords).toBe(2);
+    expect(part.sensitive.remaining.map((e) => [e.path, e.quiet, e.flagged])).toEqual([
+      ['completionTokens', true, false],
+      ['promptTokens', true, false],
+      ['totalTokens', true, false],
+    ]);
+    expect(part.sensitive.flagged).toBe(0);
+    expect(report.totals.flaggedContainers).toBe(0);
+  });
+
+  it('separates what is taken out from what would remain, in a container kept in part', async () => {
+    const { part, stored } = await partFor('mcp_servers', [
+      { id: 'm1', name: 'A server', apiKeyEnvVar: 'SOME_SETTING_NAME', oauthToken: 'made-up-token', headers: { Authorization: 'Bearer made-up-bearer' } },
+      { id: 'm2', name: 'Another', apiKeyEnvVar: 'made-up-real-key-not-a-setting-name', oauthRefreshToken: 'made-up-refresh' },
+    ]);
+    expect(part.sensitive.takenOut).toEqual([
+      // m2's apiKeyEnvVar was not shaped like a setting's name, so it was dropped.
+      { name: 'apiKeyEnvVar', records: 1 },
+      { name: 'Authorization', records: 1 },
+      { name: 'oauthRefreshToken', records: 1 },
+      { name: 'oauthToken', records: 1 },
+    ]);
+    expect(part.sensitive.remaining).toEqual([
+      {
+        document: null,
+        path: 'apiKeyEnvVar',
+        name: 'apiKeyEnvVar',
+        records: 1,
+        kinds: { 'short-text': 1 },
+        quiet: false,
+        keptOnPurpose: SENSITIVE_KEPT_ON_PURPOSE.mcp_servers.apiKeyEnvVar,
+        flagged: false,
+      },
+    ]);
+    expect(part.sensitive.flagged).toBe(0);
+    expect(stored).not.toContain('made-up');
+    expect(stored).not.toContain('SOME_SETTING_NAME');
+  });
+
+  it('a name is "kept on purpose" only where the keep list shape-checks it as a setting’s name, and only at the top level', async () => {
+    expect(Object.keys(SENSITIVE_KEPT_ON_PURPOSE).sort()).toEqual(['ai_providers', 'mcp_servers']);
+    expect(MCP_SERVER_KEEP.apiKeyEnvVar).toBe('name');
+    expect(AI_PROVIDER_KEEP.apiKeyEnvVar).toBe('name');
+    for (const names of Object.values(SENSITIVE_KEPT_ON_PURPOSE)) expect(Object.keys(names)).toEqual(['apiKeyEnvVar']);
+    // The same name in a container that does not shape-check it is flagged like any other.
+    const { part } = await partFor('blogs', [{ id: 'b1', apiKeyEnvVar: 'made-up-key' }]);
+    expect(entry(part, 'apiKeyEnvVar')).toMatchObject({ keptOnPurpose: null, flagged: true });
+  });
+
+  it('a name that would remain and cannot be printed is counted with the reason, and still raises the flag', async () => {
+    const { part, stored } = await partFor('blogs', [{ id: 'b1', token_12345678: 'made-up-value' }, { id: 'b2', inner: { 'secret for jane@example.com': 1 } }]);
+    expect(part.sensitive.remaining).toEqual([]);
+    expect(part.sensitive.remainingNotShown).toEqual({ notPlain: 2, tooMany: 0 });
+    expect(part.sensitive.flagged).toBe(1);
+    expect(stored).not.toContain('token_12345678');
+    expect(stored).not.toContain('jane@example.com');
+  });
+
+  it('every plain name that would remain is listed, however many there are', async () => {
+    const doc = { id: 'b1' };
+    for (let i = 0; i < 60; i += 1) doc[`secret${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}`] = 'made-up';
+    const { part } = await partFor('blogs', [doc]);
+    expect(part.sensitive.remaining).toHaveLength(60);
+    expect(part.sensitive.remainingNotShown).toEqual({ notPlain: 0, tooMany: 0 });
+  });
+
+  it('for admin_config and admin_settings a remaining name says which settings document it is in, when the code names that document', async () => {
+    expect(archiveDocumentLabel('admin_config', 'credential_register')).toBe('credential_register');
+    expect(archiveDocumentLabel('admin_config', 'community_days_event_made-up-id')).toBe('community_days_event_*');
+    expect(archiveDocumentLabel('admin_config', 'developer_api_key:made-up')).toBe('(other)');
+    expect(archiveDocumentLabel('admin_config', undefined)).toBe('(other)');
+    expect(archiveDocumentLabel('admin_settings', 'integrations')).toBe('integrations');
+    expect(archiveDocumentLabel('admin_settings', 'blog-source-made-up')).toBe('blog-source-*');
+    expect(archiveDocumentLabel('blogs', 'made-up-id')).toBeNull();
+
+    const { part, stored } = await partFor('admin_config', [
+      { id: 'credential_register', rotated: { 'made-up-api-token': '2026-11-01', 'another-client-secret': '2026-10-01T08:00:00Z' } },
+      { id: 'community_days_event_made-up-id', contactEmail: 'made-up@example.com' },
+      { id: 'developer_api_key:made-up', keyHash: 'made-up-hash' },
+    ]);
+    expect(entry(part, 'rotated.made-up-api-token', 'credential_register')).toMatchObject({ records: 1, kinds: { date: 1 }, flagged: true });
+    expect(entry(part, 'rotated.another-client-secret', 'credential_register')).toMatchObject({ kinds: { date: 1 } });
+    expect(entry(part, 'contactEmail', 'community_days_event_*')).toMatchObject({ records: 1, kinds: { 'short-text': 1 } });
+    // The key record is left out whole, so its name is taken out, not remaining.
+    expect(part.sensitive.takenOut).toEqual([{ name: 'keyHash', records: 1 }]);
+    expect(part.sensitive.remaining.every((e) => e.document !== '(other)')).toBe(true);
+    for (const leaked of ['made-up-id', 'made-up-hash', 'made-up@example.com', 'developer_api_key:made-up']) expect(stored).not.toContain(leaked);
   });
 });
