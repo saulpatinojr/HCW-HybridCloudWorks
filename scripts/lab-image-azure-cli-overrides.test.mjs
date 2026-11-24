@@ -133,10 +133,11 @@ describe('the sandbox template around the block', () => {
   // name exactly the packages the upgrade line does, inside the same RUN.
   it('upgrades the base packages it guards, and only those, after apt-get update', () => {
     const loop = SANDBOX_DOCKERFILE.match(/for pkg in ([^;]+); do/);
-    const upgrade = SANDBOX_DOCKERFILE.match(/apt-get install -y --no-install-recommends --only-upgrade ([^;]+);/);
+    const upgrade = SANDBOX_DOCKERFILE.match(/apt-get install -y --no-install-recommends --only-upgrade\s+([^;]+);/);
     expect(loop).not.toBeNull();
     expect(upgrade).not.toBeNull();
-    const names = (m) => m[1].trim().split(/\s+/).sort();
+    // Each list may be wrapped over several lines; a line's closing `\` is not a name.
+    const names = (m) => m[1].replace(/\\\n/g, ' ').trim().split(/\s+/).sort();
     expect(names(upgrade)).toEqual(names(loop));
     expect(names(upgrade)).toEqual([
       'apt',

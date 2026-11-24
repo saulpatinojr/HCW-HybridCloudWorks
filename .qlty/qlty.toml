@@ -123,6 +123,11 @@ default = true
 
 [[plugin]]
 name = "actionlint"
+# The version CI's `actionlint, zizmor, hadolint` job pins (ci.yml
+# ACTIONLINT_VERSION); move both together. Qlty's default, 1.7.9, predates
+# the `artifact-metadata` permission (actionlint 1.7.10), which
+# publish-lab-image.yml uses, and reported it as unknown (2026-11-24).
+version = "1.7.12"
 
 [[plugin]]
 name = "editorconfig-checker"
@@ -219,4 +224,17 @@ name = "zizmor"
 [[triage]]
 match.plugins = ["ripgrep"]
 match.rules = ["TODO", "NOTE", "OPTIMIZE"]
+set.ignored = true
+
+# lab-image/Dockerfile's `fetch` stage keeps one RUN per downloaded artefact
+# on purpose (2026-11-24): the stage ships nothing (later stages COPY only
+# /out), so its layer count reaches no image, and kept apart a change to one
+# pin in versions.env downloads only that artefact again. The comment above
+# those RUNs says so. radarlint-iac has no inline skip, so the rule is
+# ignored for that one file here; S7031 still reports in every other
+# Dockerfile. docs/security/scanner-triage.md#radarlint-iac.
+[[triage]]
+match.plugins = ["radarlint-iac"]
+match.rules = ["radarlint-iac:docker:S7031"]
+match.file_patterns = ["lab-image/Dockerfile"]
 set.ignored = true

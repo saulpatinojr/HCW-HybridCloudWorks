@@ -320,6 +320,8 @@ inside `run:`. Only people with write access can dispatch a workflow.
 | CKV_GHA_7 | `.github/workflows/tfc-plan-check.yml:74` | Accepted | Read-only plan check. `scripts/check-tfc-plan.mjs` validates the run id against `^[A-Za-z0-9]{8,}$`, and uses the commit only for comparison, never in a URL. | Inline skip, this PR |
 | CKV_GHA_7 | `.github/workflows/monitor-functions-registered.yml:104` | Fixed | The inputs (app, resource group, minimum count) only repeated the one estate's values. A dispatch could only point the monitor at the wrong app or loosen its threshold. Now fixed in `env:`, so a manual run checks what the schedule checks. | Inputs removed, 2026-09-14 |
 | CKV_GHA_7 | `.github/workflows/verify-alert-state.yml:49` | Fixed | Same shape: one resource group input whose only other value would be wrong. | Input removed, 2026-09-14 |
+| CKV_GHA_7 | `.github/workflows/cloudflare-dns-audit.yml:69` | Accepted | Read-only audit that builds nothing. `since` and `before` reach the script through `env`; `since` is now checked against the script's own date pattern (`parseWhen` in `scripts/cloudflare-dns-audit.mjs`) before it is written to the step's outputs, because a line break in it could have added an output of its own. The script refuses a bad `before`; `open_issue` is a boolean. | Inline skip and the `since` check, 2026-11-24 |
+| CKV_GHA_7 | `.github/workflows/lab-host-arc-run.yml:52` | Accepted | `action` is a `choice` of three fixed scripts, matched by a fixed `case` that refuses any other value, behind the `lab-host-arc` environment's reviewers and its main-only branch rule. | Inline skip, 2026-11-24 |
 
 ### Terraform (32)
 
@@ -377,6 +379,28 @@ above the module, which checkov honours when handed the single file.
 | CKV2_ANSIBLE_1 | `lab-host/ansible/roles/vault/tasks/seal.yml` | Ask the Arc agent for a Key Vault token | Accepted | The Azure Connected Machine agent serves its token endpoint only as plain HTTP on `127.0.0.1:40342`, as Microsoft documents and as Vault's own credential chain calls it. Nothing leaves the host, and the answer is a path to a file only root and the `himds` group can read. | Inline skip, 2026-09-29 (#726) |
 | CKV2_ANSIBLE_1 | `lab-host/ansible/roles/vault/tasks/seal.yml` | Answer the challenge and receive a Key Vault token | Accepted | As above: the same loopback endpoint, which issues the token. | Inline skip, 2026-09-29 (#726) |
 | CKV2_ANSIBLE_1 | `lab-host/ansible/roles/vault/tasks/seal.yml` | Read the seal key through Key Vault | Fixed | The URL was HTTPS, held in a variable checkov cannot resolve. It is now written out in the task, beginning `https://`. | 2026-09-29 (#726) |
+| CKV2_ANSIBLE_1 | `lab-host/ansible/roles/addons/tasks/main.yml:383` | Add-on health read | Accepted | The add-on's own port on `127.0.0.1` (`addons_publish_address` in the role's `vars/main.yml`); nothing leaves the host. | Inline skip, 2026-11-24 |
+| CKV2_ANSIBLE_1 | `lab-host/ansible/roles/caddy/tasks/main.yml:220` | Check that Caddy answers on the admin socket | Accepted | A request over Caddy's Unix admin socket; the host in the URL is never looked up. | Inline skip, 2026-11-24 |
+| CKV2_ANSIBLE_1 | `lab-host/ansible/roles/coder/tasks/first_user.yml:30` | First user | Accepted | Coder's port on loopback `127.0.0.1:7080` only. | Inline skip, 2026-11-24 |
+| CKV2_ANSIBLE_1 | `lab-host/ansible/roles/coder_sandbox/tasks/main.yml:324` | rootlesskit API | Accepted | rootlesskit's Unix API socket. | Inline skip, 2026-11-24 |
+| CKV2_ANSIBLE_1 | `lab-host/ansible/roles/labs_agent/tasks/docker_proxy.yml:138` | Docker proxy check | Accepted | The Docker proxy's Unix socket. | Inline skip, 2026-11-24 |
+| CKV_ANSIBLE_1 | `lab-host/ansible/roles/portainer/tasks/main.yml:107` | Portainer is up | Accepted | Portainer's own self-signed certificate on `127.0.0.1`; the read sends no token and only asks whether Portainer answers. A comment above the task says so. | Inline skip, 2026-11-24 |
+| CKV2_ANSIBLE_3 | `lab-host/ansible/roles/arc/tasks/onboard.yml:127` | Onboarding block | Fixed | A `rescue:` ending in `ansible.builtin.fail` with the runbook pointer; the run still stops as before and `always:` still deletes the connect file. Checked in a scratch play: both "fatal" lines print, so `arc-run/bootstrap.sh` still names the failed task; recap `failed=1 rescued=1`, exit 2. | Rescue added, 2026-11-24 |
+| CKV2_ANSIBLE_3 | `lab-host/ansible/roles/hardening/tasks/arc_gate.yml:44` | Arc gate block | Fixed | As above; the `fail` says port 22 and sshd were left unchanged (this file runs before `sshd.yml` and `ufw.yml`). | Rescue added, 2026-11-24 |
+
+**A block cannot take an inline skip** (checkov 3.2.495, found 2026-11-24):
+checkov files a skip on a block under `block..Name` and reports the finding
+as `block.Name`, so they never match, whatever the comment's placement. A
+block finding is fixed in code (as CKV2_ANSIBLE_3 above) or not at all.
+Also, checkov did not check `uri` tasks nested in a block for
+CKV2_ANSIBLE_1 in that test, so a plain-HTTP call inside a block is not
+seen by it; the reviewer checks those by hand.
+
+### Coder templates
+
+| Rule | File | Verdict | Reason and evidence | Resolution |
+| --- | --- | --- | --- | --- |
+| CKV_TF_1 | `lab-host/coder/templates/hcw-lab/main.tf:393`, `amo-guided-lab/main.tf:253`, `na-guided-lab/main.tf:252` | Accepted | The `code-server` module comes from the Coder registry (`registry.coder.com/coder/code-server/coder`) pinned to the exact release `1.6.0`; a registry source cannot take a commit hash. The two guided-lab templates already carried the skip with no row here; `hcw-lab` lacked it. | Inline skip, 2026-11-24 (row covers all three) |
 
 ### Secrets (1)
 
@@ -534,6 +558,21 @@ resource. checkov's `skip-path` was not used, because checkov does not
 honour it when Qlty hands it single files (see [Secrets](#secrets-1)).
 
 ## radarlint-iac
+
+**2026-11-24.** Four Dockerfile layout findings were fixed (a long `RUN`
+line split in `lab-image/Dockerfile`, two consecutive `RUN` steps merged, and
+both package lists in `lab-image/sandbox-template/Dockerfile` wrapped and
+sorted, with `scripts/lab-image-azure-cli-overrides.test.mjs` taught to read
+a wrapped list). One is kept on purpose: S7031 ("merge consecutive RUN") on
+the `fetch` stage of `lab-image/Dockerfile`. That stage ships nothing, and
+one `RUN` per download means a changed pin fetches only that artefact again.
+radarlint-iac has no inline skip, so a `[[triage]]` rule in
+`.qlty/qlty.toml` ignores S7031 for that one file only.
+
+Qlty also ran actionlint 1.7.9, which predates the `artifact-metadata`
+permission ([GitHub changelog, 2026-01-13](https://github.blog/changelog/2026-01-13-new-fine-grained-permission-for-artifact-metadata-is-now-generally-available/))
+and reported it as unknown in `publish-lab-image.yml`. `.qlty/qlty.toml`
+now pins actionlint to 1.7.12, CI's version.
 
 > **Retired 2026-10-02 (#821).** #821 repointed the `TODO.md` comments listed
 > below. A recount that day (`grep -rn TODO infra`, case-insensitive) found
