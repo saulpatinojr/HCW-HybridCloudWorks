@@ -267,9 +267,8 @@ def go_time(moment):
 
 def random_text(length):
     """Random letters and digits, the alphabet of Coder's key ids and secrets."""
-    # random, not secrets: these are made-up values for a fake server. Drawing
-    # them from `secrets` made CodeQL treat each one as a real secret and flag
-    # the test for writing it to its temporary state file (#1841).
+    # random, not secrets: these are made-up values for a fake server, and
+    # nothing about them needs to be unpredictable.
     return "".join(random.choice(string.ascii_letters + string.digits) for _ in range(length))  # nosec B311 - test data, not security
 
 

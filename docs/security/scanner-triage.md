@@ -474,7 +474,7 @@ The other six findings were handled in code:
 | B607 | `scripts/complexity/measure.py` (two calls) | Fixed | `git` is resolved once with `shutil.which` and called by its full path; a clear error if it is missing. |
 | B607 | `lab-host/ansible/roles/docker/files/hcw-docker-volume-carry.py` | Fixed | `cp` is called by its full path. |
 | B607 | `lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py` | Fixed | `sh` is called by its full path. |
-| B311 | `lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py` | Accepted | `random` makes the fake server's made-up keys and ids; nothing about it needs to be unpredictable. `# nosec B311` on the line, with the reason. A first fix used `secrets.choice`, and CodeQL then read every made-up value as a real secret and raised `py/clear-text-storage-sensitive-data` (high) where the test writes its temporary state file (alert 1448 on #1841), so it was put back. |
+| B311 | `lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py` | Accepted | `random` makes the fake server's made-up keys and ids; nothing about it needs to be unpredictable. `# nosec B311` on the line, with the reason. |
 | B311 | `lab-host/ansible/roles/portainer/tests/hcw-portainer-check.test.py` | Accepted | As above. |
 
 ## gitleaks
@@ -659,6 +659,7 @@ gh api "repos/saulpatinojr/HCW-HybridCloudWorks/code-scanning/alerts?state=dismi
 | 1 | False positive | `functions/src/**` | 2026-10-08 | Yes | Per-alert note |
 | 1 (#398) | Used in tests | `lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py:709` | 2026-10-09 | None | `py/overly-permissive-file`: the test makes a file world-readable on purpose to prove `hcw-coder-automation` refuses it (#1035). Recorded in `.claude/CLAUDE.md` as the example of an alert that is right and intended |
 | 1 (#388) | False positive | `scripts/open-lab-pin-pr.mjs:226` | 2026-10-14 | None | `js/file-access-to-http`: the pin-bump script reads a repository file it just wrote (the guide page and the pull-request body) and posts the body to GitHub's API with `gh`, which is the script's purpose; the file's contents are the repository's own, not a secret, and the destination is the repository's pull request (#1129, #1131) |
+| 1 (#1448), waiting for the owner | False positive (proposed) | `lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py:1219` | Not yet | Proposed note below | `py/clear-text-storage-sensitive-data`, raised on #1841. The test writes its temporary state file with the **id** part of a made-up key (`leftover.split("-")[0]`); CodeQL follows the whole token from the fake server's variable named `secret` and cannot see that the split drops it. The same flow is on `main` (line 1146 there); it reads as new on #1841 only because that line changed from `"state.json"` to the `STATE_JSON` constant. Not rewritten to slip past the query, per `.claude/CLAUDE.md`. Proposed dismissal note: "False positive: the stored value is a fake key's id, not its secret; test-only data for a fake Coder server (docs/security/scanner-triage.md#codeql)." |
 
 Counts: 151 dismissed in all; 112 harness, 39 first-party. Of the first-party
 rows the two without a dismissal note have their evidence above. Open alerts

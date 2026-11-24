@@ -405,8 +405,8 @@ else:
 
 def random_text(length, alphabet=string.ascii_letters + string.digits):
     """Random characters from the alphabet, for fake tokens and ids."""
-    # random, not secrets: made-up values for a fake server; `secrets` makes
-    # CodeQL read each one as a real secret (#1841).
+    # random, not secrets: made-up values for a fake server, and nothing
+    # about them needs to be unpredictable.
     return "".join(random.choice(alphabet) for _ in range(length))  # nosec B311 - test data, not security
 
 
