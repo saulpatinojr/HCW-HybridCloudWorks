@@ -45,6 +45,7 @@ const ENV = {
   QLTY_API_TOKEN: QLTY_TOKEN,
   REPLICATE_API_KEY: 'not-a-real-replicate-key-EXAMPLE-VALUE-FOR-TESTS',
   FIRECRAWL_API_KEY: 'not-a-real-firecrawl-key-EXAMPLE-VALUE-FOR-TESTS',
+  COMMUNITY_DAYS_API_KEY: 'cdo_test_not-a-real-community-days-key-EXAMPLE',
 };
 
 const readKey = (env, name) => (typeof env?.[name] === 'string' ? env[name].trim() : '');
@@ -128,6 +129,7 @@ describe('the probe table', () => {
       'qlty',
       'replicate',
       'firecrawl',
+      'communityDays',
     ]);
     for (const name of PROBE_NAMES) {
       const probe = PROBES[name];
@@ -154,6 +156,9 @@ describe('the probe table', () => {
     // Neither provider's 401/403 split has been measured here (ADR 0033).
     expect(PROBES.replicate.reportsKeyVerdict).toBe(false);
     expect(PROBES.firecrawl.reportsKeyVerdict).toBe(false);
+    // Community Days answers 403 for "API access not approved yet", which is
+    // not a wrong key (#1823).
+    expect(PROBES.communityDays.reportsKeyVerdict).toBe(false);
   });
 
   it('asks Replicate and Firecrawl read-only questions that spend nothing', () => {
@@ -602,5 +607,81 @@ describe('the Podbean probe', () => {
       fetch: sequence({ status: 401, text: '{"error":"invalid_client"}' }),
     })(req({ probe: 'podbean' }), ctx());
     expect(onKeyVerdict).not.toHaveBeenCalled();
+  });
+});
+
+describe('the Community Days probe (#1823)', () => {
+  const CDAYS_KEY = ENV.COMMUNITY_DAYS_API_KEY;
+  const run = (fetchImpl, env = ENV) =>
+    createConnectionProbe({ guard: allow, env, readKey, fetch: fetchImpl })(req({ probe: 'communityDays' }), ctx());
+
+  it('asks one read-only question: GET one published event, with the key as a Bearer header', async () => {
+    const { url, headers } = PROBES.communityDays.buildRequest({ values: ENV });
+    expect(url).toBe('https://api.communitydays.org/v1/published-events?per_page=1');
+    expect(url).not.toContain(CDAYS_KEY);
+    expect(headers).toEqual({ Authorization: `Bearer ${CDAYS_KEY}`, Accept: 'application/json' });
+    expect(PROBES.communityDays.settings).toEqual(['COMMUNITY_DAYS_API_KEY']);
+
+    const fetchImpl = respond({ text: '{"events":[{"title":"Example Day","home_content":"<p>Someone else’s text</p>"}],"total":42,"next_page":2}' });
+    const res = await run(fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][1].method).toBe('GET');
+    // Only the count is relayed: none of the event's own text reaches the page.
+    expect(bodyOf(res)).toEqual({ ok: true, status: 200, data: { total: 42 } });
+    expect(res.body).not.toContain(CDAYS_KEY);
+  });
+
+  it('says "no key yet" in plain words when the key is not set, and calls nothing', async () => {
+    const fetchImpl = vi.fn();
+    const res = await run(fetchImpl, { ...ENV, COMMUNITY_DAYS_API_KEY: '' });
+    expect(res.status).toBe(200);
+    const body = bodyOf(res);
+    expect(body).toMatchObject({ ok: false, code: 'INTEGRATION_NOT_CONFIGURED' });
+    expect(body.error).toMatch(/^No key yet: /);
+    expect(body.error).toMatch(/Keys tab/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [401, /did not accept the key: it is missing, wrong, deleted or expired/],
+    [403, /API access is not approved for this account yet/],
+    [429, /limiting how often this site may ask/],
+  ])('gives HTTP %i its own sentence, with none of the far end’s words', async (status, sentence) => {
+    const res = await run(respond({ ok: false, status, text: `{"message":"far-end words that echo ${CDAYS_KEY}"}` }));
+    const body = bodyOf(res);
+    expect(Object.keys(body).sort()).toEqual([...PROBE_FAILURE_FIELDS].sort());
+    expect(body).toMatchObject({ ok: false, status });
+    expect(body.error).toMatch(sentence);
+    expect(body.error).toContain(`(HTTP ${status}).`);
+    expect(res.body).not.toMatch(/far-end words/);
+    expect(res.body).not.toContain(CDAYS_KEY);
+  });
+
+  it('falls back to the plain status sentence for any other refusal', async () => {
+    const res = await run(respond({ ok: false, status: 500, text: 'oops' }));
+    expect(bodyOf(res)).toEqual({ ok: false, status: 500, error: 'Community Days answered HTTP 500.' });
+  });
+
+  it('does not report a key verdict, so "access not approved yet" cannot turn the key’s light red', async () => {
+    const onKeyVerdict = vi.fn(async () => {});
+    await createConnectionProbe({
+      guard: allow,
+      env: ENV,
+      readKey,
+      fetch: respond({ ok: false, status: 403, text: '{}' }),
+      onKeyVerdict,
+    })(req({ probe: 'communityDays' }), ctx());
+    expect(onKeyVerdict).not.toHaveBeenCalled();
+  });
+
+  it('never returns or logs the key when the request cannot be sent', async () => {
+    const context = ctx();
+    const fetchImpl = vi.fn(async () => {
+      throw new Error(`socket hang up for Bearer ${CDAYS_KEY}`);
+    });
+    const res = await createConnectionProbe({ guard: allow, env: ENV, readKey, fetch: fetchImpl })(req({ probe: 'communityDays' }), context);
+    expect(bodyOf(res).ok).toBe(false);
+    expect(res.body).not.toContain(CDAYS_KEY);
+    expect(JSON.stringify([context.error.mock.calls, context.warn.mock.calls, context.log.mock.calls])).not.toContain(CDAYS_KEY);
   });
 });
