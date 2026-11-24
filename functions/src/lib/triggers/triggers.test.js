@@ -369,7 +369,7 @@ describe('cover svg + image mirror', () => {
     expect(store.data.blogs.get('b1').contentImageSourceUrl).toBeUndefined();
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(log.warn.mock.calls[0][0]).toBe(
-      '[blogCoverImage] Refused for a blogs document: Content-Type video/mp4 is not an image'
+      '[blogCoverImage] Refused for a blogs document: not-an-image'
     );
     // No marker, so an editor who swaps the video for a picture gets it
     // mirrored on the next write.

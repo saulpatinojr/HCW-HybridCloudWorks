@@ -386,9 +386,9 @@ export function createRestProxy({
       // query cannot be used to disguise an endpoint as an allowed one.
       const pathOnly = path.split('?')[0];
       if (!isAllowedPath(integration.allowedPaths, pathOnly, method)) {
-        context.error?.(`${integration.name}Proxy blocked a path outside the allowlist`, {
-          path: pathOnly.slice(0, 200),
-        });
+        // The path is not logged: it is a route value the caller chose
+        // (#1802). The audit row below records that a path was refused.
+        context.error?.(`${integration.name}Proxy blocked a path outside the allowlist`);
         await record('refused_path');
         return json(400, {
           ok: false,

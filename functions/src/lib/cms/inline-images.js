@@ -217,7 +217,9 @@ export function createInlineImageRehoster({
         // URL stays exactly as the body had it — the reader still gets
         // whatever the origin serves, and the alt text still renders — and the
         // remaining images carry on being re-hosted.
-        if (fetched.refused) return leaveAlone(url, fetched.reason);
+        // Logged as the refusal's code: the sentence quotes the remote
+        // server's Content-Type (#1802). The caller still gets the sentence.
+        if (fetched.refused) return leaveAlone(url, fetched.reason, fetched.refused);
         const { buffer, contentType } = fetched;
         const blobPath = inlineBlobPath(contentId, url, contentType);
         // Provenance without the query string: enough to say where the copy
