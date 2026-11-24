@@ -83,6 +83,27 @@ test, `scripts/addon-image-scout-workflow.test.mjs`, pins each of those.
 Scout steps are skipped. On the Wednesday run and a manual run it is an error
 and the run is red, so a check that never ran cannot look green.
 
+**How the scanner itself gets there.** The Scout action is a small wrapper that
+downloads its real scanner, a 187 MB file, from its own GitHub release each time
+it starts, and it asks GitHub for the file without signing in. GitHub allows
+only 60 such requests an hour per network address, the runners share their
+addresses, and when the allowance is spent the answer is `Unexpected HTTP
+response: 403` and the job fails before it scans anything (the action's own
+report: [docker/scout-action#116](https://github.com/docker/scout-action/issues/116)).
+So the step before the action runs
+[`scripts/lab/seed-scout-scanner.sh`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/lab/seed-scout-scanner.sh),
+which fetches the same file signed in with the job's own GitHub token (the
+short-lived, read-only token every job is given; nothing is stored for it),
+checks its sha256 (the file's fingerprint) against
+[`scripts/lab/scout-scanner-pins.txt`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/lab/scout-scanner-pins.txt)
+and puts it where the action looks first. When it worked, the Scout step's log
+says `Using bundled binary`. If the file cannot be fetched the step only warns
+and the action downloads as before; a file with the wrong fingerprint stops the
+job. When Dependabot moves the action to a new release, the pins file needs a
+row for the new commit in the same pull request: the test
+`scripts/seed-scout-scanner.test.mjs` fails until it has one, and its message
+says what to add.
+
 ### Create the token (once)
 
 1. Open <https://app.docker.com/> and sign in as the Docker user that holds the
