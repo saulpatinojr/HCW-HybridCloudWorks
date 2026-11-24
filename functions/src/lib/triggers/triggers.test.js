@@ -341,10 +341,10 @@ describe('cover svg + image mirror', () => {
     expect(downloadUrlFor('certifications', 'c/images/b.png', 'https://src')).toBe(
       '/api/public/media/certifications/c/images/b.png'
     );
-    fetchImage.mockRejectedValueOnce(new Error('HTTP 403'));
+    fetchImage.mockRejectedValueOnce(Object.assign(new Error('refused by the origin'), { status: 403 }));
     expect(
       (await mirror.mirror('blogs', { id: 'b2', contentImageUrl: 'https://cdn.test/z.png' })).reason
-    ).toBe('error: HTTP 403');
+    ).toBe('error: HTTP_403');
     expect(store.data.blogs.get('b2')).toBeUndefined(); // no marker on failure
   });
 
@@ -637,7 +637,7 @@ describe('AI cover', () => {
     replicate.generate.mockRejectedValueOnce(
       new CoverGenerationError('Replicate HTTP 503', { status: 503 })
     );
-    expect((await gen.run('c2', 'ev2')).reason).toBe('error: Replicate HTTP 503');
+    expect((await gen.run('c2', 'ev2')).reason).toBe('error: HTTP_503');
     expect(store.data.content.get('c2')).toMatchObject({
       altCoverImageTrigger: false,
       altCoverImageRunId: null,
@@ -663,7 +663,7 @@ describe('AI cover', () => {
       uuid: () => 'g1',
     });
     expect((await gen.run('c1', 'ev1')).reason).toBe(
-      'error: Generated hero cover refused: Content-Type video/mp4 is not an image'
+      'error: CoverGenerationError'
     );
     expect(storage.uploadBlob).not.toHaveBeenCalled();
     expect(store.data.content.get('c1')).toMatchObject({
@@ -705,7 +705,7 @@ describe('AI cover', () => {
       uuid: () => 'g1',
     });
 
-    expect((await gen.run('c3', 'ev3')).reason).toBe('error_with_default_hero: boom');
+    expect((await gen.run('c3', 'ev3')).reason).toBe('error_with_default_hero: Error');
     expect(store.data.content.get('c3')).toMatchObject({
       altCoverImageTrigger: false,
       altCoverImage: '/api/public/media/covers/default-aws.png',
@@ -715,7 +715,7 @@ describe('AI cover', () => {
       ),
     });
 
-    expect((await gen.run('c4', 'ev4')).reason).toBe('error: boom');
+    expect((await gen.run('c4', 'ev4')).reason).toBe('error: Error');
     expect(store.data.content.get('c4')).toMatchObject({
       contentImageUrl: '/api/public/media/covers/manual.png',
       altCoverImageError: expect.stringMatching(

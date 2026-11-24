@@ -14,7 +14,7 @@
  *                            routes no longer accept once the forge has
  *                            moved it to forge_ready or editing
  */
-import { failureFields } from '../../http/error-response.js';
+import { failureFields, errorFacts } from '../../http/error-response.js';
 import { actorName, json } from './config.js';
 import { briefHasSubstance, normalizeBrief, text } from './brief.js';
 import { ASSIST_ACTIONS, parseAssistRequest, refuse, runAssist } from './assist.js';
@@ -174,7 +174,7 @@ async function assist(ctx, body, auth, context) {
   try {
     await recordActivity(ctx.store, target.doc, entry);
   } catch (error) {
-    context?.error?.(`[forge/assist] activity write failed: ${error?.message || error}`);
+    context?.error?.(`[forge/assist] activity write failed: ${errorFacts(error)}`);
     return json(502, {
       ok: false,
       error: 'The model answered but the activity record could not be written; nothing was kept.',
@@ -257,7 +257,7 @@ function writeVersionRow(ctx, { target, parsed, body, stamp, actor }, context) {
       versionCreatedBy: actor,
       versionReason: 'forge_studio_saved',
     })
-    .catch((error) => context?.error?.(`[forge/save] version row failed: ${error?.message}`));
+    .catch((error) => context?.error?.(`[forge/save] version row failed: ${errorFacts(error)}`));
 }
 
 /** POST cms/forge/save — { contentId, etag, title?, summary?, body? } */

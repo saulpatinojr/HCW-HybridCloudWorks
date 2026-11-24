@@ -19,6 +19,7 @@ import { isPlainObject } from '../cms/content-update-validation.js';
 import { EPISODE_CONTAINER, SET_CONTAINER, setId, speakableTextOf } from './publish.js';
 import { voiceSettingsOf } from './speech-settings.js';
 import { estimateSpeechCostUsd } from './speech/index.js';
+import { errorFacts } from '../http/error-response.js';
 
 export const PRODUCT = 'listenAndLearn';
 
@@ -141,7 +142,7 @@ export const guardedWith =
         context.warn?.(`${label} refused: JOB_PAYLOAD_TOO_LARGE`);
         return json(413, { error: TOO_LARGE_TO_QUEUE });
       }
-      context.error(`${label} failed:`, error);
+      context.error(`${label} failed:`, errorFacts(error));
       return json(500, { error: message });
     }
   };

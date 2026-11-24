@@ -23,6 +23,7 @@
  */
 import { readKey } from './ai/router.js';
 import { fetchWithTimeout } from './http/fetch-with-timeout.js';
+import { errorFacts } from './http/error-response.js';
 
 // Outbound deadline (T-712): Node's fetch has none, and these calls are
 // reached from change-feed handlers where a hung socket holds the lease.
@@ -255,7 +256,7 @@ export function createNotifier({
       const restore = () =>
         store
           .patchDoc('system', NOTIFY_STATE_ID, { [source]: previous }, { partitionKey: NOTIFY_STATE_ID })
-          .catch((error) => log.warn?.(`[notify] could not release source="${sourceForLog}": ${error?.message || error}`));
+          .catch((error) => log.warn?.(`[notify] could not release source="${sourceForLog}": ${errorFacts(error)}`));
       let response;
       try {
         response = await post(token, chatId, formatTelegramText({ title, message, severity, source }));
@@ -273,7 +274,7 @@ export function createNotifier({
       await remember({ title, message, severity, source });
       return { sent: true };
     } catch (err) {
-      log.error?.(`[notify] notifyTelegram failed: ${err?.message || err}`);
+      log.error?.(`[notify] notifyTelegram failed: ${errorFacts(err)}`);
       return { sent: false, reason: 'exception' };
     }
   }

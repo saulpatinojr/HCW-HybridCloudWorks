@@ -15,6 +15,7 @@
  */
 import { AI_FEATURES, FEATURE_NAMES, FEATURES_DOC_ID } from '../ai/ai-config.js';
 import { json, validBody } from '../http/admin-handler.js';
+import { errorFacts } from '../http/error-response.js';
 
 const SETTINGS_CONTAINER = 'admin_settings';
 /** Kept in step with the router's reader by ai-config.js exporting it. */
@@ -64,7 +65,7 @@ async function getAiFeatures(ctx, request, context) {
     );
     return json(200, { success: true, features, catalogue: AI_FEATURES });
   } catch (error) {
-    context.error('getAiFeatures failed:', error);
+    context.error('getAiFeatures failed:', errorFacts(error));
     return json(500, { error: 'Failed to read AI feature settings' });
   }
 }
@@ -102,7 +103,7 @@ async function putAiFeatures(ctx, request, context) {
     ctx.aiConfigChanged();
     return json(200, { success: true, features: result.features || merged });
   } catch (error) {
-    context.error('putAiFeatures failed:', error);
+    context.error('putAiFeatures failed:', errorFacts(error));
     return json(500, { error: 'Failed to save AI feature settings' });
   }
 }

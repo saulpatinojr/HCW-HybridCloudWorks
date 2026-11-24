@@ -112,6 +112,7 @@ import {
   registryChanges,
   removalDetails,
 } from './agent-registry-rules.js';
+import { errorFacts } from '../http/error-response.js';
 
 const json = (status, body) => ({
   status,
@@ -145,7 +146,7 @@ async function audit({ store, now, uuid }, { request, context, user }, action, d
       compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true },
     });
   } catch (error) {
-    context.warn?.(`${action} for ${details.agentId} saved but the audit row failed: ${error?.message || error}`);
+    context.warn?.(`${action} for ${details.agentId} saved but the audit row failed: ${errorFacts(error)}`);
   }
 }
 
@@ -287,7 +288,7 @@ async function guarded(deps, request, context, { read, write, what, failure }) {
   try {
     return await write(deps, { request, context, user: auth.user }, parsed.value);
   } catch (err) {
-    context.error(`${what}(${parsed.value.agentId}) failed: ${err?.message || err}`);
+    context.error(`${what}(${parsed.value.agentId}) failed: ${errorFacts(err)}`);
     return json(500, { ok: false, error: failure });
   }
 }

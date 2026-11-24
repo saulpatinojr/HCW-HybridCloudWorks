@@ -442,7 +442,7 @@ describe('content cleanup', () => {
     expect(r2.deletedContentCount).toBe(1);
     expect(store2.data.content.has('c2')).toBe(false);
     expect(log.warn).toHaveBeenCalledWith(
-      expect.stringContaining('counters not updated for c2: stats offline')
+      expect.stringMatching(/counters not updated for c2: name=Error\b/)
     );
   });
 
@@ -928,12 +928,12 @@ describe('skills hub scrape', () => {
     expect(store.upsertDoc).toHaveBeenCalledTimes(1);
     const broken = {
       parseURL: vi.fn(async () => {
-        throw new Error('503');
+        throw Object.assign(new Error('feed down'), { status: 503 });
       }),
     };
     expect(await createSkillsHubScrape({ store, parser: broken, now }).run()).toMatchObject({
       written: 0,
-      error: '503',
+      error: 'HTTP_503',
     });
   });
 });

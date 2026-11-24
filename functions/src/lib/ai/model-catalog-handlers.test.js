@@ -185,6 +185,6 @@ describe('POST cms/ai-model-catalog/refresh', () => {
     expect(res.status).toBe(500);
     expect(parse(res)).toEqual({ error: 'Failed to refresh the model catalogue' });
     expect(aiConfigChanged).not.toHaveBeenCalled();
-    expect(context.error).toHaveBeenCalledWith('refreshModelCatalog failed:', expect.any(Error));
+    expect(context.error).toHaveBeenCalledWith('refreshModelCatalog failed:', expect.stringMatching(/^name=Error\b/));
   });
 });

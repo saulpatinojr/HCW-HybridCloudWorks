@@ -31,7 +31,7 @@
  */
 import { generateCoversForContent, resolveCoverPrompt } from './triggers/ai-cover.js';
 import { fetchImage as defaultFetchImage } from './triggers/fetch-image.js';
-import { errorCode } from './http/error-response.js';
+import { errorCode, errorFacts } from './http/error-response.js';
 import { generationFailure, json, modelInfo } from './manual-images/shared.js';
 import { generateCuratedArticleImage } from './manual-images/curated.js';
 import { generatePreviewImages } from './manual-images/preview.js';
@@ -105,7 +105,7 @@ async function triggerAiImageGeneration({ guard, store }, request, context) {
     const { queued, errors } = await armTriggers(store, contentIds, { targets, seed });
     return json(queued > 0 ? 200 : 404, { success: queued > 0, queued, errors });
   } catch (error) {
-    context.error('triggerAiImageGeneration failed:', error);
+    context.error('triggerAiImageGeneration failed:', errorFacts(error));
     return json(500, { error: 'Failed to queue image generation' });
   }
 }

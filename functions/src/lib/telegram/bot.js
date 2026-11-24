@@ -39,7 +39,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
-import { recordedFailure } from '../http/error-response.js';
+import { recordedFailure, errorFacts } from '../http/error-response.js';
 
 // Outbound deadline (T-712): Node's fetch has none, and these calls are
 // reached from change-feed handlers where a hung socket holds the lease.
@@ -234,7 +234,7 @@ export function createTelegramBot({
       if (!commands || typeof commands !== 'object') return true;
       return commands[command] !== false;
     } catch (error) {
-      log.warn?.(`[telegram] could not read command toggles: ${error?.message || error}`);
+      log.warn?.(`[telegram] could not read command toggles: ${errorFacts(error)}`);
       return true;
     }
   }
@@ -251,7 +251,7 @@ export function createTelegramBot({
         at: now().toISOString(),
       });
     } catch (error) {
-      log.warn?.(`[telegram] activity log write failed: ${error?.message || error}`);
+      log.warn?.(`[telegram] activity log write failed: ${errorFacts(error)}`);
     }
   }
 
@@ -321,7 +321,7 @@ export function createTelegramBot({
           lines.push('', 'Nothing is staged for approval right now.');
         }
       } catch (error) {
-        log.warn?.(`[telegram] staged listing failed: ${error?.message || error}`);
+        log.warn?.(`[telegram] staged listing failed: ${errorFacts(error)}`);
         lines.push('', 'Could not read the staged-for-approval list just now.');
       }
       return lines.join('\n');
@@ -491,7 +491,7 @@ export function createTelegramBot({
       try {
         await send(reply);
       } catch (error) {
-        log.error?.(`[telegram] reply send failed: ${error?.stack || error}`);
+        log.error?.(`[telegram] reply send failed: ${errorFacts(error)}`);
         return { handled: true, reply, sendFailed: true };
       }
       return { handled: true, reply };

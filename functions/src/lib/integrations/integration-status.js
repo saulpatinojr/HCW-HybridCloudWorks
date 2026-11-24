@@ -20,6 +20,7 @@
  * document this sits beside.
  */
 
+import { errorFacts } from '../http/error-response.js';
 const json = (status, body) => ({
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -101,7 +102,7 @@ export function createIntegrationStatusHandlers({ guard, store, now = () => new 
           ),
         });
       } catch (error) {
-        context.error?.(`getIntegrationStatus failed: ${error?.message || error}`);
+        context.error?.(`getIntegrationStatus failed: ${errorFacts(error)}`);
         return json(500, { error: 'Failed to read integration status' });
       }
     },
@@ -179,7 +180,7 @@ export function createIntegrationStatusHandlers({ guard, store, now = () => new 
         }
         throw lastError || new Error('Concurrency conflict: maximum retries exceeded');
       } catch (error) {
-        context.error?.(`putIntegrationStatus failed: ${error?.message || error}`);
+        context.error?.(`putIntegrationStatus failed: ${errorFacts(error)}`);
         return json(500, { error: 'Failed to record integration status' });
       }
     },

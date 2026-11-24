@@ -110,6 +110,16 @@ const hasAddonUrl = (env, id) => Boolean(readSetting(env, addonEntry(id)?.settin
 const shortString = (value) =>
   typeof value === 'string' && value.length > 0 && value.length <= SHORT_STRING_MAX ? value : null;
 
+/** What can be wrong with a health body, by code: sentences this module wrote, so a log line may carry them. */
+const HEALTH_BODY_FAULTS = {
+  HEALTH_NOT_OK: 'the health body did not say ok',
+  HEALTH_NO_VERSION: 'the health body carried no semver version',
+  HEALTH_TOO_LARGE: 'the health body was too large',
+};
+
+/** A health body fault as an error that carries its code, so its sentence is looked up and never read back. */
+const healthBodyFault = (code) => Object.assign(new Error(HEALTH_BODY_FAULTS[code]), { code });
+
 /**
  * The three fields the projection copies from a health body, each checked
  * for shape. Throws when the body is not the documented health envelope, so
@@ -117,13 +127,13 @@ const shortString = (value) =>
  */
 export function projectHealth(body) {
   if (!body || typeof body !== 'object' || body.ok !== true) {
-    throw new Error('the health body did not say ok');
+    throw healthBodyFault('HEALTH_NOT_OK');
   }
   const version =
     typeof body.version === 'string' && body.version.length <= SHORT_STRING_MAX && SEMVER.test(body.version)
       ? body.version
       : null;
-  if (!version) throw new Error('the health body carried no semver version');
+  if (!version) throw healthBodyFault('HEALTH_NO_VERSION');
   const capabilities = Array.isArray(body.capabilities)
     ? body.capabilities.filter((c) => typeof c === 'string' && c.length <= SHORT_STRING_MAX).slice(0, CAPABILITIES_MAX)
     : [];
@@ -151,7 +161,7 @@ async function readBoundedText(response, max) {
   const body = response.body;
   if (!body || typeof body.getReader !== 'function') {
     const text = await response.text();
-    if (text.length > max) throw new Error('the health body was too large');
+    if (text.length > max) throw healthBodyFault('HEALTH_TOO_LARGE');
     return text;
   }
   const reader = body.getReader();
@@ -164,7 +174,7 @@ async function readBoundedText(response, max) {
     received += value.byteLength;
     if (received > max) {
       await reader.cancel();
-      throw new Error('the health body was too large');
+      throw healthBodyFault('HEALTH_TOO_LARGE');
     }
     text += decoder.decode(value, { stream: true });
   }
@@ -196,7 +206,7 @@ async function readHealth(fetchImpl, config) {
     }
     const declared = Number(response.headers?.get?.('content-length'));
     if (Number.isFinite(declared) && declared > ADDON_HEALTH_MAX_BYTES) {
-      throw new Error('the health body was too large');
+      throw healthBodyFault('HEALTH_TOO_LARGE');
     }
     return projectHealth(JSON.parse(await readBoundedText(response, ADDON_HEALTH_MAX_BYTES)));
   } catch (error) {
@@ -214,7 +224,7 @@ function failureReason(error) {
   if (error?.code === 'FETCH_TIMEOUT') return `no answer within ${ADDON_TIMEOUT_MS / 1000} s`;
   if (error instanceof SyntaxError) return 'the health body was not JSON';
   if (Number.isInteger(error?.status)) return `the health read answered ${error.status}`;
-  if (typeof error?.message === 'string' && /health body/.test(error.message)) return error.message;
+  if (Object.hasOwn(HEALTH_BODY_FAULTS, error?.code ?? '')) return HEALTH_BODY_FAULTS[error.code];
   return 'the health read failed';
 }
 

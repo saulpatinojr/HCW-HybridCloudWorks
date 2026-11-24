@@ -17,6 +17,7 @@ import {
   validateSocialPostCreate,
   validateSocialPostPatch,
 } from './social-post-rules.js';
+import { errorFacts } from '../http/error-response.js';
 
 const createdAtValue = (doc) => {
   const v = doc.createdAt || doc._createdAt || null;
@@ -62,7 +63,7 @@ async function listSocialPosts(ctx, request, context) {
       total: sorted.length,
     });
   } catch (error) {
-    context.error('listSocialPosts failed:', error);
+    context.error('listSocialPosts failed:', errorFacts(error));
     return json(500, { error: 'Failed to list social posts' });
   }
 }
@@ -96,7 +97,7 @@ async function createSocialPost(ctx, request, context) {
     });
     return json(200, { success: true, id: doc.id, item: doc });
   } catch (error) {
-    context.error('createSocialPost failed:', error);
+    context.error('createSocialPost failed:', errorFacts(error));
     return json(500, { error: 'Failed to create social post' });
   }
 }
@@ -171,7 +172,7 @@ async function patchSocialPost(ctx, request, context) {
           },
     });
   } catch (error) {
-    context.error('patchSocialPost failed:', error);
+    context.error('patchSocialPost failed:', errorFacts(error));
     return json(500, { error: 'Failed to update social post' });
   }
 }
@@ -214,7 +215,7 @@ async function deleteSocialPost(ctx, request, context) {
     });
     return json(200, { success: true, publer });
   } catch (error) {
-    context.error('deleteSocialPost failed:', error);
+    context.error('deleteSocialPost failed:', errorFacts(error));
     return json(500, { error: 'Failed to delete social post' });
   }
 }

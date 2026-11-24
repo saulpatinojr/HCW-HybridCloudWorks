@@ -26,6 +26,7 @@
  *      (`lib/timers/podcasts.js`) use it, but nothing on this route does.
  */
 
+import { errorFacts } from './http/error-response.js';
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const UPSTREAM_TIMEOUT_MS = 8000;
 const USER_AGENT = 'HybridCloudWorks-PlatformHealth/1.0';
@@ -122,7 +123,7 @@ async function safeCheck(provider, check, context) {
   } catch (error) {
     // `warn`, not `error`: a third-party status page being unreachable is not
     // a fault in this application, and paging on it would be noise.
-    context.warn?.(`[platformHealth] ${provider} status check failed:`, error?.message || error);
+    context.warn?.(`[platformHealth] ${provider} status check failed:`, errorFacts(error));
     return [provider, STATUS.UNKNOWN];
   }
 }
@@ -239,7 +240,7 @@ export function createPlatformHealthHandler({
       // means something structural. Serve a stale payload if one exists —
       // out-of-date indicators beat an error on the landing page — and
       // otherwise report every provider unknown rather than a 500.
-      context.error('[platformHealth] failed to build response:', error);
+      context.error('[platformHealth] failed to build response:', errorFacts(error));
       if (cache) return respond(cache.payload, true);
       return respond(
         {

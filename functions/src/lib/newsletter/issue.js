@@ -40,7 +40,7 @@
  * the Monday timer both pass no `days`, so both follow the saved window.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
-import { authoredMessage, errorCode } from '../http/error-response.js';
+import { authoredMessage, errorCode, errorFacts } from '../http/error-response.js';
 import { presentSetting } from '../platform-settings.js';
 import { SECTIONS, collectSections, plainText } from './sections.js';
 import {
@@ -270,7 +270,7 @@ async function readBuildSettings(store, log) {
         : null;
     return { settings: presented.value, problem };
   } catch (error) {
-    log?.warn?.(`[newsletter] settings not read, defaults used: ${error?.message ?? error}`);
+    log?.warn?.(`[newsletter] settings not read, defaults used: ${errorFacts(error)}`);
     return {
       settings: newsletterSettingsDefaults(),
       problem: 'settings: could not be read, so the default content choices were used',

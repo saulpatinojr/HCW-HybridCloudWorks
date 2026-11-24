@@ -22,6 +22,7 @@
  * throws — Cosmos unreachable, say — is reported and then rethrown, so the
  * failure is visible both on Telegram and in the Functions host.
  */
+import { errorFacts } from '../http/error-response.js';
 import { SITE_ORIGIN } from '../newsletter/sections.js';
 
 export const AUTOBUILD_SOURCE = 'buildWeeklyNewsletter';
@@ -77,7 +78,7 @@ export function createNewsletterAutoBuild({ builder, notifier, log = {}, siteUrl
       result = await builder.build({ keep: true, keptBy: AUTOBUILD_ACTOR });
     } catch (error) {
       const reason = String(error?.message ?? error).slice(0, 300);
-      log.error?.(`[${AUTOBUILD_SOURCE}] build failed: ${reason}`);
+      log.error?.(`[${AUTOBUILD_SOURCE}] build failed: ${errorFacts(error)}`);
       await notifier.notifyTelegram({
         title: 'Newsletter build failed',
         message: `The Monday build of the weekly newsletter failed: ${reason}\n\nNothing was sent. You can build it from the Newsletter Hub:\n${draftsUrl}`,

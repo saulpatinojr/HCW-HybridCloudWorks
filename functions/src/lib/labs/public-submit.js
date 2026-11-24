@@ -145,6 +145,7 @@ import {
   verifyTurnstileToken,
 } from './public-lock.js';
 import { LAB_JOBS_CONTAINER } from './rollup.js';
+import { errorFacts } from '../http/error-response.js';
 
 export * from './public-bounds.js';
 export * from './public-lock.js';
@@ -192,7 +193,7 @@ async function readDoor(deps, context) {
   try {
     readiness = await readReadiness(deps);
   } catch (error) {
-    context?.warn?.(`labs public submit: readiness read failed: ${error?.message ?? error}`);
+    context?.warn?.(`labs public submit: readiness read failed: ${errorFacts(error)}`);
     return shutDoor(DOOR_CODES.unavailable);
   }
   if (!readiness.online) return { ...shutDoor(DOOR_CODES.offline), queued: readiness.queued };
@@ -396,7 +397,7 @@ async function submitJob(deps, request, context) {
     // `enqueue` always replies; reaching here is a programming error.
     throw new Error('labs public submit pipeline ended without a reply');
   } catch (error) {
-    context.error?.('publicLabsSubmit failed:', error);
+    context.error?.('publicLabsSubmit failed:', errorFacts(error));
     return toResponse(reply(500, { ok: false, error: 'Failed to submit the lab job' }));
   }
 }
@@ -412,7 +413,7 @@ async function getSubmissionStatus(deps, _request, context) {
     const door = settingsDoor(deps.env) ?? (await cachedDoor(deps, context));
     return jsonResponse(200, { ...door, bounds: PUBLIC_BOUNDS }, MINUTE_CACHE_SECONDS);
   } catch (error) {
-    context.error?.('publicLabsSubmit status failed:', error);
+    context.error?.('publicLabsSubmit status failed:', errorFacts(error));
     return jsonResponse(500, { error: 'Failed to read the lab submission status' });
   }
 }

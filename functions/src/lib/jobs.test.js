@@ -200,7 +200,8 @@ describe('enqueueJob', () => {
     expect(warn).toHaveBeenCalledWith(
       'enqueueJob: acceptedDetails failed for',
       'priced-badly',
-      'no cost table'
+      // The error's class and where it was thrown, never its message (#1794).
+      expect.stringMatching(/^name=Error\b/)
     );
   });
 
@@ -248,7 +249,7 @@ describe('enqueueJob', () => {
         expect(warn, name).toHaveBeenCalledWith(
           'enqueueJob: acceptedDetails failed for',
           `unserialisable-${name}`,
-          expect.stringMatching(/BigInt|circular|Promise.*synchronous/i)
+          expect.stringMatching(/^name=(TypeError|Error)\b/)
         );
       }
     }
@@ -528,7 +529,8 @@ describe('runJob', () => {
       outcome: 'succeeded',
     });
     expect(store.docs['job-1'].status).toBe('succeeded');
-    expect(context.warn).toHaveBeenCalledWith(expect.stringContaining('hook boom'));
+    expect(context.warn).toHaveBeenCalledWith(expect.stringMatching(/onComplete for .* failed: name=Error\b/));
+    expect(context.warn.mock.calls.flat().join(' ')).not.toContain('hook boom');
   });
 
   it('passes AbortSignal to worker and aborts signal on timeout (AP-B7)', async () => {

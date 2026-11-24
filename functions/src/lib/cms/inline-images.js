@@ -39,6 +39,7 @@ import { createHash } from 'node:crypto';
 
 import { mediaUrlFor } from '../blob-paths.js';
 import { isExternalUrlString, requireImageExtension } from '../triggers/fetch-image.js';
+import { errorFacts } from '../http/error-response.js';
 
 /** Public media container the re-hosted copies live in; the cover trigger's. */
 export const INLINE_IMAGE_CONTAINER = 'covers';
@@ -193,7 +194,7 @@ export function createInlineImageRehoster({
     const rewritten = [];
     const failed = [];
     /** Record one URL as not re-hosted and say so once, without leaking it. */
-    const leaveAlone = (url, reason) => {
+    const leaveAlone = (url, reason, forLog = scrubUrls(reason)) => {
       failed.push({ url, reason });
       // Host only, never the full URL or the document: enough to see a
       // publisher refusing us, not enough to leak what was being read.
@@ -205,7 +206,7 @@ export function createInlineImageRehoster({
       }
       // The fetcher's own messages embed URLs; the log line carries none.
       log.warn?.(
-        `[inlineImages] ${contentId}: could not re-host an image from ${host}: ${scrubUrls(reason)}`
+        `[inlineImages] ${contentId}: could not re-host an image from ${host}: ${forLog}`
       );
     };
     const one = async (url) => {
@@ -226,7 +227,8 @@ export function createInlineImageRehoster({
         });
         rewritten.push({ from: url, to: mediaUrlFor(INLINE_IMAGE_CONTAINER, blobPath) });
       } catch (error) {
-        leaveAlone(url, String(error?.message || error || 'unknown'));
+        // The summary keeps the reason; the log line gets the error's class and code only.
+        leaveAlone(url, String(error?.message || error || 'unknown'), errorFacts(error));
       }
     };
     // A small pool: `concurrency` workers each pull the next URL until none
@@ -292,7 +294,7 @@ export async function buildInlineImageUpdate({ contentData, contentId, rehost, n
     };
   } catch (error) {
     log.warn?.(
-      `[inlineImages] ${contentId}: re-hosting skipped: ${scrubUrls(error?.message || error)}`
+      `[inlineImages] ${contentId}: re-hosting skipped: ${errorFacts(error)}`
     );
     return null;
   }

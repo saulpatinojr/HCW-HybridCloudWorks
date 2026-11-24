@@ -79,6 +79,7 @@
  */
 import { AGENT_DOWN_STATUSES, AGENT_STALE_AFTER_MS } from '../labs.js';
 import { refreshDriftRecord } from '../labs/drift.js';
+import { errorFacts } from '../http/error-response.js';
 
 export const STALE_AFTER_MS = AGENT_STALE_AFTER_MS;
 /** How long an agent must have been offline before the owner is told (#1009). */
@@ -223,7 +224,7 @@ export async function tellOwnerAgentBack({ notifier, agent, backAtMs, log = {}, 
       `${label} back-online message not sent (${result?.reason || 'no reason given'}); checkAgentHealth tries again`
     );
   } catch (error) {
-    log.warn?.(`${label} back-online notification failed: ${error?.message || error}`);
+    log.warn?.(`${label} back-online notification failed: ${errorFacts(error)}`);
   }
   return false;
 }
@@ -283,7 +284,7 @@ export function createAgentHealthCheck({
     try {
       result = await notifier.notifyTelegram(offlineMessage(agents, atMs));
     } catch (error) {
-      log.warn?.(`[checkAgentHealth] owner notification failed: ${error?.message || error}`);
+      log.warn?.(`[checkAgentHealth] owner notification failed: ${errorFacts(error)}`);
       return 0;
     }
     if (result?.sent !== true) {

@@ -8,6 +8,7 @@ import {
   validateSource,
 } from './source-config.js';
 import { AUDIT_TTL_SECONDS } from '../audit.js';
+import { errorFacts } from '../http/error-response.js';
 
 export function createBlogSourceHandlers({
   guard,
@@ -34,7 +35,7 @@ export function createBlogSourceHandlers({
           })),
         });
       } catch (error) {
-        context.error?.('Blog sources could not be loaded', error);
+        context.error?.('Blog sources could not be loaded', errorFacts(error));
         return json(500, { error: 'Blog sources could not be loaded.' });
       }
     },
@@ -82,7 +83,7 @@ export function createBlogSourceHandlers({
             compliance: { schemaVersion: 2, appendOnly: true },
           });
         } catch (error) {
-          context.warn?.('Blog source saved; audit record failed', error);
+          context.warn?.('Blog source saved; audit record failed', errorFacts(error));
         }
         return json(200, {
           source: {
@@ -93,7 +94,7 @@ export function createBlogSourceHandlers({
       } catch (error) {
         if ([409, 412].includes(Number(error.code || error.statusCode)))
           return json(409, { error: 'This source changed. Refresh before saving.' });
-        context.error?.('Blog source could not be saved', error);
+        context.error?.('Blog source could not be saved', errorFacts(error));
         return json(500, { error: 'Blog source could not be saved.' });
       }
     },

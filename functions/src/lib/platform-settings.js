@@ -43,7 +43,7 @@
  * also holds.
  */
 import { ADMIN_CONFIG_PARTITION } from './cosmos-client.js';
-import { AuthoredError, authoredMessage, isAuthoredError } from './http/error-response.js';
+import { AuthoredError, authoredMessage, isAuthoredError, errorFacts } from './http/error-response.js';
 import { DEFAULT_HEROES_CONFIG_ID } from './triggers/ai-cover.js';
 import { AUTOPOST_CONFIG_ID } from './triggers/social-caption-trigger.js';
 import {
@@ -971,7 +971,7 @@ async function getHistory({ guard, store }, request, context) {
       nextAfter: entries.length === parsed.limit && last?.at ? last.at : null,
     });
   } catch (error) {
-    context.error(`getPlatformSettingHistory failed: ${error?.message || error}`);
+    context.error(`getPlatformSettingHistory failed: ${errorFacts(error)}`);
     return json(500, { error: 'Failed to read platform settings history' });
   }
 }
@@ -1236,7 +1236,7 @@ export function createPlatformSettingsHandlers({
           etag
         );
       } catch (error) {
-        context.error(`getPlatformSetting(${name}) failed:`, error);
+        context.error(`getPlatformSetting(${name}) failed:`, errorFacts(error));
         return json(500, { error: 'Failed to read platform setting' });
       }
     },
@@ -1284,7 +1284,7 @@ export function createPlatformSettingsHandlers({
           await audit(PLATFORM_SETTING_AUDIT_ACTION, auth.user, details);
         } catch (auditError) {
           context.warn?.(
-            `putPlatformSetting(${name}) saved but the audit row failed (${JSON.stringify(auditDetailsForLog(details))}): ${auditError?.message || auditError}`
+            `putPlatformSetting(${name}) saved but the audit row failed (${JSON.stringify(auditDetailsForLog(details))}): ${errorFacts(auditError)}`
           );
         }
         return json(
@@ -1302,7 +1302,7 @@ export function createPlatformSettingsHandlers({
           etag
         );
       } catch (error) {
-        context.error(`putPlatformSetting(${name}) failed:`, error);
+        context.error(`putPlatformSetting(${name}) failed:`, errorFacts(error));
         return json(500, { error: 'Failed to save platform setting' });
       }
     },

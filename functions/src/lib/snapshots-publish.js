@@ -16,7 +16,7 @@ const json = (status, body) => ({
   body: JSON.stringify(body),
 });
 
-import { errorResponse } from './http/error-response.js';
+import { errorResponse, errorFacts } from './http/error-response.js';
 import { legacyBadgePath, legacyBadgePathsOf, repointAll } from './legacy-badge-url.js';
 
 export function serializeValue(value) {
@@ -325,7 +325,7 @@ async function persistRepoint(patch, row, changes, log) {
   } catch (error) {
     if (error?.code === 412 || error?.statusCode === 412) return 'conflict';
     log?.warn?.(
-      `[publishSnapshot] could not persist the re-pointed badge of ${row.id}: ${error?.message || error}`
+      `[publishSnapshot] could not persist the re-pointed badge of ${row.id}: ${errorFacts(error)}`
     );
     return 'failed';
   }

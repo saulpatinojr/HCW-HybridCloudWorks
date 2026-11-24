@@ -1325,7 +1325,9 @@ describe('handlers', () => {
     expect(log.warn).toHaveBeenCalledTimes(1);
     const line = String(log.warn.mock.calls[0][0]);
     expect(line).toContain('"feeds":1');
-    expect(line).toContain('audit container throttled');
+    // The error's class, never its message (#1794).
+    expect(line).toContain('name=Error');
+    expect(line).not.toContain('audit container throttled');
     expect(line).not.toContain('private-feed');
   });
 

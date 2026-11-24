@@ -49,6 +49,7 @@
  * published, and `stripInternalFields` stays here as defence in depth.
  */
 
+import { errorFacts } from './http/error-response.js';
 const json = (status, body, cacheSeconds = 0) => ({
   status,
   headers: {
@@ -1247,7 +1248,7 @@ export function createPublicReadHandlers({ store }) {
         // T-206.
         return json(200, { success: true, items, total: matching.length }, 300);
       } catch (error) {
-        context.error('publicListContent failed:', error);
+        context.error('publicListContent failed:', errorFacts(error));
         return json(500, { error: 'Failed to list content' });
       }
     },
@@ -1275,7 +1276,7 @@ export function createPublicReadHandlers({ store }) {
           .map((doc) => projectInterview(doc, PUBLIC_INTERVIEW_LIST_FIELDS));
         return json(200, { success: true, items, total: items.length }, 300);
       } catch (error) {
-        context.error('publicListInterviews failed:', error);
+        context.error('publicListInterviews failed:', errorFacts(error));
         return json(500, { error: 'Failed to list interviews' });
       }
     },
@@ -1313,7 +1314,7 @@ export function createPublicReadHandlers({ store }) {
           300
         );
       } catch (error) {
-        context.error('publicGetInterview failed:', error);
+        context.error('publicGetInterview failed:', errorFacts(error));
         return json(500, { error: 'Failed to get interview' });
       }
     },
@@ -1375,7 +1376,7 @@ export function createPublicReadHandlers({ store }) {
         // Non-public and missing answer identically — see header rule 1.
         return json(404, { error: 'Content not found' });
       } catch (error) {
-        context.error('publicGetContent failed:', error);
+        context.error('publicGetContent failed:', errorFacts(error));
         return json(500, { error: 'Failed to get content' });
       }
     },
@@ -1427,7 +1428,7 @@ export function createPublicReadHandlers({ store }) {
           imageUrl ? CURATED_IMAGE_HIT_CACHE_SECONDS : CURATED_IMAGE_MISS_CACHE_SECONDS
         );
       } catch (error) {
-        context.error('publicGetCuratedImage failed:', error);
+        context.error('publicGetCuratedImage failed:', errorFacts(error));
         return json(500, { error: 'Failed to get curated image' });
       }
     },
@@ -1506,7 +1507,7 @@ export function createPublicReadHandlers({ store }) {
           anyHit ? CURATED_IMAGE_HIT_CACHE_SECONDS : CURATED_IMAGE_MISS_CACHE_SECONDS
         );
       } catch (error) {
-        context.error('publicGetCuratedImages failed:', error);
+        context.error('publicGetCuratedImages failed:', errorFacts(error));
         return json(500, { error: 'Failed to get curated images' });
       }
     },
@@ -1545,7 +1546,7 @@ export function createPublicReadHandlers({ store }) {
         }
         return json(200, { success: true, snapshot }, 600);
       } catch (error) {
-        context.error('publicGetSnapshot failed:', error);
+        context.error('publicGetSnapshot failed:', errorFacts(error));
         return json(500, { error: 'Failed to get snapshot' });
       }
     },
@@ -1637,7 +1638,7 @@ export function createPublicReadHandlers({ store }) {
           300
         );
       } catch (error) {
-        context.error('publicListPodcasts failed:', error);
+        context.error('publicListPodcasts failed:', errorFacts(error));
         return json(500, { error: 'Failed to list podcasts' });
       }
     },
@@ -1685,7 +1686,7 @@ export function createPublicReadHandlers({ store }) {
           120
         );
       } catch (error) {
-        context.error('publicGetFeed failed:', error);
+        context.error('publicGetFeed failed:', errorFacts(error));
         return json(500, { error: 'Failed to get feed' });
       }
     },
@@ -1763,7 +1764,7 @@ export function createPublicReadHandlers({ store }) {
           300
         );
       } catch (error) {
-        context.error('publicGetListenAndLearn failed:', error);
+        context.error('publicGetListenAndLearn failed:', errorFacts(error));
         return json(500, { error: 'Failed to get Listen & Learn episodes' });
       }
     },
@@ -1840,7 +1841,7 @@ export function createPublicReadHandlers({ store }) {
 
         return json(200, { success: true, items, total: items.length }, 300);
       } catch (error) {
-        context.error('publicListListenAndLearnEpisodes failed:', error);
+        context.error('publicListListenAndLearnEpisodes failed:', errorFacts(error));
         return json(500, { error: 'Failed to list Listen & Learn episodes' });
       }
     },
@@ -1894,7 +1895,7 @@ export function createPublicReadHandlers({ store }) {
 
         return json(200, { success: true, items, total: items.length }, CERT_EVENTS_CACHE_SECONDS);
       } catch (error) {
-        context.error('publicListCertEvents failed:', error);
+        context.error('publicListCertEvents failed:', errorFacts(error));
         return json(500, { error: 'Failed to list certification events' });
       }
     },

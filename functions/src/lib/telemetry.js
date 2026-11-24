@@ -26,6 +26,7 @@
  * `customDimensions` is a string bag; numbers arrive as their decimal text.
  */
 
+import { errorFacts } from './http/error-response.js';
 /**
  * `InstrumentationKey=...;IngestionEndpoint=https://...` → { iKey, endpoint }.
  * @param {string|undefined} raw
@@ -121,7 +122,7 @@ export function createEventTracker({
       }
       return true;
     } catch (error) {
-      log.warn?.(`[telemetry] ${name} not sent: ${error?.message || error}`);
+      log.warn?.(`[telemetry] ${name} not sent: ${errorFacts(error)}`);
       return false;
     }
   }

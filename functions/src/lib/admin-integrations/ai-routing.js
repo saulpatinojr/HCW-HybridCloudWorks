@@ -44,6 +44,7 @@ import {
 import { readModelCatalog } from '../ai/model-catalog-doc.js';
 import { actorName } from '../auth/actor-name.js';
 import { json, validBody } from '../http/admin-handler.js';
+import { errorFacts } from '../http/error-response.js';
 
 const BODY_SHAPE =
   'Body must be a version 2 selection document { version: 2, global: { priority: [{ provider, model? }] }, tasks, updatedAt }';
@@ -57,7 +58,7 @@ async function readCatalogOrNull(ctx, context) {
   try {
     return await readModelCatalog({ store: ctx.store, now: ctx.now });
   } catch (error) {
-    context?.error?.('putAiRouting: could not read the model catalogue:', error);
+    context?.error?.('putAiRouting: could not read the model catalogue:', errorFacts(error));
     return null;
   }
 }
@@ -104,7 +105,7 @@ async function getAiRouting(ctx, request, context) {
       })
     );
   } catch (error) {
-    context.error('getAiRouting failed:', error);
+    context.error('getAiRouting failed:', errorFacts(error));
     return json(500, { error: 'Failed to read AI routing' });
   }
 }
@@ -183,7 +184,7 @@ async function putAiRouting(ctx, request, context) {
     ctx.aiConfigChanged();
     return json(200, answer(selection));
   } catch (error) {
-    context.error('putAiRouting failed:', error);
+    context.error('putAiRouting failed:', errorFacts(error));
     return json(500, { error: 'Failed to save AI routing' });
   }
 }

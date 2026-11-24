@@ -102,12 +102,13 @@ describe('createEventTracker', () => {
     const down = createEventTracker({
       env: { APPLICATIONINSIGHTS_CONNECTION_STRING: CONN },
       fetcher: vi.fn(async () => {
-        throw new Error('ECONNRESET');
+        throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
       }),
       log: { warn },
     });
     await expect(down.trackEvent('e')).resolves.toBe(false);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ECONNRESET'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('code=ECONNRESET'));
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('socket hang up');
   });
 
   it('a property that cannot be serialised, or a bad name, resolves false with a warning and never posts', async () => {
@@ -125,7 +126,8 @@ describe('createEventTracker', () => {
     await expect(tracker.trackEvent('', { mode: 'full' })).resolves.toBe(false);
     expect(fetcher).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(3);
-    expect(warn.mock.calls[0][0]).toMatch(/e not sent: .*circular/i);
-    expect(warn.mock.calls[2][0]).toMatch(/name is required/);
+    // Each line names the error's class and where it was thrown, never its message (#1794).
+    expect(warn.mock.calls[0][0]).toMatch(/e not sent: name=TypeError\b/);
+    expect(warn.mock.calls[2][0]).toMatch(/not sent: name=\w*Error\b.* at=src\/lib\/telemetry\.js:\d+/);
   });
 });

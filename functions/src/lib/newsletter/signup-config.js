@@ -21,6 +21,7 @@
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { presentSetting } from '../platform-settings.js';
 import { DEFAULT_NEWSLETTER_SETTINGS, NEWSLETTER_SETTINGS_CONFIG_ID } from './settings.js';
+import { errorFacts } from '../http/error-response.js';
 
 /** Five minutes: long enough to absorb a busy page, short enough for an edit to show. */
 export const SIGNUP_CONFIG_CACHE_SECONDS = 300;
@@ -60,7 +61,7 @@ export function createSignupConfigHandler({ store }) {
       presented = presentSetting('newsletter-settings', doc);
     } catch (error) {
       context?.warn?.(
-        `getSignupConfig: settings read failed, serving the default signup box: ${error?.message || error}`
+        `getSignupConfig: settings read failed, serving the default signup box: ${errorFacts(error)}`
       );
       return answer({ ...DEFAULT_SIGNUP_CONFIG });
     }
