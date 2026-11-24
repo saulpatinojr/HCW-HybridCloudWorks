@@ -906,8 +906,10 @@ jobs:
 
 
       # Lint and format run before the build so style feedback arrives fast.
-      # `npm run lint` exits non-zero only on errors, not warnings, so the 19
-      # pre-existing warnings do not fail the job.
+      # Each package's `lint` script passes `--max-warnings 0` to ESLint, so a
+      # warning fails this step the same way an error does, here and in a
+      # local `npm run lint`. scripts/lint-warnings-strict.test.mjs holds the
+      # three scripts to that.
       - name: Lint
         if: matrix.relevant == 'true' && matrix.lint != ''
         env:

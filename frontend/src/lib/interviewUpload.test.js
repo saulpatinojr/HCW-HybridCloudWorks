@@ -490,7 +490,7 @@ describe('createAudioUpload, the edges the reviews named', () => {
   it('treats a lost completion answer as done when the interview points at this upload', async () => {
     const api = fakeApi();
     let completions = 0;
-    api.postJSON.mockImplementation(async (route, body) => {
+    api.postJSON.mockImplementation(async (route) => {
       if (route === 'cms/interviews/uploads') {
         return { uploadId: UP, blockSize: BLOCK_SIZE, blockCount: 2 };
       }
