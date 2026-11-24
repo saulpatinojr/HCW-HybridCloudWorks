@@ -59,6 +59,7 @@ import {
 import { healthProbe } from './probe-catalogue.js';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { recordedFailure } from '../http/error-response.js';
+import { jsonForLog } from '../http/log-json.js';
 import {
   CODER_TEMPLATE_PROBE,
   CODER_TOKEN_PROBE,
@@ -236,7 +237,8 @@ export function createHealthPulse({
     });
 
     if (failures.length) {
-      log.warn?.(`[healthPulse] ${failures.length} check(s) not recorded: ${JSON.stringify(failures)}`);
+      // probeId is a check's fixed name from the code, not a stored document's id, so it is kept.
+      log.warn?.(`[healthPulse] ${failures.length} check(s) not recorded: ${jsonForLog(failures, { keep: ['probeId'] })}`);
     }
     return { checks: rows.length, recorded, failures: failures.length, durationMs };
   }

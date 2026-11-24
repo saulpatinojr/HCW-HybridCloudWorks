@@ -171,7 +171,7 @@ export function createPodcastRecordingHandlers({
         if (queued.error) return queued.error;
 
         context.log?.(
-          `generatePodcastTranscriptFromRecording: queued ${queued.jobId} for ${transcriptId}`
+          'generatePodcastTranscriptFromRecording: queued'
         );
         return json(202, {
           ok: true,
@@ -276,7 +276,7 @@ export function createPodcastRecordingHandlers({
           return queued.error;
         }
 
-        context.log?.(`uploadPodcastRecording: queued ${queued.jobId} (${buffer.length} B)`);
+        context.log?.(`uploadPodcastRecording: queued (${buffer.length} B)`);
         return json(202, {
           ok: true,
           jobId: queued.jobId,

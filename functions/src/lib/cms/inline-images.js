@@ -206,7 +206,7 @@ export function createInlineImageRehoster({
       }
       // The fetcher's own messages embed URLs; the log line carries none.
       log.warn?.(
-        `[inlineImages] ${contentId}: could not re-host an image from ${host}: ${forLog}`
+        `[inlineImages] could not re-host an image from ${host}: ${forLog}`
       );
     };
     const one = async (url) => {
@@ -294,7 +294,7 @@ export async function buildInlineImageUpdate({ contentData, contentId, rehost, n
     };
   } catch (error) {
     log.warn?.(
-      `[inlineImages] ${contentId}: re-hosting skipped: ${errorFacts(error)}`
+      `[inlineImages] re-hosting skipped: ${errorFacts(error)}`
     );
     return null;
   }

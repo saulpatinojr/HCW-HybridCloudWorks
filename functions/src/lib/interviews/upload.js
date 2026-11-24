@@ -419,7 +419,7 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         const audio = { ...(doc.provenance?.audio ?? {}), uploads: [...kept, session] };
         await writeProvenance(doc, audio);
 
-        context.log?.(`interviewUploadOpen: ${uploadId} opened for ${interviewId} (${bytes} B, ${blockCount} blocks)`);
+        context.log?.(`interviewUploadOpen: opened (${bytes} B, ${blockCount} blocks)`);
         return json(201, { uploadId, blockSize: BLOCK_SIZE, blockCount });
       } catch (error) {
         if (error?.code === 412) return json(409, { error: 'The interview changed while the upload was opened; try again' });
@@ -472,7 +472,7 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         }
 
         await storage.stageBlock(INTERVIEWS_AUDIO_CONTAINER, session.path, blockIdFor(index), bytes);
-        context.log?.(`interviewUploadBlock: ${uploadId} block ${index} staged (${bytes.length} B)`);
+        context.log?.(`interviewUploadBlock: block ${index} staged (${bytes.length} B)`);
         return json(200, { ok: true, index, bytes: bytes.length });
       } catch (error) {
         // Code or status only: a Storage or Cosmos message carries the request URL, which names the blob.
@@ -511,7 +511,7 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
           });
         } catch (error) {
           if (error?.code === 'InvalidBlockList') {
-            context.warn?.(`interviewUploadComplete: ${uploadId} has missing blocks (${session.blockCount} expected)`);
+            context.warn?.(`interviewUploadComplete: missing blocks (${session.blockCount} expected)`);
             return json(422, { error: 'Not every block was uploaded; send the missing blocks and complete again' });
           }
           throw error;
@@ -540,7 +540,7 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
           } catch (error) {
             if (error?.code !== 412 || !(await deletedSinceRead(doc))) throw error;
             await discardBlob(session.path, context, 'interviewUploadComplete', 'after the interview was deleted');
-            context.warn?.(`interviewUploadComplete: ${uploadId} refused; the interview's deletion started meanwhile`);
+            context.warn?.("interviewUploadComplete: refused; the interview's deletion started meanwhile");
             return interviewDeleted();
           }
           await discardBlob(session.path, context, 'interviewUploadComplete', 'after a refused completion');
@@ -551,7 +551,7 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         if (committed.contentLength !== session.bytes) {
           return await refuse(
             'The uploaded size does not match the declared size; upload the file again',
-            `interviewUploadComplete: ${uploadId} size mismatch (${committed.contentLength} B stored, ${session.bytes} B declared)`
+            `interviewUploadComplete: size mismatch (${committed.contentLength} B stored, ${session.bytes} B declared)`
           );
         }
 
@@ -559,7 +559,7 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
         if (digest !== session.sha256) {
           return await refuse(
             'The uploaded file does not match its declared SHA-256; upload the file again',
-            `interviewUploadComplete: ${uploadId} hash mismatch (${session.bytes} B)`
+            `interviewUploadComplete: hash mismatch (${session.bytes} B)`
           );
         }
 
@@ -608,14 +608,14 @@ export function createInterviewUploadHandlers({ guard, store, storage, now = () 
           // listed the prefix; any other writer leaves it for the retry.
           if (error?.code === 412 && (await deletedSinceRead(doc))) {
             await discardBlob(session.path, context, 'interviewUploadComplete', 'after the interview was deleted');
-            context.warn?.(`interviewUploadComplete: ${uploadId} committed; the interview's deletion started meanwhile, blob removed`);
+            context.warn?.("interviewUploadComplete: committed; the interview's deletion started meanwhile, blob removed");
             return interviewDeleted();
           }
           throw error;
         }
 
         context.log?.(
-          `interviewUploadComplete: ${uploadId} committed for ${doc.id} (${session.bytes} B, ${session.blockCount} blocks)`
+          `interviewUploadComplete: committed (${session.bytes} B, ${session.blockCount} blocks)`
         );
         return json(200, { ok: true, bytes: session.bytes, sha256: session.sha256, contentType: session.contentType });
       } catch (error) {

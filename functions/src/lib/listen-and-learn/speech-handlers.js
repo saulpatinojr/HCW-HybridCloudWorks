@@ -194,7 +194,7 @@ export const generateSourceEpisode = ({ queueJob, guarded }) =>
         extra: { areaSlug, sourceCount: sources.length },
       });
       context.log?.(
-        `generateSourceEpisode: queued ${JSON.parse(response.body).jobId} for ${examCode} (${sources.length} sources)`
+        `generateSourceEpisode: queued (${sources.length} sources)`
       );
       return response;
     }
@@ -233,7 +233,7 @@ export const reviewEpisode =
         });
 
         context.log?.(
-          `reviewListenAndLearn: ${examCode}/${areaSlug} → ${status} by ${actorOf(auth) || 'unknown'}`
+          `reviewListenAndLearn: → ${status}`
         );
         return json(200, { success: true, examCode, areaSlug, status, item: updated || null });
       }

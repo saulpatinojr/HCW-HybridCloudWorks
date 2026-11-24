@@ -43,6 +43,7 @@ import { createDoc, patchDoc, readDoc } from '../lib/cosmos-client.js';
 import { createPodbeanClient } from '../lib/podcast/podbean.js';
 import { logDisabledSkip, timerEnabled } from '../lib/timers/flag-gate.js';
 import { createAudienceMonthlyRead } from '../lib/timers/ambassador-audience.js';
+import { jsonForLog } from '../lib/http/log-json.js';
 
 export const TIMER_NAME = 'ambassadorAudienceMonthly';
 export const TIMER_FLAG = 'AMBASSADOR_AUDIENCE_MONTHLY';
@@ -67,6 +68,6 @@ app.timer(TIMER_NAME, {
       log: context,
       label: TIMER_NAME,
     }).run();
-    context.log(`[${TIMER_NAME}] ${JSON.stringify(result)}`);
+    context.log(`[${TIMER_NAME}] ${jsonForLog(result)}`);
   },
 });

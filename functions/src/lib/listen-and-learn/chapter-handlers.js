@@ -107,7 +107,7 @@ export const createChapter = (ctx) =>
           })
         : null;
 
-      context.log?.(`createListenAndLearnChapter: ${ref.id}/${doc.id} by ${by || 'unknown'}`);
+      context.log?.('createListenAndLearnChapter: created');
       return json(201, { success: true, item: toChapterView(doc, set), job: queued });
     }
   );
@@ -145,7 +145,7 @@ export const patchChapter = ({ store, stamp, actorOf, loadChapter, guarded }) =>
       });
       const set = await store.readDoc(SET_CONTAINER, ref.id, ref.id);
       context.log?.(
-        `patchListenAndLearnChapter: ${ref.id}/${chapterId} ${Object.keys(updates).join(',')} by ${by || 'unknown'}`
+        `patchListenAndLearnChapter: ${Object.keys(updates).join(',')}`
       );
       return json(200, {
         success: true,
@@ -191,7 +191,7 @@ export const reorderChapters = ({ store, stamp, actorOf, loadSet, guarded }) =>
         );
         changed += 1;
       }
-      context.log?.(`reorderListenAndLearnChapters: ${ref.id} ${changed} moved`);
+      context.log?.(`reorderListenAndLearnChapters: ${changed} moved`);
       return json(200, { success: true, changed, order });
     }
   );
@@ -225,7 +225,7 @@ export const deleteChapter = ({ store, stamp, actorOf, loadChapter, guarded }) =
         { softDeletedAt: at, softDeletedBy: by, updatedAt: at },
         { partitionKey: ref.id }
       );
-      context.log?.(`deleteListenAndLearnChapter: ${ref.id}/${chapterId} by ${by || 'unknown'}`);
+      context.log?.('deleteListenAndLearnChapter: deleted');
       return json(200, { success: true, id: chapterId });
     }
   );
@@ -271,7 +271,7 @@ export const deleteVersion = ({ store, storage, stamp, actorOf, loadChapter, gua
         { partitionKey: ref.id }
       );
       context.log?.(
-        `deleteListenAndLearnVersion: ${ref.id}/${chapterId}/${versionId} by ${by || 'unknown'}`
+        `deleteListenAndLearnVersion: ${remaining.length} version(s) left`
       );
       return json(200, { success: true, id: versionId, versions: remaining });
     }
@@ -315,7 +315,7 @@ export const regenerateChapter = (ctx) =>
       if (!plan.ok) return json(plan.status, { error: plan.error });
 
       const speech = await estimateFor(set, { bytes: plan.bytes });
-      context.log?.(`regenerateListenAndLearnChapter: ${ref.id}/${chapterId} as ${plan.type}`);
+      context.log?.(`regenerateListenAndLearnChapter: as ${plan.type}`);
       return await queueJob({
         type: plan.type,
         payload: plan.payload,

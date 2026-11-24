@@ -89,7 +89,7 @@ describe("callMcpTool", () => {
     }
   });
 
-  it("logs a configuration read failure as server, class and code only", async () => {
+  it("logs a configuration read failure as class and code only, without the server id", async () => {
     const log = { warn: vi.fn(), error: vi.fn() };
     const failing = {
       readDoc: vi.fn(async () => {
@@ -103,9 +103,9 @@ describe("callMcpTool", () => {
     expect(out).toMatchObject({ ok: false, httpStatus: 500 });
     expect(log.error.mock.calls[0]).toHaveLength(1);
     expect(log.error.mock.calls[0][0]).toMatch(
-      /^\[mcp\] configuration read failed: server=plaud name=Error code=429\b/,
+      /^\[mcp\] configuration read failed: name=Error code=429\b/,
     );
-    expect(log.error.mock.calls[0][0]).not.toMatch(/Request rate|stored-oauth/);
+    expect(log.error.mock.calls[0][0]).not.toMatch(/Request rate|stored-oauth|plaud/);
   });
 
   it("reports a rejected credential as UNAUTHENTICATED without leaking it", async () => {

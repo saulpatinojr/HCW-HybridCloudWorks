@@ -146,7 +146,7 @@ export const createBook = ({ store, stamp, actorOf, guarded }) =>
       const by = actorOf(auth);
       const doc = newBookDoc({ id, body, parsed, at: stamp(), by });
       await store.upsertDoc(SET_CONTAINER, doc);
-      context.log?.(`createListenAndLearnBook: ${id} (${doc.kind}) by ${by || 'unknown'}`);
+      context.log?.(`createListenAndLearnBook: kind ${doc.kind}`);
       return json(201, { success: true, item: toBookView(doc) });
     }
   );
@@ -203,7 +203,7 @@ export const patchBook = ({ store, stamp, actorOf, loadSet, guarded }) =>
         partitionKey: ref.id,
       });
       context.log?.(
-        `patchListenAndLearnBook: ${ref.id} ${Object.keys(updates).join(',')} by ${by || 'unknown'}`
+        `patchListenAndLearnBook: ${Object.keys(updates).join(',')}`
       );
       return json(200, {
         success: true,
@@ -252,7 +252,7 @@ export const deleteBook = ({ store, stamp, actorOf, loadSet, guarded }) =>
         await store.patchDoc(SET_CONTAINER, ref.id, tombstone, { partitionKey: ref.id });
       }
       context.log?.(
-        `deleteListenAndLearnBook: ${ref.id} with ${loaded.chapters.length} chapters by ${by || 'unknown'}`
+        `deleteListenAndLearnBook: ${loaded.chapters.length} chapters`
       );
       return json(200, { success: true, id: ref.id, chapters: loaded.chapters.length });
     }

@@ -29,6 +29,7 @@ import {
   parseExportPayload,
 } from '../lib/backup/cosmos-export.js';
 import { createCosmosReader, createExportBlobStore } from '../lib/backup/cosmos-export-edges.js';
+import { jsonForLog } from '../lib/http/log-json.js';
 
 const queueOutput = output.storageQueue({
   queueName: JOBS_QUEUE,
@@ -56,7 +57,8 @@ app.timer('cosmosExportScheduler', {
       log: context,
     }).run();
     if (messages.length) context.extraOutputs.set(queueOutput, messages);
-    context.log(`cosmosExportScheduler: ${JSON.stringify(result)}`);
+    // runId is the run's date label, not a stored document's id, so it is kept.
+    context.log(`cosmosExportScheduler: ${jsonForLog(result, { keep: ['runId'] })}`);
   },
 });
 

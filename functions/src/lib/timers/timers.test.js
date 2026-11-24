@@ -442,7 +442,7 @@ describe('content cleanup', () => {
     expect(r2.deletedContentCount).toBe(1);
     expect(store2.data.content.has('c2')).toBe(false);
     expect(log.warn).toHaveBeenCalledWith(
-      expect.stringMatching(/counters not updated for c2: name=Error\b/)
+      expect.stringMatching(/counters not updated for a document: name=Error\b/)
     );
   });
 

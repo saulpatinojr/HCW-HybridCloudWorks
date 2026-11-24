@@ -14,6 +14,7 @@
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { errorFacts, errorCode } from '../http/error-response.js';
+import { jsonForLog } from '../http/log-json.js';
 
 export const CANDIDATE_STATUSES = ['draft', 'ingested', 'inspected'];
 export const FORGE_SCHEDULER_ACTOR = Object.freeze({
@@ -144,17 +145,18 @@ export function createForgeScheduled({ store, config, forge, now = () => new Dat
             summary.errors += 1;
             summary.failures.push({ contentId: candidate.id, error: outcome.error });
           }
-          log.warn?.(`[forgeScheduled] ${candidate.id} -> ${outcome.error}`);
+          // The status only: the sentence in outcome.error can quote an article's title (#1802).
+          log.warn?.(`[forgeScheduled] a candidate was not forged (HTTP ${outcome.httpStatus ?? 'unknown'})`);
         } else if (outcome.result.status === 'forge_ready') summary.staged += 1;
         else summary.editing += 1;
       } catch (err) {
         summary.errors += 1;
         summary.failures.push({ contentId: candidate.id, error: errorCode(err) });
-        log.error?.(`[forgeScheduled] ${candidate.id} threw: ${errorFacts(err)}`);
+        log.error?.(`[forgeScheduled] a candidate threw: ${errorFacts(err)}`);
       }
     }
     log.log?.(
-      `[forgeScheduled] run complete: ${JSON.stringify({ ...summary, failures: undefined })}`
+      `[forgeScheduled] run complete: ${jsonForLog({ ...summary, failures: undefined })}`
     );
     return summary;
   }

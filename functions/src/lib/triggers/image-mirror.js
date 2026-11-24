@@ -86,13 +86,13 @@ export function createImageMirror({ store, storage, fetchImage = defaultFetchIma
     if (!decision.process) return { mirrored: false, reason: decision.reason };
 
     try {
-      log.log?.(`[${spec.tag}] Downloading for ${container}/${doc.id}`);
+      log.log?.(`[${spec.tag}] Downloading for a ${container} document`);
       const fetched = await fetchImage(newUrl);
       // Not an image, so not a mirror (#415). The marker is deliberately not
       // written: an editor who replaces the video with a picture gets it
       // mirrored on the next write, exactly as after a fetch failure.
       if (fetched.refused) {
-        log.warn?.(`[${spec.tag}] Refused ${container}/${doc.id}: ${fetched.reason}`);
+        log.warn?.(`[${spec.tag}] Refused for a ${container} document: ${fetched.reason}`);
         return { mirrored: false, reason: `refused: ${fetched.refused}` };
       }
       const { buffer, contentType } = fetched;
@@ -110,10 +110,10 @@ export function createImageMirror({ store, storage, fetchImage = defaultFetchIma
         [spec.targetField]: field,
         [spec.markerField]: newUrl,
       });
-      log.log?.(`[${spec.tag}] Stored ${container}/${blobPath}`);
+      log.log?.(`[${spec.tag}] Stored an image for a ${container} document`);
       return { mirrored: true, reason: 'mirrored' };
     } catch (err) {
-      log.error?.(`[${spec.tag}] Failed for ${container}/${doc.id}: ${errorFacts(err)}`);
+      log.error?.(`[${spec.tag}] Failed for a ${container} document: ${errorFacts(err)}`);
       return { mirrored: false, reason: `error: ${errorCode(err)}` };
     }
   }
@@ -148,10 +148,10 @@ export function createImageMirror({ store, storage, fetchImage = defaultFetchIma
         size: buffer.length,
       });
       await store.patchDoc('blogs', doc.id, { 'Cover Image': field, generatedCover: true });
-      log.log?.(`[generateCover] Generated template cover for blog ${doc.id}`);
+      log.log?.('[generateCover] Generated a template cover for a blog');
       return { generated: true, reason: 'generated' };
     } catch (err) {
-      log.error?.(`[generateCover] Failed for blog ${doc.id}: ${errorFacts(err)}`);
+      log.error?.(`[generateCover] Failed for a blog: ${errorFacts(err)}`);
       return { generated: false, reason: `error: ${errorCode(err)}` };
     }
   }

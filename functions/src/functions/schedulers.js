@@ -64,6 +64,7 @@ import { createReminderCheck } from '../lib/timers/reminders.js';
 import { syncCredentialReminders } from '../lib/credentials/reminders.js';
 import { createNotifier } from '../lib/notify.js';
 import { logDisabledSkip, timerEnabled } from '../lib/timers/flag-gate.js';
+import { jsonForLog } from '../lib/http/log-json.js';
 
 /**
  * Register a flag-gated timer. `run(context)` returns a small summary that is
@@ -80,7 +81,7 @@ function timer(name, flag, schedule, run) {
         return;
       }
       const result = await run(context);
-      if (result !== undefined) context.log(`[${name}] ${JSON.stringify(result)}`);
+      if (result !== undefined) context.log(`[${name}] ${jsonForLog(result)}`);
     },
   });
 }
@@ -140,7 +141,11 @@ timer('forgeScheduled', 'FORGE_SCHEDULED', '0 30 3 * * *', async (context) => {
     grader: createGrader({ ai }),
     log: context,
   });
-  return createForgeScheduled({ store, config, forge, log: context }).run();
+  const summary = await createForgeScheduled({ store, config, forge, log: context }).run();
+  // `timer` prints what this returns. Each entry of `failures` holds a document id and a
+  // sentence that can quote an article's title, so the printed summary keeps the counts
+  // (`errors` among them) and leaves the list out (#1802).
+  return { ...summary, failures: undefined };
 });
 
 // ── Publishing ───────────────────────────────────────────────────────────────
