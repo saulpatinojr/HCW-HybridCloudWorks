@@ -77,6 +77,7 @@ const EXPECTED_SHIM_FILES = [
   "cloud-tools-jobs.js",
   "cms-http.js",
   "code-quality-http.js",
+  "community-days-http.js",
   "connection-probe-http.js",
   "content-workflow-http.js",
   "cosmos-export.js",

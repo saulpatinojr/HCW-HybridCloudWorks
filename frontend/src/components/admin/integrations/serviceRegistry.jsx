@@ -23,6 +23,7 @@ import {
   Award,
   BookOpen,
   Bot,
+  CalendarSearch,
   Cloud,
   Coins,
   FlaskConical,
@@ -212,6 +213,27 @@ async function testFirecrawl() {
   return Number.isFinite(credits)
     ? `Connected — ${credits} credits remaining.`
     : 'Connected to Firecrawl.';
+}
+
+/**
+ * The Community Days card's Test: the `communityDays` connection probe, which
+ * reads one public event on the server with the stored key. The server's
+ * sentences are complete and are shown as they are: "No key yet…" while the
+ * key has not been pasted, and one each for a key that was not accepted, API
+ * access that is not approved yet, and too many requests.
+ *
+ * @returns {Promise<string>} "Connected — …" on success; throws with the
+ *   probe's sentence otherwise, as every service test here does.
+ */
+async function testCommunityDays() {
+  const body = unwrapProxy(
+    await postJSON('connectionProbe', { probe: 'communityDays' }),
+    'Community Days'
+  );
+  const total = body?.total;
+  return Number.isInteger(total)
+    ? `Connected — the key works and API access is approved (${total} event(s) published there).`
+    : 'Connected — the key works and API access is approved.';
 }
 
 /**
@@ -655,6 +677,35 @@ export const SERVICES = Object.freeze([
     cost: 'Nothing for the site: it reads a public list without a key.',
     dataDirection: 'Inbound: a public JSON feed, read by the browser directly.',
     securityNote: 'No credential. The speaker id is public and stored in admin settings.',
+  },
+  {
+    id: 'community-days',
+    group: 'content',
+    icon: CalendarSearch,
+    name: 'Community Days',
+    description:
+      'A directory of community conferences. The site reads which events are taking talk proposals right now.',
+    // The developers page, where the key is made and where its "Your keys"
+    // tab shows when it expires.
+    url: 'https://www.communitydays.org/developers',
+    // Server-side: GET one public event with the stored key. Reads nothing
+    // of the owner's and changes nothing.
+    test: testCommunityDays,
+    secrets: ['COMMUNITY-DAYS-API-KEY'],
+    credentialNote:
+      'Tested with the Test button, which reads one public event. Expires: Community Days says a key can expire but not after how long; the date is on the Your keys tab of its developers page, and the reminder here is set to 180 days until that date is known. The key cannot be made until Community Days has approved API access for the account.',
+    rotateNote:
+      'Make a new key on the Community Days developers page, paste it here, press Test, then delete the old key there the same day.',
+    capabilities: [
+      'Read the published events whose call for speakers is open',
+      'Read your own talks as Community Days lists them',
+    ],
+    usedIn: ['Speaking (Events to apply to)'],
+    cost: 'No charge is stated in the vendor’s documentation.',
+    dataDirection:
+      'Inbound only: public event listings and your talk titles come from Community Days. The site sends it nothing but the key.',
+    securityNote:
+      'This key is not read-only. The same key can create, change and delete your events, your speaker profile and your organization on Community Days, and the vendor offers no narrower key. The site only reads with it: its code makes two read calls and a test fails if any other is added. The key is kept in Key Vault, is read on the server only and never reaches a browser.',
   },
 
   // ── Education ────────────────────────────────────────────────────────────

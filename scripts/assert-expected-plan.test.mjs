@@ -1055,6 +1055,37 @@ describe('DECLARED', () => {
     expect(infraSource).toMatch(/^\s*"PROPOSAL_STRIP_ENABLED"\s*=\s*"false"$/m);
   });
 
+  it('declares the Community Days key’s Key Vault reference exactly as infra/ writes it, and passes the plan that adds only that (#1823)', () => {
+    const entry = DECLARED.find((candidate) => candidate.path === 'app_settings.COMMUNITY_DAYS_API_KEY');
+    expect(entry, 'no declaration for the Community Days key’s app setting').toBeDefined();
+    expect(entry.address).toBe(FUNCTION_APP);
+    expect(entry.before).toBeUndefined();
+
+    // The declared value is the tree's reference with the vault's address filled in.
+    const tree =
+      /^\s*"COMMUNITY_DAYS_API_KEY"\s*=\s*"@Microsoft\.KeyVault\(SecretUri=\$\{azurerm_key_vault\.hcw\.vault_uri\}secrets\/([A-Z0-9-]+)\)"\s*$/m.exec(
+        infraSource
+      );
+    expect(tree, 'COMMUNITY_DAYS_API_KEY is not a Key Vault reference in infra/').not.toBeNull();
+    expect(tree[1]).toBe('COMMUNITY-DAYS-API-KEY');
+    expect(variableDefault('key_vault_name')).toBe('"kv-site-prod-cus-01"');
+    expect(entry.after).toBe(
+      '@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/COMMUNITY-DAYS-API-KEY)'
+    );
+
+    // The plan this pull request queues: the Function App gains that one key.
+    const added = fixture();
+    added.app.after.app_settings.COMMUNITY_DAYS_API_KEY = entry.after;
+    expect(checkPlan(added.plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
+
+    // The same key pointing at another secret is not what was declared.
+    const wrong = fixture();
+    wrong.app.after.app_settings.COMMUNITY_DAYS_API_KEY = entry.after.replace('COMMUNITY-DAYS-API-KEY', 'STREAMYARD-API-KEY');
+    const result = checkPlan(wrong.plan);
+    expect(result.ok).toBe(false);
+    expect(result.unexpected.some((line) => line.includes('app_settings.COMMUNITY_DAYS_API_KEY'))).toBe(true);
+  });
+
   it('reads the owner’s own GSC values as unexpected, so they are checked by hand (#1612)', () => {
     const { plan, app } = fixture();
     app.before.app_settings.GSC_SERVICE_ACCOUNT_EMAIL = '';

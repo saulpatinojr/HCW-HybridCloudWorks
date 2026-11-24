@@ -70,6 +70,25 @@ describe('the Key Vault part is the catalogue, whole', () => {
     expect(status.source).toMatchObject({ coder: 'statusToken' });
   });
 
+  it('registers the Community Days key as a hand-renewed Key Vault credential with a reminder (#1823)', () => {
+    const entry = findCredential('kv-community-days-api-key');
+    expect(entry).toMatchObject({
+      name: 'COMMUNITY-DAYS-API-KEY',
+      store: 'key-vault',
+      renewal: 'hand',
+      // The issuer says a key can expire but not when, so the 180-day rule
+      // stands until the owner has read the real expiry at the vendor.
+      lifetimeDays: HAND_ROTATION_DAYS,
+    });
+    expect(entry.source).toEqual({ secret: 'COMMUNITY-DAYS-API-KEY' });
+    expect(entry.issuer).toMatch(/Community Days/);
+    expect(entry.consumer).toMatch(/Speaking hub/);
+    // The rotation sentence says where to paste, to test, and to delete the old key.
+    expect(entry.rotate).toMatch(/Integrations → Keys/);
+    expect(entry.rotate).toMatch(/Test/);
+    expect(entry.rotate).toMatch(/delete the old key/);
+  });
+
   it('points each Key Vault row at its own secret_state record', () => {
     for (const entry of CREDENTIAL_REGISTER.filter((e) => e.store === 'key-vault')) {
       expect(entry.id).toBe(keyVaultCredentialId(entry.name));
@@ -147,6 +166,10 @@ describe('the issue’s list', () => {
       [
         'kv-anthropic-api-key',
         'kv-telegram-bot-token',
+        // #1823: the Community Days developer key. Its issuer says a key can
+        // expire but not when, so it is on the 180-day rule until the owner
+        // has read the real expiry on the vendor's "Your keys" tab.
+        'kv-community-days-api-key',
         'gh-manifest-app-private-key',
         'gh-claude-code-oauth-token',
         'gh-copilot-review-app-private-key',
@@ -186,6 +209,7 @@ describe('the issue’s list', () => {
     for (const id of [
       'kv-anthropic-api-key',
       'kv-telegram-bot-token',
+      'kv-community-days-api-key',
       'gh-manifest-app-private-key',
       'gh-copilot-review-app-private-key',
       'lab-coder-github-oauth-secret',

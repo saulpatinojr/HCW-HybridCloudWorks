@@ -111,6 +111,14 @@ export const DIRECTORY = Object.freeze([
     docsUrl: null,
   },
   {
+    id: 'community-days',
+    category: 'productivity',
+    summary: 'A directory of community conferences and their calls for speakers.',
+    powers:
+      'The Events to apply to tab of Speaking: events taking talk proposals now, with your status, costs, notes and a rough acceptance estimate.',
+    docsUrl: 'https://api.communitydays.org/v1/fields.md',
+  },
+  {
     id: 'credly',
     category: 'education',
     summary: 'Digital credentials and badges.',

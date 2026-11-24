@@ -68,6 +68,7 @@
 import { createKeyVerdictReporter, isCredentialRejected } from '../key-verdict.js';
 import { AuthoredError, authoredMessage, errorCode, logFailure } from '../http/error-response.js';
 import { readUpstreamError } from './upstream-error.js';
+import { API_KEY_SETTING as COMMUNITY_DAYS_KEY_SETTING, PROBE_URL as COMMUNITY_DAYS_PROBE_URL, sentenceForStatus as communityDaysSentence } from '../community-days/api.js';
 
 const json = (status, body) => ({
   status,
@@ -192,6 +193,9 @@ export function createProbe({
   buildRequest,
   authenticate = null,
   reportsKeyVerdict = false,
+  notConfigured = null,
+  failureSentence = null,
+  summarize = null,
 }) {
   return Object.freeze({
     name,
@@ -200,6 +204,17 @@ export function createProbe({
     buildRequest,
     authenticate,
     reportsKeyVerdict,
+    // Three optional refinements, for a probe that can say more than the
+    // defaults (the Community Days probe is the first):
+    //   notConfigured    the sentence for "the key is not set", in place of
+    //                    the default that only names the setting
+    //   failureSentence  (status) => this module's own sentence for a refusal
+    //                    with that HTTP status, or null for the default
+    //   summarize        (data) => the few fields a success relays to the
+    //                    page, in place of the upstream's whole answer
+    notConfigured,
+    failureSentence,
+    summarize,
   });
 }
 
@@ -465,6 +480,41 @@ export const PROBES = Object.freeze({
       },
     }),
   }),
+
+  /**
+   * `GET /published-events?per_page=1` — one public event from Community
+   * Days (#1823, ADR 0045), the cheapest read that needs the key. The URL is
+   * the client module's own constant, so the API's host is written in one
+   * file only and only-read-calls.test.js can hold the site to its two reads.
+   *
+   * The key can do far more than read (it can change the owner's events and
+   * profile at the vendor), which is why this probe, like the client, sends
+   * GET and nothing else.
+   *
+   * Three answers get their own sentence, from the vendor's documented
+   * statuses: 401 the key is missing, wrong, deleted or expired; 403 API
+   * access is not approved for the account yet; 429 too many requests. A
+   * success relays only how many events are published, never an event's text.
+   *
+   * No key verdict: a 403 here means "not approved yet", not "wrong key", so
+   * a light that went red on it would send the owner to remint a good key.
+   */
+  communityDays: createProbe({
+    name: 'communityDays',
+    service: 'Community Days',
+    settings: [COMMUNITY_DAYS_KEY_SETTING],
+    buildRequest: ({ values }) => ({
+      url: COMMUNITY_DAYS_PROBE_URL,
+      headers: {
+        Authorization: `Bearer ${values[COMMUNITY_DAYS_KEY_SETTING]}`,
+        Accept: 'application/json',
+      },
+    }),
+    notConfigured:
+      'No key yet: the Community Days key has not been pasted on the Keys tab. Community Days must approve API access first; then paste the key there and press Test again',
+    failureSentence: (status) => ([401, 403, 429].includes(status) ? communityDaysSentence(status) : null),
+    summarize: (data) => ({ total: Number.isInteger(data?.total) ? data.total : null }),
+  }),
 });
 
 export const PROBE_NAMES = Object.freeze(Object.keys(PROBES));
@@ -557,7 +607,7 @@ export function createConnectionProbe({
         // fault to page anyone about.
         return json(200, {
           ok: false,
-          error: `${probe.service} is not configured: ${setting} is not set`,
+          error: probe.notConfigured ? `${probe.notConfigured}.` : `${probe.service} is not configured: ${setting} is not set`,
           code: 'INTEGRATION_NOT_CONFIGURED',
         });
       }
@@ -689,7 +739,10 @@ export function createConnectionProbe({
     // 403, which #463 and #358 made the diagnosis, is kept where they put
     // it: the key verdict's lastFailDetail, which only the super_admin
     // API-keys page reads.
-    if (response.ok) return json(200, { ok: true, status: response.status, data });
+    if (response.ok) {
+      const relayed = typeof probe.summarize === 'function' ? probe.summarize(data) : data;
+      return json(200, { ok: true, status: response.status, data: relayed });
+    }
     return json(200, probeFailure(probe, response.status));
   };
 }
@@ -701,10 +754,11 @@ export const PROBE_FAILURE_FIELDS = Object.freeze(['ok', 'status', 'error']);
  * A probe the upstream refused, as the page is told: the service and the
  * status, in this module's words.
  *
- * @param {{ service: string }} probe - the probe that ran
+ * @param {{ service: string, failureSentence?: Function|null }} probe - the probe that ran
  * @param {number} status - the upstream's HTTP status
  * @returns {{ ok: false, status: number, error: string }}
  */
 export function probeFailure(probe, status) {
-  return { ok: false, status, error: `${probe.service} answered HTTP ${status}.` };
+  const sentence = typeof probe.failureSentence === 'function' ? probe.failureSentence(status) : null;
+  return { ok: false, status, error: sentence ? `${sentence} (HTTP ${status}).` : `${probe.service} answered HTTP ${status}.` };
 }
