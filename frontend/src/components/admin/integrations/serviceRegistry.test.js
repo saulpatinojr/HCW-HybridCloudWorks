@@ -63,6 +63,8 @@ describe('the service registry', () => {
       'Qlty',
       // 2026-11-22: two sign-ins the hub lists and does not hold.
       'GitHub Copilot code review',
+      // 2026-11-24: Muse's read-only secret and Terraform's keyless sign-in.
+      'Microsoft Azure and Entra ID',
       'Hybrid Lab (Coder and Turnstile)',
       'Hostinger',
       // ADR 0035: the first tool add-on, read through the status proxy.
@@ -150,6 +152,28 @@ describe('the service registry', () => {
     }
   });
 
+  it('lists the two Azure sign-ins the site does not hold on one platform card, with no key, no test and no ledger link', () => {
+    const azure = SERVICES.find((service) => service.id === 'azure');
+    expect(azure.group).toBe('platform');
+    // Terraform keeps Muse's secret in its own state and the run identity has
+    // none, so neither is a Key Vault key and the card can test neither.
+    expect(azure.secrets).toEqual([]);
+    expect(azure.test).toBeNull();
+    expect(azure.untestedReason).toMatch(/cannot test/);
+    expect(azure.keyGroups).toEqual([
+      { title: 'Muse reader secret (read-only access for Muse)', panel: 'museReader' },
+      { title: 'Terraform run identity (no stored secret)', panel: 'terraformRunIdentity' },
+    ]);
+    // No bill comes with either, so the card says Nothing and links no ledger.
+    expect(azure.cost).toMatch(/^Nothing/);
+    expect(azure.costOnLedger).toBeUndefined();
+    // What each can reach, in the card's own "Key reach" line.
+    expect(azure.securityNote).toMatch(/Reader/);
+    expect(azure.securityNote).toMatch(/Application\.ReadWrite\.OwnedBy/);
+    // The Foundry card still says it has no key: the secret did not go there.
+    expect(SERVICES.find((service) => service.id === 'foundry').keyGroups).toBeUndefined();
+  });
+
   it('only groups keys a card actually uses, each once, and only names panels the Services tab draws', () => {
     // IntegrationsServices.jsx KEY_GROUP_PANELS: a name not there would draw
     // an empty box; a grouped key the card does not use would never show.
@@ -159,6 +183,8 @@ describe('the service registry', () => {
       'replicateMcp',
       'hostingerMcp',
       'copilotReview',
+      'museReader',
+      'terraformRunIdentity',
     ];
     for (const service of SERVICES.filter((s) => s.keyGroups)) {
       const grouped = service.keyGroups.flatMap((group) => group.secrets ?? []);

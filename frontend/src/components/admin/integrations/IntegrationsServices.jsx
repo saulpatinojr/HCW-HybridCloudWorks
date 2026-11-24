@@ -21,7 +21,13 @@ import ServiceCard from './ServiceCard';
 import CloudPricingRefresh from './CloudPricingRefresh';
 import CoderAutomation from './CoderAutomation';
 import ClaudeCodeNote from './ClaudeCodeNote';
-import { CopilotReviewNote, HostingerMcpNote, ReplicateMcpNote } from './ListedCredential';
+import {
+  CopilotReviewNote,
+  HostingerMcpNote,
+  MuseReaderNote,
+  ReplicateMcpNote,
+  TerraformRunIdentityNote,
+} from './ListedCredential';
 import SessionizeSetting, { useSpeakerId } from './SessionizeSetting';
 import StreamYardOnAirPanel from './StreamYardOnAirPanel';
 import useSecretStatus from './useSecretStatus';
@@ -65,6 +71,8 @@ const KEY_GROUP_PANELS = {
   replicateMcp: ReplicateMcpNote,
   hostingerMcp: HostingerMcpNote,
   copilotReview: CopilotReviewNote,
+  museReader: MuseReaderNote,
+  terraformRunIdentity: TerraformRunIdentityNote,
 };
 
 function panelsFor(service) {

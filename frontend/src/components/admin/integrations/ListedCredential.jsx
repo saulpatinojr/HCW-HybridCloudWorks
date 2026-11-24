@@ -4,7 +4,8 @@
  * possible").
  *
  * Some sign-ins the estate depends on have no Key Vault row: a key that only
- * GitHub reads, or a connection the AI Engine keeps for itself. Until now
+ * GitHub reads, a connection the AI Engine keeps for itself, or a secret
+ * Terraform makes for an outside system (Muse's Azure reader). Until now
  * they appeared only on the Credentials tab, as a name and a date. Each gets
  * a titled box on its vendor's card, with the same five lines every time,
  * so the owner can find it where the vendor's other keys are:
@@ -34,6 +35,36 @@ export const MCP_SERVERS_HREF = '/admin/ai-engine?tab=mcp';
 /** The runbook with the steps for the Copilot review App's key. */
 export const COPILOT_REVIEW_RUNBOOK_URL =
   'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/copilot-code-review-mcp.md';
+
+/** The runbook that turns Muse's read-only Azure access on, rotates it and takes it away. */
+export const MUSE_READER_RUNBOOK_URL =
+  'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/muse-azure-reader.md';
+
+/** Where the Terraform workspace's variables are changed and its runs are started. */
+export const TFC_AZURE_VARIABLES_URL =
+  'https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables';
+export const TFC_AZURE_RUNS_URL = 'https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs';
+
+/**
+ * Microsoft's pages for the three "it costs nothing" facts below (opened
+ * 2026-11-24): the free directory has no product charges, Azure role
+ * assignments are free and included in the subscription, and querying
+ * Analytics-plan logs is not charged.
+ */
+export const ENTRA_FREE_DOCS_URL =
+  'https://learn.microsoft.com/azure/cost-management-billing/manage/microsoft-entra-id-free';
+export const AZURE_RBAC_DOCS_URL =
+  'https://learn.microsoft.com/azure/role-based-access-control/overview';
+export const AZURE_MONITOR_COST_DOCS_URL =
+  'https://learn.microsoft.com/azure/azure-monitor/fundamentals/cost-usage';
+
+/** What the Graph permission the Terraform run identity holds allows, in Microsoft's words. */
+export const GRAPH_OWNED_BY_DOCS_URL =
+  'https://learn.microsoft.com/en-us/graph/permissions-reference#applicationreadwriteownedby';
+
+/** The standards page whose "Why OIDC federation…" table lists every keyless sign-in. */
+export const KEYLESS_SIGN_INS_URL =
+  'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/standards/variables-and-secrets.md';
 
 export const LISTED_FACT_LABELS = Object.freeze([
   'Stored in',
@@ -168,6 +199,129 @@ export function CopilotReviewNote() {
             It does not expire by itself. The house rule is to replace it every 180 days; the date
             and the reminder are on the {credentialsTab}.
           </>
+        ),
+      }}
+    />
+  );
+}
+
+/**
+ * Muse's read-only Azure sign-in (#1763, ADR 0043): a client secret Terraform
+ * makes and keeps in its own state. The site never reads it. The numbers are
+ * `infra/muse-reader.tf`'s (180 days to the reminder, 30 more before it stops
+ * working) and the register row is `tfc-azure-muse-reader-secret`.
+ */
+export function MuseReaderNote() {
+  return (
+    <ListedCredential
+      intro={
+        <>
+          A password for a program (a client secret) that lets Muse, the outside system that runs
+          Koda, sign in to Azure as <code>sp-muse-reader-plat-prod-cus-01</code> and look at the
+          evidence behind an alert: logs, alert rules, costs and resource health in the three
+          subscriptions. It holds the built-in Reader role only, so it can change nothing and cannot
+          read Key Vault secrets, stored files or database documents.
+        </>
+      }
+      facts={{
+        'Stored in': (
+          <>
+            The Terraform workspace <code>hcw-azure</code>, in its saved state, as the hidden output{' '}
+            <code>muse_reader_client_secret</code>, with a copy in Muse’s own vault. Not in Key
+            Vault, so it is not on the Keys tab: nothing on this site reads it, and a copy here
+            would add a way in that nothing needs.
+          </>
+        ),
+        Cost: (
+          <>
+            Nothing. The directory entry (
+            <External href={ENTRA_FREE_DOCS_URL}>no product charges</External>) and the three Reader
+            grants (<External href={AZURE_RBAC_DOCS_URL}>free with the subscription</External>) are
+            not billed, and Muse’s log queries are{' '}
+            <External href={AZURE_MONITOR_COST_DOCS_URL}>not charged</External> on the standard log
+            tables this estate uses.
+          </>
+        ),
+        Test: (
+          <>
+            This page cannot test it, because the site does not hold it. Run the last step of “Turn
+            it on” in <External href={MUSE_READER_RUNBOOK_URL}>the runbook</External> (“Check the
+            three grants”): three rows that each say Reader mean the access is in place. Whether the
+            copy in Muse’s vault works shows only in Muse.
+          </>
+        ),
+        Replace: (
+          <>
+            On <External href={TFC_AZURE_VARIABLES_URL}>the workspace’s Variables page</External>,
+            raise <code>muse_reader_secret_generation</code> by one, then start a run on{' '}
+            <External href={TFC_AZURE_RUNS_URL}>its Runs page</External> and confirm it. The old
+            secret stops working in that run, so copy the new one into Muse’s vault straight after
+            with the one line in <External href={MUSE_READER_RUNBOOK_URL}>the runbook</External>{' '}
+            (“Rotate the secret”).
+          </>
+        ),
+        Expires: (
+          <>
+            Each secret works for 210 days and nothing renews it. The reminder is due at day 180,
+            which leaves 30 days to replace it. The date and the reminder are on the{' '}
+            {credentialsTab}; record the new date there after replacing it.
+          </>
+        ),
+      }}
+    />
+  );
+}
+
+/**
+ * The sign-in Terraform runs with. No secret exists, so this box is here for
+ * the other half of the question a card answers: what the sign-in can reach.
+ * Since #1763 that includes one Microsoft Graph permission, because
+ * Terraform manages Muse's app registration through Microsoft Graph. The
+ * register row is `tfc-azure-dynamic-credentials`.
+ */
+export function TerraformRunIdentityNote() {
+  return (
+    <ListedCredential
+      intro={
+        <>
+          How Terraform, the tool that builds this estate’s Azure resources, signs in when a run
+          plans or applies: as the identity <code>id-plat-terraform-prod-cus-01</code>. It manages
+          the Azure resources in the three subscriptions, and it holds one permission on Microsoft
+          Graph (the API that directory entries are managed through),{' '}
+          <External href={GRAPH_OWNED_BY_DOCS_URL}>Application.ReadWrite.OwnedBy</External>: it can
+          create app registrations and change or delete only the ones it owns, which today is
+          Muse’s.
+        </>
+      }
+      facts={{
+        'Stored in': (
+          <>
+            Nowhere: there is no password or key. HCP Terraform proves who it is to Microsoft Entra
+            with a short-lived token for each run, so it is not on the Keys tab and there is nothing
+            to leak. The trust is listed with the other keyless sign-ins in{' '}
+            <External href={KEYLESS_SIGN_INS_URL}>the standards page</External> (“Why OIDC
+            federation means zero long-lived cloud credentials”).
+          </>
+        ),
+        Cost: 'Nothing: neither the sign-in nor the Graph permission is billed.',
+        Test: (
+          <>
+            This page cannot test it. Every run on{' '}
+            <External href={TFC_AZURE_RUNS_URL}>the workspace’s Runs page</External> is the test: a
+            plan that finishes means the sign-in worked. The runbook’s first step has a read-only
+            line that prints the Graph permissions it holds (
+            <External href={MUSE_READER_RUNBOOK_URL}>the runbook</External>).
+          </>
+        ),
+        Replace: (
+          <>
+            Nothing to replace. To take the Graph permission away, use the line under “Revoke it” in{' '}
+            <External href={MUSE_READER_RUNBOOK_URL}>the runbook</External>; Terraform then can no
+            longer manage Muse’s app registration.
+          </>
+        ),
+        Expires: (
+          <>It does not expire. Its row is on the {credentialsTab}, marked as renewing itself.</>
         ),
       }}
     />

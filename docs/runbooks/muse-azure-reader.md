@@ -1,7 +1,10 @@
 # Muse's read-only Azure access: turn it on, rotate it, revoke it
 
-> **Status: first apply failed part-way on 2026-11-23; follow "Recover from
-> the failed first apply" below.** Owner request of 2026-11-22
+> **Status: turned on.** The first apply failed part-way on 2026-11-23 and
+> the corrected one succeeded on 2026-11-24 (the owner's report; a session
+> cannot read the workspace). What is left for the owner is step 5 onwards
+> of "Turn it on", and step 6 of "Recover from the failed first apply".
+> Owner request of 2026-11-22
 > ([#1763](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1763)).
 > The Terraform is in
 > [`infra/muse-reader.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/muse-reader.tf).
@@ -9,6 +12,9 @@
 > [ADR 0043](../decisions/0043-muse-azure-reader.md), which was corrected on
 > 2026-11-23: step 1 used to give the run identity the Entra role
 > "Application Developer", and that role turned out not to be enough.
+> In the admin portal this secret, and the sign-in Terraform runs with, are
+> listed on the **Microsoft Azure and Entra ID** card under
+> [Integrations → Services → Site platform](https://hybridcloudworks.com/admin/integrations?tab=services&group=platform).
 
 **Scope:** what Muse can read in Azure, the one-time setup, how to hand the
 secret to Muse, how to rotate it, and how to take the access away.
@@ -152,24 +158,69 @@ permissions (Privileged Role Administrator or Global Administrator).
 
 5. **Copy the secret into Muse's vault.** This reads the secret from the
    workspace's state straight into your clipboard; it is never shown on
-   screen. You need to be signed in to HCP Terraform on this computer
-   (`terraform login`, once).
+   screen.
+
+   **This step only works from the repository's folder, on an up-to-date
+   `main`.** It reads a file in the repository (`infra\muse-reader.tf`,
+   which is on `main`). On 2026-11-24 the earlier version of this line was
+   run from `C:\Users`: its first command failed, PowerShell carried on,
+   every later command ran in the wrong folder and the prompt ended up at
+   `C:\`. So do these two lines first.
+
+   Go to your clone (your copy of the repository on this computer). This
+   looks for it under your user folder and moves there:
 
    ```powershell
-   Set-Location infra; terraform init -input=false | Out-Null; terraform output -raw muse_reader_client_secret | Set-Clipboard; terraform output -raw muse_reader_client_id; terraform output -raw muse_reader_tenant_id; terraform output -raw muse_reader_secret_expires; git checkout -- .terraform.lock.hcl; Set-Location ..
+   $found = @(Get-ChildItem -Path $HOME -Directory -Recurse -Depth 4 -Filter HCW-HybridCloudWorks -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName 'infra\muse-reader.tf') }); if ($found.Count -eq 1) { Set-Location $found[0].FullName; Get-Location } else { Write-Output "Found $($found.Count) folders named HCW-HybridCloudWorks that hold infra\muse-reader.tf:"; $found.FullName }
    ```
 
-   The `git checkout` puts back the provider lock file, which `terraform init`
-   may have added Windows entries to.
+   **Worked:** it prints one path and the prompt is now in that folder.
+   **If you see** `Found 0 folders`, the clone is somewhere else (another
+   drive, or under a different folder name) or its `main` is too old to
+   have the file: open the folder yourself with `Set-Location` and its
+   path, then carry on. **If you see** `Found 2` or more, it lists them;
+   `Set-Location` to the one you normally work in.
 
-   **Worked:** three lines print: the client id, the tenant id (both are
-   identifiers, not secrets) and the date the secret stops working; the
-   secret itself is on your clipboard. Paste the three values and the secret
-   into Muse's own secure vault, then clear the clipboard with
-   `Set-Clipboard -Value $null`. **If you see** `No outputs found` or
+   Then bring `main` up to date:
+
+   ```powershell
+   git switch main; git pull --ff-only; Test-Path infra\muse-reader.tf
+   ```
+
+   **Worked:** `Already up to date.` or a list of updated files, then
+   `True`. **If you see** `False`, or an error from `git switch` about
+   local changes, stop here: you are not on a clean `main`, and the next
+   line will refuse to run.
+
+   You also need to be signed in to HCP Terraform on this computer
+   (`terraform login`, once). Now the line itself:
+
+   ```powershell
+   if (-not (Test-Path infra\muse-reader.tf)) { Write-Error 'Stopped, nothing was run: this folder is not the repository root, or main is not up to date (infra\muse-reader.tf is not here).' } else { Push-Location infra; try { terraform init -input=false | Out-Null; if ($LASTEXITCODE -ne 0) { Write-Error 'Stopped, nothing was copied: terraform init failed. Run it by itself to see why: terraform -chdir=infra init -input=false' } else { terraform output -raw muse_reader_client_secret | Set-Clipboard; if ($LASTEXITCODE -ne 0) { Set-Clipboard -Value $null; Write-Error 'Stopped, nothing was copied: the secret could not be read. The message above says why.' } else { foreach ($name in 'muse_reader_client_id', 'muse_reader_tenant_id', 'muse_reader_secret_expires') { $value = terraform output -raw $name; Write-Output "${name}: $value"; Write-Output '' }; Write-Output 'The secret is on the clipboard.' } } } finally { git checkout -- .terraform.lock.hcl; Pop-Location } }
+   ```
+
+   The line checks the folder before it does anything, and always comes
+   back to the folder it started in. The `git checkout` puts back the
+   provider lock file (the file that pins the exact provider versions),
+   which `terraform init` may have added Windows entries to.
+
+   **Worked:** three labelled lines with a blank line after each (the
+   client id, the tenant id, which are identifiers and not secrets, and the
+   date the secret stops working), then `The secret is on the clipboard.`
+   Paste the three values and the secret into Muse's own secure vault, then
+   clear the clipboard with `Set-Clipboard -Value $null`.
+
+   **If you see** `Stopped, nothing was run`, you are not in the repository
+   folder or `main` is behind: do the two lines above again. **If you see**
+   `Stopped, nothing was copied: terraform init failed`, run the command
+   that message gives; when its output says `Required token could not be
+   found` (followed by `Run the following command to generate a token for
+   app.terraform.io: terraform login`), run `terraform login`, approve it in
+   the browser, and run the line again. **If you see** `No outputs found` or
    `Output "muse_reader_client_secret" not found`, the apply in step 4 has
-   not finished; **if you see** `Required token could not be found`, run
-   `terraform login` and try again.
+   not finished. **If you see** `Unsupported value for raw output`, the
+   output is empty because `muse_reader_enabled` is not `true` in the
+   workspace (step 2).
 
 6. **Record the date on the Credentials tab.** Open
    [Admin → Integrations → Credentials](https://hybridcloudworks.com/admin/integrations?tab=credentials),
@@ -371,7 +422,8 @@ Rotate on the reminder, or at once after a suspected leak.
 3. ⚠️ Confirm the apply, with Muse's vault open: the old secret stops working
    in this apply.
 4. Do steps 5 and 6 of "Turn it on" again: copy the new secret into Muse's
-   vault, and record today on the Credentials tab.
+   vault (step 5 starts with the two lines that put you in the repository
+   folder on an up-to-date `main`), and record today on the Credentials tab.
 
 ## Revoke it
 
@@ -417,5 +469,9 @@ because Terraform manages that setting.
   workspace variables and the four outputs.
 - [Variables and secrets](../standards/variables-and-secrets.md): why this one
   secret is allowed in Terraform state.
+- [Integrations → Services → Site platform](https://hybridcloudworks.com/admin/integrations?tab=services&group=platform):
+  the **Microsoft Azure and Entra ID** card, which lists this secret and the
+  Terraform run identity (where each is kept, what it costs, how to check and
+  replace it, when it expires).
 - [Credential compromise](credential-compromise.md): the general response when
   any credential may have leaked.

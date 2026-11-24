@@ -175,7 +175,10 @@ describe('joining services to credentials', () => {
     const { serviceGroups } = buildIntegrationView({ sections, secrets: [originSecret] });
     const platform = serviceGroups.find((group) => group.id === 'platform');
     expect(platform.loose.map((row) => row.secret)).toEqual(['CF-ORIGIN-SECRET']);
-    expect(platform.cards).toEqual([]);
+    // The group's one card lists Azure sign-ins and claims no key, so the
+    // origin secret stays loose beside it.
+    expect(platform.cards.map((card) => card.id)).toEqual(['azure']);
+    expect(platform.cards[0].items).toEqual([]);
   });
 
   it('gives a credential whose group this page does not know a heading of its own', () => {
@@ -294,6 +297,24 @@ describe('the Overview status (#570)', () => {
     expect(serviceStatus(card({ items: [item({ state: 'live' })] }))).toBe('untested');
     expect(serviceStatus(card(), { ok: true })).toBe('ok');
     expect(serviceStatus(card({ test: null }))).toBe('link-only');
+  });
+
+  it('calls a card of sign-ins the site lists and does not hold “listed”, not a profile link', () => {
+    const listed = card({ test: null, keyGroups: [{ title: 'A sign-in', panel: 'museReader' }] });
+    expect(serviceStatus(listed)).toBe('listed');
+    expect(SERVICE_STATUS.listed.badge.label).toBe('Listed, not held');
+    expect(SERVICE_STATUS.listed.badge.help).toMatch(/cannot test/);
+    // A box of real keys with no panel is still judged by its lights.
+    const keyed = card({ test: null, keyGroups: [{ title: 'Keys', secrets: ['A'] }] });
+    expect(serviceStatus(keyed)).toBe('link-only');
+    // The three cards that are only listed today.
+    for (const id of ['azure', 'hostinger', 'copilot-review']) {
+      const service = SERVICES.find((entry) => entry.id === id);
+      expect(serviceStatus({ ...service, items: [] }), id).toBe('listed');
+    }
+    expect(serviceStatus({ ...SERVICES.find((entry) => entry.id === 'credly'), items: [] })).toBe(
+      'link-only'
+    );
   });
 
   it('sorts broken first, then not configured, keeping registry order within a status', () => {
