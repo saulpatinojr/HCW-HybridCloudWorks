@@ -1284,7 +1284,7 @@ variable "tags" {
 # exactly the "false" it is today until an owner decides otherwise.
 variable "schedulers_master_enabled" {
   description = <<-EOT
-    Master kill switch for all 20 catalogued timers (FEATURE_FLAG_SCHEDULERS).
+    Master kill switch for every catalogued timer (FEATURE_FLAG_SCHEDULERS).
 
     False holds every timer off regardless of enabled_timers.
     schedulers.js checks this first and skips the handler before reading the

@@ -917,8 +917,10 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     #
     # These are generated from `local.timer_flags` rather than written out here,
     # so turning a timer on is a WORKSPACE VARIABLE edit — add its name to
-    # `enabled_timers` — and not a code change. Twenty timers turned on one at
-    # a time would otherwise be twenty pull requests during a cutover window,
+    # `enabled_timers` — and not a code change. The timers turned on one at
+    # a time would otherwise be one pull request each during a cutover window
+    # (twenty when this was written; the count is local.timer_catalogue's, and
+    # is not repeated here because a number in a comment goes stale),
     # which is how a "one at a time, watch each one" procedure quietly becomes
     # "turn them all on and see what breaks".
     #
