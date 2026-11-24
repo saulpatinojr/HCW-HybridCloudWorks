@@ -258,7 +258,9 @@ notes and from seven site containers (`content`, `frameworks`, `designs`,
 **How the code does it.** This part is read from the code, and the
 measurements below agree with it.
 
-- **The timer starts a full rebuild each time, not just a resume.**
+- **The timer starts a full rebuild each time, not just a resume.** (This
+  is the code as measured. Change 1 under *What can be saved* replaces it;
+  see *Change 1 is in the code* below.)
   `brainIndexReconcile` runs every 15 minutes
   (`functions/src/functions/brain-http.js`). It calls `start()` in
   `functions/src/lib/brain/indexing.js`, which returns early only when a
@@ -408,7 +410,7 @@ index grows.
 
 | Rank | Change | Saves a month | What it trades off | Safe? |
 | --- | --- | ---: | --- | --- |
-| 1 | The 15-minute timer only resumes an unfinished rebuild. It starts a new full rebuild once a day, for example when the last `completedAt` is more than 24 hours old. The schedule stays the same, so the overdue-timer alert does not change | **about $60 to $75**, and it stops the growth (first version: $30 to $68) | A site article, social post or recording reaches Second Brain search up to a day later, instead of within about 15 minutes. Notes are not affected, because they are indexed when saved. The **Index creator content** button still rebuilds on demand. Removed text still never shows, because search re-reads the source | Yes. `brain_search` is a copy that can always be rebuilt, it is not exported, and the change is code only |
+| 1 | **In the code since 2026-11-24, not yet deployed; see below.** The 15-minute timer only resumes an unfinished rebuild. It starts a new full rebuild once a day, for example when the last `completedAt` is more than 24 hours old. The schedule stays the same, so the overdue-timer alert does not change | **about $60 to $75**, and it stops the growth (first version: $30 to $68) | A site article, social post or recording reaches Second Brain search up to a day later, instead of within about 15 minutes. Notes are not affected, because they are indexed when saved. The **Index creator content** button still rebuilds on demand. Removed text still never shows, because search re-reads the source | Yes. `brain_search` is a copy that can always be rebuilt, it is not exported, and the change is code only |
 | 2 | Skip the write when an index entry has not changed (compare a hash of the text before the upsert) | about $30 to $40 if done alone; little extra on top of 1 | Every item is still read on every rebuild, so the Functions part (about $19) stays | Yes |
 | 3 | Stop indexing the large text fields of `brain_search` (`body`, `searchable` and the word list) in its indexing policy | about $10 to $20 if done alone; under $1 on top of 1 (first version: $7 to $25) | The owner's own searches cost more each. It is a Terraform change | Probably; measure what a search costs first |
 | 4 | `sweepVisitorSessions` every five minutes instead of two | about $0.50 | Clean-up retries land up to five minutes late; ADR 0032 chose two minutes for that reason | Not worth it |
@@ -423,8 +425,59 @@ $13 a month), once it is measured. If the lab agent's calls turn out to be
 the cause, the lever is how often the lab agent calls in. That is set on
 the lab host, not here.
 
-Nothing in this section has been changed in the estate. It is a
-recommendation, and the change belongs in a follow-up ticket.
+Changes 2 to 5 are recommendations only; none of them has been made.
+
+### Change 1 is in the code, and waits for a deploy
+
+The owner approved change 1 on 2026-11-24 ("once a day is fine",
+[#1772](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1772)).
+It is code only, and it reaches the estate at the next manual run of
+`deploy-functions.yml` (the workflow that publishes the Function App).
+Until that run, everything measured above still holds.
+
+**What the timer does now.** `brainIndexReconcile` still fires every 15
+minutes, so the overdue-timer alert is unchanged. Each firing does one of
+three things (`rebuildDecision` in `functions/src/lib/brain/indexing.js`):
+
+- **Resume.** A rebuild is unfinished, so the worker is sent back to its
+  saved place. A page that failed is tried again 15 minutes later, not a
+  day later.
+- **Start.** No rebuild has ever run, or the last one finished 24 hours ago
+  or more (`REBUILD_INTERVAL_MS`). A rebuild still unfinished 24 hours after
+  it started (`REBUILD_STALLED_MS`) is also started again from the
+  beginning, so a stuck one cannot block the index for good.
+- **Wait.** The last rebuild is under a day old. Nothing is written and no
+  queue message is sent, so `brainIndexWorker` does not run.
+
+The **Index creator content** button on the Second Brain home page is not
+held back: it still starts a rebuild at once.
+
+**What to expect after the deploy. These are expectations worked out from
+the 2026-11-22 figures, not measurements.** The timer started a rebuild on
+about 77 firings a day, so one rebuild a day is roughly one seventy-seventh
+of the work:
+
+| Figure, per day | Measured 2026-11-22 | Expected after the deploy |
+| --- | ---: | ---: |
+| `brain_search` upserts | 425,944 | about 5,500 (thousands, not hundreds of thousands), plus one for each note saved |
+| `brain_search` request units | 5.25 million | under 0.1 million |
+| `brainIndexWorker` runs | 11,269 | about 150 (hundreds at most) |
+| `brainIndexReconcile` runs | about 77 | unchanged |
+| Host storage `PutMessage` | 11,925 | a few hundred |
+
+These figures rise slowly as the index grows, because the daily rebuild
+still reads and writes every entry (change 2 would address that). The day
+of the deploy itself is a mix of the old and new rates, so read the first
+full UTC day after it.
+
+**How to confirm it.** Run steps 3 and 4 of the
+[checklist on #1772](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1772#issuecomment-7111817586)
+again, with the dates changed to the first full day after the deploy. Step
+3 gives the `brain_search` upserts and step 4 gives the `brainIndexWorker`
+runs. The Second Brain home page also shows it directly: "Last completed"
+under *Connected content & Obsidian* should move once a day, not every 15
+minutes. If the figures have not fallen, the first thing to check is
+whether the Function App was really deployed after this change merged.
 
 ### Still to measure
 

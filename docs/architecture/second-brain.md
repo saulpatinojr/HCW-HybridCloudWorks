@@ -50,8 +50,13 @@ input is refused. No timestamp chooses a conflict winner.
 `brain_search`, also partitioned on `/ownerId`, is a regenerable lexical index.
 A separate `brain-index` queue keeps private indexing checkpoints/results out
 of the generic jobs surface. Each delivery processes one bounded source page.
-A 15-minute reconciliation timer resumes interrupted checkpoints and refreshes
-updates/deletions. Its schedule is included in the timer-overdue alert contract.
+A 15-minute reconciliation timer resumes interrupted checkpoints. Once a day,
+when the last rebuild finished 24 hours ago or more, it starts a full rebuild
+that refreshes updates/deletions
+([#1772](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1772));
+until then site content changes wait, or the owner presses **Index creator
+content**. A rebuild still unfinished a day after it started is begun again.
+Its schedule is unchanged and is included in the timer-overdue alert contract.
 Reads recheck the authoritative source, so stale projections cannot expose
 removed text. Search is paginated and ranks matches within the retrieved page;
 it is not vector search or an exhaustive semantic ranking.
