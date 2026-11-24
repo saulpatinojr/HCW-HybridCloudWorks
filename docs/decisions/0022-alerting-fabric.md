@@ -155,6 +155,22 @@ section says what is actually throwing. Suppression by
 [alert processing rule](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-processing-rules)
 is for planned windows only; it outlives the reason for it otherwise.
 
+**The first filter, 2026-11-24.** `alert-app-exceptions-prod-cus` fired seven
+times in three days, and all 428 exceptions behind those firings were the
+Functions host's own storage calls being refused (`403 AuthenticationFailed`)
+for a few minutes after a Terraform apply, the known cost of the workaround
+for azurerm #29149 in `infra/functionapp.tf`. Following the order above, the
+throw cannot be fixed here (it is the provider's), so the query was filtered
+on that one signature and nothing else, with threshold, window and severity
+unchanged. A filter on a Sev1 rule is only acceptable with something that
+still fires when the filtered thing does not stop, so
+`alert-host-storage-auth-prod-cus` (Sev2) fires when the same signature fills
+four quarter hours in a row, and `alert-timer-overdue` covers the case where
+the host stops logging altogether. The Activity Log is not in the workspace,
+so the filter could not be limited to the minutes around a settings write.
+Evidence and the replay queries:
+[the Nov 24 investigation](../runbooks/investigate-app-exceptions-2026-11-24.md#outcome-nov-24).
+
 ## Consequences and accepted risks
 
 - **At the time of this ADR, reachability had no alert, and that is the

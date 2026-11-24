@@ -281,6 +281,24 @@ export function sshLoginAlertQuery(loopbackOnly) {
   ].join("\n");
 }
 
+/**
+ * The exceptions alert-app-exceptions leaves out since 2026-11-24, as
+ * `local.host_storage_auth_signature` in infra/observability.tf writes it:
+ * the Functions host's own storage calls refused with 403
+ * AuthenticationFailed, which follow every Terraform apply and clear by
+ * themselves (T-511; docs/runbooks/investigate-app-exceptions-2026-11-24.md).
+ * host-storage-auth-alert.test.mjs holds these three strings to the tree.
+ */
+export const HOST_STORAGE_AUTH_SIGNATURE =
+  'isempty(operation_Name) and problemId startswith "Azure.RequestFailedException" and (outerMessage has "AuthenticationFailed" or innermostMessage has "AuthenticationFailed")';
+
+/** alert-app-exceptions' query as Terraform renders it with that filter. */
+export const APP_EXCEPTIONS_QUERY = `exceptions | where not(${HOST_STORAGE_AUTH_SIGNATURE})`;
+
+/** alert-app-exceptions' description in infra/observability.tf since then. */
+export const APP_EXCEPTIONS_DESCRIPTION =
+  "More than 5 application exceptions in 15 minutes, not counting the Functions host's own storage sign-in failures (403 AuthenticationFailed) that follow a Terraform apply; alert-host-storage-auth watches those.";
+
 /** alert-lab-ssh-login's description in infra/lab-hybrid.tf (#953 stage 3). */
 export const SSH_LOGIN_ALERT_DESCRIPTION =
   "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (and, while lab_ssh_loopback_only is set, through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953.";
@@ -866,6 +884,36 @@ export const DECLARED = [
       "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/COMMUNITY-DAYS-API-KEY)",
     reason:
       "#1823: Key Vault reference for COMMUNITY-DAYS-API-KEY, the Community Days developer key the Speaking hub reads open calls for speakers with",
+  },
+
+  // The app-exceptions alert stops counting the storage errors that follow
+  // every Terraform apply (T-511), and a second rule watches for those errors
+  // lasting an hour. The plan shows two changed attributes on the existing
+  // rule (its query and its description) and one new rule, beside the
+  // permanent diff. `before` is what the rule has held since 2026-08-25: the
+  // bare table name, and the description below. Delete all three entries
+  // once the apply has run and verify-alert-state.yml reads both rules OK,
+  // and host-storage-auth-alert.test.mjs's "declares" test with them.
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.app_exceptions",
+    path: "criteria[0].query",
+    before: "exceptions",
+    after: APP_EXCEPTIONS_QUERY,
+    reason:
+      "alert-app-exceptions leaves out the host's storage sign-in failures that follow an apply (T-511)",
+  },
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.app_exceptions",
+    path: "description",
+    before: "More than 5 application exceptions in 15 minutes.",
+    after: APP_EXCEPTIONS_DESCRIPTION,
+    reason: "alert-app-exceptions' description says what it leaves out",
+  },
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.host_storage_auth",
+    action: "create",
+    reason:
+      "alert-host-storage-auth: the same storage failures lasting four quarter hours, Sev2",
   },
 ];
 

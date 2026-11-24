@@ -396,7 +396,10 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # two are distinguishable. `azurerm_function_app_flex_consumption` re-injects
     # it on every apply whatever `storage_authentication_type` says, and it does
     # not surface in plan: hashicorp/terraform-provider-azurerm#29149, open,
-    # reproducing on the 5.1.0 pinned in .terraform.lock.hcl. Evidence: the
+    # reproducing on the 5.14.0 in .terraform.lock.hcl (re-tested by the
+    # bursts of 21 to 24 November 2026,
+    # docs/runbooks/investigate-app-exceptions-2026-11-24.md; this line said
+    # 5.1.0, the version when it was written). Evidence: the
     # 20:02Z deploy deleted the setting, Terraform's 20:31Z apply was the only
     # `sites/config` write after it, and the setting was present again.
     #
