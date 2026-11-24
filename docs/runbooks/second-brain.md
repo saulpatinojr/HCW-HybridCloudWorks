@@ -105,6 +105,72 @@ of [#1408](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1408):
 | 4. **Create draft** with provenance; a retry makes no duplicate | The draft route of the saved note receives the reviewed title and text; a failed attempt and its retry carry the same request id, and the button is disabled once a draft exists. That request id lives in the open editor: after a reload, a reopen of the note or **Start another draft**, a new id is minted and the API will make a second draft. The API side (the same request id returns the same draft id) is unit-tested in [`functions/src/lib/brain/brain.test.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/brain/brain.test.js). | Open **Drafts** once in production and confirm the draft is there with its provenance. |
 | 5. Appearance controls, two-line headings, doubled canvas, full-screen X and Escape | All of it, in the `map appearance` journey. | A look in the owner's own browser, if wanted; nothing here depends on the model. |
 
+## If sign-in fails
+
+From plugin 1.0.4 the **Sign in** button says which step failed and why, for
+example `Sign-in failed. Step: device code request. ... (Microsoft devicecode:
+HTTP 400 invalid_scope AADSTS70011 ...)`, and writes the same line to the
+Obsidian developer console (**Ctrl+Shift+I**, then the **Console** tab) as
+`HCW Second Brain: sign-in failed.` Tokens and device codes are never shown.
+Version 1.0.3 and earlier showed one fixed sentence and logged nothing
+([#1812](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1812)).
+The DevTools **Network** tab is not a reliable place to look: the plugin
+talks to Microsoft through Obsidian's own HTTPS request function
+(`requestUrl`), not the page's `fetch`.
+
+What each step means and what to check:
+
+| Step in the message | What it means | Check |
+| --- | --- | --- |
+| `settings` | A connection value is missing or not a GUID. | Copy the four values again from Second Brain Home. |
+| `token cache (read)` or `token cache folder` | The plugin could not open its cache folder or lock file. | Check 1 below. |
+| `token cache (Windows encryption)` | The encryption helper `dpapi.ps1` did not run, or Windows refused to encrypt. | Checks 1 to 3 below. |
+| `device code request` | Microsoft refused to issue a sign-in code; the reason is the `AADSTS` code in brackets. | Look the code up in Microsoft's [error code list](https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes). This is an Entra registration matter, not a plugin one. |
+| `waiting for browser sign-in` | A code was shown and the browser sign-in was refused or ran out of time. | The `AADSTS` code, as above. |
+
+The helper is only used once a token cache file exists (to read it) or when
+a token arrives (to save it), so on a first sign-in a helper problem appears
+after the code dialog, not before. All lines below are PowerShell; run them
+in one window, in order.
+
+1. See whether a cache or a leftover lock file exists. A `tokens.cache.lock`
+   older than a minute is removed by the plugin itself.
+
+   ```powershell
+   Get-ChildItem "$env:LOCALAPPDATA\HybridCloudWorks\Obsidian" -Recurse -Force -ErrorAction SilentlyContinue | Select-Object FullName, Length, LastWriteTime
+   ```
+
+   Nothing listed, or one folder named after the desktop client id with
+   `tokens.cache` in it, is normal.
+
+2. Find the vault's copy of the helper and see whether Windows marked it as
+   downloaded. This reads Obsidian's own list of vaults and picks the one
+   whose path contains `HCW`.
+
+   ```powershell
+   $v = (Get-Content "$env:APPDATA\obsidian\obsidian.json" -Raw | ConvertFrom-Json).vaults.PSObject.Properties.Value | Where-Object { $_.path -like '*HCW*' } | Select-Object -First 1 -ExpandProperty path; $h = Join-Path $v '.obsidian\plugins\hcw-second-brain\dpapi.ps1'; Get-Item $h -Stream * | Select-Object Stream; Get-ExecutionPolicy -List
+   ```
+
+   Good: only `:$DATA` is listed, and the effective policy (the first scope
+   that is not `Undefined`, from the top) is `RemoteSigned`, `AllSigned` with
+   a signed helper, or `Bypass`. A `Zone.Identifier` line means the file is
+   marked as downloaded; `Unblock-File $h` removes the mark. A policy of
+   `Restricted` (the Windows default for desktops) stops every script,
+   including this one. The plugin does not override the policy on purpose;
+   changing it is the owner's decision.
+
+3. Run the helper the way the plugin does: encrypt a made-up value and
+   decrypt it again.
+
+   ```powershell
+   $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"; $c = 'synthetic-test' | & $ps -NoProfile -NonInteractive -File $h -Mode Protect; "protect exit $LASTEXITCODE"; $c | & $ps -NoProfile -NonInteractive -File $h -Mode Unprotect; ""; "unprotect exit $LASTEXITCODE"
+   ```
+
+   Good: `protect exit 0`, then `synthetic-test`, then `unprotect exit 0`.
+   Exit `3` means Windows' encryption (DPAPI) refused for this user; any
+   other non-zero code means PowerShell did not run the script, and the text
+   it printed says why.
+
 ## Enroll the real notes and retire private Publish
 
 Back up the original vault. After the sample pilot passes, install the tested
