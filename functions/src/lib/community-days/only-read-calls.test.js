@@ -11,11 +11,12 @@
  *
  * WHAT IT CHECKS, by reading the source:
  *
- *   1. The API's host is written in ONE source file, the client. Any other
- *      file that names it fails, so a second caller cannot appear quietly.
- *      (The Test button imports the client's own URL constant.)
- *   2. In the client, every path under that host is one of the two reads,
- *      and no word that names a writing HTTP method appears at all.
+ *   1. The API's host is written in ONE source file, api.js, which holds
+ *      constants only (no import, no call). Any other file that names the
+ *      host fails, so a second caller cannot appear quietly. Only the client
+ *      and the Test button's table read from that file.
+ *   2. Every path written is one of the two reads, and in the client no word
+ *      that names a writing HTTP method appears at all.
  *   3. The API's whole list of paths (from its public OpenAPI description, as
  *      read on 2026-11-24) is checked against the client's text: none of the
  *      others appears in it.
@@ -30,6 +31,8 @@ import * as client from './client.js';
 
 const SRC = fileURLToPath(new URL('../..', import.meta.url));
 const CLIENT_FILE = 'lib/community-days/client.js';
+// The one file that names the API's host: constants only, no imports, no calls.
+const API_FILE = 'lib/community-days/api.js';
 // The API's host. The public website (www.) is a different host: events.js builds
 // plain links to event pages on it, which call nothing.
 const HOST = 'api.communitydays.org';
@@ -50,6 +53,7 @@ function code(text) {
 }
 
 const clientCode = code(readFileSync(join(SRC, CLIENT_FILE), 'utf8'));
+const apiCode = code(readFileSync(join(SRC, API_FILE), 'utf8'));
 
 /**
  * The first segment of every path the API serves besides the two this site
@@ -68,18 +72,27 @@ const OTHER_API_PATHS = [
 ];
 
 describe('the site only reads from Community Days', () => {
-  it('names the API’s host in the client and in no other source file', () => {
+  it('names the API’s host in one constants file, which imports nothing and sends nothing', () => {
     const naming = sourceFiles(SRC)
       .filter((file) => code(readFileSync(file, 'utf8')).toLowerCase().includes(HOST))
       .map((file) => relative(SRC, file).replace(/\\/g, '/'));
-    expect(naming, 'a second file calls or names the Community Days API; route it through the client').toEqual([CLIENT_FILE]);
+    expect(naming, 'a second file names the Community Days API; route it through the client').toEqual([API_FILE]);
+    expect(apiCode).not.toMatch(/\bimport\b|\bfetch\b|\brequire\(/);
+    // The host is used by exactly two callers: the client and the Test button's table.
+    const users = sourceFiles(SRC)
+      .filter((file) => /from '[^']*community-days\/api\.js'|from '\.\/api\.js'/.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(SRC, file).replace(/\\/g, '/'))
+      .filter((file) => file.startsWith('lib/community-days/') ? file === CLIENT_FILE : true)
+      .sort();
+    expect(users).toEqual([CLIENT_FILE, 'lib/integrations/connection-probe.js']);
   });
 
   it('scans a client that really has the calls in it', () => {
     // A scan of an empty or renamed file would pass every check below.
-    expect(clientCode).toContain("'/published-events'");
-    expect(clientCode).toContain("'/profile/talks'");
+    expect(apiCode).toContain("'/published-events'");
+    expect(apiCode).toContain("'/profile/talks'");
     expect(clientCode).toContain("method: 'GET'");
+    expect(clientCode).toContain('ALLOWED_PATHS.includes(path)');
   });
 
   it('writes no HTTP method but GET in the client', () => {
@@ -91,12 +104,16 @@ describe('the site only reads from Community Days', () => {
     expect(clientCode).not.toMatch(/\bbody\s*:/);
   });
 
-  it('writes no path but the two reads in the client', () => {
+  it('writes no path but the two reads, in the constants file or the client', () => {
     // Every quoted string that starts with a slash is a path.
-    const paths = [...clientCode.matchAll(/['"`](\/[A-Za-z][^'"`\s]*)['"`]/g)].map((match) => match[1]);
-    expect([...new Set(paths)].sort()).toEqual(['/profile/talks', '/published-events']);
+    const pathsIn = (text) => [...text.matchAll(/['"`](\/[A-Za-z][^'"`\s]*)['"`]/g)].map((match) => match[1]);
+    expect([...new Set(pathsIn(apiCode))].sort()).toEqual(['/profile/talks', '/published-events']);
+    // The client writes no path of its own: it uses the two named constants.
+    expect(pathsIn(clientCode)).toEqual([]);
     for (const other of OTHER_API_PATHS) {
-      expect(clientCode.includes(`'${other}`) || clientCode.includes(`\`${other}`), `the client names ${other}`).toBe(false);
+      for (const text of [apiCode, clientCode]) {
+        expect(text.includes(`'${other}`) || text.includes(`\`${other}`), `${other} is named`).toBe(false);
+      }
     }
   });
 

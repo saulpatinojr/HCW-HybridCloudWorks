@@ -10,6 +10,9 @@ export const SPEAKING_EVENTS_PATH = '/admin/speaking';
 export const TABS = Object.freeze([
   { id: 'upcoming', label: 'Upcoming' },
   { id: 'past', label: 'Past' },
+  // Not "Upcoming": that tab is the owner's own sessions. This one is other
+  // people's events the owner could send a talk to (#1823).
+  { id: 'apply', label: 'Events to apply to' },
   { id: 'sources', label: 'Sources' },
   { id: 'publishing', label: 'Publishing' },
   { id: 'settings', label: 'Settings' },
@@ -28,6 +31,10 @@ export const MOVED_TABS = Object.freeze({
   events: 'upcoming',
   calendar: 'upcoming',
   delivered: 'past',
+  'community-days': 'apply',
+  calls: 'apply',
+  cfp: 'apply',
+  'call-for-speakers': 'apply',
   history: 'past',
   sessionize: 'sources',
   sync: 'sources',

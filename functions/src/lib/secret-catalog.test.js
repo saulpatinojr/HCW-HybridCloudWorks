@@ -34,7 +34,7 @@ import {
 } from './secret-catalog.js';
 import { CODER_BROKER_TOKEN_SETTING, VISITOR_SESSION_SWITCH } from './labs/visitor-session.js';
 import { TURNSTILE_SECRET_SETTING } from './labs/public-lock.js';
-import { API_KEY_SETTING as COMMUNITY_DAYS_KEY_SETTING } from './community-days/client.js';
+import { API_KEY_SETTING as COMMUNITY_DAYS_KEY_SETTING } from './community-days/api.js';
 
 const INFRA = join(fileURLToPath(new URL('../../..', import.meta.url)), 'infra');
 

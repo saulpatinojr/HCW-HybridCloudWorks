@@ -39,19 +39,10 @@
 import { AuthoredError, withUpstreamStatus } from '../http/error-response.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
 import { readSetting } from '../http/read-setting.js';
+import { ALLOWED_PATHS, API_BASE, API_KEY_SETTING, EVENTS_PATH, TALKS_PATH, sentenceForStatus } from './api.js';
 
-/** The app setting the key arrives in (a Key Vault reference, infra/functionapp.tf). */
-export const API_KEY_SETTING = 'COMMUNITY_DAYS_API_KEY';
-
-export const API_BASE = 'https://api.communitydays.org/v1';
-
-/** The only paths this site may call, each with GET. */
-export const EVENTS_PATH = '/published-events';
-export const TALKS_PATH = '/profile/talks';
-export const ALLOWED_PATHS = Object.freeze([EVENTS_PATH, TALKS_PATH]);
-
-/** The Test button's call (integrations/connection-probe.js): one public event, the cheapest read that needs the key. */
-export const PROBE_URL = `${API_BASE}${EVENTS_PATH}?per_page=1`;
+// The names other modules and the tests read from here, as before.
+export { ALLOWED_PATHS, API_BASE, API_KEY_SETTING, EVENTS_PATH, PROBE_URL, TALKS_PATH, sentenceForStatus } from './api.js';
 
 /** One request may take this long, answer included. */
 export const CALL_TIMEOUT_MS = 8_000;
@@ -63,28 +54,6 @@ export const PER_PAGE = 50;
 export const MAX_PAGES = 6;
 /** A Retry-After longer than this is recorded as this (one day). */
 export const MAX_RETRY_AFTER_SECONDS = 24 * 60 * 60;
-
-/**
- * The sentence for one HTTP status, written for the owner. Shared with the
- * Test button so the page and the card say the same thing.
- *
- * @param {number|undefined} status - the API's HTTP status, or undefined when there was no answer
- * @returns {string}
- */
-export function sentenceForStatus(status) {
-  if (status === 401) {
-    return 'Community Days did not accept the key: it is missing, wrong, deleted or expired. Paste a current key on Integrations → Keys';
-  }
-  if (status === 403) {
-    return 'Community Days answered that API access is not approved for this account yet, or the account is blocked. Nothing is wrong with this site; the approval is given on the Community Days developers page';
-  }
-  if (status === 429) {
-    return 'Community Days is limiting how often this site may ask. Wait a while and try again';
-  }
-  if (Number.isInteger(status) && status >= 500) return 'The Community Days service failed on its side';
-  if (Number.isInteger(status)) return 'Community Days refused the request';
-  return 'Community Days could not be reached';
-}
 
 /**
  * A failed Community Days call. `kind` is 'events' or 'talks'. `upstreamStatus`

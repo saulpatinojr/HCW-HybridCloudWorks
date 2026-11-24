@@ -68,7 +68,7 @@
 import { createKeyVerdictReporter, isCredentialRejected } from '../key-verdict.js';
 import { AuthoredError, authoredMessage, errorCode, logFailure } from '../http/error-response.js';
 import { readUpstreamError } from './upstream-error.js';
-import { API_KEY_SETTING as COMMUNITY_DAYS_KEY_SETTING, PROBE_URL as COMMUNITY_DAYS_PROBE_URL, sentenceForStatus as communityDaysSentence } from '../community-days/client.js';
+import { API_KEY_SETTING as COMMUNITY_DAYS_KEY_SETTING, PROBE_URL as COMMUNITY_DAYS_PROBE_URL, sentenceForStatus as communityDaysSentence } from '../community-days/api.js';
 
 const json = (status, body) => ({
   status,

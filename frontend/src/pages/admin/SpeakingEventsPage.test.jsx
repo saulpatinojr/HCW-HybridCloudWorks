@@ -108,7 +108,7 @@ const selectedTab = () => hubTabs().getByRole('tab', { selected: true }).textCon
 const panel = () => within(screen.getByRole('tabpanel'));
 
 describe('the header and tabs', () => {
-  it('names the hub and Sessionize in the header, and offers five tabs with Settings last', () => {
+  it('names the hub and Sessionize in the header, and offers six tabs with Settings last', () => {
     render(<SpeakingEventsPage />);
     expect(screen.getByRole('heading', { level: 1, name: 'Speaking' })).toBeTruthy();
     expect(screen.getByText('Sessionize', { selector: 'strong' })).toBeTruthy();
@@ -116,7 +116,7 @@ describe('the header and tabs', () => {
       hubTabs()
         .getAllByRole('tab')
         .map((tab) => tab.textContent)
-    ).toEqual(['Upcoming', 'Past', 'Sources', 'Publishing', 'Settings']);
+    ).toEqual(['Upcoming', 'Past', 'Events to apply to', 'Sources', 'Publishing', 'Settings']);
   });
 
   it.each([
