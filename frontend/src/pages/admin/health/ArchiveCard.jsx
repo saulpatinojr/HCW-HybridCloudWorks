@@ -67,6 +67,12 @@ const BLOCKERS = Object.freeze({
     'the newest dry run did not finish (the daily check starts a new one when that is all that is missing)',
   'report-older-than-backup':
     'the newest dry-run report was made from an older backup than the one an archive would read (the daily check starts a new one when that is all that is missing)',
+  'report-older-rules':
+    'the newest dry-run report was made before the list of what is kept last changed (the daily check starts a new one when that is all that is missing)',
+  'report-incomplete':
+    'the newest dry-run report does not cover every container an archive would write (the daily check starts a new one when that is all that is missing)',
+  'report-cut-short':
+    'the newest dry-run report met a record too large to search whole for names that look like a secret, so it cannot vouch for that container',
   'report-mismatch':
     'the newest dry-run report counted a different number of records than the backup’s own list, or met a line it could not read',
   'report-flagged':
@@ -331,6 +337,16 @@ function ArchiveProgress({ status }) {
   }
   const { run, lastArchive: last } = status;
   const parts = [];
+  if (run?.unlistedFiles) {
+    parts.push(
+      <p key="unlisted" className="text-sm text-destructive" data-testid="archive-run-unlisted">
+        The folder of the archive of {run.year} holds {number(run.unlistedFiles)} file(s) its list
+        does not name: a container that was archived when the run started and has since been taken
+        off the list. The archive cannot finish while it is there, and nothing deletes it by itself.
+        The runbook, “A file that should not be there”, has the steps.
+      </p>
+    );
+  }
   if (run) {
     const missing = Array.isArray(run.missing) ? run.missing : [];
     parts.push(

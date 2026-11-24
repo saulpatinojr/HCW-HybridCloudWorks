@@ -199,6 +199,11 @@ describe('ArchiveCard', () => {
     expect(blockerSentence(['report-flagged', 'report-waiting'])).toBe(
       'the newest dry-run report shows a field to look at in a container nobody has decided about (the red block below); the newest dry-run report shows a container waiting for you'
     );
+    expect(blockerSentence(['report-older-rules'])).toContain(
+      'before the list of what is kept last changed'
+    );
+    expect(blockerSentence(['report-incomplete'])).toContain('does not cover every container');
+    expect(blockerSentence(['report-cut-short'])).toContain('too large to search whole');
     for (const code of ['report-running', 'report-stalled', 'report-mismatch']) {
       expect(blockerSentence([code]), code).not.toBe(code);
     }
@@ -286,6 +291,28 @@ describe('ArchiveCard', () => {
     expect(late).toHaveTextContent('is not finished: 38 of 39 files are written and checked.');
     expect(late).toHaveTextContent('Missing: content_versions.');
     expect(late).toHaveTextContent('Nothing has been moved to the Archive tier');
+  });
+
+  it('says in red when the year’s folder holds a file the list does not name', async () => {
+    getJSON.mockResolvedValue({
+      ...STATUS,
+      switchOn: true,
+      run: {
+        year: 2026,
+        startedAt: '2027-02-08T03:00:00.000Z',
+        sourceRun: '2027-02-07',
+        expected: 60,
+        done: 60,
+        missing: [],
+        late: true,
+        unlistedFiles: 1,
+      },
+    });
+    renderAs('super_admin');
+    const line = await screen.findByTestId('archive-run-unlisted');
+    expect(line).toHaveTextContent('holds 1 file(s) its list does not name');
+    expect(line).toHaveTextContent('nothing deletes it by itself');
+    expect(line).toHaveClass('text-destructive');
   });
 
   it('says "could not be read" for the archive’s progress, not "none", when the server could not tell', async () => {

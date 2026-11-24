@@ -22,8 +22,23 @@ to do when one does not finish, and how to read an archived file back.
 | Reading an archive back | Steps written, **not tried**: no archive exists to try them on. No button for it yet. See [Reading an archive back](#reading-an-archive-back) |
 | Images and audio | Not in the first version (the owner's answer of 2026-11-24). The first archive is the database only |
 
-**No archive has been written.** Nothing on this page deletes anything, spends
-anything beyond a few seconds of the Function App's time, or cannot be undone.
+**No archive has been written.**
+
+**Most of this page changes nothing.** Running a dry run and reading its
+report delete nothing, spend nothing beyond a few seconds of the Function
+App's time, and need no undoing. Three sections are different, and each
+flags its steps where they are:
+
+- [Switching it on](#switching-it-on) starts something that writes a
+  long-term copy.
+- [Reading an archive back](#reading-an-archive-back) **spends money**
+  (bringing a file back from the Archive tier is charged), **opens the
+  storage account's firewall to your computer, grants your account a
+  role**, and **deletes** the copies it made. Each of those steps says so
+  before it.
+- [A file that should not be there](#a-file-that-should-not-be-there)
+  **deletes** a file, and also opens the firewall and grants a role for the
+  length of the job.
 
 ## What an archive will hold
 
@@ -287,12 +302,27 @@ Two things to know about that, said plainly:
   two under "The owner chose to keep these", with each field named like a
   secret and the kind of value it holds.
 
-To change your mind about any of them before the archive is switched on,
-reply on
+To change your mind about any of them, reply on
 [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) with
 the container's name and `OUT` (leave it out) or `STRIP` and the field names
-to keep. A session then changes the list in a pull request. Once a year has
-been archived, changing the list only affects later years.
+to keep. A session then changes the list in a pull request. What that does
+depends on when:
+
+- **Before any archive has started:** nothing more. The next dry run is made
+  under the new list (the daily check starts one by itself), and an archive
+  starts only from a report made under the list as it then is.
+- **While a year's archive is being written** (the card says "is being
+  written" or "is not finished"): the run does not carry on under the old
+  list. It starts again from the beginning under the new one, after a new
+  dry run, and every file is written again. If a container was taken off the
+  list, the file the old run wrote for it is still in the year's folder, and
+  the archive will not finish until you have removed it:
+  [A file that should not be there](#a-file-that-should-not-be-there). The
+  card and a message on your phone say so.
+- **After a year has been archived** (it has its manifest): that year is not
+  touched. The new list applies to later years only. Removing something from
+  a finished year is the by-hand erasure of
+  [ADR 0046, section 5](../decisions/0046-content-archive.md#5-erasure-a-persons-request-to-be-deleted).
 
 ## If a container is waiting
 
@@ -330,8 +360,12 @@ names; treat that as a sign it holds what people typed.
 | "50 of 60 files are in the Archive tier; the daily check moves the rest" | The archive is finished and listed, and some files are still online. Moving a file can fail; the next daily check (03:00 UTC) tries again | Nothing, unless it says so for more than two days; then say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) |
 | In red: "file(s) the archive's list names are not in storage" | A file the manifest lists has been deleted | Say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) |
 | "could not start today: no dry run has been made yet", "the newest dry run did not finish", or "the newest dry-run report was made from an older backup" | An archive never starts unless a finished dry-run report describes the very backup it would read. When that is the only thing missing, the daily check (03:00 UTC) starts the dry run itself, and the archive starts the day after if the report shows nothing to decide | Nothing. You can also press **Dry run** yourself |
+| "could not start today: the newest dry-run report was made before the list of what is kept last changed", or "does not cover every container an archive would write" | The list changed after the report was made (a decision of yours was put into the code, for example), so the report no longer describes what an archive would write | Nothing: the daily check starts a new dry run, once for each backup and each version of the list |
+| "could not start today: the newest dry-run report met a record too large to search whole" | One record in a kept container was too deep or too big for the dry run to look through all of it for names that look like a secret, so the report cannot vouch for that container | Say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811); the "Every container" table of the report shows which container. A session decides with you whether to raise the limit or leave the container out |
+| On your phone: "the dry run did not finish", or "no more automatic dry runs" | The daily check starts at most one dry run by itself for each backup. If that one did not finish it tells you once and starts no other for that backup; after three in a row (one a week) it stops starting them at all | Press **Dry run** on the card yourself. If it fails again, [Health → Alerts](https://hybridcloudworks.com/admin/health?tab=alerts) has the failed job's message |
+| In red: "The folder of the archive of 2026 holds 1 file(s) its list does not name" | A container was taken off the list while the archive was being written, and the file the earlier run wrote for it is still there | [A file that should not be there](#a-file-that-should-not-be-there) |
 | "could not start today: a dry run is still reading the backup" | The same, a few minutes in | Wait |
-| "could not start today: the newest dry-run report shows a field to look at in a container nobody has decided about" | The red block "Look before switching the archive on" is not empty. No archive starts while it is not | Read the block and answer on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) ([Read the report](#read-the-report)). Your phone gets a message each day this is the only thing in the way |
+| "could not start today: the newest dry-run report shows a field to look at in a container nobody has decided about" | The red block "Look before switching the archive on" is not empty. No archive starts while it is not | Read the block and answer on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) ([Read the report](#read-the-report)). Your phone gets one message for each such report, not one a day. Once your answer is in the list, the daily check makes a new dry run and carries on by itself |
 | "could not start today: the newest dry-run report shows a container waiting for you" | A container nobody has classified is in the backup | [If a container is waiting](#if-a-container-is-waiting) |
 | "could not start today: the newest dry-run report counted a different number of records" | The dry run disagreed with the backup's own list | Do not switch anything; say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) with the date of the backup |
 | "could not start today: it is still January" | An archive is never made in January, the month of grace | Wait |
@@ -411,6 +445,14 @@ opened on 2026-11-24).
    `"CONTENT_ARCHIVE_ENABLED" = "false"` to `"true"` in
    [`infra/functionapp.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/functionapp.tf)
    and merges it when its checks are green.
+   **Know this about the check on that run.** The program that reads each
+   Terraform plan and flags anything unexpected
+   ([`assert-expected-plan.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/assert-expected-plan.mjs))
+   has been told in advance to expect this one change, `"false"` to
+   `"true"`. That is so the arming run passes. It also means the check will
+   **not** flag that change if it ever appears in a run you did not ask for.
+   So in step 2 read the plan yourself: if `CONTENT_ARCHIVE_ENABLED` is
+   changing and you did not reply `ARM`, do not confirm.
 2. Confirm the Terraform run. Open the
    [`hcw-azure` workspace's runs](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs)
    and open the run named after that pull request.
@@ -491,14 +533,26 @@ It reads the backup, never the live database.
    at a time, puts each record through the same list the dry run uses, and
    writes what is kept to `content-archive/<year>/cosmos/<container>.ndjson.gz`
    (one record per line as JSON, then gzip-compressed). The file is written
-   as an ordinary online file.
-5. **Each job checks its file before it counts.** Three checks: no line of
-   the backup was unreadable; the job read as many records as the backup's
-   own list says it holds; and the file read back from storage has the same
-   sha256 (a fingerprint of its bytes), size and record count as what was
-   written. A file that fails a check is not counted, and the job fails.
-6. **The manifest is written last.** When every file has passed, the last job
-   writes `content-archive/<year>/manifest.json`: for each file its name,
+   as an ordinary online file, and the write is conditional: storage lets it
+   through only when no file has that name yet, or only over the exact
+   version the job saw when it started. So two jobs for one container cannot
+   both write it, and a late job cannot write over a file that has been
+   checked since.
+5. **Each job checks its file before it counts.** Two checks are made while
+   the upload is still open: no line of the backup was unreadable, and the
+   job read as many records as the backup's own list says it holds. A file
+   that fails either is never stored. The third needs the stored file: it is
+   read back, and must have the same sha256 (a fingerprint of its bytes),
+   size and record count as what was written. A file that fails that one
+   stays under its name, is not counted, and is replaced by the next job for
+   that container. The job then notes the file's version stamp, so that the
+   manifest later names exactly the version that was checked.
+6. **The manifest is written last.** Before it is written the job asks
+   again: is the switch still on; is every container of the run still on the
+   list of what is kept, under the same rules the run started with; is each
+   file in storage the very version that was checked; and is there no other
+   file in the year's folder. Only then does the last job
+   write `content-archive/<year>/manifest.json`: for each file its name,
    record count, size and sha256, how many records were left out and why,
    and the names of the fields that were removed. It holds no record and no
    id. It is written "create only": it can never replace an existing one.
@@ -550,6 +604,73 @@ stay online in `content-archive/<year>/cosmos/` with no manifest. They are
 not an archive; say so on #1811 and a session will tell you how to remove
 them.
 
+## A file that should not be there
+
+You are here because the card says, in red, "The folder of the archive of
+2026 holds 1 file(s) its list does not name", or your phone said "a file
+that should not be there".
+
+What happened: an archive had started and had written a file for some
+container; then the list of what is kept was changed and that container was
+taken off it. The run started again under the new list, and the old file is
+still in the year's folder. The archive will not finish while it is there,
+because a finished year must hold only what its manifest lists. The code has
+no way to delete a file from the archive, on purpose, so this is done by
+hand.
+
+Nothing is in the Archive tier at this point (files move there only after
+the manifest), so there is no early-deletion charge.
+
+**These steps have not been run**: no archive has ever been written. All
+lines are **PowerShell** and need the Azure CLI signed in as you.
+
+1. **This step opens the storage account's firewall to your computer and
+   grants your account a role on the archive's container.** Both are taken
+   away again in step 4.
+
+    ```powershell
+    $ip = (Invoke-RestMethod https://api.ipify.org).Trim(); az storage account network-rule add --account-name stsiteprodcus01 -g rg-stor-site-prod-cus --subscription sub-app-site-prod-cus --ip-address $ip -o none; $me = (az ad signed-in-user show -o json | ConvertFrom-Json).id; $scope = (az storage container-rm show --storage-account stsiteprodcus01 -g rg-stor-site-prod-cus --subscription sub-app-site-prod-cus -n content-archive -o json | ConvertFrom-Json).id; az role assignment create --assignee-object-id $me --assignee-principal-type User --role "Storage Blob Data Contributor" --scope $scope -o none
+    ```
+
+    You should see no output and no error. A role takes a few minutes to
+    apply: a `403` in step 2 means wait and try again. Keep this window open.
+2. List the files in the year's folder that the run does not name (2026
+   here; for another year change the number at the start of the line). It
+   reads the run's own list from the working notes and compares:
+
+    ```powershell
+    $year = 2026; az storage blob download --account-name stsiteprodcus01 --auth-mode login -c cosmos-export-state -n "state/archive-run/$year/run.json" -f archive-run.json -o none; $wanted = (Get-Content archive-run.json -Raw | ConvertFrom-Json).containers | ForEach-Object { "$year/cosmos/$_.ndjson.gz" }; $extra = az storage blob list --account-name stsiteprodcus01 --auth-mode login -c content-archive --prefix "$year/cosmos/" -o json | ConvertFrom-Json | Where-Object { $wanted -notcontains $_.name }; $extra | Select-Object name, @{ n = 'tier'; e = { $_.properties.blobTier } } | Format-Table
+    ```
+
+    You should see one row for each file that should not be there, with the
+    tier `Hot` or `Cool`. The role in step 1 is on the `content-archive`
+    container only, so if the first part fails with a `403` on
+    `cosmos-export-state`, say so on
+    [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)
+    and a session will give you the names another way. If you see no row,
+    nothing needs deleting; go to step 4. If a row shows the tier `Archive`,
+    stop and say so on #1811: that should not be possible.
+3. **This step deletes.** It deletes only the files step 2 listed. Read the
+   list first; they must be containers you took off the list.
+
+    ```powershell
+    $extra | ForEach-Object { az storage blob delete --account-name stsiteprodcus01 --auth-mode login -c content-archive -n $_.name -o none }
+    ```
+
+    You should see no output. The account keeps a deleted file restorable
+    for 7 days and its earlier versions for 30
+    ([A person's request to be erased](#a-persons-request-to-be-erased)).
+4. Take the role and the firewall opening away again (same window):
+
+    ```powershell
+    az role assignment delete --assignee $me --role "Storage Blob Data Contributor" --scope $scope -o none; az storage account network-rule remove --account-name stsiteprodcus01 -g rg-stor-site-prod-cus --subscription sub-app-site-prod-cus --ip-address $ip -o none
+    ```
+
+    You should see no output.
+
+At the next daily check (03:00 UTC) the archive finishes by itself: the red
+line goes and **Last archive** appears.
+
 ## Reading an archive back
 
 **These steps have not been run.** No archive exists yet to run them on.
@@ -588,7 +709,9 @@ App's network, and you hold no standing right to read the archive, so step 1
 gives your computer both for the length of the job and step 7 takes them
 away.
 
-1. Give your computer reach and a temporary right on this one container:
+1. **This step opens the storage account's firewall to your computer and
+   grants your account a role** (Storage Blob Data Contributor, on the
+   archive's container only). Both are temporary, and step 7 takes them away:
 
     ```powershell
     $ip = (Invoke-RestMethod https://api.ipify.org).Trim(); az storage account network-rule add --account-name stsiteprodcus01 -g rg-stor-site-prod-cus --subscription sub-app-site-prod-cus --ip-address $ip -o none; $me = (az ad signed-in-user show -o json | ConvertFrom-Json).id; $scope = (az storage container-rm show --storage-account stsiteprodcus01 -g rg-stor-site-prod-cus --subscription sub-app-site-prod-cus -n content-archive -o json | ConvertFrom-Json).id; az role assignment create --assignee-object-id $me --assignee-principal-type User --role "Storage Blob Data Contributor" --scope $scope -o none
@@ -598,7 +721,7 @@ away.
     apply: a `403` in step 2 means wait and try again, not that the grant
     failed. Keep this PowerShell window open; the later steps use `$ip`,
     `$me` and `$scope`.
-2. Download the manifest of the year you want (2026 here; for another year
+2. This step only reads. Download the manifest of the year you want (2026 here; for another year
    change the number at the start of the line):
 
     ```powershell
@@ -607,8 +730,14 @@ away.
 
     You should see one row per container with its record count and size. An
     error naming `BlobNotFound` means that year has no archive.
-3. **This step spends money** (see above). Start the copies, one per file,
-   into a `readback/` folder in the same container:
+3. **This step spends money. Treat it as not undoable once started.**
+   Bringing a file back is charged for the amount of data read and for the
+   copy written (see above). Microsoft's page says the other way of bringing
+   a file back, changing its tier, cannot be cancelled after it starts; it
+   does not say whether a copy can, so do not count on stopping one. The
+   step also writes new files into the archive's container.
+   Start the copies, one per file, into a `readback/` folder in the same
+   container:
 
     ```powershell
     $files | ForEach-Object { az storage blob copy start --account-name stsiteprodcus01 --auth-mode login --source-container content-archive --source-blob $_.name --destination-container content-archive --destination-blob ("readback/" + $_.name) --tier hot --rehydrate-priority standard -o none }
@@ -628,7 +757,10 @@ away.
     You should see every row with tier `Hot` and nothing under `waiting`.
     That can take up to 15 hours. Do not delete anything while a row is
     still waiting.
-5. Download the copies and check each one's fingerprint against the manifest:
+5. **This step puts copies of the archive's files on your computer.** They
+   hold everything the archive holds, including other people's email
+   addresses. Download the copies and check each one's fingerprint against
+   the manifest:
 
     ```powershell
     $files | ForEach-Object { $local = $_.container + ".ndjson.gz"; az storage blob download --account-name stsiteprodcus01 --auth-mode login -c content-archive -n ("readback/" + $_.name) -f $local -o none; [pscustomobject]@{ container = $_.container; matches = ((Get-FileHash $local -Algorithm SHA256).Hash.ToLower() -eq $_.sha256) } } | Format-Table
@@ -652,7 +784,9 @@ away.
     You should see no output. The account keeps a deleted file restorable
     for 7 days and its earlier versions for 30
     ([A person's request to be erased](#a-persons-request-to-be-erased)).
-7. Take the temporary right and the reach away again (same window):
+7. **This step removes a role and a firewall rule**: the two that step 1
+   added, and nothing else. Do not skip it: until it is done your account
+   can read and write the archive from that address. Same window:
 
     ```powershell
     az role assignment delete --assignee $me --role "Storage Blob Data Contributor" --scope $scope -o none; az storage account network-rule remove --account-name stsiteprodcus01 -g rg-stor-site-prod-cus --subscription sub-app-site-prod-cus --ip-address $ip -o none

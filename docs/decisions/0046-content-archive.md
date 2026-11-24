@@ -966,6 +966,59 @@ it differs, this section is what the code does.
   one. If it is deleted before the run finishes, the run starts again from
   the newest; files written from the old one are not counted and are
   replaced.
+- **A run in progress asks the keep list again, and so does the report**
+  (added after an independent review of this build, 2026-11-24). The list
+  can change while an archive is half written, or between a dry run and the
+  archive it allows. So the code computes a **fingerprint of the rules**: a
+  sha256 over every list that decides what is kept and the code that applies
+  them. It is written into the pinned run, into the note of each finished
+  file, and into each dry-run report.
+    - A run pinned under other rules than today's is not carried on. It
+      starts again through the same conditions as a first start, and every
+      file is written again.
+    - A file whose note carries other rules than its run's does not count.
+    - Before the manifest is written, every container of the run must still
+      be on the list of what is kept, by name.
+    - The year's folder must hold no file the manifest would not name. A
+      container taken off the list mid-run leaves such a file; the archive
+      then does not finish, the owner is told once, and the file is removed
+      by hand (the runbook has the steps). **The code has no way to delete a
+      file from the archive, on purpose**, so it cannot clear one itself.
+    - A dry-run report made under other rules does not allow a start; nor
+      does one that lacks a part for any container the archive would write,
+      has a part whose count did not match the backup, or met a record too
+      large to search whole. An empty report is not a clean report.
+- **One writer per file, and the exact version is what is listed.** A job
+  writes its file only when no file has that name, or only over the exact
+  version it saw when it started (storage checks this), so of two jobs for
+  one container only one can finish, and a late job cannot write over a file
+  that has since been checked. Each note records the file's version stamp
+  (its ETag), and the manifest is written only when each file in storage
+  still carries the stamp that was checked.
+- **A file that fails a check is not left in the archive where that can be
+  helped.** The two checks that need only the backup (no unreadable line,
+  the count matches the backup's list) are made while the upload is still
+  open, so such a file is never stored. The third, reading the stored file
+  back, needs the file to exist; one that fails it stays under its name,
+  uncounted, and the next job for that container replaces it. The simpler
+  of the two ways the review offered: no second place to write to, and no
+  copy step.
+- **The export's messages go to the queue before the archive's check is
+  called, and the check has two minutes.** This closes the one way riding
+  the export's timer could have cost a night's backup: a check that hung.
+- **The automatic dry run is capped, and the owner is told once, not
+  daily.** At most one automatic dry run per backup and set of rules; if it
+  does not finish the owner is told once and no other is started for that
+  backup; after three in a row (one a week) none is started until one has
+  finished. "Waiting for you" is said once per report. Each kind of message
+  (written, not finished, waiting, blocked) has its own source, so the
+  notifier's 15-minute limit per source cannot make one swallow another.
+- **The plan check now expects the arming change in advance.**
+  `scripts/assert-expected-plan.mjs` declares `CONTENT_ARCHIVE_ENABLED`
+  going from `"false"` to `"true"`, so that the owner's arming run passes.
+  The cost, said plainly: the check will not flag that change if it appears
+  in a run nobody asked for. The runbook tells the owner to read the plan
+  for it.
 - **Working notes are kept outside the archive.** The record of which backup
   a run reads, and one small note per finished file, are in the private
   `cosmos-export-state` container under `state/archive-run/<year>/`, beside

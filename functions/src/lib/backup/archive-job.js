@@ -50,6 +50,22 @@
  * queues only the containers still missing, and writes the manifest itself
  * if every file is there.
  *
+ * THE RULES ARE ASKED AGAIN WHILE IT RUNS. The list of what is kept can
+ * change (a deploy) while an archive is half written. So the run, each
+ * file's note and each dry-run report carry a fingerprint of the rules
+ * (archive-classification.js `classificationFingerprint`). A run pinned
+ * under other rules than today's is not carried on: it starts again and
+ * every file is written again. Before the manifest is written, every
+ * container of the run must still be on the list, each file in storage must
+ * be the very version that was checked (its ETag), and the year's folder
+ * must hold nothing the manifest would not name. Nothing here deletes a
+ * file from the archive, so a file left by a container that has since left
+ * the list stops the archive until the owner removes it by hand.
+ *
+ * ONE WRITER PER FILE. A job writes its file only when no file has that
+ * name, or only over the exact version it saw when it started; storage
+ * refuses any other write. Two jobs for one container cannot both finish.
+ *
  * ONE BACKUP PER ARCHIVE. The first check pins the backup it will read
  * (`state/archive-run/<year>/run.json`), so a run that takes two days is not
  * made from two different Sundays. If the pinned backup has since been
