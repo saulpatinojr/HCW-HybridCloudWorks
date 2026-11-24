@@ -956,6 +956,17 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # (docs/runbooks/developer-api.md, "The yearly clean-up of proposals").
     "PROPOSAL_STRIP_ENABLED" = "false"
 
+    # #1811, ADR 0046, owner decision 2026-11-24: the yearly content archive
+    # (a long-term copy of the site's content in the content-archive
+    # container, storage.tf). Once the archive job exists (phase 3 of the
+    # ADR), a daily check starts one archive a year, on or after 1 February,
+    # only while this reads exactly "true". Until then the admin's Archive
+    # card (Health, Overview) reports it as off, and the dry run, which
+    # writes no archive, works either way. Flip it in a pull request of its
+    # own, after the owner has read a dry-run report and said yes
+    # (docs/runbooks/content-archive.md).
+    "CONTENT_ARCHIVE_ENABLED" = "false"
+
     # The Cosmos out-of-account exporter (ADR 0028, #231): a 03:00 UTC timer
     # that fans one queue message per exported container onto the platform
     # jobs worker, writing gzip-NDJSON to the cosmos-export container in

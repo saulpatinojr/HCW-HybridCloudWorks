@@ -27,6 +27,7 @@ import {
 import ProbeGrid from './ProbeCards';
 import { PROBES } from './probeRegistry';
 import SentAlertsCard from './SentAlertsCard';
+import ArchiveCard from './ArchiveCard';
 
 export function GlanceItem({ label, children }) {
   return (
@@ -173,6 +174,8 @@ export function OverviewTab({ ops, derived, identity, labs }) {
       ) : (
         <SnapshotNotice ops={ops} />
       )}
+      {/* Its own read, and super_admin only: the yearly content archive and its dry run (ADR 0046). */}
+      <ArchiveCard />
     </div>
   );
 }

@@ -1,11 +1,14 @@
 # ADR 0046: A yearly archive of the site's content, kept in the Archive tier of the existing storage account
 
-**Status:** Proposed. The owner made the main decisions on 2026-11-24
-([#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811));
-this record turns them into a design and asks five questions. Replying
-`ACCEPT` on #1811 (with an answer to each question, or "as recommended")
-starts the build described under [Phases](#phases). Nothing is built, and no
-storage is created, by the pull request that adds this record.
+**Status:** Accepted on 2026-11-24. The owner answered the five questions and
+accepted the design that day on
+[#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811);
+the answers are under
+[The five questions, as the owner answered them](#the-five-questions-as-the-owner-answered-them).
+Phase 2 of [Phases](#phases) is built (the storage container, the switch,
+the list in code and the dry run); what it settled is under
+[What phase 2 settled](#what-phase-2-settled). No archive has been written:
+the job that writes one is phase 3.
 **Decision date:** 2026-11-24
 **Owners:** Workload owner and architecture owner
 
@@ -157,9 +160,11 @@ in
 real records. Where the code does not say what a container holds, the row
 says so and the decision is the owner's.
 
-**Totals for the database:** 48 archive as is, 4 archive with fields removed,
-18 left out, 9 the owner has to say (each has a proposed default of "leave
-out", so nothing doubtful is archived by accident).
+**Totals for the database:** 50 archive as is, 4 archive with fields removed,
+18 left out, 7 the owner has to say (they are left out until then, so nothing
+doubtful is archived by accident). When this record was proposed the numbers
+were 48 and 9: the owner's answer to question 5 moved `recordings` and
+`plaud_ingest` to "archive as is".
 
 #### The database (Cosmos DB account `cosmos-site-prod-cus`, database `hcw`)
 
@@ -175,8 +180,8 @@ out", so nothing doubtful is archived by accident).
 | `podcasts` | Podcast shows and their settings | None found | None | Archive as is |
 | `episodes` | Podcast episodes | None found | None | Archive as is |
 | `youtubevideos` | Video entries. No code in `functions/src` or `frontend/src` names this container today, so its fields were not read | Not known | None known | Archive as is; the first run's manifest shows whether it holds anything |
-| `recordings` | The owner's voice recordings brought in from the recorder service, with their transcripts | **Possibly other people's**: a recording of a meeting holds whoever spoke. The code cannot say who is in one | No agreement with the other speakers is recorded anywhere in the code | **Owner to say** (not classified). Proposed: leave out until the owner says the recordings are the owner's voice only |
-| `plaud_ingest` | Recorder imports from the earlier site. No code names it today | Possibly, as `recordings` | None known | **Owner to say** (not classified). Proposed: the same answer as `recordings` |
+| `recordings` | The owner's voice recordings brought in from the recorder service, with their transcripts | **Possibly other people's**: a recording of a meeting holds whoever spoke. The code cannot say who is in one | No agreement with the other speakers is recorded anywhere in the code | Archive as is. The owner answered question 5 on 2026-11-24: only the owner's voice is on them |
+| `plaud_ingest` | Recorder imports from the earlier site. No code names it today | Possibly, as `recordings` | None known | Archive as is, by the same answer as `recordings` |
 | `newsletters` | Newsletter issues: title, text, status, dates | No. Subscriber addresses are kept by the email provider, never in the database (data-subject runbook, section 1) | None | Archive as is |
 | `roadmap_items` | Roadmap entries from the earlier site. No code names it today | Not known | None known | Archive as is |
 | `wiki_pages` | Wiki pages from the earlier site. No code names it today | Not known | None known | Archive as is |
@@ -604,11 +609,22 @@ archive is for getting old content back, not for surviving the loss of the
 subscription. ADR 0028 carries a dated note pointing here; its status is not
 changed by this record.
 
-## What is not decided: five questions for the owner
+## The five questions, as the owner answered them
 
-Each can be answered with one word on
-[#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811).
-"As recommended" answers all five.
+The owner answered all five on 2026-11-24, on
+[#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811):
+
+1. Images and audio: **LATER**. The first archive is the database only.
+2. An accepted talk proposal: **STRIP**. The talk and the decision are kept
+   without the speaker's name, email, bio or the review note.
+3. The nine repositories: **GIT**. They are not archived.
+4. How a yearly run starts: **AUTO**. It ships switched off, and the owner
+   switches it on once.
+5. The owner's recordings: **MINE**. `recordings` and `plaud_ingest` are
+   archived as they are.
+
+The questions as they were asked, with every option, are kept below for the
+record.
 
 1. **Images and audio: in the first archive, or as a second step?** They are
    most of what a visitor sees, but their size is unknown and they are still
@@ -661,12 +677,61 @@ describe (`tool_workspaces`, `tool_migration_workspaces`,
 `tool_assessment_sessions`, `tool_architecture_plans`, `tool_exports`,
 `config_providers`, `config_settings`). They stay out until then.
 
+## What phase 2 settled
+
+Phase 2 was built on 2026-11-24. This record left some details to it; these
+are the answers, and the two places where the code is stricter than the words
+above.
+
+- **The list is in code.**
+  [`archive-classification.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/archive-classification.js)
+  names every database container once, with its decision. Its test fails when
+  a container is in
+  [`infra/cosmos-containers.json`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos-containers.json)
+  and not in the list.
+- **`admin_config`, document by document.** The same file names each document
+  id the code writes there. Kept: the Platform Settings documents, the
+  newsletter's From address, the image gallery's folders, the writing tool's
+  profile, prompts and totals, the calendar alerts, the cost ledger, the
+  dates credentials were replaced, and the owner's notes on community events.
+  Left out: every `developer_api_key:` record and the agent key record (key
+  hashes), and health results, leases, caches and queues. **A document whose
+  id is on neither list is left out**, and the dry run counts it as
+  "unlisted", so nothing reaches the archive because a rule forgot it.
+- **The Doc Vault's salt.** The salt is used for one thing: making the id of a
+  *new* document from its category and title, so that the same document
+  added twice becomes one. Stored documents and their earlier versions carry
+  their own ids and text, so an archive read back without the salt is
+  complete and readable. The one effect of restoring without it: the site
+  makes a new salt, and adding a document that is already there under the
+  same category and title could make a second copy instead of a new version.
+  So the salt stays out of the archive, as a secret.
+- **Stricter than rule 2: an interview is kept only while it is public.** Rule
+  2 says "never published". An interview that was published and then taken
+  down (for example at the guest's request) was once published, so those
+  words would keep it for good. The code leaves it out. The owner can relax
+  this; it is one line in the same file.
+- **Stricter than the table: a version with no content item is left out.** A
+  row of `content_versions` does not say what kind of content it belongs to.
+  The job reads the backup's `content` file first and keeps a version only
+  when its content item is in that file and is not an interview that was
+  left out. A version whose item was deleted is left out, because nothing
+  can show it was not an interview.
+- **Where the dry run's report is kept.** In the existing private
+  `cosmos-export-state` container, under `state/archive-report/`. A dry run
+  never writes into `content-archive`, and so works before that container
+  exists.
+- **A dry run reads only what it has to.** It reads the backup file of each
+  container an archive would write, and of the seven the owner has not
+  classified. A container left out for a known reason (the access list, the
+  audit rows) is not read; its count comes from the backup's own list.
+
 ## Phases
 
 | Phase | What the pull request contains | The owner's steps |
 | --- | --- | --- |
 | **1. Design** (this record) | This decision record, the note on ADR 0028, the changelog entry. No code, no Terraform, no workflow | Read it; answer the five questions; reply `ACCEPT` on #1811 |
-| **2. Storage and the list** | Terraform: the private `content-archive` container with `prevent_destroy`, and the app setting `CONTENT_ARCHIVE_ENABLED = "false"`. No lifecycle rule, no immutability policy, no new role. Code with no effect on its own: the archive list (every container and its decision, with the test that fails on an unclassified one), the field-removal function with its "no secret comes out" test, and the report-only dry run | Confirm the Terraform run in HCP Terraform (it adds one empty container and one setting; nothing is replaced or destroyed). Run the dry run from the admin and answer for the seven leftover containers |
+| **2. Storage and the list** (built 2026-11-24) | Terraform: the private `content-archive` container with `prevent_destroy`, and the app setting `CONTENT_ARCHIVE_ENABLED = "false"`. No lifecycle rule, no immutability policy, no new role. Code with no effect on its own: the archive list (every container and its decision, with the test that fails on an unclassified one), the field-removal function with its "no secret comes out" test, and the report-only dry run | Confirm the Terraform run in HCP Terraform (it adds one empty container and one setting; nothing is replaced or destroyed). Run the dry run from the admin and answer for the seven leftover containers |
 | **3. The job and the runbook** | The timer, the per-container job, the check-then-archive step, the manifest, the alert for a run that did not finish, a line on the admin Health page, the read-back button, a new runbook `docs/runbooks/content-archive.md`, and the changes to the data-subject requests runbook from section 5. No new credential, so the credential checklist has nothing to add; the pull request says so row by row | Switch `CONTENT_ARCHIVE_ENABLED` on. The first run happens on the first day the conditions are true (for the archive of 2026: the first Sunday backup on or after 2 February 2027; the owner can ask for an earlier trial archive under a `trial/` folder to prove the read-back sooner). Then do the read-back and write the result on #1811 |
 | **4. Images and audio** (if question 1 is `LATER` or `NOW`) | Sizes from section 3, the choice between this account and a single-region one, the copy job, and its manifest | Run the sizing lines; confirm any Terraform run; read back a sample |
 | **5. A lock, if wanted** | Only after the read-back: an unlocked time-based policy on the container | Decide; confirm the Terraform run |

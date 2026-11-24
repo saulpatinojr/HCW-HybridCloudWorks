@@ -143,6 +143,7 @@ nav:
       - Alerting and support: runbooks/alerting-and-support.md
       - Availability probe: runbooks/availability-probe.md
       - Cosmos restore: runbooks/cosmos-restore.md
+      - Content archive (the yearly long-term copy): runbooks/content-archive.md
       - Edge and DNS verification: runbooks/edge-dns-verification.md
       - Docker Scout and the add-on images: runbooks/docker-scout.md
       - Dependency review across the nine repositories: runbooks/dependency-review.md
