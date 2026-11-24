@@ -57,7 +57,7 @@ import { createForgeScheduled } from '../lib/timers/forge-scheduled.js';
 import { findDuplicateContent, buildDedupFields } from '../lib/cms/content-dedup.js';
 import { createPublerClient, createPublerReconcile } from '../lib/timers/publer-sync.js';
 import { recordKeyVerdict } from '../lib/key-verdict.js';
-import { createBlogListingsScrape } from '../lib/timers/blog-listings.js';
+import { createBlogListingsScrape, listingsLogSummary } from '../lib/timers/blog-listings.js';
 import { createPodcastIngest, createPodcastParser } from '../lib/timers/podcasts.js';
 import { createNewsletterAutoBuild } from '../lib/timers/newsletter-autobuild.js';
 import { createReminderCheck } from '../lib/timers/reminders.js';
@@ -108,12 +108,15 @@ timer('fetchPodcastFeeds', 'FETCH_PODCAST_FEEDS', '0 30 */2 * * *', async (conte
 
 timer('fetchBlogListings', 'FETCH_BLOG_LISTINGS', '0 15 */6 * * *', async (context) =>
   // Site-Main: `every 6 hours`. Skips itself while FIRECRAWL_API_KEY is a stub.
-  createBlogListingsScrape({
-    sources: (await loadBlogSources(store)).filter(source => source.enabled && source.kind === 'listing'),
-    store,
-    dedup: { findDuplicateContent, buildDedupFields },
-    log: context,
-  }).run()
+  // The printed summary is the counts only (listingsLogSummary).
+  listingsLogSummary(
+    await createBlogListingsScrape({
+      sources: (await loadBlogSources(store)).filter(source => source.enabled && source.kind === 'listing'),
+      store,
+      dedup: { findDuplicateContent, buildDedupFields },
+      log: context,
+    }).run()
+  )
 );
 
 timer('forgeScheduled', 'FORGE_SCHEDULED', '0 30 3 * * *', async (context) => {

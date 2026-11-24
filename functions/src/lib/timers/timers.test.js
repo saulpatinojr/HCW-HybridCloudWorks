@@ -936,6 +936,31 @@ describe('skills hub scrape', () => {
       error: 'HTTP_503',
     });
   });
+
+  it("names what the feed library's plain Error meant, by code and never by its words (#1794)", async () => {
+    for (const [message, code] of [
+      ['Status code 404', 'HTTP_404'],
+      ['Request timed out after 20000ms', 'TIMEOUT'],
+      ['Non-whitespace before first tag.\nLine: 0\nColumn: 1\nChar: n', 'PARSE'],
+      ['something the library has never said about hcw-private-feed', 'Error'],
+    ]) {
+      const log = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const parser = {
+        parseURL: vi.fn(async () => {
+          throw new Error(message);
+        }),
+      };
+      expect(await createSkillsHubScrape({ store: memStore(), parser, now, log }).run()).toEqual({
+        written: 0,
+        skipped: 0,
+        error: code,
+      });
+      expect(log.error).toHaveBeenCalledTimes(1);
+      expect(log.error.mock.calls[0][0]).toMatch(
+        new RegExp(`^\\[skillsHubRss\\] Failed to fetch RSS feed: ${code} \\(name=Error( at=[^ ]+)?\\)$`)
+      );
+    }
+  });
 });
 
 describe('plaud token refresh', () => {

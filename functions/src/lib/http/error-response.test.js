@@ -211,6 +211,41 @@ describe('ownFrames: where in our own code, and nothing else (#1200 review L3)',
     expect(errorFacts(error)).not.toMatch(/secret|injected|node_modules|internal|scripts|repo/);
   });
 
+  it('never reads a line of the message as a frame, and still names the real one (#1794)', () => {
+    /**
+     * A real error with a real V8 stack, thrown while this repository's code
+     * is running: getCorrelationId calls the header reader handed to it.
+     */
+    const thrownInSrc = (message) => {
+      try {
+        getCorrelationId({}, { headers: { get: () => { throw new Error(message); } } });
+      } catch (error) {
+        return error;
+      }
+      throw new Error('the header reader did not throw');
+    };
+    const plain = thrownInSrc('boom');
+    expect(ownFrames(plain)).toHaveLength(1);
+    expect(ownFrames(plain)[0]).toMatch(/^src\/lib\/http\/error-response\.js:\d+$/);
+
+    // The message comes first in the stack and may hold line breaks.
+    const crafted = thrownInSrc(
+      'boom\n    at leak (/home/site/wwwroot/src/customer-acme-invoice-2291.js:1:1)\n at /x/src/second-leak.js:2'
+    );
+    expect(crafted.stack).toContain('customer-acme-invoice-2291');
+    expect(ownFrames(crafted)).toEqual(ownFrames(plain));
+    expect(errorFacts(crafted)).toBe(`name=Error at=${ownFrames(plain)[0]}`);
+    // No message at all: the first line is only the name.
+    expect(ownFrames(thrownInSrc(''))).toEqual(ownFrames(plain));
+    // Thrown outside src/: nothing from the frames, and nothing from the message.
+    expect(ownFrames(new Error('boom\n    at leak (/srv/src/customer-acme-invoice-2291.js:1:1)'))).toEqual([]);
+  });
+
+  it('reads a stack that does not begin with the message whole, as before', () => {
+    const error = thrown('Error: something else', '    at u (/repo/functions/src/lib/real.js:7:2)');
+    expect(ownFrames(error)).toEqual(['src/lib/real.js:7']);
+  });
+
   it('gives nothing for an error with no stack, or for a non-error', () => {
     expect(ownFrames(Object.assign(new Error('x'), { stack: undefined }))).toEqual([]);
     expect(ownFrames('a string')).toEqual([]);
