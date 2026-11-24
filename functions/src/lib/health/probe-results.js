@@ -42,7 +42,7 @@
  * (`checkedBy: 'admin'`), because the Health page shows no person's identity.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
-import { AuthoredError, authoredMessage } from '../http/error-response.js';
+import { AuthoredError, authoredMessage, errorFacts } from '../http/error-response.js';
 import { actorName } from '../auth/actor-name.js';
 import { satisfiesRole } from '../auth/roles.js';
 import { healthProbe } from './probe-catalogue.js';
@@ -266,7 +266,7 @@ export function createProbeResultHandlers({ guard, store, now = () => new Date()
         const { results, pulse } = await readProbeResults(store);
         return json(200, { success: true, results, pulse, readAt: now().toISOString() });
       } catch (error) {
-        context.error?.(`getProbeResults failed: ${error?.message || error}`);
+        context.error?.(`getProbeResults failed: ${errorFacts(error)}`);
         return json(500, { error: 'Failed to read the stored probe results' });
       }
     },
@@ -301,7 +301,7 @@ export function createProbeResultHandlers({ guard, store, now = () => new Date()
         if (error?.code === 'CONFLICT') {
           return json(409, { error: authoredMessage(error, 'The result changed while it was written.') });
         }
-        context.error?.(`putProbeResult failed: ${error?.message || error}`);
+        context.error?.(`putProbeResult failed: ${errorFacts(error)}`);
         return json(500, { error: 'Failed to record the probe result' });
       }
     },

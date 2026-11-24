@@ -56,7 +56,7 @@ import { measureImage } from '../gallery-images.js';
 import { claimRisingEdge, releaseRisingEdgeClaim, SKIP_REASONS } from './rising-edge-claim.js';
 import { fetchImage as defaultFetchImage } from './fetch-image.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
-import { AuthoredError, errorCode, recordedFailure } from '../http/error-response.js';
+import { AuthoredError, errorCode, recordedFailure, errorFacts } from '../http/error-response.js';
 
 // Deadlines for the Replicate calls (T-712). This runs inside a change-feed
 // handler, so a hung socket does not just fail one cover — it holds the lease
@@ -236,7 +236,7 @@ export async function resolveCoverPrompt({ store, log = {} }, data, { slot = 'he
     }
   } catch (error) {
     log.warn?.(
-      `[generateAiCover] prompt library unavailable, using built-in prompt: ${error?.message || error}`
+      `[generateAiCover] prompt library unavailable, using built-in prompt: ${errorFacts(error)}`
     );
   }
   const prompt = buildImagePrompt(data);
@@ -731,7 +731,7 @@ export function createAiCoverGenerator({
           }
         } catch (fallbackErr) {
           log.warn?.(
-            `[generateAiCover:content] default-hero fallback failed for content/${contentId}: ${fallbackErr?.message || fallbackErr}`
+            `[generateAiCover:content] default-hero fallback failed for content/${contentId}: ${errorFacts(fallbackErr)}`
           );
         }
       }
@@ -739,8 +739,8 @@ export function createAiCoverGenerator({
       return {
         ran: false,
         reason: fallbackApplied
-          ? `error_with_default_hero: ${err?.message || err}`
-          : `error: ${err?.message || err}`,
+          ? `error_with_default_hero: ${errorCode(err)}`
+          : `error: ${errorCode(err)}`,
       };
     }
   }

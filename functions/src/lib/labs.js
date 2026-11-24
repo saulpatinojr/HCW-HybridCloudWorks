@@ -24,7 +24,7 @@
  *     to the site's pane by origin and Turnstile (lib/labs/public-lock.js).
  */
 import { randomUUID } from 'node:crypto';
-import { logFailure } from './http/error-response.js';
+import { logFailure, errorFacts } from './http/error-response.js';
 
 /**
  * This module's failure answer: the safe sentence and the correlation id,
@@ -313,7 +313,7 @@ export function createLabHandlers({
           },
         });
       } catch (error) {
-        context.error('getLabJob failed:', error);
+        context.error('getLabJob failed:', errorFacts(error));
         return json(500, { error: 'Failed to get lab job' });
       }
     },

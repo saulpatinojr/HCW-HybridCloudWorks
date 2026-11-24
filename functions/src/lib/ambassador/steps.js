@@ -10,6 +10,7 @@ import { CONTAINER, NOT_PROVISIONED } from './model.js';
 import { DEFAULT_PROGRAMS, SUPERSEDED_SEED_VALUES, currentSeedRevision } from './programs.js';
 import { str } from './fields.js';
 import { validateApplication, validateEvidence, validateProgram } from './validate.js';
+import { errorFacts } from '../http/error-response.js';
 
 export const json = (status, body) => ({
   status,
@@ -65,7 +66,7 @@ async function writeAudit(ctx, action, auth, request, details) {
       compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true },
     });
   } catch (error) {
-    ctx.log.error?.('[ambassador] audit row failed', error);
+    ctx.log.error?.('[ambassador] audit row failed', errorFacts(error));
   }
 }
 
@@ -396,7 +397,7 @@ export function guardedHandler({ guard, ctx }, role, name, fn) {
       return await fn(ctx, request, auth);
     } catch (error) {
       if (isNotProvisioned(error)) return json(503, NOT_PROVISIONED);
-      (context?.error || ctx.log.error)?.(`${name} failed:`, error);
+      (context?.error || ctx.log.error)?.(`${name} failed:`, errorFacts(error));
       return json(500, { error: `Failed to ${name}` });
     }
   };

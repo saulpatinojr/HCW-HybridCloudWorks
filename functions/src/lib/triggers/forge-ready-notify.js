@@ -31,6 +31,7 @@ import { claimRisingEdge, releaseRisingEdgeClaim } from './rising-edge-claim.js'
 import { readKey } from '../ai/router.js';
 import { buildPreviewToken } from '../public-preview.js';
 import { toPublicUrl } from '../cms/publish.js';
+import { errorFacts, errorCode } from '../http/error-response.js';
 
 /**
  * Fields recording a delivery that did NOT happen (T-735).
@@ -150,7 +151,7 @@ export function createForgeReadyNotifier({
           // Best effort: failing to record the attempt must not turn a
           // delivery problem into a handler error.
           log.warn?.(
-            `[forge-ready-notify] ${contentId}: could not record attempt: ${patchError?.message || patchError}`
+            `[forge-ready-notify] ${contentId}: could not record attempt: ${errorFacts(patchError)}`
           );
         }
         return { ran: false, reason: `not_sent:${result.reason}`, attempts };
@@ -163,8 +164,8 @@ export function createForgeReadyNotifier({
       });
       return { ran: true, reason: 'sent' };
     } catch (err) {
-      log.error?.(`[forge-ready-notify] ${contentId}: ${err?.message || err}`);
-      return { ran: false, reason: `error: ${err?.message || err}` };
+      log.error?.(`[forge-ready-notify] ${contentId}: ${errorFacts(err)}`);
+      return { ran: false, reason: `error: ${errorCode(err)}` };
     }
   }
 

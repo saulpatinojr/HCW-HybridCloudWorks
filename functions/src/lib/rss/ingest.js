@@ -22,6 +22,7 @@ import { recordRun } from './source-run.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
 import { randomUUID } from 'node:crypto';
 import { recordedFailure } from '../http/error-response.js';
+import { feedErrorCode } from './feed-error-code.js';
 import {
   PROVIDER_FEEDS,
   PROVIDERS,
@@ -55,8 +56,21 @@ export async function createRssParser() {
   });
   return { async parseURL(url, { signal } = {}) {
     const result = await guardedFetch(url, { httpsOnly: true, signal, timeoutMs: 20000, maxBytes: 8 * 1024 * 1024, headers: { 'User-Agent': 'HybridCloudWorks-Bot/1.0' } });
-    if (!result.response.ok) throw new Error(`Feed HTTP ${result.response.status}`);
-    return parser.parseString(result.text());
+    // The status travels as a field, so a log line can name it (`HTTP_404`)
+    // without reading this sentence (#1794).
+    if (!result.response.ok) {
+      throw Object.assign(new Error(`Feed HTTP ${result.response.status}`), { status: result.response.status });
+    }
+    try {
+      return await parser.parseString(result.text());
+    } catch (err) {
+      // The XML reader's errors are plain Errors with only a message; the
+      // code says it was the body, not the fetch, that failed.
+      throw Object.assign(new Error('The feed body could not be read as a feed.'), {
+        code: feedErrorCode(err),
+        cause: err,
+      });
+    }
   } };
 }
 

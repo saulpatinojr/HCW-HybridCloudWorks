@@ -36,7 +36,7 @@ import { claimRisingEdge, releaseRisingEdgeClaim, SKIP_REASONS } from './rising-
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { generateCaptionText } from '../social-caption.js';
 import { publicUrlOf } from '../cms/publish.js';
-import { recordedFailure } from '../http/error-response.js';
+import { recordedFailure, errorCode } from '../http/error-response.js';
 
 // Lifted to cms/publish.js so the related-posts interlinker shares it;
 // re-exported here because this was its original home.
@@ -191,7 +191,7 @@ export function createSocialCaptionQueuer({
         socialCaptionTrigger: false,
         socialCaptionError: recordedFailure(log, 'The social caption could not be written.', err),
       });
-      return { ran: false, reason: `error: ${err?.message || err}` };
+      return { ran: false, reason: `error: ${errorCode(err)}` };
     }
   }
   return { run };

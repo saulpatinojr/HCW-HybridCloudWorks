@@ -1694,9 +1694,12 @@ variable "muse_reader_enabled" {
     the application, management and connectivity subscriptions.
 
     False until the owner has given the HCP Terraform run identity
-    (id-plat-terraform-prod-cus-01) the Entra role Application Developer.
-    Without it the plan is clean and the apply fails at the first Entra
-    create, halfway through an estate-wide run. Flip it in the workspace
+    (id-plat-terraform-prod-cus-01) the Microsoft Graph application
+    permission Application.ReadWrite.OwnedBy. Without it the plan is clean
+    and the apply fails at the first Entra create, halfway through an
+    estate-wide run. (The Entra role Application Developer is not enough:
+    it allows the creates but not the change the provider makes to a new
+    service principal, ADR 0043's correction.) Flip it in the workspace
     after that grant (docs/runbooks/muse-azure-reader.md, "Turn it on"); the
     next run plans seven creates. Setting it back to false deletes the app
     registration and all three grants: that is the full revoke.

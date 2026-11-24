@@ -66,6 +66,7 @@ import { ROUTING_DOC_ID, normalizeRouting } from './routing-table.js';
 import { isSelectionV2, normalizeSelection } from './selection.js';
 import { applyMediaMigration, migrateSelection } from './migrate-selection.js';
 import { readModelCatalog } from './model-catalog-doc.js';
+import { errorFacts } from '../http/error-response.js';
 
 /**
  * The catalogue, the placement rules and the routing table live in sibling
@@ -185,7 +186,7 @@ async function readCatalog(store, { now, log }) {
   try {
     return await readModelCatalog({ store, now: () => new Date(now()) });
   } catch (error) {
-    log.warn?.(`[ai-config] could not read the model catalogue: ${error?.message || error}`);
+    log.warn?.(`[ai-config] could not read the model catalogue: ${errorFacts(error)}`);
     return null;
   }
 }
@@ -219,7 +220,7 @@ async function readMediaModels(store, { env, log }) {
       ADMIN_CONFIG_PARTITION
     );
   } catch (error) {
-    log.warn?.(`[ai-config] could not read the Listen & Learn speech setting: ${error?.message || error}`);
+    log.warn?.(`[ai-config] could not read the Listen & Learn speech setting: ${errorFacts(error)}`);
   }
   const podcast = String(env?.[PODCAST_VOICE_MODEL_SETTING] || '').trim();
   return {
@@ -269,7 +270,7 @@ function settleRead(state, now, value) {
  */
 function recoverFromFailedRead(state, { now, log }, error) {
   state.inflight = null;
-  log.warn?.(`[ai-config] could not read AI configuration: ${error?.message || error}`);
+  log.warn?.(`[ai-config] could not read AI configuration: ${errorFacts(error)}`);
   if (state.cache) {
     state.cache = { at: now(), value: state.cache.value };
     return state.cache.value;

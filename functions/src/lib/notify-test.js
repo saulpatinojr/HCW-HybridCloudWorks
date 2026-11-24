@@ -19,6 +19,7 @@
  * by display name only; an email is never put on the wire to Telegram.
  */
 
+import { errorFacts } from './http/error-response.js';
 export const TEST_SOURCE = 'sendTestNotification';
 
 const json = (status, body) => ({
@@ -55,7 +56,7 @@ export function createNotifyTestHandlers({ guard, notifier, now = () => new Date
           source: TEST_SOURCE,
         });
       } catch (error) {
-        context.error?.(`sendTelegramTest failed: ${error?.message || error}`);
+        context.error?.(`sendTelegramTest failed: ${errorFacts(error)}`);
         return json(500, { error: 'Failed to send the test message' });
       }
       const sent = Boolean(result?.sent);

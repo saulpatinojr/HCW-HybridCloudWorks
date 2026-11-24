@@ -3,6 +3,7 @@
  * text of the article being illustrated (PR #841 split of image-prompts.js).
  */
 import { KEYWORD_COLLECTIONS, LIST_WINDOW } from './shared.js';
+import { errorFacts } from '../../http/error-response.js';
 
 /** Does any of `patterns` appear in the lower-cased text? */
 function hitsIn(lower, patterns) {
@@ -61,7 +62,7 @@ export async function loadKeywordMatrix(store, log = {}) {
     ]);
     return { synonyms: synonyms || [], augmentations: augmentations || [] };
   } catch (error) {
-    log.warn?.(`[imagePrompts] keyword matrix unavailable: ${error?.message || error}`);
+    log.warn?.(`[imagePrompts] keyword matrix unavailable: ${errorFacts(error)}`);
     return { synonyms: [], augmentations: [] };
   }
 }

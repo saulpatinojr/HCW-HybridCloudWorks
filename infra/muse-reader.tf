@@ -24,11 +24,20 @@
 # Until this file, infra/ had no azuread provider on purpose: the HCP
 # Terraform run identity (id-plat-terraform-prod-cus-01) is an Azure RBAC
 # principal with no Entra directory role (oidc.tf's header, lab-hybrid.tf's
-# onboarding note). Creating an app registration needs one. So nothing here
-# is in the plan until var.muse_reader_enabled is true, which the owner sets
-# in the workspace after giving the run identity the Entra role
-# "Application Developer" (create app registrations it then owns, and
-# nothing else). The runbook has the one command.
+# onboarding note). Creating an app registration needs a permission in Entra.
+# So nothing here is in the plan until var.muse_reader_enabled is true, which
+# the owner sets in the workspace after giving the run identity the Microsoft
+# Graph application permission Application.ReadWrite.OwnedBy (create app
+# registrations and service principals, and change only the ones it owns).
+# The runbook has the one command.
+#
+# NOT the Entra role "Application Developer", which this header named until
+# 2026-11-23. That role lets a program create the service principal but not
+# change it afterwards, and the azuread provider always changes a service
+# principal straight after creating it (it sets the description). The first
+# apply failed there with "Failed to patch service principal after creating"
+# (403). The provider's pages name the Graph permission for a caller that is
+# not a person; ADR 0043's correction has the links.
 #
 # WHY READER ON EACH WHOLE SUBSCRIPTION
 #
@@ -70,8 +79,9 @@ locals {
 }
 
 # The run identity's own object id and the tenant, read from its token; no
-# Graph call. Used for the owner list (an Application Developer can change
-# only the apps it owns) and for the tenant output.
+# Graph call. Used for the owner list (Application.ReadWrite.OwnedBy lets the
+# run identity change only what it owns, so it must be an owner of both the
+# app registration and the service principal) and for the tenant output.
 data "azuread_client_config" "current" {
   count = var.muse_reader_enabled ? 1 : 0
 }

@@ -44,6 +44,7 @@
  * page that cannot record a verdict is a warning, not an outage.
  */
 
+import { errorFacts } from './http/error-response.js';
 /** The statuses that say "the credential is wrong", as opposed to the request. */
 const CREDENTIAL_REJECTED_STATUSES = Object.freeze([401, 403]);
 
@@ -96,7 +97,7 @@ export function createKeyVerdictReporter({ onKeyVerdict = null, log = console, s
       // write; one spare upsert is the cheaper side of that trade.
       if (verdict.ok) successReported.add(settingName);
     } catch (error) {
-      log.warn?.(`[${source}] could not record a key verdict: ${error?.message ?? error}`);
+      log.warn?.(`[${source}] could not record a key verdict: ${errorFacts(error)}`);
     }
   };
 }

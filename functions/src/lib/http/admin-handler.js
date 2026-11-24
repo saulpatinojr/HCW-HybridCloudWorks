@@ -5,6 +5,7 @@
  * for a page that filters and sorts client-side).
  */
 
+import { errorFacts } from './error-response.js';
 export const json = (status, body) => ({
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -74,7 +75,7 @@ export function listAllHandler({ guard, store }, { container, name, failure }) {
         continuationToken: null,
       });
     } catch (error) {
-      context.error(`${name} failed:`, error);
+      context.error(`${name} failed:`, errorFacts(error));
       return json(500, { error: failure });
     }
   };

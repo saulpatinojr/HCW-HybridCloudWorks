@@ -164,7 +164,7 @@ describe('createForgeReadyNotifier', () => {
     notifier.notifyTelegram.mockRejectedValueOnce(new Error('boom'));
     const result = await notify.run('doc-1', 'etag-1');
     expect(result.ran).toBe(false);
-    expect(result.reason).toMatch(/error: boom/);
+    expect(result.reason).toBe('error: Error');
     expect(store.patchDoc).not.toHaveBeenCalled();
   });
 });

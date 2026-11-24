@@ -634,7 +634,7 @@ async function commitIssue(ctx, next, context, settings = null) {
  * @param {(status: string) => boolean} spec.allowed
  * @param {(status: string) => string} spec.refusal the 409's sentence
  * @param {(body: any) => { response?: object, value?: any }} [spec.prepare] the early checks; requireEtag by default
- * @param {(error: unknown, context: object) => string} [spec.logFailure] the 500's log line
+ * @param {(context: object) => string} [spec.logLabel] how the 500's log line starts; the error's name and code follow it
  * @param {(args: { issue: object, body: object, auth: object, value: any }) => Promise<object>} spec.act
  */
 async function issueWrite(ctx, request, context, spec) {
@@ -649,11 +649,7 @@ async function issueWrite(ctx, request, context, spec) {
     if (refused) return refused;
     return await spec.act({ issue, body, auth, value: early.value });
   } catch (error) {
-    context.error?.(
-      spec.logFailure
-        ? spec.logFailure(error, context)
-        : `${spec.label} failed: ${error?.message ?? error}`
-    );
+    context.error?.(`${spec.logLabel ? spec.logLabel(context) : `${spec.label} failed`}: ${errorMeta(error)}`);
     return json(500, { ok: false, error: spec.failure });
   }
 }
@@ -801,8 +797,7 @@ function intro(ctx, request, context) {
     allowed: isDraft,
     refusal: (status) => `Only a draft's intro can be regenerated; this issue is ${status}.`,
     prepare: (body) => prepareIntro(ctx, body),
-    logFailure: (error, log) =>
-      `regenerateNewsletterIntro failed ${invocationRef(log)}: ${errorMeta(error)}`,
+    logLabel: (log) => `regenerateNewsletterIntro failed ${invocationRef(log)}`,
     act: async ({ issue }) => {
       // The saved tone (Newsletter settings → Content), the same one a build uses.
       const settings = await ctx.readSettings();
@@ -1460,7 +1455,7 @@ export function createNewsletterAdminHandlers({
           ...(reconciled.warnings.length ? { reconcileWarnings: reconciled.warnings } : {}),
         });
       } catch (error) {
-        context.error?.(`listNewsletters failed: ${error?.message ?? error}`);
+        context.error?.(`listNewsletters failed: ${errorMeta(error)}`);
         return json(500, {
           ok: false,
           error: 'Failed to list newsletter issues',
@@ -1480,7 +1475,7 @@ export function createNewsletterAdminHandlers({
           ...(reconcileWarning ? { reconcileWarning } : {}),
         });
       } catch (error) {
-        context.error?.(`getNewsletter failed: ${error?.message ?? error}`);
+        context.error?.(`getNewsletter failed: ${errorMeta(error)}`);
         return json(500, {
           ok: false,
           error: 'Failed to read the newsletter issue',

@@ -512,7 +512,7 @@ describe('testProviderConnection — the Test with no HTTP, shared with the week
       expect.objectContaining({ status: 'error', lastTestError: 'The provider call failed' })
     );
     expect(d.store.upsertDoc).not.toHaveBeenCalled();
-    expect(log.error).toHaveBeenCalledWith('probeAiProviders(nvidia) failed:', expect.any(Error));
+    expect(log.error).toHaveBeenCalledWith('probeAiProviders(nvidia) failed:', expect.stringMatching(/^name=\w+/));
   });
 
   it('refuses a trigger it does not know, before calling anything', async () => {
@@ -571,6 +571,6 @@ describe('testTaskCandidate — the call half alone, for the Tasks tab’s per-t
     });
     expect(d.store.patchDoc).not.toHaveBeenCalled();
     expect(d.store.upsertDoc).not.toHaveBeenCalled();
-    expect(log.error).toHaveBeenCalledWith('testAiTask(gemini) failed:', expect.any(Error));
+    expect(log.error).toHaveBeenCalledWith('testAiTask(gemini) failed:', expect.stringMatching(/^name=\w+/));
   });
 });

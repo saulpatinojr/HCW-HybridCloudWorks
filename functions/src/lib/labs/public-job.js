@@ -34,6 +34,7 @@ import {
 } from './public-bounds.js';
 import { LAB_JOBS_CONTAINER } from './rollup.js';
 import { buildVisitorReport } from './visitor-report.js';
+import { errorFacts } from '../http/error-response.js';
 
 /** `randomUUID()` output, the only job id the server issues. */
 const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -95,7 +96,7 @@ export async function getPublicJob({ store, env, now }, request, context) {
       ? respond(200, { ok: true, job: projectPublicJob(doc) })
       : respond(404, NOT_FOUND);
   } catch (error) {
-    context.error?.('publicGetLabJob failed:', error);
+    context.error?.('publicGetLabJob failed:', errorFacts(error));
     return respond(500, { ok: false, error: 'Failed to read the lab job' });
   }
 }

@@ -13,6 +13,7 @@
  * are cached in-process for CACHE_TTL_MS.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
+import { errorFacts } from '../http/error-response.js';
 
 export const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -199,7 +200,7 @@ export function createForgeConfigLoader({ store, now = Date.now, log = {} }) {
       const raw = await loadConfigDoc('forge_profile');
       value = raw ? normalizeProfile(raw) : DEFAULT_PROFILE;
     } catch (err) {
-      log.warn?.(`forge-config: profile load failed, using defaults: ${err.message}`);
+      log.warn?.(`forge-config: profile load failed, using defaults: ${errorFacts(err)}`);
     }
     profileCache = { value, loadedAt: at };
     return value;
@@ -215,7 +216,7 @@ export function createForgeConfigLoader({ store, now = Date.now, log = {} }) {
       const raw = await loadConfigDoc('forge_prompts');
       value = raw ? normalizePrompts(raw) : DEFAULT_PROMPTS;
     } catch (err) {
-      log.warn?.(`forge-config: prompts load failed, using defaults: ${err.message}`);
+      log.warn?.(`forge-config: prompts load failed, using defaults: ${errorFacts(err)}`);
     }
     promptsCache = { value, loadedAt: at };
     return value;

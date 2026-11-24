@@ -60,10 +60,10 @@ export const invocationRef = (context) => `[invocation ${context?.invocationId ?
  * request details such as the document id, so they are never logged.
  */
 export const errorMeta = (error) => {
-  const name = typeof error?.name === 'string' ? error.name : 'Error';
-  const code =
-    typeof error?.code === 'string' || typeof error?.code === 'number' ? ` code ${error.code}` : '';
-  return `${name}${code}`;
+  // Both are held to the code shape, so neither can carry a sentence (#1794).
+  const name = codeShaped(error?.name) || 'Error';
+  const code = codeShaped(error?.code);
+  return `${name}${code ? ` code ${code}` : ''}`;
 };
 
 /**

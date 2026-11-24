@@ -654,7 +654,7 @@ describe("what the explain route answers", () => {
     generateTextResponse: vi.fn(),
   };
 
-  it("keeps the provider out of the unavailable answer, and the log keeps it", async () => {
+  it("keeps the provider out of the unavailable answer, and the log names the refusal by its code", async () => {
     const store = { readDoc: vi.fn(async () => null) };
     const context = newContext();
     const res = await createExplainHandlers({
@@ -667,7 +667,7 @@ describe("what the explain route answers", () => {
     expect(JSON.parse(res.body).code).toBe(EXPLAIN_CODES.unavailable);
     expectVisitorOnly(res);
     expect(context.warn).toHaveBeenCalledWith(
-      expect.stringContaining("gemini"),
+      expect.stringContaining("code=AI_NOT_CONFIGURED"),
     );
   });
 });

@@ -44,7 +44,7 @@ import {
   validateMcpUrl,
 } from '../ai/mcp.js';
 import { json, LIST_WINDOW, validBody } from '../http/admin-handler.js';
-import { authoredMessage } from '../http/error-response.js';
+import { authoredMessage, errorFacts } from '../http/error-response.js';
 import { AUDIT_TTL_SECONDS } from '../audit.js';
 
 /** Route-segment → container allowlist for the client-id config collections. */
@@ -360,7 +360,7 @@ async function auditConfigWrite(ctx, context, { container, id, user, existing, f
     });
   } catch (auditError) {
     context.warn?.(
-      `${action} ${container}/${id} saved but the audit row failed: ${auditError?.message || auditError}`
+      `${action} ${container}/${id} saved but the audit row failed: ${errorFacts(auditError)}`
     );
   }
 }
@@ -540,7 +540,7 @@ async function listConfig(ctx, request, context) {
       .map((doc) => readableDoc(container, doc));
     return json(200, { success: true, items, total: items.length });
   } catch (error) {
-    context.error(`listConfig(${container}) failed:`, error);
+    context.error(`listConfig(${container}) failed:`, errorFacts(error));
     return json(500, { error: 'Failed to list configuration' });
   }
 }
@@ -587,7 +587,7 @@ async function putConfig(ctx, request, context) {
     });
     return json(200, { success: true, id, item: readableDoc(container, doc) });
   } catch (error) {
-    context.error(`putConfig(${container}) failed:`, error);
+    context.error(`putConfig(${container}) failed:`, errorFacts(error));
     return json(500, { error: 'Failed to save configuration' });
   }
 }
@@ -621,7 +621,7 @@ async function patchConfig(ctx, request, context) {
     });
     return json(200, { success: true, item: readableDoc(container, updated) });
   } catch (error) {
-    context.error(`patchConfig(${container}) failed:`, error);
+    context.error(`patchConfig(${container}) failed:`, errorFacts(error));
     return json(500, { error: 'Failed to update configuration' });
   }
 }
@@ -655,7 +655,7 @@ async function deleteConfig(ctx, request, context) {
     });
     return json(200, { success: true });
   } catch (error) {
-    context.error(`deleteConfig(${container}) failed:`, error);
+    context.error(`deleteConfig(${container}) failed:`, errorFacts(error));
     return json(500, { error: 'Failed to delete configuration' });
   }
 }

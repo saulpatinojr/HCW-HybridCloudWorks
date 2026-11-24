@@ -23,7 +23,7 @@ import { evaluateActivationNotice, ACTIVATION_NOTIFIED_FIELD } from './activatio
 import { markerForFields, shouldProcessValue } from './value-marker.js';
 import { generateSlug } from '../rss/feeds.js';
 import { articleSlugFor } from '../cms/article-topics.js';
-import { recordedFailure } from '../http/error-response.js';
+import { recordedFailure, errorFacts, errorCode } from '../http/error-response.js';
 
 export const SLUG_PAGE_CLAIM_FIELDS = Object.freeze({
   flagField: 'createSlugPageTrigger',
@@ -106,8 +106,8 @@ async function runEach(docs, context, label, fn, { budgetMs, monotonic }) {
     try {
       results.push(await fn(doc));
     } catch (err) {
-      context.error?.(`[${label}] ${doc.id}: ${err?.message || err}`);
-      results.push({ id: doc.id, error: err?.message || String(err) });
+      context.error?.(`[${label}] ${doc.id}: ${errorFacts(err)}`);
+      results.push({ id: doc.id, error: errorCode(err) });
     }
   }
   return results;
@@ -243,7 +243,7 @@ export function createFeedHandlers({
         try {
           return await fn();
         } catch (err) {
-          context.error?.(`[${label}:content] ${doc.id}: ${err?.message || err}`);
+          context.error?.(`[${label}:content] ${doc.id}: ${errorFacts(err)}`);
           return 'error';
         }
       };
@@ -413,7 +413,7 @@ export async function unpublishFromPubler(publer, doc, log = {}) {
     }
     return { attempted: ids.length, removed: deletedIds.length };
   } catch (error) {
-    log.warn?.(`[unpublishFromPubler] ${error?.message || error}`);
+    log.warn?.(`[unpublishFromPubler] ${errorFacts(error)}`);
     return { attempted: ids.length, removed: 0 };
   }
 }

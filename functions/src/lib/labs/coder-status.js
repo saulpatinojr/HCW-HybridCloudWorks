@@ -105,6 +105,7 @@
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 import { readSetting } from '../http/read-setting.js';
 import { createMinuteCache, jsonResponse, MINUTE_CACHE_SECONDS } from './minute-cache.js';
+import { errorFacts } from '../http/error-response.js';
 
 export const CODER_STATUS_CACHE_ID = 'labs:coder-status';
 /** Coder's last answers to the status token (#1009): admin_config, read by the health pulse. */
@@ -475,7 +476,7 @@ async function resolveVersionName(fetchImpl, config, versionId, context) {
     );
     return typeof version?.name === 'string' && version.name ? version.name : null;
   } catch (error) {
-    context?.warn?.(`coder-status: template version lookup failed: ${error?.message ?? error}`);
+    context?.warn?.(`coder-status: template version lookup failed: ${errorFacts(error)}`);
     return null;
   }
 }
@@ -540,7 +541,7 @@ async function readDetailOrUnknown({ fetchImpl, config, context, onTokenAnswer =
       warnRefusal(context, error.status, 'templates and running workspaces are reported as unknown');
     } else {
       context?.warn?.(
-        `coder-status: the templates and workspaces read failed, and both are reported as unknown: ${error?.message ?? error}`
+        `coder-status: the templates and workspaces read failed, and both are reported as unknown: ${errorFacts(error)}`
       );
     }
     if (error?.status === 401 || error?.status === 403) await onTokenAnswer?.(error.status);
@@ -828,7 +829,7 @@ export function createCoderStatusHandlers({
       });
       body = { configured: true, reachable: true, ...detail, asOf };
     } catch (error) {
-      context?.warn?.(`coder-status: Coder unreachable: ${error?.message ?? error}`);
+      context?.warn?.(`coder-status: Coder unreachable: ${errorFacts(error)}`);
       body = {
         configured: true,
         reachable: false,
@@ -919,7 +920,7 @@ export function createCoderStatusHandlers({
         else if (token.known) await onTokenAnswer('expiry', context)(null);
         return privateJson(200, { configured: true, token, warningDays: TOKEN_RENEW_WARNING_DAYS });
       } catch (error) {
-        context.error('cmsLabsCoderToken failed:', error);
+        context.error('cmsLabsCoderToken failed:', errorFacts(error));
         return privateJson(500, { error: 'Failed to read the Coder status token' });
       }
     },
@@ -930,7 +931,7 @@ export function createCoderStatusHandlers({
         const body = await readStatus(context);
         return jsonResponse(200, body, body.configured ? CODER_STATUS_CACHE_SECONDS : 0);
       } catch (error) {
-        context.error('publicGetLabsCoderStatus failed:', error);
+        context.error('publicGetLabsCoderStatus failed:', errorFacts(error));
         return jsonResponse(500, { error: 'Failed to read Coder status' });
       }
     },

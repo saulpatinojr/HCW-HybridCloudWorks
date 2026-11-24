@@ -205,7 +205,7 @@
  * `@Microsoft.KeyVault(...)` string. That is not a key; `readKey` says so.
  */
 
-import { AuthoredError, codeShaped, errorCode } from '../http/error-response.js';
+import { AuthoredError, codeShaped, errorCode, errorFacts } from '../http/error-response.js';
 import {
   DEFAULT_PROVIDER_ORDER,
   createAiConfigLoader,
@@ -1365,7 +1365,7 @@ async function failOverOrThrow(ctx, provider, error, chain) {
   const last = chain[chain.length - 1].provider === provider;
   if (last || !isProviderUnusable(error, provider)) throw error;
   ctx.log.warn?.(
-    `[ai-router] ${provider} could not serve this call (${error?.message || error}); trying the next provider`
+    `[ai-router] ${provider} could not serve this call (${errorFacts(error)}); trying the next provider`
   );
 }
 

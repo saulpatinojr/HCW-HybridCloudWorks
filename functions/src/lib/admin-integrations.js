@@ -44,6 +44,7 @@ import { createAiFeatureHandlers } from './admin-integrations/ai-features.js';
 import { createAiRoutingHandlers } from './admin-integrations/ai-routing.js';
 import { createAiTaskHandlers } from './admin-integrations/ai-tasks.js';
 import { createConfigCollectionHandlers } from './admin-integrations/config-collections.js';
+import { errorFacts } from './http/error-response.js';
 
 const dateValue = (v) => {
   if (!v) return 0;
@@ -80,7 +81,7 @@ async function listRecordings(ctx, request, context) {
       total: sorted.length,
     });
   } catch (error) {
-    context.error('listRecordings failed:', error);
+    context.error('listRecordings failed:', errorFacts(error));
     return json(500, { error: 'Failed to list recordings' });
   }
 }
@@ -343,7 +344,7 @@ async function createRecording(ctx, request, context) {
     });
     return json(200, { success: true, id: doc.id, item: doc });
   } catch (error) {
-    context.error('createRecording failed:', error);
+    context.error('createRecording failed:', errorFacts(error));
     return json(500, { error: 'Failed to create recording' });
   }
 }
@@ -383,7 +384,7 @@ async function patchRecording(ctx, request, context) {
     });
     return json(200, { success: true, item: updated });
   } catch (error) {
-    context.error('patchRecording failed:', error);
+    context.error('patchRecording failed:', errorFacts(error));
     return json(500, { error: 'Failed to update recording' });
   }
 }
@@ -398,7 +399,7 @@ async function getSettings(ctx, request, context) {
     const doc = await ctx.store.readDoc(SETTINGS_CONTAINER, SETTINGS_DOC_ID, SETTINGS_DOC_ID);
     return json(200, { success: true, settings: doc || {} });
   } catch (error) {
-    context.error('getSettings failed:', error);
+    context.error('getSettings failed:', errorFacts(error));
     return json(500, { error: 'Failed to get settings' });
   }
 }
@@ -434,7 +435,7 @@ async function auditSpeakerIdChange(ctx, { user, existing, updates, nowIso }, co
     });
   } catch (auditError) {
     context.warn?.(
-      `putSettings saved but the audit row failed: ${auditError?.message || auditError}`
+      `putSettings saved but the audit row failed: ${errorFacts(auditError)}`
     );
   }
 }
@@ -525,7 +526,7 @@ async function putSettings(ctx, request, context) {
     }
     return json(200, { success: true, settings });
   } catch (error) {
-    context.error('putSettings failed:', error);
+    context.error('putSettings failed:', errorFacts(error));
     return json(500, { error: 'Failed to save settings' });
   }
 }
@@ -542,7 +543,7 @@ function contentUsageRows(ctx, params, context) {
       []
     )
     .catch((error) => {
-      context.warn?.('listImages usage read failed:', error?.message);
+      context.warn?.('listImages usage read failed:', errorFacts(error));
       return [];
     });
 }
@@ -594,7 +595,7 @@ async function listImages(ctx, request, context) {
         .slice(0, params.limit),
     });
   } catch (error) {
-    context.error('listImages failed:', error);
+    context.error('listImages failed:', errorFacts(error));
     return json(500, { error: 'Failed to list images' });
   }
 }
@@ -614,7 +615,7 @@ async function getCuratedImage(ctx, request, context) {
     const doc = await ctx.store.readDoc('curated_article_images', id, id);
     return json(200, { success: true, item: doc || null });
   } catch (error) {
-    context.error('getCuratedImage failed:', error);
+    context.error('getCuratedImage failed:', errorFacts(error));
     return json(500, { error: 'Failed to get curated image' });
   }
 }
@@ -650,7 +651,7 @@ async function listUsage(ctx, request, context) {
       .slice(0, limit);
     return json(200, { success: true, items, total: items.length });
   } catch (error) {
-    context.error('listUsage failed:', error);
+    context.error('listUsage failed:', errorFacts(error));
     return json(500, { error: 'Failed to list usage records' });
   }
 }

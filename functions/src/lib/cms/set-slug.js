@@ -55,7 +55,7 @@
  * what was stored.
  */
 import { randomUUID } from 'node:crypto';
-import { errorResponse } from '../http/error-response.js';
+import { errorResponse, errorFacts } from '../http/error-response.js';
 import { SET_SLUG_REASON } from './publish.js';
 
 const json = (status, body) => ({
@@ -173,7 +173,7 @@ export function createSetSlugHandlers({
     try {
       await store.upsertDoc('admin_audit_logs', { id: uuid(), ...row });
     } catch (error) {
-      log.error?.('setContentSlug: audit row failed', error);
+      log.error?.('setContentSlug: audit row failed', errorFacts(error));
     }
   }
 

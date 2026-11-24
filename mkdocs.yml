@@ -134,6 +134,7 @@ nav:
       - 0041 Native Terraform only: decisions/0041-native-terraform-only.md
       - 0042 Developer API v1 (events and call for speakers): decisions/0042-developer-api.md
       - 0043 Muse reads Azure: decisions/0043-muse-azure-reader.md
+      - 0044 Signed releases: decisions/0044-signed-releases.md
   - Runbooks:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md

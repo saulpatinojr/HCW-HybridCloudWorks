@@ -164,11 +164,32 @@ const FRAME_SHAPE = /^src\/[A-Za-z0-9_.\/-]{1,200}\.[cm]?js:\d{1,6}$/;
 const MAX_FRAMES = 3;
 
 /**
+ * The lines of a stack that can be frames: everything after the message.
+ * V8 begins a stack with `${name}: ${message}`, and a message may hold line
+ * breaks, so a message such as `boom\n at x/src/secret-name.js:1` would
+ * otherwise be read as a frame and its words printed as a place (#1794). The
+ * message is cut out where the first line holds it. A stack that does not
+ * begin with the message (one built by hand, or a message replaced after the
+ * error was made) is read whole, as before.
+ *
+ * @param {unknown} error - anything thrown
+ * @returns {string[]}
+ */
+function frameLines(error) {
+  const stack = typeof error?.stack === 'string' ? error.stack : '';
+  const message = typeof error?.message === 'string' ? error.message : '';
+  const head = message ? stack.indexOf(message) : -1;
+  const startsWithMessage = head >= 0 && !stack.slice(0, head).includes('\n');
+  return (startsWithMessage ? stack.slice(head + message.length) : stack).split('\n');
+}
+
+/**
  * Where an error was thrown, in this repository's code only: the first few
  * stack frames under `src/`, each as `src/lib/jobs.js:657`, relative to
  * functions/ and held to FRAME_SHAPE. A frame in node_modules, in a test
  * file, or outside src/ is skipped, so neither the host's absolute path nor
- * a dependency's is logged; the message lines of the stack are never kept.
+ * a dependency's is logged; the message lines of the stack are never kept
+ * and never read as frames (frameLines).
  * What it gives back is a place to look when a TypeError behind the door
  * has nothing else to say (#1200 review L3).
  *
@@ -176,9 +197,8 @@ const MAX_FRAMES = 3;
  * @returns {string[]}
  */
 export function ownFrames(error) {
-  const stack = typeof error?.stack === 'string' ? error.stack : '';
   const out = [];
-  for (const raw of stack.split('\n')) {
+  for (const raw of frameLines(error)) {
     const line = raw.trim();
     if (!line.startsWith('at ')) continue;
     const open = line.lastIndexOf('(');

@@ -246,7 +246,11 @@ describe('the organizer key guard (ADR 0042)', () => {
       const env = setup();
       const wrong = wrongOf(env.secret);
       await env.guard.authenticate(env.withKey(wrong));
-      const secretPart = wrong.split('_')[2];
+      // Everything after the second underscore. The random part may itself
+      // hold an underscore (it is base64url), so `split('_')[2]` was now and
+      // then an empty string, and `not.toContain('')` always fails (#1798).
+      const secretPart = wrong.slice(wrong.indexOf('_', wrong.indexOf('_') + 1) + 1);
+      expect(secretPart.length).toBeGreaterThan(8);
       expect(JSON.stringify(env.store.all('submission_quota'))).not.toContain(secretPart);
       expect(JSON.stringify(env.auditDenial.mock.calls)).not.toContain(secretPart);
     });

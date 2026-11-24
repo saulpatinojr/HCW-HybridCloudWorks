@@ -49,6 +49,7 @@ import {
   outageMinutes,
   tellOwnerAgentBack,
 } from './timers/agent-health.js';
+import { errorFacts } from './http/error-response.js';
 
 /**
  * Statuses a completing agent may report.
@@ -161,7 +162,7 @@ async function claimFirstAvailable({ store, now, uuid = randomUUID }, context, a
       // 412: someone else claimed it between our read and our write. Try the
       // next candidate rather than failing the poll.
       if (err?.code === 412) continue;
-      context.error('claimLabJob write failed:', err?.message);
+      context.error('claimLabJob write failed:', errorFacts(err));
       return json(500, { ok: false, error: 'Failed to claim job' });
     }
   }
@@ -265,7 +266,7 @@ async function reportOutage({ store, notifier }, context, agent, outage, atMs) {
   } catch (err) {
     // The message went; the next health run would send it again, which is
     // the lesser fault than claiming here that it did not.
-    context.warn?.(`heartbeatAgent: back-online message sent, but clearing the debt failed: ${err?.message}`);
+    context.warn?.(`heartbeatAgent: back-online message sent, but clearing the debt failed: ${errorFacts(err)}`);
   }
 }
 
@@ -371,7 +372,7 @@ async function heartbeatAgent({ guard, store, now, notifier }, request, context)
       partitionKey: agent.agentId,
     });
   } catch (err) {
-    context.error('heartbeatAgent failed:', err?.message);
+    context.error('heartbeatAgent failed:', errorFacts(err));
     return json(500, { ok: false, error: 'Failed to record heartbeat' });
   }
 
@@ -478,7 +479,7 @@ async function completeLabJob({ guard, store, now }, request, context) {
       return json(200, { ok: true });
     } catch (err) {
       if (err?.code === 412) continue;
-      context.error('completeLabJob failed:', err?.message);
+      context.error('completeLabJob failed:', errorFacts(err));
       return json(500, { ok: false, error: 'Failed to record result' });
     }
   }
