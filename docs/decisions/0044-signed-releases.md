@@ -1,7 +1,8 @@
 # ADR 0044: Signed releases across the estate: the site publishes none, and the four App repositories attach provenance to theirs
 
 **Status:** Proposed (owner's question of 2026-11-23; accepted when the owner
-answers on the pull request that adds this record)
+answers on [#1799](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1799),
+the pull request that adds this record)
 **Decision date:** 2026-11-23
 **Owners:** Workload owner and architecture owner
 
