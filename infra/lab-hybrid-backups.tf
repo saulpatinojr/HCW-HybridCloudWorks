@@ -56,10 +56,11 @@
 # would stop the nightly backup silently. docs/security/scanner-triage.md,
 # "trivy". The ignore must be the line directly above the resource.
 #
-# Also accepted, by owner decision and not repeated per account:
-# AVD-AZU-0061 (infrastructure encryption) is the 2026-09-14 "no
-# infrastructure encryption" decision, ADR 0031, because it is one-way on an
-# existing account; AVD-AZU-0057 (classic Storage Analytics logging) is
+# Also accepted:
+# AVD-AZU-0061 (infrastructure encryption) follows ADR 0031's 2026-09-14
+# choice for the two storage accounts that existed then; this account came
+# later (2026-10-14), so extending it here awaits the owner's confirmation.
+# It can be set only when an account is created; AVD-AZU-0057 (classic Storage Analytics logging) is
 # answered by azurerm_monitor_diagnostic_setting.lab_hybrid_backups_blob,
 # which sends blob read, write and delete logs to Log Analytics; trivy reads
 # only the older per-account logging switch.

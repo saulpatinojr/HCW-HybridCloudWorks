@@ -2145,14 +2145,42 @@ jobs:
           chmod 0755 qlty
           echo "$tools" >> "$GITHUB_PATH"
 
+      # The rules come from the base branch, not from the pull request being
+      # judged, so a pull request cannot loosen its own scan (add an exclude, an
+      # allowlist or a skipped check and pass on it). A change to a rule file
+      # is still allowed; it takes effect for the pull requests after it
+      # merges, and the log says which files it changed. A rule file the base
+      # does not have yet (the first pull request that adds it) is used from
+      # the pull request. Inline notes on one line (`# nosec`,
+      # `checkov:skip`, `trivy:ignore`, `gitleaks:allow`) still come from the
+      # pull request: each sits on the line it excuses, in the diff a
+      # reviewer reads.
+      - name: Use the base branch's scanner rules
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          for file in .qlty/qlty.toml .gitleaks.toml .gitleaksignore .bandit .checkov.yaml; do
+            if git cat-file -e "${BASE_SHA}:${file}" 2> /dev/null; then
+              if ! git diff --quiet "${BASE_SHA}" HEAD -- "${file}"; then
+                echo "::notice file=${file},title=Scanner rules changed::This pull request changes ${file}. The scan below uses the base branch's copy; the change applies to pull requests after this one merges."
+              fi
+              git show "${BASE_SHA}:${file}" > "${file}"
+            else
+              echo "${file}: not on the base branch; using this pull request's copy"
+            fi
+          done
+
       - name: Scan the changed lines
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           qlty --version
+          # --summary prints what ran, so a scan that looked at nothing does
+          # not read like a clean one.
           qlty check --upstream "${BASE_SHA}" --filter "${QLTY_SECURITY_PLUGINS}" \
-            --no-formatters --no-fix --no-progress --level medium --fail-level medium
+            --no-formatters --no-fix --no-progress --summary --level medium --fail-level medium
 
   # THE ONE REQUIRED CHECK (#1545). The `main` ruleset requires `gate`, and
   # `gate` waits for every job above. `!cancelled()` keeps it running when a

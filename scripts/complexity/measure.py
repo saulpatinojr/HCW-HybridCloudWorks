@@ -21,8 +21,10 @@ def git_program() -> str:
     git's full path, found on PATH (git.exe on Windows).
 
     Found by name once per call rather than written in, because git lives in a
-    different place on a runner, a Linux host and Windows; running it by its
-    full path means a git in the working directory is never the one run.
+    different place on a runner, a Linux host and Windows. On Linux and macOS
+    this means a git in the working directory is never the one run; on Windows
+    shutil.which looks in the current folder first, so there it gives no such
+    guarantee.
     """
     program = shutil.which("git")
     if program is None:

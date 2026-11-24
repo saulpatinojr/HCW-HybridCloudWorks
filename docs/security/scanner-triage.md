@@ -71,7 +71,7 @@ Qlty Cloud's Security grade read **F** on the admin
 while its Maintainability badge read A. The F came from about 120 high and
 medium security findings, and none was a real secret or vulnerability:
 
-- **gitleaks, 33 in tracked files**: made-up values in test files, SHA-256
+- **gitleaks, 37 in tracked files**: made-up values in test files, SHA-256
   checksums in `lab-image/versions.env`, a public PGP key fingerprint, a git
   commit id in a document, and the Firebase links in the generated manifest.
 - **bandit, 22**: every one rated LOW by bandit, but shown as HIGH by Qlty.
@@ -92,15 +92,22 @@ Qlty Cloud analyses `main`.
 
 | Change | Where | Effect |
 | --- | --- | --- |
-| Allowlists that describe a kind of match | [`.gitleaks.toml`](#gitleaks-rules-2026-11-24) | gitleaks 36 → 0 on tracked files; a random key in a source file is still caught |
+| Allowlists that describe a kind of match | [`.gitleaks.toml`](#gitleaks-rules-2026-11-24) | gitleaks 37 → 0 on tracked files; a random key in a source file, and an AWS or GitHub key planted in a test folder, are still caught |
 | B404 and B603 off; B602, B605, B607 and the rest stay on | [`.bandit`](#bandit-settings-2026-11-24) | bandit 22 → 0 after the code fixes below |
 | `lab-image/smoke/**` excluded as test data | `.qlty/qlty.toml`, [below](#lab-image-smoke-fixtures) | 69 → 0 |
-| Recorded reasons on two Terraform resources | [Terraform](#terraform-32), [trivy](#trivy) | 5 → 0, no plan change |
+| Recorded reasons on two Terraform resources | [Terraform](#terraform-36), [trivy](#trivy) | 5 → 0, no plan change |
 | `security-scan` job in `ci.yml`, which `gate` waits for | `.github/workflows/ci.yml` | A pull request that adds a high or medium finding fails |
 
 The new job runs the same Qlty CLI, pinned and digest-checked, with the
 plugins bandit, checkov, gitleaks, osv-scanner, trivy, trufflehog and zizmor,
-on the lines a pull request changes (`--upstream` the base commit). Proved
+on the lines a pull request changes (`--upstream` the base commit). **It uses
+the base branch's rule files** (`.qlty/qlty.toml`, `.gitleaks.toml`,
+`.gitleaksignore`, `.bandit`, `.checkov.yaml`), so a pull request cannot
+loosen its own scan; a rule change applies to the pull requests after it
+merges, and the job's log names the changed file. A rule file the base does
+not have yet is used from the pull request. Inline notes on one line
+(`# nosec`, `checkov:skip`, `trivy:ignore`, `gitleaks:allow`) still come from
+the pull request, in the diff a reviewer reads. Proved
 both ways on 2026-11-24: clean on this branch, and exit 1 on a throwaway
 commit that added a random 32-character `apiKey` to a source file (gitleaks,
 high) and a `subprocess.call(..., shell=True)` (bandit B602, high).
@@ -303,7 +310,7 @@ or `# checkov:skip=RULE:reason` (YAML comment spacing) on the
 `workflow_dispatch:` key of the workflow. Checkov accepts both spellings. The one repository-wide skip is in
 `.checkov.yaml`, with its reason.
 
-### workflow_dispatch inputs, CKV_GHA_7 (8): 6 accepted, 2 fixed
+### workflow_dispatch inputs, CKV_GHA_7 (10): 8 accepted, 2 fixed
 
 CKV_GHA_7 is a SLSA build-integrity rule: "workflow_dispatch inputs MUST be
 empty". None of these workflows builds a release artifact from its inputs, and
@@ -323,7 +330,7 @@ inside `run:`. Only people with write access can dispatch a workflow.
 | CKV_GHA_7 | `.github/workflows/cloudflare-dns-audit.yml:69` | Accepted | Read-only audit that builds nothing. `since` and `before` reach the script through `env`; `since` is now checked against the script's own date pattern (`parseWhen` in `scripts/cloudflare-dns-audit.mjs`) before it is written to the step's outputs, because a line break in it could have added an output of its own. The script refuses a bad `before`; `open_issue` is a boolean. | Inline skip and the `since` check, 2026-11-24 |
 | CKV_GHA_7 | `.github/workflows/lab-host-arc-run.yml:52` | Accepted | `action` is a `choice` of three fixed scripts, matched by a fixed `case` that refuses any other value, behind the `lab-host-arc` environment's reviewers and its main-only branch rule. | Inline skip, 2026-11-24 |
 
-### Terraform (32)
+### Terraform (36)
 
 Infra files at `357114f4`, and the last three rows from #726 on 2026-09-29.
 Owner decisions were read from `infra/variables.tf` and `docs/decisions/`
@@ -365,10 +372,10 @@ before any verdict.
 | CKV_AZURE_189 | `infra/lab-hybrid.tf` | `azurerm_key_vault.lab_hybrid` | Accepted | Public network access stays on for the same reason: the VPS is outside Azure and has no private path to the vault. | Inline skip, 2026-09-29 (#726) |
 | CKV2_AZURE_32 | `infra/lab-hybrid.tf` | `azurerm_key_vault.lab_hybrid` | Accepted | No private endpoints, ADR 0031, and a private endpoint could not serve a caller outside Azure. | Inline skip, 2026-09-29 (#726) |
 | CKV_AZURE_134 | `infra/foundry.tf` | `azurerm_cognitive_account.foundry` | Accepted | Public endpoint, Entra only (`local_auth_enabled = false`, so the account has no keys). The Functions subnet has no Cognitive Services service endpoint, so turning public access off would cut the AI router off. The file already names restricting it to the VNet as a follow-up for the owner. | Inline skip, 2026-11-24 |
-| CKV2_AZURE_22 | `infra/foundry.tf` | `azurerm_cognitive_account.foundry` | Accepted | Microsoft-managed keys, owner decision 2026-09-14, [ADR 0031](../decisions/0031-security-scanner-owner-decisions.md). A customer-managed key needs a paid Key Vault key and cannot be undone on an existing account. | Inline skip, 2026-11-24 |
+| CKV2_AZURE_22 | `infra/foundry.tf` | `azurerm_cognitive_account.foundry` | Accepted, owner to confirm | Microsoft-managed keys, as [ADR 0031](../decisions/0031-security-scanner-owner-decisions.md) chose on 2026-09-14 for the storage and Cosmos accounts. This account came later (2026-10-04), so extending that choice to it is the owner's to confirm. A customer-managed key needs a paid Key Vault key; on this kind of account it can be switched off again ([Microsoft Learn](https://learn.microsoft.com/azure/ai-foundry/openai/encrypt-data-at-rest#disable-customer-managed-keys)). | Inline skip, 2026-11-24 |
 | CKV_AZURE_238 | `infra/foundry.tf` | `azurerm_cognitive_account.foundry` | Accepted | The rule asks the account to have its own managed identity. The account makes no outbound call that would use one: callers reach it with their own identity (the Function App's, holding "Cognitive Services OpenAI User"). Adding one would be an unused identity. | Inline skip, 2026-11-24 |
 
-### Ansible (3)
+### Ansible (11)
 
 From #726 on 2026-09-29, the `vault` role's auto-unseal checks. Inline
 skips on an Ansible task are `# checkov:skip=RULE:reason` inside the task,
@@ -423,8 +430,7 @@ finding. No `.trivyignore` is needed.
 | AZU-0058 | `infra/storage.tf` | Fixed | Host storage is GRS. Same change as checkov CKV_AZURE_206. | 2026-09-14 |
 | AZU-0013 | `infra/lab-hybrid.tf` | Accepted | Network default Allow on `azurerm_key_vault.lab_hybrid`, the lab-only Key Vault; the reason is checkov CKV_AZURE_109's row. Without the ignore it is the file's one finding at any severity (CRITICAL), measured with trivy 0.69.3. | Inline ignore, 2026-09-29 (#726) |
 | AZU-0012 | `infra/lab-hybrid-backups.tf` | Accepted | Network default Allow, no rules, on `azurerm_storage_account.lab_hybrid_backups`, the lab host's backup account (LAB-9, #955): the only writer is the lab VPS, outside Azure, whose address infra/ does not own (ADR 0032 decision 1), so an IP rule would drift and stop the nightly backup silently; shared keys are off, OAuth is the default, the Arc identity's grant is container-scoped and the container is immutable for 35 days. The reason the lab Key Vault accepts AZU-0013. Measured with trivy 0.69.3 on #1147: the file's one finding at HIGH or CRITICAL. | Inline ignore, 2026-10-14 (#1147) |
-
-| AZU-0061 | `infra/lab-hybrid-backups.tf` | Accepted | Infrastructure encryption can be set only at account creation; Microsoft-managed keys and no infrastructure encryption are the 2026-09-14 owner decision, [ADR 0031](../decisions/0031-security-scanner-owner-decisions.md). | Inline ignore, 2026-11-24 |
+| AZU-0061 | `infra/lab-hybrid-backups.tf` | Accepted, owner to confirm | Infrastructure encryption can be set only when an account is created. [ADR 0031](../decisions/0031-security-scanner-owner-decisions.md) decided against it on 2026-09-14 for the two storage accounts that existed then; this account came later (2026-10-14), so extending that decision to it is the owner's to confirm. | Inline ignore, 2026-11-24 |
 | AZU-0057 | `infra/lab-hybrid-backups.tf` | False positive | trivy reads only the classic per-account logging switch. Blob reads, writes and deletes go to Log Analytics through `azurerm_monitor_diagnostic_setting.lab_hybrid_backups_blob` (StorageRead, StorageWrite, StorageDelete); the account has no queues. | Inline ignore, 2026-11-24 |
 
 Two trivy ignores on one resource must sit on consecutive lines directly above
@@ -483,27 +489,40 @@ The other six findings were handled in code:
 
 [`.gitleaks.toml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.gitleaks.toml) keeps every built-in rule
 (`[extend] useDefault = true`) and adds allowlists that say what a harmless
-match **is**, so they hold when a line moves or a new file arrives. Qlty
+match **is**. Each names the one rule it answers (`targetRules`), so every
+precise rule (AWS keys, GitHub tokens, private keys and the rest) still runs
+everywhere, test files included; only the broad `generic-api-key` heuristic
+is quietened, and only where an allowlist says. They so they hold when a line moves or a new file arrives. Qlty
 passes the file to gitleaks with `--config` (its gitleaks plugin lists
 `config_files = [".gitleaks.toml"]` in CLI 0.672.0). The note further down
 that "Qlty's gitleaks plugin did not read one when tested" was true of the
 earlier CLI 0.644.0 test and is no longer.
 
-Every one of the 36 matches in tracked files on 2026-11-24 was read in full
+Every one of the 37 matches in tracked files on 2026-11-24 (gitleaks' built-in rules alone) was read in full
 before this was written. None is printed here.
 
 | Allowlist | Matches it covers | Why it is safe |
 | --- | --- | --- |
-| Test files: `*.test.*`, `*.spec.*`, `*.Tests.ps1`, `test_*.py`, `tests/`, `__tests__/`, `__fixtures__/` | 28: made-up keys such as `0123456789abcdef…` and `sk_test1234567890` in 18 test files | Values there are invented so the code under test has something to read. trufflehog still scans test files and checks candidate keys with the issuer, and GitHub secret scanning covers this public repository. |
-| A line `NAME_SHA256=<64 hex>` | 2 in `lab-image/versions.env` | A published checksum of a download. It unlocks nothing. |
-| A line `…_fingerprint: <40 hex>` | 1 in `lab-host/ansible/roles/vault/defaults/main.yml` | The fingerprint of a public PGP key. |
-| The `sourcegraph-access-token` rule, on a line with the word `commit` | 2 in `docs/architecture/azure-architecture-mcp-appliance.md` | A git commit id has the same 40-hex shape as a legacy Sourcegraph token. |
-| A Firebase Storage download link | 3 in `frontend/data/content-manifest.json` (Qlty excludes the folder; gitleaks alone does not) | The rows below; the token reads one public image. |
+| `generic-api-key` in test files: `*.test.*`, `*.spec.*`, `*.Tests.ps1`, `test_*.py`, `tests/`, `__tests__/`, `__fixtures__/` | 29: made-up keys such as `0123456789abcdef…` and `sk_test1234567890` in 19 test files | Values there are invented so the code under test has something to read. Every other gitleaks rule still runs on these files. Note that `tests/` also holds a few non-test helpers and captured output (for example `lab-host/ansible/roles/privilege_checks/tests/*.txt`); a real provider key there is still caught by the precise rules. |
+| `generic-api-key` on a line that is only `NAME_SHA256=<64 hex>` | 2 in `lab-image/versions.env` | A published checksum of a download. It unlocks nothing. Nothing else may follow on the line, so a value after it is still checked. |
+| `generic-api-key` on a line that is only `…_fingerprint: <40 hex>` | 1 in `lab-host/ansible/roles/vault/defaults/main.yml` | The fingerprint of a public PGP key. |
+| `sourcegraph-access-token` whose matched value is exactly 40 hex characters, in `docs/**/*.md` | 2 in `docs/architecture/azure-architecture-mcp-appliance.md` | A git commit id has the same 40-hex shape as a legacy Sourcegraph token. The test is on the matched value, not the line, so a modern `sgp_` token beside it is still checked. |
+| `generic-api-key` on a Firebase Storage download link, in `frontend/data/content-manifest.json` only | 3 there (Qlty excludes the folder; gitleaks alone does not) | The rows below; the token reads one public image. |
 
-Tested with gitleaks 8.29.1: 36 matches before, 0 after, on the whole tree
+Tested with gitleaks 8.29.1: 37 matches before, 0 after, on the whole tree
 and file by file as Qlty runs it. The same files without the config still
-report (exit 101), and a random 32-character key in a non-test source file
-is still reported.
+report (exit 101). Still reported with the config: a random 32-character key
+in a non-test source file; an AWS access key and a GitHub token planted in a
+`tests/` folder; a GitHub token after a checksum on a `_SHA256=` line; a
+generic key on a one-line JSON file that also holds a Firebase link.
+
+**What else catches a real key.** GitHub secret scanning and push protection
+are on for this repository and catch known providers' tokens. trufflehog runs
+in Qlty with `--only-verified`, so it reports only a key the issuer confirms
+is live; it is not a net for a made-up-looking value. The first version of
+this page said trufflehog "still scans test files" as if it were; the
+independent review on #1841 showed it is not, and the allowlists were
+narrowed with `targetRules` instead.
 
 `.gitleaksignore` keeps one entry, the Cosmos DB emulator key in
 `functions/local.settings.json.example`: JSON cannot carry an inline comment,
@@ -538,6 +557,19 @@ fingerprints. A `.gitleaks.toml` allowlist keyed on the URL shape would
 survive regeneration, but Qlty's gitleaks plugin did not read one when tested,
 so it was not added.
 
+## osv-scanner
+
+osv-scanner checks the lock files against the public OSV list of known
+vulnerable package versions. Since 2026-11-24 the `Qlty security scan` job
+fails a pull request that changes a lock-file line with a high or medium
+advisory. Normally the answer is the upgrade. When no fixed version exists
+yet, the route is an `osv-scanner.toml` beside the lock file, one
+`[[IgnoredVulns]]` entry per advisory with its `id`, a `reason` and an
+`effectiveUntil` date (the day the ignore stops applying) no more than 90
+days out, plus a row here first. None
+exists today. Format:
+[osv-scanner configuration](https://google.github.io/osv-scanner/configuration/).
+
 ## lab-image smoke fixtures
 
 **Excluded from Qlty on 2026-11-24.** Every file under `lab-image/smoke/` is an
@@ -552,9 +584,11 @@ checkov's and trivy's production Kubernetes and Terraform rules reported 69
 high and medium findings on those files (no CPU limits, `latest` image tag,
 no security context and so on). Hardening a test input would change what the
 smoke test proves and say nothing about a real cluster, so the folder is
-excluded in `.qlty/qlty.toml`, as Qlty already excludes `**/testdata/**` by
-default. This says what the folder is; it is not a silence on a real
-resource. checkov's `skip-path` was not used, because checkov does not
+excluded **for checkov and trivy only** by an `[[exclude]]` block in
+`.qlty/qlty.toml`; gitleaks, trufflehog and osv-scanner still read the
+folder (checked: a key planted there was reported, and without the block
+checkov and trivy report 29 findings on one manifest). This says what the
+folder is; it is not a silence on a real resource. checkov's `skip-path` was not used, because checkov does not
 honour it when Qlty hands it single files (see [Secrets](#secrets-1)).
 
 ## radarlint-iac
