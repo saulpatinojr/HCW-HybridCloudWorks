@@ -8,22 +8,36 @@
  * (archive-classification.js), and writes down what an archive made from
  * that backup WOULD hold: per container, how many records would be kept,
  * how many would have fields taken out, how many would be left out and why.
- * For the seven containers the owner has not classified yet it also lists
- * the NAMES of the top-level fields, so the owner can say what each one is.
+ * For EVERY container it reads it also lists the NAMES of the top-level
+ * fields, and counts the records that carry a field, at any depth, whose
+ * name looks like a secret or someone's contact details. That is how the
+ * owner sees "container X: 3 records have a field named like a secret"
+ * before anything is archived.
  *
  * WHAT IT NEVER DOES. It writes nothing into `content-archive`, changes no
  * record and no backup file, and keeps no record, no id and no field value:
  * names of containers, names of fields, counts, sizes and times only.
  *
- * WHERE THE REPORT IS KEPT. In the private `cosmos-export-state` blob
- * container, under `state/archive-report/<report>/`. That container is the
- * backup's own working state (it has no rule that deletes files and none
- * that locks them), so the report does not depend on `content-archive`
- * existing yet and never mixes with a real archive.
+ * A FIELD NAME CAN ITSELF BE AN ID. A record shaped as a list keyed by
+ * visitor id has ids for field names. So a name is printed only when it is
+ * COMMON and PLAIN (`listableNames` below says exactly what that means);
+ * every other name is only counted.
+ *
+ * WHERE THE REPORT IS KEPT, AND FOR HOW LONG. In the private
+ * `cosmos-export-state` blob container, under
+ * `state/archive-report/<report>/`. That container is the backup's own
+ * working state (it has no rule that deletes files and none that locks
+ * them), so the report does not depend on `content-archive` existing yet and
+ * never mixes with a real archive. Because no storage rule deletes a report,
+ * this file does: starting a dry run deletes every report older than
+ * REPORT_KEEP_DAYS.
  *
  * HOW ONE RUN WORKS. The admin route (archive-handlers.js) finds the backup,
  * claims a report id by writing `run.json` create-only (so a double press
- * makes one run), and queues one platform job per container to read. Each
+ * makes one run), and queues one platform job per container to read. Only
+ * when every job row is written does it point `latest.json` at the new
+ * report, so a start that broke half-way leaves the card on the report
+ * before it and the button free to press again. Each
  * job streams one backup file through gunzip a line at a time, so memory
  * stays flat however large the container is, and writes one small part
  * file. The job that finds every part present writes `report.json`,
@@ -51,6 +65,7 @@ import {
   archivePlan,
   archiveRecord,
   createContentIndex,
+  looksSensitive,
 } from './archive-classification.js';
 
 /** The private blob container a yearly archive is written to (Terraform: infra/storage.tf). */
@@ -63,14 +78,123 @@ export const REPORT_JOB_TYPE = 'content-archive-dry-run';
 export const REPORT_PREFIX = 'state/archive-report/';
 /** How far back the newest complete full backup is looked for: the backup keeps 35 days. */
 export const BACKUP_LOOKBACK_DAYS = 35;
-/** The most distinct field names one container's part lists; more than that reads as data used as names. */
+/** The most field names one container's part lists. */
 export const MAX_FIELD_NAMES = 100;
+/** The most distinct names counted while one file is read; past that, a new name is only counted as "other". Keeps memory flat when ids are used as names. */
+export const MAX_TALLIED_NAMES = 2000;
+/** The longest field name that is printed. */
+export const MAX_NAME_LENGTH = 40;
+/** A name is printed only when at least this many records carry it... */
+export const MIN_NAME_RECORDS = 2;
+/** ...and at least this share of the container's records (1 in 100), whichever is more. */
+export const MIN_NAME_SHARE = 0.01;
+/** The most names that look sensitive one container's part lists. */
+export const MAX_SENSITIVE_NAMES = 40;
+/** How deep, and how many values, one record is searched for a name that looks sensitive. */
+export const SENSITIVE_MAX_DEPTH = 8;
+export const SENSITIVE_MAX_NODES = 5000;
+/** A dry run that has not finished after this long is called "did not finish", and a new one may start. */
+export const RUN_STALE_MINUTES = 30;
+/** Reports older than this are deleted when a new dry run starts. */
+export const REPORT_KEEP_DAYS = 90;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REPORT_ID = /^\d{8}T\d{4}Z$/;
 const RUN_ID = /^\d{4}-\d{2}-\d{2}$/;
-/** A field name that is safe to repeat: a plain identifier, not text someone typed. */
-const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
+
+// ── Which field names may be printed ─────────────────────────────────────────
+
+const UUID_SHAPE = /[0-9a-f]{8}-[0-9a-f]{4}-/i;
+const HEX_RUN = /[0-9a-f]{12,}/i;
+
+/**
+ * Is this name PLAIN: one that reads like a field a programmer named, not
+ * like an id, an address or text someone typed? All of these must hold:
+ *
+ *   - it starts with a letter and holds only letters, digits, `_` and `-`
+ *     (so no `@`, no space and no dot: `jane.doe` and `a@b.c` are out);
+ *   - it is at most MAX_NAME_LENGTH characters;
+ *   - it has no run of four or more digits (`user_12345` is out);
+ *   - it is not shaped like a UUID and has no long run of hex characters.
+ *
+ * @param {unknown} name
+ */
+export function isPlainName(name) {
+  return (
+    typeof name === 'string' &&
+    name.length <= MAX_NAME_LENGTH &&
+    /^[A-Za-z][A-Za-z0-9_-]*$/.test(name) &&
+    !/\d{4,}/.test(name) &&
+    !UUID_SHAPE.test(name) &&
+    !HEX_RUN.test(name)
+  );
+}
+
+/** How many records must carry a name before it is printed, for a container of `read` records. */
+export function nameThreshold(read) {
+  return Math.max(MIN_NAME_RECORDS, Math.ceil(count(read) * MIN_NAME_SHARE));
+}
+
+/**
+ * The names to print from a tally of plain names, most common first, then
+ * by name. A name is printed only when it is COMMON: at least
+ * MIN_NAME_RECORDS records carry it, and at least 1 in 100 of the
+ * container's records. So a container with one record prints no name at
+ * all, and a name only one visitor's record has is never printed.
+ *
+ * @param {Map<string, number>} tally - plain name → records that carry it
+ * @param {number} read - records read
+ * @param {number} [limit]
+ * @returns {{ names: { name: string, records: number }[], truncated: boolean }}
+ */
+export function listableNames(tally, read, limit = MAX_FIELD_NAMES) {
+  const least = nameThreshold(read);
+  const common = [...tally]
+    .filter(([, records]) => records >= least)
+    .map(([name, records]) => ({ name, records }))
+    .sort((a, b) => b.records - a.records || a.name.localeCompare(b.name));
+  return { names: common.slice(0, limit), truncated: common.length > limit };
+}
+
+/**
+ * The names in one record, at any depth, that look like a secret or
+ * someone's contact details (archive-classification.js looksSensitive).
+ * Names only: a value is never read, copied or returned. Bounded, so one
+ * huge record cannot hold a job: past the depth or the size limit the search
+ * stops and says so.
+ *
+ * @param {unknown} doc
+ * @returns {{ names: Set<string>, cutShort: boolean }}
+ */
+export function sensitiveNamesIn(doc) {
+  const names = new Set();
+  let nodes = 0;
+  let cutShort = false;
+  const stack = [[doc, 0]];
+  while (stack.length) {
+    const [value, depth] = stack.pop();
+    if (value === null || typeof value !== 'object') continue;
+    nodes += 1;
+    if (depth > SENSITIVE_MAX_DEPTH || nodes > SENSITIVE_MAX_NODES) {
+      cutShort = true;
+      continue;
+    }
+    const push = (inner) => {
+      if (inner === null || typeof inner !== 'object') return;
+      if (stack.length >= SENSITIVE_MAX_NODES) cutShort = true;
+      else stack.push([inner, depth + 1]);
+    };
+    if (Array.isArray(value)) {
+      for (const item of value) push(item);
+      continue;
+    }
+    for (const [key, inner] of Object.entries(value)) {
+      if (looksSensitive(key)) names.add(key);
+      push(inner);
+    }
+  }
+  return { names, cutShort };
+}
 
 // ── Names ────────────────────────────────────────────────────────────────────
 
@@ -102,25 +226,32 @@ export function archiveYearFor(now) {
 }
 
 /**
- * May the yearly archive start now? All four must hold:
+ * May the yearly archive start now? All five must hold:
  *
  *   1. the switch `CONTENT_ARCHIVE_ENABLED` is exactly `true`;
  *   2. today is on or after 1 February (UTC), so January is the month of grace;
- *   3. last year's `manifest.json` does not exist (a year is archived once);
- *   4. a complete full backup dated on or after 2 February exists (the day
+ *   3. the `content-archive` container exists;
+ *   4. last year's `manifest.json` does not exist (a year is archived once);
+ *   5. a complete full backup dated on or after 2 February exists (the day
  *      after the yearly clean-up of talk proposals runs).
  *
- * `manifestExists` and `backupRunId` are `null` when they could not be read;
- * not known is never read as "go".
+ * `containerExists`, `manifestExists` and `backupRunId` are `null` when they
+ * could not be read; not known is never read as "go". A container that is
+ * not there is its own blocker and is NOT the same as "no manifest": storage
+ * answers "not found" for a file in a missing container exactly as it does
+ * for a missing file, so without condition 3 a container that was never
+ * created, or was deleted, would read as "this year is not archived yet,
+ * safe to start".
  *
  * @param {object} facts
  * @param {Record<string, string|undefined>} facts.env
  * @param {Date} facts.now
+ * @param {boolean|null} facts.containerExists
  * @param {boolean|null} facts.manifestExists
  * @param {string|null} facts.backupRunId - the newest complete full backup's date, `YYYY-MM-DD`
  * @returns {{ start: boolean, year: number, earliestBackup: string, blockers: string[] }}
  */
-export function archiveStartDecision({ env = process.env, now, manifestExists, backupRunId }) {
+export function archiveStartDecision({ env = process.env, now, containerExists, manifestExists, backupRunId }) {
   const at = new Date(now);
   const year = archiveYearFor(at);
   const opens = Date.UTC(year + 1, 1, 1); // 1 February of the year after
@@ -128,7 +259,9 @@ export function archiveStartDecision({ env = process.env, now, manifestExists, b
   const blockers = [];
   if (env?.[ARCHIVE_SETTING] !== 'true') blockers.push('switch-off');
   if (at.getTime() < opens) blockers.push('before-1-february');
-  if (manifestExists === true) blockers.push('already-archived');
+  if (containerExists === false) blockers.push('archive-container-missing');
+  else if (containerExists !== true) blockers.push('archive-not-readable');
+  else if (manifestExists === true) blockers.push('already-archived');
   else if (manifestExists !== false) blockers.push('archive-not-readable');
   if (typeof backupRunId !== 'string' || !RUN_ID.test(backupRunId)) blockers.push('no-backup');
   else if (backupRunId < earliestBackup) blockers.push('backup-too-early');
@@ -212,7 +345,7 @@ export function parseReportPayload(payload = {}) {
 
 /**
  * The containers a dry run reads a backup file for: the ones an archive
- * would write, and the seven waiting for the owner. A container that is left
+ * would write, and the ones waiting for the owner. A container that is left
  * out for a known reason is not read at all; its count comes from the
  * backup's own manifest.
  */
@@ -262,7 +395,6 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
   async function readContainer({ reportId, runId, container, signal }) {
     const startedAt = now();
     const decision = archiveDecisionFor(container);
-    const unclassified = decision?.reason === REASONS.unclassified;
     const names = reportNames(reportId, container);
     const part = {
       container,
@@ -277,9 +409,19 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
       removed: {},
       unreadable: 0,
     };
-    const fieldNames = {};
-    let otherNames = 0;
-    let truncated = false;
+    // Plain top-level names → records that carry each. Bounded (MAX_TALLIED_NAMES).
+    const tally = new Map();
+    let nameUses = 0;
+    // Names that look sensitive, at any depth, in the records as read.
+    const sensitive = { records: 0, keptRecords: 0, cutShort: 0, tally: new Map(), otherNames: 0 };
+    const noteSensitive = (found) => {
+      for (const name of found.names) {
+        if (!isPlainName(name)) sensitive.otherNames += 1;
+        else if (sensitive.tally.has(name)) sensitive.tally.set(name, sensitive.tally.get(name) + 1);
+        else if (sensitive.tally.size < MAX_TALLIED_NAMES) sensitive.tally.set(name, 1);
+        else sensitive.otherNames += 1;
+      }
+    };
 
     const exists = (await blobs.listNames(blobNames({ mode: 'full', runId, container }).data)).length > 0;
     if (!exists) {
@@ -292,16 +434,28 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
           part.unreadable += 1;
           continue;
         }
-        if (unclassified && doc && typeof doc === 'object' && !Array.isArray(doc)) {
+        let found = null;
+        if (doc && typeof doc === 'object' && !Array.isArray(doc)) {
           for (const key of Object.keys(doc)) {
             if (key.startsWith('_')) continue; // the database's own fields (_ts, _etag, _rid)
-            if (!FIELD_NAME.test(key)) otherNames += 1;
-            else if (Object.hasOwn(fieldNames, key)) fieldNames[key] += 1;
-            else if (Object.keys(fieldNames).length < MAX_FIELD_NAMES) fieldNames[key] = 1;
-            else truncated = true;
+            nameUses += 1;
+            if (!isPlainName(key)) continue;
+            if (tally.has(key)) tally.set(key, tally.get(key) + 1);
+            else if (tally.size < MAX_TALLIED_NAMES) tally.set(key, 1);
+          }
+          found = sensitiveNamesIn(doc);
+          if (found.cutShort) sensitive.cutShort += 1;
+          if (found.names.size) {
+            sensitive.records += 1;
+            noteSensitive(found);
           }
         }
         const result = archiveRecord(container, doc, { contentIndex });
+        // The same question about what an archive would actually keep.
+        if (result.keep) {
+          const kept = result.doc === doc && found ? found : sensitiveNamesIn(result.doc);
+          if (kept.names.size) sensitive.keptRecords += 1;
+        }
         if (!result.keep) {
           part.leftOut += 1;
           bump(part.leftOutBy, result.reason || REASONS.unlisted);
@@ -314,13 +468,25 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
         }
       }
     }
-    if (unclassified) {
-      part.fieldNames = Object.entries(fieldNames)
-        .map(([name, records]) => ({ name, records }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-      part.fieldNamesTruncated = truncated;
-      part.otherNames = otherNames;
-    }
+    // Field names, for every container read: only the common, plain ones (listableNames).
+    const listed = listableNames(tally, part.read);
+    part.fieldNames = listed.names;
+    part.fieldNamesTruncated = listed.truncated;
+    // How many times a field was met whose name is not printed above.
+    part.otherNames = nameUses - listed.names.reduce((n, field) => n + field.records, 0);
+    // Names that look like a secret or contact details. They come from a
+    // fixed word list, so one record is enough to print a name, but the name
+    // still has to be plain (an id that happens to contain "token" is only counted).
+    const sensitiveNames = [...sensitive.tally]
+      .map(([name, records]) => ({ name, records }))
+      .sort((a, b) => b.records - a.records || a.name.localeCompare(b.name));
+    part.sensitive = {
+      records: sensitive.records,
+      keptRecords: sensitive.keptRecords,
+      names: sensitiveNames.slice(0, MAX_SENSITIVE_NAMES),
+      namesNotShown: sensitive.otherNames + Math.max(0, sensitiveNames.length - MAX_SENSITIVE_NAMES),
+      cutShort: sensitive.cutShort,
+    };
     part.durationMs = now().getTime() - startedAt.getTime();
     part.completedAt = now().toISOString();
     await blobs.putJson(names.part, part);
@@ -377,6 +543,8 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
         changed: sum('changed'),
         leftOut: sum('leftOut'),
         unreadable: sum('unreadable'),
+        sensitiveRecords: containers.reduce((n, c) => n + count(c.sensitive?.records), 0),
+        sensitiveKeptRecords: containers.reduce((n, c) => n + count(c.sensitive?.keptRecords), 0),
         mismatched: containers.filter((c) => c.matchesBackup === false).length,
       },
       containers,
@@ -399,7 +567,7 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
 /**
  * @param {object} deps
  * @param {{ upsertDoc: Function }} deps.store - the `jobs` container writer
- * @param {{ readJson: Function, putJson: Function }} deps.blobs - the export blob store
+ * @param {{ readJson: Function, putJson: Function, listNames: Function, deleteReportFile?: Function }} deps.blobs - the export blob store
  * @param {(messages: {jobId: string, type: string}[]) => void} deps.enqueue
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
@@ -408,10 +576,16 @@ export function createReportScheduler({ store, blobs, enqueue, now = () => new D
   /**
    * Claim a report and queue its jobs.
    * @param {{ requestedBy?: object|null }} [options]
-   * @returns {Promise<{ started: boolean, reason?: string, reportId?: string, sourceRun?: string, queued?: number }>}
+   * @returns {Promise<{ started: boolean, reason?: string, reportId?: string, sourceRun?: string, queued?: number, removedReports?: number }>}
    */
   async function start({ requestedBy = null } = {}) {
     const at = now();
+    // One dry run at a time: while the newest one is still reading and is
+    // young, a second would read the whole backup again for nothing.
+    const newest = await readLatestReport({ blobs, now: at });
+    if (newest && !newest.complete && !newest.stalled) {
+      return { started: false, reason: 'in-progress', reportId: newest.reportId };
+    }
     const backup = await findLatestFullBackup({ blobs, now: at });
     if (!backup) return { started: false, reason: 'no-backup' };
 
@@ -450,7 +624,6 @@ export function createReportScheduler({ store, blobs, enqueue, now = () => new D
       { overwrite: false }
     );
     if (!claimed) return { started: false, reason: 'already-started', reportId };
-    await blobs.putJson(names.latest, { reportId, startedAt: at.toISOString() });
 
     const messages = [];
     for (const container of containers) {
@@ -468,20 +641,59 @@ export function createReportScheduler({ store, blobs, enqueue, now = () => new D
       messages.push({ jobId, type: REPORT_JOB_TYPE });
     }
     if (messages.length) enqueue(messages);
-    return { started: true, reportId, sourceRun: backup.runId, queued: messages.length };
+    // Only now is the new report the newest one. If anything above failed,
+    // `latest.json` still names the report before it: the card keeps showing
+    // that one, nothing reads as "running", and the button can be pressed
+    // again a minute later. The half-started folder is removed with the old
+    // reports, below, once it is old enough.
+    await blobs.putJson(names.latest, { reportId, startedAt: at.toISOString() });
+    const removedReports = await removeOldReports({ keep: reportId, at }).catch(() => 0);
+    return { started: true, reportId, sourceRun: backup.runId, queued: messages.length, removedReports };
   }
 
-  return { start };
+  /**
+   * Delete every report older than REPORT_KEEP_DAYS. A report's age is read
+   * from its own name (the minute it was asked for). Best effort: a failure
+   * here never fails the dry run that was just started.
+   */
+  async function removeOldReports({ keep, at }) {
+    if (typeof blobs.deleteReportFile !== 'function') return 0;
+    const cutoff = at.getTime() - REPORT_KEEP_DAYS * DAY_MS;
+    const old = new Set();
+    for (const name of await blobs.listNames(REPORT_PREFIX)) {
+      const id = name.slice(REPORT_PREFIX.length).split('/')[0];
+      if (id === keep || !REPORT_ID.test(id)) continue;
+      const asked = reportIdTime(id);
+      if (asked === null || asked >= cutoff) continue;
+      await blobs.deleteReportFile(name);
+      old.add(id);
+    }
+    return old.size;
+  }
+
+  return { start, removeOldReports };
 }
 
 // ── Reading the newest report ────────────────────────────────────────────────
 
+/** The UTC time a report id names, in milliseconds, or null. */
+export function reportIdTime(reportId) {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})Z$/.exec(String(reportId || ''));
+  if (!m) return null;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /**
- * The newest report, finished or not.
- * @param {{ blobs: { readJson: Function, listNames: Function } }} deps
- * @returns {Promise<null | { reportId: string, complete: boolean, report?: object, startedAt?: string|null, sourceRun?: string|null, done?: number, expected?: number }>}
+ * The newest report, finished or not. One that is not finished also says
+ * which containers are still missing, and `stalled: true` once it is older
+ * than RUN_STALE_MINUTES: a job has 28 minutes at most, so by then the run
+ * did not finish and will not.
+ *
+ * @param {{ blobs: { readJson: Function, listNames: Function }, now?: Date }} deps
+ * @returns {Promise<null | { reportId: string, complete: boolean, report?: object, startedAt?: string|null, sourceRun?: string|null, done?: number, expected?: number, missing?: string[], stalled?: boolean }>}
  */
-export async function readLatestReport({ blobs }) {
+export async function readLatestReport({ blobs, now = new Date() }) {
   const latest = await blobs.readJson(reportNames('x').latest);
   const reportId = typeof latest?.reportId === 'string' && REPORT_ID.test(latest.reportId) ? latest.reportId : null;
   if (!reportId) return null;
@@ -489,14 +701,19 @@ export async function readLatestReport({ blobs }) {
   const report = await blobs.readJson(names.report);
   if (report && typeof report === 'object') return { reportId, complete: true, report };
   const run = await blobs.readJson(names.run);
-  const expected = Array.isArray(run?.containers) ? run.containers.length : 0;
-  const present = await blobs.listNames(names.prefix);
+  const wanted = Array.isArray(run?.containers) ? run.containers.filter((c) => typeof c === 'string') : [];
+  const present = new Set(await blobs.listNames(names.prefix));
+  const missing = wanted.filter((container) => !present.has(reportNames(reportId, container).part));
+  const asked = reportIdTime(reportId);
   return {
     reportId,
     complete: false,
     startedAt: typeof run?.startedAt === 'string' ? run.startedAt : null,
     sourceRun: typeof run?.backup?.runId === 'string' ? run.backup.runId : null,
-    done: present.filter((name) => name.endsWith('.part.json')).length,
-    expected,
+    done: wanted.length - missing.length,
+    expected: wanted.length,
+    // Container names only; they are this repository's own names.
+    missing,
+    stalled: asked === null || new Date(now).getTime() - asked >= RUN_STALE_MINUTES * 60 * 1000,
   };
 }

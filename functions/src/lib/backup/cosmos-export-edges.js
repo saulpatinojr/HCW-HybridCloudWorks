@@ -153,5 +153,22 @@ export function createExportBlobStore({
       const blobs = await storage.listBlobs(targetContainer(prefix), prefix);
       return blobs.map((b) => b.name);
     },
+
+    /** Does the store's main container exist? A failure to ask is a throw, never `false`. */
+    async containerExists() {
+      return storage.containerExists(container);
+    },
+
+    /**
+     * Delete one file of an old archive dry-run report. Only a name under
+     * `state/archive-report/` is accepted: this store also holds the backup
+     * and its bookmarks, and nothing here may ever delete one of those.
+     */
+    async deleteReportFile(name) {
+      if (typeof name !== 'string' || !name.startsWith('state/archive-report/') || name.includes('..')) {
+        throw new Error('only a file of an archive dry-run report can be deleted here');
+      }
+      await storage.deleteBlob(targetContainer(name), name);
+    },
   };
 }

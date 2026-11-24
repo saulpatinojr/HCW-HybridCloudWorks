@@ -11,7 +11,9 @@
  * to report whether it is on. So this file is safe to deploy before or after
  * the Terraform run that adds the setting and the `content-archive`
  * container: with the setting absent the switch reads as off, and with the
- * container absent the archive reads as "not readable yet". A dry run needs
+ * container absent the status says "the container does not exist yet" and
+ * the year's archive is "not known" (never "not archived": a missing
+ * container must not look like a year that is safe to start). A dry run needs
  * neither; it reads the backup and writes its report beside the backup's own
  * working state.
  */
@@ -69,7 +71,7 @@ registerJobType(REPORT_JOB_TYPE, {
   // worker reads one container's backup file and writes counts.
   role: 'super_admin',
   description:
-    'Archive dry run (ADR 0046): read one container’s file from a weekly full backup in the private cosmos-export blob container, a line at a time, put every record through the archive classification, and write a small part file of counts (and, for a container the owner has not classified, top-level field names) under state/archive-report/ in cosmos-export-state; the job that finds every part present writes the report. Writes nothing to content-archive and changes no record. Queued by POST cms/content-archive/dry-run.',
+    'Archive dry run (ADR 0046): read one container’s file from a weekly full backup in the private cosmos-export blob container, a line at a time, put every record through the archive classification, and write a small part file of counts, the common top-level field names, and a count of records carrying a field whose name looks like a secret (names only, never a value) under state/archive-report/ in cosmos-export-state; the job that finds every part present writes the report. Writes nothing to content-archive and changes no record. Queued by POST cms/content-archive/dry-run.',
   maxPayloadBytes: 1024,
   // Under the 30-minute non-HTTP host limit, with room for the terminal write.
   timeoutMs: 28 * 60 * 1000,

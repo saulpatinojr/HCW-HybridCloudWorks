@@ -286,7 +286,12 @@ resource "azurerm_storage_container" "cosmos_export" {
 # It also holds the reports of the content archive's dry run (ADR 0046, #1811),
 # under state/archive-report/: container names, field names and counts, never
 # a record. They are kept here because this container has no rule that locks
-# or deletes a file, and so that a dry run never writes into content-archive.
+# a file, and so that a dry run never writes into content-archive. No
+# lifecycle rule deletes them either: the code does, when a new dry run
+# starts, for any report older than 90 days (REPORT_KEEP_DAYS in
+# functions/src/lib/backup/archive-report.js). A rule here would need a new
+# prefix filter beside the backup's bookmarks; the code-side clean-up is the
+# smaller change.
 resource "azurerm_storage_container" "cosmos_export_state" {
   #checkov:skip=CKV2_AZURE_21:Blob read logging is on for this account via azurerm_monitor_diagnostic_setting.content_blob (StorageRead). docs/security/scanner-triage.md#checkov
   name                  = "cosmos-export-state"

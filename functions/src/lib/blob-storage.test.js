@@ -20,6 +20,7 @@ import {
   resolveAccountName,
   getBlobUrl,
   commitBlockList,
+  containerExists,
   deleteBlob,
   hashBlobSha256,
   headBlobForDelivery,
@@ -40,6 +41,7 @@ const blockPropertiesSpy = vi.hoisted(() => vi.fn());
 const deleteSpy = vi.hoisted(() => vi.fn());
 const downloadSpy = vi.hoisted(() => vi.fn());
 const propertiesSpy = vi.hoisted(() => vi.fn());
+const containerExistsSpy = vi.hoisted(() => vi.fn());
 
 // Only the service client is replaced. Everything else in the SDK — the SAS
 // helpers this module imports at load time — stays real.
@@ -50,6 +52,7 @@ vi.mock('@azure/storage-blob', async (importOriginal) => {
     BlobServiceClient: class {
       getContainerClient() {
         return {
+          exists: containerExistsSpy,
           getBlockBlobClient: (blobName) => ({
             url: `https://hcwmedia.blob.core.windows.net/c/${blobName}`,
             upload: uploadSpy,
@@ -513,5 +516,27 @@ describe('no shared-key credential path survives', () => {
 
   it('signs SAS tokens with a user delegation key', () => {
     expect(MODULE_CODE).toContain('getUserDelegationKey');
+  });
+});
+
+describe('containerExists', () => {
+  beforeEach(() => {
+    resetBlobServiceForTests();
+    vi.stubEnv('STORAGE_BLOB_ENDPOINT', 'https://hcwmedia.blob.core.windows.net');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    resetBlobServiceForTests();
+  });
+
+  it('answers true or false, and throws when it could not ask', async () => {
+    containerExistsSpy.mockResolvedValueOnce(true);
+    expect(await containerExists('content-archive')).toBe(true);
+    containerExistsSpy.mockResolvedValueOnce(false);
+    expect(await containerExists('content-archive')).toBe(false);
+    // Not known is never "it is not there".
+    containerExistsSpy.mockRejectedValueOnce(Object.assign(new Error('refused'), { statusCode: 403 }));
+    await expect(containerExists('content-archive')).rejects.toThrow('refused');
   });
 });

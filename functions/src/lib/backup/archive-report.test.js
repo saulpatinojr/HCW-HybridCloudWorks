@@ -9,7 +9,15 @@ import { gzipSync } from 'node:zlib';
 import {
   ARCHIVE_SETTING,
   MAX_FIELD_NAMES,
+  MAX_NAME_LENGTH,
   REPORT_JOB_TYPE,
+  REPORT_KEEP_DAYS,
+  RUN_STALE_MINUTES,
+  isPlainName,
+  listableNames,
+  nameThreshold,
+  reportIdTime,
+  sensitiveNamesIn,
   archiveStartDecision,
   archiveYearFor,
   createReportScheduler,
@@ -51,6 +59,31 @@ function memoryBlobs(seed = {}) {
       const value = files.get(name);
       return Buffer.isBuffer(value) ? Readable.from([value.subarray(0, 7), value.subarray(7)]) : null;
     },
+    deleted: [],
+    async deleteReportFile(name) {
+      if (!name.startsWith('state/archive-report/')) throw new Error('not a report file');
+      files.delete(name);
+      this.deleted.push(name);
+    },
+  };
+}
+
+/**
+ * The archive's own blob container, as storage really answers. A file that
+ * is not there reads as `null` whether or not the container exists (that is
+ * what blob-storage.js readBlobForDelivery does with any "not found"), so
+ * only `containerExists` can tell the two apart.
+ */
+function archiveStore({ exists = true, manifests = [], failExists = null, failRead = null } = {}) {
+  return {
+    async containerExists() {
+      if (failExists) throw failExists;
+      return exists;
+    },
+    async readJson(name) {
+      if (failRead) throw failRead;
+      return exists && manifests.includes(name) ? {} : null;
+    },
   };
 }
 
@@ -66,7 +99,7 @@ const backupSeed = (containers) => ({
 
 describe('archiveStartDecision: once a year, never in January, only when switched on', () => {
   const on = { [ARCHIVE_SETTING]: 'true' };
-  const facts = (over = {}) => ({ env: on, now: new Date('2027-02-08T04:00:00Z'), manifestExists: false, backupRunId: '2027-02-07', ...over });
+  const facts = (over = {}) => ({ env: on, now: new Date('2027-02-08T04:00:00Z'), containerExists: true, manifestExists: false, backupRunId: '2027-02-07', ...over });
 
   it('starts when all four conditions hold, for the year before', () => {
     expect(archiveStartDecision(facts())).toEqual({ start: true, year: 2026, earliestBackup: '2027-02-02', blockers: [] });
@@ -106,8 +139,22 @@ describe('archiveStartDecision: once a year, never in January, only when switche
     expect(archiveStartDecision(facts({ manifestExists: undefined })).start).toBe(false);
   });
 
+  it('never starts while the archive container is missing or could not be asked about, whatever the manifest says', () => {
+    // "No manifest" in a container that is not there is not "not archived yet".
+    expect(archiveStartDecision(facts({ containerExists: false, manifestExists: false }))).toMatchObject({
+      start: false,
+      blockers: ['archive-container-missing'],
+    });
+    for (const containerExists of [null, undefined, 'yes', 1]) {
+      expect(archiveStartDecision(facts({ containerExists, manifestExists: false }))).toMatchObject({
+        start: false,
+        blockers: ['archive-not-readable'],
+      });
+    }
+  });
+
   it('lists every blocker at once', () => {
-    const decision = archiveStartDecision({ env: {}, now: new Date('2027-01-15T00:00:00Z'), manifestExists: true, backupRunId: null });
+    const decision = archiveStartDecision({ env: {}, now: new Date('2027-01-15T00:00:00Z'), containerExists: true, manifestExists: true, backupRunId: null });
     expect(decision.blockers).toEqual(['switch-off', 'before-1-february', 'already-archived', 'no-backup']);
   });
 });
@@ -175,13 +222,13 @@ describe('a dry run, end to end', () => {
       { id: 'v3', contentId: 'gone' },
     ],
     developer_events: [
-      { id: 'c1', docType: 'cfs-call' },
-      { id: 'p1', docType: 'cfs-submission', speakerName: 'Example Speaker', speakerEmail: 'speaker@example.com' },
+      { id: 'c1', docType: 'cfs-call', organizerName: 'Example Organizer' },
+      { id: 'p1', docType: 'cfs-submission', speakerName: 'Example Speaker', speakerEmail: 'speaker@example.com', 'made-up-odd-field': 1 },
     ],
     admin_config: [{ id: 'reminders' }, { id: 'developer_api_key:k1', keyHash: 'made-up' }, { id: 'health_pulse' }, { id: 'added_later' }],
     tool_workspaces: [
-      { id: 't1', visitorId: 'made-up-visitor', notes: 'typed by someone', _ts: 1 },
-      { id: 't2', notes: 'more', 'a name with spaces': 1 },
+      { id: 't1', visitorId: 'made-up-visitor', notes: 'typed by someone', _ts: 1, settings: { providers: [{ apiKey: 'made-up-nested-key' }] } },
+      { id: 't2', notes: 'more', 'a name with spaces': 1, user_12345: { a: 1 }, 'jane.doe': 1, 'aaaaaaaa-0000-4000-8000-000000000001': 1 },
       'this line is not JSON',
     ],
     admins: [{ id: 'made-up-admin' }],
@@ -231,7 +278,9 @@ describe('a dry run, end to end', () => {
     expect(of('blogs')).toMatchObject({ read: 2, kept: 2, changed: 0, leftOut: 0, matchesBackup: true });
     expect(of('content')).toMatchObject({ read: 3, kept: 2, leftOut: 1, leftOutBy: { promise: 1 } });
     expect(of('content_versions')).toMatchObject({ read: 3, kept: 1, leftOut: 2, leftOutBy: { promise: 1, orphan: 1 } });
-    expect(of('developer_events')).toMatchObject({ read: 2, kept: 2, changed: 1, removed: { speakerName: 1, speakerEmail: 1 } });
+    expect(of('developer_events')).toMatchObject({ read: 2, kept: 2, changed: 2 });
+    // A removed field is named only when this repository wrote the name; any other is "(other fields)".
+    expect(of('developer_events').removed).toEqual({ organizerName: 1, speakerName: 1, speakerEmail: 1, '(other fields)': 1 });
     expect(of('admin_config')).toMatchObject({
       read: 4,
       kept: 1,
@@ -245,29 +294,84 @@ describe('a dry run, end to end', () => {
       kept: 0,
       leftOut: 2,
       unreadable: 1,
-      otherNames: 1,
+      // Two names are in both records. The other six uses are names only one
+      // record has, or names shaped like an id or typed text: counted, not printed.
+      otherNames: 6,
       fieldNamesTruncated: false,
       fieldNames: [
         { name: 'id', records: 2 },
         { name: 'notes', records: 2 },
-        { name: 'visitorId', records: 1 },
       ],
+      sensitive: { records: 1, keptRecords: 0, names: [{ name: 'apiKey', records: 1 }], namesNotShown: 0, cutShort: 0 },
     });
+    // Every container that was read carries field names and the count, not only the unclassified ones.
+    for (const part of report.containers) {
+      expect(Array.isArray(part.fieldNames), part.container).toBe(true);
+      expect(part.sensitive, part.container).toMatchObject({ records: expect.any(Number), keptRecords: expect.any(Number) });
+    }
+    expect(of('blogs').fieldNames).toEqual([{ name: 'id', records: 2 }]);
+    expect(of('admin_config').sensitive).toMatchObject({ records: 1, keptRecords: 0, names: [{ name: 'keyHash', records: 1 }] });
+    expect(of('developer_events').sensitive).toMatchObject({ records: 1, keptRecords: 0, names: [{ name: 'speakerEmail', records: 1 }] });
     expect(report.leftOutWhole).toEqual([{ container: 'admins', reason: 'access-list', backupDocs: 1 }]);
     expect(report.notInBackup.map((c) => c.container)).toContain('jobs');
-    expect(report.totals).toMatchObject({ containersRead: 6, read: 17, kept: 8, changed: 1, leftOut: 8, unreadable: 1, mismatched: 0 });
+    expect(report.totals).toMatchObject({ containersRead: 6, read: 17, kept: 8, changed: 2, leftOut: 8, unreadable: 1, mismatched: 0, sensitiveRecords: 3, sensitiveKeptRecords: 0 });
     expect(report.sourceBackup).toEqual({ mode: 'full', runId: SUNDAY });
   });
 
-  it('carries field names only for unclassified containers, and never a value', async () => {
+  it('never stores a value, an id, or a field name that is shaped like one', async () => {
     const blobs = memoryBlobs(backupSeed(containers));
     await runAll(blobs);
-    const { report } = await readLatestReport({ blobs });
-    expect(report.containers.filter((c) => c.fieldNames).map((c) => c.container)).toEqual(['tool_workspaces']);
     const everything = JSON.stringify([...blobs.files].filter(([name]) => name.startsWith('state/')));
-    for (const value of ['made-up-visitor', 'typed by someone', 'Example Speaker', 'speaker@example.com', 'a name with spaces', 'made-up-admin', 'b1', 'developer_api_key', 'made-up-oid']) {
+    for (const value of [
+      'made-up-visitor',
+      'typed by someone',
+      'Example Speaker',
+      'Example Organizer',
+      'speaker@example.com',
+      'a name with spaces',
+      'made-up-admin',
+      'b1',
+      'developer_api_key',
+      'made-up-oid',
+      'made-up-nested-key',
+      // Field names that are ids, an address-like name, and a name only one record has.
+      'user_12345',
+      'jane.doe',
+      'aaaaaaaa',
+      'visitorId',
+      'made-up-odd-field',
+    ]) {
       expect(everything, value).not.toContain(value);
     }
+  });
+
+  it('prints no field name at all for a container with one record: it only counts', async () => {
+    const blobs = memoryBlobs(backupSeed({ config_settings: [{ id: 'only', provider: 'x', 'made-up-visitor-key': 1 }] }));
+    await runAll(blobs);
+    const { report } = await readLatestReport({ blobs });
+    expect(report.containers[0]).toMatchObject({ read: 1, fieldNames: [], otherNames: 3 });
+  });
+
+  it('prints a name only when at least 1 record in 100 carries it', async () => {
+    const docs = Array.from({ length: 300 }, (_, i) => ({ id: `r${i}`, ...(i < 3 ? { commonEnough: 1 } : {}), ...(i < 2 ? { tooRare: 1 } : {}) }));
+    const blobs = memoryBlobs(backupSeed({ config_settings: docs }));
+    await runAll(blobs);
+    const { report } = await readLatestReport({ blobs });
+    expect(report.containers[0].fieldNames).toEqual([
+      { name: 'id', records: 300 },
+      { name: 'commonEnough', records: 3 },
+    ]);
+    expect(report.containers[0].otherNames).toBe(2);
+  });
+
+  it('a record shaped as a list keyed by visitor id puts no id in the report', async () => {
+    const byVisitor = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`visitor_${10000 + i}`, { note: 'typed' }]));
+    const blobs = memoryBlobs(backupSeed({ tool_exports: [{ id: 'a', ...byVisitor(50) }, { id: 'b', ...byVisitor(50) }] }));
+    await runAll(blobs);
+    const { report } = await readLatestReport({ blobs });
+    expect(report.containers[0].fieldNames).toEqual([{ name: 'id', records: 2 }]);
+    expect(report.containers[0].otherNames).toBe(100);
+    expect(JSON.stringify([...blobs.files].filter(([name]) => name.startsWith('state/')))).not.toContain('visitor_1');
   });
 
   it('writes nothing to the archive and changes no backup file', async () => {
@@ -281,7 +385,7 @@ describe('a dry run, end to end', () => {
 
   it('stops listing field names past the limit and says so', async () => {
     const wide = Object.fromEntries(Array.from({ length: MAX_FIELD_NAMES + 5 }, (_, i) => [`field${i}`, i]));
-    const blobs = memoryBlobs(backupSeed({ config_settings: [wide] }));
+    const blobs = memoryBlobs(backupSeed({ config_settings: [wide, wide] }));
     await runAll(blobs);
     const { report } = await readLatestReport({ blobs });
     const part = report.containers[0];
@@ -329,7 +433,83 @@ describe('a dry run, end to end', () => {
     const worker = createReportWorker({ blobs });
     const result = await worker.readContainer(parseReportPayload(jobs[0].payload));
     expect(result.reportWritten).toBe(false);
-    expect(await readLatestReport({ blobs })).toMatchObject({ complete: false, done: 1, expected: 6, sourceRun: SUNDAY });
+    const young = await readLatestReport({ blobs, now: new Date('2027-02-08T04:10:00Z') });
+    expect(young).toMatchObject({ complete: false, done: 1, expected: 6, sourceRun: SUNDAY, stalled: false });
+    expect(young.missing).toHaveLength(5);
+    expect(young.missing).not.toContain(jobs[0].payload.container);
+
+    // A second press while that run is young starts nothing and writes nothing.
+    const writesBefore = blobs.writes.length;
+    const upsertDoc = vi.fn();
+    const enqueue = vi.fn();
+    const again = await createReportScheduler({ store: { upsertDoc }, blobs, enqueue, now: () => new Date('2027-02-08T04:29:00Z') }).start();
+    expect(again).toEqual({ started: false, reason: 'in-progress', reportId: '20270208T0400Z' });
+    expect(upsertDoc).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(blobs.writes.length).toBe(writesBefore);
+
+    // Past the limit the run "did not finish": it says which containers are missing, and a new one may start.
+    const late = new Date(Date.parse('2027-02-08T04:00:00Z') + RUN_STALE_MINUTES * 60 * 1000);
+    expect(await readLatestReport({ blobs, now: late })).toMatchObject({ complete: false, stalled: true, done: 1 });
+    const restart = await createReportScheduler({ store: { upsertDoc }, blobs, enqueue, now: () => late }).start();
+    expect(restart).toMatchObject({ started: true, reportId: '20270208T0430Z', queued: 6 });
+    expect((await readLatestReport({ blobs, now: late })).reportId).toBe('20270208T0430Z');
+  });
+
+  it('a start that breaks while the job rows are written leaves the report before it as the newest', async () => {
+    const blobs = memoryBlobs(backupSeed(containers));
+    await runAll(blobs, new Date('2027-02-08T04:00:30Z'));
+    let rows = 0;
+    const broken = createReportScheduler({
+      store: {
+        upsertDoc: async () => {
+          rows += 1;
+          if (rows === 3) throw new Error('the database refused');
+        },
+      },
+      blobs,
+      enqueue: vi.fn(),
+      now: () => new Date('2027-02-08T06:00:00Z'),
+    });
+    await expect(broken.start()).rejects.toThrow('the database refused');
+    // Nothing reads as "running": the card still shows the finished report.
+    expect(await readLatestReport({ blobs, now: new Date('2027-02-08T06:00:30Z') })).toMatchObject({
+      reportId: '20270208T0400Z',
+      complete: true,
+    });
+    // And the button works again a minute later.
+    const retry = await createReportScheduler({ store: { upsertDoc: vi.fn() }, blobs, enqueue: vi.fn(), now: () => new Date('2027-02-08T06:01:00Z') }).start();
+    expect(retry).toMatchObject({ started: true, reportId: '20270208T0601Z' });
+  });
+
+  it('deletes reports older than the keep time when a new one starts, and nothing else', async () => {
+    const blobs = memoryBlobs(backupSeed(containers));
+    const old = reportNames('20261101T0000Z');
+    const recent = reportNames('20270201T0000Z');
+    blobs.files.set(old.run, { containers: [] });
+    blobs.files.set(old.report, { reportId: '20261101T0000Z' });
+    blobs.files.set(reportNames('20261101T0000Z', 'blogs').part, {});
+    blobs.files.set(recent.report, { reportId: '20270201T0000Z' });
+    blobs.files.set('state/archive-report/not-a-report/x.json', {});
+    blobs.files.set('state/continuation/blogs.json', { token: 'made-up' });
+    const at = new Date('2027-02-08T04:00:30Z');
+    expect((at.getTime() - reportIdTime('20261101T0000Z')) / 86400000).toBeGreaterThan(REPORT_KEEP_DAYS);
+    const { started } = await runAll(blobs, at);
+    expect(started.removedReports).toBe(1);
+    expect(blobs.deleted.sort()).toEqual([old.report, old.run, reportNames('20261101T0000Z', 'blogs').part].sort());
+    for (const kept of [recent.report, 'state/archive-report/not-a-report/x.json', 'state/continuation/blogs.json', `full/${SUNDAY}/manifest.json`, reportNames('x').latest]) {
+      expect(blobs.files.has(kept), kept).toBe(true);
+    }
+  });
+
+  it('a failed clean-up of old reports does not fail the dry run that started', async () => {
+    const blobs = memoryBlobs(backupSeed(containers));
+    blobs.files.set(reportNames('20261101T0000Z').run, {});
+    blobs.deleteReportFile = async () => {
+      throw new Error('refused');
+    };
+    const { started } = await runAll(blobs);
+    expect(started).toMatchObject({ started: true, removedReports: 0 });
   });
 
   it('says so when a container’s file is not in the backup, and stops when the job is cancelled', async () => {
@@ -367,7 +547,7 @@ describe('the two admin routes', () => {
       guard: allow,
       store: { upsertDoc: async (container, doc) => audit.push({ container, doc }) },
       blobs,
-      archiveBlobs: { readJson: async () => null },
+      archiveBlobs: archiveStore(),
       env: {},
       now: () => at,
       uuid: () => 'made-up-uuid',
@@ -398,28 +578,50 @@ describe('the two admin routes', () => {
       switchOn: false,
       jobBuilt: false,
       year: 2026,
+      archiveContainerExists: true,
       archived: false,
       wouldStart: false,
       blockers: ['switch-off'],
       latestBackup: { runId: SUNDAY, containers: 1 },
-      classification: { asIs: 50, leftOut: 18, unclassified: expect.arrayContaining(['tool_exports']) },
+      classification: { asIs: 33, leftOut: 19, unclassified: expect.arrayContaining(['tool_exports', 'site_settings']) },
       latest: null,
+      reports: { container: 'cosmos-export-state', prefix: 'state/archive-report/', keepDays: REPORT_KEEP_DAYS, staleMinutes: RUN_STALE_MINUTES },
     });
+    expect(body(response).classification.unclassified).toHaveLength(21);
+    expect(body(response).classification.changed.find((c) => c.container === 'mcp_servers').keeps).toContain('url');
   });
 
-  it('GET: an archive container that cannot be read is "not known", never "not archived"', async () => {
-    const warn = vi.fn();
-    const { handlers } = make({
-      env: { CONTENT_ARCHIVE_ENABLED: 'true' },
-      archiveBlobs: { readJson: async () => Promise.reject(Object.assign(new Error('secret words'), { code: 'AuthorizationFailure' })) },
+  it('GET: a container that does not exist yet is "not known", never "not archived", with every other condition met', async () => {
+    // The realistic case: storage answers "not found" for the manifest, exactly as it would for a year with no archive.
+    const missing = archiveStore({ exists: false });
+    expect(await missing.readJson('2026/manifest.json')).toBeNull();
+    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs: missing });
+    expect(body(await handlers.getStatus({}, {}))).toMatchObject({
+      switchOn: true,
+      archiveContainerExists: false,
+      archived: null,
+      wouldStart: false,
+      blockers: ['archive-container-missing'],
     });
-    const answer = body(await handlers.getStatus({}, { warn }));
-    expect(answer).toMatchObject({ switchOn: true, archived: null, wouldStart: false, blockers: ['archive-not-readable'] });
-    expect(warn.mock.calls.flat().join(' ')).not.toContain('secret words');
+    // The same facts with the container there: the year really is not archived, and only then could a run start.
+    const there = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs: archiveStore({ exists: true }) });
+    expect(body(await there.handlers.getStatus({}, {}))).toMatchObject({ archiveContainerExists: true, archived: false, wouldStart: true, blockers: [] });
+  });
+
+  it('GET: an archive container that cannot be asked about or read is "not known", and the far end\'s words are not logged', async () => {
+    const refused = Object.assign(new Error('secret words'), { code: 'AuthorizationFailure' });
+    for (const archiveBlobs of [archiveStore({ failExists: refused }), archiveStore({ failRead: refused })]) {
+      const warn = vi.fn();
+      const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs });
+      const answer = body(await handlers.getStatus({}, { warn }));
+      expect(answer).toMatchObject({ switchOn: true, archived: null, wouldStart: false, blockers: ['archive-not-readable'] });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('secret words');
+    }
   });
 
   it('GET: a year that has its manifest is archived', async () => {
-    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs: { readJson: async (name) => (name === '2026/manifest.json' ? {} : null) } });
+    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs: archiveStore({ manifests: ['2026/manifest.json'] }) });
     expect(body(await handlers.getStatus({}, {}))).toMatchObject({ archived: true, blockers: ['already-archived'] });
   });
 
@@ -443,11 +645,12 @@ describe('the two admin routes', () => {
     expect(body(noBackup).error).toBe('no_backup');
     expect(none.audit).toEqual([]);
 
+    // A second press while the first run is still reading: refused with a sentence the card shows.
     const twice = make();
     await twice.handlers.startDryRun({}, {}, { enqueue: vi.fn() });
     const second = await twice.handlers.startDryRun({}, {}, { enqueue: vi.fn() });
     expect(second.status).toBe(409);
-    expect(body(second).error).toBe('already_started');
+    expect(body(second)).toMatchObject({ ok: false, error: 'in_progress', message: expect.stringContaining('still reading') });
     expect(twice.audit.filter((row) => row.container === 'admin_audit_logs')).toHaveLength(1);
 
     expect((await make().handlers.startDryRun({}, { error: vi.fn() }, {})).status).toBe(500);
@@ -463,4 +666,101 @@ describe('the two admin routes', () => {
 
 it('reportIdFor is the UTC minute', () => {
   expect(reportIdFor(new Date('2027-02-08T04:00:59.999Z'))).toBe('20270208T0400Z');
+});
+
+describe('which field names may be printed', () => {
+  it('a plain name is a short programmer’s name: no id, no address, no typed text', () => {
+    for (const name of ['id', 'title', 'createdAt', 'speaker_name', 'content-type', 'v2Notes', 'x'.repeat(MAX_NAME_LENGTH)]) {
+      expect(isPlainName(name), name).toBe(true);
+    }
+    for (const name of [
+      'user_12345',
+      'visitor2026',
+      'jane.doe',
+      'jane@example.com',
+      'a name with spaces',
+      'aaaaaaaa-0000-4000-8000-000000000001',
+      'abcdef0123456789abcdef',
+      'deadbeefcafe',
+      '_private',
+      '9lives',
+      '',
+      'x'.repeat(MAX_NAME_LENGTH + 1),
+      null,
+      7,
+    ]) {
+      expect(isPlainName(name), String(name)).toBe(false);
+    }
+  });
+
+  it('a name must be in at least 2 records, and at least 1 in 100', () => {
+    expect([0, 1, 2, 100, 200, 201, 5000].map(nameThreshold)).toEqual([2, 2, 2, 2, 2, 3, 50]);
+    const tally = new Map([['id', 5000], ['rare', 49], ['enough', 50]]);
+    expect(listableNames(tally, 5000).names.map((n) => n.name)).toEqual(['id', 'enough']);
+    expect(listableNames(new Map([['only', 1]]), 1)).toEqual({ names: [], truncated: false });
+    const many = new Map(Array.from({ length: 7 }, (_, i) => [`n${i}`, 10 - i]));
+    expect(listableNames(many, 10, 3)).toEqual({ names: [{ name: 'n0', records: 10 }, { name: 'n1', records: 9 }, { name: 'n2', records: 8 }], truncated: true });
+  });
+});
+
+describe('sensitiveNamesIn: names that look like a secret, at any depth, and never a value', () => {
+  it('finds a nested name inside objects and lists', () => {
+    const found = sensitiveNamesIn({ id: 'x', a: { b: [{ c: { refreshToken: 'made-up-value-1' } }] }, list: [{ email: 'made-up-value-2' }], plain: 'made-up-value-3' });
+    expect([...found.names].sort()).toEqual(['email', 'refreshToken']);
+    expect(found.cutShort).toBe(false);
+    expect(JSON.stringify([...found.names])).not.toContain('made-up-value');
+  });
+
+  it('reads names, not values: a value that looks like a secret is not a finding', () => {
+    expect(sensitiveNamesIn({ note: 'my password is token secret' }).names.size).toBe(0);
+    expect(sensitiveNamesIn('token').names.size).toBe(0);
+    expect(sensitiveNamesIn(null).names.size).toBe(0);
+  });
+
+  it('stops at its limits on a very deep or very large record, and says so', () => {
+    let deep = { token: 'made-up' };
+    for (let i = 0; i < 50; i += 1) deep = { next: deep };
+    expect(sensitiveNamesIn(deep)).toMatchObject({ cutShort: true });
+    const wide = { items: Array.from({ length: 20000 }, () => ({ a: 1 })) };
+    expect(sensitiveNamesIn(wide).cutShort).toBe(true);
+  });
+
+  it('the report counts a record once however many such names it has, and counts an id-shaped name without printing it', async () => {
+    const docs = [
+      { id: 'a', token: 'made-up-1', nested: { password: 'made-up-2' } },
+      { id: 'b', token_12345678: 'made-up-3' },
+      { id: 'c' },
+    ];
+    const blobs = memoryBlobs(backupSeed({ config_providers: docs }));
+    const jobs = [];
+    const at = new Date('2027-02-08T04:00:30Z');
+    await createReportScheduler({ store: { upsertDoc: async (_c, doc) => jobs.push(doc) }, blobs, enqueue: () => {}, now: () => at }).start();
+    await createReportWorker({ blobs, now: () => at }).readContainer(parseReportPayload(jobs[0].payload));
+    const { report } = await readLatestReport({ blobs, now: at });
+    expect(report.containers[0].sensitive).toEqual({
+      records: 2,
+      keptRecords: 0,
+      names: [
+        { name: 'password', records: 1 },
+        { name: 'token', records: 1 },
+      ],
+      namesNotShown: 1,
+      cutShort: 0,
+    });
+    expect(report.totals.sensitiveRecords).toBe(2);
+    const stored = JSON.stringify([...blobs.files].filter(([name]) => name.startsWith('state/')));
+    expect(stored).not.toContain('made-up-');
+    expect(stored).not.toContain('token_12345678');
+  });
+
+  it('counts a kept record that still carries such a name, so the owner sees it before anything is archived', async () => {
+    const blobs = memoryBlobs(backupSeed({ blogs: [{ id: 'b1', authorEmail: 'made-up@example.com' }, { id: 'b2' }] }));
+    const jobs = [];
+    const at = new Date('2027-02-08T04:00:30Z');
+    await createReportScheduler({ store: { upsertDoc: async (_c, doc) => jobs.push(doc) }, blobs, enqueue: () => {}, now: () => at }).start();
+    await createReportWorker({ blobs, now: () => at }).readContainer(parseReportPayload(jobs[0].payload));
+    const { report } = await readLatestReport({ blobs, now: at });
+    expect(report.containers[0].sensitive).toMatchObject({ records: 1, keptRecords: 1, names: [{ name: 'authorEmail', records: 1 }] });
+    expect(report.totals.sensitiveKeptRecords).toBe(1);
+  });
 });

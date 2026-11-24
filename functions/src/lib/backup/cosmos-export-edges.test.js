@@ -199,6 +199,40 @@ describe('createExportBlobStore', () => {
     expect(storage.listBlobs).toHaveBeenCalledWith('cosmos-export', 'full/2026-09-13/');
   });
 
+  it('containerExists asks about the store’s own container, and a failure to ask is a throw, never false', async () => {
+    const storage = fakeStorage();
+    storage.containerExists = vi.fn(async () => false);
+    const store = createExportBlobStore({ container: 'content-archive', stateContainer: 'content-archive', storage });
+    expect(await store.containerExists()).toBe(false);
+    expect(storage.containerExists).toHaveBeenCalledWith('content-archive');
+    // The case the status route must not confuse: the manifest reads as "not there" either way.
+    expect(await store.readJson('2026/manifest.json')).toBeNull();
+    storage.containerExists = vi.fn(async () => {
+      throw Object.assign(new Error('AuthorizationFailure'), { statusCode: 403 });
+    });
+    await expect(store.containerExists()).rejects.toThrow(/AuthorizationFailure/);
+  });
+
+  it('deleteReportFile deletes only a file of an archive dry-run report, from the state container', async () => {
+    const storage = fakeStorage();
+    storage.deleteBlob = vi.fn(async () => {});
+    const store = createExportBlobStore({ storage });
+    await store.deleteReportFile('state/archive-report/20261101T0000Z/report.json');
+    expect(storage.deleteBlob).toHaveBeenCalledTimes(1);
+    expect(storage.deleteBlob).toHaveBeenCalledWith('cosmos-export-state', 'state/archive-report/20261101T0000Z/report.json');
+    for (const name of [
+      'full/2026-09-13/content.ndjson.gz',
+      'state/content.json',
+      'state/archive-report/../content.json',
+      'state/archive-reports/x.json',
+      '',
+      undefined,
+    ]) {
+      await expect(store.deleteReportFile(name), String(name)).rejects.toThrow(/only a file of an archive dry-run report/);
+    }
+    expect(storage.deleteBlob).toHaveBeenCalledTimes(1);
+  });
+
   it('routes state/ blobs to cosmos-export-state by default while run blobs stay in cosmos-export (PLAT-8, #968)', async () => {
     const storage = fakeStorage();
     const store = createExportBlobStore({ storage });

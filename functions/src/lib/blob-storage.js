@@ -411,6 +411,20 @@ export async function deleteBlob(containerName, blobName) {
 }
 
 /**
+ * Does this container exist? `true` or `false`; a failure to ask (no network,
+ * no permission) is a throw, never a `false`, so a caller cannot mistake "I
+ * could not tell" for "it is not there". The yearly archive's status route
+ * uses it to tell a container that was never created from a year with no
+ * archive in it (backup/archive-handlers.js).
+ *
+ * @param {string} containerName
+ * @returns {Promise<boolean>}
+ */
+export async function containerExists(containerName) {
+  return (await getContainerClient(containerName).exists()) === true;
+}
+
+/**
  * Get the direct URL of a blob.
  *
  * Whether that URL is anonymously readable depends on the container's access
