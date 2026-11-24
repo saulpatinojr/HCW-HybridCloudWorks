@@ -339,7 +339,9 @@ class Coder:
         except urllib.error.HTTPError as error:
             status, raw = error.code, b""
             error.close()
-        except (urllib.error.URLError, OSError) as error:
+        # OSError covers urllib's URLError too (it is a kind of OSError): no
+        # connection, a refused port, a timeout.
+        except OSError as error:
             reason = getattr(error, "reason", error)
             raise Failure(f"Coder did not answer at {self.url} ({type(reason).__name__})") from None
         if not 200 <= status < 300 or not raw:

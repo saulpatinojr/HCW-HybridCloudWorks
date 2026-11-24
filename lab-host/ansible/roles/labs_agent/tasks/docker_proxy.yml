@@ -136,7 +136,7 @@
 # failure above, caught in this role rather than at the privilege check at
 # the end of the play.
 - name: Refuse a proxy that cannot reach the daemon
-  # checkov:skip=CKV2_ANSIBLE_1:a request over the Docker proxy's Unix socket, not the network; the host in the URL is never resolved. docs/security/scanner-triage.md#checkov
+  # checkov:skip=CKV2_ANSIBLE_1:the Docker proxy's Unix socket, not the network; the URL's host is never resolved. docs/security/scanner-triage.md#checkov
   ansible.builtin.uri:
     url: http://localhost/_ping
     unix_socket: "{{ labs_agent_docker_proxy_socket }}"

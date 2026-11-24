@@ -408,19 +408,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
         unscoped = SCOPE_ALL in key["scopes"]
         owner = is_owner(caller)
         mine = target["id"] == caller["id"]
+        manages = unscoped and (mine or owner)
         rest = parts[4:]
         if rest == [] and method == "GET":
-            return self.send(200, target) if unscoped and (mine or owner) else self.send(403, {})
-        if rest == ["keys", "tokens"]:
-            if not (unscoped and (mine or owner)):
-                return self.send(403, {"message": FORBIDDEN})
-            if method == "GET":
-                return self.list_tokens(target)
-            if method == "POST":
-                return self.create_token(body, caller, target)
+            return self.send(200, target) if manages else self.send(403, {})
+        # Any other method on .../keys/tokens, once allowed, falls through to
+        # the single-key route below, which finds no key named "tokens" (404).
+        if rest == ["keys", "tokens"] and (not manages or method in ("GET", "POST")):
+            return self.serve_tokens(method, body, caller, target, manages)
         if len(rest) == 2 and rest[0] == "keys":
             return self.serve_key(method, rest[1], key, target, mine, owner)
         return self.send(404, {"message": ROUTE_NOT_FOUND})
+
+    def serve_tokens(self, method, body, caller, target, allowed):
+        """GET or POST .../keys/tokens, for a caller allowed to manage the user's keys."""
+        if not allowed:
+            return self.send(403, {"message": FORBIDDEN})
+        if method == "GET":
+            return self.list_tokens(target)
+        return self.create_token(body, caller, target)
 
     def list_tokens(self, target):
         """GET .../keys/tokens: the user's unexpired keys."""
