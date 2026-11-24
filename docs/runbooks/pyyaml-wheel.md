@@ -105,49 +105,28 @@ Two things to know:
 
 ## The two releases it left behind
 
-The workflow published two releases of this repository. They are not
-releases of the site; each holds one wheel and its attestation.
+The workflow published two releases of this repository, `pyyaml-6.0.3-cp315`
+(for CPython 3.15) and `pyyaml-6.0.3-cp314` (for CPython 3.14). They were
+not releases of the site; each held one wheel and its attestation.
 
-| Release | Built for | Still used by |
-| --- | --- | --- |
-| [`pyyaml-6.0.3-cp315`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/tag/pyyaml-6.0.3-cp315) | CPython 3.15 | A lab host that has not yet run `bootstrap.sh` from a commit after #1778, or one held back to an older commit |
-| [`pyyaml-6.0.3-cp314`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/releases/tag/pyyaml-6.0.3-cp314) | CPython 3.14 | Only a host held back to a commit from before the move to 3.15 |
+**Both were deleted by the owner on 2026-11-23, with their tags.** That was
+done after the lab host ran `bootstrap.sh` from `main` and this check
+printed `6.0.4 True`, which showed the host was on PyPI's wheel:
 
-A session does not delete them. They cost nothing and can stay for good.
-Deleting them is the owner's choice, and it is safe once both of these are
-true:
+```powershell
+ssh hcw-lab "/opt/uv/ansible-core/bin/python -c 'import yaml; print(yaml.__version__, yaml.__with_libyaml__)'"
+```
 
-1. The lab host has run `bootstrap.sh` from `main` after #1778 merged. This
-   is PowerShell, on the owner's workstation:
+Two things follow from the deletion, and neither can be undone:
 
-   ```powershell
-   ssh hcw-lab "sudo -n /opt/hcw-src/lab-host/bootstrap.sh"
-   ```
+- A lab host held back to a commit from before #1778 (the `HCW_REPO_REF`
+  setting in the
+  [lab host README](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/README.md))
+  can no longer build its ansible-core environment: `bootstrap.sh` at such
+  a commit downloads the wheel from the release and stops with
+  `refusing to run: could not download`. Do not hold the host back that far.
+- The repository now has no GitHub Releases at all. What that means for
+  the Signed-Releases check of OpenSSF Scorecard (a security grader) is
+  recorded in the decision record on signed releases, proposed in
+  [#1799](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1799).
 
-   The run should end with `failed=0`. Then this line should print
-   `6.0.4 True`:
-
-   ```powershell
-   ssh hcw-lab "/opt/uv/ansible-core/bin/python -c 'import yaml; print(yaml.__version__, yaml.__with_libyaml__)'"
-   ```
-
-   If it prints `6.0.3 True`, the host is still on the old wheel: read the
-   end of the `bootstrap.sh` output for the reason before deleting anything.
-
-2. Nobody plans to hold the host back to a commit from before #1778 (the
-   `HCW_REPO_REF` setting in the
-   [lab host README](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/lab-host/README.md)).
-   A host held back to such a commit downloads its wheel from the release
-   whenever it has to build its ansible-core environment again, and stops
-   with `refusing to run: could not download` if the release is gone.
-
-**Deleting a release cannot be undone.** A wheel built again from the same
-source would be a different file with a different SHA256, so the old
-commits' pins could never be met again. To delete one, open its link in the
-table above, choose the bin icon at the top right of the release, and
-confirm with **Delete this release**. GitHub's steps are on
-[Managing releases in a repository](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository#deleting-a-release).
-Deleting a release leaves its tag (the name on the commit) behind; the tag
-is listed on the
-[tags page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/tags) and
-can be deleted there, or left: a tag with no release holds no file.
