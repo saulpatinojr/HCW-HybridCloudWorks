@@ -394,7 +394,8 @@ export const SERVICE_GROUPS = Object.freeze([
   {
     id: 'platform',
     title: 'Site platform',
-    blurb: 'Values the site runs on. Each one says what changing it breaks.',
+    blurb:
+      'What the site itself runs on: the values it reads, and the sign-ins that reach its Azure estate. Each one says what changing it breaks.',
   },
   {
     id: 'labs',
@@ -973,6 +974,42 @@ export const SERVICES = Object.freeze([
     costOnLedger: true,
     securityNote:
       'Read-only, this repository only, and held only by GitHub. This site cannot read or write it.',
+  },
+
+  // ── Site platform ────────────────────────────────────────────────────────
+  {
+    // Listed, not held (2026-11-24): two sign-ins to the Azure estate that
+    // showed only on the Credentials tab. No Microsoft card fitted them: the
+    // Foundry card is one language model and says it has no key, Azure AI
+    // Speech is a spare narrator, Microsoft Learn is a public profile. So the
+    // platform itself gets a card, and later Azure sign-ins join it as boxes.
+    id: 'azure',
+    group: 'platform',
+    icon: Cloud,
+    name: 'Microsoft Azure and Entra ID',
+    description:
+      'The cloud the site runs in and the directory that holds its sign-ins. This card lists the sign-ins to it that this site does not hold: the read-only access given to Muse, and the one Terraform runs with.',
+    // The runbook for the one stored secret here: what it reads, how to
+    // rotate it and how to take it away.
+    url: 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/muse-azure-reader.md',
+    test: null,
+    untestedReason:
+      'The site holds neither sign-in, so it cannot test them. Each box below says how to check its own.',
+    secrets: [],
+    keyGroups: [
+      { title: 'Muse reader secret (read-only access for Muse)', panel: 'museReader' },
+      { title: 'Terraform run identity (no stored secret)', panel: 'terraformRunIdentity' },
+    ],
+    capabilities: [
+      'Let Muse read logs, alert rules, costs and resource health',
+      'Let Terraform build the Azure resources and manage Muse’s app registration',
+    ],
+    usedIn: ['Muse (Koda’s alert investigations)', 'HCP Terraform (workspace hcw-azure)'],
+    dataDirection:
+      'Outbound to Muse: what it reads in Azure (logs can include visitor IP addresses) leaves the estate. Nothing comes to this site.',
+    cost: 'Nothing for either sign-in: a directory entry and Reader grants are not billed. The Azure resources themselves are on the Cost page.',
+    securityNote:
+      'Muse’s secret: built-in Reader on the application, management and connectivity subscriptions; no change of any kind, and no Key Vault secret values, stored files or database documents. Terraform’s identity: the Azure resources it manages, plus the Microsoft Graph permission Application.ReadWrite.OwnedBy, which creates app registrations and changes only the ones it owns. This site can read or write neither.',
   },
 
   // ── Hybrid Lab (ADR 0033) ────────────────────────────────────────────────

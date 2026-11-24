@@ -309,7 +309,7 @@ Both cloud handshakes in this estate are federated, and neither has a secret:
 
 | Handshake | Identity | Trust anchor | Created by |
 | --- | --- | --- | --- |
-| HCP Terraform → Azure | `id-plat-terraform-prod-cus-01` | `TFC_AZURE_PROVIDER_AUTH=true` plus federated credentials `tfc-plan` / `tfc-apply`, issuer `https://app.terraform.io` | `scripts/bootstrap-terraform-oidc.ps1`, once, outside Terraform state |
+| HCP Terraform → Azure | `id-plat-terraform-prod-cus-01` | `TFC_AZURE_PROVIDER_AUTH=true` plus federated credentials `tfc-plan` / `tfc-apply`, issuer `https://app.terraform.io` | `scripts/bootstrap-terraform-oidc.ps1`, once, outside Terraform state. Since 2026-11-23 the identity also holds one permission outside Azure resources: the Microsoft Graph application permission `Application.ReadWrite.OwnedBy` (create app registrations, and change or delete only the ones it owns), given by the owner by hand so Terraform can manage Muse's app registration ([runbook](../runbooks/muse-azure-reader.md), "Turn it on" step 1; [ADR 0043](../decisions/0043-muse-azure-reader.md)). It adds no secret: the sign-in is the same federated one |
 | GitHub Actions → Azure (backend deploy) | the `github_deploy` user-assigned identity | Federated credentials on issuer `https://token.actions.githubusercontent.com`, subject-pinned to the `production-backend` environment only, in both the name and immutable-ID forms — two credentials. That environment has required reviewers, so every sign-in waits for an approval. `deploy-functions.yml` alone signs in as it. Until [#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617) it was pinned to `production` instead and both deploys signed in as it, so the frontend deploy held the Function App and storage rights too; #1617's first pull request added the `production-backend` pair beside the `production` one, and its second moved the backend deploy there, moved the frontend to its own identity (next row) and removed the `production` pair and this identity's role on the site. The deploy-ref pair it also held was retired on 2026-10-06 (SEC-2) | `infra/oidc.tf` |
 | GitHub Actions → Azure (frontend deploy) | the `github_frontend_deploy` user-assigned identity ([#1617](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1617)) | The same issuer, pinned to the `production` environment, both forms — two credentials. *HCW Static Web App Deployer* on the one Static Web App and nothing else, so a frontend run, which no one approves since #1613, can read the site's deployment token and cannot reach the Function App or its storage. Client id `FRONTEND_DEPLOY_CLIENT_ID`; `deploy-azure-frontend.yml` signs in as it since #1617, and it is the only identity that trusts `production` | `infra/oidc.tf` |
 | GitHub Copilot → Azure (read-only) | the `github_copilot_review` user-assigned identity | The same issuer, pinned to `…:environment:copilot` only, both forms — two credentials, no ref subject, so no branch-triggered workflow can assume it. Reader on the four workload groups and nothing else; the Azure MCP Server runs `--read-only` with fourteen hand-picked tools on top | `infra/oidc.tf` |
@@ -390,7 +390,14 @@ acceptable is what the secret can do: built-in Reader, no data action, no
 `listKeys`, no Key Vault secret value. It still widens who can read the
 estate to whoever can read the `hcw-azure` state, and that is written down in
 the ADR as the accepted risk. The value is copied once into Muse's own vault
-and rotated on a 180-day reminder ([runbook](../runbooks/muse-azure-reader.md)).
+and rotated on a 180-day reminder; each secret works for 210 days, so the
+reminder comes 30 days before Muse would be locked out
+([runbook](../runbooks/muse-azure-reader.md)). The site holds no copy and has
+no way to read one, so the secret is not on Admin → Integrations → Keys; it is
+listed on the **Microsoft Azure and Entra ID** card on
+[Integrations → Services](https://hybridcloudworks.com/admin/integrations?tab=services&group=platform),
+which says where it is kept, what it costs (nothing), how to check and replace
+it and when it expires.
 The alternative the ADR records, if the owner later wants the value out of
 state, is Terraform keeping the app and its grants while the owner mints the
 secret with `az ad app credential reset`.

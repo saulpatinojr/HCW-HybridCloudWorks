@@ -110,6 +110,7 @@ describe('the configuration', () => {
   it('reads a status key as connected, not connected, or unknown', () => {
     expect(connectionOf('ok')).toBe('connected');
     expect(connectionOf('link-only')).toBe('connected');
+    expect(connectionOf('listed')).toBe('connected');
     expect(connectionOf('broken')).toBe('not-connected');
     expect(connectionOf('not-configured')).toBe('not-connected');
     expect(connectionOf('untested')).toBe('unknown');

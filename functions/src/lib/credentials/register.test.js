@@ -2,12 +2,16 @@
  * The register's shape, and the pin that keeps its Key Vault part and the
  * Keys tab's catalogue one list (#1026).
  */
+import { readFileSync } from 'node:fs';
+
 import { describe, it, expect } from 'vitest';
 
 import { SECRET_CATALOG } from '../secret-catalog.js';
 import { MAX_LEAD_DAYS } from '../reminders/settings.js';
 import {
   HAND_ROTATION_DAYS,
+  MUSE_READER_GRACE_DAYS,
+  MUSE_READER_ROTATION_DAYS,
   CLAUDE_CODE_OAUTH_TOKEN_DAYS,
   CREDENTIAL_REGISTER,
   CREDENTIAL_STORES,
@@ -164,6 +168,19 @@ describe('the issue’s list', () => {
     // The issuer's own expiry: a `claude setup-token` token lasts a year.
     expect(findCredential('gh-claude-code-oauth-token').lifetimeDays).toBe(CLAUDE_CODE_OAUTH_TOKEN_DAYS);
     expect(CLAUDE_CODE_OAUTH_TOKEN_DAYS).toBe(365);
+    // Muse's Azure secret: the reminder is due at 180 days and the secret
+    // itself works 30 more (infra/muse-reader.tf), so the number here is the
+    // rotation date, never the 210 days it works for.
+    expect(findCredential('tfc-azure-muse-reader-secret').lifetimeDays).toBe(MUSE_READER_ROTATION_DAYS);
+    expect(MUSE_READER_ROTATION_DAYS).toBe(180);
+    expect(MUSE_READER_GRACE_DAYS).toBe(30);
+    expect(findCredential('tfc-azure-muse-reader-secret').rotate).toContain(
+      `it stops working ${MUSE_READER_GRACE_DAYS} days after this reminder`
+    );
+    // Held to the Terraform, so the two numbers cannot drift apart.
+    const terraform = readFileSync(new URL('../../../../infra/muse-reader.tf', import.meta.url), 'utf8');
+    expect(terraform).toMatch(new RegExp(`muse_reader_secret_days\\s*=\\s*${MUSE_READER_ROTATION_DAYS}\\b`));
+    expect(terraform).toMatch(new RegExp(`muse_reader_secret_grace_days\\s*=\\s*${MUSE_READER_GRACE_DAYS}\\b`));
     // The owner's rule for the hand-only ones that never expire (2026-10-09).
     expect(HAND_ROTATION_DAYS).toBe(180);
     for (const id of [

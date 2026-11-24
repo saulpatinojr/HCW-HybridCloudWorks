@@ -182,6 +182,19 @@ export const SERVICE_STATUS = Object.freeze({
   pending: { rank: 2, label: 'Degraded', tone: 'pending', badge: SYSTEM_STATUS.degraded },
   untested: { rank: 3, label: 'Unknown', tone: null, badge: SYSTEM_STATUS.unknown },
   ok: { rank: 4, label: 'Healthy', tone: 'live', badge: SYSTEM_STATUS.healthy },
+  // A card whose sign-ins this site lists and does not hold (ListedCredential):
+  // there is nothing here to test, and it is not a public profile either.
+  listed: {
+    rank: 5,
+    label: 'Listed, not held',
+    tone: null,
+    badge: {
+      id: 'listed',
+      label: 'Listed, not held',
+      tone: 'muted',
+      help: 'Sign-ins this site lists and does not hold, so it cannot test them. Each box on the card says how to check its own.',
+    },
+  },
   'link-only': {
     rank: 5,
     label: 'Profile link',
@@ -225,7 +238,10 @@ export function serviceStatus(card, result) {
   if (states.includes('never')) return 'not-configured';
   if (states.includes('pending')) return 'pending';
   if (result?.ok === true) return 'ok';
-  if (!card.test) return states.length > 0 ? 'ok' : 'link-only';
+  if (!card.test) {
+    if (states.length > 0) return 'ok';
+    return (card.keyGroups ?? []).some((group) => group.panel) ? 'listed' : 'link-only';
+  }
   return 'untested';
 }
 
