@@ -536,6 +536,93 @@ describe('words', () => {
       );
     });
 
+    it('lists a flagged container the owner decided to keep under its own heading, not in red, with its names still shown', async () => {
+      await show([
+        part(
+          'blogs',
+          {
+            flagged: 1,
+            remaining: [
+              remaining({
+                path: 'email',
+                name: 'email',
+                records: 242,
+                kinds: { 'short-text': 242 },
+              }),
+            ],
+          },
+          { ownerAccepted: '2026-11-24' }
+        ),
+        part('newsletters', {
+          flagged: 1,
+          remaining: [remaining({ path: 'authorEmail', name: 'authorEmail' })],
+        }),
+      ]);
+      // Only the container no decision covers is in the red block.
+      const flagged = screen.getByTestId('archive-flagged');
+      expect(flagged).toHaveTextContent('1 container(s) an archive would keep');
+      expect(flagged).toHaveTextContent('newsletters');
+      expect(flagged).not.toHaveTextContent('blogs');
+      const accepted = screen.getByTestId('archive-owner-accepted');
+      expect(accepted).toHaveTextContent(
+        'The owner chose to keep these, 2026-11-24: 1 container(s)'
+      );
+      expect(accepted).toHaveTextContent('blogs');
+      expect(accepted).toHaveTextContent(
+        'email in 242 record(s); values seen: short text (under 64 characters) ×242'
+      );
+      expect(accepted).toHaveTextContent('not for each name one by one');
+      expect(within(accepted).getByTestId('archive-remaining-flagged')).not.toHaveClass(
+        'text-destructive'
+      );
+      expect(within(flagged).getByTestId('archive-remaining-flagged')).toHaveClass(
+        'text-destructive'
+      );
+    });
+
+    it('says nothing is waiting when every container is classified, and what the owner chose', async () => {
+      getJSON.mockResolvedValue({
+        ...STATUS,
+        classification: { ownerAccepted: { date: '2026-11-24', containers: [], wereWaiting: 21 } },
+        latest: {
+          reportId: '20270208T0400Z',
+          complete: true,
+          report: {
+            completedAt: '2027-02-08T04:06:00.000Z',
+            sourceBackup: { runId: '2027-02-07' },
+            totals: { kept: 1 },
+            containers: [part('blogs', {})],
+            leftOutWhole: [],
+          },
+        },
+      });
+      renderAs('super_admin');
+      const nothing = await screen.findByTestId('archive-nothing-waiting');
+      expect(nothing).toHaveTextContent(
+        'Nothing is waiting for you: every container is classified.'
+      );
+      expect(nothing).toHaveTextContent(
+        'On 2026-11-24 the owner chose to keep, whole, the 21 that were waiting.'
+      );
+      expect(screen.queryByRole('list', { name: 'Containers to classify' })).toBeNull();
+    });
+
+    it('still lists a container nobody has classified as waiting', async () => {
+      await show([
+        part(
+          'a_new_container',
+          { keptRecords: 0, takenOut: [{ name: 'apiKey', records: 1 }] },
+          { decision: 'leave-out', reason: 'unclassified', kept: 0, leftOut: 10 }
+        ),
+      ]);
+      expect(screen.queryByTestId('archive-nothing-waiting')).toBeNull();
+      const waiting = within(
+        screen.getByRole('list', { name: 'Containers to classify' })
+      ).getAllByTestId('archive-unclassified');
+      expect(waiting).toHaveLength(1);
+      expect(waiting[0]).toHaveTextContent('a_new_container: 10 records');
+    });
+
     it('the small helpers', () => {
       expect(kindWords({ number: 3, 'long-text': 1200 })).toBe('number ×3, long text ×1,200');
       expect(kindWords()).toBe('');

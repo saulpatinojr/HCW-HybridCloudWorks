@@ -44,6 +44,12 @@
  * and nothing about another person is archived unless an agreement covers
  * it. So wherever a container can hold either, this file says what is KEPT,
  * never what is removed.
+ *
+ * THE OWNER'S EXCEPTION TO IT (also 2026-11-24, after the first dry run):
+ * 21 containers left over from the earlier site are kept whole although no
+ * code can say what they hold, and some of them hold other people's email
+ * addresses and may hold old keys. The comment above them in ARCHIVE_AS_IS
+ * says what was known and who chose. Everything else follows the rule.
  */
 import { STRIPPED_FIELDS } from '../developer-api/proposal-cycle.js';
 import { isPublicDocument } from '../public-reads.js';
@@ -66,7 +72,7 @@ export const REASONS = Object.freeze({
   accessList: 'access-list', // who may sign in; not content
   derived: 'derived', // a job, a publish or a script in Git rebuilds it
   workingState: 'working-state', // jobs, counters, leases, caches: nothing later
-  unclassified: 'unclassified', // the owner has not said yet (ADR 0046, "owner to say")
+  unclassified: 'unclassified', // the owner has not said yet (ADR 0046, "owner to say"), or this file does not name the container at all
   unlisted: 'unlisted', // an admin_config or admin_settings document id, or a kind of record, this file does not name
   orphan: 'orphan', // a version whose content item is not in the backup
 });
@@ -76,8 +82,9 @@ const freeze = (list) => Object.freeze([...list].sort());
 /**
  * Archived as they are. Every container here is one the code under
  * `functions/src` reads or writes today, so its fields are known (the test
- * beside this file checks that), except the two the owner answered for by
- * name. `content` and `content_versions` also carry a record rule, below.
+ * beside this file checks that), except the ones the owner answered for by
+ * name (KEPT_ON_THE_OWNERS_WORD, below). `content` and `content_versions`
+ * also carry a record rule, below.
  */
 export const ARCHIVE_AS_IS = freeze([
   'content',
@@ -117,10 +124,131 @@ export const ARCHIVE_AS_IS = freeze([
   'telegram_bot_activity',
   'workflow_alerts',
   'workflow_digests',
+  // ── Kept by the owner's decision of 2026-11-24, after the first dry run ──
+  // "Everything the dry run listed stays in the archive"
+  // (https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811#issuecomment-7144574612).
+  // No code under functions/src or frontend/src names any of the 21 below,
+  // so nothing in this repository says what their records hold. They are
+  // left over from the earlier site. Until that decision they were left out
+  // as "not classified yet"; the owner read the dry run's record counts,
+  // field names and flagged names, and chose to keep all of them, whole.
+  //
+  // Three of the five tool_* containers hold the EMAIL ADDRESS and the
+  // SESSION ID of whoever used the tool (the owner's decision says "the
+  // three tool_ containers" without naming them; the dry-run report shows
+  // which, by their field names). That is another person's contact detail
+  // with no agreement recorded for keeping it. The session pointed that out
+  // and recommended leaving those three out; the owner chose to keep them,
+  // on the grounds that the archive is private and readable by the owner
+  // only. This is an exception to the rule at the top of this
+  // file, made by the owner, and an erasure request from someone who used
+  // those tools means rewriting each year's archive that holds them
+  // (ADR 0046 section 5).
+  'tool_workspaces',
+  'tool_migration_workspaces',
+  'tool_assessment_sessions',
+  'tool_architecture_plans',
+  'tool_exports',
+  // Settings of the earlier site. The dry run's report showed their field
+  // names; `config_providers` and `config_settings` may hold keys typed
+  // into the earlier site. Kept whole by the same decision.
+  'config',
+  'config_providers',
+  'config_settings',
+  'config_tags',
+  'site_settings',
+  // Content of the earlier site.
+  'content_templates',
+  'youtubevideos',
+  'roadmap_items',
+  'wiki_pages',
+  'pillar_details',
+  'pillar_items',
+  'prompts',
+  'character_profiles',
+  'character_modules',
+  'character_images',
+  'character_tag_adjectives',
 ]);
 
-/** Kept on the owner's word although no code names it (question 5: "MINE"). */
-export const KEPT_ON_THE_OWNERS_WORD = Object.freeze(['plaud_ingest']);
+/**
+ * The 21 containers the owner chose to keep on 2026-11-24 although no code
+ * names them (the comment above them in ARCHIVE_AS_IS says how and why).
+ */
+export const KEPT_BY_THE_OWNERS_DECISION = freeze([
+  'tool_workspaces',
+  'tool_migration_workspaces',
+  'tool_assessment_sessions',
+  'tool_architecture_plans',
+  'tool_exports',
+  'config',
+  'config_providers',
+  'config_settings',
+  'config_tags',
+  'site_settings',
+  'content_templates',
+  'youtubevideos',
+  'roadmap_items',
+  'wiki_pages',
+  'pillar_details',
+  'pillar_items',
+  'prompts',
+  'character_profiles',
+  'character_modules',
+  'character_images',
+  'character_tag_adjectives',
+]);
+
+/**
+ * Kept on the owner's word although no code names it: `plaud_ingest`
+ * (question 5 of ADR 0046: "MINE"), and the 21 above. These are the only
+ * containers archived as they are without the code being able to say what
+ * they hold; the test beside this file holds the list to exactly these.
+ */
+export const KEPT_ON_THE_OWNERS_WORD = freeze(['plaud_ingest', ...KEPT_BY_THE_OWNERS_DECISION]);
+
+/**
+ * The owner's decision of 2026-11-24 about the dry run's flagged names:
+ * "everything the dry run listed stays". The first dry run flagged ten
+ * containers an archive keeps for a field named like a secret or someone's
+ * contact details (for example `email` and `emailVerified` on `blogs`,
+ * `certifications` and `speakerevents`, and `requestHash` on
+ * `brain_records`). The owner chose to keep those containers as they are,
+ * and to keep the 21 that were waiting.
+ *
+ * WHAT THIS IS NOT. Nobody went through the names one by one, so this is
+ * not a list of reviewed names like SENSITIVE_KEPT_ON_PURPOSE below. It is a
+ * decision per container. The dry run still lists every such name with its
+ * place and the kind of value it holds; the card shows them under "the owner
+ * chose to keep these" instead of asking the owner the same question again.
+ * A container that is not on this list is still shown in red.
+ *
+ * It changes nothing about what is kept: the containers with a keep list
+ * (`mcp_servers`, `ai_providers`, `admin_config`) still drop every field and
+ * document they dropped before. "Stays" meant "as the dry run showed it".
+ */
+export const OWNER_ACCEPTED = Object.freeze({
+  date: '2026-11-24',
+  record: 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811#issuecomment-7144574612',
+  containers: freeze([
+    // The ten the first dry run flagged.
+    'admin_config',
+    'ai_providers',
+    'ai_usage',
+    'blogs',
+    'brain_records',
+    'certifications',
+    'content',
+    'mcp_servers',
+    'speakerevents',
+    'system',
+    // The 21 that were waiting.
+    ...KEPT_BY_THE_OWNERS_DECISION,
+  ]),
+});
+
+/** The date of the owner's decision to keep this container as the dry run showed it, or null. */
+export const ownerAcceptedOn = (container) => (OWNER_ACCEPTED.containers.includes(container) ? OWNER_ACCEPTED.date : null);
 
 // ── Names that look like a secret or a person's contact details ─────────────
 
@@ -448,39 +576,19 @@ export const LEFT_OUT = Object.freeze({
   submission_quota: REASONS.workingState,
   tool_ai_plan_quota: REASONS.workingState,
   tool_export_quota: REASONS.workingState,
-  // The ones nobody can describe (ADR 0046, rule 4): no code under
-  // functions/src or frontend/src names them today, so nothing says what
-  // their records hold. They may hold what a visitor typed, or a key. Left
-  // out until the owner has read the dry-run report (record counts, field
-  // NAMES and a count of names that look like a secret; never a value) and
-  // said what each one is.
-  // Saved work and settings from the earlier site:
-  tool_workspaces: REASONS.unclassified,
-  tool_migration_workspaces: REASONS.unclassified,
-  tool_assessment_sessions: REASONS.unclassified,
-  tool_architecture_plans: REASONS.unclassified,
-  tool_exports: REASONS.unclassified,
-  config_providers: REASONS.unclassified,
-  config_settings: REASONS.unclassified,
-  // Moved here on 2026-11-24 after an independent review: they were "archive
-  // as is" although no code reads or writes them, so nobody had looked.
-  config: REASONS.unclassified,
-  config_tags: REASONS.unclassified,
-  site_settings: REASONS.unclassified,
-  content_templates: REASONS.unclassified,
-  youtubevideos: REASONS.unclassified,
-  roadmap_items: REASONS.unclassified,
-  wiki_pages: REASONS.unclassified,
-  pillar_details: REASONS.unclassified,
-  pillar_items: REASONS.unclassified,
-  prompts: REASONS.unclassified,
-  character_profiles: REASONS.unclassified,
-  character_modules: REASONS.unclassified,
-  character_images: REASONS.unclassified,
-  character_tag_adjectives: REASONS.unclassified,
+  // A CONTAINER NOBODY HAS DECIDED ABOUT GOES HERE, with
+  // `REASONS.unclassified`. That is the waiting list (ADR 0046, rule 4): it
+  // is left out of every archive, and the dry run reads it and shows its
+  // record count, field names and flagged names so the owner can decide.
+  // The list is empty since 2026-11-24, when the owner chose to keep the 21
+  // that were on it (KEPT_BY_THE_OWNERS_DECISION, above). A container added
+  // to infra/cosmos-containers.json fails the test beside this file until
+  // it is named somewhere in this file; when nobody can say what it holds,
+  // this is the place:
+  //   some_new_container: REASONS.unclassified,
 });
 
-/** The containers the owner still has to classify, sorted. */
+/** The containers the owner still has to classify, sorted. Empty since 2026-11-24. */
 export const UNCLASSIFIED = freeze(
   Object.entries(LEFT_OUT)
     .filter(([, reason]) => reason === REASONS.unclassified)

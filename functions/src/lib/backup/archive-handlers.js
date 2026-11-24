@@ -6,7 +6,7 @@
  *   POST cms/content-archive/dry-run   start a dry run (queues one job per container)            super_admin
  *
  * WHY SUPER_ADMIN. The report lists field names of every container it reads,
- * some of which nobody has classified yet, and a dry run makes the Function
+ * some of which no code can describe, and a dry run makes the Function
  * App read the whole weekly backup. Both are the owner's.
  *
  * WHAT THE GET ANSWERS. The switch (on or off), the year an archive taken
@@ -27,7 +27,9 @@ import {
   ADMIN_SETTINGS_KEEP,
   ARCHIVE_AS_IS,
   ARCHIVE_CHANGED,
+  KEPT_BY_THE_OWNERS_DECISION,
   LEFT_OUT,
+  OWNER_ACCEPTED,
   UNCLASSIFIED,
 } from './archive-classification.js';
 import {
@@ -64,6 +66,9 @@ function classificationSummary() {
     })),
     leftOut: Object.keys(LEFT_OUT).length - UNCLASSIFIED.length,
     unclassified: [...UNCLASSIFIED],
+    // The owner's decision of 2026-11-24: which containers it keeps as the
+    // dry run showed them, and how many of those had been waiting.
+    ownerAccepted: { date: OWNER_ACCEPTED.date, containers: [...OWNER_ACCEPTED.containers], wereWaiting: KEPT_BY_THE_OWNERS_DECISION.length },
     adminConfigKept: ADMIN_CONFIG_KEEP.ids.length + ADMIN_CONFIG_KEEP.prefixes.length,
     adminSettingsKept: Object.keys(ADMIN_SETTINGS_KEEP.ids).length + ADMIN_SETTINGS_KEEP.prefixes.length,
   };

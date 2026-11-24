@@ -18,9 +18,10 @@
  * remaining name it shows where the field sits, in how many records, and
  * what kind of value it holds (a number, true/false, a date, short or long
  * text). Only the remaining names that are not explained are shown in red.
- * The containers nobody has classified yet are shown first, so the owner can
- * say what each one is. It never shows a record or a value; the server does
- * not send one.
+ * A container nobody has classified yet is shown as waiting, so the owner
+ * can say what it is; a flagged container the owner already decided to keep
+ * is listed under that decision and its date, not in red. It never shows a
+ * record or a value; the server does not send one.
  *
  * Both routes are super_admin, so below that role the card is not drawn.
  */
@@ -178,6 +179,34 @@ export const isFlagged = (part) =>
     : // A report made before the lists were split says only how many kept records carry one.
       part?.sensitive?.keptRecords > 0;
 
+/** The names that would remain and are not explained, one line each. Red unless the owner decided. */
+function RemainingFlagged({ part, flagged, hidden: remainingHidden }) {
+  if (!flagged.length && !remainingHidden) return null;
+  return (
+    <div
+      className={part.ownerAccepted ? undefined : 'text-destructive'}
+      data-testid="archive-remaining-flagged"
+    >
+      <p>
+        Would remain in the archive, named like a secret or contact details
+        {part.ownerAccepted
+          ? `. The owner chose to keep this container as it is on ${part.ownerAccepted}; the names are still listed so a new one is noticed`
+          : ''}
+        :
+      </p>
+      <ul className="list-disc pl-4">
+        {flagged.map((entry) => (
+          <li key={whereWords(entry)}>
+            <span className="font-mono">{whereWords(entry)}</span> in {number(entry.records)}{' '}
+            record(s); values seen: {kindWords(entry.kinds)}
+          </li>
+        ))}
+        {remainingHidden ? <li>{remainingHidden}</li> : null}
+      </ul>
+    </div>
+  );
+}
+
 /**
  * Everything the report says about names that look like a secret or contact
  * details, for one container: what would remain (in red when not explained),
@@ -209,20 +238,7 @@ function SensitiveLine({ part }) {
     return null;
   return (
     <div className="space-y-1 text-xs [overflow-wrap:anywhere]" data-testid="archive-sensitive">
-      {flagged.length || remainingHidden ? (
-        <div className="text-destructive" data-testid="archive-remaining-flagged">
-          <p>Would remain in the archive, named like a secret or contact details:</p>
-          <ul className="list-disc pl-4">
-            {flagged.map((entry) => (
-              <li key={whereWords(entry)}>
-                <span className="font-mono">{whereWords(entry)}</span> in {number(entry.records)}{' '}
-                record(s); values seen: {kindWords(entry.kinds)}
-              </li>
-            ))}
-            {remainingHidden ? <li>{remainingHidden}</li> : null}
-          </ul>
-        </div>
-      ) : null}
+      <RemainingFlagged part={part} flagged={flagged} hidden={remainingHidden} />
       {quiet.length ? (
         <p className="text-muted-foreground" data-testid="archive-remaining-quiet">
           Named like one, but only numbers or yes/no:{' '}
@@ -269,7 +285,83 @@ function UnclassifiedRow({ part }) {
   );
 }
 
-function ReportBody({ latest }) {
+/**
+ * What needs a decision and what already has one: the red block, the
+ * containers the owner chose to keep, and the waiting list (or that it is
+ * empty).
+ */
+function DecisionBlocks({ flagged, accepted, unclassified, ownerAccepted }) {
+  return (
+    <>
+      {flagged.length ? (
+        <div data-testid="archive-flagged">
+          <p className="text-sm font-medium text-destructive">
+            Look before switching the archive on: {flagged.length} container(s) an archive would
+            keep hold a field that would remain, is named like a secret or contact details, and
+            holds more than numbers or yes/no
+          </p>
+          <ul aria-label="Kept containers with a field named like a secret">
+            {flagged.map((part) => (
+              <li key={part.container} className="py-1">
+                <p className="text-sm font-mono">{part.container}</p>
+                <SensitiveLine part={part} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {accepted.length ? (
+        <div data-testid="archive-owner-accepted">
+          <p className="text-sm font-medium">
+            The owner chose to keep these, {accepted[0].ownerAccepted}: {accepted.length}{' '}
+            container(s) an archive keeps hold a field that would remain and is named like a secret
+            or contact details
+          </p>
+          <p className="text-xs text-muted-foreground">
+            That decision was for each container as the dry run showed it, not for each name one by
+            one. The names and the kinds of value are listed every time, so one that appears later
+            is seen.
+          </p>
+          <ul aria-label="Kept by the owner’s decision, with a field named like a secret">
+            {accepted.map((part) => (
+              <li key={part.container} className="py-1">
+                <p className="text-sm font-mono">{part.container}</p>
+                <SensitiveLine part={part} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {unclassified.length ? (
+        <div>
+          <p className="text-sm font-medium">
+            Waiting for you: {unclassified.length} container(s) to classify
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Nothing in the code says what these hold, so they stay out of the archive until you say.
+            Counts and field names only; no record is shown. A field name is listed only when it is
+            common and plain, so a name that is really an id is not shown.
+          </p>
+          <ul aria-label="Containers to classify">
+            {unclassified.map((part) => (
+              <UnclassifiedRow key={part.container} part={part} />
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="text-sm" data-testid="archive-nothing-waiting">
+          Nothing is waiting for you: every container is classified.
+          {ownerAccepted?.wereWaiting
+            ? ` On ${ownerAccepted.date} the owner chose to keep, whole, the ${ownerAccepted.wereWaiting} that were waiting.`
+            : ''}{' '}
+          A container added later is left out and listed here until it is decided.
+        </p>
+      )}
+    </>
+  );
+}
+
+function ReportBody({ latest, ownerAccepted }) {
   if (!latest) {
     return (
       <p className="text-sm text-muted-foreground" data-testid="archive-no-report">
@@ -307,7 +399,11 @@ function ReportBody({ latest }) {
   const containers = Array.isArray(report.containers) ? report.containers : [];
   const unclassified = containers.filter((part) => part.reason === 'unclassified');
   const read = containers.filter((part) => part.reason !== 'unclassified');
-  const flagged = read.filter(isFlagged);
+  // A flagged container the owner has already decided to keep as it is, is
+  // listed on its own, not in red: the question was answered. Its names are
+  // still shown.
+  const flagged = read.filter((part) => isFlagged(part) && !part.ownerAccepted);
+  const accepted = read.filter((part) => isFlagged(part) && part.ownerAccepted);
   const leftOutWhole = Array.isArray(report.leftOutWhole) ? report.leftOutWhole : [];
   return (
     <div className="space-y-3" data-testid="archive-report">
@@ -337,38 +433,12 @@ function ReportBody({ latest }) {
           {number(totals.unreadable)} line(s) of the backup could not be read as a record.
         </p>
       ) : null}
-      {flagged.length ? (
-        <div data-testid="archive-flagged">
-          <p className="text-sm font-medium text-destructive">
-            Look before switching the archive on: {flagged.length} container(s) an archive would
-            keep hold a field that would remain, is named like a secret or contact details, and
-            holds more than numbers or yes/no
-          </p>
-          <ul aria-label="Kept containers with a field named like a secret">
-            {flagged.map((part) => (
-              <li key={part.container} className="py-1">
-                <p className="text-sm font-mono">{part.container}</p>
-                <SensitiveLine part={part} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      <div>
-        <p className="text-sm font-medium">
-          Waiting for you: {unclassified.length} containers to classify
-        </p>
-        <p className="text-xs text-muted-foreground">
-          No code names these today, so nothing says what they hold, and they stay out of the
-          archive until you do. Counts and field names only; no record is shown. A field name is
-          listed only when it is common and plain, so a name that is really an id is not shown.
-        </p>
-        <ul aria-label="Containers to classify">
-          {unclassified.map((part) => (
-            <UnclassifiedRow key={part.container} part={part} />
-          ))}
-        </ul>
-      </div>
+      <DecisionBlocks
+        flagged={flagged}
+        accepted={accepted}
+        unclassified={unclassified}
+        ownerAccepted={ownerAccepted}
+      />
       <details>
         <summary className="cursor-pointer text-xs text-primary">
           Every container ({read.length} read, {leftOutWhole.length} left out whole)
@@ -502,7 +572,7 @@ function ArchiveCardBody() {
             ? `Every condition for the archive of ${status.year} is met today.`
             : `An archive of ${status.year} could not start today: ${blockerSentence(status.blockers)}.`}
         </p>
-        <ReportBody latest={status.latest} />
+        <ReportBody latest={status.latest} ownerAccepted={status.classification?.ownerAccepted} />
         {status.reports ? (
           <p className="text-xs text-muted-foreground" data-testid="archive-report-home">
             Reports are kept in the private{' '}

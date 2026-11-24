@@ -25,6 +25,7 @@ import {
   createReportScheduler,
   createReportWorker,
   findLatestFullBackup,
+  isUnnamedContainer,
   gzipLines,
   parseReportPayload,
   readLatestReport,
@@ -202,6 +203,14 @@ describe('parseReportPayload', () => {
     for (const bad of [{ ...ok, container: 'admins' }, { ...ok, container: 'jobs' }, { ...ok, reportId: '../x' }, { ...ok, runId: 'full/../x' }, {}]) {
       expect(() => parseReportPayload(bad)).toThrow();
     }
+    // A container the classification does not name at all is read too, as one that is waiting,
+    // but only when its name is shaped like a container's name (it becomes part of a file name).
+    expect(parseReportPayload({ ...ok, container: 'a_new_container' }).container).toBe('a_new_container');
+    expect(isUnnamedContainer('a_new_container')).toBe(true);
+    for (const container of ['../blogs', 'a/b', 'a.b', '', 'x'.repeat(80), 'blogs', 'admins']) {
+      expect(isUnnamedContainer(container), container).toBe(false);
+    }
+    for (const container of ['../x', 'a/b', 'state/x']) expect(() => parseReportPayload({ ...ok, container })).toThrow();
     try {
       parseReportPayload({});
     } catch (error) {
@@ -228,7 +237,7 @@ describe('a dry run, end to end', () => {
       { id: 'p1', docType: 'cfs-submission', speakerName: 'Example Speaker', speakerEmail: 'speaker@example.com', 'made-up-odd-field': 1 },
     ],
     admin_config: [{ id: 'reminders' }, { id: 'developer_api_key:k1', keyHash: 'made-up' }, { id: 'health_pulse' }, { id: 'added_later' }],
-    tool_workspaces: [
+    made_up_waiting: [
       { id: 't1', visitorId: 'made-up-visitor', notes: 'typed by someone', _ts: 1, settings: { providers: [{ apiKey: 'made-up-nested-key' }] } },
       { id: 't2', notes: 'more', 'a name with spaces': 1, user_12345: { a: 1 }, 'jane.doe': 1, 'aaaaaaaa-0000-4000-8000-000000000001': 1 },
       'this line is not JSON',
@@ -262,7 +271,7 @@ describe('a dry run, end to end', () => {
       'content',
       'content_versions',
       'developer_events',
-      'tool_workspaces',
+      'made_up_waiting',
     ]);
     expect(jobs.every((job) => job.type === REPORT_JOB_TYPE)).toBe(true);
     expect(queued).toHaveLength(6);
@@ -289,7 +298,7 @@ describe('a dry run, end to end', () => {
       leftOut: 3,
       leftOutBy: { secret: 1, 'working-state': 1, unlisted: 1 },
     });
-    expect(of('tool_workspaces')).toMatchObject({
+    expect(of('made_up_waiting')).toMatchObject({
       decision: 'leave-out',
       reason: 'unclassified',
       read: 3,
@@ -585,11 +594,11 @@ describe('the two admin routes', () => {
       wouldStart: false,
       blockers: ['switch-off'],
       latestBackup: { runId: SUNDAY, containers: 1 },
-      classification: { asIs: 33, leftOut: 19, unclassified: expect.arrayContaining(['tool_exports', 'site_settings']) },
+      classification: { asIs: 54, leftOut: 19, unclassified: [], ownerAccepted: { date: '2026-11-24', wereWaiting: 21 } },
       latest: null,
       reports: { container: 'cosmos-export-state', prefix: 'state/archive-report/', keepDays: REPORT_KEEP_DAYS, staleMinutes: RUN_STALE_MINUTES },
     });
-    expect(body(response).classification.unclassified).toHaveLength(21);
+    expect(body(response).classification.ownerAccepted.containers).toEqual(expect.arrayContaining(['tool_exports', 'site_settings', 'blogs']));
     expect(body(response).classification.changed.find((c) => c.container === 'mcp_servers').keeps).toContain('url');
   });
 
@@ -735,7 +744,7 @@ describe('sensitiveNamesIn: names that look like a secret, at any depth, and nev
       { id: 'b', token_12345678: 'made-up-3' },
       { id: 'c' },
     ];
-    const blobs = memoryBlobs(backupSeed({ config_providers: docs }));
+    const blobs = memoryBlobs(backupSeed({ made_up_waiting: docs }));
     const jobs = [];
     const at = new Date('2027-02-08T04:00:30Z');
     await createReportScheduler({ store: { upsertDoc: async (_c, doc) => jobs.push(doc) }, blobs, enqueue: () => {}, now: () => at }).start();
@@ -937,5 +946,57 @@ describe('names that look like a secret: which are taken out, which would remain
     expect(part.sensitive.takenOut).toEqual([{ name: 'keyHash', records: 1 }]);
     expect(part.sensitive.remaining.every((e) => e.document !== '(other)')).toBe(true);
     for (const leaked of ['made-up-id', 'made-up-hash', 'made-up@example.com', 'developer_api_key:made-up']) expect(stored).not.toContain(leaked);
+  });
+});
+
+describe('after the owner’s decision of 2026-11-24: nothing is waiting, and a new container still would be', () => {
+  const at = new Date('2027-02-08T04:00:30Z');
+  async function reportFor(containers) {
+    const blobs = memoryBlobs(backupSeed(containers));
+    const jobs = [];
+    await createReportScheduler({ store: { upsertDoc: async (_c, doc) => jobs.push(doc) }, blobs, enqueue: () => {}, now: () => at }).start();
+    for (const job of jobs) await createReportWorker({ blobs, now: () => at }).readContainer(parseReportPayload(job.payload));
+    return (await readLatestReport({ blobs, now: at })).report;
+  }
+
+  it('the 21 that were waiting are read as kept, whole, and marked with the date the owner chose', async () => {
+    const report = await reportFor({ tool_exports: [{ id: 't1', email: 'made-up@example.com', sessionId: 'made-up-session' }], site_settings: [{ id: 's1' }] });
+    const part = report.containers.find((c) => c.container === 'tool_exports');
+    expect(part).toMatchObject({ decision: 'archive', reason: null, read: 1, kept: 1, leftOut: 0, ownerAccepted: '2026-11-24' });
+    // The name is still listed, with its kind, and still counted as flagged: the card does not go silent.
+    expect(part.sensitive.remaining).toEqual([
+      { document: null, path: 'email', name: 'email', records: 1, kinds: { 'short-text': 1 }, quiet: false, keptOnPurpose: null, flagged: true },
+    ]);
+    expect(part.sensitive.flagged).toBe(1);
+    // ...but it is not counted among what is still to look at.
+    expect(report.totals).toMatchObject({ flaggedContainers: 1, flaggedNotAccepted: 0 });
+    expect(report.containers.every((c) => c.reason !== 'unclassified')).toBe(true);
+  });
+
+  it('a flagged container the decision does not cover is still to look at', async () => {
+    const report = await reportFor({ newsletters: [{ id: 'n1', authorEmail: 'made-up@example.com' }] });
+    expect(report.containers[0]).toMatchObject({ container: 'newsletters', ownerAccepted: null });
+    expect(report.totals).toMatchObject({ flaggedContainers: 1, flaggedNotAccepted: 1 });
+  });
+
+  it('a container nobody has classified is read, left out whole, and reported as waiting', async () => {
+    const report = await reportFor({ blogs: [{ id: 'b1' }], a_new_container: [{ id: 'x1', title: 'made up' }, { id: 'x2', title: 'made up too', apiKey: 'made-up-key' }] });
+    const part = report.containers.find((c) => c.container === 'a_new_container');
+    expect(part).toMatchObject({
+      decision: 'leave-out',
+      reason: 'unclassified',
+      ownerAccepted: null,
+      read: 2,
+      kept: 0,
+      leftOut: 2,
+      leftOutBy: { unclassified: 2 },
+      fieldNames: [
+        { name: 'id', records: 2 },
+        { name: 'title', records: 2 },
+      ],
+    });
+    expect(part.sensitive.takenOut).toEqual([{ name: 'apiKey', records: 1 }]);
+    expect(part.sensitive.remaining).toEqual([]);
+    expect(report.leftOutWhole).toEqual([]);
   });
 });

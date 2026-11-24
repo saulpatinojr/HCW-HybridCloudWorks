@@ -71,6 +71,7 @@ import {
   archiveDocumentLabel,
   archivePlan,
   archiveRecord,
+  ownerAcceptedOn,
   createContentIndex,
   looksSensitive,
 } from './archive-classification.js';
@@ -417,6 +418,18 @@ export async function* gzipLines(source) {
   await piping;
 }
 
+/**
+ * Is this a container the classification does not name at all? Such a
+ * container is left out of every archive (`archiveRecord` answers
+ * "unclassified"), and the dry run reads it like one on the waiting list,
+ * so that a container nobody has decided about is seen and not skipped.
+ * Only a name shaped like a database container's name counts, because the
+ * name becomes part of the backup file's name.
+ */
+export function isUnnamedContainer(container) {
+  return typeof container === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(container) && archiveDecisionFor(container) === null;
+}
+
 /** Validate a queue payload into `{ reportId, runId, container }`; throws (400) on anything else. */
 export function parseReportPayload(payload = {}) {
   const reportId = String(payload?.reportId || '');
@@ -424,7 +437,7 @@ export function parseReportPayload(payload = {}) {
   const container = String(payload?.container || '');
   if (!REPORT_ID.test(reportId)) throw withStatus(new Error('reportId is not a report id'), 400);
   if (!RUN_ID.test(runId)) throw withStatus(new Error('runId must be a UTC date, YYYY-MM-DD'), 400);
-  if (!reportContainers().includes(container)) {
+  if (!reportContainers().includes(container) && !isUnnamedContainer(container)) {
     throw withStatus(new Error('that container is not read by the archive dry run'), 400);
   }
   return { reportId, runId, container };
@@ -486,7 +499,11 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
     const part = {
       container,
       decision: decision?.decision || DECISIONS.leaveOut,
-      reason: decision?.reason || null,
+      // A container this file does not name is waiting for a decision.
+      reason: decision ? decision.reason || null : REASONS.unclassified,
+      // The date the owner chose to keep this container as the dry run
+      // showed it, flagged names included; null when no such decision covers it.
+      ownerAccepted: ownerAcceptedOn(container),
       inBackup: true,
       read: 0,
       kept: 0,
@@ -700,6 +717,8 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
         sensitiveKeptRecords: containers.reduce((n, c) => n + count(c.sensitive?.keptRecords), 0),
         // Containers an archive would keep that hold a name to look at (see `flagged` in a part).
         flaggedContainers: containers.filter((c) => c.decision !== DECISIONS.leaveOut && count(c.sensitive?.flagged) > 0).length,
+        // Of those, the ones no owner decision covers: these are what is still to look at.
+        flaggedNotAccepted: containers.filter((c) => c.decision !== DECISIONS.leaveOut && count(c.sensitive?.flagged) > 0 && !c.ownerAccepted).length,
         mismatched: containers.filter((c) => c.matchesBackup === false).length,
       },
       containers,
@@ -746,8 +765,11 @@ export function createReportScheduler({ store, blobs, enqueue, now = () => new D
 
     const inBackup = new Set(backup.containers.map((row) => row.container));
     const docsOf = new Map(backup.containers.map((row) => [row.container, row.docs]));
-    const containers = reportContainers().filter((name) => inBackup.has(name));
-    const wanted = new Set(reportContainers());
+    // What an archive would write, what is on the waiting list, and any
+    // container in the backup that the classification does not name at all.
+    const unnamed = backup.containers.map((row) => row.container).filter(isUnnamedContainer);
+    const containers = [...reportContainers().filter((name) => inBackup.has(name)), ...unnamed].sort();
+    const wanted = new Set([...reportContainers(), ...unnamed]);
     // Left out whole for a known reason: not read, counted from the backup's own manifest.
     const leftOutWhole = backup.containers
       .filter((row) => !wanted.has(row.container))
