@@ -738,11 +738,12 @@ describe('podcasts', () => {
         log: brokenLog,
       }).run()
     ).toEqual({
-      azure: { processed: 0, error: '504' },
+      // The error's code or class, never its message: the timer prints this summary (#1794).
+      azure: { processed: 0, error: 'Error' },
     });
     expect(brokenLog.error).toHaveBeenCalledTimes(1);
     // Provider, never the URL: the feed list names the feed from the provider.
-    expect(brokenLog.error.mock.calls[0][0]).toBe('[fetchPodcastFeeds] azure: feed failed: 504');
+    expect(brokenLog.error.mock.calls[0][0]).toMatch(/^\[fetchPodcastFeeds\] azure: feed failed: name=Error\b/);
   });
 
   it('fetchPodcastFeeds says so at Warning when the feed is reachable but empty', async () => {

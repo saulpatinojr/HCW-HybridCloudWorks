@@ -27,6 +27,7 @@
 import { createOAuthHttp, refreshOAuthToken, tokenExpiresWithin } from '../ai/mcp-oauth.js';
 import { usesOAuthConnect } from '../ai/mcp-policy.js';
 import { createPlaudTokenRefresh } from './plaud-token.js';
+import { errorFacts, errorCode } from '../http/error-response.js';
 
 /** The timer refreshes a connected server whose token has less than this left. */
 export const TIMER_REFRESH_WINDOW_MS = 30 * 60_000;
@@ -68,7 +69,7 @@ export function createMcpTokenRefresh({
         else summary.failed += 1;
       } catch (error) {
         summary.failed += 1;
-        log.error?.(`[refreshPlaudToken] an OAuth Connect refresh threw: ${error?.message || error}`);
+        log.error?.(`[refreshPlaudToken] an OAuth Connect refresh threw: ${errorFacts(error)}`);
       }
     }
     return summary;
@@ -79,15 +80,15 @@ export function createMcpTokenRefresh({
     try {
       plaudResult = await plaud.run();
     } catch (error) {
-      log.error?.(`[refreshPlaudToken] Plaud refresh threw: ${error?.message || error}`);
+      log.error?.(`[refreshPlaudToken] Plaud refresh threw: ${errorFacts(error)}`);
       plaudResult = { ok: false, reason: 'exception' };
     }
     let oauth;
     try {
       oauth = await refreshConnectedServers();
     } catch (error) {
-      log.error?.(`[refreshPlaudToken] OAuth refresh sweep failed: ${error?.message || error}`);
-      oauth = { error: String(error?.message || error).slice(0, 300) };
+      log.error?.(`[refreshPlaudToken] OAuth refresh sweep failed: ${errorFacts(error)}`);
+      oauth = { error: errorCode(error) };
     }
     return { plaud: plaudResult, oauth };
   }

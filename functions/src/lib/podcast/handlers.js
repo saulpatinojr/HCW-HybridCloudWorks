@@ -55,7 +55,7 @@
  * per range.
  */
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
-import { authoredMessage } from '../http/error-response.js';
+import { authoredMessage, errorFacts } from '../http/error-response.js';
 import {
   ARTICLE_CONTAINER,
   TRANSCRIPT_JOB_TYPE,
@@ -242,7 +242,7 @@ export function createPodcastHandlers({
           transcriptId: id,
         });
       } catch (error) {
-        context.error('generatePodcastTranscript failed:', error);
+        context.error('generatePodcastTranscript failed:', errorFacts(error));
         return json(500, { error: 'Failed to queue the transcript' });
       }
     },
@@ -255,7 +255,7 @@ export function createPodcastHandlers({
         const items = await store.queryDocs(TRANSCRIPT_CONTAINER, LIST_QUERY, []);
         return json(200, { success: true, items, total: items.length });
       } catch (error) {
-        context.error('listPodcastTranscripts failed:', error);
+        context.error('listPodcastTranscripts failed:', errorFacts(error));
         return json(500, { error: 'Failed to list podcast transcripts' });
       }
     },
@@ -358,7 +358,7 @@ export function createPodcastHandlers({
         if (!item) return json(404, { error: `No podcast transcript ${id}` });
         return json(200, { success: true, item });
       } catch (error) {
-        context.error('getPodcastTranscript failed:', error);
+        context.error('getPodcastTranscript failed:', errorFacts(error));
         return json(500, { error: 'Failed to get the podcast transcript' });
       }
     },

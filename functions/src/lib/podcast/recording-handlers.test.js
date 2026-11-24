@@ -343,11 +343,13 @@ describe('uploadRecording', () => {
       );
       expect(res.status).toBe(500);
       expect(JSON.parse(res.body).error).toBe('Failed to upload the recording');
-      // The enqueue error is what reaches the error log — as a code and a
-      // message, never the error object; the delete is a warning.
+      // The enqueue error is what reaches the error log, as its class and
+      // where it was thrown, never its message or the error object; the
+      // delete is a warning.
       expect(ctx.error).toHaveBeenCalledTimes(1);
       expect(ctx.error.mock.calls[0]).toHaveLength(1);
-      expect(ctx.error.mock.calls[0][0]).toBe('uploadPodcastRecording failed (n/a): cosmos down');
+      expect(ctx.error.mock.calls[0][0]).toMatch(/^uploadPodcastRecording failed \(name=Error\b[^)]*\)$/);
+      expect(ctx.error.mock.calls[0][0]).not.toContain('cosmos down');
       expect(ctx.warn).toHaveBeenCalledTimes(1);
       const line = ctx.warn.mock.calls[0][0];
       expect(line).toMatch(/upload blob not deleted after a failed enqueue \(503\)/);

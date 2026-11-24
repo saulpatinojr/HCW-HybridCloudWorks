@@ -156,19 +156,20 @@ describe('provider isolation', () => {
 });
 
 describe('logging distinguishes a miss from a failure', () => {
-  it('logs FAILED with the error message when a provider throws', async () => {
+  it('logs FAILED with the error code, never its message, when a provider throws', async () => {
     const logger = { warn: vi.fn() };
     await fetchLivePricing('compute-vm', 'us-east-1', baseline, {
       logger,
       loaders: loaders({
         aws: async () => {
-          throw new Error('boom');
+          throw Object.assign(new Error('boom'), { code: 'ETIMEDOUT' });
         },
       }),
     });
 
     const failed = logger.warn.mock.calls.find(([msg]) => msg.includes('FAILED'));
-    expect(failed[1]).toMatchObject({ provider: 'aws', message: 'boom' });
+    expect(failed[1]).toMatchObject({ provider: 'aws', code: 'ETIMEDOUT' });
+    expect(JSON.stringify(failed)).not.toContain('boom');
   });
 
   it('logs NOT FOUND when a provider returns null', async () => {

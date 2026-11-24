@@ -19,6 +19,7 @@
  * testing" is exactly the shape the archived scrapeCredlyBadges had.
  */
 
+import { errorFacts } from '../http/error-response.js';
 /** Epoch ms of an expiry value: ISO string, bare YYYY-MM-DD, or Date. NaN when unparseable. */
 export function parseExpiryMs(expDate) {
   if (!expDate) return NaN;
@@ -58,7 +59,7 @@ async function credlySaysRevoked({ fetch: fetchImpl, log }, cert) {
     return body.includes('Unable to verify badge');
   } catch (err) {
     log.warn?.(
-      `[reVerifyCertifications] Failed to reach Credly for ${cert.name}: ${err?.message || err}`
+      `[reVerifyCertifications] Failed to reach Credly for ${cert.name}: ${errorFacts(err)}`
     );
     return false;
   } finally {

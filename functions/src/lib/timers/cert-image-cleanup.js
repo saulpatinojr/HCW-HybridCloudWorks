@@ -25,6 +25,7 @@
  * deletes blobs.
  */
 
+import { errorFacts } from '../http/error-response.js';
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const CONTAINER = 'certifications';
 
@@ -162,7 +163,7 @@ export function createCertImageCleanup({
           deleted += 1;
           log.log?.(`[cleanupUnusedCertImages] Deleted unreferenced cert image: ${name}`);
         } catch (err) {
-          log.error?.(`[cleanupUnusedCertImages] Failed to delete ${name}: ${err?.message || err}`);
+          log.error?.(`[cleanupUnusedCertImages] Failed to delete ${name}: ${errorFacts(err)}`);
         }
       }
     }

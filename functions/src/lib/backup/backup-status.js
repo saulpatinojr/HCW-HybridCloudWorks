@@ -44,6 +44,7 @@
  * "not known" rather than "no run". No new timer.
  */
 import { PARTITION_KEY_PATHS } from '../cosmos-client.js';
+import { errorCode } from '../http/error-response.js';
 import { AUTHORED } from './export-classification.js';
 import { blobNames, modeFor, runIdFor } from './cosmos-export.js';
 
@@ -114,10 +115,6 @@ function watched(containers, partitionKeys, name) {
     partitionKey: partitionKeys[name] || '/id',
   };
 }
-
-/** The error's code for a log line: its HTTP status, its code, or its name. Never its message. */
-const errorCode = (error) =>
-  error?.statusCode ?? error?.code ?? error?.name ?? 'unknown';
 
 /**
  * @param {object} deps

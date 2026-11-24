@@ -43,6 +43,7 @@ import {
 import { normalizeBadgeImage, withExtension } from './badge-image.js';
 import { randomUUID } from 'node:crypto';
 import { recordMutationAudit } from './audit.js';
+import { errorFacts } from './http/error-response.js';
 
 /**
  * Containers whose uploads are decoded and re-encoded before they are stored
@@ -322,7 +323,7 @@ export function createAdminUploadHandlers({
         if (error?.statusCode === 409 || error?.code === 'BlobAlreadyExists') {
           return json(409, { error: 'A file already exists at that path' });
         }
-        context.error('uploadFile failed:', error);
+        context.error('uploadFile failed:', errorFacts(error));
         return json(500, { error: 'Failed to upload file' });
       }
     },

@@ -44,7 +44,7 @@
 import { randomUUID } from 'node:crypto';
 import { ROLE_NAMES, roleLevel } from './auth/roles.js';
 import { runAsJob } from './job-context.js';
-import { AuthoredError, errorResponse, logFailure, storedFailure } from './http/error-response.js';
+import { AuthoredError, errorResponse, logFailure, storedFailure, errorFacts } from './http/error-response.js';
 
 export const JOBS_CONTAINER = 'jobs';
 export const JOBS_QUEUE = 'platform-jobs';
@@ -453,7 +453,7 @@ export function createJobHandlers({
         try {
           details = serialisableObject(spec.acceptedDetails(payload));
         } catch (error) {
-          context.warn?.('enqueueJob: acceptedDetails failed for', type, error?.message);
+          context.warn?.('enqueueJob: acceptedDetails failed for', type, errorFacts(error));
           details = {};
         }
       }
@@ -470,7 +470,7 @@ export function createJobHandlers({
           poll: `getJob?jobId=${jobId}`,
         });
       } catch (error) {
-        context.error?.('enqueueJob failed:', error);
+        context.error?.('enqueueJob failed:', errorFacts(error));
         return json(500, { ok: false, error: 'Failed to enqueue job' });
       }
     },
@@ -604,7 +604,7 @@ export function createJobHandlers({
           await spec.onComplete(info, { context, now });
         } catch (hookError) {
           context.warn?.(
-            `runJob: onComplete for ${doc.type} failed: ${hookError?.message || hookError}`
+            `runJob: onComplete for ${doc.type} failed: ${errorFacts(hookError)}`
           );
         }
       };
@@ -774,12 +774,12 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
             );
           } catch (hookError) {
             log.warn?.(
-              `sweep: onComplete for ${doc.type} failed: ${hookError?.message || hookError}`
+              `sweep: onComplete for ${doc.type} failed: ${errorFacts(hookError)}`
             );
           }
         }
       } catch (err) {
-        log.warn?.(`sweep: could not reap job ${doc.id}: ${err?.message || err}`);
+        log.warn?.(`sweep: could not reap job ${doc.id}: ${errorFacts(err)}`);
       }
     }
     return reaped;
@@ -820,12 +820,12 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
                 );
               } catch (hookError) {
                 log.warn?.(
-                  `sweep: onComplete for poison ${doc.type} failed: ${hookError?.message || hookError}`
+                  `sweep: onComplete for poison ${doc.type} failed: ${errorFacts(hookError)}`
                 );
               }
             }
           } catch (err) {
-            log.warn?.(`sweep: could not fail poison job ${doc.id}: ${err?.message || err}`);
+            log.warn?.(`sweep: could not fail poison job ${doc.id}: ${errorFacts(err)}`);
           }
         } else {
           try {
@@ -840,7 +840,7 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
             }
             requeued.push({ jobId: doc.id, type: doc.type });
           } catch (err) {
-            log.warn?.(`sweep: could not stamp job ${doc.id}: ${err?.message || err}`);
+            log.warn?.(`sweep: could not stamp job ${doc.id}: ${errorFacts(err)}`);
           }
         }
       }

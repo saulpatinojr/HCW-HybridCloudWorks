@@ -22,6 +22,7 @@ import {
   priceChangesDocId,
 } from './history.js';
 import { DEFAULT_REGION, regionOption } from './pricing/regions.js';
+import { errorFacts } from '../http/error-response.js';
 
 const HIT_CACHE_SECONDS = 900;
 const MISS_CACHE_SECONDS = 60;
@@ -86,7 +87,7 @@ export function createPublicPriceChangesHandlers({ store }) {
           HIT_CACHE_SECONDS
         );
       } catch (error) {
-        context.error('publicGetCloudToolsPriceChanges failed:', error);
+        context.error('publicGetCloudToolsPriceChanges failed:', errorFacts(error));
         return json(500, { error: 'Failed to get price changes' });
       }
     },

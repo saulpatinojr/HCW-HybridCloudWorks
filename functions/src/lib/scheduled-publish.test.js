@@ -138,7 +138,7 @@ describe('runScheduledPublish', () => {
     await expect(run(store, makePublish())).resolves.toMatchObject({ published: 1 });
     expect(context.error).toHaveBeenCalledWith(
       '[publishScheduledContent] could not record the run on the digest:',
-      expect.any(Error)
+      expect.stringMatching(/^name=Error\b/)
     );
   });
 

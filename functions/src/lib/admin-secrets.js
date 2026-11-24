@@ -60,6 +60,7 @@ import {
   settingToSecret,
 } from './secret-catalog.js';
 import { refreshKeyVaultReferences, setVaultSecret } from './secret-vault.js';
+import { errorFacts } from './http/error-response.js';
 
 // Re-exported so the AI router has one import for the whole feature.
 export { settingToSecret };
@@ -457,7 +458,7 @@ export async function writeCatalogSecret(
     ({ version } = await vault.setVaultSecret(name, value, { env }));
   } catch (error) {
     // The message names the secret and the HTTP status, never the body.
-    log?.error?.(`[admin-secrets] could not set ${name}: ${error?.message ?? error}`);
+    log?.error?.(`[admin-secrets] could not set ${name}: ${errorFacts(error)}`);
     return notWritten(502, `Key Vault refused the write for ${name}. The value was not stored.`);
   }
 

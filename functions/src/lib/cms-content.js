@@ -30,6 +30,7 @@ import {
   derivedKindTypes,
   derivedOriginSources,
 } from "./cms/taxonomy-fields.js";
+import { errorFacts } from './http/error-response.js';
 
 /**
  * Ported verbatim from Site-Main cms-functions.js:2211
@@ -324,7 +325,7 @@ function guarded(guard, { name, failure }, fn) {
     try {
       return await fn(request, context);
     } catch (error) {
-      context.error(`${name} failed:`, error);
+      context.error(`${name} failed:`, errorFacts(error));
       return json(500, { error: failure });
     }
   };
@@ -457,7 +458,7 @@ export function createCmsContentHandlers({
         if (onContentDeleted) {
           await onContentDeleted(id).catch((err) =>
             context.warn?.(
-              `cmsDeleteContent: counters not updated for ${id}: ${err?.message}`,
+              `cmsDeleteContent: counters not updated for ${id}: ${errorFacts(err)}`,
             ),
           );
         }

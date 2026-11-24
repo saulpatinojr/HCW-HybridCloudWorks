@@ -28,6 +28,7 @@
  * episodes it writes carry `provider: 'main'`. See MAIN_FEED_PROVIDER.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
+import { errorFacts, errorCode } from '../http/error-response.js';
 
 export const PODCAST_FEEDS = Object.freeze([]);
 
@@ -238,10 +239,9 @@ export function createPodcastIngest({ store, parser, feeds, now = () => new Date
         });
         results.processed += 1;
       } catch (err) {
-        const message = String(err?.message || err);
         // Position, not title, for the same reason as the Warning below: this
         // array is JSON-stringified into the summary line.
-        results.errors.push({ position: index + 1, error: message });
+        results.errors.push({ position: index + 1, error: errorCode(err) });
         // Warning, not Information: host.json gates `Function` at Warning
         // (#321), so anything logged below this level never reaches the
         // workspace. The witness for this timer is a fresh `updatedAt`; when
@@ -250,7 +250,7 @@ export function createPodcastIngest({ store, parser, feeds, now = () => new Date
         // stays content-free. The feed itself is named by its provider —
         // one URL per provider in the feed list.
         log.warn?.(
-          `[fetchPodcastFeeds] ${provider}: episode ${index + 1} of ${items.length} failed: ${message}`
+          `[fetchPodcastFeeds] ${provider}: episode ${index + 1} of ${items.length} failed: ${errorFacts(err)}`
         );
       }
     }
@@ -275,7 +275,6 @@ export function createPodcastIngest({ store, parser, feeds, now = () => new Date
       try {
         summary[cfg.provider] = await processFeed(cfg.provider, cfg.url);
       } catch (err) {
-        const message = String(err?.message || err);
         if (isFeedGoneError(err)) {
           summary[cfg.provider] = { processed: 0, skipped: 'gone' };
           log.warn?.(
@@ -283,8 +282,8 @@ export function createPodcastIngest({ store, parser, feeds, now = () => new Date
           );
           continue;
         }
-        summary[cfg.provider] = { processed: 0, error: message };
-        log.error?.(`[fetchPodcastFeeds] ${cfg.provider}: feed failed: ${message}`);
+        summary[cfg.provider] = { processed: 0, error: errorCode(err) };
+        log.error?.(`[fetchPodcastFeeds] ${cfg.provider}: feed failed: ${errorFacts(err)}`);
       }
     }
     log.log?.(`[fetchPodcastFeeds] (${resolved.source}) ${JSON.stringify(summary)}`);

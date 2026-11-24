@@ -5,7 +5,7 @@
  * a module-level function over `ctx` (`{ guard, store, now }`); the factory
  * only binds them (PR #841 split of image-prompts.js).
  */
-import { errorResponse } from '../../http/error-response.js';
+import { errorResponse, errorFacts } from '../../http/error-response.js';
 import {
   json,
   KEYWORD_COLLECTIONS,
@@ -112,7 +112,7 @@ async function getConfigTree({ guard, store }, request, context) {
       allowedPages: [...ADMIN_PROMPT_PAGE_ALLOWLIST],
     });
   } catch (error) {
-    context.error('getImagePromptConfig failed:', error);
+    context.error('getImagePromptConfig failed:', errorFacts(error));
     return json(500, { error: 'Failed to load image prompt config' });
   }
 }
@@ -177,7 +177,7 @@ async function resolveForContent({ guard, store }, request, context) {
     const prompt = await heroPromptFor(store, data, resolved, context);
     return json(200, resolutionBody(contentId, data, resolved, prompt));
   } catch (error) {
-    context.error('resolveImagePrompt failed:', error);
+    context.error('resolveImagePrompt failed:', errorFacts(error));
     return json(500, { error: 'Failed to resolve image prompt' });
   }
 }
@@ -195,7 +195,7 @@ async function getKeywordConfig({ guard, store }, request, context) {
     augmentations.sort((a, b) => String(a.label || '').localeCompare(String(b.label || '')));
     return json(200, { success: true, synonyms, augmentations });
   } catch (error) {
-    context.error('getKeywordConfig failed:', error);
+    context.error('getKeywordConfig failed:', errorFacts(error));
     return json(500, { error: 'Failed to load keyword config' });
   }
 }
@@ -234,7 +234,7 @@ async function putKeywordDoc({ guard, store, now }, request, context) {
     });
     return json(200, { success: true, item: saved });
   } catch (error) {
-    context.error('putKeywordDoc failed:', error);
+    context.error('putKeywordDoc failed:', errorFacts(error));
     return json(500, { error: 'Failed to save keyword doc' });
   }
 }
@@ -249,7 +249,7 @@ async function deleteKeywordDoc({ guard, store }, request, context) {
     await deleteIgnoringMissing(store, target.container, target.id);
     return json(200, { success: true });
   } catch (error) {
-    context.error('deleteKeywordDoc failed:', error);
+    context.error('deleteKeywordDoc failed:', errorFacts(error));
     return json(500, { error: 'Failed to delete keyword doc' });
   }
 }

@@ -13,7 +13,7 @@
  * keyless servers, and Plaud's pasted token, take the path they always did.
  */
 import { parseMcpResponseBody } from '../cloud-tools/mcp-parse.js';
-import { AuthoredError, authoredMessage, codeShaped, errorCode } from '../http/error-response.js';
+import { AuthoredError, authoredMessage, codeShaped, errorCode, errorFacts } from '../http/error-response.js';
 import {
   INTEGRATION_KEY_HOSTS,
   KNOWN_INTEGRATION_KEY_NAMES,
@@ -170,7 +170,7 @@ async function getSessionId(serverId, url, authHeaders, { fetchImpl, log, timeou
   } catch (error) {
     log.warn?.('[mcp] initialize handshake failed', {
       serverId,
-      message: error.message,
+      code: errorCode(error),
     });
     return null;
   }
@@ -752,7 +752,7 @@ export async function callMcpTool({
 
   const loaded = await loadMcpServer(store, serverId, (error) =>
     log.error?.(
-      `[mcp] configuration read failed: server=${serverId} code=${error?.code ?? error?.statusCode ?? 'n/a'} ${error?.message || error}`
+      `[mcp] configuration read failed: server=${serverId} ${errorFacts(error)}`
     )
   );
   if (loaded.failure) return loaded.failure;
@@ -793,11 +793,11 @@ export async function callMcpTool({
     // Content-free on purpose: a McpUpstreamError carries `responseBody`,
     // which for a tool call can be the tool's output — a transcript — and
     // logging the error object whole would put that in Function logs. The
-    // server, the tool, the HTTP status and the error's own message are all
-    // an operator needs; the body reaches only the caller, through
+    // server, the tool and the error's class, code and HTTP status are all
+    // an operator needs (never its message, #1794); the body reaches only the caller, through
     // `mcpAuthError`, and only as an OAuth error description.
     log.error?.(
-      `[mcp] upstream call failed: server=${serverId} tool=${tool} status=${error?.status ?? 'n/a'} ${error?.message || error}`
+      `[mcp] upstream call failed: server=${serverId} tool=${tool} ${errorFacts(error)}`
     );
     return {
       ...failureBody(mcpAuthError(error, 'MCP tool call failed')),
@@ -917,7 +917,7 @@ async function syncMcpTools(ctx, request, context) {
   if (!serverId) return json(400, { ok: false, error: 'serverId is required' });
 
   const loaded = await loadMcpServer(ctx.store, serverId, (error) =>
-    context.error?.('[syncMcpTools] configuration read failed:', error)
+    context.error?.('[syncMcpTools] configuration read failed:', errorFacts(error))
   );
   if (loaded.failure) {
     const { httpStatus, ...failure } = loaded.failure;

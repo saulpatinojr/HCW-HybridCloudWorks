@@ -46,6 +46,7 @@
  */
 
 import { isValidBlobPath, PUBLIC_MEDIA_CONTAINERS } from './blob-paths.js';
+import { errorFacts } from './http/error-response.js';
 
 /** One year. The path is content-addressed by timestamp, so this is safe. */
 const MAX_AGE_SECONDS = 31536000;
@@ -342,7 +343,7 @@ async function dispatch(media, request, context) {
     return await respond(req);
   } catch (error) {
     if (error?.statusCode === 404 || error?.code === 'BlobNotFound') return notFound();
-    context.error('getMedia failed:', error);
+    context.error('getMedia failed:', errorFacts(error));
     return json(500, { error: 'Failed to read media' });
   }
 }

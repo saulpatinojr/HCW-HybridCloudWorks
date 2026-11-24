@@ -14,6 +14,7 @@
  * `TEMP_STORAGE_CLEANUP_DELETE=true`.
  */
 
+import { errorFacts } from '../http/error-response.js';
 export const DEFAULT_PREFIXES = 'content:uploads/';
 export const DEFAULT_MAX_AGE_DAYS = 7;
 
@@ -69,7 +70,7 @@ export function createTempStorageCleanup({
             deleted += 1;
           } catch (err) {
             log.error?.(
-              `[cleanupTempStorage] Failed to delete ${container}/${blob.name}: ${err?.message || err}`
+              `[cleanupTempStorage] Failed to delete ${container}/${blob.name}: ${errorFacts(err)}`
             );
           }
         }

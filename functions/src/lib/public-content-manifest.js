@@ -68,6 +68,7 @@ import {
   projectInterview as projectPublicInterview,
 } from './public-reads.js';
 import { countSections } from './public-section-counts.js';
+import { errorFacts } from './http/error-response.js';
 
 /**
  * The fields the manifest keeps, and therefore the only fields this returns.
@@ -371,7 +372,7 @@ export function createPublicContentManifestHandlers({ store }) {
           headers: { 'Cache-Control': 'no-store' },
         };
       } catch (error) {
-        context?.error?.('public content manifest failed', error);
+        context?.error?.('public content manifest failed', errorFacts(error));
         return { status: 500, jsonBody: { success: false, error: 'manifest_unavailable' } };
       }
     },

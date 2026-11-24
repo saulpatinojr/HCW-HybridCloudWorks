@@ -86,6 +86,7 @@
 
 import { isAgentOnline } from '../labs.js';
 import { createMinuteCache, jsonResponse, MINUTE_CACHE_SECONDS } from './minute-cache.js';
+import { errorFacts } from '../http/error-response.js';
 
 export const ESTATE_CACHE_ID = 'labs:estate';
 export const ESTATE_CACHE_SECONDS = MINUTE_CACHE_SECONDS;
@@ -243,7 +244,7 @@ async function sideRead(label, context, read) {
   try {
     return await read();
   } catch (error) {
-    context?.warn?.(`labs-estate: ${label} read failed: ${error?.message ?? error}`);
+    context?.warn?.(`labs-estate: ${label} read failed: ${errorFacts(error)}`);
     return null;
   }
 }
@@ -263,7 +264,7 @@ async function readArc({ arm }, context) {
     // No subscription to scope the read to: a local or test process. There is
     // no estate this process could see, and the reason is not an outage.
     if (error?.code === 'ARG_UNSCOPED') return { kind: 'absent' };
-    context?.warn?.(`labs-estate: Arc read failed: ${error?.message ?? error}`);
+    context?.warn?.(`labs-estate: Arc read failed: ${errorFacts(error)}`);
     return { kind: 'unavailable' };
   }
 }
@@ -330,7 +331,7 @@ export function createEstateHandlers({ store, arm, coderStatus, now = () => Date
         }
         return jsonResponse(result.status, result.body, result.status === 200 ? ESTATE_CACHE_SECONDS : 0);
       } catch (error) {
-        context.error('publicGetLabsEstate failed:', error);
+        context.error('publicGetLabsEstate failed:', errorFacts(error));
         return jsonResponse(500, { error: 'Failed to read the labs estate' });
       }
     },

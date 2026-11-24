@@ -359,10 +359,10 @@ describe('buildInlineImageUpdate', () => {
     });
     expect(update).toBeNull();
     expect(log.warn).toHaveBeenCalledTimes(1);
-    // The whole-step warning is scrubbed like the per-URL one.
-    expect(log.warn.mock.calls[0][0]).toContain('storage account unreachable');
+    // The whole-step warning names the error's class, never its message (#1794).
+    expect(log.warn.mock.calls[0][0]).toMatch(/re-hosting skipped: name=Error\b/);
+    expect(log.warn.mock.calls[0][0]).not.toContain('storage account unreachable');
     expect(log.warn.mock.calls[0][0]).not.toContain('devblogs.microsoft.com');
-    expect(log.warn.mock.calls[0][0]).toContain('[url]');
   });
 });
 

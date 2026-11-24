@@ -45,6 +45,7 @@
  * still returns the Tests.
  */
 import { testProviderConnection } from '../ai/proxy.js';
+import { errorFacts, errorCode } from '../http/error-response.js';
 
 /**
  * @param {object} deps
@@ -63,8 +64,8 @@ export function createAiProviderProbe({ store, ai, catalog = null, log = {}, now
     try {
       return await catalog.refresh();
     } catch (error) {
-      log.error?.('probeAiProviders catalogue refresh failed:', error);
-      return { error: String(error?.message || error) };
+      log.error?.('probeAiProviders catalogue refresh failed:', errorFacts(error));
+      return { error: errorCode(error) };
     }
   }
 
