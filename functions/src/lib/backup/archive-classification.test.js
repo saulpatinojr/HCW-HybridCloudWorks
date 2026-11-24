@@ -25,6 +25,7 @@ import {
   OWNER_ACCEPTED,
   SENSITIVE_KEPT_ON_PURPOSE,
   ownerAcceptedOn,
+  classificationFingerprint,
   LEFT_OUT,
   MCP_SERVER_KEEP,
   NAMED_REMOVALS,
@@ -139,6 +140,10 @@ describe('archive classification against infra/cosmos-containers.json', () => {
     const comments = source.replace(/\n\s*\/\/ ?/g, ' ');
     expect(comments).toContain('hold the EMAIL ADDRESS and the SESSION ID of whoever used the tool');
     expect(comments).toContain('recommended leaving those three out; the owner chose to keep them');
+    // ...and which three, with the field names the dry run showed.
+    for (const line of ['tool_workspaces ownerEmail', 'tool_assessment_sessions ownerEmail, requestedByEmail, ownerUid', 'tool_architecture_plans requestedByEmail, ownerUid, sessionId']) {
+      expect(comments.replace(/ +/g, ' ')).toContain(line);
+    }
   });
 
   it('records the owner’s blanket decision per container, with its date, and does not pass it off as names reviewed one by one', () => {
@@ -158,6 +163,45 @@ describe('archive classification against infra/cosmos-containers.json', () => {
       mcp_servers: { apiKeyEnvVar: expect.any(String) },
       ai_providers: { apiKeyEnvVar: expect.any(String) },
     });
+  });
+
+  it('gives the rules one fingerprint: the same every time it is asked, and built from every list and function that decides a record', () => {
+    const print = classificationFingerprint();
+    expect(print).toMatch(/^[0-9a-f]{64}$/);
+    expect(classificationFingerprint()).toBe(print);
+    // The function names every list a record's fate depends on, so a change to any of them changes it.
+    const source = readFileSync(new URL('./archive-classification.js', import.meta.url), 'utf8');
+    const body = source.slice(source.indexOf('export function classificationFingerprint()'));
+    for (const part of [
+      'ARCHIVE_AS_IS',
+      'ARCHIVE_CHANGED',
+      'LEFT_OUT',
+      'RECORD_RULES',
+      'MCP_SERVER_KEEP',
+      'AI_PROVIDER_KEEP',
+      'DEVELOPER_EVENT_KEEP',
+      'DOC_VAULT_KEPT_TYPES',
+      'DOC_VAULT_SALT_ID',
+      'ADMIN_CONFIG_KEEP',
+      'ADMIN_CONFIG_LEAVE_OUT',
+      'ADMIN_SETTINGS_KEEP',
+      'ADMIN_SETTINGS_LEAVE_OUT',
+      'SENSITIVE_NAME_WORDS',
+      'text(archiveRecord)',
+      'text(keepOnly)',
+      'text(adminConfigDecision)',
+      'text(adminSettingsDecision)',
+      'text(withoutSensitiveKeys)',
+      'text(addressWithoutSecrets)',
+      'text(isPublicDocument)',
+      'Object.entries(KINDS)',
+    ]) {
+      expect(body, part).toContain(part);
+    }
+    // Every keep list and decision list the file exports is in it: a new one must be added.
+    const lists = [...source.matchAll(/^export const ([A-Z_]+_(?:KEEP|LEAVE_OUT)) = /gm)].map((m) => m[1]);
+    expect(lists.length).toBeGreaterThanOrEqual(7);
+    for (const name of lists) expect(body, name).toContain(name);
   });
 
   it('"everything stays" did not put a secret back: the keep lists still drop what they dropped', () => {

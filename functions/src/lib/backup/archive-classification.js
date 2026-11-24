@@ -31,7 +31,7 @@
  * short-lived state).
  *
  * THE ONE FUNCTION THAT DECIDES A RECORD is `archiveRecord`. Both the dry-run
- * report (archive-report.js) and the archive job (phase 3 of ADR 0046) go
+ * report (archive-report.js) and the archive job (archive-job.js) go
  * through it, so what the report counts is what the job will do.
  *
  * FAIL CLOSED. A container this file does not name, a container no code
@@ -51,6 +51,8 @@
  * addresses and may hold old keys. The comment above them in ARCHIVE_AS_IS
  * says what was known and who chose. Everything else follows the rule.
  */
+import { createHash } from 'node:crypto';
+
 import { STRIPPED_FIELDS } from '../developer-api/proposal-cycle.js';
 import { isPublicDocument } from '../public-reads.js';
 
@@ -134,16 +136,20 @@ export const ARCHIVE_AS_IS = freeze([
   // field names and flagged names, and chose to keep all of them, whole.
   //
   // Three of the five tool_* containers hold the EMAIL ADDRESS and the
-  // SESSION ID of whoever used the tool (the owner's decision says "the
-  // three tool_ containers" without naming them; the dry-run report shows
-  // which, by their field names). That is another person's contact detail
-  // with no agreement recorded for keeping it. The session pointed that out
-  // and recommended leaving those three out; the owner chose to keep them,
-  // on the grounds that the archive is private and readable by the owner
-  // only. This is an exception to the rule at the top of this
-  // file, made by the owner, and an erasure request from someone who used
-  // those tools means rewriting each year's archive that holds them
-  // (ADR 0046 section 5).
+  // SESSION ID of whoever used the tool. By the field names the first dry
+  // run showed (names only, never a value):
+  //   tool_workspaces            ownerEmail
+  //   tool_assessment_sessions   ownerEmail, requestedByEmail, ownerUid
+  //   tool_architecture_plans    requestedByEmail, ownerUid, sessionId
+  // (`ownerUid` is the id of the person's account.) The other two,
+  // tool_migration_workspaces and tool_exports, held no record that day.
+  // An email address is another person's contact detail, with no agreement
+  // recorded for keeping it. The session pointed that out and recommended
+  // leaving those three out; the owner chose to keep them, on the grounds
+  // that the archive is private and readable by the owner only. This is an
+  // exception to the rule at the top of this file, made by the owner, and
+  // an erasure request from someone who used those tools means rewriting
+  // each year's archive that holds them (ADR 0046 section 5).
   'tool_workspaces',
   'tool_migration_workspaces',
   'tool_assessment_sessions',
@@ -1039,4 +1045,56 @@ export function archiveRecord(container, doc, ctx = {}) {
       break;
   }
   return { keep: true, doc, removed: [], reason: null };
+}
+
+// ── A fingerprint of the rules ──────────────────────────────────────────────
+
+let fingerprint = null;
+
+/**
+ * A sha256 over everything that decides what an archive holds: every list in
+ * this file that `archivePlan` and `archiveRecord` read, and the text of the
+ * functions that apply them. It changes whenever a container moves between
+ * lists, a keep list changes, or the code that copies a record changes.
+ *
+ * WHY. An archive takes hours or days to write, and a dry-run report is read
+ * days after it was made. Both write down this fingerprint. A file written,
+ * or a report made, under other rules than today's is then recognised and
+ * not trusted: the file is written again and the report is made again
+ * (archive-job.js, archive-report.js `reportGate`). Without it, a container
+ * that was moved to "left out" while a run was unfinished would still be
+ * named by that run's manifest.
+ *
+ * It holds no record and no value: only this file's own lists and code.
+ *
+ * @returns {string} lower-case hex
+ */
+export function classificationFingerprint() {
+  if (fingerprint) return fingerprint;
+  const text = (fn) => String(fn);
+  const rules = {
+    asIs: ARCHIVE_AS_IS,
+    changed: ARCHIVE_CHANGED,
+    leftOut: LEFT_OUT,
+    recordRules: RECORD_RULES,
+    keep: { MCP_SERVER_KEEP, AI_PROVIDER_KEEP, DEVELOPER_EVENT_KEEP, DOC_VAULT_KEPT_TYPES, DOC_VAULT_SALT_ID },
+    adminConfig: { keep: ADMIN_CONFIG_KEEP, leaveOut: ADMIN_CONFIG_LEAVE_OUT },
+    adminSettings: { keep: ADMIN_SETTINGS_KEEP, leaveOut: ADMIN_SETTINGS_LEAVE_OUT },
+    sensitive: { SENSITIVE_NAME_WORDS, SENSITIVE_EXACT_NAMES },
+    code: [
+      text(archiveRecord),
+      text(keepOnly),
+      text(adminConfigDecision),
+      text(adminSettingsDecision),
+      text(withoutSensitiveKeys),
+      text(addressWithoutSecrets),
+      text(looksSensitive),
+      text(isInterview),
+      text(isPublicDocument),
+      text(createContentIndex),
+      ...Object.entries(KINDS).map(([kind, copy]) => `${kind}:${text(copy)}`),
+    ],
+  };
+  fingerprint = createHash('sha256').update(JSON.stringify(rules)).digest('hex');
+  return fingerprint;
 }

@@ -90,6 +90,10 @@ export const SOURCE_DISPLAY_NAMES = Object.freeze({
   delivery_monitor_red: 'the delivery monitor watch',
   delivery_monitor_green: 'the delivery monitor watch',
   delivery_monitor_blind: 'the delivery monitor watch',
+  content_archive_written: 'the yearly content archive',
+  content_archive_late: 'the yearly content archive',
+  content_archive_waiting: 'the yearly content archive',
+  content_archive_blocked: 'the yearly content archive',
 });
 
 export function formatTelegramText({ title, message, severity, source }) {

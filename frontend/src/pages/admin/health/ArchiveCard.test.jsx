@@ -1,6 +1,7 @@
 /**
  * The Health page's Archive card (ADR 0046, #1811): the switch, whether an
- * archive could start, the newest dry-run report, and the Dry run button.
+ * archive could start, the last archive and one in progress, the newest
+ * dry-run report, and the Dry run button.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -14,6 +15,7 @@ import ArchiveCard, {
   kindWords,
   notShownWords,
   reasonWords,
+  sizeWords,
   sensitiveSentence,
   yearState,
 } from './ArchiveCard';
@@ -33,7 +35,11 @@ const STATUS = {
   ok: true,
   setting: 'CONTENT_ARCHIVE_ENABLED',
   switchOn: false,
-  jobBuilt: false,
+  jobBuilt: true,
+  exportOn: true,
+  progressKnown: true,
+  lastArchive: null,
+  run: null,
   year: 2026,
   archived: false,
   wouldStart: false,
@@ -158,17 +164,184 @@ describe('ArchiveCard', () => {
     expect(getJSON).not.toHaveBeenCalled();
   });
 
-  it('shows the switch off, that the job is not built, and what stands in the way', async () => {
+  it('shows the switch off, what stands in the way, and that no archive has been written', async () => {
     renderAs('super_admin');
     expect(await screen.findByTestId('archive-switch')).toHaveTextContent('Off');
     expect(getJSON).toHaveBeenCalledWith(ARCHIVE_STATUS_ROUTE);
     expect(screen.getByTestId('archive-year-state')).toHaveTextContent('Not written');
     const readiness = screen.getByTestId('archive-readiness');
-    expect(readiness).toHaveTextContent('The job that writes an archive is not built yet');
+    expect(readiness).not.toHaveTextContent('not built');
     expect(readiness).toHaveTextContent(
       'An archive of 2026 could not start today: the switch is off; the newest complete weekly backup is from before 2 February.'
     );
+    expect(screen.getByTestId('archive-none')).toHaveTextContent(
+      'No archive has been written yet.'
+    );
     expect(screen.getByTestId('archive-no-report')).toBeInTheDocument();
+  });
+
+  it('says why it did not start when the nightly export is off', async () => {
+    getJSON.mockResolvedValue({
+      ...STATUS,
+      switchOn: true,
+      exportOn: false,
+      blockers: ['export-off'],
+    });
+    renderAs('super_admin');
+    expect(await screen.findByTestId('archive-readiness')).toHaveTextContent(
+      'An archive of 2026 could not start today: the nightly export is off'
+    );
+  });
+
+  it('says in plain words when the dry-run report is what stands in the way', async () => {
+    expect(blockerSentence(['report-missing'])).toContain('no dry run has been made yet');
+    expect(blockerSentence(['report-older-than-backup'])).toContain('made from an older backup');
+    expect(blockerSentence(['report-flagged', 'report-waiting'])).toBe(
+      'the newest dry-run report shows a field to look at in a container nobody has decided about (the red block below); the newest dry-run report shows a container waiting for you'
+    );
+    expect(blockerSentence(['report-older-rules'])).toContain(
+      'before the list of what is kept last changed'
+    );
+    expect(blockerSentence(['report-incomplete'])).toContain('does not cover every container');
+    expect(blockerSentence(['report-cut-short'])).toContain('too large to search whole');
+    for (const code of ['report-running', 'report-stalled', 'report-mismatch']) {
+      expect(blockerSentence([code]), code).not.toBe(code);
+    }
+    getJSON.mockResolvedValue({ ...STATUS, switchOn: true, blockers: ['report-flagged'] });
+    renderAs('super_admin');
+    expect(await screen.findByTestId('archive-readiness')).toHaveTextContent(
+      'An archive of 2026 could not start today: the newest dry-run report shows a field to look at'
+    );
+  });
+
+  it('shows the last archive: year, when, files, records, size and the Archive tier', async () => {
+    getJSON.mockResolvedValue({
+      ...STATUS,
+      switchOn: true,
+      archived: true,
+      blockers: ['already-archived'],
+      lastArchive: {
+        year: 2026,
+        createdAt: '2027-02-08T03:41:00.000Z',
+        sourceRun: '2027-02-07',
+        containers: 60,
+        records: 123456,
+        bytes: 5 * 1024 * 1024,
+        inArchiveTier: 60,
+        missingFiles: 0,
+      },
+    });
+    renderAs('super_admin');
+    const last = await screen.findByTestId('archive-last');
+    expect(last).toHaveTextContent('Last archive: 2026');
+    expect(last).toHaveTextContent('2027-02-08 03:41 UTC');
+    expect(last).toHaveTextContent(
+      '60 files (one per container), 123,456 records, 5.0 MB compressed'
+    );
+    expect(last).toHaveTextContent('made from the weekly backup of 2027-02-07');
+    expect(last).toHaveTextContent('Every file is in the Archive tier');
+    expect(screen.queryByTestId('archive-last-missing')).toBeNull();
+    expect(screen.getByTestId('archive-year-state')).toHaveTextContent('Written');
+  });
+
+  it('says when some files are not in the Archive tier yet, and when a listed file is missing', async () => {
+    getJSON.mockResolvedValue({
+      ...STATUS,
+      archived: true,
+      lastArchive: {
+        year: 2026,
+        createdAt: null,
+        sourceRun: null,
+        containers: 60,
+        records: 1,
+        bytes: 10,
+        inArchiveTier: 30,
+        missingFiles: 2,
+      },
+    });
+    renderAs('super_admin');
+    const last = await screen.findByTestId('archive-last');
+    expect(last).toHaveTextContent(
+      '30 of 60 files are in the Archive tier; the daily check moves the rest.'
+    );
+    expect(screen.getByTestId('archive-last-missing')).toHaveTextContent('2 file(s)');
+  });
+
+  it('shows an archive that is being written, and one that is late with what it lacks', async () => {
+    const run = {
+      year: 2026,
+      startedAt: '2027-02-08T03:00:00.000Z',
+      sourceRun: '2027-02-07',
+      expected: 39,
+      done: 12,
+      missing: ['content_versions'],
+      late: false,
+    };
+    getJSON.mockResolvedValue({ ...STATUS, switchOn: true, run });
+    const first = renderAs('super_admin');
+    expect(await screen.findByTestId('archive-run')).toHaveTextContent(
+      'The archive of 2026 is being written from the weekly backup of 2027-02-07: 12 of 39 files are written and checked.'
+    );
+    expect(screen.queryByTestId('archive-none')).toBeNull();
+    first.unmount();
+
+    getJSON.mockResolvedValue({ ...STATUS, switchOn: true, run: { ...run, done: 38, late: true } });
+    renderAs('super_admin');
+    const late = await screen.findByTestId('archive-run-late');
+    expect(late).toHaveTextContent('is not finished: 38 of 39 files are written and checked.');
+    expect(late).toHaveTextContent('Missing: content_versions.');
+    expect(late).toHaveTextContent('Nothing has been moved to the Archive tier');
+  });
+
+  it('says in red when the year’s folder holds a file the list does not name', async () => {
+    getJSON.mockResolvedValue({
+      ...STATUS,
+      switchOn: true,
+      run: {
+        year: 2026,
+        startedAt: '2027-02-08T03:00:00.000Z',
+        sourceRun: '2027-02-07',
+        expected: 60,
+        done: 60,
+        missing: [],
+        late: true,
+        unlistedFiles: 1,
+      },
+    });
+    renderAs('super_admin');
+    const line = await screen.findByTestId('archive-run-unlisted');
+    expect(line).toHaveTextContent('holds 1 file(s) its list does not name');
+    expect(line).toHaveTextContent('nothing deletes it by itself');
+    expect(line).toHaveClass('text-destructive');
+  });
+
+  it('says "could not be read" for the archive’s progress, not "none", when the server could not tell', async () => {
+    getJSON.mockResolvedValue({ ...STATUS, progressKnown: false });
+    renderAs('super_admin');
+    expect(await screen.findByTestId('archive-progress-unknown')).toBeInTheDocument();
+    expect(screen.queryByTestId('archive-none')).toBeNull();
+  });
+
+  it('keeps the old sentence for a server that has not been deployed with the job yet', async () => {
+    getJSON.mockResolvedValue({
+      ...STATUS,
+      jobBuilt: false,
+      progressKnown: undefined,
+      lastArchive: undefined,
+      run: undefined,
+    });
+    renderAs('super_admin');
+    expect(await screen.findByTestId('archive-readiness')).toHaveTextContent(
+      'The job that writes an archive is not built yet'
+    );
+    expect(screen.queryByTestId('archive-none')).toBeNull();
+  });
+
+  it('writes sizes in plain words', () => {
+    expect(sizeWords(512)).toBe('512 bytes');
+    expect(sizeWords(1536)).toBe('1.5 KB');
+    expect(sizeWords(3 * 1024 ** 3)).toBe('3.0 GB');
+    expect(sizeWords(undefined)).toBe('an unknown size');
   });
 
   it('says "Not known" when the archive container could not be read, not "Not written"', async () => {

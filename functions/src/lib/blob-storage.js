@@ -177,6 +177,12 @@ export async function uploadBlob(
  * @param {object} [options]
  * @param {string} [options.tier] - access tier to write at, e.g. 'Cool'
  * @param {Record<string, string>} [options.metadata]
+ * @param {{ ifNoneMatch?: string, ifMatch?: string }} [options.conditions] -
+ *   make the write conditional: `{ ifNoneMatch: '*' }` writes only when no
+ *   blob has that name, `{ ifMatch: etag }` only over the exact version that
+ *   was read. Storage refuses the commit otherwise (409 or 412), so two
+ *   writers of one name cannot both win. The yearly archive uses it
+ *   (backup/archive-job.js).
  * @returns {Promise<string>} Blob URL
  */
 export async function uploadBlobFromStream(
@@ -195,6 +201,7 @@ export async function uploadBlobFromStream(
     blobHTTPHeaders: { blobContentType: contentType },
     ...(options.metadata ? { metadata: options.metadata } : {}),
     ...(options.tier ? { tier: options.tier } : {}),
+    ...(options.conditions ? { conditions: options.conditions } : {}),
   });
 
   return blockBlobClient.url;
@@ -495,7 +502,7 @@ export async function generateSasUrl(containerName, blobName, expiresInMinutes =
  *
  * @param {string} containerName
  * @param {string} [prefix] - Filter blobs by path prefix
- * @returns {Promise<Array<{name: string, url: string, contentType: string, size: number}>>}
+ * @returns {Promise<Array<{name: string, url: string, contentType: string, size: number, lastModified: Date, tier: string|null}>>}
  */
 export async function listBlobs(containerName, prefix = '') {
   const containerClient = getContainerClient(containerName);
@@ -508,10 +515,34 @@ export async function listBlobs(containerName, prefix = '') {
       contentType: blob.properties.contentType,
       size: blob.properties.contentLength,
       lastModified: blob.properties.lastModified,
+      // The access tier ('Hot', 'Cool', 'Cold' or 'Archive'), when storage says.
+      tier: blob.properties.accessTier ?? null,
+      // The version stamp storage gives each write of a blob; it changes on every write.
+      etag: blob.properties.etag ?? null,
     });
   }
 
   return blobs;
+}
+
+/**
+ * Set a blob's access tier (Set Blob Tier). The yearly content archive
+ * (backup/archive-job.js) uses it to move a checked data file to 'Archive',
+ * Azure's cheapest tier, where a file is offline: it cannot be read again
+ * until it has been brought back, which takes hours
+ * (https://learn.microsoft.com/azure/storage/blobs/archive-rehydrate-overview).
+ * So the caller checks the file first, and nothing here reads it afterwards.
+ *
+ * A write, so it is refused once a job's time has run out, like an upload.
+ *
+ * @param {string} containerName
+ * @param {string} blobName
+ * @param {'Hot'|'Cool'|'Cold'|'Archive'} tier
+ * @returns {Promise<void>}
+ */
+export async function setBlobAccessTier(containerName, blobName, tier) {
+  refuseWriteAfterJobAbort();
+  await getContainerClient(containerName).getBlobClient(blobName).setAccessTier(tier);
 }
 
 // --- Block staging for the interview upload (ADR 0040 D1, #1565) ---------
