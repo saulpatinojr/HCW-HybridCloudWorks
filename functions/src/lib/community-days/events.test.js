@@ -7,6 +7,8 @@ import {
   EVENT_PAGE_BASE,
   MAX_EVENTS,
   PAGE_TEXT_MAX,
+  PAGE_TEXT_MAX_BYTES,
+  cutToBytes,
   dayOf,
   htmlToText,
   httpUrl,
@@ -119,16 +121,40 @@ describe('htmlToText', () => {
     expect(htmlToText('&#65;&#x42; &unknown; &amp;lt;')).toBe('AB &unknown; &lt;');
   });
 
-  it('leaves a script’s text as plain words, with no tag left to run', () => {
-    const out = htmlToText('<p>Hi</p><script>alert("x")</script><img src=x onerror=alert(1)>');
-    expect(out).not.toMatch(/<script|<img|onerror/i);
-    expect(out).toContain('Hi');
+  it('drops what is inside a script or a style, with its tags, and drops a comment', () => {
+    const out = htmlToText('<p>Hi</p><script>alert("x")</script><img src=x onerror=alert(1)><STYLE type="text/css">p { color: red }</STYLE> there<!-- a note --> friend');
+    expect(out).toBe('Hi there friend');
+    // A script with no end tag takes the rest with it, as a browser would read it.
+    expect(htmlToText('Before <script>var hidden = 1; <b>not shown</b>')).toBe('Before');
+    // A tag that only starts with the same letters is an ordinary tag: its words stay.
+    expect(htmlToText('<styled-box>Kept</styled-box> <scripture>too</scripture>')).toBe('Kept too');
   });
 
-  it('survives an unclosed tag and a value that is not text', () => {
-    expect(htmlToText('before <a href="x')).toBe('before');
+  it('keeps a bare “<” as a character, and the words after it', () => {
+    expect(htmlToText('Talks for teams of < 10 people, and > 100 too')).toBe('Talks for teams of < 10 people, and > 100 too');
+    expect(htmlToText('<p>Costs are <b>low</b>: 5 < 10</p><p>See you there</p>')).toBe('Costs are low : 5 < 10 See you there');
+    // No ">" follows, so nothing here is a tag: the words are kept, not lost.
+    expect(htmlToText('x<y and then a long sentence that used to vanish')).toBe('x<y and then a long sentence that used to vanish');
+    expect(htmlToText('before <a href="x')).toBe('before <a href="x');
+  });
+
+  it('reads a value that is not text as nothing', () => {
     expect(htmlToText(undefined)).toBe('');
     expect(htmlToText(42)).toBe('');
+  });
+
+  it('cuts by bytes as well as characters, never in the middle of a character', () => {
+    // Plain English: one byte each, so all the characters are kept.
+    expect(htmlToText('x'.repeat(200000))).toHaveLength(PAGE_TEXT_MAX);
+    // Three bytes each: a third as many characters fit.
+    const kanji = htmlToText('日'.repeat(5000));
+    expect(Buffer.byteLength(kanji, 'utf8')).toBeLessThanOrEqual(PAGE_TEXT_MAX_BYTES);
+    expect(kanji).toHaveLength(Math.floor(PAGE_TEXT_MAX_BYTES / 3));
+    // Four bytes each (two UTF-16 units): no half character is left at the end.
+    expect(cutToBytes('😀'.repeat(10), 9)).toBe('😀😀');
+    expect(cutToBytes('aé日😀', 6)).toBe('aé日');
+    expect(cutToBytes('abc', 0)).toBe('');
+    expect(cutToBytes(42, 10)).toBe('');
   });
 
   it('is bounded on a very long input', () => {

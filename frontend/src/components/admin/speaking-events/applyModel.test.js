@@ -20,6 +20,8 @@ import {
   formatDay,
   formatRange,
   isDay,
+  isDropped,
+  isPlanned,
   knownEvents,
   locationLine,
   marksForMonth,
@@ -193,9 +195,18 @@ describe('what clashes', () => {
         { talks, known }
       );
   };
+  // An event the owner cares about: marked Interested, Applied or Accepted.
+  const planned = (over = {}) => event({ note: { status: 'applied' }, ...over });
 
-  it('flags a talk on the first, a middle or the last day of a multi-day event, and not the day before or after', () => {
-    const three = event({ startDate: '2027-03-05', endDate: '2027-03-07' });
+  it('knows which statuses put an event in the owner’s plans and which take it out', () => {
+    expect(['interested', 'applied', 'accepted'].every(isPlanned)).toBe(true);
+    expect(['', 'declined', 'not_going', undefined].some(isPlanned)).toBe(false);
+    expect(['declined', 'not_going'].every(isDropped)).toBe(true);
+    expect(['', 'interested', 'applied', 'accepted', undefined].some(isDropped)).toBe(false);
+  });
+
+  it('flags a talk on the first, a middle or the last day of a planned multi-day event, and not the day before or after', () => {
+    const three = planned({ startDate: '2027-03-05', endDate: '2027-03-07' });
     for (const day of ['2027-03-05', '2027-03-06', '2027-03-07']) {
       expect(against([three], [talk({ day })])('event-1').clashes, day).toHaveLength(1);
     }
@@ -204,15 +215,48 @@ describe('what clashes', () => {
     }
   });
 
+  it.each(['interested', 'applied', 'accepted'])(
+    'counts an event marked %s as one of the owner’s own things',
+    (status) => {
+      const result = against([event({ note: { status } })], [talk()])('event-1');
+      expect(result.clashes).toHaveLength(1);
+      expect(result.wouldMeet).toEqual([]);
+    }
+  );
+
   it('says what it clashes with, in words', () => {
     const result = against(
-      [event()],
+      [planned()],
       [talk({ status: 'proposed', statusLabel: 'Proposed' })]
     )('event-1');
     expect(result.clashes).toEqual([
       { kind: 'talk', name: 'Other Conf', detail: 'Proposed talk on Mar 6, 2027' },
     ]);
   });
+
+  it('does not call it a clash when the event has no status: it only says what the dates would meet', () => {
+    // This used to be a clash: any listed event with one of the owner's talks
+    // on its days. With hundreds of listed events that marked almost any day.
+    const result = against([event()], [talk()])('event-1');
+    expect(result.clashes).toEqual([]);
+    expect(result.wouldMeet).toEqual([
+      { kind: 'talk', name: 'Other Conf', detail: 'Accepted talk on Mar 6, 2027' },
+    ]);
+  });
+
+  it.each(['declined', 'not_going'])(
+    'says nothing at all for an event marked %s, and such an event clashes with nothing',
+    (status) => {
+      const dropped = event({ note: { status } });
+      expect(against([dropped], [talk()])('event-1')).toEqual({
+        clashes: [],
+        wouldMeet: [],
+        speakingHere: null,
+      });
+      const other = planned({ id: 'event-2', title: 'Second Day' });
+      expect(against([dropped, other])('event-2').clashes).toEqual([]);
+    }
+  );
 
   it('ignores talks that are only an idea, declined, delivered or undated', () => {
     const talks = [
@@ -221,16 +265,23 @@ describe('what clashes', () => {
       talk({ status: 'delivered' }),
       talk({ day: null }),
     ];
-    expect(against([event()], talks)('event-1').clashes).toEqual([]);
+    expect(against([planned()], talks)('event-1')).toEqual({
+      clashes: [],
+      wouldMeet: [],
+      speakingHere: null,
+    });
   });
 
   it('says "already speaking here" when the talk is this same event, not a clash', () => {
-    const result = against([event()], [talk({ name: '  example community day ' })])('event-1');
-    expect(result.clashes).toEqual([]);
-    expect(result.speakingHere).toBe('Accepted');
+    for (const row of [event(), planned()]) {
+      const result = against([row], [talk({ name: '  example community day ' })])('event-1');
+      expect(result.clashes).toEqual([]);
+      expect(result.wouldMeet).toEqual([]);
+      expect(result.speakingHere).toBe('Accepted');
+    }
   });
 
-  it('flags another event only when the owner applied to it or was accepted there', () => {
+  it('flags two events against each other only when the owner planned both', () => {
     const other = (status) =>
       event({
         id: 'event-2',
@@ -239,8 +290,8 @@ describe('what clashes', () => {
         endDate: '2027-03-08',
         note: status ? { status } : null,
       });
-    for (const status of ['applied', 'accepted']) {
-      const of = against([event(), other(status)]);
+    for (const status of ['interested', 'applied', 'accepted']) {
+      const of = against([planned(), other(status)]);
       expect(of('event-1').clashes, status).toEqual([
         {
           kind: 'event',
@@ -248,20 +299,35 @@ describe('what clashes', () => {
           detail: `${applyStatusInfo(status).label}, Mar 7–8, 2027`,
         },
       ]);
-      // The applied event itself is not flagged by an event the owner has not chosen.
-      expect(of('event-2').clashes, status).toEqual([]);
+      expect(of('event-2').clashes, status).toEqual([
+        { kind: 'event', name: 'Example Community Day', detail: 'Applied, Mar 6–7, 2027' },
+      ]);
     }
-    for (const status of [null, 'interested', 'declined', 'not_going']) {
-      expect(against([event(), other(status)])('event-1').clashes, String(status)).toEqual([]);
+    // The other event is not one the owner cares about: no clash on either row.
+    for (const status of [null, 'declined', 'not_going']) {
+      const of = against([planned(), other(status)]);
+      expect(of('event-1').clashes, String(status)).toEqual([]);
+      expect(of('event-2').clashes, String(status)).toEqual([]);
     }
   });
 
-  it('flags both ways when the owner applied to both', () => {
-    const a = event({ note: { status: 'applied' } });
-    const b = event({ id: 'event-2', title: 'Second Day', note: { status: 'accepted' } });
-    const of = against([a, b]);
-    expect(of('event-1').clashes).toHaveLength(1);
-    expect(of('event-2').clashes).toHaveLength(1);
+  it('tells an unmarked event what it would meet, without flagging either row', () => {
+    // This used to flag the unmarked row with "Clash".
+    const unmarked = event();
+    const applied = planned({ id: 'event-2', title: 'Second Day' });
+    const of = against([unmarked, applied]);
+    expect(of('event-1').clashes).toEqual([]);
+    expect(of('event-1').wouldMeet).toEqual([
+      { kind: 'event', name: 'Second Day', detail: 'Applied, Mar 6–7, 2027' },
+    ]);
+    expect(of('event-2')).toEqual({ clashes: [], wouldMeet: [], speakingHere: null });
+  });
+
+  it('says nothing between two events the owner has not marked', () => {
+    const of = against([event(), event({ id: 'event-2', title: 'Second Day' })]);
+    for (const id of ['event-1', 'event-2']) {
+      expect(of(id)).toEqual({ clashes: [], wouldMeet: [], speakingHere: null });
+    }
   });
 
   it('counts an event the owner applied to that is no longer listed', () => {
@@ -272,35 +338,35 @@ describe('what clashes', () => {
         event: { title: 'Closed Call Day', startDate: '2027-03-07', endDate: '2027-03-07' },
       },
     ];
-    const result = against([event()], [], saved)('event-1');
-    expect(result.clashes).toEqual([
+    const of = against([planned()], [], saved);
+    expect(of('event-1').clashes).toEqual([
       { kind: 'event', name: 'Closed Call Day', detail: 'Applied, Mar 7, 2027' },
+    ]);
+    // And the saved one is flagged too: it is still the owner's commitment.
+    expect(of('event-gone').clashes).toEqual([
+      { kind: 'event', name: 'Example Community Day', detail: 'Applied, Mar 6–7, 2027' },
     ]);
   });
 
   it('never flags a cancelled or postponed event, in either direction', () => {
     for (const flag of ['cancelled', 'postponed']) {
-      const off = event({ [flag]: true });
+      const off = planned({ [flag]: true });
       expect(against([off], [talk()])('event-1'), flag).toEqual({
         clashes: [],
+        wouldMeet: [],
         speakingHere: null,
       });
-      const offApplied = event({
-        id: 'event-2',
-        title: 'Off Day',
-        [flag]: true,
-        note: { status: 'applied' },
-      });
-      expect(against([event(), offApplied])('event-1').clashes, flag).toEqual([]);
+      const offApplied = planned({ id: 'event-2', title: 'Off Day', [flag]: true });
+      expect(against([planned(), offApplied])('event-1').clashes, flag).toEqual([]);
     }
   });
 
   it('does not flag an event against itself', () => {
-    expect(against([event({ note: { status: 'applied' } })])('event-1').clashes).toEqual([]);
+    expect(against([planned()])('event-1').clashes).toEqual([]);
   });
 
   it('answers for every listed and saved event at once', () => {
-    const overlaps = allOverlaps({ events: [event()], saved: [], talks: [talk()] });
+    const overlaps = allOverlaps({ events: [planned()], saved: [], talks: [talk()] });
     expect([...overlaps.keys()]).toEqual(['event-1']);
     expect(overlaps.get('event-1').clashes).toHaveLength(1);
   });
@@ -326,11 +392,11 @@ describe('the calendar', () => {
     expect(shiftMonth({ year: 2027, monthIndex: 0 }, -1)).toEqual({ year: 2026, monthIndex: 11 });
   });
 
-  it('marks every day of a multi-day event, the owner’s talks and the closing calls', () => {
+  it('marks every day of a planned multi-day event, the owner’s talks and the closing calls', () => {
     const marks = marksForMonth(
       { year: 2027, monthIndex: 2 },
       {
-        events: [event({ callCloses: '2027-03-01' })],
+        events: [event({ callCloses: '2027-03-01', note: { status: 'interested' } })],
         saved: [],
         talks: [talk({ day: '2027-03-20' }), talk({ day: '2027-03-21', status: 'idea' })],
       }
@@ -342,8 +408,9 @@ describe('the calendar', () => {
       '2027-03-20',
     ]);
     expect(marks.get('2027-03-06').events).toEqual([
-      { id: 'event-1', title: 'Example Community Day', status: '', listed: true },
+      { id: 'event-1', title: 'Example Community Day', status: 'interested', listed: true },
     ]);
+    expect(marks.get('2027-03-06').unmarked).toEqual([]);
     expect(marks.get('2027-03-20').talks).toEqual([
       { name: 'Other Conf', statusLabel: 'Accepted' },
     ]);
@@ -370,24 +437,83 @@ describe('the calendar', () => {
     expect(may.size).toBe(0);
   });
 
-  it('flags the day a talk meets another event, and only that day', () => {
-    const marks = marksForMonth(
-      { year: 2027, monthIndex: 2 },
-      { events: [event()], saved: [], talks: [talk({ day: '2027-03-07' })] }
+  const march = (input) => marksForMonth({ year: 2027, monthIndex: 2 }, input);
+  const marked = (status, over = {}) => event({ note: { status }, ...over });
+  const anyClash = (marks) => [...marks.values()].some((mark) => mark.overlap);
+
+  it('keeps an event with no status apart from the planned ones, as a quiet mark', () => {
+    const marks = march({ events: [event()], saved: [], talks: [] });
+    expect(marks.get('2027-03-06')).toEqual({
+      events: [],
+      unmarked: [{ id: 'event-1', title: 'Example Community Day', status: '', listed: true }],
+      talks: [],
+      deadlines: [],
+      overlap: false,
+    });
+  });
+
+  it('flags the day a talk meets a planned event, and only that day', () => {
+    for (const status of ['interested', 'applied', 'accepted']) {
+      const marks = march({
+        events: [marked(status)],
+        saved: [],
+        talks: [talk({ day: '2027-03-07' })],
+      });
+      expect(marks.get('2027-03-06').overlap, status).toBe(false);
+      expect(marks.get('2027-03-07').overlap, status).toBe(true);
+    }
+  });
+
+  it('does not flag a talk on the day of an event the owner has not marked', () => {
+    // The old rule flagged this: one of the owner's talks on ANY listed event.
+    const marks = march({ events: [event()], saved: [], talks: [talk({ day: '2027-03-07' })] });
+    expect(anyClash(marks)).toBe(false);
+    // The talk and the quiet mark are both still there to be read.
+    expect(marks.get('2027-03-07').talks).toHaveLength(1);
+    expect(marks.get('2027-03-07').unmarked).toHaveLength(1);
+  });
+
+  it('does not flag a busy day of many unmarked events around one the owner applied to', () => {
+    // The old rule flagged this too: two events on a day, one of them Applied.
+    const crowd = Array.from({ length: 40 }, (_, n) =>
+      event({ id: `crowd-${n}`, title: `Elsewhere ${n}` })
     );
-    expect(marks.get('2027-03-06').overlap).toBe(false);
-    expect(marks.get('2027-03-07').overlap).toBe(true);
+    const marks = march({ events: [marked('applied'), ...crowd], saved: [], talks: [] });
+    expect(anyClash(marks)).toBe(false);
+    expect(marks.get('2027-03-06').events).toHaveLength(1);
+    expect(marks.get('2027-03-06').unmarked).toHaveLength(40);
+  });
+
+  it('leaves events marked Not going or Declined off the calendar, with their closing days', () => {
+    const marks = march({
+      events: [
+        marked('not_going', { callCloses: '2027-03-02' }),
+        marked('declined', { id: 'event-2', title: 'Second Day', callCloses: '2027-03-03' }),
+      ],
+      saved: [
+        {
+          eventId: 'event-gone',
+          status: 'declined',
+          event: { title: 'Closed Call Day', startDate: '2027-03-09', endDate: '2027-03-09' },
+        },
+      ],
+      talks: [talk({ day: '2027-03-06' })],
+    });
+    // Only the owner's talk is left; nothing clashes with it.
+    expect([...marks.keys()]).toEqual(['2027-03-06']);
+    expect(marks.get('2027-03-06')).toMatchObject({ events: [], unmarked: [], overlap: false });
   });
 
   it('does not flag the day of a talk at the same event', () => {
-    const marks = marksForMonth(
-      { year: 2027, monthIndex: 2 },
-      { events: [event()], saved: [], talks: [talk({ name: 'Example Community Day' })] }
-    );
+    const marks = march({
+      events: [marked('accepted')],
+      saved: [],
+      talks: [talk({ name: 'Example Community Day' })],
+    });
     expect(marks.get('2027-03-06').overlap).toBe(false);
   });
 
-  it('flags the shared days of two events only when one is applied to or accepted', () => {
+  it('flags the shared days of two events only when the owner planned both', () => {
     const second = (status) =>
       event({
         id: 'event-2',
@@ -396,18 +522,51 @@ describe('the calendar', () => {
         endDate: '2027-03-08',
         note: status ? { status } : null,
       });
-    const quiet = marksForMonth(
-      { year: 2027, monthIndex: 2 },
-      { events: [event(), second(null)], saved: [], talks: [] }
-    );
-    expect([...quiet.values()].some((mark) => mark.overlap)).toBe(false);
-    const applied = marksForMonth(
-      { year: 2027, monthIndex: 2 },
-      { events: [event(), second('applied')], saved: [], talks: [] }
-    );
-    expect(applied.get('2027-03-06').overlap).toBe(false);
-    expect(applied.get('2027-03-07').overlap).toBe(true);
-    expect(applied.get('2027-03-08').overlap).toBe(false);
+    for (const [first, other] of [
+      [null, null],
+      [null, 'applied'],
+      ['applied', null],
+      ['applied', 'declined'],
+      ['accepted', 'not_going'],
+    ]) {
+      const quiet = march({ events: [marked(first ?? ''), second(other)], saved: [], talks: [] });
+      expect(anyClash(quiet), `${first} and ${other}`).toBe(false);
+    }
+    for (const [first, other] of [
+      ['applied', 'applied'],
+      ['interested', 'interested'],
+      ['accepted', 'interested'],
+    ]) {
+      const both = march({ events: [marked(first), second(other)], saved: [], talks: [] });
+      expect(both.get('2027-03-06').overlap, `${first} and ${other}`).toBe(false);
+      expect(both.get('2027-03-07').overlap, `${first} and ${other}`).toBe(true);
+      expect(both.get('2027-03-08').overlap, `${first} and ${other}`).toBe(false);
+    }
+  });
+
+  it('agrees with the rows: a day is a clash day exactly when a row says Clash for it', () => {
+    const events = [
+      marked('applied'),
+      event({ id: 'event-2', title: 'Unmarked Day' }),
+      marked('interested', {
+        id: 'event-3',
+        title: 'Maybe Day',
+        startDate: '2027-03-20',
+        endDate: '2027-03-20',
+      }),
+      marked('declined', { id: 'event-4', title: 'Dropped Day' }),
+    ];
+    const talks = [talk({ day: '2027-03-07' }), talk({ name: 'Third Conf', day: '2027-03-20' })];
+    const overlaps = allOverlaps({ events, saved: [], talks });
+    const rowsWithClash = [...overlaps.entries()]
+      .filter(([, o]) => o.clashes.length > 0)
+      .map(([id]) => id);
+    expect(rowsWithClash).toEqual(['event-1', 'event-3']);
+    const clashDays = [...march({ events, saved: [], talks }).entries()]
+      .filter(([, mark]) => mark.overlap)
+      .map(([day]) => day)
+      .sort();
+    expect(clashDays).toEqual(['2027-03-07', '2027-03-20']);
   });
 
   it('leaves cancelled and postponed events off, and their closing calls when cancelled', () => {
@@ -434,6 +593,7 @@ describe('the calendar', () => {
       },
     ];
     const marks = marksForMonth({ year: 2027, monthIndex: 2 }, { events: [], saved, talks: [] });
+    expect(marks.get('2027-03-09').unmarked).toEqual([]);
     expect(marks.get('2027-03-09').events).toEqual([
       { id: 'event-gone', title: 'Closed Call Day', status: 'accepted', listed: false },
     ]);

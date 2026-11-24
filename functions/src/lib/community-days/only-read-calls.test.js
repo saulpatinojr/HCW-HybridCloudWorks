@@ -13,8 +13,8 @@
  *
  *   1. The API's host is written in ONE source file, api.js, which holds
  *      constants only (no import, no call). Any other file that names the
- *      host fails, so a second caller cannot appear quietly. Only the client
- *      and the Test button's table read from that file.
+ *      host fails, and only the client and the Test button's table may take
+ *      the address from that file; nothing passes it on (rule 1b below).
  *   2. Every path written is one of the two reads, and in the client no word
  *      that names a writing HTTP method appears at all.
  *   3. The API's whole list of paths (from its public OpenAPI description, as
@@ -24,9 +24,10 @@
  *      anything, and sends GET whatever it is given.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi } from 'vitest';
+import * as api from './api.js';
 import * as client from './client.js';
 
 const SRC = fileURLToPath(new URL('../..', import.meta.url));
@@ -78,13 +79,36 @@ describe('the site only reads from Community Days', () => {
       .map((file) => relative(SRC, file).replace(/\\/g, '/'));
     expect(naming, 'a second file names the Community Days API; route it through the client').toEqual([API_FILE]);
     expect(apiCode).not.toMatch(/\bimport\b|\bfetch\b|\brequire\(/);
-    // The host is used by exactly two callers: the client and the Test button's table.
-    const users = sourceFiles(SRC)
-      .filter((file) => /from '[^']*community-days\/api\.js'|from '\.\/api\.js'/.test(readFileSync(file, 'utf8')))
-      .map((file) => relative(SRC, file).replace(/\\/g, '/'))
-      .filter((file) => file.startsWith('lib/community-days/') ? file === CLIENT_FILE : true)
-      .sort();
-    expect(users).toEqual([CLIENT_FILE, 'lib/integrations/connection-probe.js']);
+  });
+
+  it('lets only the client and the Test button take the address from that file, and nothing pass it on', () => {
+    const found = sourceFiles(SRC).flatMap((file) => apiUses(file, code(readFileSync(file, 'utf8'))));
+    // The scan sees the two real callers; a scan that saw nothing would pass everything below.
+    const takers = [...new Set(found.filter((use) => use.takesAddress).map((use) => use.file))].sort();
+    expect(takers, 'only these two files may import the Community Days address').toEqual(MAY_TAKE_ADDRESS);
+    // Every other use of the file is a plain import of names that are not the address.
+    const unclear = found.filter((use) => use.kind !== 'import' || use.names === null).map((use) => `${use.file}: ${use.kind}`);
+    expect(unclear, 'api.js is passed on, loaded whole, or loaded at run time; import the names needed, by name').toEqual([]);
+    // The client hands the address to no one.
+    for (const name of ADDRESS_NAMES) expect(Object.keys(client), `client.js exports ${name}`).not.toContain(name);
+  });
+
+  it('would catch each way of taking the address quietly', () => {
+    // The scan above, run on made-up files, so a gap in it shows here and not in production.
+    const uses = (file, text) => apiUses(join(SRC, file), text);
+    const here = 'lib/community-days/other.js';
+    expect(uses(here, "import { API_BASE } from './api.js';")).toEqual([{ file: here, kind: 'import', names: ['API_BASE'], takesAddress: true }]);
+    expect(uses(here, "import { API_KEY_SETTING, PROBE_URL as url } from './api.js';")[0]).toMatchObject({ takesAddress: true });
+    expect(uses(here, "import {\n  API_KEY_SETTING,\n  API_BASE,\n} from './api.js';")[0]).toMatchObject({ takesAddress: true });
+    expect(uses(here, "import { API_KEY_SETTING } from './api.js';")[0]).toMatchObject({ kind: 'import', takesAddress: false });
+    // Loaded whole, passed on, or loaded at run time: the names cannot be counted, so each is refused.
+    expect(uses(here, "import * as all from './api.js';")[0]).toMatchObject({ names: null, takesAddress: true });
+    expect(uses(here, "export { API_BASE } from './api.js';")[0]).toMatchObject({ kind: 'export', takesAddress: true });
+    expect(uses(here, "export * from './api.js';")[0]).toMatchObject({ kind: 'export', takesAddress: true });
+    expect(uses(here, "const all = await import('./api.js');")[0]).toMatchObject({ kind: 'dynamic', takesAddress: true });
+    expect(uses('lib/other/far.js', 'import { PROBE_URL } from "../community-days/api.js";')[0]).toMatchObject({ takesAddress: true });
+    // Another folder's own api.js is a different file.
+    expect(uses('lib/other/far.js', "import { API_BASE } from './api.js';")).toEqual([]);
   });
 
   it('scans a client that really has the calls in it', () => {
@@ -120,8 +144,8 @@ describe('the site only reads from Community Days', () => {
   it('exports nothing that could send another call', () => {
     const made = client.createCommunityDaysClient({ apiKey: 'cdo_test_not-a-real-key-EXAMPLE' });
     expect(Object.keys(made).sort()).toEqual(['listOpenCalls', 'listTalks']);
-    expect(client.ALLOWED_PATHS).toEqual(['/published-events', '/profile/talks']);
-    expect(Object.isFrozen(client.ALLOWED_PATHS)).toBe(true);
+    expect(api.ALLOWED_PATHS).toEqual(['/published-events', '/profile/talks']);
+    expect(Object.isFrozen(api.ALLOWED_PATHS)).toBe(true);
   });
 
   it('sends GET to one of the two paths on the API’s own host, whatever happens', async () => {
@@ -149,3 +173,41 @@ describe('the site only reads from Community Days', () => {
     }
   });
 });
+
+// The scan for rule 1b. It sits below the tests so that the lines above keep
+// their place; the tests run after the whole file has loaded, so they see it.
+
+/** The names under which api.js exports the API's address (the base, and the Test button's full URL). */
+const ADDRESS_NAMES = Object.keys(api).filter((name) => typeof api[name] === 'string' && api[name].includes('://'));
+/** The only files that may import one of them. */
+const MAY_TAKE_ADDRESS = [CLIENT_FILE, 'lib/integrations/connection-probe.js'];
+
+/**
+ * Every place `text` (the source of `file`, comments removed) loads api.js:
+ * a static import, a re-export, or a run-time `import()` or `require()`. The
+ * module's path is worked out from the file's own folder, so `./api.js` in
+ * another folder is not mistaken for this one.
+ *
+ * `names` is the list of names imported, or null when they cannot be listed
+ * (the whole module, a default, or a run-time load). `takesAddress` is true
+ * when one of the names is the address, or when the names cannot be listed.
+ */
+function apiUses(file, text) {
+  const target = join(SRC, API_FILE);
+  const name = relative(SRC, file).replace(/\\/g, '/');
+  const isApi = (specifier) => specifier.startsWith('.') && resolve(dirname(file), specifier) === target;
+  const uses = [];
+  for (const match of text.matchAll(/\b(import|export)\b([^;'"`]*?)\bfrom\s*['"]([^'"]+)['"]/g)) {
+    const [, kind, clause, specifier] = match;
+    if (!isApi(specifier)) continue;
+    const braces = /^\s*\{([^}]*)\}\s*$/.exec(clause);
+    // The name before any `as`: `PROBE_URL as url` takes PROBE_URL.
+    const names = braces ? braces[1].split(',').map((part) => part.trim().split(/\s+/)[0]).filter(Boolean) : null;
+    const takesAddress = kind === 'export' || names === null || names.some((taken) => ADDRESS_NAMES.includes(taken));
+    uses.push({ file: name, kind, names, takesAddress });
+  }
+  for (const match of text.matchAll(/\b(?:import|require)\s*\(\s*['"`]([^'"`]+)['"`]/g)) {
+    if (isApi(match[1])) uses.push({ file: name, kind: 'dynamic', names: null, takesAddress: true });
+  }
+  return uses;
+}

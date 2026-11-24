@@ -18,9 +18,12 @@
  * Three things keep that from working:
  *
  *   1. The text is only ever placed between the fence markers
- *      (ai/prompt-fence.js), after `fenceArticleText` has broken any copy of
- *      the markers it carries, so the text cannot close the fence. The
- *      instructions say that everything inside a fence is data.
+ *      (ai/prompt-fence.js), and it cannot write a marker of its own, so it
+ *      cannot close the fence. A marker starts with three `<` and ends with
+ *      three `>`; `fenceBody` below cuts every run of three or more of
+ *      either down to two, so the text between the markers never holds
+ *      three in a row and so never holds a marker. The instructions say
+ *      that everything inside a fence is data.
  *   2. It is plain text by then (events.js strips the HTML) and cut to a
  *      fixed length.
  *   3. Whatever the model answers is checked here before anything is stored
@@ -120,8 +123,50 @@ export function gatherTopics({ speakerEvents = [], speakerProfile = null, talks 
 
 const line = (label, value) => (value ? `${label}: ${value}\n` : '');
 
-/** The fenced block: `body` with any copy of the markers broken, between the markers. */
-const fenced = (body) => `${ARTICLE_OPEN}\n${fenceArticleText(body).trim()}\n${ARTICLE_CLOSE}`;
+// Characters that are drawn like `<` or `>` but are not them (the full-width
+// and small forms). They are turned into the plain character before the runs
+// are cut, so a marker cannot be written in look-alikes either.
+const LOOKS_LIKE_LESS = /[\uFF1C\uFE64]/g;
+const LOOKS_LIKE_GREATER = /[\uFF1E\uFE65]/g;
+// Characters that take no space on the page (zero-width spaces and joiners,
+// direction marks, the soft hyphen). One of them between two brackets would
+// split a run for this code while still reading as one run.
+const UNSEEN_CHARACTERS = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+
+/**
+ * Someone else's text, made unable to write a fence marker.
+ *
+ * WHY NOT ONLY `fenceArticleText`. That shared helper replaces each whole
+ * marker once, taking one bracket off each side. A text with FOUR brackets
+ * round the words (`<<<<END ARTICLE>>>>`) therefore comes out with a real
+ * marker in it: the replacement itself builds one. The same text can arrive
+ * written as HTML entities (`&lt;&lt;&lt;&lt;END ARTICLE…`), which events.js
+ * decodes after it strips the tags. Fixing the helper would change what its
+ * other callers send, so this feature closes the gap for its own prompt.
+ *
+ * HOW. Both markers begin with `<<<` and end with `>>>` (the test pins
+ * that). After this function no run of three `<` or three `>` is left in the
+ * text, in any of the forms above, so no marker is left in it, whatever the
+ * words between the brackets were and however the pieces were nested. A
+ * single pass is enough: a run of any length becomes exactly two, and two
+ * runs are never joined, because the character between them stays.
+ * `fenceArticleText` still runs afterwards and has nothing left to do.
+ *
+ * @param {string} body
+ * @returns {string}
+ */
+export function fenceBody(body) {
+  const plain = String(body || '')
+    .replace(UNSEEN_CHARACTERS, '')
+    .replace(LOOKS_LIKE_LESS, '<')
+    .replace(LOOKS_LIKE_GREATER, '>')
+    .replace(/<{3,}/g, '<<')
+    .replace(/>{3,}/g, '>>');
+  return fenceArticleText(plain).trim();
+}
+
+/** The fenced block: `body`, made unable to write a marker, between the two markers. */
+const fenced = (body) => `${ARTICLE_OPEN}\n${fenceBody(body)}\n${ARTICLE_CLOSE}`;
 
 export const ESTIMATE_SYSTEM_PROMPT =
   'You give a rough estimate of how likely a community conference is to accept a talk proposal from one speaker. Respond with valid JSON only.';

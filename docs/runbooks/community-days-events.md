@@ -39,31 +39,58 @@ For each event the tab shows:
 
 Beside the list is a **small month calendar**. It marks:
 
-- a square on each day a listed event runs (and each event you saved a status
-  for, even after its call closed);
+- a square on each day of an event you marked **Interested**, **Applied** or
+  **Accepted** (even after its call closed and it left the list);
+- one small grey dot on a day that has listed events you have **not** marked,
+  however many there are. Choose the day to see how many and the first few
+  names;
 - a diamond on the day of each of **your own talks** that is sent or accepted
   (from the hub's Upcoming and Past tabs: Speaking hub status *Proposed* or
   *Accepted*);
 - a ring on the day a call for speakers closes;
-- a warning sign, and a red frame, on a day where two of those **clash**.
+- a warning sign, and a red frame, on a **clash** day (the rule is below).
+
+An event you marked **Not going** or **Declined** is left off the calendar,
+and so is the day its call closes.
 
 Choose a marked day to read what is on it. Every mark has a different shape
 and its word in the legend, so nothing depends on colour.
 
 ### What counts as a clash
 
-The calendar and the rows use one rule:
+The calendar and the rows use one rule: **a clash is two things you care
+about on the same day.** The directory lists hundreds of events around the
+world, so "some listed event is on that day" is true of almost every day and
+would tell you nothing. The things that count are:
 
-1. An event clashes with one of your own talks when the talk's day falls on
-   or between the event's first and last day. Only talks you have sent or
-   had accepted count. The hub stores one day for each talk, not a range.
-2. An event clashes with another event on this tab that you marked
-   **Applied** or **Accepted** when the two share at least one day.
+- one of **your own talks** that you have sent or had accepted. The hub
+  stores one day for each talk, not a range;
+- an event on this tab that **you marked Interested, Applied or Accepted**.
 
-A cancelled or postponed event clashes with nothing and is left off the
-calendar, because its dates no longer say when anything happens. When one of
-your talks **is** the listed event (the same name), the row says "You already
-have a talk at this event" instead of flagging a clash.
+So:
+
+1. An event you marked clashes with one of your own talks when the talk's
+   day falls on or between the event's first and last day.
+2. Two events you marked clash when they share at least one day. Both rows
+   say so.
+3. On the calendar, a day is a clash day when it holds two events you marked,
+   or one of your talks and an event you marked.
+
+What stays quiet:
+
+- **An event you have not marked never makes a clash.** Its row says, in
+  plain grey words with no warning sign, "If you go, these dates meet ...",
+  because that is worth knowing before you apply. Mark it Interested and the
+  same line becomes a clash.
+- **An event you marked Not going or Declined** makes no clash, says nothing
+  on its row and is left off the calendar.
+- **A cancelled or postponed event** is the same, because its dates no longer
+  say when anything happens.
+- Two of your own talks on one day are not marked here; that is the Upcoming
+  tab's business.
+
+When one of your talks **is** the listed event (the same name), the row says
+"You already have a talk at this event" instead of flagging a clash.
 
 Days are compared as calendar days, in each event's own local time, exactly
 as written. "About N days left" uses your computer's date for today, so for
@@ -73,8 +100,10 @@ an event on the other side of the world it can be a day out.
 
 Community Days lists an event here only while its call is open. Once it
 closes, the event leaves the list. Anything you saved for it stays, under
-**Saved, no longer listed**, and still counts on the calendar. Use **Clear**
-there to remove it.
+**Saved, no longer listed**, and still counts on the calendar. That is
+usually when the answer arrives, so each row there has **Edit status, costs
+and notes**: change Applied to Accepted or Declined, and add what it cost.
+Use **Clear** there to remove what you saved.
 
 ## The estimate, and its limits
 
@@ -104,8 +133,11 @@ Use it to sort a long list, never to decide alone.
 **Nothing makes an estimate by itself.** Opening the tab, refreshing the list
 and saving notes never call the model. One press is one request for one
 event, so there is no model cost without a click. The feature has its own
-switch on the AI Engine page, **Speaking acceptance estimate**; when it is
-off, the button answers that it is switched off.
+switch on the
+[AI Engine page, AI Services tab](https://hybridcloudworks.com/admin/ai-engine?tab=services),
+**Speaking acceptance estimate**; when it is off, pressing Estimate shows
+"The acceptance estimate is switched off" with a link to that tab, and no
+model is asked.
 
 **If Estimate is greyed out**, the site found no talk topics. Add a topic or
 session titles to an event on the
@@ -115,10 +147,21 @@ session titles to an event on the
 
 **The event's page is someone else's text.** An organizer could write
 instructions for a model on their page ("answer 100"). The site keeps that
-text inside a marked block that the model is told to treat as data only,
-removes any copy of the markers from it first, and checks the answer before
-keeping it: the number is held between 0 and 100, at most three reasons are
-kept, and they are shown as plain text.
+text inside a marked block that the model is told to treat as data only. The
+block's two markers begin and end with three angle brackets (`<<<` and
+`>>>`), and before the text goes in, every run of three or more `<` or `>`
+in it is cut down to two. So the text cannot contain a marker, however it
+was written (extra brackets, brackets written as HTML codes such as `&lt;`,
+look-alike or invisible characters), and cannot end the block early. A test
+checks that with a list of such attempts.
+
+What that does and does not promise: it stops the page's text from
+**pretending to be the site's instructions**. It cannot make a model ignore
+persuasive words inside the block, so the answer is also checked before it
+is kept: the number is held between 0 and 100, at most three reasons are
+kept, and they are shown as plain text. The worst a hostile page can do is
+move one event's rough number, which is one more reason to treat the number
+as a guess.
 
 ## How often Community Days is asked
 
@@ -126,8 +169,20 @@ The server keeps its own copy of the list. It reads the list again only when
 the copy is six hours old (the next time someone opens the tab), or when you
 press **Refresh**, at most once a minute. If a read fails, the tab keeps
 showing the last good copy and says why; it does not try again by itself for
-five minutes. If Community Days answers "too many requests", the site waits
-as long as that answer says before asking again, even if you press Refresh.
+five minutes. If Community Days answers "too many requests", to the list of
+events or to the list of your talks, the site waits as long as that answer
+says before asking again, even if you press Refresh.
+
+If the list was read but the site could not save its copy, that counts as a
+failed read too: the tab says so, keeps the last good copy, and waits five
+minutes before trying again.
+
+The copy has a size limit, because the database refuses one document over
+2 MB. Each event's page text is kept to 2,500 characters and 2,500 bytes
+(text in a non-Latin script takes two or three bytes a character, so less of
+it is kept). If the whole list were still too large, page texts would be
+shortened further, and as a last step only the soonest events kept, with the
+tab saying that more exist.
 
 ## The key
 
@@ -246,7 +301,9 @@ value is useless.
 | "Community Days could not be reached" | No answer within 8 seconds, or the connection failed | Try Refresh later |
 | "The answer from Community Days could not be read" | It answered, but not in the documented form | Try later; if it persists, the API may have changed: open an issue |
 | "Showing the last copy that was read." before one of the above | The refresh failed and the list on screen is the older copy | As for the message that follows it |
-| "This event was changed somewhere else since the page read it" | You, in another tab, or an estimate, saved this event after the page loaded it | The page has reloaded it; make the change again |
+| "This event was changed somewhere else since the page read it" | You, in another tab, or an estimate, saved this event after the page loaded it | Nothing was saved. The page has read the event again and the open form now shows the saved values (it says so). Make your change again, then press Save |
+| "The acceptance estimate is switched off" | The **Speaking acceptance estimate** switch is off. No model was asked | Switch it on at [AI Engine → AI Services](https://hybridcloudworks.com/admin/ai-engine?tab=services), then press Estimate again |
+| "The list was read from Community Days, but this site could not save its copy of it" | The site's own database refused the write | Wait five minutes and press Refresh. If it repeats, tell a session what the tab shows |
 | "There are no talk topics to compare the event with" | The estimate found no topics, sessions or bio | Add them as "If Estimate is greyed out" says |
 | "The model did not answer with a usable number" | The model replied without a number | Press Estimate again |
 | "The estimate could not be made" with a reference | The model call or the save failed | Try again; give the reference to a session if it repeats |
@@ -262,7 +319,7 @@ Everything is in the `admin_config` container of the site's database (no new
 container was added):
 
 - `community_days_cache`: the site's copy of the list (the fields above and
-  the page text cut to 2,500 characters), your talk titles as Community Days
+  the page text cut to 2,500 characters and 2,500 bytes), your talk titles as Community Days
   lists them, and when the copy was made. Public information from the
   directory; never the key.
 - `community_days_event_<event id>`: one small document per event you saved

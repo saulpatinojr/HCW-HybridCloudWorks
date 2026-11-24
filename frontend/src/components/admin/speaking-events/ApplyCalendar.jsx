@@ -1,11 +1,16 @@
 /**
  * The small month calendar on the "Events to apply to" tab (#1823, ADR 0045).
  *
- * It marks, for one month: the days each listed event runs (and each event
- * the owner saved a status for), the days of the owner's own talks that are
+ * It marks, for one month: the days of each event the owner marked
+ * Interested, Applied or Accepted, the days of the owner's own talks that are
  * sent or accepted, the days a call for speakers closes, and the days where
- * two of those clash. What counts as a clash is applyModel.js's rule, the
- * same one the rows use.
+ * two of the owner's own things clash. What counts as a clash is
+ * applyModel.js's rule, the same one the rows use.
+ *
+ * QUIET ON PURPOSE. The directory lists hundreds of events, so a listed event
+ * the owner has not marked gets one small faint mark for its day, however
+ * many share it, and never makes a clash. An event marked Not going or
+ * Declined is left off altogether.
  *
  * NOT COLOUR ALONE. Each kind of mark is a different shape with its word in
  * the legend, a clash day carries a warning icon and the word "clash" in its
@@ -16,7 +21,14 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { MONTH_NAMES, WEEKDAYS, formatDay, monthGrid, shiftMonth } from './applyModel';
+import {
+  MONTH_NAMES,
+  WEEKDAYS,
+  applyStatusInfo,
+  formatDay,
+  monthGrid,
+  shiftMonth,
+} from './applyModel';
 
 /** What a day holds, as one sentence for a screen reader and the tooltip. */
 export function describeDay(day, mark) {
@@ -24,7 +36,11 @@ export function describeDay(day, mark) {
   const parts = [];
   if (mark.overlap) parts.push('clash');
   if (mark.events.length)
-    parts.push(`${mark.events.length} event${mark.events.length === 1 ? '' : 's'}`);
+    parts.push(`${mark.events.length} event${mark.events.length === 1 ? '' : 's'} you marked`);
+  if (mark.unmarked.length)
+    parts.push(
+      `${mark.unmarked.length} listed event${mark.unmarked.length === 1 ? '' : 's'} you have not marked`
+    );
   if (mark.talks.length) parts.push(`${mark.talks.length} of your talks`);
   if (mark.deadlines.length)
     parts.push(`${mark.deadlines.length} call${mark.deadlines.length === 1 ? '' : 's'} closing`);
@@ -33,6 +49,8 @@ export function describeDay(day, mark) {
 
 const SHAPES = {
   event: 'h-1.5 w-1.5 rounded-sm bg-sky-600 dark:bg-sky-400',
+  // Smaller and grey: there to be found, not to draw the eye.
+  unmarked: 'h-1 w-1 rounded-full bg-muted-foreground/40',
   talk: 'h-1.5 w-1.5 rotate-45 bg-emerald-600 dark:bg-emerald-400',
   deadline: 'h-1.5 w-1.5 rounded-full border border-amber-600 dark:border-amber-400',
 };
@@ -48,7 +66,8 @@ function Legend() {
       className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
       aria-label="Calendar legend"
     >
-      {item(SHAPES.event, 'Event from this list (square)')}
+      {item(SHAPES.event, 'Event you marked Interested, Applied or Accepted (square)')}
+      {item(SHAPES.unmarked, 'Listed events you have not marked (small grey dot)')}
       {item(SHAPES.talk, 'Your talk, sent or accepted (diamond)')}
       {item(SHAPES.deadline, 'A call closes (ring)')}
       <li className="flex items-center gap-1.5">
@@ -58,6 +77,9 @@ function Legend() {
     </ul>
   );
 }
+
+/** How many unmarked events a chosen day names before it says "and N more". */
+export const UNMARKED_SHOWN = 6;
 
 function DayDetails({ day, mark }) {
   if (!day) {
@@ -75,8 +97,8 @@ function DayDetails({ day, mark }) {
       <ul className="space-y-0.5">
         {mark?.events.map((event) => (
           <li key={`e-${event.id}`}>
-            Event: {event.title}
-            {event.listed ? '' : ' (saved, no longer listed)'}
+            Event: {event.title} ({applyStatusInfo(event.status).label}
+            {event.listed ? '' : ', no longer listed'})
           </li>
         ))}
         {mark?.talks.map((talk) => (
@@ -88,6 +110,19 @@ function DayDetails({ day, mark }) {
           <li key={`d-${deadline.title}`}>Call closes: {deadline.title}</li>
         ))}
       </ul>
+      {mark?.unmarked.length > 0 && (
+        <div className="text-muted-foreground">
+          <p>Listed, not marked by you ({mark.unmarked.length}):</p>
+          <ul className="space-y-0.5 pl-3">
+            {mark.unmarked.slice(0, UNMARKED_SHOWN).map((event) => (
+              <li key={`u-${event.id}`}>{event.title}</li>
+            ))}
+            {mark.unmarked.length > UNMARKED_SHOWN && (
+              <li>and {mark.unmarked.length - UNMARKED_SHOWN} more; find them in the list.</li>
+            )}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -109,6 +144,7 @@ function DayCell({ cell, mark, isToday, selected, onSelect }) {
           <AlertTriangle className="h-2.5 w-2.5 text-rose-600 dark:text-rose-400" />
         )}
         {mark?.events.length > 0 && <span className={SHAPES.event} />}
+        {mark?.unmarked.length > 0 && <span className={SHAPES.unmarked} />}
         {mark?.talks.length > 0 && <span className={SHAPES.talk} />}
         {mark?.deadlines.length > 0 && <span className={SHAPES.deadline} />}
       </span>
@@ -222,8 +258,9 @@ export default function ApplyCalendar({ month, onMonth, marks, today }) {
       <Legend />
       <DayDetails day={selected} mark={selected ? marks.get(selected) : null} />
       <p className="text-xs text-muted-foreground">
-        Days are each event’s own local days, compared as written. A cancelled or postponed event is
-        left off.
+        Days are each event’s own local days, compared as written. A clash is two of your own things
+        on one day: your talks, and events you marked Interested, Applied or Accepted. A cancelled
+        or postponed event is left off, and so is one you marked Not going or Declined.
       </p>
     </section>
   );

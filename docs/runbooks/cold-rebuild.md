@@ -280,8 +280,15 @@ az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CLOUDFLARE-ANA
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CODER-URL" --value "https://coder.lab.hybridcloudworks.com"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CODER-STATUS-TOKEN" --value "<TOKEN>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CODER-BROKER-TOKEN" --value "<TOKEN>"
-az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "COMMUNITY-DAYS-API-KEY" --value "<KEY>"
 ```
+
+The Community Days key (`COMMUNITY-DAYS-API-KEY`) is not set from a command
+line. Paste it on
+[Integrations → Keys](https://hybridcloudworks.com/admin/integrations?tab=keys),
+in the row "Community Days — API key", once the site is running. That key can
+change and delete things at Community Days, so it goes in that one field and
+nowhere else; the steps are in the
+[Community Days runbook](community-days-events.md).
 
 ---
 

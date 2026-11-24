@@ -16,19 +16,36 @@
  * left before a call closes; an event on the other side of the world may
  * therefore be a day out, and the page says "about".
  *
- * WHAT COUNTS AS AN OVERLAP (the rule the calendar and the rows share):
+ * WHAT COUNTS AS A CLASH (the rule the calendar and the rows share). A clash
+ * needs TWO things the owner cares about on the same day. The directory lists
+ * hundreds of events around the world, so "some listed event is on that day"
+ * is true of almost every day and says nothing. The things that count are:
  *
- *   1. A listed event against one of the owner's own talks: the talk's day
- *      falls on or between the event's first and last day. Only talks the
- *      owner has sent or had accepted count (Speaking hub status Proposed or
- *      Accepted). The hub stores one day per talk, not a range.
- *   2. A listed event against another event from this tab that the owner has
- *      marked Applied or Accepted: the two ranges share at least one day.
+ *   - one of the owner's own talks that is sent or accepted (Speaking hub
+ *     status Proposed or Accepted). The hub stores one day per talk.
+ *   - an event from this tab that the owner marked Interested, Applied or
+ *     Accepted ("planned" below).
  *
- * A cancelled or postponed event overlaps nothing and is left off the
- * calendar: its dates no longer say when anything happens. When one of the
- * owner's talks IS the listed event (the same name), that is "you are
- * already speaking here", not a clash.
+ * So a planned event clashes with a talk whose day falls on or between its
+ * first and last day, and with another planned event when the two ranges
+ * share at least one day. A calendar day is a clash day when two planned
+ * events are on it, or a talk and a planned event. Two of the owner's own
+ * talks on one day are not marked here: they are the Upcoming tab's business,
+ * and this tab only knows one day per talk.
+ *
+ * WHAT IS QUIET.
+ *
+ *   - An event with no status yet never makes a clash. Its row still says, in
+ *     plain grey words, what its dates would meet, because that is useful
+ *     when deciding whether to apply; and it shows on the calendar as a small
+ *     faint mark, apart from the planned ones.
+ *   - An event marked Not going or Declined makes no clash, says nothing on
+ *     its row, and is left off the calendar, with its closing day.
+ *   - A cancelled or postponed event is the same: its dates no longer say
+ *     when anything happens.
+ *
+ * When one of the owner's talks IS the listed event (the same name), that is
+ * "you are already speaking here", not a clash.
  */
 import { normalizeName, speakingStatusInfo, toInputDate } from '@/lib/speakingEvents';
 import { manualRowStatus, safeString, sessionizeRowStatus } from './eventModel';
@@ -79,8 +96,14 @@ export const APPLY_STATUS_INFO = Object.freeze({
 export const APPLY_STATUSES = Object.freeze(Object.keys(APPLY_STATUS_INFO));
 export const applyStatusInfo = (status) => APPLY_STATUS_INFO[status] ?? APPLY_STATUS_INFO[''];
 
-/** The statuses that hold the owner's calendar: a proposal out, or a yes. */
-const COMMITTED_APPLY = new Set(['applied', 'accepted']);
+/** The statuses that put an event in the owner's plans: a maybe, a proposal out, or a yes. */
+const PLANNED_APPLY = new Set(['interested', 'applied', 'accepted']);
+/** The statuses that take an event out of them: decided against, or turned down. */
+const DROPPED_APPLY = new Set(['not_going', 'declined']);
+/** Whether the owner marked an event Interested, Applied or Accepted. */
+export const isPlanned = (status) => PLANNED_APPLY.has(status);
+/** Whether the owner marked an event Not going or Declined. */
+export const isDropped = (status) => DROPPED_APPLY.has(status);
 const COMMITTED_TALK = new Set(['proposed', 'accepted']);
 
 export const COST_FIELDS = Object.freeze([
@@ -228,22 +251,29 @@ export function knownEvents(events, saved) {
 }
 
 /**
- * What one event clashes with, by the two rules in the header.
+ * What one event's dates meet, by the rule in the header.
+ *
+ * `clashes` is filled only for an event the owner planned (Interested,
+ * Applied or Accepted). For an event with no status the same entries come
+ * back as `wouldMeet`: worth knowing before applying, but not a clash. An
+ * event marked Not going or Declined, or one that is cancelled or postponed,
+ * gets nothing.
  *
  * @param {object} event - one known event (`knownEvents`)
  * @param {{ talks: object[], known: object[] }} against
- * @returns {{ clashes: Array<{ kind: 'talk'|'event', name: string, detail: string }>, speakingHere: string|null }}
+ * @returns {{ clashes: Array<{ kind: 'talk'|'event', name: string, detail: string }>, wouldMeet: Array<{ kind: 'talk'|'event', name: string, detail: string }>, speakingHere: string|null }}
  */
 export function overlapsFor(event, { talks, known }) {
-  const result = { clashes: [], speakingHere: null };
-  if (!event?.range || event.offCalendar) return result;
+  const result = { clashes: [], wouldMeet: [], speakingHere: null };
+  if (!event?.range || event.offCalendar || isDropped(event.status)) return result;
+  const meets = [];
   const ownName = normalizeName(event.title);
   for (const talk of committedTalks(talks)) {
     if (talk.day < event.range.start || talk.day > event.range.end) continue;
     if (ownName && normalizeName(talk.name) === ownName) {
       result.speakingHere = talk.statusLabel;
     } else {
-      result.clashes.push({
+      meets.push({
         kind: 'talk',
         name: talk.name,
         detail: `${talk.statusLabel} talk on ${formatDay(talk.day)}`,
@@ -251,15 +281,17 @@ export function overlapsFor(event, { talks, known }) {
     }
   }
   for (const other of known) {
-    if (other.id === event.id || other.offCalendar || !COMMITTED_APPLY.has(other.status)) continue;
+    if (other.id === event.id || other.offCalendar || !isPlanned(other.status)) continue;
     if (rangesOverlap(event.range, other.range)) {
-      result.clashes.push({
+      meets.push({
         kind: 'event',
         name: other.title,
         detail: `${applyStatusInfo(other.status).label}, ${formatRange(other.range)}`,
       });
     }
   }
+  if (isPlanned(event.status)) result.clashes = meets;
+  else result.wouldMeet = meets;
   return result;
 }
 
@@ -302,37 +334,61 @@ export const monthOf = (day) => {
 };
 
 /**
+ * Whether an event's call for speakers closes on a day from `first` to `last`
+ * and is still worth a mark: not cancelled, and not one the owner marked Not
+ * going or Declined.
+ */
+const closesWithin = (event, first, last) =>
+  isDay(event.callCloses) &&
+  event.callCloses >= first &&
+  event.callCloses <= last &&
+  !event.cancelled &&
+  !isDropped(event.note?.status);
+
+/**
  * What the calendar marks on each day of one month.
  *
- * Returns a Map from day to `{ events, talks, deadlines, overlap }`: the
- * titles of listed or saved events held that day (cancelled and postponed
- * ones left out), the owner's committed talks that day, the calls for
- * speakers that close that day, and whether that day is inside a clash.
- * A multi-day event marks each of its days that fall in the month, so an
- * event that runs across a month's end shows in both months.
+ * Returns a Map from day to `{ events, unmarked, talks, deadlines, overlap }`:
+ *
+ *   events     the events held that day that the owner planned (Interested,
+ *              Applied or Accepted)
+ *   unmarked   the events held that day that have no status yet; the calendar
+ *              draws these as one faint mark
+ *   talks      the owner's committed talks that day
+ *   deadlines  the calls for speakers that close that day
+ *   overlap    whether that day is a clash day (the header's rule)
+ *
+ * Cancelled and postponed events are left out, and so are events marked Not
+ * going or Declined, with their closing days. A multi-day event marks each of
+ * its days that fall in the month, so an event that runs across a month's end
+ * shows in both months.
  */
 export function marksForMonth({ year, monthIndex }, { events, saved, talks }) {
   const first = `${year}-${pad(monthIndex + 1)}-01`;
   const last = dayFromUtc(new Date(Date.UTC(year, monthIndex + 1, 0)));
   const marks = new Map();
   const at = (day) => {
-    if (!marks.has(day)) marks.set(day, { events: [], talks: [], deadlines: [], overlap: false });
+    if (!marks.has(day))
+      marks.set(day, { events: [], unmarked: [], talks: [], deadlines: [], overlap: false });
     return marks.get(day);
   };
   const known = knownEvents(events, saved);
   const committed = committedTalks(talks);
 
   for (const event of known) {
-    if (!event.range || event.offCalendar) continue;
+    if (!event.range || event.offCalendar || isDropped(event.status)) continue;
+    const planned = isPlanned(event.status);
     const from = event.range.start < first ? first : event.range.start;
     const to = event.range.end > last ? last : event.range.end;
     for (let day = from; day <= to; day = addDays(day, 1)) {
-      at(day).events.push({
+      const entry = {
         id: event.id,
         title: event.title,
         status: event.status,
         listed: event.listed,
-      });
+      };
+      if (planned) at(day).events.push(entry);
+      else at(day).unmarked.push(entry);
     }
   }
   for (const talk of committed) {
@@ -340,26 +396,19 @@ export function marksForMonth({ year, monthIndex }, { events, saved, talks }) {
       at(talk.day).talks.push({ name: talk.name, statusLabel: talk.statusLabel });
   }
   for (const event of events ?? []) {
-    if (
-      isDay(event.callCloses) &&
-      event.callCloses >= first &&
-      event.callCloses <= last &&
-      !event.cancelled
-    ) {
+    if (closesWithin(event, first, last))
       at(event.callCloses).deadlines.push({ title: event.title });
-    }
   }
 
-  // A day is inside a clash when a talk falls on a day of an event that is
-  // not that same event, or when two events share it and at least one of
-  // them is one the owner has applied to or been accepted at.
+  // A clash day needs two things the owner cares about: two planned events,
+  // or one of the owner's talks and a planned event that is not that same
+  // event. `mark.events` holds only planned events; an event with no status
+  // (`mark.unmarked`) never makes a clash, however many share the day.
   for (const mark of marks.values()) {
-    const otherTalk = mark.talks.some((talk) =>
+    const talkMeetsPlanned = mark.talks.some((talk) =>
       mark.events.some((event) => normalizeName(event.title) !== normalizeName(talk.name))
     );
-    const twoEvents =
-      mark.events.length > 1 && mark.events.some((event) => COMMITTED_APPLY.has(event.status));
-    mark.overlap = otherTalk || twoEvents;
+    mark.overlap = talkMeetsPlanned || mark.events.length > 1;
   }
   return marks;
 }

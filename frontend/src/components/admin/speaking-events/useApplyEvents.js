@@ -12,8 +12,11 @@
  * out is ignored, not sent twice. A save sends the version (`etag`) the row
  * was read at; when the server answers that the note changed somewhere else
  * (HTTP 409), the list is read again so the row shows the latest, and the
- * server's sentence is shown. After any write the list is re-read; rows stay
- * on screen while it is.
+ * server's sentence is shown. The open form then puts the stored values back
+ * (ApplyTab's NoteEditor), so a second Save cannot send the old form over the
+ * other change. After any write the list is re-read; rows stay on screen
+ * while it is. `writeErrorCode` is the server's code for the refusal, when it
+ * gave one, so the page can add a link for the ones it knows.
  *
  * NOTHING HERE ASKS FOR AN ESTIMATE BY ITSELF. `estimate` is only ever
  * called from the row's button.
@@ -69,6 +72,7 @@ export default function useApplyEvents(authReady) {
   });
   const { busyIds, claim, release } = useWriteGuard();
   const [writeError, setWriteError] = useState('');
+  const [writeErrorCode, setWriteErrorCode] = useState('');
   // Which kind of write each busy event has out: 'save', 'clear' or 'estimate'.
   const [kinds, setKinds] = useState({});
   const { refresh } = read;
@@ -88,6 +92,7 @@ export default function useApplyEvents(authReady) {
     async (eventId, kind, send) => {
       if (!claim(eventId)) return false;
       setWriteError('');
+      setWriteErrorCode('');
       setKinds((current) => ({ ...current, [eventId]: kind }));
       let landed = false;
       try {
@@ -95,6 +100,7 @@ export default function useApplyEvents(authReady) {
         landed = true;
       } catch (err) {
         setWriteError(err?.message || 'The change could not be saved.');
+        setWriteErrorCode(typeof err?.code === 'string' ? err.code : '');
       } finally {
         // Re-read either way: after a refusal the row must show what is stored.
         await refresh();
@@ -137,6 +143,10 @@ export default function useApplyEvents(authReady) {
     busyIds,
     kinds,
     writeError,
-    clearWriteError: () => setWriteError(''),
+    writeErrorCode,
+    clearWriteError: () => {
+      setWriteError('');
+      setWriteErrorCode('');
+    },
   };
 }

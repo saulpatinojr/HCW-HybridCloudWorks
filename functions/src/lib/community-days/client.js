@@ -41,8 +41,10 @@ import { guardedFetch } from '../http/guarded-fetch.js';
 import { readSetting } from '../http/read-setting.js';
 import { ALLOWED_PATHS, API_BASE, API_KEY_SETTING, EVENTS_PATH, TALKS_PATH, sentenceForStatus } from './api.js';
 
-// The names other modules and the tests read from here, as before.
-export { ALLOWED_PATHS, API_BASE, API_KEY_SETTING, EVENTS_PATH, PROBE_URL, TALKS_PATH, sentenceForStatus } from './api.js';
+// Nothing from api.js is passed on from here. A module that needs a name or
+// the address imports it from api.js itself, where only-read-calls.test.js
+// counts who does; passing the address on from this file would let another
+// module take it without being counted.
 
 /** One request may take this long, answer included. */
 export const CALL_TIMEOUT_MS = 8_000;

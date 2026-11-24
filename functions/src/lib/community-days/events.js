@@ -9,10 +9,11 @@
  *   - a link is kept only when it is a plain http or https address, so the
  *     page can never be handed a `javascript:` link to render;
  *   - the page text arrives as HTML and is turned into plain text here
- *     (`htmlToText`), cut to PAGE_TEXT_MAX characters, and the page renders
- *     it as text, never as HTML;
+ *     (`htmlToText`), cut to PAGE_TEXT_MAX characters and to
+ *     PAGE_TEXT_MAX_BYTES bytes, and the page renders it as text, never as
+ *     HTML;
  *   - every string is cut to a fixed length, so one event cannot fill the
- *     cache document.
+ *     cache document (cache.js also holds the whole document to a size).
  *
  * DATES ARE CALENDAR DAYS. The API sends an event's dates in the event's own
  * local time with no zone on them (`2026-11-21T09:00`) and the zone's name
@@ -22,8 +23,16 @@
  * arithmetic is done.
  */
 
-/** Characters of page text kept per event: enough for the estimate, small enough for 300 events in one document. */
+/** Characters of page text kept per event: enough for the estimate. */
 export const PAGE_TEXT_MAX = 2500;
+/**
+ * Bytes of page text kept per event, as stored (UTF-8). The database limits
+ * one document by its size in bytes, not by its number of characters, and a
+ * character outside the Latin alphabet takes two to four bytes. So the page
+ * text is cut by bytes as well: plain English keeps all 2,500 characters, and
+ * text in another script keeps fewer.
+ */
+export const PAGE_TEXT_MAX_BYTES = 2500;
 /** Events kept from one refresh. */
 export const MAX_EVENTS = 300;
 /** The public address of an event's page; its slug (start date and title) follows. */
@@ -67,34 +76,106 @@ export function dayOf(value) {
   return real ? match[0] : null;
 }
 
-const ENTITIES = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' });
-
 /**
- * HTML as plain text: tags removed, block ends turned into spaces, the few
- * common entities decoded once. The result is DATA for a prompt and text for
- * a page; it is never written back out as HTML, so this does not need to be
- * (and is not) an HTML sanitizer.
+ * `value` cut to at most `maxBytes` bytes of UTF-8, never in the middle of a
+ * character.
  *
- * @param {unknown} html
- * @param {number} [max]
+ * @param {string} value
+ * @param {number} maxBytes
  * @returns {string}
  */
-export function htmlToText(html, max = PAGE_TEXT_MAX) {
+export function cutToBytes(value, maxBytes) {
+  if (typeof value !== 'string' || maxBytes <= 0) return '';
+  // No character is more than three bytes per UTF-16 unit, so short text needs no count.
+  if (value.length * 3 <= maxBytes) return value;
+  let bytes = 0;
+  let end = 0;
+  for (const char of value) {
+    const code = char.codePointAt(0);
+    let size = 4;
+    if (code < 0x80) size = 1;
+    else if (code < 0x800) size = 2;
+    else if (code < 0x10000) size = 3;
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    end += char.length;
+  }
+  return value.slice(0, end).trimEnd();
+}
+
+const ENTITIES = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' });
+
+/** Tags whose contents are code or styling, never words for a reader. */
+const UNSEEN_TAGS = Object.freeze(['script', 'style']);
+
+/**
+ * The text of `html` with its tags taken out.
+ *
+ * A `<` starts a tag only when a letter, `/`, `!` or `?` follows it and a `>`
+ * closes it later, which is how a browser reads it. Any other `<` ("a < b",
+ * or one with no `>` after it) is kept as the character it is, so the words
+ * after it are not lost. The contents of `<script>` and `<style>` are dropped
+ * with their tags, and so is a comment.
+ */
+function stripTags(html) {
+  const lower = html.toLowerCase();
+  let out = '';
+  let at = 0;
+  // Once a search finds no `>` there is none further on either; remembering
+  // that keeps a page of bare `<` characters from being searched again each time.
+  let noMoreClosers = false;
+  while (at < html.length) {
+    const open = html.indexOf('<', at);
+    if (open === -1) {
+      out += html.slice(at);
+      break;
+    }
+    out += html.slice(at, open);
+    const close = noMoreClosers ? -1 : html.indexOf('>', open + 1);
+    if (close === -1) noMoreClosers = true;
+    if (close === -1 || !/[a-z/!?]/.test(lower[open + 1] ?? '')) {
+      out += '<';
+      at = open + 1;
+      continue;
+    }
+    // A tag ends a word, so it leaves a space behind.
+    out += ' ';
+    if (lower.startsWith('<!--', open)) {
+      const end = lower.indexOf('-->', open + 4);
+      at = end === -1 ? html.length : end + 3;
+      continue;
+    }
+    const name = /^<([a-z]+)/.exec(lower.slice(open, open + 12))?.[1];
+    if (UNSEEN_TAGS.includes(name)) {
+      // Everything up to the matching end tag is dropped; with no end tag,
+      // the rest is, as a browser would treat it.
+      const end = lower.indexOf(`</${name}`, close + 1);
+      const endClose = end === -1 ? -1 : lower.indexOf('>', end);
+      at = endClose === -1 ? html.length : endClose + 1;
+      continue;
+    }
+    at = close + 1;
+  }
+  return out;
+}
+
+/**
+ * HTML as plain text: tags removed (with the contents of scripts and styles),
+ * block ends turned into spaces, the few common entities decoded once. The
+ * result is DATA for a prompt and text for a page; it is never written back
+ * out as HTML, so this does not need to be (and is not) an HTML sanitizer.
+ * It can still hold angle brackets (a bare `<`, or a decoded `&lt;`), which
+ * is why the estimate's prompt breaks up runs of them itself (estimate.js).
+ *
+ * @param {unknown} html
+ * @param {number} [max] - characters kept
+ * @param {number} [maxBytes] - bytes kept
+ * @returns {string}
+ */
+export function htmlToText(html, max = PAGE_TEXT_MAX, maxBytes = PAGE_TEXT_MAX_BYTES) {
   if (typeof html !== 'string') return '';
   // Cut first: no pattern below ever runs over more than this much text.
-  const bounded = html.slice(0, max * 8);
-  let out = '';
-  let inTag = false;
-  for (const char of bounded) {
-    if (char === '<') {
-      inTag = true;
-      out += ' ';
-    } else if (char === '>' && inTag) {
-      inTag = false;
-    } else if (!inTag) {
-      out += char;
-    }
-  }
+  const out = stripTags(html.slice(0, max * 8));
   const decoded = out.replace(/&(#\d{1,6}|#x[0-9a-f]{1,5}|[a-z]{2,6});/gi, (whole, name) => {
     const key = name.toLowerCase();
     if (Object.hasOwn(ENTITIES, key)) return ENTITIES[key];
@@ -105,7 +186,7 @@ export function htmlToText(html, max = PAGE_TEXT_MAX) {
     }
     return whole;
   });
-  return text(decoded, max);
+  return cutToBytes(text(decoded, max), maxBytes);
 }
 
 /**

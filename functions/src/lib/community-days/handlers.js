@@ -30,7 +30,8 @@ import { authoredMessage, errorCode, errorResponse, isAuthoredError } from '../h
 import { readJsonBodyWithin } from '../http/bounded-body.js';
 import { loadEvents, readCacheState, CACHE_DOC_ID, CONTAINER } from './cache.js';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
-import { API_KEY_SETTING, readApiKey } from './client.js';
+import { API_KEY_SETTING } from './api.js';
+import { readApiKey } from './client.js';
 import { isEventId, presentEvent } from './events.js';
 import { ESTIMATE_AI_BUDGET_MS, EstimateRefusedError, EstimateUnusableError, estimateAcceptance, gatherTopics } from './estimate.js';
 import {
@@ -49,6 +50,11 @@ export const COMMUNITY_DAYS_ROLE = 'editor';
 export const MAX_BODY_BYTES = 24_000;
 /** How many Speaking hub rows are read for talk topics. */
 export const SPEAKER_EVENTS_WINDOW = 200;
+
+/** What the Estimate button answers when its switch on the AI Engine page is off. */
+export const ESTIMATE_SWITCHED_OFF_CODE = 'ESTIMATE_SWITCHED_OFF';
+export const ESTIMATE_SWITCHED_OFF_SENTENCE =
+  'The acceptance estimate is switched off. To use it, switch on “Speaking acceptance estimate” on the AI Engine page (the AI Services tab), then press Estimate again. Nothing was asked of a model.';
 
 export const AUDIT_ACTIONS = Object.freeze({
   saved: 'community_days_note_saved',
@@ -99,6 +105,14 @@ export function createCommunityDaysHandlers({
   aiBudgetMs = ESTIMATE_AI_BUDGET_MS,
 }) {
   function failed(context, request, sentence, error) {
+    // The estimate is switched off on the AI Engine page. That is the owner's
+    // own choice, not a fault: the model router says so with an error that
+    // carries no HTTP status, which would otherwise fall through to a 500 and
+    // a failure in the log. Answer 409 with a sentence that says where the
+    // switch is, and a code the page can tell apart.
+    if (error?.code === 'AI_FEATURE_DISABLED') {
+      return privateJson(409, { ok: false, error: ESTIMATE_SWITCHED_OFF_SENTENCE, code: ESTIMATE_SWITCHED_OFF_CODE });
+    }
     // A refusal this module wrote: below 500, or the one 502 it writes itself
     // (the model answered, but not with a number). Anything else, including
     // an authored error from the model router, gets the fixed sentence.

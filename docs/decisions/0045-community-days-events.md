@@ -78,16 +78,25 @@ owner's own sessions.
 7. **The acceptance estimate is made only when its button is pressed**, one
    event per press, through the site's existing model router under a new
    feature switch (`speakingEstimate`). No provider or key is added. The
-   event's text goes inside a prompt fence as data; the answer is checked,
+   event's text goes inside a prompt fence as data, with every run of three
+   or more angle brackets in it cut to two so it cannot write a fence marker
+   (the shared helper alone could be made to build one; changed after an
+   independent review of the pull request); the answer is checked,
    held to 0 to 100, cut to three plain-text reasons, and labelled a rough
    estimate wherever it shows.
 8. **The owner's talk topics come from data the site already has**: Speaking
    hub topics and session titles, the speaker profile's bio, and the talk
    titles Community Days lists. No new setting.
 9. **Days are compared as calendar days** in each event's own local time. A
-   clash is a sent or accepted talk on a day of the event, or a shared day
-   with another event the owner marked Applied or Accepted. Cancelled and
-   postponed events clash with nothing.
+   clash is two things the owner cares about on one day: the owner's own
+   sent or accepted talks, and events the owner marked Interested, Applied or
+   Accepted. An event with no status never makes a clash (its row says in
+   plain words what its dates would meet, and it is a faint mark on the
+   calendar); events marked Not going or Declined, and cancelled and
+   postponed events, clash with nothing and are left off the calendar. The
+   first version flagged any listed event against a talk, which with
+   hundreds of listed events marked almost every busy day (changed after an
+   independent review of the pull request).
 
 ## Consequences and accepted risks
 

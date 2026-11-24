@@ -3,19 +3,8 @@
  * answers, and what it says when a call fails. Every event here is made up.
  */
 import { describe, it, expect, vi } from 'vitest';
-import {
-  ALLOWED_PATHS,
-  API_BASE,
-  API_KEY_SETTING,
-  CommunityDaysError,
-  MAX_PAGES,
-  MAX_RETRY_AFTER_SECONDS,
-  PER_PAGE,
-  PROBE_URL,
-  createCommunityDaysClient,
-  readApiKey,
-  sentenceForStatus,
-} from './client.js';
+import { ALLOWED_PATHS, API_BASE, API_KEY_SETTING, PROBE_URL, sentenceForStatus } from './api.js';
+import { CommunityDaysError, MAX_PAGES, MAX_RETRY_AFTER_SECONDS, PER_PAGE, createCommunityDaysClient, readApiKey } from './client.js';
 import { authoredMessage, errorFacts } from '../http/error-response.js';
 
 // Plainly not a real key: the real ones start with cdo_ and are far longer.

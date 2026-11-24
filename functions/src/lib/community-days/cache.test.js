@@ -5,11 +5,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   CACHE_DOC_ID,
+  CACHE_EVENTS_MAX_BYTES,
   CACHE_TTL_MS,
   CONTAINER,
   DEFAULT_RETRY_WAIT_MS,
   FAILED_RETRY_MS,
   MIN_REFRESH_MS,
+  SAVE_FAILED_CODE,
+  SAVE_FAILED_SENTENCE,
+  fitEvents,
   loadEvents,
   readCacheState,
   refreshDecision,
@@ -90,6 +94,149 @@ describe('the first read', () => {
     const result = await loadEvents({ store, env: ENV, now: () => T0, makeClient: api.makeClient, log });
     expect(result).toMatchObject({ status: 'ok', talks: ['Old talk'] });
     expect(log.warn).toHaveBeenCalledWith('communityDays: the talks could not be read (CDAYS_HTTP_500)');
+    expect(result.retryAt).toBeNull();
+  });
+
+  it('keeps the wait a 429 on the talks asked for, so Refresh does not ask again before it', async () => {
+    const store = fakeStore();
+    const api = apiClient({ talksFail: new CommunityDaysError('talks', 429, { retryAfterSeconds: 900 }) });
+    const first = await loadEvents({ store, env: ENV, now: () => T0, makeClient: api.makeClient });
+    // The events were read, so the list is good; only the wait is remembered.
+    expect(first).toMatchObject({ status: 'ok', refreshed: true, error: null, retryAt: later(900_000).toISOString() });
+    expect(first.events.map((event) => event.id)).toEqual(['event-1']);
+    expect(store.get(CONTAINER, CACHE_DOC_ID).retryAt).toBe(later(900_000).toISOString());
+
+    // Opening the page as usual says nothing: the copy is fresh.
+    const opened = await loadEvents({ store, env: ENV, now: () => later(120_000), makeClient: api.makeClient });
+    expect(opened).toMatchObject({ status: 'ok', refreshed: false, notice: null });
+    // Refresh inside the wait calls nothing and says why.
+    const pressed = await loadEvents({ store, env: ENV, now: () => later(899_000), makeClient: api.makeClient, force: true });
+    expect(pressed).toMatchObject({ status: 'ok', refreshed: false });
+    expect(pressed.notice).toMatch(/asked this site to wait/);
+    expect(api.client.listOpenCalls).toHaveBeenCalledTimes(1);
+    expect(api.client.listTalks).toHaveBeenCalledTimes(1);
+
+    // After the wait, Refresh reads again.
+    await loadEvents({ store, env: ENV, now: () => later(900_000), makeClient: api.makeClient, force: true });
+    expect(api.client.listOpenCalls).toHaveBeenCalledTimes(2);
+  });
+
+  it('waits fifteen minutes after a 429 on the talks that names no time', async () => {
+    const store = fakeStore();
+    const api = apiClient({ talksFail: new CommunityDaysError('talks', 429) });
+    const result = await loadEvents({ store, env: ENV, now: () => T0, makeClient: api.makeClient });
+    expect(result).toMatchObject({ status: 'ok', retryAt: later(DEFAULT_RETRY_WAIT_MS).toISOString() });
+  });
+});
+
+describe('a copy that could not be saved', () => {
+  const storeFailure = () => Object.assign(new Error('Request size is too large: account acct-not-real'), { code: 413 });
+
+  it('records the try beside the last good copy, so the next page views do not read the outside service again', async () => {
+    const store = fakeStore([[CONTAINER, cacheDoc()]]);
+    const api = apiClient({ events: [rawEvent(2)] });
+    // The new copy is refused; the small record that follows is accepted.
+    store.replaceDocIfMatch.mockRejectedValueOnce(storeFailure());
+    const log = { warn: vi.fn() };
+    const failed = await loadEvents({ store, env: ENV, now: () => later(CACHE_TTL_MS), makeClient: api.makeClient, log });
+    expect(failed).toMatchObject({ status: 'stale', refreshed: false, error: SAVE_FAILED_SENTENCE, code: SAVE_FAILED_CODE });
+    // The last good copy is what is answered and what is stored, with the time of the try.
+    expect(failed.events.map((event) => event.id)).toEqual(['event-9']);
+    const stored = store.get(CONTAINER, CACHE_DOC_ID);
+    expect(stored).toMatchObject({ fetchedAt: T0.toISOString(), attemptedAt: later(CACHE_TTL_MS).toISOString(), lastError: SAVE_FAILED_SENTENCE });
+    expect(stored.events.map((event) => event.id)).toEqual(['event-9']);
+    // A code is logged, never the store's own text.
+    expect(log.warn).toHaveBeenCalledWith('communityDays: the copy of the list could not be saved (413)');
+    expect(JSON.stringify(log.warn.mock.calls)).not.toMatch(/acct-not-real|too large/);
+
+    // The next page view, a minute later: nothing is called.
+    const soon = await loadEvents({ store, env: ENV, now: () => later(CACHE_TTL_MS + 60_000), makeClient: api.makeClient });
+    expect(api.client.listOpenCalls).toHaveBeenCalledTimes(1);
+    expect(soon).toMatchObject({ status: 'stale', refreshed: false, error: SAVE_FAILED_SENTENCE });
+
+    // After the five-minute wait it tries again, and this time the copy is saved.
+    const again = await loadEvents({ store, env: ENV, now: () => later(CACHE_TTL_MS + FAILED_RETRY_MS), makeClient: api.makeClient });
+    expect(api.client.listOpenCalls).toHaveBeenCalledTimes(2);
+    expect(again).toMatchObject({ status: 'ok', refreshed: true, error: null });
+    expect(again.events.map((event) => event.id)).toEqual(['event-2']);
+  });
+
+  it('is an error, not a crash, on the very first read, and is recorded the same way', async () => {
+    const store = fakeStore();
+    const api = apiClient();
+    store.createDoc.mockRejectedValueOnce(storeFailure());
+    const first = await loadEvents({ store, env: ENV, now: () => T0, makeClient: api.makeClient });
+    expect(first).toMatchObject({ status: 'error', events: [], error: SAVE_FAILED_SENTENCE, code: SAVE_FAILED_CODE });
+    expect(store.get(CONTAINER, CACHE_DOC_ID)).toMatchObject({ fetchedAt: null, attemptedAt: T0.toISOString() });
+    await loadEvents({ store, env: ENV, now: () => later(60_000), makeClient: api.makeClient });
+    expect(api.client.listOpenCalls).toHaveBeenCalledTimes(1);
+  });
+
+  it('still answers the sentence when even the record cannot be saved', async () => {
+    const store = fakeStore([[CONTAINER, cacheDoc()]]);
+    const api = apiClient();
+    store.replaceDocIfMatch.mockRejectedValue(storeFailure());
+    const log = { warn: vi.fn() };
+    const failed = await loadEvents({ store, env: ENV, now: () => later(CACHE_TTL_MS), makeClient: api.makeClient, log });
+    expect(failed).toMatchObject({ status: 'stale', error: SAVE_FAILED_SENTENCE });
+    expect(log.warn).toHaveBeenCalledWith('communityDays: the failed save could not be recorded (413)');
+  });
+});
+
+describe('the size of the copy', () => {
+  const bytes = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8');
+  const big = (n, pageText) => ({ id: `event-${n}`, title: `Example Day ${n}`, startDate: '2027-03-06', endDate: '2027-03-06', pageText });
+
+  it('leaves a list that fits exactly as it is', () => {
+    const events = [big(1, 'Talks.'), big(2, 'More talks.')];
+    expect(fitEvents(events)).toEqual({ events, dropped: 0 });
+  });
+
+  it('shortens the page texts first, and keeps every event', () => {
+    const events = Array.from({ length: 20 }, (_, n) => big(n, '日'.repeat(800)));
+    const limit = Math.floor(bytes(events) / 2);
+    const fitted = fitEvents(events, limit);
+    expect(fitted.dropped).toBe(0);
+    expect(fitted.events).toHaveLength(20);
+    expect(bytes(fitted.events)).toBeLessThanOrEqual(limit);
+    expect(fitted.events[0].pageText.length).toBeGreaterThan(0);
+    expect(fitted.events[0].pageText.length).toBeLessThan(800);
+  });
+
+  it('keeps the soonest events, and counts the rest, when they do not fit even with no page text', () => {
+    const events = Array.from({ length: 50 }, (_, n) => big(n, 'x'.repeat(100)));
+    const limit = 1000;
+    const fitted = fitEvents(events, limit);
+    expect(fitted.events.length).toBeGreaterThan(0);
+    expect(fitted.events.length).toBeLessThan(50);
+    expect(fitted.dropped).toBe(50 - fitted.events.length);
+    expect(fitted.events.map((event) => event.id)).toEqual(events.slice(0, fitted.events.length).map((event) => event.id));
+    expect(bytes(fitted.events)).toBeLessThanOrEqual(limit);
+  });
+
+  it('holds 300 events of text in a three-byte script well under the database’s 2 MB limit', async () => {
+    const store = fakeStore();
+    // Every text field as long as the API could send it, in a script that takes three bytes a character.
+    const wide = (n) => ({
+      RowKey: `event-${n}`,
+      title: '日'.repeat(400),
+      tagline: '日'.repeat(400),
+      location: '日'.repeat(400),
+      city: '日'.repeat(400),
+      state_province: '日'.repeat(400),
+      start_date: '2027-03-06T09:00',
+      website: `https://example.org/${'日'.repeat(150)}`,
+      call_for_speakers_link: `https://example.org/${'日'.repeat(150)}`,
+      home_content: `<p>${'日'.repeat(20000)}</p>`,
+    });
+    const api = apiClient({ events: Array.from({ length: 300 }, (_, n) => wide(n)) });
+    const result = await loadEvents({ store, env: ENV, now: () => T0, makeClient: api.makeClient });
+    const stored = store.get(CONTAINER, CACHE_DOC_ID);
+    expect(bytes(stored)).toBeLessThan(2 * 1024 * 1024);
+    expect(bytes(stored.events)).toBeLessThanOrEqual(CACHE_EVENTS_MAX_BYTES);
+    // What was left out is said, not hidden.
+    expect(result.events.length + result.skipped).toBe(300);
+    expect(result.truncated).toBe(result.skipped > 0);
   });
 });
 

@@ -19,10 +19,12 @@
  * it is a plain http(s) address.
  *
  * The small calendar and the "Clash" notes on the rows share one rule
- * (applyModel.js): an event clashes with one of the owner's own talks that
- * is sent or accepted, or with another event from this tab the owner marked
- * Applied or Accepted, when their days meet. Days are compared as calendar
- * days in each event's own local time.
+ * (applyModel.js): a clash is two things the owner cares about on the same
+ * day. Those are the owner's own talks that are sent or accepted, and events
+ * from this tab the owner marked Interested, Applied or Accepted. An event
+ * with no status never clashes; its row says in plain grey words what its
+ * dates would meet. Days are compared as calendar days in each event's own
+ * local time.
  */
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router';
@@ -44,6 +46,7 @@ import ConfirmModal from '@/components/admin/ConfirmModal';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
 import { tabHref as integrationsTabHref } from '@/components/admin/integrations/tabs';
+import { tabHref as aiEngineTabHref } from '@/components/admin/ai-engine/tabs';
 import ApplyCalendar from './ApplyCalendar';
 import { Dismissible, ReadsStatus, RefreshButton } from './TabParts';
 import { SectionHeading } from './EventTables';
@@ -73,6 +76,12 @@ import {
 export const KEYS_HREF = integrationsTabHref('keys');
 export const CARD_HREF = `${integrationsTabHref('services')}&group=content`;
 export const ESTIMATE_LABEL = 'Rough estimate, not a measurement';
+/** Where the estimate's switch is: the AI Engine page's AI Services tab, under its feature switches. */
+export const AI_SWITCHES_HREF = aiEngineTabHref('services');
+/** The server's code for "the estimate is switched off" (functions community-days/handlers.js). */
+export const SWITCHED_OFF_CODE = 'ESTIMATE_SWITCHED_OFF';
+export const CHANGED_ELSEWHERE =
+  'What is saved for this event changed while this form was open, so the form now shows the saved values. Make your change again, then press Save.';
 
 const CLEAR_CONFIRM = {
   title: 'Clear what you saved for this event?',
@@ -154,6 +163,22 @@ function Estimate({ estimate }) {
 function NoteEditor({ event, note, busy, onSave, onClose, onClear }) {
   const [form, setForm] = useState(() => noteForm(note));
   const [invalid, setInvalid] = useState('');
+  // The version (ETag) of the note this form was filled from. When the row
+  // is read again and the version is a different one, someone changed or
+  // cleared the note while the form was open: another tab, or the change
+  // that made the server refuse this Save with a 409. Saving the old form
+  // under the new version would quietly overwrite that change, so the form
+  // goes back to the saved values and says so; the owner makes the change
+  // again on top of what is really stored.
+  const version = note?.etag ?? '';
+  const [filledFrom, setFilledFrom] = useState(version);
+  const [changedElsewhere, setChangedElsewhere] = useState(false);
+  if (version !== filledFrom) {
+    setFilledFrom(version);
+    setForm(noteForm(note));
+    setInvalid('');
+    setChangedElsewhere(true);
+  }
   const id = `apply-${event.id}`;
   const total = costTotal(form.costs);
   const submit = async (e) => {
@@ -229,6 +254,11 @@ function NoteEditor({ event, note, busy, onSave, onClose, onClear }) {
           {invalid}
         </p>
       )}
+      {changedElsewhere && (
+        <p role="alert" className="text-xs text-amber-800 dark:text-amber-300">
+          {CHANGED_ELSEWHERE}
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" size="sm" disabled={busy}>
           {busy && <Loader2 className="mr-1 h-3 w-3 animate-spin" />} Save
@@ -255,9 +285,25 @@ function NoteEditor({ event, note, busy, onSave, onClose, onClear }) {
 
 /** "Clash" and "already speaking here", in words and with an icon. */
 function Overlap({ overlap }) {
-  if (!overlap || (overlap.clashes.length === 0 && !overlap.speakingHere)) return null;
+  if (!overlap) return null;
+  const { clashes, wouldMeet = [], speakingHere } = overlap;
+  if (clashes.length === 0 && wouldMeet.length === 0 && !speakingHere) return null;
   return (
     <div className="space-y-1 text-xs">
+      {wouldMeet.length > 0 && (
+        // Not a clash: the owner has not marked this event. Plain grey words,
+        // no warning sign, so a long list of unmarked events stays calm.
+        <p className="text-muted-foreground" data-testid="would-meet">
+          If you go, these dates meet{' '}
+          {wouldMeet.map((entry, index) => (
+            <span key={`${entry.kind}-${entry.name}`}>
+              {index > 0 ? '; ' : ''}
+              {entry.name} ({entry.detail})
+            </span>
+          ))}
+          .
+        </p>
+      )}
       {overlap.speakingHere && (
         <p className="text-emerald-700 dark:text-emerald-400">
           You already have a talk at this event ({overlap.speakingHere}).
@@ -472,56 +518,100 @@ function EventRow({ event, overlap, today, apply, canEstimate, editing, setEditi
   );
 }
 
-/** Notes kept for events whose call has closed, so they no longer come from the directory. */
-function SavedList({ saved, overlaps, apply, askClear }) {
+/**
+ * Notes kept for events whose call has closed, so they no longer come from
+ * the directory. A closed call is exactly when the answer arrives (Applied
+ * becomes Accepted or Declined) and when the costs are known, so each row
+ * can be edited with the same form as a listed row, not only cleared.
+ */
+function SavedList({ saved, overlaps, apply, editing, setEditing, askClear }) {
   if (saved.length === 0) return null;
   return (
     <section>
       <SectionHeading>Saved, no longer listed ({saved.length})</SectionHeading>
       <p className="mb-2 text-xs text-muted-foreground">
         These events are not in the directory’s list any more (their call for speakers closed, or
-        the event was withdrawn). What you saved is kept, and still counts on the calendar.
+        the event was withdrawn). What you saved is kept, can still be changed, and still counts on
+        the calendar.
       </p>
-      <ul className="space-y-2">
-        {saved.map((note) => {
-          const page = httpUrl(note.event?.url);
-          return (
-            <li
-              key={note.eventId}
-              className="space-y-1 rounded-xl border border-border p-3 text-xs"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-sm font-medium">
-                  {page ? (
-                    <a href={page} target="_blank" rel="noopener noreferrer" className="underline">
-                      {note.event.title}
-                    </a>
-                  ) : (
-                    note.event.title
-                  )}
-                </span>
-                <StatusBadge status={applyStatusInfo(note.status)} />
-              </div>
-              <p className="text-muted-foreground">
-                {formatRange(eventRange(note.event))} · {locationLine(note.event)}
-              </p>
-              {note.notes && <p className="whitespace-pre-wrap break-words">{note.notes}</p>}
-              <Overlap overlap={overlaps.get(note.eventId)} />
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                onClick={() => askClear({ id: note.eventId, title: note.event.title, note })}
-                disabled={apply.busyIds.has(note.eventId)}
-                aria-label={`Clear what is saved for ${note.event.title}`}
-              >
-                <X className="mr-1 h-3 w-3" /> Clear
-              </Button>
-            </li>
-          );
-        })}
+      <ul className="space-y-2" aria-label="Saved events that are no longer listed">
+        {saved.map((note) => (
+          <SavedRow
+            key={note.eventId}
+            note={note}
+            overlap={overlaps.get(note.eventId)}
+            apply={apply}
+            editing={editing === note.eventId}
+            setEditing={setEditing}
+            askClear={askClear}
+          />
+        ))}
       </ul>
     </section>
+  );
+}
+
+function SavedRow({ note, overlap, apply, editing, setEditing, askClear }) {
+  const page = httpUrl(note.event?.url);
+  const { title } = note.event;
+  const busy = apply.busyIds.has(note.eventId);
+  const clear = () => askClear({ id: note.eventId, title, note });
+  return (
+    <li className="space-y-1 rounded-xl border border-border p-3 text-xs" data-event={note.eventId}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm font-medium">
+          {page ? (
+            <a href={page} target="_blank" rel="noopener noreferrer" className="underline">
+              {title}
+            </a>
+          ) : (
+            title
+          )}
+        </span>
+        <StatusBadge status={applyStatusInfo(note.status)} />
+      </div>
+      <p className="text-muted-foreground">
+        {formatRange(eventRange(note.event))} · {locationLine(note.event)}
+      </p>
+      <p>
+        <span className="text-muted-foreground">Your costs:</span> {costsLine(note)}
+      </p>
+      {note.notes && <p className="whitespace-pre-wrap break-words">{note.notes}</p>}
+      <Overlap overlap={overlap} />
+      {editing ? (
+        <NoteEditor
+          event={{ id: note.eventId, title }}
+          note={note}
+          busy={busy}
+          onSave={(payload) => apply.save(note.eventId, payload, note.etag ?? '')}
+          onClose={() => setEditing(null)}
+          onClear={clear}
+        />
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => setEditing(note.eventId)}
+            disabled={busy}
+            aria-label={`Edit status, costs and notes for ${title}`}
+          >
+            <Pencil className="mr-1 h-3 w-3" /> Edit status, costs and notes
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+            onClick={clear}
+            disabled={busy}
+            aria-label={`Clear what is saved for ${title}`}
+          >
+            <X className="mr-1 h-3 w-3" /> Clear
+          </Button>
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -693,7 +783,17 @@ export default function ApplyTab({ data }) {
       </div>
 
       {apply.writeError && (
-        <Dismissible onDismiss={apply.clearWriteError}>{apply.writeError}</Dismissible>
+        <Dismissible onDismiss={apply.clearWriteError}>
+          {apply.writeError}
+          {apply.writeErrorCode === SWITCHED_OFF_CODE && (
+            <>
+              {' '}
+              <Link to={AI_SWITCHES_HREF} className="underline">
+                Open AI Engine → AI Services
+              </Link>
+            </>
+          )}
+        </Dismissible>
       )}
       <ReadsStatus reads={[read]} label="events to apply to" />
 
@@ -729,7 +829,14 @@ export default function ApplyTab({ data }) {
                 </EventList>
               </>
             )}
-            <SavedList saved={list.saved} overlaps={overlaps} apply={apply} askClear={askClear} />
+            <SavedList
+              saved={list.saved}
+              overlaps={overlaps}
+              apply={apply}
+              editing={editing}
+              setEditing={setEditing}
+              askClear={askClear}
+            />
           </div>
 
           <div className="order-1 space-y-2 lg:order-2">

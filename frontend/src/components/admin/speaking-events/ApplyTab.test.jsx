@@ -9,8 +9,14 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
-import ApplyTab, { ESTIMATE_LABEL, KEYS_HREF } from './ApplyTab';
-import ApplyCalendar, { describeDay } from './ApplyCalendar';
+import ApplyTab, {
+  AI_SWITCHES_HREF,
+  CHANGED_ELSEWHERE,
+  ESTIMATE_LABEL,
+  KEYS_HREF,
+  SWITCHED_OFF_CODE,
+} from './ApplyTab';
+import ApplyCalendar, { UNMARKED_SHOWN, describeDay } from './ApplyCalendar';
 import { marksForMonth } from './applyModel';
 import { EVENTS_ROUTE, REFRESH_ROUTE } from './useApplyEvents';
 
@@ -81,6 +87,17 @@ const acceptedTalk = (over = {}) => ({
   eventName: 'Other Conf',
   date: '2099-03-07',
   status: 'accepted',
+  ...over,
+});
+
+/** What the owner saved for an event, as the server sends it. */
+const savedNote = (status, over = {}) => ({
+  eventId: 'event-1',
+  status,
+  notes: '',
+  costs: { travel: null, lodging: null, other: null },
+  estimate: null,
+  etag: '"n1"',
   ...over,
 });
 
@@ -283,6 +300,71 @@ describe('the list', () => {
     expect(within(saved).getByText(/Feb 1, 2099 · Sampletown, US \(Hybrid\)/)).toBeInTheDocument();
   });
 
+  it('lets the owner change the status and costs of an event that has left the list, not only clear it', async () => {
+    // The call has closed, which is when the answer comes: Applied becomes Accepted.
+    const gone = (over = {}) => ({
+      eventId: 'event-gone',
+      status: 'applied',
+      notes: 'Two talks sent.',
+      costs: { travel: null, lodging: null, other: null },
+      estimate: null,
+      event: {
+        title: 'Closed Call Day',
+        startDate: '2099-02-01',
+        endDate: '2099-02-01',
+        city: 'Sampletown',
+        country: 'US',
+        eventType: 'Hybrid',
+      },
+      etag: '"g1"',
+      ...over,
+    });
+    getJSON.mockResolvedValue(answer({ events: [], saved: [gone()] }));
+    await show();
+    const saved = (await screen.findByText('Closed Call Day')).closest('li');
+    expect(within(saved).getByText('Applied')).toBeInTheDocument();
+    expect(
+      within(saved).getByRole('button', { name: 'Clear what is saved for Closed Call Day' })
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      within(saved).getByRole('button', {
+        name: 'Edit status, costs and notes for Closed Call Day',
+      })
+    );
+    const form = within(saved).getByRole('form', { name: 'Your notes for Closed Call Day' });
+    expect(within(form).getByLabelText('Your status')).toHaveValue('applied');
+    expect(within(form).getByLabelText('Notes')).toHaveValue('Two talks sent.');
+    fireEvent.change(within(form).getByLabelText('Your status'), { target: { value: 'accepted' } });
+    fireEvent.change(within(form).getByLabelText('Travel'), { target: { value: '420' } });
+    getJSON.mockResolvedValue(
+      answer({
+        events: [],
+        saved: [
+          gone({
+            status: 'accepted',
+            costs: { travel: 420, lodging: null, other: null },
+            etag: '"g2"',
+          }),
+        ],
+      })
+    );
+    fireEvent.click(within(form).getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(sendJSON).toHaveBeenCalledWith(`${EVENTS_ROUTE}/event-gone`, 'PUT', {
+        status: 'accepted',
+        notes: 'Two talks sent.',
+        costs: { travel: 420, lodging: null, other: null },
+        etag: '"g1"',
+      })
+    );
+    // The form closes and the row shows what is now saved.
+    await waitFor(() => expect(screen.queryByRole('form')).toBeNull());
+    const after = screen.getByText('Closed Call Day').closest('li');
+    expect(within(after).getByText('Accepted')).toBeInTheDocument();
+    expect(after).toHaveTextContent('Your costs: Travel 420 · total 420');
+  });
+
   it('shows the read’s own error with a way to try again', async () => {
     getJSON.mockRejectedValueOnce(new Error('HTTP 500'));
     render(<ApplyTab data={hubData()} />);
@@ -294,6 +376,7 @@ describe('the list', () => {
 
 describe('clashes', () => {
   it('flags a clash on the row and on the calendar, in words and with a mark that is not colour alone', async () => {
+    getJSON.mockResolvedValue(answer({ events: [event({ note: savedNote('applied') })] }));
     await show(hubData([acceptedTalk()]));
     const row = (await screen.findByText('Example Community Day')).closest('li');
     const clash = within(row).getByTestId('clash');
@@ -307,43 +390,93 @@ describe('clashes', () => {
     expect(day).toHaveAttribute('data-overlap', 'true');
     // The first day of the event has no talk on it: marked, but not a clash.
     expect(
-      within(calendar).getByRole('button', { name: 'Mar 6, 2099: 1 event' })
+      within(calendar).getByRole('button', { name: 'Mar 6, 2099: 1 event you marked' })
     ).not.toHaveAttribute('data-overlap');
 
     fireEvent.click(day);
     expect(within(calendar).getByText('Mar 7, 2099 (clash)')).toBeInTheDocument();
-    expect(within(calendar).getByText('Event: Example Community Day')).toBeInTheDocument();
+    expect(
+      within(calendar).getByText('Event: Example Community Day (Applied)')
+    ).toBeInTheDocument();
     expect(within(calendar).getByText('Your talk: Other Conf (Accepted)')).toBeInTheDocument();
   });
 
-  it('flags another event the owner applied to, on both rows’ dates', async () => {
+  it('keeps an event with no status quiet: no clash on the row or the calendar, only what its dates would meet', async () => {
+    // The same talk on the same day as above, but the owner has not marked the event.
+    await show(hubData([acceptedTalk()]));
+    const row = (await screen.findByText('Example Community Day')).closest('li');
+    expect(within(row).queryByTestId('clash')).toBeNull();
+    expect(within(row).getByTestId('would-meet')).toHaveTextContent(
+      'If you go, these dates meet Other Conf (Accepted talk on Mar 7, 2099).'
+    );
+
+    const calendar = screen.getByRole('region', { name: 'Calendar of events and your talks' });
+    expect(within(calendar).queryByRole('button', { name: /clash/ })).toBeNull();
+    const day = within(calendar).getByRole('button', {
+      name: 'Mar 7, 2099: 1 listed event you have not marked, 1 of your talks',
+    });
+    expect(day).not.toHaveAttribute('data-overlap');
+    fireEvent.click(day);
+    expect(within(calendar).getByText('Listed, not marked by you (1):')).toBeInTheDocument();
+    expect(within(calendar).getByText('Example Community Day')).toBeInTheDocument();
+  });
+
+  it('says nothing on the row, and shows nothing on the calendar, for an event marked Not going', async () => {
+    getJSON.mockResolvedValue(answer({ events: [event({ note: savedNote('not_going') })] }));
+    await show(hubData([acceptedTalk()]));
+    // Not going is hidden by the default filter; show every event to read its row.
+    fireEvent.change(await screen.findByLabelText('Show'), { target: { value: 'all' } });
+    const row = (await screen.findByText('Example Community Day')).closest('li');
+    expect(within(row).queryByTestId('clash')).toBeNull();
+    expect(within(row).queryByTestId('would-meet')).toBeNull();
+    const calendar = screen.getByRole('region', { name: 'Calendar of events and your talks' });
+    expect(within(calendar).queryByRole('button', { name: /Mar 6, 2099/ })).toBeNull();
+    expect(
+      within(calendar).getByRole('button', { name: 'Mar 7, 2099: 1 of your talks' })
+    ).not.toHaveAttribute('data-overlap');
+  });
+
+  it('flags two events the owner planned on both rows, and only tells an unmarked one what it would meet', async () => {
+    const second = event({
+      id: 'event-2',
+      title: 'Second Day',
+      startDate: '2099-03-07',
+      endDate: '2099-03-08',
+      note: savedNote('applied', { eventId: 'event-2', etag: '"s1"' }),
+    });
     getJSON.mockResolvedValue(
-      answer({
-        events: [
-          event(),
-          event({
-            id: 'event-2',
-            title: 'Second Day',
-            startDate: '2099-03-07',
-            endDate: '2099-03-08',
-            note: {
-              eventId: 'event-2',
-              status: 'applied',
-              notes: '',
-              costs: {},
-              estimate: null,
-              etag: '"s1"',
-            },
-          }),
-        ],
-      })
+      answer({ events: [event({ note: savedNote('interested') }), second] })
     );
     await show();
     const first = (await screen.findByText('Example Community Day')).closest('li');
     expect(within(first).getByTestId('clash')).toHaveTextContent(
       'Second Day (Applied, Mar 7–8, 2099)'
     );
-    expect(within(screen.getByText('Second Day').closest('li')).queryByTestId('clash')).toBeNull();
+    expect(
+      within(screen.getByText('Second Day').closest('li')).getByTestId('clash')
+    ).toHaveTextContent('Example Community Day (Interested, Mar 6–7, 2099)');
+  });
+
+  it('does not flag an event the owner applied to because an unmarked event shares its days', async () => {
+    const second = event({
+      id: 'event-2',
+      title: 'Second Day',
+      startDate: '2099-03-07',
+      endDate: '2099-03-08',
+      note: savedNote('applied', { eventId: 'event-2', etag: '"s1"' }),
+    });
+    getJSON.mockResolvedValue(answer({ events: [event(), second] }));
+    await show();
+    const first = (await screen.findByText('Example Community Day')).closest('li');
+    expect(within(first).queryByTestId('clash')).toBeNull();
+    expect(within(first).getByTestId('would-meet')).toHaveTextContent(
+      'Second Day (Applied, Mar 7–8, 2099)'
+    );
+    const other = screen.getByText('Second Day').closest('li');
+    expect(within(other).queryByTestId('clash')).toBeNull();
+    expect(within(other).queryByTestId('would-meet')).toBeNull();
+    const calendar = screen.getByRole('region', { name: 'Calendar of events and your talks' });
+    expect(within(calendar).queryByRole('button', { name: /clash/ })).toBeNull();
   });
 
   it('says "already have a talk" for the same event, and flags nothing', async () => {
@@ -424,6 +557,31 @@ describe('the estimate', () => {
     await show();
     fireEvent.click(await screen.findByRole('button', { name: /^Estimate the chance/ }));
     expect(await screen.findByText(/did not answer with a usable number/)).toBeInTheDocument();
+    // An ordinary refusal carries no link to the switch.
+    expect(screen.queryByRole('link', { name: /AI Engine/ })).toBeNull();
+  });
+
+  it('says the estimate is switched off, with a link to the switch, when the server answers that', async () => {
+    // What lib/api.js throws for the server's 409: its sentence, the status and the code.
+    sendJSON.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          'The acceptance estimate is switched off. To use it, switch on “Speaking acceptance estimate” on the AI Engine page (the AI Services tab), then press Estimate again. Nothing was asked of a model.'
+        ),
+        { status: 409, code: SWITCHED_OFF_CODE }
+      )
+    );
+    await show();
+    fireEvent.click(await screen.findByRole('button', { name: /^Estimate the chance/ }));
+    expect(await screen.findByText(/The acceptance estimate is switched off/)).toBeInTheDocument();
+    expect(SWITCHED_OFF_CODE).toBe('ESTIMATE_SWITCHED_OFF');
+    expect(screen.getByRole('link', { name: 'Open AI Engine → AI Services' })).toHaveAttribute(
+      'href',
+      AI_SWITCHES_HREF
+    );
+    expect(AI_SWITCHES_HREF).toBe('/admin/ai-engine?tab=services');
+    // The row is as it was: no estimate was stored, and the button can be pressed again.
+    expect(screen.getByText('No estimate yet. Press Estimate to ask for one.')).toBeInTheDocument();
   });
 });
 
@@ -490,7 +648,7 @@ describe('saving and clearing', () => {
     expect(sendJSON).not.toHaveBeenCalled();
   });
 
-  it('shows the server’s sentence and reads the list again when the note changed somewhere else, keeping the form open', async () => {
+  it('puts the saved values back in the form after a 409, so a second Save cannot overwrite the other change', async () => {
     getJSON.mockResolvedValue(noted());
     sendJSON.mockRejectedValueOnce(
       Object.assign(new Error('This event was changed somewhere else since the page read it.'), {
@@ -499,10 +657,68 @@ describe('saving and clearing', () => {
     );
     await show();
     fireEvent.click(await screen.findByRole('button', { name: /Edit status, costs and notes/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByText(/changed somewhere else/)).toBeInTheDocument();
+    const form = () => screen.getByRole('form', { name: 'Your notes for Example Community Day' });
+    fireEvent.change(within(form()).getByLabelText('Your status'), {
+      target: { value: 'declined' },
+    });
+    fireEvent.change(within(form()).getByLabelText('Notes'), { target: { value: 'Mine.' } });
+
+    // What another tab saved in the meantime; the re-read after the refusal brings it.
+    getJSON.mockResolvedValue(
+      answer({
+        events: [
+          event({
+            note: {
+              eventId: 'event-1',
+              status: 'accepted',
+              notes: 'Theirs.',
+              costs: { travel: 100, lodging: 300, other: null },
+              estimate: null,
+              etag: '"v8"',
+            },
+          }),
+        ],
+      })
+    );
+    fireEvent.click(within(form()).getByRole('button', { name: 'Save' }));
+    expect(
+      await screen.findByText(/changed somewhere else since the page read it/)
+    ).toBeInTheDocument();
     await waitFor(() => expect(getJSON).toHaveBeenCalledTimes(2));
-    expect(screen.getByRole('form')).toBeInTheDocument();
+
+    // The form is still open, but it shows what is stored now, and says why.
+    expect(await within(form()).findByText(CHANGED_ELSEWHERE)).toBeInTheDocument();
+    expect(within(form()).getByLabelText('Your status')).toHaveValue('accepted');
+    expect(within(form()).getByLabelText('Notes')).toHaveValue('Theirs.');
+    expect(within(form()).getByLabelText('Lodging')).toHaveValue('300');
+
+    // Pressing Save again sends the stored values under the new version: the
+    // owner's old form ("declined", "Mine.") is never sent over the other change.
+    fireEvent.click(within(form()).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(sendJSON).toHaveBeenCalledTimes(2));
+    expect(sendJSON.mock.calls[1]).toEqual([
+      `${EVENTS_ROUTE}/event-1`,
+      'PUT',
+      {
+        status: 'accepted',
+        notes: 'Theirs.',
+        costs: { travel: 100, lodging: 300, other: null },
+        etag: '"v8"',
+      },
+    ]);
+  });
+
+  it('keeps what was typed when a save fails for another reason and nothing changed underneath', async () => {
+    getJSON.mockResolvedValue(noted());
+    sendJSON.mockRejectedValueOnce(new Error('Failed to save the event'));
+    await show();
+    fireEvent.click(await screen.findByRole('button', { name: /Edit status, costs and notes/ }));
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Typed once.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Failed to save the event')).toBeInTheDocument();
+    await waitFor(() => expect(getJSON).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText('Notes')).toHaveValue('Typed once.');
+    expect(screen.queryByText(CHANGED_ELSEWHERE)).toBeNull();
   });
 
   it('clears only after a confirmation, with the version in If-Match', async () => {
@@ -557,7 +773,19 @@ describe('the list’s filters', () => {
 describe('ApplyCalendar', () => {
   const month = { year: 2099, monthIndex: 2 };
   const marks = marksForMonth(month, {
-    events: [event({ callCloses: '2099-03-02' })],
+    events: [
+      event({ callCloses: '2099-03-02', note: { status: 'interested' } }),
+      // Not marked by the owner: a quiet mark on its day, and no clash.
+      ...Array.from({ length: UNMARKED_SHOWN + 2 }, (_, n) =>
+        event({
+          id: `other-${n}`,
+          title: `Elsewhere Day ${n}`,
+          startDate: '2099-03-20',
+          endDate: '2099-03-20',
+          callCloses: null,
+        })
+      ),
+    ],
     saved: [],
     talks: [{ name: 'Other Conf', day: '2099-03-07', status: 'accepted', statusLabel: 'Accepted' }],
   });
@@ -565,17 +793,36 @@ describe('ApplyCalendar', () => {
   it('reads each marked day out in words, and leaves unmarked days as plain text', () => {
     render(<ApplyCalendar month={month} onMonth={() => {}} marks={marks} today="2099-03-10" />);
     expect(screen.getByRole('button', { name: 'Mar 2, 2099: 1 call closing' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Mar 6, 2099: 1 event' })).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Mar 7, 2099: clash, 1 event, 1 of your talks' })
+      screen.getByRole('button', { name: 'Mar 6, 2099: 1 event you marked' })
     ).toBeInTheDocument();
-    // 31 days, three of them marked: only those are buttons (plus the two month buttons).
-    expect(screen.getAllByRole('button')).toHaveLength(5);
+    expect(
+      screen.getByRole('button', {
+        name: 'Mar 7, 2099: clash, 1 event you marked, 1 of your talks',
+      })
+    ).toBeInTheDocument();
+    // 31 days, four of them marked: only those are buttons (plus the two month buttons).
+    expect(screen.getAllByRole('button')).toHaveLength(6);
     expect(screen.getByText('10').closest('[aria-current="date"]')).not.toBeNull();
     // The legend names every mark by its shape, so colour is never the only signal.
     const legend = screen.getByRole('list', { name: 'Calendar legend' });
-    for (const word of ['square', 'diamond', 'ring', 'warning sign'])
+    for (const word of ['square', 'small grey dot', 'diamond', 'ring', 'warning sign'])
       expect(legend).toHaveTextContent(word);
+  });
+
+  it('draws a day of unmarked events as one quiet mark, never a clash, and names only a few of them', () => {
+    render(<ApplyCalendar month={month} onMonth={() => {}} marks={marks} today="2099-03-10" />);
+    const day = screen.getByRole('button', {
+      name: `Mar 20, 2099: ${UNMARKED_SHOWN + 2} listed events you have not marked`,
+    });
+    expect(day).not.toHaveAttribute('data-overlap');
+    fireEvent.click(day);
+    expect(
+      screen.getByText(`Listed, not marked by you (${UNMARKED_SHOWN + 2}):`)
+    ).toBeInTheDocument();
+    expect(screen.getByText('Elsewhere Day 0')).toBeInTheDocument();
+    expect(screen.queryByText(`Elsewhere Day ${UNMARKED_SHOWN}`)).toBeNull();
+    expect(screen.getByText('and 2 more; find them in the list.')).toBeInTheDocument();
   });
 
   it('moves a month at a time from the keyboard-reachable buttons', () => {
