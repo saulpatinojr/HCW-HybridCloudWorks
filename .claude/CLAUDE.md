@@ -442,22 +442,8 @@ much as they should be.
   reviewer need not repeat it; the rest no test can read, so the reviewer
   agent is told to check them by name in its briefing, for every changed
   file under that folder:
-  - `functions/**` (test and reviewer): log lines are content-free (no
-    document ids, tokens, file paths, route values or payloads). Two tests
-    hold part of that: `no-raw-error-in-logs.test.js` (an error's own text)
-    and `no-ids-in-logs.test.js` (a value named like an id, a person or the
-    place a stored thing lives, and a whole value printed with
-    `JSON.stringify`; a run's summary is printed with `jsonForLog` from
-    `lib/http/log-json.js`, which leaves the ids out). The second reads names,
-    so the reviewer still checks what a name does not say: an id held under a
-    plain name (`key`, `name`), a route value, and a sentence that quotes
-    one. Decided on
-    [#1802](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1802):
-    a job's id is not logged (the invocation id, the reference number the
-    host adds to every line, ties a line to its run); a fixed name from the
-    code may be (a provider, a backup run's date, a cache entry, a
-    registered tool server or lab machine), and each line that keeps one is
-    listed with its reason in that test's `ALLOWED` list. A write decided from an
+  - `functions/**` (reviewer): log lines are content-free (no document ids,
+    tokens, file paths, route values or payloads); a write decided from an
     earlier read is guarded with `ifMatch` and handles the 412; an update
     built from request input carries no `undefined` value (`patchDoc` deletes
     the field) and no dotted key (a nested Cosmos patch). Raw errors in
