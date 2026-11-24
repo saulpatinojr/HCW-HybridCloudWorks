@@ -727,7 +727,9 @@ describe('sensitiveNamesIn: names that look like a secret, at any depth, and nev
 
   it('the report counts a record once however many such names it has, and counts an id-shaped name without printing it', async () => {
     const docs = [
-      { id: 'a', token: 'made-up-1', nested: { password: 'made-up-2' } },
+      // The nested value is a number on purpose: only the NAME is read, and a
+      // secret scanner reads a quoted word beside the name `password` as a real one.
+      { id: 'a', token: 'made-up-1', nested: { password: 2 } },
       { id: 'b', token_12345678: 'made-up-3' },
       { id: 'c' },
     ];
