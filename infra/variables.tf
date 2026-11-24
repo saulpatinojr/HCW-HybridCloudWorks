@@ -1284,7 +1284,7 @@ variable "tags" {
 # exactly the "false" it is today until an owner decides otherwise.
 variable "schedulers_master_enabled" {
   description = <<-EOT
-    Master kill switch for all 20 catalogued timers (FEATURE_FLAG_SCHEDULERS).
+    Master kill switch for every catalogued timer (FEATURE_FLAG_SCHEDULERS).
 
     False holds every timer off regardless of enabled_timers.
     schedulers.js checks this first and skips the handler before reading the
@@ -1421,7 +1421,7 @@ variable "enabled_timers" {
         "PLATFORM_JOB_SWEEPER", "BUILD_WEEKLY_NEWSLETTER", "REFRESH_TOOL_SERVICE_CACHE",
         "LABS_WEEKLY_ROLLUP", "PROBE_AI_PROVIDERS", "SEND_REMINDERS", "HEALTH_PULSE",
         "LAB_CANARY", "AMBASSADOR_AUDIENCE_MONTHLY", "SWEEP_VISITOR_SESSIONS",
-        "SYNC_SEARCH_CONSOLE",
+        "SYNC_SEARCH_CONSOLE", "BRAIN_INDEX_RECONCILE",
       ], name)
     ])
     error_message = "enabled_timers accepts only flag suffixes from local.timer_catalogue in functionapp.tf, e.g. SYNC_RSS_FEEDS — not the function name, and not the full FEATURE_FLAG_ prefix."

@@ -1,5 +1,5 @@
 /**
- * The small month calendar on the "Events to apply to" tab (#1823, ADR 0045).
+ * The small month calendar on the "Future Events" tab (#1823, ADR 0045).
  *
  * It marks, for one month: the days of each event the owner marked
  * Interested, Applied or Accepted, the days of the owner's own talks that are

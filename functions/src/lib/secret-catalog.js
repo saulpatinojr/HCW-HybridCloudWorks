@@ -355,7 +355,7 @@ export const SECRET_CATALOG = Object.freeze([
     probe: null,
   },
   // The Community Days developer key (#1823, ADR 0045), read by
-  // lib/community-days/client.js for the Speaking hub's "Events to apply to"
+  // lib/community-days/client.js for the Speaking hub's "Future Events"
   // tab. The key is NOT read-only at the vendor (it can change and delete the
   // owner's events and profile there); the site's code makes two GET calls
   // and nothing else, and only-read-calls.test.js holds it to that. No probe:
@@ -369,7 +369,7 @@ export const SECRET_CATALOG = Object.freeze([
     label: "Community Days \u2014 API key",
     help:
       "API key from the Community Days developers page (it starts with cdo_). Reads the list of " +
-      "community events whose call for speakers is open, for Speaking \u2192 Events to apply to. " +
+      "community events whose call for speakers is open, for Speaking \u2192 Future Events. " +
       "The same key could change your events and profile on Community Days, so it is kept only " +
       "here; this site only reads with it. Until it is set, that tab says the key is not set.",
     probe: null,

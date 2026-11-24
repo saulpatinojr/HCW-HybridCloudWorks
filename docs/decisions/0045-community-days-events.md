@@ -46,7 +46,7 @@ owner's own sessions.
 
 ## Decision
 
-1. **A new tab on the Speaking hub, "Events to apply to"** (`?tab=apply`),
+1. **A new tab on the Speaking hub, "Future Events"** (`?tab=apply`),
    named apart from Upcoming. The browser calls the site's own API only.
 2. **The server makes two calls to Community Days, both `GET`, and nothing
    else:** `/published-events?call_for_speakers=true` and `/profile/talks`.

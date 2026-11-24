@@ -1,5 +1,5 @@
 /**
- * Speaking → Events to apply to, as the owner sees it (#1823): the no-key
+ * Speaking → Future Events, as the owner sees it (#1823): the no-key
  * state, the rows, the calendar's clash marks, and the three writes. What
  * must hold above all: nothing asks for an estimate unless its button is
  * pressed, a save carries the version it was read at, and someone else's
@@ -132,7 +132,7 @@ describe('before the key is set', () => {
       KEYS_HREF
     );
     expect(KEYS_HREF).toBe('/admin/integrations?tab=keys');
-    expect(screen.queryByRole('list', { name: 'Events to apply to' })).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Future Events' })).toBeNull();
     expect(screen.queryByLabelText('Search events')).toBeNull();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
     // The calendar still shows, for the owner's own talks.

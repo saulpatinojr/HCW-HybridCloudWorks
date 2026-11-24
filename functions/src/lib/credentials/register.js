@@ -228,7 +228,7 @@ const KEY_VAULT_METADATA = Object.freeze({
   "COMMUNITY-DAYS-API-KEY": {
     issuer: "Community Days (developers page, Your keys)",
     consumer:
-      "Speaking hub, Events to apply to: reads the list of events with an open call for speakers, and the owner’s talks",
+      "Speaking hub, Future Events: reads the list of events with an open call for speakers, and the owner’s talks",
     lifetimeDays: HAND_ROTATION_DAYS,
     rotate:
       "Make a new key on the Community Days developers page (Your keys), paste it on Integrations → Keys, press Test on the Community Days card, then delete the old key on that page. The key can change your events there, so delete the old one the same day.",

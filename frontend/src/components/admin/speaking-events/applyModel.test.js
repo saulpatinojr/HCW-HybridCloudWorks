@@ -1,5 +1,5 @@
 /**
- * The pure rules of Speaking → Events to apply to (#1823): days, which
+ * The pure rules of Speaking → Future Events (#1823): days, which
  * events clash with what the owner already has, what the calendar marks, and
  * the sums on a row. Every event here is made up.
  */

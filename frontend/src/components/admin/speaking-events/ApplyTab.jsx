@@ -1,5 +1,5 @@
 /**
- * Events to apply to (#1823, ADR 0045): community events whose call for
+ * Future Events (#1823, ADR 0045): community events whose call for
  * speakers (the period when an event accepts talk proposals) is open, read
  * by the server from the Community Days directory, with what the owner has
  * recorded for each: a status, costs, notes, and a rough estimate of the
@@ -695,7 +695,7 @@ function TopicsLine({ topics, canEstimate }) {
 function EventList({ list, shown, children }) {
   if (shown.length > 0) {
     return (
-      <ul className="space-y-3" aria-label="Events to apply to">
+      <ul className="space-y-3" aria-label="Future Events">
         {children}
       </ul>
     );

@@ -778,7 +778,9 @@ describe("non-HTTP triggers", () => {
     // FEATURE_FLAG_LAB_CANARY; the twenty-seventh is
     // ambassadorAudienceMonthly (ambassador-audience.js, #1302), behind
     // FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY; the twenty-eighth (after
-    // brainIndexReconcile) is sweepVisitorSessions (visitor-session-sweep.js,
+    // brainIndexReconcile, brain-http.js, behind
+    // FEATURE_FLAG_BRAIN_INDEX_RECONCILE since #1822 as well as
+    // BRAIN_ENABLED) is sweepVisitorSessions (visitor-session-sweep.js,
     // #1403), behind FEATURE_FLAG_SWEEP_VISITOR_SESSIONS; the thirtieth is
     // syncSearchConsole (schedulers.js, #1612), behind
     // FEATURE_FLAG_SYNC_SEARCH_CONSOLE.

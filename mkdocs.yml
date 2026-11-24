@@ -168,7 +168,7 @@ nav:
       - AI Engine models and costs: runbooks/ai-engine-model-review.md
       - Cost page: runbooks/cost.md
       - Search Console page: runbooks/search-console.md
-      - Events to apply to (Community Days): runbooks/community-days-events.md
+      - Future Events (Community Days): runbooks/community-days-events.md
       - "PyYAML wheel for the lab host (retired)": runbooks/pyyaml-wheel.md
       - Required checks and the main ruleset: runbooks/required-checks.md
   - Standards:

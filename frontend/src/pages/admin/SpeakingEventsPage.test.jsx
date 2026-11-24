@@ -116,7 +116,7 @@ describe('the header and tabs', () => {
       hubTabs()
         .getAllByRole('tab')
         .map((tab) => tab.textContent)
-    ).toEqual(['Upcoming', 'Past', 'Events to apply to', 'Sources', 'Publishing', 'Settings']);
+    ).toEqual(['Upcoming', 'Past', 'Sources', 'Publishing', 'Future Events', 'Settings']);
   });
 
   it.each([

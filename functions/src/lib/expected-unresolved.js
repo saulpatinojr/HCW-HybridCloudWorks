@@ -69,7 +69,7 @@ export const EXPECTED_UNRESOLVED = new Map([
   // The Community Days developer key (#1823) waits on the owner as well: the
   // reference lands with its Terraform run, and the key cannot be pasted
   // until Community Days has approved API access for the owner's account.
-  // Until then the Speaking hub's "Events to apply to" tab says the key is
+  // Until then the Speaking hub's "Future Events" tab says the key is
   // not set and nothing is called. Take it off when the owner seeds it.
   [
     "COMMUNITY_DAYS_API_KEY",

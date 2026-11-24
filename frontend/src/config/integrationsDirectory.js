@@ -115,7 +115,7 @@ export const DIRECTORY = Object.freeze([
     category: 'productivity',
     summary: 'A directory of community conferences and their calls for speakers.',
     powers:
-      'The Events to apply to tab of Speaking: events taking talk proposals now, with your status, costs, notes and a rough acceptance estimate.',
+      'The Future Events tab of Speaking: events taking talk proposals now, with your status, costs, notes and a rough acceptance estimate.',
     docsUrl: 'https://api.communitydays.org/v1/fields.md',
   },
   {
