@@ -381,4 +381,14 @@ describe('scrubUrls', () => {
     expect(scrubUrls('Request timed out')).toBe('Request timed out');
     expect(scrubUrls(null)).toBe('');
   });
+
+  // Found by the property test beside this file: a URL used to end at the
+  // first bracket or apostrophe, and the path and query after it stayed.
+  it('removes a URL that holds a bracket or an apostrophe whole', () => {
+    expect(scrubUrls('HTTP 403 fetching https://cdn.example/a(1)/photo.png?sig=abc then stopped')).toBe(
+      'HTTP 403 fetching [url] then stopped'
+    );
+    expect(scrubUrls("HTTP 403 fetching https://cdn.example/it's.png?sig=abc")).toBe('HTTP 403 fetching [url]');
+    expect(scrubUrls('see (https://cdn.example/a.png) for more')).toBe('see ([url] for more');
+  });
 });

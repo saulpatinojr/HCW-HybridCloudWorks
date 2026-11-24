@@ -121,9 +121,14 @@ export function inlineBlobPath(contentId, url, contentType) {
  * Log-safe text: every http(s) URL replaced by `[url]`. The fetcher's messages
  * embed the URL they were fetching (and, after a redirect, another one), and
  * the log must name hosts at most — never what was being read.
+ *
+ * A URL runs to the next blank. It used to stop at the first `)`, `'`, `"`,
+ * `<` or `>` as well, and a URL may hold the first two, so the rest of one
+ * (`.../a(1)/photo.png?sig=...`) stayed in the text. A bracket or quote that
+ * closes around a URL now goes with it, which costs a log line nothing.
  */
 export function scrubUrls(text) {
-  return String(text ?? '').replace(/https?:\/\/[^\s)"'<>]+/gi, '[url]');
+  return String(text ?? '').replace(/https?:\/\/\S+/gi, '[url]');
 }
 
 /** Origin and path of a URL, no query string or fragment; the URL itself if unparsable. */
