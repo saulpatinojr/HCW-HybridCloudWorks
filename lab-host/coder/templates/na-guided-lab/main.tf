@@ -32,8 +32,8 @@ provider "docker" {
 }
 
 locals {
-  image_tag      = "bd823099fcaaca5e414900e36298b7909117e605"
-  image_digest   = "sha256:52bf5701241c47622e7817552318b75b0514be0f5e42c00f6c31e4f13aca9c43"
+  image_tag      = "8f0a24331840ffd59041c79d72a2ad947be09d45"
+  image_digest   = "sha256:2e58ba66b2b9f894629c030f2dfc991e7f4b3f8dc1fecdeeeabe2b682f634e6f"
   default_image  = "docker.io/hybridcloudworks/hcw-lab@${local.image_digest}"
   home           = "/tmp/home"
   assessment_dir = "/tmp/home/assessment"
