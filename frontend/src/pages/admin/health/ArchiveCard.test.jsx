@@ -10,6 +10,9 @@ import ArchiveCard, {
   ARCHIVE_DRY_RUN_ROUTE,
   ARCHIVE_STATUS_ROUTE,
   blockerSentence,
+  isFlagged,
+  kindWords,
+  notShownWords,
   reasonWords,
   sensitiveSentence,
   yearState,
@@ -355,5 +358,194 @@ describe('words', () => {
     expect(sensitiveSentence({ records: 2, keptRecords: 0, names: [], namesNotShown: 2 })).toBe(
       '2 record(s) have a field named like a secret or contact details: 2 not shown. None of those names would be in the archive.'
     );
+  });
+
+  describe('names that look like a secret: taken out, or would remain', () => {
+    const remaining = (over) => ({
+      document: null,
+      records: 1,
+      kinds: { 'short-text': 1 },
+      quiet: false,
+      keptOnPurpose: null,
+      flagged: true,
+      ...over,
+    });
+    const part = (container, sensitive, over = {}) => ({
+      container,
+      decision: 'archive',
+      reason: null,
+      read: 10,
+      kept: 10,
+      changed: 0,
+      leftOut: 0,
+      sensitive: {
+        records: 10,
+        keptRecords: 10,
+        takenOut: [],
+        takenOutNotShown: { notPlain: 0, tooMany: 0 },
+        remaining: [],
+        remainingNotShown: { notPlain: 0, tooMany: 0 },
+        flagged: 0,
+        ...sensitive,
+      },
+      ...over,
+    });
+    const show = async (containers) => {
+      getJSON.mockResolvedValue({
+        ...STATUS,
+        latest: {
+          reportId: '20270208T0400Z',
+          complete: true,
+          report: {
+            completedAt: '2027-02-08T04:06:00.000Z',
+            sourceBackup: { runId: '2027-02-07' },
+            totals: { kept: 1 },
+            containers,
+            leftOutWhole: [],
+          },
+        },
+      });
+      renderAs('super_admin');
+      await screen.findByTestId('archive-report');
+    };
+
+    it('puts in red only a name that would remain and is not explained, with its path, count and kinds', async () => {
+      await show([
+        part('brain_records', {
+          flagged: 1,
+          remaining: [
+            remaining({
+              path: 'meta.requestHash',
+              name: 'requestHash',
+              records: 12,
+              kinds: { 'short-text': 11, empty: 1 },
+            }),
+          ],
+        }),
+        part('ai_usage', {
+          remaining: [
+            remaining({
+              path: 'totalTokens',
+              name: 'totalTokens',
+              records: 10,
+              kinds: { number: 10 },
+              quiet: true,
+              flagged: false,
+            }),
+            remaining({
+              path: 'emailVerified',
+              name: 'emailVerified',
+              kinds: { 'yes-no': 10 },
+              quiet: true,
+              flagged: false,
+            }),
+          ],
+        }),
+      ]);
+      const flagged = screen.getByTestId('archive-flagged');
+      expect(flagged).toHaveTextContent('1 container(s) an archive would keep');
+      expect(flagged).toHaveTextContent('brain_records');
+      expect(flagged).toHaveTextContent(
+        'meta.requestHash in 12 record(s); values seen: short text (under 64 characters) ×11, empty ×1'
+      );
+      // A container whose such names hold only numbers or yes/no is not in the red block.
+      expect(flagged).not.toHaveTextContent('ai_usage');
+      expect(flagged).not.toHaveTextContent('totalTokens');
+      const table = screen.getByRole('table', { hidden: true });
+      expect(
+        within(table).getByText(/Named like one, but only numbers or yes\/no/)
+      ).toHaveTextContent('totalTokens, emailVerified');
+    });
+
+    it('shows a name kept on purpose with its reason, and what is taken out, without red', async () => {
+      await show([
+        part(
+          'mcp_servers',
+          {
+            keptRecords: 1,
+            takenOut: [
+              { name: 'oauthToken', records: 3 },
+              { name: 'Authorization', records: 1 },
+            ],
+            takenOutNotShown: { notPlain: 2, tooMany: 0 },
+            remaining: [
+              remaining({
+                path: 'apiKeyEnvVar',
+                name: 'apiKeyEnvVar',
+                records: 4,
+                flagged: false,
+                keptOnPurpose: 'the name of the setting a key is read from, never the key itself',
+              }),
+            ],
+          },
+          { decision: 'archive-changed' }
+        ),
+      ]);
+      expect(screen.queryByTestId('archive-flagged')).toBeNull();
+      const table = screen.getByRole('table', { hidden: true });
+      expect(within(table).getByTestId('archive-kept-on-purpose')).toHaveTextContent(
+        'Kept on purpose: apiKeyEnvVar in 4 record(s) (the name of the setting a key is read from, never the key itself)'
+      );
+      expect(within(table).getByTestId('archive-taken-out')).toHaveTextContent(
+        'Taken out before archiving: oauthToken (3), Authorization (1); 2 more use(s) of a name that is not shown because it is shaped like an id or typed text'
+      );
+      expect(within(table).queryByTestId('archive-remaining-flagged')).toBeNull();
+    });
+
+    it('names the settings document a remaining field is in', async () => {
+      await show([
+        part(
+          'admin_config',
+          {
+            flagged: 1,
+            remaining: [
+              remaining({
+                document: 'credential_register',
+                path: 'rotated.some-api-token',
+                name: 'some-api-token',
+                kinds: { date: 1 },
+              }),
+            ],
+          },
+          { decision: 'archive-changed' }
+        ),
+      ]);
+      expect(screen.getByTestId('archive-flagged')).toHaveTextContent(
+        'credential_register › rotated.some-api-token in 1 record(s); values seen: date-like text ×1'
+      );
+    });
+
+    it('says how many remaining names cannot be shown and why, in red', async () => {
+      await show([part('system', { flagged: 1, remainingNotShown: { notPlain: 7, tooMany: 0 } })]);
+      expect(screen.getByTestId('archive-flagged')).toHaveTextContent(
+        '7 more use(s) of a name that is not shown because it is shaped like an id or typed text'
+      );
+    });
+
+    it('for a container that is left out, says the names were found and are not archived', async () => {
+      await show([
+        part(
+          'tool_exports',
+          { keptRecords: 0, takenOut: [{ name: 'apiKey', records: 2 }] },
+          { decision: 'leave-out', reason: 'unclassified', kept: 0, leftOut: 10 }
+        ),
+      ]);
+      expect(screen.queryByTestId('archive-flagged')).toBeNull();
+      expect(screen.getByTestId('archive-taken-out')).toHaveTextContent(
+        'Found, and not archived: apiKey (2)'
+      );
+    });
+
+    it('the small helpers', () => {
+      expect(kindWords({ number: 3, 'long-text': 1200 })).toBe('number ×3, long text ×1,200');
+      expect(kindWords()).toBe('');
+      expect(notShownWords({ notPlain: 0, tooMany: 0 })).toBe('');
+      expect(notShownWords({ notPlain: 0, tooMany: 4 })).toContain('more than 2,000 different');
+      expect(isFlagged({ sensitive: { remaining: [], flagged: 0, keptRecords: 9 } })).toBe(false);
+      expect(isFlagged({ sensitive: { remaining: [{}], flagged: 1 } })).toBe(true);
+      // A report from before the lists were split is still read the old way.
+      expect(isFlagged({ sensitive: { keptRecords: 2 } })).toBe(true);
+      expect(isFlagged({})).toBe(false);
+    });
   });
 });

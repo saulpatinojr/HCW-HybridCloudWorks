@@ -12,10 +12,15 @@
  * A dry run writes no archive and changes no record.
  *
  * For every container it read, the report lists the common, plain names of
- * its top-level fields, and counts the records that carry a field whose name
- * looks like a secret or someone's contact details. The containers nobody
- * has classified yet are shown first, so the owner can say what each one is.
- * It never shows a record or a value; the server does not send one.
+ * its top-level fields, and the fields whose name looks like a secret or
+ * someone's contact details, in separate lists: names that are taken out
+ * before archiving, and names that WOULD REMAIN in the archive. For each
+ * remaining name it shows where the field sits, in how many records, and
+ * what kind of value it holds (a number, true/false, a date, short or long
+ * text). Only the remaining names that are not explained are shown in red.
+ * The containers nobody has classified yet are shown first, so the owner can
+ * say what each one is. It never shows a record or a value; the server does
+ * not send one.
  *
  * Both routes are super_admin, so below that role the card is not drawn.
  */
@@ -131,16 +136,120 @@ export function sensitiveSentence(sensitive) {
   return `${number(sensitive.records)} record(s) have a field named like a secret or contact details: ${names.join(', ')}${hidden}.${kept}`;
 }
 
+/** The kinds of value the report tells apart, in plain words. */
+const KIND_WORDS = Object.freeze({
+  number: 'number',
+  'yes-no': 'true/false',
+  date: 'date-like text',
+  'short-text': 'short text (under 64 characters)',
+  'long-text': 'long text',
+  list: 'list',
+  object: 'object',
+  empty: 'empty',
+});
+
+/** "short text (under 64 characters) ×12, empty ×1": the kinds of value seen, as counts. */
+export const kindWords = (kinds = {}) =>
+  Object.entries(kinds)
+    .map(([kind, n]) => `${KIND_WORDS[kind] || kind} ×${number(n)}`)
+    .join(', ');
+
+/** "credential_register › rotated.some-name" or just the path. */
+const whereWords = (entry) => (entry.document ? `${entry.document} › ${entry.path}` : entry.path);
+
+/** Why some names are counted and not printed. Empty when none are. */
+export function notShownWords(notShown = {}) {
+  const parts = [];
+  if (notShown.notPlain)
+    parts.push(
+      `${number(notShown.notPlain)} more use(s) of a name that is not shown because it is shaped like an id or typed text`
+    );
+  if (notShown.tooMany)
+    parts.push(
+      `${number(notShown.tooMany)} more use(s) not listed because this container has more than 2,000 different such names`
+    );
+  return parts.join('; ');
+}
+
+/** True when this container has a name that would remain and is not explained. */
+export const isFlagged = (part) =>
+  part?.sensitive?.remaining
+    ? part.sensitive.flagged > 0
+    : // A report made before the lists were split says only how many kept records carry one.
+      part?.sensitive?.keptRecords > 0;
+
+/**
+ * Everything the report says about names that look like a secret or contact
+ * details, for one container: what would remain (in red when not explained),
+ * what is only numbers or yes/no, what is kept on purpose, and what is taken
+ * out. Names, paths, counts and kinds only.
+ */
 function SensitiveLine({ part }) {
-  const sentence = sensitiveSentence(part.sensitive);
-  if (!sentence) return null;
+  const { sensitive } = part;
+  if (!sensitive?.remaining) {
+    // A report made before the lists were split: one sentence, as it was.
+    const sentence = sensitiveSentence(sensitive);
+    if (!sentence) return null;
+    return (
+      <p
+        className={`text-xs [overflow-wrap:anywhere] ${sensitive.keptRecords > 0 ? 'text-destructive' : 'text-muted-foreground'}`}
+        data-testid="archive-sensitive"
+      >
+        {sentence}
+      </p>
+    );
+  }
+  const flagged = sensitive.remaining.filter((entry) => entry.flagged);
+  const quiet = sensitive.remaining.filter((entry) => entry.quiet && !entry.keptOnPurpose);
+  const onPurpose = sensitive.remaining.filter((entry) => entry.keptOnPurpose);
+  const takenOut = sensitive.takenOut || [];
+  const remainingHidden = notShownWords(sensitive.remainingNotShown);
+  const takenOutHidden = notShownWords(sensitive.takenOutNotShown);
+  if (!sensitive.remaining.length && !takenOut.length && !remainingHidden && !takenOutHidden)
+    return null;
   return (
-    <p
-      className={`text-xs [overflow-wrap:anywhere] ${part.sensitive.keptRecords > 0 ? 'text-destructive' : 'text-muted-foreground'}`}
-      data-testid="archive-sensitive"
-    >
-      {sentence}
-    </p>
+    <div className="space-y-1 text-xs [overflow-wrap:anywhere]" data-testid="archive-sensitive">
+      {flagged.length || remainingHidden ? (
+        <div className="text-destructive" data-testid="archive-remaining-flagged">
+          <p>Would remain in the archive, named like a secret or contact details:</p>
+          <ul className="list-disc pl-4">
+            {flagged.map((entry) => (
+              <li key={whereWords(entry)}>
+                <span className="font-mono">{whereWords(entry)}</span> in {number(entry.records)}{' '}
+                record(s); values seen: {kindWords(entry.kinds)}
+              </li>
+            ))}
+            {remainingHidden ? <li>{remainingHidden}</li> : null}
+          </ul>
+        </div>
+      ) : null}
+      {quiet.length ? (
+        <p className="text-muted-foreground" data-testid="archive-remaining-quiet">
+          Named like one, but only numbers or yes/no:{' '}
+          <span className="font-mono">{quiet.map(whereWords).join(', ')}</span>
+        </p>
+      ) : null}
+      {onPurpose.map((entry) => (
+        <p
+          key={whereWords(entry)}
+          className="text-muted-foreground"
+          data-testid="archive-kept-on-purpose"
+        >
+          Kept on purpose: <span className="font-mono">{whereWords(entry)}</span> in{' '}
+          {number(entry.records)} record(s) ({entry.keptOnPurpose})
+        </p>
+      ))}
+      {takenOut.length || takenOutHidden ? (
+        <p className="text-muted-foreground" data-testid="archive-taken-out">
+          {part.decision === 'leave-out' ? 'Found, and not archived' : 'Taken out before archiving'}
+          :{' '}
+          <span className="font-mono">
+            {takenOut.map((field) => `${field.name} (${number(field.records)})`).join(', ')}
+          </span>
+          {takenOutHidden ? `${takenOut.length ? '; ' : ''}${takenOutHidden}` : ''}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -198,7 +307,7 @@ function ReportBody({ latest }) {
   const containers = Array.isArray(report.containers) ? report.containers : [];
   const unclassified = containers.filter((part) => part.reason === 'unclassified');
   const read = containers.filter((part) => part.reason !== 'unclassified');
-  const flagged = read.filter((part) => part.sensitive?.keptRecords > 0);
+  const flagged = read.filter(isFlagged);
   const leftOutWhole = Array.isArray(report.leftOutWhole) ? report.leftOutWhole : [];
   return (
     <div className="space-y-3" data-testid="archive-report">
@@ -232,7 +341,8 @@ function ReportBody({ latest }) {
         <div data-testid="archive-flagged">
           <p className="text-sm font-medium text-destructive">
             Look before switching the archive on: {flagged.length} container(s) an archive would
-            keep hold a field named like a secret or contact details
+            keep hold a field that would remain, is named like a secret or contact details, and
+            holds more than numbers or yes/no
           </p>
           <ul aria-label="Kept containers with a field named like a secret">
             {flagged.map((part) => (

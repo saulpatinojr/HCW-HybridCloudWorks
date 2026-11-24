@@ -127,24 +127,63 @@ You need the `super_admin` role. Below that role the card is not shown.
   [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)
   with the date of the backup.
 - **A red block "Look before switching the archive on".** It lists every
-  container an archive would **keep** in which at least one kept record
-  still has a field whose *name* looks like a secret or someone's contact
-  details (a name containing `token`, `secret`, `password`, `apikey`,
-  `authorization`, `credential`, `privatekey`, `hash`, `salt`, `cookie`,
-  `signature`, `email` or `phone`, or exactly `sas`, `sig`, `key`, `pwd`,
-  `auth` or `pin`; the list is in
+  container an archive would **keep** that has at least one field which
+  (a) **would remain** in the archive, (b) has a *name* that looks like a
+  secret or someone's contact details, and (c) holds something other than
+  numbers or yes/no. A name looks that way when it contains `token`,
+  `secret`, `password`, `apikey`, `authorization`, `credential`,
+  `privatekey`, `hash`, `salt`, `cookie`, `signature`, `email` or `phone`,
+  or is exactly `sas`, `sig`, `key`, `pwd`, `auth` or `pin` (the list is in
   [`archive-classification.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/archive-classification.js),
   `SENSITIVE_NAME_WORDS`). The check reads names at any depth inside a
-  record and never a value. A hit is a reason to look, not proof: `contentHash`
-  matches and is harmless. Say what you see on
+  record and never a value. For each such field the block gives one line:
+
+    ```text
+    meta.requestHash in 12 record(s); values seen: short text (under 64 characters) ×11, empty ×1
+    ```
+
+    - **Where it sits**: the names of the fields above it, then its own, joined
+      by dots. `meta.requestHash` is a field `requestHash` inside a field
+      `meta`. A part shown as `(id)` is a field name that is not printed
+      because it is shaped like an id or typed text. For the two settings
+      containers, `admin_config` and `admin_settings`, the line starts with
+      the settings document the field is in (`credential_register › …`) when
+      the code names that document, and `(other)` otherwise.
+    - **In how many records.**
+    - **What kind of value it holds**, as counts: number, true/false,
+      date-like text, short text (under 64 characters), long text, list,
+      object, or empty. This is what tells a harmless field from a real one:
+      a date is not a secret; a short text under a name like `apiKey` may be.
+      Never the value itself.
+    - "N more use(s) of a name that is not shown because it is shaped like
+      an id or typed text": a field that would remain whose own name cannot
+      be printed. It is in red because nothing can be said about it from the
+      report; say so on #1811 and a session will look at the code that writes
+      that container.
+
+  A hit is a reason to look, not proof. For each line, answer on
   [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)
-  and a session will decide each one with you before the archive is switched
-  on.
+  with `FINE` (it may stay) or `OUT` (take it out), and a session changes the
+  list in a pull request before the archive is switched on.
+- **Three quieter lines, in grey, per container** (in the red block's
+  containers and in "Every container"):
+    - **"Named like one, but only numbers or yes/no"**: a field that would
+      remain and whose every value was a number or true/false, such as a
+      count of tokens (`totalTokens`) or a switch (`emailVerified`). It
+      cannot hold a secret or an address, so it is not flagged.
+    - **"Kept on purpose"**, with the reason. Today that is one name,
+      `apiKeyEnvVar` on `mcp_servers` and `ai_providers`: the *name* of the
+      setting a key is read from, never the key. The list keeps it only when
+      it is shaped like a setting's name and drops anything else.
+    - **"Taken out before archiving"**: names the records carry that the
+      archive would not, because the record is left out or the field is
+      dropped, with a count of records each. For a container that is left
+      out whole the line reads "Found, and not archived".
 - **Waiting for you: 21 containers to classify.** See the next section.
 - **Every container** (press to unfold). One row per container: how many
   records would be kept, how many would have fields removed and which fields,
-  how many would be left out and why, its field names, and the same count of
-  names that look sensitive. A removed field is named only when the name is
+  how many would be left out and why, its field names, and the same lines
+  about names that look sensitive. A removed field is named only when the name is
   one the site's own code uses (`speakerEmail`, `oauthToken`); any other
   removed field shows as "(other fields)", because its name could be
   anything. The reasons, in the card's words:
