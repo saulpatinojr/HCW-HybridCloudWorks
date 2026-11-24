@@ -59,7 +59,7 @@ async function credlySaysRevoked({ fetch: fetchImpl, log }, cert) {
     return body.includes('Unable to verify badge');
   } catch (err) {
     log.warn?.(
-      `[reVerifyCertifications] Failed to reach Credly for ${cert.name}: ${errorFacts(err)}`
+      `[reVerifyCertifications] Failed to reach Credly for a certification: ${errorFacts(err)}`
     );
     return false;
   } finally {
@@ -135,7 +135,7 @@ export function createCertReverify({
         reverifyReason: verdict.reason,
       });
       log.log?.(
-        `[reVerifyCertifications] Marked ${cert.name} as ${verdict.next} (${verdict.reason})`
+        `[reVerifyCertifications] Marked a certification as ${verdict.next} (${verdict.reason})`
       );
     }
 

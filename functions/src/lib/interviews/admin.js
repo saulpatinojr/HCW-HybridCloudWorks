@@ -156,7 +156,7 @@ export function ownedRecordingPaths(doc = {}, log = {}) {
   const owned = [...new Set(named.filter((path) => ownsAudioPath(doc.id, path)))];
   const refused = named.length - named.filter((path) => ownsAudioPath(doc.id, path)).length;
   if (refused > 0) {
-    log.warn?.(`[interviews] ${doc.id} names ${refused} recording path(s) it does not own; not deleted`);
+    log.warn?.(`[interviews] an interview names ${refused} recording path(s) it does not own; not deleted`);
   }
   return owned;
 }
@@ -268,11 +268,11 @@ export async function deleteInterviewAssets({ blobs, log = {} }, doc, { scope = 
       versionFailures += outcome.versionFailures;
     } catch (error) {
       failed += 1;
-      log.warn?.(`[interviews] a blob of ${doc.id} was not deleted (${errorCode(error)})`);
+      log.warn?.(`[interviews] a blob of an interview was not deleted (${errorCode(error)})`);
     }
   }
   log.log?.(
-    `[interviews] ${doc.id}: ${deleted} blob(s) deleted, ${failed} failed, ${versionFailures} version(s) kept`
+    `[interviews] one interview: ${deleted} blob(s) deleted, ${failed} failed, ${versionFailures} version(s) kept`
   );
   return { deleted, failed, versionFailures };
 }
@@ -297,7 +297,7 @@ async function readTranscript({ blobs, log }, doc) {
       segments: Array.isArray(parsed?.segments) ? parsed.segments : [],
     };
   } catch (error) {
-    log.warn?.(`[interviews] transcript v${version} of ${doc.id} was not read (${errorCode(error)})`);
+    log.warn?.(`[interviews] transcript v${version} was not read (${errorCode(error)})`);
     return null;
   }
 }
@@ -397,7 +397,7 @@ export function createInterviewAdminHandlers({
             context.warn?.(`[interviews] the create audit row was not written (${errorCode(error)})`)
           );
         const stored = await store.readDoc('content', contentId, contentId);
-        context.log?.(`[interviews] created ${contentId}`);
+        context.log?.('[interviews] created an interview');
         return json(200, { ok: true, id: contentId, etag: stored?._etag || null }, PRIVATE);
       } catch (error) {
         return errorResponse(context, 'Failed to create the interview', error, 500, request);

@@ -139,7 +139,7 @@ export function createForgeReadyNotifier({
         // order to find it.
         const attempts = Number(data[NOTIFY_ATTEMPTS_FIELD] || 0) + 1;
         log.warn?.(
-          `[forge-ready-notify] ${contentId}: not sent (${result.reason}), attempt ${attempts}`
+          `[forge-ready-notify] not sent (${result.reason}), attempt ${attempts}`
         );
         try {
           await store.patchDoc('content', contentId, {
@@ -151,7 +151,7 @@ export function createForgeReadyNotifier({
           // Best effort: failing to record the attempt must not turn a
           // delivery problem into a handler error.
           log.warn?.(
-            `[forge-ready-notify] ${contentId}: could not record attempt: ${errorFacts(patchError)}`
+            `[forge-ready-notify] could not record attempt: ${errorFacts(patchError)}`
           );
         }
         return { ran: false, reason: `not_sent:${result.reason}`, attempts };
@@ -164,7 +164,7 @@ export function createForgeReadyNotifier({
       });
       return { ran: true, reason: 'sent' };
     } catch (err) {
-      log.error?.(`[forge-ready-notify] ${contentId}: ${errorFacts(err)}`);
+      log.error?.(`[forge-ready-notify] failed: ${errorFacts(err)}`);
       return { ran: false, reason: `error: ${errorCode(err)}` };
     }
   }

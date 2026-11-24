@@ -86,7 +86,7 @@ app.timer(TIMER_NAME, {
     }
     const message = await enqueueRefreshJob({ store });
     context.extraOutputs.set(queueOutput, message);
-    context.log(`[${TIMER_NAME}] enqueued ${message.type} ${message.jobId}`);
+    context.log(`[${TIMER_NAME}] enqueued ${message.type}`);
   },
 });
 

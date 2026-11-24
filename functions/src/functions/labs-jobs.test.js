@@ -86,6 +86,9 @@ describe('labsWeeklyRollup registration', () => {
     expect(doc.ttl).toBe(60 * 24 * 60 * 60);
     const summary = context.log.mock.calls.map(([m]) => m).find((m) => m.startsWith(`[${TIMER_NAME}] {`));
     expect(summary).toBeDefined();
-    expect(JSON.parse(summary.slice(`[${TIMER_NAME}] `.length))).toMatchObject({ id: doc.id, jobs: 0, merged: false });
+    const printed = JSON.parse(summary.slice(`[${TIMER_NAME}] `.length));
+    expect(printed).toMatchObject({ jobs: 0, merged: false });
+    // The summary is printed without the document's id (#1802).
+    expect(printed).not.toHaveProperty('id');
   });
 });

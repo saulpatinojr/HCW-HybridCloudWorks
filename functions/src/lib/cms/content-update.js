@@ -786,7 +786,7 @@ function transitionResponse(
     return json(status, errorBody);
   }
   context.warn(
-    `transitionStatus ${resolvedContentId}: ${result.from} → ${result.to} by ${reviewedBy}`,
+    `transitionStatus: ${result.from} → ${result.to}`,
   );
   const { skipped = [], settled = true } = result.linkedBlogs || {};
   if (skipped.length > 0 || !settled) {

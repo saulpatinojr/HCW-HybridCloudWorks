@@ -401,7 +401,7 @@ describe('get', () => {
     const missing = makeStore([interviewDoc()]);
     body = JSON.parse((await handlersWith(missing, blobs).get(makeRequest({ params: { id: 'i1' } }), context)).body);
     expect(body.transcript).toBeNull();
-    expect(logged()).toMatch(/transcript v2 of i1 was not read \(404\)/);
+    expect(logged()).toMatch(/transcript v2 was not read \(404\)/);
     expect(logged()).not.toContain('transcripts/i1');
   });
 
@@ -587,7 +587,7 @@ describe('ownedRecordingPaths (ADR 0040, D1 and D10 layout)', () => {
     ];
     const doc = interviewDoc({ provenance: { audio: { path: planted[0], superseded: planted.slice(1) } } });
     expect(ownedRecordingPaths(doc, context)).toEqual([]);
-    expect(logged()).toMatch(/i1 names 8 recording path\(s\) it does not own/);
+    expect(logged()).toMatch(/an interview names 8 recording path\(s\) it does not own/);
     expect(logged()).not.toContain('audio/i2');
   });
 
@@ -623,7 +623,7 @@ describe('deleteInterviewAssets, the interview delete hook', () => {
     expect(blobs.versionDeletes.sort()).toEqual(
       [`${CURRENT}@v-1`, `${CURRENT}@v-2`, 'transcripts/i1/v1.json@v-1', `audio/i1/${U_GONE}.mp3@v-9`].sort()
     );
-    expect(logged()).toContain('i1: 6 blob(s) deleted, 0 failed, 0 version(s) kept');
+    expect(logged()).toContain('one interview: 6 blob(s) deleted, 0 failed, 0 version(s) kept');
     expect(logged()).not.toContain('.mp3');
   });
 

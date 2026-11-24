@@ -360,7 +360,7 @@ async function auditConfigWrite(ctx, context, { container, id, user, existing, f
     });
   } catch (auditError) {
     context.warn?.(
-      `${action} ${container}/${id} saved but the audit row failed: ${errorFacts(auditError)}`
+      `${action} on ${container} saved but the audit row failed: ${errorFacts(auditError)}`
     );
   }
 }

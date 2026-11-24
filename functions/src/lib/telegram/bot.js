@@ -453,7 +453,7 @@ export function createTelegramBot({
       if (!isAuthorizedSender(message.chat?.id, env)) {
         // Deliberately no reply. Answering would confirm the bot exists to
         // anyone who found it.
-        log.warn?.(`[telegram] ignored message from unauthorized chat ${message.chat?.id}`);
+        log.warn?.("[telegram] ignored a message from a chat that is not the owner's");
         return { handled: false, reason: 'unauthorized_chat' };
       }
       const text = message.text.trim();

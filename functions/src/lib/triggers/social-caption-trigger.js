@@ -101,7 +101,7 @@ export function createSocialCaptionQueuer({
     });
     if (!claim.claim) {
       if (claim.reason !== SKIP_REASONS.FLAG_NOT_SET)
-        log.log?.(`[social-caption] content/${contentId} skipped: ${claim.reason}`);
+        log.log?.(`[social-caption] a document was skipped: ${claim.reason}`);
       return { ran: false, reason: claim.reason };
     }
     const data = claim.data;

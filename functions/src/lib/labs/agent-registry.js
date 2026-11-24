@@ -146,7 +146,7 @@ async function audit({ store, now, uuid }, { request, context, user }, action, d
       compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true },
     });
   } catch (error) {
-    context.warn?.(`${action} for ${details.agentId} saved but the audit row failed: ${errorFacts(error)}`);
+    context.warn?.(`${action} saved but the audit row failed: ${errorFacts(error)}`);
   }
 }
 
@@ -288,7 +288,7 @@ async function guarded(deps, request, context, { read, write, what, failure }) {
   try {
     return await write(deps, { request, context, user: auth.user }, parsed.value);
   } catch (err) {
-    context.error(`${what}(${parsed.value.agentId}) failed: ${errorFacts(err)}`);
+    context.error(`${what} failed: ${errorFacts(err)}`);
     return json(500, { ok: false, error: failure });
   }
 }

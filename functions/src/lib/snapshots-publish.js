@@ -299,7 +299,7 @@ async function repointRow(row, existing, { patch, reread, log }) {
   // row as it is now, and publish that decision whether or not it persists.
   const fresh = reread ? await reread(row.id) : null;
   if (!fresh) {
-    log?.warn?.(`[publishSnapshot] ${row.id} changed during publish and could not be re-read; published as queried`);
+    log?.warn?.('[publishSnapshot] a row changed during publish and could not be re-read; published as queried');
     return { row, repointed: 0, missing: first.missing };
   }
   const again = repointAll(fresh, existing);
@@ -308,7 +308,7 @@ async function repointRow(row, existing, { patch, reread, log }) {
   }
   const second = await persistRepoint(patch, fresh, again.changes, log);
   if (second === 'conflict') {
-    log?.warn?.(`[publishSnapshot] ${row.id} changed twice during publish; published as stored, not re-pointed`);
+    log?.warn?.('[publishSnapshot] a row changed twice during publish; published as stored, not re-pointed');
     return { row: fresh, repointed: 0, missing: again.missing };
   }
   return { row: again.doc, repointed: 1, missing: again.missing };
@@ -325,7 +325,7 @@ async function persistRepoint(patch, row, changes, log) {
   } catch (error) {
     if (error?.code === 412 || error?.statusCode === 412) return 'conflict';
     log?.warn?.(
-      `[publishSnapshot] could not persist the re-pointed badge of ${row.id}: ${errorFacts(error)}`
+      `[publishSnapshot] could not persist a re-pointed badge: ${errorFacts(error)}`
     );
     return 'failed';
   }

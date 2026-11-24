@@ -27,6 +27,7 @@ import { createForgeReadyNotifier } from '../lib/triggers/forge-ready-notify.js'
 import { createSocialCaptionQueuer } from '../lib/triggers/social-caption-trigger.js';
 import { createNotifier } from '../lib/notify.js';
 import { createPublerClient } from '../lib/timers/publer-sync.js';
+import { jsonForLog } from '../lib/http/log-json.js';
 
 export const COSMOS_CONNECTION = 'COSMOS_CONNECTION';
 export const LEASE_CONTAINER = 'leases';
@@ -103,7 +104,7 @@ function feed(name, containerName, pick, maxItemsPerInvocation = DEFAULT_MAX_ITE
       if (!Array.isArray(documents) || documents.length === 0) return;
       const results = await pick(await handlers(context))(documents, context);
       context.log(
-        `[${name}] ${documents.length} change(s): ${JSON.stringify(results).slice(0, 2000)}`
+        `[${name}] ${documents.length} change(s): ${jsonForLog(results).slice(0, 2000)}`
       );
     },
   });
