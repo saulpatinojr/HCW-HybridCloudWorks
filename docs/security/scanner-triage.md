@@ -430,7 +430,7 @@ Qlty runs bandit as `bandit --ini .bandit`, and until 2026-11-24 there was no
 added findings. Qlty shows bandit's LOW findings as HIGH, so they counted
 against the Security grade.
 
-[`.bandit`](../../.bandit) turns off two checks, because each flags the safe
+[`.bandit`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.bandit) turns off two checks, because each flags the safe
 form:
 
 | Check | What it flags | Why it is off |
@@ -457,7 +457,7 @@ The other six findings were fixed in code:
 
 ### gitleaks rules (2026-11-24)
 
-[`.gitleaks.toml`](../../.gitleaks.toml) keeps every built-in rule
+[`.gitleaks.toml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.gitleaks.toml) keeps every built-in rule
 (`[extend] useDefault = true`) and adds allowlists that say what a harmless
 match **is**, so they hold when a line moves or a new file arrives. Qlty
 passes the file to gitleaks with `--config` (its gitleaks plugin lists
