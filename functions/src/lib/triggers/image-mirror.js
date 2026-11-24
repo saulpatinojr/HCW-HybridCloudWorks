@@ -92,7 +92,9 @@ export function createImageMirror({ store, storage, fetchImage = defaultFetchIma
       // written: an editor who replaces the video with a picture gets it
       // mirrored on the next write, exactly as after a fetch failure.
       if (fetched.refused) {
-        log.warn?.(`[${spec.tag}] Refused for a ${container} document: ${fetched.reason}`);
+        // The refusal's code, not its sentence: the sentence quotes the
+        // remote server's Content-Type, which is text the far end chose (#1802).
+        log.warn?.(`[${spec.tag}] Refused for a ${container} document: ${fetched.refused}`);
         return { mirrored: false, reason: `refused: ${fetched.refused}` };
       }
       const { buffer, contentType } = fetched;
