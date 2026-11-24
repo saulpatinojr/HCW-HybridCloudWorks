@@ -23,6 +23,8 @@ import {
   containerExists,
   deleteBlob,
   hashBlobSha256,
+  listBlobs,
+  setBlobAccessTier,
   headBlobForDelivery,
   parseContentRangeTotal,
   readBlobRangeForDelivery,
@@ -42,6 +44,8 @@ const deleteSpy = vi.hoisted(() => vi.fn());
 const downloadSpy = vi.hoisted(() => vi.fn());
 const propertiesSpy = vi.hoisted(() => vi.fn());
 const containerExistsSpy = vi.hoisted(() => vi.fn());
+const setAccessTierSpy = vi.hoisted(() => vi.fn());
+const listedBlobs = vi.hoisted(() => ({ items: [] }));
 
 // Only the service client is replaced. Everything else in the SDK — the SAS
 // helpers this module imports at load time — stays real.
@@ -53,6 +57,9 @@ vi.mock('@azure/storage-blob', async (importOriginal) => {
       getContainerClient() {
         return {
           exists: containerExistsSpy,
+          async *listBlobsFlat() {
+            yield* listedBlobs.items;
+          },
           getBlockBlobClient: (blobName) => ({
             url: `https://hcwmedia.blob.core.windows.net/c/${blobName}`,
             upload: uploadSpy,
@@ -65,6 +72,7 @@ vi.mock('@azure/storage-blob', async (importOriginal) => {
             download: downloadSpy,
             getProperties: propertiesSpy,
             deleteIfExists: deleteSpy,
+            setAccessTier: setAccessTierSpy,
           }),
         };
       }
@@ -538,5 +546,42 @@ describe('containerExists', () => {
     // Not known is never "it is not there".
     containerExistsSpy.mockRejectedValueOnce(Object.assign(new Error('refused'), { statusCode: 403 }));
     await expect(containerExists('content-archive')).rejects.toThrow('refused');
+  });
+});
+
+describe('access tiers, for the yearly content archive (ADR 0046)', () => {
+  beforeEach(() => {
+    resetBlobServiceForTests();
+    vi.stubEnv('STORAGE_BLOB_ENDPOINT', 'https://hcwmedia.blob.core.windows.net');
+    setAccessTierSpy.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    resetBlobServiceForTests();
+    listedBlobs.items = [];
+  });
+
+  it('listBlobs says which tier each file is in, or null when storage does not say', async () => {
+    listedBlobs.items = [
+      { name: '2026/cosmos/blogs.ndjson.gz', properties: { contentLength: 12, accessTier: 'Archive' } },
+      { name: '2026/manifest.json', properties: { contentLength: 3 } },
+    ];
+    const listed = await listBlobs('content-archive', '2026/');
+    expect(listed.map(({ name, size, tier }) => ({ name, size, tier }))).toEqual([
+      { name: '2026/cosmos/blogs.ndjson.gz', size: 12, tier: 'Archive' },
+      { name: '2026/manifest.json', size: 3, tier: null },
+    ]);
+  });
+
+  it('setBlobAccessTier sets the tier, and is refused once a job’s time has run out', async () => {
+    await setBlobAccessTier('content-archive', '2026/cosmos/blogs.ndjson.gz', 'Archive');
+    expect(setAccessTierSpy).toHaveBeenCalledWith('Archive');
+    const controller = new AbortController();
+    controller.abort(new Error('timeout'));
+    await expect(
+      runAsJob(controller.signal, () => setBlobAccessTier('content-archive', '2026/cosmos/blogs.ndjson.gz', 'Archive'))
+    ).rejects.toThrow();
+    expect(setAccessTierSpy).toHaveBeenCalledTimes(1);
   });
 });

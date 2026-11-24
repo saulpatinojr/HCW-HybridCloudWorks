@@ -11,7 +11,9 @@ vi.mock('@azure/functions', () => ({
   output: { storageQueue: (options) => ({ type: 'queue', ...options }) },
 }));
 
-const { exportEnabled } = await import('./cosmos-export.js');
+const { exportEnabled, contentArchiveCheck } = await import('./cosmos-export.js');
+const { ARCHIVE_JOB_TYPE } = await import('../lib/backup/archive-job.js');
+await import('./content-archive-http.js');
 const { getJobType } = await import('../lib/jobs.js');
 const { EXPORT_JOB_TYPE } = await import('../lib/backup/cosmos-export.js');
 
@@ -83,3 +85,89 @@ describe('cosmos-export-container job type', () => {
   });
 });
 
+
+describe('the yearly content archive’s daily check rides this timer (ADR 0046)', () => {
+  const stores = () => ({
+    store: { upsertDoc: vi.fn() },
+    backupBlobs: { readJson: vi.fn(async () => null), putJson: vi.fn(), listNames: vi.fn(async () => []) },
+    archiveBlobs: { containerExists: vi.fn(async () => true), readJson: vi.fn(async () => null), listDetails: vi.fn(async () => []) },
+    notifier: { notifyTelegram: vi.fn() },
+  });
+
+  it('with the archive’s switch off it reads nothing, queues nothing and says it is off', async () => {
+    const deps = stores();
+    const enqueue = vi.fn();
+    const result = await contentArchiveCheck({ log: vi.fn() }, enqueue, { ...deps, env: { FEATURE_FLAG_COSMOS_EXPORT: 'true' } });
+    expect(result).toMatchObject({ action: 'off', blockers: ['switch-off'] });
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(deps.archiveBlobs.containerExists).not.toHaveBeenCalled();
+    expect(deps.backupBlobs.readJson).not.toHaveBeenCalled();
+  });
+
+  it('a failure of the check is logged by its code and never thrown, so the export’s own run is not failed by it', async () => {
+    const deps = stores();
+    deps.backupBlobs.readJson = vi.fn(async () => {
+      throw Object.assign(new Error('secret words from storage'), { code: 'ServerBusy' });
+    });
+    const error = vi.fn();
+    const result = await contentArchiveCheck({ log: vi.fn(), error }, vi.fn(), {
+      ...deps,
+      env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' },
+    });
+    expect(result).toEqual({ action: 'failed' });
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls.flat().join(' ')).not.toContain('secret words');
+  });
+
+  it('with the nightly export off the timer returns before the archive is looked at', async () => {
+    const saved = { export: process.env.FEATURE_FLAG_COSMOS_EXPORT, archive: process.env.CONTENT_ARCHIVE_ENABLED };
+    delete process.env.FEATURE_FLAG_COSMOS_EXPORT;
+    process.env.CONTENT_ARCHIVE_ENABLED = 'true';
+    try {
+      const context = { log: vi.fn(), error: vi.fn(), extraOutputs: { set: vi.fn() } };
+      await timers.get('cosmosExportScheduler').handler({}, context);
+      expect(context.log).toHaveBeenCalledTimes(1);
+      expect(context.log.mock.calls[0][0]).toContain('disabled');
+      expect(context.error).not.toHaveBeenCalled();
+      expect(context.extraOutputs.set).not.toHaveBeenCalled();
+    } finally {
+      if (saved.export !== undefined) process.env.FEATURE_FLAG_COSMOS_EXPORT = saved.export;
+      if (saved.archive === undefined) delete process.env.CONTENT_ARCHIVE_ENABLED;
+      else process.env.CONTENT_ARCHIVE_ENABLED = saved.archive;
+    }
+  });
+});
+
+describe('content-archive-container job type', () => {
+  it('is registered super_admin-only, small payload, under the 30-minute host limit, with the failure hook', () => {
+    const spec = getJobType(ARCHIVE_JOB_TYPE);
+    expect(spec).not.toBeNull();
+    expect(spec.role).toBe('super_admin');
+    expect(spec.maxPayloadBytes).toBe(1024);
+    expect(spec.timeoutMs).toBeLessThan(30 * 60 * 1000);
+    expect(typeof spec.onComplete).toBe('function');
+  });
+
+  it('refuses a container the archive does not write before touching storage', async () => {
+    const spec = getJobType(ARCHIVE_JOB_TYPE);
+    for (const container of ['admins', 'tool_exports', 'jobs']) {
+      await expect(
+        spec.worker({ year: 2026, runId: '2027-02-07', container }, { context: { log: vi.fn() } })
+      ).rejects.toThrow(/not written by the content archive/);
+    }
+  });
+
+  it('writes nothing while CONTENT_ARCHIVE_ENABLED is not "true"', async () => {
+    const saved = process.env.CONTENT_ARCHIVE_ENABLED;
+    delete process.env.CONTENT_ARCHIVE_ENABLED;
+    try {
+      const spec = getJobType(ARCHIVE_JOB_TYPE);
+      // No storage is configured in this test, so reaching it would throw.
+      expect(
+        await spec.worker({ year: 2026, runId: '2027-02-07', container: 'blogs' }, { context: { log: vi.fn() } })
+      ).toEqual({ container: 'blogs', written: false, skipped: 'switch-off' });
+    } finally {
+      if (saved !== undefined) process.env.CONTENT_ARCHIVE_ENABLED = saved;
+    }
+  });
+});

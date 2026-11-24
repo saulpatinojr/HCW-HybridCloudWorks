@@ -84,6 +84,10 @@ function archiveStore({ exists = true, manifests = [], failExists = null, failRe
       if (failRead) throw failRead;
       return exists && manifests.includes(name) ? {} : null;
     },
+    async listDetails() {
+      if (failRead) throw failRead;
+      return exists ? manifests.map((name) => ({ name, size: 2, tier: 'Hot' })) : [];
+    },
   };
 }
 
@@ -98,10 +102,10 @@ const backupSeed = (containers) => ({
 });
 
 describe('archiveStartDecision: once a year, never in January, only when switched on', () => {
-  const on = { [ARCHIVE_SETTING]: 'true' };
+  const on = { [ARCHIVE_SETTING]: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' };
   const facts = (over = {}) => ({ env: on, now: new Date('2027-02-08T04:00:00Z'), containerExists: true, manifestExists: false, backupRunId: '2027-02-07', ...over });
 
-  it('starts when all four conditions hold, for the year before', () => {
+  it('starts when every condition holds, for the year before', () => {
     expect(archiveStartDecision(facts())).toEqual({ start: true, year: 2026, earliestBackup: '2027-02-02', blockers: [] });
     expect(archiveYearFor(new Date('2027-12-31T23:59:59Z'))).toBe(2026);
     expect(archiveYearFor(new Date('2028-01-01T00:00:00Z'))).toBe(2027);
@@ -109,7 +113,7 @@ describe('archiveStartDecision: once a year, never in January, only when switche
 
   it('does not start while the switch is off, absent, or anything but the exact text true', () => {
     for (const value of [undefined, 'false', '', 'TRUE', '1', 'true ']) {
-      const decision = archiveStartDecision(facts({ env: { [ARCHIVE_SETTING]: value } }));
+      const decision = archiveStartDecision(facts({ env: { ...on, [ARCHIVE_SETTING]: value } }));
       expect(decision.start, String(value)).toBe(false);
       expect(decision.blockers).toEqual(['switch-off']);
     }
@@ -153,9 +157,15 @@ describe('archiveStartDecision: once a year, never in January, only when switche
     }
   });
 
+  it('does not start while the nightly export is off: its timer makes the daily check, and its backup is what is read', () => {
+    for (const env of [{ ...on, FEATURE_FLAG_COSMOS_EXPORT: 'false' }, { [ARCHIVE_SETTING]: 'true' }, { ...on, FEATURE_FLAG_SCHEDULERS: 'false' }]) {
+      expect(archiveStartDecision(facts({ env }))).toMatchObject({ start: false, blockers: ['export-off'] });
+    }
+  });
+
   it('lists every blocker at once', () => {
     const decision = archiveStartDecision({ env: {}, now: new Date('2027-01-15T00:00:00Z'), containerExists: true, manifestExists: true, backupRunId: null });
-    expect(decision.blockers).toEqual(['switch-off', 'before-1-february', 'already-archived', 'no-backup']);
+    expect(decision.blockers).toEqual(['switch-off', 'export-off', 'before-1-february', 'already-archived', 'no-backup']);
   });
 });
 
@@ -568,7 +578,7 @@ describe('the two admin routes', () => {
     expect(blobs.writes).toEqual([]);
   });
 
-  it('GET: switch off, the job not built, the blockers and the classification in numbers', async () => {
+  it('GET: switch off, the blockers and the classification in numbers', async () => {
     const response = await make().handlers.getStatus({}, {});
     expect(response.status).toBe(200);
     expect(response.headers['Cache-Control']).toBe('private, no-store');
@@ -576,12 +586,16 @@ describe('the two admin routes', () => {
       ok: true,
       setting: 'CONTENT_ARCHIVE_ENABLED',
       switchOn: false,
-      jobBuilt: false,
+      jobBuilt: true,
+      exportOn: false,
       year: 2026,
       archiveContainerExists: true,
       archived: false,
       wouldStart: false,
-      blockers: ['switch-off'],
+      blockers: ['switch-off', 'export-off'],
+      progressKnown: true,
+      lastArchive: null,
+      run: null,
       latestBackup: { runId: SUNDAY, containers: 1 },
       classification: { asIs: 33, leftOut: 19, unclassified: expect.arrayContaining(['tool_exports', 'site_settings']) },
       latest: null,
@@ -595,7 +609,7 @@ describe('the two admin routes', () => {
     // The realistic case: storage answers "not found" for the manifest, exactly as it would for a year with no archive.
     const missing = archiveStore({ exists: false });
     expect(await missing.readJson('2026/manifest.json')).toBeNull();
-    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs: missing });
+    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs: missing });
     expect(body(await handlers.getStatus({}, {}))).toMatchObject({
       switchOn: true,
       archiveContainerExists: false,
@@ -604,7 +618,7 @@ describe('the two admin routes', () => {
       blockers: ['archive-container-missing'],
     });
     // The same facts with the container there: the year really is not archived, and only then could a run start.
-    const there = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs: archiveStore({ exists: true }) });
+    const there = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs: archiveStore({ exists: true }) });
     expect(body(await there.handlers.getStatus({}, {}))).toMatchObject({ archiveContainerExists: true, archived: false, wouldStart: true, blockers: [] });
   });
 
@@ -612,7 +626,7 @@ describe('the two admin routes', () => {
     const refused = Object.assign(new Error('secret words'), { code: 'AuthorizationFailure' });
     for (const archiveBlobs of [archiveStore({ failExists: refused }), archiveStore({ failRead: refused })]) {
       const warn = vi.fn();
-      const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs });
+      const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs });
       const answer = body(await handlers.getStatus({}, { warn }));
       expect(answer).toMatchObject({ switchOn: true, archived: null, wouldStart: false, blockers: ['archive-not-readable'] });
       expect(warn).toHaveBeenCalledTimes(1);
@@ -621,7 +635,7 @@ describe('the two admin routes', () => {
   });
 
   it('GET: a year that has its manifest is archived', async () => {
-    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true' }, archiveBlobs: archiveStore({ manifests: ['2026/manifest.json'] }) });
+    const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs: archiveStore({ manifests: ['2026/manifest.json'] }) });
     expect(body(await handlers.getStatus({}, {}))).toMatchObject({ archived: true, blockers: ['already-archived'] });
   });
 

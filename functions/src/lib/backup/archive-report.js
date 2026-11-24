@@ -44,9 +44,9 @@
  * create-only, so two jobs finishing together cannot both write it.
  *
  * THE START RULE. `archiveStartDecision` is the whole of "once a year, never
- * in January, only when switched on" (ADR 0046 section 4). Nothing calls it
- * to start an archive yet: the job that writes one is phase 3. The status
- * route uses it to tell the owner what would happen today.
+ * in January, only when switched on" (ADR 0046 section 4). The daily check
+ * that starts an archive (archive-job.js) asks it, and the status route uses
+ * it to tell the owner what would happen today.
  */
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
@@ -55,7 +55,7 @@ import { createGunzip } from 'node:zlib';
 
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
 import { withStatus } from '../http/error-response.js';
-import { blobNames } from './cosmos-export.js';
+import { blobNames, exportEnabled } from './cosmos-export.js';
 import {
   DECISIONS,
   REASONS,
@@ -226,14 +226,18 @@ export function archiveYearFor(now) {
 }
 
 /**
- * May the yearly archive start now? All five must hold:
+ * May the yearly archive start now? All six must hold:
  *
  *   1. the switch `CONTENT_ARCHIVE_ENABLED` is exactly `true`;
  *   2. today is on or after 1 February (UTC), so January is the month of grace;
  *   3. the `content-archive` container exists;
  *   4. last year's `manifest.json` does not exist (a year is archived once);
  *   5. a complete full backup dated on or after 2 February exists (the day
- *      after the yearly clean-up of talk proposals runs).
+ *      after the yearly clean-up of talk proposals runs);
+ *   6. the nightly export is switched on (`exportEnabled`). The archive is
+ *      made from its weekly backup and its daily check rides the export's
+ *      timer, so with the export off nothing looks and nothing starts
+ *      ("no backup, no archive", ADR 0046 section 4).
  *
  * `containerExists`, `manifestExists` and `backupRunId` are `null` when they
  * could not be read; not known is never read as "go". A container that is
@@ -258,6 +262,7 @@ export function archiveStartDecision({ env = process.env, now, containerExists, 
   const earliestBackup = `${year + 1}-02-02`;
   const blockers = [];
   if (env?.[ARCHIVE_SETTING] !== 'true') blockers.push('switch-off');
+  if (!exportEnabled(env || {})) blockers.push('export-off');
   if (at.getTime() < opens) blockers.push('before-1-february');
   if (containerExists === false) blockers.push('archive-container-missing');
   else if (containerExists !== true) blockers.push('archive-not-readable');

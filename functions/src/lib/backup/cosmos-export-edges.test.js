@@ -213,6 +213,40 @@ describe('createExportBlobStore', () => {
     await expect(store.containerExists()).rejects.toThrow(/AuthorizationFailure/);
   });
 
+  it('listDetails gives each file’s name, size and access tier', async () => {
+    const storage = fakeStorage();
+    storage.listBlobs = vi.fn(async () => [
+      { name: '2026/cosmos/blogs.ndjson.gz', size: 120, tier: 'Archive' },
+      { name: '2026/manifest.json', size: '40' },
+    ]);
+    const store = createExportBlobStore({ container: 'content-archive', stateContainer: 'content-archive', storage });
+    expect(await store.listDetails('2026/')).toEqual([
+      { name: '2026/cosmos/blogs.ndjson.gz', size: 120, tier: 'Archive' },
+      { name: '2026/manifest.json', size: 40, tier: null },
+    ]);
+    expect(storage.listBlobs).toHaveBeenCalledWith('content-archive', '2026/');
+  });
+
+  it('setTier moves only a data file of a yearly archive, never a manifest, a backup file or a bookmark', async () => {
+    const storage = fakeStorage();
+    storage.setBlobAccessTier = vi.fn(async () => {});
+    const store = createExportBlobStore({ container: 'content-archive', stateContainer: 'content-archive', storage });
+    await store.setTier('2026/cosmos/certEvents.ndjson.gz', 'Archive');
+    expect(storage.setBlobAccessTier).toHaveBeenCalledWith('content-archive', '2026/cosmos/certEvents.ndjson.gz', 'Archive');
+    for (const name of [
+      '2026/manifest.json',
+      'full/2026-09-13/content.ndjson.gz',
+      'state/content.json',
+      '2026/cosmos/../manifest.json',
+      '2026/cosmos/a/b.ndjson.gz',
+      '',
+      undefined,
+    ]) {
+      await expect(store.setTier(name, 'Archive'), String(name)).rejects.toThrow(/only a data file of a yearly archive/);
+    }
+    expect(storage.setBlobAccessTier).toHaveBeenCalledTimes(1);
+  });
+
   it('deleteReportFile deletes only a file of an archive dry-run report, from the state container', async () => {
     const storage = fakeStorage();
     storage.deleteBlob = vi.fn(async () => {});

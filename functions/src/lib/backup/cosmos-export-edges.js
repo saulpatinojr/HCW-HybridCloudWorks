@@ -154,6 +154,30 @@ export function createExportBlobStore({
       return blobs.map((b) => b.name);
     },
 
+    /**
+     * Name, size in bytes and access tier of every file under a prefix. For
+     * the yearly archive (archive-job.js), which checks that each data file
+     * is there, at the size it wrote, before the manifest names it, and
+     * which files are already in the Archive tier.
+     */
+    async listDetails(prefix) {
+      const blobs = await storage.listBlobs(targetContainer(prefix), prefix);
+      return blobs.map((b) => ({ name: b.name, size: Number(b.size) || 0, tier: b.tier ?? null }));
+    },
+
+    /**
+     * Move one data file of a yearly archive to another access tier. Only a
+     * name shaped like `<year>/cosmos/<file>.ndjson.gz` is accepted, so this
+     * can never be pointed at a backup file, a bookmark or a manifest (the
+     * manifest stays online on purpose: ADR 0046 section 4).
+     */
+    async setTier(name, tier) {
+      if (typeof name !== 'string' || !/^\d{4}\/cosmos\/[a-z0-9_]+\.ndjson\.gz$/i.test(name)) {
+        throw new Error('only a data file of a yearly archive can change tier here');
+      }
+      await storage.setBlobAccessTier(container, name, tier);
+    },
+
     /** Does the store's main container exist? A failure to ask is a throw, never `false`. */
     async containerExists() {
       return storage.containerExists(container);
