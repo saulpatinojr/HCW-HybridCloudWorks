@@ -31,11 +31,15 @@ from the weekly full database backup (the Sunday run of the nightly export;
 [Cosmos restore runbook](cosmos-restore.md)). Each database container (a
 named box of records) gets one of three decisions:
 
-- **Kept as it is**: 33 containers. Articles, pages, the owner's notes and
-  recordings, newsletters, image records and the like. Every one of them is
-  a container the site's code reads or writes today, so its fields are
-  known. (`plaud_ingest` is the one exception: no code names it, and it is
-  kept because the owner said its recordings are theirs.)
+- **Kept as it is**: 54 containers.
+    - 33 that the site's code reads or writes today, so their fields are
+      known: articles, pages, the owner's notes and recordings, newsletters,
+      image records and the like. (`plaud_ingest` is the one exception among
+      them: no code names it, and it is kept because the owner said its
+      recordings are theirs.)
+    - 21 left over from the earlier site that no code names, kept whole by
+      the owner's decision of 2026-11-24:
+      [The 21 containers the owner chose to keep](#the-21-containers-the-owner-chose-to-keep).
 - **Kept in part**: 6 containers. For four of them the code holds a **keep
   list** (the only fields that are kept; a field nobody listed is dropped, so
   a new or forgotten field can never carry a secret in).
@@ -63,10 +67,12 @@ named box of records) gets one of three decisions:
     - `admin_config` (settings documents): key records, and short-lived state
       such as health results and caches, are left out. A document the list
       does not name is left out too.
-- **Left out**: 40 containers. 19 for a known reason (the two access lists:
-  who may sign in, and which machine is which lab agent; audit rows the
-  database deletes after 90 days; caches and queues that a job rebuilds) and
-  **21 that are waiting for the owner**, below.
+- **Left out**: 19 containers, each for a known reason (the two access
+  lists: who may sign in, and which machine is which lab agent; audit rows
+  the database deletes after 90 days; caches and queues that a job
+  rebuilds). **None is waiting for the owner.** A container added to the
+  database later is left out, and shown on the card as waiting, until it is
+  decided.
 
 Two rules cut across containers. An interview is kept only while it is public
 in the backup, and **no earlier version of an interview is kept at all**: a
@@ -161,10 +167,24 @@ You need the `super_admin` role. Below that role the card is not shown.
       report; say so on #1811 and a session will look at the code that writes
       that container.
 
+  A container the owner has already decided about is **not** in this block:
+  see the next point. So after the decision of 2026-11-24 this block is
+  expected to be empty, and a line in it is something new.
+
   A hit is a reason to look, not proof. For each line, answer on
   [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)
   with `FINE` (it may stay) or `OUT` (take it out), and a session changes the
   list in a pull request before the archive is switched on.
+- **A block "The owner chose to keep these, 2026-11-24".** It lists the
+  containers that would be in the red block, had the owner not already
+  decided to keep them as the dry run showed them (ten that were flagged in
+  the first dry run, and the 21 that were waiting). Each still shows the
+  same lines: where the field sits, in how many records, and the kinds of
+  value. That decision was made for each container, not for each name one
+  by one, so the names are listed every time and are not treated as checked.
+  If a name appears here that you do not remember from the first dry run,
+  say so on
+  [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811).
 - **Three quieter lines, in grey, per container** (in the red block's
   containers and in "Every container"):
     - **"Named like one, but only numbers or yes/no"**: a field that would
@@ -179,7 +199,11 @@ You need the `super_admin` role. Below that role the card is not shown.
       archive would not, because the record is left out or the field is
       dropped, with a count of records each. For a container that is left
       out whole the line reads "Found, and not archived".
-- **Waiting for you: 21 containers to classify.** See the next section.
+- **"Nothing is waiting for you: every container is classified."** What you
+  see since the decision of 2026-11-24. If a container is ever added to the
+  database without being classified, this turns into "Waiting for you: 1
+  container(s) to classify", with its record count and field names; see
+  [If a container is waiting](#if-a-container-is-waiting).
 - **Every container** (press to unfold). One row per container: how many
   records would be kept, how many would have fields removed and which fields,
   how many would be left out and why, its field names, and the same lines
@@ -197,7 +221,7 @@ You need the `super_admin` role. Below that role the card is not shown.
     | short-lived working state | Health results, leases, queues |
     | a document the list does not name | A settings document whose id is not in the code's list, or a record of a kind the list does not name. Left out to be safe; a number above zero here is worth a look |
     | its content item is not in the backup | An earlier version of something that has since been deleted |
-    | not classified yet | One of the 21 below |
+    | not classified yet | A container nobody has decided about. None today; see [If a container is waiting](#if-a-container-is-waiting) |
 
 The report never shows a record, the id of a record or the value of a field.
 The server does not send one.
@@ -217,11 +241,10 @@ listed per container, the most common first.
 folder per report. No storage rule deletes it; the code does: starting a dry
 run deletes every report older than 90 days.
 
-## Classify the 21 containers
+## The 21 containers the owner chose to keep
 
 No code in this repository names these 21 containers today, so nothing here
-can say what they hold. They are left over from the earlier site. They may
-hold what a visitor typed, or a key someone pasted into the earlier site.
+can say what their records hold. They are left over from the earlier site.
 
 - Saved work from the earlier site's tools: `tool_workspaces`,
   `tool_migration_workspaces`, `tool_assessment_sessions`,
@@ -233,30 +256,53 @@ hold what a visitor typed, or a key someone pasted into the earlier site.
   `character_profiles`, `character_modules`, `character_images`,
   `character_tag_adjectives`.
 
-The first seven were always waiting for you. The other fourteen were listed
-as "kept as it is" until an independent review on 2026-11-24 pointed out that
-nobody had read them; they moved here, so they are looked at before they are
-kept.
+Until 2026-11-24 they were left out, waiting for you. After the first dry
+run you decided that everything it listed stays
+([your decision on #1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811#issuecomment-7144574612)),
+so all 21 are now archived **whole**: every record, every field.
 
-For each one the report shows the number of records, the **names** of its
-common fields, and how many records have a field named like a secret. Read
-them and answer on
+Two things to know about that, said plainly:
+
+- **Three of the five `tool_` containers hold the email address and the
+  session id of whoever used the tool.** That is another person's contact
+  detail, and nobody agreed to it being kept for good. The session
+  recommended leaving those three out; you chose to keep them, because the
+  archive is private and only you can read it. If someone who used those
+  tools ever asks to be erased, each year's archive that holds their record
+  has to be rewritten by hand
+  ([ADR 0046, section 5](../decisions/0046-content-archive.md#5-erasure-a-persons-request-to-be-deleted)).
+  The dry-run report shows which three, by their field names.
+- **`config_providers` and `config_settings` may hold keys typed into the
+  earlier site.** Nothing is taken out of a container that is kept whole, so
+  if one is there, it goes into the archive. The dry-run report lists those
+  two under "The owner chose to keep these", with each field named like a
+  secret and the kind of value it holds.
+
+To change your mind about any of them before the archive is switched on,
+reply on
 [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) with
-one word per container:
+the container's name and `OUT` (leave it out) or `STRIP` and the field names
+to keep. A session then changes the list in a pull request. Once a year has
+been archived, changing the list only affects later years.
 
-- `KEEP`: it is content worth keeping and holds nothing about a visitor and no
-  key.
+## If a container is waiting
+
+None is today. This is what happens if one ever is, because a container was
+added to the database and nobody could say what it holds.
+
+It is left out of every archive, and the dry run reads it and shows, under
+"Waiting for you", its number of records, the **names** of its common fields,
+and the fields named like a secret. Read them and answer on
+[#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) with
+one word:
+
+- `KEEP`: it is content worth keeping.
 - `STRIP`, with the field names to keep: keep it with only those fields.
 - `OUT`: leave it out for good.
 
-A container with 0 records, or one the report says is "not in the backup", can
-be answered `OUT`. Until you answer, all 21 stay out, so not answering is
-safe. A session then changes the list in a pull request; the test beside the
-list keeps the count honest.
-
-If a container shows a large number of "names that are not shown", its
-records use ids or typed text as field names. Treat that as a sign it holds
-what people typed, and answer `OUT` unless you know otherwise.
+Until you answer it stays out, so not answering is safe. A container with a
+large number of "names that are not shown" uses ids or typed text as field
+names; treat that as a sign it holds what people typed.
 
 ## What each state on the card means
 
@@ -304,8 +350,9 @@ nothing in either case.
     (or empty). An error that names `ContainerNotFound` means step 1 has not
     been applied.
 4. **Run a dry run** and read it: [Run a dry run](#run-a-dry-run).
-5. **Answer for the 21 containers** on #1811:
-   [Classify the 21 containers](#classify-the-21-containers).
+5. **Answer for the containers that were waiting.** Done on 2026-11-24:
+   you chose to keep all 21
+   ([The 21 containers the owner chose to keep](#the-21-containers-the-owner-chose-to-keep)).
 
 Switching the archive on is not one of these steps.
 
