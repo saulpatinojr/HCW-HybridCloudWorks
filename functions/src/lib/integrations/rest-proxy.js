@@ -37,7 +37,7 @@
  * made the call still gets the status and the body it always did.
  */
 import { randomUUID } from 'node:crypto';
-import { AuthoredError, authoredMessage, errorCode, logFailure } from '../http/error-response.js';
+import { AuthoredError, authoredMessage, errorCode, logFailure, errorFacts } from '../http/error-response.js';
 import { createKeyVerdictReporter, isCredentialRejected } from '../key-verdict.js';
 import { readUpstreamError } from './upstream-error.js';
 import { redactSecrets } from './connection-probe.js';
@@ -249,7 +249,7 @@ async function recordProxyAudit(audit, context, { integration, auth, method, bod
     });
   } catch (error) {
     context.warn?.(
-      `${integration.name}Proxy ${method} was answered but its audit row failed: ${error?.message || error}`
+      `${integration.name}Proxy ${method} was answered but its audit row failed: ${errorFacts(error)}`
     );
   }
 }

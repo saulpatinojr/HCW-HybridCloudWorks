@@ -57,7 +57,7 @@ describe('createMinuteCache', () => {
     });
     expect(await cacheFor(store).read({ warn })).toBeNull();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('cache read failed'));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Error (ECONNRESET)'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('name=Error code=ECONNRESET'));
     expect(warn.mock.calls.flat().join(' ')).not.toMatch(/cosmos down|https?:\/\//);
   });
 

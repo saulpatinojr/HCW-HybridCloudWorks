@@ -26,6 +26,7 @@ import { httpRoute } from '../lib/auth/http-route.js';
 import { readDoc, upsertDoc, patchDoc, queryDocs } from '../lib/cosmos-client.js';
 import { JOBS_CONTAINER, JOBS_QUEUE, newJobDoc } from '../lib/jobs.js';
 import { createTelegramBot, createSender, secretMatches } from '../lib/telegram/bot.js';
+import { errorFacts } from '../lib/http/error-response.js';
 
 const queueOutput = output.storageQueue({
   queueName: JOBS_QUEUE,
@@ -116,7 +117,7 @@ httpRoute('telegramWebhook', {
       const result = await bot.handleUpdate(update);
       context.log(`[telegram] ${result.handled ? 'handled' : `ignored (${result.reason})`}`);
     } catch (error) {
-      context.error?.(`[telegram] handleUpdate threw: ${error?.stack || error}`);
+      context.error?.(`[telegram] handleUpdate threw: ${errorFacts(error)}`);
     }
     return { status: 200, body: 'ok' };
   },

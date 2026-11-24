@@ -8,6 +8,7 @@
  */
 import { json } from '../http/admin-handler.js';
 import { AUDIT_TTL_SECONDS } from '../audit.js';
+import { errorFacts } from '../http/error-response.js';
 
 /** The Change history row a blog delete writes. */
 function blogDeletedAudit({ now, uuid }, { user, request, id, existing }) {
@@ -50,7 +51,7 @@ async function deleteBlog(ctx, request, context) {
     );
     return json(200, { success: true, blogId: id });
   } catch (error) {
-    context.error('deleteBlog failed:', error);
+    context.error('deleteBlog failed:', errorFacts(error));
     return json(500, { error: 'Failed to delete blog' });
   }
 }

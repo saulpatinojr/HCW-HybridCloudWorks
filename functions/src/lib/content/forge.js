@@ -37,7 +37,7 @@ import {
 } from '../cms/content-quality.js';
 import { applyPublishTimeCoverTrigger } from '../cms/publish.js';
 import { buildVoiceAndFormatBlock, pickNextFormat } from './voice.js';
-import { recordedFailure } from '../http/error-response.js';
+import { recordedFailure, errorFacts } from '../http/error-response.js';
 import {
   buildForgeModuleInstruction,
   findSimilarTitle,
@@ -273,7 +273,7 @@ export function createForge({
       );
       return rows || [];
     } catch (err) {
-      log.warn?.(`fetchPublishedCorpus failed (dedupe + interlinking skipped): ${err.message}`);
+      log.warn?.(`fetchPublishedCorpus failed (dedupe + interlinking skipped): ${errorFacts(err)}`);
       return [];
     }
   }
@@ -399,7 +399,7 @@ export function createForge({
         });
       }
     } catch (err) {
-      log.warn?.(`bumpForgeStats failed: ${err.message}`);
+      log.warn?.(`bumpForgeStats failed: ${errorFacts(err)}`);
     }
   }
 

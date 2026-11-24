@@ -13,6 +13,7 @@
  * (or `editing`) and still need the human one-click publish.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
+import { errorFacts, errorCode } from '../http/error-response.js';
 
 export const CANDIDATE_STATUSES = ['draft', 'ingested', 'inspected'];
 export const FORGE_SCHEDULER_ACTOR = Object.freeze({
@@ -148,8 +149,8 @@ export function createForgeScheduled({ store, config, forge, now = () => new Dat
         else summary.editing += 1;
       } catch (err) {
         summary.errors += 1;
-        summary.failures.push({ contentId: candidate.id, error: err?.message || String(err) });
-        log.error?.(`[forgeScheduled] ${candidate.id} threw: ${err?.message || err}`);
+        summary.failures.push({ contentId: candidate.id, error: errorCode(err) });
+        log.error?.(`[forgeScheduled] ${candidate.id} threw: ${errorFacts(err)}`);
       }
     }
     log.log?.(

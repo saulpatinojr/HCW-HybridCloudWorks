@@ -1,9 +1,10 @@
 # ADR 0044: Signed releases across the estate: the site publishes none, and the four App repositories attach provenance to theirs
 
-**Status:** Proposed (owner's question of 2026-11-23; accepted when the owner
-answers on [#1799](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1799),
-the pull request that adds this record)
-**Decision date:** 2026-11-23
+**Status:** Accepted (the owner chose both recommendations on 2026-11-24:
+option A for the site, and "files" for the four App repositories; asked on
+[#1799](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1799), the
+pull request that adds this record)
+**Decision date:** 2026-11-24
 **Owners:** Workload owner and architecture owner
 
 ## Context
@@ -138,7 +139,26 @@ Two things in this table are easy to misread:
 
 ## Decision
 
-Two decisions, both the owner's.
+Two decisions, both the owner's. **Both were made on 2026-11-24, and both
+follow the recommendation:** the site takes option A and publishes no
+releases; the four App repositories attach their build provenance to each
+release as a file, without turning on immutable releases.
+
+### What was built, and where it differs from the sketches below
+
+The snippets in section 2 were written before the work and are kept as the
+proposal. Each repository's own rules shaped the result, so read the pull
+request for what is really there:
+
+| Repository | Pull request | Differs from the sketch |
+| --- | --- | --- |
+| HCW-MigrateOrchestrator_App | [#150](https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/pull/150), merged 2026-11-24 | No `jq` step in the signing job: that repository tests that the signing job runs no script (its ADR-0034). The job only saves the three bundles; the next job, which cannot sign, writes `amo-<version>.intoto.jsonl`. Recorded there as ADR-0035. |
+| HCW-CloudCrawler_App | [#104](https://github.com/saulpatinojr/HCW-CloudCrawler_App/pull/104), merged 2026-11-24 | The file is written by the tested release script, not `jq`, and is named `cloud_crawler_core-<version>.intoto.jsonl`, with the version. The release job verifies the wheel and sdist against it before publishing. |
+| HCW-CloudAssessor_App | [#115](https://github.com/saulpatinojr/HCW-CloudAssessor_App/pull/115), open on 2026-11-24 | A separate step after the wheel is attached, so a failure there cannot leave a tag without its wheel; the file is written outside `dist/`, so the version check and PyPI step still see two files. |
+| HCW-NetworkEyes_App | [#423](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/423), open on 2026-11-24 | As sketched (a separate signing job), plus a check script: the release job compares each file's sha256 with the provenance and verifies the signature before the release is created. |
+
+None of the four has cut a release since, so no release carries the file
+yet. Each repository's first release after its pull request is the proof.
 
 ### 1. The site (this repository): three options
 

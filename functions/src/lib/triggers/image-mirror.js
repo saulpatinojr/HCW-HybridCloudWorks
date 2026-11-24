@@ -24,6 +24,7 @@ import {
 } from './fetch-image.js';
 import { shouldProcessValue } from './value-marker.js';
 import { buildCoverSvg } from './cover-svg.js';
+import { errorFacts, errorCode } from '../http/error-response.js';
 
 export const MIRRORS = Object.freeze({
   speakerevents: {
@@ -112,8 +113,8 @@ export function createImageMirror({ store, storage, fetchImage = defaultFetchIma
       log.log?.(`[${spec.tag}] Stored ${container}/${blobPath}`);
       return { mirrored: true, reason: 'mirrored' };
     } catch (err) {
-      log.error?.(`[${spec.tag}] Failed for ${container}/${doc.id}: ${err?.message || err}`);
-      return { mirrored: false, reason: `error: ${err?.message || err}` };
+      log.error?.(`[${spec.tag}] Failed for ${container}/${doc.id}: ${errorFacts(err)}`);
+      return { mirrored: false, reason: `error: ${errorCode(err)}` };
     }
   }
 
@@ -150,8 +151,8 @@ export function createImageMirror({ store, storage, fetchImage = defaultFetchIma
       log.log?.(`[generateCover] Generated template cover for blog ${doc.id}`);
       return { generated: true, reason: 'generated' };
     } catch (err) {
-      log.error?.(`[generateCover] Failed for blog ${doc.id}: ${err?.message || err}`);
-      return { generated: false, reason: `error: ${err?.message || err}` };
+      log.error?.(`[generateCover] Failed for blog ${doc.id}: ${errorFacts(err)}`);
+      return { generated: false, reason: `error: ${errorCode(err)}` };
     }
   }
 

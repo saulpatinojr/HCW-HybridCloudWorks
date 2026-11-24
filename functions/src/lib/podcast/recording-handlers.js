@@ -32,6 +32,7 @@ import {
 } from './recording-upload.js';
 import { PLAUD_EMBEDDED_NOT_CONFIGURED_MESSAGE, isPlaudEmbeddedConfigured } from './plaud-embedded.js';
 import { mediaUrlFor } from '../blob-paths.js';
+import { errorFacts } from '../http/error-response.js';
 
 const MCP_CONTAINER = 'mcp_servers';
 
@@ -182,7 +183,7 @@ export function createPodcastRecordingHandlers({
         });
       } catch (error) {
         context.error(
-          `generatePodcastTranscriptFromRecording failed (${error?.code ?? error?.statusCode ?? 'n/a'}): ${error?.message || error}`
+          `generatePodcastTranscriptFromRecording failed (${errorFacts(error)})`
         );
         return json(500, { error: 'Failed to queue the transcript' });
       }
@@ -294,10 +295,11 @@ export function createPodcastRecordingHandlers({
               'infra/storage.tf — run the Terraform apply that creates it, then upload again.',
           });
         }
-        // Code and message only — never the error object, whose properties
-        // (a storage response, a request body) are not for the log.
+        // The error's code, status and class only: never its message or the
+        // object, whose properties (a storage response, a request body) are not
+        // for the log.
         context.error(
-          `uploadPodcastRecording failed (${error?.code ?? error?.statusCode ?? 'n/a'}): ${error?.message || error}`
+          `uploadPodcastRecording failed (${errorFacts(error)})`
         );
         return json(500, { error: 'Failed to upload the recording' });
       }

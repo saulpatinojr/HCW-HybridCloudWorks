@@ -52,7 +52,7 @@ import {
   normalizeGalleryRow,
 } from './gallery/listing.js';
 import { applyBulkAction, parseBulkRequest } from './gallery/bulk.js';
-import { errorResponse } from './http/error-response.js';
+import { errorResponse, errorFacts } from './http/error-response.js';
 import {
   fetchForImport,
   findImportDuplicate,
@@ -191,7 +191,7 @@ async function deleteBlobFor(storage, { imageUrl, storagePath }, context) {
     await storage.deleteBlob(ref.container, ref.blobName);
     return true;
   } catch (error) {
-    context.warn?.('gallery blob delete failed:', ref.container, ref.blobName, error?.message);
+    context.warn?.('gallery blob delete failed:', ref.container, ref.blobName, errorFacts(error));
     return false;
   }
 }

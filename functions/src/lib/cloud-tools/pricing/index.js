@@ -20,6 +20,7 @@ import { PROVIDERS } from './baseline.js';
 import { fetchAwsPrice } from './aws.js';
 import { fetchAzurePrice } from './azure.js';
 import { fetchGcpPrice, resetGoogleCaches } from './gcp.js';
+import { errorCode } from '../../http/error-response.js';
 
 /** @typedef {{sku: string, unit: string, pricePerUnit: number, currency?: string}} PriceTriple */
 
@@ -83,7 +84,7 @@ export async function fetchLivePricing(serviceId, requestedRegion, baseline, opt
           provider,
           serviceId,
           region: requestedRegion,
-          message: error.message,
+          code: errorCode(error),
         });
         triple = null;
       }

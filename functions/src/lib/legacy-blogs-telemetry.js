@@ -26,6 +26,7 @@
  * and writing whole objects avoids dotted-path escaping entirely.
  */
 
+import { errorFacts } from './http/error-response.js';
 export const TELEMETRY_CONTAINER = 'system';
 export const LEGACY_BLOGS_READS_ID = 'legacy_blogs_reads';
 
@@ -172,7 +173,7 @@ export function createLegacyBlogsTelemetryHandlers({ guard, store, now = () => n
 
         return json(200, { success: true });
       } catch (error) {
-        context.error('recordLegacyBlogsRead failed:', error);
+        context.error('recordLegacyBlogsRead failed:', errorFacts(error));
         return json(500, { error: 'Failed to record telemetry' });
       }
     },

@@ -36,6 +36,7 @@ import {
   publicRegionOptions,
   regionOption,
 } from './pricing/regions.js';
+import { errorFacts } from '../http/error-response.js';
 
 const HIT_CACHE_SECONDS = 900;
 const MISS_CACHE_SECONDS = 60;
@@ -106,7 +107,7 @@ export function createPublicPricingHandlers({ store, now = () => Date.now() }) {
           HIT_CACHE_SECONDS
         );
       } catch (error) {
-        context.error('publicGetCloudToolsPricing failed:', error);
+        context.error('publicGetCloudToolsPricing failed:', errorFacts(error));
         return json(500, { error: 'Failed to get pricing' });
       }
     },

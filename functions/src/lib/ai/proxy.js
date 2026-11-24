@@ -37,6 +37,7 @@ import { recordAiUsage, USAGE_SOURCES } from './usage.js';
 import { takeDailyCap } from '../daily-cap.js';
 import { readModelCatalog } from './model-catalog-doc.js';
 import { CACHE_CONTAINER, utcDay } from '../cloud-tools/history.js';
+import { errorFacts } from '../http/error-response.js';
 
 const json = (status, body) => ({
   status,
@@ -112,7 +113,7 @@ async function runTestCall(
     );
     return outcome;
   } catch (error) {
-    log?.error?.(`${label}(${providerId}) failed:`, error);
+    log?.error?.(`${label}(${providerId}) failed:`, errorFacts(error));
     return {
       ok: false,
       status: 'error',
@@ -183,7 +184,7 @@ export async function testProviderConnection(deps, { providerId, model = null, t
       lastTestedBy: trigger,
     });
   } catch (error) {
-    log?.error?.(`${label}(${providerId}) could not save status:`, error);
+    log?.error?.(`${label}(${providerId}) could not save status:`, errorFacts(error));
   }
 
   return outcome;
@@ -384,7 +385,7 @@ export function createAiProxyHandlers({
         // 200 with ok:false, not 5xx. The caller is a Playground that renders
         // the message; an unconfigured provider is an answer, not a fault, and
         // AI_NOT_CONFIGURED already says exactly what to do about it.
-        context.error?.('aiProxy failed:', error);
+        context.error?.('aiProxy failed:', errorFacts(error));
         return json(200, {
           ok: false,
           error: 'The provider call failed',

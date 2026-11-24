@@ -23,7 +23,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
-import { authoredMessage, errorResponse, isAuthoredError } from '../http/error-response.js';
+import { authoredMessage, errorResponse, isAuthoredError, errorFacts } from '../http/error-response.js';
 import { describePolicy } from './admin-access.js';
 import {
   AGENT_ID,
@@ -95,7 +95,7 @@ export function createAgentContentAdminHandlers({
         compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true },
       });
     } catch (error) {
-      log.error?.(`[agent-content] audit row ${action} failed`, error);
+      log.error?.(`[agent-content] audit row ${action} failed`, errorFacts(error));
     }
   }
 

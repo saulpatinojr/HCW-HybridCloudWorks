@@ -55,7 +55,7 @@ describe("callMcpTool", () => {
     });
   });
 
-  it("logs an upstream failure as server, tool, status and message — never the response body", async () => {
+  it("logs an upstream failure as server, tool, class and status, never the message or the response body", async () => {
     // A tool call's error body can be the tool's output: a transcript. The
     // log must carry none of it.
     const secret = "Speaker 1: the quarterly numbers are confidential";
@@ -79,16 +79,17 @@ describe("callMcpTool", () => {
     // One string argument, not an error object with `responseBody` on it.
     expect(call).toHaveLength(1);
     expect(typeof call[0]).toBe("string");
-    expect(call[0]).toBe(
-      "[mcp] upstream call failed: server=plaud tool=get_transcript status=500 MCP server returned HTTP 500",
+    expect(call[0]).toMatch(
+      /^\[mcp\] upstream call failed: server=plaud tool=get_transcript name=McpUpstreamError status=500 at=src\/lib\/ai\/mcp\.js:\d+/,
     );
+    expect(call[0]).not.toContain("MCP server returned");
     const logged = JSON.stringify(log.error.mock.calls) + JSON.stringify(log.warn.mock.calls);
     for (const fragment of ["Speaker 1", "quarterly", "confidential", "responseBody"]) {
       expect(logged).not.toContain(fragment);
     }
   });
 
-  it("logs a configuration read failure as server, code and message only", async () => {
+  it("logs a configuration read failure as server, class and code only", async () => {
     const log = { warn: vi.fn(), error: vi.fn() };
     const failing = {
       readDoc: vi.fn(async () => {
@@ -100,9 +101,11 @@ describe("callMcpTool", () => {
     };
     const out = await callMcpTool({ store: failing, serverId: "plaud", tool: "t", env: {}, log });
     expect(out).toMatchObject({ ok: false, httpStatus: 500 });
-    expect(log.error.mock.calls[0]).toEqual([
-      "[mcp] configuration read failed: server=plaud code=429 Request rate is large",
-    ]);
+    expect(log.error.mock.calls[0]).toHaveLength(1);
+    expect(log.error.mock.calls[0][0]).toMatch(
+      /^\[mcp\] configuration read failed: server=plaud name=Error code=429\b/,
+    );
+    expect(log.error.mock.calls[0][0]).not.toMatch(/Request rate|stored-oauth/);
   });
 
   it("reports a rejected credential as UNAUTHENTICATED without leaking it", async () => {

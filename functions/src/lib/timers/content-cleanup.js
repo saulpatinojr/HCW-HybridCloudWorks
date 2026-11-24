@@ -36,6 +36,7 @@
 import { getDocDateValue } from "../cms/content-dedup.js";
 import { createDashboardStatsMaintainer } from "../triggers/dashboard-stats.js";
 import { writeSystemAudit } from "./workflow-records.js";
+import { errorFacts } from "../http/error-response.js";
 
 export function getRejectionReferenceDate(data) {
   return (
@@ -110,7 +111,7 @@ async function deleteVersions(store, doc, log) {
     }
   } catch (err) {
     log.warn?.(
-      `[cleanupSoftDeletedContent] versions cleanup failed for ${doc.id}: ${err?.message || err}`,
+      `[cleanupSoftDeletedContent] versions cleanup failed for ${doc.id}: ${errorFacts(err)}`,
     );
   }
   return deleted;
@@ -127,7 +128,7 @@ async function purgeDocument({ store, log, countersAfterDelete }, doc) {
     await countersAfterDelete(doc.id);
   } catch (err) {
     log.warn?.(
-      `[cleanupSoftDeletedContent] counters not updated for ${doc.id}: ${err?.message || err}`,
+      `[cleanupSoftDeletedContent] counters not updated for ${doc.id}: ${errorFacts(err)}`,
     );
   }
   const versions = await deleteVersions(store, doc, log);

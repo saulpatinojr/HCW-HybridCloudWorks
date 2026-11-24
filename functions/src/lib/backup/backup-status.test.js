@@ -198,7 +198,7 @@ describe('createBackupStatusReader', () => {
     const log = quiet();
     const r2 = createBackupStatusReader({ blobs: failing, now: () => NOW, log });
     await expect(r2.read()).rejects.toThrow(/authenticate/);
-    expect(log.warn).toHaveBeenCalledWith('[backupStatus] read failed: 403');
+    expect(log.warn).toHaveBeenCalledWith('[backupStatus] read failed: HTTP_403');
     expect(JSON.stringify(log.warn.mock.calls)).not.toMatch(/blob\.core|stsite/);
     await r2.read();
     expect(failing.readJson.mock.calls.length).toBeGreaterThan(1);

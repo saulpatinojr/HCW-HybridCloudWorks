@@ -34,6 +34,7 @@ import { readJsonBodyWithin } from "../http/bounded-body.js";
 import {
   authoredMessage,
   errorCode,
+  errorFacts,
   errorResponse,
   isAuthoredError,
 } from "../http/error-response.js";
@@ -231,7 +232,7 @@ async function writeAudit(deps, container, row) {
       ...row,
     });
   } catch (error) {
-    deps.log.error?.(`[drafts] ${container} row ${row.action} failed`, error);
+    deps.log.error?.(`[drafts] ${container} row ${row.action} failed`, errorFacts(error));
   }
 }
 

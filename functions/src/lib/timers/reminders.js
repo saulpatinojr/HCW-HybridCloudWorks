@@ -48,6 +48,7 @@ import {
   mergeStamps,
   readStoredReminders,
 } from '../reminders/settings.js';
+import { errorFacts } from '../http/error-response.js';
 
 export const REMINDER_SOURCE_PREFIX = 'reminder:';
 export const STAMP_WRITE_ATTEMPTS = 3;
@@ -91,7 +92,7 @@ function readValue(doc, log) {
     return readStoredReminders(doc);
   } catch (error) {
     if (!(error instanceof RemindersValidationError)) throw error;
-    log.warn?.(`[sendReminders] stored reminders do not validate; nothing said: ${error.message}`);
+    log.warn?.(`[sendReminders] stored reminders do not validate; nothing said: ${errorFacts(error)}`);
     return null;
   }
 }
@@ -111,7 +112,7 @@ async function sayReminder({ notifier, log }, reminder, index, stage, today) {
       source: `${REMINDER_SOURCE_PREFIX}${reminder.id}`,
     });
   } catch (error) {
-    log.warn?.(`[sendReminders] reminders[${index}] ${stage}: notifier threw: ${error?.message || error}`);
+    log.warn?.(`[sendReminders] reminders[${index}] ${stage}: notifier threw: ${errorFacts(error)}`);
     result = { sent: false, reason: 'exception' };
   }
   if (!result?.sent) {

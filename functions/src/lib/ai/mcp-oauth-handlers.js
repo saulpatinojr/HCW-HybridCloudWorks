@@ -34,7 +34,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { json } from '../http/admin-handler.js';
-import { authoredMessage, errorCode } from '../http/error-response.js';
+import { authoredMessage, errorCode, errorFacts } from '../http/error-response.js';
 import { syncMcpServerTools } from './mcp.js';
 import { usesOAuthConnect, validateMcpUrl } from './mcp-policy.js';
 import {
@@ -90,7 +90,7 @@ async function auditConnection(ctx, context, { action, serverId, user, details }
       details: { collection: MCP_CONTAINER, documentId: serverId, ...details },
     });
   } catch (error) {
-    context.warn?.(`${action} saved but the audit row failed: ${error?.message || error}`);
+    context.warn?.(`${action} saved but the audit row failed: ${errorFacts(error)}`);
   }
 }
 
@@ -102,7 +102,7 @@ async function loadRouteServer(ctx, request, context, label) {
   try {
     server = await ctx.store.readDoc(MCP_CONTAINER, serverId, serverId);
   } catch (error) {
-    context.error?.(`[${label}] configuration read failed:`, error?.message || error);
+    context.error?.(`[${label}] configuration read failed:`, errorFacts(error));
     return { response: fail(500, 'Failed to read MCP server configuration') };
   }
   if (!server) return { response: fail(404, 'MCP server not found') };
@@ -153,7 +153,7 @@ async function findPending(ctx, context, { state, userId }) {
       [{ name: '@stateHash', value: stateHash }]
     );
   } catch (error) {
-    context.error?.('[completeMcpOAuth] pending lookup failed:', error?.message || error);
+    context.error?.('[completeMcpOAuth] pending lookup failed:', errorFacts(error));
     return { response: fail(500, 'Failed to read MCP server configuration') };
   }
   const server = (rows || []).find((doc) => doc?.oauthPending?.stateHash === stateHash);
@@ -221,7 +221,7 @@ async function completeMcpOAuth(ctx, request, context) {
     if (isPreconditionFailure(error)) {
       return fail(409, 'This sign-in has already been used. Press Connect on the server card to start again.', 'STATE_USED');
     }
-    context.error?.('[completeMcpOAuth] could not spend the state:', error?.message || error);
+    context.error?.('[completeMcpOAuth] could not spend the state:', errorFacts(error));
     return fail(500, 'Failed to update MCP server configuration');
   }
 
@@ -287,7 +287,7 @@ async function completeMcpOAuth(ctx, request, context) {
         'SERVER_CHANGED'
       );
     }
-    context.error?.('[completeMcpOAuth] could not store the connection:', error?.message || error);
+    context.error?.('[completeMcpOAuth] could not store the connection:', errorFacts(error));
     return fail(500, `${name} signed in, but the connection could not be saved. Press Connect again.`);
   }
   await auditConnection(ctx, context, {
@@ -352,7 +352,7 @@ async function disconnectMcpOAuth(ctx, request, context) {
       lastError: null,
     });
   } catch (error) {
-    context.error?.('[disconnectMcpOAuth] failed:', error?.message || error);
+    context.error?.('[disconnectMcpOAuth] failed:', errorFacts(error));
     return fail(500, 'Failed to update MCP server configuration');
   }
   await auditConnection(ctx, context, {

@@ -25,7 +25,7 @@
 import { ADMIN_CONTENT_SNAPSHOT_FIELDS } from "./cms-content.js";
 import { REVIEW_DECISION_STATUSES } from "./cms/content-status.js";
 import { resolveIdeaOrigin, resolveKind } from "./cms/taxonomy.js";
-import { errorResponse } from "./http/error-response.js";
+import { errorFacts, errorResponse } from "./http/error-response.js";
 
 const json = (status, body) => ({
   status,
@@ -566,7 +566,7 @@ async function scanAndSeedStats({ store, reads, now }, context) {
   store
     .upsertDoc("system", seed)
     .catch((err) =>
-      context.warn?.("[dashboard-stats] seed write failed:", err?.message),
+      context.warn?.("[dashboard-stats] seed write failed:", errorFacts(err)),
     );
   return scan.stats;
 }

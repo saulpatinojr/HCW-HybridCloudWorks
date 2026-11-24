@@ -94,7 +94,7 @@ describe('createKeyVerdictReporter', () => {
     });
     await expect(report('PUBLER_API_KEY', { ok: false, status: 401 })).resolves.toBeUndefined();
     expect(log.warn).toHaveBeenCalledTimes(1);
-    expect(log.warn.mock.calls[0][0]).toMatch(/^\[publer\] could not record a key verdict: Cosmos/);
+    expect(log.warn.mock.calls[0][0]).toMatch(/^\[publer\] could not record a key verdict: name=Error\b/);
   });
 
   it('retries a success whose write failed, and dedupes only once one has landed', async () => {
@@ -169,7 +169,7 @@ describe('recordKeyVerdict — the process-wide writer', () => {
         recordKeyVerdict('PUBLER_API_KEY', { ok: false, status: 403 })
       ).resolves.toBeUndefined();
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toMatch(/could not record a key verdict: 503/);
+      expect(warn.mock.calls[0][0]).toMatch(/could not record a key verdict: name=Error\b/);
     } finally {
       warn.mockRestore();
     }

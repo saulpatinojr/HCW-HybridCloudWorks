@@ -128,7 +128,7 @@ A talk proposal sent to an organizer's call for speakers holds the requester's n
 3. Press **Delete** on each line and confirm. Each one shows a "Proposal deleted" note and its line disappears.
 4. Press **Find proposals** again; "No proposals are stored for that address." confirms the erasure.
 
-The full steps, the organizer's own PowerShell route, and what is written to the audit log (`developer_cfs_submission_erased`, with no address and no proposal text) are in the [developer API runbook](developer-api.md#delete-a-speakers-proposals-an-erasure-request). For an **access** request (section 3) the card lists where the address has proposals but not their text; the text is read from the organizer's own list, or from the container by a database administrator.
+The full steps, the organizer's own PowerShell route, and what is written to the audit log (`developer_cfs_proposal_search` for each search, with the number found and never the address searched for, and `developer_cfs_submission_erased` for each delete, with no address and no proposal text) are in the [developer API runbook](developer-api.md#delete-a-speakers-proposals-an-erasure-request). For an **access** request (section 3) the card lists where the address has proposals but not their text; the text is read from the organizer's own list, or from the container by a database administrator.
 
 ### Step 4: Immutable backup lifecycle disclosure
 Under GDPR Article 17(3)(b) and EDPB guidelines, data in immutable disaster-recovery backups cannot and should not be modified in place.

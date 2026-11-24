@@ -15,6 +15,7 @@
 import { PROVIDERS } from './router.js';
 import { readModelCatalog, setModelHidden } from './model-catalog.js';
 import { json, validBody } from '../http/admin-handler.js';
+import { errorFacts } from '../http/error-response.js';
 
 /** The route's model segment as the catalogue keys it: `{ model }` or `{ error }`. */
 export function decodeModelParam(raw) {
@@ -37,7 +38,7 @@ async function getModelCatalog(ctx, request, context) {
     const catalog = await readModelCatalog({ store: ctx.store, now: ctx.now });
     return json(200, { success: true, catalog });
   } catch (error) {
-    context.error('getModelCatalog failed:', error);
+    context.error('getModelCatalog failed:', errorFacts(error));
     return json(500, { error: 'Failed to read the model catalogue' });
   }
 }
@@ -77,7 +78,7 @@ async function patchModelCatalogModel(ctx, request, context) {
     ctx.aiConfigChanged();
     return json(200, { success: true, provider, model });
   } catch (error) {
-    context.error('patchModelCatalogModel failed:', error);
+    context.error('patchModelCatalogModel failed:', errorFacts(error));
     return json(500, { error: 'Failed to update the model catalogue' });
   }
 }
@@ -91,7 +92,7 @@ async function refreshModelCatalogNow(ctx, request, context) {
     ctx.aiConfigChanged();
     return json(200, { success: true, summary });
   } catch (error) {
-    context.error('refreshModelCatalog failed:', error);
+    context.error('refreshModelCatalog failed:', errorFacts(error));
     return json(500, { error: 'Failed to refresh the model catalogue' });
   }
 }

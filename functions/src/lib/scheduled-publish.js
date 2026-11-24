@@ -36,7 +36,7 @@
  */
 
 import { digestDateOf, mergeDigest } from './timers/workflow-records.js';
-import { recordedFailure } from './http/error-response.js';
+import { recordedFailure, errorFacts } from './http/error-response.js';
 
 const DEFAULT_BATCH = 25;
 
@@ -179,7 +179,7 @@ export function createScheduledPublisher({ store, publish, now = () => new Date(
           },
         });
       } catch (recordError) {
-        context.error('[publishScheduledContent] could not record the run on the digest:', recordError);
+        context.error('[publishScheduledContent] could not record the run on the digest:', errorFacts(recordError));
       }
     },
 
@@ -268,7 +268,7 @@ export function createScheduledPublisher({ store, publish, now = () => new Date(
           buildPublishFailureAlert({ existing, failures, nowIso })
         );
       } catch (error) {
-        context.error('[publishScheduledContent] could not record failure alert:', error);
+        context.error('[publishScheduledContent] could not record failure alert:', errorFacts(error));
       }
     },
   };

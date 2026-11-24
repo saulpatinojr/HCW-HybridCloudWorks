@@ -10,7 +10,7 @@
  * certificate failure fails the scrape, it is never bypassed.
  */
 import { load as loadHtml } from 'cheerio';
-import { AuthoredError, authoredMessage, errorCode } from '../http/error-response.js';
+import { AuthoredError, authoredMessage, errorCode, errorFacts } from '../http/error-response.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 import TurndownService from 'turndown';
@@ -155,7 +155,7 @@ async function tryReaderFallback(url, startedAt, { env, fetchImpl, log, signal }
       scrapeFailureReason: null,
     };
   } catch (error) {
-    log.warn?.(`[scraper] Reader fallback failed: ${error.message}`);
+    log.warn?.(`[scraper] Reader fallback failed: ${errorFacts(error)}`);
     return null;
   }
 }
@@ -200,7 +200,7 @@ async function tryHeadlessFallback(url, startedAt, { env, fetchImpl, log, signal
       scrapeFailureReason: null,
     };
   } catch (error) {
-    log.warn?.(`[scraper] Headless fallback failed: ${error.message}`);
+    log.warn?.(`[scraper] Headless fallback failed: ${errorFacts(error)}`);
     return null;
   }
 }
@@ -253,7 +253,7 @@ export async function scrapeArticle(
       scrapeFailureReason: null,
     };
   } catch (error) {
-    log.warn?.(`[scraper] Direct scrape failed: ${error.message}`);
+    log.warn?.(`[scraper] Direct scrape failed: ${errorFacts(error)}`);
     // A URL the guard refused is not retried through a fallback: the reader
     // and headless services would only fetch the same forbidden target from
     // their side, and the answer here is "no", not "try harder".

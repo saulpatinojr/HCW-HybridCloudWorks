@@ -98,7 +98,8 @@ describe('GET public/newsletter/signup-config', () => {
     expect(res.status).toBe(200);
     expect(body).toEqual({ placement: 'both', heading: DEFAULT_SIGNUP_HEADING, blurb: DEFAULT_SIGNUP_BLURB });
     expect(res.headers['Cache-Control']).toBe('public, max-age=300');
-    expect(context.warn).toHaveBeenCalledWith(expect.stringContaining('Cosmos unavailable'));
+    expect(context.warn).toHaveBeenCalledWith(expect.stringMatching(/settings read failed.*: name=Error\b/));
+    expect(context.warn.mock.calls.flat().join(' ')).not.toContain('Cosmos unavailable');
   });
 
   it('answers the defaults when nothing has been saved yet', async () => {

@@ -12,7 +12,7 @@ import { recordRun } from '../rss/source-run.js';
 import { randomUUID } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { buildRssContentDoc, truncateText } from '../rss/feeds.js';
-import { errorCode } from '../http/error-response.js';
+import { AuthoredError, errorCode, storedFailure } from '../http/error-response.js';
 
 export const FIRECRAWL_SCRAPE_URL = 'https://api.firecrawl.dev/v1/scrape';
 export const MAX_ARTICLES_PER_SOURCE = 20;
@@ -89,6 +89,24 @@ export function resolveArticleUrl(url, listingUrl) {
   }
 }
 
+/**
+ * The error for a scrape the provider refused. The status, or a fixed code
+ * for a 200 that says it failed, travels as a field: the sentence names the
+ * address and may quote the provider, so no log line or stored result reads
+ * it (#1794).
+ *
+ * @param {{ ok: boolean, status: number }} response - the provider's answer
+ * @param {{ error?: string }} result - its parsed body
+ * @param {string} listingUrl - the page that was asked for
+ * @returns {Error}
+ */
+function scrapeRefusal(response, result, listingUrl) {
+  return Object.assign(
+    new Error(`Firecrawl scrape failed for ${listingUrl}: ${result.error || `HTTP ${response.status}`}`),
+    response.ok ? { code: 'SCRAPE_REFUSED' } : { status: response.status }
+  );
+}
+
 /** Articles on a listing page via Firecrawl structured extraction. */
 export async function scrapeListingPage(
   { apiKey, fetch: fetchImpl = globalThis.fetch },
@@ -110,13 +128,10 @@ export async function scrapeListingPage(
     result = await response.json();
   } catch (error) {
     if (signal?.aborted) throw signal.reason || error;
-    throw new Error('The blog listing response could not be read.');
+    // A sentence written here, so the job's result may keep it as it is.
+    throw new AuthoredError('The blog listing response could not be read.', { code: 'UNREADABLE_BODY' });
   }
-  if (!response.ok || result.success === false) {
-    throw new Error(
-      `Firecrawl scrape failed for ${listingUrl}: ${result.error || `HTTP ${response.status}`}`
-    );
-  }
+  if (!response.ok || result.success === false) throw scrapeRefusal(response, result, listingUrl);
   const articles = result.data?.extract?.articles || result.extract?.articles || [];
   return articles.map((a) => ({ ...a, url: resolveArticleUrl(a.url, listingUrl) }));
 }
@@ -217,7 +232,13 @@ export function createBlogListingsScrape({
         if (signal?.aborted) throw signal.reason || err;
         await recordRun(store, source, 'failed', { fetchedAt: now().toISOString() });
         results.errors += 1;
-        results.failures.push({ source: source.name, error: err?.message || String(err) });
+        // Stored as the `sync-blog-source` job's result, which an admin can
+        // read: a sentence written here with the error's code, never the
+        // error's own text (#945, #1794).
+        results.failures.push({
+          source: source.name,
+          error: storedFailure(err, 'The listing could not be read.'),
+        });
         // The provider and the error's code: no editor-typed name or raw error text (#1642).
         log.error?.(`[blogScraper] ${source.provider} listing failed: ${errorCode(err)}`);
       }
@@ -225,4 +246,17 @@ export function createBlogListingsScrape({
     return results;
   }
   return { run, ingestArticle };
+}
+
+/**
+ * A run's result as the timer prints it: the counts, without `failures`.
+ * Each failure names its source, and a source's name is typed by an editor,
+ * so the list is kept for the stored job result and left out of the log
+ * line (#1635, #1794).
+ *
+ * @param {object} results - what `run()` returned
+ * @returns {object}
+ */
+export function listingsLogSummary(results) {
+  return { ...results, failures: undefined };
 }

@@ -34,6 +34,7 @@
 import { AI_TASKS, TASK_NAMES, isMediaTask } from '../ai/tasks.js';
 import { testTaskCandidate } from '../ai/proxy.js';
 import { json } from '../http/admin-handler.js';
+import { errorFacts } from '../http/error-response.js';
 
 /** GET /api/cms/ai-routing/effective — every task's chain, rejected candidates and flags. */
 async function getAiRoutingEffective(ctx, request, context) {
@@ -46,7 +47,7 @@ async function getAiRoutingEffective(ctx, request, context) {
     const effective = await ctx.effectiveSelection();
     return json(200, { success: true, ...effective });
   } catch (error) {
-    context.error('getAiRoutingEffective failed:', error);
+    context.error('getAiRoutingEffective failed:', errorFacts(error));
     return json(500, { error: 'Failed to resolve the AI routing' });
   }
 }
@@ -144,7 +145,7 @@ async function testAiTask(ctx, request, context) {
       ...(answeredBy ? {} : { error: 'No candidate of the chain answered' }),
     });
   } catch (error) {
-    context.error('testAiTask failed:', error);
+    context.error('testAiTask failed:', errorFacts(error));
     return json(500, { ok: false, error: 'Failed to test the task' });
   }
 }

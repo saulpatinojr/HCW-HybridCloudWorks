@@ -91,6 +91,6 @@ describe('listAllHandler', () => {
     const res = await listAllHandler({ guard, store }, spec)({}, { error });
     expect(res.status).toBe(500);
     expect(JSON.parse(res.body)).toEqual({ error: 'Failed to list things' });
-    expect(error).toHaveBeenCalledWith('listThings failed:', expect.any(Error));
+    expect(error).toHaveBeenCalledWith('listThings failed:', expect.stringMatching(/^name=Error\b/));
   });
 });

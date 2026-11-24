@@ -16,6 +16,7 @@ import {
   isCertImagePath,
   validateCertification,
 } from './certification-rules.js';
+import { errorFacts } from '../http/error-response.js';
 
 /** POST /api/cms/certifications — create; name is the page's one required field. */
 async function createCertification(ctx, request, context) {
@@ -45,7 +46,7 @@ async function createCertification(ctx, request, context) {
     });
     return json(200, { success: true, id: doc.id, item: doc });
   } catch (error) {
-    context.error('createCertification failed:', error);
+    context.error('createCertification failed:', errorFacts(error));
     return json(500, { error: 'Failed to create certification' });
   }
 }
@@ -92,7 +93,7 @@ async function patchCertification(ctx, request, context) {
     });
     return json(200, { success: true, item: updated });
   } catch (error) {
-    context.error('patchCertification failed:', error);
+    context.error('patchCertification failed:', errorFacts(error));
     return json(500, { error: 'Failed to update certification' });
   }
 }
@@ -142,7 +143,7 @@ async function deleteCertificationImage(ctx, request, context) {
     }
     return res;
   } catch (error) {
-    context.error('deleteCertificationImage failed:', error);
+    context.error('deleteCertificationImage failed:', errorFacts(error));
     return json(500, { error: 'Failed to delete certification image' });
   }
 }
@@ -168,7 +169,7 @@ async function deleteCertification(ctx, request, context) {
     });
     return json(200, { success: true });
   } catch (error) {
-    context.error('deleteCertification failed:', error);
+    context.error('deleteCertification failed:', errorFacts(error));
     return json(500, { error: 'Failed to delete certification' });
   }
 }

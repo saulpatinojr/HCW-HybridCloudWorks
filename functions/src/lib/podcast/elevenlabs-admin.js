@@ -78,7 +78,7 @@
  * `createElevenLabsHandlers` only binds them. Small functions, each doing one
  * step, rather than one closure holding both routes.
  */
-import { authoredMessage, errorCode } from '../http/error-response.js';
+import { authoredMessage, errorCode, errorFacts } from '../http/error-response.js';
 import { readSetting, synthesizeDialogue } from '../listen-and-learn/speech/index.js';
 import {
   API_KEYS_PAGE,
@@ -406,7 +406,7 @@ async function getStatus(deps, request, context) {
       sample: SAMPLE_INFO,
     });
   } catch (error) {
-    context.error('elevenLabsStatus failed:', error);
+    context.error('elevenLabsStatus failed:', errorFacts(error));
     return json(500, { error: 'Failed to read the ElevenLabs status' });
   }
 }
@@ -558,7 +558,7 @@ async function respondWithReport(deps, run, rendered, context) {
     context.log?.(`elevenLabsSample: rendered, ${report.charactersBilled} characters billed`);
     return json(200, report);
   } catch (error) {
-    context.error('elevenLabsSample failed after rendering:', error);
+    context.error('elevenLabsSample failed after rendering:', errorFacts(error));
     return json(500, { error: 'The sample was rendered but the result could not be reported' });
   }
 }
@@ -654,7 +654,7 @@ async function listVoices(deps, request, context) {
       voicesError: null,
     });
   } catch (error) {
-    context.error('elevenLabsVoices failed:', error?.message || error);
+    context.error('elevenLabsVoices failed:', errorFacts(error));
     return json(500, { error: 'Failed to list the ElevenLabs voices' });
   }
 }
@@ -680,7 +680,7 @@ const PREVIEW_REFUSALS = new Set([
 /** A failed preview as its answer: its own sentence by code, or a bare 500. */
 function previewRefusal(error, context) {
   if (!PREVIEW_REFUSALS.has(error?.code)) {
-    context.error('elevenLabsPreview failed:', error?.message || error);
+    context.error('elevenLabsPreview failed:', errorFacts(error));
     return json(500, { error: 'Failed to fetch the voice preview' });
   }
   context.log?.(`elevenLabsPreview: refused (${error.code})`);

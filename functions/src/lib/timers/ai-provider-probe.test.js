@@ -120,7 +120,7 @@ describe('probeAiProviders', () => {
       'openai',
       'anthropic',
     ]);
-    expect(log.error).toHaveBeenCalledWith('probeAiProviders(nvidia) failed:', expect.any(Error));
+    expect(log.error).toHaveBeenCalledWith('probeAiProviders(nvidia) failed:', expect.stringMatching(/^name=\w+/));
     expect(summary).toEqual({
       probed: 4,
       connected: 3,
@@ -201,10 +201,10 @@ describe('probeAiProviders — the model catalogue step (ADR 0034 slice 2, #857)
     const summary = await probeWith({ store, ai, clock, refresh, log }).run();
 
     expect(store.patchDoc).toHaveBeenCalledTimes(4);
-    expect(summary).toMatchObject({ probed: 4, connected: 4, catalog: { error: 'cosmos down' } });
+    expect(summary).toMatchObject({ probed: 4, connected: 4, catalog: { error: 'Error' } });
     expect(log.error).toHaveBeenCalledWith(
       'probeAiProviders catalogue refresh failed:',
-      expect.any(Error)
+      expect.stringMatching(/^name=Error\b/)
     );
   });
 

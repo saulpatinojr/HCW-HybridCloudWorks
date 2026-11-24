@@ -35,7 +35,7 @@ import { ENTRA_REQUIRED_TOKEN_VERSION } from './auth/verify-token.js';
 import { ENTRA_LAB_AGENT_APP_ROLE } from './auth/require-agent.js';
 import { actorName } from './auth/actor-name.js';
 import { json } from './http/admin-handler.js';
-import { errorResponse } from './http/error-response.js';
+import { errorResponse, errorFacts } from './http/error-response.js';
 import { createSpeakerEventHandlers } from './admin-identity/speaker-events.js';
 import {
   validateClientAuditAction,
@@ -201,7 +201,7 @@ async function getCurrentAdminStatus(ctx, request, context) {
       active: true,
     });
   } catch (error) {
-    context.error('getCurrentAdminStatus failed:', error);
+    context.error('getCurrentAdminStatus failed:', errorFacts(error));
     return json(500, { error: 'Failed to get admin status', isAdmin: false });
   }
 }

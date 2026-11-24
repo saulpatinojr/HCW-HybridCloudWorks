@@ -25,7 +25,7 @@
  * Guarded like the publish route it is a narrow form of: the list needs
  * `editor`, the write needs `publisher`.
  */
-import { errorResponse } from '../http/error-response.js';
+import { errorResponse, errorFacts } from '../http/error-response.js';
 import { findInlineImageUrls, resolveBodyFields } from './inline-images.js';
 import { publicUrlOf, REHOST_IMAGES_REASON } from './publish.js';
 
@@ -166,7 +166,7 @@ export function createRehostImageHandlers({ guard, store, processPublishContent,
           scanned: rows.length,
         });
       } catch (error) {
-        context.error('listRehostCandidates failed:', error);
+        context.error('listRehostCandidates failed:', errorFacts(error));
         return json(500, { error: 'Failed to list re-host candidates' });
       }
     },

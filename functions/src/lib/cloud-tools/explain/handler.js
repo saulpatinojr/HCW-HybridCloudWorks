@@ -56,6 +56,7 @@ import { selectExplainKind } from './kinds/index.js';
 import { stripUrls } from './prompt.js';
 import { takeClientQuota, takeDailyQuota } from './quota.js';
 import { EXPLAIN_MAX_BODY_BYTES, explainCacheId } from './validate.js';
+import { errorFacts } from '../../http/error-response.js';
 
 export const EXPLAIN_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
 /** Seconds a cache hit may be served from an HTTP cache: the text is a week old at most anyway. */
@@ -165,7 +166,7 @@ async function checkProvider({ ai }, state) {
     return null;
   } catch (error) {
     if (!isUnavailable(error)) throw error;
-    state.context.warn?.(`explain unavailable: ${error.message}`);
+    state.context.warn?.(`explain unavailable: ${errorFacts(error)}`);
     return unavailable();
   }
 }
@@ -206,7 +207,7 @@ async function generate({ ai, store }, state) {
     });
   } catch (error) {
     if (!isUnavailable(error)) throw error;
-    state.context.warn?.(`explain unavailable: ${error.message}`);
+    state.context.warn?.(`explain unavailable: ${errorFacts(error)}`);
     return unavailable();
   }
   const text = stripUrls(generated);
@@ -261,7 +262,7 @@ export function createExplainHandlers({ identity, store, ai, now = Date.now }) {
         // `generate` always replies; reaching here is a programming error.
         throw new Error('explain pipeline ended without a reply');
       } catch (error) {
-        context.error?.('publicCloudToolsExplain failed:', error);
+        context.error?.('publicCloudToolsExplain failed:', errorFacts(error));
         return toResponse(refusal(500, EXPLAIN_CODES.failed));
       }
     },

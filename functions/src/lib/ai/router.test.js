@@ -1551,7 +1551,8 @@ describe('a time budget for synchronous callers (router header)', () => {
     expect(nvidia.endedAt - nvidia.startedAt).toBe(30_000);
     expect(run.endedAt - run.startedAt).toBeLessThanOrEqual(60_000);
     expect(log.warn).toHaveBeenCalledWith(
-      expect.stringMatching(/nvidia could not serve this call \(timeout after 30000 ms\)/)
+      // The timeout is named by its status (408), never by the error's message (#1794).
+      expect.stringMatching(/nvidia could not serve this call \(name=Error status=408\b/)
     );
   });
 
