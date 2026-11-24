@@ -182,7 +182,7 @@ describe('createInlineImageRehoster', () => {
 
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(log.warn.mock.calls[0][0]).toBe(
-      '[inlineImages] could not re-host an image from cdn.example.org: Content-Type video/mp4 is not an image'
+      '[inlineImages] could not re-host an image from cdn.example.org: not-an-image'
     );
   });
 
