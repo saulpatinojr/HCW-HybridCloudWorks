@@ -157,6 +157,10 @@ describe('lock 1: nothing outside the Doc Vault names its container or its code'
     'functions/src/functions/index.js',
     // Backed up with the other authored work (ADR 0028).
     'functions/src/lib/backup/export-classification.js',
+    // The yearly archive's list (ADR 0046) names the container to say it is
+    // kept, without its id salt. It imports none of the vault's code and
+    // reads no document; the archive is a private blob container nothing serves.
+    'functions/src/lib/backup/archive-classification.js',
     // The container list and its generated form (Terraform reads the JSON).
     'scripts/lib/migration-manifest.mjs',
     'scripts/generate-cosmos-container-spec.mjs',

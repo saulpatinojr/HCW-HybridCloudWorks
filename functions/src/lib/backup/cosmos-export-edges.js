@@ -134,6 +134,21 @@ export function createExportBlobStore({
       return JSON.parse(blob.body.toString('utf8'));
     },
 
+    /**
+     * A blob's bytes as a stream, or null when it is not there. For the
+     * archive dry run (archive-report.js), which reads a backup file a piece
+     * at a time and so never holds a whole container in memory.
+     */
+    async readGzipStream(name) {
+      try {
+        const blob = await storage.downloadBlobStream(targetContainer(name), name);
+        return blob.stream;
+      } catch (error) {
+        if (error?.statusCode === 404 || error?.code === 'BlobNotFound') return null;
+        throw error;
+      }
+    },
+
     async listNames(prefix) {
       const blobs = await storage.listBlobs(targetContainer(prefix), prefix);
       return blobs.map((b) => b.name);

@@ -36,6 +36,7 @@ import "./change-feed.js";
 import "./cloud-tools-http.js";
 import "./cloud-tools-jobs.js";
 import "./cosmos-export.js";
+import "./content-archive-http.js";
 import "./jobs-http.js";
 import "./jobs-worker.js";
 import "./lab-agent-http.js";

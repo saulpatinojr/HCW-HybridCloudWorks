@@ -165,6 +165,10 @@ describe('nothing but the alerts module itself names the alerts', () => {
     // An admin-side grant through the same editor-gated route, never a
     // public path; the key acts as `koda (agent)` and every read is audited.
     `lib${sep}agent-content${sep}admin-access.js`,
+    // The yearly archive's list (ADR 0046) names the alerts' document id, to
+    // say it is kept. It names it and nothing more: it reads no document, and
+    // the archive it describes is a private blob container nothing serves.
+    `lib${sep}backup${sep}archive-classification.js`,
   ];
   const NAMES = /calendar[_-]?alerts?/i;
 

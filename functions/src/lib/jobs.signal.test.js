@@ -243,6 +243,7 @@ function passesSignalOn(worker) {
 const EXPECTED_TYPES = [
   'batch-inspect',
   'build-newsletter-issue',
+  'content-archive-dry-run',
   'cosmos-export-container',
   'fetch-rss-feeds',
   'forge-article',
@@ -267,6 +268,7 @@ const EXPECTED_TYPES = [
 /** Every module that registers them; lib/jobs.js registers noop itself. */
 const EXPECTED_MODULES = [
   'functions/cloud-tools-jobs.js',
+  'functions/content-archive-http.js',
   'functions/cosmos-export.js',
   'functions/forge-jobs.js',
   'functions/inspect-jobs.js',
