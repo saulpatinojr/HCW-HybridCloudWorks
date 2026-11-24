@@ -15,4 +15,4 @@ try {
         [Console]::Out.Write([Text.Encoding]::UTF8.GetString([System.Security.Cryptography.ProtectedData]::Unprotect($bytes, $null, $scope)))
     }
 }
-catch { exit 1 }
+catch { exit 3 }
