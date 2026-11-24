@@ -48,8 +48,8 @@ import io
 import json
 import os
 import pathlib
+import random
 import re
-import secrets
 import shutil
 import socket
 import stat
@@ -405,7 +405,9 @@ else:
 
 def random_text(length, alphabet=string.ascii_letters + string.digits):
     """Random characters from the alphabet, for fake tokens and ids."""
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+    # random, not secrets: made-up values for a fake server; `secrets` makes
+    # CodeQL read each one as a real secret (#1841).
+    return "".join(random.choice(alphabet) for _ in range(length))  # nosec B311 - test data, not security
 
 
 def container(cid, state, status, name, image):

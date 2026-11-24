@@ -443,15 +443,15 @@ Every check for the risky forms stays on: B602 (`shell=True`), B605
 The `# nosec B404` and `# nosec B603` comments in the table above are now
 redundant and harmless; they were left in place.
 
-The other six findings were fixed in code:
+The other six findings were handled in code:
 
 | Rule | File | Verdict | Resolution |
 | --- | --- | --- | --- |
 | B607 | `scripts/complexity/measure.py` (two calls) | Fixed | `git` is resolved once with `shutil.which` and called by its full path; a clear error if it is missing. |
 | B607 | `lab-host/ansible/roles/docker/files/hcw-docker-volume-carry.py` | Fixed | `cp` is called by its full path. |
 | B607 | `lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py` | Fixed | `sh` is called by its full path. |
-| B311 | `lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py` | Fixed | The test's made-up token uses `secrets.choice`. |
-| B311 | `lab-host/ansible/roles/portainer/tests/hcw-portainer-check.test.py` | Fixed | As above. |
+| B311 | `lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py` | Accepted | `random` makes the fake server's made-up keys and ids; nothing about it needs to be unpredictable. `# nosec B311` on the line, with the reason. A first fix used `secrets.choice`, and CodeQL then read every made-up value as a real secret and raised `py/clear-text-storage-sensitive-data` (high) where the test writes its temporary state file (alert 1448 on #1841), so it was put back. |
+| B311 | `lab-host/ansible/roles/portainer/tests/hcw-portainer-check.test.py` | Accepted | As above. |
 
 ## gitleaks
 

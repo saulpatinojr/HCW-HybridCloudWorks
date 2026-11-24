@@ -35,8 +35,8 @@ import importlib.util
 import json
 import os
 import pathlib
+import random
 import re
-import secrets
 import shutil
 import socket
 import stat
@@ -267,7 +267,10 @@ def go_time(moment):
 
 def random_text(length):
     """Random letters and digits, the alphabet of Coder's key ids and secrets."""
-    return "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(length))
+    # random, not secrets: these are made-up values for a fake server. Drawing
+    # them from `secrets` made CodeQL treat each one as a real secret and flag
+    # the test for writing it to its temporary state file (#1841).
+    return "".join(random.choice(string.ascii_letters + string.digits) for _ in range(length))  # nosec B311 - test data, not security
 
 
 KNOWN_SCOPES = {SCOPE_ALL, "template:read", SCOPE_WORKSPACE_READ, SCOPE_API_KEY_READ, SCOPE_USER_READ}
