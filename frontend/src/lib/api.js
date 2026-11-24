@@ -85,6 +85,14 @@ const FUNCTION_TIMEOUT_MS = {
   // the admin's patience. Edit, snooze and delete use the per-alert route
   // and the default.
   'cms/calendar-alerts': 10000,
+  // Speaking → Events to apply to (#1823). Opening the tab or pressing
+  // Refresh may make the server read the outside directory: up to seven
+  // requests of at most 8 s each, one after another
+  // (functions/src/lib/community-days/client.js), though one or two is the
+  // usual case. Above the default so a slow directory answers instead of
+  // timing out. Not retried: the server keeps its own copy and its own waits.
+  'cms/community-days/events': 60000,
+  'cms/community-days/refresh': 60000,
 };
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const SAFE_RETRY_FUNCTIONS = new Set([

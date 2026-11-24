@@ -18,6 +18,8 @@ describe('resolveTab', () => {
     ['snapshot', 'publishing'],
     ['speaker', 'settings'],
     ['events', 'upcoming'],
+    ['community-days', 'apply'],
+    ['cfp', 'apply'],
   ])('sends the moved id %s to %s', (from, to) => {
     expect(resolveTab(from)).toBe(to);
   });
@@ -41,6 +43,16 @@ describe('resolveTab', () => {
     for (const target of Object.values(MOVED_TABS)) expect(ids.has(target)).toBe(true);
     for (const moved of Object.keys(MOVED_TABS)) expect(ids.has(moved)).toBe(false);
     expect(TABS.at(-1).id).toBe('settings');
+  });
+
+  it('names the events-to-apply-to tab apart from Upcoming, which is the owner’s own sessions (#1823)', () => {
+    const apply = TABS.find((tab) => tab.id === 'apply');
+    expect(apply.label).toBe('Events to apply to');
+    expect(TABS.filter((tab) => /upcoming/i.test(tab.label)).map((tab) => tab.id)).toEqual([
+      'upcoming',
+    ]);
+    expect(resolveTab('apply')).toBe('apply');
+    expect(tabHref('apply')).toBe('/admin/speaking?tab=apply');
   });
 
   it('builds a link to a tab', () => {

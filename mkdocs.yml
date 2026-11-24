@@ -135,6 +135,7 @@ nav:
       - 0042 Developer API v1 (events and call for speakers): decisions/0042-developer-api.md
       - 0043 Muse reads Azure: decisions/0043-muse-azure-reader.md
       - 0044 Signed releases: decisions/0044-signed-releases.md
+      - 0045 Community Days events: decisions/0045-community-days-events.md
   - Runbooks:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md
@@ -167,6 +168,7 @@ nav:
       - AI Engine models and costs: runbooks/ai-engine-model-review.md
       - Cost page: runbooks/cost.md
       - Search Console page: runbooks/search-console.md
+      - Events to apply to (Community Days): runbooks/community-days-events.md
       - "PyYAML wheel for the lab host (retired)": runbooks/pyyaml-wheel.md
       - Required checks and the main ruleset: runbooks/required-checks.md
   - Standards:

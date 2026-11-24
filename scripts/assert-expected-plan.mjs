@@ -830,6 +830,22 @@ export const DECLARED = [
     after: "true",
     reason: "#1777: the owner armed the yearly clean-up of unaccepted proposals",
   },
+
+  // #1823 (ADR 0045): the Community Days developer key's app setting, a Key
+  // Vault reference like every other credential's. The plan shows it as one
+  // added key on the Function App and nothing else. It does not read the
+  // vault, so the plan and the apply are the same whether or not the owner
+  // has pasted COMMUNITY-DAYS-API-KEY yet. Delete this entry once the apply
+  // has run, and its test in assert-expected-plan.test.mjs with it.
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.COMMUNITY_DAYS_API_KEY",
+    before: undefined,
+    after:
+      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/COMMUNITY-DAYS-API-KEY)",
+    reason:
+      "#1823: Key Vault reference for COMMUNITY-DAYS-API-KEY, the Community Days developer key the Speaking hub reads open calls for speakers with",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

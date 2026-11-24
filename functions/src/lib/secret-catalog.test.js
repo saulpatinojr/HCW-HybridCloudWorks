@@ -34,6 +34,7 @@ import {
 } from './secret-catalog.js';
 import { CODER_BROKER_TOKEN_SETTING, VISITOR_SESSION_SWITCH } from './labs/visitor-session.js';
 import { TURNSTILE_SECRET_SETTING } from './labs/public-lock.js';
+import { API_KEY_SETTING as COMMUNITY_DAYS_KEY_SETTING } from './community-days/api.js';
 
 const INFRA = join(fileURLToPath(new URL('../../..', import.meta.url)), 'infra');
 
@@ -77,8 +78,11 @@ describe('secret catalogue ↔ Terraform', () => {
   it.each([
     [CODER_BROKER_TOKEN_SETTING, 'CODER-BROKER-TOKEN'],
     [TURNSTILE_SECRET_SETTING, 'TURNSTILE-SECRET-KEY'],
+    // #1823: the name comes from the Community Days client's own constant, so
+    // renaming the setting in the code without infra/ fails here.
+    [COMMUNITY_DAYS_KEY_SETTING, 'COMMUNITY-DAYS-API-KEY'],
   ])(
-    'declares %s, a credential the lab code reads by name, as a reference to %s, and the catalogue lists it (#1403)',
+    'declares %s, a credential the code reads by name, as a reference to %s, and the catalogue lists it (#1403, #1823)',
     (setting, secret) => {
       // The names come from the constants the code itself reads process.env
       // with: visitor-session.js for the broker token (readBrokerConfig) and

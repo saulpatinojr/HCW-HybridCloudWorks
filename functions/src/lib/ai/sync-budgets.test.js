@@ -25,6 +25,7 @@ import { CAPTION_AI_BUDGET_MS } from '../social-caption.js';
 import { FORGE_ASSIST_AI_BUDGET_MS, FORGE_ASSIST_HTTP_BUDGET_MS } from '../content/forge-studio.js';
 import { AFTER_MODEL_MARGIN_MS, MIN_ATTEMPT_MS } from './time-budget.js';
 import { BRAIN_HTTP_BUDGET_MS, BRAIN_AI_BUDGET_MS } from '../brain/assistant.js';
+import { ESTIMATE_AI_BUDGET_MS } from '../community-days/estimate.js';
 
 const API_JS = fileURLToPath(new URL('../../../../frontend/src/lib/api.js', import.meta.url));
 const REGISTRATIONS = fileURLToPath(new URL('../../functions/', import.meta.url));
@@ -104,6 +105,14 @@ const BUDGETED = [
     aiMs: CAPTION_AI_BUDGET_MS,
   },
   {
+    // cms/community-days/events/{eventId}/estimate (#1823): the id is in the
+    // name, so only the client's default can apply.
+    route: 'cmsCommunityDaysEstimate',
+    clientMs: CLIENT.fallback,
+    handlerMs: ESTIMATE_AI_BUDGET_MS,
+    aiMs: ESTIMATE_AI_BUDGET_MS,
+  },
+  {
     // Forge Studio's AI actions over the draft text (ADR 0033).
     route: 'cms/forge/assist',
     clientMs: CLIENT.byRoute['cms/forge/assist'],
@@ -124,6 +133,7 @@ const HTTP_ROUTES_THAT_REACH_A_MODEL = Object.freeze({
   'recording-content-http.js': 'budget: RECORDING_DRAFT_HTTP_BUDGET_MS',
   'newsletter-admin-http.js': 'budget: NEWSLETTER_AI_BUDGET_MS',
   'social-caption-http.js': 'budget: CAPTION_AI_BUDGET_MS',
+  'community-days-http.js': 'budget: ESTIMATE_AI_BUDGET_MS (the estimate route; the other four reach no model)',
   'forge-config-http.js':
     'budget: FORGE_ASSIST_HTTP_BUDGET_MS (cms/forge/assist; the two config RPCs reach no model)',
   'ai-proxy-http.js':

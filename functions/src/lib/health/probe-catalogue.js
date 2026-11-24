@@ -53,6 +53,8 @@ export const HEALTH_PROBES = Object.freeze({
   streamyard: probe("live", "editor"),
   plaud: probe("live", "editor"),
   youtube: probe("live", "editor"),
+  // #1823: the Community Days card's Test (connection-probe.js communityDays).
+  "community-days": probe("live", "editor"),
   // Enhanced
   elevenlabs: probe("live", "editor"),
   "lab-agents": probe("live", "viewer"),
