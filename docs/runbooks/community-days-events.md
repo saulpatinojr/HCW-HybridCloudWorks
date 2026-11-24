@@ -241,11 +241,11 @@ approved API access; steps 3 to 6 cannot.
    starts its reminder. Then tell a session the expiry day you noted in step
    3, so the reminder can use the real expiry in place of the 180-day rule.
 
-After step 5, one follow-up pull request removes `COMMUNITY_DAYS_API_KEY`
-from the list of references that are expected to be unset
+The owner reported the key pasted on 2026-11-24, and `COMMUNITY_DAYS_API_KEY`
+was then taken off the list of references that are expected to be unset
 ([`expected-unresolved.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/expected-unresolved.js)
-on `main`). A session does that; until it is done, the nightly check reports
-the key as "resolving but still listed", which is a reminder and not a fault.
+on `main`). From then on the nightly check reports it as a fault if it stops
+resolving, for example after the key is deleted from the vault.
 
 To check from PowerShell that the app setting is in place (step 1 applied),
 without reading the key:

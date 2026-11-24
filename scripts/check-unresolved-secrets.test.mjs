@@ -265,23 +265,18 @@ describe("evaluate", () => {
     expect(seeded.unexpected).toEqual([]);
   });
 
-  // The Community Days developer key (#1823): its reference is applied before
-  // Community Days has approved API access, so the owner cannot paste the key
-  // yet. Until then it is expected, once; when it resolves the list says it
-  // is stale, which is the prompt to delete the entry.
-  it("expects the unseeded Community Days key, once, and notices when it resolves", () => {
-    const unseeded = evaluate(
+  // The Community Days developer key (#1823) was expected to be unresolved
+  // until the owner pasted it (reported 2026-11-24). It is off the list now,
+  // so an unresolved one is a real finding again.
+  it("flags an unresolved Community Days key, which is seeded and must resolve", () => {
+    const got = evaluate(
       shapeA({
         COMMUNITY_DAYS_API_KEY: { status: "SecretNotFound" },
         APPSETTING_COMMUNITY_DAYS_API_KEY: { status: "SecretNotFound" },
       }),
     );
-    expect(unseeded.expected.map((s) => s.name)).toEqual(["COMMUNITY_DAYS_API_KEY"]);
-    expect(unseeded.unexpected).toEqual([]);
-
-    const seeded = evaluate(shapeA({ COMMUNITY_DAYS_API_KEY: { status: "Resolved" } }));
-    expect(seeded.staleAllowlist).toEqual(["COMMUNITY_DAYS_API_KEY"]);
-    expect(seeded.unexpected).toEqual([]);
+    expect(got.unexpected.map((s) => s.name)).toContain("COMMUNITY_DAYS_API_KEY");
+    expect(got.expected.map((s) => s.name)).not.toContain("COMMUNITY_DAYS_API_KEY");
   });
 
   // The status token beside it is seeded and must keep resolving: giving the
