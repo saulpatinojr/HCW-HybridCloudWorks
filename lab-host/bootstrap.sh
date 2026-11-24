@@ -72,8 +72,8 @@ PYTHON_VERSION=3.15.2
 # (scripts/lab-pins-upstream.mjs --bump host) moves both lines, and the same
 # release in cosign_version and cosign_checksum of ansible/group_vars/all.yml,
 # together. These comments name no version, so a bump cannot leave them behind.
-COSIGN_VERSION=3.1.4
-COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+COSIGN_VERSION=3.1.5
+COSIGN_SHA256=912502def4baf810eaf36b210a4f51e1da214f9f6d664e2a9a2154cfc67ee0d6
 # ansible-core is not pinned here. Its release, the SHA256 of its wheel and
 # the hash of every wheel it depends on are the ANSIBLE_CORE_VERSION,
 # ANSIBLE_CORE_SHA256 and ANSIBLE_CORE_DEPS lines of lab-image/versions.env,
