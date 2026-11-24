@@ -214,16 +214,17 @@ Left as they were, on purpose:
   runbook's "Accepted risks in Phase 1"; Phase 2's event records settle it.
 - **This ADR's status.** Whether it moves from Proposed to Accepted is the
   owner's decision.
-- **The credential register.** Neither site-issued key (Koda's `hcwk_`, the
-  organizers' `hcdk_`) has a row in
-  `functions/src/lib/credentials/register.js`, so neither gets a reminder at
-  180 days. They do not fit the register as it is: a row is one named
-  credential in a store the register knows, with one date, and the register
-  has no store for "issued by this site, hash in `admin_config`" and no live
-  source that reads a key record's own rotation date. Organizer keys are also
-  many, each with its own date. Whether to extend the register (a new store
-  and a source for Koda's key; a per-key reminder for organizers) is the
-  owner's decision on #1777.
+- **The credential register: decided, they stay out (owner, 2026-11-24, on
+  #1777).** Neither site-issued key (Koda's `hcwk_`, the organizers' `hcdk_`)
+  has a row in `functions/src/lib/credentials/register.js`, and neither will
+  get one. The register lists credentials the estate *holds* and must renew
+  before they run out; these are keys the site *hands out*. They do not fit
+  a row: a row is one named credential in a store the register knows, with
+  one date, and the register has no store for "issued by this site, hash in
+  `admin_config`". Organizer keys are also many, each with its own date. What
+  this leaves: no reminder at 180 days for either kind. A key is listed,
+  rotated and revoked where it is issued, on Admin → AI Engine → Developer
+  API (the runbook, `docs/runbooks/developer-api.md`, has the steps).
 
 ## Alternatives considered
 
