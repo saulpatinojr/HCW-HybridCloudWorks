@@ -39,9 +39,10 @@
  *     `code`, `status`, `statusCode`, `name`, ...): `err.body`, `err.details`.
  *   - An error handed to any function except the content-free describers
  *     (`errorCode`, `errorFacts`, `ownFrames`, `codeShaped`, imported from the
- *     door module; and the few local ones in LOCAL_DESCRIBERS, each held to
- *     never reading `.message` or `.stack`) and yes/no tests (`.includes`,
- *     `Boolean`, ...), so the text cannot be laundered through a helper.
+ *     door module; and the few local ones in LOCAL_DESCRIBERS, each held by
+ *     `describerProblems` to returning nothing of the error's text) and
+ *     yes/no tests (`.includes`, `Boolean`, ...), so the text cannot be
+ *     laundered through a helper.
  *   - A variable that holds any of the above (`const msg = err.message`),
  *     followed through aliases, destructuring and reassignment in the same
  *     function scope.
@@ -117,14 +118,20 @@ const PREDICATES = new Set([
 ]);
 /**
  * Functions in the tree that describe an error for a log line without its
- * text, each with what it returns. A call to one is content-free; the test
- * below fails if one of them ever reads `.message` or `.stack`.
+ * text, each with what it returns. A call to one is content-free, and
+ * `describerProblems` below holds each to that: the scan's own taint logic
+ * is run over what it returns, and one that reads the message to classify
+ * it may return only fixed values.
  */
 const LOCAL_DESCRIBERS = new Map([
   ['lib/addons/status.js::failureReason', "a sentence that module wrote, chosen by the error's code, class or status"],
   ['lib/labs/lab-starts.js::safeLogCode', 'a number from 100 to 599, else the word "error"'],
   ['lib/labs/visitor-session.js::errorKind', 'a three-digit status, a system code or a class name, else the word "error"'],
   ['lib/newsletter/admin-responses.js::errorMeta', "the error's class name and code, each held to the door's code shape"],
+  [
+    'lib/rss/feed-error-code.js::feedErrorCode',
+    "HTTP_ and three digits, TIMEOUT, REDIRECTS or PARSE, chosen by the feed library's message shape; else the door's errorCode",
+  ],
 ]);
 
 /** A variable named like an error is treated as one. */
@@ -395,12 +402,14 @@ function moduleTable(file, program) {
 }
 
 /**
- * Scan a tree of modules for error text in log lines.
+ * Parse a tree of modules and build the scan's tools over it: what error
+ * text an expression carries (`taint`), how it spreads through variables
+ * (`settle`), and which calls are log lines (`loggedArguments`).
  *
  * @param {Record<string, string>} modules - tree key → source
- * @returns {Array<{ key: string, file: string, line: number, what: string }>}
+ * @returns {object} the parsed modules and the tools
  */
-export function scanLogSources(modules) {
+function analyse(modules) {
   const parsed = Object.entries(modules).map(([file, source]) => {
     const program = parse(file, source);
     return { file, source, program, scopes: scopesOf(program), table: moduleTable(file, program) };
@@ -618,6 +627,17 @@ export function scanLogSources(modules) {
     }
   };
 
+  return { parsed, byFile, taint, settle, aliasesOf, loggedArguments, findWrappers, isSafeDescriber };
+}
+
+/**
+ * Scan a tree of modules for error text in log lines.
+ *
+ * @param {Record<string, string>} modules - tree key → source
+ * @returns {Array<{ key: string, file: string, line: number, what: string }>}
+ */
+export function scanLogSources(modules) {
+  const { parsed, taint, settle, aliasesOf, loggedArguments, findWrappers } = analyse(modules);
   for (const m of parsed) settle(m);
   findWrappers();
 
@@ -649,30 +669,173 @@ export function scanLogSources(modules) {
 }
 
 /**
- * What is wrong with the LOCAL_DESCRIBERS list: an entry whose function is
- * gone, or one that reads an error's `.message` or `.stack`.
+ * The body of the `group`-th capturing group of a regular expression's
+ * source, or null when there is no such group.
+ *
+ * @param {string} pattern - the source of a regular expression
+ * @param {number} group - 1 for the first capturing group
+ * @returns {string | null}
+ */
+function captureGroupBody(pattern, group) {
+  const open = [];
+  let seen = 0;
+  let inClass = false;
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === '\\') i += 1;
+    else if (inClass) inClass = ch !== ']';
+    else if (ch === '[') inClass = true;
+    else if (ch === '(') {
+      // `(?:`, `(?=`, `(?!`, `(?<=`, `(?<!` do not capture; `(` and `(?<name>` do.
+      const capturing = pattern[i + 1] !== '?' || /^\?<[^=!]/.test(pattern.slice(i + 1, i + 4));
+      if (capturing) seen += 1;
+      open.push(capturing && seen === group ? i : -1);
+    } else if (ch === ')') {
+      const start = open.pop();
+      if (start >= 0) return pattern.slice(start + 1, i);
+    }
+  }
+  return null;
+}
+
+/** A capturing group that can only ever hold a few digits: `\d{3}`, `[0-9]{1,3}`. */
+const DIGITS_ONLY_GROUP = /^(?:\\d|\[0-9\])\{\d(?:,\d)?\}$/;
+
+/**
+ * What is wrong with the LOCAL_DESCRIBERS list. A describer is a function
+ * the scan trusts to turn an error into something a log line may carry, so
+ * each one is held to one of two rules:
+ *
+ *   - A describer that never reads the error's `message` or `stack`: the
+ *     scan's own taint logic is run over everything it returns, with its
+ *     parameters taken to be errors. `String(error)`, `error.toString()`,
+ *     `JSON.stringify(error)`, a template or a concatenation holding the
+ *     error or a field of it outside SAFE_ERROR_FIELDS, and the error itself
+ *     are all refused, the same as in a log line.
+ *   - A describer that READS the message or stack (to classify it), by a
+ *     member read or by destructuring: every `return` must be a fixed value.
+ *     That is a literal, a member of a fixed table of literals, a door
+ *     describer's answer (`errorCode(error)`), or a template of a fixed
+ *     prefix and a regular expression's capture of a few digits
+ *     (`HTTP_${match[1]}` from `/^Status code (\d{3})$/`). Nothing computed
+ *     from the text any other way may leave the function.
  *
  * @param {Record<string, string>} modules - tree key → source
  * @param {Iterable<string>} [keys] - `file::function` entries to check
  * @returns {string[]}
  */
 export function describerProblems(modules, keys = LOCAL_DESCRIBERS.keys()) {
+  const wanted = [...keys];
+  const files = new Set(wanted.map((key) => key.split('::')[0]));
+  const { byFile, taint, settle, isSafeDescriber } = analyse(
+    Object.fromEntries(Object.entries(modules).filter(([file]) => files.has(file)))
+  );
   const problems = [];
-  for (const key of keys) {
+  for (const key of wanted) {
     const [file, name] = key.split('::');
-    const fn = modules[file] ? moduleTable(file, parse(file, modules[file])).functions.get(name) : null;
+    const m = byFile.get(file);
+    const fn = m?.table.functions.get(name);
     if (!fn) {
       problems.push(`${key} — no such top-level function`);
       continue;
     }
-    /** Look for a raw field read anywhere in the function. */
-    const visit = (node) => {
-      if (node.type === 'MemberExpression' && RAW_FIELDS.has(memberName(node))) {
-        problems.push(`${key} — reads .${memberName(node)}, so it is not content-free`);
+    /** The text of a node, on one line, for a message. */
+    const text = (node) => m.source.slice(node.start, node.end).replace(/\s+/g, ' ');
+
+    // Whatever a describer is handed is an error.
+    for (const { name: param, from } of fn.params.flatMap((p) => patternNames(p))) {
+      const entry = m.scopes.get(fn)?.get(param);
+      if (entry) entry.kind = from === null ? 'error' : SAFE_ERROR_FIELDS.has(from) ? null : 'text';
+    }
+    settle(m);
+
+    const reads = [];
+    const returns = fn.type === 'ArrowFunctionExpression' && fn.body.type !== 'BlockStatement' ? [fn.body] : [];
+    /** Collect the raw reads anywhere inside, and the returns of the function itself. */
+    const visit = (node, own) => {
+      if (node.type === 'MemberExpression' && RAW_FIELDS.has(memberName(node))) reads.push(`.${memberName(node)}`);
+      if (node.type === 'ObjectPattern') {
+        for (const { from } of patternNames(node)) if (RAW_FIELDS.has(from)) reads.push(`{ ${from} }`);
       }
-      eachChild(node, visit);
+      if (own && node.type === 'ReturnStatement' && node.argument) returns.push(node.argument);
+      eachChild(node, (child) => visit(child, own && !isFunction(child)));
     };
-    visit(fn);
+    eachChild(fn, (child) => visit(child, !isFunction(child)));
+
+    /** The declaration of a name inside the describer or at the top of its module. */
+    const declarationOf = (identifier) => {
+      let found = null;
+      /** Find the declarator of that name. */
+      const search = (node) => {
+        if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.id.name === identifier) found = node;
+        eachChild(node, search);
+      };
+      search(fn);
+      if (found) return found;
+      for (const statement of m.program.body) {
+        const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+        if (declaration?.type === 'VariableDeclaration') declaration.declarations.forEach(search);
+      }
+      return found;
+    };
+    /** Whether an expression is a string, number, boolean or null written in the source. */
+    const isLiteral = (node) =>
+      (node?.type === 'Literal' && !node.regex) || (node?.type === 'TemplateLiteral' && node.expressions.length === 0);
+    /** Whether a name is a table of literals declared with `const`: an object or an array of them. */
+    const isFixedTable = (identifier) => {
+      const declarator = declarationOf(identifier);
+      if (declarator?.parent.kind !== 'const') return false;
+      let init = unwrap(declarator.init);
+      if (init?.type === 'CallExpression' && lastName(init.callee) === 'freeze') init = unwrap(init.arguments[0]);
+      if (init?.type === 'ObjectExpression') return init.properties.every((p) => p.type === 'Property' && isLiteral(unwrap(p.value)));
+      if (init?.type === 'ArrayExpression') return init.elements.every((el) => isLiteral(unwrap(el)));
+      return false;
+    };
+    /** Whether an expression is `match[n]` for a capture that can only hold a few digits. */
+    const isDigitCapture = (node) => {
+      const n = unwrap(node);
+      if (n?.type !== 'MemberExpression' || !n.computed || !Number.isInteger(n.property.value)) return false;
+      const object = unwrap(n.object);
+      const call = object?.type === 'Identifier' ? unwrap(declarationOf(object.name)?.init) : null;
+      if (call?.type !== 'CallExpression') return false;
+      const callee = unwrap(call.callee);
+      const method = callee?.type === 'MemberExpression' ? memberName(callee) : null;
+      const regex = method === 'exec' ? unwrap(callee.object) : method === 'match' ? unwrap(call.arguments[0]) : null;
+      const body = regex?.regex ? captureGroupBody(regex.regex.pattern, n.property.value) : null;
+      return body !== null && DIGITS_ONLY_GROUP.test(body);
+    };
+    /** Whether a returned expression is a fixed value, whatever the message said. */
+    const isFixed = (node) => {
+      const n = unwrap(node);
+      if (isLiteral(n)) return true;
+      if (n.type === 'Identifier') return n.name === 'undefined';
+      if (n.type === 'ConditionalExpression') return isFixed(n.consequent) && isFixed(n.alternate);
+      if (n.type === 'LogicalExpression') return isFixed(n.left) && isFixed(n.right);
+      if (n.type === 'CallExpression') return isSafeDescriber(m, n.callee);
+      if (n.type === 'MemberExpression') {
+        const table = unwrap(n.object);
+        return table?.type === 'Identifier' && isFixedTable(table.name);
+      }
+      if (n.type === 'TemplateLiteral') {
+        const [prefix, suffix] = n.quasis.map((q) => q.value.cooked);
+        return n.expressions.length === 1 && /^[A-Z][A-Z0-9_]{0,15}$/.test(prefix) && suffix === '' && isDigitCapture(n.expressions[0]);
+      }
+      return false;
+    };
+
+    if (reads.length) {
+      for (const returned of returns) {
+        if (!isFixed(returned)) {
+          problems.push(
+            `${key} — reads ${reads[0]} and returns \`${text(returned)}\`, which is not a fixed value (a literal, a member of a table of literals, a door describer's answer, or a prefix and a capture of digits)`
+          );
+        }
+      }
+    } else {
+      for (const returned of returns) {
+        if (taint(m, returned)) problems.push(`${key} — returns \`${text(returned)}\`, which carries the error's own text`);
+      }
+    }
   }
   return problems;
 }
@@ -753,7 +916,7 @@ describe('no raw error text in log lines (#1794)', () => {
     expect(misfiled, `allowlist entries that are wrong:\n${misfiled.join('\n')}`).toEqual([]);
   });
 
-  it('every local describer exists and never reads an error\'s message or stack', () => {
+  it('every local describer exists and returns nothing of an error\'s own text', () => {
     expect(describerProblems(realTree())).toEqual([]);
   });
 });
@@ -881,13 +1044,98 @@ describe('the log scan itself', () => {
     expect(judgeLogSites([], [{ site, why: 'kept for a reason' }]).stale).toEqual([site]);
   });
 
-  it('refuses a local describer that is missing or reads the message', () => {
-    const modules = { 'lib/a.js': 'export const kind = (e) => e.code;\nexport const words = (e) => e?.message;' };
+  /** The problems of one describer, `describe`, written as the given source. */
+  const describerFaults = (source, head = '') =>
+    describerProblems({ 'lib/a.js': `${head}\n${source}` }, ['lib/a.js::describe']).map((p) => p.split(' — ')[1]);
+
+  it('refuses a local describer that is missing', () => {
+    const modules = { 'lib/a.js': 'export const kind = (e) => e.code;' };
     expect(describerProblems(modules, ['lib/a.js::kind'])).toEqual([]);
-    expect(describerProblems(modules, ['lib/a.js::words', 'lib/a.js::gone', 'lib/b.js::kind'])).toEqual([
-      'lib/a.js::words — reads .message, so it is not content-free',
+    expect(describerProblems(modules, ['lib/a.js::gone', 'lib/b.js::kind'])).toEqual([
       'lib/a.js::gone — no such top-level function',
       'lib/b.js::kind — no such top-level function',
     ]);
+  });
+
+  it('runs the taint logic over what a describer returns: the error, its text and its other fields are refused', () => {
+    /** One leaking return, and the fault it must raise. */
+    const leaks = (returned, body = '') =>
+      expect(describerFaults(`export function describe(error) { ${body} return ${returned}; }`)).toEqual([
+        `returns \`${returned}\`, which carries the error's own text`,
+      ]);
+    leaks('String(error)');
+    leaks('error.toString()');
+    leaks('JSON.stringify(error)');
+    leaks('`failed: ${error}`');
+    leaks("'failed: ' + error");
+    leaks('`${error?.body}`');
+    leaks('error.response.data');
+    leaks('error');
+    leaks('text', 'const text = String(error);');
+    leaks('`${body}`', 'const { body } = error;');
+    // An arrow with no braces is its own return, and a destructured parameter is still the error's.
+    expect(describerFaults('export const describe = (e) => `${e}`;')).toHaveLength(1);
+    expect(describerFaults('export const describe = ({ details }) => details;')).toHaveLength(1);
+    // The content-free fields, and anything held to a shape by a yes/no test, pass.
+    expect(describerFaults('export const describe = (e) => `${e.name} ${e?.code} ${e.status}`;')).toEqual([]);
+    expect(
+      describerFaults(
+        "export function describe(error) { const kind = String(error?.code ?? error?.name ?? 'error'); return /^[A-Z]+$/.test(kind) ? kind : 'error'; }"
+      )
+    ).toEqual([]);
+  });
+
+  it('refuses the describer the old check let through: a destructured message, the whole error and a field', () => {
+    const faults = describerFaults(
+      'export function describe(error) { const { message } = error; return `${message} ${String(error)} ${error?.body}`; }'
+    );
+    expect(faults).toHaveLength(1);
+    expect(faults[0]).toMatch(/^reads \{ message \} and returns .* which is not a fixed value/);
+  });
+
+  it('lets a describer read the message to classify it only when every return is a fixed value', () => {
+    const door = "import { errorCode } from './http/error-response.js';";
+    const classifier = `
+      const WORDS = Object.freeze({ gone: 'the page is gone', slow: 'no answer in time' });
+      export function describe(error) {
+        const message = typeof error?.message === 'string' ? error.message : '';
+        const status = /^Status code (\\d{3})$/.exec(message);
+        if (status) return \`HTTP_\${status[1]}\`;
+        if (/timed out/.test(message)) return 'TIMEOUT';
+        if (message.includes('gone')) return WORDS.gone;
+        if (error.stack?.includes('slow')) return WORDS[error.code];
+        return error?.code === 'X' ? 'REFUSED' : errorCode(error);
+      }`;
+    expect(describerFaults(classifier, door)).toEqual([]);
+
+    /** A reading describer with one return, and how many faults it raises. */
+    const reading = (returned, body = '') =>
+      describerFaults(`export function describe(error) { const text = error.message; ${body} return ${returned}; }`, door);
+    // Any part of the text, however it is cut or wrapped.
+    expect(reading('text')).toHaveLength(1);
+    expect(reading('text.slice(0, 10)')).toHaveLength(1);
+    expect(reading('`PREFIX_${text}`')).toHaveLength(1);
+    expect(reading('error.message')).toHaveLength(1);
+    // A field the scan calls content-free is still not fixed once the message has been read.
+    expect(reading('error.code')).toHaveLength(1);
+    // A capture that is not digits only, an unbounded one, and a template with more than a prefix.
+    expect(reading('`HTTP_${m[1]}`', 'const m = /^Status (.+)$/.exec(text);')).toHaveLength(1);
+    expect(reading('`HTTP_${m[1]}`', 'const m = /^Status (\\d+)$/.exec(text);')).toHaveLength(1);
+    expect(reading('`HTTP_${m[2]}`', 'const m = /^(?:a|b) (\\w+) (?<n>.*) (\\d{3})$/.exec(text);')).toHaveLength(1);
+    expect(reading('`HTTP_${m[1]} for ${text}`', 'const m = /^Status (\\d{3})$/.exec(text);')).toHaveLength(1);
+    expect(reading('`http ${m[1]}`', 'const m = /^Status (\\d{3})$/.exec(text);')).toHaveLength(1);
+    // A table that is not all literals, or not a const, is not a fixed table.
+    expect(reading('TABLE.a', 'const TABLE = { a: text };')).toHaveLength(1);
+    expect(reading('TABLE.a', "let TABLE = { a: 'x' };")).toHaveLength(1);
+    // The same name as a door describer, not imported from the door.
+    expect(
+      describerFaults('const errorCode = (e) => e.message;\nexport function describe(error) { void error.stack; return errorCode(error); }')
+    ).toHaveLength(1);
+    // The good shapes: a later group, digits by [0-9], `.match`, and the door's answer.
+    // An escaped or bracketed parenthesis and a `(?:` are not groups, so the count still lands on the digits.
+    expect(reading('`HTTP_${m[2]}`', 'const m = /^(?:a|b) \\((\\w+)\\) [(] (\\d{3})$/.exec(text);')).toEqual([]);
+    expect(reading('`HTTP_${m[1]}`', 'const m = /^(?:a|b) \\((\\w+)\\) [(] (\\d{3})$/.exec(text);')).toHaveLength(1);
+    expect(reading('`CODE_${m[1]}`', 'const m = text.match(/^Status ([0-9]{1,3})$/);')).toEqual([]);
+    expect(reading("m ? 'FOUND' : errorCode(error)", 'const m = /x/.test(text);')).toEqual([]);
   });
 });

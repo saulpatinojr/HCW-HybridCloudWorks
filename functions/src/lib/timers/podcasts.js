@@ -29,6 +29,7 @@
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { errorFacts, errorCode } from '../http/error-response.js';
+import { feedErrorCode } from '../rss/feed-error-code.js';
 
 export const PODCAST_FEEDS = Object.freeze([]);
 
@@ -282,8 +283,13 @@ export function createPodcastIngest({ store, parser, feeds, now = () => new Date
           );
           continue;
         }
-        summary[cfg.provider] = { processed: 0, error: errorCode(err) };
-        log.error?.(`[fetchPodcastFeeds] ${cfg.provider}: feed failed: ${errorFacts(err)}`);
+        // The feed library's failures are plain Errors with nothing but a
+        // message, so the code is read from its known message shapes
+        // (feedErrorCode): `HTTP_404`, `TIMEOUT`, `PARSE`. Never the message.
+        summary[cfg.provider] = { processed: 0, error: feedErrorCode(err) };
+        log.error?.(
+          `[fetchPodcastFeeds] ${cfg.provider}: feed failed: ${feedErrorCode(err)} (${errorFacts(err)})`
+        );
       }
     }
     log.log?.(`[fetchPodcastFeeds] (${resolved.source}) ${JSON.stringify(summary)}`);

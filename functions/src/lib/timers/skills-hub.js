@@ -9,7 +9,8 @@
  * late in winter. That DST drift is gone.
  */
 
-import { errorFacts, errorCode } from '../http/error-response.js';
+import { errorFacts } from '../http/error-response.js';
+import { feedErrorCode } from '../rss/feed-error-code.js';
 export const MS_SKILLS_RSS =
   'https://techcommunity.microsoft.com/t5/s/gxcuf89792/rss/board?board.id=skills-hub-blog';
 
@@ -68,8 +69,10 @@ export function createSkillsHubScrape({ store, parser, now = () => new Date(), l
     try {
       feed = await parser.parseURL(MS_SKILLS_RSS);
     } catch (err) {
-      log.error?.(`[skillsHubRss] Failed to fetch RSS feed: ${errorFacts(err)}`);
-      return { written: 0, skipped: 0, error: errorCode(err) };
+      // A code read from the feed library's known message shapes
+      // (feedErrorCode): `HTTP_404`, `TIMEOUT`, `PARSE`. Never the message.
+      log.error?.(`[skillsHubRss] Failed to fetch RSS feed: ${feedErrorCode(err)} (${errorFacts(err)})`);
+      return { written: 0, skipped: 0, error: feedErrorCode(err) };
     }
     let written = 0;
     let skipped = 0;

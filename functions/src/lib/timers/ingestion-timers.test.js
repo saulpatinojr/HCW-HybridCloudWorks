@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { errorCode, errorFacts, storedFailure } from '../http/error-response.js';
 import {
   createPublerClient,
   publerSettingForStatus,
@@ -9,6 +10,7 @@ import {
 } from './publer-sync.js';
 import {
   createBlogListingsScrape,
+  listingsLogSummary,
   scrapeListingPage,
   buildListingContentDoc,
   resolveArticleUrl,
@@ -534,6 +536,34 @@ describe('blog listings (Firecrawl)', () => {
     );
   });
 
+  it('carries what failed as a field, so nothing has to read the sentence (#1794)', async () => {
+    /** The error a scrape rejects with, for one answer. */
+    const rejection = (answer) =>
+      scrapeListingPage({ apiKey: 'fc', fetch: vi.fn(async () => answer) }, 'https://listing.example/private').then(
+        () => null,
+        (error) => error
+      );
+    const refused = await rejection({ ok: false, status: 402, json: async () => ({ error: 'quota for org-abc' }) });
+    expect(errorCode(refused)).toBe('HTTP_402');
+    const saidNo = await rejection({ ok: true, status: 200, json: async () => ({ success: false, error: 'blocked' }) });
+    expect(errorCode(saidNo)).toBe('SCRAPE_REFUSED');
+    const notJson = await rejection({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON');
+      },
+    });
+    expect(errorCode(notJson)).toBe('UNREADABLE_BODY');
+    for (const error of [refused, saidNo, notJson]) {
+      expect(errorFacts(error)).not.toMatch(/listing\.example|quota|blocked|org-abc/);
+    }
+    // What the job's result keeps: the code for someone else's words, our own sentence as written.
+    expect(storedFailure(refused, 'The listing could not be read.')).toBe('The listing could not be read (HTTP_402).');
+    expect(storedFailure(saidNo, 'The listing could not be read.')).toBe('The listing could not be read (SCRAPE_REFUSED).');
+    expect(storedFailure(notJson, 'The listing could not be read.')).toBe('The blog listing response could not be read.');
+  });
+
   it('writes the RSS content shape with source firecrawl, dedups, skips when unconfigured, isolates source failures', async () => {
     const doc = buildListingContentDoc({
       article: {
@@ -616,9 +646,18 @@ describe('blog listings (Firecrawl)', () => {
       failures: [
         {
           source: 'broken',
-          error: 'Firecrawl scrape failed for https://broken/: HTTP 500',
+          // A sentence written here and the status, never the error's own
+          // text: this is stored as the job's result (#945, #1794).
+          error: 'The listing could not be read (HTTP_500).',
         },
       ],
+    });
+    // What the timer prints: the counts, without the list that names sources.
+    expect(JSON.parse(JSON.stringify(listingsLogSummary(r)))).toEqual({
+      skipped: false,
+      scraped: 1,
+      newArticles: 1,
+      errors: 1,
     });
     expect(store.upsertDoc).toHaveBeenCalledTimes(1);
     expect(dedup.findDuplicateContent.mock.calls[0][1]).toMatchObject({
@@ -743,7 +782,51 @@ describe('podcasts', () => {
     });
     expect(brokenLog.error).toHaveBeenCalledTimes(1);
     // Provider, never the URL: the feed list names the feed from the provider.
-    expect(brokenLog.error.mock.calls[0][0]).toMatch(/^\[fetchPodcastFeeds\] azure: feed failed: name=Error\b/);
+    expect(brokenLog.error.mock.calls[0][0]).toMatch(
+      /^\[fetchPodcastFeeds\] azure: feed failed: Error \(name=Error\b/
+    );
+  });
+
+  it("names what the feed library's plain Error meant, by code and never by its words (#1794)", async () => {
+    // The feed library throws `new Error(...)` with no code and no status, so
+    // the content-free facts alone read `name=Error` for every one of these.
+    const cases = [
+      ['Status code 404', 'HTTP_404'],
+      ['Status code 500', 'HTTP_500'],
+      ['Request timed out after 60000ms', 'TIMEOUT'],
+      ['Unexpected close tag\nLine: 12\nColumn: 40\nChar: >', 'PARSE'],
+      ['Feed not recognized as RSS 1 or 2.', 'PARSE'],
+      ['Too many redirects', 'REDIRECTS'],
+      ['Status code 404 for https://feeds.example/private-show?token=abc', 'Error'],
+    ];
+    for (const [message, code] of cases) {
+      const log = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      const parser = {
+        parseURL: vi.fn(async () => {
+          throw new Error(message);
+        }),
+      };
+      const summary = await createPodcastIngest({ store: memStore(), parser, feeds, now, log }).run();
+      expect(summary).toEqual({ azure: { processed: 0, error: code } });
+      expect(log.error).toHaveBeenCalledTimes(1);
+      // In this test the error is made inside an async function, so it also has frames under src/.
+      expect(log.error.mock.calls[0][0]).toMatch(
+        new RegExp(`^\\[fetchPodcastFeeds\\] azure: feed failed: ${code} \\(name=Error( at=[^ ]+)?\\)$`)
+      );
+    }
+    // An error that names itself keeps its own code.
+    const log = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const parser = {
+      parseURL: vi.fn(async () => {
+        throw Object.assign(new Error('getaddrinfo ENOTFOUND feeds.example'), { code: 'ENOTFOUND' });
+      }),
+    };
+    expect(await createPodcastIngest({ store: memStore(), parser, feeds, now, log }).run()).toEqual({
+      azure: { processed: 0, error: 'ENOTFOUND' },
+    });
+    expect(log.error.mock.calls[0][0]).toMatch(
+      /^\[fetchPodcastFeeds\] azure: feed failed: ENOTFOUND \(name=Error code=ENOTFOUND( at=[^ ]+)?\)$/
+    );
   });
 
   it('fetchPodcastFeeds says so at Warning when the feed is reachable but empty', async () => {
