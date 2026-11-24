@@ -221,15 +221,16 @@ const KEY_VAULT_METADATA = Object.freeze({
   // Hand-renewed: the owner makes it on the vendor's developers page and no
   // API renews it. The vendor's documentation says a key can expire but not
   // after how long (https://api.communitydays.org/v1/openapi-events.json,
-  // the 401 answer, read 2026-11-24), so the reminder uses the 180-day
-  // hand-rotation rule for now. The key's real expiry is shown on the "Your
-  // keys" tab of the vendor's developers page; when the owner has read it
-  // there, replace HAND_ROTATION_DAYS below with that number of days.
+  // the 401 answer, read 2026-11-24). The owner read the real expiry on the
+  // "Your keys" tab of the vendor's developers page on 2026-11-24: six
+  // months after the day the key is made. Six months is 181 to 184 days, so
+  // 180 keeps the reminder on the early side; that page is behind the
+  // owner's sign-in, so there is no public page to link for the number.
   "COMMUNITY-DAYS-API-KEY": {
     issuer: "Community Days (developers page, Your keys)",
     consumer:
       "Speaking hub, Future Events: reads the list of events with an open call for speakers, and the owner’s talks",
-    lifetimeDays: HAND_ROTATION_DAYS,
+    lifetimeDays: 180,
     rotate:
       "Make a new key on the Community Days developers page (Your keys), paste it on Integrations → Keys, press Test on the Community Days card, then delete the old key on that page. The key can change your events there, so delete the old one the same day.",
   },

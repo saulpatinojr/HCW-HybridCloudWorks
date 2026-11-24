@@ -76,9 +76,9 @@ describe('the Key Vault part is the catalogue, whole', () => {
       name: 'COMMUNITY-DAYS-API-KEY',
       store: 'key-vault',
       renewal: 'hand',
-      // The issuer says a key can expire but not when, so the 180-day rule
-      // stands until the owner has read the real expiry at the vendor.
-      lifetimeDays: HAND_ROTATION_DAYS,
+      // The owner read the key's expiry at the vendor on 2026-11-24: six
+      // months, which is 181 days at the least, so 180 reminds a day early.
+      lifetimeDays: 180,
     });
     expect(entry.source).toEqual({ secret: 'COMMUNITY-DAYS-API-KEY' });
     expect(entry.issuer).toMatch(/Community Days/);
@@ -166,9 +166,8 @@ describe('the issue’s list', () => {
       [
         'kv-anthropic-api-key',
         'kv-telegram-bot-token',
-        // #1823: the Community Days developer key. Its issuer says a key can
-        // expire but not when, so it is on the 180-day rule until the owner
-        // has read the real expiry on the vendor's "Your keys" tab.
+        // #1823: the Community Days developer key. It expires six months
+        // after it is made (read by the owner at the vendor, 2026-11-24).
         'kv-community-days-api-key',
         'gh-manifest-app-private-key',
         'gh-claude-code-oauth-token',

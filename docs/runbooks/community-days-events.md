@@ -238,8 +238,9 @@ approved API access; steps 3 to 6 cannot.
 6. **Record the key's date.** Open
    [Integrations → Credentials](https://hybridcloudworks.com/admin/integrations?tab=credentials),
    find `COMMUNITY-DAYS-API-KEY`, and record the day you made the key. That
-   starts its reminder. Then tell a session the expiry day you noted in step
-   3, so the reminder can use the real expiry in place of the 180-day rule.
+   starts its reminder. A key expires six months after it is made (the owner
+   read that on the **Your keys** tab on 2026-11-24), and the reminder counts
+   180 days from the day you record, so it comes a day or more early.
 
 The owner reported the key pasted on 2026-11-24, and `COMMUNITY_DAYS_API_KEY`
 was then taken off the list of references that are expected to be unset
