@@ -399,9 +399,102 @@ is stored in the `developer_events` container and shown only to the key that
 owns the call. It is backed up with the authored data (class A in
 `functions/src/lib/backup/export-classification.js`).
 
-A proposal is kept until someone deletes it. There is no time limit yet: how
-long to keep proposals after a call closes is the owner's decision, still open
-on [#1777](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1777).
+An accepted proposal is kept until someone deletes it. A proposal that was
+not accepted is cleaned up after its yearly cycle, once that clean-up is
+switched on (the next section).
+
+## The yearly clean-up of proposals
+
+Owner decision 2026-11-24, on
+[#1777](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1777):
+"the yearly cycle ends in December... If a proposal is not accepted, strip
+it," with "the previous year an extra month to complete applications".
+
+**The rule.**
+
+- The cycle is the calendar year. A year's clean-up is due on **1 February of
+  the next year**: the year ends on 31 December and January is left alone.
+  Times are UTC.
+- A proposal belongs to the year its call closed in (the day the organizer
+  closed it, or the call's deadline once that has passed). If the call never
+  closed, the proposal belongs to the year it was sent in.
+- When the clean-up is due, a proposal that was **not accepted** (status
+  `pending` or `rejected`; one nobody reviewed counts) is **stripped**: the
+  speaker's name, email and bio and the organizer's review note are removed
+  for good. The talk's title, abstract, format, level, status and dates
+  stay, and the record gets a `strippedAt` date.
+- An **accepted** proposal is never stripped. It keeps the speaker's details
+  until the organizer or the owner deletes it (the section after this one).
+- A stripped proposal still shows in the organizer's list, with `null` in the
+  four removed fields and the date in `strippedAt`. Its decision can no
+  longer be changed (`409`, code `PROPOSAL_STRIPPED`); it can be deleted.
+- The **Erase a speaker's proposals** card no longer finds a stripped
+  proposal, because the address is not on it any more. That is correct:
+  nothing of the speaker is left on it to erase.
+
+**How it runs.** It is the second step of the daily clean-up timer
+`cleanupRejectedContent` (04:00 UTC), which is already on. The code is
+[`proposal-strip.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/timers/proposal-strip.js).
+It takes effect at the first run of the
+[Deploy Functions workflow](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-functions.yml)
+after the merge.
+
+**It ships switched off (a dry run).** A dry run counts what it would strip
+and changes nothing. Each day it writes one row to the audit log (the
+`admin_audit_logs` container), with the action
+`cron_stripped_unaccepted_proposals` and these numbers and no names,
+addresses or ids. The newest row is what the card **Yearly clean-up of
+proposals** shows on
+<https://hybridcloudworks.com/admin/ai-engine?tab=developer-api>:
+
+| Field | Meaning |
+| --- | --- |
+| `dryRun` | `true` while switched off |
+| `cycleYear` | The newest year whose clean-up is due |
+| `callsExamined` | How many calls for speakers were read |
+| `eligibleCount` | How many proposals are due to be stripped |
+| `strippedCount` | How many were stripped (always 0 in a dry run) |
+| `skippedCount` | Found due, then deleted or accepted before the write |
+| `racedCount`, `failedCount` | Changed twice during the write, or the write failed; tried again the next day |
+| `hasMore` | `true` when a later run has work left (one run strips at most 500) |
+
+### Switch the clean-up on
+
+**Step 3 starts something that cannot be undone.** Once it is on, the next
+04:00 UTC run removes the speaker's name, email and bio and the review note
+from every proposal that is due. The database's own backup can bring a record
+back for 30 days; after that nothing can.
+
+1. Read a dry-run count. Open
+   <https://hybridcloudworks.com/admin/ai-engine?tab=developer-api> and
+   scroll to the card **Yearly clean-up of proposals**. You should see
+   "Switched off (dry run)" and a sentence such as "The last run, (date),
+   changed nothing. Switched on, it would have stripped 0 proposals for
+   cycles up to 2025." If it says "No run recorded yet" a day after the
+   functions were deployed, the timer is not running: say so on
+   [#1777](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1777)
+   and stop.
+2. Decide whether that number is what you expect. Before 1 February 2027 it
+   should be `0` unless a call closed in 2025 or earlier, because the 2026
+   cycle is not over yet.
+3. Reply **"arm the proposal clean-up"** on
+   [#1777](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1777).
+   A session then opens a one-line pull request that changes
+   `"PROPOSAL_STRIP_ENABLED" = "false"` to `"true"` in
+   [`infra/functionapp.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/functionapp.tf)
+   and merges it.
+4. Confirm the Terraform run that merge starts, in the
+   [`hcw-azure` workspace](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs).
+   You should see one change: the Function App's setting
+   `PROPOSAL_STRIP_ENABLED` going from `false` to `true`. If the plan shows
+   anything else, do not confirm it; say what it shows on the issue.
+5. The day after, open the same card again. It should say "Switched on" and
+   that the last run stripped the number of proposals you read in step 1 (or
+   500, with "There is more to do", if there were more).
+
+**To switch it off again**, the same pull request in reverse (`"true"` back
+to `"false"`) and its Terraform run. That stops further stripping; it does
+not bring back what was already removed.
 
 ## Delete a speaker's proposals (an erasure request)
 
@@ -485,8 +578,10 @@ status only.
 
 ### What a delete does not reach
 
-The backups. A copy of the database is kept for 35 days and cannot be edited;
-the proposal leaves it when that copy expires. The data-subject requests
+The backups. The nightly copy of the database is kept for 35 days and the
+database's own backup for 30; neither is edited, and the proposal leaves each
+when that copy expires. The same is true of a proposal the yearly clean-up
+stripped: the copies hold it unstripped until they expire. The data-subject requests
 runbook has the sentence to tell the speaker
 ([step 4 there](data-subject-requests.md#step-4-immutable-backup-lifecycle-disclosure)).
 

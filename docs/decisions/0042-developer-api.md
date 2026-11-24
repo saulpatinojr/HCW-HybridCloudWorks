@@ -134,8 +134,61 @@ new container, setting or secret, and still no route that publishes.
   `DELETE cms/developer-api/proposals/{submissionId}`, both super_admin). The
   address travels in the request body, never in a URL. Every delete is under
   the version that was read, is safe to repeat, and writes an audit row with
-  the status and no personal data. **Still open, the owner's decision:** how
-  long a proposal is kept after its call closes. Nothing expires today.
+  the status and no personal data. How long a proposal is kept was open
+  here until 2026-11-24; the next bullet is the decision.
+- **A proposal that was not accepted is stripped after its yearly cycle
+  (owner decision, 2026-11-24).** The owner's words: "the yearly cycle ends
+  in December to match the MVP cycle. If a proposal is not accepted, strip
+  it," and "keep the 'previous' year an extra month to complete
+  applications". As built:
+  - *The cycle is the calendar year.* It ends on 31 December, and January is
+    a month of grace, so a year's clean-up is due on 1 February of the next
+    year. Dates are read in UTC, like every other time in the app.
+  - *Which year a proposal belongs to:* the year of the day its call closed
+    (`closedAt`, or else the deadline `closesAt` once it has passed). A call
+    that never closed leaves each proposal to the year it was sent in
+    (`submittedAt`).
+  - *Stripped* means four fields are removed from the record for good:
+    `speakerName`, `speakerEmail`, `speakerBio` and `reviewNote`. The talk's
+    title, abstract, format, level, status and dates stay, and the record
+    gets `strippedAt` and `strippedReason: "cycle_ended"` so it is never
+    processed twice.
+  - *Not accepted* means every status other than `accepted`: `pending`
+    (never reviewed, or put back) and `rejected` today, and a record with no
+    status. **An accepted proposal is not touched by this rule.** It keeps
+    the speaker's details until its organizer or the owner deletes it, and
+    the erasure search still finds it.
+  - *A stripped proposal's decision is final.* The review route answers
+    `409 PROPOSAL_STRIPPED` for it, so it cannot be accepted after its
+    speaker's details are gone and no new review note can be written to it.
+    It can still be listed (the four fields read `null`, and `strippedAt`
+    carries the date) and deleted.
+  - *How it runs.* It is the second step of the existing daily timer
+    `cleanupRejectedContent` (04:00 UTC), in
+    `functions/src/lib/timers/proposal-strip.js`; no new timer was added,
+    because a new one needs its own flag and alert row, both Terraform
+    applies. Each write is under the version that was read; a proposal that
+    changed meanwhile is read and judged again, and left for the next day
+    after a second lost race. One run strips at most 500. Each run writes one
+    audit row (`cron_stripped_unaccepted_proposals`) and one log line, with
+    counts only.
+  - *It ships switched off.* Stripping cannot be undone, so the step only
+    counts what it would strip until the app setting `PROPOSAL_STRIP_ENABLED`
+    is `true` (`infra/functionapp.tf`; `"false"` as merged). The runbook has
+    the owner's steps.
+  - *What this does not do.* It does not add an accepted proposal to the
+    About page's Speaking Engagements section. That section lists the
+    owner's own talks, kept in the `speakerevents` container and edited in
+    the admin; a proposal here is another speaker answering an organizer's
+    call. The two are not linked, and decision 6 (nothing here publishes)
+    stands. The same owner decision moved that section's yearly switch from
+    1 January to 1 February
+    (`frontend/src/components/widgets/sessionizeEvents.js`).
+  - *Not covered:* a proposal whose call record is missing is never visited
+    (no route deletes a call, so that takes a hand edit); the backups keep
+    an unstripped copy until they expire (35 days for the nightly export, 30
+    for the database's own backup); and the long-term archive the owner
+    asked for is a separate piece of work with its own decision record.
 - **The admin search leaves an audit row (owner decision, 2026-11-23).** As
   first built, the search by a speaker's email address wrote nothing, so
   nothing recorded who had looked a person up. The owner decided it should.

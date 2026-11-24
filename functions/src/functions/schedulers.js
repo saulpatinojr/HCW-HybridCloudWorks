@@ -41,6 +41,7 @@ import { createScheduledPublisher } from '../lib/scheduled-publish.js';
 import { createSnapshotPublishHandlers } from '../lib/snapshots-publish.js';
 import { createReviewerDigest } from '../lib/timers/reviewer-digest.js';
 import { createContentCleanup } from '../lib/timers/content-cleanup.js';
+import { createProposalStrip, runDailyRetirement } from '../lib/timers/proposal-strip.js';
 import { createPublishingWatchdog } from '../lib/timers/publishing-watchdog.js';
 import { createLinkCheck } from '../lib/timers/link-check.js';
 import { createCertReverify } from '../lib/timers/cert-reverify.js';
@@ -193,9 +194,18 @@ timer('buildWeeklyNewsletter', 'BUILD_WEEKLY_NEWSLETTER', '0 0 13 * * 1', async 
 // ── Retirement ───────────────────────────────────────────────────────────────
 
 timer('cleanupRejectedContent', 'CLEANUP_REJECTED_CONTENT', '0 0 4 * * *', (context) =>
-  createContentCleanup({ store, log: context }).softDeleteRejected({
-    olderThanHours: 24,
-    limit: 500,
+  // Two daily clean-ups share this timer. The second (#1777) removes the
+  // speaker's details from talk proposals that were not accepted, once their
+  // yearly cycle is over; it only counts until PROPOSAL_STRIP_ENABLED=true
+  // (lib/timers/proposal-strip.js). Each runs whatever the other did, and a
+  // failure of either is still thrown so the host records the run as failed.
+  runDailyRetirement({
+    rejected: () =>
+      createContentCleanup({ store, log: context }).softDeleteRejected({
+        olderThanHours: 24,
+        limit: 500,
+      }),
+    proposals: () => createProposalStrip({ store, log: context }).run(),
   })
 );
 
