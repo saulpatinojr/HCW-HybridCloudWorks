@@ -118,8 +118,7 @@ jobs:
           # at its end cannot join onto the `|` that adds this workflow and so
           # hide the mistake. These lines are the same as in ci.yml; the test
           # in scripts/iac-workflow-steps.test.mjs runs this step (codeql.yml
-          # had them too until it left the pull-request path on 2026-11-04,
-          # #1545). If the second filter is the broken one, the first
+          # has them too). If the second filter is the broken one, the first
           # answer has been written already; the step still fails, so no later
           # step runs and nothing is skipped.
           status=0

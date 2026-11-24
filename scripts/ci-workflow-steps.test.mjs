@@ -896,7 +896,6 @@ const LEFT_OUT = new Map([
   ['ci.yml / coverage', 'Checks out for the repository metadata the upload records, then only downloads artifacts and runs the Qlty action; no shell step runs code from this repository. It has its own limit anyway (10 minutes).'],
   ['ci.yml / gate', 'Never checks out: it only reads the results of the jobs it needs from the `needs` context. It has its own limit anyway (5 minutes).'],
   ['claude.yml / claude', 'Checks out, then runs only the Claude Code action; no shell step of this workflow runs code from this repository. It has its own limit anyway (60 minutes).'],
-  ['codeql.yml / analyze', 'Checks out, then runs only the CodeQL init and analyze actions (no detect step since it left the pull-request path, #1545); no shell step runs code from this repository. It has its own limit anyway (20 minutes).'],
   ['dependency-review.yml / dependency-review', 'Its only step after the checkout is the dependency-review action; there is no shell step that runs code from this repository.'],
   ['docs-pages.yml / deploy', 'Never checks out the repository: it hands the site the build job made to the Pages deploy action, with no shell step.'],
   // The self-arming gates (#1618): a job's `if:` cannot read `secrets`, so
