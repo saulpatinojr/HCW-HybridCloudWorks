@@ -34,7 +34,15 @@ import {
   reportIdFor,
   reportNames,
 } from './archive-report.js';
-import { AI_PROVIDER_KEEP, MCP_SERVER_KEEP, SENSITIVE_KEPT_ON_PURPOSE, archiveDocumentLabel, archivePlan, UNCLASSIFIED } from './archive-classification.js';
+import {
+  AI_PROVIDER_KEEP,
+  MCP_SERVER_KEEP,
+  SENSITIVE_KEPT_ON_PURPOSE,
+  archiveDocumentLabel,
+  archivePlan,
+  classificationFingerprint,
+  UNCLASSIFIED,
+} from './archive-classification.js';
 import { createArchiveHandlers, DRY_RUN_AUDIT_ACTION } from './archive-handlers.js';
 
 const ndjson = (docs) => gzipSync(Buffer.from(docs.map((doc) => (typeof doc === 'string' ? doc : JSON.stringify(doc))).join('\n') + '\n'));
@@ -626,7 +634,15 @@ describe('the two admin routes', () => {
       const blobs = memoryBlobs(backupSeed({ blogs: [{ id: 'b1' }] }));
       const id = '20270207T2000Z';
       blobs.files.set(reportNames(id).latest, { reportId: id });
-      blobs.files.set(reportNames(id).report, { reportId: id, sourceBackup: { runId: SUNDAY }, totals: {}, containers: [], leftOutWhole: [] });
+      blobs.files.set(reportNames(id).report, {
+        reportId: id,
+        sourceBackup: { runId: SUNDAY },
+        rules: classificationFingerprint(),
+        totals: {},
+        // One part for the one container the backup holds that an archive would write.
+        containers: [{ container: 'blogs', decision: 'archive', reason: null, read: 1, matchesBackup: true, sensitive: { remaining: [], flagged: 0, cutShort: 0 } }],
+        leftOutWhole: [],
+      });
       return blobs;
     };
     const { handlers } = make({ env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, archiveBlobs: missing, blobs: withReport() });
@@ -1028,14 +1044,21 @@ describe('after the owner’s decision of 2026-11-24: nothing is waiting, and a 
 });
 
 describe('reportGate: an archive never starts from a state no finished report describes', () => {
-  const done = (report = {}) => ({ reportId: 'x', complete: true, report: { sourceBackup: { runId: SUNDAY }, totals: {}, containers: [], leftOutWhole: [], ...report } });
-  const gate = (latest, backupRunId = SUNDAY) => reportGate({ latest, backupRunId });
-  const kept = (container, sensitive) => ({ container, decision: 'archive', reason: null, sensitive });
-  const flaggedOnce = { remaining: [{ path: 'authorEmail', flagged: true }], flagged: 1, keptRecords: 1 };
+  // The backup holds two containers an archive would write, and one it leaves out.
+  const BACKUP = ['blogs', 'newsletters', 'admins'];
+  const clean = { remaining: [], flagged: 0, keptRecords: 0, cutShort: 0 };
+  const part = (container, over = {}) => ({ container, decision: 'archive', reason: null, read: 3, matchesBackup: true, unreadable: 0, sensitive: clean, ...over });
+  /** A finished report as a real clean one is: today's rules, and a part for each container the archive would write. */
+  const done = (report = {}) => ({
+    reportId: 'x',
+    complete: true,
+    report: { sourceBackup: { runId: SUNDAY }, rules: classificationFingerprint(), totals: {}, containers: [part('blogs'), part('newsletters')], leftOutWhole: [], ...report },
+  });
+  const gate = (latest, backupRunId = SUNDAY, backupContainers = BACKUP) => reportGate({ latest, backupRunId, backupContainers });
+  const flaggedOnce = { remaining: [{ path: 'authorEmail', flagged: true }], flagged: 1, keptRecords: 1, cutShort: 0 };
 
-  it('lets a finished, clean report of the same backup through', () => {
+  it('lets a finished, clean report of the same backup and the same rules through', () => {
     expect(gate(done())).toEqual([]);
-    expect(gate(done({ containers: [kept('newsletters', { remaining: [], flagged: 0, keptRecords: 0 })] }))).toEqual([]);
   });
 
   it('stops when there is no report, one is still reading, or the newest did not finish', () => {
@@ -1051,29 +1074,76 @@ describe('reportGate: an archive never starts from a state no finished report de
     expect(gate(done(), null)).toEqual(['report-older-than-backup']);
   });
 
-  it('stops for a flagged container no owner decision covers, and not for one the decision covers', () => {
-    expect(gate(done({ containers: [kept('newsletters', flaggedOnce)] }))).toEqual(['report-flagged']);
-    // blogs and tool_workspaces are on the owner's list of 2026-11-24.
-    expect(gate(done({ containers: [kept('blogs', flaggedOnce), kept('tool_workspaces', flaggedOnce)] }))).toEqual([]);
-    // What the report stored does not decide it: the list as it is now does.
-    expect(gate(done({ containers: [{ ...kept('newsletters', flaggedOnce), ownerAccepted: '2026-11-24' }] }))).toEqual(['report-flagged']);
-    // A report from before the lists were split cannot say what would remain, so a kept record with such a name counts.
-    expect(gate(done({ containers: [kept('newsletters', { records: 2, keptRecords: 2, names: [] })] }))).toEqual(['report-flagged']);
-    // A container that is left out is never a reason: nothing of it would be archived.
-    expect(gate(done({ containers: [{ container: 'admins', decision: 'leave-out', reason: 'access-list', sensitive: flaggedOnce }] }))).toEqual([]);
+  it('stops when the report was made under other rules than today’s, or does not say which', () => {
+    expect(gate(done({ rules: 'the-rules-of-last-week' }))).toEqual(['report-older-rules']);
+    expect(gate(done({ rules: undefined }))).toEqual(['report-older-rules']);
+    expect(gate(done({ rules: null }))).toEqual(['report-older-rules']);
   });
 
-  it('stops while any container is waiting for the owner, read or not', () => {
-    expect(gate(done({ containers: [{ container: 'a_new_container', decision: 'leave-out', reason: 'unclassified' }] }))).toEqual(['report-waiting']);
-    expect(gate(done({ leftOutWhole: [{ container: 'a_new_container', reason: 'unclassified', backupDocs: 3 }] }))).toEqual(['report-waiting']);
+  it('stops when the report does not cover every container the archive would write', () => {
+    // A finished report with no containers at all says nothing: it is not "nothing to decide".
+    expect(gate(done({ containers: [] }))).toEqual(['report-incomplete']);
+    expect(gate(done({ containers: [part('blogs')] }))).toEqual(['report-incomplete']);
+    // In the report, but with another decision than the list gives it today.
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { decision: 'leave-out', reason: 'unclassified' })] }))).toContain('report-incomplete');
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { decision: 'archive-changed' })] }))).toEqual(['report-incomplete']);
+    // Without the backup's own list of containers, no report can be called complete.
+    expect(reportGate({ latest: done(), backupRunId: SUNDAY })).toEqual(['report-incomplete']);
+    // A container the backup does not hold is not asked for.
+    expect(gate(done({ containers: [part('blogs')] }), SUNDAY, ['blogs', 'admins'])).toEqual([]);
   });
 
-  it('stops when the dry run disagreed with the backup, and lists every reason at once', () => {
-    expect(gate(done({ totals: { mismatched: 1 } }))).toEqual(['report-mismatch']);
+  it('stops when a container the archive would write was not read whole', () => {
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { matchesBackup: false })] }))).toEqual(['report-mismatch']);
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { matchesBackup: null })] }))).toEqual(['report-mismatch']);
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { unreadable: 1 })] }))).toEqual(['report-mismatch']);
     expect(gate(done({ totals: { unreadable: 2 } }))).toEqual(['report-mismatch']);
+  });
+
+  it('stops when a record was too large to be searched whole for names that look like a secret', () => {
+    expect(gate(done({ containers: [part('blogs', { sensitive: { ...clean, cutShort: 1 } }), part('newsletters')] }))).toEqual(['report-cut-short']);
+  });
+
+  it('stops for a flagged container no owner decision covers, and not for one the decision covers', () => {
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { sensitive: flaggedOnce })] }))).toEqual(['report-flagged']);
+    // blogs is on the owner's list of 2026-11-24.
+    expect(gate(done({ containers: [part('blogs', { sensitive: flaggedOnce }), part('newsletters')] }))).toEqual([]);
+    // What the report stored does not decide it: the list as it is now does.
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { sensitive: flaggedOnce, ownerAccepted: '2026-11-24' })] }))).toEqual(['report-flagged']);
+    // A report from before the lists were split cannot say what would remain, so a kept record with such a name counts.
+    expect(gate(done({ containers: [part('blogs'), part('newsletters', { sensitive: { records: 2, keptRecords: 2, names: [] } })] }))).toEqual(['report-flagged']);
+    // A container that is left out is never a reason: nothing of it would be archived.
+    expect(gate(done({ containers: [part('blogs'), part('newsletters'), { container: 'admins', decision: 'leave-out', reason: 'access-list', sensitive: flaggedOnce }] }))).toEqual([]);
+  });
+
+  it('stops while a container is waiting for the owner, read or not, and stops stopping once the list has an answer for it', () => {
+    const base = [part('blogs'), part('newsletters')];
+    expect(gate(done({ containers: [...base, { container: 'a_new_container', decision: 'leave-out', reason: 'unclassified' }] }))).toEqual(['report-waiting']);
+    expect(gate(done({ leftOutWhole: [{ container: 'a_new_container', reason: 'unclassified', backupDocs: 3 }] }))).toEqual(['report-waiting']);
+    // The report called it waiting, and the list has since been given an answer for it: it is no longer waiting.
+    expect(gate(done({ leftOutWhole: [{ container: 'admins', reason: 'unclassified', backupDocs: 3 }] }))).toEqual([]);
+    expect(gate(done({ leftOutWhole: [{ container: 'tool_exports', reason: 'unclassified', backupDocs: 0 }] }))).toEqual([]);
+  });
+
+  it('lists every reason at once', () => {
     expect(
-      gate(done({ totals: { mismatched: 1 }, containers: [kept('newsletters', flaggedOnce), { container: 'a_new_container', decision: 'leave-out', reason: 'unclassified' }] }))
-    ).toEqual(['report-mismatch', 'report-flagged', 'report-waiting']);
+      gate(
+        done({
+          containers: [part('blogs', { matchesBackup: false }), part('newsletters', { sensitive: { ...flaggedOnce, cutShort: 2 } }), { container: 'a_new_container', decision: 'leave-out', reason: 'unclassified' }],
+        })
+      )
+    ).toEqual(['report-mismatch', 'report-cut-short', 'report-flagged', 'report-waiting']);
+  });
+
+  it('a real dry run of a clean backup passes the gate, and says which rules it was made under', async () => {
+    const at = new Date('2027-02-08T04:00:30Z');
+    const blobs = memoryBlobs(backupSeed({ blogs: [{ id: 'b1' }], newsletters: [{ id: 'n1' }], admins: [{ id: 'a1' }] }));
+    const jobs = [];
+    await createReportScheduler({ store: { upsertDoc: async (_c, doc) => jobs.push(doc) }, blobs, enqueue: () => {}, now: () => at }).start();
+    for (const job of jobs) await createReportWorker({ blobs, now: () => at }).readContainer(parseReportPayload(job.payload));
+    const latest = await readLatestReport({ blobs, now: at });
+    expect(latest.report.rules).toBe(classificationFingerprint());
+    expect(gate(latest)).toEqual([]);
   });
 
   it('the start rule adds the gate’s answer to its own, and counts a gate that was not asked as "no report"', () => {

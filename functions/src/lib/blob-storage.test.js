@@ -564,14 +564,22 @@ describe('access tiers, for the yearly content archive (ADR 0046)', () => {
 
   it('listBlobs says which tier each file is in, or null when storage does not say', async () => {
     listedBlobs.items = [
-      { name: '2026/cosmos/blogs.ndjson.gz', properties: { contentLength: 12, accessTier: 'Archive' } },
+      { name: '2026/cosmos/blogs.ndjson.gz', properties: { contentLength: 12, accessTier: 'Archive', etag: '"0x1"' } },
       { name: '2026/manifest.json', properties: { contentLength: 3 } },
     ];
     const listed = await listBlobs('content-archive', '2026/');
-    expect(listed.map(({ name, size, tier }) => ({ name, size, tier }))).toEqual([
-      { name: '2026/cosmos/blogs.ndjson.gz', size: 12, tier: 'Archive' },
-      { name: '2026/manifest.json', size: 3, tier: null },
+    expect(listed.map(({ name, size, tier, etag }) => ({ name, size, tier, etag }))).toEqual([
+      { name: '2026/cosmos/blogs.ndjson.gz', size: 12, tier: 'Archive', etag: '"0x1"' },
+      { name: '2026/manifest.json', size: 3, tier: null, etag: null },
     ]);
+  });
+
+  it('uploadBlobFromStream hands a write condition to storage, and none when none is asked for', async () => {
+    uploadStreamSpy.mockReset().mockResolvedValue({});
+    await uploadBlobFromStream('content-archive', '2026/cosmos/blogs.ndjson.gz', {}, 1024, 'application/gzip', { conditions: { ifNoneMatch: '*' } });
+    expect(uploadStreamSpy.mock.calls[0][3]).toMatchObject({ conditions: { ifNoneMatch: '*' } });
+    await uploadBlobFromStream('content-archive', '2026/cosmos/blogs.ndjson.gz', {}, 1024, 'application/gzip', {});
+    expect(uploadStreamSpy.mock.calls[1][3]).not.toHaveProperty('conditions');
   });
 
   it('setBlobAccessTier sets the tier, and is refused once a job’s time has run out', async () => {

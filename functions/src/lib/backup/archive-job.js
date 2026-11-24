@@ -73,7 +73,15 @@ import { createGzip } from 'node:zlib';
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
 import { withStatus } from '../http/error-response.js';
 import { blobNames } from './cosmos-export.js';
-import { DECISIONS, REASONS, archiveDecisionFor, archivePlan, archiveRecord, createContentIndex } from './archive-classification.js';
+import {
+  DECISIONS,
+  REASONS,
+  archiveDecisionFor,
+  archivePlan,
+  archiveRecord,
+  classificationFingerprint,
+  createContentIndex,
+} from './archive-classification.js';
 import {
   ARCHIVE_CONTAINER,
   ARCHIVE_SETTING,
@@ -99,8 +107,22 @@ export const ARCHIVE_LATE_HOURS = 6;
 export const MANIFEST_FORMAT = 1;
 /** Stamped on the job documents the daily check creates. */
 export const ARCHIVE_ACTOR = Object.freeze({ oid: null, email: 'content-archive@system' });
-/** The source a notification about the archive is sent under (lib/notify.js). */
-export const ARCHIVE_NOTIFY_SOURCE = 'content_archive';
+/**
+ * The sources notifications about the archive are sent under (lib/notify.js).
+ * One each, because the notifier sends at most one message per source in 15
+ * minutes: with a shared source, "not finished" at 03:00 could swallow
+ * "written" a few minutes later.
+ */
+export const ARCHIVE_NOTIFY_SOURCES = Object.freeze({
+  written: 'content_archive_written',
+  late: 'content_archive_late',
+  waiting: 'content_archive_waiting',
+  blocked: 'content_archive_blocked',
+});
+/** How long the daily check may take before the export timer stops waiting for it. */
+export const ARCHIVE_CHECK_DEADLINE_MS = 2 * 60 * 1000;
+/** After this many automatic dry runs in a row that did not finish, the daily check stops starting them. */
+export const AUTO_DRY_RUN_MAX_FAILURES = 3;
 
 const RUN_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const HOUR_MS = 60 * 60 * 1000;
@@ -127,6 +149,8 @@ export function archiveNames(year, container = '') {
   return {
     run: `${notes}run.json`,
     note: `${notes}${container}.done.json`,
+    // What the daily check has already done or said for this year, so it does it once.
+    memo: `${notes}check-memo.json`,
     dataPrefix: `${year}/cosmos/`,
     data: `${year}/cosmos/${container}.ndjson.gz`,
     manifest: archiveManifestName(year),
@@ -148,8 +172,18 @@ export function parseArchivePayload(payload = {}) {
   return { year, runId, container };
 }
 
-/** Is this the pinned run of that year, in a shape this file wrote? */
+/**
+ * Is this the pinned run of that year, in a shape this file wrote, started
+ * under the rules as they are TODAY? A run pinned under other rules (the
+ * list of what is kept changed while it was unfinished) is not a run to
+ * carry on: nothing it wrote is trusted, and it starts again.
+ */
 function validRun(run, year) {
+  return isRunOfYear(run, year) && run.rules === classificationFingerprint();
+}
+
+/** Is this a pinned run of that year in a shape this file wrote, whatever rules it was pinned under? */
+function isRunOfYear(run, year) {
   return (
     run !== null &&
     typeof run === 'object' &&
@@ -161,7 +195,11 @@ function validRun(run, year) {
   );
 }
 
-/** Does this note say the container's file was written and checked for THIS run? */
+/**
+ * Does this note say the container's file was written and checked for THIS
+ * run, under the SAME rules the run was pinned with? (The run itself is
+ * only valid under today's rules: `validRun`.)
+ */
 function noteMatches(note, run, container) {
   return (
     note !== null &&
@@ -169,6 +207,9 @@ function noteMatches(note, run, container) {
     note.container === container &&
     note.year === run.year &&
     note.sourceRun === run.backup.runId &&
+    note.rules === run.rules &&
+    typeof note.etag === 'string' &&
+    note.etag !== '' &&
     typeof note.sha256 === 'string' &&
     /^[0-9a-f]{64}$/.test(note.sha256)
   );
@@ -277,16 +318,18 @@ export function createArchiveWorker({ backupBlobs, archiveBlobs, env = process.e
       return skipped(container, 'not-this-run');
     }
 
+    // What is in storage under this file's name right now, if anything. Its
+    // version stamp (ETag) changes on every write, so it says exactly which
+    // write a note vouches for, and which one this job may replace.
+    const there = (await archiveBlobs.listDetails(names.data)).find((file) => file.name === names.data) || null;
     const earlier = await backupBlobs.readJson(names.note);
-    if (noteMatches(earlier, run, container)) {
-      const there = (await archiveBlobs.listDetails(names.data)).find((file) => file.name === names.data);
-      if (there && there.size === count(earlier.bytes)) {
-        const completion = await completeIfLast({ year });
-        return { ...skipped(container, 'already-written'), manifestWritten: completion.written };
-      }
+    if (noteMatches(earlier, run, container) && there && there.etag === earlier.etag) {
+      const completion = await completeIfLast({ year });
+      return { ...skipped(container, 'already-written'), manifestWritten: completion.written };
     }
 
     const startedAt = now();
+    const expected = (run.backup.containers || []).find((row) => row?.container === container);
     const stats = { read: 0, kept: 0, changed: 0, leftOut: 0, leftOutBy: {}, removed: {}, unreadable: 0, rawBytes: 0, bytes: 0 };
     const contentIndex = container === 'content_versions' ? await contentIndexFor(runId, signal) : null;
 
@@ -314,6 +357,15 @@ export function createArchiveWorker({ backupBlobs, archiveBlobs, env = process.e
         stats.rawBytes += Buffer.byteLength(line);
         yield line;
       }
+      // Two checks while the upload is still open. Throwing here fails the
+      // stream, so storage is never told to keep the file: a file that fails
+      // either check is not left in `content-archive`.
+      if (stats.unreadable > 0) {
+        throw new Error('a line of the backup file could not be read as a record, so the archive file is not written');
+      }
+      if (expected && count(expected.docs) !== stats.read) {
+        throw new Error('the backup file holds a different number of records than the backup’s own list says');
+      }
     }
 
     const hash = createHash('sha256');
@@ -329,35 +381,50 @@ export function createArchiveWorker({ backupBlobs, archiveBlobs, env = process.e
     // pipeline() carries a read failure into `tap`, so the upload fails too;
     // an upload failure destroys `tap`, so the pipeline ends instead of
     // waiting for ever. Promise.all gives whichever failed first.
-    await Promise.all([
+    // The write is conditional: only when no file has this name, or only
+    // over the exact version this job saw when it started. So of two jobs
+    // writing one container at once, storage lets one finish, and a job that
+    // is late cannot write over a file another job has since written.
+    const [, committed] = await Promise.all([
       pipeline(Readable.from(keptLines()), createGzip(), tap),
       archiveBlobs
-        .uploadGzipStream(names.data, tap, { metadata: { year: String(year), sourcerun: runId } })
+        .uploadGzipStream(names.data, tap, {
+          metadata: { year: String(year), sourcerun: runId },
+          conditions: there?.etag ? { ifMatch: there.etag } : { ifNoneMatch: '*' },
+        })
         .catch((error) => {
           tap.destroy(error);
           throw error;
         }),
     ]);
+    if (committed === false) return skipped(container, 'another-job-wrote-it');
     const sha256 = hash.digest('hex');
 
-    // Three checks before the file counts. None of them names a record.
-    if (stats.unreadable > 0) {
-      throw new Error('a line of the backup file could not be read as a record, so the archive file is not counted');
-    }
-    const expected = (run.backup.containers || []).find((row) => row?.container === container);
-    if (expected && count(expected.docs) !== stats.read) {
-      throw new Error('the backup file holds a different number of records than the backup’s own list says');
-    }
+    // The third check, which needs the stored file: read it back. A file
+    // that fails here stays under its name, uncounted (it gets no note), and
+    // the next job for this container replaces it.
     const stored = await readBack(names.data);
     if (!stored || stored.sha256 !== sha256 || stored.bytes !== stats.bytes || stored.records !== stats.kept) {
       throw new Error('the archive file read back from storage is not the file that was written');
     }
+    const written = (await archiveBlobs.listDetails(names.data)).find((file) => file.name === names.data) || null;
+    if (!written?.etag || written.size !== stats.bytes) {
+      throw new Error('the archive file changed in storage while it was being checked');
+    }
+
+    // Asked again, now that minutes have passed: nothing is noted once the
+    // owner has switched the archive off, or the year has its manifest.
+    if (env?.[ARCHIVE_SETTING] !== 'true') return skipped(container, 'switch-off');
+    if ((await archiveBlobs.readJson(names.manifest)) !== null) return skipped(container, 'already-archived');
 
     const durationMs = now().getTime() - startedAt.getTime();
     await backupBlobs.putJson(names.note, {
       container,
       year,
       sourceRun: runId,
+      // The rules the file was written under, and the exact version of it that was checked.
+      rules: run.rules,
+      etag: written.etag,
       file: names.data,
       decision: decision.decision,
       records: stats.kept,
@@ -398,9 +465,16 @@ export function createArchiveWorker({ backupBlobs, archiveBlobs, env = process.e
    */
   async function completeIfLast({ year }) {
     const names = archiveNames(year);
+    // The switch is asked again here: a manifest is never written once the owner has switched the archive off.
+    if (env?.[ARCHIVE_SETTING] !== 'true') return { written: false, reason: 'switch-off' };
     const run = await backupBlobs.readJson(names.run);
+    // `validRun` also refuses a run pinned under other rules than today's.
     if (!validRun(run, year) || !run.containers.length) return { written: false, reason: 'no-run' };
     if ((await archiveBlobs.readJson(names.manifest)) !== null) return { written: false, reason: 'exists' };
+    // The keep list is asked again, by name: a manifest never names a
+    // container the list does not archive today, whatever the run says.
+    const plan = archivePlan();
+    if (!run.containers.every((container) => plan.includes(container))) return { written: false, reason: 'not-in-plan' };
 
     const notes = [];
     for (const container of run.containers) {
@@ -408,12 +482,20 @@ export function createArchiveWorker({ backupBlobs, archiveBlobs, env = process.e
       if (!noteMatches(note, run, container)) return { written: false, reason: 'incomplete' };
       notes.push(note);
     }
-    // Each file must still be there, at the size that was checked.
-    const sizes = new Map((await archiveBlobs.listDetails(names.dataPrefix)).map((file) => [file.name, file.size]));
+    // Each file must still be there, in the very version that was checked.
+    const listed = await archiveBlobs.listDetails(names.dataPrefix);
+    const stamps = new Map(listed.map((file) => [file.name, file.etag]));
+    const wanted = new Set(notes.map((note) => archiveNames(year, note.container).data));
     for (const note of notes) {
       const name = archiveNames(year, note.container).data;
-      if (sizes.get(name) !== count(note.bytes)) return { written: false, reason: 'file-missing' };
+      if (stamps.get(name) !== note.etag) return { written: false, reason: 'file-missing' };
     }
+    // And nothing else may be in the year's folder. A file the manifest
+    // would not name is one written under earlier rules (a container that
+    // has since left the list): it must not sit in a finished archive
+    // unlisted. Nothing here deletes it; the owner clears it by hand.
+    const unlisted = listed.filter((file) => !wanted.has(file.name)).length;
+    if (unlisted > 0) return { written: false, reason: 'unlisted-file', unlisted };
 
     const files = notes.map((note) => ({
       name: archiveNames(year, note.container).data,
@@ -459,7 +541,7 @@ export function createArchiveWorker({ backupBlobs, archiveBlobs, env = process.e
         title: `Content archive of ${year} written`,
         message: `The yearly archive of ${year} is written: ${files.length} files, ${manifest.totals.records} records, ${manifest.totals.bytes} bytes. ${tiering.moved + tiering.alreadyArchived} of ${tiering.files} files are in the Archive tier. The next step is the read-back check in the content archive runbook.`,
         severity: 'info',
-        source: ARCHIVE_NOTIFY_SOURCE,
+        source: ARCHIVE_NOTIFY_SOURCES.written,
       })
       ?.catch?.(() => {});
     return { written: true, tiering };
@@ -557,15 +639,28 @@ export function createArchiveScheduler({
    */
   async function resume(run, at) {
     const { year } = run;
+    // A container is missing when it has no note for this run, or when the
+    // file in storage is not the version its note vouches for.
+    const stamps = new Map((await archiveBlobs.listDetails(archiveNames(year).dataPrefix)).map((file) => [file.name, file.etag]));
     const missing = [];
     for (const container of run.containers) {
-      const note = await backupBlobs.readJson(archiveNames(year, container).note);
-      if (!noteMatches(note, run, container)) missing.push(container);
+      const names = archiveNames(year, container);
+      const note = await backupBlobs.readJson(names.note);
+      if (!noteMatches(note, run, container) || stamps.get(names.data) !== note.etag) missing.push(container);
     }
     const startedMs = Date.parse(run.startedAt || '');
     const late = Number.isFinite(startedMs) && at.getTime() - startedMs >= ARCHIVE_LATE_HOURS * HOUR_MS;
     if (!missing.length) {
       const completion = await worker.completeIfLast({ year });
+      if (completion.reason === 'unlisted-file') {
+        log.warn?.(`[contentArchive] the archive of ${year} is not finished: ${completion.unlisted} file(s) in its folder are not on its list`);
+        await sayOnce(year, `unlisted-file:${run.backup.runId}:${run.rules}`, {
+          title: `Content archive of ${year} needs you: a file that should not be there`,
+          message: `Every file of the yearly archive of ${year} is written and checked, but its folder also holds ${completion.unlisted} file(s) the archive's list does not name: a container that was archived when the run started and has since been taken off the list. The archive is not finished and nothing is in the Archive tier. Nothing deletes a file by itself; the content archive runbook, "A file that should not be there", has the steps.`,
+          severity: 'warning',
+          source: ARCHIVE_NOTIFY_SOURCES.blocked,
+        });
+      }
       return { action: completion.written ? 'completed' : 'waiting', year, queued: 0, reason: completion.reason || null };
     }
     const queued = await queue(year, run.backup.runId, missing);
@@ -578,28 +673,79 @@ export function createArchiveScheduler({
           title: `Content archive of ${year} is not finished`,
           message: `The yearly archive of ${year} started more than ${ARCHIVE_LATE_HOURS} hours ago and is not finished: ${run.containers.length - missing.length} of ${run.containers.length} files are written. Nothing has been moved to the Archive tier. The ${queued} missing container(s) were queued again. The Archive card on Health, Overview names them.`,
           severity: 'warning',
-          source: ARCHIVE_NOTIFY_SOURCE,
+          source: ARCHIVE_NOTIFY_SOURCES.late,
         })
         ?.catch?.(() => {});
     }
     return { action: 'resumed', year, queued, late };
   }
 
-  /** A report that is only absent, unfinished or made from an older backup: a new dry run puts that right. */
-  const NEEDS_A_DRY_RUN = ['report-missing', 'report-stalled', 'report-older-than-backup'];
+  /** A report that is absent, unfinished, or made from another backup or under other rules: a new dry run puts that right. */
+  const NEEDS_A_DRY_RUN = ['report-missing', 'report-stalled', 'report-older-than-backup', 'report-older-rules', 'report-incomplete'];
   /** A finished report of the right backup that shows something to decide: only the owner puts that right. */
-  const NEEDS_THE_OWNER = ['report-mismatch', 'report-flagged', 'report-waiting'];
+  const NEEDS_THE_OWNER = ['report-mismatch', 'report-cut-short', 'report-flagged', 'report-waiting'];
+
+  /** What the daily check has already done or said for this year. */
+  const readMemo = async (year) => {
+    const memo = await backupBlobs.readJson(archiveNames(year).memo);
+    return memo !== null && typeof memo === 'object' ? memo : {};
+  };
 
   /**
-   * When the only thing between today and an archive is that no finished
+   * Tell the owner something once. The daily check runs every day, and a
+   * thing that waits for the owner would otherwise be said every morning.
+   * `key` names the exact situation, so a new situation is said again.
+   */
+  async function sayOnce(year, key, message) {
+    const memo = await readMemo(year);
+    if (memo.said?.[key]) return false;
+    await notifier?.notifyTelegram(message)?.catch?.(() => {});
+    await backupBlobs.putJson(archiveNames(year).memo, { ...memo, said: { ...(memo.said || {}), [key]: now().toISOString() } });
+    return true;
+  }
+
+  /**
+   * When the only thing between today and an archive is that no usable
    * dry-run report describes the backup, make one. The owner's answer to
    * "how does a yearly run start" was "by itself" (ADR 0046, question 4), so
    * the yearly check does not wait for someone to press Dry run. The archive
    * then starts at the next daily check, if that report shows nothing to
    * decide. A dry run writes no archive and changes no record.
+   *
+   * CAPPED, so a dry run that keeps failing is not started every morning for
+   * ever: at most ONE automatic start per backup and set of rules. If that
+   * one leaves no finished report, the owner is told once and nothing more
+   * is started for that backup. After AUTO_DRY_RUN_MAX_FAILURES automatic
+   * dry runs in a row that did not finish (one per weekly backup), no more
+   * are started at all until a dry run has finished; the owner is told once.
    */
-  async function dryRunIfThatIsAllThatIsMissing(blockers) {
-    if (!blockers.length || !blockers.every((code) => NEEDS_A_DRY_RUN.includes(code))) return { started: false, queued: 0 };
+  async function dryRunIfThatIsAllThatIsMissing(year, blockers, backup, latest) {
+    const none = (reason) => ({ started: false, queued: 0, reason });
+    if (!backup || !blockers.length || !blockers.every((code) => NEEDS_A_DRY_RUN.includes(code))) return none('not-the-only-thing');
+    const key = `${backup.runId}:${classificationFingerprint()}`;
+    const memo = await readMemo(year);
+    const auto = memo.autoDryRun || {};
+    const pressAgain = 'Open the Archive card on Health, Overview and press Dry run; the content archive runbook says what to check if it fails again.';
+    if (auto.key === key) {
+      await sayOnce(year, `dry-run-did-not-finish:${key}`, {
+        title: `Content archive of ${year}: the dry run did not finish`,
+        message: `The yearly archive of ${year} is ready to start, but the dry run that has to come first did not finish, and it is not started again by itself for this backup. Nothing has been written. ${pressAgain}`,
+        severity: 'warning',
+        source: ARCHIVE_NOTIFY_SOURCES.blocked,
+      });
+      return none('already-tried');
+    }
+    // The automatic dry run before this one left no finished report.
+    const failures = auto.key && !latest?.complete ? count(auto.failures) + 1 : 0;
+    if (failures >= AUTO_DRY_RUN_MAX_FAILURES) {
+      await sayOnce(year, 'dry-run-gave-up', {
+        title: `Content archive of ${year}: no more automatic dry runs`,
+        message: `${AUTO_DRY_RUN_MAX_FAILURES} automatic dry runs in a row did not finish, so no more are started by themselves and the yearly archive of ${year} cannot start. Nothing has been written. ${pressAgain}`,
+        severity: 'warning',
+        source: ARCHIVE_NOTIFY_SOURCES.blocked,
+      });
+      return none('gave-up');
+    }
     const result = await createReportScheduler({
       store,
       blobs: backupBlobs,
@@ -607,22 +753,22 @@ export function createArchiveScheduler({
       now,
       uuid,
     }).start({ requestedBy: ARCHIVE_ACTOR });
-    if (result.started) log.log?.(`[contentArchive] a dry run was started for the archive of ${archiveYearFor(now())}: ${result.queued} container job(s) queued`);
-    return { started: result.started === true, queued: result.started ? result.queued : 0 };
+    if (!result.started) return none(result.reason || 'not-started');
+    await backupBlobs.putJson(archiveNames(year).memo, { ...(await readMemo(year)), autoDryRun: { key, failures, startedAt: now().toISOString() } });
+    log.log?.(`[contentArchive] a dry run was started for the archive of ${year}: ${result.queued} container job(s) queued`);
+    return { started: true, queued: result.queued };
   }
 
-  /** Tell the owner when everything else is ready and only the report's findings stop the archive. */
-  async function sayIfTheReportStopsIt(year, blockers) {
-    if (!blockers.length || !blockers.every((code) => NEEDS_THE_OWNER.includes(code))) return;
+  /** Tell the owner, once, when everything else is ready and only the report's findings stop the archive. */
+  async function sayIfTheReportStopsIt(year, blockers, backup) {
+    if (!backup || !blockers.length || !blockers.every((code) => NEEDS_THE_OWNER.includes(code))) return;
     log.warn?.(`[contentArchive] the archive of ${year} is not started: the dry-run report shows something to decide (${blockers.join(', ')})`);
-    await notifier
-      ?.notifyTelegram({
-        title: `Content archive of ${year} is waiting for you`,
-        message: `The yearly archive of ${year} is ready to start, and the newest dry-run report shows something to decide first (${blockers.join(', ')}). Nothing has been written. Open the Archive card on Health, Overview and read the report; the content archive runbook says how to answer.`,
-        severity: 'warning',
-        source: ARCHIVE_NOTIFY_SOURCE,
-      })
-      ?.catch?.(() => {});
+    await sayOnce(year, `waiting:${backup.runId}:${classificationFingerprint()}:${blockers.join(',')}`, {
+      title: `Content archive of ${year} is waiting for you`,
+      message: `The yearly archive of ${year} is ready to start, and the newest dry-run report shows something to decide first (${blockers.join(', ')}). Nothing has been written. Open the Archive card on Health, Overview and read the report; the content archive runbook says how to answer.`,
+      severity: 'warning',
+      source: ARCHIVE_NOTIFY_SOURCES.waiting,
+    });
   }
 
   /**
@@ -651,18 +797,29 @@ export function createArchiveScheduler({
     }
 
     const pinned = await backupBlobs.readJson(names.run);
-    const started = validRun(pinned, year);
-    if (started) {
+    // A run was pinned for this year before, under today's rules or not.
+    const existing = isRunOfYear(pinned, year);
+    if (validRun(pinned, year)) {
       const stillThere = await backupBlobs.readJson(blobNames({ mode: 'full', runId: pinned.backup.runId, container: '' }).manifest);
       if (stillThere) return resume(pinned, at);
       log.warn?.(`[contentArchive] the backup the archive of ${year} was started from is gone; starting again from the newest one`);
+    } else if (existing) {
+      // The list of what is kept changed while the run was unfinished.
+      // Nothing it wrote is trusted: it starts again, through the same gate
+      // as a first start, and every file is written again.
+      log.warn?.(`[contentArchive] the rules changed while the archive of ${year} was unfinished; it starts again under today's rules`);
     }
 
     const backup = await findLatestFullBackup({ blobs: backupBlobs, now: at });
-    // The newest dry-run report has to describe this very backup and show
-    // nothing still to decide, or no archive starts (reportGate).
+    // The newest dry-run report has to describe this very backup, under
+    // today's rules, and show nothing still to decide, or no archive starts
+    // (reportGate).
     const latest = await readLatestReport({ blobs: backupBlobs, now: at });
-    const reportBlockers = reportGate({ latest, backupRunId: backup?.runId ?? null });
+    const reportBlockers = reportGate({
+      latest,
+      backupRunId: backup?.runId ?? null,
+      backupContainers: backup ? backup.containers.map((row) => row.container) : null,
+    });
     const decision = archiveStartDecision({
       env,
       now: at,
@@ -672,9 +829,9 @@ export function createArchiveScheduler({
       reportBlockers,
     });
     if (!decision.start) {
-      const dryRunStarted = await dryRunIfThatIsAllThatIsMissing(decision.blockers);
-      await sayIfTheReportStopsIt(year, decision.blockers);
-      return { action: 'blocked', year, blockers: decision.blockers, queued: dryRunStarted.queued, dryRunStarted: dryRunStarted.started };
+      const dryRun = await dryRunIfThatIsAllThatIsMissing(year, decision.blockers, backup, latest);
+      await sayIfTheReportStopsIt(year, decision.blockers, backup);
+      return { action: 'blocked', year, blockers: decision.blockers, queued: dryRun.queued, dryRunStarted: dryRun.started };
     }
 
     const inBackup = new Map(backup.containers.map((row) => [row.container, row.docs]));
@@ -686,13 +843,16 @@ export function createArchiveScheduler({
       {
         year,
         startedAt: at.toISOString(),
+        // The rules every file of this run is written under (archive-classification.js).
+        rules: classificationFingerprint(),
         backup: { runId: backup.runId, containers: containers.map((container) => ({ container, docs: inBackup.get(container) })) },
         containers,
         notInBackup: plan.filter((name) => !inBackup.has(name)),
       },
       // Create-only, so two checks at once start one run. Replacing is
-      // allowed only for a run whose backup is gone, which can never finish.
-      { overwrite: started }
+      // allowed only for a run that can never finish: its backup is gone, or
+      // it was pinned under rules that have since changed.
+      { overwrite: existing }
     );
     if (!claimed) return { action: 'already-started', year, queued: 0 };
     const queued = await queue(year, backup.runId, containers);
@@ -748,13 +908,19 @@ export async function readArchiveProgress({ backupBlobs, archiveBlobs, year, arc
     const pinned = await backupBlobs.readJson(archiveNames(year).run);
     if (validRun(pinned, year)) {
       const missing = [];
+      const mine = new Set();
       for (const container of pinned.containers) {
-        const note = await backupBlobs.readJson(archiveNames(year, container).note);
+        const names = archiveNames(year, container);
+        mine.add(names.data);
+        const note = await backupBlobs.readJson(names.note);
         if (!noteMatches(note, pinned, container)) missing.push(container);
       }
+      const prefix = archiveNames(year).dataPrefix;
       const startedMs = Date.parse(pinned.startedAt || '');
       run = {
         year,
+        // Files in the year's folder that this run's list does not name. While there is one, the archive cannot finish.
+        unlistedFiles: files.filter((file) => file.name.startsWith(prefix) && !mine.has(file.name)).length,
         startedAt: typeof pinned.startedAt === 'string' ? pinned.startedAt : null,
         sourceRun: pinned.backup.runId,
         expected: pinned.containers.length,

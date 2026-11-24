@@ -71,6 +71,7 @@ import {
   archiveDocumentLabel,
   archivePlan,
   archiveRecord,
+  classificationFingerprint,
   ownerAcceptedOn,
   createContentIndex,
   looksSensitive,
@@ -317,48 +318,83 @@ export function archiveYearFor(now) {
  * What the newest dry-run report says against starting an archive from one
  * backup. An archive is never started from a state no finished report
  * describes: the report has to exist, be finished, be made from the very
- * backup the archive would read, and show nothing still to decide.
+ * backup the archive would read and under today's rules, cover every
+ * container the archive would write, and show nothing still to decide.
  *
  *   report-missing             no dry run has been made
  *   report-running             one is reading the backup now
  *   report-stalled             the newest one did not finish
  *   report-older-than-backup   it was made from another backup than the one
  *                              the archive would read
- *   report-mismatch            it counted a different number of records than
- *                              the backup's own list, or met a line it could
- *                              not read
+ *   report-older-rules         it was made under other rules than today's
+ *                              (the list of what is kept has changed since)
+ *   report-incomplete          a container the archive would write is not in
+ *                              it, or is in it with another decision than
+ *                              today's
+ *   report-mismatch            for a container the archive would write it
+ *                              did not count the number of records the
+ *                              backup's own list says, or it met a line it
+ *                              could not read
+ *   report-cut-short           a record was too large or too deep to be
+ *                              searched whole for names that look like a
+ *                              secret, so the report cannot vouch for it
  *   report-flagged             a container an archive keeps has a field that
  *                              would remain, is named like a secret or
  *                              contact details, and no owner decision covers
  *                              the container
  *   report-waiting             a container is waiting for the owner
  *
- * Whether the owner's decision covers a container is read from the list as
- * it is now (`ownerAcceptedOn`), not from what the report stored, so a
- * decision recorded after the report was made counts.
+ * The first five end the reading: such a report says nothing about today.
+ * The rest are listed together.
+ *
+ * Whether the owner's decision covers a container, and whether a container
+ * is still waiting, are read from the list as it is now, not from what the
+ * report stored.
  *
  * @param {object} facts
  * @param {Awaited<ReturnType<typeof readLatestReport>>} facts.latest
  * @param {string|null} facts.backupRunId - the backup the archive would read
+ * @param {string[]|null} [facts.backupContainers] - the containers that
+ *   backup holds; without it no report is enough
  * @returns {string[]} blockers; empty when the report allows a start
  */
-export function reportGate({ latest, backupRunId }) {
+export function reportGate({ latest, backupRunId, backupContainers = null }) {
   if (!latest) return ['report-missing'];
   if (!latest.complete) return [latest.stalled ? 'report-stalled' : 'report-running'];
   const report = latest.report || {};
   if (typeof backupRunId !== 'string' || report.sourceBackup?.runId !== backupRunId) return ['report-older-than-backup'];
+  if (report.rules !== classificationFingerprint()) return ['report-older-rules'];
   const containers = Array.isArray(report.containers) ? report.containers : [];
   const leftOutWhole = Array.isArray(report.leftOutWhole) ? report.leftOutWhole : [];
   const blockers = [];
-  if (count(report.totals?.mismatched) > 0 || count(report.totals?.unreadable) > 0) blockers.push('report-mismatch');
+
+  // Every container the archive would write must be in the report, read
+  // whole, with the decision the list gives it today.
+  const byName = new Map(containers.map((part) => [part?.container, part]));
+  const inBackup = new Set(Array.isArray(backupContainers) ? backupContainers : []);
+  const wanted = Array.isArray(backupContainers) ? archivePlan().filter((name) => inBackup.has(name)) : null;
+  const covered = wanted !== null && wanted.every((name) => byName.get(name)?.decision === archiveDecisionFor(name).decision);
+  if (!covered) blockers.push('report-incomplete');
+  const planned = (wanted || []).map((name) => byName.get(name)).filter(Boolean);
+  if (count(report.totals?.unreadable) > 0 || planned.some((part) => part.matchesBackup !== true || count(part.unreadable) > 0)) {
+    blockers.push('report-mismatch');
+  }
+
   const kept = containers.filter((part) => part?.decision !== DECISIONS.leaveOut);
+  if (kept.some((part) => count(part.sensitive?.cutShort) > 0)) blockers.push('report-cut-short');
   const flagged = kept.filter((part) => {
     if (ownerAcceptedOn(part.container)) return false;
     // A report from before the lists were split cannot say what would remain: count any kept record that carries a name.
     return Array.isArray(part.sensitive?.remaining) ? count(part.sensitive.flagged) > 0 : count(part.sensitive?.keptRecords) > 0;
   });
   if (flagged.length) blockers.push('report-flagged');
-  const waiting = [...containers, ...leftOutWhole].filter((part) => part?.reason === REASONS.unclassified);
+  // Waiting: the report called it unclassified, and the list still has no
+  // other answer for it today.
+  const waiting = [...containers, ...leftOutWhole].filter((part) => {
+    if (part?.reason !== REASONS.unclassified) return false;
+    const today = archiveDecisionFor(part.container);
+    return !today || today.reason === REASONS.unclassified;
+  });
   if (waiting.length) blockers.push('report-waiting');
   return blockers;
 }
@@ -765,6 +801,10 @@ export function createReportWorker({ blobs, now = () => new Date(), log = {} }) 
     const report = {
       reportId,
       sourceBackup: { mode: 'full', runId: run.backup?.runId || null },
+      // The fingerprint of the rules the run was started under. When a
+      // deploy changed the rules half-way, the parts were read under two
+      // sets of rules, and the report says so by carrying neither.
+      rules: run.rules === classificationFingerprint() ? run.rules : null,
       startedAt: run.startedAt || null,
       completedAt: now().toISOString(),
       totals: {
@@ -854,6 +894,8 @@ export function createReportScheduler({ store, blobs, enqueue, now = () => new D
       {
         reportId,
         startedAt: at.toISOString(),
+        // Which rules this run reads the backup under (archive-classification.js).
+        rules: classificationFingerprint(),
         backup: { runId: backup.runId, containers: backup.containers.map((row) => ({ container: row.container, docs: docsOf.get(row.container) })) },
         containers,
         leftOutWhole,

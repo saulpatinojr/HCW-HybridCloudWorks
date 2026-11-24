@@ -11,7 +11,7 @@ vi.mock('@azure/functions', () => ({
   output: { storageQueue: (options) => ({ type: 'queue', ...options }) },
 }));
 
-const { exportEnabled, contentArchiveCheck } = await import('./cosmos-export.js');
+const { exportEnabled, contentArchiveCheck, exportThenArchive } = await import('./cosmos-export.js');
 const { ARCHIVE_JOB_TYPE } = await import('../lib/backup/archive-job.js');
 await import('./content-archive-http.js');
 const { getJobType } = await import('../lib/jobs.js');
@@ -117,6 +117,69 @@ describe('the yearly content archive’s daily check rides this timer (ADR 0046)
     expect(result).toEqual({ action: 'failed' });
     expect(error).toHaveBeenCalledTimes(1);
     expect(error.mock.calls.flat().join(' ')).not.toContain('secret words');
+  });
+
+  it('hands the export’s messages to the queue before the archive’s check is called, and a check that never answers cannot lose them', async () => {
+    const exported = [{ jobId: 'made-up-1', type: 'cosmos-export-container' }, { jobId: 'made-up-2', type: 'cosmos-export-container' }];
+    const sets = [];
+    const context = { log: vi.fn(), error: vi.fn(), extraOutputs: { set: (_output, messages) => sets.push([...messages]) } };
+    let setsWhenCheckStarted = null;
+    const never = new Promise(() => {});
+    const deps = stores();
+    // A storage read that never comes back: the check hangs, it does not throw.
+    deps.archiveBlobs.containerExists = vi.fn(() => never);
+    const started = Date.now();
+    const result = await exportThenArchive(context, {
+      scheduleExport: async (enqueue) => {
+        exported.forEach((message) => enqueue(message));
+        return { runId: '2027-02-08', mode: 'delta', enqueued: 2 };
+      },
+      archiveCheck: (ctx, enqueue) => {
+        setsWhenCheckStarted = sets.length;
+        return contentArchiveCheck(ctx, enqueue, { ...deps, env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' }, deadlineMs: 30 });
+      },
+    });
+    // The export was on the queue output before the check began...
+    expect(setsWhenCheckStarted).toBe(1);
+    expect(sets[0]).toEqual(exported);
+    // ...the timer stopped waiting at the deadline, said so, and nothing was taken back.
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(result.archive).toEqual({ action: 'timed-out' });
+    expect(sets).toEqual([exported]);
+    expect(context.error).toHaveBeenCalledTimes(1);
+    expect(context.error.mock.calls[0][0]).toContain('did not answer');
+  });
+
+  it('adds what the check queued to the export’s messages, and a check that throws leaves the export’s as they were', async () => {
+    const sets = [];
+    const context = { log: vi.fn(), error: vi.fn(), extraOutputs: { set: (_output, messages) => sets.push([...messages]) } };
+    const scheduleExport = async (enqueue) => {
+      enqueue({ jobId: 'made-up-1', type: 'cosmos-export-container' });
+      return { enqueued: 1 };
+    };
+    await exportThenArchive(context, {
+      scheduleExport,
+      archiveCheck: async (_ctx, enqueue) => {
+        enqueue({ jobId: 'made-up-9', type: ARCHIVE_JOB_TYPE });
+        return { action: 'started', year: 2026, queued: 1 };
+      },
+    });
+    expect(sets.at(-1)).toEqual([
+      { jobId: 'made-up-1', type: 'cosmos-export-container' },
+      { jobId: 'made-up-9', type: ARCHIVE_JOB_TYPE },
+    ]);
+
+    sets.length = 0;
+    const deps = stores();
+    deps.archiveBlobs.containerExists = vi.fn(async () => true);
+    deps.backupBlobs.readJson = vi.fn(async () => {
+      throw new Error('storage was away');
+    });
+    await exportThenArchive(context, {
+      scheduleExport,
+      archiveCheck: (ctx, enqueue) => contentArchiveCheck(ctx, enqueue, { ...deps, env: { CONTENT_ARCHIVE_ENABLED: 'true', FEATURE_FLAG_COSMOS_EXPORT: 'true' } }),
+    });
+    expect(sets).toEqual([[{ jobId: 'made-up-1', type: 'cosmos-export-container' }]]);
   });
 
   it('with the nightly export off the timer returns before the archive is looked at', async () => {

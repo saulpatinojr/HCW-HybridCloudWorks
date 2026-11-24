@@ -157,7 +157,7 @@ export function createArchiveHandlers({ guard, store, blobs, archiveBlobs, env =
           manifestExists: archived,
           backupRunId: backup?.runId ?? null,
           // An archive never starts from a state no finished report describes.
-          reportBlockers: reportGate({ latest, backupRunId: backup?.runId ?? null }),
+          reportBlockers: reportGate({ latest, backupRunId: backup?.runId ?? null, backupContainers: backup ? backup.containers.map((row) => row.container) : null }),
         });
         return privateJson(200, {
           ok: true,

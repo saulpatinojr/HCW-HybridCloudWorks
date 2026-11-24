@@ -177,6 +177,12 @@ export async function uploadBlob(
  * @param {object} [options]
  * @param {string} [options.tier] - access tier to write at, e.g. 'Cool'
  * @param {Record<string, string>} [options.metadata]
+ * @param {{ ifNoneMatch?: string, ifMatch?: string }} [options.conditions] -
+ *   make the write conditional: `{ ifNoneMatch: '*' }` writes only when no
+ *   blob has that name, `{ ifMatch: etag }` only over the exact version that
+ *   was read. Storage refuses the commit otherwise (409 or 412), so two
+ *   writers of one name cannot both win. The yearly archive uses it
+ *   (backup/archive-job.js).
  * @returns {Promise<string>} Blob URL
  */
 export async function uploadBlobFromStream(
@@ -195,6 +201,7 @@ export async function uploadBlobFromStream(
     blobHTTPHeaders: { blobContentType: contentType },
     ...(options.metadata ? { metadata: options.metadata } : {}),
     ...(options.tier ? { tier: options.tier } : {}),
+    ...(options.conditions ? { conditions: options.conditions } : {}),
   });
 
   return blockBlobClient.url;
@@ -510,6 +517,8 @@ export async function listBlobs(containerName, prefix = '') {
       lastModified: blob.properties.lastModified,
       // The access tier ('Hot', 'Cool', 'Cold' or 'Archive'), when storage says.
       tier: blob.properties.accessTier ?? null,
+      // The version stamp storage gives each write of a blob; it changes on every write.
+      etag: blob.properties.etag ?? null,
     });
   }
 
