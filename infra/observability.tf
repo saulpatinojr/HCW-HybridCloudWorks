@@ -121,10 +121,15 @@ resource "azurerm_monitor_diagnostic_setting" "key_vault" {
 #   everything on `leases`, the change-feed bookkeeping the exporter and the
 #     brain indexer write to and read back several times a second: 2.3 MB/h,
 #     dropped;
-#   everything on `brain_search`, the derived search index the hourly brain
-#     indexer rebuilds with about 140,000 Create rows a day: 3.5 MB/h,
-#     dropped. Its source, brain_records, is kept in full, so nothing about
-#     a person is lost with it.
+#   everything on `brain_search`, the derived search index the Second Brain
+#     indexer rebuilds: 3.5 MB/h, dropped. Its source, brain_records, is
+#     kept in full, so nothing about a person is lost with it. The indexer
+#     is a timer every 15 minutes (brainIndexReconcile) that resumes an
+#     unfinished rebuild and starts a full one once a day. When this was
+#     measured every firing could start a full rebuild, which came to about
+#     140,000 Create rows a day here; since #1772 (2026-11-24) the same
+#     rows are written about once a day, so this table's share is smaller
+#     now and has not been measured again. The filter drops them either way.
 #
 # That is 0.48 MB/h kept of 9.48: 95% of the table's volume gone, and the
 # share this table takes of the cap down from about half to about 5%.
