@@ -789,6 +789,27 @@ export const DECLARED = [
     reason:
       "#1754 ADR 0042: the developer_events container for calls for speakers and their proposals",
   },
+
+  // #1777: the yearly clean-up of talk proposals that were not accepted
+  // (functions/src/lib/timers/proposal-strip.js). The plan after the merge
+  // adds its switch, off: the job only counts until the setting is "true".
+  // Delete the first entry once that run has applied. The second is the
+  // arming plan, a one-line pull request made after the owner has read a
+  // dry-run count and said yes; it stays until that has applied.
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.PROPOSAL_STRIP_ENABLED",
+    before: undefined,
+    after: "false",
+    reason: "#1777: the proposal clean-up's switch declared, off (dry run)",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.PROPOSAL_STRIP_ENABLED",
+    before: "false",
+    after: "true",
+    reason: "#1777: the owner armed the yearly clean-up of unaccepted proposals",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

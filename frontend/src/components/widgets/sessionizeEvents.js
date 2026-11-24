@@ -261,12 +261,36 @@ export function combineEvents(sessionizeEvents, snapshotItems) {
 const byTimestamp = (a, b) => getDateTimestamp(eventDate(a)) - getDateTimestamp(eventDate(b));
 
 /**
- * The About page's three sections: coming soon (today or later, the same rule
- * as the admin's Upcoming tab), this year's past talks and last year's — each
- * soonest first. Undated rows are in none.
+ * How many months into a new calendar year the page keeps the layout of the
+ * year that just ended. One: through January the past sections are the ones
+ * shown on 31 December, and the page rolls over on 1 February (owner decision
+ * 2026-11-24, #1777: "keep the previous year an extra month").
+ */
+export const SPEAKING_YEAR_GRACE_MONTHS = 1;
+
+/**
+ * The year the page treats as "this year". The calendar year from 1 February
+ * on, and still the year before through January. Read in the visitor's own
+ * time zone, like every other date on this page.
+ */
+export function speakingYear(now = new Date()) {
+  const year = now.getFullYear();
+  return now.getMonth() < SPEAKING_YEAR_GRACE_MONTHS ? year - 1 : year;
+}
+
+/**
+ * The About page's sections: coming soon (today or later, the same rule as
+ * the admin's Upcoming tab), this year's past talks and last year's, each
+ * soonest first. Undated rows are in none. "This year" is `speakingYear`, so
+ * in January it is still the year that just ended.
+ *
+ * `newYear` is only ever filled in January: a talk already given in the new
+ * calendar year is past, so it is not coming soon, and it does not belong to
+ * the year that just ended. It gets a section of its own so it does not
+ * vanish; on 1 February it becomes part of `thisYear`.
  */
 export function groupSessions(sessions, now = new Date()) {
-  const year = now.getFullYear();
+  const year = speakingYear(now);
   const dated = sessions
     .map((session) => ({ session, date: parseDateValue(eventDate(session)) }))
     .filter((row) => row.date);
@@ -277,7 +301,9 @@ export function groupSessions(sessions, now = new Date()) {
       .sort(byTimestamp);
   const past = (date) => !isUpcoming(date, now);
   return {
+    year,
     comingSoon: section((date) => isUpcoming(date, now)),
+    newYear: section((date) => past(date) && date.getFullYear() > year),
     thisYear: section((date) => past(date) && date.getFullYear() === year),
     lastYear: section((date) => past(date) && date.getFullYear() === year - 1),
   };

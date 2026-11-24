@@ -29,6 +29,7 @@ export const EMPTY = Object.freeze({
   limits: { keyedRequestsPerMinute: 120 },
   basePath: '/api/developer/v1',
   endpoints: [],
+  proposalCleanup: null,
 });
 
 const describeError = (error) => error?.message || 'The organizer keys could not be read.';

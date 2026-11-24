@@ -14,6 +14,7 @@ import {
   decodeListCursor,
   encodeListCursor,
 } from './cfs.js';
+import { stripProposal } from './proposal-cycle.js';
 import { createTestStore, makeRequest, testContext } from './test-store.test-helper.js';
 
 const NOW = Date.parse('2026-11-21T10:00:00Z');
@@ -708,6 +709,48 @@ describe('Developer API v1 handlers (ADR 0042, Phase 1)', () => {
       await review('rejected');
       const back = body(await review('pending'));
       expect(back.submission).toMatchObject({ status: 'pending', reviewedAt: null });
+    });
+
+    it('lists a stripped proposal with null speaker fields and its strippedAt, and refuses to review it (#1777)', async () => {
+      const env = await withProposals();
+      const stored = await env.store.readDoc(CFS_CONTAINER, env.first.id, EVENT);
+      env.store.put(CFS_CONTAINER, stripProposal({ ...stored, status: 'rejected' }, '2027-02-01T04:00:00.000Z'), EVENT);
+
+      const list = body(
+        await env.handlers.listSubmissions(env.keyed(env.org.secret, { params: { eventId: EVENT } }), ctx),
+      );
+      const shown = list.submissions.find((row) => row.id === env.first.id);
+      expect(shown).toMatchObject({
+        status: 'rejected',
+        speakerName: null,
+        speakerEmail: null,
+        speakerBio: null,
+        reviewNote: null,
+        strippedAt: '2027-02-01T04:00:00.000Z',
+      });
+      expect(shown.title).toBeTruthy();
+      expect(list.submissions.find((row) => row.id === env.second.id).strippedAt).toBeNull();
+
+      const res = await env.handlers.reviewSubmission(
+        env.keyed(env.org.secret, {
+          method: 'PUT',
+          params: { eventId: EVENT, submissionId: env.first.id },
+          body: { decision: 'accepted', note: 'late' },
+        }),
+        ctx,
+      );
+      expect(res.status).toBe(409);
+      expect(body(res).code).toBe('PROPOSAL_STRIPPED');
+      const after = await env.store.readDoc(CFS_CONTAINER, env.first.id, EVENT);
+      expect(after.status).toBe('rejected');
+      expect(after).not.toHaveProperty('reviewNote');
+
+      // Deleting it still works: a stripped proposal is an ordinary record to the delete route.
+      const gone = await env.handlers.deleteSubmission(
+        env.keyed(env.org.secret, { method: 'DELETE', params: { eventId: EVENT, submissionId: env.first.id } }),
+        ctx,
+      );
+      expect(body(gone)).toMatchObject({ deleted: true });
     });
 
     it('answers 409 when the proposal changed between the read and the write', async () => {
