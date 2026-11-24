@@ -59,7 +59,7 @@
 # Also accepted:
 # AVD-AZU-0061 (infrastructure encryption) follows ADR 0031's 2026-09-14
 # choice for the two storage accounts that existed then; this account came
-# later (2026-10-14), so extending it here awaits the owner's confirmation.
+# later (2026-10-14); the owner extended that choice to it on 2026-11-24.
 # It can be set only when an account is created; AVD-AZU-0057 (classic Storage Analytics logging) is
 # answered by azurerm_monitor_diagnostic_setting.lab_hybrid_backups_blob,
 # which sends blob read, write and delete logs to Log Analytics; trivy reads

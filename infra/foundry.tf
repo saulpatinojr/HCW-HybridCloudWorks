@@ -24,7 +24,7 @@
 
 resource "azurerm_cognitive_account" "foundry" {
   #checkov:skip=CKV_AZURE_134:Public endpoint, Entra-only (local_auth_enabled = false); the Functions subnet has no Cognitive Services service endpoint yet, so Disabled would cut the router off. Restricting it to the VNet is the follow-up named in the comment below, the owner's call. docs/security/scanner-triage.md#checkov
-  #checkov:skip=CKV2_AZURE_22:Microsoft-managed keys, as ADR 0031 (2026-09-14) chose for the storage and Cosmos accounts; this account came later (2026-10-04), so extending that choice to it awaits the owner's confirmation. A customer-managed key needs a paid Key Vault key; on this account it can be switched off again. docs/security/scanner-triage.md#checkov
+  #checkov:skip=CKV2_AZURE_22:Microsoft-managed keys, as ADR 0031 (2026-09-14) chose for the storage and Cosmos accounts; the owner extended that choice to this account (created 2026-10-04) on 2026-11-24. A customer-managed key needs a paid Key Vault key; on this account it can be switched off again. docs/security/scanner-triage.md#checkov
   #checkov:skip=CKV_AZURE_238:The account makes no outbound call that needs an identity of its own; callers reach it with THEIR identity (the Function App's, through "Cognitive Services OpenAI User"). docs/security/scanner-triage.md#checkov
   name                = var.foundry_account_name
   location            = azurerm_resource_group.app["ai"].location
