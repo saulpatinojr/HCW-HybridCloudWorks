@@ -1,0 +1,15 @@
+# The Docker Scout scanner files scripts/lab/seed-scout-scanner.sh is allowed to fetch. One row per release of
+# docker/scout-action that a workflow here pins (or is about to):
+#
+#   <the action's commit, 40 hex>  <the release that commit downloads>  <sha256 of docker-scout-action_linux_amd64>
+#
+# The commit is the one written after `docker/scout-action@` in the workflows. The release is the one the action's
+# own code asks for at that commit (`const version = "v..."` in its index.js); the script checks that again on the
+# runner. The sha256 is the fingerprint GitHub publishes beside the file on the release page
+# (https://github.com/docker/scout-action/releases, "Assets"), and it was also computed from a download of the file
+# when the row was written.
+#
+# When Dependabot moves the pinned commit, add the row for the new commit in the same pull request:
+# scripts/seed-scout-scanner.test.mjs fails until every pinned commit has one, and its message says what to add. A
+# row for a release no workflow pins any more can be removed.
+b265cd48f8a1451d2680815b3e8dc4ed65ee16e7 v1.30.0 70f409d601182a2b6062b12bfaef6cc654bea8df1bf153fe1428586e178c4092

@@ -34,6 +34,25 @@
 # input. The pull request comment is off (`write-comment: false`), so no write
 # scope is needed; the result is the job summary and the job's pass or fail.
 #
+# THE SCANNER IS FETCHED BEFORE THE SCAN. docker/scout-action is a small wrapper
+# that downloads its real scanner (a 187 MB file) from its own GitHub release
+# when it starts, and it asks GitHub's API for the file without signing in.
+# GitHub allows 60 such requests an hour per network address, the runners share
+# their addresses, and a spent allowance answers "Unexpected HTTP response: 403"
+# before any image is scanned (https://github.com/docker/scout-action/issues/116).
+# So the step before the action runs scripts/lab/seed-scout-scanner.sh: it
+# fetches the same file signed in with this job's own GitHub token (the
+# short-lived, read-only token every job is given; nothing is stored for it),
+# checks its sha256 (the file's fingerprint) against
+# scripts/lab/scout-scanner-pins.txt, and puts it in the action's `dist/`
+# folder, where the action looks before it downloads. The step decides nothing
+# about an image. If the file cannot be fetched it only warns, and the action
+# downloads as before and still fails the job when it cannot scan; a file with
+# the wrong sha256 stops the job. The job checks out the repository for that
+# one script. scripts/seed-scout-scanner.test.mjs holds all of this. The same
+# step was proved in the NetworkEyes App repository first
+# (https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/428).
+#
 # NO TOKEN YET IS NOT A PASS. On a pull request, a missing credential is a
 # warning and the scout job reports skipped steps. On the weekly run and a manual
 # run it is an error: a check that goes green because it never ran is worse than
@@ -51,6 +70,9 @@ on:
     paths:
       - lab-host/ansible/group_vars/all.yml
       - scripts/lab/read-addon-pins.mjs
+      # A change to how the scanner is fetched is proved by a real scan.
+      - scripts/lab/seed-scout-scanner.sh
+      - scripts/lab/scout-scanner-pins.txt
       - .github/workflows/addon-image-scout.yml
   schedule:
     # Wednesdays 07:20 UTC: a day after lab-supply-chain.yml (Tuesdays 06:45),
@@ -129,6 +151,25 @@ jobs:
           fi
           echo "::error::${msg}"
           exit 1
+
+      # The repository is checked out for one file, the script the next step
+      # runs. Nothing is kept from the checkout's sign-in.
+      - name: Checkout
+        if: steps.credential.outputs.set == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # Fetch the scanner signed in, so a refused anonymous download cannot
+      # fail the job by itself (the header says why). No `continue-on-error`:
+      # the script itself exits 0 with a warning when it cannot fetch, and
+      # exits 1 only for a file that is not the published one. The Docker
+      # token is not given to this step.
+      - name: Fetch the Docker Scout scanner with this job's token
+        if: steps.credential.outputs.set == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/lab/seed-scout-scanner.sh
 
       # docker/scout-action, pinned to its commit like every other action here;
       # the release it is stands beside the commit, where Dependabot moves

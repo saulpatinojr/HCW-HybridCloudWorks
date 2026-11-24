@@ -893,7 +893,6 @@ export function timeoutMinutes(job) {
  * for, not missed.
  */
 const LEFT_OUT = new Map([
-  ['addon-image-scout.yml / scout', 'Never checks out this repository: it only reads the published images. It has its own limit anyway (15 minutes).'],
   ['ci.yml / coverage', 'Checks out for the repository metadata the upload records, then only downloads artifacts and runs the Qlty action; no shell step runs code from this repository. It has its own limit anyway (10 minutes).'],
   ['ci.yml / gate', 'Never checks out: it only reads the results of the jobs it needs from the `needs` context. It has its own limit anyway (5 minutes).'],
   ['claude.yml / claude', 'Checks out, then runs only the Claude Code action; no shell step of this workflow runs code from this repository. It has its own limit anyway (60 minutes).'],

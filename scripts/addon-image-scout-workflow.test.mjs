@@ -53,7 +53,12 @@ describe('addon-image-scout.yml', () => {
     expect(reads).toEqual(['DOCKER_SCOUT_PAT', 'DOCKER_SCOUT_PAT']);
     expect(code).toContain('SCOUT_PAT: ${{ secrets.DOCKER_SCOUT_PAT }}');
     expect(code).toContain('dockerhub-password: ${{ secrets.DOCKER_SCOUT_PAT }}');
-    expect(code).not.toMatch(/secrets\.GITHUB_TOKEN|github\.token/);
+    // The job's own GitHub token is read once, by the step that fetches the scanner signed in
+    // (seed-scout-scanner.test.mjs holds that step); it is not a stored secret and is never the Docker token's neighbour.
+    expect(code).not.toContain('secrets.GITHUB_TOKEN');
+    expect(code.match(/github\.token/g)).toEqual(['github.token']);
+    expect(scout).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(pins).not.toContain('github.token');
   });
 
   it('turns the pull request comment off, which is what lets the job stay read-only', () => {
