@@ -80,11 +80,23 @@ describe('which year a proposal belongs to', () => {
     expect(callClosedMs(call({ status: 'open', closedAt: null, closesAt: '2027-06-01T00:00:00Z' }), NOW)).toBeNull();
   });
 
-  it('uses the year the proposal was sent when the call never closed, or is missing', () => {
-    const open = call({ status: 'open', closedAt: null, closesAt: null });
-    expect(proposalCycleYear(proposal({ submittedAt: '2025-12-31T23:59:59Z' }), open, NOW)).toBe(2025);
-    expect(proposalCycleYear(proposal({ submittedAt: '2026-01-01T00:00:00Z' }), open, NOW)).toBe(2026);
+  it('uses the year the proposal was sent when the call has no close day and is not open, or is missing', () => {
+    const undated = call({ status: 'closed', closedAt: null, closesAt: null });
+    expect(proposalCycleYear(proposal({ submittedAt: '2025-12-31T23:59:59Z' }), undated, NOW)).toBe(2025);
+    expect(proposalCycleYear(proposal({ submittedAt: '2026-01-01T00:00:00Z' }), undated, NOW)).toBe(2026);
     expect(proposalCycleYear(proposal(), null, NOW)).toBe(2026);
+  });
+
+  it('has no year, so nothing is stripped, while the call is still open', () => {
+    // Sent in December 2025 to a call that closes in March 2027: still being judged.
+    const stillOpen = call({ status: 'open', closedAt: null, closesAt: '2027-03-01T00:00:00Z' });
+    const noDeadline = call({ status: 'open', closedAt: null, closesAt: null });
+    const sent = proposal({ submittedAt: '2025-12-01T00:00:00Z' });
+    expect(proposalCycleYear(sent, stillOpen, at('2027-02-15T00:00:00Z'))).toBeNull();
+    expect(isStripDue(sent, stillOpen, at('2027-02-15T00:00:00Z'))).toBe(false);
+    expect(isStripDue(sent, noDeadline, at('2040-01-01T00:00:00Z'))).toBe(false);
+    // Once the deadline has passed it belongs to that year, and is due the next February.
+    expect(isStripDue(sent, stillOpen, at('2028-02-01T00:00:00Z'))).toBe(true);
   });
 
   it('has no year for a proposal with no readable date, so it is never due', () => {

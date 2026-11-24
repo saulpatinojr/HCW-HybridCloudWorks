@@ -416,8 +416,12 @@ it," with "the previous year an extra month to complete applications".
   the next year**: the year ends on 31 December and January is left alone.
   Times are UTC.
 - A proposal belongs to the year its call closed in (the day the organizer
-  closed it, or the call's deadline once that has passed). If the call never
-  closed, the proposal belongs to the year it was sent in.
+  closed it, or the call's deadline once that has passed). While a call is
+  still open, none of its proposals is touched, however old: they wait until
+  the call closes or its deadline passes, so a proposal still being judged
+  keeps its speaker's details. (A call with no close day that is no longer
+  open goes by the year each proposal was sent in.) To let an open-ended
+  call's proposals be cleaned up, close the call.
 - When the clean-up is due, a proposal that was **not accepted** (status
   `pending` or `rejected`; one nobody reviewed counts) is **stripped**: the
   speaker's name, email and bio and the organizer's review note are removed

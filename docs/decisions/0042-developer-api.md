@@ -146,8 +146,10 @@ new container, setting or secret, and still no route that publishes.
     year. Dates are read in UTC, like every other time in the app.
   - *Which year a proposal belongs to:* the year of the day its call closed
     (`closedAt`, or else the deadline `closesAt` once it has passed). A call
-    that never closed leaves each proposal to the year it was sent in
-    (`submittedAt`).
+    that is still open keeps all its proposals until it closes or its
+    deadline passes, so a proposal still being judged is never stripped. A
+    call with no close day that is no longer open leaves each proposal to
+    the year it was sent in (`submittedAt`).
   - *Stripped* means four fields are removed from the record for good:
     `speakerName`, `speakerEmail`, `speakerBio` and `reviewNote`. The talk's
     title, abstract, format, level, status and dates stay, and the record

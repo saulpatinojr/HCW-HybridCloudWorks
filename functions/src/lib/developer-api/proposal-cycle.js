@@ -66,12 +66,18 @@ export function callCycleYear(call, nowMs) {
 
 /**
  * The cycle year of one proposal: its call's, or the year it was sent in when
- * the call never closed. Null when neither date can be read, and a proposal
- * with no readable date is never stripped.
+ * the call has no close day and is not open. Null while the call is still
+ * open, and when no date can be read; a proposal with no year is never
+ * stripped.
  */
 export function proposalCycleYear(proposal, call, nowMs) {
   const fromCall = callCycleYear(call, nowMs);
   if (fromCall !== null) return fromCall;
+  // A call that is still taking proposals is still being judged: a proposal
+  // sent in December to a call that closes in March must not lose its
+  // speaker's details in February, before anyone has reviewed it. Its
+  // proposals wait until the call closes or its deadline passes.
+  if (call?.status === 'open') return null;
   const submitted = instantMs(proposal?.submittedAt);
   return submitted === null ? null : yearOf(submitted);
 }

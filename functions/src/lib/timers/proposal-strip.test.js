@@ -184,16 +184,23 @@ describe('armed', () => {
     expect(await job.run()).toMatchObject({ strippedCount: 1 });
   });
 
-  it('goes by the year each proposal was sent in when the call never closed', async () => {
+  it('goes by the year each proposal was sent in when the call has no close day and is not open', async () => {
     const old = proposal('ev', { submittedAt: '2026-12-31T23:59:59.000Z' });
     const recent = proposal('ev', { submittedAt: '2027-01-01T00:00:00.000Z' });
-    const { store, job } = harness([call('ev', { status: 'open', closedAt: null, closesAt: null }), old, recent]);
+    const { store, job } = harness([call('ev', { status: 'closed', closedAt: null, closesAt: null }), old, recent]);
     expect(await job.run()).toMatchObject({ eligibleCount: 1, strippedCount: 1 });
     expect(store.get(old.id).strippedAt).toBeTruthy();
     expect(store.get(recent.id).speakerEmail).toBe('sam@example.com');
     const [, query, parameters] = store.queryDocs.mock.calls[0];
     expect(query).toContain('c.submittedAt < @sentBefore');
     expect(parameters).toContainEqual({ name: '@sentBefore', value: '2027-01-01T00:00:00.000Z' });
+  });
+
+  it('strips nothing from a call that is still open, however old its proposals', async () => {
+    const old = proposal('ev', { submittedAt: '2025-06-01T00:00:00.000Z' });
+    const { store, job } = harness([call('ev', { status: 'open', closedAt: null, closesAt: null }), old]);
+    expect(await job.run()).toMatchObject({ eligibleCount: 0, strippedCount: 0 });
+    expect(store.get(old.id).speakerEmail).toBe('sam@example.com');
   });
 
   it('skips a call that closed in a year that is not over, without reading its proposals', async () => {
