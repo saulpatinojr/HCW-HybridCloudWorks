@@ -32,7 +32,7 @@
 # except what later stages COPY out of /out. The base already carries
 # ca-certificates and python3 with pip.
 # ---------------------------------------------------------------------------
-FROM python:3.15.2-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS fetch
+FROM python:3.15.2-slim-trixie@sha256:1c670c3568107e243bfd05457ad9ca0b11c35a855c985af73e4452db9a714e70 AS fetch
 
 # Every RUN below is bash with pipefail (hadolint DL4006, #1575): a failing
 # command on the left of a pipe fails the step instead of being hidden by
@@ -266,7 +266,7 @@ RUN set -eu; . /build/versions.env; \
 # ---------------------------------------------------------------------------
 # runner
 # ---------------------------------------------------------------------------
-FROM python:3.15.2-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS runner
+FROM python:3.15.2-slim-trixie@sha256:1c670c3568107e243bfd05457ad9ca0b11c35a855c985af73e4452db9a714e70 AS runner
 
 # Every RUN in this stage and `full` is bash with pipefail (hadolint DL4006, #1575): a failing
 # command on the left of a pipe fails the step instead of being hidden by
