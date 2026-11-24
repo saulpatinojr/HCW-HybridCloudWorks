@@ -155,7 +155,7 @@ makes the join a required artefact.
 | The runbook's first section is bootstrap, and states plainly that nothing below it works until bootstrap is done | Ordering is the whole message |
 | Where two OIDC handshakes exist (runner→cloud and CI→cloud), the runbook tables them side by side | They are both called "the OIDC setup" and only one is in the repository; confusing them is the default failure |
 | The runner's own credentials are inventoried alongside application inputs | An unrecorded input is an input nobody provisions |
-| Prefer federating a **user-assigned managed identity** over an app registration | App registrations need Entra directory roles; cloud-resource Owner does not grant them. Managed identities are ordinary resources and federate to arbitrary external issuers |
+| Prefer federating a **user-assigned managed identity** over an app registration | Creating an app registration needs a permission in the directory itself (an Entra role for a person, a Microsoft Graph application permission for a program); cloud-resource Owner grants neither. Managed identities are ordinary resources and federate to arbitrary external issuers. This estate's one app registration made by Terraform shows the cost: its run identity had to be given `Application.ReadWrite.OwnedBy` on Microsoft Graph first ([ADR 0043](../decisions/0043-muse-azure-reader.md)) |
 
 The preflight is what makes the script worth writing. Assume the operator has
 a directory created minutes ago and no resources anywhere: check the CLI, the

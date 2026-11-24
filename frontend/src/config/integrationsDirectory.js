@@ -227,6 +227,14 @@ export const DIRECTORY = Object.freeze([
     docsUrl: 'https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-code-review',
   },
   {
+    id: 'azure',
+    category: 'cloud',
+    summary: 'Microsoft’s cloud and its directory, Microsoft Entra ID, which holds the sign-ins.',
+    powers:
+      'Everything the site runs on. On this page: the read-only access Muse uses to look into alerts, and the sign-in Terraform builds the estate with.',
+    docsUrl: 'https://learn.microsoft.com/azure/role-based-access-control/built-in-roles#reader',
+  },
+  {
     id: 'hybrid-lab',
     category: 'cloud',
     summary: 'Browser workspaces on the lab host, behind a human check.',
@@ -315,7 +323,9 @@ export function decorateEntries(entries, { serviceCards, results, secretsKnown }
 
 /** Whether a status key from integrationView.js reads as connected, not, or unknown. */
 export function connectionOf(statusKey) {
-  if (statusKey === 'ok' || statusKey === 'link-only') return 'connected';
+  // `listed` (sign-ins the site lists and does not hold) is filed where it
+  // was while it read as `link-only`: the filter has no fourth choice.
+  if (statusKey === 'ok' || statusKey === 'link-only' || statusKey === 'listed') return 'connected';
   if (statusKey === 'broken' || statusKey === 'offline' || statusKey === 'not-configured') {
     return 'not-connected';
   }

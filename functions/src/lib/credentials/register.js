@@ -131,6 +131,16 @@ export const CODER_ROTATION_CREDENTIAL_DAYS = 365;
  */
 export const CLAUDE_CODE_OAUTH_TOKEN_DAYS = 365;
 
+/**
+ * When Muse's Azure secret is due for rotation: `muse_reader_secret_days`
+ * in infra/muse-reader.tf, which that file sets to the hand-rotation rule
+ * above. Each secret keeps working for `MUSE_READER_GRACE_DAYS` more, so
+ * the reminder comes 30 days before Muse would be locked out.
+ * register.test.js holds both to the Terraform.
+ */
+export const MUSE_READER_ROTATION_DAYS = HAND_ROTATION_DAYS;
+export const MUSE_READER_GRACE_DAYS = 30;
+
 const KEYS_TAB_ROTATION =
   "Mint a new one from the issuer, paste it on Integrations → Keys, then revoke the old one.";
 
@@ -500,7 +510,11 @@ const OTHER_ENTRIES = [
     id: "tfc-azure-dynamic-credentials",
     name: "TFC_AZURE_RUN_CLIENT_ID (dynamic provider credentials)",
     store: "tfc-azure",
-    consumer: "Every hcw-azure plan and apply",
+    // Since #1763 it also holds one Microsoft Graph application permission,
+    // Application.ReadWrite.OwnedBy, so Terraform can manage Muse's app
+    // registration (docs/runbooks/muse-azure-reader.md, "Turn it on" step 1).
+    consumer:
+      "Every hcw-azure plan and apply: the Azure resources, and through Microsoft Graph the app registrations it owns (Application.ReadWrite.OwnedBy)",
     issuer:
       "HCP Terraform OIDC, trusted by Entra (id-plat-terraform-prod-cus-01)",
     renewal: "self",
@@ -512,6 +526,8 @@ const OTHER_ENTRIES = [
     // copies it into Muse's own vault. Each secret works for 210 days; a new
     // one is made only when the owner raises muse_reader_secret_generation,
     // and nothing reaches Muse until the owner copies it: renewed by hand.
+    // Listed on the Services tab's Azure card (MuseReaderNote in
+    // ListedCredential.jsx), not on the Keys tab: the site never reads it.
     id: "tfc-azure-muse-reader-secret",
     name: "muse_reader_client_secret (Terraform output; sp-muse-reader-plat-prod-cus-01)",
     store: "tfc-azure",
@@ -519,9 +535,17 @@ const OTHER_ENTRIES = [
       "Muse (Koda's runtime): Reader on the application, management and connectivity subscriptions, for alert investigations",
     issuer: "Entra, created by Terraform (azuread_application_password)",
     renewal: "hand",
-    // muse_reader_secret_days in infra/muse-reader.tf: the secret's own
-    // expiry, set to the estate's hand-rotation rule.
-    lifetimeDays: HAND_ROTATION_DAYS,
+    // The days until the reminder is DUE, not the days the secret works.
+    // status.js adds this number to the recorded date to get the due date
+    // and reminders.js puts the reminder on that day. The secret's real
+    // expiry is 30 days later: infra/muse-reader.tf sets its end date to
+    // muse_reader_secret_days (180) + muse_reader_secret_grace_days (30),
+    // https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/muse-reader.tf
+    // 210 here would put the reminder on the day Muse is locked out. Entra
+    // itself sets no fixed lifetime for a client secret; Microsoft
+    // recommends less than twelve months:
+    // https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials
+    lifetimeDays: MUSE_READER_ROTATION_DAYS,
     rotate:
       "Raise muse_reader_secret_generation by one in hcw-azure, plan and apply, then copy muse_reader_client_secret into Muse's vault; it stops working 30 days after this reminder: docs/runbooks/muse-azure-reader.md.",
   },
