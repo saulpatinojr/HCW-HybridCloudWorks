@@ -6,6 +6,7 @@ either of them.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,10 +15,25 @@ from pathlib import Path
 
 from model import EXCLUDED_PARTS, TEST_MARKERS, Func, lizard, supported_extensions
 
+
+def git_program() -> str:
+    """
+    git's full path, found on PATH (git.exe on Windows).
+
+    Found by name once per call rather than written in, because git lives in a
+    different place on a runner, a Linux host and Windows; running it by its
+    full path means a git in the working directory is never the one run.
+    """
+    program = shutil.which("git")
+    if program is None:
+        raise RuntimeError("git is not on PATH; install git, or add it to PATH, and run this again")
+    return program
+
+
 def git(*args: str) -> str:
     """One git command, as stripped stdout. Raises on a non-zero exit."""
     result = subprocess.run(
-        ["git", *args], capture_output=True, text=True, check=False
+        [git_program(), *args], capture_output=True, text=True, check=False
     )
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
@@ -132,11 +148,12 @@ def measure_base(
     base-side read error into a phantom NEW function on the head side.
     """
     out: dict[tuple[str, str, int], Func] = {}
+    program = git_program()
     with tempfile.TemporaryDirectory(prefix="complexity-base-") as tmp:
         tmpdir = Path(tmp)
         for path in paths:
             blob = subprocess.run(
-                ["git", "show", f"{base_sha}:{path}"],
+                [program, "show", f"{base_sha}:{path}"],
                 capture_output=True,
                 check=False,
                 cwd=root,
