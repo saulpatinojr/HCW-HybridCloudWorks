@@ -42,7 +42,7 @@
  */
 
 import { DefaultAzureCredential } from '@azure/identity';
-import { errorCode } from './http/error-response.js';
+import { errorCode, withStatus } from './http/error-response.js';
 
 /** Key Vault data-plane API version. */
 export const VAULT_API_VERSION = '7.4';
@@ -111,7 +111,7 @@ export async function setVaultSecret(name, value, deps = {}) {
     // The NAME is safe to report and is what an operator needs. The body is
     // not: a Key Vault error can echo the request, and this request's body is
     // the credential.
-    throw new Error(`Key Vault refused to set ${name}: HTTP ${response.status}`);
+    throw withStatus(new Error(`Key Vault refused to set ${name}: HTTP ${response.status}`), response.status);
   }
 
   const json = await response.json().catch(() => ({}));

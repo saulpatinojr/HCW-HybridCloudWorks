@@ -27,6 +27,7 @@
  * document whose size we do not control.
  */
 
+import { withStatus } from '../../http/error-response.js';
 import {
   MESSAGING_BENCHMARK_SKU,
   MESSAGING_BENCHMARK_UNIT,
@@ -201,7 +202,7 @@ export async function findAcrossPages(filter, selectItem, deps = {}) {
 
   while (url && pages < MAX_PAGES) {
     const response = await doFetch(url);
-    if (!response.ok) throw new Error(`Azure retail prices returned ${response.status}`);
+    if (!response.ok) throw withStatus(new Error(`Azure retail prices returned ${response.status}`), response.status);
 
     const json = await response.json();
     pages += 1;

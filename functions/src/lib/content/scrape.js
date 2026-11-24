@@ -235,7 +235,7 @@ export async function scrapeArticle(
       headers: BROWSER_HEADERS,
       signal,
     });
-    if (!response.ok) throw new ScrapeError(`Status code ${response.status}`);
+    if (!response.ok) throw new ScrapeError(`Status code ${response.status}`, { status: response.status });
     const fullHtml = text();
     const { articleHtml, contentText, images } = extractArticle(fullHtml, url);
     const markdown = htmlToMarkdown(articleHtml);

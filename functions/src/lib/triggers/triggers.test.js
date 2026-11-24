@@ -195,6 +195,19 @@ describe('fetch-image', () => {
     await expect(
       fetchImage('https://a.test/x', { fetch: bad, resolve: async () => ({ address: '1.1.1.1' }) })
     ).rejects.toThrow('HTTP 404');
+    // The status is also a field, so a log line can show it (#1802). It is
+    // `upstreamStatus`, not `status`: callers store this error's code in a
+    // sentence, and that sentence must read as it did.
+    const failure = await fetchImage('https://a.test/x', {
+      fetch: bad,
+      resolve: async () => ({ address: '1.1.1.1' }),
+    }).catch((error) => error);
+    expect(failure).toMatchObject({ message: 'HTTP 404 fetching https://a.test/x', upstreamStatus: 404 });
+    expect(failure.status).toBeUndefined();
+    const stuck = vi.fn(async () => ({ status: 302, headers: new Map() }));
+    await expect(
+      fetchImage('https://a.test/x', { fetch: stuck, resolve: async () => ({ address: '1.1.1.1' }) })
+    ).rejects.toMatchObject({ message: 'HTTP 302 fetching https://a.test/x', upstreamStatus: 302 });
   });
 
   it('refuses a video response and never reads its body (#415)', async () => {

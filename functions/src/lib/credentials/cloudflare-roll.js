@@ -24,6 +24,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { withStatus } from '../http/error-response.js';
 
 /**
  * The three Cloudflare token targets managed by this estate (#1027).
@@ -129,8 +130,9 @@ export async function rollCloudflareToken({
       data?.errors?.map((e) => e.message).join('; ') ||
       response.statusText ||
       'unknown error';
-    throw new Error(
-      `Cloudflare roll-token request failed (${response.status}): ${errorDetail}`
+    throw withStatus(
+      new Error(`Cloudflare roll-token request failed (${response.status}): ${errorDetail}`),
+      response.status
     );
   }
 
@@ -182,8 +184,9 @@ export async function verifyCloudflareToken({
       data?.errors?.map((e) => e.message).join('; ') ||
       response.statusText ||
       'unknown error';
-    throw new Error(
-      `Cloudflare token verification failed (${response.status}): ${errorDetail}`
+    throw withStatus(
+      new Error(`Cloudflare token verification failed (${response.status}): ${errorDetail}`),
+      response.status
     );
   }
 
@@ -249,8 +252,9 @@ export async function updateTfcVariable({
     const err =
       wsData?.errors?.map((e) => e.detail || e.title).join('; ') ||
       wsResponse.statusText;
-    throw new Error(
-      `HCP Terraform workspace ${organization}/${workspace} lookup failed (${wsResponse.status}): ${err}`
+    throw withStatus(
+      new Error(`HCP Terraform workspace ${organization}/${workspace} lookup failed (${wsResponse.status}): ${err}`),
+      wsResponse.status
     );
   }
   const workspaceId = wsData.data.id;
@@ -267,8 +271,9 @@ export async function updateTfcVariable({
     const err =
       varsData?.errors?.map((e) => e.detail || e.title).join('; ') ||
       varsResponse.statusText;
-    throw new Error(
-      `HCP Terraform list vars failed for ${organization}/${workspace} (${varsResponse.status}): ${err}`
+    throw withStatus(
+      new Error(`HCP Terraform list vars failed for ${organization}/${workspace} (${varsResponse.status}): ${err}`),
+      varsResponse.status
     );
   }
 
@@ -307,8 +312,9 @@ export async function updateTfcVariable({
       const err =
         patchData?.errors?.map((e) => e.detail || e.title).join('; ') ||
         patchResponse.statusText;
-      throw new Error(
-        `HCP Terraform update variable ${key} in ${organization}/${workspace} failed (${patchResponse.status}): ${err}`
+      throw withStatus(
+        new Error(`HCP Terraform update variable ${key} in ${organization}/${workspace} failed (${patchResponse.status}): ${err}`),
+        patchResponse.status
       );
     }
 
@@ -341,8 +347,9 @@ export async function updateTfcVariable({
       const err =
         postData?.errors?.map((e) => e.detail || e.title).join('; ') ||
         postResponse.statusText;
-      throw new Error(
-        `HCP Terraform create variable ${key} in ${organization}/${workspace} failed (${postResponse.status}): ${err}`
+      throw withStatus(
+        new Error(`HCP Terraform create variable ${key} in ${organization}/${workspace} failed (${postResponse.status}): ${err}`),
+        postResponse.status
       );
     }
 
