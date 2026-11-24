@@ -297,7 +297,8 @@ which is itself a manual deploy.
 | `alert-func-http5xx` | 1 | More than 5 HTTP 5xx on the Function App in 15 min, evaluated every 5 min. From #250 until the apply of #816 the deployed window was 30 min, on reasoning that belonged to the availability probe | The host answered and failed: a cold start that timed out, a worker that died mid-request, an unhandled 500 | Application Insights → **Failures**, filtered to the window, grouped by operation |
 | `alert-func-latency` | 2 | P95 request duration above 5 s over 30 min, evaluated every 5 min | A slow dependency, or cold starts dominating a low-traffic window | Application Insights → **Performance**, split by operation; then check whether a deploy landed in the window |
 | `alert-cosmos-throttle` | 2 | More than 10 Cosmos responses with `StatusCode = 429` in 15 min | Retries are no longer absorbing throttling | Cosmos → **Insights** → normalized RU consumption, to find the container and partition key range |
-| `alert-app-exceptions` | 1 | More than 5 `AppExceptions` rows in 15 min | Handlers are throwing | The `AppExceptions` table, grouped by `ProblemId` and `OperationName` |
+| `alert-app-exceptions` | 1 | More than 5 `AppExceptions` rows in 15 min, evaluated every 5 min (stateful). Since 2026-11-24 it does not count the Functions host's own storage sign-in failures (no operation name, problem id starting `Azure.RequestFailedException`, message carrying `AuthenticationFailed`), which follow every Terraform apply and clear by themselves; `alert-host-storage-auth` watches those. That takes effect when the owner confirms the Terraform run for that change | Handlers are throwing | The `AppExceptions` table, grouped by `ProblemId` and `OperationName` |
+| `alert-host-storage-auth` | 2 | Each of the last four quarter hours holds at least one of the storage sign-in failures `alert-app-exceptions` leaves out. Every 15 min over the last hour, stateful | Azure Storage keeps refusing the Functions host, so timers and queue triggers cannot start. Either a Terraform apply stopped between writing the settings and removing `AzureWebJobsStorage` again, or several applies ran back to back | [hcw-azure runs](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs) for a running or failed apply, then the latest **Monitor Functions Registered** run, which says whether `AzureWebJobsStorage` is present; then [the Nov 24 investigation](investigate-app-exceptions-2026-11-24.md#if-it-happens-again) |
 | `alert-telegram-delivery` | 2 | A `[notify] Telegram API error` or `[notify] notifyTelegram failed` trace in the last hour, evaluated every 15 min (stateful) | Telegram refused or failed a notification to the owner: the bot is blocked, or the chat id is stale. Every owner notification is silent until it is fixed, which is why this pages by SMS and mail instead. A refused **Send again** from the Health page writes the same trace (`… on a resend`), on purpose | `AppTraces` for messages starting `[notify]` over the last two hours; then message the bot from the owner's Telegram account |
 | `alert-api-reachability` | 1 | Fewer than 3 `edge-api-health` successes in `availabilityResults` in 30 min, of the 6 expected, evaluated every 5 min (stateful). Gated on `availability_probe_alert_enabled`, armed 2026-09-01 (T-519) | The API is unreachable over the Cloudflare path, or the edge probe itself has stopped; from a visitor's seat they are the same incident | `AppAvailabilityResults` for `edge-api-health` over the last hour, then [Availability probe](availability-probe.md) |
 | `alert-cosmos-export-daily` | 2 | No `cosmosExportCompleted` event, full or delta, in the last 2 days, evaluated daily. **Stateless**: mails once a day until a run completes. Gated on `cosmos_export_enabled` | The 03:00 UTC exporter is not finishing, and the out-of-account copy is going stale | `AppEvents` for `cosmosExportCompleted`, and `AppExceptions` for the export timer and job; then [Cosmos restore](cosmos-restore.md) |
@@ -677,6 +678,17 @@ before it:
    is the honest number — but change it because the evidence says so, not to
    make the mail quieter, and note that severity alone does not change what the
    action group sends.
+
+**Step 2 was taken once, on 2026-11-24.** Seven firings in three days were all
+one thing: Azure Storage refusing the Functions host's own calls for a few
+minutes after each Terraform apply. The rule now leaves that one signature
+out, and `alert-host-storage-auth` (in the table above) fires if the same
+failures last about an hour. The evidence, the exact filter and the queries
+that replay it are in
+[the Nov 24 investigation](investigate-app-exceptions-2026-11-24.md#outcome-nov-24).
+A second filter needs the same standard: every row it would hide named and
+counted first, and something else that still fires if the hidden thing does
+not stop.
 
 An [alert processing rule](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-processing-rules)
 is the right tool for a *planned* silence — a deploy window, a known-bad
@@ -1743,6 +1755,7 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
 | `alert-lab-heartbeat` | 2026-10-18, 15:36Z | `Invoke-AlertFireTest.ps1 -Test lab-heartbeat`: `azuremonitoragent` stopped at 14:52:53Z, the 30-minute window empty from 15:22:53Z, the alert opened at 15:36:11Z at the quarter-hour evaluation after; the agent started again and read `active` (#981, LAB-2). The 2026-10-06 alert at the rule's first evaluation was the `Computer` predicate misreading an Arc machine, not a missing heartbeat, and does not count |
 | `alert-lab-disk` | 2026-10-18, 16:20Z | `Invoke-AlertFireTest.ps1 -Test lab-disk`: one 138.9 GiB file took the root filesystem from 15% to 87% used at 15:43:26Z, the alert opened at 16:20:16Z at the hourly evaluation, the file was removed and df read 15% again (#981, LAB-2) |
 | `alert-lab-unit-failed` | 2026-10-18, 14:46Z | `Invoke-AlertFireTest.ps1 -Test lab-unit-failed`: one `hcw-unit-failed` line at `daemon.err` naming `hcw-fire-test-20261018T143622Z.service`, written at 14:36:22Z as the notifier writes its own; the alert opened at 14:46:59Z; nothing to put back (#981, LAB-2) |
+| `alert-host-storage-auth` | not yet | No fire test: staging it means making Azure Storage refuse the production host for an hour, which stops every timer. Design test: the second query in [the Nov 24 investigation](investigate-app-exceptions-2026-11-24.md#check-the-new-rules-against-nov-21-to-24) replays it over the bursts of 21 to 24 November |
 | `alert-export-window-latency` | not yet | No fire test: a degraded export window cannot be staged without slowing production. Design test: the rule's query with `windowRequests >= 1` and `windowP95 > 0` under Application Insights → **Logs** returns one row on any night with requests in the window |
 
 ### What these still do not cover

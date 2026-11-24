@@ -851,12 +851,52 @@ resource "azurerm_monitor_metric_alert" "cosmos_throttled" {
 # exceptions here are supposed to be rare, but one failing timer can emit
 # several per run, so a bare "greater than zero" would page on a known-broken
 # integration forever.
+#
+# ONE KIND OF EXCEPTION IS LEFT OUT, since 2026-11-24. The rule fired seven
+# times in three days (21 to 24 November) and all 428 exceptions behind those
+# firings were the same thing: Azure Storage refusing the Functions host (the
+# program that runs our functions) with 403 AuthenticationFailed, and then
+# every timer's listener (the part of the host that starts a timer) failing to
+# start. That is T-511 in functionapp.tf: every Terraform apply puts a storage
+# setting with an empty key back for a few seconds, and a host that restarts
+# in those seconds cannot sign its storage calls. It clears by itself when the
+# strip lands, and no handler of ours is involved. The record, with the
+# counts and the Activity Log times, is
+# docs/runbooks/investigate-app-exceptions-2026-11-24.md.
+#
+# So the query below leaves out exactly that signature (the local under this
+# comment), and every other exception still counts toward the same threshold.
+# A storage refusal that does NOT clear is a real outage, and it is not
+# hidden: alert-host-storage-auth below fires on the same signature once it
+# has lasted about an hour, and alert-timer-overdue fires on any timer with no
+# good run 45 minutes after it was due, whatever the host logged.
+#
+# NOT joined to the Activity Log ("only leave these out near a settings
+# write"), which would be tighter. The Activity Log is not exported to the
+# workspace (see the PLAT-4 note below: exporting it would add ingestion), so
+# there is no table for a log rule to join on.
+locals {
+  # The T-511 signature, in the classic Application Insights column names
+  # (the rules' scope is the component; see the note on the query below).
+  # Three conditions, all required:
+  #   - no operation name: the host raised it, not a function invocation;
+  #   - the problem id starts with the Azure SDK's request-failure type;
+  #   - the message, outer or innermost, carries Azure Storage's error code
+  #     for a request whose signature it could not check.
+  # Column names are from Microsoft's mapping table,
+  # https://learn.microsoft.com/azure/azure-monitor/app/apm-tables
+  # (exceptions: operation_Name, problemId, outerMessage, innermostMessage).
+  # One line, because the Sev1 rule's query is one line and both rules must
+  # use the same text: scripts/host-storage-auth-alert.test.mjs holds that.
+  host_storage_auth_signature = "isempty(operation_Name) and problemId startswith \"Azure.RequestFailedException\" and (outerMessage has \"AuthenticationFailed\" or innermostMessage has \"AuthenticationFailed\")"
+}
+
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "app_exceptions" {
   name                = "alert-app-exceptions-${var.environment}-${var.region_abbreviation}"
   resource_group_name = azurerm_resource_group.app["web"].name
   location            = azurerm_resource_group.app["web"].location
   scopes              = [azurerm_application_insights.hcw.id]
-  description         = "More than 5 application exceptions in 15 minutes."
+  description         = "More than 5 application exceptions in 15 minutes, not counting the Functions host's own storage sign-in failures (403 AuthenticationFailed) that follow a Terraform apply; alert-host-storage-auth watches those."
   severity            = 1
 
   evaluation_frequency = "PT5M"
@@ -879,7 +919,9 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "app_exceptions" {
   # nothing is suppressed; only the repeats go. That is why this was the change
   # made without evidence: it costs no coverage. The levers that do cost
   # coverage — a filter on the query below, a higher threshold, a severity that
-  # is not 1 — need a week of real firing to set, not a guess.
+  # is not 1 — need a week of real firing to set, not a guess. (The filter
+  # came on 2026-11-24, from three days in which every one of 428 rows was
+  # classified; see the note above the resource.)
   #
   # Mutually exclusive with mute_actions_after_alert_duration. Since
   # 2026-10-16 that is left only to alert-lab-unit-failed, whose condition is
@@ -896,7 +938,10 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "app_exceptions" {
     # what alert-logs-capacity does. Getting this wrong is not a warning: ARM
     # rejects the create with "Failed to resolve table expression named
     # 'AppExceptions'", which is exactly how it was found (2026-08-25).
-    query                   = "exceptions"
+    #
+    # The `where not(...)` leaves out the T-511 signature and nothing else;
+    # the rows are still returned as rows, so Count still counts them.
+    query                   = "exceptions | where not(${local.host_storage_auth_signature})"
     time_aggregation_method = "Count"
     operator                = "GreaterThan"
     threshold               = 5
@@ -921,6 +966,98 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "app_exceptions" {
   # Permissions before the rule, which is the entire reason this identity is
   # user-assigned. identity_ids alone orders the rule after the IDENTITY, not
   # after its grants.
+  depends_on = [
+    azurerm_role_assignment.alerts_app_workspace,
+    azurerm_role_assignment.alerts_app_component,
+  ]
+}
+
+# ---------------------------------------------------------------------------
+# Functions host — storage keeps refusing its sign-in
+# ---------------------------------------------------------------------------
+#
+# The other half of the filter on alert-app-exceptions above. That rule no
+# longer counts the host's storage sign-in failures (403 AuthenticationFailed),
+# because after a Terraform apply they clear by themselves within minutes
+# (T-511). This rule is for when they do NOT clear: the strip that removes the
+# bad setting did not run, or storage is refusing the host for another reason.
+# Then no timer and no queue trigger can start, which is an outage.
+#
+# HOW "DID NOT CLEAR" IS DECIDED. The last hour is cut into four quarter
+# hours, counted back from now, and the rule fires only when every one of the
+# four holds at least one such failure. So the failures have to have gone on
+# for more than half an hour without a quarter-hour gap. The bursts of 21 to
+# 24 November lasted from a few minutes to about 45; the validation query in
+# docs/runbooks/investigate-app-exceptions-2026-11-24.md shows which of them,
+# if any, would have reached four quarters. Several applies in a row can also
+# fill four quarters; that is an hour of the host being unable to reach its
+# storage, and worth one Sev2.
+#
+# The count is done in the query, not with failing_periods, so that the same
+# lines can be run by hand against past days. tolong() of a division, not
+# bin(), in the manner of alert-timer-overdue.
+#
+# NOT THE ONLY GUARD, and it is not relied on alone. Whether a host in this
+# state keeps logging the failure for a whole hour was not measured; if it
+# goes quiet instead, this rule stays quiet too. alert-timer-overdue does not
+# depend on what the host logs: three timers run every five minutes or less,
+# and any timer with no good run 45 minutes after it was due fires it.
+# deploy-functions.yml refuses to deploy while the bad setting is present, and
+# monitor-functions-registered.yml reports it on its timer.
+#
+# Sev2, like alert-timer-overdue, and every 15 minutes, like every log rule
+# added since PLAT-4 (the price note there).
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "host_storage_auth" {
+  name                = "alert-host-storage-auth-${var.environment}-${var.region_abbreviation}"
+  resource_group_name = azurerm_resource_group.app["web"].name
+  location            = azurerm_resource_group.app["web"].location
+  scopes              = [azurerm_application_insights.hcw.id]
+  description         = "Azure Storage has refused the Functions host's own sign-in (403 AuthenticationFailed) in each of the last four quarter hours. After a Terraform apply these failures clear in minutes; an hour of them means timers and queue triggers cannot start. Check that the app setting AzureWebJobsStorage is absent (T-511), then re-apply."
+  severity            = 2
+
+  evaluation_frequency = "PT15M"
+  window_duration      = "PT1H"
+
+  # Stateful, as alert-app-exceptions: one alert per outage, resolved once a
+  # quarter hour passes with no such failure and the next evaluations stay
+  # clear.
+  auto_mitigation_enabled = true
+
+  criteria {
+    # Classic schema, because the scope is the component. The query returns
+    # one row when all four quarter hours hold a failure and none otherwise:
+    # `count` always returns a row, and the last line drops it below four.
+    query                   = <<-KQL
+      let Slot = 15m;
+      let Slots = 4;
+      exceptions
+      | where timestamp > now() - Slot * Slots
+      | where ${local.host_storage_auth_signature}
+      | summarize by slot = tolong((now() - timestamp) / Slot)
+      | count
+      | where Count >= Slots
+    KQL
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+
+    failing_periods {
+      number_of_evaluation_periods             = 1
+      minimum_failing_periods_to_trigger_alert = 1
+    }
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.alerts_app.id]
+  }
+
+  tags = local.tags
+
   depends_on = [
     azurerm_role_assignment.alerts_app_workspace,
     azurerm_role_assignment.alerts_app_component,

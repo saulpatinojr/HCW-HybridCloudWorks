@@ -141,6 +141,7 @@ nav:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md
       - Alerting and support: runbooks/alerting-and-support.md
+      - "Investigation: app-exceptions alert, Nov 21 to 24, 2026": runbooks/investigate-app-exceptions-2026-11-24.md
       - Availability probe: runbooks/availability-probe.md
       - Cosmos restore: runbooks/cosmos-restore.md
       - Edge and DNS verification: runbooks/edge-dns-verification.md
