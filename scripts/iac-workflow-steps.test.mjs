@@ -1,12 +1,14 @@
 /**
- * The change-detection steps of `iac-validate.yml`, run for real, and a rule
- * for every workflow: no `if grep` (#1429).
+ * The change-detection steps of `codeql.yml` and `iac-validate.yml`, run for
+ * real, and a rule for every workflow: no `if grep` (#1429).
  *
  * This is the second half of #1428, which fixed `ci.yml` (see
- * `ci-workflow-steps.test.mjs`). `iac-validate.yml` had the same weakness, and
- * so did `codeql.yml` until 2026-11-04, when CodeQL moved to pushes to `main`
- * and the weekly schedule and lost its detect step (#1545; the file was
- * `codeql-iac-workflow-steps.test.mjs` until then).
+ * `ci-workflow-steps.test.mjs`). These two workflows had the same weakness.
+ * `codeql.yml` had no detect step from 2026-11-04 to 2026-11-24, while CodeQL
+ * did not run on pull requests (#1545); the owner turned it back on with the
+ * per-language skip on 2026-11-24, and its step is tested here again. What
+ * else `codeql.yml` must hold (its triggers, that a run on `main` never
+ * skips, its concurrency group) is in `codeql-workflow.test.mjs`.
  *
  * ## The weakness
  *
@@ -16,8 +18,8 @@
  * read the pattern, for example because a parenthesis is never closed). Written
  * as `if grep -qE ...; then`, the 2 counts as "no", the job is skipped as "no
  * relevant change", and the pull request looks green. Here that would have
- * switched off a Terraform or Trivy check, which are required checks, without
- * anything turning red.
+ * switched off a CodeQL analysis, or a Terraform or Trivy check (both required
+ * checks), without anything turning red.
  *
  * The steps now keep the answer and fail the step on anything but 0 or 1. The
  * names of the jobs and of the checks do not change: a step that fails fails
@@ -47,7 +49,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { findBashTools, GIT_TEST_CONFIG, isIfGrepLine, parseJobs } from './lib/workflow-text.mjs';
+import { findBashTools, GIT_TEST_CONFIG, isIfGrepLine, parseJobs, parseMatrixRows } from './lib/workflow-text.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOWS = join(REPO, '.github', 'workflows');
@@ -57,7 +59,20 @@ const IAC = parseJobs(read('iac-validate.yml'));
 const CI = parseJobs(read('ci.yml'));
 const CODEQL = parseJobs(read('codeql.yml'));
 
+const CODEQL_JOB = CODEQL.find((job) => job.key === 'analyze');
+const CODEQL_ROWS = parseMatrixRows(CODEQL_JOB.lines);
+const CODEQL_STEP = 'Detect language changes';
 const IAC_STEP = 'Detect infra changes';
+
+/**
+ * A path that each CodeQL row's real filter matches. A language this table does
+ * not know fails the test that needs it, so a new row is noticed.
+ */
+const CODEQL_MATCHING_PATH = {
+  'javascript-typescript': 'frontend/src/zz-probe.js',
+  actions: '.github/workflows/zz-probe.yml',
+  python: 'hooks/zz-probe.py',
+};
 
 /** The two things iac-validate.yml decides: each has the setting that holds its filter, the output it writes and a path it matches. */
 const IAC_DECISIONS = [
@@ -65,29 +80,53 @@ const IAC_DECISIONS = [
   { output: 'lab', filterVar: 'LAB_FILTER', path: 'infra-lab/zz-probe.tf' },
 ];
 
+/** Files in the folders CodeQL is told not to read: each would match a language's filter, and none is a reason to analyse. */
+const CODEQL_IGNORED_PATHS = ['.claude/skills/zz-probe/scripts/zz-probe.py', '.agents/zz-probe/zz-probe.js'];
+
+/** More paths a CodeQL row must count as its language, besides the one in CODEQL_MATCHING_PATH. */
+const CODEQL_EXTRA_PATHS = [
+  ['javascript-typescript', 'frontend/src/zz-probe.tsx'],
+  ['javascript-typescript', 'scripts/zz-probe.mjs'],
+  ['javascript-typescript', 'frontend/zz-probe.html'],
+  ['actions', '.github/actions/zz-probe/action.yml'],
+  ['actions', 'tools/zz-probe/action.yaml'],
+  ['python', 'tooling/zz-probe.py'],
+];
+
 /** Files that always count as a change for their workflow, whatever the filter says. */
 const OWN_PATHS = {
+  'codeql.yml': ['.github/workflows/codeql.yml', '.github/codeql/codeql-config.yml'],
   'iac-validate.yml': ['.github/workflows/iac-validate.yml'],
 };
 
 /** What the script adds after the filter, besides this workflow's own file. */
-const EXTRA_ALTERNATIVES = { 'iac-validate.yml': '', 'ci.yml': '' };
+const EXTRA_ALTERNATIVES = { 'codeql.yml': '|^\\.github/codeql/', 'iac-validate.yml': '', 'ci.yml': '' };
 
 const stepOf = (jobs, jobKey, name) => jobs.find((job) => job.key === jobKey)?.steps.find((step) => step.name === name);
 
-/** One entry per time a change-detection step of iac-validate.yml runs. */
-const ENTRIES = ['terraform', 'trivy'].map((job) => {
-  const step = stepOf(IAC, job, IAC_STEP);
-  return {
-    file: 'iac-validate.yml',
-    job,
-    step,
-    label: `iac-validate.yml / ${job}`,
-    settings: {},
-    decisions: IAC_DECISIONS.map((decision) => ({ ...decision, filter: step?.env[decision.filterVar] })),
-  };
-});
-/** Each step once (every entry here is its own step; kept for the tests that do not depend on a row). */
+/** One entry per time a change-detection step of these two workflows runs: the CodeQL step once per matrix row. */
+const ENTRIES = [
+  ...CODEQL_ROWS.map((row) => ({
+    file: 'codeql.yml',
+    job: 'analyze',
+    step: stepOf(CODEQL, 'analyze', CODEQL_STEP),
+    label: `codeql.yml / ${row.language}`,
+    settings: { LANGUAGE: row.language, IGNORED: stepOf(CODEQL, 'analyze', CODEQL_STEP)?.env.IGNORED },
+    decisions: [{ output: 'relevant', filterVar: 'FILTER', filter: row.filter, path: CODEQL_MATCHING_PATH[row.language] }],
+  })),
+  ...['terraform', 'trivy'].map((job) => {
+    const step = stepOf(IAC, job, IAC_STEP);
+    return {
+      file: 'iac-validate.yml',
+      job,
+      step,
+      label: `iac-validate.yml / ${job}`,
+      settings: {},
+      decisions: IAC_DECISIONS.map((decision) => ({ ...decision, filter: step?.env[decision.filterVar] })),
+    };
+  }),
+];
+/** The CodeQL step once, for what does not depend on the row's filter. */
 const DISTINCT = ENTRIES.filter((entry, i) => ENTRIES.findIndex((other) => other.step === entry.step) === i);
 const byLabel = (entries) => entries.map((entry) => [entry.label, entry]);
 
@@ -129,50 +168,43 @@ function decisionsIn(run) {
     .map((block) => block.map((line) => (/^echo "[^"]*"$/.test(line) && !line.includes('GITHUB_OUTPUT') && !line.includes('::error') ? '<message>' : line)));
 }
 
-/** Every change-detection step this test knows about, in the two workflows, with the decisions it should hold. */
+/** Every change-detection step this test knows about, in the three workflows, with the decisions it should hold. */
 const ALL_DETECT_STEPS = [
   ...CI.flatMap((job) =>
     job.steps
       .filter((step) => step.run?.includes('git diff --name-only'))
       .map((step) => ({ file: 'ci.yml', job: job.key, step, decisions: [{ filterVar: 'FILTER', output: 'relevant' }] }))
   ),
+  { file: 'codeql.yml', job: 'analyze', step: stepOf(CODEQL, 'analyze', CODEQL_STEP), decisions: [{ filterVar: 'FILTER', output: 'relevant' }] },
   { file: 'iac-validate.yml', job: 'terraform', step: stepOf(IAC, 'terraform', IAC_STEP), decisions: IAC_DECISIONS },
   { file: 'iac-validate.yml', job: 'trivy', step: stepOf(IAC, 'trivy', IAC_STEP), decisions: IAC_DECISIONS },
 ];
 
-describe('iac-validate.yml change-detection steps: what they are made of (#1429)', () => {
-  it('finds the two IaC steps (a quiet parse would make every test below pass for nothing)', () => {
+describe('codeql.yml and iac-validate.yml change-detection steps: what they are made of (#1429)', () => {
+  it('finds the CodeQL rows and the two IaC steps (a quiet parse would make every test below pass for nothing)', () => {
+    expect(CODEQL_ROWS.map((row) => row.language)).toEqual(['javascript-typescript', 'actions', 'python']);
+    for (const row of CODEQL_ROWS) expect(CODEQL_MATCHING_PATH[row.language], `no matching path is named for the ${row.language} row`).toBeTruthy();
     expect(ENTRIES.every((entry) => entry.step), 'a detection step was not found').toBe(true);
-    expect(ENTRIES.map((entry) => entry.label)).toEqual(['iac-validate.yml / terraform', 'iac-validate.yml / trivy']);
+    expect(ENTRIES.map((entry) => entry.label)).toEqual([
+      'codeql.yml / javascript-typescript',
+      'codeql.yml / actions',
+      'codeql.yml / python',
+      'iac-validate.yml / terraform',
+      'iac-validate.yml / trivy',
+    ]);
     // ci.yml has its ten, all in its `changes` job since #1545 (five for the
     // jobs with an `if:`, five for the rows of the verify matrix), so the
-    // "one shape" test below really compares twelve steps.
+    // "one shape" test below really compares thirteen steps.
     expect(ALL_DETECT_STEPS.map(({ file, job }) => `${file}: ${job}`)).toEqual([
       ...Array(10).fill('ci.yml: changes'),
+      'codeql.yml: analyze',
       'iac-validate.yml: terraform',
       'iac-validate.yml: trivy',
     ]);
   });
 
-  // CodeQL left the pull-request path on 2026-11-04 (#1545): its three
-  // `Analyze …` contexts are no longer required by the `main` ruleset, so the
-  // workflow runs on pushes to `main` and on the Monday schedule, analyses
-  // everything each time, and has no detect step to test. Pinned here so a
-  // `pull_request:` trigger or a detect step cannot come back by accident.
-  it('codeql.yml runs on pushes to main and the weekly schedule only, with no detect step', () => {
-    const codeql = read('codeql.yml');
-    const triggers = codeql.slice(codeql.indexOf('\non:\n') + 1, codeql.indexOf('\npermissions:'));
-    expect(triggers).toContain('  push:\n    branches: [main]\n');
-    expect(triggers).toMatch(/\n {2}schedule:\n {4}(?:#.*\n {4})*- cron: '\d+ \d+ \* \* [0-6]'\n/);
-    expect(triggers).not.toContain('pull_request');
-    expect(CODEQL.map((job) => job.key)).toEqual(['analyze']);
-    const analyze = CODEQL[0];
-    expect(analyze.steps.map((step) => step.name)).toEqual(['Checkout repository', 'Initialize CodeQL', 'Perform CodeQL analysis']);
-    expect(analyze.steps.every((step) => step.run === undefined && step.if === undefined)).toBe(true);
-    expect(analyze.lines).toContain('        language: [javascript-typescript, actions, python]');
-  });
-
-  it('the IaC steps hold their filters in their own env: block', () => {
+  it('the CodeQL step reads the matrix row\'s filter, and the IaC steps hold theirs in their own env: block', () => {
+    expect(stepOf(CODEQL, 'analyze', CODEQL_STEP).env.FILTER).toBe('${{ matrix.filter }}');
     for (const job of ['terraform', 'trivy']) {
       const { env } = stepOf(IAC, job, IAC_STEP);
       expect(env.INFRA_FILTER, `${job}: INFRA_FILTER`).toBe('^infra/');
@@ -181,7 +213,7 @@ describe('iac-validate.yml change-detection steps: what they are made of (#1429)
   });
 
   it.each(ALL_DETECT_STEPS.map((entry) => [`${entry.file}: ${entry.job}`, entry]))(
-    '%s: the lines that decide are the same in every change-detection step of the two workflows (one shape to learn)',
+    '%s: the lines that decide are the same in every change-detection step of the three workflows (one shape to learn)',
     (_label, { file, step, decisions }) => {
       const found = decisionsIn(step.run);
       const wanted = decisions.map((decision) => expectedDecision({ file, ...decision }));
@@ -199,10 +231,13 @@ describe('iac-validate.yml change-detection steps: what they are made of (#1429)
   );
 
   it('keeps the steps and the jobs as they were: no `if` on the detection step, no `continue-on-error`, no `shell:`', () => {
-    for (const { file, jobs, keys } of [{ file: 'iac-validate.yml', jobs: IAC, keys: ['terraform', 'trivy'] }]) {
+    for (const { file, jobs, keys } of [
+      { file: 'codeql.yml', jobs: CODEQL, keys: ['analyze'] },
+      { file: 'iac-validate.yml', jobs: IAC, keys: ['terraform', 'trivy'] },
+    ]) {
       for (const key of keys) {
         const job = jobs.find((candidate) => candidate.key === key);
-        const step = job.steps.find((candidate) => candidate.name === IAC_STEP);
+        const step = job.steps.find((candidate) => candidate.name === (file === 'codeql.yml' ? CODEQL_STEP : IAC_STEP));
         // A condition on the step would let a job skip the very step that decides; continue-on-error would turn its failure green.
         expect(step.if, `${file} ${key}: the detection step must run every time`).toBeUndefined();
         expect(step['continue-on-error'], `${file} ${key}: the detection step must not continue on error`).toBeUndefined();
@@ -213,8 +248,10 @@ describe('iac-validate.yml change-detection steps: what they are made of (#1429)
     }
   });
 
-  it('keeps the check names the ruleset requires: the job ids and names are untouched', () => {
-    // scripts/ruleset-contexts.test.mjs holds the full list; this is the part this change is near.
+  it('keeps the check names: the job ids and names, and the CodeQL matrix, are untouched', () => {
+    // scripts/ruleset-contexts.test.mjs holds the list the ruleset requires (the two IaC names are on it; the CodeQL
+    // `Analyze …` names are not, and stay as they are so the checks keep one name over time).
+    expect(CODEQL_JOB.lines.find((line) => /^ {4}name:/.test(line))).toBe('    name: Analyze ${{ matrix.language }}');
     expect(IAC.map((job) => job.key)).toEqual(['terraform', 'trivy']);
     expect(IAC.find((job) => job.key === 'terraform').lines.find((line) => /^ {4}name:/.test(line))).toBe('    name: fmt, validate, tflint');
     expect(IAC.find((job) => job.key === 'trivy').lines.find((line) => /^ {4}name:/.test(line))).toBe('    name: Trivy IaC misconfiguration scan');
@@ -228,13 +265,13 @@ const TOOLS = findBashTools();
 const SKIPPED = TOOLS.ready ? '' : ` (SKIPPED here: ${TOOLS.why}; they run on GitHub Actions)`;
 const forward = (path) => path.replace(/\\/g, '/');
 
-describe('iac-validate.yml change-detection steps: bash is there', () => {
+describe('codeql.yml and iac-validate.yml change-detection steps: bash is there', () => {
   it.skipIf(process.env.GITHUB_ACTIONS !== 'true')('on GitHub Actions bash, git and grep are present, so the shell tests below run', () => {
     expect(TOOLS.ready, TOOLS.why).toBe(true);
   });
 });
 
-describe.skipIf(!TOOLS.ready)(`iac-validate.yml change-detection steps: run with bash${SKIPPED}`, () => {
+describe.skipIf(!TOOLS.ready)(`codeql.yml and iac-validate.yml change-detection steps: run with bash${SKIPPED}`, () => {
   let work;
   let repo;
   let outputs;
@@ -245,7 +282,7 @@ describe.skipIf(!TOOLS.ready)(`iac-validate.yml change-detection steps: run with
   function cleanEnv(extra) {
     const env = { ...process.env };
     for (const name of Object.keys(env)) {
-      if (name.startsWith('GIT_') || ['FILTER', 'INFRA_FILTER', 'LAB_FILTER', 'BASE_SHA'].includes(name)) delete env[name];
+      if (name.startsWith('GIT_') || ['FILTER', 'INFRA_FILTER', 'LAB_FILTER', 'LANGUAGE', 'IGNORED', 'BASE_SHA'].includes(name)) delete env[name];
     }
     return { ...env, ...extra };
   }
@@ -280,7 +317,7 @@ describe.skipIf(!TOOLS.ready)(`iac-validate.yml change-detection steps: run with
   };
 
   beforeAll(() => {
-    work = forward(mkdtempSync(join(tmpdir(), 'iac-steps-')));
+    work = forward(mkdtempSync(join(tmpdir(), 'codeql-iac-steps-')));
     repo = `${work}/repo`;
     outputs = `${work}/outputs`;
     mkdirSync(repo);
@@ -292,7 +329,7 @@ describe.skipIf(!TOOLS.ready)(`iac-validate.yml change-detection steps: run with
     git('tag', 'base');
     baseSha = git('rev-parse', 'base');
     // One commit per path, so a test learns whether the step's OWN filter matched its OWN path.
-    const paths = new Set(['notes/zz-unrelated.txt', ...Object.values(OWN_PATHS).flat()]);
+    const paths = new Set(['notes/zz-unrelated.txt', ...CODEQL_IGNORED_PATHS, ...CODEQL_EXTRA_PATHS.map(([, path]) => path), ...Object.values(OWN_PATHS).flat()]);
     for (const entry of ENTRIES) for (const decision of entry.decisions) paths.add(decision.path);
     for (const path of paths) commit(tagFor(path), [path]);
   }, 60_000);
@@ -339,6 +376,51 @@ describe.skipIf(!TOOLS.ready)(`iac-validate.yml change-detection steps: run with
       const result = run(entry, { path: 'notes/zz-unrelated.txt' });
       expect(result.status, result.log).toBe(0);
       expect(result.written).toBe(answers(entry, []));
+    });
+  });
+
+  describe('codeql.yml: what counts as a language (owner decision 2026-11-24)', () => {
+    const CODEQL_ENTRIES = ENTRIES.filter((entry) => entry.file === 'codeql.yml');
+
+    it.each(CODEQL_EXTRA_PATHS)('the %s row analyses when %s changes, and no other row does', (language, path) => {
+      for (const entry of CODEQL_ENTRIES) {
+        const result = run(entry, { path });
+        expect(result.status, result.log).toBe(0);
+        expect(result.written, `${entry.label} on ${path}`).toBe(`relevant=${entry.settings.LANGUAGE === language}\n`);
+      }
+    });
+
+    it.each(CODEQL_IGNORED_PATHS.map((path) => [path]))('no row analyses when only %s changes (CodeQL is told not to read that folder)', (path) => {
+      for (const entry of CODEQL_ENTRIES) {
+        const result = run(entry, { path });
+        expect(result.status, result.log).toBe(0);
+        expect(result.written, `${entry.label} on ${path}`).toBe('relevant=false\n');
+      }
+    });
+
+    it('a documentation-only pull request skips every language, and says that nothing is uploaded', () => {
+      for (const entry of CODEQL_ENTRIES) {
+        const result = run(entry, { path: 'notes/zz-unrelated.txt' });
+        expect(result.written).toBe('relevant=false\n');
+        expect(result.log).toContain(`no ${entry.settings.LANGUAGE} change`);
+        expect(result.log).toContain('uploading nothing');
+      }
+    });
+
+    it('a pattern for the ignored folders that sed cannot read stops the step and writes no answer', () => {
+      for (const entry of CODEQL_ENTRIES) {
+        const result = run(entry, { path: 'notes/zz-unrelated.txt', filters: { IGNORED: '^(unclosed' } });
+        expect(result.status, result.log).not.toBe(0);
+        expect(result.written).toBe('');
+      }
+    });
+
+    it.each([['schedule'], ['push'], ['workflow_dispatch']])('a %s run analyses every language, whatever changed', (event) => {
+      for (const entry of CODEQL_ENTRIES) {
+        const result = run(entry, { path: 'notes/zz-unrelated.txt', event });
+        expect(result.status, result.log).toBe(0);
+        expect(result.written).toBe('relevant=true\n');
+      }
     });
   });
 
@@ -468,7 +550,7 @@ describe('no workflow decides with `if grep` (#1429)', () => {
 
   it('finds the `if grep` shapes it is meant to find', () => {
     // The scan is only worth anything if it sees the old shape. These two lines are the ones #1429 replaced
-    // (the first in the codeql.yml detect step that went on 2026-11-04).
+    // (the first was in the codeql.yml detect step).
     const sample = isIfGrepLine;
     expect(sample(`if grep -qE "\${FILTER}"'|^\\.github/workflows/codeql\\.yml$' <<<"$changed"; then`)).toBe(true);
     expect(sample(`if grep -qE '^(infra/|\\.github/workflows/iac-validate\\.yml$)' <<<"$changed"; then`)).toBe(true);
@@ -489,7 +571,7 @@ describe('no workflow decides with `if grep` (#1429)', () => {
       offenders,
       `${name} tests grep inside an \`if\`. grep exits 2 when it cannot read its pattern, and \`if\` takes that as "no match", so a broken filter ` +
         'would skip a job (or let a bad patch through). Keep the exit status instead (status=0; grep ... || status=$?) and fail the step on anything ' +
-        'but 0 or 1, as the change-detection steps in ci.yml and iac-validate.yml do. Only a line with a reason in REMAINING_IF_GREP may stay:\n  ' +
+        'but 0 or 1, as the change-detection steps in ci.yml, codeql.yml and iac-validate.yml do. Only a line with a reason in REMAINING_IF_GREP may stay:\n  ' +
         offenders.join('\n  ')
     ).toEqual([]);
   });
@@ -505,7 +587,7 @@ describe('no workflow decides with `if grep` (#1429)', () => {
     }
   });
 
-  it('lists nothing in the two workflows whose change-detection steps are tested above, nor in codeql.yml', () => {
+  it('lists nothing in the three workflows whose change-detection steps are tested above', () => {
     for (const name of ['ci.yml', 'codeql.yml', 'iac-validate.yml']) expect(REMAINING_IF_GREP[name], `${name} must have no \`if grep\` at all`).toBeUndefined();
   });
 });

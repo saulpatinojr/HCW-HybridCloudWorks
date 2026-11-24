@@ -36,43 +36,131 @@ former Coverage and Complexity Delta workflows' jobs, which are now CI jobs
 under `gate`), and the three CodeQL contexts (`Analyze javascript-typescript`,
 `Analyze actions`, `Analyze python`). The owner applied the list on
 2026-11-04 (14:11 UTC, read back from the API), and the second pull request of
-#1545 then moved CodeQL off pull requests; see "CodeQL runs after the merge"
-below.
+#1545 then moved CodeQL off pull requests. The owner turned it back on for
+pull requests on 2026-11-24, without putting it back on this list; see
+"CodeQL runs on pull requests again, as an advisory check" below.
 
-## CodeQL runs after the merge, not before it (2026-11-04)
+## CodeQL runs on pull requests again, as an advisory check (2026-11-24)
 
-`codeql.yml` runs on every push to `main` and every Monday, and no longer on
-pull requests. While its three `Analyze …` contexts were required, the
-workflow had to run on every pull request (a required check whose workflow
-never ran is never satisfied, ADR 0026) and carried a detect step per
-language so that a pull request with no file of that language skipped the
-analysis. With `gate` the only CI context the ruleset names, that run, its
-detect step and its shape test went.
+CodeQL is GitHub's code scanning: it reads the code and reports patterns
+that are often security bugs. Its workflow is
+[`codeql.yml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/workflows/codeql.yml),
+with one job per language: `Analyze javascript-typescript`, `Analyze actions`
+(the workflow files) and `Analyze python`.
 
-What this trades away, in plain words:
+**Owner decision 2026-11-24** ("turn it back on, with the skip",
+[#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545)):
+the workflow runs on every pull request to `main` again, as well as on every
+push to `main` and every Monday. It is **not** a required check: the list at
+the top of this page is unchanged, and
+`scripts/codeql-workflow.test.mjs` fails if an `Analyze …` name is added to
+it.
 
-- **An alert lands after the merge.** A change that introduces a CodeQL
-  finding is merged first and flagged a few minutes later, by the push run
-  on `main` (about four minutes for the three languages). Before, the
-  finding was on the pull request. So the session that merges looks at
+The history in three lines. Until 2026-11-04 the three `Analyze …` contexts
+were required, so every pull request waited for them. From 2026-11-04 to
+2026-11-24 the workflow did not run on pull requests at all, and a finding
+was seen only on `main`, after the merge. Now it runs on pull requests but
+nothing waits for it.
+
+### What a pull request pays
+
+Each of the three jobs checks out the repository and looks at the files the
+pull request changes (the step "Detect language changes"). If none of them
+belongs to the job's language, the two CodeQL steps are skipped and the job
+ends green in well under a minute, most of it the checkout. If one does, that
+language is analysed, which takes two to five minutes (JavaScript is the
+slowest). The three jobs run side by side, so a pull request that touches
+all three languages waits about five minutes for the slowest, not the sum.
+
+| The pull request changes | What runs |
+|---|---|
+| Only documentation, JSON, Terraform or other files no language reads | Nothing is analysed; three short green jobs |
+| JavaScript, TypeScript, HTML or Vue files | `Analyze javascript-typescript` |
+| A workflow file, or a local action's files | `Analyze actions` |
+| Python files | `Analyze python` |
+| `codeql.yml` itself, or anything in `.github/codeql/` | All three, so a change to the scan tests itself |
+| Only files under `.claude/` or `.agents/` | Nothing: the CodeQL settings file tells CodeQL not to read those folders |
+
+A push to `main` and the Monday run never skip: they analyse every language
+in full, as before.
+
+### What a skip looks like, and why it is safe
+
+- **The job is green, and its log says "no … change — skipping the
+  analysis".** The job itself always runs, so a pull request never shows a
+  missing or failed check because of a skip.
+- **A skipped language uploads nothing.** That matters: an empty result
+  would tell code scanning the language has no findings and close its open
+  alerts for the pull request. With nothing uploaded, the alerts stay as
+  they are.
+- **GitHub's own "CodeQL" line may show a warning.** When some languages ran
+  and others skipped, code scanning's roll-up check (named `CodeQL`, also not
+  required) says it "cannot determine the alerts introduced by this pull
+  request, because N configurations present on refs/heads/main were not
+  found". That is the skip, not a broken scan
+  ([ADR 0026](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/decisions/0026-required-checks-filter-inside-the-job.md)
+  has the history). When every language skips, that line does not appear at
+  all.
+- **A filter that cannot be read fails the job red**, it does not skip
+  quietly, and a diff that cannot be computed analyses everything.
+
+What the skip does not see: JavaScript analysis also reads JSON and YAML
+files for a few configuration queries, and those file types do not count as
+"JavaScript changed" here (nearly every pull request would). A finding of
+that kind is caught by the run on `main` after the merge, as every finding
+was between 2026-11-04 and 2026-11-24.
+
+### Advisory, not required: what that means for a merge
+
+- **A red `Analyze …` job or `CodeQL` line does not grey out the merge
+  button.** GitHub will let the pull request merge. The rule that it is read
+  first is ours, in
+  [`.claude/CLAUDE.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.claude/CLAUDE.md)
+  ("Code scanning's alerts are read on the pull request before the merge"):
+  the session that owns the pull request reads the three `Analyze` jobs on
+  the head commit and code scanning's review comments before it merges, and
+  fixes what they report.
+- **A finding still arrives as a review comment, and that does block.**
+  Code scanning posts each new alert as a comment on the line, and the
+  ruleset requires every review conversation to be resolved. So an alert on
+  a pull request holds the merge until the code is fixed (the thread closes
+  on the next analysis) or the alert is dismissed.
+- **An alert that is right but intended is still dismissed by the owner**,
+  not by a session and not by rewriting the code to slip past the query
+  (`.claude/CLAUDE.md`, "A code scanning alert is fixed in code, or
+  dismissed by the owner"). The owner picks the reason on the alert's page
+  under
+  [code scanning](https://github.com/saulpatinojr/HCW-HybridCloudWorks/security/code-scanning).
+- **Pull requests from Dependabot or a fork** get a read-only token. The
+  upload still works, because code scanning accepts results from a run that a
+  pull request started
+  ([GitHub Docs](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/resource-not-accessible)).
+  Not seen here for a fork, since nobody has opened one.
+
+### What does not change
+
+- Every language is analysed in full on every merge to `main` and every
+  Monday. The weekly run is what finds a newly published query's matches in
+  code nobody touched.
+- After a merge, the session that merged still looks at
   [code scanning](https://github.com/saulpatinojr/HCW-HybridCloudWorks/security/code-scanning)
-  after the merge and fixes a new alert in a follow-up pull request; the
-  alert's own page says which commit introduced it.
-- **Code scanning's review comments on pull requests go away.** They were
-  the one thread type a session could not resolve itself when the alert was
-  intended (the owner dismissed the alert instead, `.claude/CLAUDE.md`,
-  "A code scanning alert is fixed in code, or dismissed by the owner"). That
-  dismissal step now happens on the alert's page after the merge, with no
-  pull request thread to close.
-- **What does not change:** every language is analysed in full on every
-  merge and every Monday, as before; the weekly run is what finds a newly
-  published query's matches in code nobody touched.
+  once the push run is green (a cloud session cannot read that list and hands
+  the owner the page). The pull request run covers only the languages it
+  touched; the run on `main` covers everything.
+- Runs do not cancel each other across pull requests or between a pull
+  request and `main`: each pull request and each branch has its own queue. A
+  new push to the same pull request cancels that pull request's older run.
 
-To put CodeQL back on pull requests: add `pull_request: { branches: [main] }`
-to the `on:` block of `codeql.yml` (the ruleset does not need to change, since
-its contexts are not required), and consider bringing back the per-language
-detect step from the version before #1545's second pull request, or every
-pull request pays the full four minutes.
+### To change it
+
+- **Off pull requests again:** remove the `pull_request:` trigger from
+  `codeql.yml`. The detect step can stay; it answers "analyse everything" on
+  any run that is not a pull request.
+- **Required again:** that is the owner's ruleset change, and it brings back
+  the wait on every pull request. The skip keeps it safe (the job always
+  reports), but update `scripts/ruleset-contexts.test.mjs` and
+  `scripts/codeql-workflow.test.mjs` in the same pull request, since both
+  hold the list as it is today.
 
 ## Why `gate` is safe, and why it reads each result itself
 
@@ -175,9 +263,11 @@ ten single CI job names `frontend`, `functions (azure)`, `scripts
 `coder (lab-host)`, `e2e (playwright)`, plus `Validate root and documentation
 policy`, `dependency-review`, `fmt, validate, tflint` and `Trivy IaC
 misconfiguration scan`) in place of the five, and send the same `PUT`. The
-three CodeQL `Analyze …` contexts cannot go back on the list until
-`codeql.yml` runs on pull requests again (the section above says how); a
-required context no workflow posts blocks every merge.
+three CodeQL `Analyze …` contexts could go back on the list too, now that
+`codeql.yml` runs on pull requests again (owner decision 2026-11-24), but
+the owner chose to keep them advisory; a required context no workflow posts
+blocks every merge, so they must come off again first if the pull-request
+trigger is ever removed.
 
 ## Renaming a CI job after the cut-over
 

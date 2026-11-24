@@ -102,7 +102,7 @@ trips. The session is the orchestrator of a team of agents and does the work.
     GitHub Docs does not describe them. Not yet tested from a cloud
     session: editing the work board, which is GraphQL only.
   - **Code scanning alerts cannot be read**; see "Code scanning's alerts
-    are read on `main`" below.
+    are read on the pull request" below.
   - **Rulesets (a repository's merge rules) cannot be changed.** Reading
     a ruleset works, but changing one does not: on 2026-11-22 `gh api -X PUT
     repos/saulpatinojr/HCW-MigrateOrchestrator_App/rulesets/25778324` was
@@ -647,7 +647,7 @@ so it is recorded here, where every session reads it.
   CodeRabbit parts are paused until the owner restores it; the rest of each
   bullet still applies, including the pull request template, Copilot's
   findings worked on their threads within three rounds, and the code scanning
-  check on `main` after a merge. Dependabot's pull requests still go to the
+  check on the pull request and on `main` after a merge. Dependabot's pull requests still go to the
   owner: when one is green, tell the owner with its link, and do not merge it
   on a session's own judgement. A CodeRabbit request for changes left
   standing on an open pull request still blocks its merge and no new
@@ -738,18 +738,28 @@ so it is recorded here, where every session reads it.
     lines that name work. Its `up to` line names the commit that round
     judged, the same question the reviews line answers for Copilot. While
     it reads `Currently processing new changes`, the next round is coming.
-  - **Code scanning's alerts are read on `main`, after the merge.** Since
-    2026-11-04 CodeQL runs on pushes to `main` and weekly, not on pull
-    requests ([#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545)),
-    so the line is run once the merge's push run has finished (about four
+  - **Code scanning's alerts are read on the pull request before the merge,
+    and on `main` after it.** Owner decision 2026-11-24
+    ([#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545)):
+    CodeQL runs on pull requests again, as well as on pushes to `main` and
+    weekly. On a pull request each of the three `Analyze` jobs looks at the
+    changed files first and skips its analysis when none is in its language,
+    so a green `Analyze` job is either "analysed" or "skipped"; its log says
+    which. It is not a required check, so nothing here greys out the merge
+    button. Before merging, read the three `Analyze` jobs of the CodeQL run
+    on the head (all green, none failed or cancelled) and code scanning's
+    review comments, which arrive with the other line comments in the
+    comments line above (author `github-advanced-security[bot]`), and work
+    each one like any other thread. To read the alerts list for the pull
+    request, the line takes `ref=refs/pull/<n>/merge` in place of
+    `ref=refs/heads/main`. After the merge the line is run on `main` as
+    written, once the merge's push run has finished (about four
     minutes) with all three `Analyze` jobs green: a failed or cancelled
     analysis uploads nothing, and the workflow cancels an in-progress run
     when the next push lands, so a run that did not succeed is not "no new
     alerts". Rerun it, or wait for a later `main` run that contains the
     merge, before reading the list. A new alert is the merging session's
-    follow-up. Until
-    then the line read `refs/pull/<n>/merge`, the ref the PR threads came
-    from. The query goes in the URL: `-f state=open` beside `--paginate`
+    follow-up. The query goes in the URL: `-f state=open` beside `--paginate`
     silently returned nothing for Dependabot alerts on 2026-09-29, while
     three were open. **A cloud session cannot read the list.** The alerts
     and analyses routes answer HTTP 403 "Resource not accessible by
@@ -758,7 +768,10 @@ so it is recorded here, where every session reads it.
     artifact (a file a run keeps for download), so its results cannot be
     fetched either
     ([#1683](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1683)).
-    In a cloud session, check that the three `Analyze` jobs of the CodeQL
+    On a pull request a cloud session can read the `Analyze` jobs (the
+    check runs of the head commit) and the review comments, and that is
+    its check before the merge. After the merge, in a cloud session, check
+    that the three `Analyze` jobs of the CodeQL
     run on the merge commit are green, then put a line in the closing
     summary's "your next steps" that links the
     [code scanning page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/security/code-scanning)
@@ -838,8 +851,10 @@ so it is recorded here, where every session reads it.
   last job of `ci.yml`, which waits for every other CI job and fails if any
   failed), `Validate root and documentation policy`, `dependency-review`,
   `fmt, validate, tflint` and `Trivy IaC misconfiguration scan`. The three
-  CodeQL `Analyze …` contexts and the ten single CI job names left the list,
-  and CodeQL now runs on pushes to `main` and weekly, not on pull requests.
+  CodeQL `Analyze …` contexts and the ten single CI job names left the list.
+  CodeQL runs on pull requests again since the owner's decision of
+  2026-11-24, as well as on pushes to `main` and weekly, and its contexts
+  stay off the list.
   The payload, the `gh api` line that applied it and the read-back are in the
   [required checks runbook](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/required-checks.md);
   `scripts/ruleset-contexts.test.mjs` holds the list.
@@ -900,22 +915,27 @@ so it is recorded here, where every session reads it.
   Copilot review off and capped it at two rounds once it returned.
 
   - **Two reviewers on the pull request, none optional, and code scanning
-    after the merge.** Copilot (`copilot-pull-request-reviewer`) and
+    beside them.** Copilot (`copilot-pull-request-reviewer`) and
     CodeRabbit (`coderabbitai`) review a PR. Every finding from each is
     fixed, or answered on its thread with the reason, and the thread
     resolved, as the bullets above and below say. A finding is not optional
     because its bot is not a required check. Code scanning
-    (`github-advanced-security`, posting CodeQL's alerts) reviewed pull
-    requests too until 2026-11-04; since then CodeQL runs on each push to
-    `main` and weekly
+    (`github-advanced-security`, posting CodeQL's alerts) reviews pull
+    requests too. Owner decision 2026-11-24: CodeQL runs on pull requests
+    again, for the languages the pull request touched, as well as on each
+    push to `main` and weekly
     ([#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545),
-    trade-off in the required checks runbook), so an alert a change
-    introduces appears on
+    trade-off in the required checks runbook; it was off pull requests from
+    2026-11-04 until then). An alert a change introduces is posted as a
+    review comment on the pull request and is worked there before the
+    merge. The run on `main` after the merge is still read, because it
+    analyses every language and a skipped language was not analysed on the
+    pull request: an alert that appears on
     [code scanning](https://github.com/saulpatinojr/HCW-HybridCloudWorks/security/code-scanning)
-    a few minutes after the merge, and the session that merged looks there
-    and fixes it in a follow-up (a cloud session cannot look, so it hands
-    the owner the page instead; see "Code scanning's alerts are read on
-    `main`").
+    after the merge is fixed by the session that merged, in a follow-up (a
+    cloud session cannot look at that page's list, so it hands the owner
+    the page instead; see "Code scanning's alerts are read on the pull
+    request").
   - **Each bot's first review is waited for, and CodeRabbit's is asked
     for.** A PR is not merge-ready until Copilot and CodeRabbit have each
     reviewed it once.
@@ -975,12 +995,15 @@ so it is recorded here, where every session reads it.
     and the reason to choose (**Used in tests**, **False positive** or
     **Won't fix**); their dismissal closes the thread. What GitHub enforces
     and what this file adds differ here. Neither the `CodeQL` check nor the
-    `Analyze …` jobs are required checks since 2026-11-04, and CodeQL no
-    longer runs on pull requests, so no alert blocks the merge button and
-    no alert thread appears on the PR (until then code scanning posted each
-    alert as a review comment, and the ruleset's conversation resolution
-    blocked on it, as alert 398's did on #1035 until the dismissal closed
-    it). What this file adds: an alert found on `main` after a merge is the
+    `Analyze …` jobs are required checks since 2026-11-04, so a red one
+    does not block the merge button. Since the owner's decision of
+    2026-11-24 CodeQL runs on pull requests again, so code scanning posts
+    each alert as a review comment once more, and the ruleset's
+    conversation resolution blocks on that thread until the alert is fixed
+    or dismissed (as alert 398's did on #1035 until the dismissal closed
+    it). What this file adds: a red `CodeQL` or `Analyze …` check on a pull
+    request is read and worked before the merge even though GitHub would
+    allow the merge, and an alert found on `main` after a merge is the
     merging session's to fix in a follow-up pull request, or to hand to the
     owner with its page and the reason to choose.
 
