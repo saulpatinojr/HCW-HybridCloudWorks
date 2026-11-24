@@ -6,7 +6,10 @@
  * from the weekly database backup, with personal details and secrets taken
  * out first. This card reads `GET cms/content-archive` and shows: whether
  * the switch is on, whether an archive could start today and what stands in
- * the way, and the newest dry-run report. The Dry run button
+ * the way, the last archive that was written (year, when, files, records,
+ * size), an archive that is being written now and what it still lacks, and
+ * the newest dry-run report. Nothing on this card starts an archive: it
+ * starts by itself once a year when the switch is on. The Dry run button
  * (`POST cms/content-archive/dry-run`) makes the server read the newest
  * weekly backup and count what an archive would keep, change and leave out.
  * A dry run writes no archive and changes no record.
@@ -41,6 +44,8 @@ export const ARCHIVE_RUNBOOK_URL = 'https://docs.hybridcloudworks.com/runbooks/c
 /** Each thing that can stand in the way of an archive starting, in plain words. */
 const BLOCKERS = Object.freeze({
   'switch-off': 'the switch is off',
+  'export-off':
+    'the nightly export is off (the archive is made from its weekly backup, and its timer makes the daily check)',
   'before-1-february': 'it is still January, the month of grace',
   'already-archived': 'that year is already archived',
   'archive-container-missing':
@@ -83,6 +88,20 @@ export function yearState(archived, containerExists) {
 }
 
 const number = (value) => (Number.isFinite(value) ? value.toLocaleString('en-US') : '0');
+
+/** A size in plain words: "512 bytes", "1.5 MB". */
+export function sizeWords(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return 'an unknown size';
+  if (bytes < 1024) return `${number(bytes)} bytes`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
+}
 
 function Row({ label, children }) {
   return (
@@ -158,6 +177,90 @@ function UnclassifiedRow({ part }) {
       <SensitiveLine part={part} />
     </li>
   );
+}
+
+/**
+ * The archive itself: one being written now, the last one written, or that
+ * none has been. Numbers, dates and container names only.
+ */
+function ArchiveProgress({ status }) {
+  if (status.progressKnown === false) {
+    return (
+      <p className="text-sm text-muted-foreground" data-testid="archive-progress-unknown">
+        Whether an archive has been written, or is being written, could not be read just now.
+      </p>
+    );
+  }
+  const { run, lastArchive: last } = status;
+  const parts = [];
+  if (run) {
+    const missing = Array.isArray(run.missing) ? run.missing : [];
+    parts.push(
+      run.late ? (
+        <p
+          key="run"
+          className="text-sm text-destructive"
+          role="status"
+          data-testid="archive-run-late"
+        >
+          The archive of {run.year} started {utcMinute(run.startedAt) || 'at an unrecorded time'}{' '}
+          and is not finished: {run.done} of {run.expected} files are written and checked.
+          {missing.length ? (
+            <>
+              {' '}
+              Missing: <span className="font-mono">{missing.join(', ')}</span>.
+            </>
+          ) : null}{' '}
+          Nothing has been moved to the Archive tier, so every file can still be replaced. The daily
+          check at 03:00 UTC queues the missing ones again; the runbook says what to do if it stays
+          like this.
+        </p>
+      ) : (
+        <p
+          key="run"
+          className="text-sm text-muted-foreground"
+          role="status"
+          data-testid="archive-run"
+        >
+          The archive of {run.year} is being written from the weekly backup of{' '}
+          {run.sourceRun || 'an unknown date'}: {run.done} of {run.expected} files are written and
+          checked. Press the refresh button in a few minutes.
+        </p>
+      )
+    );
+  }
+  if (last) {
+    const allOffline = last.inArchiveTier === last.containers;
+    parts.push(
+      <div key="last" className="space-y-1" data-testid="archive-last">
+        <Row label={`Last archive: ${last.year}`}>
+          <Badge variant="outline">{utcMinute(last.createdAt) || 'time not recorded'}</Badge>
+        </Row>
+        <p className="text-xs text-muted-foreground">
+          {number(last.containers)} files (one per container), {number(last.records)} records,{' '}
+          {sizeWords(last.bytes)} compressed, made from the weekly backup of{' '}
+          {last.sourceRun || 'an unknown date'}.{' '}
+          {allOffline
+            ? 'Every file is in the Archive tier (offline; reading one back takes hours).'
+            : `${number(last.inArchiveTier)} of ${number(last.containers)} files are in the Archive tier; the daily check moves the rest.`}
+        </p>
+        {last.missingFiles ? (
+          <p className="text-xs text-destructive" data-testid="archive-last-missing">
+            {number(last.missingFiles)} file(s) the archive’s list names are not in storage. Say so
+            on the issue; the runbook has the link.
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  if (!parts.length) {
+    return (
+      <p className="text-sm text-muted-foreground" data-testid="archive-none">
+        No archive has been written yet.
+      </p>
+    );
+  }
+  return <div className="space-y-2">{parts}</div>;
 }
 
 function ReportBody({ latest }) {
@@ -392,6 +495,7 @@ function ArchiveCardBody() {
             ? `Every condition for the archive of ${status.year} is met today.`
             : `An archive of ${status.year} could not start today: ${blockerSentence(status.blockers)}.`}
         </p>
+        {status.jobBuilt === false ? null : <ArchiveProgress status={status} />}
         <ReportBody latest={status.latest} />
         {status.reports ? (
           <p className="text-xs text-muted-foreground" data-testid="archive-report-home">

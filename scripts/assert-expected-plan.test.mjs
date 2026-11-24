@@ -1055,8 +1055,8 @@ describe('DECLARED', () => {
     expect(infraSource).toMatch(/^\s*"PROPOSAL_STRIP_ENABLED"\s*=\s*"false"$/m);
   });
 
-  it('passes the plan after #1811’s merge (the content-archive container and its switch, off), and not a plan that arms the switch', () => {
-    // Delete this test with the two declarations, once the run has applied.
+  it('passes the plan after #1811’s merge (the content-archive container and its switch, off) and the plan that arms the switch', () => {
+    // Once the first run has applied, delete the two "merged" declarations and that half of this test.
     const merged = fixture();
     merged.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'false';
     merged.plan.resource_changes.push({
@@ -1065,13 +1065,18 @@ describe('DECLARED', () => {
     });
     expect(checkPlan(merged.plan)).toMatchObject({ ok: true, unexpected: [] });
 
-    // The job that reads the switch is not built, so arming it is not a declared plan yet.
-    for (const before of [undefined, 'false']) {
-      const armed = fixture();
-      if (before !== undefined) armed.app.before.app_settings.CONTENT_ARCHIVE_ENABLED = before;
-      armed.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'true';
-      expect(checkPlan(armed.plan).ok).toBe(false);
-    }
+    // The arming plan: off to on, and nothing else beside it.
+    const armed = fixture();
+    armed.app.before.app_settings.CONTENT_ARCHIVE_ENABLED = 'false';
+    armed.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'true';
+    expect(checkPlan(armed.plan)).toMatchObject({ ok: true, unexpected: [] });
+    // Absent straight to "true" would arm it before it had ever applied as off: not declared.
+    const skipped = fixture();
+    skipped.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'true';
+    expect(checkPlan(skipped.plan).ok).toBe(false);
+    // The job adds no timer of its own: no flag for it, and no row on alert-timer-overdue.
+    expect(infraSource).not.toMatch(/FEATURE_FLAG_CONTENT_ARCHIVE|CONTENT_ARCHIVE\w*\s*=\s*"contentArchive/);
+    expect(infraSource).not.toMatch(/^\s*contentArchive\w*\s*=\s*\{ period/m);
     // Replacing or deleting the container is never expected.
     for (const actions of [['delete'], ['delete', 'create']]) {
       const lost = fixture();

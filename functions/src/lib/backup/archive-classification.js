@@ -31,7 +31,7 @@
  * short-lived state).
  *
  * THE ONE FUNCTION THAT DECIDES A RECORD is `archiveRecord`. Both the dry-run
- * report (archive-report.js) and the archive job (phase 3 of ADR 0046) go
+ * report (archive-report.js) and the archive job (archive-job.js) go
  * through it, so what the report counts is what the job will do.
  *
  * FAIL CLOSED. A container this file does not name, a container no code

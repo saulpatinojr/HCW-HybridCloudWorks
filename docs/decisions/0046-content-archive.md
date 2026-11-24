@@ -10,8 +10,11 @@ the list in code and the dry run); what it settled is under
 [What phase 2 settled](#what-phase-2-settled). An independent review of that
 build on 2026-11-24 moved several decisions to the safe side; they are under
 [Changed after an independent review](#changed-after-an-independent-review-2026-11-24),
-and the inventory table below shows the result. No archive has been written:
-the job that writes one is phase 3.
+and the inventory table below shows the result. Phase 3 is built too, in
+part (the job that writes an archive, its daily check, the admin card and
+the runbooks); what it settled, and what it left for later, is under
+[What phase 3 settled](#what-phase-3-settled). No archive has been written:
+the switch ships off.
 **Decision date:** 2026-11-24
 **Owners:** Workload owner and architecture owner
 
@@ -834,13 +837,97 @@ to the list the later job will use.
 | Earlier versions of a public interview were kept, drafts included | None is kept; open question above |
 | The Doc Vault's salt was left out by its id and kind | Only the two content kinds are kept |
 
+## What phase 3 settled
+
+Phase 3 was built on 2026-11-24: the job that writes an archive
+([`archive-job.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/archive-job.js)).
+It ships switched off. Section 4 left some details open; these are the
+answers, and the places where the build differs from the words above. Where
+it differs, this section is what the code does.
+
+- **No new timer: the daily check rides the nightly export's timer.**
+  Section 4 says "a daily timer". The check is made by the timer the nightly
+  export already has (`cosmosExportScheduler`, 03:00 UTC), after it has
+  queued the export. The archive is made from that export's backup, and
+  section 4 already says "if the nightly export is switched off, the archive
+  job does nothing"; this makes that literally true. It also means the
+  archive adds no timer flag, no row on the overdue-timer alert and no
+  Terraform change, and there is one switch, `CONTENT_ARCHIVE_ENABLED`, as
+  the owner's answer `AUTO` describes. The start rule has a sixth condition
+  for it (the nightly export is on), shown on the card as its own reason.
+  One effect: a Sunday backup is read on Monday.
+- **The backup read is the newest complete one, and it is written down.**
+  Section 4 says "the first complete Sunday copy dated on or after
+  2 February". With the switch on before February those are the same backup.
+  Switched on later in the year, the first one may already be deleted
+  (backups are kept 35 days), so the job reads the newest. The first check
+  records which backup it chose, and every job of that archive reads that
+  one. If it is deleted before the run finishes, the run starts again from
+  the newest; files written from the old one are not counted and are
+  replaced.
+- **Working notes are kept outside the archive.** The record of which backup
+  a run reads, and one small note per finished file, are in the private
+  `cosmos-export-state` container under `state/archive-run/<year>/`, beside
+  the dry run's reports. They hold names, counts, sizes and fingerprints.
+  `content-archive` holds only the data files and the manifest, as the
+  layout in section 1 shows.
+- **Three checks before a file counts**, where step 3 names one: no line of
+  the backup was unreadable; the job read as many records as the backup's own
+  list says the container holds; and the file read back from storage has the
+  sha256, the size and the record count of what was written. The sha256 is of
+  the file's bytes as stored, compressed.
+- **A job reads the switch again.** Switching the archive off stops the daily
+  check and also stops a job that was already waiting in the queue.
+- **What the manifest holds.** The year, when it was written, which backup it
+  was made from, and for each file its name, container, decision, record
+  count, size, sha256, how many records the backup held, how many were left
+  out and why, and the names of the fields removed (only names the list
+  itself writes; any other shows as "(other fields)"). Also the containers on
+  the archive list that the backup did not hold. **Not "the version of the
+  code"** that step 4 asks for: the running code has no build number to
+  read. The manifest carries a format number instead (`format: 1`), raised
+  when its layout changes.
+- **The Archive tier comes after the manifest, and is retried.** Moving a
+  file can fail. The next daily check moves whatever is still online, and
+  the card says how many files are in the tier.
+- **The alert for a run that did not finish is a message from the next daily
+  check, not an Azure alert rule.** Section 4 says "six hours". A job that
+  fails tells the owner's phone at once, as every background job does. A run
+  that is more than six hours old with no manifest is said by the next
+  daily check, so up to a day later, and shown in red on the card from the
+  sixth hour. An alert rule in Azure Monitor would be a Terraform resource
+  with a monthly price for something that can happen once a year; it can be
+  added if the owner wants it.
+- **One file per container; no numbered parts yet.** Section 4 says phase 3
+  "measures its job and splits the file if it comes close" to the 30-minute
+  limit. Nothing can be measured before a real archive is written, so no
+  splitting is built. Each finished file's note records how long its job
+  took, and so does each line of a dry-run report. A job that runs out of
+  time fails, tells the owner, and leaves nothing half-archived; the fix
+  would be numbered part files, which the file names leave room for.
+- **A run still unfinished when the next January comes is left.** Its year
+  is not made up later, as section 4 says. Its files stay online without a
+  manifest; they are not an archive, and removing them is by hand.
+- **Built in this phase beside the job:** the card's lines for the last
+  archive and a run in progress; the runbook's sections on switching on,
+  what a run does, a run that does not finish, and reading a file back by
+  hand; and the three changes to the data-subject requests runbook that
+  section 5 lists.
+- **Not built in this phase, though the phases table lists it:** the
+  read-back button of section 6 (the runbook has by-hand steps instead,
+  written from Microsoft's pages and not yet run), and the `trial/` archive
+  the table mentions. Both wait for a first real archive to try them on.
+- **Unchanged:** no earlier version of an interview is kept (the open
+  question above stays `NONE` until the owner answers), and the 21
+  unclassified containers are never written; a job for one is refused.
+
 ## Phases
 
 | Phase | What the pull request contains | The owner's steps |
 | --- | --- | --- |
 | **1. Design** (this record) | This decision record, the note on ADR 0028, the changelog entry. No code, no Terraform, no workflow | Read it; answer the five questions; reply `ACCEPT` on #1811 |
 | **2. Storage and the list** (built 2026-11-24) | Terraform: the private `content-archive` container with `prevent_destroy`, and the app setting `CONTENT_ARCHIVE_ENABLED = "false"`. No lifecycle rule, no immutability policy, no new role. Code with no effect on its own: the archive list (every container and its decision, with the test that fails on an unclassified one), the keep lists with their "no secret comes out" test, and the report-only dry run | Confirm the Terraform run in HCP Terraform (it adds one empty container and one setting; nothing is replaced or destroyed). Run the dry run from the admin, answer for the 21 leftover containers, and answer the open question about interview versions |
-| **3. The job and the runbook** | The timer, the per-container job, the check-then-archive step, the manifest, the alert for a run that did not finish, a line on the admin Health page, the read-back button, a new runbook `docs/runbooks/content-archive.md`, and the changes to the data-subject requests runbook from section 5. No new credential, so the credential checklist has nothing to add; the pull request says so row by row | Switch `CONTENT_ARCHIVE_ENABLED` on. The first run happens on the first day the conditions are true (for the archive of 2026: the first Sunday backup on or after 2 February 2027; the owner can ask for an earlier trial archive under a `trial/` folder to prove the read-back sooner). Then do the read-back and write the result on #1811 |
+| **3. The job and the runbook** (the job built 2026-11-24; the read-back button and the `trial/` archive are not, see [What phase 3 settled](#what-phase-3-settled)) | The timer, the per-container job, the check-then-archive step, the manifest, the alert for a run that did not finish, a line on the admin Health page, the read-back button, a new runbook `docs/runbooks/content-archive.md`, and the changes to the data-subject requests runbook from section 5. No new credential, so the credential checklist has nothing to add; the pull request says so row by row | Switch `CONTENT_ARCHIVE_ENABLED` on. The first run happens on the first day the conditions are true (for the archive of 2026: the first Sunday backup on or after 2 February 2027; the owner can ask for an earlier trial archive under a `trial/` folder to prove the read-back sooner). Then do the read-back and write the result on #1811 |
 | **4. Images and audio** (if question 1 is `LATER` or `NOW`) | Sizes from section 3, the choice between this account and a single-region one, the copy job, and its manifest | Run the sizing lines; confirm any Terraform run; read back a sample |
 | **5. A lock, if wanted** | Only after the read-back: an unlocked time-based policy on the container | Decide; confirm the Terraform run |
 

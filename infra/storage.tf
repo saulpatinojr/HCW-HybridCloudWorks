@@ -308,9 +308,11 @@ resource "azurerm_storage_container" "cosmos_export_state" {
 # job, so there is NO lifecycle rule for this container, on purpose: a rule
 # would archive a file before it had been checked.
 #
-# Created empty and unused: nothing writes here until the archive job exists
-# (phase 3 of ADR 0046) and CONTENT_ARCHIVE_ENABLED in functionapp.tf is
-# "true". The dry run writes its report into cosmos-export-state, not here.
+# Created empty: nothing writes here until CONTENT_ARCHIVE_ENABLED in
+# functionapp.tf is "true". Then the archive job
+# (functions/src/lib/backup/archive-job.js) writes one year's files, once a
+# year. The dry run writes its report into cosmos-export-state, not here, and
+# so do the archive job's own working notes (state/archive-run/).
 #
 # Private like every container above, and it must never join
 # PUBLIC_MEDIA_CONTAINERS or UPLOAD_CONTAINERS in blob-paths.js
