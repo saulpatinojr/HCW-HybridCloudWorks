@@ -103,6 +103,13 @@ export const BRANDS = Object.freeze({
     site: 'https://sessionize.com',
     approximate: true,
   },
+  // No brand page was found for Community Days (2026-11-24), hence approximate.
+  'community-days': {
+    name: 'Community Days',
+    color: '#2563EB',
+    site: 'https://www.communitydays.org',
+    approximate: true,
+  },
   credly: { name: 'Credly', color: '#FF6B00', site: 'https://www.credly.com' },
   'aws-skill-builder': { name: 'AWS', color: '#FF9900', site: 'https://aws.amazon.com' },
   github: { name: 'GitHub', color: '#24292F', onDark: '#F0F6FC', site: 'https://github.com' },

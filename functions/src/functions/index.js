@@ -77,6 +77,7 @@ import "./telegram-http.js";
 import "./doc-vault-http.js";
 import "./calendar-alerts-http.js";
 import "./cost-http.js";
+import "./community-days-http.js";
 import "./interviews-jobs.js";
 import "./interviews-upload-http.js";
 import "./interviews-admin-http.js";

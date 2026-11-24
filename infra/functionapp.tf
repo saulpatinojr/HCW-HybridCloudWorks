@@ -698,6 +698,24 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     "PLAUD_EMBEDDED_CLIENT_ID" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/PLAUD-EMBEDDED-CLIENT-ID)"
     "PLAUD_EMBEDDED_API_KEY"   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/PLAUD-EMBEDDED-API-KEY)"
 
+    # Community Days (#1823, ADR 0045): the developer key the Speaking hub's
+    # "Events to apply to" tab reads the list of open calls for speakers with
+    # (functions/src/lib/community-days/client.js). A vault reference like
+    # every other credential here, so the value never enters Terraform or its
+    # state; the owner pastes it on the Integrations Keys tab once Community
+    # Days has approved API access. The key is not read-only at the vendor,
+    # which is why it lives in Key Vault and nowhere else; the code makes two
+    # GET calls and a test holds it to that.
+    #
+    # Applying this before the secret exists is safe and is the intended
+    # order: this run, the functions deploy, then the paste. Until the secret
+    # exists the reference arrives as the literal @Microsoft.KeyVault(...)
+    # text, which readSetting() reads as "not set": the tab says the key is
+    # not set and nothing is called. It is listed in EXPECTED_UNRESOLVED
+    # (functions/src/lib/expected-unresolved.js) meanwhile; take it off that
+    # list in the pull request after the key is pasted.
+    "COMMUNITY_DAYS_API_KEY" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/COMMUNITY-DAYS-API-KEY)"
+
     # The origin the media route is reachable on from the internet — the API's
     # own Cloudflare-fronted hostname, not the storage account (closed by
     # network rule) and not the SPA's. The transcription job hands Plaud
