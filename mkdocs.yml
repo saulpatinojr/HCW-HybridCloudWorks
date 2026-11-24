@@ -136,6 +136,7 @@ nav:
       - 0043 Muse reads Azure: decisions/0043-muse-azure-reader.md
       - 0044 Signed releases: decisions/0044-signed-releases.md
       - 0045 Community Days events: decisions/0045-community-days-events.md
+      - 0046 Yearly content archive: decisions/0046-content-archive.md
   - Runbooks:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md

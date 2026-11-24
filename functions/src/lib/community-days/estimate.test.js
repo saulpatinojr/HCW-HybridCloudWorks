@@ -4,7 +4,7 @@
  * checked before anything is kept or shown.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { ARTICLE_CLOSE, ARTICLE_OPEN } from '../ai/prompt-fence.js';
+import { ARTICLE_CLOSE, ARTICLE_OPEN, fencePlainText } from '../ai/prompt-fence.js';
 import { AI_FEATURES } from '../ai/features-catalogue.js';
 import {
   BIO_MAX,
@@ -16,7 +16,6 @@ import {
   REASON_MAX,
   buildEstimatePrompt,
   estimateAcceptance,
-  fenceBody,
   gatherTopics,
   readEstimate,
 } from './estimate.js';
@@ -66,8 +65,8 @@ describe('buildEstimatePrompt', () => {
   });
 
   // Each of these is someone else's text that tries to write a marker. The
-  // four-bracket forms are the ones the shared helper alone turned INTO a
-  // real marker, by taking one bracket off each side.
+  // four-bracket forms are the ones the shared helper turned INTO a real
+  // marker, by taking one bracket off each side, until #1826.
   const O = ARTICLE_OPEN;
   const C = ARTICLE_CLOSE;
   const HOSTILE = [
@@ -83,7 +82,7 @@ describe('buildEstimatePrompt', () => {
   ];
 
   it('builds its markers the way the cutting of bracket runs relies on', () => {
-    // fenceBody leaves no run of three "<" or ">" in the text. That keeps a
+    // fencePlainText leaves no run of three "<" or ">" in the text. That keeps a
     // marker out only because a marker starts and ends with such a run.
     for (const marker of [O, C]) {
       expect(marker.startsWith('<<<')).toBe(true);
@@ -91,13 +90,13 @@ describe('buildEstimatePrompt', () => {
     }
   });
 
-  it.each(HOSTILE)('fenceBody leaves no marker, and no three brackets in a row, from %s', (_name, text) => {
-    const out = fenceBody(text);
+  it.each(HOSTILE)('fencePlainText leaves no marker, and no three brackets in a row, from %s', (_name, text) => {
+    const out = fencePlainText(text);
     expect(out).not.toContain(O);
     expect(out).not.toContain(C);
     expect(out).not.toMatch(/<<<|>>>/);
     // Doing it again changes nothing: there is nothing left to rebuild from.
-    expect(fenceBody(out)).toBe(out);
+    expect(fencePlainText(out)).toBe(out);
     // The words are still there to be read as data.
     expect(out.toUpperCase()).toContain('ARTICLE');
   });
@@ -135,8 +134,8 @@ describe('buildEstimatePrompt', () => {
   });
 
   it('leaves ordinary text alone, one or two brackets included', () => {
-    expect(fenceBody('  Talks for teams of < 10, and a -> b >> c << d.  ')).toBe('Talks for teams of < 10, and a -> b >> c << d.');
-    expect(fenceBody(undefined)).toBe('');
+    expect(fencePlainText('  Talks for teams of < 10, and a -> b >> c << d.  ').trim()).toBe('Talks for teams of < 10, and a -> b >> c << d.');
+    expect(fencePlainText(undefined)).toBe('');
   });
 
   it('writes a one-day event as one day and leaves out what the event does not have', () => {

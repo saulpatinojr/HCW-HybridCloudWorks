@@ -167,6 +167,15 @@ subscription-loss becomes the scenario being designed for.
 > 4. **Out-of-Subscription Copy:** Full exports are archived quarterly to an offline or secondary
 >    subscription storage account to mitigate subscription-loss risk.
 
+> **Note, 2026-11-24 ([#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)).**
+> Item 4 above was never built: no quarterly copy exists, and nothing is
+> stored outside the subscription. It is replaced by the yearly content
+> archive designed in [ADR 0046](0046-content-archive.md), which keeps one
+> copy a year in the Archive tier of this same storage account. The copy in a
+> second subscription is dropped by the owner's decision of 2026-11-24: that
+> archive is for bringing old content back at leisure, not for surviving the
+> loss of the subscription. This record's status is unchanged by the note.
+
 ### 5. Monitoring: alert on the missing run
 
 A scheduled query rule in the existing alerting fabric (ADR 0022) fires to the
