@@ -47,7 +47,7 @@ describe('resolveTab', () => {
 
   it('names the events-to-apply-to tab apart from Upcoming, which is the owner’s own sessions (#1823)', () => {
     const apply = TABS.find((tab) => tab.id === 'apply');
-    expect(apply.label).toBe('Events to apply to');
+    expect(apply.label).toBe('Future Events');
     expect(TABS.filter((tab) => /upcoming/i.test(tab.label)).map((tab) => tab.id)).toEqual([
       'upcoming',
     ]);

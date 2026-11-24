@@ -85,7 +85,7 @@ const FUNCTION_TIMEOUT_MS = {
   // the admin's patience. Edit, snooze and delete use the per-alert route
   // and the default.
   'cms/calendar-alerts': 10000,
-  // Speaking → Events to apply to (#1823). Opening the tab or pressing
+  // Speaking → Future Events (#1823). Opening the tab or pressing
   // Refresh may make the server read the outside directory: up to seven
   // requests of at most 8 s each, one after another
   // (functions/src/lib/community-days/client.js), though one or two is the

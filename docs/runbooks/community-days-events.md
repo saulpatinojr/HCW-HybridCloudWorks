@@ -1,4 +1,4 @@
-# Events to apply to: the Community Days list on the Speaking hub
+# Future Events: the Community Days list on the Speaking hub
 
 > **Status: built, waiting for the key.** Owner request of 2026-11-24, ticket
 > [#1823](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1823);
@@ -6,7 +6,7 @@
 > Until the Community Days key is pasted on the Keys tab, the tab says **the
 > key is not set** and calls nothing.
 
-**Scope:** what the **Events to apply to** tab of the admin
+**Scope:** what the **Future Events** tab of the admin
 [Speaking hub](https://hybridcloudworks.com/admin/speaking?tab=apply) shows,
 how its acceptance estimate works and what it cannot tell you, how to set,
 replace and revoke the key, and what each error means.
@@ -218,7 +218,7 @@ approved API access; steps 3 to 6 cannot.
    [the Deploy Functions workflow](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-functions.yml),
    press **Run workflow**, leave the branch on `main`, and press the green
    **Run workflow** button. When the run is green, open
-   [Speaking → Events to apply to](https://hybridcloudworks.com/admin/speaking?tab=apply).
+   [Speaking → Future Events](https://hybridcloudworks.com/admin/speaking?tab=apply).
    You should see "The Community Days key is not set yet". That is correct at
    this point.
 3. **Wait for Community Days to approve API access**, then open

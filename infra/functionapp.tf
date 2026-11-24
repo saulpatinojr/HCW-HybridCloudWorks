@@ -711,7 +711,7 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     "PLAUD_EMBEDDED_API_KEY"   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/PLAUD-EMBEDDED-API-KEY)"
 
     # Community Days (#1823, ADR 0045): the developer key the Speaking hub's
-    # "Events to apply to" tab reads the list of open calls for speakers with
+    # "Future Events" tab reads the list of open calls for speakers with
     # (functions/src/lib/community-days/client.js). A vault reference like
     # every other credential here, so the value never enters Terraform or its
     # state; the owner pastes it on the Integrations Keys tab once Community
@@ -917,8 +917,10 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     #
     # These are generated from `local.timer_flags` rather than written out here,
     # so turning a timer on is a WORKSPACE VARIABLE edit — add its name to
-    # `enabled_timers` — and not a code change. Twenty timers turned on one at
-    # a time would otherwise be twenty pull requests during a cutover window,
+    # `enabled_timers` — and not a code change. The timers turned on one at
+    # a time would otherwise be one pull request each during a cutover window
+    # (twenty when this was written; the count is local.timer_catalogue's, and
+    # is not repeated here because a number in a comment goes stale),
     # which is how a "one at a time, watch each one" procedure quietly becomes
     # "turn them all on and see what breaks".
     #

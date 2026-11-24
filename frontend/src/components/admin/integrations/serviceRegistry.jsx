@@ -700,7 +700,7 @@ export const SERVICES = Object.freeze([
       'Read the published events whose call for speakers is open',
       'Read your own talks as Community Days lists them',
     ],
-    usedIn: ['Speaking (Events to apply to)'],
+    usedIn: ['Speaking (Future Events)'],
     cost: 'No charge is stated in the vendor’s documentation.',
     dataDirection:
       'Inbound only: public event listings and your talk titles come from Community Days. The site sends it nothing but the key.',

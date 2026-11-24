@@ -201,9 +201,9 @@ export const AI_TASKS = Object.freeze({
   speakingEstimate: task({
     label: 'Speaking acceptance estimate',
     description:
-      'Reads one event from the Speaking hub’s “Events to apply to” tab and gives a rough percentage chance that it would accept a talk, with two or three reasons.',
+      'Reads one event from the Speaking hub’s “Future Events” tab and gives a rough percentage chance that it would accept a talk, with two or three reasons.',
     route:
-      'The Estimate button on Speaking → Events to apply to, one event per press. Nothing runs by itself. Off means the button answers that the feature is switched off.',
+      'The Estimate button on Speaking → Future Events, one event per press. Nothing runs by itself. Off means the button answers that the feature is switched off.',
     modality: 'json',
     needs: ['text', 'json'],
     public: false,

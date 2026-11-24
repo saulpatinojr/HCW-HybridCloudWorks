@@ -44,7 +44,7 @@ describe('the service registry', () => {
       'YouTube',
       'Plaud',
       'Sessionize',
-      // #1823: the directory behind Speaking → Events to apply to.
+      // #1823: the directory behind Speaking → Future Events.
       'Community Days',
       'Credly',
       'Microsoft Learn',
@@ -483,7 +483,7 @@ describe('the service registry', () => {
         group: 'content',
         name: 'Community Days',
         secrets: ['COMMUNITY-DAYS-API-KEY'],
-        usedIn: ['Speaking (Events to apply to)'],
+        usedIn: ['Speaking (Future Events)'],
         url: 'https://www.communitydays.org/developers',
       });
       expect(card().dataDirection).toMatch(/^Inbound only/);
