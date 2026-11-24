@@ -1,5 +1,5 @@
 /**
- * The routes behind Speaking → Events to apply to (#1823): who may call
+ * The routes behind Speaking → Future Events (#1823): who may call
  * them, what they refuse, and that the estimate runs only when asked.
  */
 import { describe, it, expect, vi } from 'vitest';

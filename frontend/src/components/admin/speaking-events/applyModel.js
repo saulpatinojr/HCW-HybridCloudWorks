@@ -1,5 +1,5 @@
 /**
- * The pure rules of the Speaking hub's "Events to apply to" tab (#1823,
+ * The pure rules of the Speaking hub's "Future Events" tab (#1823,
  * ADR 0045): days and ranges, which events overlap what the owner already has,
  * what the small calendar marks on each day, and the sums the rows show.
  * Nothing here reads the network or the clock by itself; every function is

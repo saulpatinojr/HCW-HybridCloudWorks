@@ -10,11 +10,13 @@ export const SPEAKING_EVENTS_PATH = '/admin/speaking';
 export const TABS = Object.freeze([
   { id: 'upcoming', label: 'Upcoming' },
   { id: 'past', label: 'Past' },
-  // Not "Upcoming": that tab is the owner's own sessions. This one is other
-  // people's events the owner could send a talk to (#1823).
-  { id: 'apply', label: 'Events to apply to' },
   { id: 'sources', label: 'Sources' },
   { id: 'publishing', label: 'Publishing' },
+  // Not "Upcoming": that tab is the owner's own sessions. This one is other
+  // people's events the owner could send a talk to (#1823). Named and placed
+  // by the owner on 2026-11-24: a tab's name is one or two words, and this
+  // one sits after Publishing. The id stays `apply`, so old links still work.
+  { id: 'apply', label: 'Future Events' },
   { id: 'settings', label: 'Settings' },
 ]);
 

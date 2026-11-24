@@ -1,5 +1,5 @@
 /**
- * The "Events to apply to" tab's read and its three writes (#1823, ADR 0045).
+ * The "Future Events" tab's read and its three writes (#1823, ADR 0045).
  *
  * THE READ is one route, `cms/community-days/events`, through the shared
  * `useGuardedLoad` (ADR 0033 §2): every read takes a generation number and

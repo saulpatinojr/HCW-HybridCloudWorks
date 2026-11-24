@@ -699,7 +699,7 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     "PLAUD_EMBEDDED_API_KEY"   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/PLAUD-EMBEDDED-API-KEY)"
 
     # Community Days (#1823, ADR 0045): the developer key the Speaking hub's
-    # "Events to apply to" tab reads the list of open calls for speakers with
+    # "Future Events" tab reads the list of open calls for speakers with
     # (functions/src/lib/community-days/client.js). A vault reference like
     # every other credential here, so the value never enters Terraform or its
     # state; the owner pastes it on the Integrations Keys tab once Community
