@@ -150,7 +150,7 @@ describe('content-archive-container job type', () => {
 
   it('refuses a container the archive does not write before touching storage', async () => {
     const spec = getJobType(ARCHIVE_JOB_TYPE);
-    for (const container of ['admins', 'tool_exports', 'jobs']) {
+    for (const container of ['admins', 'a_new_container', 'jobs']) {
       await expect(
         spec.worker({ year: 2026, runId: '2027-02-07', container }, { context: { log: vi.fn() } })
       ).rejects.toThrow(/not written by the content archive/);

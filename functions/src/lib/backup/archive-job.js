@@ -34,6 +34,15 @@
  * read and nothing runs. The start rule is `archiveStartDecision`
  * (archive-report.js).
  *
+ * NEVER FROM A STATE NO REPORT DESCRIBES. An archive starts only when the
+ * newest dry-run report is finished, was made from the very backup the
+ * archive would read, and shows nothing still to decide: no container
+ * waiting for the owner, no flagged field in a container the owner has not
+ * decided about, and no count that disagrees with the backup (`reportGate`).
+ * When a report is all that is missing, the daily check starts the dry run
+ * itself and the archive starts a day later. When the report shows something
+ * to decide, nothing starts and the owner is told.
+ *
  * RUNNING TWICE DOES NO HARM. File names are fixed by year and container.
  * A job that finds its file already checked skips it. A job never writes
  * once the year's manifest exists, so a finished year is never overwritten.
@@ -71,8 +80,11 @@ import {
   archiveManifestName,
   archiveStartDecision,
   archiveYearFor,
+  createReportScheduler,
   findLatestFullBackup,
   gzipLines,
+  readLatestReport,
+  reportGate,
 } from './archive-report.js';
 
 /** The platform job type one message per container is queued as. */
@@ -573,6 +585,46 @@ export function createArchiveScheduler({
     return { action: 'resumed', year, queued, late };
   }
 
+  /** A report that is only absent, unfinished or made from an older backup: a new dry run puts that right. */
+  const NEEDS_A_DRY_RUN = ['report-missing', 'report-stalled', 'report-older-than-backup'];
+  /** A finished report of the right backup that shows something to decide: only the owner puts that right. */
+  const NEEDS_THE_OWNER = ['report-mismatch', 'report-flagged', 'report-waiting'];
+
+  /**
+   * When the only thing between today and an archive is that no finished
+   * dry-run report describes the backup, make one. The owner's answer to
+   * "how does a yearly run start" was "by itself" (ADR 0046, question 4), so
+   * the yearly check does not wait for someone to press Dry run. The archive
+   * then starts at the next daily check, if that report shows nothing to
+   * decide. A dry run writes no archive and changes no record.
+   */
+  async function dryRunIfThatIsAllThatIsMissing(blockers) {
+    if (!blockers.length || !blockers.every((code) => NEEDS_A_DRY_RUN.includes(code))) return { started: false, queued: 0 };
+    const result = await createReportScheduler({
+      store,
+      blobs: backupBlobs,
+      enqueue: (messages) => messages.forEach((message) => enqueue(message)),
+      now,
+      uuid,
+    }).start({ requestedBy: ARCHIVE_ACTOR });
+    if (result.started) log.log?.(`[contentArchive] a dry run was started for the archive of ${archiveYearFor(now())}: ${result.queued} container job(s) queued`);
+    return { started: result.started === true, queued: result.started ? result.queued : 0 };
+  }
+
+  /** Tell the owner when everything else is ready and only the report's findings stop the archive. */
+  async function sayIfTheReportStopsIt(year, blockers) {
+    if (!blockers.length || !blockers.every((code) => NEEDS_THE_OWNER.includes(code))) return;
+    log.warn?.(`[contentArchive] the archive of ${year} is not started: the dry-run report shows something to decide (${blockers.join(', ')})`);
+    await notifier
+      ?.notifyTelegram({
+        title: `Content archive of ${year} is waiting for you`,
+        message: `The yearly archive of ${year} is ready to start, and the newest dry-run report shows something to decide first (${blockers.join(', ')}). Nothing has been written. Open the Archive card on Health, Overview and read the report; the content archive runbook says how to answer.`,
+        severity: 'warning',
+        source: ARCHIVE_NOTIFY_SOURCE,
+      })
+      ?.catch?.(() => {});
+  }
+
   /**
    * The daily check. Does nothing, and says so, unless the switch is on.
    * @returns {Promise<{ action: string, year: number, queued?: number, blockers?: string[] }>}
@@ -607,14 +659,23 @@ export function createArchiveScheduler({
     }
 
     const backup = await findLatestFullBackup({ blobs: backupBlobs, now: at });
+    // The newest dry-run report has to describe this very backup and show
+    // nothing still to decide, or no archive starts (reportGate).
+    const latest = await readLatestReport({ blobs: backupBlobs, now: at });
+    const reportBlockers = reportGate({ latest, backupRunId: backup?.runId ?? null });
     const decision = archiveStartDecision({
       env,
       now: at,
       containerExists: true,
       manifestExists: false,
       backupRunId: backup?.runId ?? null,
+      reportBlockers,
     });
-    if (!decision.start) return { action: 'blocked', year, blockers: decision.blockers };
+    if (!decision.start) {
+      const dryRunStarted = await dryRunIfThatIsAllThatIsMissing(decision.blockers);
+      await sayIfTheReportStopsIt(year, decision.blockers);
+      return { action: 'blocked', year, blockers: decision.blockers, queued: dryRunStarted.queued, dryRunStarted: dryRunStarted.started };
+    }
 
     const inBackup = new Map(backup.containers.map((row) => [row.container, row.docs]));
     const plan = archivePlan();

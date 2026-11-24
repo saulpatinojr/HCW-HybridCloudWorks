@@ -32,11 +32,15 @@ from the weekly full database backup (the Sunday run of the nightly export;
 [Cosmos restore runbook](cosmos-restore.md)). Each database container (a
 named box of records) gets one of three decisions:
 
-- **Kept as it is**: 33 containers. Articles, pages, the owner's notes and
-  recordings, newsletters, image records and the like. Every one of them is
-  a container the site's code reads or writes today, so its fields are
-  known. (`plaud_ingest` is the one exception: no code names it, and it is
-  kept because the owner said its recordings are theirs.)
+- **Kept as it is**: 54 containers.
+    - 33 that the site's code reads or writes today, so their fields are
+      known: articles, pages, the owner's notes and recordings, newsletters,
+      image records and the like. (`plaud_ingest` is the one exception among
+      them: no code names it, and it is kept because the owner said its
+      recordings are theirs.)
+    - 21 left over from the earlier site that no code names, kept whole by
+      the owner's decision of 2026-11-24:
+      [The 21 containers the owner chose to keep](#the-21-containers-the-owner-chose-to-keep).
 - **Kept in part**: 6 containers. For four of them the code holds a **keep
   list** (the only fields that are kept; a field nobody listed is dropped, so
   a new or forgotten field can never carry a secret in).
@@ -64,10 +68,12 @@ named box of records) gets one of three decisions:
     - `admin_config` (settings documents): key records, and short-lived state
       such as health results and caches, are left out. A document the list
       does not name is left out too.
-- **Left out**: 40 containers. 19 for a known reason (the two access lists:
-  who may sign in, and which machine is which lab agent; audit rows the
-  database deletes after 90 days; caches and queues that a job rebuilds) and
-  **21 that are waiting for the owner**, below.
+- **Left out**: 19 containers, each for a known reason (the two access
+  lists: who may sign in, and which machine is which lab agent; audit rows
+  the database deletes after 90 days; caches and queues that a job
+  rebuilds). **None is waiting for the owner.** A container added to the
+  database later is left out, and shown on the card as waiting, until it is
+  decided.
 
 Two rules cut across containers. An interview is kept only while it is public
 in the backup, and **no earlier version of an interview is kept at all**: a
@@ -129,24 +135,81 @@ You need the `super_admin` role. Below that role the card is not shown.
   [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)
   with the date of the backup.
 - **A red block "Look before switching the archive on".** It lists every
-  container an archive would **keep** in which at least one kept record
-  still has a field whose *name* looks like a secret or someone's contact
-  details (a name containing `token`, `secret`, `password`, `apikey`,
-  `authorization`, `credential`, `privatekey`, `hash`, `salt`, `cookie`,
-  `signature`, `email` or `phone`, or exactly `sas`, `sig`, `key`, `pwd`,
-  `auth` or `pin`; the list is in
+  container an archive would **keep** that has at least one field which
+  (a) **would remain** in the archive, (b) has a *name* that looks like a
+  secret or someone's contact details, and (c) holds something other than
+  numbers or yes/no. A name looks that way when it contains `token`,
+  `secret`, `password`, `apikey`, `authorization`, `credential`,
+  `privatekey`, `hash`, `salt`, `cookie`, `signature`, `email` or `phone`,
+  or is exactly `sas`, `sig`, `key`, `pwd`, `auth` or `pin` (the list is in
   [`archive-classification.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/archive-classification.js),
   `SENSITIVE_NAME_WORDS`). The check reads names at any depth inside a
-  record and never a value. A hit is a reason to look, not proof: `contentHash`
-  matches and is harmless. Say what you see on
+  record and never a value. For each such field the block gives one line:
+
+    ```text
+    meta.requestHash in 12 record(s); values seen: short text (under 64 characters) ×11, empty ×1
+    ```
+
+    - **Where it sits**: the names of the fields above it, then its own, joined
+      by dots. `meta.requestHash` is a field `requestHash` inside a field
+      `meta`. A part shown as `(id)` is a field name that is not printed
+      because it is shaped like an id or typed text. For the two settings
+      containers, `admin_config` and `admin_settings`, the line starts with
+      the settings document the field is in (`credential_register › …`) when
+      the code names that document, and `(other)` otherwise.
+    - **In how many records.**
+    - **What kind of value it holds**, as counts: number, true/false,
+      date-like text, short text (under 64 characters), long text, list,
+      object, or empty. This is what tells a harmless field from a real one:
+      a date is not a secret; a short text under a name like `apiKey` may be.
+      Never the value itself.
+    - "N more use(s) of a name that is not shown because it is shaped like
+      an id or typed text": a field that would remain whose own name cannot
+      be printed. It is in red because nothing can be said about it from the
+      report; say so on #1811 and a session will look at the code that writes
+      that container.
+
+  A container the owner has already decided about is **not** in this block:
+  see the next point. So after the decision of 2026-11-24 this block is
+  expected to be empty, and a line in it is something new.
+
+  A hit is a reason to look, not proof. For each line, answer on
   [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)
-  and a session will decide each one with you before the archive is switched
-  on.
-- **Waiting for you: 21 containers to classify.** See the next section.
+  with `FINE` (it may stay) or `OUT` (take it out), and a session changes the
+  list in a pull request before the archive is switched on.
+- **A block "The owner chose to keep these, 2026-11-24".** It lists the
+  containers that would be in the red block, had the owner not already
+  decided to keep them as the dry run showed them (ten that were flagged in
+  the first dry run, and the 21 that were waiting). Each still shows the
+  same lines: where the field sits, in how many records, and the kinds of
+  value. That decision was made for each container, not for each name one
+  by one, so the names are listed every time and are not treated as checked.
+  If a name appears here that you do not remember from the first dry run,
+  say so on
+  [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811).
+- **Three quieter lines, in grey, per container** (in the red block's
+  containers and in "Every container"):
+    - **"Named like one, but only numbers or yes/no"**: a field that would
+      remain and whose every value was a number or true/false, such as a
+      count of tokens (`totalTokens`) or a switch (`emailVerified`). It
+      cannot hold a secret or an address, so it is not flagged.
+    - **"Kept on purpose"**, with the reason. Today that is one name,
+      `apiKeyEnvVar` on `mcp_servers` and `ai_providers`: the *name* of the
+      setting a key is read from, never the key. The list keeps it only when
+      it is shaped like a setting's name and drops anything else.
+    - **"Taken out before archiving"**: names the records carry that the
+      archive would not, because the record is left out or the field is
+      dropped, with a count of records each. For a container that is left
+      out whole the line reads "Found, and not archived".
+- **"Nothing is waiting for you: every container is classified."** What you
+  see since the decision of 2026-11-24. If a container is ever added to the
+  database without being classified, this turns into "Waiting for you: 1
+  container(s) to classify", with its record count and field names; see
+  [If a container is waiting](#if-a-container-is-waiting).
 - **Every container** (press to unfold). One row per container: how many
   records would be kept, how many would have fields removed and which fields,
-  how many would be left out and why, its field names, and the same count of
-  names that look sensitive. A removed field is named only when the name is
+  how many would be left out and why, its field names, and the same lines
+  about names that look sensitive. A removed field is named only when the name is
   one the site's own code uses (`speakerEmail`, `oauthToken`); any other
   removed field shows as "(other fields)", because its name could be
   anything. The reasons, in the card's words:
@@ -160,7 +223,7 @@ You need the `super_admin` role. Below that role the card is not shown.
     | short-lived working state | Health results, leases, queues |
     | a document the list does not name | A settings document whose id is not in the code's list, or a record of a kind the list does not name. Left out to be safe; a number above zero here is worth a look |
     | its content item is not in the backup | An earlier version of something that has since been deleted |
-    | not classified yet | One of the 21 below |
+    | not classified yet | A container nobody has decided about. None today; see [If a container is waiting](#if-a-container-is-waiting) |
 
 The report never shows a record, the id of a record or the value of a field.
 The server does not send one.
@@ -180,11 +243,10 @@ listed per container, the most common first.
 folder per report. No storage rule deletes it; the code does: starting a dry
 run deletes every report older than 90 days.
 
-## Classify the 21 containers
+## The 21 containers the owner chose to keep
 
 No code in this repository names these 21 containers today, so nothing here
-can say what they hold. They are left over from the earlier site. They may
-hold what a visitor typed, or a key someone pasted into the earlier site.
+can say what their records hold. They are left over from the earlier site.
 
 - Saved work from the earlier site's tools: `tool_workspaces`,
   `tool_migration_workspaces`, `tool_assessment_sessions`,
@@ -196,30 +258,60 @@ hold what a visitor typed, or a key someone pasted into the earlier site.
   `character_profiles`, `character_modules`, `character_images`,
   `character_tag_adjectives`.
 
-The first seven were always waiting for you. The other fourteen were listed
-as "kept as it is" until an independent review on 2026-11-24 pointed out that
-nobody had read them; they moved here, so they are looked at before they are
-kept.
+Until 2026-11-24 they were left out, waiting for you. After the first dry
+run you decided that everything it listed stays
+([your decision on #1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811#issuecomment-7144574612)),
+so all 21 are now archived **whole**: every record, every field.
 
-For each one the report shows the number of records, the **names** of its
-common fields, and how many records have a field named like a secret. Read
-them and answer on
+Two things to know about that, said plainly:
+
+- **Three of the five `tool_` containers hold the email address and the
+  session id of whoever used the tool:** `tool_workspaces` (the field
+  `ownerEmail`), `tool_assessment_sessions` (`ownerEmail`,
+  `requestedByEmail`, `ownerUid`) and `tool_architecture_plans`
+  (`requestedByEmail`, `ownerUid`, `sessionId`). `ownerUid` is the id of the
+  person's account. Those are the field names your first dry run showed;
+  the other two `tool_` containers held no record. An email address is
+  another person's contact detail, and nobody agreed to it being kept for
+  good. The session
+  recommended leaving those three out; you chose to keep them, because the
+  archive is private and only you can read it. If someone who used those
+  tools ever asks to be erased, each year's archive that holds their record
+  has to be rewritten by hand
+  ([ADR 0046, section 5](../decisions/0046-content-archive.md#5-erasure-a-persons-request-to-be-deleted),
+  and step 4a of the
+  [data-subject requests runbook](data-subject-requests.md#step-4a-the-yearly-archive-content-archive)).
+- **`config_providers` and `config_settings` may hold keys typed into the
+  earlier site.** Nothing is taken out of a container that is kept whole, so
+  if one is there, it goes into the archive. The dry-run report lists those
+  two under "The owner chose to keep these", with each field named like a
+  secret and the kind of value it holds.
+
+To change your mind about any of them before the archive is switched on,
+reply on
 [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) with
-one word per container:
+the container's name and `OUT` (leave it out) or `STRIP` and the field names
+to keep. A session then changes the list in a pull request. Once a year has
+been archived, changing the list only affects later years.
 
-- `KEEP`: it is content worth keeping and holds nothing about a visitor and no
-  key.
+## If a container is waiting
+
+None is today. This is what happens if one ever is, because a container was
+added to the database and nobody could say what it holds.
+
+It is left out of every archive, and the dry run reads it and shows, under
+"Waiting for you", its number of records, the **names** of its common fields,
+and the fields named like a secret. Read them and answer on
+[#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) with
+one word:
+
+- `KEEP`: it is content worth keeping.
 - `STRIP`, with the field names to keep: keep it with only those fields.
 - `OUT`: leave it out for good.
 
-A container with 0 records, or one the report says is "not in the backup", can
-be answered `OUT`. Until you answer, all 21 stay out, so not answering is
-safe. A session then changes the list in a pull request; the test beside the
-list keeps the count honest.
-
-If a container shows a large number of "names that are not shown", its
-records use ids or typed text as field names. Treat that as a sign it holds
-what people typed, and answer `OUT` unless you know otherwise.
+Until you answer it stays out, so not answering is safe. A container with a
+large number of "names that are not shown" uses ids or typed text as field
+names; treat that as a sign it holds what people typed.
 
 ## What each state on the card means
 
@@ -232,11 +324,16 @@ what people typed, and answer `OUT` unless you know otherwise.
 | Archive of 2026: **Written** | That year's manifest (the list of files with their counts and fingerprints) exists. A year is archived once | Nothing |
 | "could not start today: the nightly export is off" | The archive is made from the nightly export's weekly backup, and the export's timer is what looks, once a day, whether an archive should start. With the export off nothing looks | Check the **Nightly export** line on the same tab. Switching the export on is the variable `cosmos_export_enabled` in the [`hcw-azure` workspace](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables) |
 | "No archive has been written yet." | No year has a manifest | Nothing |
-| "The archive of 2026 is being written … 12 of 39 files are written and checked" | A run is in progress. Each file is written, read back and checked; nothing is in the Archive tier yet | Wait, and press the refresh arrow |
+| "The archive of 2026 is being written … 12 of 60 files are written and checked" | A run is in progress. Each file is written, read back and checked; nothing is in the Archive tier yet | Wait, and press the refresh arrow |
 | In red: "The archive of 2026 started … and is not finished", with the missing containers | The run is more than 6 hours old and has no manifest. Nothing has been moved to the Archive tier | See [When a run does not finish](#when-a-run-does-not-finish) |
-| **Last archive: 2026**, with a time, and "39 files (one per container), … records, … compressed" | That year's archive is finished. The numbers are from its manifest | Do the read-back check once ([Reading an archive back](#reading-an-archive-back)) |
-| "30 of 39 files are in the Archive tier; the daily check moves the rest" | The archive is finished and listed, and some files are still online. Moving a file can fail; the next daily check (03:00 UTC) tries again | Nothing, unless it says so for more than two days; then say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) |
+| **Last archive: 2026**, with a time, and "60 files (one per container), … records, … compressed" | That year's archive is finished. The numbers are from its manifest | Do the read-back check once ([Reading an archive back](#reading-an-archive-back)) |
+| "50 of 60 files are in the Archive tier; the daily check moves the rest" | The archive is finished and listed, and some files are still online. Moving a file can fail; the next daily check (03:00 UTC) tries again | Nothing, unless it says so for more than two days; then say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) |
 | In red: "file(s) the archive's list names are not in storage" | A file the manifest lists has been deleted | Say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) |
+| "could not start today: no dry run has been made yet", "the newest dry run did not finish", or "the newest dry-run report was made from an older backup" | An archive never starts unless a finished dry-run report describes the very backup it would read. When that is the only thing missing, the daily check (03:00 UTC) starts the dry run itself, and the archive starts the day after if the report shows nothing to decide | Nothing. You can also press **Dry run** yourself |
+| "could not start today: a dry run is still reading the backup" | The same, a few minutes in | Wait |
+| "could not start today: the newest dry-run report shows a field to look at in a container nobody has decided about" | The red block "Look before switching the archive on" is not empty. No archive starts while it is not | Read the block and answer on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) ([Read the report](#read-the-report)). Your phone gets a message each day this is the only thing in the way |
+| "could not start today: the newest dry-run report shows a container waiting for you" | A container nobody has classified is in the backup | [If a container is waiting](#if-a-container-is-waiting) |
+| "could not start today: the newest dry-run report counted a different number of records" | The dry run disagreed with the backup's own list | Do not switch anything; say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) with the date of the backup |
 | "could not start today: it is still January" | An archive is never made in January, the month of grace | Wait |
 | "the newest complete weekly backup is from before 2 February" | The archive is made from the first Sunday backup on or after 2 February, the day after the yearly clean-up of talk proposals | Wait for that Sunday |
 | "no complete weekly full backup was found" | The nightly export is off or has not finished a Sunday run in 35 days. No backup, no archive | Check the Nightly export line on the same tab |
@@ -277,8 +374,9 @@ nothing in either case.
     (or empty). An error that names `ContainerNotFound` means step 1 has not
     been applied.
 4. **Run a dry run** and read it: [Run a dry run](#run-a-dry-run).
-5. **Answer for the 21 containers** on #1811:
-   [Classify the 21 containers](#classify-the-21-containers).
+5. **Answer for the containers that were waiting.** Done on 2026-11-24:
+   you chose to keep all 21
+   ([The 21 containers the owner chose to keep](#the-21-containers-the-owner-chose-to-keep)).
 
 Switching the archive on is not one of these steps.
 
@@ -331,11 +429,29 @@ opened on 2026-11-24).
 Nothing else is needed. The first archive is then made on the first day, at
 03:00 UTC, on which all of these hold: the switch is on, the nightly export
 is on, the date is 1 February or later, the `content-archive` container
-exists, that year has no archive yet, and the newest complete Sunday backup
-is dated 2 February or later. For the archive of 2026 that is Monday
-8 February 2027, reading the backup of Sunday 7 February 2027, provided the
-switch is on by then. Switched on later in the year, it starts the next
-morning and reads the newest Sunday backup.
+exists, that year has no archive yet, the newest complete Sunday backup is
+dated 2 February or later, **and the newest dry-run report was made from
+that same backup and shows nothing to decide** (no red block, no container
+waiting, no count that disagrees with the backup).
+
+You do not have to press Dry run for that. On the first morning everything
+else holds, the daily check starts a dry run of the new backup by itself.
+The next morning it reads the report: if it is clean the archive starts, and
+if it is not, nothing starts and your phone gets the message "Content
+archive of 2026 is waiting for you".
+
+For the archive of 2026 that means: the dry run on Monday 8 February 2027
+(of the backup of Sunday 7 February), and the archive on Tuesday 9 February,
+provided the switch is on by then. If you press **Dry run** yourself on the
+Sunday, after the backup has finished, the archive starts on the Monday.
+Switched on later in the year, it works the same way from the next morning,
+reading the newest Sunday backup.
+
+One effect to know: a new Sunday backup arrives every week. If a report
+shows something to decide and you answer a week later, the report is by
+then older than the newest backup, so a new dry run is made first. That is
+on purpose: an archive is only ever made from a backup that a finished
+report describes.
 
 **What success looks like.** A message on your phone, "Content archive of
 2026 written", with the number of files, records and bytes. On the card:
@@ -357,7 +473,10 @@ It reads the backup, never the live database.
 1. **The daily check.** Every day at 03:00 UTC the nightly export's timer
    (`cosmosExportScheduler`) queues the export, and then asks whether an
    archive should start. If the switch is off it stops there, having read
-   nothing, and logs one line that says so.
+   nothing, and logs one line that says so. If everything is ready except
+   that no finished dry-run report describes the newest backup, it starts a
+   dry run and stops; the archive starts at a later check, and only if that
+   report shows nothing to decide.
 2. **It picks one backup and writes that down.** It takes the newest complete
    Sunday backup and records its date in a small working note
    (`state/archive-run/<year>/run.json` in the private `cosmos-export-state`
@@ -365,8 +484,9 @@ It reads the backup, never the live database.
    archive that takes two days is not made from two different Sundays.
 3. **It queues one job per container** that the list keeps
    ([What an archive will hold](#what-an-archive-will-hold)) and the backup
-   holds: 39 at most. The 21 unclassified containers and the 19 left out are
-   never queued, and a job for one of them is refused.
+   holds: 60 at most. The 19 containers that are left out are never queued,
+   and neither is one that is waiting for a decision or that the list does
+   not name; a job for any of those is refused.
 4. **Each job writes one file.** It reads the container's backup file a line
    at a time, puts each record through the same list the dry run uses, and
    writes what is kept to `content-archive/<year>/cosmos/<container>.ndjson.gz`

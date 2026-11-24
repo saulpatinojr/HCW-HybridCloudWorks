@@ -20,7 +20,11 @@ import {
   DEVELOPER_EVENT_KEEP,
   DOC_VAULT_KEPT_TYPES,
   DOC_VAULT_SALT_ID,
+  KEPT_BY_THE_OWNERS_DECISION,
   KEPT_ON_THE_OWNERS_WORD,
+  OWNER_ACCEPTED,
+  SENSITIVE_KEPT_ON_PURPOSE,
+  ownerAcceptedOn,
   LEFT_OUT,
   MCP_SERVER_KEEP,
   NAMED_REMOVALS,
@@ -83,8 +87,8 @@ describe('archive classification against infra/cosmos-containers.json', () => {
     expect(archiveClassifiedContainers().filter((name) => !live.has(name))).toEqual([]);
   });
 
-  it('is 33 as they are, 6 kept in part, 40 left out (21 of them waiting for the owner): 79', () => {
-    expect(ARCHIVE_AS_IS).toHaveLength(33);
+  it('is 54 as they are, 6 kept in part, 19 left out and none waiting for the owner: 79', () => {
+    expect(ARCHIVE_AS_IS).toHaveLength(54);
     expect(Object.keys(ARCHIVE_CHANGED).sort()).toEqual([
       'admin_config',
       'admin_settings',
@@ -93,8 +97,15 @@ describe('archive classification against infra/cosmos-containers.json', () => {
       'doc_vault',
       'mcp_servers',
     ]);
-    expect(Object.keys(LEFT_OUT)).toHaveLength(40);
-    expect(UNCLASSIFIED).toEqual([
+    expect(Object.keys(LEFT_OUT)).toHaveLength(19);
+    expect(UNCLASSIFIED).toEqual([]);
+    expect(archiveClassifiedContainers()).toHaveLength(79);
+    // No container is named twice.
+    expect(new Set(archiveClassifiedContainers()).size).toBe(79);
+  });
+
+  it('keeps, whole, the 21 containers the owner chose on 2026-11-24, the ones with tool users’ email addresses included', () => {
+    expect(KEPT_BY_THE_OWNERS_DECISION).toEqual([
       'character_images',
       'character_modules',
       'character_profiles',
@@ -117,7 +128,50 @@ describe('archive classification against infra/cosmos-containers.json', () => {
       'wiki_pages',
       'youtubevideos',
     ]);
-    expect(archiveClassifiedContainers()).toHaveLength(79);
+    for (const container of KEPT_BY_THE_OWNERS_DECISION) {
+      expect(archiveDecisionFor(container), container).toMatchObject({ decision: DECISIONS.archive, reason: null, keeps: null });
+      expect(Object.hasOwn(LEFT_OUT, container), container).toBe(false);
+      const doc = { id: 'made-up-id', email: 'made-up@example.com', sessionId: 'made-up-session' };
+      expect(archiveRecord(container, doc)).toEqual({ keep: true, doc, removed: [], reason: null });
+    }
+    // The comment beside them says, in so many words, what the three tool containers hold and who chose.
+    const source = readFileSync(new URL('./archive-classification.js', import.meta.url), 'utf8');
+    const comments = source.replace(/\n\s*\/\/ ?/g, ' ');
+    expect(comments).toContain('hold the EMAIL ADDRESS and the SESSION ID of whoever used the tool');
+    expect(comments).toContain('recommended leaving those three out; the owner chose to keep them');
+    // ...and which three, with the field names the dry run showed.
+    for (const line of ['tool_workspaces ownerEmail', 'tool_assessment_sessions ownerEmail, requestedByEmail, ownerUid', 'tool_architecture_plans requestedByEmail, ownerUid, sessionId']) {
+      expect(comments.replace(/ +/g, ' ')).toContain(line);
+    }
+  });
+
+  it('records the owner’s blanket decision per container, with its date, and does not pass it off as names reviewed one by one', () => {
+    expect(OWNER_ACCEPTED.date).toBe('2026-11-24');
+    expect(OWNER_ACCEPTED.record).toMatch(/issues\/1811#issuecomment-\d+$/);
+    expect(OWNER_ACCEPTED.containers).toHaveLength(31);
+    for (const container of KEPT_BY_THE_OWNERS_DECISION) expect(OWNER_ACCEPTED.containers).toContain(container);
+    for (const container of ['blogs', 'certifications', 'speakerevents', 'brain_records', 'ai_usage', 'content', 'system', 'admin_config', 'ai_providers', 'mcp_servers']) {
+      expect(ownerAcceptedOn(container), container).toBe('2026-11-24');
+    }
+    // Every one of them is a container an archive writes.
+    for (const container of OWNER_ACCEPTED.containers) expect(archivePlan(), container).toContain(container);
+    expect(ownerAcceptedOn('newsletters')).toBeNull();
+    expect(ownerAcceptedOn('a_new_container')).toBeNull();
+    // The reviewed-by-name list is still one name on two containers: nothing was added to it.
+    expect(SENSITIVE_KEPT_ON_PURPOSE).toEqual({
+      mcp_servers: { apiKeyEnvVar: expect.any(String) },
+      ai_providers: { apiKeyEnvVar: expect.any(String) },
+    });
+  });
+
+  it('"everything stays" did not put a secret back: the keep lists still drop what they dropped', () => {
+    expect(archiveRecord('mcp_servers', { id: 'm1', name: 'A server', oauthToken: 'made-up-token', headers: { Authorization: 'made-up' } }).doc).toEqual({ id: 'm1', name: 'A server' });
+    expect(archiveRecord('ai_providers', { id: 'a1', name: 'A provider', apiKey: 'made-up-key' }).doc).toEqual({ id: 'a1', name: 'A provider' });
+    expect(archiveRecord('admin_config', { id: 'developer_api_key:made-up', keyHash: 'made-up-hash' })).toMatchObject({ keep: false, reason: REASONS.secret });
+    expect(archiveRecord('admin_settings', { id: 'bootstrap-state', oid: 'made-up-oid' })).toMatchObject({ keep: false, reason: REASONS.accessList });
+    expect(archiveRecord('developer_events', { id: 'p1', eventId: 'e1', docType: 'cfs-submission', title: 'A talk', speakerEmail: 'speaker@example.com' }).doc).toEqual({ id: 'p1', eventId: 'e1', docType: 'cfs-submission', title: 'A talk' });
+    // And the two rules about interviews are as they were (the open question stays NONE).
+    expect(archiveRecord('content', { id: 'c2', type: 'interview', status: 'draft' })).toMatchObject({ keep: false, reason: REASONS.promise });
   });
 
   it('leaves both access lists out: who may sign in, and which machine is which lab agent', () => {
@@ -133,7 +187,7 @@ describe('archive classification against infra/cosmos-containers.json', () => {
    * test and not the backup's own lists. One that no code names is one
    * nobody can describe: it belongs with the unclassified ones until the
    * owner has read its dry-run report. The exception is what the owner
-   * answered for by name (question 5 of ADR 0046).
+   * answered for by name (question 5 of ADR 0046, and the 21 of 2026-11-24).
    */
   it('archives as is only a container some code under functions/src names', () => {
     const texts = sourceFiles(SRC)
@@ -148,7 +202,8 @@ describe('archive classification against infra/cosmos-containers.json', () => {
       unknown,
       'archived as is, but no code under functions/src names it, so nobody knows what it holds: move it to the unclassified list in archive-classification.js'
     ).toEqual([]);
-    expect(KEPT_ON_THE_OWNERS_WORD).toEqual(['plaud_ingest']);
+    // Exactly these are kept without the code being able to say what they hold: nothing slips onto the list.
+    expect(KEPT_ON_THE_OWNERS_WORD).toEqual(['plaud_ingest', ...KEPT_BY_THE_OWNERS_DECISION].sort());
     for (const name of KEPT_ON_THE_OWNERS_WORD) expect(ARCHIVE_AS_IS).toContain(name);
   });
 
@@ -167,7 +222,7 @@ describe('archive classification against infra/cosmos-containers.json', () => {
   it('plans only containers the weekly full backup holds: no backup file, no archive file', () => {
     const backup = new Set(exportPlanFor('full'));
     expect(archivePlan().filter((name) => !backup.has(name))).toEqual([]);
-    expect(archivePlan()).toHaveLength(39);
+    expect(archivePlan()).toHaveLength(60);
   });
 
   it('treats a container it does not name as left out', () => {

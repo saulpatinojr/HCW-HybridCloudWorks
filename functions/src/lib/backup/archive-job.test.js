@@ -24,6 +24,7 @@ import {
   readArchiveProgress,
 } from './archive-job.js';
 import { archivePlan, LEFT_OUT, UNCLASSIFIED } from './archive-classification.js';
+import { REPORT_JOB_TYPE, createReportWorker, parseReportPayload, reportGate, reportNames } from './archive-report.js';
 import { createArchiveHandlers } from './archive-handlers.js';
 
 const SUNDAY = '2027-02-07'; // a Sunday
@@ -100,9 +101,38 @@ const backupSeed = (containers, runId = SUNDAY) => ({
   ...Object.fromEntries(Object.entries(containers).map(([container, docs]) => [`full/${runId}/${container}.ndjson.gz`, ndjson(docs)])),
 });
 
-/** A scheduler, a worker and both stores, with jobs collected instead of queued. */
-function rig({ backup = {}, env = ON, now = MONDAY, archive, seedBackupStore } = {}) {
+/** A finished dry-run report of one backup that shows nothing to decide, as the newest report. */
+function cleanReport(runId, over = {}) {
+  const reportId = '20270207T2000Z';
+  return {
+    [reportNames(reportId).latest]: { reportId },
+    [reportNames(reportId).report]: {
+      reportId,
+      sourceBackup: { mode: 'full', runId },
+      completedAt: '2027-02-07T20:05:00.000Z',
+      totals: { mismatched: 0, unreadable: 0 },
+      containers: [],
+      leftOutWhole: [],
+      ...over,
+    },
+  };
+}
+
+/**
+ * A scheduler, a worker and both stores, with jobs collected instead of
+ * queued. Unless `report` is false, the newest dry-run report is a clean one
+ * of the newest backup in the store, as it is when an archive may start.
+ */
+function rig({ backup = {}, env = ON, now = MONDAY, archive, seedBackupStore, report = true } = {}) {
   const backupBlobs = seedBackupStore || memoryStore(backupSeed(backup));
+  if (report) {
+    const newest = [...backupBlobs.files.keys()]
+      .map((name) => /^full\/(\d{4}-\d{2}-\d{2})\/manifest\.json$/.exec(name)?.[1])
+      .filter(Boolean)
+      .sort()
+      .pop();
+    if (newest) for (const [name, value] of Object.entries(cleanReport(newest, report === true ? {} : report))) backupBlobs.files.set(name, value);
+  }
   const archiveBlobs = archive || memoryStore();
   const clock = { now };
   const jobs = [];
@@ -124,6 +154,11 @@ function rig({ backup = {}, env = ON, now = MONDAY, archive, seedBackupStore } =
     const results = [];
     while (jobs.length) {
       const job = jobs.shift();
+      if (job.type === REPORT_JOB_TYPE) {
+        // A dry run the daily check started: read one container and write its part of the report.
+        await createReportWorker({ blobs: backupBlobs, now: () => clock.now }).readContainer(parseReportPayload(job.payload));
+        continue;
+      }
       results.push(await createArchiveWorker({ ...deps, env: workerEnv }).archiveContainer(parseArchivePayload(job.payload)));
     }
     return results;
@@ -144,9 +179,10 @@ describe('the payload a job accepts', () => {
     }
   });
 
-  it('refuses every container the owner has not classified and every container that is left out', () => {
-    expect(UNCLASSIFIED).toHaveLength(21);
-    for (const container of [...Object.keys(LEFT_OUT), 'not_a_container', '../blogs', '']) {
+  it('refuses every container that is left out or waiting, and every container the list does not name', () => {
+    // Nothing is waiting since the owner's decision of 2026-11-24; a container the list does not name is refused all the same.
+    expect(UNCLASSIFIED).toEqual([]);
+    for (const container of [...Object.keys(LEFT_OUT), ...UNCLASSIFIED, 'a_new_container', '../blogs', '']) {
       expect(() => parseArchivePayload({ year: 2026, runId: SUNDAY, container }), container).toThrow(/not written by the content archive/);
     }
   });
@@ -186,7 +222,7 @@ describe('the daily check', () => {
       action: 'blocked',
       blockers: ['backup-too-early'],
     });
-    expect(await blocked({ seedBackupStore: memoryStore({}) })).toMatchObject({ action: 'blocked', blockers: ['no-backup'] });
+    expect(await blocked({ seedBackupStore: memoryStore({}) })).toMatchObject({ action: 'blocked', blockers: ['no-backup', 'report-missing'] });
     expect(await blocked({ env: { CONTENT_ARCHIVE_ENABLED: 'true' } })).toMatchObject({ action: 'blocked', blockers: ['export-off'] });
   });
 
@@ -205,7 +241,7 @@ describe('the daily check', () => {
 
   it('starts one job per container the list archives and the backup holds, and none for any other', async () => {
     const r = rig({
-      backup: { ...SAMPLE, admins: [{ id: 'a1', email: 'made-up@example.com' }], tool_exports: [{ id: 't1' }], site_settings: [{ id: 's1' }] },
+      backup: { ...SAMPLE, admins: [{ id: 'a1', email: 'made-up@example.com' }], jobs: [{ id: 'j1' }], a_new_container: [{ id: 'x1' }] },
     });
     expect(await r.scheduler.run()).toEqual({ action: 'started', year: YEAR, queued: 2, sourceRun: SUNDAY });
     expect(r.jobs.map((job) => job.payload)).toEqual([
@@ -237,6 +273,88 @@ describe('the daily check', () => {
     expect(await r.scheduler.run()).toMatchObject({ action: 'resumed', queued: 1, late: false });
     expect(r.jobs.map((job) => job.payload.container)).toEqual(['newsletters']);
     expect(r.notifier.notifyTelegram).not.toHaveBeenCalled();
+  });
+});
+
+describe('the dry-run report stands between the switch and an archive', () => {
+  it('with no report it starts a dry run instead of an archive, and the archive starts the day after if the report is clean', async () => {
+    const r = rig({ backup: SAMPLE, report: false });
+    expect(await r.scheduler.run()).toEqual({ action: 'blocked', year: YEAR, blockers: ['report-missing'], queued: 2, dryRunStarted: true });
+    expect(r.jobs.every((job) => job.type === REPORT_JOB_TYPE)).toBe(true);
+    expect(r.messages.every((message) => message.type === REPORT_JOB_TYPE)).toBe(true);
+    // Nothing of an archive exists yet: no pinned run, no file.
+    expect(await r.backupBlobs.readJson(archiveNames(YEAR).run)).toBeNull();
+    expect(r.archiveBlobs.log).toEqual([]);
+
+    // The same morning, before the dry run has finished: it waits, and starts no second one.
+    const waiting = r.jobs.length;
+    expect(await r.scheduler.run()).toMatchObject({ action: 'blocked', blockers: ['report-running'], dryRunStarted: false });
+    expect(r.jobs).toHaveLength(waiting);
+
+    await r.drain();
+    r.clock.now = new Date('2027-02-09T03:00:00Z');
+    expect(await r.scheduler.run()).toMatchObject({ action: 'started', queued: 2, sourceRun: SUNDAY });
+    await r.drain();
+    expect(await r.archiveBlobs.readJson('2026/manifest.json')).toMatchObject({ totals: { files: 2, records: 3 } });
+  });
+
+  it('a report made from an older backup is not enough: a new dry run is made first', async () => {
+    const r = rig({ backup: SAMPLE, report: false });
+    for (const [name, value] of Object.entries(cleanReport('2027-01-31'))) r.backupBlobs.files.set(name, value);
+    expect(await r.scheduler.run()).toMatchObject({ action: 'blocked', blockers: ['report-older-than-backup'], dryRunStarted: true });
+    expect(r.archiveBlobs.log).toEqual([]);
+  });
+
+  it('does not start, and tells the owner, while the report shows a flagged container no decision covers', async () => {
+    // authorEmail on newsletters: a container the owner's decision of 2026-11-24 does not cover.
+    const r = rig({ backup: { ...SAMPLE, newsletters: [{ id: 'n1', title: 'Issue', authorEmail: 'made-up@example.com' }] }, report: false });
+    await r.scheduler.run(); // starts the dry run
+    await r.drain();
+    r.clock.now = new Date('2027-02-09T03:00:00Z');
+    expect(await r.scheduler.run()).toEqual({ action: 'blocked', year: YEAR, blockers: ['report-flagged'], queued: 0, dryRunStarted: false });
+    expect(r.jobs).toEqual([]);
+    expect(r.archiveBlobs.log).toEqual([]);
+    expect(r.notifier.notifyTelegram).toHaveBeenCalledTimes(1);
+    const said = r.notifier.notifyTelegram.mock.calls[0][0];
+    expect(said).toMatchObject({ severity: 'warning', source: 'content_archive' });
+    expect(said.message).toContain('report-flagged');
+    expect(said.message).not.toContain('made-up');
+    expect(reportGate({ latest: null, backupRunId: SUNDAY })).toEqual(['report-missing']);
+  });
+
+  it('does not start while a container is waiting for the owner', async () => {
+    const r = rig({ backup: { ...SAMPLE, a_new_container: [{ id: 'x1' }] }, report: false });
+    await r.scheduler.run();
+    await r.drain();
+    r.clock.now = new Date('2027-02-09T03:00:00Z');
+    expect(await r.scheduler.run()).toMatchObject({ action: 'blocked', blockers: ['report-waiting'], dryRunStarted: false });
+    expect(r.archiveBlobs.log).toEqual([]);
+    expect(await r.backupBlobs.readJson(archiveNames(YEAR).run)).toBeNull();
+  });
+
+  it('starts no dry run while something else is also in the way', async () => {
+    const r = rig({ backup: SAMPLE, report: false, now: new Date('2027-01-25T03:00:00Z') });
+    const result = await r.scheduler.run();
+    expect(result.blockers).toEqual(expect.arrayContaining(['before-1-february', 'report-missing']));
+    expect(result.dryRunStarted).toBe(false);
+    expect(r.jobs).toEqual([]);
+  });
+
+  it('a flagged container the owner decided to keep does not stop it', async () => {
+    const r = rig({ backup: { blogs: [{ id: 'b1', email: 'made-up@example.com' }] }, report: false });
+    await r.scheduler.run();
+    await r.drain();
+    r.clock.now = new Date('2027-02-09T03:00:00Z');
+    expect(await r.scheduler.run()).toMatchObject({ action: 'started', queued: 1 });
+  });
+
+  it('a run that has started is carried on whatever a later report says', async () => {
+    const r = rig({ backup: SAMPLE });
+    await r.scheduler.run();
+    r.jobs.splice(0);
+    // The report is gone the next day; the pinned run still resumes.
+    for (const name of [...r.backupBlobs.files.keys()]) if (name.startsWith('state/archive-report/')) r.backupBlobs.files.delete(name);
+    expect(await r.scheduler.run()).toMatchObject({ action: 'resumed', queued: 2 });
   });
 });
 
@@ -297,14 +415,14 @@ describe('writing one year', () => {
     expect(r.archiveBlobs.files.get('2026/cosmos/blogs.ndjson.gz').equals(first)).toBe(true);
   });
 
-  it('never writes a container the owner has not classified, or one that is left out, even when a job is queued by hand', async () => {
-    const r = rig({ backup: { ...SAMPLE, tool_exports: [{ id: 't1', typed: 'made up' }], admins: [{ id: 'a1' }] } });
+  it('never writes a container the list does not name, or one that is left out, even when a job is queued by hand', async () => {
+    const r = rig({ backup: { ...SAMPLE, a_new_container: [{ id: 't1', typed: 'made up' }], admins: [{ id: 'a1' }] } });
     await r.scheduler.run();
     // Someone edits the run so that it names them, and calls the worker directly.
     const run = await r.backupBlobs.readJson(archiveNames(YEAR).run);
-    run.containers.push('tool_exports', 'admins');
+    run.containers.push('a_new_container', 'admins');
     r.backupBlobs.files.set(archiveNames(YEAR).run, run);
-    for (const container of ['tool_exports', 'admins', ...UNCLASSIFIED]) {
+    for (const container of ['a_new_container', 'admins', ...Object.keys(LEFT_OUT)]) {
       await expect(r.worker.archiveContainer({ year: YEAR, runId: SUNDAY, container }), container).rejects.toThrow(/not written by the content archive/);
     }
     expect(r.archiveBlobs.log).toEqual([]);
@@ -576,6 +694,11 @@ describe('a run that stopped half-way', () => {
       r.backupBlobs.files.set(name, value);
     }
     r.clock.now = new Date('2027-03-15T03:00:00Z');
+    // The report on file describes the deleted backup, so the first check makes a dry run of the new one...
+    expect(await r.scheduler.run()).toMatchObject({ action: 'blocked', blockers: ['report-older-than-backup'], dryRunStarted: true, queued: 2 });
+    await r.drain();
+    // ...and the next day's check starts the archive from it.
+    r.clock.now = new Date('2027-03-16T03:00:00Z');
     expect(await r.scheduler.run()).toMatchObject({ action: 'started', queued: 2, sourceRun: later });
     // A job of the old run that is still in the queue writes nothing.
     expect(await r.worker.archiveContainer(parseArchivePayload(blogsJob.payload))).toMatchObject({ written: false, skipped: 'not-this-run' });
