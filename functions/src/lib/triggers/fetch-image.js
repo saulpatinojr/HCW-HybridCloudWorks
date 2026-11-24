@@ -18,6 +18,7 @@
  * `Content-Type`, which is strictly stronger than an extension guess.
  */
 import { isPrivateIp, pinnedDispatcher, validateFetchUrl } from '../http/guarded-fetch.js';
+import { withUpstreamStatus } from '../http/error-response.js';
 
 // The SSRF guard lives in lib/http/guarded-fetch.js since the 2026-10-06
 // review (AP-B2) so the scraper and the document fetch share it; re-exported
@@ -186,12 +187,12 @@ export async function fetchImage(
       if ([301, 302, 307, 308].includes(response.status)) {
         const location = response.headers.get('location');
         if (!location || hop === maxRedirects)
-          throw new Error(`HTTP ${response.status} fetching ${current}`);
+          throw withUpstreamStatus(new Error(`HTTP ${response.status} fetching ${current}`), response.status);
         current = /^https?:\/\//i.test(location) ? location : new URL(location, current).href;
         continue;
       }
       if (response.status < 200 || response.status >= 300)
-        throw new Error(`HTTP ${response.status} fetching ${current}`);
+        throw withUpstreamStatus(new Error(`HTTP ${response.status} fetching ${current}`), response.status);
       const contentType = normalizeMediaType(response.headers.get('content-type'));
       // Before the bytes: a type this site will not store is refused here, so
       // a video or an octet-stream is never buffered, never named and never

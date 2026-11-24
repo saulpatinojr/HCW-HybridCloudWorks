@@ -301,7 +301,9 @@ export const SUPPORTED_PROVIDERS = Object.keys(PARSERS);
 async function defaultFetchPage(url) {
   const response = await fetch(url, { headers: { 'User-Agent': 'HybridCloudWorks/1.0' } });
   if (!response.ok) {
-    throw new StudyGuideError(`Study guide fetch failed: HTTP ${response.status} for ${url}`);
+    throw new StudyGuideError(`Study guide fetch failed: HTTP ${response.status} for ${url}`, {
+      status: response.status,
+    });
   }
   // A retired exam does not 404 — Microsoft Learn quietly redirects it to the
   // credential browse page, which parses as a valid page with no skill areas.

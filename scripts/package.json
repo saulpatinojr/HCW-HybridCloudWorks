@@ -9,7 +9,7 @@
     "container-spec:check": "node generate-cosmos-container-spec.mjs --check",
     "test": "vitest run",
     "smoke:deployed": "node smoke-deployed.mjs",
-    "lint": "eslint ."
+    "lint": "eslint . --max-warnings 0"
   },
   "engines": {
     "node": ">=26.11.0"

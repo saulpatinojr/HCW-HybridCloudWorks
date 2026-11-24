@@ -18,6 +18,7 @@
  */
 
 import { setVaultSecret, refreshKeyVaultReferences } from '../secret-vault.js';
+import { withStatus } from '../http/error-response.js';
 
 export const GOOGLE_TARGETS = Object.freeze({
   gemini: Object.freeze({
@@ -88,7 +89,7 @@ export async function lookupGoogleApiKey({
 
   if (!response.ok || !data?.name) {
     const err = data?.error?.message || response.statusText || 'unknown error';
-    throw new Error(`Google API key lookup failed (HTTP ${response.status}): ${err}`);
+    throw withStatus(new Error(`Google API key lookup failed (HTTP ${response.status}): ${err}`), response.status);
   }
 
   return {
@@ -133,7 +134,7 @@ export async function getGoogleKeyDetails({
 
   if (!response.ok || !data?.name) {
     const err = data?.error?.message || response.statusText || 'unknown error';
-    throw new Error(`Google API key details read failed (HTTP ${response.status}): ${err}`);
+    throw withStatus(new Error(`Google API key details read failed (HTTP ${response.status}): ${err}`), response.status);
   }
 
   return {
@@ -195,7 +196,7 @@ export async function createGoogleApiKey({
 
   if (!response.ok || !data?.name) {
     const err = data?.error?.message || response.statusText || 'unknown error';
-    throw new Error(`Google API key creation initiation failed (HTTP ${response.status}): ${err}`);
+    throw withStatus(new Error(`Google API key creation initiation failed (HTTP ${response.status}): ${err}`), response.status);
   }
 
   return {
@@ -244,7 +245,7 @@ export async function pollGoogleOperation({
 
     if (!response.ok) {
       const err = data?.error?.message || response.statusText || 'unknown error';
-      throw new Error(`Polling operation ${operationName} failed (HTTP ${response.status}): ${err}`);
+      throw withStatus(new Error(`Polling operation ${operationName} failed (HTTP ${response.status}): ${err}`), response.status);
     }
 
     if (data.error) {
@@ -300,7 +301,7 @@ export async function getGoogleKeyString({
 
   if (!response.ok || !data?.keyString) {
     const err = data?.error?.message || response.statusText || 'unknown error';
-    throw new Error(`Retrieving keyString for ${keyName} failed (HTTP ${response.status}): ${err}`);
+    throw withStatus(new Error(`Retrieving keyString for ${keyName} failed (HTTP ${response.status}): ${err}`), response.status);
   }
 
   return data.keyString;
@@ -338,7 +339,7 @@ export async function deleteGoogleApiKey({
       data = await response.json();
     } catch {}
     const err = data?.error?.message || response.statusText || 'unknown error';
-    throw new Error(`Deleting Google API key ${keyName} failed (HTTP ${response.status}): ${err}`);
+    throw withStatus(new Error(`Deleting Google API key ${keyName} failed (HTTP ${response.status}): ${err}`), response.status);
   }
 
   return {
@@ -383,8 +384,9 @@ export async function verifyGoogleApiKey({
   const response = await fetchImpl(url, options);
 
   if (!response.ok) {
-    throw new Error(
-      `Verification probe for ${target.secretName} returned HTTP ${response.status}`
+    throw withStatus(
+      new Error(`Verification probe for ${target.secretName} returned HTTP ${response.status}`),
+      response.status
     );
   }
 

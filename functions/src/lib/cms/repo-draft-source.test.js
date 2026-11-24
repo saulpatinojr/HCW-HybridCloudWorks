@@ -120,6 +120,7 @@ describe('fetchPinned — two hosts, no redirects, a cap and a deadline', () => 
     );
     await expect(fetchPinned(fetchImpl, FILE_URL, OPTIONS)).rejects.toMatchObject({
       code: 'REDIRECTED',
+      upstreamStatus: 302,
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });

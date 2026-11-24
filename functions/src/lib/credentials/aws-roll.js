@@ -18,6 +18,7 @@
 
 import crypto from 'node:crypto';
 import { setVaultSecret, refreshKeyVaultReferences } from '../secret-vault.js';
+import { withStatus } from '../http/error-response.js';
 
 export const AWS_TARGETS = Object.freeze({
   pricing: Object.freeze({
@@ -166,7 +167,7 @@ export async function listAwsAccessKeys({
   if (!response.ok) {
     const errorMatch = text.match(/<Message>(.*?)<\/Message>/s);
     const err = errorMatch ? errorMatch[1] : `HTTP ${response.status}`;
-    throw new Error(`AWS IAM ListAccessKeys failed: ${err}`);
+    throw withStatus(new Error(`AWS IAM ListAccessKeys failed: ${err}`), response.status);
   }
 
   // Parse access keys from XML response
@@ -234,7 +235,7 @@ export async function createAwsAccessKey({
   if (!response.ok) {
     const errorMatch = text.match(/<Message>(.*?)<\/Message>/s);
     const err = errorMatch ? errorMatch[1] : `HTTP ${response.status}`;
-    throw new Error(`AWS IAM CreateAccessKey failed: ${err}`);
+    throw withStatus(new Error(`AWS IAM CreateAccessKey failed: ${err}`), response.status);
   }
 
   const newIdMatch = text.match(/<AccessKeyId>(.*?)<\/AccessKeyId>/);
@@ -303,7 +304,7 @@ export async function deleteAwsAccessKey({
     const text = await response.text();
     const errorMatch = text.match(/<Message>(.*?)<\/Message>/s);
     const err = errorMatch ? errorMatch[1] : `HTTP ${response.status}`;
-    throw new Error(`AWS IAM DeleteAccessKey for ${targetAccessKeyId} failed: ${err}`);
+    throw withStatus(new Error(`AWS IAM DeleteAccessKey for ${targetAccessKeyId} failed: ${err}`), response.status);
   }
 
   return {

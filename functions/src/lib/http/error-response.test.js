@@ -14,6 +14,8 @@ import {
   ownFrames,
   recordedFailure,
   storedFailure,
+  withStatus,
+  withUpstreamStatus,
 } from './error-response.js';
 
 describe('errorResponse (AP-B10)', () => {
@@ -277,6 +279,63 @@ describe('errorFacts: what an operator diagnoses by, and nothing else', () => {
     ['nothing', null, 'type=null'],
   ])('%s', (_, error, facts) => {
     expect(errorFacts(error)).toBe(facts);
+  });
+});
+
+describe('withStatus and withUpstreamStatus: the other service\'s status as a field (#1802)', () => {
+  const secret = 'https://vault.example/secrets/NAME?sig=abc';
+
+  it('withStatus puts the number on the error, keeps the message, and the log line shows it', () => {
+    const error = withStatus(new Error(`Google SKUs returned 503 for ${secret}`), 503);
+    expect(error.status).toBe(503);
+    expect(error.message).toBe(`Google SKUs returned 503 for ${secret}`);
+    expect(errorFacts(error)).toBe('name=Error status=503');
+    expect(errorCode(error)).toBe('HTTP_503');
+    const context = { error: vi.fn() };
+    logFailure({ ...context, invocationId: 'inv-1' }, 'The prices could not be read.', error);
+    expect(context.error).toHaveBeenCalledWith('[inv-1] The prices could not be read. (name=Error status=503)');
+  });
+
+  it('withUpstreamStatus leaves status and the error code alone, and the log line still shows the number', () => {
+    const plain = withUpstreamStatus(new Error('HTTP 404 fetching https://cdn.example/a.png'), 404);
+    expect(plain.status).toBeUndefined();
+    expect(plain.upstreamStatus).toBe(404);
+    expect(errorFacts(plain)).toBe('name=Error upstream=404');
+    // A stored sentence built from the code reads as it did before the field existed.
+    expect(errorCode(plain)).toBe('Error');
+    expect(storedFailure(plain, 'The cover could not be generated.')).toBe('The cover could not be generated (Error).');
+
+    const answered = withUpstreamStatus(new AuthoredError('The preview host answered HTTP 403.', { code: 'PREVIEW_FAILED', status: 502 }), 403);
+    expect(answered.status).toBe(502);
+    expect(errorFacts(answered)).toBe('name=AuthoredError code=PREVIEW_FAILED status=502 upstream=403');
+    expect(authoredMessage(answered, 'x')).toBe('The preview host answered HTTP 403.');
+  });
+
+  it.each([
+    ['a body', '{"error":"quota for org-abc"}'],
+    ['a numeric string', '503'],
+    ['a fraction', 503.5],
+    ['nothing', undefined],
+    ['null', null],
+    ['an object', { status: 503 }],
+  ])('keeps only a whole number: %s is not put on the error', (_, value) => {
+    const a = withStatus(new Error('x'), value);
+    const b = withUpstreamStatus(new Error('x'), value);
+    expect('status' in a).toBe(false);
+    expect('upstreamStatus' in b).toBe(false);
+    expect(errorFacts(a)).toBe('name=Error');
+    expect(errorFacts(b)).toBe('name=Error');
+  });
+
+  it('errorFacts prints upstream only when it is a whole number, whoever set it', () => {
+    expect(errorFacts(Object.assign(new Error('x'), { upstreamStatus: 'invalid_grant' }))).toBe('name=Error');
+    expect(errorFacts(Object.assign(new Error('x'), { upstreamStatus: secret }))).toBe('name=Error');
+    expect(errorFacts(Object.assign(new Error('x'), { upstreamStatus: null }))).toBe('name=Error');
+  });
+
+  it('hands back what it was given when that is not an error object', () => {
+    expect(withStatus(null, 500)).toBeNull();
+    expect(withUpstreamStatus(undefined, 500)).toBeUndefined();
   });
 });
 

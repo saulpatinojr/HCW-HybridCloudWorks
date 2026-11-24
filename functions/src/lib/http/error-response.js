@@ -219,10 +219,11 @@ export function ownFrames(error) {
 /**
  * Everything content-free an operator diagnoses an error by, as `key=value`
  * pairs for a log line: its class name, its code (a provider's or Node's,
- * `ECONNRESET`, `invalid_grant`, `429`), its HTTP status, a Cosmos substatus,
- * the code of its cause (undici's `fetch failed` keeps the socket code
- * there), and where in this repository's code it was thrown (`at=`, from
- * ownFrames). Each value must fit CODE_SHAPE or FRAME_SHAPE, so none can
+ * `ECONNRESET`, `invalid_grant`, `429`), its HTTP status, the status another
+ * service answered with when `status` is taken (`upstream=`, see
+ * withUpstreamStatus), a Cosmos substatus, the code of its cause (undici's
+ * `fetch failed` keeps the socket code there), and where in this
+ * repository's code it was thrown (`at=`, from ownFrames). Each value must fit CODE_SHAPE or FRAME_SHAPE, so none can
  * carry a sentence; the message is never read, and of the stack only our
  * own frames' file and line.
  *
@@ -240,11 +241,54 @@ export function errorFacts(error) {
   add('name', error.name);
   add('code', error.code);
   add('status', error.status ?? error.statusCode);
+  // A number only: this field is ours (withUpstreamStatus), and a code-shaped word has no place in it.
+  if (Number.isInteger(error.upstreamStatus)) add('upstream', error.upstreamStatus);
   add('substatus', error.substatus);
   add('cause', error.cause?.code ?? error.cause?.name);
   const frames = ownFrames(error);
   if (frames.length) facts.push(`at=${frames.join(',')}`);
   return facts.join(' ') || 'type=object';
+}
+
+/**
+ * Put the HTTP status another service answered with on the error our code
+ * throws about it, so a log line can show it (#1802). The message of such an
+ * error usually names the status ("Google SKUs returned 503"), but a log
+ * line never prints a message, so without the field the line says where the
+ * error was thrown and not what the service answered. errorFacts prints the
+ * field as `status=503`, and errorCode reads it as `HTTP_503`.
+ *
+ * Only a whole number is kept: never a body, a URL, an id or any text the
+ * other service sent. The message is left exactly as it was.
+ *
+ * @template {object} T
+ * @param {T} error - the error about to be thrown
+ * @param {unknown} status - the other service's HTTP status
+ * @returns {T} the same error
+ */
+export function withStatus(error, status) {
+  if (error && typeof error === 'object' && Number.isInteger(status)) error.status = status;
+  return error;
+}
+
+/**
+ * The same, under the name `upstreamStatus`, for an error whose `status`
+ * already means something else or is read by a caller. Two cases: an error
+ * whose `status` is the status this site answers with (a preview refusal
+ * answers 502 whatever the other service said), and a plain error whose
+ * code a caller writes into a stored sentence (errorCode would start
+ * answering `HTTP_404` where it answered `Error`). errorFacts prints the
+ * field as `upstream=404`; errorCode does not read it, so nothing a caller
+ * decides or says changes.
+ *
+ * @template {object} T
+ * @param {T} error - the error about to be thrown
+ * @param {unknown} status - the other service's HTTP status
+ * @returns {T} the same error
+ */
+export function withUpstreamStatus(error, status) {
+  if (error && typeof error === 'object' && Number.isInteger(status)) error.upstreamStatus = status;
+  return error;
 }
 
 /**

@@ -140,7 +140,8 @@ function assertServedFrom(response, url) {
   if (response.status >= 300 && response.status < 400) {
     throw coded(
       'REDIRECTED',
-      `GitHub answered HTTP ${response.status}; redirects are not followed.`
+      `GitHub answered HTTP ${response.status}; redirects are not followed.`,
+      { upstreamStatus: response.status }
     );
   }
   // Compared parsed, so a runtime that re-serialises the URL it was given is
