@@ -309,16 +309,29 @@ export function targetBytesForArticle(text) {
 }
 
 /** What the model is told about the parts it must not read aloud. */
+/** The longest language name the list outside the fence repeats. */
+const SET_ASIDE_LANGUAGE_MAX = 24;
+
+/**
+ * The list of what was set aside, which sits OUTSIDE the fence, among the
+ * instructions. So it carries only what this module counted, never the
+ * article's own words (#1826): a table is named by how many columns it has,
+ * not by its header cells, which are free text the article's author wrote,
+ * and a code block's language is the short word after the three backticks
+ * (letters, digits, `_`, `+` and `-` only, by the pattern that read it), cut
+ * to a fixed length. The header cells are still in the prompt, inside the
+ * fence, in the `[table N: columns …]` line that stands where the table was.
+ */
 function renderSetAside({ codeBlocks, tables }) {
   const lines = [];
   for (const block of codeBlocks) {
-    lines.push(
-      `- [code block ${block.index}] ${block.language || 'code'}, ${lineCount(block.lines)} — refer to it, never read it out.`
-    );
+    const language = String(block.language || '').replace(/[^\w+-]/g, '').slice(0, SET_ASIDE_LANGUAGE_MAX) || 'code';
+    lines.push(`- [code block ${block.index}] ${language}, ${lineCount(block.lines)} — refer to it, never read it out.`);
   }
   for (const table of tables) {
-    const columns = table.columns.length ? table.columns.join(', ') : `${table.rows} rows`;
-    lines.push(`- [table ${table.index}] ${columns} — say what it shows, do not read the cells.`);
+    const count = Array.isArray(table.columns) ? table.columns.length : 0;
+    const size = count ? `${count} column${count === 1 ? '' : 's'}` : `${Number(table.rows) || 0} rows`;
+    lines.push(`- [table ${table.index}] ${size} — say what it shows, do not read the cells.`);
   }
   return lines.length ? lines.join('\n') : '  (none)';
 }
