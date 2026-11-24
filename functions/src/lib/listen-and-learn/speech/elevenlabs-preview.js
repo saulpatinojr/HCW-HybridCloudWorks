@@ -27,7 +27,7 @@
  * `MAX_PREVIEW_BYTES`, and hands back the bytes only if they begin like an
  * MP3.
  */
-import { codeShaped, errorCode as failureCode } from '../../http/error-response.js';
+import { codeShaped, errorCode as failureCode, withUpstreamStatus } from '../../http/error-response.js';
 import { ElevenLabsSpeechError } from './elevenlabs-account.js';
 import { isElevenLabsVoiceId } from './elevenlabs-voice-plan.js';
 
@@ -154,7 +154,10 @@ function namedMediaType(header) {
  */
 function assertAudioResponse(response) {
   if (!response.ok) {
-    throw previewError(`The preview host answered HTTP ${response.status}.`, PREVIEW_FAILED, 502);
+    throw withUpstreamStatus(
+      previewError(`The preview host answered HTTP ${response.status}.`, PREVIEW_FAILED, 502),
+      response.status
+    );
   }
   const type = String(response.headers?.get?.('content-type') || '');
   if (type && !PREVIEW_CONTENT_TYPES.some((pattern) => pattern.test(type))) {

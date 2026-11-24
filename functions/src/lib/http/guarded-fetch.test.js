@@ -219,11 +219,12 @@ describe('guardedFetch', () => {
     const loop = vi.fn(async () => res(302, { location: 'https://a.example/again' }));
     await expect(
       guardedFetch('https://a.example/x', { fetch: loop, resolve: publicAddr, dispatcherFor: pin, maxRedirects: 2 })
-    ).rejects.toMatchObject({ code: 'REDIRECT_LIMIT' });
+    ).rejects.toMatchObject({ code: 'REDIRECT_LIMIT', status: 302 });
     expect(loop).toHaveBeenCalledTimes(3);
     const blank = vi.fn(async () => res(302));
     await expect(guardedFetch('https://a.example/x', { fetch: blank, resolve: publicAddr, dispatcherFor: pin })).rejects.toMatchObject({
       code: 'REDIRECT_NO_LOCATION',
+      status: 302,
     });
   });
 

@@ -361,6 +361,7 @@ async function requestWithRedirects(
     if (!location || hop === maxRedirects) {
       throw Object.assign(new Error(`HTTP ${response.status} fetching ${current}`), {
         code: location ? 'REDIRECT_LIMIT' : 'REDIRECT_NO_LOCATION',
+        status: response.status,
       });
     }
     current = /^https?:\/\//i.test(location) ? location : new URL(location, current).href;

@@ -48,6 +48,7 @@
  */
 
 import { readKey } from '../../ai/router.js';
+import { withStatus } from '../../http/error-response.js';
 import {
   GCP_MESSAGING_BENCHMARK_BYTES,
   MESSAGING_BENCHMARK_SKU,
@@ -117,7 +118,7 @@ async function getGoogleServices(apiKey, deps = {}) {
   url.searchParams.set('pageSize', '5000');
   url.searchParams.set('key', apiKey);
   const response = await doFetch(url);
-  if (!response.ok) throw new Error(`Google services list returned ${response.status}`);
+  if (!response.ok) throw withStatus(new Error(`Google services list returned ${response.status}`), response.status);
 
   const json = await response.json();
   cachedGoogleServices = Array.isArray(json.services) ? json.services : [];
@@ -307,7 +308,7 @@ export async function fetchGcpPrice(serviceId, requestedRegion, deps = {}) {
     url.searchParams.set('key', apiKey);
 
     const response = await doFetch(url);
-    if (!response.ok) throw new Error(`Google SKUs returned ${response.status}`);
+    if (!response.ok) throw withStatus(new Error(`Google SKUs returned ${response.status}`), response.status);
 
     const json = await response.json();
     const skus = Array.isArray(json.skus) ? json.skus : [];
