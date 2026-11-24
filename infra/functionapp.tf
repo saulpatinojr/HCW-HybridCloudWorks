@@ -68,7 +68,7 @@ locals {
     GENERATE_REVIEWER_DIGEST     = "generateReviewerDigest — daily 07:00 UTC reviewer digest e-mail"
     CHECK_LIVE_LINKS             = "checkLiveLinks — weekly Monday 06:00 UTC link check"
     BUILD_WEEKLY_NEWSLETTER      = "buildWeeklyNewsletter — weekly Monday 13:00 UTC, builds the newsletter issue into Drafts and pings Telegram. Never sends (#504)"
-    CLEANUP_REJECTED_CONTENT     = "cleanupRejectedContent — daily 04:00 UTC, deletes rejected documents"
+    CLEANUP_REJECTED_CONTENT     = "cleanupRejectedContent — daily 04:00 UTC, deletes rejected documents; then counts talk proposals that were not accepted and whose yearly cycle is over, and strips them only when PROPOSAL_STRIP_ENABLED is true (#1777)"
     CLEANUP_SOFT_DELETED_CONTENT = "cleanupSoftDeletedContent — every 4 hours, purges soft-deleted documents (dry-run unless CONTENT_HARD_DELETE; a mark with no recorded origin is never deleted)"
     REVERIFY_CERTIFICATIONS      = "reVerifyCertifications — weekly Sunday 00:00 UTC certification re-verify"
     SCRAPE_SKILLS_HUB_RSS        = "scrapeSkillsHubRss — weekly Friday 09:00 UTC Skills Hub scrape"
@@ -911,6 +911,18 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     "TEMP_STORAGE_CLEANUP_DELETE" = "false"
     "CERT_IMAGE_CLEANUP_DELETE"   = "false"
     "CONTENT_HARD_DELETE"         = "true"
+
+    # #1777, owner decision 2026-11-24: the yearly clean-up of talk proposals
+    # (what speakers send to an organizer's call through the Developer API,
+    # ADR 0042). It is the second step of cleanupRejectedContent, daily at
+    # 04:00 UTC. Once a proposal's calendar year is over, plus January as a
+    # month of grace, a proposal that was not accepted loses the speaker's
+    # name, email and bio and the review note; that cannot be undone. So,
+    # like the three above, the step only COUNTS what it would strip (one
+    # audit row a day) until this reads "true". Flip it in a pull request of
+    # its own, after the owner has read a dry-run count and said yes
+    # (docs/runbooks/developer-api.md, "The yearly clean-up of proposals").
+    "PROPOSAL_STRIP_ENABLED" = "false"
 
     # The Cosmos out-of-account exporter (ADR 0028, #231): a 03:00 UTC timer
     # that fans one queue message per exported container onto the platform

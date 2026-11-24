@@ -309,7 +309,14 @@ export function validateReview(body) {
   return { decision: body.decision, note: text(body.note, 'note', MAX_REVIEW_NOTE, { multiline: true }) };
 }
 
-/** What the organizer who owns the call is told about one proposal. */
+/**
+ * What the organizer who owns the call is told about one proposal.
+ *
+ * `strippedAt` is null for a proposal as it was sent. A date there means the
+ * proposal was not accepted and its yearly cycle ended, so the speaker's
+ * name, email and bio and the review note were removed for good and are null
+ * here (./proposal-cycle.js, #1777).
+ */
 export function presentSubmission(doc) {
   return {
     id: doc.id,
@@ -325,5 +332,6 @@ export function presentSubmission(doc) {
     submittedAt: doc.submittedAt || null,
     reviewedAt: doc.reviewedAt || null,
     reviewNote: doc.reviewNote || null,
+    strippedAt: doc.strippedAt || null,
   };
 }

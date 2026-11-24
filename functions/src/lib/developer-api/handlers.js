@@ -55,6 +55,7 @@ import {
   validateReview,
   validateSubmission,
 } from './cfs.js';
+import { isStripped } from './proposal-cycle.js';
 import { listPublishedEvents, listSpeakers, readEventFilters, readSearch } from './directory.js';
 import {
   API_BASE_PATH,
@@ -102,6 +103,8 @@ const notFound = (error) => json(404, { ok: false, code: 'NOT_FOUND', error });
 const NO_CALL = 'There is no call for speakers on this event for this key.';
 const NO_PROPOSAL = 'There is no such proposal on this event.';
 const NOT_OPEN = 'This event has no open call for speakers.';
+const STRIPPED =
+  "This proposal's yearly cycle has ended and it was not accepted, so the speaker's details were removed and its decision can no longer change. It can still be listed and deleted.";
 const CHANGED = 'The record changed while this request was being made. Read it again and retry.';
 
 /** Thrown inside a handler to answer with a ready response. */
@@ -455,6 +458,9 @@ export function createDeveloperApiHandlers({ guard, store, publicStore, identity
       if (!existing || existing.docType !== 'cfs-submission' || existing.eventId !== eventId) {
         return notFound(NO_PROPOSAL);
       }
+      // A stripped proposal's decision is final (#1777): its speaker details are gone, so accepting it
+      // now would accept a talk nobody can be reached about, and a new note would never be removed.
+      if (isStripped(existing)) return json(409, { ok: false, code: 'PROPOSAL_STRIPPED', error: STRIPPED });
       const nowIso = new Date(now()).toISOString();
       const next = {
         ...existing,

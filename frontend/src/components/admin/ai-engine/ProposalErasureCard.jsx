@@ -12,6 +12,10 @@
  * in this card's state only: it goes in the request body, never in the page
  * address, a toast or storage.
  *
+ * A proposal the yearly clean-up has stripped (#1777,
+ * functions/src/lib/timers/proposal-strip.js) no longer holds the address,
+ * so the search does not find it; the card says so.
+ *
  * Both calls need super_admin; RoleGate says so instead of a 403.
  */
 import React, { useState } from 'react';
@@ -96,6 +100,13 @@ export default function ProposalErasureCard() {
           For when a speaker asks you to delete their data. Type their email address to see where
           they sent a talk proposal, then delete each one. A delete cannot be undone, and it removes
           the proposal from the organizer’s list too.
+        </CardDescription>
+        <CardDescription>
+          A proposal that was not accepted is also cleaned up by itself once the yearly clean-up is
+          switched on: after its calendar year ends, plus January, the speaker’s name, email and bio
+          are removed and the talk’s title and abstract are kept. A proposal cleaned up that way no
+          longer holds the address, so it is not listed here. Accepted proposals are never cleaned
+          up that way and stay in this list.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

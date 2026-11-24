@@ -3,7 +3,8 @@
  * re-scope and revoke organizer keys for the Developer API (ADR 0042),
  * following the Koda key's routes (lib/agent-content/admin-handlers.js):
  *
- *   GET    cms/developer-api/keys                  every key (never a key), scopes, limits   editor
+ *   GET    cms/developer-api/keys                  every key (never a key), scopes, limits,  editor
+ *                                                  and the last yearly clean-up run's counts
  *   POST   cms/developer-api/keys                  make a key; answers the plaintext ONCE    super_admin
  *   PATCH  cms/developer-api/keys/{keyId}          { scopes?, organizerName?, organizerContact? }  super_admin
  *   DELETE cms/developer-api/keys/{keyId}          revoke: the hash is removed at once       super_admin
@@ -36,6 +37,7 @@
 import { randomUUID } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { authoredMessage, errorResponse, isAuthoredError } from '../http/error-response.js';
+import { AUDIT_ACTION as PROPOSAL_CLEANUP_ACTION } from '../timers/proposal-strip.js';
 import { CFS_CONTAINER, isSubmissionId, normalizeSpeakerEmail } from './cfs.js';
 import { ENDPOINTS, LIMITS } from './handlers.js';
 import {
@@ -158,6 +160,38 @@ export function createDeveloperApiAdminHandlers({
     endpoints: ENDPOINTS.map(([method, path, who]) => ({ method, path, who })),
   });
 
+  /**
+   * What the newest run of the yearly proposal clean-up did (#1777,
+   * ../timers/proposal-strip.js), read from its audit row: when it ran,
+   * whether it was a dry run, and its counts. Null when it has never run or
+   * the row cannot be read; the keys list never fails because of it.
+   */
+  async function lastProposalCleanup() {
+    try {
+      const rows = await store.queryDocs(
+        'admin_audit_logs',
+        `SELECT TOP 1 c.timestamp, c.details FROM c WHERE c.action = '${PROPOSAL_CLEANUP_ACTION}' ORDER BY c.timestamp DESC`,
+        [],
+      );
+      const newest = (rows || []).reduce((best, row) => (!best || String(row.timestamp) > String(best.timestamp) ? row : best), null);
+      if (!newest) return null;
+      const details = newest.details && typeof newest.details === 'object' ? newest.details : {};
+      const count = (name) => (Number.isFinite(details[name]) ? details[name] : 0);
+      return {
+        ranAt: newest.timestamp || null,
+        dryRun: details.dryRun !== false,
+        cycleYear: Number.isInteger(details.cycleYear) ? details.cycleYear : null,
+        eligibleCount: count('eligibleCount'),
+        strippedCount: count('strippedCount'),
+        leftCount: count('racedCount') + count('failedCount'),
+        hasMore: details.hasMore === true,
+      };
+    } catch {
+      log.warn?.('[developer-api] the last proposal clean-up run could not be read');
+      return null;
+    }
+  }
+
   const keyIdOf = (request) => {
     const keyId = request.params?.keyId;
     if (!isKeyId(keyId)) throw NO_KEY();
@@ -189,7 +223,12 @@ export function createDeveloperApiAdminHandlers({
         [],
         { partitionKey: ADMIN_CONFIG_PARTITION },
       );
-      return json(200, { ok: true, keys: (rows || []).map(presentKeyRecord), ...describe() });
+      return json(200, {
+        ok: true,
+        keys: (rows || []).map(presentKeyRecord),
+        ...describe(),
+        proposalCleanup: await lastProposalCleanup(),
+      });
     }),
 
     /** POST cms/developer-api/keys — { organizerName, organizerContact?, scopes }. The plaintext is in this answer only. */
