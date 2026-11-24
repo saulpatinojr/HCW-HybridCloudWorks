@@ -28,6 +28,7 @@ import { app } from '@azure/functions';
 import * as store from '../lib/cosmos-client.js';
 import { logDisabledSkip, timerEnabled } from '../lib/timers/flag-gate.js';
 import { createLabsDayRollup } from '../lib/labs/rollup.js';
+import { jsonForLog } from '../lib/http/log-json.js';
 
 export const TIMER_NAME = 'labsWeeklyRollup';
 export const TIMER_FLAG = 'LABS_WEEKLY_ROLLUP';
@@ -45,6 +46,6 @@ app.timer(TIMER_NAME, {
       return;
     }
     const result = await createLabsDayRollup({ store }).run();
-    context.log(`[${TIMER_NAME}] ${JSON.stringify(result)}`);
+    context.log(`[${TIMER_NAME}] ${jsonForLog(result)}`);
   },
 });

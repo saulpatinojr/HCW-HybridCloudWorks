@@ -191,7 +191,7 @@ async function deleteBlobFor(storage, { imageUrl, storagePath }, context) {
     await storage.deleteBlob(ref.container, ref.blobName);
     return true;
   } catch (error) {
-    context.warn?.('gallery blob delete failed:', ref.container, ref.blobName, errorFacts(error));
+    context.warn?.('gallery blob delete failed:', ref.container, errorFacts(error));
     return false;
   }
 }

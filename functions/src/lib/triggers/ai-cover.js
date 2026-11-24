@@ -670,7 +670,7 @@ export function createAiCoverGenerator({
     });
     if (!claim.claim) {
       if (claim.reason !== SKIP_REASONS.FLAG_NOT_SET)
-        log.log?.(`[generateAiCover:content] content/${contentId} skipped: ${claim.reason}`);
+        log.log?.(`[generateAiCover:content] a document was skipped: ${claim.reason}`);
       return { ran: false, reason: claim.reason };
     }
     const data = claim.data;
@@ -731,7 +731,7 @@ export function createAiCoverGenerator({
           }
         } catch (fallbackErr) {
           log.warn?.(
-            `[generateAiCover:content] default-hero fallback failed for content/${contentId}: ${errorFacts(fallbackErr)}`
+            `[generateAiCover:content] default-hero fallback failed: ${errorFacts(fallbackErr)}`
           );
         }
       }

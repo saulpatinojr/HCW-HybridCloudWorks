@@ -370,7 +370,7 @@ async function checkDailyCap({ store, now }, state) {
 async function enqueue({ store, uuid }, state) {
   const jobId = uuid();
   await store.createDoc(LAB_JOBS_CONTAINER, publicJobDocument(jobId, state.value, state.nowIso));
-  state.context.log?.('labs public submit queued', jobId);
+  state.context.log?.('labs public submit queued');
   return reply(202, { ok: true, jobId, type: PUBLIC_LAB_JOB_TYPE, status: 'queued' });
 }
 

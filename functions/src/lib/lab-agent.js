@@ -410,7 +410,7 @@ function heldJobRefusal(job, jobId, agent, context, claimId = undefined) {
   if (!job) return json(404, { ok: false, error: 'Job not found' });
 
   if (job.agentId !== agent.agentId) {
-    context.warn?.(`agent ${agent.agentId} tried to complete job ${jobId} it does not hold`);
+    context.warn?.(`agent ${agent.agentId} tried to complete a job it does not hold`);
     return json(403, { ok: false, error: 'Job is not held by this agent' });
   }
 

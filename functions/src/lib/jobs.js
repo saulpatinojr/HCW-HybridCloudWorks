@@ -460,7 +460,7 @@ export function createJobHandlers({
       try {
         await store.upsertDoc(JOBS_CONTAINER, doc);
         enqueue({ jobId, type });
-        context.log?.('enqueueJob', jobId, type, `${payloadBytes}B`);
+        context.log?.('enqueueJob', type, `${payloadBytes}B`);
         return json(202, {
           ...details,
           ok: true,
@@ -538,7 +538,7 @@ export function createJobHandlers({
 
       const doc = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
       if (!doc) {
-        context.warn?.(`runJob: job ${jobId} has no document`);
+        context.warn?.('runJob: a queued job has no document');
         return { jobId, outcome: 'missing' };
       }
       if (doc.status !== 'queued') {
@@ -743,7 +743,7 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
       // undated row would fall straight through into being reaped.
       const startedMs = Date.parse(doc.startedAt);
       if (!Number.isFinite(startedMs)) {
-        log.warn?.(`sweep: job ${doc.id} is running with no readable startedAt; leaving it`);
+        log.warn?.('sweep: a job is running with no readable startedAt; leaving it');
         continue;
       }
       const spec = types?.get?.(doc.type);
@@ -779,7 +779,7 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
           }
         }
       } catch (err) {
-        log.warn?.(`sweep: could not reap job ${doc.id}: ${errorFacts(err)}`);
+        log.warn?.(`sweep: could not reap a job: ${errorFacts(err)}`);
       }
     }
     return reaped;
@@ -809,7 +809,7 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
               await store.patchDoc(JOBS_CONTAINER, doc.id, failUpdate);
             }
             log.warn?.(
-              `sweep: job ${doc.id} reached maximum requeue attempts (${MAX_REQUEUE_COUNT}); marked failed as poison message`
+              `sweep: a job reached maximum requeue attempts (${MAX_REQUEUE_COUNT}); marked failed as poison message`
             );
             const spec = typesToUse?.get?.(doc.type);
             if (typeof spec?.onComplete === 'function') {
@@ -825,7 +825,7 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
               }
             }
           } catch (err) {
-            log.warn?.(`sweep: could not fail poison job ${doc.id}: ${errorFacts(err)}`);
+            log.warn?.(`sweep: could not fail a poison job: ${errorFacts(err)}`);
           }
         } else {
           try {
@@ -840,7 +840,7 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
             }
             requeued.push({ jobId: doc.id, type: doc.type });
           } catch (err) {
-            log.warn?.(`sweep: could not stamp job ${doc.id}: ${errorFacts(err)}`);
+            log.warn?.(`sweep: could not stamp a job: ${errorFacts(err)}`);
           }
         }
       }

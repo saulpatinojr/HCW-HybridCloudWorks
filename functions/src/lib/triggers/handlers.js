@@ -106,7 +106,7 @@ async function runEach(docs, context, label, fn, { budgetMs, monotonic }) {
     try {
       results.push(await fn(doc));
     } catch (err) {
-      context.error?.(`[${label}] ${doc.id}: ${errorFacts(err)}`);
+      context.error?.(`[${label}] a document failed: ${errorFacts(err)}`);
       results.push({ id: doc.id, error: errorCode(err) });
     }
   }
@@ -243,7 +243,7 @@ export function createFeedHandlers({
         try {
           return await fn();
         } catch (err) {
-          context.error?.(`[${label}:content] ${doc.id}: ${errorFacts(err)}`);
+          context.error?.(`[${label}:content] failed: ${errorFacts(err)}`);
           return 'error';
         }
       };

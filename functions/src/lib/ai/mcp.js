@@ -752,7 +752,7 @@ export async function callMcpTool({
 
   const loaded = await loadMcpServer(store, serverId, (error) =>
     log.error?.(
-      `[mcp] configuration read failed: server=${serverId} ${errorFacts(error)}`
+      `[mcp] configuration read failed: ${errorFacts(error)}`
     )
   );
   if (loaded.failure) return loaded.failure;

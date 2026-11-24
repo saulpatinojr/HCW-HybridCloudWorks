@@ -353,7 +353,10 @@ describe('openUpload', () => {
     );
     // The file name is neither stored nor logged.
     expect(JSON.stringify(store.content['int-1'])).not.toContain('secret-guest-name');
-    expect(allLogText(ctx)).toContain(UPLOAD_ID);
+    expect(allLogText(ctx)).toContain('interviewUploadOpen: opened');
+    // Neither the upload's id nor the interview's is logged (#1802).
+    expect(allLogText(ctx)).not.toContain(UPLOAD_ID);
+    expect(allLogText(ctx)).not.toContain('int-1');
     expect(allLogText(ctx)).toContain(`${BLOCK_SIZE + 10} B`);
     expect(allLogText(ctx)).not.toContain('secret-guest-name');
     expect(allLogText(ctx)).not.toContain('a'.repeat(64));
@@ -520,7 +523,8 @@ describe('putBlock', () => {
       [INTERVIEWS_AUDIO_CONTAINER, PATH, blockIdFor(0), BLOCK_SIZE],
       [INTERVIEWS_AUDIO_CONTAINER, PATH, blockIdFor(1), 10],
     ]);
-    expect(allLogText(ctx)).toContain(`${UPLOAD_ID} block 1 staged (10 B)`);
+    expect(allLogText(ctx)).toContain('interviewUploadBlock: block 1 staged (10 B)');
+    expect(allLogText(ctx)).not.toContain(UPLOAD_ID);
     expect(allLogText(ctx)).not.toContain('audio/int-1');
     expect(allLogText(ctx)).not.toContain('a'.repeat(64));
   });
@@ -606,7 +610,8 @@ describe('completeUpload', () => {
     );
     expect(store.content['int-1'].provenance.audio.uploads).toBeUndefined();
     expect(storage.deleteBlob).not.toHaveBeenCalled();
-    expect(allLogText(ctx)).toContain(`${UPLOAD_ID} committed for int-1 (${content.length} B, 2 blocks)`);
+    expect(allLogText(ctx)).toContain(`interviewUploadComplete: committed (${content.length} B, 2 blocks)`);
+    expect(allLogText(ctx)).not.toContain(UPLOAD_ID);
     expect(allLogText(ctx)).not.toContain(digest);
     expect(allLogText(ctx)).not.toContain('audio/int-1');
   });

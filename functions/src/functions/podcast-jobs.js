@@ -111,17 +111,17 @@ export function parsePublishPayload(payload) {
  * The article's public URL for the episode notes' link, or null. A read failure here
  * is logged and costs the link, not the publish: an episode without a page
  * link is still an episode, and the retry route recovers the link later.
- * The log line carries the job id and the error's code — never a document
- * id or the raw message; the job document records the rest.
+ * The log line carries the error's code only: no job id, no document id and
+ * no raw message (#1802). The job document records the rest.
  */
-async function resolveArticleUrl(doc, { context, jobId }) {
+async function resolveArticleUrl(doc, { context }) {
   if (!doc?.sourceId) return null;
   try {
     const article = await readDoc(ARTICLE_CONTAINER, doc.sourceId, doc.sourceId);
     return publicUrlOf(article || {}) || null;
   } catch (error) {
     context?.warn?.(
-      `${PUBLISH_JOB_TYPE}: job ${jobId ?? 'unknown'} publishes without the article link ` +
+      `${PUBLISH_JOB_TYPE}: a job publishes without the article link ` +
         `(article read failed: ${error?.code ?? error?.statusCode ?? 'unknown'})`
     );
     return null;
@@ -134,14 +134,13 @@ export async function runTranscriptPublish(payload, { context, job, signal } = {
   const parsed = parsePublishPayload(payload);
   if (parsed.error) throw new JobFailedError(parsed.error);
   const id = parsed.value.transcriptId;
-  const jobId = job?.id ?? null;
 
   const record = await runHostPublish({
     store: { readDoc, patchDoc },
     id,
     client: createPodbeanClient({ signal }),
     readAudio: audioReaderFor(readBlobForDelivery),
-    resolvePublicUrl: (doc) => resolveArticleUrl(doc, { context, jobId }),
+    resolvePublicUrl: (doc) => resolveArticleUrl(doc, { context }),
     signal,
   });
 

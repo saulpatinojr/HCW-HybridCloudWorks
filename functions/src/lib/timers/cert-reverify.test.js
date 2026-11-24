@@ -48,7 +48,7 @@ describe('verdictFor', () => {
     const warn = vi.fn();
     const cert = { name: 'U', certState: true, verifyUrl: 'https://credly.com/u' };
     expect(await verdictFor({ fetch, log: { warn } }, cert, NOW)).toBeNull();
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/Failed to reach Credly for U/));
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/Failed to reach Credly for a certification: /));
   });
 
   it('renews an inactive cert whose expiry is ahead, unless Credly still refuses it', async () => {

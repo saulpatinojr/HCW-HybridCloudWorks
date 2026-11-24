@@ -2,8 +2,10 @@
 
 > **Status: turned on.** The first apply failed part-way on 2026-11-23 and
 > the corrected one succeeded on 2026-11-24 (the owner's report; a session
-> cannot read the workspace). What is left for the owner is step 5 onwards
-> of "Turn it on", and step 6 of "Recover from the failed first apply".
+> cannot read the workspace). The secret was replaced once that day
+> (generation 2) and Muse signed in with the sign-in header of step 5 (the
+> owner's report). What is left for the owner is step 6 of "Turn it on"
+> and step 6 of "Recover from the failed first apply".
 > Owner request of 2026-11-22
 > ([#1763](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1763)).
 > The Terraform is in
@@ -156,9 +158,29 @@ permissions (Privileged Role Administrator or Global Administrator).
      happened on 2026-11-23. Do "Recover from the failed first apply" below;
      do not just start the run again.
 
-5. **Copy the secret into Muse's vault.** This reads the secret from the
-   workspace's state straight into your clipboard; it is never shown on
-   screen.
+5. **Copy the sign-in header into Muse's vault.** This reads the secret
+   from the workspace's state, wraps it the way Muse needs, and puts the
+   result on your clipboard; nothing secret is shown on screen.
+
+   **Muse cannot use the plain secret, so what you paste is a wrapped
+   form of it.** Muse can only send a stored value as a header (a labelled
+   line sent ahead of a request), unchanged; it cannot put one in the form
+   body, which is where a client secret normally goes. Found on 2026-11-24:
+   three pastes of the plain secret were each refused with
+   `AADSTS7000215` (invalid client secret) although the secret was right.
+   Microsoft also accepts the secret in an `Authorization` header, "the
+   Basic auth pattern"
+   ([client credentials flow, "Get a token"](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-client-creds-grant-flow#get-a-token)).
+   So the line below builds the whole header value, the word `Basic`, a
+   space, and the client id and secret joined by a colon and encoded as
+   base64 (a way of writing bytes as letters and digits), and Muse stores
+   and sends exactly that. Muse's request body then holds only
+   `grant_type=client_credentials` and the scope, with no client id and no
+   secret.
+
+   **The header value is as sensitive as the secret.** Base64 is
+   packaging, not protection: anyone who has it can sign in as Muse. It
+   goes only into Muse's secure field.
 
    **This step only works from the repository's folder, on an up-to-date
    `main`.** It reads a file in the repository (`infra\muse-reader.tf`,
@@ -196,7 +218,7 @@ permissions (Privileged Role Administrator or Global Administrator).
    (`terraform login`, once). Now the line itself:
 
    ```powershell
-   if (-not (Test-Path infra\muse-reader.tf)) { Write-Error 'Stopped, nothing was run: this folder is not the repository root, or main is not up to date (infra\muse-reader.tf is not here).' } else { Push-Location infra; try { terraform init -input=false | Out-Null; if ($LASTEXITCODE -ne 0) { Write-Error 'Stopped, nothing was copied: terraform init failed. Run it by itself to see why: terraform -chdir=infra init -input=false' } else { terraform output -raw muse_reader_client_secret | Set-Clipboard; if ($LASTEXITCODE -ne 0) { Set-Clipboard -Value $null; Write-Error 'Stopped, nothing was copied: the secret could not be read. The message above says why.' } else { foreach ($name in 'muse_reader_client_id', 'muse_reader_tenant_id', 'muse_reader_secret_expires') { $value = terraform output -raw $name; Write-Output "${name}: $value"; Write-Output '' }; Write-Output 'The secret is on the clipboard.' } } } finally { git checkout -- .terraform.lock.hcl; Pop-Location } }
+   if (-not (Test-Path infra\muse-reader.tf)) { Write-Error 'Stopped, nothing was run: this folder is not the repository root, or main is not up to date (infra\muse-reader.tf is not here).' } else { Push-Location infra; try { terraform init -input=false | Out-Null; if ($LASTEXITCODE -ne 0) { Write-Error 'Stopped, nothing was copied: terraform init failed. Run it by itself to see why: terraform -chdir=infra init -input=false' } else { $sec = terraform output -raw muse_reader_client_secret; if ($LASTEXITCODE -ne 0) { Write-Error 'Stopped, nothing was copied: the secret could not be read. The message above says why.' } else { $cid = terraform output -raw muse_reader_client_id; ('Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([uri]::EscapeDataString("$cid") + ':' + [uri]::EscapeDataString("$sec")))) | Set-Clipboard; $sec = $null; foreach ($name in 'muse_reader_client_id', 'muse_reader_tenant_id', 'muse_reader_secret_expires') { $value = terraform output -raw $name; Write-Output "${name}: $value"; Write-Output '' }; Write-Output 'The sign-in header is on the clipboard.' } } } finally { git checkout -- .terraform.lock.hcl; Pop-Location } }
    ```
 
    The line checks the folder before it does anything, and always comes
@@ -206,9 +228,18 @@ permissions (Privileged Role Administrator or Global Administrator).
 
    **Worked:** three labelled lines with a blank line after each (the
    client id, the tenant id, which are identifiers and not secrets, and the
-   date the secret stops working), then `The secret is on the clipboard.`
-   Paste the three values and the secret into Muse's own secure vault, then
-   clear the clipboard with `Set-Clipboard -Value $null`.
+   date the secret stops working), then `The sign-in header is on the
+   clipboard.` Paste the header into Muse's secure field **before you copy
+   anything else**: copying one of the three printed values first replaces
+   it on the clipboard, and Muse then stores an id in place of the
+   credential. Save, then clear the clipboard with
+   `Set-Clipboard -Value ' '`. Muse already has the client id and tenant
+   id; check they match the two printed.
+
+   The line keeps the secret in a PowerShell variable for the moment it
+   takes to wrap it, then empties the variable. The owner ran the same
+   wrapping on 2026-11-24 and Muse signed in with the result; this guarded
+   form of the line has not been run since it was rewritten.
 
    **If you see** `Stopped, nothing was run`, you are not in the repository
    folder or `main` is behind: do the two lines above again. **If you see**

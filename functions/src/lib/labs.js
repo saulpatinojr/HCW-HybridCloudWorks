@@ -268,7 +268,7 @@ export function createLabHandlers({
           output: null,
         });
 
-        context.log('enqueueLabJob', jobId, type);
+        context.log('enqueueLabJob', type);
         return json(200, { jobId, type, status: 'queued' });
       } catch (error) {
         return errorResponse(context, 'Failed to enqueue job', error, 500, request);
@@ -442,7 +442,7 @@ export function createLabHandlers({
           cancelledBy: user.oid ?? user.sub,
         });
 
-        context.log('cancelLabJob', jobId);
+        context.log('cancelLabJob');
         return json(200, { jobId, status: 'cancelled' });
       } catch (error) {
         return errorResponse(context, 'Cancel failed', error, 500, request);

@@ -174,9 +174,9 @@ export function createPodcastHandlers({
       uuid,
       now,
     });
-    // Outcome and the job id (a correlation id), never the transcript id.
+    // The outcome and whether a job was queued; no job id or transcript id (#1802).
     context.log?.(
-      `podcast host step: ${outcome.outcome}${outcome.jobId ? ` (job ${outcome.jobId})` : ''}`
+      `podcast host step: ${outcome.outcome}${outcome.jobId ? ' (job queued)' : ''}`
     );
     return {
       ...outcome,
@@ -232,7 +232,7 @@ export function createPodcastHandlers({
         await store.upsertDoc(JOBS_CONTAINER, doc);
         enqueue({ jobId, type: TRANSCRIPT_JOB_TYPE });
 
-        context.log?.(`generatePodcastTranscript: queued ${jobId} for ${id}`);
+        context.log?.('generatePodcastTranscript: queued');
         return json(202, {
           ok: true,
           jobId,
@@ -410,7 +410,7 @@ export function createPodcastHandlers({
           actorId: auth.user?.oid || null,
           now: now().toISOString(),
         });
-        context.log?.(`reviewPodcastTranscript: → ${status} by ${auth.user?.oid || 'unknown'}`);
+        context.log?.(`reviewPodcastTranscript: → ${status}`);
 
         if (status !== STATUS.published) {
           return json(200, { success: true, id, status, item: updated || null, host: null });

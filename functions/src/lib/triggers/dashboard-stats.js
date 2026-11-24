@@ -213,7 +213,7 @@ export function createDashboardStatsMaintainer({ store, now = () => new Date(), 
           await store.replaceDocIfMatch(MARKERS_CONTAINER, next);
         } catch (err) {
           if (err?.code === 412 || err?.statusCode === 412) {
-            log.log?.(`[dashboard-stats] marker for ${contentId} advanced concurrently; no-op`);
+            log.log?.('[dashboard-stats] a marker advanced concurrently; no-op');
             return {};
           }
           throw err;

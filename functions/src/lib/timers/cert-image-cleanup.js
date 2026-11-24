@@ -161,9 +161,9 @@ export function createCertImageCleanup({
         try {
           await storage.deleteBlob(CONTAINER, name);
           deleted += 1;
-          log.log?.(`[cleanupUnusedCertImages] Deleted unreferenced cert image: ${name}`);
+          log.log?.('[cleanupUnusedCertImages] Deleted an unreferenced cert image');
         } catch (err) {
-          log.error?.(`[cleanupUnusedCertImages] Failed to delete ${name}: ${errorFacts(err)}`);
+          log.error?.(`[cleanupUnusedCertImages] Failed to delete a cert image: ${errorFacts(err)}`);
         }
       }
     }

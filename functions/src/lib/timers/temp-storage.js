@@ -70,7 +70,7 @@ export function createTempStorageCleanup({
             deleted += 1;
           } catch (err) {
             log.error?.(
-              `[cleanupTempStorage] Failed to delete ${container}/${blob.name}: ${errorFacts(err)}`
+              `[cleanupTempStorage] Failed to delete a blob in ${container}: ${errorFacts(err)}`
             );
           }
         }

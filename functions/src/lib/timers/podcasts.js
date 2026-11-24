@@ -29,6 +29,7 @@
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { errorFacts, errorCode } from '../http/error-response.js';
+import { jsonForLog } from '../http/log-json.js';
 import { feedErrorCode } from '../rss/feed-error-code.js';
 
 export const PODCAST_FEEDS = Object.freeze([]);
@@ -292,7 +293,7 @@ export function createPodcastIngest({ store, parser, feeds, now = () => new Date
         );
       }
     }
-    log.log?.(`[fetchPodcastFeeds] (${resolved.source}) ${JSON.stringify(summary)}`);
+    log.log?.(`[fetchPodcastFeeds] (${resolved.source}) ${jsonForLog(summary)}`);
     return summary;
   }
   return { run, processFeed };

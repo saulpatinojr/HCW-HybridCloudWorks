@@ -610,7 +610,8 @@ describe('DELETE cms/labs/agents/{agentId}', () => {
     expect(res.status).toBe(500);
     expect(bodyOf(res).error).toBe('Failed to remove the lab agent');
     expect(res.body).not.toContain('internal');
-    expect(ctx.error).toHaveBeenCalledWith(expect.stringContaining(`removeLabAgent(${OLD_ID})`));
+    expect(ctx.error).toHaveBeenCalledWith(expect.stringContaining('removeLabAgent failed:'));
+    expect(ctx.error).not.toHaveBeenCalledWith(expect.stringContaining(OLD_ID));
     expect(memory.all('admin_audit_logs')).toHaveLength(0);
   });
 

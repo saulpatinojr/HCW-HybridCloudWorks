@@ -92,7 +92,7 @@ export function createSubmissionsHandler({
     });
     await store.upsertDoc('content', doc);
 
-    context.log(`submission accepted: type=${doc.type} id=${doc.id}`);
+    context.log(`submission accepted: type=${doc.type}`);
     return json(201, { ok: true, id: doc.id });
   };
 }

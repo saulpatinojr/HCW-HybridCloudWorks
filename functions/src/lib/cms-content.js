@@ -458,7 +458,7 @@ export function createCmsContentHandlers({
         if (onContentDeleted) {
           await onContentDeleted(id).catch((err) =>
             context.warn?.(
-              `cmsDeleteContent: counters not updated for ${id}: ${errorFacts(err)}`,
+              `cmsDeleteContent: counters not updated after a delete: ${errorFacts(err)}`,
             ),
           );
         }
