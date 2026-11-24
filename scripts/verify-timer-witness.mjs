@@ -124,7 +124,9 @@ export const WITNESSES = {
   reVerifyCertifications: { none: 'updates certifications; the verification field is not projected publicly' },
   cleanupUnusedCertImages: { none: 'dry-run until CERT_IMAGE_CLEANUP_DELETE; blobs are private' },
   cleanupSoftDeletedContent: { none: 'deletes soft-deleted documents, which were never public' },
-  cleanupRejectedContent: { none: 'deletes rejected documents, which were never public' },
+  cleanupRejectedContent: {
+    none: 'deletes rejected documents, which were never public; its second step counts or strips talk proposals (#1777), which are never public either',
+  },
   syncSocialCalendarScheduled: { none: 'writes social_posts, which has no public route' },
   refreshPlaudToken: { none: 'rotates a secret; nothing public changes' },
   probeAiProviders: { none: 'stamps ai_providers and writes ai_usage, which have no public route' },

@@ -16,6 +16,8 @@ import {
   normalizeLocationLabel,
   parseCoords,
   sessionView,
+  SPEAKING_YEAR_GRACE_MONTHS,
+  speakingYear,
 } from './sessionizeEvents';
 
 const NOW = new Date(2026, 8, 14, 9); // 14 Sep 2026, 09:00 local
@@ -157,6 +159,84 @@ describe('groupSessions', () => {
     expect(groups.comingSoon.map((s) => s.id)).toEqual(['today', 'later']);
     expect(groups.thisYear.map((s) => s.id)).toEqual(['earlier', 'past']);
     expect(groups.lastYear.map((s) => s.id)).toEqual(['lastYear']);
+  });
+});
+
+describe('the yearly roll-over, one month late (#1777)', () => {
+  const SESSIONS = [
+    { id: 'nextSpring', date: '2027-04-10' },
+    { id: 'thisJanuary', date: '2027-01-10' },
+    { id: 'lastDecember', date: '2026-12-05' },
+    { id: 'lastMarch', date: '2026-03-01' },
+    { id: 'yearBefore', date: '2025-06-01' },
+    { id: 'ancient', date: '2024-06-01' },
+  ];
+  const ids = (groups) => ({
+    year: groups.year,
+    comingSoon: groups.comingSoon.map((s) => s.id),
+    newYear: groups.newYear.map((s) => s.id),
+    thisYear: groups.thisYear.map((s) => s.id),
+    lastYear: groups.lastYear.map((s) => s.id),
+  });
+
+  it('names the grace month and reads the year in local time', () => {
+    expect(SPEAKING_YEAR_GRACE_MONTHS).toBe(1);
+    expect(speakingYear(new Date(2026, 11, 31, 23, 59, 59))).toBe(2026);
+    expect(speakingYear(new Date(2027, 0, 1, 0, 0, 0))).toBe(2026);
+    expect(speakingYear(new Date(2027, 0, 31, 23, 59, 59))).toBe(2026);
+    expect(speakingYear(new Date(2027, 1, 1, 0, 0, 0))).toBe(2027);
+    expect(speakingYear(new Date(2027, 11, 31, 23, 59, 59))).toBe(2027);
+  });
+
+  it('shows the same past sections on 1 January and 31 January as on 31 December', () => {
+    const december = ids(groupSessions(SESSIONS, new Date(2026, 11, 31, 12)));
+    expect(december).toEqual({
+      year: 2026,
+      comingSoon: ['thisJanuary', 'nextSpring'],
+      newYear: [],
+      thisYear: ['lastMarch', 'lastDecember'],
+      lastYear: ['yearBefore'],
+    });
+    for (const now of [new Date(2027, 0, 1, 0, 0, 1), new Date(2027, 0, 9, 12)]) {
+      const january = ids(groupSessions(SESSIONS, now));
+      expect(january.year).toBe(2026);
+      expect(january.thisYear).toEqual(december.thisYear);
+      expect(january.lastYear).toEqual(december.lastYear);
+      expect(january.comingSoon).toEqual(december.comingSoon);
+      expect(january.newYear).toEqual([]);
+    }
+  });
+
+  it('keeps a talk given in January itself on the page, in a section of its own, and Coming Soon still works', () => {
+    const january = ids(groupSessions(SESSIONS, new Date(2027, 0, 31, 23, 59)));
+    expect(january).toEqual({
+      year: 2026,
+      comingSoon: ['nextSpring'],
+      newYear: ['thisJanuary'],
+      thisYear: ['lastMarch', 'lastDecember'],
+      lastYear: ['yearBefore'],
+    });
+  });
+
+  it('rolls over on 1 February: the January talk joins the new year, last year folds, the year before leaves', () => {
+    const february = ids(groupSessions(SESSIONS, new Date(2027, 1, 1, 0, 0, 1)));
+    expect(february).toEqual({
+      year: 2027,
+      comingSoon: ['nextSpring'],
+      newYear: [],
+      thisYear: ['thisJanuary'],
+      lastYear: ['lastMarch', 'lastDecember'],
+    });
+    // The fold follows the same year: in January the year before last is still the folded one.
+    expect(
+      sessionView({ date: '2025-06-01' }, 0, speakingYear(new Date(2027, 0, 15))).isPreviousYear
+    ).toBe(true);
+    expect(
+      sessionView({ date: '2026-03-01' }, 0, speakingYear(new Date(2027, 0, 15))).isPreviousYear
+    ).toBe(false);
+    expect(
+      sessionView({ date: '2026-03-01' }, 0, speakingYear(new Date(2027, 1, 1))).isPreviousYear
+    ).toBe(true);
   });
 });
 

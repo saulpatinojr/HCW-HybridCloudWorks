@@ -30,8 +30,10 @@ const workflowsDir = join(here, '..', '.github', 'workflows');
  * docs/runbooks/required-checks.md). `gate` stands for every job in ci.yml;
  * the other four are jobs of workflows that are still separate. The fifteen
  * contexts it named before (the ten single CI job names, the three CodeQL
- * `Analyze …` contexts and two of these) are no longer required, and CodeQL
- * no longer runs on pull requests at all.
+ * `Analyze …` contexts and two of these) are no longer required. CodeQL runs
+ * on pull requests again since the owner's decision of 2026-11-24, as an
+ * advisory check: its `Analyze …` contexts stay OFF this list
+ * (scripts/codeql-workflow.test.mjs holds that).
  */
 export const RULESET_REQUIRED_CONTEXTS = [
   'gate',

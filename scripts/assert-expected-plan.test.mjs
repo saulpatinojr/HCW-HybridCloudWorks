@@ -1038,6 +1038,23 @@ describe('DECLARED', () => {
     expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [] });
   });
 
+  it('passes the plan after #1777’s merge (the proposal clean-up’s switch, off) and the plan that arms it', () => {
+    const merged = fixture();
+    merged.app.after.app_settings.PROPOSAL_STRIP_ENABLED = 'false';
+    expect(checkPlan(merged.plan)).toMatchObject({ ok: true, unexpected: [] });
+
+    const armed = fixture();
+    armed.app.before.app_settings.PROPOSAL_STRIP_ENABLED = 'false';
+    armed.app.after.app_settings.PROPOSAL_STRIP_ENABLED = 'true';
+    expect(checkPlan(armed.plan)).toMatchObject({ ok: true, unexpected: [] });
+
+    // Absent straight to "true" would arm it without a dry run ever having applied: not declared.
+    const skipped = fixture();
+    skipped.app.after.app_settings.PROPOSAL_STRIP_ENABLED = 'true';
+    expect(checkPlan(skipped.plan).ok).toBe(false);
+    expect(infraSource).toMatch(/^\s*"PROPOSAL_STRIP_ENABLED"\s*=\s*"false"$/m);
+  });
+
   it('reads the owner’s own GSC values as unexpected, so they are checked by hand (#1612)', () => {
     const { plan, app } = fixture();
     app.before.app_settings.GSC_SERVICE_ACCOUNT_EMAIL = '';

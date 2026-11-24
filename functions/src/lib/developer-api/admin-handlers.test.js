@@ -61,6 +61,39 @@ describe('the organizer key admin routes (ADR 0042)', () => {
     expect(res.body).not.toContain('keyHash');
   });
 
+  it('answers the newest yearly clean-up run with the keys, counts only, and null when there is none (#1777)', async () => {
+    const { handlers, store } = setup();
+    expect(body(await handlers.listKeys(makeRequest(), ctx)).proposalCleanup).toBeNull();
+
+    const row = (id, timestamp, details) =>
+      store.put('admin_audit_logs', { id, action: 'cron_stripped_unaccepted_proposals', actor: 'system', timestamp, details });
+    row('a1', '2027-01-31T04:00:00.000Z', { dryRun: true, cycleYear: 2025, eligibleCount: 0, strippedCount: 0, racedCount: 0, failedCount: 0, hasMore: false });
+    row('a2', '2027-02-01T04:00:00.000Z', { dryRun: false, cycleYear: 2026, eligibleCount: 7, strippedCount: 5, racedCount: 1, failedCount: 1, hasMore: true });
+    store.put('admin_audit_logs', { id: 'other', action: 'developer_api_key_generated', timestamp: '2027-03-01T00:00:00.000Z', details: {} });
+
+    expect(body(await handlers.listKeys(makeRequest(), ctx)).proposalCleanup).toEqual({
+      ranAt: '2027-02-01T04:00:00.000Z',
+      dryRun: false,
+      cycleYear: 2026,
+      eligibleCount: 7,
+      strippedCount: 5,
+      leftCount: 2,
+      hasMore: true,
+    });
+
+    // A row with no details reads as a dry run that found nothing; a failed read never fails the list.
+    row('a3', '2027-02-02T04:00:00.000Z', null);
+    expect(body(await handlers.listKeys(makeRequest(), ctx)).proposalCleanup).toMatchObject({ dryRun: true, eligibleCount: 0, cycleYear: null });
+    const queryDocs = store.queryDocs;
+    store.queryDocs = async (container, ...rest) => {
+      if (container === 'admin_audit_logs') throw new Error('unavailable');
+      return queryDocs(container, ...rest);
+    };
+    const res = await handlers.listKeys(makeRequest(), ctx);
+    expect(res.status).toBe(200);
+    expect(body(res).proposalCleanup).toBeNull();
+  });
+
   it('refuses bad input with 400', async () => {
     const { handlers } = setup();
     expect((await create(handlers, { organizerName: 'Org', scopes: ['events:publish'] })).status).toBe(400);

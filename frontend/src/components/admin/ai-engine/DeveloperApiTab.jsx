@@ -9,14 +9,16 @@
  * shows a hint. Modelled on the Koda tab (KodaTab.jsx, ADR 0037), which does
  * the same for Koda's single key.
  *
- * Five cards:
+ * Six cards:
  *   1. Make a key       organizer name, contact, scopes; Make (super_admin)
  *   2. Organizer keys   one row per key: state, scopes (switches), details,
  *                       Rotate / Revoke, or Make a new key once revoked
  *   3. Connect          the base URL and header an organizer needs, none
  *                       secret, and the plain rule that no key publishes
  *   4. What a key can reach   the endpoints and who may call each
- *   5. Erase a speaker's proposals   find one address's talk proposals and
+ *   5. Yearly clean-up of proposals   what the newest daily run did, counts
+ *                       only; it ships switched off (ProposalCleanupCard.jsx)
+ *   6. Erase a speaker's proposals   find one address's talk proposals and
  *                       delete them, for an erasure request (ProposalErasureCard.jsx)
  *
  * Role gating is RoleGate's: an editor sees the tab and the list, and the
@@ -46,6 +48,7 @@ import ConfirmModal from '@/components/admin/ConfirmModal';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import useWriteGuard from '@/components/admin/shared/useWriteGuard';
 import { kodaApiAddress as apiAddress } from '@/lib/agentContent';
+import ProposalCleanupCard from './ProposalCleanupCard';
 import ProposalErasureCard from './ProposalErasureCard';
 import useDeveloperKeys from './useDeveloperKeys';
 import {
@@ -661,6 +664,7 @@ export default function DeveloperApiTab() {
       <KeysCard data={data} busyIds={busyIds} handlers={handlers} />
       <ConnectCard data={data} />
       <ReachCard data={data} />
+      <ProposalCleanupCard run={data.proposalCleanup} />
       <ProposalErasureCard />
       <ConfirmModal
         open={confirm?.kind === 'rotate'}

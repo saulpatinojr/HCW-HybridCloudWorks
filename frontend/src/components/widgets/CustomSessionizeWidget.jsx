@@ -178,9 +178,10 @@ const CustomSessionizeWidget = ({ speakerId: speakerIdProp = null }) => {
       .finally(() => setLoading(false));
   }, [speakerIdProp, isInView]);
 
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const groups = groupSessions(sessions, now);
+  // `groups.year` is the year the page treats as current: the calendar year
+  // from 1 February, and still the year before through January (#1777).
+  const groups = groupSessions(sessions, new Date());
+  const currentYear = groups.year;
   const sectionProps = { currentYear, expandedCard, setExpandedCard, onImage: setSelectedImage };
 
   return (
@@ -192,6 +193,15 @@ const CustomSessionizeWidget = ({ speakerId: speakerIdProp = null }) => {
           <div>
             <SessionSection title="Coming Soon" events={groups.comingSoon} {...sectionProps} />
           </div>
+          {groups.newYear.length > 0 && (
+            <div className="pt-12">
+              <SessionSection
+                title={`${currentYear + 1} Speaking Engagements`}
+                events={groups.newYear}
+                {...sectionProps}
+              />
+            </div>
+          )}
           <div className="pt-12">
             <SessionSection
               title={`${currentYear} Speaking Engagements`}
