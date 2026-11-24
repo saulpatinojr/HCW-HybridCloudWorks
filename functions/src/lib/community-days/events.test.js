@@ -18,7 +18,7 @@ import {
 } from './events.js';
 
 const raw = (over = {}) => ({
-  RowKey: '3f2a9c1e-0000-4000-8000-000000000001',
+  RowKey: '00000000-0000-0000-0000-000000000001',
   slug: '2027-03-06/example-community-day-2027',
   title: 'Example Community Day 2027',
   tagline: 'A free day of talks',
@@ -44,7 +44,7 @@ const raw = (over = {}) => ({
 describe('normalizeEvent', () => {
   it('keeps the fields the page uses, days as plain calendar days', () => {
     expect(normalizeEvent(raw())).toEqual({
-      id: '3f2a9c1e-0000-4000-8000-000000000001',
+      id: '00000000-0000-0000-0000-000000000001',
       title: 'Example Community Day 2027',
       tagline: 'A free day of talks',
       url: `${EVENT_PAGE_BASE}2027-03-06/example-community-day-2027`,
@@ -147,7 +147,7 @@ describe('dayOf and isEventId', () => {
   });
 
   it('accepts ids that are safe to store under', () => {
-    expect(isEventId('3f2a9c1e-0000-4000-8000-000000000001')).toBe(true);
+    expect(isEventId('00000000-0000-0000-0000-000000000001')).toBe(true);
     for (const bad of ['', 'a/b', 'a?b', 'a#b', 'a b', '-lead', '__proto__/x', 5, null]) expect(isEventId(bad), String(bad)).toBe(false);
   });
 });

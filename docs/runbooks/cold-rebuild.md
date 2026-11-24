@@ -242,7 +242,7 @@ job names it). The backend deploy, `deploy-functions.yml`, names it
 
 ## Phase 6: Key Vault secret escrow seeding
 
-Using the authoritative **Where to Re-obtain** paths documented in [Required inputs §4.6](../standards/required-inputs.md#46-key-vault-secrets-kv-site-prod-cus-01), seed all 32 Key Vault secrets into `kv-site-prod-cus-01`:
+Using the authoritative **Where to Re-obtain** paths documented in [Required inputs §4.6](../standards/required-inputs.md#46-key-vault-secrets-kv-site-prod-cus-01), seed all 33 Key Vault secrets into `kv-site-prod-cus-01`:
 
 ```powershell
 # Generated high-entropy secrets (retrieve from Bitwarden escrow, or generate fresh with `openssl rand -hex 32` and immediately escrow in Bitwarden):
@@ -280,6 +280,7 @@ az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CLOUDFLARE-ANA
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CODER-URL" --value "https://coder.lab.hybridcloudworks.com"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CODER-STATUS-TOKEN" --value "<TOKEN>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CODER-BROKER-TOKEN" --value "<TOKEN>"
+az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "COMMUNITY-DAYS-API-KEY" --value "<KEY>"
 ```
 
 ---
