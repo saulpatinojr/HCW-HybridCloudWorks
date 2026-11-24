@@ -257,7 +257,8 @@ export function MuseReaderNote() {
             <External href={TFC_AZURE_RUNS_URL}>its Runs page</External> and confirm it. The old
             secret stops working in that run, so copy the new one into Muse’s vault straight after
             with the one line in <External href={MUSE_READER_RUNBOOK_URL}>the runbook</External>{' '}
-            (“Rotate the secret”).
+            (“Rotate the secret”). That line copies a sign-in header built from the secret, not the
+            plain secret, because a header is the only form Muse can send.
           </>
         ),
         Expires: (
