@@ -172,10 +172,12 @@ Reply with JSON only, in exactly this shape: {"percent": 0, "reasons": ["", ""]}
  */
 export function readEstimate(answer) {
   const raw = answer && typeof answer === 'object' && !Array.isArray(answer) ? answer.percent : undefined;
-  // A number, or a string that is only a number (with an optional % sign).
+  // A number, or a short string that is only a number (with an optional % sign).
   let percent = Number.NaN;
   if (typeof raw === 'number') percent = raw;
-  else if (typeof raw === 'string' && /^\s*-?\d{1,3}(\.\d{1,4})?\s*%?\s*$/.test(raw)) percent = Number.parseFloat(raw);
+  else if (typeof raw === 'string' && raw.length <= 16 && /^-?\d{1,3}(\.\d{1,4})?%?$/.test(raw.replace(/\s/g, ''))) {
+    percent = Number.parseFloat(raw.replace(/\s/g, ''));
+  }
   if (!Number.isFinite(percent)) throw new EstimateUnusableError();
   const reasons = (Array.isArray(answer.reasons) ? answer.reasons : [])
     .filter((reason) => typeof reason === 'string')
