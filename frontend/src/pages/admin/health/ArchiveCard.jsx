@@ -11,9 +11,11 @@
  * weekly backup and count what an archive would keep, change and leave out.
  * A dry run writes no archive and changes no record.
  *
- * For the seven containers nobody has classified yet, the report lists the
- * names of their top-level fields so the owner can say what each one is. It
- * never shows a record or a value; the server does not send one.
+ * For every container it read, the report lists the common, plain names of
+ * its top-level fields, and counts the records that carry a field whose name
+ * looks like a secret or someone's contact details. The containers nobody
+ * has classified yet are shown first, so the owner can say what each one is.
+ * It never shows a record or a value; the server does not send one.
  *
  * Both routes are super_admin, so below that role the card is not drawn.
  */
@@ -41,6 +43,8 @@ const BLOCKERS = Object.freeze({
   'switch-off': 'the switch is off',
   'before-1-february': 'it is still January, the month of grace',
   'already-archived': 'that year is already archived',
+  'archive-container-missing':
+    'the archive’s storage container does not exist yet (the Terraform run that creates it has not been confirmed)',
   'archive-not-readable': 'the archive’s storage container could not be read just now',
   'no-backup': 'no complete weekly full backup was found in the last 35 days',
   'backup-too-early': 'the newest complete weekly backup is from before 2 February',
@@ -66,8 +70,13 @@ export const reasonWords = (leftOutBy = {}) =>
     .map(([reason, n]) => `${n} ${REASONS[reason] || reason}`)
     .join(', ');
 
-/** true: written; false: not written; anything else: the container could not be read. */
-export function yearState(archived) {
+/**
+ * true: written; false: not written; anything else: not known. A container
+ * that does not exist yet is "not known", never "not written": nothing was
+ * looked at, so nothing can be said about the year.
+ */
+export function yearState(archived, containerExists) {
+  if (containerExists === false) return 'Not known: no container yet';
   if (archived === true) return 'Written';
   if (archived === false) return 'Not written';
   return 'Not known';
@@ -84,9 +93,59 @@ function Row({ label, children }) {
   );
 }
 
-/** One unclassified container: its count and the names of its fields. */
-function UnclassifiedRow({ part }) {
+/** The field names of one container, as a sentence. Nothing when the report listed none. */
+function FieldNames({ part }) {
   const names = part.fieldNames || [];
+  if (!names.length && !part.otherNames) return null;
+  return (
+    <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+      {names.length ? (
+        <>
+          Fields: <span className="font-mono">{names.map((field) => field.name).join(', ')}</span>
+        </>
+      ) : (
+        'No field name is common and plain enough to show.'
+      )}
+      {part.fieldNamesTruncated ? ' (and more; only the 100 most common are listed)' : ''}
+      {part.otherNames
+        ? ` (${number(part.otherNames)} more uses of names that are not shown: too rare, or shaped like an id or typed text)`
+        : ''}
+    </p>
+  );
+}
+
+/**
+ * "3 records have a field named like a secret: apiKey, token". Names only;
+ * the server never sends a value.
+ */
+export function sensitiveSentence(sensitive) {
+  if (!sensitive?.records) return '';
+  const names = (sensitive.names || []).map((field) => field.name);
+  const hidden = sensitive.namesNotShown
+    ? `${names.length ? ', and ' : ''}${number(sensitive.namesNotShown)} not shown`
+    : '';
+  const kept =
+    sensitive.keptRecords > 0
+      ? ` ${number(sensitive.keptRecords)} of them would still carry one in the archive.`
+      : ' None of those names would be in the archive.';
+  return `${number(sensitive.records)} record(s) have a field named like a secret or contact details: ${names.join(', ')}${hidden}.${kept}`;
+}
+
+function SensitiveLine({ part }) {
+  const sentence = sensitiveSentence(part.sensitive);
+  if (!sentence) return null;
+  return (
+    <p
+      className={`text-xs [overflow-wrap:anywhere] ${part.sensitive.keptRecords > 0 ? 'text-destructive' : 'text-muted-foreground'}`}
+      data-testid="archive-sensitive"
+    >
+      {sentence}
+    </p>
+  );
+}
+
+/** One unclassified container: its count, the names of its fields, and any that look sensitive. */
+function UnclassifiedRow({ part }) {
   return (
     <li className="border-b border-border/60 py-2 last:border-0" data-testid="archive-unclassified">
       <p className="text-sm">
@@ -95,15 +154,8 @@ function UnclassifiedRow({ part }) {
           {part.inBackup === false ? ': not in the backup' : `: ${number(part.read)} records`}
         </span>
       </p>
-      {names.length ? (
-        <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-          Fields: <span className="font-mono">{names.map((field) => field.name).join(', ')}</span>
-          {part.fieldNamesTruncated ? ' (and more; only the first 100 names are listed)' : ''}
-          {part.otherNames
-            ? ` (${number(part.otherNames)} names not shown: they read like typed text)`
-            : ''}
-        </p>
-      ) : null}
+      <FieldNames part={part} />
+      <SensitiveLine part={part} />
     </li>
   );
 }
@@ -114,6 +166,22 @@ function ReportBody({ latest }) {
       <p className="text-sm text-muted-foreground" data-testid="archive-no-report">
         No dry run yet. Press Dry run: it reads the newest weekly backup and counts what an archive
         would keep, change and leave out. It writes no archive and changes no record.
+      </p>
+    );
+  }
+  if (!latest.complete && latest.stalled) {
+    const missing = Array.isArray(latest.missing) ? latest.missing : [];
+    return (
+      <p className="text-sm text-destructive" role="status" data-testid="archive-stalled">
+        The last dry run did not finish: {latest.done} of {latest.expected} containers were read
+        from the backup of {latest.sourceRun || 'an unknown date'}.
+        {missing.length ? (
+          <>
+            {' '}
+            Missing: <span className="font-mono">{missing.join(', ')}</span>.
+          </>
+        ) : null}{' '}
+        Nothing was archived or changed. Press Dry run to start a new one.
       </p>
     );
   }
@@ -130,6 +198,7 @@ function ReportBody({ latest }) {
   const containers = Array.isArray(report.containers) ? report.containers : [];
   const unclassified = containers.filter((part) => part.reason === 'unclassified');
   const read = containers.filter((part) => part.reason !== 'unclassified');
+  const flagged = read.filter((part) => part.sensitive?.keptRecords > 0);
   const leftOutWhole = Array.isArray(report.leftOutWhole) ? report.leftOutWhole : [];
   return (
     <div className="space-y-3" data-testid="archive-report">
@@ -159,13 +228,30 @@ function ReportBody({ latest }) {
           {number(totals.unreadable)} line(s) of the backup could not be read as a record.
         </p>
       ) : null}
+      {flagged.length ? (
+        <div data-testid="archive-flagged">
+          <p className="text-sm font-medium text-destructive">
+            Look before switching the archive on: {flagged.length} container(s) an archive would
+            keep hold a field named like a secret or contact details
+          </p>
+          <ul aria-label="Kept containers with a field named like a secret">
+            {flagged.map((part) => (
+              <li key={part.container} className="py-1">
+                <p className="text-sm font-mono">{part.container}</p>
+                <SensitiveLine part={part} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div>
         <p className="text-sm font-medium">
           Waiting for you: {unclassified.length} containers to classify
         </p>
         <p className="text-xs text-muted-foreground">
-          The code cannot say what these hold, so they stay out of the archive until you do. Counts
-          and field names only; no record is shown.
+          No code names these today, so nothing says what they hold, and they stay out of the
+          archive until you do. Counts and field names only; no record is shown. A field name is
+          listed only when it is common and plain, so a name that is really an id is not shown.
         </p>
         <ul aria-label="Containers to classify">
           {unclassified.map((part) => (
@@ -190,8 +276,11 @@ function ReportBody({ latest }) {
               <th scope="col" className="py-1 pr-2 font-medium">
                 Changed
               </th>
-              <th scope="col" className="py-1 font-medium">
+              <th scope="col" className="py-1 pr-2 font-medium">
                 Left out
+              </th>
+              <th scope="col" className="py-1 font-medium">
+                Fields, and names that look sensitive
               </th>
             </tr>
           </thead>
@@ -204,9 +293,13 @@ function ReportBody({ latest }) {
                   {number(part.changed)}
                   {part.changed ? ` (${Object.keys(part.removed || {}).join(', ')})` : ''}
                 </td>
-                <td className="py-1">
+                <td className="py-1 pr-2">
                   {number(part.leftOut)}
                   {part.leftOut ? ` (${reasonWords(part.leftOutBy)})` : ''}
+                </td>
+                <td className="py-1">
+                  <FieldNames part={part} />
+                  <SensitiveLine part={part} />
                 </td>
               </tr>
             ))}
@@ -215,9 +308,10 @@ function ReportBody({ latest }) {
                 <td className="py-1 pr-2 font-mono">{part.container}</td>
                 <td className="py-1 pr-2">0</td>
                 <td className="py-1 pr-2">0</td>
-                <td className="py-1">
+                <td className="py-1 pr-2">
                   all {number(part.backupDocs)} ({REASONS[part.reason] || part.reason})
                 </td>
+                <td className="py-1 text-muted-foreground">not read</td>
               </tr>
             ))}
           </tbody>
@@ -276,7 +370,8 @@ function ArchiveCardBody() {
       </p>
     );
   } else {
-    const running = status.latest && !status.latest.complete;
+    // A run that did not finish no longer holds the button: a new one may start.
+    const running = status.latest && !status.latest.complete && !status.latest.stalled;
     body = (
       <div className="space-y-3">
         <Row label={`Switch (${status.setting})`}>
@@ -286,7 +381,7 @@ function ArchiveCardBody() {
         </Row>
         <Row label={`Archive of ${status.year}`}>
           <Badge variant="outline" data-testid="archive-year-state">
-            {yearState(status.archived)}
+            {yearState(status.archived, status.archiveContainerExists)}
           </Badge>
         </Row>
         <p className="text-xs text-muted-foreground" data-testid="archive-readiness">
@@ -298,6 +393,14 @@ function ArchiveCardBody() {
             : `An archive of ${status.year} could not start today: ${blockerSentence(status.blockers)}.`}
         </p>
         <ReportBody latest={status.latest} />
+        {status.reports ? (
+          <p className="text-xs text-muted-foreground" data-testid="archive-report-home">
+            Reports are kept in the private{' '}
+            <span className="font-mono">{status.reports.container}</span> storage container, under{' '}
+            <span className="font-mono">{status.reports.prefix}</span>, and one older than{' '}
+            {status.reports.keepDays} days is deleted when a new dry run starts.
+          </p>
+        ) : null}
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"

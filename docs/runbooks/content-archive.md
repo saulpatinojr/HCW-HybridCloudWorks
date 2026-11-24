@@ -31,28 +31,50 @@ from the weekly full database backup (the Sunday run of the nightly export;
 [Cosmos restore runbook](cosmos-restore.md)). Each database container (a
 named box of records) gets one of three decisions:
 
-- **Kept as it is**: 50 containers. Articles, pages, the owner's notes and
-  recordings, newsletters, prompts, images' records and the like.
-- **Kept, with something taken out first**: 4 containers.
-    - `developer_events` (calls for speakers and talk proposals): the
-      speaker's name, email and bio and the organizer's review note are
-      removed from every proposal, accepted or not.
-    - `mcp_servers` (outside tool servers): the sign-in tokens and the client
-      secret are removed.
-    - `doc_vault` (the owner's private documents): the one secret item the
-      vault uses to make document ids is left out. The documents read back
-      without it.
+- **Kept as it is**: 33 containers. Articles, pages, the owner's notes and
+  recordings, newsletters, image records and the like. Every one of them is
+  a container the site's code reads or writes today, so its fields are
+  known. (`plaud_ingest` is the one exception: no code names it, and it is
+  kept because the owner said its recordings are theirs.)
+- **Kept in part**: 6 containers. For four of them the code holds a **keep
+  list** (the only fields that are kept; a field nobody listed is dropped, so
+  a new or forgotten field can never carry a secret in).
+    - `developer_events` (calls for speakers and talk proposals): from a call,
+      its title, description, dates and status; from a proposal, the talk's
+      title, abstract, format, level, dates and status. The speaker's name,
+      email and bio, the review note, who reviewed it, and the organizer's
+      name and key id are never kept. The abstract is free text the speaker
+      typed and **is** kept: it is the talk.
+    - `mcp_servers` (outside tool servers): name, transport, switches, the
+      *name* of the setting its key is read from, tool names, and its web
+      address **without** its query string (the part after `?`, where a key
+      can sit). Sign-in tokens, the client secret and request headers are
+      never kept.
+    - `ai_providers` (the AI provider cards): the fields today's editor
+      accepts. An old key on a card carried over from the earlier site is
+      dropped.
+    - `admin_settings` (settings documents): four named documents and the
+      news sources are kept; the record of who first set the site up, test
+      results and caches are left out, and so is a document the list does
+      not name.
+    - `doc_vault` (the owner's private documents): documents and their
+      earlier versions are kept; the one secret item the vault uses to make
+      document ids is left out. The documents read back without it.
     - `admin_config` (settings documents): key records, and short-lived state
       such as health results and caches, are left out. A document the list
       does not name is left out too.
-- **Left out**: 25 containers. 18 for a known reason (the access list, audit
-  rows the database deletes after 90 days, caches and queues that a job
-  rebuilds) and **7 that are waiting for the owner**, below.
+- **Left out**: 40 containers. 19 for a known reason (the two access lists:
+  who may sign in, and which machine is which lab agent; audit rows the
+  database deletes after 90 days; caches and queues that a job rebuilds) and
+  **21 that are waiting for the owner**, below.
 
 Two rules cut across containers. An interview is kept only while it is public
-in the backup, in `content` and in its earlier versions in `content_versions`.
-And an earlier version is kept only when its content item is in the same
-backup.
+in the backup, and **no earlier version of an interview is kept at all**: a
+public interview's history holds its drafts from before it was published,
+which the guest never agreed to (an open question for the owner in
+[ADR 0046](../decisions/0046-content-archive.md#open-question-for-the-owner-earlier-versions-of-a-published-interview)).
+And an earlier version of anything else is kept only when its content item is
+in the same backup.
 
 ## Run a dry run
 
@@ -73,7 +95,10 @@ You need the `super_admin` role. Below that role the card is not shown.
    [After the merge](#after-the-merge-the-owners-steps-in-order).
 2. Press **Dry run**.
    You should see a notice "Dry run started", naming the date of the backup it
-   reads and the number of containers (about 61).
+   reads and the number of containers (about 60).
+   If it says "A dry run is still reading the backup", one is already
+   running and less than 30 minutes old; nothing new was started. Wait for
+   its report.
    If it says no complete weekly full backup was found, the nightly export has
    not finished a Sunday run in the last 35 days. The **Nightly export** line
    on the Operational Signals card of the same tab says when the last run
@@ -81,14 +106,15 @@ You need the `super_admin` role. Below that role the card is not shown.
    UTC).
 3. Wait a few minutes, then press the round refresh arrow at the top right of
    the card.
-   While it is reading you see "12 of 61 containers done" (the numbers move).
+   While it is reading you see "12 of 60 containers done" (the numbers move).
    When it has finished you see **Records an archive would keep** with a
    number.
-   If it still shows progress after 45 minutes, one container's job failed. A
-   failed job sends an alert to your phone, and
+   If, 30 minutes after it started, the card says in red "The last dry run
+   did not finish" and names the containers that are missing, one
+   container's job failed. A failed job sends an alert to your phone, and
    [Health → Alerts](https://hybridcloudworks.com/admin/health?tab=alerts)
-   lists it under "Sent to your phone". Press **Dry run** again: a new run
-   starts from the beginning and the old one is simply left unfinished.
+   lists it under "Sent to your phone". Nothing was archived or changed.
+   Press **Dry run** again: a new run starts from the beginning.
 
 ## Read the report
 
@@ -100,61 +126,107 @@ You need the `super_admin` role. Below that role the card is not shown.
   the archive on; say so on
   [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)
   with the date of the backup.
-- **Waiting for you: 7 containers to classify.** See the next section.
+- **A red block "Look before switching the archive on".** It lists every
+  container an archive would **keep** in which at least one kept record
+  still has a field whose *name* looks like a secret or someone's contact
+  details (a name containing `token`, `secret`, `password`, `apikey`,
+  `authorization`, `credential`, `privatekey`, `hash`, `salt`, `cookie`,
+  `signature`, `email` or `phone`, or exactly `sas`, `sig`, `key`, `pwd`,
+  `auth` or `pin`; the list is in
+  [`archive-classification.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/archive-classification.js),
+  `SENSITIVE_NAME_WORDS`). The check reads names at any depth inside a
+  record and never a value. A hit is a reason to look, not proof: `contentHash`
+  matches and is harmless. Say what you see on
+  [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)
+  and a session will decide each one with you before the archive is switched
+  on.
+- **Waiting for you: 21 containers to classify.** See the next section.
 - **Every container** (press to unfold). One row per container: how many
   records would be kept, how many would have fields removed and which fields,
-  and how many would be left out and why. The reasons, in the card's words:
+  how many would be left out and why, its field names, and the same count of
+  names that look sensitive. A removed field is named only when the name is
+  one the site's own code uses (`speakerEmail`, `oauthToken`); any other
+  removed field shows as "(other fields)", because its name could be
+  anything. The reasons, in the card's words:
 
     | Reason on the card | What it means |
     | --- | --- |
     | a promise limits keeping it | Someone was told it would be deleted, or agreed to less than keeping it for good (an interview that is not public, audit rows) |
     | it is a secret | A token, a key record or the Doc Vault's secret item |
-    | it is the access list | Who may sign in to the admin |
+    | it is the access list | Who may sign in to the admin, which machine is which lab agent, or who first set the site up |
     | a job rebuilds it | A cache or an index |
     | short-lived working state | Health results, leases, queues |
-    | a document the list does not name | A settings document whose id is not in the code's list. Left out to be safe; a number above zero here is worth a look |
+    | a document the list does not name | A settings document whose id is not in the code's list, or a record of a kind the list does not name. Left out to be safe; a number above zero here is worth a look |
     | its content item is not in the backup | An earlier version of something that has since been deleted |
-    | not classified yet | One of the seven below |
+    | not classified yet | One of the 21 below |
 
 The report never shows a record, the id of a record or the value of a field.
 The server does not send one.
 
-## Classify the seven containers
+**Which field names are shown.** A field's name can itself be an id: a record
+that is a list keyed by visitor id has ids for field names. So a name is shown
+only when it is both **common** (at least 2 records of that container carry
+it, and at least 1 record in every 100) and **plain** (it starts with a letter,
+holds only letters, digits, `_` and `-`, is at most 40 characters, has no run
+of four or more digits, and is not shaped like a UUID or a long run of hex).
+Every other name is only counted ("more uses of names that are not shown").
+A container with one record shows no field name at all. At most 100 names are
+listed per container, the most common first.
 
-Seven containers are left over from the earlier site, and no code in this
-repository reads them, so nothing here can say what they hold:
-`tool_workspaces`, `tool_migration_workspaces`, `tool_assessment_sessions`,
-`tool_architecture_plans`, `tool_exports`, `config_providers` and
-`config_settings`. They may hold what a visitor typed, or a key someone pasted
-into the earlier site.
+**Where a report is kept, and for how long.** In the private
+`cosmos-export-state` blob container, under `state/archive-report/`, one
+folder per report. No storage rule deletes it; the code does: starting a dry
+run deletes every report older than 90 days.
 
-For each one the report shows the number of records and the **names** of its
-fields. Read the names and answer on
+## Classify the 21 containers
+
+No code in this repository names these 21 containers today, so nothing here
+can say what they hold. They are left over from the earlier site. They may
+hold what a visitor typed, or a key someone pasted into the earlier site.
+
+- Saved work from the earlier site's tools: `tool_workspaces`,
+  `tool_migration_workspaces`, `tool_assessment_sessions`,
+  `tool_architecture_plans`, `tool_exports`.
+- Settings from the earlier site: `config`, `config_providers`,
+  `config_settings`, `config_tags`, `site_settings`.
+- Content from the earlier site: `content_templates`, `youtubevideos`,
+  `roadmap_items`, `wiki_pages`, `pillar_details`, `pillar_items`, `prompts`,
+  `character_profiles`, `character_modules`, `character_images`,
+  `character_tag_adjectives`.
+
+The first seven were always waiting for you. The other fourteen were listed
+as "kept as it is" until an independent review on 2026-11-24 pointed out that
+nobody had read them; they moved here, so they are looked at before they are
+kept.
+
+For each one the report shows the number of records, the **names** of its
+common fields, and how many records have a field named like a secret. Read
+them and answer on
 [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) with
 one word per container:
 
 - `KEEP`: it is content worth keeping and holds nothing about a visitor and no
   key.
-- `STRIP`, with the field names to remove: keep it without those fields.
+- `STRIP`, with the field names to keep: keep it with only those fields.
 - `OUT`: leave it out for good.
 
 A container with 0 records, or one the report says is "not in the backup", can
-be answered `OUT`. Until you answer, all seven stay out, so not answering is
+be answered `OUT`. Until you answer, all 21 stay out, so not answering is
 safe. A session then changes the list in a pull request; the test beside the
 list keeps the count honest.
 
-If a container shows "only the first 100 names are listed" or "names not
-shown: they read like typed text", its records use typed text as field names.
-Treat that as a sign it holds what people typed, and answer `OUT` unless you
-know otherwise.
+If a container shows a large number of "names that are not shown", its
+records use ids or typed text as field names. Treat that as a sign it holds
+what people typed, and answer `OUT` unless you know otherwise.
 
 ## What each state on the card means
 
 | The card says | Meaning | What to do |
 | --- | --- | --- |
 | Switch: **Off** | `CONTENT_ARCHIVE_ENABLED` is not exactly `true` (this includes the setting not existing yet) | Nothing. This is how it ships |
-| Archive of 2026: **Not written** | `content-archive/2026/manifest.json` does not exist | Nothing. No archive has been written |
-| Archive of 2026: **Not known** | The storage account did not answer, or refused, when the server looked for that year's manifest. (A container that does not exist yet reads as "Not written", which is true.) | Press the refresh arrow in a minute. If it stays, say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) |
+| Archive of 2026: **Not written** | The `content-archive` container exists, and `2026/manifest.json` is not in it | Nothing. No archive has been written |
+| Archive of 2026: **Not known: no container yet** | The `content-archive` container does not exist. The server asks that first, because storage answers "not found" for a file in a missing container exactly as for a missing file, and "the container is gone" must never look like "this year is safe to start" | Before the Terraform run is confirmed this is expected. After it, it is a fault: say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) |
+| Archive of 2026: **Not known** | The storage account did not answer, or refused, when the server asked whether the container exists or looked for that year's manifest | Press the refresh arrow in a minute. If it stays, say so on [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811) |
 | Archive of 2026: **Written** | That year's manifest (the list of files with their counts and fingerprints) exists. A year is archived once | Nothing |
 | "could not start today: it is still January" | An archive is never made in January, the month of grace | Wait |
 | "the newest complete weekly backup is from before 2 February" | The archive is made from the first Sunday backup on or after 2 February, the day after the yearly clean-up of talk proposals | Wait for that Sunday |
@@ -163,8 +235,8 @@ know otherwise.
 ## After the merge: the owner's steps, in order
 
 Either order of steps 1 and 2 is safe. The code reads a missing setting as
-"off" and a missing container as "not known", and starts nothing in either
-case.
+"off" and a missing container as "not known: no container yet", and starts
+nothing in either case.
 
 1. **Confirm the Terraform run.** Open the
    [`hcw-azure` workspace's runs](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs)
@@ -193,8 +265,8 @@ case.
     (or empty). An error that names `ContainerNotFound` means step 1 has not
     been applied.
 4. **Run a dry run** and read it: [Run a dry run](#run-a-dry-run).
-5. **Answer for the seven containers** on #1811:
-   [Classify the seven containers](#classify-the-seven-containers).
+5. **Answer for the 21 containers** on #1811:
+   [Classify the 21 containers](#classify-the-21-containers).
 
 Switching the archive on is not one of these steps.
 
@@ -206,8 +278,9 @@ that changes `"CONTENT_ARCHIVE_ENABLED" = "false"` to `"true"` in
 [`infra/functionapp.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/functionapp.tf),
 made only after you have read a dry-run report with no red line and said yes.
 The first archive would then be made on the first day all of these hold: the
-switch is on, the date is 1 February or later, that year has no archive yet,
-and a complete Sunday backup dated 2 February or later exists.
+switch is on, the date is 1 February or later, the `content-archive`
+container exists, that year has no archive yet, and a complete Sunday backup
+dated 2 February or later exists.
 
 ## Reading an archive back
 
@@ -245,4 +318,30 @@ so its sentence about backups is still the whole truth. ADR 0046 section 5
 lists the three changes that runbook gets when the first archive is written.
 
 One thing does exist now: a dry-run report. It holds container names, field
-names and counts, and nothing about a person.
+names and counts. A field name is shown only when it is common and plain
+([Read the report](#read-the-report)), so that an id used as a field name
+does not end up in a report, and a report is deleted after 90 days.
+
+**A deleted archive file is not gone at once.** This matters for the erasure
+steps of ADR 0046 section 5, and for anyone deleting an archive on purpose.
+The storage account has two safety nets, both set in
+[`infra/storage.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/storage.tf):
+
+- **Versioning** (`versioning_enabled`): deleting or replacing a file does
+  not remove its bytes; the file as it was becomes an "earlier version". A
+  storage rule (`expire-noncurrent-versions`) deletes an earlier version
+  **30 days** after it was made.
+- **Soft delete** (`delete_retention_policy`, **7 days**): when an earlier
+  version is deleted, by that rule or by hand, it can still be brought back
+  for 7 more days.
+
+So the old bytes of a deleted or rewritten archive file can linger for up to
+about 37 days (30, then 7) if nothing more is done, and for 7 days even when
+its earlier versions are deleted by hand straight away. An erasure is
+finished only when that time has passed. Microsoft describes how the two
+work together on
+[Soft delete for blobs](https://learn.microsoft.com/azure/storage/blobs/soft-delete-blob-overview#feature-interactions)
+and
+[Blob versioning](https://learn.microsoft.com/azure/storage/blobs/versioning-overview#feature-interactions)
+(both opened on 2026-11-24). Not tried on this account: no archive file
+exists yet.

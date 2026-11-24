@@ -7,7 +7,10 @@ the answers are under
 [The five questions, as the owner answered them](#the-five-questions-as-the-owner-answered-them).
 Phase 2 of [Phases](#phases) is built (the storage container, the switch,
 the list in code and the dry run); what it settled is under
-[What phase 2 settled](#what-phase-2-settled). No archive has been written:
+[What phase 2 settled](#what-phase-2-settled). An independent review of that
+build on 2026-11-24 moved several decisions to the safe side; they are under
+[Changed after an independent review](#changed-after-an-independent-review-2026-11-24),
+and the inventory table below shows the result. No archive has been written:
 the job that writes one is phase 3.
 **Decision date:** 2026-11-24
 **Owners:** Workload owner and architecture owner
@@ -145,11 +148,21 @@ timer.
 ### 2. The inventory: what goes in, what is changed first, what stays out
 
 There are three possible decisions for each container: **archive as is**;
-**archive with fields removed** (the named fields are taken out of every
-record before it is written); or **leave out**, for one of four reasons: a
-promise, a secret, derived data (something a job can rebuild, such as a search
-index or a cache), or working state (jobs, counters and locks that mean
-nothing later).
+**archive in part** (only the fields on a short list are kept from each
+record, or named records are left out, or both; the table calls it "archive
+with fields removed" where it was first written that way); or **leave out**,
+for one of five reasons: a promise, a secret, an access list (who or what may
+sign in), derived data (something a job can rebuild, such as a search index
+or a cache), or working state (jobs, counters and locks that mean nothing
+later).
+
+**Keep lists, not remove lists.** The owner's rule of 2026-11-24 is that a
+secret, token or key is never archived, and nothing about another person is
+archived unless an agreement covers it. A list of fields to *remove* fails
+open: a field nobody thought of, or one added next year, goes into the
+permanent copy. So wherever a container can hold a secret or another
+person's details, the code holds the list of fields that are **kept**, and
+everything else is dropped.
 
 The list of containers is from
 [`infra/cosmos-containers.json`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos-containers.json)
@@ -160,40 +173,45 @@ in
 real records. Where the code does not say what a container holds, the row
 says so and the decision is the owner's.
 
-**Totals for the database:** 50 archive as is, 4 archive with fields removed,
-18 left out, 7 the owner has to say (they are left out until then, so nothing
-doubtful is archived by accident). When this record was proposed the numbers
-were 48 and 9: the owner's answer to question 5 moved `recordings` and
-`plaud_ingest` to "archive as is".
+**Totals for the database:** 33 archive as is, 6 archive in part, 19 left
+out, 21 the owner has to say (they are left out until then, so nothing
+doubtful is archived by accident). That is 79.
+
+How the numbers moved: when this record was proposed they were 48, 4, 18 and
+9. The owner's answer to question 5 moved `recordings` and `plaud_ingest` to
+"archive as is" (50, 4, 18, 7). The independent review of 2026-11-24 then
+moved fourteen containers that no code names from "archive as is" to "owner
+to say", `lab_agents` to "left out", and `admin_settings` and `ai_providers`
+to "archive in part" (33, 6, 19, 21).
 
 #### The database (Cosmos DB account `cosmos-site-prod-cus`, database `hcw`)
 
 | Container | What it holds | Personal data, and whose | A promise that limits keeping it | Proposed decision |
 | --- | --- | --- | --- | --- |
 | `content` | Every article, page, learning item and interview the site has, published or draft. Public submissions land here too and carry no submitter details. | Yes, for interviews only: the guest's name, role, bio and the dated consent record | The guest agreed to publication on the site (the consent wording in `interviews/consent.js`) | Archive as is. An interview that was never published is left out (rule 2 under the table) |
-| `content_versions` | An earlier copy of a content item, one per save (the editor's version history). The only container that grows without limit | Same as `content`: earlier versions of interviews | Same as `content` | Archive as is, with the same rule for unpublished interviews |
+| `content_versions` | An earlier copy of a content item, one per save (the editor's version history). The only container that grows without limit | Same as `content`: earlier versions of interviews | Same as `content` | Archive as is, **except that no earlier version of an interview is kept**, public or not (rule 2 under the table, and the [open question](#open-question-for-the-owner-earlier-versions-of-a-published-interview)) |
 | `blogs` | Blog posts from the earlier site, about 242, read only through a fallback path | None found | None | Archive as is |
-| `content_templates` | Templates the editor starts a new item from | None found | None | Archive as is |
+| `content_templates` | Templates the editor of the earlier site started a new item from. No code names it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 because nobody had read it |
 | `certifications` | Certification pages, about 110, partly generated from Microsoft Learn | None found | None | Archive as is |
 | `certEvents` | Certification news items shown on the Skills hub | None found | None | Archive as is |
 | `speakerevents` | The owner's own talks and events, about 18 | The owner's own | None | Archive as is |
 | `podcasts` | Podcast shows and their settings | None found | None | Archive as is |
 | `episodes` | Podcast episodes | None found | None | Archive as is |
-| `youtubevideos` | Video entries. No code in `functions/src` or `frontend/src` names this container today, so its fields were not read | Not known | None known | Archive as is; the first run's manifest shows whether it holds anything |
+| `youtubevideos` | Video entries. No code in `functions/src` or `frontend/src` names this container today, so its fields were not read | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
 | `recordings` | The owner's voice recordings brought in from the recorder service, with their transcripts | **Possibly other people's**: a recording of a meeting holds whoever spoke. The code cannot say who is in one | No agreement with the other speakers is recorded anywhere in the code | Archive as is. The owner answered question 5 on 2026-11-24: only the owner's voice is on them |
-| `plaud_ingest` | Recorder imports from the earlier site. No code names it today | Possibly, as `recordings` | None known | Archive as is, by the same answer as `recordings` |
+| `plaud_ingest` | Recorder imports from the earlier site. No code names it today | Possibly, as `recordings` | None known | Archive as is, by the same answer as `recordings`. It is the one container kept although no code names it; the dry run reports its field names and any name that looks like a secret, like every other container's |
 | `newsletters` | Newsletter issues: title, text, status, dates | No. Subscriber addresses are kept by the email provider, never in the database (data-subject runbook, section 1) | None | Archive as is |
-| `roadmap_items` | Roadmap entries from the earlier site. No code names it today | Not known | None known | Archive as is |
-| `wiki_pages` | Wiki pages from the earlier site. No code names it today | Not known | None known | Archive as is |
+| `roadmap_items` | Roadmap entries from the earlier site. No code names it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
+| `wiki_pages` | Wiki pages from the earlier site. No code names it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
 | `listen_and_learn` | Listen & Learn sets (one per exam) | None found | None | Archive as is |
 | `listen_and_learn_episodes` | Listen & Learn episodes: script and audio path, one per exam area | None found | None | Archive as is |
 | `podcast_transcripts` | Two-host scripts made from articles and recordings, with their audio path | Possibly, where a script was made from a recording | None | Archive as is, except scripts made from a recording, which follow the answer for `recordings` |
 | `designs` | Architecture designs shown on the site | None found | None | Archive as is |
 | `frameworks` | Framework pages (for example the Well-Architected pillars) | None found | None | Archive as is |
-| `pillar_details` | Detail pages under a framework pillar. No code names it today | None found | None | Archive as is |
-| `pillar_items` | Items under a framework pillar. No code names it today | None found | None | Archive as is |
+| `pillar_details` | Detail pages under a framework pillar. No code names it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
+| `pillar_items` | Items under a framework pillar. No code names it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
 | `social_posts` | Social media posts and captions, about 15 | None found | None | Archive as is |
-| `prompts` | The writing prompts the content tools use | None found | None | Archive as is |
+| `prompts` | The writing prompts of the earlier site's content tools. No code names this container today (today's prompts are documents in `admin_config`) | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
 | `prompt_keyword_synonyms` | Word lists for the prompts | None found | None | Archive as is |
 | `prompt_keyword_augmentations` | Word lists for the prompts | None found | None | Archive as is |
 | `image_prompts` | Image prompts, one document per page | None found | None | Archive as is |
@@ -203,31 +221,31 @@ were 48 and 9: the owner's answer to question 5 moved `recordings` and
 | `image_prompt_pages` | Pages that have image prompts | None found | None | Archive as is |
 | `generated_content_images` | Records of generated images (the picture itself is a blob) | None found | None | Archive as is |
 | `curated_article_images` | Records of hand-picked article images | None found | None | Archive as is |
-| `character_profiles` | Character descriptions used for cover images | None found | None | Archive as is |
-| `character_modules` | Parts of a character description | None found | None | Archive as is |
-| `character_images` | Records of character images | None found | None | Archive as is |
-| `character_tag_adjectives` | Word lists for characters | None found | None | Archive as is |
+| `character_profiles` | Character descriptions used for cover images. One comment mentions it; no code reads or writes it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
+| `character_modules` | Parts of a character description. No code names it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
+| `character_images` | Records of character images. No code names it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
+| `character_tag_adjectives` | Word lists for characters. No code names it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
 | `brain_records` | The owner's private notes (the Second Brain): notes, links between them, earlier versions | The owner's own; a note can mention anyone | None | Archive as is (the owner's own writing) |
-| `doc_vault` | The owner's private templates, applications and letters, with earlier versions, and one `salt` item (a random secret that document ids are made from) | The owner's own; a letter can name someone else | None | Archive with fields removed: the one item `vault-id-salt` is left out, because it is a secret. Phase 2 checks in `doc-vault/model.js` that a restore works without it |
+| `doc_vault` | The owner's private templates, applications and letters, with earlier versions, and one `salt` item (a random secret that document ids are made from) | The owner's own; a letter can name someone else | None | Archive in part: only items of the kind `document` or `version` are kept. The one item `vault-id-salt` is the only other kind today and is left out, because it is a secret; a kind added later is left out too. Phase 2 checked in `doc-vault/model.js` that a restore works without it |
 | `ambassador` | The owner's Ambassador hub: programs, the owner's applications and their evidence | The owner's own; free-text fields and attachments can hold someone else's details (data-subject runbook, section 1) | None | Archive as is |
-| `developer_events` | Calls for speakers that organizers opened, and the talk proposals speakers sent to them | **Yes, speakers'**: name, email, bio, and the organizer's review note | A proposal that was not accepted loses those four fields after the yearly cycle (#1777) | Archive with fields removed: `speakerName`, `speakerEmail`, `speakerBio`, `reviewNote` from **every** proposal, accepted or not (question 2 below), and whether or not the live clean-up is switched on |
+| `developer_events` | Calls for speakers that organizers opened, and the talk proposals speakers sent to them | **Yes, speakers' and organizers'**: a proposal has the speaker's name, email and bio, the organizer's review note and the id of who reviewed it; a call has the organizer's name, the id of the organizer's key and the id of who last changed it | A proposal that was not accepted loses the speaker's four fields after the yearly cycle (#1777) | Archive in part, by a keep list for each kind of record. From a **call**: `id`, `eventId`, `docType`, `status`, `title`, `description`, `closesAt`, `openedAt`, `closedAt`, `createdAt`, `updatedAt`. From a **proposal**, accepted or not (question 2 below): `id`, `eventId`, `docType`, `status`, `title`, `abstract`, `format`, `level`, `submittedAt`, `reviewedAt`, `strippedAt`, `strippedReason`. Nothing else, and a record of any other kind is left out. **The abstract is free text the speaker typed, and it is kept**: it is the talk, and the owner's answer "STRIP" keeps the talk. A speaker who put their own name inside their abstract is therefore in the archive |
 | `tool_workspaces` | Saved work from the Cloud Tools of the earlier site. No code names it today | **Not known**: it may hold what a visitor typed, under a visitor id | None known | **Owner to say** (not classified). Proposed: leave out until the first run reports its count and field names |
 | `tool_migration_workspaces` | As `tool_workspaces` | **Not known** | None known | **Owner to say** (not classified). Proposed: as `tool_workspaces` |
 | `tool_assessment_sessions` | As `tool_workspaces` | **Not known** | None known | **Owner to say** (not classified). Proposed: as `tool_workspaces` |
 | `tool_architecture_plans` | As `tool_workspaces` | **Not known** | None known | **Owner to say** (not classified). Proposed: as `tool_workspaces` |
 | `tool_exports` | As `tool_workspaces` | **Not known** | None known | **Owner to say** (not classified). Proposed: as `tool_workspaces` |
-| `mcp_servers` | The outside tool servers the site can call (MCP servers), with their sign-in state | No | None; but it holds **secrets**: access tokens, refresh tokens and a client secret | Archive with fields removed: `oauthToken`, `oauthRefreshToken`, `oauthClientSecret`, `oauthPending` |
-| `lab_agents` | The list of lab machines allowed to report in. No token or hash was found in the files read | None found | None | Archive as is |
+| `mcp_servers` | The outside tool servers the site can call (MCP servers), with their sign-in state | No | None; but it holds **secrets**: access tokens, refresh tokens, a client secret, and a free-form `headers` field that can carry `Authorization: Bearer …` | Archive in part, by a keep list: `id`, `name`, `transport`, `enabled`, `order`, `authType`, `description`, `notes`, `createdAt`, `updatedAt`; `apiKeyEnvVar` only when it is shaped like a setting's name; `allowedTools` as a list of names; `tools` as name and description only; and `url` without its query string, fragment or user name (an address that cannot be read is dropped). Every `oauth…` field, `headers`, the last test's result and any field added later are not kept |
+| `lab_agents` | The list of lab machines allowed to report in: each record ties an agent id to the object id of a service principal (the identity a program signs in with), with the id of the admin who registered it and the machine's host name | Identifiers of an administrator and of machines | None | Leave out: it is an access list, like `admins`. Was "archive as is"; moved on 2026-11-24 |
 | `admins` | Who may sign in to the admin, and with which role | **Yes, administrators'**: sign-in id, email, role | None | Leave out: it is the access list, not content. Putting back a years-old access list would be a mistake, and the live one is in the nightly backup |
 | `admin_config` | About seventy features keep a settings document here: writing-tool settings, reminders, the cost ledger, notes on events, health results, and the records of the keys the site issues | **Yes, in places**: an organizer's name and contact note on each key record; what the owner pays, on the cost ledger | None; but the key records hold a **hash of each key** (a one-way scramble, enough to check a key but not to rebuild it) | Archive with fields removed: whole documents: every `developer_api_key:` record and the agent key record (key hashes and organizers' details), and the short-lived state documents (leases, probe results, caches). Phase 2 lists the document ids in code, with a test, the way the export list is held today |
-| `admin_settings` | Admin settings: the Telegram bot's switches, news-feed sources, the model list | None found in the files read | None | Archive as is; phase 2 reads every document id before the first run |
-| `site_settings` | Site settings from the earlier site. No code names it today | Not known | None known | Archive as is |
+| `admin_settings` | Several features keep one settings document here: the AI feature switches and model choices, the Telegram bot's switches, the owner's speaker profile, news-feed sources; and beside them the record of who first set the site up, test results and a fetched model list | **Yes, in one place**: `bootstrap-state` holds an administrator's object id | None | Archive in part, one document at a time, the way `admin_config` is. Kept: `ai-features`, `ai-routing`, `telegram_bot`, `integrations` (only the speaker id and speaker profile, the two fields today's writer accepts), and every `blog-source-…` document. Left out: `bootstrap-state` (access list), `integration-status` and every `run-…` document (working state), `ai-model-catalog` (a job refetches it). **A document whose id is on neither list is left out.** A test reads the source and fails when the code names an id the list does not |
+| `site_settings` | Site settings from the earlier site. No code names it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
 | `system` | Counters and status documents the platform keeps (dashboard counts, publish state) | None found | None | Archive as is |
-| `config` | Empty by design: its data lives in the three containers below | None found | None | Archive as is (expected to be empty) |
+| `config` | Expected to be empty: its data lives in the three containers below. No code names it today, so that was never checked | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
 | `config_providers` | Provider settings from the earlier site. No code names it today, so its fields were not read | Not known | **It may hold keys** typed into the earlier site; not known | **Owner to say** (not classified). Proposed: leave out until the first run reports its field names |
 | `config_settings` | Settings from the earlier site. No code names it today | Not known | It may hold keys; not known | **Owner to say** (not classified). Proposed: as `config_providers` |
-| `config_tags` | Tag lists from the earlier site. No code names it today | None found | None | Archive as is |
-| `ai_providers` | The AI providers the site can use. Holds the *name* of the setting a key is read from, never a key | None found | None | Archive as is |
+| `config_tags` | Tag lists from the earlier site. No code names it today | Not known | None known | **Owner to say** (not classified). Was "archive as is"; moved on 2026-11-24 |
+| `ai_providers` | The AI providers the site can use. Today's writer stores the *name* of the setting a key is read from, never a key; a card carried over from the earlier site could still hold an old key | None found | None | Archive in part, by a keep list: the fields today's writer accepts, without the last test's result (`status`, `lastError`, `lastTestedAt`); `apiKeyEnvVar` only when it is shaped like a setting's name; `baseUrl` without its query string. Anything else, an old `apiKey` included, is dropped |
 | `admin_audit_logs` | The log of admin actions and refused sign-ins | Yes: user ids and masked email addresses | **The database deletes each row after 90 days** (`default_ttl`) | Leave out: a 90-day record does not go into a permanent archive |
 | `audits` | The log of content changes (who changed what) | Yes: user ids | **Deleted after 90 days**, as above | Leave out, for the same reason |
 | `ai_usage` | One row per AI call: task, model, token counts, cost | None found in the files read | None | Archive as is |
@@ -253,7 +271,7 @@ were 48 and 9: the owner's answer to question 5 moved `recordings` and
 Rules that apply across the table:
 
 1. **A talk proposal is always archived without the speaker's details.** The
-   archive job removes the four fields itself. It does not rely on the live
+   archive job keeps only the talk's own fields (the keep list in the table). It does not rely on the live
    clean-up, because that clean-up ships switched off (`PROPOSAL_STRIP_ENABLED`
    is `"false"` in
    [`infra/functionapp.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/functionapp.tf)).
@@ -262,17 +280,29 @@ Rules that apply across the table:
    site; a draft the guest never saw published is not covered by it. A
    published interview is archived as it is, with the guest's name, role, bio
    and the consent record, because that is what the public page shows.
+   **The code goes further for versions: no earlier version of any interview
+   is kept.** The editor saves a version on every save, so the history of a
+   *published* interview holds its drafts from before it was published, and
+   by the reasoning above those are not covered either. See the
+   [open question](#open-question-for-the-owner-earlier-versions-of-a-published-interview).
 3. **A container added later must be classified before the next archive.** The
    list is held in code with a test, the way the backup's list is held today
    ([`export-classification.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/export-classification.js)):
    a new container fails the build until someone decides whether it is
    archived.
-4. **The nine "owner to say" containers are settled by the owner, not by
-   guessing.** Two (`recordings`, `plaud_ingest`) are question 5 below. The
-   other seven are settled by a dry run: phase 2 adds a report-only run that
-   writes, for every container, the number of records and the *names* of the
-   top-level fields (never a value). The owner reads that list and answers.
-   Until then all nine are left out.
+4. **The "owner to say" containers are settled by the owner, not by
+   guessing.** Two (`recordings`, `plaud_ingest`) were question 5 below and
+   are answered. The other 21 are settled by a dry run: phase 2 adds a
+   report-only run that writes, for every container it reads, the number of
+   records, the *names* of the common top-level fields, and a count of
+   records that have a field named like a secret (never a value). The owner
+   reads that and answers. Until then all 21 are left out.
+5. **"Archive as is" is only for a container the code knows.** Nobody looks
+   at the fields of a container that is archived as it is, so that decision
+   is right only where the code under `functions/src` reads or writes the
+   container today. A test holds that. A container no code names is one
+   nobody can describe, and waits for the owner. The one exception is
+   `plaud_ingest`, which the owner answered for by name.
 
 #### The files (Blob Storage)
 
@@ -473,7 +503,7 @@ that leaves:
 | A published interview: the guest's name, role, bio, their words as published | The guest agreed to publication, and the consent record is archived with it | The archive must be rewritten (below) if the guest withdraws |
 | The owner's own data (notes, applications, talks, bot log) | It is the owner's | Nothing: the owner is the one asking |
 | Someone named in the owner's free text or attachments (a note, a letter, an Ambassador entry) | The code cannot see inside free text | The archive must be rewritten if such a request is upheld |
-| Speakers who sent proposals | **Not there**: the four fields are removed before archiving | Nothing to do in the archive |
+| Speakers who sent proposals | **Not there**: only the talk's own fields are kept (title, abstract, format, level, dates, status). A speaker who wrote their own name into the abstract is the exception | Nothing to do in the archive, unless the request names an abstract |
 | Administrators, audit rows, subscribers, recordings | **Not there**: left out | Nothing to do in the archive |
 
 **When the archive does have to change, this is the honest procedure.** A file
@@ -577,10 +607,12 @@ and (b) any lock against deletion is even discussed. The result is written on
 
   | Where | What | In the archive |
   | --- | --- | --- |
-  | `mcp_servers` | `oauthToken`, `oauthRefreshToken`, `oauthClientSecret`, `oauthPending` (sign-in tokens for outside tool servers) | Fields removed |
+  | `mcp_servers` | `oauthToken`, `oauthRefreshToken`, `oauthClientSecret`, `oauthPending`, `oauth`, a free-form `headers` field, and a key in the query string of `url` | Not on the keep list, so dropped; the address loses its query string |
+  | `ai_providers` | Possibly an old `apiKey` on a card from the earlier site | Not on the keep list, so dropped |
+  | `admin_settings`, document `integrations` | Possibly old keys from the earlier site (the document is saved by merging) | Only the two fields today's writer accepts are kept |
   | `admin_config`, records `developer_api_key:…` and the agent key record | The hash of each key the site issued, with the organizer's name and contact note | Whole records left out |
   | `doc_vault`, item `vault-id-salt` | The random secret that document ids are derived from | Item left out |
-  | `config_providers`, `config_settings` | Not known; they may hold keys typed into the earlier site | Left out until the dry run shows their field names |
+  | `config_providers`, `config_settings`, and the other 19 containers no code names | Not known; they may hold keys typed into the earlier site | Left out until the dry run has shown their field names and the owner has answered |
   | `host-backups` (files) | A snapshot of the lab machine's secret store | Left out |
 
   Every other key the site uses is in Key Vault, not in the database, and is
@@ -671,11 +703,40 @@ record.
      (and the scripts made from them). **This is what happens until the
      question is answered.**
 
-Not a question, but the owner's to confirm after the dry run: the seven
+Not a question, but the owner's to confirm after the dry run: the 21
 containers left over from the earlier site whose contents the code cannot
-describe (`tool_workspaces`, `tool_migration_workspaces`,
-`tool_assessment_sessions`, `tool_architecture_plans`, `tool_exports`,
-`config_providers`, `config_settings`). They stay out until then.
+describe. Seven were on this list from the start (`tool_workspaces`,
+`tool_migration_workspaces`, `tool_assessment_sessions`,
+`tool_architecture_plans`, `tool_exports`, `config_providers`,
+`config_settings`). Fourteen joined it on 2026-11-24 (`config`,
+`config_tags`, `site_settings`, `content_templates`, `youtubevideos`,
+`roadmap_items`, `wiki_pages`, `pillar_details`, `pillar_items`, `prompts`,
+`character_profiles`, `character_modules`, `character_images`,
+`character_tag_adjectives`). They stay out until then.
+
+### Open question for the owner: earlier versions of a published interview
+
+**What is being decided.** The editor keeps an earlier copy of a content item
+on every save (`content_versions`). For an interview that is public today,
+those copies include its drafts from before it was published. Should the
+archive keep them?
+
+**Why it matters.** A guest agreed to publication on the site. Rule 2 above
+says a draft the guest never saw published is not covered by that agreement.
+A version row does not say whether it was ever the public one, so the code
+cannot keep "only the versions that were public".
+
+- `NONE`: keep no earlier version of any interview. The public record in
+  `content` is the archive's copy of an interview. **This is what the code
+  does today, and it is recommended**: it follows rule 2, and nothing about a
+  guest is kept that the guest did not see published.
+- `ALL`: keep every earlier version of an interview that is public in the
+  backup. This keeps the editing history, and with it wording the guest may
+  have asked to have removed before publication.
+
+**How to answer.** Reply `NONE` or `ALL` on
+[#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811).
+Not answering is safe: it stays `NONE`.
 
 ## What phase 2 settled
 
@@ -689,6 +750,10 @@ above.
   a container is in
   [`infra/cosmos-containers.json`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos-containers.json)
   and not in the list.
+- **`admin_settings`, document by document.** The table above used to say
+  "phase 2 reads every document id before the first run". That reading is
+  now a list in the same file, held to the source by a test, and the ids are
+  in the table's row.
 - **`admin_config`, document by document.** The same file names each document
   id the code writes there. Kept: the Platform Settings documents, the
   newsletter's From address, the image gallery's folders, the writing tool's
@@ -698,7 +763,9 @@ above.
   hashes), and health results, leases, caches and queues. **A document whose
   id is on neither list is left out**, and the dry run counts it as
   "unlisted", so nothing reaches the archive because a rule forgot it.
-- **The Doc Vault's salt.** The salt is used for one thing: making the id of a
+- **The Doc Vault's salt.** The archive keeps only the two kinds of item
+  that are content (`document` and `version`), so the salt, and any kind
+  added later, is left out. The salt is used for one thing: making the id of a
   *new* document from its category and title, so that the same document
   added twice becomes one. Stored documents and their earlier versions carry
   their own ids and text, so an archive read back without the salt is
@@ -706,6 +773,8 @@ above.
   makes a new salt, and adding a document that is already there under the
   same category and title could make a second copy instead of a new version.
   So the salt stays out of the archive, as a secret.
+- **Stricter than rule 2, again: no earlier version of an interview is
+  kept.** See the open question above.
 - **Stricter than rule 2: an interview is kept only while it is public.** Rule
   2 says "never published". An interview that was published and then taken
   down (for example at the guest's request) was once published, so those
@@ -714,24 +783,63 @@ above.
 - **Stricter than the table: a version with no content item is left out.** A
   row of `content_versions` does not say what kind of content it belongs to.
   The job reads the backup's `content` file first and keeps a version only
-  when its content item is in that file and is not an interview that was
-  left out. A version whose item was deleted is left out, because nothing
-  can show it was not an interview.
-- **Where the dry run's report is kept.** In the existing private
-  `cosmos-export-state` container, under `state/archive-report/`. A dry run
-  never writes into `content-archive`, and so works before that container
-  exists.
+  when its content item is in that file and is not an interview. A version
+  whose item was deleted is left out, because nothing can show it was not an
+  interview.
+- **Where the dry run's report is kept, and for how long.** In the existing
+  private `cosmos-export-state` container, under `state/archive-report/`. A
+  dry run never writes into `content-archive`, and so works before that
+  container exists. No storage rule deletes a report, so the code does:
+  starting a dry run deletes every report older than 90 days.
 - **A dry run reads only what it has to.** It reads the backup file of each
-  container an archive would write, and of the seven the owner has not
-  classified. A container left out for a known reason (the access list, the
+  container an archive would write, and of the 21 the owner has not
+  classified. A container left out for a known reason (the access lists, the
   audit rows) is not read; its count comes from the backup's own list.
+- **What a report says about fields.** For every container it reads: the
+  names of its common, plain top-level fields, and a count of the records
+  that carry a field, at any depth, whose *name* looks like a secret or
+  someone's contact details, with those names. Never a value.
+- **A field name can be an id, so not every name is shown.** A record that is
+  a list keyed by visitor id has ids for field names, and a report is kept
+  for weeks. A name is shown only when at least 2 records of the container
+  carry it and at least 1 record in 100, and it starts with a letter, holds
+  only letters, digits, `_` and `-`, is at most 40 characters, has no run of
+  four or more digits, and is not shaped like a UUID or a long run of hex.
+  Every other name is only counted. A container with one record shows none.
+- **A missing container is not "not archived".** Storage answers "not found"
+  for a file in a container that does not exist exactly as for a file that
+  does not exist. So the status asks first whether `content-archive` exists.
+  If it does not, the year's state is "not known" and the start rule has its
+  own blocker for it, so the job in phase 3 can never read "the container is
+  gone" as "this year is safe to start".
+
+## Changed after an independent review (2026-11-24)
+
+A second reader went through phase 2 before it merged, against the owner's
+rule that a secret is never archived and nothing about another person is
+archived without an agreement. Nothing had been archived; these are changes
+to the list the later job will use.
+
+| What the review found | What changed |
+| --- | --- |
+| `mcp_servers` removed four named fields. The editor also accepts a free-form `headers` field and a web address that can carry a key after `?`, and any field added later would have been kept | A keep list. Headers, every sign-in field and unknown fields are dropped; the address loses its query string |
+| Fourteen containers were "archive as is" although no code names them, so nobody had looked inside | Moved to "owner to say". The dry run now reports field names and names that look like a secret for **every** container it reads |
+| `admin_settings` was "archive as is" with a promise to read its document ids later; one document holds an administrator's id | A list of document ids, kept or left out, with a test against the source |
+| `ai_providers` was "archive as is"; an old card could hold a key | A keep list of the fields today's writer accepts |
+| `developer_events` removed four fields from proposals and kept calls whole; a call holds the organizer's name and key id, a proposal holds who reviewed it | A keep list for each kind of record; any other kind is left out |
+| A field name printed in a report could be an id | Only common, plain names are printed; reports are deleted after 90 days |
+| `lab_agents` ties an agent id to a service principal and an admin's id, and was "archive as is" | Left out, as an access list |
+| A missing `content-archive` container read as "this year is not archived" | Asked separately; "not known", with its own blocker |
+| A dry run could be started twice, and one that never finished showed as running for ever | One at a time; after 30 minutes the card says it did not finish and names what is missing; a start that breaks half-way leaves the earlier report showing |
+| Earlier versions of a public interview were kept, drafts included | None is kept; open question above |
+| The Doc Vault's salt was left out by its id and kind | Only the two content kinds are kept |
 
 ## Phases
 
 | Phase | What the pull request contains | The owner's steps |
 | --- | --- | --- |
 | **1. Design** (this record) | This decision record, the note on ADR 0028, the changelog entry. No code, no Terraform, no workflow | Read it; answer the five questions; reply `ACCEPT` on #1811 |
-| **2. Storage and the list** (built 2026-11-24) | Terraform: the private `content-archive` container with `prevent_destroy`, and the app setting `CONTENT_ARCHIVE_ENABLED = "false"`. No lifecycle rule, no immutability policy, no new role. Code with no effect on its own: the archive list (every container and its decision, with the test that fails on an unclassified one), the field-removal function with its "no secret comes out" test, and the report-only dry run | Confirm the Terraform run in HCP Terraform (it adds one empty container and one setting; nothing is replaced or destroyed). Run the dry run from the admin and answer for the seven leftover containers |
+| **2. Storage and the list** (built 2026-11-24) | Terraform: the private `content-archive` container with `prevent_destroy`, and the app setting `CONTENT_ARCHIVE_ENABLED = "false"`. No lifecycle rule, no immutability policy, no new role. Code with no effect on its own: the archive list (every container and its decision, with the test that fails on an unclassified one), the keep lists with their "no secret comes out" test, and the report-only dry run | Confirm the Terraform run in HCP Terraform (it adds one empty container and one setting; nothing is replaced or destroyed). Run the dry run from the admin, answer for the 21 leftover containers, and answer the open question about interview versions |
 | **3. The job and the runbook** | The timer, the per-container job, the check-then-archive step, the manifest, the alert for a run that did not finish, a line on the admin Health page, the read-back button, a new runbook `docs/runbooks/content-archive.md`, and the changes to the data-subject requests runbook from section 5. No new credential, so the credential checklist has nothing to add; the pull request says so row by row | Switch `CONTENT_ARCHIVE_ENABLED` on. The first run happens on the first day the conditions are true (for the archive of 2026: the first Sunday backup on or after 2 February 2027; the owner can ask for an earlier trial archive under a `trial/` folder to prove the read-back sooner). Then do the read-back and write the result on #1811 |
 | **4. Images and audio** (if question 1 is `LATER` or `NOW`) | Sizes from section 3, the choice between this account and a single-region one, the copy job, and its manifest | Run the sizing lines; confirm any Terraform run; read back a sample |
 | **5. A lock, if wanted** | Only after the read-back: an unlocked time-based policy on the container | Decide; confirm the Terraform run |
