@@ -92,6 +92,11 @@ $allowedRootFiles = @(
   # entry in either is a row in docs/security/scanner-triage.md.
   '.gitleaksignore',
   '.checkov.yaml',
+  # The rule files Qlty hands to gitleaks (`--config .gitleaks.toml`) and
+  # bandit (`--ini .bandit`), read from the root the same way. They describe
+  # kinds of harmless match, so a finding stays silenced when its line moves.
+  '.gitleaks.toml',
+  '.bandit',
   # The repository licence (owner decision 2026-09-28, #780: Apache-2.0).
   # GitHub detects a repository's licence from a LICENSE file at the root, and
   # Apache practice keeps NOTICE beside it, so both live at the root by

@@ -1,0 +1,63 @@
+# gitleaks configuration: the built-in rules, plus allowlists that describe
+# KINDS of harmless match rather than single lines.
+#
+# Why this file exists. Until this file, every false positive was silenced in
+# .gitleaksignore by `path:rule:line`. Any edit that moved such a line brought
+# the finding back as a new high "secret" in Qlty Cloud, and new test files
+# brought new ones, so the Code and Security tab's Security grade kept falling
+# to F with no real secret in the repository. An allowlist keyed on what the
+# match is (a test file, a checksum, a commit id) does not move with the line.
+#
+# Who reads it. gitleaks finds `.gitleaks.toml` in the folder it scans, and
+# Qlty's gitleaks plugin passes `--config .gitleaks.toml` when the file exists
+# (`config_files` in Qlty's plugin definition, CLI 0.672.0), so a local run
+# and Qlty Cloud apply the same rules.
+#
+# What still catches a real secret in a test file. trufflehog (also in Qlty)
+# scans every file, test files included, and checks candidate keys against
+# the issuer. GitHub secret scanning covers this public repository as well.
+#
+# The record of each decision is docs/security/scanner-triage.md#gitleaks.
+# A new allowlist needs a row there first.
+
+title = "HCW gitleaks configuration"
+
+[extend]
+# Keep every built-in rule and its own allowlists; this file only adds.
+useDefault = true
+
+[[allowlists]]
+description = "Automated tests and their fixtures: values there are made up so the code under test has something to read"
+paths = [
+  '''\.(test|spec)\.[A-Za-z0-9]+$''',
+  '''\.Tests\.ps1$''',
+  '''(^|/)test_[^/]+\.py$''',
+  '''(^|/)tests?/''',
+  '''(^|/)__fixtures__/''',
+  '''(^|/)__tests__/''',
+]
+
+[[allowlists]]
+description = "Published checksums and public key fingerprints: they identify a file or a public key, they unlock nothing"
+regexTarget = "line"
+regexes = [
+  # lab-image/versions.env: `NAME_SHA256=<64 hex>`, the digest a download is checked against.
+  '''^\s*[A-Za-z0-9_]*_SHA256=[0-9a-fA-F]{64}\s*(#.*)?$''',
+  # Ansible defaults: the fingerprint of a PUBLIC PGP key, 40 hex characters.
+  '''^\s*[a-z0-9_]*_fingerprint:\s*"?[0-9A-Fa-f]{40}"?\s*(#.*)?$''',
+]
+
+[[allowlists]]
+description = "Git commit ids written next to the word commit: a 40-hex commit id has the shape of a legacy Sourcegraph token"
+targetRules = ["sourcegraph-access-token"]
+regexTarget = "line"
+regexes = [
+  '''(?i)\bcommit\b''',
+]
+
+[[allowlists]]
+description = "Firebase Storage download links for images the public site already serves; the token reads that one public object"
+regexTarget = "line"
+regexes = [
+  '''https://firebasestorage\.googleapis\.com/v0/b/[^"'\s]+\?alt=media&token=''',
+]
