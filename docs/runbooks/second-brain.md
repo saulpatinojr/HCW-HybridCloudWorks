@@ -55,7 +55,9 @@ client registration in the environment's identity inventory.
 3. Press **Index creator content**. Watch its checkpoint/status on Home until
    complete. Check each source format, rename/update an article, and remove a
    sample source; search must never return removed text even before indexing
-   catches up. The timer resumes an interrupted queued/running checkpoint.
+   catches up. The timer resumes an interrupted queued/running checkpoint
+   every 15 minutes, and starts a new full rebuild once a day (see
+   *Operations and rollback* below).
 4. Use Node.js 26.10 or newer to build/test. In `obsidian-plugin`, run
    `npm ci --ignore-scripts`, `npm test`, and
    `npm run build`. Copy the contents of `dist` to
@@ -123,8 +125,21 @@ Subscription cancellation is a separate account action.
   reports local pending operations, the last completed cycle, and local errors.
   A failed/offline plugin cannot report fresh status to the server, so the
   hosted timestamp is not a proof that every local change has uploaded.
-- Reindexing resumes a checkpoint; a completed run can be started again. The
-  15-minute timer reconciles content changes without any AI call.
+- Reindexing resumes a checkpoint; a completed run can be started again at
+  any time with **Index creator content**. The timer makes no AI call. It
+  fires every 15 minutes and does one of three things
+  ([#1772](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1772)):
+  it resumes an unfinished rebuild; it starts a new full rebuild when the last
+  one finished 24 hours ago or more (`REBUILD_INTERVAL_MS` in
+  `functions/src/lib/brain/indexing.js`); or it does nothing. So a new or
+  changed site article, social post or recording can take up to a day to
+  reach Second Brain search, unless the button is pressed. Notes are indexed
+  when saved and are not affected. Removed text still never shows, because
+  search re-reads the source.
+- A rebuild that fails part-way is tried again from its saved place at the
+  next firing, 15 minutes later. A rebuild still unfinished 24 hours after
+  it started (`REBUILD_STALLED_MS`) is treated as stuck and started again
+  from the beginning.
 - On an AI failure, use notes/search normally. Answers send bounded excerpts
   to Foundry only and retain no automatic conversation history.
 - Set `brain_ai_enabled=false` to stop AI alone. Set `brain_enabled=false` to

@@ -40,7 +40,8 @@ export default function WorkspaceHome({
           {status.indexing?.completedAt
             ? ` · Last completed ${new Date(status.indexing.completedAt).toLocaleString()}`
             : ''}
-          . New changes are reconciled every 15 minutes.
+          . Notes are indexed when saved. Site content is picked up once a day; press the button
+          below to index it now.
         </p>
         <Button variant="outline" disabled={busy} onClick={onReindex}>
           Index creator content

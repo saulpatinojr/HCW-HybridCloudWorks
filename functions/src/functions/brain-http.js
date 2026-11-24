@@ -81,7 +81,11 @@ app.timer('brainIndexReconcile', {
   extraOutputs: [queue],
   handler: async (_timer, context) => {
     if (!enabled() || process.env.FEATURE_FLAG_SCHEDULERS === 'false') return;
-    await createBrainIndexer(repository()).start();
-    context.extraOutputs.set(queue, { ownerId: process.env.BRAIN_OWNER_OID });
+    // Every firing resumes an unfinished rebuild; a new full rebuild starts
+    // only once a day (REBUILD_INTERVAL_MS, #1772). When there is nothing to
+    // do, no message is queued, so the worker does not run at all.
+    const { action } = await createBrainIndexer(repository()).reconcile();
+    if (action !== 'wait')
+      context.extraOutputs.set(queue, { ownerId: process.env.BRAIN_OWNER_OID });
   },
 });
