@@ -50,6 +50,7 @@ name: Lab host - run a fixed command through Azure Arc
 # allowlist admits the Run Command handler.
 on:
   workflow_dispatch:
+    # checkov:skip=CKV_GHA_7: builds nothing; `action` is a choice of three fixed scripts, matched by a fixed case that refuses any other value, behind the reviewer-gated lab-host-arc environment. docs/security/scanner-triage.md#checkov
     inputs:
       action:
         description: 'What to run on the lab host (status is read-only; bootstrap takes about six minutes)'

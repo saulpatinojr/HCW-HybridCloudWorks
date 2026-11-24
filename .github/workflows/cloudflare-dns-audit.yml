@@ -67,6 +67,7 @@ on:
     # (publish-lab-image 05:20 Tuesdays, publish-content-manifest 06:15).
     - cron: '50 5 * * *'
   workflow_dispatch:
+    # checkov:skip=CKV_GHA_7: read-only audit that builds nothing; the window inputs go through env and are refused unless they are a date or RFC3339 time. docs/security/scanner-triage.md#checkov
     inputs:
       since:
         description: 'Start of the window (YYYY-MM-DD or RFC3339, UTC). Empty: 26 hours before `before`.'
@@ -132,6 +133,14 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${SINCE_INPUT}" ]; then
+            # Checked here as well as by the script, because the value is
+            # written to $GITHUB_OUTPUT (the file a step's outputs are read
+            # from) below, and a line break in it would add an output of its
+            # own. The pattern is parseWhen's in scripts/cloudflare-dns-audit.mjs.
+            if [[ ! "${SINCE_INPUT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2}))?$ ]]; then
+              echo "::error::The since input is neither a YYYY-MM-DD date nor an RFC3339 time such as 2026-11-24T05:50:00Z."
+              exit 1
+            fi
             echo "since=${SINCE_INPUT}" >> "$GITHUB_OUTPUT"
             echo "Window start from the input: ${SINCE_INPUT}"
             exit 0

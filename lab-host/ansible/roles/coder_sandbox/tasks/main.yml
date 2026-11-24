@@ -322,6 +322,7 @@
 # subnet or driver would leave every workspace unable to resolve a name, the
 # way #1267 did, so that is said here rather than found by a learner.
 - name: Read the sandbox network's DNS forwarder from rootlesskit
+  # checkov:skip=CKV2_ANSIBLE_1:a request over rootlesskit's Unix API socket, not the network; the host in the URL is never resolved. docs/security/scanner-triage.md#checkov
   ansible.builtin.uri:
     unix_socket: "{{ coder_sandbox_rootlesskit_api }}"
     url: http://rootlesskit/v1/info

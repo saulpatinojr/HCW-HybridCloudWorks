@@ -28,6 +28,7 @@
 # answers 200 or 404 within that minute still fails the run, before the
 # route below is written.
 - name: Ask Coder whether its first account exists
+  # checkov:skip=CKV2_ANSIBLE_1:Coder's loopback-only port on 127.0.0.1; nothing leaves the host, and Caddy serves the public route over HTTPS. docs/security/scanner-triage.md#checkov
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ coder_http_port }}/api/v2/users/first"
     method: GET

@@ -102,6 +102,7 @@
 # 303 is reported below rather than failing a run that happens to come later.
 # Redirects are not followed, because the 303 leads to a page that answers 200.
 - name: Wait for Portainer to answer on the loopback
+  # checkov:skip=CKV_ANSIBLE_1:Portainer's own self-signed certificate on 127.0.0.1; the read carries no credential and nothing leaves the host. docs/security/scanner-triage.md#checkov
   ansible.builtin.uri:
     url: "https://127.0.0.1:{{ portainer_https_port }}/api/system/status"
     validate_certs: false

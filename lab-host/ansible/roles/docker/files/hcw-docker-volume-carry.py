@@ -36,6 +36,9 @@ import sys
 # userns-remap allocates 65536 subordinate ids; a uid at or above that has no
 # place in the remapped range.
 RANGE = 65536
+# cp by its full path, so this root-run helper never runs a cp found earlier
+# on PATH. Ubuntu's merged /usr puts coreutils there (/bin is a link to it).
+CP = "/usr/bin/cp"
 
 
 def fail(message):
@@ -105,7 +108,7 @@ def main():
     # cp -a keeps modes, timestamps, hard links, symlinks and extended
     # attributes, which PostgreSQL's data directory relies on (its mode 0700
     # above all).
-    subprocess.run(["cp", "-a", "--", source, staging], check=True)
+    subprocess.run([CP, "-a", "--", source, staging], check=True)
     shifted = 0
     if args.uid_shift or args.gid_shift:
         try:
