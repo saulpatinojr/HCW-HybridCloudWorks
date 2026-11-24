@@ -34,7 +34,7 @@ def git_program() -> str:
 
 def git(*args: str) -> str:
     """One git command, as stripped stdout. Raises on a non-zero exit."""
-    result = subprocess.run(
+    result = subprocess.run(  # nosec B603 - list argv, git by full path, no shell
         [git_program(), *args], capture_output=True, text=True, check=False
     )
     if result.returncode != 0:
@@ -154,7 +154,7 @@ def measure_base(
     with tempfile.TemporaryDirectory(prefix="complexity-base-") as tmp:
         tmpdir = Path(tmp)
         for path in paths:
-            blob = subprocess.run(
+            blob = subprocess.run(  # nosec B603 - list argv, git by full path, no shell
                 [program, "show", f"{base_sha}:{path}"],
                 capture_output=True,
                 check=False,

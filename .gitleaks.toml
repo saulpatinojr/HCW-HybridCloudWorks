@@ -68,11 +68,13 @@ paths = ['''^docs/.*\.md$''']
 regexes = ['''^[0-9a-f]{40}$''']
 
 [[allowlists]]
-description = "Firebase Storage download links in the generated content manifest; each token reads one public image the site already serves"
+description = "Firebase Storage download tokens in the generated content manifest; each reads one public image the site already serves"
 targetRules = ["generic-api-key"]
 condition = "AND"
 paths = ['''^frontend/data/content-manifest\.json$''']
-regexTarget = "line"
+# The match itself (`token=<UUID>` at the end of a download link), not the
+# line: any other value on the same line is still checked. Review of #1841.
+regexTarget = "match"
 regexes = [
-  '''https://firebasestorage\.googleapis\.com/v0/b/[^"'\s]+\?alt=media&token=''',
+  '''^token=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"?$''',
 ]

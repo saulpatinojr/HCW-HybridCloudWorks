@@ -2150,24 +2150,39 @@ jobs:
       # allowlist or a skipped check and pass on it). A change to a rule file
       # is still allowed; it takes effect for the pull requests after it
       # merges, and the log says which files it changed. A rule file the base
-      # does not have yet (the first pull request that adds it) is used from
-      # the pull request. Inline notes on one line (`# nosec`,
-      # `checkov:skip`, `trivy:ignore`, `gitleaks:allow`) still come from the
-      # pull request: each sits on the line it excuses, in the diff a
-      # reviewer reads.
+      # does not have is removed, so the scanner runs on its own defaults: a
+      # new rule file cannot excuse anything in the pull request that adds it.
+      # A rule path that is a symbolic link (a file that points at another
+      # file) is refused, and each file is removed before it is written, so
+      # writing the base copy can never overwrite the file a link points at.
+      # Inline notes on one line (`# nosec`, `checkov:skip`, `trivy:ignore`,
+      # `gitleaks:allow`) still come from the pull request: each sits on the
+      # line it excuses, in the diff a reviewer reads. Review of #1841,
+      # 2026-11-24.
       - name: Use the base branch's scanner rules
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
+          if [ -L .qlty ]; then
+            echo "::error file=.qlty,title=Scanner rules::.qlty is a symbolic link; the scan refuses to run with it."
+            exit 1
+          fi
           for file in .qlty/qlty.toml .gitleaks.toml .gitleaksignore .bandit .checkov.yaml; do
+            if [ -L "${file}" ]; then
+              echo "::error file=${file},title=Scanner rules::${file} is a symbolic link; the scan refuses to run with it."
+              exit 1
+            fi
             if git cat-file -e "${BASE_SHA}:${file}" 2> /dev/null; then
               if ! git diff --quiet "${BASE_SHA}" HEAD -- "${file}"; then
                 echo "::notice file=${file},title=Scanner rules changed::This pull request changes ${file}. The scan below uses the base branch's copy; the change applies to pull requests after this one merges."
               fi
+              mkdir -p "$(dirname -- "${file}")"
+              rm -f -- "${file}"
               git show "${BASE_SHA}:${file}" > "${file}"
-            else
-              echo "${file}: not on the base branch; using this pull request's copy"
+            elif [ -e "${file}" ]; then
+              echo "::notice file=${file},title=Scanner rules added::${file} is not on the base branch, so this scan runs without it; it applies to pull requests after this one merges."
+              rm -f -- "${file}"
             fi
           done
 

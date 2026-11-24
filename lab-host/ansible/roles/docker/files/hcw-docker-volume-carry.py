@@ -108,7 +108,7 @@ def main():
     # cp -a keeps modes, timestamps, hard links, symlinks and extended
     # attributes, which PostgreSQL's data directory relies on (its mode 0700
     # above all).
-    subprocess.run([CP, "-a", "--", source, staging], check=True)
+    subprocess.run([CP, "-a", "--", source, staging], check=True)  # nosec B603 - list argv, cp by full path, no shell
     shifted = 0
     if args.uid_shift or args.gid_shift:
         try:

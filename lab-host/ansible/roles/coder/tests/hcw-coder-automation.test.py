@@ -228,7 +228,7 @@ check("the timer runs the service daily, catching up after a day off",
 SH = shutil.which("sh")
 if SH is None:
     sys.exit("hcw-coder-automation.test.py: no sh on PATH, which the seed wrapper's syntax check needs")
-seed_check = subprocess.run([SH, "-n"], input=seed_wrapper, capture_output=True, text=True)
+seed_check = subprocess.run([SH, "-n"], input=seed_wrapper, capture_output=True, text=True)  # nosec B603 - sh -n only parses
 check("the seed wrapper parses and hands its arguments to the helper's seed command",
       seed_check.returncode == 0
       and seed_wrapper.rstrip().endswith(

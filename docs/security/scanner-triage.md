@@ -105,7 +105,12 @@ the base branch's rule files** (`.qlty/qlty.toml`, `.gitleaks.toml`,
 `.gitleaksignore`, `.bandit`, `.checkov.yaml`), so a pull request cannot
 loosen its own scan; a rule change applies to the pull requests after it
 merges, and the job's log names the changed file. A rule file the base does
-not have yet is used from the pull request. Inline notes on one line
+not have is removed for the scan, so a new rule file cannot excuse anything
+in the pull request that adds it, this one included: the four `subprocess`
+lines this pull request touches carry `# nosec B603` with the reason instead.
+A rule path that is a symbolic link is refused, and each file is removed
+before it is written, so the step cannot overwrite a file a link points at
+(both from Copilot's review on #1841). Inline notes on one line
 (`# nosec`, `checkov:skip`, `trivy:ignore`, `gitleaks:allow`) still come from
 the pull request, in the diff a reviewer reads. Proved
 both ways on 2026-11-24: clean on this branch, and exit 1 on a throwaway
@@ -492,7 +497,7 @@ The other six findings were handled in code:
 match **is**. Each names the one rule it answers (`targetRules`), so every
 precise rule (AWS keys, GitHub tokens, private keys and the rest) still runs
 everywhere, test files included; only the broad `generic-api-key` heuristic
-is quietened, and only where an allowlist says. They so they hold when a line moves or a new file arrives. Qlty
+is quietened, and only where an allowlist says. They hold when a line moves or a new file arrives. Qlty
 passes the file to gitleaks with `--config` (its gitleaks plugin lists
 `config_files = [".gitleaks.toml"]` in CLI 0.672.0). The note further down
 that "Qlty's gitleaks plugin did not read one when tested" was true of the
@@ -507,7 +512,7 @@ before this was written. None is printed here.
 | `generic-api-key` on a line that is only `NAME_SHA256=<64 hex>` | 2 in `lab-image/versions.env` | A published checksum of a download. It unlocks nothing. Nothing else may follow on the line, so a value after it is still checked. |
 | `generic-api-key` on a line that is only `…_fingerprint: <40 hex>` | 1 in `lab-host/ansible/roles/vault/defaults/main.yml` | The fingerprint of a public PGP key. |
 | `sourcegraph-access-token` whose matched value is exactly 40 hex characters, in `docs/**/*.md` | 2 in `docs/architecture/azure-architecture-mcp-appliance.md` | A git commit id has the same 40-hex shape as a legacy Sourcegraph token. The test is on the matched value, not the line, so a modern `sgp_` token beside it is still checked. |
-| `generic-api-key` on a Firebase Storage download link, in `frontend/data/content-manifest.json` only | 3 there (Qlty excludes the folder; gitleaks alone does not) | The rows below; the token reads one public image. |
+| `generic-api-key` whose matched value is exactly `token=<UUID>`, in `frontend/data/content-manifest.json` only | 3 there (Qlty excludes the folder; gitleaks alone does not) | The download token at the end of a Firebase Storage link; it reads one public image (rows below). The test is on the matched value, not the line, so another key on the same line is still caught (checked by planting one, 2026-11-24, after Copilot's review on #1841). |
 
 Tested with gitleaks 8.29.1: 37 matches before, 0 after, on the whole tree
 and file by file as Qlty runs it. The same files without the config still
