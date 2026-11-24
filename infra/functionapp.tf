@@ -136,6 +136,18 @@ locals {
     # off until the owner adds SYNC_SEARCH_CONSOLE to enabled_timers
     # (docs/runbooks/search-console.md).
     SYNC_SEARCH_CONSOLE = "syncSearchConsole — daily 00:10 and 12:10 UTC (the owner's 06:00 and 18:00 Central, an hour later in summer), refreshes the admin Search Console page from Google's URL Inspection, Search Analytics and Sitemaps APIs"
+    # #1822: the Second Brain index timer (brain-http.js). Unlike the entries
+    # above, this timer was ALREADY RUNNING when it was catalogued: until then
+    # it checked only BRAIN_ENABLED and the master switch. It still needs
+    # both, and now this flag too. So BRAIN_INDEX_RECONCILE has to be in
+    # enabled_timers BEFORE the functions that read the flag are deployed,
+    # or the search index stops being rebuilt each day (the Index creator
+    # content button still works). deploy-functions.yml refuses to deploy
+    # while the app has no such setting, and the plan that adds it as "false"
+    # is not declared in scripts/assert-expected-plan.mjs, so it reads as
+    # UNEXPECTED. Removing the name later is the way to pause the timer
+    # without switching Second Brain off.
+    BRAIN_INDEX_RECONCILE = "brainIndexReconcile — every 15 minutes, resumes an unfinished rebuild of the Second Brain search index and starts a full rebuild once a day (#1772); does nothing unless BRAIN_ENABLED is true"
   }
 
   timer_flags = {

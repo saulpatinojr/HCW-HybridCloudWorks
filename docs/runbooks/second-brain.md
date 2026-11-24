@@ -206,6 +206,33 @@ Subscription cancellation is a separate account action.
   next firing, 15 minutes later. A rebuild still unfinished 24 hours after
   it started (`REBUILD_STALLED_MS`) is treated as stuck and started again
   from the beginning.
+- **The timer has its own switch**
+  ([#1822](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1822)).
+  It runs only while three things hold: `brain_enabled` is `true`,
+  `schedulers_master_enabled` is `true`, and `"BRAIN_INDEX_RECONCILE"` is in
+  the `enabled_timers` list. All three are Terraform variables in the
+  [`hcw-azure` workspace](https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables).
+  Terraform turns the list into the app setting
+  `FEATURE_FLAG_BRAIN_INDEX_RECONCILE` (`"true"` when the name is listed,
+  `"false"` when it is not).
+  - *To pause the daily rebuild without switching Second Brain off:* remove
+    `"BRAIN_INDEX_RECONCILE"` from `enabled_timers`, start a run from the
+    [runs page](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs)
+    and confirm it. The plan changes one line, the flag from `"true"` to
+    `"false"`; the plan check lists it as UNEXPECTED on purpose, as it does
+    for every timer being switched off. Notes, search and the **Index creator
+    content** button keep working; site articles, social posts and recordings
+    stop reaching the index by themselves. Put the name back the same way to
+    resume.
+  - *How to tell it is off:* the timer still fires every 15 minutes and
+    returns at once, so the overdue-timer alert stays quiet. The first firing
+    after each restart writes one Warning line,
+    `[brainIndexReconcile] disabled — skipping`, and every run of
+    `deploy-functions.yml` shows a warning that names the flag.
+  - *On a rebuilt estate:* put `"BRAIN_INDEX_RECONCILE"` in `enabled_timers`
+    before the first deploy of the functions. `deploy-functions.yml` refuses
+    to deploy while the app has no `FEATURE_FLAG_BRAIN_INDEX_RECONCILE`
+    setting at all, which means Terraform has not applied yet.
 - On an AI failure, use notes/search normally. Answers send bounded excerpts
   to Foundry only and retain no automatic conversation history.
 - Set `brain_ai_enabled=false` to stop AI alone. Set `brain_enabled=false` to

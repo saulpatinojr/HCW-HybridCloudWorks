@@ -36,7 +36,7 @@ jobs:
       contents: read # the checkout, nothing more
       id-token: write # exchanged by azure/login for an Azure access token
     runs-on: ubuntu-26.04
-    timeout-minutes: 60 # slowest 5 min; each step up to the last window close has its own limit, 55 min in all (#1441); waiting for approval does not count
+    timeout-minutes: 61 # slowest 5 min; each step up to the last window close has its own limit, 56 min in all (#1441); waiting for approval does not count
     # The backend deploy's own environment, `production-backend` (#1617). It
     # has required reviewers (saulpatinojr and hcw-architect, either one
     # approves, no administrator bypass) and a main-only deployment-branch
@@ -177,6 +177,37 @@ jobs:
       # if it fails, the cleanup has already restored Deny and the site keeps
       # running the package it had. Unset, or any other value, is today's
       # behaviour.
+      # The Second Brain index timer (brainIndexReconcile) was already running
+      # when it was given its own switch (#1822). The code this deploy ships
+      # runs it only while the app setting FEATURE_FLAG_BRAIN_INDEX_RECONCILE
+      # is "true", and Terraform writes that setting. A deploy that lands
+      # before Terraform has written it would stop the daily rebuild of the
+      # Second Brain search index without any error, so this step refuses
+      # while the setting is absent. "false" is a choice the owner can make
+      # (the timer is paused), so it is said in a warning and not refused.
+      # Read-only, and before the firewall windows open, so a refusal leaves
+      # nothing to unwind. The value is "true" or "false", never a secret.
+      - name: Refuse to deploy before the Second Brain timer's switch exists
+        timeout-minutes: 1 # one read of the app settings, a few seconds
+        env:
+          APP: ${{ vars.FUNCTION_APP_NAME }}
+          RG: ${{ vars.RESOURCE_GROUP }}
+        run: |
+          set -euo pipefail
+          flag=$(az functionapp config appsettings list -n "$APP" -g "$RG" --query "[?name=='FEATURE_FLAG_BRAIN_INDEX_RECONCILE'].value | [0]" -o tsv)
+          case "$flag" in
+            true)
+              echo "FEATURE_FLAG_BRAIN_INDEX_RECONCILE is true: the Second Brain index timer keeps running"
+              ;;
+            false)
+              echo "::warning::FEATURE_FLAG_BRAIN_INDEX_RECONCILE is false on $APP, so the Second Brain index timer is switched off and the search index is rebuilt only by the Index creator content button. If that is not intended, add BRAIN_INDEX_RECONCILE to enabled_timers in the hcw-azure workspace variables and apply (docs/runbooks/second-brain.md)."
+              ;;
+            *)
+              echo "::error::$APP has no FEATURE_FLAG_BRAIN_INDEX_RECONCILE setting. Terraform has not applied it yet, and deploying now would stop the daily rebuild of the Second Brain search index. Add BRAIN_INDEX_RECONCILE to enabled_timers in the hcw-azure workspace variables, apply in HCP Terraform, then run this deploy again (docs/runbooks/second-brain.md)."
+              exit 1
+              ;;
+          esac
+
       - name: Open storage firewall window for this runner
         id: fw
         timeout-minutes: 3 # slowest 48 s, 30 of them a sleep
