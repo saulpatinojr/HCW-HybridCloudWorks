@@ -862,18 +862,11 @@ export const DECLARED = [
   // The job adds no Terraform of its own: it rides the nightly export's
   // timer, so there is no new timer flag and no new row on
   // alert-timer-overdue.
-  {
-    address: "azurerm_storage_container.content_archive",
-    action: "create",
-    reason: "#1811 ADR 0046: the private content-archive container for the yearly content archive",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.CONTENT_ARCHIVE_ENABLED",
-    before: undefined,
-    after: "false",
-    reason: "#1811 ADR 0046: the yearly content archive's switch declared, off",
-  },
+  // The container and the switch (declared off) were applied on 2026-11-24:
+  // the owner's dry runs that day wrote their reports and the Archive card
+  // read the switch as Off. Those two declarations are gone, so a plan that
+  // creates the container again, or adds the switch from nothing, is read as
+  // unexpected. What is left is the arming change the owner asked for.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.CONTENT_ARCHIVE_ENABLED",

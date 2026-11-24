@@ -731,6 +731,11 @@ contents the code cannot describe. Seven were on this list from the start (`tool
 
 ### Open question for the owner: earlier versions of a published interview
 
+**Answered on 2026-11-24: `NONE`.** The owner replied `NONE` on
+[#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811), so
+the code stays as it is: no earlier version of any interview is archived. The
+question is kept below as it was asked, for the record.
+
 **What is being decided.** The editor keeps an earlier copy of a content item
 on every save (`content_versions`). For an interview that is public today,
 those copies include its drafts from before it was published. Should the
@@ -801,8 +806,15 @@ What that means in the list
   headers, `ai_providers` an old key, `developer_events` the speakers'
   details, and `admin_config` and `admin_settings` the documents they left
   out. No secret was put back.
-- **Still open, unchanged:** earlier versions of a published interview stay
-  out (`NONE`, the open question above).
+- **Answered later the same day:** earlier versions of a published interview
+  stay out (`NONE`, the question above).
+- **Armed the same day.** The owner replied "arm now", knowing the job
+  archives the last calendar year, so the first archive is the one of 2025,
+  made from the newest Sunday backup of November 2026 (the site as it is
+  then, not as it was in December 2025). The reason given to the owner for
+  arming early: the job had never run against real storage, and a first run
+  on a small copy leaves time to fix anything before the archive of 2026 in
+  February 2027.
 
 ## What phase 2 settled
 

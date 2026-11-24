@@ -968,10 +968,12 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # (functions/src/lib/backup/archive-job.js). While it reads anything
     # else nothing is read or written, the admin's Archive card (Health,
     # Overview) reports it as off, and the dry run, which writes no archive,
-    # works either way. Flip it in a pull request of its own, after the
+    # works either way. It is flipped in a pull request of its own, after the
     # owner has read a dry-run report and said yes
-    # (docs/runbooks/content-archive.md).
-    "CONTENT_ARCHIVE_ENABLED" = "false"
+    # (docs/runbooks/content-archive.md). The owner said yes on 2026-11-24
+    # ("arm now", #1811), after two dry-run reports, knowing the first archive
+    # it writes is the one of 2025.
+    "CONTENT_ARCHIVE_ENABLED" = "true"
 
     # The Cosmos out-of-account exporter (ADR 0028, #231): a 03:00 UTC timer
     # that fans one queue message per exported container onto the platform

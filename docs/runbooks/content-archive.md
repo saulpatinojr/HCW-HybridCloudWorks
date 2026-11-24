@@ -15,7 +15,7 @@ to do when one does not finish, and how to read an archived file back.
 | Part | State |
 | --- | --- |
 | The storage for it: a private blob container (a folder for files in Azure Storage) named `content-archive` on the account `stsiteprodcus01` | In Terraform. It exists once the owner has confirmed the run that follows the merge. Empty |
-| The switch: the app setting `CONTENT_ARCHIVE_ENABLED` on the Function App (the site's server-side code) | In Terraform, set to `false` |
+| The switch: the app setting `CONTENT_ARCHIVE_ENABLED` on the Function App (the site's server-side code) | In Terraform, set to `true` since the owner said "arm now" on 2026-11-24 ([#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)). It is live once the owner has confirmed the Terraform run that follows that pull request; until then the card still reads Off. The first archive it writes is the one of 2025, because the job always archives the last calendar year |
 | The list of what is kept, changed and left out, container by container | In code, with a test: [`archive-classification.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/archive-classification.js) |
 | The dry run and its report | Built. On the admin at [Health → Overview](https://hybridcloudworks.com/admin/health?tab=overview), card **Archive** |
 | The job that writes an archive, and the daily check that starts it | Built: [`archive-job.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/backup/archive-job.js). **Switched off.** While the switch is off it reads nothing and writes nothing. See [What a run does](#what-a-run-does-step-by-step) |
