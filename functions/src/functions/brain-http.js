@@ -10,6 +10,7 @@ import {
 } from '../lib/brain/repository.js';
 import { createBrainHandlers } from '../lib/brain/handlers.js';
 import { BRAIN_QUEUE, createBrainIndexer } from '../lib/brain/indexing.js';
+import { logDisabledSkip, timerEnabled } from '../lib/timers/flag-gate.js';
 
 const queue = output.storageQueue({
   queueName: BRAIN_QUEUE,
@@ -75,12 +76,32 @@ app.storageQueue('brainIndexWorker', {
       context.extraOutputs.set(queue, { ownerId: process.env.BRAIN_OWNER_OID });
   },
 });
-app.timer('brainIndexReconcile', {
+/**
+ * The Second Brain index timer and its own switch (#1822). It runs when three
+ * things hold: Second Brain is on (`enabled()` above), the schedulers master
+ * switch `FEATURE_FLAG_SCHEDULERS` is not "false", and its own flag
+ * `FEATURE_FLAG_BRAIN_INDEX_RECONCILE` is "true". The last two are the gate
+ * every catalogued timer uses (lib/timers/flag-gate.js); the flag is written
+ * by Terraform from `local.timer_catalogue` (infra/functionapp.tf) and is
+ * "true" only while BRAIN_INDEX_RECONCILE is in the `enabled_timers` workspace
+ * variable. Switched off, the timer still fires and returns at once, so the
+ * overdue-timer alert stays quiet; the index is then rebuilt only by the
+ * Index creator content button.
+ */
+const TIMER_NAME = 'brainIndexReconcile';
+const TIMER_FLAG = 'BRAIN_INDEX_RECONCILE';
+app.timer(TIMER_NAME, {
   schedule: '0 */15 * * * *',
   runOnStartup: false,
   extraOutputs: [queue],
   handler: async (_timer, context) => {
-    if (!enabled() || process.env.FEATURE_FLAG_SCHEDULERS === 'false') return;
+    // Second Brain off: nothing to say, as before. The timer's own switch
+    // off: say so once per process at Warning, like its siblings.
+    if (!enabled()) return;
+    if (!timerEnabled(TIMER_FLAG)) {
+      logDisabledSkip(context, TIMER_NAME);
+      return;
+    }
     // Every firing resumes an unfinished rebuild; a new full rebuild starts
     // only once a day (REBUILD_INTERVAL_MS, #1772). When there is nothing to
     // do, no message is queued, so the worker does not run at all.

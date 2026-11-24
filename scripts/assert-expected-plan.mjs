@@ -777,6 +777,26 @@ export const DECLARED = [
     reason: "#1612: the Search Console property the page reads",
   },
 
+  // #1822: the Second Brain index timer, brainIndexReconcile, gets its own
+  // flag. This timer was already running when it was catalogued, so its
+  // flag must arrive as "true": the functions that read it stop the daily
+  // rebuild of the search index when it is "false". So only that plan is
+  // declared. The owner adds BRAIN_INDEX_RECONCILE to enabled_timers after
+  // the merge and before confirming a run. A plan that adds the flag as
+  // "false" (the name is not in enabled_timers yet) is deliberately NOT
+  // declared: it shows as UNEXPECTED, which is the prompt to add the name
+  // and plan again, not to confirm. Delete this entry once it has applied.
+  // Pausing the timer later ("true" -> "false") is not declared either, like
+  // every other disarming plan.
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_BRAIN_INDEX_RECONCILE",
+    before: undefined,
+    after: "true",
+    reason:
+      "#1822: the Second Brain index timer catalogued with BRAIN_INDEX_RECONCILE already in enabled_timers, so it keeps running",
+  },
+
   // #1754 (ADR 0042): the Developer API's container, developer_events, added
   // to infra/cosmos-containers.json. It holds the calls for speakers and the
   // talk proposals sent to them, one partition per event. It has no computed
