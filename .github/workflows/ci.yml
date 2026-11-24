@@ -2180,7 +2180,7 @@ jobs:
           # How much there was to scan, so a scan that looked at nothing does
           # not read like a clean one. (Qlty's --summary was tried: it prints
           # only the counts and hides which file and line failed.)
-          echo "files this pull request changes: $(git diff --name-only "${BASE_SHA}" HEAD | wc -l)"
+          echo "files this pull request changes: $(git diff --numstat "${BASE_SHA}" HEAD | wc -l)"
           qlty check --upstream "${BASE_SHA}" --filter "${QLTY_SECURITY_PLUGINS}" \
             --no-formatters --no-fix --no-progress --level medium --fail-level medium
 
