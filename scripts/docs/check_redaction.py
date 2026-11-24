@@ -118,6 +118,7 @@ ALLOWED_GUIDS = {
     "e147488a-f6f5-4113-8e2d-b22465e65bf6": "Key Vault Crypto Service Encryption User built-in role id (Microsoft constant; infra/lab-hybrid.tf)",
     "b64e21ea-ac4e-4cdf-9dc9-5b892992bee7": "Azure Connected Machine Onboarding built-in role id (Microsoft constant; scripts/lab/Register-LabArc.ps1)",
     "cf1c38e5-3621-4004-a7cb-879624dced7c": "Entra built-in role Application Developer template id (Microsoft constant, learn.microsoft.com permissions reference; docs/runbooks/muse-azure-reader.md, #1763)",
+    "00000003-0000-0000-c000-000000000000": "Microsoft Graph first-party application id (Microsoft constant, learn.microsoft.com/graph/permissions-grant-via-msgraph; docs/runbooks/muse-azure-reader.md, #1763)",
     "fc9b3da7-8347-4380-8e70-0a0361d8dedd": "Azure Policy built-in definition 'Linux machines should meet requirements for the Azure compute security baseline' (Microsoft constant; infra/lab-hybrid.tf)",
     "dfee1d68-95f7-4a8f-9c0e-7ebe61112472": "Cloudflare custom-hostname ownership token for go.hybridcloudworks.com: the content of a public DNS TXT record, readable by anyone who queries the name (infra/frontend.tf)",
     # The browser tests' e2e00000-0000-4000-8000-... ids (client ...c11e,
