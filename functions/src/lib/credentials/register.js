@@ -216,6 +216,23 @@ const KEY_VAULT_METADATA = Object.freeze({
     consumer:
       "StreamYard On-Air webinar registrants, newsletter sync and Telegram alerts",
   },
+  // The Community Days developer key (#1823, ADR 0045). Stored in Key Vault
+  // because the site's own code reads it (lib/community-days/client.js).
+  // Hand-renewed: the owner makes it on the vendor's developers page and no
+  // API renews it. The vendor's documentation says a key can expire but not
+  // after how long (https://api.communitydays.org/v1/openapi-events.json,
+  // the 401 answer, read 2026-11-24), so the reminder uses the 180-day
+  // hand-rotation rule for now. The key's real expiry is shown on the "Your
+  // keys" tab of the vendor's developers page; when the owner has read it
+  // there, replace HAND_ROTATION_DAYS below with that number of days.
+  "COMMUNITY-DAYS-API-KEY": {
+    issuer: "Community Days (developers page, Your keys)",
+    consumer:
+      "Speaking hub, Events to apply to: reads the list of events with an open call for speakers, and the owner’s talks",
+    lifetimeDays: HAND_ROTATION_DAYS,
+    rotate:
+      "Make a new key on the Community Days developers page (Your keys), paste it on Integrations → Keys, press Test on the Community Days card, then delete the old key on that page. The key can change your events there, so delete the old one the same day.",
+  },
   "YOUTUBE-API-KEY": {
     issuer: "Google Cloud",
     consumer: "Listen & Learn “watch next” links",

@@ -198,6 +198,17 @@ export const AI_TASKS = Object.freeze({
     public: false,
     recommended: foundryNano('A caption is a sentence or two.'),
   }),
+  speakingEstimate: task({
+    label: 'Speaking acceptance estimate',
+    description:
+      'Reads one event from the Speaking hub’s “Events to apply to” tab and gives a rough percentage chance that it would accept a talk, with two or three reasons.',
+    route:
+      'The Estimate button on Speaking → Events to apply to, one event per press. Nothing runs by itself. Off means the button answers that the feature is switched off.',
+    modality: 'json',
+    needs: ['text', 'json'],
+    public: false,
+    recommended: foundryNano('One event page of text in, a number and three short reasons out.'),
+  }),
   listenAndLearn: task({
     label: 'Listen & Learn scripts',
     description: 'Scripts a two-host study episode for one skill area of a certification guide.',

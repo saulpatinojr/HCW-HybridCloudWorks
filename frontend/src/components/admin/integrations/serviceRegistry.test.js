@@ -44,6 +44,8 @@ describe('the service registry', () => {
       'YouTube',
       'Plaud',
       'Sessionize',
+      // #1823: the directory behind Speaking → Events to apply to.
+      'Community Days',
       'Credly',
       'Microsoft Learn',
       'AWS Skill Builder',
@@ -395,6 +397,7 @@ describe('the service registry', () => {
         ['youtube', 'youtube'],
         ['resend', 'resend'],
         ['qlty', 'qlty'],
+        ['community-days', 'communityDays'],
       ]) {
         postJSON.mockResolvedValueOnce({ ok: true, status: 200, data: {} });
         await runnerFor(id)();
@@ -467,6 +470,99 @@ describe('the service registry', () => {
     it('says what a YouTube press costs, because pressing it spends quota', async () => {
       postJSON.mockResolvedValueOnce({ ok: true, status: 200, data: { items: [] } });
       await expect(runnerFor('youtube')()).resolves.toMatch(/quota/i);
+    });
+  });
+
+  describe('the Community Days card (#1823)', () => {
+    const card = () => SERVICES.find((service) => service.id === 'community-days');
+
+    beforeEach(() => postJSON.mockReset());
+
+    it('says what it is, where it is used, and that data only comes in', () => {
+      expect(card()).toMatchObject({
+        group: 'content',
+        name: 'Community Days',
+        secrets: ['COMMUNITY-DAYS-API-KEY'],
+        usedIn: ['Speaking (Events to apply to)'],
+        url: 'https://www.communitydays.org/developers',
+      });
+      expect(card().dataDirection).toMatch(/^Inbound only/);
+    });
+
+    it('says plainly that the key is not read-only and that the site only reads with it', () => {
+      expect(card().securityNote).toMatch(/This key is not read-only/);
+      expect(card().securityNote).toMatch(/create, change and delete/);
+      expect(card().securityNote).toMatch(/The site only reads with it/);
+      expect(card().securityNote).toMatch(/never reaches a browser/);
+    });
+
+    it('says the documentation states no charge, without calling it free or pointing at the ledger', () => {
+      expect(card().cost).toBe('No charge is stated in the vendor’s documentation.');
+      expect(card().cost).not.toMatch(/\bfree\b/i);
+      expect(card().costOnLedger).toBeUndefined();
+    });
+
+    it('says how the key is tested, replaced and when it expires', () => {
+      expect(card().credentialNote).toMatch(/Tested with the Test button/);
+      expect(card().credentialNote).toMatch(/Expires: .*Your keys tab/);
+      expect(card().rotateNote).toMatch(/delete the old key/);
+    });
+
+    it('says Connected only when the server-side probe passed', async () => {
+      postJSON.mockResolvedValueOnce({ ok: true, status: 200, data: { total: 42 } });
+      await expect(card().test()).resolves.toBe(
+        'Connected — the key works and API access is approved (42 event(s) published there).'
+      );
+      postJSON.mockResolvedValueOnce({ ok: true, status: 200, data: { total: null } });
+      await expect(card().test()).resolves.toBe(
+        'Connected — the key works and API access is approved.'
+      );
+    });
+
+    it.each([
+      [
+        'no key yet',
+        {
+          ok: false,
+          code: 'INTEGRATION_NOT_CONFIGURED',
+          error:
+            'No key yet: the Community Days key has not been pasted on the Keys tab. Community Days must approve API access first; then paste the key there and press Test again.',
+        },
+        /^No key yet: /,
+      ],
+      [
+        'a key that was not accepted',
+        {
+          ok: false,
+          status: 401,
+          error:
+            'Community Days did not accept the key: it is missing, wrong, deleted or expired. Paste a current key on Integrations → Keys (HTTP 401).',
+        },
+        /did not accept the key/,
+      ],
+      [
+        'API access not approved yet',
+        {
+          ok: false,
+          status: 403,
+          error:
+            'Community Days answered that API access is not approved for this account yet, or the account is blocked. Nothing is wrong with this site; the approval is given on the Community Days developers page (HTTP 403).',
+        },
+        /not approved for this account yet/,
+      ],
+      [
+        'too many requests',
+        {
+          ok: false,
+          status: 429,
+          error:
+            'Community Days is limiting how often this site may ask. Wait a while and try again (HTTP 429).',
+        },
+        /limiting how often/,
+      ],
+    ])('shows the server’s own sentence for %s', async (_name, envelope, sentence) => {
+      postJSON.mockResolvedValueOnce(envelope);
+      await expect(card().test()).rejects.toThrow(sentence);
     });
   });
 

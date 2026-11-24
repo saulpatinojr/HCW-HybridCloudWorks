@@ -127,6 +127,9 @@ const placements = ({ content, altText, brain = 'off' }) =>
     interviewDrafting: content,
     voiceCalibration: content,
     socialCaption: content,
+    // The Speaking hub's acceptance estimate (#1823): owner-triggered, one
+    // event per press, placed like the other owner-triggered text work.
+    speakingEstimate: content,
     listenAndLearn: content,
     podcastScript: content,
     telegram: content,

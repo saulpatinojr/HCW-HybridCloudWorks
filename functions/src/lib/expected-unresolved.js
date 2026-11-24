@@ -66,6 +66,15 @@ export const EXPECTED_UNRESOLVED = new Map([
     "CODER_BROKER_TOKEN",
     "Coder broker token for visitor lab sessions, unseeded until the owner mints it in Coder and seeds CODER-BROKER-TOKEN on Integrations -> Keys",
   ],
+  // The Community Days developer key (#1823) waits on the owner as well: the
+  // reference lands with its Terraform run, and the key cannot be pasted
+  // until Community Days has approved API access for the owner's account.
+  // Until then the Speaking hub's "Events to apply to" tab says the key is
+  // not set and nothing is called. Take it off when the owner seeds it.
+  [
+    "COMMUNITY_DAYS_API_KEY",
+    "Community Days developer key, unseeded until Community Days approves API access and the owner seeds COMMUNITY-DAYS-API-KEY on Integrations -> Keys",
+  ],
   // CODER_STATUS_TOKEN was here from its Terraform run until the owner
   // created it in Coder and seeded CODER-STATUS-TOKEN on 2026-09-28 (#682),
   // when the site's Coder card first listed hcw-lab and a running count. It

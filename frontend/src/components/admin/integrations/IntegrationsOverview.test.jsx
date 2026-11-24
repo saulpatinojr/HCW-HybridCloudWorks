@@ -188,6 +188,8 @@ describe('Test all', () => {
         'telegram',
         'podbean',
         'mcpProxy',
+        // #1823: one read of a public event with the stored key.
+        'communityDays',
         // ADR 0033: the language models (five since Foundry got its card,
         // 2026-11-22), then the two AI-service probes.
         'testAiProvider',

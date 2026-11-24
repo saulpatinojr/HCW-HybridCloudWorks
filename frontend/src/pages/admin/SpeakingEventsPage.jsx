@@ -9,6 +9,11 @@
  *   Upcoming    sessions today or later, with Enrich / Edit / Delete, search
  *               and a status filter
  *   Past        delivered sessions, with slides and event links, still editable
+ *   Events to   other people's events with an open call for speakers, read by
+ *   apply to    the server from the Community Days directory, with the
+ *               owner's status, costs, notes and a rough acceptance estimate,
+ *               and a small calendar that marks clashes with the owner's own
+ *               talks (#1823; the tab reads its own list while it is open)
  *   Sources     Sessionize (last read, what a sync would change, Sync) and
  *               manual entries (Manual Entry)
  *   Publishing  the public snapshot, what a publish would write, Publish
@@ -41,6 +46,7 @@ import ConfirmModal from '@/components/admin/ConfirmModal';
 import PageHeader from '@/components/admin/shared/PageHeader';
 import { TABS, resolveTab } from '@/components/admin/speaking-events/tabs';
 import { PastTab, UpcomingTab } from '@/components/admin/speaking-events/SessionsTab';
+import ApplyTab from '@/components/admin/speaking-events/ApplyTab';
 import SourcesTab from '@/components/admin/speaking-events/SourcesTab';
 import PublishingTab from '@/components/admin/speaking-events/PublishingTab';
 import SettingsTab from '@/components/admin/speaking-events/SettingsTab';
@@ -58,6 +64,7 @@ import { mergeEvents } from '@/components/admin/speaking-events/eventModel';
 const PANELS = {
   upcoming: UpcomingTab,
   past: PastTab,
+  apply: ApplyTab,
   sources: SourcesTab,
   publishing: PublishingTab,
   settings: SettingsTab,
@@ -66,6 +73,7 @@ const PANELS = {
 const HELP = [
   'Sessionize is read live; Sync from Sessionize on Sources creates a stored row for each event so you can enrich it.',
   'Enrich a row with its status, CFP deadline, sessions, slides, recording, attendance and evidence links. The Ambassador hub imports those as evidence.',
+  'Events to apply to lists other events with an open call for speakers. Record a status, costs and notes for each; an estimate of the chance of acceptance is a rough guess and is made only when you press Estimate.',
   'Only rows with Show on site ticked are public; unticking it on a Sessionize event hides that event publicly too.',
   'Visitors see changes after Publish snapshot on the Publishing tab — the About page renders the newer of the published snapshot and the deploy-time copy.',
 ];
