@@ -79,6 +79,7 @@ const EXPECTED_SHIM_FILES = [
   "code-quality-http.js",
   "community-days-http.js",
   "connection-probe-http.js",
+  "content-archive-http.js",
   "content-workflow-http.js",
   "cosmos-export.js",
   "cost-http.js",

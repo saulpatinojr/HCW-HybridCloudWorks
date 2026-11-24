@@ -70,6 +70,8 @@
     "cmsCommunityDaysEvents",
     "cmsCommunityDaysRefresh",
     "cmsConfigDoc",
+    "cmsContentArchive",
+    "cmsContentArchiveDryRun",
     "cmsContentRehostImages",
     "cmsContentSetSlug",
     "cmsCostServiceById",

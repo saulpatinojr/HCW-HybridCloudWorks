@@ -849,6 +849,27 @@ export const DECLARED = [
     reason: "#1777: the owner armed the yearly clean-up of unaccepted proposals",
   },
 
+  // #1811 (ADR 0046): the yearly content archive, storage and switch. The
+  // plan after the merge creates one empty private container on the content
+  // storage account and adds one app setting, off. No lifecycle rule, no
+  // immutability policy and no role assignment is added. Arming the switch
+  // ("false" -> "true") is deliberately NOT declared here: the job that
+  // reads it is not built yet, and its pull request declares that plan.
+  // Delete both entries once the run has applied, and their test in
+  // assert-expected-plan.test.mjs with them.
+  {
+    address: "azurerm_storage_container.content_archive",
+    action: "create",
+    reason: "#1811 ADR 0046: the private content-archive container for the yearly content archive",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.CONTENT_ARCHIVE_ENABLED",
+    before: undefined,
+    after: "false",
+    reason: "#1811 ADR 0046: the yearly content archive's switch declared, off",
+  },
+
   // #1823 (ADR 0045): the Community Days developer key's app setting, a Key
   // Vault reference like every other credential's. The plan shows it as one
   // added key on the Function App and nothing else. It does not read the

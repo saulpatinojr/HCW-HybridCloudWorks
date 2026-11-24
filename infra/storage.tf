@@ -282,11 +282,57 @@ resource "azurerm_storage_container" "cosmos_export" {
 # Kept separate from cosmos-export so that azurerm_storage_container_immutability_policy
 # on cosmos-export can enforce strict WORM retention on backup runs without blocking
 # daily in-place continuation token overwrites.
+#
+# It also holds the reports of the content archive's dry run (ADR 0046, #1811),
+# under state/archive-report/: container names, field names and counts, never
+# a record. They are kept here because this container has no rule that locks
+# a file, and so that a dry run never writes into content-archive. No
+# lifecycle rule deletes them either: the code does, when a new dry run
+# starts, for any report older than 90 days (REPORT_KEEP_DAYS in
+# functions/src/lib/backup/archive-report.js). A rule here would need a new
+# prefix filter beside the backup's bookmarks; the code-side clean-up is the
+# smaller change.
 resource "azurerm_storage_container" "cosmos_export_state" {
   #checkov:skip=CKV2_AZURE_21:Blob read logging is on for this account via azurerm_monitor_diagnostic_setting.content_blob (StorageRead). docs/security/scanner-triage.md#checkov
   name                  = "cosmos-export-state"
   storage_account_id    = azurerm_storage_account.hcw.id
   container_access_type = "private" # Cosmos export change-feed continuation tokens; mutable state, never served
+}
+
+# The yearly content archive (ADR 0046, #1811): a long-term copy of the site's
+# content, one folder per calendar year, made by the Function App from the
+# weekly full backup above with personal details and secrets taken out first.
+# Each year's data files are gzip-compressed NDJSON that the job moves to the
+# Archive tier (Azure's cheapest, offline tier) one by one after checking
+# them; the year's manifest.json stays online. The tier is set per file by the
+# job, so there is NO lifecycle rule for this container, on purpose: a rule
+# would archive a file before it had been checked.
+#
+# Created empty and unused: nothing writes here until the archive job exists
+# (phase 3 of ADR 0046) and CONTENT_ARCHIVE_ENABLED in functionapp.tf is
+# "true". The dry run writes its report into cosmos-export-state, not here.
+#
+# Private like every container above, and it must never join
+# PUBLIC_MEDIA_CONTAINERS or UPLOAD_CONTAINERS in blob-paths.js
+# (archive-classification.test.js holds that). No new role assignment: the
+# Function App identity already holds Storage Blob Data Contributor on the
+# whole account (azurerm_role_assignment.func_blob below), which covers
+# writing a file and setting its tier. No immutability policy either (owner
+# decision 2026-11-24): the archive is not locked until one has been read
+# back, and a locked one could not honour a person's request to be erased.
+#
+# prevent_destroy, unlike the sibling containers, because ADR 0046 section 7
+# asks for it: this is the one container whose contents exist nowhere else
+# once a year has passed. Removing it takes a reviewed change to this block.
+resource "azurerm_storage_container" "content_archive" {
+  #checkov:skip=CKV2_AZURE_21:Blob read logging is on for this account via azurerm_monitor_diagnostic_setting.content_blob (StorageRead). docs/security/scanner-triage.md#checkov
+  name                  = "content-archive"
+  storage_account_id    = azurerm_storage_account.hcw.id
+  container_access_type = "private" # the yearly content archive; never served
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Time-based immutability policy for Cosmos DB out-of-account backup exports (PLAT-8, #968).

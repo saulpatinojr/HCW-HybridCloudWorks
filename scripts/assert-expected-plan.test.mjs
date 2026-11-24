@@ -1055,6 +1055,41 @@ describe('DECLARED', () => {
     expect(infraSource).toMatch(/^\s*"PROPOSAL_STRIP_ENABLED"\s*=\s*"false"$/m);
   });
 
+  it('passes the plan after #1811’s merge (the content-archive container and its switch, off), and not a plan that arms the switch', () => {
+    // Delete this test with the two declarations, once the run has applied.
+    const merged = fixture();
+    merged.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'false';
+    merged.plan.resource_changes.push({
+      address: 'azurerm_storage_container.content_archive',
+      change: { actions: ['create'] },
+    });
+    expect(checkPlan(merged.plan)).toMatchObject({ ok: true, unexpected: [] });
+
+    // The job that reads the switch is not built, so arming it is not a declared plan yet.
+    for (const before of [undefined, 'false']) {
+      const armed = fixture();
+      if (before !== undefined) armed.app.before.app_settings.CONTENT_ARCHIVE_ENABLED = before;
+      armed.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'true';
+      expect(checkPlan(armed.plan).ok).toBe(false);
+    }
+    // Replacing or deleting the container is never expected.
+    for (const actions of [['delete'], ['delete', 'create']]) {
+      const lost = fixture();
+      lost.plan.resource_changes.push({ address: 'azurerm_storage_container.content_archive', change: { actions } });
+      expect(checkPlan(lost.plan).ok).toBe(false);
+    }
+
+    expect(infraSource).toMatch(/^\s*"CONTENT_ARCHIVE_ENABLED"\s*=\s*"false"$/m);
+    const block = /resource "azurerm_storage_container" "content_archive" \{[\s\S]*?\n\}/.exec(infraSource);
+    expect(block, 'azurerm_storage_container.content_archive is not in infra/').not.toBeNull();
+    expect(block[0]).toMatch(/name\s*=\s*"content-archive"/);
+    expect(block[0]).toMatch(/container_access_type\s*=\s*"private"/);
+    expect(block[0]).toMatch(/prevent_destroy\s*=\s*true/);
+    // No lock and no timer-driven tiering or deletion for the archive (ADR 0046 sections 4 and 7).
+    expect(infraSource).not.toMatch(/azurerm_storage_container\.content_archive\.(?:id|resource_manager_id)/);
+    expect(infraSource).not.toMatch(/"content-archive\//);
+  });
+
   it('declares the Community Days key’s Key Vault reference exactly as infra/ writes it, and passes the plan that adds only that (#1823)', () => {
     const entry = DECLARED.find((candidate) => candidate.path === 'app_settings.COMMUNITY_DAYS_API_KEY');
     expect(entry, 'no declaration for the Community Days key’s app setting').toBeDefined();

@@ -134,9 +134,41 @@ export function createExportBlobStore({
       return JSON.parse(blob.body.toString('utf8'));
     },
 
+    /**
+     * A blob's bytes as a stream, or null when it is not there. For the
+     * archive dry run (archive-report.js), which reads a backup file a piece
+     * at a time and so never holds a whole container in memory.
+     */
+    async readGzipStream(name) {
+      try {
+        const blob = await storage.downloadBlobStream(targetContainer(name), name);
+        return blob.stream;
+      } catch (error) {
+        if (error?.statusCode === 404 || error?.code === 'BlobNotFound') return null;
+        throw error;
+      }
+    },
+
     async listNames(prefix) {
       const blobs = await storage.listBlobs(targetContainer(prefix), prefix);
       return blobs.map((b) => b.name);
+    },
+
+    /** Does the store's main container exist? A failure to ask is a throw, never `false`. */
+    async containerExists() {
+      return storage.containerExists(container);
+    },
+
+    /**
+     * Delete one file of an old archive dry-run report. Only a name under
+     * `state/archive-report/` is accepted: this store also holds the backup
+     * and its bookmarks, and nothing here may ever delete one of those.
+     */
+    async deleteReportFile(name) {
+      if (typeof name !== 'string' || !name.startsWith('state/archive-report/') || name.includes('..')) {
+        throw new Error('only a file of an archive dry-run report can be deleted here');
+      }
+      await storage.deleteBlob(targetContainer(name), name);
     },
   };
 }
