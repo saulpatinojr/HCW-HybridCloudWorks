@@ -1055,15 +1055,17 @@ describe('DECLARED', () => {
     expect(infraSource).toMatch(/^\s*"PROPOSAL_STRIP_ENABLED"\s*=\s*"false"$/m);
   });
 
-  it('passes the plan after #1811’s merge (the content-archive container and its switch, off) and the plan that arms the switch', () => {
-    // Once the first run has applied, delete the two "merged" declarations and that half of this test.
-    const merged = fixture();
-    merged.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'false';
-    merged.plan.resource_changes.push({
+  it('passes the plan that arms the content archive’s switch, and no longer the plan that first declared it (#1811)', () => {
+    // The first run has applied, so creating the container or adding the switch from nothing is unexpected now.
+    const again = fixture();
+    again.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'false';
+    expect(checkPlan(again.plan).ok).toBe(false);
+    const recreated = fixture();
+    recreated.plan.resource_changes.push({
       address: 'azurerm_storage_container.content_archive',
       change: { actions: ['create'] },
     });
-    expect(checkPlan(merged.plan)).toMatchObject({ ok: true, unexpected: [] });
+    expect(checkPlan(recreated.plan).ok).toBe(false);
 
     // The arming plan: off to on, and nothing else beside it.
     const armed = fixture();
@@ -1084,7 +1086,8 @@ describe('DECLARED', () => {
       expect(checkPlan(lost.plan).ok).toBe(false);
     }
 
-    expect(infraSource).toMatch(/^\s*"CONTENT_ARCHIVE_ENABLED"\s*=\s*"false"$/m);
+    // Armed by the owner on 2026-11-24 ("arm now", #1811).
+    expect(infraSource).toMatch(/^\s*"CONTENT_ARCHIVE_ENABLED"\s*=\s*"true"$/m);
     const block = /resource "azurerm_storage_container" "content_archive" \{[\s\S]*?\n\}/.exec(infraSource);
     expect(block, 'azurerm_storage_container.content_archive is not in infra/').not.toBeNull();
     expect(block[0]).toMatch(/name\s*=\s*"content-archive"/);
