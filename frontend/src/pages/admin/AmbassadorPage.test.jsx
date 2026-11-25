@@ -25,7 +25,8 @@ vi.mock('@/lib/api', () => ({
   sendJSON: (...args) => sendJSON(...args),
 }));
 vi.mock('@/hooks/useAuthReady', () => ({ useAuthReady: () => ({ authReady: true }) }));
-vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
+const toast = vi.fn();
+vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast }) }));
 vi.mock('react-router', () => ({
   useSearchParams: () => [new URLSearchParams(searchParams), setSearchParams],
   useLocation: () => ({ pathname: '/admin/ambassador' }),
@@ -193,6 +194,7 @@ beforeEach(() => {
   searchParams = '';
   setSearchParams.mockReset();
   navigate.mockReset();
+  toast.mockReset();
   getJSON.mockReset().mockImplementation(routes());
   postJSON
     .mockReset()
@@ -435,7 +437,13 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     getJSON.mockImplementation(
       upkeepRoutes({ 'cms/content': { success: true, items: [LIVE_PIECE, DRAFT_PIECE] } })
     );
-    postJSON.mockResolvedValue({ success: true, created: 1, existing: 0 });
+    // The route's real answer: the created rows, the existing ids, the missing ids.
+    postJSON.mockResolvedValue({
+      success: true,
+      created: [{ id: 'evidence-import-x', sourceId: 'content-live' }],
+      existing: [],
+      missing: [],
+    });
     render(<AmbassadorPage />);
     await panel().findByTestId('program-upkeep');
     await act(async () => {
@@ -458,6 +466,45 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
       ids: ['content-live'],
       programIds: ['program-gk'],
     });
+  });
+
+  it('says "filed" only when the import filed this piece, and "not filed" when it was no longer live', async () => {
+    searchParams = 'tab=programs';
+    getJSON.mockImplementation(
+      upkeepRoutes({ 'cms/content': { success: true, items: [LIVE_PIECE] } })
+    );
+    render(<AmbassadorPage />);
+    await panel().findByTestId('program-upkeep');
+    await act(async () => {
+      fireEvent.click(within(gitKrakenCard()).getByRole('button', { name: 'Details' }));
+    });
+    const pipeline = await screen.findByTestId('program-pipeline');
+    const fileButton = await within(pipeline).findByRole('button', { name: /File as evidence/ });
+
+    postJSON.mockResolvedValueOnce({
+      success: true,
+      created: [],
+      existing: [],
+      missing: ['content-live'],
+    });
+    await act(async () => {
+      fireEvent.click(fileButton);
+    });
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Not filed' }));
+    expect(toast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Filed as evidence for GitKraken Ambassador' })
+    );
+
+    postJSON.mockResolvedValueOnce({
+      success: true,
+      created: [{ id: 'evidence-import-z', sourceId: 'content-live' }],
+      existing: [],
+      missing: [],
+    });
+    await act(async () => {
+      fireEvent.click(within(pipeline).getByRole('button', { name: /File as evidence/ }));
+    });
+    expect(toast).toHaveBeenCalledWith({ title: 'Filed as evidence for GitKraken Ambassador' });
   });
 
   it('marks a live piece already filed instead of offering it again', async () => {

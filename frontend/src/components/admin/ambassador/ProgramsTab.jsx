@@ -184,7 +184,24 @@ export default function ProgramsTab({ hub, nav }) {
     setFiling(contentId);
     const result = await hub.writes.importEvidence('content', [contentId], [details.id]);
     setFiling(null);
-    if (result) toast({ title: `Filed as evidence for ${details.name}` });
+    if (!result) return; // refused: the write guard's toast already said why
+    // The import answers 200 whether it filed the piece or not (review of
+    // #1890), so the message follows what it actually did with this id.
+    const listOf = (value) => (Array.isArray(value) ? value : []);
+    if (listOf(result.created).some((row) => row?.sourceId === contentId)) {
+      toast({ title: `Filed as evidence for ${details.name}` });
+    } else if (listOf(result.missing).includes(contentId)) {
+      toast({
+        title: 'Not filed',
+        description: 'That piece is no longer live, so it cannot be filed as evidence.',
+        variant: 'destructive',
+      });
+    } else {
+      toast({
+        title: 'Already filed',
+        description: 'It was filed before; attach it to this program on the Evidence tab.',
+      });
+    }
   };
 
   return (
