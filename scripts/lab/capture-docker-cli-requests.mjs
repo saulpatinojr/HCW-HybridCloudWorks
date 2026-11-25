@@ -63,6 +63,67 @@ function frame(text) {
 const head = (status, headers) =>
   [`HTTP/1.1 ${status}`, `Api-Version: ${API_VERSION}`, 'Ostype: linux', ...headers, '', ''].join(CRLF);
 
+/**
+ * One request off the front of `buf`: its method, path, query, headers and
+ * body, and the bytes after it (`rest`); null until all of it has arrived.
+ */
+function takeRequest(buf) {
+  const end = buf.indexOf(`${CRLF}${CRLF}`);
+  if (end === -1) return null;
+  const [requestLine, ...headerLines] = buf.subarray(0, end).toString('latin1').split(CRLF);
+  // A Map, not an object: header names come from the client, and an
+  // object would take `__proto__` as one.
+  const headers = new Map();
+  for (const line of headerLines) {
+    const colon = line.indexOf(':');
+    headers.set(line.slice(0, colon).trim().toLowerCase(), line.slice(colon + 1).trim());
+  }
+  const length = Number(headers.get('content-length') || 0);
+  if (buf.length < end + 4 + length) return null;
+  const body = buf.subarray(end + 4, end + 4 + length).toString('utf8');
+  const [method, target] = requestLine.split(' ');
+  const [pathname, query = ''] = target.split('?');
+  return { method, pathname, query, headers, body, rest: buf.subarray(end + 4 + length) };
+}
+
+/**
+ * Answer one request as a daemon whose container prints one line and exits 0.
+ * Returns true when the socket is now held open for the attach stream or the
+ * wait, so nothing more is read from it.
+ */
+function answer(sock, { method, pathname }, { id, state, finish }) {
+  const json = (status, value) => {
+    const text = JSON.stringify(value);
+    sock.write(head(status, ['Content-Type: application/json', `Content-Length: ${Buffer.byteLength(text)}`]) + text);
+  };
+  if (pathname.endsWith(`/containers/${id}/attach`)) {
+    sock.write(head('101 UPGRADED', ['Content-Type: application/vnd.docker.raw-stream', 'Connection: Upgrade', 'Upgrade: tcp']));
+    state.attach = sock;
+    finish();
+    return true;
+  }
+  if (pathname.endsWith(`/containers/${id}/wait`)) {
+    sock.write(head('200 OK', ['Content-Type: application/json', 'Transfer-Encoding: chunked']));
+    state.wait = sock;
+    finish();
+    return true;
+  }
+  if (pathname === '/_ping') {
+    sock.write(head('200 OK', ['Content-Type: text/plain', 'Content-Length: 2']) + (method === 'HEAD' ? '' : 'OK'));
+  } else if (/\/containers\/create$/.test(pathname)) {
+    json('201 Created', { Id: id, Warnings: [] });
+  } else if (pathname.endsWith(`/containers/${id}/start`)) {
+    sock.write(head('204 No Content', []));
+    state.started = true;
+    setTimeout(finish, 50);
+  } else if (method === 'DELETE') {
+    sock.write(head('204 No Content', []));
+  } else {
+    json('404 Not Found', { message: `recording daemon: no answer for ${method} ${pathname}` });
+  }
+  return false;
+}
+
 /** Run one docker argv against a fresh recording daemon; resolves with what it saw. */
 function record(argv, dockerConfig) {
   const id = crypto.randomBytes(32).toString('hex');
@@ -87,23 +148,9 @@ function record(argv, dockerConfig) {
     sock.on('error', () => {});
     sock.on('data', (chunk) => {
       buf = Buffer.concat([buf, chunk]);
-      for (;;) {
-        const end = buf.indexOf(`${CRLF}${CRLF}`);
-        if (end === -1) return;
-        const [requestLine, ...headerLines] = buf.subarray(0, end).toString('latin1').split(CRLF);
-        // A Map, not an object: header names come from the client, and an
-        // object would take `__proto__` as one.
-        const headers = new Map();
-        for (const line of headerLines) {
-          const colon = line.indexOf(':');
-          headers.set(line.slice(0, colon).trim().toLowerCase(), line.slice(colon + 1).trim());
-        }
-        const length = Number(headers.get('content-length') || 0);
-        if (buf.length < end + 4 + length) return;
-        const body = buf.subarray(end + 4, end + 4 + length).toString('utf8');
-        buf = buf.subarray(end + 4 + length);
-        const [method, target] = requestLine.split(' ');
-        const [pathname, query = ''] = target.split('?');
+      for (let taken = takeRequest(buf); taken; taken = takeRequest(buf)) {
+        buf = taken.rest;
+        const { method, pathname, query, headers, body } = taken;
         requests.push({
           method,
           path: pathname.replace(id, '<id>'),
@@ -111,33 +158,7 @@ function record(argv, dockerConfig) {
           headers: Object.fromEntries(KEPT_HEADERS.filter((h) => headers.has(h)).map((h) => [h, headers.get(h)])),
           body,
         });
-        const json = (status, value) => {
-          const text = JSON.stringify(value);
-          sock.write(head(status, ['Content-Type: application/json', `Content-Length: ${Buffer.byteLength(text)}`]) + text);
-        };
-        if (pathname === '/_ping') {
-          sock.write(head('200 OK', ['Content-Type: text/plain', 'Content-Length: 2']) + (method === 'HEAD' ? '' : 'OK'));
-        } else if (/\/containers\/create$/.test(pathname)) {
-          json('201 Created', { Id: id, Warnings: [] });
-        } else if (pathname.endsWith(`/containers/${id}/attach`)) {
-          sock.write(head('101 UPGRADED', ['Content-Type: application/vnd.docker.raw-stream', 'Connection: Upgrade', 'Upgrade: tcp']));
-          state.attach = sock;
-          finish();
-          return;
-        } else if (pathname.endsWith(`/containers/${id}/wait`)) {
-          sock.write(head('200 OK', ['Content-Type: application/json', 'Transfer-Encoding: chunked']));
-          state.wait = sock;
-          finish();
-          return;
-        } else if (pathname.endsWith(`/containers/${id}/start`)) {
-          sock.write(head('204 No Content', []));
-          state.started = true;
-          setTimeout(finish, 50);
-        } else if (method === 'DELETE') {
-          sock.write(head('204 No Content', []));
-        } else {
-          json('404 Not Found', { message: `recording daemon: no answer for ${method} ${pathname}` });
-        }
+        if (answer(sock, taken, { id, state, finish })) return;
       }
     });
   });

@@ -136,13 +136,7 @@ export function parseNote(text) {
   if (lines[0].trimEnd() !== '---') {
     return { fields: null, unclosed: false, problems: [], body: source, bodyLine: 1 };
   }
-  let end = -1;
-  for (let index = 1; index < lines.length; index += 1) {
-    if (lines[index].trimEnd() === '---') {
-      end = index;
-      break;
-    }
-  }
+  const end = lines.findIndex((line, index) => index > 0 && line.trimEnd() === '---');
   if (end === -1) {
     return { fields: null, unclosed: true, problems: [], body: source, bodyLine: 1 };
   }
@@ -151,68 +145,7 @@ export function parseNote(text) {
   const problems = [];
   let current = null;
   for (let index = 1; index < end; index += 1) {
-    const raw = lines[index].trimEnd();
-    const line = index + 1;
-    if (!raw.trim() || raw.trimStart().startsWith('#')) continue;
-
-    const item = /^\s*-\s+(.*)$/.exec(raw) ?? /^\s*-$/.exec(raw);
-    if (item && current) {
-      current.kind = 'list';
-      const value = unquote(item[1] ?? '');
-      if (value) current.items.push(value);
-      continue;
-    }
-
-    // Obsidian allows any text as a property name ("date created", "année"), so
-    // take everything up to the first colon that is followed by a space or the
-    // end of the line. Keys the format does not name are ignored, whatever they say.
-    const entry = /^([^\s:#'"[-][^:]*?):(?:[ \t]+(.*))?$/.exec(raw);
-    if (!entry) {
-      if (/^\s/.test(raw) && current) {
-        if (KNOWN_KEYS.includes(current.key)) {
-          problems.push({
-            line,
-            field: current.key,
-            message: `${current.key} must fit on one line`,
-          });
-        }
-        continue;
-      }
-      problems.push({
-        line,
-        field: null,
-        message: `cannot read this line of the properties; write it as name: value`,
-      });
-      current = null;
-      continue;
-    }
-
-    const key = entry[1].trim();
-    const rest = (entry[2] ?? '').trim();
-    const field = { key, line, kind: 'empty', value: '', items: [] };
-    if (rest.startsWith('[') && rest.endsWith(']')) {
-      field.kind = 'list';
-      field.items = rest
-        .slice(1, -1)
-        .split(',')
-        .map(unquote)
-        .filter(Boolean);
-    } else if (rest) {
-      field.kind = 'scalar';
-      field.value = unquote(rest);
-      const quote = rest[0];
-      if (quote === '"' || quote === "'") {
-        const close = rest.indexOf(quote, 1);
-        const after = close > 0 ? rest.slice(close + 1).trim() : '';
-        if (after && !after.startsWith('#')) field.junk = after;
-      }
-    }
-    if (fields.has(key)) {
-      problems.push({ line, field: key, message: `${key} is written twice` });
-    } else {
-      fields.set(key, field);
-    }
-    current = field;
+    current = readPropertyLine(lines[index].trimEnd(), index + 1, { current, fields, problems });
   }
 
   return {
@@ -222,6 +155,200 @@ export function parseNote(text) {
     body: lines.slice(end + 1).join('\n'),
     bodyLine: end + 2,
   };
+}
+
+/**
+ * One line of the properties block, onto `fields` or `problems`. Returns the
+ * field that list items and continued lines below it belong to.
+ */
+function readPropertyLine(raw, line, { current, fields, problems }) {
+  if (!raw.trim() || raw.trimStart().startsWith('#')) return current;
+
+  const item = /^\s*-\s+(.*)$/.exec(raw) ?? /^\s*-$/.exec(raw);
+  if (item && current) {
+    current.kind = 'list';
+    const value = unquote(item[1] ?? '');
+    if (value) current.items.push(value);
+    return current;
+  }
+
+  // Obsidian allows any text as a property name ("date created", "année"), so
+  // take everything up to the first colon that is followed by a space or the
+  // end of the line. Keys the format does not name are ignored, whatever they say.
+  const entry = /^([^\s:#'"[-][^:]*?):(?:[ \t]+(.*))?$/.exec(raw);
+  if (!entry) return unreadablePropertyLine(raw, line, current, problems);
+
+  const field = fieldFrom(entry[1].trim(), (entry[2] ?? '').trim(), line);
+  if (fields.has(field.key)) {
+    problems.push({ line, field: field.key, message: `${field.key} is written twice` });
+  } else {
+    fields.set(field.key, field);
+  }
+  return field;
+}
+
+/**
+ * A line that is not `name: value`: an indented line goes on from the field
+ * above it (a problem only for a key the format reads); anything else is a
+ * problem, and ends that field.
+ */
+function unreadablePropertyLine(raw, line, current, problems) {
+  if (/^\s/.test(raw) && current) {
+    if (KNOWN_KEYS.includes(current.key)) {
+      problems.push({
+        line,
+        field: current.key,
+        message: `${current.key} must fit on one line`,
+      });
+    }
+    return current;
+  }
+  problems.push({
+    line,
+    field: null,
+    message: `cannot read this line of the properties; write it as name: value`,
+  });
+  return null;
+}
+
+/** A field from its key and the text after the colon: empty, a `[a, b]` list, or one value. */
+function fieldFrom(key, rest, line) {
+  const field = { key, line, kind: 'empty', value: '', items: [] };
+  if (rest.startsWith('[') && rest.endsWith(']')) {
+    field.kind = 'list';
+    field.items = rest
+      .slice(1, -1)
+      .split(',')
+      .map(unquote)
+      .filter(Boolean);
+  } else if (rest) {
+    field.kind = 'scalar';
+    field.value = unquote(rest);
+    const junk = textAfterQuote(rest);
+    if (junk) field.junk = junk;
+  }
+  return field;
+}
+
+/** What follows a quoted value's closing quote, other than a comment; '' for none. */
+function textAfterQuote(rest) {
+  const quote = rest[0];
+  if (quote !== '"' && quote !== "'") return '';
+  const close = rest.indexOf(quote, 1);
+  const after = close > 0 ? rest.slice(close + 1).trim() : '';
+  return after.startsWith('#') ? '' : after;
+}
+
+/**
+ * One value from the properties, or null. A missing value is an issue when it
+ * is `required`; a list, or a quoted value with text after its closing quote,
+ * is always one.
+ */
+function scalarOf({ fields, add }, key, { required = false } = {}) {
+  const field = fields.get(key);
+  if (!field || field.kind === 'empty') {
+    if (required) add(`${key} is missing`, key, field?.line ?? null);
+    return null;
+  }
+  if (field.kind === 'list') {
+    add(`${key} must be one value, not a list`, key, field.line);
+    return null;
+  }
+  if (field.junk) {
+    add(
+      `${key} starts with a quote mark and carries on after it ("${field.junk}"), which would be cut off; wrap the whole value in the other kind of quote mark`,
+      key,
+      field.line
+    );
+    return null;
+  }
+  return field.value;
+}
+
+/** A required value that must be one of `allowed`, or null with an issue. */
+function oneOfValue(ctx, key, allowed) {
+  const value = scalarOf(ctx, key, { required: true });
+  if (value === null) return null;
+  if (!allowed.includes(value)) {
+    ctx.add(`${key}: "${value}" is not one of ${allowed.join(', ')}`, key, ctx.fields.get(key).line);
+    return null;
+  }
+  return value;
+}
+
+function themeOf(ctx) {
+  const theme = scalarOf(ctx, 'theme', { required: true });
+  if (theme !== null && (!WORDS.test(theme) || theme.length > LIMITS.theme)) {
+    ctx.add(
+      `theme: "${theme}" must be lower-case words joined by hyphens, at most ${LIMITS.theme} characters`,
+      'theme',
+      ctx.fields.get('theme').line
+    );
+  }
+  return theme;
+}
+
+/** The title property, or the file name without `.md` when there is none. */
+function titleOf(ctx, name) {
+  const stem = String(name ?? '').replace(/\.md$/i, '').trim();
+  const title = (scalarOf(ctx, 'title') ?? '').trim() || stem;
+  if (!title) ctx.add('the note has no title and no usable file name', 'title');
+  if (title.length > LIMITS.title) {
+    ctx.add(`title is ${title.length} characters; at most ${LIMITS.title}`, 'title', ctx.fields.get('title')?.line);
+  }
+  return title;
+}
+
+function subtitleOf(ctx) {
+  const subtitle = (scalarOf(ctx, 'subtitle') ?? '').trim();
+  if (subtitle.length > LIMITS.subtitle) {
+    ctx.add(
+      `subtitle is ${subtitle.length} characters; at most ${LIMITS.subtitle}`,
+      'subtitle',
+      ctx.fields.get('subtitle')?.line
+    );
+  }
+  return subtitle;
+}
+
+/** The tags, without `#` and repeats; each must be hyphenated words, and there is a limit to how many. */
+function tagsOf(ctx) {
+  const tagField = ctx.fields.get('tags');
+  const tags = [];
+  if (!tagField || tagField.kind === 'empty') return tags;
+  const raw = tagField.kind === 'list' ? tagField.items : [tagField.value];
+  for (const entry of raw) {
+    const tag = String(entry).replace(/^#/, '');
+    if (!WORDS.test(tag) || tag.length > LIMITS.tag) {
+      ctx.add(
+        `tag "${entry}" must be lower-case words joined by hyphens, at most ${LIMITS.tag} characters`,
+        'tags',
+        tagField.line
+      );
+    } else if (!tags.includes(tag)) {
+      tags.push(tag);
+    }
+  }
+  if (tags.length > LIMITS.tags) {
+    ctx.add(`${tags.length} tags; at most ${LIMITS.tags}`, 'tags', tagField.line);
+  }
+  return tags;
+}
+
+/** Reading time in minutes, or null when it is not given or not a whole number from 1 to 999. */
+function readingOf(ctx) {
+  const readingRaw = scalarOf(ctx, 'reading');
+  if (readingRaw === null) return null;
+  if (/^\d{1,3}$/.test(readingRaw) && Number(readingRaw) > 0) return Number(readingRaw);
+  ctx.add(`reading: "${readingRaw}" must be a whole number of minutes, 1 to 999`, 'reading', ctx.fields.get('reading').line);
+  return null;
+}
+
+/** An optional value that must match `valid` when it is given; `message(value)` is the issue when it does not. */
+function optionalOf(ctx, key, valid, message) {
+  const value = scalarOf(ctx, key);
+  if (value !== null && !valid(value)) ctx.add(message(value), key, ctx.fields.get(key).line);
+  return value;
 }
 
 /**
@@ -256,113 +383,24 @@ export function checkNote(name, text) {
     }
   }
 
-  const get = (key) => parsed.fields.get(key);
-  const scalar = (key, { required = false } = {}) => {
-    const field = get(key);
-    if (!field || field.kind === 'empty') {
-      if (required) add(`${key} is missing`, key, field?.line ?? null);
-      return null;
-    }
-    if (field.kind === 'list') {
-      add(`${key} must be one value, not a list`, key, field.line);
-      return null;
-    }
-    if (field.junk) {
-      add(
-        `${key} starts with a quote mark and carries on after it ("${field.junk}"), which would be cut off; wrap the whole value in the other kind of quote mark`,
-        key,
-        field.line
-      );
-      return null;
-    }
-    return field.value;
-  };
-  const oneOf = (key, allowed) => {
-    const value = scalar(key, { required: true });
-    if (value === null) return null;
-    if (!allowed.includes(value)) {
-      add(`${key}: "${value}" is not one of ${allowed.join(', ')}`, key, get(key).line);
-      return null;
-    }
-    return value;
-  };
-
-  const type = oneOf('type', IDEA_TYPES);
-  const format = oneOf('format', IDEA_FORMATS);
-  const status = oneOf('status', IDEA_STATUSES);
-
-  const theme = scalar('theme', { required: true });
-  if (theme !== null && (!WORDS.test(theme) || theme.length > LIMITS.theme)) {
-    add(
-      `theme: "${theme}" must be lower-case words joined by hyphens, at most ${LIMITS.theme} characters`,
-      'theme',
-      get('theme').line
-    );
-  }
-
-  const stem = String(name ?? '').replace(/\.md$/i, '').trim();
-  const title = (scalar('title') ?? '').trim() || stem;
-  if (!title) add('the note has no title and no usable file name', 'title');
-  if (title.length > LIMITS.title) {
-    add(`title is ${title.length} characters; at most ${LIMITS.title}`, 'title', get('title')?.line);
-  }
-
-  const subtitle = (scalar('subtitle') ?? '').trim();
-  if (subtitle.length > LIMITS.subtitle) {
-    add(
-      `subtitle is ${subtitle.length} characters; at most ${LIMITS.subtitle}`,
-      'subtitle',
-      get('subtitle')?.line
-    );
-  }
-
-  const tagField = get('tags');
-  const tags = [];
-  if (tagField && tagField.kind !== 'empty') {
-    const raw = tagField.kind === 'list' ? tagField.items : [tagField.value];
-    for (const entry of raw) {
-      const tag = String(entry).replace(/^#/, '');
-      if (!WORDS.test(tag) || tag.length > LIMITS.tag) {
-        add(
-          `tag "${entry}" must be lower-case words joined by hyphens, at most ${LIMITS.tag} characters`,
-          'tags',
-          tagField.line
-        );
-      } else if (!tags.includes(tag)) {
-        tags.push(tag);
-      }
-    }
-    if (tags.length > LIMITS.tags) {
-      add(`${tags.length} tags; at most ${LIMITS.tags}`, 'tags', tagField.line);
-    }
-  }
-
-  let reading = null;
-  const readingRaw = scalar('reading');
-  if (readingRaw !== null) {
-    if (/^\d{1,3}$/.test(readingRaw) && Number(readingRaw) > 0) {
-      reading = Number(readingRaw);
-    } else {
-      add(`reading: "${readingRaw}" must be a whole number of minutes, 1 to 999`, 'reading', get('reading').line);
-    }
-  }
-
-  const part = scalar('part');
-  if (part !== null && !/^\d{1,2} of \d{1,2}$/.test(part)) {
-    add(`part: "${part}" must be written like "1 of 2"`, 'part', get('part').line);
-  }
-
-  const date = scalar('date');
-  if (date !== null && !isCalendarDate(date)) {
-    add(`date: "${date}" must be a real date written YYYY-MM-DD`, 'date', get('date').line);
-  }
+  const ctx = { fields: parsed.fields, add };
+  const type = oneOfValue(ctx, 'type', IDEA_TYPES);
+  const format = oneOfValue(ctx, 'format', IDEA_FORMATS);
+  const status = oneOfValue(ctx, 'status', IDEA_STATUSES);
+  const theme = themeOf(ctx);
+  const title = titleOf(ctx, name);
+  const subtitle = subtitleOf(ctx);
+  const tags = tagsOf(ctx);
+  const reading = readingOf(ctx);
+  const part = optionalOf(ctx, 'part', (value) => /^\d{1,2} of \d{1,2}$/.test(value), (value) => `part: "${value}" must be written like "1 of 2"`);
+  const date = optionalOf(ctx, 'date', isCalendarDate, (value) => `date: "${value}" must be a real date written YYYY-MM-DD`);
 
   const body = parsed.body.replace(/^\n+/, '').trimEnd();
   if (status !== null && NEEDS_BODY.includes(status) && !body.trim()) {
     add(
       `status is "${status}" but nothing is written under the properties; add the outline, or set the status back to idea`,
       'status',
-      get('status').line
+      parsed.fields.get('status').line
     );
   }
 
@@ -429,6 +467,15 @@ export function findObsidianOnly(body, bodyLine = 1) {
   return found;
 }
 
+/** What makes a value unsafe to write unquoted: a leading YAML indicator, a closing quote, `: `, ` #` or a final colon. */
+const NEEDS_QUOTES = [
+  (text) => /^[\-?:,[\]{}#&*!|>'"%@`]/.test(text),
+  (text) => /['"]$/.test(text),
+  (text) => text.includes(': '),
+  (text) => text.includes(' #'),
+  (text) => text.endsWith(':'),
+];
+
 /**
  * A value for a front-matter line that the import's reader gives back as written,
  * or null when none exists. The reader (repo-draft.js `readScalar`) ends a quoted
@@ -436,13 +483,7 @@ export function findObsidianOnly(body, bodyLine = 1) {
  */
 export function frontMatterValue(value) {
   const text = String(value);
-  const plain =
-    !/^[\-?:,[\]{}#&*!|>'"%@`]/.test(text) &&
-    !/['"]$/.test(text) &&
-    !text.includes(': ') &&
-    !text.includes(' #') &&
-    !text.endsWith(':');
-  if (plain) return text;
+  if (!NEEDS_QUOTES.some((needs) => needs(text))) return text;
   if (!text.includes('"')) return `"${text}"`;
   if (!text.includes("'")) return `'${text}'`;
   return null;
@@ -493,20 +534,29 @@ export function planPromotion(note, { name, now = () => new Date() } = {}) {
   if (subtitle === null) reasons.push('the subtitle holds both kinds of quote mark; reword it');
 
   const chosen = name ?? draftName(note.title);
-  if (!chosen || !WORDS.test(chosen)) {
-    reasons.push(
-      name
-        ? `--name "${name}" must be lower-case words joined by hyphens`
-        : 'the title gives no usable file name (no letters or digits a file name can hold); pass --name'
-    );
-  }
   const fileName = `blog-${chosen}.md`;
-  const path = `docs/content/${fileName}`;
-  if (chosen && WORDS.test(chosen) && (!DRAFT_PATH.test(path) || path.length > MAX_DRAFT_PATH)) {
-    reasons.push(`${path} is not a file name the draft reader accepts (at most ${MAX_DRAFT_PATH} characters)`);
-  }
+  const nameProblem = fileNameProblem(name, chosen, fileName);
+  if (nameProblem) reasons.push(nameProblem);
   if (reasons.length > 0) return { ok: false, reasons };
+  return { ok: true, name: chosen, fileName, text: draftText(note, { title, subtitle, track, now }) };
+}
 
+/** Why the chosen file name will not do, or null: not hyphenated words, or not a path the draft reader accepts. */
+function fileNameProblem(name, chosen, fileName) {
+  if (!chosen || !WORDS.test(chosen)) {
+    return name
+      ? `--name "${name}" must be lower-case words joined by hyphens`
+      : 'the title gives no usable file name (no letters or digits a file name can hold); pass --name';
+  }
+  const path = `docs/content/${fileName}`;
+  if (!DRAFT_PATH.test(path) || path.length > MAX_DRAFT_PATH) {
+    return `${path} is not a file name the draft reader accepts (at most ${MAX_DRAFT_PATH} characters)`;
+  }
+  return null;
+}
+
+/** The draft: its front matter, then the note's body. */
+function draftText(note, { title, subtitle, track, now }) {
   const lines = ['---', `title: ${title}`];
   if (note.subtitle) lines.push(`subtitle: ${subtitle}`);
   lines.push(`date: ${note.date ?? now().toISOString().slice(0, 10)}`);
@@ -515,5 +565,5 @@ export function planPromotion(note, { name, now = () => new Date() } = {}) {
   if (note.tags.length > 0) lines.push(`tags: [${note.tags.join(', ')}]`);
   if (note.reading) lines.push(`reading: ${note.reading}`);
   lines.push('---', '', note.body, '');
-  return { ok: true, name: chosen, fileName, text: lines.join('\n') };
+  return lines.join('\n');
 }
