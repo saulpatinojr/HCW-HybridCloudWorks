@@ -140,7 +140,13 @@ export default function TerraformLandingPage() {
           eyebrow: 'LEARNING CENTER',
           title: 'Certification & Learning Tracks',
           action: { label: 'Learning hub', to: routes.education('terraform') },
-          content: <CertTrackGrid certs={LEARNING} linkFor={() => routes.education('terraform')} columns={3} />,
+          content: (
+            <CertTrackGrid
+              certs={LEARNING}
+              linkFor={() => routes.education('terraform')}
+              columns={3}
+            />
+          ),
         },
       ]}
     />

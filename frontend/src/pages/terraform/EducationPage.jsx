@@ -45,11 +45,15 @@ const TONE = {
   articleHover: 'hover:shadow-[0_0_25px_rgba(168,85,247,0.15)] hover:border-purple-400/50',
   badge: 'bg-purple-500/20 border border-purple-500/30 text-purple-300',
   button: 'bg-purple-600 hover:bg-purple-500 text-white',
-  gettingStartedCard: 'bg-gradient-to-br from-purple-500/20 to-violet-900/20 backdrop-blur-md border border-purple-500/30',
+  gettingStartedCard:
+    'bg-gradient-to-br from-purple-500/20 to-violet-900/20 backdrop-blur-md border border-purple-500/30',
 };
 
 /** The hub's own link to the issuer's full catalogue, under the featured credential. */
-const ALL_CERTS = { href: 'https://www.hashicorp.com/certification', label: 'View All HashiCorp Certs ↗' };
+const ALL_CERTS = {
+  href: 'https://www.hashicorp.com/certification',
+  label: 'View All HashiCorp Certs ↗',
+};
 
 /** The "Getting Started" card beside the catalogue: where a newcomer begins. */
 const GETTING_STARTED = {
@@ -77,7 +81,8 @@ const learningPaths = [
     title: 'Terraform Associate Path',
     level: 'Intermediate',
     hours: 25,
-    description: 'Master Terraform fundamentals from HCL syntax through state management, modules, workspaces, and integrating Terraform into CI/CD pipelines.',
+    description:
+      'Master Terraform fundamentals from HCL syntax through state management, modules, workspaces, and integrating Terraform into CI/CD pipelines.',
     modules: [
       { title: 'HCL Syntax & Basics' },
       { title: 'Providers & Resources' },
@@ -93,7 +98,8 @@ const learningPaths = [
     title: 'Multi-Cloud IaC Path',
     level: 'Advanced',
     hours: 40,
-    description: 'Use Terraform to manage infrastructure across AWS, Azure, and Google Cloud with remote state backends and plans reviewed in pull requests before they apply.',
+    description:
+      'Use Terraform to manage infrastructure across AWS, Azure, and Google Cloud with remote state backends and plans reviewed in pull requests before they apply.',
     modules: [
       { title: 'AWS Provider' },
       { title: 'AzureRM Provider' },
@@ -108,7 +114,8 @@ const learningPaths = [
     title: 'HCP Terraform Enterprise Path',
     level: 'Advanced',
     hours: 35,
-    description: 'Operate Terraform at enterprise scale using HCP Terraform — covering VCS-driven workflows, Sentinel policy as code, drift detection, and run triggers.',
+    description:
+      'Operate Terraform at enterprise scale using HCP Terraform — covering VCS-driven workflows, Sentinel policy as code, drift detection, and run triggers.',
     modules: [
       { title: 'Team Workflows & VCS' },
       { title: 'Policy as Code (Sentinel)' },
@@ -123,7 +130,8 @@ const resources = [
   {
     id: 'hashicorp-developer',
     title: 'HashiCorp Developer Docs',
-    description: 'Official documentation for Terraform, Vault, Consul, Nomad, and all HashiCorp tools — tutorials, reference guides, and API docs.',
+    description:
+      'Official documentation for Terraform, Vault, Consul, Nomad, and all HashiCorp tools — tutorials, reference guides, and API docs.',
     type: 'Documentation',
     icon: 'description',
     url: 'https://developer.hashicorp.com/',
@@ -131,7 +139,8 @@ const resources = [
   {
     id: 'hc-tutorials',
     title: 'HashiCorp Tutorials',
-    description: 'Hands-on step-by-step tutorials for every HashiCorp product hosted on HashiCorp Developer — formerly HashiCorp Learn.',
+    description:
+      'Hands-on step-by-step tutorials for every HashiCorp product hosted on HashiCorp Developer — formerly HashiCorp Learn.',
     type: 'Tutorials',
     icon: 'school',
     url: 'https://developer.hashicorp.com/tutorials',
@@ -139,7 +148,8 @@ const resources = [
   {
     id: 'terraform-registry',
     title: 'Terraform Registry',
-    description: 'Browse 10,000+ providers and modules from HashiCorp and the community for every major cloud platform and service.',
+    description:
+      'Browse 10,000+ providers and modules from HashiCorp and the community for every major cloud platform and service.',
     type: 'Registry',
     icon: 'inventory',
     url: 'https://registry.terraform.io/',
@@ -147,7 +157,8 @@ const resources = [
   {
     id: 'hcp-terraform',
     title: 'HCP Terraform Free Tier',
-    description: 'HashiCorp Cloud Platform Terraform — remote state, team collaboration, and Sentinel policy as code, free for up to 500 resources.',
+    description:
+      'HashiCorp Cloud Platform Terraform — remote state, team collaboration, and Sentinel policy as code, free for up to 500 resources.',
     type: 'Platform',
     icon: 'cloud',
     url: 'https://app.terraform.io/',
@@ -155,7 +166,8 @@ const resources = [
   {
     id: 'tflint',
     title: 'TFLint',
-    description: 'A Terraform linter focused on detecting errors and enforcing best practices — supports AWS, Azure, and GCP provider rules.',
+    description:
+      'A Terraform linter focused on detecting errors and enforcing best practices — supports AWS, Azure, and GCP provider rules.',
     type: 'Tool',
     icon: 'bug_report',
     url: 'https://github.com/terraform-linters/tflint',
@@ -194,7 +206,6 @@ export default function TerraformEducationPage() {
 
   const featuredCert = certifications.find((c) => c.featured);
 
-
   return (
     <>
       <Helmet>
@@ -220,8 +231,8 @@ export default function TerraformEducationPage() {
             </span>
           </h1>
           <p className="text-base sm:text-lg text-foreground max-w-3xl relative z-10">
-            Master infrastructure as code and secrets management with HashiCorp certifications
-            for Terraform and Vault — the Associate exams and the lab-based Advanced credentials.
+            Master infrastructure as code and secrets management with HashiCorp certifications for
+            Terraform and Vault — the Associate exams and the lab-based Advanced credentials.
           </p>
           <div className="flex flex-wrap gap-2 mt-4 relative z-10">
             {['Associate', 'Advanced'].map((level) => (
