@@ -38,8 +38,9 @@ import { buildCatalogue } from './applied-skills-build.mjs';
 import { SourceError, stampSyncDate, summarizeChanges, todayIso } from './applied-skills-rules.mjs';
 import { collectSources } from './applied-skills-sources.mjs';
 
-// The work is split by job into four sibling files: the rules, the text
-// helpers, reading the sources, and building the next catalogue. What this
+// The work is split by job into five sibling files: the rules, the text
+// helpers, reading the sources, and building the next catalogue's applied
+// skills and certifications. What this
 // file used to export is re-exported here, so the test and any caller keep
 // one import path.
 export {
@@ -54,7 +55,8 @@ export {
   summarizeChanges,
 } from './applied-skills-rules.mjs';
 export { extractCertificationPosterEntries, collectSources } from './applied-skills-sources.mjs';
-export { buildCertificationFromSources, buildCatalogue } from './applied-skills-build.mjs';
+export { buildCatalogue } from './applied-skills-build.mjs';
+export { buildCertificationFromSources } from './applied-skills-certs.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');

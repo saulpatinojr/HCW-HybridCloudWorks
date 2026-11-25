@@ -31,18 +31,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  HERO_COMPOSITIONS,
-  esc,
-  hashSeed,
-  mulberry32,
-  n,
-  rings,
-} from './brand-art-compositions.mjs';
+import { HERO_COMPOSITIONS, rings } from './brand-art-compositions.mjs';
 import { encodePng } from './brand-art-png.mjs';
+import { esc, hashSeed, mulberry32, n } from './brand-art-seed.mjs';
 
-// The compositions and the PNG encoder live in two sibling files; what this
-// file exported from them before is re-exported here.
+// The compositions (brand-art-compositions.mjs and brand-art-networks.mjs),
+// their helpers (brand-art-seed.mjs) and the PNG encoder (brand-art-png.mjs)
+// live in sibling files; what this file exported from them before is
+// re-exported here.
 export { HERO_COMPOSITIONS } from './brand-art-compositions.mjs';
 export { encodePng } from './brand-art-png.mjs';
 

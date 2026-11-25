@@ -4,13 +4,14 @@
  * `url()` and Markdown images. Split out of check-image-hosts.mjs, which
  * explains the check in its header and re-exports the three readers.
  */
-import { decodeAttribute, startTags, styleAttributeValues } from './stage-swa-config.mjs';
+import { startTags, styleAttributeValues } from './stage-swa-config.mjs';
+import { imageSourcesInCss } from './image-sources-text.mjs';
 
-const FONT_URL = /\.(woff2?|ttf|otf|eot)([?#]|$)|^data:(font\/|application\/(x-)?font)/i;
+// CSS and manifest reading lives in image-sources-text.mjs; both readers
+// are re-exported here.
+export { imageSourcesInCss, imageSourcesInManifest } from './image-sources-text.mjs';
+
 const IMAGE_ELEMENTS = new Set(['img', 'source', 'video', 'input', 'link']);
-const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/g;
-const HTML_IMG_SRC = /<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
-const MARKDOWN_IMAGE = /!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
 
 const STYLE_ELEMENT = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
 
@@ -104,36 +105,4 @@ function inlineCssImageSources(html) {
     }
   }
   return found;
-}
-
-/** Every `url()` in a stylesheet that is not a font. */
-export function imageSourcesInCss(css) {
-  const found = [];
-  for (const match of css.matchAll(CSS_URL)) {
-    const url = (match[1] ?? match[2] ?? match[3] ?? '').trim();
-    if (url && !FONT_URL.test(url)) found.push({ url, where: 'css url()' });
-  }
-  return found;
-}
-
-/**
- * Every image an article body renders, from the manifest's `data` map. Every
- * body field is read, as scripts/scan-inline-images.mjs does, because the
- * images are not always in the field the page renders.
- */
-export function imageSourcesInManifest(manifest) {
-  const found = [];
-  for (const [key, article] of Object.entries(manifest?.data ?? {})) {
-    if (!article || typeof article !== 'object') continue;
-    const body = ['blogDraft', 'Content', 'content']
-      .map((field) => (typeof article[field] === 'string' ? article[field] : ''))
-      .join('\n');
-    for (const match of body.matchAll(HTML_IMG_SRC)) {
-      found.push({ url: decodeAttribute(match[1] ?? match[2] ?? ''), where: `${key} <img>` });
-    }
-    for (const match of body.matchAll(MARKDOWN_IMAGE)) {
-      found.push({ url: match[1], where: `${key} markdown` });
-    }
-  }
-  return found.filter((entry) => entry.url);
 }
