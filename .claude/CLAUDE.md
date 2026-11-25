@@ -152,6 +152,17 @@ trips. The session is the orchestrator of a team of agents and does the work.
   the top: P1 now, then P2 next, then P3 later; "Gated" items wait only for the
   named gate. Close a ticket when its acceptance lines are met and say how you
   checked, linking the evidence.
+- **Anything that recurs runs on a schedule, and its output is finished by
+  one.** Owner instruction 2026-11-25. A weekly or monthly task is never
+  left for someone to remember: it is a scheduled GitHub Actions job, and
+  what those jobs leave behind (a failed run, a pull request with hand
+  edits, an issue they open) is picked up by the daily scheduled session
+  "Daily: finish what the scheduled jobs left" (09:13 UTC; listed in the
+  owner's scheduled tasks at claude.ai/code), which fixes, finishes and
+  merges it under the rules in this file and reports to the owner. A
+  session that adds a scheduled job whose output needs a person or a
+  session makes sure that daily session's instructions cover it, and never
+  sets a one-off reminder for something that will come back.
 - **Names follow the owner's convention.** Docker images are
   `img-<mo|ca|ne|cc>-<lab-addon|appliance-app>`, Docker OIDC connections
   `cnt-<name>`, Docker rulesets `rule-<code>-<role>`, and repositories use
