@@ -1,4 +1,6 @@
 import { block, file, joinBlocks, q } from '../format';
+import { isSelected } from '../../state';
+import { ALLOW_LIST_VARIABLE } from './networkFirewall';
 
 export function variablesTf() {
   const blocks = [];
@@ -55,5 +57,14 @@ export function tfvarsExample(state) {
     `corp_count   = ${state.options?.corpCount ?? 1}`,
     `online_count = ${state.options?.onlineCount ?? 1}`,
   ];
+  if (isSelected(state, 'firewall')) {
+    // Empty until someone decides what the workloads may reach (#1871).
+    lines.push(
+      '',
+      '# Domains the hub firewall lets out over HTTP and HTTPS. Empty allows nothing.',
+      `# ${ALLOW_LIST_VARIABLE} = ["api.example.com", ".amazonaws.com"]`,
+      `${ALLOW_LIST_VARIABLE} = []`
+    );
+  }
   return file('terraform.tfvars.example', lines);
 }

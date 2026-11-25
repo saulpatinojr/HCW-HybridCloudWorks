@@ -50,6 +50,7 @@ export function emitCloudPack(state, pack) {
  * @param {string} readme.terraformVersion the Terraform engine constraint
  * @param {string} readme.providerLine the provider requirement, as one Markdown list item
  * @param {string[]} readme.guardrails the guardrail list items
+ * @param {string[]} [readme.sections] extra Markdown lines placed before the guardrails
  */
 export function cloudReadme({
   title,
@@ -59,6 +60,7 @@ export function cloudReadme({
   terraformVersion,
   providerLine,
   guardrails,
+  sections = [],
 }) {
   const fileList = files.map((f) => `- \`${f.path}\``).join('\n');
 
@@ -95,6 +97,7 @@ export function cloudReadme({
     'terraform validate',
     '```',
     '',
+    ...sections,
     '## Security & Governance Guardrails',
     '',
     ...guardrails,
