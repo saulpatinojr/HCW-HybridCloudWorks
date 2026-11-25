@@ -220,79 +220,100 @@ async function deleteAsRead(store, doc) {
  * and a failure to write it is logged rather than reported as a failed
  * delete: the document is gone either way.
  */
-async function deleteContentItem(
-  { guard, store, onContentDeleted, onInterviewDeleted, now, uuid },
-  request,
-  context
-) {
-  const auth = await guard.requireRole(request, 'publisher');
+async function deleteContentItem(deps, request, context) {
+  const auth = await deps.guard.requireRole(request, 'publisher');
   if (auth.error) return auth.error;
   const { user } = auth;
 
   try {
     const { contentId, expectedStatus = null } = await readBody(request);
     if (!contentId) return json(400, { error: 'contentId required' });
-
-    const doc = await store.readDoc('content', contentId, contentId);
-    if (!doc) return json(200, { success: true, contentId });
-    const refused = deleteRefusal(doc, expectedStatus);
-    if (refused) return refused;
-
-    let deleted;
-    try {
-      // An interview is tombstoned first, under the ETag read above, and
-      // deleted under the tombstone's ETag (ADR 0040, D10): an upload that
-      // read the document before the mark fails its own write, and the
-      // sweep in the hook below removes anything committed in between.
-      let target = doc;
-      if (isInterviewDoc(doc)) {
-        target = await writeInterviewTombstone(store, doc, now().toISOString());
-        if (!target) return json(200, { success: true, contentId });
-      }
-      deleted = await deleteAsRead(store, target);
-    } catch (err) {
-      if (err?.code === 412) {
-        return json(409, { error: DELETE_CHANGED_SINCE_READ, code: 'CONFLICT' });
-      }
-      if (err?.code === 404) return json(200, { success: true, contentId });
-      throw err;
-    }
-    if (!deleted) return json(200, { success: true, contentId });
-
-    // Both failure lines are content-free (the PR template's telemetry
-    // rule): a fixed sentence and the error's code, never the document id or
-    // the error itself, whose message and fields can carry what was sent.
-    await store
-      .upsertDoc(
-        'audits',
-        deletionAuditRow(uuid, { user, request, doc, expectedStatus, nowIso: now().toISOString() })
-      )
-      .catch((err) =>
-        context.error(`deleteContentItem: the audit row was not written (${err?.code ?? 'error'})`)
-      );
-    // An interview owns a recording and transcripts in the private container
-    // (ADR 0040, D10); they go with the document. Best-effort and logged by
-    // count: the document is gone either way, and a blob that stays is
-    // expired by the container's lifecycle rule.
-    if (onInterviewDeleted && isInterviewDoc(doc)) {
-      await onInterviewDeleted(doc, context).catch((err) =>
-        context.warn?.(
-          `deleteContentItem: the interview's recording was not deleted (${err?.code ?? 'error'})`
-        )
-      );
-    }
-    // The change feed never delivers a delete (T-324): move the dashboard
-    // counters here, best-effort.
-    if (onContentDeleted) {
-      await onContentDeleted(contentId).catch((err) =>
-        context.warn?.(
-          `deleteContentItem: the dashboard counters were not updated (${err?.code ?? 'error'})`
-        )
-      );
-    }
-    return json(200, { success: true, contentId });
+    return await deleteNamedItem(deps, { contentId, expectedStatus, user, request }, context);
   } catch (error) {
     return workflowFailure(context, 'deleteContentItem', error, 'Failed to delete content');
+  }
+}
+
+/** The delete itself, once the body names an item: the answer the route gives. */
+async function deleteNamedItem(deps, { contentId, expectedStatus, user, request }, context) {
+  const { store, now } = deps;
+  const doc = await store.readDoc('content', contentId, contentId);
+  const refused = doc ? deleteRefusal(doc, expectedStatus) : null;
+  if (refused) return refused;
+
+  // Nothing to delete is a success too: the item is gone either way.
+  const outcome = doc ? await deleteAsDecided(store, doc, now) : 'gone';
+  if (outcome === 'changed') {
+    return json(409, { error: DELETE_CHANGED_SINCE_READ, code: 'CONFLICT' });
+  }
+  if (outcome === 'deleted') {
+    await afterContentDeleted(deps, { doc, contentId, expectedStatus, user, request }, context);
+  }
+  return json(200, { success: true, contentId });
+}
+
+/**
+ * Delete the document as it was read: 'deleted', 'gone' (nothing was left to
+ * delete), or 'changed' (it moved since the read, so it is kept).
+ */
+async function deleteAsDecided(store, doc, now) {
+  try {
+    // An interview is tombstoned first, under the ETag read above, and
+    // deleted under the tombstone's ETag (ADR 0040, D10): an upload that
+    // read the document before the mark fails its own write, and the
+    // sweep in the hook below removes anything committed in between. No
+    // tombstone means the interview is already gone.
+    const target = isInterviewDoc(doc) ? await writeInterviewTombstone(store, doc, now().toISOString()) : doc;
+    return target && (await deleteAsRead(store, target)) ? 'deleted' : 'gone';
+  } catch (err) {
+    const outcome = DELETE_FAILURE_OUTCOMES.get(err?.code);
+    if (!outcome) throw err;
+    return outcome;
+  }
+}
+
+/** A delete that failed with one of these codes is an answer, not a fault: 412 moved since the read, 404 already gone. */
+const DELETE_FAILURE_OUTCOMES = new Map([
+  [412, 'changed'],
+  [404, 'gone'],
+]);
+
+/** What follows a delete: the audit row, the interview's files, the dashboard counters. Each best effort. */
+async function afterContentDeleted(
+  { store, onContentDeleted, onInterviewDeleted, now, uuid },
+  { doc, contentId, expectedStatus, user, request },
+  context
+) {
+  // Both failure lines are content-free (the PR template's telemetry
+  // rule): a fixed sentence and the error's code, never the document id or
+  // the error itself, whose message and fields can carry what was sent.
+  await store
+    .upsertDoc(
+      'audits',
+      deletionAuditRow(uuid, { user, request, doc, expectedStatus, nowIso: now().toISOString() })
+    )
+    .catch((err) =>
+      context.error(`deleteContentItem: the audit row was not written (${err?.code ?? 'error'})`)
+    );
+  // An interview owns a recording and transcripts in the private container
+  // (ADR 0040, D10); they go with the document. Best-effort and logged by
+  // count: the document is gone either way, and a blob that stays is
+  // expired by the container's lifecycle rule.
+  if (onInterviewDeleted && isInterviewDoc(doc)) {
+    await onInterviewDeleted(doc, context).catch((err) =>
+      context.warn?.(
+        `deleteContentItem: the interview's recording was not deleted (${err?.code ?? 'error'})`
+      )
+    );
+  }
+  // The change feed never delivers a delete (T-324): move the dashboard
+  // counters here, best-effort.
+  if (onContentDeleted) {
+    await onContentDeleted(contentId).catch((err) =>
+      context.warn?.(
+        `deleteContentItem: the dashboard counters were not updated (${err?.code ?? 'error'})`
+      )
+    );
   }
 }
 
