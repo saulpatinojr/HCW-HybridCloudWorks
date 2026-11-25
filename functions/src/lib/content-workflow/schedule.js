@@ -12,8 +12,11 @@ import { actor, json, readBody, workflowFailure } from './shared.js';
  * A live page is refused (#1889): saving a schedule writes `Live: false`, so
  * it would take the page off the public site, and the timer never publishes a
  * page that is live, so keeping `Live` instead would leave a schedule that
- * never fires. No caller schedules a live page; the Calendar offers only
- * pages that are not live. Unpublish first, as `unscheduleRefusal` says.
+ * never fires. The Calendar offers only pages that are not live, but the
+ * article review page's schedule card (`useScheduleActions` in
+ * frontend/src/components/admin/blog-review/useBlogReviewActions.js) calls
+ * this for any article, live ones included, so this refusal is what keeps a
+ * live page on the site. Unpublish first, as `unscheduleRefusal` says.
  */
 function scheduleRefusal(contentId, validId, contentData) {
   if (!validId) return json(400, { error: 'contentId required' });
