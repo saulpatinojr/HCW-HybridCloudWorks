@@ -5,7 +5,19 @@
  * DNS resources on the option.
  */
 import { isSelected } from '../state';
+import { AVM_MODULES, requiredInputs } from '../avmVersions';
 import { block, file, moduleSource, obj, providersMap, q } from './format';
+
+const CONNECTIVITY = 'avm-ptn-alz-connectivity-hub-and-spoke-vnet';
+
+/**
+ * The inputs the module requires at `version` and not before (#1868):
+ * `location` from 0.18.2. Nothing at 0.18.1, which has no such variable.
+ */
+function inputsRequiredAt(version) {
+  const rows = requiredInputs(CONNECTIVITY, version);
+  return rows.length ? [...rows.map((row) => [row.input, row.builderValue]), ''] : [];
+}
 
 function header(firewall, dns, sku) {
   return [
@@ -52,7 +64,8 @@ function hubObject(firewall, dns, sku) {
   return obj(hub);
 }
 
-export function connectivityTf(state) {
+/** `version` defaults to the pin; a test passes a later release to see its inputs. */
+export function connectivityTf(state, version = AVM_MODULES[CONNECTIVITY].version) {
   const firewall = isSelected(state, 'firewall');
   const dns = state.options.privateDnsZones;
   const sku = state.options.firewallSku;
@@ -66,8 +79,9 @@ export function connectivityTf(state) {
     ]),
     '',
     ...block('module "connectivity"', [
-      ...moduleSource('avm-ptn-alz-connectivity-hub-and-spoke-vnet'),
+      ...moduleSource(CONNECTIVITY),
       '',
+      ...inputsRequiredAt(version),
       ['enable_telemetry', 'var.enable_telemetry'],
       '',
       '# A DDoS protection plan is a fixed monthly charge; the learning build leaves it out.',
@@ -78,7 +92,7 @@ export function connectivityTf(state) {
       '',
       ['hub_virtual_networks', obj([['primary', hubObject(firewall, dns, sku)]])],
       '',
-      ['providers', providersMap('avm-ptn-alz-connectivity-hub-and-spoke-vnet', 'connectivity')],
+      ['providers', providersMap(CONNECTIVITY, 'connectivity')],
     ]),
   ]);
 }

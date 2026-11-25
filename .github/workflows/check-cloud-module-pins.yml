@@ -1,0 +1,184 @@
+# Check cloud module pins: is every AWS and Google Cloud module the Landing
+# Zone Builder pins a release that was actually published? (#1869)
+#
+# WHY. The builder writes Terraform `module` blocks pinned to an exact release
+# of a registry module (frontend/src/lib/landingZone/hcl/aws/moduleVersions.js
+# and gcp/moduleVersions.js). In #1862 a pin named network-firewall 1.1.0, a
+# release that was never published, so `terraform init` failed on every AWS
+# pack a learner downloaded. The offline test cannot see that because CI does
+# not call the registry. This workflow does.
+#
+# WHAT IT RUNS. frontend/scripts/check-cloud-module-pins.mjs reads the list of
+# releases for each pinned module from registry.terraform.io. A pin that is
+# not in the list fails the run, naming the module. A newer release is only a
+# warning in the run summary, with where that release's versions.tf differs
+# from what is recorded beside the pin. If the registry or GitHub cannot be
+# reached, the run fails as "could not finish"; it never reports a pin it did
+# not check as fine. docs/runbooks/landing-zone-module-pins.md says what to do
+# when it fails.
+#
+# AZURE IS NOT HERE. The Azure pins have their own weekly workflow,
+# update-avm-versions.yml, which also opens the pull request that moves them.
+# This one only checks; it never changes a file.
+#
+# TWO JOBS, SO THE ONE THAT CAN WRITE RUNS NO CODE FROM THE REPOSITORY.
+# `check` reads the repository and the two public sites and holds only
+# `contents: read`. `report` holds `issues: write` for one issue, runs only on
+# the schedule or a manual run (never on a pull request), checks nothing out
+# and runs only `gh` and `jq`. Values from `check` reach the shell through
+# `env:`, never pasted into the script text.
+#
+# No npm install: the script and the pin files use only what comes with Node.
+name: Check cloud module pins
+
+on:
+  schedule:
+    # Wednesdays 07:43 UTC, off the hour. Tuesday morning has the Azure pin
+    # update (06:30) and three other jobs; Wednesday 06:30 and 07:20 are
+    # taken, so this goes after them.
+    - cron: '43 7 * * 3'
+  workflow_dispatch:
+  # A pull request that moves a pin, or changes the check, runs it before the
+  # merge. Not a required check: a registry outage must not block a merge.
+  pull_request:
+    paths:
+      - 'frontend/src/lib/landingZone/hcl/aws/moduleVersions.js'
+      - 'frontend/src/lib/landingZone/hcl/gcp/moduleVersions.js'
+      - 'frontend/src/lib/landingZone/hcl/registryModule.js'
+      - 'frontend/scripts/check-cloud-module-pins.mjs'
+      - 'frontend/scripts/cloud-module-pins.mjs'
+      - 'frontend/scripts/cloud-module-pins-versions.mjs'
+      - '.github/workflows/check-cloud-module-pins.yml'
+
+# No workflow-level permissions: each job declares its own.
+permissions: {}
+
+concurrency:
+  group: check-cloud-module-pins-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: AWS and GCP pins are published releases
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout only
+    outputs:
+      exit: ${{ steps.pins.outputs.exit }}
+      report: ${{ steps.pins.outputs.report }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # Node.js 26, the line the repository requires, not the runner's own.
+      # No cache: nothing is installed.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
+      # `|| code=$?` keeps the step going when the script fails, so the exit
+      # code and the report are always written (see check-drill-age.yml and
+      # scripts/workflow-exit-code-steps.test.mjs for why). The script writes
+      # its report on every exit it handles; if it crashed before that, the
+      # step writes one that says so and treats it as "could not finish" (2),
+      # because a crash is not a verdict on the pins.
+      - name: Check the pins against the registry
+        id: pins
+        working-directory: frontend
+        run: |
+          set -uo pipefail
+          report="${RUNNER_TEMP}/cloud-module-pins.md"
+          code=0
+          node scripts/check-cloud-module-pins.mjs --summary "${report}" || code=$?
+          if [ ! -s "${report}" ]; then
+            code=2
+            printf '## AWS and Google Cloud module pins\n\nThe check stopped before it wrote a report; see the step log.\n' > "${report}"
+          fi
+          cat "${report}" >> "$GITHUB_STEP_SUMMARY"
+          echo "exit=${code}" >> "$GITHUB_OUTPUT"
+          delimiter="report_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            echo "report<<${delimiter}"
+            cat "${report}"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Fail the run when a pin is not published or was not checked
+        if: steps.pins.outputs.exit != '0'
+        env:
+          PINS_EXIT: ${{ steps.pins.outputs.exit }}
+        run: |
+          if [ "${PINS_EXIT}" = "1" ]; then
+            echo "::error::A pinned AWS or Google Cloud module release is not published; see the run summary."
+          else
+            echo "::error::The pin check could not finish, so some pins were not checked; see the run summary."
+          fi
+          exit 1
+
+  # One issue, kept current, in the same shape as check-drill-age.yml: found
+  # again by its label and exact title, commented on each failing week, and
+  # closed by the next green run of `main`. A run of another branch (a manual
+  # run) never closes it, because it reads that branch's pins.
+  report:
+    name: Open, update or close the pin issue
+    needs: check
+    # !cancelled(), not always(): a run someone cancelled checked nothing and
+    # should not open an issue saying so.
+    # Only main's result speaks for the pins: a manual run from another
+    # branch reports in its log but never touches the issue.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      issues: write # open, comment on or close the one pin issue
+    steps:
+      - name: Open, update or close the pin issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PINS_EXIT: ${{ needs.check.outputs.exit }}
+          PINS_REPORT: ${{ needs.check.outputs.report }}
+        run: |
+          set -euo pipefail
+          title="Landing Zone Builder: an AWS or Google Cloud module pin needs attention"
+          label="terraform"
+          existing=$(gh issue list --repo "$REPO" --state open --label "$label" --limit 200 --json number,title | jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          if [ "${PINS_EXIT:-}" = "0" ]; then
+            if [ -n "$existing" ] && [ "${GITHUB_REF:-}" != "refs/heads/main" ]; then
+              echo "Every pin is published, but this run is of ${GITHUB_REF:-an unknown ref}, not main, so #${existing} is left open."
+            elif [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$REPO" --reason completed --comment "Every AWS and Google Cloud module pin is a published release again: run ${RUN_URL}."
+              echo "Closed #${existing}."
+            else
+              echo "Every pin is published and no pin issue is open."
+            fi
+            exit 0
+          fi
+          {
+            echo "Weekly check, run ${RUN_URL}, $(date -u +%Y-%m-%d)."
+            echo
+            if [ -n "${PINS_REPORT:-}" ]; then
+              printf '%s\n' "${PINS_REPORT}"
+            else
+              echo "The check job ended without a report (it may have failed before the check ran); see the run."
+            fi
+            echo
+            if [ "${PINS_EXIT:-}" = "1" ]; then
+              echo "**What to do:** follow \"When it fails\" in docs/runbooks/landing-zone-module-pins.md. In short: move the named pin in frontend/src/lib/landingZone/hcl/aws/moduleVersions.js or gcp/moduleVersions.js to a release the registry lists, read that release's versions.tf into its \`requires\`, and run the landing zone tests. The next green run of \`main\` closes this issue."
+            else
+              echo "**What to do:** the check could not finish, which says nothing about the pins. Run the workflow again from the Actions tab; if it keeps failing, follow \"When it cannot finish\" in docs/runbooks/landing-zone-module-pins.md."
+            fi
+          } > "${RUNNER_TEMP}/issue.md"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/issue.md"
+            echo "Commented on #${existing}."
+          else
+            gh issue create --repo "$REPO" --title "$title" --label "$label" --body-file "${RUNNER_TEMP}/issue.md"
+          fi

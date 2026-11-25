@@ -191,7 +191,7 @@ export const AWS_PRESETS = Object.freeze([
     state: normalizeState({
       cloud: 'aws',
       selected: COMPONENT_IDS,
-      options: presetOptions('us-east-1', true, 'Standard', 1, 1),
+      options: presetOptions('eastus', true, 'Standard', 1, 1),
     }),
   }),
   Object.freeze({
@@ -215,7 +215,7 @@ export const AWS_PRESETS = Object.freeze([
         'identity',
         'corp',
       ],
-      options: presetOptions('us-east-1', true, 'Standard', 3, 0),
+      options: presetOptions('eastus', true, 'Standard', 3, 0),
     }),
   }),
   Object.freeze({
@@ -229,7 +229,7 @@ export const AWS_PRESETS = Object.freeze([
     state: normalizeState({
       cloud: 'aws',
       selected: ['management-groups', 'policy', 'management'],
-      options: presetOptions('us-east-1', false, 'Standard', 0, 0),
+      options: presetOptions('eastus', false, 'Standard', 0, 0),
     }),
   }),
 ]);
@@ -246,7 +246,7 @@ export const GCP_PRESETS = Object.freeze([
     state: normalizeState({
       cloud: 'gcp',
       selected: COMPONENT_IDS,
-      options: presetOptions('us-central1', true, 'Standard', 1, 1),
+      options: presetOptions('centralus', true, 'Standard', 1, 1),
     }),
   }),
   Object.freeze({
@@ -268,7 +268,7 @@ export const GCP_PRESETS = Object.freeze([
         'identity',
         'corp',
       ],
-      options: presetOptions('us-central1', true, 'Standard', 2, 0),
+      options: presetOptions('centralus', true, 'Standard', 2, 0),
     }),
   }),
   Object.freeze({
@@ -282,7 +282,7 @@ export const GCP_PRESETS = Object.freeze([
     state: normalizeState({
       cloud: 'gcp',
       selected: ['management-groups', 'policy', 'management'],
-      options: presetOptions('us-central1', false, 'Standard', 0, 0),
+      options: presetOptions('centralus', false, 'Standard', 0, 0),
     }),
   }),
 ]);

@@ -23,7 +23,7 @@
  * render agree; the page still corrects itself.
  */
 import { useSyncExternalStore } from 'react';
-import { isIsoDate, todayIso } from './certDates';
+import { isIsoDate, todayIso } from './certDates.js';
 
 // The clock is an external system as far as React is concerned, so it is read
 // through useSyncExternalStore rather than a state-plus-effect pair: React
@@ -62,6 +62,6 @@ export function useToday(fallbackIso) {
 
 // The pure helpers live in three sibling files, grouped by job. They are
 // re-exported here so every caller keeps importing from '@/lib/certStatus'.
-export { isIsoDate, todayIso, isPastDate, daysUntil, formatIsoDate } from './certDates';
-export { CERT_STATUSES, deriveStatus, describeCertStatus } from './certStatusRules';
-export { CERT_DATE_FIELDS, findStaleStatuses, findStatusesDueWithin } from './certStatusCheck';
+export { isIsoDate, todayIso, isPastDate, daysUntil, formatIsoDate } from './certDates.js';
+export { CERT_STATUSES, deriveStatus, describeCertStatus } from './certStatusRules.js';
+export { CERT_DATE_FIELDS, findStaleStatuses, findStatusesDueWithin } from './certStatusCheck.js';

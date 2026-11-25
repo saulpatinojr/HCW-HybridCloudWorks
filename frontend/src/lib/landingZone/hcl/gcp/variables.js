@@ -1,7 +1,17 @@
 import { block, file, joinBlocks, q } from '../format';
+import { isSelected } from '../../state';
+import { githubOrganizationVariable } from './identity';
+import { nearestRegion } from '../cloudRegion';
 
-export function variablesTf() {
+/**
+ * The pack's variables. `github_organization` has no default, so Terraform
+ * stops until it is set; it is written only when identity.tf is, so a pack
+ * without the GitHub sign-in never asks for it (#1870).
+ */
+export function variablesTf(state) {
   const blocks = [];
+
+  if (isSelected(state, 'identity')) blocks.push(githubOrganizationVariable());
 
   blocks.push(
     block('variable "organization_id"', [
@@ -75,12 +85,20 @@ export function tfvarsExample(state) {
     '# Sample Google Cloud Landing Zone Configuration Parameters',
     'organization_id    = "123456789012"',
     'billing_account_id = "012345-6789AB-CDEF01"',
-    `gcp_region         = "${state.options?.location || 'us-central1'}"`,
+    `gcp_region         = "${nearestRegion('gcp', state.options?.location, 'us-central1')}"`,
     'host_project_id    = "prj-shared-vpc-host-hcw"',
     'logging_project_id = "prj-logging-hub-hcw"',
     `spoke_cidr         = "${state.options?.spokeCidr || '10.1.0.0/16'}"`,
     `corp_count         = ${state.options?.corpCount ?? 1}`,
     `online_count       = ${state.options?.onlineCount ?? 1}`,
   ];
+  if (isSelected(state, 'identity')) {
+    lines.push(
+      '',
+      '# Required: the GitHub organisation (or user) whose Actions workflows may sign in.',
+      '# Change this to your own; no other organisation is accepted.',
+      'github_organization = "example-org"'
+    );
+  }
   return file('terraform.tfvars.example', lines);
 }

@@ -8,9 +8,11 @@
  * and the alarm agree.
  */
 import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { findStaleStatuses } from '../src/lib/certStatus.js';
 import { CATALOGUES } from '../src/data/catalogues.js';
@@ -117,6 +119,22 @@ describe('renderReport', () => {
       today: TODAY,
     });
     expect(report).toContain('| 2026-11-01 | x | A\\|B: odd | — |');
+  });
+});
+
+// warn-catalogue-due.yml runs this script with plain Node, which needs every
+// relative import written with its `.js` ending; the test runner does not.
+// One import lost its ending in a refactor and the Monday run would have
+// failed to start, with nothing here to say so.
+describe('under plain Node', () => {
+  it('starts and prints its report, as the workflow runs it', () => {
+    const script = join(dirname(fileURLToPath(import.meta.url)), 'catalogue-due-soon.mjs');
+    const run = spawnSync(process.execPath, [script, '--days', '21', '--today', '2026-01-01'], {
+      encoding: 'utf8',
+    });
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain(REPORT_MARKER);
   });
 });
 

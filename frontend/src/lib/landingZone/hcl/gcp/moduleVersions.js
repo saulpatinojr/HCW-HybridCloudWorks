@@ -19,20 +19,18 @@
  * submodule this pack does not use. network 10.0.0 and project-factory
  * 17.1.0 stop at google `< 7`, so the pack stays on google 6.
  *
- * cloudStorage is the `simple_bucket` submodule: one named bucket, which is
- * what the log sink writes to. It was written straight into loggingSink.js
- * as the root module at `~> 6.0`, which takes a list of `names`, not `name`,
- * so `terraform init` refused the call. 6.x also fails for a second reason:
- * simple_bucket calls the kms module at `~> 2.0`, which asks for google
- * `< 6`. 7.0.0 is the first release whose kms call (`~> 3.0`, google
- * `>= 5.31, < 7`) accepts google 6; its other breaking change renames a
- * lifecycle field this pack does not set. 8.x and 9.x would fit too; 7.0.0
- * is the smallest step that ends the clash, and a later bump is a choice
- * of its own (11.x and later need google >= 6.9). A module's `requires` includes
- * what the registry modules it calls ask for, because Terraform checks them
- * all together.
+ * logStorage is log-export's own Cloud Storage destination
+ * (`modules/storage`), at the same release as the sink. It makes the bucket
+ * and grants the sink's writer identity `roles/storage.objectCreator` on it,
+ * which Google needs before it accepts a single log (#1870). It replaces the
+ * cloud-storage `simple_bucket` 7.0.0 the pack used before, which made the
+ * bucket but left the sink unable to write to it. It calls no kms module,
+ * so the google `< 6` clash that pin had to dodge (#1863) cannot come back
+ * through it. A module's `requires` includes what the registry modules it
+ * calls ask for, because Terraform checks them all together.
  */
-import { registryModule } from '../cloudPack';
+// With its `.js` ending, so plain Node can load this file (see registryModule.js).
+import { registryModule } from '../registryModule.js';
 
 export const GCP_VERIFIED_ON = '2026-11-25';
 
@@ -54,12 +52,12 @@ export const GCP_MODULES = Object.freeze({
     'Organization-level aggregated log sink and central Cloud Storage bucket.',
     { terraform: '>= 1.3', readAt: '10.0.0', providers: { google: '>= 5.27, < 7' } }
   ),
-  cloudStorage: registryModule(
-    'terraform-google-modules/cloud-storage/google//modules/simple_bucket',
-    '7.0.0',
-    'The Cloud Storage bucket the organization log sink writes to.',
-    // Its own floor is google >= 5.43; the kms 3.x module it calls stops at < 7.
-    { terraform: '>= 0.13', readAt: '7.0.0', providers: { google: '>= 5.43, < 7' } }
+  logStorage: registryModule(
+    'terraform-google-modules/log-export/google//modules/storage',
+    '10.0.0',
+    'The Cloud Storage bucket the organization log sink writes to, with the sink allowed to write.',
+    // From modules/storage/versions.tf at v10.0.0; it calls no other module.
+    { terraform: '>= 1.3', readAt: '10.0.0', providers: { google: '>= 5.22, < 7' } }
   ),
   projectFactory: registryModule(
     'terraform-google-modules/project-factory/google',

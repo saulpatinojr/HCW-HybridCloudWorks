@@ -525,7 +525,9 @@ and attests. Where each sum comes from:
   prints over the old two, rewrites `LAB_IMAGE_CHILD_AVM` in
   `frontend/src/lib/landingZone/labImage.js` when the child list changed,
   moves the exact pin on the module's block in
-  `smoke/terraform-validate-payload/main.tf` where it has one, and runs
+  `smoke/terraform-validate-payload/main.tf` where it has one (adding any
+  input the new release made required, from `AVM_REQUIRED_INPUTS` in
+  `avmVersions.js`), and runs
   `scripts/lab-image-avm-vendoring.test.mjs` on the result before the pull
   request opens; a vendor stage that fails fails the run with its log, and
   no pull request opens with the old record. A hand bump, or a module added
