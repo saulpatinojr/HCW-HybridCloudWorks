@@ -4,6 +4,7 @@ import { getCoverImageUrl } from '@/lib/blogUtils';
 import { byNewest } from '@/lib/dateUtils';
 import { ADMIN_ROUTES } from '@/config/admin';
 import { getCanonicalContentType } from '@/lib/contentModel';
+import { firstField } from '@/components/shared/firstField';
 
 export const MIN_BODY_CHARS = 200;
 
@@ -18,7 +19,7 @@ export function getPrePublishFailures(item) {
   if (!String(item.Summary || item.summary || '').trim()) {
     failures.push('Summary is empty.');
   }
-  const body = String(item.blogDraft || item.Body || item.body || item.Content || '');
+  const body = String(firstField(item, ['blogDraft', 'Body', 'body', 'Content'], ''));
   if (body.trim().length <= MIN_BODY_CHARS) {
     failures.push(`Body is too short (needs more than ${MIN_BODY_CHARS} characters).`);
   }

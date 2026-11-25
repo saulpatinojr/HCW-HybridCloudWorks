@@ -111,7 +111,7 @@
  * in". So the built HTML is the lab's heading and the opening sentence, and
  * hydration matches it.
  */
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, Navigate, useParams } from 'react-router';
 import {
@@ -130,48 +130,28 @@ import HowLabsWork from '@/components/labs/HowLabsWork';
 import LabArticles from '@/components/labs/LabArticles';
 import LabFacts from '@/components/labs/LabFacts';
 import LabSteps from '@/components/labs/LabSteps';
-import LabPreflightCard from '@/components/labs/LabPreflightCard';
 import WorkspaceStatusBadge from '@/components/labs/WorkspaceStatusBadge';
 import MiniLandingFrame from '@/components/shared/MiniLandingFrame';
-import {
-  markSignInStarted,
-  markSignedIn,
-  readSignedInAt,
-  subscribeSignedIn,
-} from '@/components/labs/labSignIn';
+import { markSignInStarted, readSignedInAt, subscribeSignedIn } from '@/components/labs/labSignIn';
 import { providerName } from '@/components/labs/labsWords';
 import { usePublicData } from '@/hooks/usePublicData';
-import {
-  fetchCoderStatus,
-  fetchVisitorSessionStatus,
-  startVisitorSession,
-  stopVisitorSession,
-} from '@/lib/publicApi';
+import { fetchCoderStatus, stopVisitorSession } from '@/lib/publicApi';
 import { routes, staticRoutes } from '@/lib/routeFactory';
 import { safeUrl } from '@/lib/safeUrl';
-import { loadTurnstile, turnstileSiteKey, VISITOR_TURNSTILE_ACTION } from '@/lib/turnstile';
-import { useLabTurnstile } from '@/pages/tools/landingZone/useLabTurnstile';
+import SignInStep from './labPane/SignInStep';
+import { DEFAULT_TURNSTILE, LINK, MUTED, PRIMARY, SECONDARY } from './labPane/labPaneWords';
+
+export {
+  DEFAULT_TURNSTILE,
+  SIGN_IN_HEADING,
+  SIGN_IN_PENDING_SENTENCE,
+  VISITOR_CAPACITY_FULL_REASON,
+  VISITOR_START_BUTTON,
+  VISITOR_START_REREAD_MS,
+} from './labPane/labPaneWords';
 
 export const UNAVAILABLE_SENTENCE = "Lab workspaces aren't available right now.";
-export const SIGN_IN_HEADING = 'Sign in with GitHub to open your lab workspace';
 export const OPENING_SENTENCE = 'Opening your lab workspace…';
-export const VISITOR_START_BUTTON = 'Start visitor session';
-/** How long the pane waits before it reads the status again after "your session is still being set up" (409). */
-export const VISITOR_START_REREAD_MS = 5000;
-export const VISITOR_CAPACITY_FULL_REASON =
-  'The lab is currently at full capacity (visitor limit reached). Please try again in a few minutes, or sign in if you are a team member.';
-export const DEFAULT_TURNSTILE = Object.freeze({
-  siteKey: turnstileSiteKey(),
-  load: loadTurnstile,
-});
-/**
- * The fallback clause is for a return this page cannot hear: storage that
- * is blocked, or a visit on www, whose storage the returning tab (always on
- * the apex, where #750 redirects) does not share.
- */
-export const SIGN_IN_PENDING_SENTENCE =
-  "Finish signing in with GitHub in the new tab. Your workspace opens here when you're done; if it doesn't, choose I've already signed in.";
-
 /** A frame that has not loaded in this long is treated as unavailable. */
 export const PANE_LOAD_TIMEOUT_MS = 30_000;
 
@@ -267,14 +247,6 @@ export const PANE_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-p
  */
 export const PANE_ALLOW = ['clipboard-read *', 'clipboard-write *', 'fullscreen *'].join('; ');
 
-const MUTED = 'text-slate-600 dark:text-slate-400';
-const BUTTON =
-  'inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
-const PRIMARY = `${BUTTON} bg-primary text-primary-foreground hover:opacity-90`;
-const SECONDARY = `${BUTTON} border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800`;
-const LINK =
-  'font-semibold text-slate-900 dark:text-slate-100 underline underline-offset-4 hover:text-primary';
-
 /** What the status read says about the workspaces: 'checking', 'available' or 'unavailable'. */
 export function workspaceService({ data, loading, error }) {
   if (error) return 'unavailable';
@@ -305,9 +277,6 @@ export default function LabPanePage({ turnstile = DEFAULT_TURNSTILE } = {}) {
     />
   );
 }
-
-/** "I've already signed in": record it, which shows the pane. No argument, so the click event is not taken for a time. */
-const alreadySignedIn = () => markSignedIn();
 
 function LabPane({ lab, provider, turnstile = DEFAULT_TURNSTILE }) {
   const status = usePublicData(() => fetchCoderStatus(), WORKSPACE_STATUS_KEY);
@@ -664,196 +633,6 @@ function VisitorPane({ lab, session, backTo, onStopSession }) {
         Visitor sessions are ephemeral and stop automatically when time expires.
       </p>
     </div>
-  );
-}
-
-function SignInStep({
-  lab,
-  signInHref,
-  backTo,
-  pending,
-  onStart,
-  onVisitorSessionStarted,
-  turnstile = DEFAULT_TURNSTILE,
-}) {
-  const [visitorStatus, setVisitorStatus] = useState(null);
-  const [visitorStarting, setVisitorStarting] = useState(false);
-  const [visitorError, setVisitorError] = useState(null);
-  // The server's sentence when a status read is refused for too many requests (429). The last
-  // status the pane read is kept, so the guest box does not vanish (#1464).
-  const [visitorNotice, setVisitorNotice] = useState(null);
-  const mounted = useRef(true);
-  const rereadTimer = useRef(null);
-
-  const readVisitorStatus = useCallback(
-    () =>
-      fetchVisitorSessionStatus()
-        .then((st) => {
-          if (!mounted.current || !st) return;
-          setVisitorNotice(null);
-          setVisitorStatus(st);
-          if (st.session) {
-            onVisitorSessionStarted?.(st.session);
-          }
-        })
-        .catch((err) => {
-          if (mounted.current && err?.status === 429 && err.message) setVisitorNotice(err.message);
-        }),
-    [onVisitorSessionStarted]
-  );
-
-  useEffect(() => {
-    mounted.current = true;
-    readVisitorStatus();
-    return () => {
-      mounted.current = false;
-      clearTimeout(rereadTimer.current);
-    };
-  }, [readVisitorStatus]);
-
-  const turnstileActive = Boolean(visitorStatus?.configured && visitorStatus?.open);
-  const {
-    containerRef,
-    phase: turnstilePhase,
-    take: takeTurnstileToken,
-    renew: renewTurnstile,
-  } = useLabTurnstile({
-    active: turnstileActive,
-    siteKey: turnstile?.siteKey ?? turnstileSiteKey(),
-    load: turnstile?.load ?? loadTurnstile,
-    action: VISITOR_TURNSTILE_ACTION,
-  });
-
-  const handleStartVisitor = async () => {
-    setVisitorStarting(true);
-    setVisitorError(null);
-    try {
-      const turnstileToken = takeTurnstileToken();
-      if (!turnstileToken) {
-        setVisitorError('Please complete the verification check.');
-        setVisitorStarting(false);
-        return;
-      }
-      const res = await startVisitorSession({ labId: lab.id, turnstileToken });
-      onVisitorSessionStarted?.({
-        id: res.sessionId,
-        labId: res.labId,
-        accessUrl: res.accessUrl,
-        expiresAt: res.expiresAt,
-      });
-    } catch (err) {
-      renewTurnstile();
-      setVisitorError(err?.message || 'Failed to start visitor session');
-      setVisitorStarting(false);
-      // A start of this visitor's is still being set up: wait, then read the status again, which
-      // opens the session once it is running (#1464).
-      if (err?.code === 'VISITOR_START_IN_PROGRESS') {
-        clearTimeout(rereadTimer.current);
-        rereadTimer.current = setTimeout(readVisitorStatus, VISITOR_START_REREAD_MS);
-      }
-    }
-  };
-
-  return (
-    <section
-      aria-labelledby="lab-sign-in-heading"
-      data-testid="lab-sign-in"
-      className="glass rounded-xl p-6 flex flex-col gap-4 max-w-2xl"
-    >
-      <div className="flex flex-col gap-1.5">
-        <h2 id="lab-sign-in-heading" className="text-lg font-bold text-slate-950 dark:text-white">
-          {SIGN_IN_HEADING}
-        </h2>
-        <p className="text-sm text-slate-700 dark:text-slate-300">
-          Sign-in opens in a new tab. When it finishes, that tab brings you back to this lab, and
-          the workspace opens here as well.
-        </p>
-        <p className={`text-sm ${MUTED}`}>
-          Lab workspaces are for members of the HybridCloudWorks organization on GitHub.
-        </p>
-      </div>
-
-      {visitorStatus?.configured ? (
-        <div className="flex flex-col gap-2 p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50">
-          <h3 className="text-sm font-semibold text-slate-950 dark:text-white">
-            Guest / Visitor Access
-          </h3>
-          <p className={`text-xs ${MUTED}`}>
-            Outside the organization? Start an ephemeral 60-minute workspace right in this browser
-            pane.
-          </p>
-          {visitorStatus.open ? (
-            <div className="flex flex-col gap-2 mt-1">
-              <div ref={containerRef} data-testid="visitor-check-container" />
-              <button
-                type="button"
-                onClick={handleStartVisitor}
-                disabled={
-                  visitorStarting || (turnstilePhase !== 'ready' && turnstilePhase !== 'idle')
-                }
-                data-testid="start-visitor-session-button"
-                className={`${PRIMARY} self-start`}
-              >
-                {visitorStarting ? 'Starting session…' : VISITOR_START_BUTTON}
-              </button>
-            </div>
-          ) : (
-            <p
-              className="text-xs text-amber-700 dark:text-amber-400"
-              data-testid="visitor-session-closed-notice"
-            >
-              {visitorStatus.reason || VISITOR_CAPACITY_FULL_REASON}
-            </p>
-          )}
-          {visitorError ? (
-            <p
-              className="text-xs text-rose-600 dark:text-rose-400"
-              data-testid="visitor-session-error"
-            >
-              {visitorError}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-      {visitorNotice ? (
-        <p
-          className="text-xs text-amber-700 dark:text-amber-400"
-          data-testid="visitor-session-notice"
-          role="status"
-        >
-          {visitorNotice}
-        </p>
-      ) : null}
-
-      {/* Pre-flight card with duration, toolchains, terminal preview and trust disclosures */}
-      <LabPreflightCard compact headingLevel="h3" />
-
-      {pending ? (
-        <p role="status" className="text-sm text-slate-900 dark:text-slate-100">
-          {SIGN_IN_PENDING_SENTENCE}
-        </p>
-      ) : null}
-      <div className="flex flex-wrap gap-3">
-        {signInHref ? (
-          <a
-            href={signInHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={onStart}
-            data-testid="lab-sign-in-link"
-            className={PRIMARY}
-          >
-            Sign in with GitHub <span className="sr-only">(opens in a new tab)</span>
-          </a>
-        ) : null}
-        <button type="button" onClick={alreadySignedIn} className={SECONDARY}>
-          I&apos;ve already signed in
-        </button>
-        <Link to={backTo} className={SECONDARY}>
-          Back to labs
-        </Link>
-      </div>
-    </section>
   );
 }
 

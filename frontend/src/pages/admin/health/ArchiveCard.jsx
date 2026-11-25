@@ -29,606 +29,94 @@
  * Both routes are super_admin, so below that role the card is not drawn.
  */
 import React, { useCallback, useState } from 'react';
-import { Archive, Loader2, RefreshCw } from 'lucide-react';
+import { Archive, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import RefreshableCard from './RefreshableCard';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuthReady } from '@/hooks/useAuthReady';
 import { useAdminRole } from '@/hooks/useAdminRole';
 import { satisfiesRole } from '@/config/adminNav';
 import useGuardedLoad from '@/components/admin/shared/useGuardedLoad';
 import { getJSON, postJSON } from '@/lib/api';
-import { refusalSentence, utcMinute } from './SentAlertsCard';
+import { refusalSentence } from './SentAlertsCard';
+import { blockerSentence, yearState } from './archiveWords';
+import { ArchiveProgress, Row } from './ArchiveReport';
+import { ReportBody } from './ArchiveDryRun';
 
 export const ARCHIVE_STATUS_ROUTE = 'cms/content-archive';
 export const ARCHIVE_DRY_RUN_ROUTE = 'cms/content-archive/dry-run';
 /** The role both routes need; below it the card is not drawn. */
 export const ARCHIVE_ROLE = 'super_admin';
+export {
+  blockerSentence,
+  isFlagged,
+  kindWords,
+  notShownWords,
+  reasonWords,
+  sensitiveSentence,
+  sizeWords,
+  yearState,
+} from './archiveWords';
+
 export const ARCHIVE_RUNBOOK_URL = 'https://docs.hybridcloudworks.com/runbooks/content-archive/';
 
-/** Each thing that can stand in the way of an archive starting, in plain words. */
-const BLOCKERS = Object.freeze({
-  'switch-off': 'the switch is off',
-  'export-off':
-    'the nightly export is off (the archive is made from its weekly backup, and its timer makes the daily check)',
-  'before-1-february': 'it is still January, the month of grace',
-  'already-archived': 'that year is already archived',
-  'archive-container-missing':
-    'the archive’s storage container does not exist yet (the Terraform run that creates it has not been confirmed)',
-  'archive-not-readable': 'the archive’s storage container could not be read just now',
-  'no-backup': 'no complete weekly full backup was found in the last 35 days',
-  'backup-too-early': 'the newest complete weekly backup is from before 2 February',
-  // An archive never starts from a state no finished dry-run report describes.
-  'report-missing':
-    'no dry run has been made yet (the daily check starts one by itself when that is all that is missing)',
-  'report-running': 'a dry run is still reading the backup',
-  'report-stalled':
-    'the newest dry run did not finish (the daily check starts a new one when that is all that is missing)',
-  'report-older-than-backup':
-    'the newest dry-run report was made from an older backup than the one an archive would read (the daily check starts a new one when that is all that is missing)',
-  'report-older-rules':
-    'the newest dry-run report was made before the list of what is kept last changed (the daily check starts a new one when that is all that is missing)',
-  'report-incomplete':
-    'the newest dry-run report does not cover every container an archive would write (the daily check starts a new one when that is all that is missing)',
-  'report-cut-short':
-    'the newest dry-run report met a record too large to search whole for names that look like a secret, so it cannot vouch for that container',
-  'report-mismatch':
-    'the newest dry-run report counted a different number of records than the backup’s own list, or met a line it could not read',
-  'report-flagged':
-    'the newest dry-run report shows a field to look at in a container nobody has decided about (the red block below)',
-  'report-waiting': 'the newest dry-run report shows a container waiting for you',
-});
-
-/** Why a record or a container is left out, in plain words. */
-const REASONS = Object.freeze({
-  promise: 'a promise limits keeping it',
-  secret: 'it is a secret',
-  'access-list': 'it is the access list',
-  derived: 'a job rebuilds it',
-  'working-state': 'short-lived working state',
-  unclassified: 'not classified yet',
-  unlisted: 'a document the list does not name',
-  orphan: 'its content item is not in the backup',
-});
-
-export const blockerSentence = (blockers = []) =>
-  blockers.map((code) => BLOCKERS[code] || code).join('; ');
-
-export const reasonWords = (leftOutBy = {}) =>
-  Object.entries(leftOutBy)
-    .map(([reason, n]) => `${n} ${REASONS[reason] || reason}`)
-    .join(', ');
-
-/**
- * true: written; false: not written; anything else: not known. A container
- * that does not exist yet is "not known", never "not written": nothing was
- * looked at, so nothing can be said about the year.
- */
-export function yearState(archived, containerExists) {
-  if (containerExists === false) return 'Not known: no container yet';
-  if (archived === true) return 'Written';
-  if (archived === false) return 'Not written';
-  return 'Not known';
-}
-
-const number = (value) => (Number.isFinite(value) ? value.toLocaleString('en-US') : '0');
-
-/** A size in plain words: "512 bytes", "1.5 MB". */
-export function sizeWords(bytes) {
-  if (!Number.isFinite(bytes) || bytes < 0) return 'an unknown size';
-  if (bytes < 1024) return `${number(bytes)} bytes`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(1)} ${units[unit]}`;
-}
-
-function Row({ label, children }) {
+/** The archive's state once read: the switch, the year, the readiness, the report and Dry run. */
+function ArchiveStatus({ status, starting, onDryRun }) {
+  // A run that did not finish no longer holds the button: a new one may start.
+  const running = status.latest && !status.latest.complete && !status.latest.stalled;
   return (
-    <div className="flex items-center justify-between gap-2 text-sm">
-      <span>{label}</span>
-      {children}
-    </div>
-  );
-}
-
-/** The field names of one container, as a sentence. Nothing when the report listed none. */
-function FieldNames({ part }) {
-  const names = part.fieldNames || [];
-  if (!names.length && !part.otherNames) return null;
-  return (
-    <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-      {names.length ? (
-        <>
-          Fields: <span className="font-mono">{names.map((field) => field.name).join(', ')}</span>
-        </>
-      ) : (
-        'No field name is common and plain enough to show.'
-      )}
-      {part.fieldNamesTruncated ? ' (and more; only the 100 most common are listed)' : ''}
-      {part.otherNames
-        ? ` (${number(part.otherNames)} more uses of names that are not shown: too rare, or shaped like an id or typed text)`
-        : ''}
-    </p>
-  );
-}
-
-/**
- * "3 records have a field named like a secret: apiKey, token". Names only;
- * the server never sends a value.
- */
-export function sensitiveSentence(sensitive) {
-  if (!sensitive?.records) return '';
-  const names = (sensitive.names || []).map((field) => field.name);
-  const hidden = sensitive.namesNotShown
-    ? `${names.length ? ', and ' : ''}${number(sensitive.namesNotShown)} not shown`
-    : '';
-  const kept =
-    sensitive.keptRecords > 0
-      ? ` ${number(sensitive.keptRecords)} of them would still carry one in the archive.`
-      : ' None of those names would be in the archive.';
-  return `${number(sensitive.records)} record(s) have a field named like a secret or contact details: ${names.join(', ')}${hidden}.${kept}`;
-}
-
-/** The kinds of value the report tells apart, in plain words. */
-const KIND_WORDS = Object.freeze({
-  number: 'number',
-  'yes-no': 'true/false',
-  date: 'date-like text',
-  'short-text': 'short text (under 64 characters)',
-  'long-text': 'long text',
-  list: 'list',
-  object: 'object',
-  empty: 'empty',
-});
-
-/** "short text (under 64 characters) ×12, empty ×1": the kinds of value seen, as counts. */
-export const kindWords = (kinds = {}) =>
-  Object.entries(kinds)
-    .map(([kind, n]) => `${KIND_WORDS[kind] || kind} ×${number(n)}`)
-    .join(', ');
-
-/** "credential_register › rotated.some-name" or just the path. */
-const whereWords = (entry) => (entry.document ? `${entry.document} › ${entry.path}` : entry.path);
-
-/** Why some names are counted and not printed. Empty when none are. */
-export function notShownWords(notShown = {}) {
-  const parts = [];
-  if (notShown.notPlain)
-    parts.push(
-      `${number(notShown.notPlain)} more use(s) of a name that is not shown because it is shaped like an id or typed text`
-    );
-  if (notShown.tooMany)
-    parts.push(
-      `${number(notShown.tooMany)} more use(s) not listed because this container has more than 2,000 different such names`
-    );
-  return parts.join('; ');
-}
-
-/** True when this container has a name that would remain and is not explained. */
-export const isFlagged = (part) =>
-  part?.sensitive?.remaining
-    ? part.sensitive.flagged > 0
-    : // A report made before the lists were split says only how many kept records carry one.
-      part?.sensitive?.keptRecords > 0;
-
-/** The names that would remain and are not explained, one line each. Red unless the owner decided. */
-function RemainingFlagged({ part, flagged, hidden: remainingHidden }) {
-  if (!flagged.length && !remainingHidden) return null;
-  return (
-    <div
-      className={part.ownerAccepted ? undefined : 'text-destructive'}
-      data-testid="archive-remaining-flagged"
-    >
-      <p>
-        Would remain in the archive, named like a secret or contact details
-        {part.ownerAccepted
-          ? `. The owner chose to keep this container as it is on ${part.ownerAccepted}; the names are still listed so a new one is noticed`
-          : ''}
-        :
-      </p>
-      <ul className="list-disc pl-4">
-        {flagged.map((entry) => (
-          <li key={whereWords(entry)}>
-            <span className="font-mono">{whereWords(entry)}</span> in {number(entry.records)}{' '}
-            record(s); values seen: {kindWords(entry.kinds)}
-          </li>
-        ))}
-        {remainingHidden ? <li>{remainingHidden}</li> : null}
-      </ul>
-    </div>
-  );
-}
-
-/**
- * Everything the report says about names that look like a secret or contact
- * details, for one container: what would remain (in red when not explained),
- * what is only numbers or yes/no, what is kept on purpose, and what is taken
- * out. Names, paths, counts and kinds only.
- */
-function SensitiveLine({ part }) {
-  const { sensitive } = part;
-  if (!sensitive?.remaining) {
-    // A report made before the lists were split: one sentence, as it was.
-    const sentence = sensitiveSentence(sensitive);
-    if (!sentence) return null;
-    return (
-      <p
-        className={`text-xs [overflow-wrap:anywhere] ${sensitive.keptRecords > 0 ? 'text-destructive' : 'text-muted-foreground'}`}
-        data-testid="archive-sensitive"
-      >
-        {sentence}
-      </p>
-    );
-  }
-  const flagged = sensitive.remaining.filter((entry) => entry.flagged);
-  const quiet = sensitive.remaining.filter((entry) => entry.quiet && !entry.keptOnPurpose);
-  const onPurpose = sensitive.remaining.filter((entry) => entry.keptOnPurpose);
-  const takenOut = sensitive.takenOut || [];
-  const remainingHidden = notShownWords(sensitive.remainingNotShown);
-  const takenOutHidden = notShownWords(sensitive.takenOutNotShown);
-  if (!sensitive.remaining.length && !takenOut.length && !remainingHidden && !takenOutHidden)
-    return null;
-  return (
-    <div className="space-y-1 text-xs [overflow-wrap:anywhere]" data-testid="archive-sensitive">
-      <RemainingFlagged part={part} flagged={flagged} hidden={remainingHidden} />
-      {quiet.length ? (
-        <p className="text-muted-foreground" data-testid="archive-remaining-quiet">
-          Named like one, but only numbers or yes/no:{' '}
-          <span className="font-mono">{quiet.map(whereWords).join(', ')}</span>
-        </p>
-      ) : null}
-      {onPurpose.map((entry) => (
-        <p
-          key={whereWords(entry)}
-          className="text-muted-foreground"
-          data-testid="archive-kept-on-purpose"
-        >
-          Kept on purpose: <span className="font-mono">{whereWords(entry)}</span> in{' '}
-          {number(entry.records)} record(s) ({entry.keptOnPurpose})
-        </p>
-      ))}
-      {takenOut.length || takenOutHidden ? (
-        <p className="text-muted-foreground" data-testid="archive-taken-out">
-          {part.decision === 'leave-out' ? 'Found, and not archived' : 'Taken out before archiving'}
-          :{' '}
-          <span className="font-mono">
-            {takenOut.map((field) => `${field.name} (${number(field.records)})`).join(', ')}
-          </span>
-          {takenOutHidden ? `${takenOut.length ? '; ' : ''}${takenOutHidden}` : ''}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-/** One unclassified container: its count, the names of its fields, and any that look sensitive. */
-function UnclassifiedRow({ part }) {
-  return (
-    <li className="border-b border-border/60 py-2 last:border-0" data-testid="archive-unclassified">
-      <p className="text-sm">
-        <span className="font-mono">{part.container}</span>
-        <span className="text-muted-foreground">
-          {part.inBackup === false ? ': not in the backup' : `: ${number(part.read)} records`}
-        </span>
-      </p>
-      <FieldNames part={part} />
-      <SensitiveLine part={part} />
-    </li>
-  );
-}
-
-/**
- * The archive itself: one being written now, the last one written, or that
- * none has been. Numbers, dates and container names only.
- */
-function ArchiveProgress({ status }) {
-  if (status.progressKnown === false) {
-    return (
-      <p className="text-sm text-muted-foreground" data-testid="archive-progress-unknown">
-        Whether an archive has been written, or is being written, could not be read just now.
-      </p>
-    );
-  }
-  const { run, lastArchive: last } = status;
-  const parts = [];
-  if (run?.unlistedFiles) {
-    parts.push(
-      <p key="unlisted" className="text-sm text-destructive" data-testid="archive-run-unlisted">
-        The folder of the archive of {run.year} holds {number(run.unlistedFiles)} file(s) its list
-        does not name: a container that was archived when the run started and has since been taken
-        off the list. The archive cannot finish while it is there, and nothing deletes it by itself.
-        The runbook, “A file that should not be there”, has the steps.
-      </p>
-    );
-  }
-  if (run) {
-    const missing = Array.isArray(run.missing) ? run.missing : [];
-    parts.push(
-      run.late ? (
-        <p
-          key="run"
-          className="text-sm text-destructive"
-          role="status"
-          data-testid="archive-run-late"
-        >
-          The archive of {run.year} started {utcMinute(run.startedAt) || 'at an unrecorded time'}{' '}
-          and is not finished: {run.done} of {run.expected} files are written and checked.
-          {missing.length ? (
-            <>
-              {' '}
-              Missing: <span className="font-mono">{missing.join(', ')}</span>.
-            </>
-          ) : null}{' '}
-          Nothing has been moved to the Archive tier, so every file can still be replaced. The daily
-          check at 03:00 UTC queues the missing ones again; the runbook says what to do if it stays
-          like this.
-        </p>
-      ) : (
-        <p
-          key="run"
-          className="text-sm text-muted-foreground"
-          role="status"
-          data-testid="archive-run"
-        >
-          The archive of {run.year} is being written from the weekly backup of{' '}
-          {run.sourceRun || 'an unknown date'}: {run.done} of {run.expected} files are written and
-          checked. Press the refresh button in a few minutes.
-        </p>
-      )
-    );
-  }
-  if (last) {
-    const allOffline = last.inArchiveTier === last.containers;
-    parts.push(
-      <div key="last" className="space-y-1" data-testid="archive-last">
-        <Row label={`Last archive: ${last.year}`}>
-          <Badge variant="outline">{utcMinute(last.createdAt) || 'time not recorded'}</Badge>
-        </Row>
-        <p className="text-xs text-muted-foreground">
-          {number(last.containers)} files (one per container), {number(last.records)} records,{' '}
-          {sizeWords(last.bytes)} compressed, made from the weekly backup of{' '}
-          {last.sourceRun || 'an unknown date'}.{' '}
-          {allOffline
-            ? 'Every file is in the Archive tier (offline; reading one back takes hours).'
-            : `${number(last.inArchiveTier)} of ${number(last.containers)} files are in the Archive tier; the daily check moves the rest.`}
-        </p>
-        {last.missingFiles ? (
-          <p className="text-xs text-destructive" data-testid="archive-last-missing">
-            {number(last.missingFiles)} file(s) the archive’s list names are not in storage. Say so
-            on the issue; the runbook has the link.
-          </p>
-        ) : null}
-      </div>
-    );
-  }
-  if (!parts.length) {
-    return (
-      <p className="text-sm text-muted-foreground" data-testid="archive-none">
-        No archive has been written yet.
-      </p>
-    );
-  }
-  return <div className="space-y-2">{parts}</div>;
-}
-
-/**
- * What needs a decision and what already has one: the red block, the
- * containers the owner chose to keep, and the waiting list (or that it is
- * empty).
- */
-function DecisionBlocks({ flagged, accepted, unclassified, ownerAccepted }) {
-  return (
-    <>
-      {flagged.length ? (
-        <div data-testid="archive-flagged">
-          <p className="text-sm font-medium text-destructive">
-            Look before switching the archive on: {flagged.length} container(s) an archive would
-            keep hold a field that would remain, is named like a secret or contact details, and
-            holds more than numbers or yes/no
-          </p>
-          <ul aria-label="Kept containers with a field named like a secret">
-            {flagged.map((part) => (
-              <li key={part.container} className="py-1">
-                <p className="text-sm font-mono">{part.container}</p>
-                <SensitiveLine part={part} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {accepted.length ? (
-        <div data-testid="archive-owner-accepted">
-          <p className="text-sm font-medium">
-            The owner chose to keep these, {accepted[0].ownerAccepted}: {accepted.length}{' '}
-            container(s) an archive keeps hold a field that would remain and is named like a secret
-            or contact details
-          </p>
-          <p className="text-xs text-muted-foreground">
-            That decision was for each container as the dry run showed it, not for each name one by
-            one. The names and the kinds of value are listed every time, so one that appears later
-            is seen.
-          </p>
-          <ul aria-label="Kept by the owner’s decision, with a field named like a secret">
-            {accepted.map((part) => (
-              <li key={part.container} className="py-1">
-                <p className="text-sm font-mono">{part.container}</p>
-                <SensitiveLine part={part} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {unclassified.length ? (
-        <div>
-          <p className="text-sm font-medium">
-            Waiting for you: {unclassified.length} container(s) to classify
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Nothing in the code says what these hold, so they stay out of the archive until you say.
-            Counts and field names only; no record is shown. A field name is listed only when it is
-            common and plain, so a name that is really an id is not shown.
-          </p>
-          <ul aria-label="Containers to classify">
-            {unclassified.map((part) => (
-              <UnclassifiedRow key={part.container} part={part} />
-            ))}
-          </ul>
-        </div>
-      ) : (
-        <p className="text-sm" data-testid="archive-nothing-waiting">
-          Nothing is waiting for you: every container is classified.
-          {ownerAccepted?.wereWaiting
-            ? ` On ${ownerAccepted.date} the owner chose to keep, whole, the ${ownerAccepted.wereWaiting} that were waiting.`
-            : ''}{' '}
-          A container added later is left out and listed here until it is decided.
-        </p>
-      )}
-    </>
-  );
-}
-
-function ReportBody({ latest, ownerAccepted }) {
-  if (!latest) {
-    return (
-      <p className="text-sm text-muted-foreground" data-testid="archive-no-report">
-        No dry run yet. Press Dry run: it reads the newest weekly backup and counts what an archive
-        would keep, change and leave out. It writes no archive and changes no record.
-      </p>
-    );
-  }
-  if (!latest.complete && latest.stalled) {
-    const missing = Array.isArray(latest.missing) ? latest.missing : [];
-    return (
-      <p className="text-sm text-destructive" role="status" data-testid="archive-stalled">
-        The last dry run did not finish: {latest.done} of {latest.expected} containers were read
-        from the backup of {latest.sourceRun || 'an unknown date'}.
-        {missing.length ? (
-          <>
-            {' '}
-            Missing: <span className="font-mono">{missing.join(', ')}</span>.
-          </>
-        ) : null}{' '}
-        Nothing was archived or changed. Press Dry run to start a new one.
-      </p>
-    );
-  }
-  if (!latest.complete) {
-    return (
-      <p className="text-sm text-muted-foreground" role="status" data-testid="archive-progress">
-        A dry run is reading the backup of {latest.sourceRun || 'an unknown date'}: {latest.done} of{' '}
-        {latest.expected} containers done. Press the refresh button in a few minutes.
-      </p>
-    );
-  }
-  const report = latest.report || {};
-  const totals = report.totals || {};
-  const containers = Array.isArray(report.containers) ? report.containers : [];
-  const unclassified = containers.filter((part) => part.reason === 'unclassified');
-  const read = containers.filter((part) => part.reason !== 'unclassified');
-  // A flagged container the owner has already decided to keep as it is, is
-  // listed on its own, not in red: the question was answered. Its names are
-  // still shown.
-  const flagged = read.filter((part) => isFlagged(part) && !part.ownerAccepted);
-  const accepted = read.filter((part) => isFlagged(part) && part.ownerAccepted);
-  const leftOutWhole = Array.isArray(report.leftOutWhole) ? report.leftOutWhole : [];
-  return (
-    <div className="space-y-3" data-testid="archive-report">
-      <p className="text-xs text-muted-foreground">
-        Dry run finished {utcMinute(report.completedAt) || 'at an unrecorded time'}, from the weekly
-        backup of {report.sourceBackup?.runId || 'an unknown date'}.
-      </p>
-      <Row label="Records an archive would keep">
-        <Badge variant="outline" data-testid="archive-kept">
-          {number(totals.kept)}
+    <div className="space-y-3">
+      <Row label={`Switch (${status.setting})`}>
+        <Badge variant={status.switchOn ? 'secondary' : 'outline'} data-testid="archive-switch">
+          {status.switchOn ? 'On' : 'Off'}
         </Badge>
       </Row>
-      <Row label="Of those, with fields taken out first">
-        <Badge variant="outline">{number(totals.changed)}</Badge>
+      <Row label={`Archive of ${status.year}`}>
+        <Badge variant="outline" data-testid="archive-year-state">
+          {yearState(status.archived, status.archiveContainerExists)}
+        </Badge>
       </Row>
-      <Row label="Records it would leave out">
-        <Badge variant="outline">{number(totals.leftOut)}</Badge>
-      </Row>
-      {totals.mismatched ? (
-        <p className="text-xs text-destructive" data-testid="archive-mismatch">
-          {number(totals.mismatched)} container(s) held a different number of records than the
-          backup’s own list says. Do not switch the archive on; the runbook says what to check.
+      <p className="text-xs text-muted-foreground" data-testid="archive-readiness">
+        {status.jobBuilt === false
+          ? 'The job that writes an archive is not built yet, so nothing starts whatever the switch says. '
+          : ''}
+        {status.wouldStart
+          ? `Every condition for the archive of ${status.year} is met today.`
+          : `An archive of ${status.year} could not start today: ${blockerSentence(status.blockers)}.`}
+      </p>
+      {status.jobBuilt === false ? null : <ArchiveProgress status={status} />}
+      <ReportBody latest={status.latest} ownerAccepted={status.classification?.ownerAccepted} />
+      {status.reports ? (
+        <p className="text-xs text-muted-foreground" data-testid="archive-report-home">
+          Reports are kept in the private{' '}
+          <span className="font-mono">{status.reports.container}</span> storage container, under{' '}
+          <span className="font-mono">{status.reports.prefix}</span>, and one older than{' '}
+          {status.reports.keepDays} days is deleted when a new dry run starts.
         </p>
       ) : null}
-      {totals.unreadable ? (
-        <p className="text-xs text-destructive">
-          {number(totals.unreadable)} line(s) of the backup could not be read as a record.
-        </p>
-      ) : null}
-      <DecisionBlocks
-        flagged={flagged}
-        accepted={accepted}
-        unclassified={unclassified}
-        ownerAccepted={ownerAccepted}
-      />
-      <details>
-        <summary className="cursor-pointer text-xs text-primary">
-          Every container ({read.length} read, {leftOutWhole.length} left out whole)
-        </summary>
-        <table className="mt-2 w-full text-left text-xs">
-          <caption className="sr-only">What the dry run found, container by container</caption>
-          <thead>
-            <tr className="text-muted-foreground">
-              <th scope="col" className="py-1 pr-2 font-medium">
-                Container
-              </th>
-              <th scope="col" className="py-1 pr-2 font-medium">
-                Kept
-              </th>
-              <th scope="col" className="py-1 pr-2 font-medium">
-                Changed
-              </th>
-              <th scope="col" className="py-1 pr-2 font-medium">
-                Left out
-              </th>
-              <th scope="col" className="py-1 font-medium">
-                Fields, and names that look sensitive
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {read.map((part) => (
-              <tr key={part.container} className="border-t border-border/60 align-top">
-                <td className="py-1 pr-2 font-mono">{part.container}</td>
-                <td className="py-1 pr-2">{number(part.kept)}</td>
-                <td className="py-1 pr-2">
-                  {number(part.changed)}
-                  {part.changed ? ` (${Object.keys(part.removed || {}).join(', ')})` : ''}
-                </td>
-                <td className="py-1 pr-2">
-                  {number(part.leftOut)}
-                  {part.leftOut ? ` (${reasonWords(part.leftOutBy)})` : ''}
-                </td>
-                <td className="py-1">
-                  <FieldNames part={part} />
-                  <SensitiveLine part={part} />
-                </td>
-              </tr>
-            ))}
-            {leftOutWhole.map((part) => (
-              <tr key={part.container} className="border-t border-border/60 align-top">
-                <td className="py-1 pr-2 font-mono">{part.container}</td>
-                <td className="py-1 pr-2">0</td>
-                <td className="py-1 pr-2">0</td>
-                <td className="py-1 pr-2">
-                  all {number(part.backupDocs)} ({REASONS[part.reason] || part.reason})
-                </td>
-                <td className="py-1 text-muted-foreground">not read</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={onDryRun}
+          disabled={starting || running}
+        >
+          {starting ? (
+            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : null}
+          Dry run
+        </Button>
+        <a
+          href={ARCHIVE_RUNBOOK_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+        >
+          How to read this report
+        </a>
+      </div>
     </div>
   );
 }
@@ -682,95 +170,21 @@ function ArchiveCardBody() {
       </p>
     );
   } else {
-    // A run that did not finish no longer holds the button: a new one may start.
-    const running = status.latest && !status.latest.complete && !status.latest.stalled;
-    body = (
-      <div className="space-y-3">
-        <Row label={`Switch (${status.setting})`}>
-          <Badge variant={status.switchOn ? 'secondary' : 'outline'} data-testid="archive-switch">
-            {status.switchOn ? 'On' : 'Off'}
-          </Badge>
-        </Row>
-        <Row label={`Archive of ${status.year}`}>
-          <Badge variant="outline" data-testid="archive-year-state">
-            {yearState(status.archived, status.archiveContainerExists)}
-          </Badge>
-        </Row>
-        <p className="text-xs text-muted-foreground" data-testid="archive-readiness">
-          {status.jobBuilt === false
-            ? 'The job that writes an archive is not built yet, so nothing starts whatever the switch says. '
-            : ''}
-          {status.wouldStart
-            ? `Every condition for the archive of ${status.year} is met today.`
-            : `An archive of ${status.year} could not start today: ${blockerSentence(status.blockers)}.`}
-        </p>
-        {status.jobBuilt === false ? null : <ArchiveProgress status={status} />}
-        <ReportBody latest={status.latest} ownerAccepted={status.classification?.ownerAccepted} />
-        {status.reports ? (
-          <p className="text-xs text-muted-foreground" data-testid="archive-report-home">
-            Reports are kept in the private{' '}
-            <span className="font-mono">{status.reports.container}</span> storage container, under{' '}
-            <span className="font-mono">{status.reports.prefix}</span>, and one older than{' '}
-            {status.reports.keepDays} days is deleted when a new dry run starts.
-          </p>
-        ) : null}
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={startDryRun}
-            disabled={starting || running}
-          >
-            {starting ? (
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            ) : null}
-            Dry run
-          </Button>
-          <a
-            href={ARCHIVE_RUNBOOK_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs font-medium text-primary underline-offset-2 hover:underline"
-          >
-            How to read this report
-          </a>
-        </div>
-      </div>
-    );
+    body = <ArchiveStatus status={status} starting={starting} onDryRun={startDryRun} />;
   }
 
   return (
-    <Card data-testid="archive-card">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Archive className="h-4 w-4 text-primary" aria-hidden="true" />
-              Archive
-            </CardTitle>
-            <CardDescription>
-              The yearly long-term copy of the site’s content, and a dry run that shows what it
-              would hold.
-            </CardDescription>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => refresh()}
-            disabled={guarded.pending}
-            aria-label="Read the archive’s state again"
-          >
-            <RefreshCw
-              className={`h-4 w-4 ${guarded.pending ? 'animate-spin' : ''}`}
-              aria-hidden="true"
-            />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>{body}</CardContent>
-    </Card>
+    <RefreshableCard
+      icon={Archive}
+      title="Archive"
+      description="The yearly long-term copy of the site’s content, and a dry run that shows what it would hold."
+      pending={guarded.pending}
+      onRefresh={refresh}
+      refreshLabel="Read the archive’s state again"
+      testId="archive-card"
+    >
+      {body}
+    </RefreshableCard>
   );
 }
 

@@ -35,13 +35,12 @@
  * and the one input here is a date.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { BellRing, CalendarCheck, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
-import { useAuthReady } from '@/hooks/useAuthReady';
-import { getJSON, sendJSON } from '@/lib/api';
+import { sendJSON } from '@/lib/api';
 import {
   CREDENTIALS_ROUTE,
   CREDENTIAL_STATE,
@@ -60,59 +59,13 @@ import {
   stateOf,
 } from './credentialsView';
 import { TabError, TabLoading } from './TabNotice';
+import useGuardedRouteRead from './useGuardedRouteRead';
 
 /** `GET cms/credentials`, generation-guarded; `replace` takes a write's answer. */
 export function useCredentialRegister() {
   // Every cms/credentials route is super_admin: a read before the token
-  // exists is a guaranteed 401.
-  const { authReady } = useAuthReady();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const generation = useRef(0);
-
-  const fetchRegister = useCallback((mine) => {
-    const current = () => mine === generation.current;
-    return getJSON(CREDENTIALS_ROUTE)
-      .then((response) => {
-        if (!current()) return;
-        setData(response);
-        setError(null);
-      })
-      .catch((err) => {
-        if (!current()) return;
-        setData(null);
-        setError(err?.message ?? 'Could not load the credential register.');
-      })
-      .finally(() => {
-        if (current()) setLoading(false);
-      });
-  }, []);
-
-  const reload = useCallback(() => {
-    if (!authReady) return Promise.resolve();
-    const mine = ++generation.current;
-    setLoading(true);
-    return fetchRegister(mine);
-  }, [authReady, fetchRegister]);
-
-  // A write's answer is the newest register: it wins over any load in flight.
-  const replace = useCallback((response) => {
-    generation.current += 1;
-    setData(response);
-    setError(null);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (!authReady) return undefined;
-    fetchRegister(++generation.current);
-    return () => {
-      generation.current += 1;
-    };
-  }, [authReady, fetchRegister]);
-
-  return { data, loading, error, reload, replace };
+  // exists is a guaranteed 401, so the shared read waits for sign-in.
+  return useGuardedRouteRead(CREDENTIALS_ROUTE, 'Could not load the credential register.');
 }
 
 /** The tab's two writes, one at a time. */

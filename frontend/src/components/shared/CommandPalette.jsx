@@ -1,7 +1,88 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router';
-import { cn } from '@/lib/utils';
 import { filterSearchItems, STATIC_SEARCH_ITEMS } from '@/data/searchIndex';
+import { PaletteFooter, PaletteResults } from './CommandPaletteParts';
+
+// Cmd+K on a Mac, Ctrl+K elsewhere.
+function isPaletteShortcut(event) {
+  return (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k';
+}
+
+const ARROW_STEPS = { ArrowDown: 1, ArrowUp: -1 };
+
+// +1 or -1 for the up and down arrows, 0 for any other key.
+function arrowStep(key) {
+  return Object.hasOwn(ARROW_STEPS, key) ? ARROW_STEPS[key] : 0;
+}
+
+function scrollActiveIntoView(listEl, activeIndex) {
+  const activeEl = listEl?.querySelector(`[data-index="${activeIndex}"]`);
+  if (activeEl && typeof activeEl.scrollIntoView === 'function') {
+    activeEl.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+// Escape closes; the arrows move the highlight (wrapping at either end);
+// Enter opens the highlighted result.
+function handlePaletteKey(
+  event,
+  { filteredItems, activeIndex, setActiveIndex, handleClose, selectItem }
+) {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    handleClose();
+    return;
+  }
+
+  const count = filteredItems.length;
+  if (count === 0) return;
+
+  const step = arrowStep(event.key);
+  if (step) {
+    event.preventDefault();
+    setActiveIndex((prev) => (prev + step + count) % count);
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    selectItem(filteredItems[activeIndex]);
+  }
+}
+
+// Focus the search box shortly after the palette opens. Returns the cleanup.
+function focusSoon(open, inputRef) {
+  if (!open) return undefined;
+  const timer = setTimeout(() => {
+    inputRef.current?.focus();
+  }, 50);
+  return () => clearTimeout(timer);
+}
+
+// Cmd/Ctrl+K toggles the palette anywhere on the page, and other code can
+// open it by sending the `hcw:open-command-palette` event.
+function usePaletteShortcuts(open, handleClose, handleOpen) {
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (!isPaletteShortcut(event)) return;
+      event.preventDefault();
+      if (open) {
+        handleClose();
+      } else {
+        handleOpen();
+      }
+    };
+
+    const handleCustomOpen = () => {
+      handleOpen();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('hcw:open-command-palette', handleCustomOpen);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('hcw:open-command-palette', handleCustomOpen);
+    };
+  }, [open, handleClose, handleOpen]);
+}
 
 export default function CommandPalette({ isOpen: propIsOpen, onClose: propOnClose }) {
   const [internalOpen, setInternalOpen] = useState(false);
@@ -32,30 +113,7 @@ export default function CommandPalette({ isOpen: propIsOpen, onClose: propOnClos
   }, [isControlled]);
 
   // Global shortcut listener for Cmd+K and Ctrl+K
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        if (open) {
-          handleClose();
-        } else {
-          handleOpen();
-        }
-      }
-    };
-
-    const handleCustomOpen = () => {
-      handleOpen();
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('hcw:open-command-palette', handleCustomOpen);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('hcw:open-command-palette', handleCustomOpen);
-    };
-  }, [open, handleClose, handleOpen]);
+  usePaletteShortcuts(open, handleClose, handleOpen);
 
   // Filter items based on user input
   const filteredItems = useMemo(() => {
@@ -63,49 +121,30 @@ export default function CommandPalette({ isOpen: propIsOpen, onClose: propOnClos
   }, [query]);
 
   // Autofocus input when opened
-  useEffect(() => {
-    if (open) {
-      const timer = setTimeout(() => {
-        inputRef.current?.focus();
-      }, 50);
-      return () => clearTimeout(timer);
-    }
-  }, [open]);
+  useEffect(() => focusSoon(open, inputRef), [open]);
 
   // Scroll active item into view
   useEffect(() => {
-    if (!open || !listRef.current) return;
-    const activeEl = listRef.current.querySelector(`[data-index="${activeIndex}"]`);
-    if (activeEl && typeof activeEl.scrollIntoView === 'function') {
-      activeEl.scrollIntoView({ block: 'nearest' });
-    }
+    if (open) scrollActiveIntoView(listRef.current, activeIndex);
   }, [activeIndex, open]);
 
-  // Key navigation inside dialog
-  const handleDialogKeyDown = (event) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
+  // Go to a result and close the palette.
+  const selectItem = (item) => {
+    if (item) {
+      navigate(item.path);
       handleClose();
-      return;
-    }
-
-    if (filteredItems.length === 0) return;
-
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setActiveIndex((prev) => (prev + 1) % filteredItems.length);
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setActiveIndex((prev) => (prev - 1 + filteredItems.length) % filteredItems.length);
-    } else if (event.key === 'Enter') {
-      event.preventDefault();
-      const selected = filteredItems[activeIndex];
-      if (selected) {
-        navigate(selected.path);
-        handleClose();
-      }
     }
   };
+
+  // Key navigation inside dialog
+  const handleDialogKeyDown = (event) =>
+    handlePaletteKey(event, {
+      filteredItems,
+      activeIndex,
+      setActiveIndex,
+      handleClose,
+      selectItem,
+    });
 
   if (!open) return null;
 
@@ -180,125 +219,16 @@ export default function CommandPalette({ isOpen: propIsOpen, onClose: propOnClos
           ref={listRef}
           className="flex-1 overflow-y-auto p-2 divide-y divide-slate-100 dark:divide-slate-800/40"
         >
-          {filteredItems.length === 0 ? (
-            <div className="py-12 text-center" data-testid="command-palette-empty">
-              <span
-                className="material-symbols-outlined text-3xl text-slate-400 mb-2"
-                aria-hidden="true"
-              >
-                find_in_page
-              </span>
-              <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                No matching results found
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Try searching for “FOCUS 1.4”, “Landing Zone”, “Azure”, “Terraform”, or “Labs”.
-              </p>
-            </div>
-          ) : (
-            <ul className="flex flex-col gap-1 py-1" role="presentation">
-              {filteredItems.map((item, index) => {
-                const isActive = index === activeIndex;
-                return (
-                  <li
-                    key={item.id}
-                    id={`result-option-${index}`}
-                    data-index={index}
-                    role="option"
-                    tabIndex={-1}
-                    aria-selected={isActive}
-                    onClick={() => {
-                      navigate(item.path);
-                      handleClose();
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        navigate(item.path);
-                        handleClose();
-                      }
-                    }}
-                    onMouseEnter={() => setActiveIndex(index)}
-                    className={cn(
-                      'flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all border',
-                      isActive
-                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-slate-300 dark:border-slate-700 shadow-sm'
-                        : 'border-transparent text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                    )}
-                  >
-                    <div className="flex items-center gap-3 min-w-0 pr-3">
-                      <div
-                        className={cn(
-                          'w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border transition-colors',
-                          isActive
-                            ? 'bg-primary/10 border-primary/30 text-primary'
-                            : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500'
-                        )}
-                        aria-hidden="true"
-                      >
-                        <span className="material-symbols-outlined text-lg">{item.icon}</span>
-                      </div>
-                      <div className="min-w-0 flex flex-col">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold truncate">{item.title}</span>
-                          <span className="text-xs font-mono uppercase px-1.5 py-0.5 rounded bg-slate-200/60 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300/40 dark:border-slate-700/60 shrink-0">
-                            {item.category}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                          {item.subtitle}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      {item.badge && (
-                        <span className="text-xs font-mono font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                          {item.badge}
-                        </span>
-                      )}
-                      <span
-                        className="material-symbols-outlined text-slate-400 text-base"
-                        aria-hidden="true"
-                      >
-                        chevron_right
-                      </span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          <PaletteResults
+            items={filteredItems}
+            activeIndex={activeIndex}
+            onSelect={selectItem}
+            onHover={setActiveIndex}
+          />
         </div>
 
         {/* Footer Navigation Hints */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-900/60 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 font-mono">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
-                ↑
-              </kbd>
-              <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
-                ↓
-              </kbd>
-              Navigate
-            </span>
-            <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
-                ↵
-              </kbd>
-              Select
-            </span>
-            <span className="flex items-center gap-1">
-              <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
-                ESC
-              </kbd>
-              Close
-            </span>
-          </div>
-          <span className="text-xs">
-            {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}
-          </span>
-        </div>
+        <PaletteFooter count={filteredItems.length} />
       </div>
     </div>
   );

@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { moveQa, qaForSave, qaProblems, statusActions } from './interviewQa';
 import { describe, expect, it } from 'vitest';
 import {
   CONSENT_WORDING_V1,
@@ -23,14 +24,10 @@ import {
   isRealDate,
   LIMITS,
   livePagePath,
-  moveQa,
   nextStep,
   parseTags,
-  qaForSave,
-  qaProblems,
   stageDetail,
   stageOf,
-  statusActions,
   todayUtc,
 } from './interviewModel';
 

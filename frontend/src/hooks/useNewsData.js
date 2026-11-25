@@ -122,6 +122,19 @@ function scoreRssItemForCuration(item, provider) {
   return Math.max(0, score);
 }
 
+// The article's link with the scheme and punctuation stripped, or, with no
+// link, its title the same way.
+function rssItemSlug(item) {
+  const url = [item.sourceUrl, item['CD Url'], item.url, item.link].find(Boolean) || '';
+  if (url) {
+    return url
+      .replace(/^https?:\/\//, '')
+      .replace(/[^a-z0-9]/gi, '')
+      .slice(0, 60);
+  }
+  return item.title?.replace(/[^a-z0-9]/gi, '').slice(0, 40) || '';
+}
+
 function curateArticlesFromRss(rssItems, provider) {
   if (!rssItems || rssItems.length === 0) {
     return { curatedArticles: [], liveItems: [] };
@@ -130,18 +143,7 @@ function curateArticlesFromRss(rssItems, provider) {
   const scoredItems = rssItems.map((item) => {
     // Derive a stable ID from the article URL so cache hits survive position changes on refresh.
     // Fall back to title-only slug if no URL is available.
-    const stableKey =
-      item.id ||
-      (() => {
-        const url = item.sourceUrl || item['CD Url'] || item.url || item.link || '';
-        const slug = url
-          ? url
-              .replace(/^https?:\/\//, '')
-              .replace(/[^a-z0-9]/gi, '')
-              .slice(0, 60)
-          : item.title?.replace(/[^a-z0-9]/gi, '').slice(0, 40) || '';
-        return `rss-${provider}-${slug}`;
-      })();
+    const stableKey = item.id || `rss-${provider}-${rssItemSlug(item)}`;
     return {
       ...item,
       id: stableKey,

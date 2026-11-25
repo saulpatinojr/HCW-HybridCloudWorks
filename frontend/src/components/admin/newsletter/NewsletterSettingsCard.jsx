@@ -61,6 +61,58 @@ const EMPTY = {
   templateId: '',
 };
 
+/**
+ * Read the stored settings into the form. Returns the effect cleanup:
+ * unmounting or a newer attempt stops this load writing state.
+ */
+function loadSettings({ loadGeneration, etagRef, setValue, setOptions, setLoadError, setLoading }) {
+  const generation = ++loadGeneration.current;
+  const current = () => generation === loadGeneration.current;
+  getJSON(NEWSLETTER_SETTINGS_ROUTE)
+    .then((res) => {
+      if (!current()) return;
+      setValue({ ...EMPTY, ...(res?.value || {}) });
+      setOptions(res?.options || null);
+      etagRef.current = res?.etag ?? null;
+      setLoadError('');
+    })
+    .catch((err) => {
+      if (!current()) return;
+      setValue(EMPTY);
+      etagRef.current = null;
+      setLoadError(err.message || 'Could not load the newsletter settings.');
+    })
+    .finally(() => current() && setLoading(false));
+  return () => {
+    // Unmounting or a newer attempt: this load may no longer write state.
+    if (current()) loadGeneration.current += 1;
+  };
+}
+
+/** Save the checked form under the version last read (see handleSave). */
+async function saveSettings(value, ctx) {
+  const { savingRef, etagRef, setSaving, setNotice, setValue, setOptions, onSaved, reload } = ctx;
+  savingRef.current = true;
+  setSaving(true);
+  setNotice(null);
+  try {
+    const res = await putSetting(NEWSLETTER_SETTINGS_ROUTE, value, etagRef.current);
+    etagRef.current = res?.etag ?? null;
+    // What the server stored, after its own clamping, is what the form shows.
+    setValue({ ...EMPTY, ...res.value });
+    if (res.options) setOptions(res.options);
+    setNotice({ ok: true, message: 'Newsletter settings saved.' });
+    onSaved?.();
+  } catch (err) {
+    setNotice({ ok: false, message: isStaleSave(err) ? CHANGED_ELSEWHERE : err.message });
+    // Saved elsewhere since this card read them: load what is stored now.
+    if (isStaleSave(err)) reload();
+  } finally {
+    savingRef.current = false;
+    setSaving(false);
+  }
+}
+
 /** The newsletter settings as one form over one document, saved whole so no field is dropped. */
 export default function NewsletterSettingsCard({ onSaved }) {
   const [value, setValue] = useState(EMPTY);
@@ -78,29 +130,10 @@ export default function NewsletterSettingsCard({ onSaved }) {
   // The ETag of the settings this card last read or wrote: what a save names.
   const etagRef = useRef(null);
 
-  useEffect(() => {
-    const generation = ++loadGeneration.current;
-    const current = () => generation === loadGeneration.current;
-    getJSON(NEWSLETTER_SETTINGS_ROUTE)
-      .then((res) => {
-        if (!current()) return;
-        setValue({ ...EMPTY, ...(res?.value || {}) });
-        setOptions(res?.options || null);
-        etagRef.current = res?.etag ?? null;
-        setLoadError('');
-      })
-      .catch((err) => {
-        if (!current()) return;
-        setValue(EMPTY);
-        etagRef.current = null;
-        setLoadError(err.message || 'Could not load the newsletter settings.');
-      })
-      .finally(() => current() && setLoading(false));
-    return () => {
-      // Unmounting or a newer attempt: this load may no longer write state.
-      if (current()) loadGeneration.current += 1;
-    };
-  }, [attempt]);
+  useEffect(
+    () => loadSettings({ loadGeneration, etagRef, setValue, setOptions, setLoadError, setLoading }),
+    [attempt]
+  );
 
   const handleRetry = () => {
     setLoading(true);
@@ -127,25 +160,16 @@ export default function NewsletterSettingsCard({ onSaved }) {
       setNotice({ ok: false, message: problem });
       return;
     }
-    savingRef.current = true;
-    setSaving(true);
-    setNotice(null);
-    try {
-      const res = await putSetting(NEWSLETTER_SETTINGS_ROUTE, value, etagRef.current);
-      etagRef.current = res?.etag ?? null;
-      // What the server stored, after its own clamping, is what the form shows.
-      setValue({ ...EMPTY, ...res.value });
-      if (res.options) setOptions(res.options);
-      setNotice({ ok: true, message: 'Newsletter settings saved.' });
-      onSaved?.();
-    } catch (err) {
-      setNotice({ ok: false, message: isStaleSave(err) ? CHANGED_ELSEWHERE : err.message });
-      // Saved elsewhere since this card read them: load what is stored now.
-      if (isStaleSave(err)) handleRetry();
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
+    await saveSettings(value, {
+      savingRef,
+      etagRef,
+      setSaving,
+      setNotice,
+      setValue,
+      setOptions,
+      onSaved,
+      reload: handleRetry,
+    });
   };
 
   return (

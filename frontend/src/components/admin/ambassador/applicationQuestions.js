@@ -40,6 +40,21 @@ const asArray = (text) => {
   return Array.isArray(parsed) ? parsed : [];
 };
 
+// How each structured kind reads its stored string.
+const PARSERS = {
+  links: (stored) =>
+    asArray(stored)
+      .filter(isRecord)
+      .map((row) => ({ network: String(row.network || ''), url: String(row.url || '') })),
+  scale: (stored) => {
+    const parsed = parseJson(stored);
+    return isRecord(parsed)
+      ? Object.fromEntries(Object.entries(parsed).map(([row, value]) => [row, String(value)]))
+      : {};
+  },
+  activities: (stored) => asArray(stored).filter((id) => typeof id === 'string'),
+};
+
 /**
  * A stored answer back in the shape its kind edits: links as
  * `[{ network, url }]`, a scale as `{ row: option }`, activities as evidence
@@ -47,20 +62,28 @@ const asArray = (text) => {
  */
 export function parseAnswer(kind, text) {
   const stored = typeof text === 'string' ? text : '';
-  if (kind === 'links') {
-    return asArray(stored)
-      .filter(isRecord)
-      .map((row) => ({ network: String(row.network || ''), url: String(row.url || '') }));
-  }
-  if (kind === 'scale') {
-    const parsed = parseJson(stored);
-    return isRecord(parsed)
-      ? Object.fromEntries(Object.entries(parsed).map(([row, value]) => [row, String(value)]))
-      : {};
-  }
-  if (kind === 'activities') return asArray(stored).filter((id) => typeof id === 'string');
-  return stored;
+  return Object.hasOwn(PARSERS, kind) ? PARSERS[kind](stored) : stored;
 }
+
+// A JSON string of `list`, or '' for an empty one.
+const jsonOrEmpty = (list, toJson = (l) => l) => (list.length ? JSON.stringify(toJson(list)) : '');
+
+// How each structured kind writes its edited value.
+const SERIALISERS = {
+  links: (value) =>
+    jsonOrEmpty(
+      (Array.isArray(value) ? value : []).map((row) => ({
+        network: String(row.network || ''),
+        url: String(row.url || ''),
+      }))
+    ),
+  scale: (value) =>
+    jsonOrEmpty(
+      Object.entries(isRecord(value) ? value : {}).filter(([, v]) => v),
+      Object.fromEntries
+    ),
+  activities: (value) => jsonOrEmpty((Array.isArray(value) ? value : []).filter(Boolean)),
+};
 
 /**
  * The edited value as the one string the API stores; an empty answer is the
@@ -68,52 +91,40 @@ export function parseAnswer(kind, text) {
  * on screen to be filled in; only a list with no rows at all is empty.
  */
 export function serialiseAnswer(kind, value) {
-  if (kind === 'links') {
-    const rows = (Array.isArray(value) ? value : []).map((row) => ({
-      network: String(row.network || ''),
-      url: String(row.url || ''),
-    }));
-    return rows.length ? JSON.stringify(rows) : '';
-  }
-  if (kind === 'scale') {
-    const entries = Object.entries(isRecord(value) ? value : {}).filter(([, v]) => v);
-    return entries.length ? JSON.stringify(Object.fromEntries(entries)) : '';
-  }
-  if (kind === 'activities') {
-    const ids = (Array.isArray(value) ? value : []).filter(Boolean);
-    return ids.length ? JSON.stringify(ids) : '';
-  }
-  return String(value ?? '');
+  return Object.hasOwn(SERIALISERS, kind) ? SERIALISERS[kind](value) : String(value ?? '');
 }
 
 /** One attached evidence item as the line an activity copies as. */
 const activityLine = (item) =>
   `${item.title} — ${item.date || 'undated'}${item.url ? ` · ${item.url}` : ''}`;
 
-/** An answer as the plain text that goes on the clipboard; `evidenceById` names tagged activities. */
-export function answerText(question, text, { evidenceById } = {}) {
-  const value = parseAnswer(question.kind, text);
-  if (question.kind === 'links') {
-    return value
+// How each structured kind copies as text.
+const ANSWER_TEXT = {
+  links: (value) =>
+    value
       .filter((row) => row.url)
       .map((row) => `${row.network || 'Link'}: ${row.url}`)
-      .join('\n');
-  }
-  if (question.kind === 'scale') {
-    return (question.rows || [])
+      .join('\n'),
+  scale: (value, question) =>
+    (question.rows || [])
       .filter((row) => value[row])
       .map((row) => `${row}: ${value[row]}`)
-      .join('\n');
-  }
-  if (question.kind === 'activities') {
-    return value
+      .join('\n'),
+  activities: (value, question, evidenceById) =>
+    value
       .map((id) => {
         const item = evidenceById?.get(id);
         return item ? activityLine(item) : id;
       })
-      .join('\n');
-  }
-  return value;
+      .join('\n'),
+};
+
+/** An answer as the plain text that goes on the clipboard; `evidenceById` names tagged activities. */
+export function answerText(question, text, { evidenceById } = {}) {
+  const value = parseAnswer(question.kind, text);
+  return Object.hasOwn(ANSWER_TEXT, question.kind)
+    ? ANSWER_TEXT[question.kind](value, question, evidenceById)
+    : value;
 }
 
 /**
@@ -152,17 +163,25 @@ export function questionErrors(questions, responses) {
   const by = responsesMap(responses);
   const errors = {};
   for (const question of questions || []) {
-    const text = by.get(question.id) || '';
-    if (!text) continue;
-    if (question.kind === 'url' && !isHttpUrl(text)) {
-      errors[question.id] = 'Must start with http:// or https://.';
-    } else if (question.kind === 'links') {
-      const bad = parseAnswer('links', text).find((row) => row.url && !isHttpUrl(row.url));
-      if (bad) errors[question.id] = `"${bad.url}" must start with http:// or https://.`;
-    } else if (question.maxChars && ['text', 'profile'].includes(question.kind)) {
-      if (text.length > question.maxChars)
-        errors[question.id] = `Over the limit by ${text.length - question.maxChars} characters.`;
-    }
+    const error = answerError(question, by.get(question.id) || '');
+    if (error) errors[question.id] = error;
   }
   return errors;
+}
+
+/** What is wrong with one stored answer, or null when nothing is (or it is empty). */
+function answerError(question, text) {
+  if (!text) return null;
+  if (question.kind === 'url') {
+    return isHttpUrl(text) ? null : 'Must start with http:// or https://.';
+  }
+  if (question.kind === 'links') {
+    const bad = parseAnswer('links', text).find((row) => row.url && !isHttpUrl(row.url));
+    return bad ? `"${bad.url}" must start with http:// or https://.` : null;
+  }
+  const limited = question.maxChars && ['text', 'profile'].includes(question.kind);
+  if (limited && text.length > question.maxChars) {
+    return `Over the limit by ${text.length - question.maxChars} characters.`;
+  }
+  return null;
 }

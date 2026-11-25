@@ -7,7 +7,6 @@
  */
 import React, { useMemo, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { Link } from 'react-router';
 import { AVM_MODULES, AVM_VERIFIED_ON, emitFiles } from '@/lib/landingZone';
 import {
   LZ_PRESETS,
@@ -22,6 +21,7 @@ import { LzExplainButton } from './landingZone/LzExplainButton';
 import { LzFiles } from './landingZone/LzFiles';
 import { LzTeaches } from './landingZone/LzTeaches';
 import { MultiCloudPreview } from './landingZone/MultiCloudPreview';
+import { PresetBanner } from './landingZone/PresetBanner';
 import { useLzState } from './landingZone/useLzState';
 
 const PAGE_TITLE = 'Landing Zone Builder';
@@ -136,26 +136,7 @@ export default function LandingZonePage() {
         ) : (
           <>
             {/* Blueprint Context Banner when build matches a known preset */}
-            {activePreset && (
-              <div
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-2.5 text-xs"
-                data-testid="lz-preset-banner"
-              >
-                <div className="flex items-center gap-2 text-slate-800 dark:text-slate-200">
-                  <span className="rounded bg-sky-600 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-white">
-                    {activePreset.badge}
-                  </span>
-                  <span className="font-semibold">{activePreset.label}:</span>
-                  <span className="text-slate-600 dark:text-slate-300">{activePreset.summary}</span>
-                </div>
-                <Link
-                  to={activePreset.blueprintSlug}
-                  className="font-semibold text-sky-700 underline underline-offset-2 hover:text-sky-900 dark:text-sky-300 dark:hover:text-white"
-                >
-                  {`Read Blueprint: ${activePreset.blueprintTitle} →`}
-                </Link>
-              </div>
-            )}
+            {activePreset && <PresetBanner preset={activePreset} />}
 
             {/* Header + Live Telemetry Strip */}
             <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 border-b border-slate-200 dark:border-slate-800 pb-6">

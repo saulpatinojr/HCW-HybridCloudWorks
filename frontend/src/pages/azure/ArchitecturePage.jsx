@@ -4,6 +4,12 @@ import { useNavigate } from 'react-router';
 import { usePublicData } from '@/hooks/usePublicData';
 import { fetchPublicContentList } from '@/lib/publicApi';
 import FeaturedArchitecture from '@/components/architecture/FeaturedArchitecture';
+import {
+  BlueprintCategoryCost,
+  BlueprintStats,
+  CheckboxGroup,
+  isProviderDoc,
+} from '@/pages/shared/architecture/ArchitectureParts';
 import { staticBlueprints } from './architecture-blueprints';
 
 // The two badges the hand-written panel showed, from the blueprint's own fields.
@@ -23,6 +29,23 @@ function mapComplexityToLevel(complexity) {
   return '200';
 }
 
+// A published design as this page's gallery shows it.
+function toBlueprint(doc) {
+  return {
+    icon: doc.icon || 'architecture',
+    category: doc.category || 'General',
+    categoryColor: doc.categoryColor || 'blue',
+    title: doc.title || doc.Title || 'Untitled Blueprint',
+    slug: doc.slug,
+    description: doc.summary || doc.Summary || doc.description || '',
+    rpo: doc.rpo || doc.RPO || 'N/A',
+    rto: doc.rto || doc.RTO || 'N/A',
+    level: doc.level || mapComplexityToLevel(doc.complexity),
+    cost: doc.costAnalysis?.estimatedMonthly || doc.cost || 'TBD',
+    costColor: doc.costColor || 'green',
+  };
+}
+
 export default function ArchitecturePage() {
   const navigate = useNavigate();
 
@@ -33,22 +56,8 @@ export default function ArchitecturePage() {
   );
 
   const contentBlueprints = (contentDocs || [])
-    .filter(
-      (doc) => (doc.cloudProvider || doc['Cloud Provider'] || 'azure').toLowerCase() === 'azure'
-    )
-    .map((doc) => ({
-      icon: doc.icon || 'architecture',
-      category: doc.category || 'General',
-      categoryColor: doc.categoryColor || 'blue',
-      title: doc.title || doc.Title || 'Untitled Blueprint',
-      slug: doc.slug,
-      description: doc.summary || doc.Summary || doc.description || '',
-      rpo: doc.rpo || doc.RPO || 'N/A',
-      rto: doc.rto || doc.RTO || 'N/A',
-      level: doc.level || mapComplexityToLevel(doc.complexity),
-      cost: doc.costAnalysis?.estimatedMonthly || doc.cost || 'TBD',
-      costColor: doc.costColor || 'green',
-    }));
+    .filter((doc) => isProviderDoc(doc, 'azure'))
+    .map(toBlueprint);
 
   const shouldLoadLegacy = !contentLoading && contentBlueprints.length === 0;
   const { data: dynamicDocs } = usePublicData(
@@ -59,24 +68,7 @@ export default function ArchitecturePage() {
   const dynamicBlueprints =
     contentBlueprints.length > 0
       ? contentBlueprints
-      : (dynamicDocs || [])
-          .filter(
-            (doc) =>
-              (doc.cloudProvider || doc['Cloud Provider'] || 'azure').toLowerCase() === 'azure'
-          )
-          .map((doc) => ({
-            icon: doc.icon || 'architecture',
-            category: doc.category || 'General',
-            categoryColor: doc.categoryColor || 'blue',
-            title: doc.title || doc.Title || 'Untitled Blueprint',
-            slug: doc.slug,
-            description: doc.summary || doc.Summary || doc.description || '',
-            rpo: doc.rpo || doc.RPO || 'N/A',
-            rto: doc.rto || doc.RTO || 'N/A',
-            level: doc.level || mapComplexityToLevel(doc.complexity),
-            cost: doc.costAnalysis?.estimatedMonthly || doc.cost || 'TBD',
-            costColor: doc.costColor || 'green',
-          }));
+      : (dynamicDocs || []).filter((doc) => isProviderDoc(doc, 'azure')).map(toBlueprint);
 
   const blueprints = [...dynamicBlueprints, ...staticBlueprints];
 
@@ -111,46 +103,14 @@ export default function ArchitecturePage() {
             </div>
             <div className="h-px bg-border-dark mb-6"></div>
             <div className="space-y-6">
-              <div>
-                <h4 className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest mb-3">
-                  Workload Type
-                </h4>
-                <div className="space-y-2">
-                  {['Serverless', 'Containers', 'Compute', 'Database'].map((item) => (
-                    <label key={item} className="flex items-center gap-3 cursor-pointer group">
-                      <input
-                        className="rounded border-slate-700 bg-[hsl(var(--background))] text-primary focus:ring-primary/50 focus:ring-offset-0"
-                        type="checkbox"
-                        aria-label={`Select ${item}`}
-                      />
-                      <span className="text-sm text-slate-300 group-hover:text-white transition-colors">
-                        {item}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest mb-3">
-                  Use Case
-                </h4>
-                <div className="space-y-2">
-                  {['Migration', 'FinOps & Cost', 'Disaster Recovery', 'Machine Learning'].map(
-                    (item) => (
-                      <label key={item} className="flex items-center gap-3 cursor-pointer group">
-                        <input
-                          className="rounded border-slate-700 bg-[hsl(var(--background))] text-primary focus:ring-primary/50 focus:ring-offset-0"
-                          type="checkbox"
-                          aria-label={`Select ${item}`}
-                        />
-                        <span className="text-sm text-slate-300 group-hover:text-white transition-colors">
-                          {item}
-                        </span>
-                      </label>
-                    )
-                  )}
-                </div>
-              </div>
+              <CheckboxGroup
+                title="Workload Type"
+                items={['Serverless', 'Containers', 'Compute', 'Database']}
+              />
+              <CheckboxGroup
+                title="Use Case"
+                items={['Migration', 'FinOps & Cost', 'Disaster Recovery', 'Machine Learning']}
+              />
             </div>
             <div className="mt-8 pt-6 border-t border-border-dark">
               <button
@@ -229,41 +189,12 @@ export default function ArchitecturePage() {
                     </div>
                   </div>
                   <div className="p-5 flex flex-col flex-grow">
-                    <div className="flex justify-between items-start mb-2">
-                      <div
-                        className={`px-2 py-0.5 rounded bg-${blueprint.categoryColor}-500/10 border border-${blueprint.categoryColor}-500/20 text-${blueprint.categoryColor}-400 text-[10px] font-bold uppercase tracking-wide`}
-                      >
-                        {blueprint.category}
-                      </div>
-                      <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                        <span
-                          className={`material-symbols-outlined text-[12px] text-${blueprint.costColor || 'primary'}`}
-                        >
-                          attach_money
-                        </span>
-                        <span>{blueprint.cost}</span>
-                      </div>
-                    </div>
+                    <BlueprintCategoryCost blueprint={blueprint} />
                     <h3 className="font-bold text-lg mb-2 group-hover:text-primary transition-colors">
                       {blueprint.title}
                     </h3>
                     <p className="text-slate-400 text-sm mb-4">{blueprint.description}</p>
-                    <div className="flex gap-4 mb-4 text-xs text-slate-400 font-mono border-y border-border-dark py-2 mt-auto">
-                      <div className="flex flex-col">
-                        <span className="text-slate-500 text-[10px]">RPO</span>
-                        <span>{blueprint.rpo}</span>
-                      </div>
-                      <div className="w-px bg-border-dark"></div>
-                      <div className="flex flex-col">
-                        <span className="text-slate-500 text-[10px]">RTO</span>
-                        <span>{blueprint.rto}</span>
-                      </div>
-                      <div className="w-px bg-border-dark"></div>
-                      <div className="flex flex-col">
-                        <span className="text-slate-500 text-[10px]">Level</span>
-                        <span>{blueprint.level}</span>
-                      </div>
-                    </div>
+                    <BlueprintStats blueprint={blueprint} />
                     <button
                       type="button"
                       onClick={() =>

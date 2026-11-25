@@ -120,6 +120,65 @@ function routeOf(anchor) {
 }
 
 /**
+ * The two listeners a dirty draft needs, added now; returns their removal.
+ * `answeredUnloadUntilRef` and `standDownRef` are the hook's refs below.
+ */
+function listenWhileDirty({ answeredUnloadUntilRef, standDownRef, setPending }) {
+  /** Ask before a reload, a tab close or a typed address drops the edits — once per answer. */
+  const onBeforeUnload = (event) => {
+    if (Date.now() <= answeredUnloadUntilRef.current) {
+      // The confirmed leave's own navigation: asked and answered in the
+      // modal. Stood down for this one prompt only.
+      answeredUnloadUntilRef.current = 0;
+      return undefined;
+    }
+    event.preventDefault();
+    // Required by some browsers for the prompt to appear at all.
+    event.returnValue = UNSAVED_MESSAGE;
+    return UNSAVED_MESSAGE;
+  };
+  /** Hold an in-app link click before the router sees it, so the owner can be asked first. */
+  const onClick = (event) => {
+    if (standDownRef.current) return;
+    const anchor = inAppNavigationTarget(event);
+    if (!anchor) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setPending({ to: routeOf(anchor), anchor });
+  };
+  window.addEventListener('beforeunload', onBeforeUnload);
+  document.addEventListener('click', onClick, true);
+  return () => {
+    window.removeEventListener('beforeunload', onBeforeUnload);
+    document.removeEventListener('click', onClick, true);
+  };
+}
+
+/**
+ * Replay the click the guard cancelled, this once let through. The
+ * dispatch is synchronous, so the guard is back up before this returns.
+ *
+ * The prompt is stood down BEFORE the click, because a browser may ask
+ * inside it: the specification queues a link navigation's
+ * `beforeunload` for later, but an engine may fire it before click()
+ * returns. Either way a plain link's own prompt finds the
+ * answer already given. A click a handler cancelled — the router's
+ * Link, navigating in place — unloads nothing, so the prompt is put
+ * back as it was at once.
+ */
+function replayHeldClick(anchor, { answeredUnloadUntilRef, standDownRef }) {
+  standDownRef.current = true;
+  answeredUnloadUntilRef.current = Date.now() + REPLAYED_UNLOAD_WINDOW_MS;
+  let documentNavigation = false;
+  try {
+    documentNavigation = clickStartsDocumentNavigation(anchor);
+  } finally {
+    standDownRef.current = false;
+    if (!documentNavigation) answeredUnloadUntilRef.current = 0;
+  }
+}
+
+/**
  * Hold a link out of a dirty draft until the owner answers, and let the
  * browser ask on reload or tab close, so no exit drops unsaved edits unasked.
  *
@@ -153,34 +212,7 @@ export function useUnsavedGuard(dirty) {
 
   useEffect(() => {
     if (!dirty) return undefined;
-    /** Ask before a reload, a tab close or a typed address drops the edits — once per answer. */
-    const onBeforeUnload = (event) => {
-      if (Date.now() <= answeredUnloadUntilRef.current) {
-        // The confirmed leave's own navigation: asked and answered in the
-        // modal. Stood down for this one prompt only.
-        answeredUnloadUntilRef.current = 0;
-        return undefined;
-      }
-      event.preventDefault();
-      // Required by some browsers for the prompt to appear at all.
-      event.returnValue = UNSAVED_MESSAGE;
-      return UNSAVED_MESSAGE;
-    };
-    /** Hold an in-app link click before the router sees it, so the owner can be asked first. */
-    const onClick = (event) => {
-      if (standDownRef.current) return;
-      const anchor = inAppNavigationTarget(event);
-      if (!anchor) return;
-      event.preventDefault();
-      event.stopPropagation();
-      setPending({ to: routeOf(anchor), anchor });
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    document.addEventListener('click', onClick, true);
-    return () => {
-      window.removeEventListener('beforeunload', onBeforeUnload);
-      document.removeEventListener('click', onClick, true);
-    };
+    return listenWhileDirty({ answeredUnloadUntilRef, standDownRef, setPending });
   }, [dirty]);
 
   /** Keep the page and its edits: the held click is dropped, not replayed. */
@@ -191,25 +223,7 @@ export function useUnsavedGuard(dirty) {
     if (!pending) return;
     setPending(null);
     if (pending.anchor.isConnected) {
-      // Replay the click the guard cancelled, this once let through. The
-      // dispatch is synchronous, so the guard is back up before this returns.
-      //
-      // The prompt is stood down BEFORE the click, because a browser may ask
-      // inside it: the specification queues a link navigation's
-      // `beforeunload` for later, but an engine may fire it before click()
-      // returns. Either way a plain link's own prompt finds the
-      // answer already given. A click a handler cancelled — the router's
-      // Link, navigating in place — unloads nothing, so the prompt is put
-      // back as it was at once.
-      standDownRef.current = true;
-      answeredUnloadUntilRef.current = Date.now() + REPLAYED_UNLOAD_WINDOW_MS;
-      let documentNavigation = false;
-      try {
-        documentNavigation = clickStartsDocumentNavigation(pending.anchor);
-      } finally {
-        standDownRef.current = false;
-        if (!documentNavigation) answeredUnloadUntilRef.current = 0;
-      }
+      replayHeldClick(pending.anchor, { answeredUnloadUntilRef, standDownRef });
     } else {
       // The link is gone (its list re-rendered); the router takes the route.
       navigate(pending.to);

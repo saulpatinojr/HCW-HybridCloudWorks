@@ -48,7 +48,7 @@ CHANGELOG.md
 # Infrastructure
 infrastructure/
 .github/
-terraform/
+/terraform/
 
 # Temporary
 *.tmp

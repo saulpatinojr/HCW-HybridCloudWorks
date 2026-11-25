@@ -55,23 +55,21 @@ import useApplyEvents from './useApplyEvents';
 import {
   APPLY_STATUSES,
   COST_FIELDS,
-  allOverlaps,
   applyStatusInfo,
   attendanceCost,
   callCloseInfo,
   costTotal,
   eventRange,
   filterEvents,
-  firstMonth,
   formatDay,
   formatRange,
   locationLine,
-  marksForMonth,
   noteForm,
   notePayload,
   ownTalks,
   todayDay,
 } from './applyModel';
+import { allOverlaps, firstMonth, marksForMonth } from './applyCalendarModel';
 
 export const KEYS_HREF = integrationsTabHref('keys');
 export const CARD_HREF = `${integrationsTabHref('services')}&group=content`;

@@ -22,23 +22,18 @@ export function getPublishTargetForType(value) {
   return type;
 }
 
+// The public section each publish target lives under; anything else is 'blog'.
+const PUBLIC_SECTION_BY_TARGET = new Map([
+  ['framework', 'frameworks'],
+  ['architecture', 'architecture-designs'],
+  ['coder_corner', 'code'],
+  // ADR 0040, D5: an interview lives at /azure/interviews/<slug>.
+  ['interview', 'interviews'],
+  ['news', 'news'],
+]);
+
 export function getPublicSectionForTarget(value) {
-  switch (getPublishTargetForType(value)) {
-    case 'framework':
-      return 'frameworks';
-    case 'architecture':
-      return 'architecture-designs';
-    case 'coder_corner':
-      return 'code';
-    // ADR 0040, D5: an interview lives at /azure/interviews/<slug>.
-    case 'interview':
-      return 'interviews';
-    case 'news':
-      return 'news';
-    case 'blog':
-    default:
-      return 'blog';
-  }
+  return PUBLIC_SECTION_BY_TARGET.get(getPublishTargetForType(value)) ?? 'blog';
 }
 
 export function getCanonicalContentType(item = {}) {

@@ -209,8 +209,25 @@ const step = (title, body, validation = null) =>
     validation ? { title, body, validation: Object.freeze(validation) } : { title, body }
   );
 
+/** The lines of a fenced bash block, to spread into `md([...])`. */
+const bash = (...commands) => ['```bash', ...commands, '```'];
+
 /** A learner-facing link: `url` is a site path or an https address. */
 const resource = (label, url) => Object.freeze({ label, url });
+
+/** The runner job that checks a lab's sample, sent as plain text. */
+const textValidation = (jobType, samplePayload) =>
+  Object.freeze({ jobType, payloadEncoding: 'text', samplePayload });
+
+/** The launch parameters: which lab the workspace template boots. */
+const labParams = (lab) => Object.freeze({ lab });
+
+/** One step of a landing frame's flow strip. */
+const frameStage = (title, subtitle, boundary, guardrail) =>
+  Object.freeze({ title, subtitle, boundary, guardrail });
+
+/** One service on a landing frame, and the job it does. */
+const frameService = (name, role) => Object.freeze({ name, role });
 
 /**
  * An article on this site, `/<provider>/blog/<slug>`: the three parts of the
@@ -447,9 +464,7 @@ export const labs = Object.freeze([
         md([
           'The lab folder starts empty apart from a README. Drag the zip into the file explorer (or use File > Upload), then in the terminal:',
           '',
-          '```bash',
-          'unzip landing-zone.zip -d landing-zone && cd landing-zone && ls',
-          '```',
+          ...bash('unzip landing-zone.zip -d landing-zone && cd landing-zone && ls'),
           '',
           'The builder writes plain Terraform and downloads it as `landing-zone.zip`. For the full default build you should see nine `.tf` files (`terraform.tf`, `providers.tf`, `alz.tf`, `subscriptions.tf`, `management.tf`, `connectivity.tf`, `identity.tf`, `application.tf` and `variables.tf`), plus `terraform.tfvars.example` and `README.md`; a smaller build has fewer. Read `README.md` first: it lists the other files and the module version each component uses. Then open the `.tf` files: the comment at the top of each says why its calls look the way they do, not only what they are.',
         ])
@@ -457,9 +472,7 @@ export const labs = Object.freeze([
       step(
         'terraform init, with the network on',
         md([
-          '```bash',
-          'terraform init',
-          '```',
+          ...bash('terraform init'),
           '',
           'This workspace reaches the Terraform registry, so init downloads the Azure Verified Modules and their providers — tens of megabytes for a full landing zone. Note how long it takes and what lands in `.terraform/`; the lab runner at the end does the same work with no network at all, from offline copies of these modules.',
         ])
@@ -467,10 +480,7 @@ export const labs = Object.freeze([
       step(
         'fmt and validate, then break something',
         md([
-          '```bash',
-          'terraform fmt -check -diff',
-          'terraform validate',
-          '```',
+          ...bash('terraform fmt -check -diff', 'terraform validate'),
           '',
           '`fmt -check` reports formatting only and changes nothing; `validate` checks that every reference resolves and every argument is one the provider or module accepts. Now open `management.tf`, misspell a reference inside its module call (for example `local.management_resource_group_name`, the resource group name the module reads), and run `terraform validate` again. It names the file and line. Fix it and re-run until both pass.',
         ])
@@ -480,10 +490,7 @@ export const labs = Object.freeze([
         md([
           'Validate never contacts Azure, so it cannot know whether a name is taken, whether a policy definition exists, or what will be created. That is a plan. If you want to see one:',
           '',
-          '```bash',
-          'az login --use-device-code',
-          'terraform plan',
-          '```',
+          ...bash('az login --use-device-code', 'terraform plan'),
           '',
           'A plan needs a subscription and read permissions; it changes nothing. Stop there: the articles for this lab explain why nothing from a lab is ever applied.',
         ])
@@ -511,13 +518,9 @@ export const labs = Object.freeze([
         'https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/landing-zone/'
       ),
     ]),
-    validation: Object.freeze({
-      jobType: 'terraform-validate',
-      payloadEncoding: 'text',
-      samplePayload: LANDING_ZONE_SAMPLE,
-    }),
+    validation: textValidation('terraform-validate', LANDING_ZONE_SAMPLE),
     template: LAB_TEMPLATE,
-    params: Object.freeze({ lab: 'landing-zone-builder-output' }),
+    params: labParams('landing-zone-builder-output'),
     articleSlugs: Object.freeze([
       ARTICLE_LANDING_ZONE,
       ARTICLE_ONE_CONTAINER,
@@ -552,10 +555,10 @@ export const labs = Object.freeze([
         md([
           'The workspace opens directly in `~/wsl-containers-lab`, seeded by the lab bootloader. List the files and read `Dockerfile.agentic-wslc` to see how the Ubuntu 24.04 rootfs is configured for a non-root user:',
           '',
-          '```bash',
-          'ls -la ~/wsl-containers-lab',
-          'cat ~/wsl-containers-lab/Dockerfile.agentic-wslc',
-          '```',
+          ...bash(
+            'ls -la ~/wsl-containers-lab',
+            'cat ~/wsl-containers-lab/Dockerfile.agentic-wslc'
+          ),
           '',
           'The imported WSL distribution uses its own `/etc/wsl.conf`: Windows drive automount is disabled (`[automount] enabled=false`) and the default user is `nobody` (`[user] default=nobody`). It does not inherit Docker’s single-folder bind-mount boundary.',
         ])
@@ -565,9 +568,7 @@ export const labs = Object.freeze([
         md([
           'Execute `verify-sandbox.sh` in `bash` to inspect the active Linux kernel, user identity, workspace mount, and offline provider mirror:',
           '',
-          '```bash',
-          '~/wsl-containers-lab/verify-sandbox.sh',
-          '```',
+          ...bash('~/wsl-containers-lab/verify-sandbox.sh'),
           '',
           'Confirm that `User` resolves to a non-root account and that `TF_CLI_CONFIG_FILE` points at the baked-in filesystem mirror.',
         ])
@@ -591,12 +592,12 @@ export const labs = Object.freeze([
         md([
           'Initialise and validate the Terraform configuration inside `~/wsl-containers-lab` with the network backend disabled:',
           '',
-          '```bash',
-          'cd ~/wsl-containers-lab',
-          'terraform init -backend=false',
-          'terraform fmt -check',
-          'terraform validate',
-          '```',
+          ...bash(
+            'cd ~/wsl-containers-lab',
+            'terraform init -backend=false',
+            'terraform fmt -check',
+            'terraform validate'
+          ),
           '',
           'Send `main.tf` to the lab runner below to confirm the runner reaches the same offline validation result.',
         ]),
@@ -617,13 +618,9 @@ export const labs = Object.freeze([
       ),
       resource('Docker Sandboxes', routes.sandboxes('docker')),
     ]),
-    validation: Object.freeze({
-      jobType: 'terraform-validate',
-      payloadEncoding: 'text',
-      samplePayload: PROVIDERS_ONLY_SAMPLE,
-    }),
+    validation: textValidation('terraform-validate', PROVIDERS_ONLY_SAMPLE),
     template: LAB_TEMPLATE,
-    params: Object.freeze({ lab: 'wsl-containers-walkthrough' }),
+    params: labParams('wsl-containers-walkthrough'),
     articleSlugs: Object.freeze([ARTICLE_ONE_CONTAINER, ARTICLE_AGENT_EXPLAINS]),
   }),
   Object.freeze({
@@ -660,9 +657,7 @@ export const labs = Object.freeze([
           '',
           'Because this browser lab runs inside a Linux container rather than a Windows VM, the workspace provides simulated output so you can inspect the fields (`PluginStatus`, `SensorHealth`, `HostDeviceId`, `WslDeviceName`) before running the real check on a Windows host:',
           '',
-          '```bash',
-          'healthcheck.exe',
-          '```',
+          ...bash('healthcheck.exe'),
           '',
           'Notice the `[SIMULATED]` banner in the Linux shim output and verify that `WslDeviceName` follows the `<HostName>-wslc` naming convention (`LAB-HOST-wslc`).',
         ])
@@ -672,9 +667,7 @@ export const labs = Object.freeze([
         md([
           'Run the benign DIY Linux EDR simulation script inside `~/mde-wsl-lab` (or click **Run DIY Linux EDR Test** in the interactive simulator on this page):',
           '',
-          '```bash',
-          '~/mde-wsl-lab/diy-edr-test.sh --trigger-test-marker',
-          '```',
+          ...bash('~/mde-wsl-lab/diy-edr-test.sh --trigger-test-marker'),
           '',
           'In this Linux container simulation, the script records a local simulated `DeviceProcessEvents` JSON event rather than submitting a live alert to Defender. On a real onboarded Windows 11 + WSL2 host, validate actual detections in the Microsoft Defender portal (`https://security.microsoft.com`) under **Incidents & alerts** and **Advanced hunting**.',
         ])
@@ -684,9 +677,7 @@ export const labs = Object.freeze([
         md([
           'Open `~/mde-wsl-lab/hunting-queries.kql` in the workspace or step through the **4. Advanced Hunting KQL** tab in the simulator above:',
           '',
-          '```bash',
-          'cat ~/mde-wsl-lab/hunting-queries.kql',
-          '```',
+          ...bash('cat ~/mde-wsl-lab/hunting-queries.kql'),
           '',
           'The three queries cover: (1) listing all `WSL2`-tagged Linux instances in `DeviceInfo` with their `HostDeviceId` column, (2) joining WSL2 instances back to their parent Windows 11 host via `DeviceInfo.HostDeviceId`, and (3) filtering `DeviceProcessEvents` across WSL2 devices identified by `DeviceInfo.HostDeviceId`.',
         ])
@@ -696,12 +687,12 @@ export const labs = Object.freeze([
         md([
           'Initialise and validate the Terraform configuration in `~/mde-wsl-lab/main.tf` using the offline provider mirror:',
           '',
-          '```bash',
-          'cd ~/mde-wsl-lab',
-          'terraform init -backend=false',
-          'terraform fmt -check',
-          'terraform validate',
-          '```',
+          ...bash(
+            'cd ~/mde-wsl-lab',
+            'terraform init -backend=false',
+            'terraform fmt -check',
+            'terraform validate'
+          ),
           '',
           'Submit `main.tf` to the lab runner to verify the configuration passes offline validation.',
         ]),
@@ -725,13 +716,9 @@ export const labs = Object.freeze([
         'https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-deviceprocessevents-table'
       ),
     ]),
-    validation: Object.freeze({
-      jobType: 'terraform-validate',
-      payloadEncoding: 'text',
-      samplePayload: LANDING_ZONE_SAMPLE,
-    }),
+    validation: textValidation('terraform-validate', LANDING_ZONE_SAMPLE),
     template: LAB_TEMPLATE,
-    params: Object.freeze({ lab: 'defender-wsl-plugin-walkthrough' }),
+    params: labParams('defender-wsl-plugin-walkthrough'),
     articleSlugs: Object.freeze([ARTICLE_LANDING_ZONE, ARTICLE_ONE_CONTAINER]),
   }),
   Object.freeze({
@@ -762,10 +749,7 @@ export const labs = Object.freeze([
           'Review the organizational structure under `organizations.tf` and `scp.tf`.',
           'The baseline provisions Security, Infrastructure, and Workloads OUs with SCP guardrails that disallow root access and restrict unapproved regions.',
           '',
-          '```bash',
-          'cat organizations.tf',
-          'cat scp.tf',
-          '```',
+          ...bash('cat organizations.tf', 'cat scp.tf'),
         ])
       ),
       step(
@@ -774,10 +758,7 @@ export const labs = Object.freeze([
           'Examine `transit-gateway.tf` and `spokes.tf` to see how Workload VPCs attach to the central Transit Gateway hub.',
           'Notice how East-West traffic is isolated via dedicated Route 53 Resolver and Transit Gateway route tables.',
           '',
-          '```bash',
-          'cat transit-gateway.tf',
-          'cat spokes.tf',
-          '```',
+          ...bash('cat transit-gateway.tf', 'cat spokes.tf'),
         ])
       ),
       step(
@@ -785,10 +766,7 @@ export const labs = Object.freeze([
         md([
           'Initialize Terraform without a backend and run `terraform validate` to verify the multi-account HCL configuration.',
           '',
-          '```bash',
-          'terraform init -backend=false',
-          'terraform validate',
-          '```',
+          ...bash('terraform init -backend=false', 'terraform validate'),
         ]),
         {
           jobType: 'terraform-validate',
@@ -804,13 +782,9 @@ export const labs = Object.freeze([
         'https://docs.aws.amazon.com/prescriptive-guidance/latest/security-reference-architecture/welcome.html'
       ),
     ]),
-    validation: Object.freeze({
-      jobType: 'terraform-validate',
-      payloadEncoding: 'text',
-      samplePayload: AWS_TRANSIT_GATEWAY_SAMPLE,
-    }),
+    validation: textValidation('terraform-validate', AWS_TRANSIT_GATEWAY_SAMPLE),
     template: LAB_TEMPLATE,
-    params: Object.freeze({ lab: 'aws-transit-gateway-walkthrough' }),
+    params: labParams('aws-transit-gateway-walkthrough'),
     articleSlugs: Object.freeze([]),
   }),
   Object.freeze({
@@ -840,10 +814,7 @@ export const labs = Object.freeze([
         md([
           'Review `folders.tf` and `org-policies.tf`. The configuration defines Platform, Corp, and Online folder hierarchies along with organizational policy constraints that enforce shielded VMs and prevent external IP exposure.',
           '',
-          '```bash',
-          'cat folders.tf',
-          'cat org-policies.tf',
-          '```',
+          ...bash('cat folders.tf', 'cat org-policies.tf'),
         ])
       ),
       step(
@@ -851,10 +822,7 @@ export const labs = Object.freeze([
         md([
           'Examine `shared-vpc.tf` and `projects.tf` to see how the Shared VPC Host project shares subnets and Cloud NAT gateways with attached service projects.',
           '',
-          '```bash',
-          'cat shared-vpc.tf',
-          'cat projects.tf',
-          '```',
+          ...bash('cat shared-vpc.tf', 'cat projects.tf'),
         ])
       ),
       step(
@@ -862,10 +830,7 @@ export const labs = Object.freeze([
         md([
           'Run `terraform init -backend=false` and `terraform validate` inside the terminal to verify syntax across all Foundation Fabric resource definitions.',
           '',
-          '```bash',
-          'terraform init -backend=false',
-          'terraform validate',
-          '```',
+          ...bash('terraform init -backend=false', 'terraform validate'),
         ]),
         {
           jobType: 'terraform-validate',
@@ -881,13 +846,9 @@ export const labs = Object.freeze([
         'https://cloud.google.com/architecture/security-foundations'
       ),
     ]),
-    validation: Object.freeze({
-      jobType: 'terraform-validate',
-      payloadEncoding: 'text',
-      samplePayload: GCP_SHARED_VPC_SAMPLE,
-    }),
+    validation: textValidation('terraform-validate', GCP_SHARED_VPC_SAMPLE),
     template: LAB_TEMPLATE,
-    params: Object.freeze({ lab: 'gcp-shared-vpc-walkthrough' }),
+    params: labParams('gcp-shared-vpc-walkthrough'),
     articleSlugs: Object.freeze([]),
   }),
   Object.freeze({
@@ -917,10 +878,7 @@ export const labs = Object.freeze([
         md([
           'Review `vsphere.tf` and `avs-interconnect.tf`. The configuration defines on-premises vSphere datacenter clusters, compute resource pools, and ExpressRoute / private cloud interconnect attachments.',
           '',
-          '```bash',
-          'cat vsphere.tf',
-          'cat avs-interconnect.tf',
-          '```',
+          ...bash('cat vsphere.tf', 'cat avs-interconnect.tf'),
         ])
       ),
       step(
@@ -928,10 +886,7 @@ export const labs = Object.freeze([
         md([
           'Inspect `hcx-service-mesh.tf` and `network-extension.tf` to examine HCX interconnect service mesh appliances, WAN optimization profiles, and stretched L2 broadcast domains.',
           '',
-          '```bash',
-          'cat hcx-service-mesh.tf',
-          'cat network-extension.tf',
-          '```',
+          ...bash('cat hcx-service-mesh.tf', 'cat network-extension.tf'),
         ])
       ),
       step(
@@ -939,10 +894,7 @@ export const labs = Object.freeze([
         md([
           'Run `terraform init -backend=false` and `terraform validate` to verify the multi-provider vSphere and AzureRM hybrid landing zone HCL declarations offline.',
           '',
-          '```bash',
-          'terraform init -backend=false',
-          'terraform validate',
-          '```',
+          ...bash('terraform init -backend=false', 'terraform validate'),
         ]),
         {
           jobType: 'terraform-validate',
@@ -958,13 +910,9 @@ export const labs = Object.freeze([
         'https://learn.microsoft.com/en-us/azure/azure-vmware/'
       ),
     ]),
-    validation: Object.freeze({
-      jobType: 'terraform-validate',
-      payloadEncoding: 'text',
-      samplePayload: VMWARE_HCX_SAMPLE,
-    }),
+    validation: textValidation('terraform-validate', VMWARE_HCX_SAMPLE),
     template: LAB_TEMPLATE,
-    params: Object.freeze({ lab: 'vmware-hcx-migration-walkthrough' }),
+    params: labParams('vmware-hcx-migration-walkthrough'),
     articleSlugs: Object.freeze([]),
   }),
   Object.freeze({
@@ -999,16 +947,14 @@ export const labs = Object.freeze([
       step(
         'Initialise with no registry',
         md([
-          '```bash',
-          'terraform init -backend=false',
-          '```',
+          ...bash('terraform init -backend=false'),
           '',
           'It completes, and nothing was downloaded. The image sets `TF_CLI_CONFIG_FILE` to a configuration that installs providers from a filesystem mirror. Look at both:',
           '',
-          '```bash',
-          'cat "$TF_CLI_CONFIG_FILE"',
-          'ls /opt/terraform/mirror/registry.terraform.io/hashicorp',
-          '```',
+          ...bash(
+            'cat "$TF_CLI_CONFIG_FILE"',
+            'ls /opt/terraform/mirror/registry.terraform.io/hashicorp'
+          ),
           '',
           'Every provider listed there can be installed offline; that is how the lab runner validates with the network switched off.',
         ])
@@ -1016,10 +962,7 @@ export const labs = Object.freeze([
       step(
         'fmt, then validate',
         md([
-          '```bash',
-          'terraform fmt -check -diff',
-          'terraform validate',
-          '```',
+          ...bash('terraform fmt -check -diff', 'terraform validate'),
           '',
           'Both pass. Now indent the `length` line in `main.tf` by one extra space and run both again: `fmt -check` reports the file and exits non-zero, `validate` still passes. Formatting is not correctness. Run `terraform fmt` with no flags to fix it.',
         ])
@@ -1043,9 +986,7 @@ export const labs = Object.freeze([
         md([
           'Add `aws = { source = "hashicorp/aws", version = "~> 6.0" }` to `required_providers` and run `terraform init -backend=false`. It fails before validate can run: the mirror has no `hashicorp/aws`, and the configuration allows no other source. This is the runner’s answer too, by design. In this workspace you may reach the registry for one command:',
           '',
-          '```bash',
-          'TF_CLI_CONFIG_FILE=/dev/null terraform init -backend=false',
-          '```',
+          ...bash('TF_CLI_CONFIG_FILE=/dev/null terraform init -backend=false'),
           '',
           'Then remove the `aws` block again, delete `.terraform.lock.hcl`, and re-run the offline init.',
         ])
@@ -1076,13 +1017,9 @@ export const labs = Object.freeze([
         'https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/lab-image'
       ),
     ]),
-    validation: Object.freeze({
-      jobType: 'terraform-validate',
-      payloadEncoding: 'text',
-      samplePayload: PROVIDERS_ONLY_SAMPLE,
-    }),
+    validation: textValidation('terraform-validate', PROVIDERS_ONLY_SAMPLE),
     template: LAB_TEMPLATE,
-    params: Object.freeze({ lab: 'terraform-validate-walkthrough' }),
+    params: labParams('terraform-validate-walkthrough'),
     articleSlugs: Object.freeze([ARTICLE_ONE_CONTAINER]),
   }),
   Object.freeze({
@@ -1117,9 +1054,7 @@ export const labs = Object.freeze([
       step(
         'Run the syntax check, and watch it fail',
         md([
-          '```bash',
-          'ansible-playbook --syntax-check site.yml',
-          '```',
+          ...bash('ansible-playbook --syntax-check site.yml'),
           '',
           'The image carries `ansible-core` and no collections, so the first role that names a module outside `ansible.builtin` stops the check with "couldn’t resolve module/action". A syntax check resolves every module it meets; a missing collection is a syntax error to it.',
         ])
@@ -1127,10 +1062,10 @@ export const labs = Object.freeze([
       step(
         'Install the pinned collections',
         md([
-          '```bash',
-          'ansible-galaxy collection install -r requirements.yml',
-          'ansible-playbook --syntax-check site.yml',
-          '```',
+          ...bash(
+            'ansible-galaxy collection install -r requirements.yml',
+            'ansible-playbook --syntax-check site.yml'
+          ),
           '',
           'The versions are exact, so you install the same code the host runs. The check now ends with `playbook: site.yml` and exit code 0.',
         ])
@@ -1140,10 +1075,7 @@ export const labs = Object.freeze([
         md([
           'In `site.yml`, rename `pre_tasks:` to `pre_taskz:` and run the check again. It reports that `pre_taskz` is not a valid attribute for a Play, with the file and line. Then open any `roles/*/tasks/main.yml`, misspell a module name (`ansible.builtin.fil`), and see the same kind of message name the task instead. Put both back:',
           '',
-          '```bash',
-          'git checkout -- .',
-          'ansible-playbook --syntax-check site.yml',
-          '```',
+          ...bash('git checkout -- .', 'ansible-playbook --syntax-check site.yml'),
         ])
       ),
       step(
@@ -1175,13 +1107,9 @@ export const labs = Object.freeze([
         'https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/lab-host'
       ),
     ]),
-    validation: Object.freeze({
-      jobType: 'ansible-check',
-      payloadEncoding: 'text',
-      samplePayload: ANSIBLE_SAMPLE,
-    }),
+    validation: textValidation('ansible-check', ANSIBLE_SAMPLE),
     template: LAB_TEMPLATE,
-    params: Object.freeze({ lab: 'ansible-syntax-check-walkthrough' }),
+    params: labParams('ansible-syntax-check-walkthrough'),
     articleSlugs: Object.freeze([]),
   }),
   Object.freeze({
@@ -1211,11 +1139,7 @@ export const labs = Object.freeze([
         md([
           'Inspect the rootless Docker daemon socket, subuid/subgid allocations, and unprivileged user mappings in the container sandbox environment.',
           '',
-          '```bash',
-          'docker info',
-          'id -u',
-          'cat /etc/subuid',
-          '```',
+          ...bash('docker info', 'id -u', 'cat /etc/subuid'),
         ])
       ),
       step(
@@ -1223,9 +1147,7 @@ export const labs = Object.freeze([
         md([
           'Review the container containment execution profile: verify that the workspace runs with `--network none`, a read-only root filesystem, and strict memory/CPU bounds.',
           '',
-          '```bash',
-          'docker run --rm --network none alpine ip addr',
-          '```',
+          ...bash('docker run --rm --network none alpine ip addr'),
         ])
       ),
       step(
@@ -1233,10 +1155,7 @@ export const labs = Object.freeze([
         md([
           'Run `terraform init -backend=false` and `terraform validate` to verify the declarative Docker sandbox infrastructure and container resource specifications offline.',
           '',
-          '```bash',
-          'terraform init -backend=false',
-          'terraform validate',
-          '```',
+          ...bash('terraform init -backend=false', 'terraform validate'),
         ]),
         {
           jobType: 'terraform-validate',
@@ -1249,13 +1168,9 @@ export const labs = Object.freeze([
       resource('Docker Learn Hub', '/docker/education'),
       resource('Docker Security Best Practices', 'https://docs.docker.com/engine/security/'),
     ]),
-    validation: Object.freeze({
-      jobType: 'terraform-validate',
-      payloadEncoding: 'text',
-      samplePayload: DOCKER_SANDBOX_SAMPLE,
-    }),
+    validation: textValidation('terraform-validate', DOCKER_SANDBOX_SAMPLE),
     template: LAB_TEMPLATE,
-    params: Object.freeze({ lab: 'docker-sandbox-agent-walkthrough' }),
+    params: labParams('docker-sandbox-agent-walkthrough'),
     articleSlugs: Object.freeze([]),
   }),
 ]);
@@ -1389,36 +1304,36 @@ export const LAB_LANDING_FRAMES = Object.freeze({
         'Non-root UID 1000',
       ]),
       stages: Object.freeze([
-        Object.freeze({
-          title: 'OCI Image RootFS',
-          subtitle: 'hybridcloudworks/hcw-lab:latest',
-          boundary: 'Image Layer',
-          guardrail: 'Pinned Terraform + Azure CLI',
-        }),
-        Object.freeze({
-          title: 'WSL2 / Container Import',
-          subtitle: 'wsl --import or container runtime',
-          boundary: 'Linux Kernel',
-          guardrail: 'Isolated from default profile',
-        }),
-        Object.freeze({
-          title: 'Single-Folder Mount',
-          subtitle: '~/wsl-containers-lab -> /workspace',
-          boundary: 'Mount Boundary',
-          guardrail: 'No host ~/.ssh or ~/.azure',
-        }),
-        Object.freeze({
-          title: 'Boundary Verification',
-          subtitle: 'verify-sandbox.sh check',
-          boundary: 'Userland Check',
-          guardrail: 'Non-root user confirmed',
-        }),
-        Object.freeze({
-          title: 'Offline Terraform Check',
-          subtitle: 'terraform init -backend=false && validate',
-          boundary: 'Runner Parity',
-          guardrail: 'Zero network calls required',
-        }),
+        frameStage(
+          'OCI Image RootFS',
+          'hybridcloudworks/hcw-lab:latest',
+          'Image Layer',
+          'Pinned Terraform + Azure CLI'
+        ),
+        frameStage(
+          'WSL2 / Container Import',
+          'wsl --import or container runtime',
+          'Linux Kernel',
+          'Isolated from default profile'
+        ),
+        frameStage(
+          'Single-Folder Mount',
+          '~/wsl-containers-lab -> /workspace',
+          'Mount Boundary',
+          'No host ~/.ssh or ~/.azure'
+        ),
+        frameStage(
+          'Boundary Verification',
+          'verify-sandbox.sh check',
+          'Userland Check',
+          'Non-root user confirmed'
+        ),
+        frameStage(
+          'Offline Terraform Check',
+          'terraform init -backend=false && validate',
+          'Runner Parity',
+          'Zero network calls required'
+        ),
       ]),
     }),
     howItWorks: Object.freeze([
@@ -1427,18 +1342,18 @@ export const LAB_LANDING_FRAMES = Object.freeze({
       'Compare the Windows 11 wsl --import workflow with the running Linux container and validate main.tf offline.',
     ]),
     keyServices: Object.freeze([
-      Object.freeze({
-        name: 'WSL2 Custom Distribution',
-        role: 'Imports a clean container rootfs on Windows 11 via wsl --import',
-      }),
-      Object.freeze({
-        name: 'hybridcloudworks/hcw-lab',
-        role: 'Pre-built Linux container image with Terraform and Azure CLI',
-      }),
-      Object.freeze({
-        name: 'Filesystem Provider Mirror',
-        role: 'Allows terraform init -backend=false and validate with no network',
-      }),
+      frameService(
+        'WSL2 Custom Distribution',
+        'Imports a clean container rootfs on Windows 11 via wsl --import'
+      ),
+      frameService(
+        'hybridcloudworks/hcw-lab',
+        'Pre-built Linux container image with Terraform and Azure CLI'
+      ),
+      frameService(
+        'Filesystem Provider Mirror',
+        'Allows terraform init -backend=false and validate with no network'
+      ),
     ]),
     practices: Object.freeze([
       'Mount only the target project directory (/workspace) instead of sharing your entire home directory with an agent.',
@@ -1459,36 +1374,31 @@ export const LAB_LANDING_FRAMES = Object.freeze({
         'Defender Portal Assets & Hunting',
       ]),
       stages: Object.freeze([
-        Object.freeze({
-          title: 'Windows 11 Host',
-          subtitle: 'LAB-HOST (Onboarded)',
-          boundary: 'Host OS',
-          guardrail: 'HostDeviceId anchor',
-        }),
-        Object.freeze({
-          title: 'MDE WSL2 Plug-in',
-          subtitle: 'healthcheck.exe (Healthy)',
-          boundary: 'Plug-in Bridge',
-          guardrail: 'PluginVersion 1.0.2604.1',
-        }),
-        Object.freeze({
-          title: 'WSL2 Linux Instance',
-          subtitle: 'LAB-HOST-wslc (WSL2 Tag)',
-          boundary: 'WSL2 Kernel',
-          guardrail: 'Attaches to active distros',
-        }),
-        Object.freeze({
-          title: 'DIY Linux EDR Marker',
-          subtitle: 'diy-edr-test.sh --trigger-test-marker',
-          boundary: 'Process Sensor',
-          guardrail: 'Benign test alert only',
-        }),
-        Object.freeze({
-          title: 'Advanced Hunting KQL',
-          subtitle: 'DeviceInfo & DeviceProcessEvents',
-          boundary: 'Defender XDR',
-          guardrail: 'HostDeviceId correlation',
-        }),
+        frameStage('Windows 11 Host', 'LAB-HOST (Onboarded)', 'Host OS', 'HostDeviceId anchor'),
+        frameStage(
+          'MDE WSL2 Plug-in',
+          'healthcheck.exe (Healthy)',
+          'Plug-in Bridge',
+          'PluginVersion 1.0.2604.1'
+        ),
+        frameStage(
+          'WSL2 Linux Instance',
+          'LAB-HOST-wslc (WSL2 Tag)',
+          'WSL2 Kernel',
+          'Attaches to active distros'
+        ),
+        frameStage(
+          'DIY Linux EDR Marker',
+          'diy-edr-test.sh --trigger-test-marker',
+          'Process Sensor',
+          'Benign test alert only'
+        ),
+        frameStage(
+          'Advanced Hunting KQL',
+          'DeviceInfo & DeviceProcessEvents',
+          'Defender XDR',
+          'HostDeviceId correlation'
+        ),
       ]),
     }),
     howItWorks: Object.freeze([
@@ -1497,18 +1407,18 @@ export const LAB_LANDING_FRAMES = Object.freeze({
       'Run diy-edr-test.sh --trigger-test-marker and query DeviceInfo and DeviceProcessEvents with the three KQL hunting queries.',
     ]),
     keyServices: Object.freeze([
-      Object.freeze({
-        name: 'Defender for Endpoint Plug-in for WSL',
-        role: 'Streams process and network telemetry from the shared WSL2 Linux kernel',
-      }),
-      Object.freeze({
-        name: 'Defender Device Inventory',
-        role: 'Lists each WSL2 machine as <HostName>-wslc with the WSL2 tag',
-      }),
-      Object.freeze({
-        name: 'Advanced Hunting (KQL)',
-        role: 'Joins WSL2 DeviceProcessEvents back to the parent Windows 11 host via HostDeviceId',
-      }),
+      frameService(
+        'Defender for Endpoint Plug-in for WSL',
+        'Streams process and network telemetry from the shared WSL2 Linux kernel'
+      ),
+      frameService(
+        'Defender Device Inventory',
+        'Lists each WSL2 machine as <HostName>-wslc with the WSL2 tag'
+      ),
+      frameService(
+        'Advanced Hunting (KQL)',
+        'Joins WSL2 DeviceProcessEvents back to the parent Windows 11 host via HostDeviceId'
+      ),
     ]),
     practices: Object.freeze([
       'Ensure WSL 2.0.14.0 or newer is installed via wsl.exe --update so the plug-in can attach to the virtual machine kernel.',

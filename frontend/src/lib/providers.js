@@ -98,6 +98,25 @@ export function canonicalizeProvider(value) {
   return squashed;
 }
 
+// The fields a stored document may name its provider in, most specific first.
+const DOC_PROVIDER_FIELDS = Object.freeze([
+  'Cloud Provider',
+  'cloudProvider',
+  'provider',
+  'Provider',
+  'primaryProvider',
+]);
+
+/**
+ * Canonicalise the provider a document names itself: the first filled-in
+ * provider field, read the same way as `a || b || c`.
+ */
+export function canonicalDocProvider(doc = {}) {
+  return canonicalizeProvider(
+    DOC_PROVIDER_FIELDS.reduce((found, field) => found || doc[field], undefined)
+  );
+}
+
 /**
  * Infer a provider from free text (a title, a summary, a URL).
  *
@@ -110,6 +129,18 @@ export function inferProviderFromText(value) {
   if (!text) return '';
   for (const { provider, text: tokens } of PROVIDER_ALIASES) {
     if (tokens.some((token) => text.includes(token))) return provider;
+  }
+  return '';
+}
+
+/**
+ * `inferProviderFromText` over several fields of a document, in order: the
+ * first field that names a provider wins, and '' when none does.
+ */
+export function inferProviderFromFields(doc, fields) {
+  for (const field of fields) {
+    const provider = inferProviderFromText(doc[field]);
+    if (provider) return provider;
   }
   return '';
 }

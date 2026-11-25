@@ -198,6 +198,67 @@ function PlannedTaskRow({ task, resolved }) {
   );
 }
 
+/** The Test button's tooltip: why it is off, or what it will do. */
+function testButtonTitle(dirty, media) {
+  if (dirty) return 'Save first; the Test runs the stored chain';
+  if (media) return 'Resolve the chain and say which model would serve; makes no audio or image';
+  return 'Run the effective chain with the Test’s limits';
+}
+
+/** The task's name, badges and description, beside what serves it now. */
+function TaskRowHeader({ task, resolved, badges, rejection, providers }) {
+  return (
+    <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">{resolved.label}</span>
+          <span className={`${BADGE} border-border text-muted-foreground`}>
+            {resolved.modality}
+          </span>
+          {resolved.public && <span className={`${BADGE} ${BADGE_TONE.public}`}>public</span>}
+          {badges.map((b) => (
+            <span key={b} className={`${BADGE} ${BADGE_TONE.warn}`}>
+              {b}
+            </span>
+          ))}
+        </div>
+        <div className="mt-0.5 text-xs text-muted-foreground">{resolved.description}</div>
+      </div>
+      <div className="min-w-0 space-y-1 break-words rounded-lg bg-muted/30 p-3 lg:text-right">
+        <p className="text-xs font-medium" data-testid={`effective-${task}`}>
+          {describeEffective(resolved, providers)}
+        </p>
+        {rejection && (
+          <p className="text-xs text-muted-foreground" data-testid={`rejected-${task}`}>
+            {rejection}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Why providers were passed over, and any routing flags, folded away. */
+function RoutingDetails({ resolved, providers }) {
+  if (!(resolved.rejected?.length > 0 || resolved.flags?.length > 0)) return null;
+  return (
+    <details className="min-w-0 text-xs text-muted-foreground">
+      <summary className="cursor-pointer font-medium">Routing details</summary>
+      <ul className="mt-2 space-y-2 break-words leading-relaxed">
+        {(resolved.flags || []).map((flag) => (
+          <li key={flag}>{flag}</li>
+        ))}
+        {(resolved.rejected || []).map((item, index) => (
+          <li key={`${item.provider}-${index}`}>
+            {providerLabel(item.provider, providers)}
+            {item.model ? ` (${item.model})` : ''}: {item.why}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function TaskRow({ task, resolved, selection, providers, availability, catalog, saving, onSave }) {
   const [draft, setDraft] = useState(() => draftEntry(resolved.entry));
   const [error, setError] = useState(null);
@@ -211,10 +272,7 @@ function TaskRow({ task, resolved, selection, providers, availability, catalog, 
   // the media providers, by what each carries (ADR 0034 slice 5).
   const chainProviders = chainProvidersFor(resolved, providers, availability);
   const media = resolved.media === true;
-  let testTitle = 'Run the effective chain with the Test’s limits';
-  if (dirty) testTitle = 'Save first; the Test runs the stored chain';
-  else if (media)
-    testTitle = 'Resolve the chain and say which model would serve; makes no audio or image';
+  const testTitle = testButtonTitle(dirty, media);
 
   const handleSave = async () => {
     setError(null);
@@ -242,33 +300,13 @@ function TaskRow({ task, resolved, selection, providers, availability, catalog, 
       className="min-w-0 space-y-4 rounded-xl border border-border bg-background p-4 sm:p-5"
       data-task={task}
     >
-      <div className="grid min-w-0 gap-3 lg:grid-cols-2">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium">{resolved.label}</span>
-            <span className={`${BADGE} border-border text-muted-foreground`}>
-              {resolved.modality}
-            </span>
-            {resolved.public && <span className={`${BADGE} ${BADGE_TONE.public}`}>public</span>}
-            {badges.map((b) => (
-              <span key={b} className={`${BADGE} ${BADGE_TONE.warn}`}>
-                {b}
-              </span>
-            ))}
-          </div>
-          <div className="mt-0.5 text-xs text-muted-foreground">{resolved.description}</div>
-        </div>
-        <div className="min-w-0 space-y-1 break-words rounded-lg bg-muted/30 p-3 lg:text-right">
-          <p className="text-xs font-medium" data-testid={`effective-${task}`}>
-            {describeEffective(resolved, providers)}
-          </p>
-          {rejection && (
-            <p className="text-xs text-muted-foreground" data-testid={`rejected-${task}`}>
-              {rejection}
-            </p>
-          )}
-        </div>
-      </div>
+      <TaskRowHeader
+        task={task}
+        resolved={resolved}
+        badges={badges}
+        rejection={rejection}
+        providers={providers}
+      />
 
       <div className="grid min-w-0 gap-5 xl:grid-cols-2">
         <ModeRadios
@@ -356,22 +394,7 @@ function TaskRow({ task, resolved, selection, providers, availability, catalog, 
           </p>
         )}
       </div>
-      {(resolved.rejected?.length > 0 || resolved.flags?.length > 0) && (
-        <details className="min-w-0 text-xs text-muted-foreground">
-          <summary className="cursor-pointer font-medium">Routing details</summary>
-          <ul className="mt-2 space-y-2 break-words leading-relaxed">
-            {(resolved.flags || []).map((flag) => (
-              <li key={flag}>{flag}</li>
-            ))}
-            {(resolved.rejected || []).map((item, index) => (
-              <li key={`${item.provider}-${index}`}>
-                {providerLabel(item.provider, providers)}
-                {item.model ? ` (${item.model})` : ''}: {item.why}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      <RoutingDetails resolved={resolved} providers={providers} />
       <TestResult result={testResult} providers={providers} />
     </div>
   );

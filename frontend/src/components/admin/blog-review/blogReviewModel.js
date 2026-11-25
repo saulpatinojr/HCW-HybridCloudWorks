@@ -198,14 +198,18 @@ export const PUBLISHED_ADDRESS_HINT =
 export function hasPublishedAddress(blog) {
   // The server keeps an address only when one is stored (publish.js `reuse`).
   if (!blog || !(blog.slug || blog.Slug)) return false;
+  return isPublishedStatus(blog) || isMarkedLive(blog) || Boolean(blog.curatedSubpagePath);
+}
+
+// `published`, or the legacy `published_*` spelling.
+function isPublishedStatus(blog) {
   const status = String(blog.contentStatus || '');
-  return (
-    status === 'published' ||
-    status.startsWith('published_') ||
-    blog.Live === true ||
-    blog.Status === 'Live' ||
-    Boolean(blog.curatedSubpagePath)
-  );
+  return status === 'published' || status.startsWith('published_');
+}
+
+// The older live markers: `Live: true` or `Status: 'Live'`.
+function isMarkedLive(blog) {
+  return blog.Live === true || blog.Status === 'Live';
 }
 
 /**

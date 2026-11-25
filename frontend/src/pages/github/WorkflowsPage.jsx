@@ -2,6 +2,71 @@ import React from 'react';
 import { Helmet } from 'react-helmet-async';
 import { routes } from '@/lib/routeFactory';
 
+/** The three one-step workflow snippets under the featured card. */
+const SNIPPETS = [
+  {
+    color: 'text-purple-400',
+    icon: 'security',
+    kind: 'Security',
+    title: 'Trivy Container Scan',
+    text: 'Vulnerability scanning for container images before pushing to registry.',
+    uses: 'aquasecurity/trivy-action@0.16.1',
+    block: 'with:',
+    key: 'image-ref:',
+    value: "'my-app:${{ github.sha }}'",
+  },
+  {
+    color: 'text-orange-400',
+    icon: 'rocket_launch',
+    kind: 'CD / Release',
+    title: 'Auto Semantic Release',
+    text: 'Automated versioning and changelog generation based on conventional commits.',
+    uses: 'cycjimmy/semantic-release-action@v4',
+    block: 'env:',
+    key: 'GITHUB_TOKEN:',
+    value: '${{ secrets.GITHUB_TOKEN }}',
+  },
+  {
+    color: 'text-green-400',
+    icon: 'smart_toy',
+    kind: 'Automation',
+    title: 'Stale Issue Closer',
+    text: 'Automatically identify and close stale issues and PRs to keep backlog clean.',
+    uses: 'actions/stale@v9',
+    block: 'with:',
+    key: 'days-before-stale:',
+    value: '30',
+  },
+];
+
+/** One snippet: its kind, title and purpose, the YAML lines and a copy button. */
+function SnippetCard({ snippet }) {
+  return (
+    <div className="bento-card col-span-1">
+      <div className={`flex items-center gap-2 mb-3 ${snippet.color}`}>
+        <span className="material-symbols-outlined text-[24px]">{snippet.icon}</span>
+        <span className="font-bold uppercase tracking-widest text-xs">{snippet.kind}</span>
+      </div>
+      <h3 className="text-lg font-bold mb-2">{snippet.title}</h3>
+      <p className="text-xs text-gh-text-gray mb-4">{snippet.text}</p>
+      <div className="bg-gh-code-bg border border-gh-border rounded p-2 mb-4">
+        <pre className="font-mono text-[10px] text-gh-text-gray overflow-hidden whitespace-nowrap">
+          <code>
+            <span className="token-key">uses:</span>{' '}
+            <span className="token-val">{snippet.uses}</span>
+            <span className="token-key">{snippet.block}</span>
+            <span className="token-key">{snippet.key}</span>{' '}
+            <span className="token-val">{snippet.value}</span>
+          </code>
+        </pre>
+      </div>
+      <button className="w-full py-1.5 bg-gh-border/50 hover:bg-gh-border text-white rounded text-xs font-bold transition-colors">
+        Copy YAML
+      </button>
+    </div>
+  );
+}
+
 export default function GitHubWorkflowsPage() {
   return (
     <>
@@ -188,78 +253,9 @@ export default function GitHubWorkflowsPage() {
                   </li>
                 </ul>
               </div>
-              <div className="bento-card col-span-1">
-                <div className="flex items-center gap-2 mb-3 text-purple-400">
-                  <span className="material-symbols-outlined text-[24px]">security</span>
-                  <span className="font-bold uppercase tracking-widest text-xs">Security</span>
-                </div>
-                <h3 className="text-lg font-bold mb-2">Trivy Container Scan</h3>
-                <p className="text-xs text-gh-text-gray mb-4">
-                  Vulnerability scanning for container images before pushing to registry.
-                </p>
-                <div className="bg-gh-code-bg border border-gh-border rounded p-2 mb-4">
-                  <pre className="font-mono text-[10px] text-gh-text-gray overflow-hidden whitespace-nowrap">
-                    <code>
-                      <span className="token-key">uses:</span>{' '}
-                      <span className="token-val">aquasecurity/trivy-action@0.16.1</span>
-                      <span className="token-key">with:</span>
-                      <span className="token-key">image-ref:</span>{' '}
-                      <span className="token-val">{"'my-app:${{ github.sha }}'"}</span>
-                    </code>
-                  </pre>
-                </div>
-                <button className="w-full py-1.5 bg-gh-border/50 hover:bg-gh-border text-white rounded text-xs font-bold transition-colors">
-                  Copy YAML
-                </button>
-              </div>
-              <div className="bento-card col-span-1">
-                <div className="flex items-center gap-2 mb-3 text-orange-400">
-                  <span className="material-symbols-outlined text-[24px]">rocket_launch</span>
-                  <span className="font-bold uppercase tracking-widest text-xs">CD / Release</span>
-                </div>
-                <h3 className="text-lg font-bold mb-2">Auto Semantic Release</h3>
-                <p className="text-xs text-gh-text-gray mb-4">
-                  Automated versioning and changelog generation based on conventional commits.
-                </p>
-                <div className="bg-gh-code-bg border border-gh-border rounded p-2 mb-4">
-                  <pre className="font-mono text-[10px] text-gh-text-gray overflow-hidden whitespace-nowrap">
-                    <code>
-                      <span className="token-key">uses:</span>{' '}
-                      <span className="token-val">cycjimmy/semantic-release-action@v4</span>
-                      <span className="token-key">env:</span>
-                      <span className="token-key">GITHUB_TOKEN:</span>{' '}
-                      <span className="token-val">{'${{ secrets.GITHUB_TOKEN }}'}</span>
-                    </code>
-                  </pre>
-                </div>
-                <button className="w-full py-1.5 bg-gh-border/50 hover:bg-gh-border text-white rounded text-xs font-bold transition-colors">
-                  Copy YAML
-                </button>
-              </div>
-              <div className="bento-card col-span-1">
-                <div className="flex items-center gap-2 mb-3 text-green-400">
-                  <span className="material-symbols-outlined text-[24px]">smart_toy</span>
-                  <span className="font-bold uppercase tracking-widest text-xs">Automation</span>
-                </div>
-                <h3 className="text-lg font-bold mb-2">Stale Issue Closer</h3>
-                <p className="text-xs text-gh-text-gray mb-4">
-                  Automatically identify and close stale issues and PRs to keep backlog clean.
-                </p>
-                <div className="bg-gh-code-bg border border-gh-border rounded p-2 mb-4">
-                  <pre className="font-mono text-[10px] text-gh-text-gray overflow-hidden whitespace-nowrap">
-                    <code>
-                      <span className="token-key">uses:</span>{' '}
-                      <span className="token-val">actions/stale@v9</span>
-                      <span className="token-key">with:</span>
-                      <span className="token-key">days-before-stale:</span>{' '}
-                      <span className="token-val">30</span>
-                    </code>
-                  </pre>
-                </div>
-                <button className="w-full py-1.5 bg-gh-border/50 hover:bg-gh-border text-white rounded text-xs font-bold transition-colors">
-                  Copy YAML
-                </button>
-              </div>
+              {SNIPPETS.map((snippet) => (
+                <SnippetCard key={snippet.title} snippet={snippet} />
+              ))}
               <div className="bento-card md:col-span-2 lg:col-span-3 flex flex-row items-center justify-between gap-6">
                 <div>
                   <div className="flex items-center gap-2 text-gh-blue mb-2">

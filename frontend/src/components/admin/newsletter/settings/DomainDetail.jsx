@@ -172,8 +172,22 @@ function useDomainDetail(id, domain, onLoaded) {
   return { loading, error, reload };
 }
 
-export default function DomainDetail({ id, domain, onLoaded }) {
-  const detail = useDomainDetail(id, domain, onLoaded);
+/** Claim `key` for one write; false when that write is already running. */
+function claimKey(inFlight, key) {
+  if (inFlight.current.has(key)) return false;
+  inFlight.current.add(key);
+  return true;
+}
+
+/** A copy of the set without `key`. */
+function withoutKey(set, key) {
+  const next = new Set(set);
+  next.delete(key);
+  return next;
+}
+
+/** Verify and the tracking switches: each write runs once at a time and says its error. */
+function useDomainWrites(id, onLoaded) {
   const [busy, setBusy] = useState(() => new Set());
   const [verifying, setVerifying] = useState(false);
   const [verified, setVerified] = useState(false);
@@ -181,14 +195,9 @@ export default function DomainDetail({ id, domain, onLoaded }) {
   // Refs, not state, guard the writes: a double click lands before the
   // re-render that disables the control, and would send the write twice.
   const inFlight = useRef(new Set());
-  const claim = (key) => {
-    if (inFlight.current.has(key)) return false;
-    inFlight.current.add(key);
-    return true;
-  };
 
   const verify = async () => {
-    if (!claim('verify')) return;
+    if (!claimKey(inFlight, 'verify')) return;
     setVerifying(true);
     setActionError('');
     try {
@@ -203,7 +212,7 @@ export default function DomainDetail({ id, domain, onLoaded }) {
   };
 
   const toggle = async (field, value) => {
-    if (!claim(field)) return;
+    if (!claimKey(inFlight, field)) return;
     setBusy((previous) => new Set(previous).add(field));
     setActionError('');
     try {
@@ -216,13 +225,16 @@ export default function DomainDetail({ id, domain, onLoaded }) {
       setActionError(describeResendError(err));
     } finally {
       inFlight.current.delete(field);
-      setBusy((previous) => {
-        const next = new Set(previous);
-        next.delete(field);
-        return next;
-      });
+      setBusy((previous) => withoutKey(previous, field));
     }
   };
+
+  return { busy, verifying, verified, actionError, verify, toggle };
+}
+
+export default function DomainDetail({ id, domain, onLoaded }) {
+  const detail = useDomainDetail(id, domain, onLoaded);
+  const { busy, verifying, verified, actionError, verify, toggle } = useDomainWrites(id, onLoaded);
 
   if (detail.loading && !domain) return <Loading>Loading DNS records…</Loading>;
   if (!domain)

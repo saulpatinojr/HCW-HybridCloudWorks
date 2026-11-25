@@ -167,6 +167,11 @@ export function describeDue(alert) {
   }
   const days = alert.daysUntilDue;
   if (!Number.isFinite(days)) return { text: 'No date', tone: 'later' };
+  return describeDaysLeft(days);
+}
+
+// `describeDue` for an open alert with a due date `days` away.
+function describeDaysLeft(days) {
   if (days < 0) return { text: `${plural(-days, 'day')} overdue`, tone: 'overdue' };
   if (days === 0) return { text: 'Due today', tone: 'today' };
   if (days === 1) return { text: 'Due tomorrow', tone: 'soon' };

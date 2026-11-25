@@ -18,92 +18,38 @@
  */
 
 import React from 'react';
-import { Link } from 'react-router';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import RoleGate from '@/components/admin/RoleGate';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
-import useLinkedItem from '@/hooks/useLinkedItem';
-import { LINK_PARAMS } from '@/lib/itemLinks';
-import { describeAge, worstStatus } from '@/lib/status';
-import { AlertTriangle, Bot, CheckCircle2, Workflow } from 'lucide-react';
+import { worstStatus } from '@/lib/status';
+import { AlertTriangle, Workflow } from 'lucide-react';
 import {
-  contentAgentVerdict,
   nightlyExportVerdict,
   scheduledPublishingVerdict,
   unresolvedSplit,
 } from './probeEvaluators';
-import { KODA } from './probeKit';
-import StatusSlot from './StatusSlot';
+import {
+  CardRow,
+  CheckedFooter,
+  formatHours,
+  formatTimestamp,
+  getAlertStatus,
+  getBadgeVariantByCount,
+  getDigestDocLabel,
+  SignalCardHeader,
+  stagedAgeStatus,
+} from './signalParts';
 
-export const ALERT_FILTERS = [
-  { value: 'open', label: 'Open' },
-  { value: 'acknowledged', label: 'Acknowledged' },
-  { value: 'resolved', label: 'Resolved' },
-];
-
-/**
- * A Cosmos timestamp is an ISO string; a migrated one may still be a
- * Firestore-shaped `{ toDate }` or `{ seconds }`. Until 2026-10-03 only the
- * first shape was read, so every time on this page said "Not available"
- * (ADR 0033 §1 Platform).
- */
-export function formatTimestamp(value) {
-  let date = null;
-  if (typeof value?.toDate === 'function') date = value.toDate();
-  else if (value && typeof value === 'object' && typeof value.seconds === 'number')
-    date = new Date(value.seconds * 1000);
-  else if (typeof value === 'string' || typeof value === 'number') date = new Date(value);
-  if (!date || Number.isNaN(date.getTime())) return 'Not available';
-
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(date);
-}
-
-/**
- * Every Overview card ends the same way (ADR 0033 §1 Platform): when the
- * block it shows was read — its age as well as its time (#1010) — and where
- * its probes, impacts and fixes live. Pinned to the bottom of the card.
- */
-export function CheckedFooter({ at, probeLabel }) {
-  const age = describeAge(typeof at === 'string' ? at : null);
-  return (
-    <p className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
-      <span>
-        Checked {age ? `${age} · ` : ''}
-        {formatTimestamp(at)}
-      </span>
-      <Link
-        to="/admin/health?tab=checks"
-        className="font-medium text-primary underline-offset-2 hover:underline"
-      >
-        {probeLabel ?? 'Impact, fixes and tests on Checks'}
-      </Link>
-    </p>
-  );
-}
-
-/**
- * A signal card's header: the title, and the card's status in the slot every
- * Health Hub card keeps in the same place (StatusSlot.jsx).
- */
-function SignalCardHeader({ icon = null, title, status }) {
-  return (
-    <CardHeader className="flex-row items-start gap-3 space-y-0" data-slot="header">
-      <CardTitle className="flex min-w-0 flex-1 items-center gap-2 text-lg">
-        {icon}
-        {title}
-      </CardTitle>
-      <StatusSlot status={status} size="sm" />
-    </CardHeader>
-  );
-}
+// The shared parts and two cards live in their own modules; callers read them from here.
+export {
+  ALERT_FILTERS,
+  CheckedFooter,
+  formatTimestamp,
+  getAlertActionLabel,
+  getAlertStatus,
+} from './signalParts';
+export { ContentAgentCard } from './ContentAgentCard';
+export { WorkflowAlertsCard } from './WorkflowAlertsCard';
 
 /** The one word for the runtime-configuration readiness (ADR 0033, lib/status.js). */
 export function readinessStatus(readiness) {
@@ -147,44 +93,6 @@ export function alertsStatus(alerts) {
   const open = (alerts ?? []).filter((alert) => getAlertStatus(alert) !== 'resolved');
   if (open.length === 0) return 'healthy';
   return open.some((alert) => alert.severity === 'critical') ? 'critical' : 'degraded';
-}
-
-export function getAlertActionLabel(action) {
-  if (action === 'resolve') return 'Resolved';
-  if (action === 'acknowledge') return 'Acknowledged';
-  return 'Updated';
-}
-
-export function getAlertStatus(alert) {
-  return alert.status || (alert.active === false ? 'resolved' : 'open');
-}
-
-function getBadgeVariantByCount(count, positiveVariant) {
-  if (count > 0) return positiveVariant;
-  return 'secondary';
-}
-
-function getDigestDocLabel(digestDate) {
-  if (!digestDate) return '';
-  return ` (digest doc: ${digestDate})`;
-}
-
-/**
- * The waiting-to-go-live tile's word, and its share of the card's header:
- * degraded past three days, and degraded when items wait but none carries a
- * time (#1516). Not unknown: worstStatus counts unknown only when nothing
- * else is known, so the header would read Healthy over the tile, and
- * "unknown" there means "never checked", which this is not (the #1491 rule
- * for a read that could not count).
- */
-function stagedAgeStatus(hours) {
-  if (hours === null) return 'degraded';
-  return (hours || 0) > 72 ? 'degraded' : 'healthy';
-}
-
-function formatHours(value) {
-  if (!value) return '0h';
-  return `${value}h`;
 }
 
 function renderPublishingHint(publishingOps) {
@@ -466,145 +374,6 @@ function JobsStrip({ jobs }) {
   );
 }
 
-/** The key's one word and the badge colour that goes with it. */
-function keyBadge(key) {
-  if (key.unavailable) return { word: 'could not be read', variant: 'outline' };
-  if (!key.present) return { word: 'none', variant: 'outline' };
-  if (key.active) return { word: 'active', variant: 'secondary' };
-  return { word: 'revoked', variant: 'destructive' };
-}
-
-/** One label/value row of the card, in the shape the sibling cards use. */
-function CardRow({ label, children }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span>{label}</span>
-      {children}
-    </div>
-  );
-}
-
-/**
- * The rows that describe a key the snapshot has: when it was last used, when
- * it was rotated (or, for a key never rotated, when it was created, said as
- * such) and which switches are off. Nothing here is shown for a key that is
- * absent or unread, because none of it would be a fact.
- */
-function KeyRows({ keyState, sectionsOff }) {
-  return (
-    <>
-      <CardRow label="Last used">
-        <Badge variant="outline">{formatTimestamp(keyState.lastUsedAt)}</Badge>
-      </CardRow>
-      {keyState.rotatedAt ? (
-        <CardRow label="Rotated">
-          <Badge variant="outline">{formatTimestamp(keyState.rotatedAt)}</Badge>
-        </CardRow>
-      ) : (
-        <CardRow label="Created, never rotated">
-          <Badge variant="outline">{formatTimestamp(keyState.createdAt)}</Badge>
-        </CardRow>
-      )}
-      <CardRow label="Switches off">
-        <span className="text-right text-xs text-muted-foreground" data-testid="agent-switches-off">
-          {sectionsOff.length
-            ? sectionsOff.map((section) => section.label).join(', ')
-            : 'none, every switch is on'}
-        </span>
-      </CardRow>
-    </>
-  );
-}
-
-/** The refusal count, or the fact that it could not be made. */
-function RefusalsBadge({ denials }) {
-  if (denials.unavailable) return <Badge variant="outline">could not be counted</Badge>;
-  const total = denials.total || 0;
-  return (
-    <Badge variant={getBadgeVariantByCount(total, 'destructive')}>
-      {total}
-      {denials.bounded ? '+' : ''}
-    </Badge>
-  );
-}
-
-/**
- * The reasons, most frequent first, when the read made it and found any. At
- * the read's bound each count is a floor, like the total, so it carries the
- * same "+".
- */
-function RefusalReasons({ denials }) {
-  if (denials.unavailable || !denials.byReason?.length) return null;
-  const floor = denials.bounded ? '+' : '';
-  return (
-    <ul className="space-y-1 text-xs" data-testid="agent-denials-by-reason">
-      {denials.byReason.slice(0, 6).map((row) => (
-        <li key={row.reason} className="flex items-center justify-between font-mono">
-          <span>{row.reason}</span>
-          <span className="text-muted-foreground">
-            {row.count}
-            {floor}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/**
- * The content agent (Koda): its key, the switches that are off and the day's
- * refusals by reason, from the snapshot's `agent` block (#1491). The same
- * verdict as the Content agent probe on Checks. Never the key or its hint:
- * that is the Koda tab's, behind super_admin. A snapshot without the block
- * (one written before this card existed) gets the verdict sentence and the
- * link only: rows of "none" and "0" would read as findings.
- */
-export function ContentAgentCard({ agent }) {
-  const verdict = contentAgentVerdict(agent);
-  const key = agent?.key || {};
-  const denials = agent?.denials || {};
-  const badge = keyBadge(key);
-  const sectionsOff = agent?.sectionsOff || [];
-  const kodaLink = (
-    <p className="text-xs">
-      <Link to={KODA.to} className="font-medium text-primary underline-offset-2 hover:underline">
-        {KODA.label}: the key, its switches and the route list
-      </Link>
-    </p>
-  );
-  return (
-    <Card className="flex h-full flex-col" data-testid="content-agent-card">
-      <SignalCardHeader
-        icon={<Bot className="h-4 w-4 text-violet-500" aria-hidden="true" />}
-        title={`Content agent (${agent?.label || 'Koda'})`}
-        status={verdict.status}
-      />
-      <CardContent className="flex flex-1 flex-col gap-2 text-sm">
-        <p className="text-xs text-muted-foreground">{verdict.summary}</p>
-        {agent ? (
-          <>
-            <CardRow label="Key">
-              <Badge variant={badge.variant}>{badge.word}</Badge>
-            </CardRow>
-            {key.present ? <KeyRows keyState={key} sectionsOff={sectionsOff} /> : null}
-            <CardRow label="Refusals, last 24 h">
-              <RefusalsBadge denials={denials} />
-            </CardRow>
-            <RefusalReasons denials={denials} />
-            {denials.lastAt ? (
-              <p className="text-xs text-muted-foreground">
-                Last refusal {formatTimestamp(denials.lastAt)}.
-              </p>
-            ) : null}
-          </>
-        ) : null}
-        {kodaLink}
-        <CheckedFooter at={agent?.lastCheckedAt} />
-      </CardContent>
-    </Card>
-  );
-}
-
 /**
  * Last night's Cosmos export, from the snapshot's `backups` block (#1409):
  * the newest completed run, when it finished, how many containers it holds,
@@ -781,140 +550,6 @@ export function OperationalSignalsCard({ signals, backups = null }) {
           </div>
         )}
         <CheckedFooter at={signals.lastCheckedAt} />
-      </CardContent>
-    </Card>
-  );
-}
-
-/** One workflow alert with its state changes, gated together because the hub is a viewer read and updateWorkflowAlert is publisher. */
-function AlertRow({
-  alert,
-  alertActionId,
-  resolutionNotes,
-  setResolutionNotes,
-  handleAlertAction,
-}) {
-  const status = getAlertStatus(alert);
-  // `?alert=<id>` (the dashboard's Decision Center) scrolls to this alert and rings it.
-  const { ref, linkedProps, linkedClassName } = useLinkedItem(LINK_PARAMS.alert, alert.id);
-  return (
-    <div
-      key={alert.id}
-      ref={ref}
-      {...linkedProps}
-      className={`rounded-lg border p-3 ${linkedClassName}`}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium">{alert.alertType || 'workflow_alert'}</p>
-          <p className="text-xs text-muted-foreground">
-            {alert.source || 'unknown source'} ·{' '}
-            {formatTimestamp(alert.updatedAt || alert.firstSeenAt)}
-          </p>
-        </div>
-        <Badge variant={alert.severity === 'critical' ? 'destructive' : 'outline'}>
-          {alert.severity || 'warning'}
-        </Badge>
-      </div>
-      {status !== 'resolved' && (
-        <div className="mt-3">
-          <Input
-            value={resolutionNotes[alert.id] || ''}
-            onChange={(e) =>
-              setResolutionNotes((prev) => ({ ...prev, [alert.id]: e.target.value }))
-            }
-            placeholder="Resolution note (required to resolve)"
-          />
-        </div>
-      )}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {/* The hub is readable by a viewer; updateWorkflowAlert is publisher
-            (lib/ops-health.js), so the three state changes say so together. */}
-        <RoleGate minRole="publisher" reason="Changing an alert's state needs the publisher role.">
-          {status === 'open' && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={alertActionId !== ''}
-              onClick={() => handleAlertAction(alert.id, 'acknowledge')}
-            >
-              {alertActionId === `${alert.id}:acknowledge` ? 'Acknowledging...' : 'Acknowledge'}
-            </Button>
-          )}
-          {status !== 'resolved' && (
-            <Button
-              size="sm"
-              disabled={alertActionId !== ''}
-              onClick={() => handleAlertAction(alert.id, 'resolve')}
-            >
-              {alertActionId === `${alert.id}:resolve` ? 'Resolving...' : 'Resolve'}
-            </Button>
-          )}
-          {status === 'resolved' && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={alertActionId !== ''}
-              onClick={() => handleAlertAction(alert.id, 'reopen')}
-            >
-              {alertActionId === `${alert.id}:reopen` ? 'Reopening...' : 'Reopen'}
-            </Button>
-          )}
-        </RoleGate>
-        <Badge variant="secondary">{status}</Badge>
-      </div>
-    </div>
-  );
-}
-
-export function WorkflowAlertsCard({
-  alertFilter,
-  setAlertFilter,
-  filteredAlerts,
-  alertActionId,
-  resolutionNotes,
-  setResolutionNotes,
-  handleAlertAction,
-  status = 'unknown',
-}) {
-  return (
-    <Card>
-      <SignalCardHeader
-        icon={<AlertTriangle className="h-4 w-4 text-amber-500" aria-hidden="true" />}
-        title="Workflow Alerts"
-        status={status}
-      />
-      <CardContent>
-        <div className="mb-4 flex flex-wrap gap-2">
-          {ALERT_FILTERS.map((filter) => (
-            <Button
-              key={filter.value}
-              size="sm"
-              variant={alertFilter === filter.value ? 'default' : 'outline'}
-              onClick={() => setAlertFilter(filter.value)}
-            >
-              {filter.label}
-            </Button>
-          ))}
-        </div>
-        {filteredAlerts.length === 0 ? (
-          <div className="flex items-center gap-2 text-sm text-emerald-600">
-            <CheckCircle2 className="h-4 w-4" /> No alerts in this filter.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredAlerts.map((alert) => (
-              <AlertRow
-                key={alert.id}
-                alert={alert}
-                alertActionId={alertActionId}
-                resolutionNotes={resolutionNotes}
-                setResolutionNotes={setResolutionNotes}
-                handleAlertAction={handleAlertAction}
-              />
-            ))}
-          </div>
-        )}
       </CardContent>
     </Card>
   );

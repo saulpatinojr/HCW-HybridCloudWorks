@@ -5,6 +5,7 @@ import { normalizePublicImageUrl } from '@/lib/blogUtils';
 import ResponsiveCoverImage from '@/components/shared/ResponsiveCoverImage';
 import { resolveMediaUrl } from '../../lib/functionsBase';
 import { safeUrl } from '@/lib/safeUrl';
+import { firstField } from '@/components/shared/firstField';
 
 // Pulls the WebP variants that match whichever imageUrl resolveImageUrl
 // picked. Returns null when the source doesn't carry variants.
@@ -54,13 +55,9 @@ function formatDate(date) {
 }
 
 function extractSourceFeed(article) {
-  return (
-    article.feedName ||
-    article.source ||
-    article['Source Feed'] ||
-    article.Author ||
-    article.author ||
-    article['Author Name'] ||
+  return firstField(
+    article,
+    ['feedName', 'source', 'Source Feed', 'Author', 'author', 'Author Name'],
     'Cloud Provider'
   );
 }
@@ -70,7 +67,7 @@ function extractTitle(article) {
 }
 
 function extractSummary(article) {
-  return article.aiSummary || article.Summary || article.summary || article.description || '';
+  return firstField(article, ['aiSummary', 'Summary', 'summary', 'description'], '');
 }
 
 function extractTags(article) {
@@ -178,7 +175,7 @@ const CuratedArticleCard = React.memo(({ article, index, generatedImageUrl }) =>
   const summary = extractSummary(article);
   const sourceFeed = extractSourceFeed(article);
   const tags = extractTags(article);
-  const externalUrl = article.sourceUrl || article['CD Url'] || article.url || article.link || '#';
+  const externalUrl = firstField(article, ['sourceUrl', 'CD Url', 'url', 'link'], '#');
 
   return (
     <ScrollTrigger animation="slideUp" duration={0.4} delay={index * 0.03}>

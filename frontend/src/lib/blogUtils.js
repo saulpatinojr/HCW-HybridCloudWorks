@@ -42,6 +42,14 @@ export const stripHtmlTags = (value) => {
   return out;
 };
 
+// The URL inside a Cover Image field: the first upload of a list, the one
+// upload of an object, or the field itself when it is already a URL.
+const coverImageFieldUrl = (coverImage) => {
+  if (Array.isArray(coverImage)) return coverImage[0]?.downloadURL || null;
+  if (typeof coverImage === 'object') return coverImage.downloadURL || null;
+  return coverImage;
+};
+
 export const getCoverImageUrl = (article) => {
   if (!article) return null;
 
@@ -53,10 +61,7 @@ export const getCoverImageUrl = (article) => {
   // Priority 1: Cover Image field (array or object)
   const coverImage = article.coverImage || article['Cover Image'];
   if (!coverImage) return null;
-  if (Array.isArray(coverImage)) return normalizePublicImageUrl(coverImage[0]?.downloadURL || null);
-  if (typeof coverImage === 'object')
-    return normalizePublicImageUrl(coverImage.downloadURL || null);
-  return normalizePublicImageUrl(coverImage);
+  return normalizePublicImageUrl(coverImageFieldUrl(coverImage));
 };
 
 /**
@@ -89,26 +94,32 @@ const RELATIVE_URL_BASE = 'https://relative.invalid';
  * or fragment otherwise defeats it in both directions: `…/clip.mp4?w=1200`
  * is still a video, and `…/photo.png?poster=clip.mp4` is still an image.
  */
+const parseLooseUrl = (url) => {
+  try {
+    return new URL(url, RELATIVE_URL_BASE);
+  } catch {
+    return null;
+  }
+};
+
+/** The lower-case extension of the last path segment, or '' when it has none. */
+const fileExtension = (pathname) => {
+  const filename = pathname.slice(pathname.lastIndexOf('/') + 1);
+  const dot = filename.lastIndexOf('.');
+  return dot === -1 ? '' : filename.slice(dot + 1).toLowerCase();
+};
+
 export const isVideoUrl = (value) => {
   if (typeof value !== 'string') return false;
   const url = value.trim();
-  if (!url) return false;
-
-  let parsed;
-  try {
-    parsed = new URL(url, RELATIVE_URL_BASE);
-  } catch {
-    return false;
-  }
+  const parsed = url ? parseLooseUrl(url) : null;
+  if (!parsed) return false;
 
   // A data: URI declares its own media type, which beats guessing at an
   // extension the payload does not have.
   if (parsed.protocol === 'data:') return /^video\//i.test(parsed.pathname);
 
-  const filename = parsed.pathname.slice(parsed.pathname.lastIndexOf('/') + 1);
-  const dot = filename.lastIndexOf('.');
-  if (dot === -1) return false;
-  return VIDEO_EXTENSIONS.has(filename.slice(dot + 1).toLowerCase());
+  return VIDEO_EXTENSIONS.has(fileExtension(parsed.pathname));
 };
 
 /**

@@ -8,7 +8,11 @@ import { getCanonicalContentType, getContentPublicPath } from '@/lib/contentMode
 // used to own privately — vmware/broadcom, ansible/redhat — is the table
 // every other reader now shares, which is what stops those documents
 // showing here and vanishing from their own provider's blog list.
-import { canonicalizeProvider, inferProviderFromText } from '@/lib/providers';
+import {
+  canonicalDocProvider,
+  canonicalizeProvider,
+  inferProviderFromFields,
+} from '@/lib/providers';
 
 const DISPLAY_TYPE_LABELS = {
   blog: 'Blog',
@@ -20,42 +24,47 @@ const DISPLAY_TYPE_LABELS = {
 
 const SUPPORTED_TYPES = new Set(Object.keys(DISPLAY_TYPE_LABELS));
 
+// `a || b || c` over a list of field names: the first truthy field, or a
+// falsy value when none is.
+function firstTruthyField(doc, fields) {
+  return fields.reduce((found, field) => found || doc[field], undefined);
+}
+
+// Fields read, in order, for a provider name inside a URL, path or title.
+const PROVIDER_TEXT_FIELDS = [
+  'slugPageUrl',
+  'publishedUrl',
+  'publicUrl',
+  'blogUrl',
+  'curatedSubpagePath',
+  'url',
+  'sourceUrl',
+  'Title',
+  'title',
+];
+
 function inferProviderFromDoc(doc = {}) {
-  const explicit = canonicalizeProvider(
-    doc['Cloud Provider'] ||
-      doc.cloudProvider ||
-      doc.provider ||
-      doc.Provider ||
-      doc.primaryProvider
-  );
+  const explicit = canonicalDocProvider(doc);
   if (explicit) return explicit;
 
   const pathProvider = canonicalizeProvider(String(doc.curatedSubpagePath || '').split('/')[1]);
   if (pathProvider) return pathProvider;
 
-  return (
-    inferProviderFromText(doc.slugPageUrl) ||
-    inferProviderFromText(doc.publishedUrl) ||
-    inferProviderFromText(doc.publicUrl) ||
-    inferProviderFromText(doc.blogUrl) ||
-    inferProviderFromText(doc.curatedSubpagePath) ||
-    inferProviderFromText(doc.url) ||
-    inferProviderFromText(doc.sourceUrl) ||
-    inferProviderFromText(doc.Title) ||
-    inferProviderFromText(doc.title) ||
-    ''
-  );
+  return inferProviderFromFields(doc, PROVIDER_TEXT_FIELDS);
+}
+
+function curatedPageUrl(curatedSubpagePath) {
+  if (!curatedSubpagePath) return '';
+  const path = String(curatedSubpagePath).startsWith('/')
+    ? curatedSubpagePath
+    : `/${curatedSubpagePath}`;
+  return `https://hybridcloudworks.com${path}`;
 }
 
 function getPublicUrl(doc = {}) {
   const explicitUrl =
-    doc.slugPageUrl ||
-    doc.publishedUrl ||
-    doc.blogUrl ||
-    doc.publicUrl ||
-    (doc.curatedSubpagePath
-      ? `https://hybridcloudworks.com${String(doc.curatedSubpagePath).startsWith('/') ? doc.curatedSubpagePath : `/${doc.curatedSubpagePath}`}`
-      : '');
+    firstTruthyField(doc, ['slugPageUrl', 'publishedUrl', 'blogUrl', 'publicUrl']) ||
+    curatedPageUrl(doc.curatedSubpagePath);
 
   if (explicitUrl) return explicitUrl;
 
@@ -115,6 +124,32 @@ function normalizeItem(doc = {}) {
   };
 }
 
+function hasPublicPage(item) {
+  return Boolean(item.publicUrl && item.title && item.title !== 'Untitled');
+}
+
+// The provider's own items from a list of documents: supported types only,
+// one per public URL, newest first.
+function collectProviderItems(docs, providerKey) {
+  const seen = new Set();
+  const merged = [];
+
+  for (const doc of docs || []) {
+    if (inferProviderFromDoc(doc) !== providerKey) continue;
+    if (!SUPPORTED_TYPES.has(getCanonicalContentType(doc))) continue;
+
+    const normalized = normalizeItem(doc);
+    if (!hasPublicPage(normalized)) continue;
+
+    const dedupeKey = normalized.publicUrl.trim().toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    merged.push(normalized);
+  }
+
+  return merged.sort((a, b) => b.recency - a.recency);
+}
+
 export function useProviderLandingContent(provider) {
   const providerKey = canonicalizeProvider(provider);
   // Visibility is enforced server-side — the public API only returns
@@ -124,27 +159,10 @@ export function useProviderLandingContent(provider) {
     'landing:content'
   );
 
-  const contentItems = useMemo(() => {
-    const seen = new Set();
-    const merged = [];
-
-    (contentDocs || []).forEach((doc) => {
-      if (inferProviderFromDoc(doc) !== providerKey) return;
-
-      const contentType = getCanonicalContentType(doc);
-      if (!SUPPORTED_TYPES.has(contentType)) return;
-
-      const normalized = normalizeItem(doc);
-      if (!normalized.publicUrl || !normalized.title || normalized.title === 'Untitled') return;
-
-      const dedupeKey = normalized.publicUrl.trim().toLowerCase();
-      if (seen.has(dedupeKey)) return;
-      seen.add(dedupeKey);
-      merged.push(normalized);
-    });
-
-    return merged.sort((a, b) => b.recency - a.recency);
-  }, [contentDocs, providerKey]);
+  const contentItems = useMemo(
+    () => collectProviderItems(contentDocs, providerKey),
+    [contentDocs, providerKey]
+  );
 
   const shouldLoadLegacy = !contentLoading && contentItems.length === 0;
   const { data: blogDocs, loading: blogLoading } = usePublicData(
@@ -152,27 +170,10 @@ export function useProviderLandingContent(provider) {
     shouldLoadLegacy ? 'landing:legacy' : ''
   );
 
-  const blogItems = useMemo(() => {
-    const seen = new Set();
-    const merged = [];
-
-    (blogDocs || []).forEach((doc) => {
-      if (inferProviderFromDoc(doc) !== providerKey) return;
-
-      const contentType = getCanonicalContentType(doc);
-      if (!SUPPORTED_TYPES.has(contentType)) return;
-
-      const normalized = normalizeItem(doc);
-      if (!normalized.publicUrl || !normalized.title || normalized.title === 'Untitled') return;
-
-      const dedupeKey = normalized.publicUrl.trim().toLowerCase();
-      if (seen.has(dedupeKey)) return;
-      seen.add(dedupeKey);
-      merged.push(normalized);
-    });
-
-    return merged.sort((a, b) => b.recency - a.recency);
-  }, [blogDocs, providerKey]);
+  const blogItems = useMemo(
+    () => collectProviderItems(blogDocs, providerKey),
+    [blogDocs, providerKey]
+  );
 
   const items = contentItems.length > 0 ? contentItems : blogItems;
 

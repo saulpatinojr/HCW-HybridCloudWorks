@@ -74,6 +74,102 @@ function mergeItemMaps(a, b) {
   return merged;
 }
 
+/** The banner after a bulk reject: how many went, and how many are left with a reason. */
+function bulkRejectMessage(successCount, failureCount) {
+  return `Rejected ${successCount} item${successCount === 1 ? '' : 's'}.${
+    failureCount ? ` ${failureCount} failed — see red error under each remaining card.` : ''
+  }`;
+}
+
+/**
+ * Soft-deletes every rejected item, a hundred per request, until the server
+ * says there are no more (or deleted none on the last pass). Resolves the count.
+ */
+async function deleteAllRejected() {
+  let deletedCount = 0;
+  let hasMore = false;
+
+  do {
+    const result = await postJSON('deleteRejectedContent', { limit: 100 });
+    deletedCount += result.deletedCount || 0;
+    hasMore = result.hasMore === true && (result.deletedCount || 0) > 0;
+  } while (hasMore);
+  return deletedCount;
+}
+
+/** Asks for a new hero image; resolves its address or throws the reason. */
+async function generateHeroImage(contentId) {
+  const result = await postJSON('generateReviewHeroImage', { contentId });
+  if (!result?.success) {
+    throw new Error(result?.error || 'Image generation failed');
+  }
+  return result.imageUrl;
+}
+
+/** `items` with the new hero image on the one card it was made for. */
+const withHeroImage = (contentId, imageUrl) => (prev) =>
+  prev.map((item) =>
+    item.id === contentId
+      ? {
+          ...item,
+          altCoverImage: imageUrl,
+          __regenAt: Date.now(),
+        }
+      : item
+  );
+
+/**
+ * "Forge Selected" (Blog Machine T-603): the checked documents, enqueued in
+ * chunks by forgeSelected.js; this is the state around that run.
+ * `pickIds()` reads the selection still on screen; `clearSelection()` empties it.
+ */
+function useForgeSelected(pickIds, clearSelection) {
+  const [forgingSelected, setForgingSelected] = useState(false);
+  const [forgeMessage, setForgeMessage] = useState(null);
+  const [forgeError, setForgeError] = useState(null);
+
+  const handleForgeSelected = async () => {
+    const ids = pickIds();
+    if (ids.length === 0) return;
+    setForgingSelected(true);
+    setForgeError(null);
+    setForgeMessage(null);
+    try {
+      const { jobIds, failures } = await enqueueForgeBatches(ids);
+      if (jobIds.length) {
+        await logAdminAction('content_forge_enqueued', { count: ids.length, jobIds });
+        clearSelection();
+        setForgeMessage(forgeQueuedMessage(ids.length, jobIds, failures));
+      }
+      if (failures.length) setForgeError(forgeFailureMessage(failures));
+    } finally {
+      setForgingSelected(false);
+    }
+  };
+  return { forgingSelected, forgeMessage, forgeError, handleForgeSelected };
+}
+
+/**
+ * Rejects each id in turn through `reject`, never stopping on a failure: a
+ * null answer is a failure the transition hook has already written under the
+ * card as "Reject failed: <reason>". Resolves the ids that went and the count.
+ */
+async function rejectEach(ids, reject) {
+  let successCount = 0;
+  const failures = [];
+  for (const contentId of ids) {
+    const result = await reject(contentId, { reviewNotes: 'Bulk rejected from queue' });
+    if (result) successCount += 1;
+    else failures.push(contentId);
+  }
+  const failedIds = new Set(failures);
+  return {
+    successCount,
+    failureCount: failures.length,
+    succeeded: new Set(ids.filter((id) => !failedIds.has(id))),
+  };
+}
+
 /**
  * @param {object} params
  * @param {Array} params.items the queue items currently on screen
@@ -117,32 +213,10 @@ export function useQueueActions({ items, setItems, statusFilter, contentTypeFilt
     []
   );
 
-  const [forgingSelected, setForgingSelected] = useState(false);
-  const [forgeMessage, setForgeMessage] = useState(null);
-  const [forgeError, setForgeError] = useState(null);
-
-  /**
-   * "Forge Selected" (Blog Machine T-603): the checked documents, enqueued in
-   * chunks by forgeSelected.js; this is the state around that run.
-   */
-  const handleForgeSelected = async () => {
-    const ids = selectedOnScreen(selectedIds, items);
-    if (ids.length === 0) return;
-    setForgingSelected(true);
-    setForgeError(null);
-    setForgeMessage(null);
-    try {
-      const { jobIds, failures } = await enqueueForgeBatches(ids);
-      if (jobIds.length) {
-        await logAdminAction('content_forge_enqueued', { count: ids.length, jobIds });
-        setSelectedIds(new Set());
-        setForgeMessage(forgeQueuedMessage(ids.length, jobIds, failures));
-      }
-      if (failures.length) setForgeError(forgeFailureMessage(failures));
-    } finally {
-      setForgingSelected(false);
-    }
-  };
+  const { forgingSelected, forgeMessage, forgeError, handleForgeSelected } = useForgeSelected(
+    () => selectedOnScreen(selectedIds, items),
+    () => setSelectedIds(new Set())
+  );
 
   const handleBulkReject = () => {
     const ids = selectedOnScreen(selectedIds, items);
@@ -153,29 +227,11 @@ export function useQueueActions({ items, setItems, statusFilter, contentTypeFilt
     setBulkRejecting(true);
     setBulkDeleteError(null);
     setBulkDeleteMessage(null);
-    let successCount = 0;
-    const failures = [];
     try {
-      for (const contentId of ids) {
-        // A null answer is a failure the hook has already written under the
-        // card as "Reject failed: <reason>"; the run goes on to the next id.
-        const result = await transitions.reject(contentId, {
-          reviewNotes: 'Bulk rejected from queue',
-        });
-        if (result) successCount += 1;
-        else failures.push(contentId);
-      }
-      const failedIds = new Set(failures);
-      const successSet = new Set(ids.filter((id) => !failedIds.has(id)));
-      setItems((prev) => prev.filter((item) => !successSet.has(item.id)));
+      const { successCount, failureCount, succeeded } = await rejectEach(ids, transitions.reject);
+      setItems((prev) => prev.filter((item) => !succeeded.has(item.id)));
       setSelectedIds(new Set());
-      setBulkDeleteMessage(
-        `Rejected ${successCount} item${successCount === 1 ? '' : 's'}.${
-          failures.length
-            ? ` ${failures.length} failed — see red error under each remaining card.`
-            : ''
-        }`
-      );
+      setBulkDeleteMessage(bulkRejectMessage(successCount, failureCount));
     } finally {
       setBulkRejecting(false);
     }
@@ -210,15 +266,7 @@ export function useQueueActions({ items, setItems, statusFilter, contentTypeFilt
     setBulkDeleteMessage(null);
     setBulkDeletingRejected(true);
     try {
-      let deletedCount = 0;
-      let hasMore = false;
-
-      do {
-        const result = await postJSON('deleteRejectedContent', { limit: 100 });
-        deletedCount += result.deletedCount || 0;
-        hasMore = result.hasMore === true && (result.deletedCount || 0) > 0;
-      } while (hasMore);
-
+      const deletedCount = await deleteAllRejected();
       await logAdminAction('bulk_delete_rejected', { deletedCount, mode: 'soft' });
       setItems([]);
       setBulkDeleteMessage(`Soft-deleted ${deletedCount} rejected items. Recoverable for 7 days.`);
@@ -245,23 +293,36 @@ export function useQueueActions({ items, setItems, statusFilter, contentTypeFilt
     if (result) setItems((prev) => prev.filter((item) => item.id !== contentId));
   };
 
-  const doPermanentDelete = async (contentId) => {
+  /**
+   * One card's own action: its spinner shows `state` while `work` runs, and
+   * a failure is logged under `label` and written under the card as
+   * "<failure>: <reason>".
+   */
+  const runItemAction = async (contentId, state, { label, failure }, work) => {
     setActionError((prev) => ({ ...prev, [contentId]: null }));
-    setActionLoading((prev) => ({ ...prev, [contentId]: 'deleting' }));
+    setActionLoading((prev) => ({ ...prev, [contentId]: state }));
     try {
-      await postJSON('deleteContentItem', { contentId });
-      await logAdminAction('content_deleted_from_rejected_queue', { contentId });
-      setItems((prev) => prev.filter((item) => item.id !== contentId));
+      await work();
     } catch (err) {
-      console.error('Permanent delete error:', err);
-      setActionError((prev) => ({
-        ...prev,
-        [contentId]: `Permanent delete failed: ${err.message}`,
-      }));
+      console.error(label, err);
+      setActionError((prev) => ({ ...prev, [contentId]: `${failure}: ${err.message}` }));
     } finally {
       setActionLoading((prev) => ({ ...prev, [contentId]: null }));
     }
   };
+  const dropItem = (contentId) => setItems((prev) => prev.filter((item) => item.id !== contentId));
+
+  const doPermanentDelete = (contentId) =>
+    runItemAction(
+      contentId,
+      'deleting',
+      { label: 'Permanent delete error:', failure: 'Permanent delete failed' },
+      async () => {
+        await postJSON('deleteContentItem', { contentId });
+        await logAdminAction('content_deleted_from_rejected_queue', { contentId });
+        dropItem(contentId);
+      }
+    );
 
   /**
    * Run whatever the confirm modal was opened for.
@@ -286,49 +347,27 @@ export function useQueueActions({ items, setItems, statusFilter, contentTypeFilt
     if (target) await run[target.type]?.();
   };
 
-  const handleReinspect = async (contentId) => {
-    setActionError((prev) => ({ ...prev, [contentId]: null }));
-    setActionLoading((prev) => ({ ...prev, [contentId]: 'inspecting' }));
-    try {
-      await requestContentInspection(contentId);
-      setItems((prev) => prev.filter((item) => item.id !== contentId));
-    } catch (err) {
-      console.error('Reinspect error:', err);
-      setActionError((prev) => ({ ...prev, [contentId]: `Reinspect failed: ${err.message}` }));
-    } finally {
-      setActionLoading((prev) => ({ ...prev, [contentId]: null }));
-    }
-  };
-
-  const handleGenerateHero = async (contentId) => {
-    setActionError((prev) => ({ ...prev, [contentId]: null }));
-    setActionLoading((prev) => ({ ...prev, [contentId]: 'generatingHero' }));
-    try {
-      const result = await postJSON('generateReviewHeroImage', { contentId });
-      if (!result?.success) {
-        throw new Error(result?.error || 'Image generation failed');
+  const handleReinspect = (contentId) =>
+    runItemAction(
+      contentId,
+      'inspecting',
+      { label: 'Reinspect error:', failure: 'Reinspect failed' },
+      async () => {
+        await requestContentInspection(contentId);
+        dropItem(contentId);
       }
-      setItems((prev) =>
-        prev.map((item) =>
-          item.id === contentId
-            ? {
-                ...item,
-                altCoverImage: result.imageUrl,
-                __regenAt: Date.now(),
-              }
-            : item
-        )
-      );
-    } catch (err) {
-      console.error('Generate hero error:', err);
-      setActionError((prev) => ({
-        ...prev,
-        [contentId]: `Image generation failed: ${err.message}`,
-      }));
-    } finally {
-      setActionLoading((prev) => ({ ...prev, [contentId]: null }));
-    }
-  };
+    );
+
+  const handleGenerateHero = (contentId) =>
+    runItemAction(
+      contentId,
+      'generatingHero',
+      { label: 'Generate hero error:', failure: 'Image generation failed' },
+      async () => {
+        const imageUrl = await generateHeroImage(contentId);
+        setItems(withHeroImage(contentId, imageUrl));
+      }
+    );
 
   return {
     actionLoading,

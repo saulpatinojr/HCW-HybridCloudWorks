@@ -21,14 +21,8 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  MONTH_NAMES,
-  WEEKDAYS,
-  applyStatusInfo,
-  formatDay,
-  monthGrid,
-  shiftMonth,
-} from './applyModel';
+import { MONTH_NAMES, WEEKDAYS, applyStatusInfo, formatDay } from './applyModel';
+import { monthGrid, shiftMonth } from './applyCalendarModel';
 
 /** What a day holds, as one sentence for a screen reader and the tooltip. */
 export function describeDay(day, mark) {

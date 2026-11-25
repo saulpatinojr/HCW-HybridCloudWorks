@@ -21,21 +21,24 @@ export default function TerraformToolsPage() {
     },
     {
       title: 'Terraform CLI',
-      description: 'Official Terraform command-line tool with init, plan, apply, and destroy operations.',
+      description:
+        'Official Terraform command-line tool with init, plan, apply, and destroy operations.',
       category: 'Core',
       complexity: 'Beginner',
       tags: ['CLI', 'Core', 'Official'],
     },
     {
       title: 'TFLint',
-      description: 'Linter for Terraform code quality, security best practices, and AWS/Azure/GCP compliance checks.',
+      description:
+        'Linter for Terraform code quality, security best practices, and AWS/Azure/GCP compliance checks.',
       category: 'Quality',
       complexity: 'Beginner',
       tags: ['Linting', 'Quality', 'Security'],
     },
     {
       title: 'Sentinel',
-      description: 'Policy as Code framework for enforcing governance and compliance on Terraform runs.',
+      description:
+        'Policy as Code framework for enforcing governance and compliance on Terraform runs.',
       category: 'Governance',
       complexity: 'Advanced',
       tags: ['Policy', 'Governance', 'Compliance'],

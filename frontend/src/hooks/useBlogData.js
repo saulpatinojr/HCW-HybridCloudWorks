@@ -6,7 +6,13 @@ import { formatPostDate, normalizePublicImageUrl, pickPublicImageUrl } from '@/l
 // copy, and that copy did not know `vmware`, `broadcom`, `ansible` or `redhat`
 // while useProviderLandingContent's did — so those documents appeared on the
 // landing page and vanished from their own provider's blog list.
-import { canonicalizeProvider, inferProviderFromText, squashProvider } from '@/lib/providers';
+import {
+  canonicalDocProvider,
+  canonicalizeProvider,
+  inferProviderFromFields,
+  inferProviderFromText,
+  squashProvider,
+} from '@/lib/providers';
 
 // Canonical governance source is `content`.
 // `blogs` is retained as a legacy read fallback for older migrated content.
@@ -46,13 +52,7 @@ const inferProviderFromUrlFields = (doc = {}) => {
 };
 
 const inferProviderFromDoc = (doc) => {
-  const explicit =
-    doc['Cloud Provider'] ||
-    doc.cloudProvider ||
-    doc.provider ||
-    doc.Provider ||
-    doc.primaryProvider;
-  const explicitNormalized = canonicalizeProvider(explicit);
+  const explicitNormalized = canonicalDocProvider(doc);
   if (explicitNormalized) return explicitNormalized;
 
   const pathNormalized = canonicalizeProvider(String(doc.curatedSubpagePath || '').split('/')[1]);
@@ -61,13 +61,7 @@ const inferProviderFromDoc = (doc) => {
   const urlProvider = inferProviderFromUrlFields(doc);
   if (urlProvider) return urlProvider;
 
-  return (
-    inferProviderFromText(doc.Title) ||
-    inferProviderFromText(doc.title) ||
-    inferProviderFromText(doc.Summary) ||
-    inferProviderFromText(doc.summary) ||
-    ''
-  );
+  return inferProviderFromFields(doc, ['Title', 'title', 'Summary', 'summary']);
 };
 
 const getReadTime = (doc) => {

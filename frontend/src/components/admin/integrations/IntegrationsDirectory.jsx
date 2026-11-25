@@ -109,24 +109,36 @@ function DirectoryCard({ entry }) {
   );
 }
 
+const CHIP_CLASS = {
+  on: 'border-foreground bg-foreground text-background',
+  off: 'border-border text-muted-foreground hover:text-foreground',
+};
+
+/** One toggle chip. */
+function Chip({ option, pressed, onPress }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onPress}
+      className={`rounded-full border px-2.5 py-1 text-xs ${pressed ? CHIP_CLASS.on : CHIP_CLASS.off}`}
+    >
+      {option.label}
+    </button>
+  );
+}
+
 /** A row of toggle chips; one pressed at a time. */
 function Chips({ label, options, value, onChange }) {
   return (
     <div role="group" aria-label={label} className="flex flex-wrap gap-1.5">
       {options.map((option) => (
-        <button
+        <Chip
           key={option.id}
-          type="button"
-          aria-pressed={value === option.id}
-          onClick={() => onChange(option.id)}
-          className={`rounded-full border px-2.5 py-1 text-xs ${
-            value === option.id
-              ? 'border-foreground bg-foreground text-background'
-              : 'border-border text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          {option.label}
-        </button>
+          option={option}
+          pressed={value === option.id}
+          onPress={() => onChange(option.id)}
+        />
       ))}
     </div>
   );

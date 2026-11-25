@@ -129,6 +129,25 @@ export function settingsOf(draft) {
   };
 }
 
+/** One labelled number box of the alert settings, bound to `draft[field]`. */
+function NumberField({ id, label, field, draft, saving, edit, ...limits }) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
+        {label}
+      </Label>
+      <Input
+        id={id}
+        type="number"
+        {...limits}
+        value={draft[field]}
+        disabled={saving}
+        onChange={(e) => edit({ [field]: e.target.value })}
+      />
+    </div>
+  );
+}
+
 export function SettingsForm({ settings, onSaved, save = saveCostSettings }) {
   const [draft, setDraft] = useState(() => draftOf(settings));
   const [state, setState] = useState({ phase: 'idle' });
@@ -151,51 +170,39 @@ export function SettingsForm({ settings, onSaved, save = saveCostSettings }) {
   return (
     <form onSubmit={submit} aria-label="Alert settings" className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-3">
-        <div className="space-y-1">
-          <Label htmlFor="cost-ai-budget" className="text-xs text-muted-foreground">
-            Monthly AI budget (USD)
-          </Label>
-          <Input
-            id="cost-ai-budget"
-            type="number"
-            min={0}
-            step="0.01"
-            value={draft.aiMonthlyBudgetUsd}
-            disabled={saving}
-            placeholder="empty: no budget"
-            onChange={(e) => edit({ aiMonthlyBudgetUsd: e.target.value })}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="cost-lead-days" className="text-xs text-muted-foreground">
-            Say a renewal is coming, days before (1 to 60)
-          </Label>
-          <Input
-            id="cost-lead-days"
-            type="number"
-            min={1}
-            max={60}
-            step={1}
-            value={draft.renewalLeadDays}
-            disabled={saving}
-            onChange={(e) => edit({ renewalLeadDays: e.target.value })}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="cost-refresh-hours" className="text-xs text-muted-foreground">
-            Re-read Azure every (hours, 1 to 24)
-          </Label>
-          <Input
-            id="cost-refresh-hours"
-            type="number"
-            min={1}
-            max={24}
-            step={1}
-            value={draft.refreshHours}
-            disabled={saving}
-            onChange={(e) => edit({ refreshHours: e.target.value })}
-          />
-        </div>
+        <NumberField
+          id="cost-ai-budget"
+          label="Monthly AI budget (USD)"
+          field="aiMonthlyBudgetUsd"
+          draft={draft}
+          saving={saving}
+          edit={edit}
+          min={0}
+          step="0.01"
+          placeholder="empty: no budget"
+        />
+        <NumberField
+          id="cost-lead-days"
+          label="Say a renewal is coming, days before (1 to 60)"
+          field="renewalLeadDays"
+          draft={draft}
+          saving={saving}
+          edit={edit}
+          min={1}
+          max={60}
+          step={1}
+        />
+        <NumberField
+          id="cost-refresh-hours"
+          label="Re-read Azure every (hours, 1 to 24)"
+          field="refreshHours"
+          draft={draft}
+          saving={saving}
+          edit={edit}
+          min={1}
+          max={24}
+          step={1}
+        />
       </div>
       <div className="flex flex-wrap gap-6">
         <div className="flex items-center gap-2">

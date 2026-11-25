@@ -3,36 +3,16 @@ import { useNavigate } from 'react-router';
 import { Helmet } from 'react-helmet-async';
 import { usePublicData } from '@/hooks/usePublicData';
 import { fetchPublicContentList } from '@/lib/publicApi';
+import {
+  CategoryFilterPanel,
+  FeaturedMetrics,
+  isProviderDoc,
+  mapDynamicBlueprint,
+} from '@/pages/shared/architecture/ArchitectureParts';
 import { staticBlueprints } from './architecture-blueprints';
 
-function firstPresent(...values) {
-  for (const value of values) {
-    if (value !== undefined && value !== null && value !== '') {
-      return value;
-    }
-  }
-  return null;
-}
-
-function mapDynamicBlueprint(doc, index, normalizeCategory) {
-  const category = normalizeCategory(firstPresent(doc.category, doc.Category, 'Compute'));
-  return {
-    id: firstPresent(doc.id, doc.slug, doc.Slug, `dynamic-${index}`),
-    icon: firstPresent(doc.icon, 'hub'),
-    category,
-    categoryColor: 'text-blue-400',
-    title: firstPresent(doc.title, doc.Title, 'Untitled Blueprint'),
-    description: firstPresent(doc.summary, doc.Summary, doc.description, ''),
-    rpo: firstPresent(doc.rpo, doc.RPO, 'N/A'),
-    rto: firstPresent(doc.rto, doc.RTO, 'N/A'),
-    level: firstPresent(doc.level, doc.complexity, 'Production'),
-    cost: firstPresent(doc.costAnalysis?.estimatedMonthly, doc.cost, 'TBD'),
-    costColor: firstPresent(doc.costColor, 'text-green-400'),
-    featured: doc.featured === true || doc.Featured === true,
-    waf: firstPresent(doc.waf, doc.wellArchitectedScore, 90),
-    slug: firstPresent(doc.slug, doc.Slug),
-  };
-}
+// This page's fallbacks for a published design that leaves them out.
+const DYNAMIC_DEFAULTS = { category: 'Compute', icon: 'hub', categoryColor: 'text-blue-400' };
 
 export default function ArchitecturePage() {
   const navigate = useNavigate();
@@ -47,8 +27,8 @@ export default function ArchitecturePage() {
     'architecture:content'
   );
   const dynamicBlueprints = (dynamicDocs || [])
-    .filter((doc) => (doc.cloudProvider || doc['Cloud Provider'] || 'gcp').toLowerCase() === 'gcp')
-    .map((doc, index) => mapDynamicBlueprint(doc, index, normalizeCategory));
+    .filter((doc) => isProviderDoc(doc, 'gcp'))
+    .map((doc, index) => mapDynamicBlueprint(doc, index, normalizeCategory, DYNAMIC_DEFAULTS));
 
   const blueprints = [...dynamicBlueprints, ...staticBlueprints];
 
@@ -106,44 +86,14 @@ export default function ArchitecturePage() {
       <main className="flex-grow max-w-[1440px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 grid grid-cols-1 xl:grid-cols-12 gap-8">
         {/* Left Sidebar - Filters (Mobile: Bottom) */}
         <aside className="xl:col-span-3 order-2 xl:order-1 h-fit xl:sticky xl:top-28">
-          <div className="bg-slate-800/40 backdrop-blur-md border border-slate-700 rounded-2xl p-6 hover:shadow-[0_0_25px_rgba(var(--primary-rgb,234,67,53),0.15)] hover:border-primary/50 transition-all duration-300">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <span className="text-primary text-[20px] material-symbols-outlined">
-                  filter_alt
-                </span>
-                Filters
-              </h3>
-            </div>
-
-            {/* Category Checkboxes */}
-            <div className="space-y-3 mb-6">
-              {categories.map((category) => (
-                <label key={category} className="flex items-center gap-3 cursor-pointer group">
-                  <input
-                    type="checkbox"
-                    checked={selectedCategories.includes(category)}
-                    onChange={() => toggleCategory(category)}
-                    className="w-4 h-4 rounded border border-slate-600 bg-slate-700 checked:bg-primary checked:border-primary cursor-pointer"
-                  />
-                  <span className="text-sm text-slate-300 group-hover:text-white transition-colors">
-                    {category}
-                  </span>
-                </label>
-              ))}
-            </div>
-
-            {/* Reset Button */}
-            {selectedCategories.length > 0 && (
-              <button
-                onClick={resetFilters}
-                className="w-full h-11 px-4 bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white rounded-lg text-sm font-medium transition-colors border border-slate-600 flex items-center justify-center gap-2"
-              >
-                <span className="text-[18px] material-symbols-outlined">restart_alt</span>
-                Reset Filters
-              </button>
-            )}
-          </div>
+          <CategoryFilterPanel
+            categories={categories}
+            selected={selectedCategories}
+            onToggle={toggleCategory}
+            onReset={resetFilters}
+            panelClass="bg-slate-800/40 backdrop-blur-md border border-slate-700 rounded-2xl p-6 hover:shadow-[0_0_25px_rgba(var(--primary-rgb,234,67,53),0.15)] hover:border-primary/50 transition-all duration-300"
+            resetClass="w-full h-11 px-4 bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white rounded-lg text-sm font-medium transition-colors border border-slate-600 flex items-center justify-center gap-2"
+          />
         </aside>
 
         {/* Right Content - Featured + Gallery (Mobile: Top) */}
@@ -165,20 +115,7 @@ export default function ArchitecturePage() {
                   </div>
                   <h2 className="text-3xl font-bold mb-4">{featuredArch.title}</h2>
                   <p className="text-slate-300 mb-6">{featuredArch.description}</p>
-                  <div className="grid grid-cols-3 gap-4 mb-6">
-                    <div className="bg-slate-900/50 rounded-lg p-3">
-                      <span className="text-[10px] text-foreground uppercase font-bold">SLA</span>
-                      <p className="text-xl font-bold text-white">{featuredArch.waf}%</p>
-                    </div>
-                    <div className="bg-slate-900/50 rounded-lg p-3">
-                      <span className="text-[10px] text-foreground uppercase font-bold">RPO</span>
-                      <p className="text-xl font-bold text-white">{featuredArch.rpo}</p>
-                    </div>
-                    <div className="bg-slate-900/50 rounded-lg p-3">
-                      <span className="text-[10px] text-foreground uppercase font-bold">RTO</span>
-                      <p className="text-xl font-bold text-white">{featuredArch.rto}</p>
-                    </div>
-                  </div>
+                  <FeaturedMetrics arch={featuredArch} />
 
                   {featuredArch.slug ? (
                     <button

@@ -37,20 +37,19 @@ const toSlug = (value) =>
     .replace(/\s+/g, '-')
     .slice(0, 60);
 
+// Checked in this order: the first provider with a word found in the text wins.
+const PROVIDER_TEXT_HINTS = [
+  ['finops', ['finops']],
+  ['azure', ['azure', 'microsoft']],
+  ['gcp', ['gcp', 'google cloud', 'cloud.google']],
+  ['aws', ['aws', 'amazon web services', 'amazon']],
+];
+
 const inferProviderFromText = (value) => {
   const text = String(value || '').toLowerCase();
   if (!text) return '';
-
-  if (text.includes('finops')) return 'finops';
-  if (text.includes('azure') || text.includes('microsoft')) return 'azure';
-  if (text.includes('gcp') || text.includes('google cloud') || text.includes('cloud.google')) {
-    return 'gcp';
-  }
-  if (text.includes('aws') || text.includes('amazon web services') || text.includes('amazon')) {
-    return 'aws';
-  }
-
-  return '';
+  const match = PROVIDER_TEXT_HINTS.find(([, words]) => words.some((word) => text.includes(word)));
+  return match ? match[0] : '';
 };
 
 const inferProviderFromDoc = (doc = {}) => {

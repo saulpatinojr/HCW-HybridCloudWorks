@@ -220,6 +220,20 @@ export function resultStatus(result) {
   return SYSTEM_STATUS[classifyFailure(result.message)];
 }
 
+// A key light that settles a card's status, worst first.
+const KEY_STATE_STATUS = [
+  ['failing', 'broken'],
+  ['never', 'not-configured'],
+  ['pending', 'pending'],
+];
+
+// A card with no Test: keys all green means ok; with no keys, a card that
+// lists keys elsewhere is "listed", one that only links out is "link-only".
+function untestedCardStatus(card, states) {
+  if (states.length > 0) return 'ok';
+  return (card.keyGroups ?? []).some((group) => group.panel) ? 'listed' : 'link-only';
+}
+
 /**
  * One status for a service, from its credential lights and this session's
  * test result (`{ ok, message, at }` or undefined).
@@ -234,15 +248,10 @@ export function serviceStatus(card, result) {
   if (result?.ok === false) {
     return classifyFailure(result.message) === 'offline' ? 'offline' : 'broken';
   }
-  if (states.includes('failing')) return 'broken';
-  if (states.includes('never')) return 'not-configured';
-  if (states.includes('pending')) return 'pending';
+  const fromKeys = KEY_STATE_STATUS.find(([state]) => states.includes(state));
+  if (fromKeys) return fromKeys[1];
   if (result?.ok === true) return 'ok';
-  if (!card.test) {
-    if (states.length > 0) return 'ok';
-    return (card.keyGroups ?? []).some((group) => group.panel) ? 'listed' : 'link-only';
-  }
-  return 'untested';
+  return card.test ? 'untested' : untestedCardStatus(card, states);
 }
 
 /** Cards with their status, worst first; registry order breaks ties. */

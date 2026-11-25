@@ -204,6 +204,9 @@ export const DATA_SOURCE = {
   url: 'https://aws.amazon.com/certification/',
 };
 
+/** A certification's modules when every one links to the same course: `{ title, url }` each. */
+const courseModules = (url, ...titles) => titles.map((title) => ({ title, url }));
+
 export const certifications = [
   {
     id: 'clf-c02',
@@ -226,24 +229,13 @@ export const certifications = [
       'https://docs.aws.amazon.com/aws-certification/latest/cloud-practitioner-02/cloud-practitioner-02.html',
     practiceUrl: 'https://skillbuilder.aws/search?searchText=cloud+practitioner+practice',
     microcredentialUrl: null,
-    modules: [
-      {
-        title: 'Cloud Concepts',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/134/aws-cloud-practitioner-essentials',
-      },
-      {
-        title: 'AWS Core Services Overview',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/134/aws-cloud-practitioner-essentials',
-      },
-      {
-        title: 'Security & the Shared Responsibility Model',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/134/aws-cloud-practitioner-essentials',
-      },
-      {
-        title: 'Billing, Pricing & Support Plans',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/134/aws-cloud-practitioner-essentials',
-      },
-    ],
+    modules: courseModules(
+      'https://explore.skillbuilder.aws/learn/course/external/view/elearning/134/aws-cloud-practitioner-essentials',
+      'Cloud Concepts',
+      'AWS Core Services Overview',
+      'Security & the Shared Responsibility Model',
+      'Billing, Pricing & Support Plans'
+    ),
     prerequisites: 'No prerequisites — recommended for beginners.',
     nextCerts: ['saa-c03', 'aif-c01'],
   },
@@ -342,24 +334,13 @@ export const certifications = [
     practiceUrl:
       'https://skillbuilder.aws/search?searchText=solutions+architect+associate+practice',
     microcredentialUrl: null,
-    modules: [
-      {
-        title: 'Designing Resilient Architectures',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9541/aws-certified-solutions-architect-associate-official-practice-question-set',
-      },
-      {
-        title: 'High-Performing Architectures',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9541/aws-certified-solutions-architect-associate-official-practice-question-set',
-      },
-      {
-        title: 'Secure Applications & Architectures',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9541/aws-certified-solutions-architect-associate-official-practice-question-set',
-      },
-      {
-        title: 'Cost-Optimized Architectures',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9541/aws-certified-solutions-architect-associate-official-practice-question-set',
-      },
-    ],
+    modules: courseModules(
+      'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9541/aws-certified-solutions-architect-associate-official-practice-question-set',
+      'Designing Resilient Architectures',
+      'High-Performing Architectures',
+      'Secure Applications & Architectures',
+      'Cost-Optimized Architectures'
+    ),
     prerequisites: 'CLF-C02 recommended. 1+ year of hands-on AWS experience.',
     nextCerts: ['sap-c02', 'sap-c03', 'dop-c02', 'scs-c03'],
   },
@@ -391,24 +372,13 @@ export const certifications = [
       'https://docs.aws.amazon.com/aws-certification/latest/sysops-administrator-associate-03/sysops-administrator-associate-03.html',
     practiceUrl: 'https://skillbuilder.aws/search?searchText=cloudops+engineer+practice',
     microcredentialUrl: 'https://skillbuilder.aws/category/type/microcredentials',
-    modules: [
-      {
-        title: 'Monitoring, Logging & Remediation',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9534/exam-prep-aws-certified-sysops-administrator-associate',
-      },
-      {
-        title: 'Reliability & Business Continuity',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9534/exam-prep-aws-certified-sysops-administrator-associate',
-      },
-      {
-        title: 'Deployment, Provisioning & Automation',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9534/exam-prep-aws-certified-sysops-administrator-associate',
-      },
-      {
-        title: 'Security & Compliance',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9534/exam-prep-aws-certified-sysops-administrator-associate',
-      },
-    ],
+    modules: courseModules(
+      'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9534/exam-prep-aws-certified-sysops-administrator-associate',
+      'Monitoring, Logging & Remediation',
+      'Reliability & Business Continuity',
+      'Deployment, Provisioning & Automation',
+      'Security & Compliance'
+    ),
     prerequisites: 'SAA-C03 recommended. 1+ year of AWS operations experience.',
     nextCerts: ['dop-c02'],
   },
@@ -437,24 +407,13 @@ export const certifications = [
       'https://docs.aws.amazon.com/aws-certification/latest/developer-associate-02/developer-associate-02.html',
     practiceUrl: 'https://skillbuilder.aws/search?searchText=developer+associate+practice',
     microcredentialUrl: 'https://skillbuilder.aws/category/type/microcredentials',
-    modules: [
-      {
-        title: 'Development with AWS Services',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9543/exam-prep-aws-certified-developer-associate',
-      },
-      {
-        title: 'Security & Authentication',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9543/exam-prep-aws-certified-developer-associate',
-      },
-      {
-        title: 'Deployment & CI/CD',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9543/exam-prep-aws-certified-developer-associate',
-      },
-      {
-        title: 'Troubleshooting & Optimization',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9543/exam-prep-aws-certified-developer-associate',
-      },
-    ],
+    modules: courseModules(
+      'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9543/exam-prep-aws-certified-developer-associate',
+      'Development with AWS Services',
+      'Security & Authentication',
+      'Deployment & CI/CD',
+      'Troubleshooting & Optimization'
+    ),
     prerequisites: 'CLF-C02 recommended. 1+ year of development experience on AWS.',
     nextCerts: ['dva-c03', 'sap-c02', 'dop-c02'],
   },
@@ -506,24 +465,13 @@ export const certifications = [
       'https://docs.aws.amazon.com/aws-certification/latest/data-engineer-associate-01/data-engineer-associate-01.html',
     practiceUrl: 'https://skillbuilder.aws/search?searchText=data+engineer+associate+practice',
     microcredentialUrl: 'https://skillbuilder.aws/category/type/microcredentials',
-    modules: [
-      {
-        title: 'Data Ingestion & Transformation',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/18924/exam-prep-aws-certified-data-engineer-associate',
-      },
-      {
-        title: 'Data Store Management',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/18924/exam-prep-aws-certified-data-engineer-associate',
-      },
-      {
-        title: 'Data Operations & Support',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/18924/exam-prep-aws-certified-data-engineer-associate',
-      },
-      {
-        title: 'Data Security & Governance',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/18924/exam-prep-aws-certified-data-engineer-associate',
-      },
-    ],
+    modules: courseModules(
+      'https://explore.skillbuilder.aws/learn/course/external/view/elearning/18924/exam-prep-aws-certified-data-engineer-associate',
+      'Data Ingestion & Transformation',
+      'Data Store Management',
+      'Data Operations & Support',
+      'Data Security & Governance'
+    ),
     prerequisites: 'CLF-C02 recommended. Experience with data engineering concepts and SQL.',
     nextCerts: ['sap-c02'],
   },
@@ -550,24 +498,13 @@ export const certifications = [
       'https://docs.aws.amazon.com/aws-certification/latest/machine-learning-engineer-associate-01/machine-learning-engineer-associate-01.html',
     practiceUrl: 'https://skillbuilder.aws/search?searchText=machine+learning+engineer+practice',
     microcredentialUrl: 'https://skillbuilder.aws/category/type/microcredentials',
-    modules: [
-      {
-        title: 'Data Preparation for ML',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9541/aws-certified-machine-learning-specialty-exam-prep',
-      },
-      {
-        title: 'Model Development & Training',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9541/aws-certified-machine-learning-specialty-exam-prep',
-      },
-      {
-        title: 'Model Deployment & Inference',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9541/aws-certified-machine-learning-specialty-exam-prep',
-      },
-      {
-        title: 'MLOps & Monitoring',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9541/aws-certified-machine-learning-specialty-exam-prep',
-      },
-    ],
+    modules: courseModules(
+      'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9541/aws-certified-machine-learning-specialty-exam-prep',
+      'Data Preparation for ML',
+      'Model Development & Training',
+      'Model Deployment & Inference',
+      'MLOps & Monitoring'
+    ),
     prerequisites: 'AIF-C01 recommended. Experience with ML concepts and Python.',
     nextCerts: ['mla-c02'],
   },
@@ -681,24 +618,13 @@ export const certifications = [
     practiceUrl:
       'https://skillbuilder.aws/search?searchText=solutions+architect+professional+practice',
     microcredentialUrl: null,
-    modules: [
-      {
-        title: 'Organizational Complexity & Migrations',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9542/exam-prep-aws-certified-solutions-architect-professional',
-      },
-      {
-        title: 'New Solutions Design',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9542/exam-prep-aws-certified-solutions-architect-professional',
-      },
-      {
-        title: 'Continuous Improvement',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9542/exam-prep-aws-certified-solutions-architect-professional',
-      },
-      {
-        title: 'Workload Acceleration',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9542/exam-prep-aws-certified-solutions-architect-professional',
-      },
-    ],
+    modules: courseModules(
+      'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9542/exam-prep-aws-certified-solutions-architect-professional',
+      'Organizational Complexity & Migrations',
+      'New Solutions Design',
+      'Continuous Improvement',
+      'Workload Acceleration'
+    ),
     prerequisites: 'SAA-C03 required. 2+ years of hands-on AWS architecture experience.',
     nextCerts: ['sap-c03'],
   },
@@ -763,24 +689,13 @@ export const certifications = [
       'https://docs.aws.amazon.com/aws-certification/latest/devops-engineer-professional-02/devops-engineer-professional-02.html',
     practiceUrl: 'https://skillbuilder.aws/search?searchText=devops+engineer+professional+practice',
     microcredentialUrl: 'https://skillbuilder.aws/category/type/microcredentials',
-    modules: [
-      {
-        title: 'SDLC Automation',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9544/exam-prep-aws-certified-devops-engineer-professional',
-      },
-      {
-        title: 'Configuration Management & IaC',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9544/exam-prep-aws-certified-devops-engineer-professional',
-      },
-      {
-        title: 'Resilient Cloud Solutions',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9544/exam-prep-aws-certified-devops-engineer-professional',
-      },
-      {
-        title: 'Monitoring & Logging',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9544/exam-prep-aws-certified-devops-engineer-professional',
-      },
-    ],
+    modules: courseModules(
+      'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9544/exam-prep-aws-certified-devops-engineer-professional',
+      'SDLC Automation',
+      'Configuration Management & IaC',
+      'Resilient Cloud Solutions',
+      'Monitoring & Logging'
+    ),
     prerequisites: 'DVA-C02 or SOA-C03 recommended. 2+ years of DevOps experience on AWS.',
     nextCerts: [],
   },
@@ -812,24 +727,13 @@ export const certifications = [
       'https://docs.aws.amazon.com/aws-certification/latest/security-specialty-03/security-specialty-03.html',
     practiceUrl: 'https://skillbuilder.aws/search?searchText=security+specialty+practice',
     microcredentialUrl: 'https://skillbuilder.aws/category/type/microcredentials',
-    modules: [
-      {
-        title: 'Threat Detection & Incident Response',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9545/exam-prep-aws-certified-security-specialty',
-      },
-      {
-        title: 'Security Logging & Monitoring',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9545/exam-prep-aws-certified-security-specialty',
-      },
-      {
-        title: 'Infrastructure Security',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9545/exam-prep-aws-certified-security-specialty',
-      },
-      {
-        title: 'Identity & Access Management',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9545/exam-prep-aws-certified-security-specialty',
-      },
-    ],
+    modules: courseModules(
+      'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9545/exam-prep-aws-certified-security-specialty',
+      'Threat Detection & Incident Response',
+      'Security Logging & Monitoring',
+      'Infrastructure Security',
+      'Identity & Access Management'
+    ),
     prerequisites: 'SAA-C03 recommended. 5+ years of IT security experience, 2+ years on AWS.',
     nextCerts: ['sap-c02'],
   },
@@ -862,24 +766,13 @@ export const certifications = [
     practiceUrl:
       'https://skillbuilder.aws/search?searchText=advanced+networking+specialty+practice',
     microcredentialUrl: null,
-    modules: [
-      {
-        title: 'Network Design & Implementation',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9546/exam-prep-aws-certified-advanced-networking-specialty',
-      },
-      {
-        title: 'Network Security & Compliance',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9546/exam-prep-aws-certified-advanced-networking-specialty',
-      },
-      {
-        title: 'Network Management & Troubleshooting',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9546/exam-prep-aws-certified-advanced-networking-specialty',
-      },
-      {
-        title: 'Hybrid Network Design',
-        url: 'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9546/exam-prep-aws-certified-advanced-networking-specialty',
-      },
-    ],
+    modules: courseModules(
+      'https://explore.skillbuilder.aws/learn/course/external/view/elearning/9546/exam-prep-aws-certified-advanced-networking-specialty',
+      'Network Design & Implementation',
+      'Network Security & Compliance',
+      'Network Management & Troubleshooting',
+      'Hybrid Network Design'
+    ),
     prerequisites: 'SAA-C03 recommended. 5+ years of networking experience.',
     nextCerts: ['sap-c02'],
   },

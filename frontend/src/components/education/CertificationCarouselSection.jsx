@@ -23,8 +23,12 @@ import CertificationBrowser from '@/components/education/CertificationBrowser';
 const PAGE_BUTTON_CLASS =
   'h-9 w-9 bg-card/40 hover:bg-card/60 disabled:opacity-30 border border-card/50 rounded-lg flex items-center justify-center transition-colors';
 
-/** Previous, one dot per page, Next, and "n–m of total". Rendered only when there is more than one page. */
-function CarouselPagination({
+/**
+ * Previous, one dot per page, Next, and "n–m of total". Rendered only when
+ * there is more than one page. Exported for the AWS, Azure and FinOps hubs,
+ * which lay out their own carousels but share these controls.
+ */
+export function CarouselPagination({
   carouselPage,
   totalPages,
   visibleCount,

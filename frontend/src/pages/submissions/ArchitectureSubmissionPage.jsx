@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import {
   CheckCircle2,
@@ -22,6 +22,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { submitPublicContent } from '@/lib/publicApi';
+import { BasicInfoCard, ContentTabList, OverviewTab, UrlField } from './SubmissionFields';
 import SubmissionReceived from './SubmissionReceived';
 
 const REFERENCE_BLUEPRINTS = [
@@ -90,6 +91,21 @@ const CATEGORY_OPTIONS = [
   'AI/ML',
 ];
 
+/** The "Basic Information" card's labels and placeholders on this page. */
+const BASIC_INFO_TEXT = {
+  titleLabel: 'Blueprint Title *',
+  titlePlaceholder: 'AWS Multi-Region Web Application',
+  summaryPlaceholder: 'A highly available, multi-region web application architecture using...',
+  tagsPlaceholder: 'HA, Multi-Region, Auto-Scaling',
+};
+
+/** The three lists the "Basic Information" card offers. */
+const FIELD_OPTIONS = {
+  providers: PROVIDER_OPTIONS,
+  categories: CATEGORY_OPTIONS,
+  complexities: COMPLEXITY_OPTIONS,
+};
+
 const EMPTY_FORM = {
   title: '',
   summary: '',
@@ -112,6 +128,8 @@ export default function ArchitectureSubmissionPage() {
   const [error, setError] = useState(null);
 
   const handleChange = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
+  /** What every shared field needs: the form and how to change it. */
+  const field = { form, onChange: handleChange };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -293,137 +311,21 @@ export default function ArchitectureSubmissionPage() {
         ) : (
           <form onSubmit={handleSubmit} className="max-w-4xl space-y-6">
             {/* Basic Info */}
-            <Card className="bg-card/40">
-              <CardHeader>
-                <CardTitle className="text-base">Basic Information</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label
-                      htmlFor="arch-title"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Blueprint Title *
-                    </label>
-                    <Input
-                      id="arch-title"
-                      value={form.title}
-                      onChange={(e) => handleChange('title', e.target.value)}
-                      placeholder="AWS Multi-Region Web Application"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="arch-provider"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Cloud Provider *
-                    </label>
-                    <select
-                      id="arch-provider"
-                      value={form.cloudProvider}
-                      onChange={(e) => handleChange('cloudProvider', e.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                      {PROVIDER_OPTIONS.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label
-                    htmlFor="arch-summary"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Short Description / Summary *
-                  </label>
-                  <Textarea
-                    id="arch-summary"
-                    value={form.summary}
-                    onChange={(e) => handleChange('summary', e.target.value)}
-                    placeholder="A highly available, multi-region web application architecture using..."
-                    className="min-h-[80px]"
-                    required
-                  />
-                </div>
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div>
-                    <label
-                      htmlFor="arch-category"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Category
-                    </label>
-                    <select
-                      id="arch-category"
-                      value={form.category}
-                      onChange={(e) => handleChange('category', e.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                      {CATEGORY_OPTIONS.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="arch-complexity"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Complexity
-                    </label>
-                    <select
-                      id="arch-complexity"
-                      value={form.complexity}
-                      onChange={(e) => handleChange('complexity', e.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                      {COMPLEXITY_OPTIONS.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="arch-tags"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Tags (comma-separated)
-                    </label>
-                    <Input
-                      id="arch-tags"
-                      value={form.tags}
-                      onChange={(e) => handleChange('tags', e.target.value)}
-                      placeholder="HA, Multi-Region, Auto-Scaling"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label
-                    htmlFor="arch-diagram"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Architecture Diagram URL
-                  </label>
-                  <Input
-                    id="arch-diagram"
-                    value={form.diagramUrl}
-                    onChange={(e) => handleChange('diagramUrl', e.target.value)}
-                    placeholder="https://..."
-                    type="url"
-                  />
-                </div>
-              </CardContent>
-            </Card>
+            <BasicInfoCard
+              idPrefix="arch"
+              form={form}
+              onChange={handleChange}
+              text={BASIC_INFO_TEXT}
+              options={FIELD_OPTIONS}
+            >
+              <UrlField
+                {...field}
+                name="diagramUrl"
+                id="arch-diagram"
+                label="Architecture Diagram URL"
+                placeholder="https://..."
+              />
+            </BasicInfoCard>
 
             {/* Content Tabs */}
             <Card className="bg-card/40">
@@ -432,31 +334,19 @@ export default function ArchitectureSubmissionPage() {
               </CardHeader>
               <CardContent>
                 <Tabs value={activeTab} onValueChange={setActiveTab}>
-                  <TabsList className="grid w-full grid-cols-4 mb-4">
-                    <TabsTrigger value="overview">
-                      <Eye className="h-3 w-3 mr-1" /> Overview
-                    </TabsTrigger>
-                    <TabsTrigger value="technical">
-                      <Layers className="h-3 w-3 mr-1" /> Technical
-                    </TabsTrigger>
-                    <TabsTrigger value="iac">
-                      <Code className="h-3 w-3 mr-1" /> IaC
-                    </TabsTrigger>
-                    <TabsTrigger value="finops">
-                      <ExternalLink className="h-3 w-3 mr-1" /> FinOps
-                    </TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="overview">
-                    <Textarea
-                      value={form.overviewHtml}
-                      onChange={(e) => handleChange('overviewHtml', e.target.value)}
-                      className="min-h-[200px] font-mono text-sm"
-                      placeholder="<p>HTML overview content describing the architecture...</p>"
-                    />
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Supports HTML. Renders in the Overview tab on the detail page.
-                    </p>
-                  </TabsContent>
+                  <ContentTabList
+                    tabs={[
+                      { value: 'overview', Icon: Eye, label: 'Overview' },
+                      { value: 'technical', Icon: Layers, label: 'Technical' },
+                      { value: 'iac', Icon: Code, label: 'IaC' },
+                      { value: 'finops', Icon: ExternalLink, label: 'FinOps' },
+                    ]}
+                  />
+                  <OverviewTab
+                    value={form.overviewHtml}
+                    onChange={(value) => handleChange('overviewHtml', value)}
+                    placeholder="<p>HTML overview content describing the architecture...</p>"
+                  />
                   <TabsContent value="technical" className="space-y-4">
                     <div>
                       <label

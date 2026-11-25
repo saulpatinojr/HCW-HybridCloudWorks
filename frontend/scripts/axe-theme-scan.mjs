@@ -106,164 +106,117 @@ function summarizeNode(node) {
   };
 }
 
-async function main() {
-  const browser = await chromium.launch({ headless: true });
-  const results = [];
-  const startedAt = new Date().toISOString();
+// Hydration sets the theme class on <html>; wait until it matches `theme`.
+function waitForTheme(page, theme) {
+  return page.waitForFunction(
+    (t) =>
+      t === 'dark'
+        ? document.documentElement.classList.contains('dark')
+        : !document.documentElement.classList.contains('dark'),
+    theme,
+    { timeout: 5000 }
+  );
+}
 
+/** Runs axe on a loaded page and shapes its answer into one report row. */
+async function scanRow(page, where) {
+  const axeResult = await runAxeOnPage(page);
+  const contrastNodes = (
+    axeResult.violations.find((v) => v.id === 'color-contrast')?.nodes ?? []
+  ).map(summarizeNode);
+
+  return {
+    ...where,
+    violations: axeResult.violations.map((v) => ({
+      id: v.id,
+      impact: v.impact,
+      help: v.help,
+      helpUrl: v.helpUrl,
+      nodeCount: v.nodes.length,
+      nodes: v.id === 'color-contrast' ? contrastNodes : v.nodes.slice(0, 3).map(summarizeNode),
+    })),
+    incomplete: axeResult.incomplete.map((v) => ({
+      id: v.id,
+      impact: v.impact,
+      nodeCount: v.nodes.length,
+    })),
+    passCount: axeResult.passes.length,
+  };
+}
+
+/** The report row for a route that could not be scanned. */
+function errorRow(where, err) {
+  return { ...where, error: err.message, violations: [], incomplete: [], passCount: 0 };
+}
+
+async function scanPublicRoute(page, theme, route) {
+  const url = `${BASE_URL}${route}`;
+  const where = { theme, route, url };
   try {
-    for (const theme of THEMES) {
-      const context = await browser.newContext({
-        colorScheme: theme,
-        reducedMotion: 'reduce',
-      });
+    await page.goto(url, { waitUntil: 'networkidle' });
+    // Wait for hydration; theme class must be present on <html>.
+    await waitForTheme(page, theme);
+    return await scanRow(page, where);
+  } catch (err) {
+    return errorRow(where, err);
+  }
+}
 
-      // Force the saved-theme path so the pre-hydration script in index.html
-      // applies the requested theme deterministically.
-      await context.addInitScript((selectedTheme) => {
-        try {
-          window.localStorage.setItem('hcw-theme', selectedTheme);
-        } catch {
-          /* storage may be unavailable */
-        }
-      }, theme);
-
-      const page = await context.newPage();
-      page.setDefaultTimeout(20_000);
-
-      for (const route of ROUTES) {
-        const url = `${BASE_URL}${route}`;
-        try {
-          await page.goto(url, { waitUntil: 'networkidle' });
-          // Wait for hydration; theme class must be present on <html>.
-          await page.waitForFunction(
-            (t) =>
-              t === 'dark'
-                ? document.documentElement.classList.contains('dark')
-                : !document.documentElement.classList.contains('dark'),
-            theme,
-            { timeout: 5000 }
-          );
-
-          const axeResult = await runAxeOnPage(page);
-          const contrastNodes = (
-            axeResult.violations.find((v) => v.id === 'color-contrast')?.nodes ?? []
-          ).map(summarizeNode);
-
-          results.push({
-            theme,
-            route,
-            url,
-            violations: axeResult.violations.map((v) => ({
-              id: v.id,
-              impact: v.impact,
-              help: v.help,
-              helpUrl: v.helpUrl,
-              nodeCount: v.nodes.length,
-              nodes:
-                v.id === 'color-contrast' ? contrastNodes : v.nodes.slice(0, 3).map(summarizeNode),
-            })),
-            incomplete: axeResult.incomplete.map((v) => ({
-              id: v.id,
-              impact: v.impact,
-              nodeCount: v.nodes.length,
-            })),
-            passCount: axeResult.passes.length,
-          });
-        } catch (err) {
-          results.push({
-            theme,
-            route,
-            url,
-            error: err.message,
-            violations: [],
-            incomplete: [],
-            passCount: 0,
-          });
-        }
-      }
-
-      for (const route of ADMIN_ROUTES) {
-        const url = `${BASE_URL}${route}`;
-        const adminPage = await context.newPage();
-        adminPage.setDefaultTimeout(20_000);
-        try {
-          const stub = new IdentityStub(adminPage, BASE_URL);
-          await stub.install();
-          await stub.signIn(route);
-          await adminPage.waitForFunction(
-            (t) =>
-              t === 'dark'
-                ? document.documentElement.classList.contains('dark')
-                : !document.documentElement.classList.contains('dark'),
-            theme,
-            { timeout: 5000 }
-          );
-
-          const axeResult = await runAxeOnPage(adminPage);
-          const contrastNodes = (
-            axeResult.violations.find((v) => v.id === 'color-contrast')?.nodes ?? []
-          ).map(summarizeNode);
-
-          results.push({
-            theme,
-            route,
-            url,
-            violations: axeResult.violations.map((v) => ({
-              id: v.id,
-              impact: v.impact,
-              help: v.help,
-              helpUrl: v.helpUrl,
-              nodeCount: v.nodes.length,
-              nodes:
-                v.id === 'color-contrast' ? contrastNodes : v.nodes.slice(0, 3).map(summarizeNode),
-            })),
-            incomplete: axeResult.incomplete.map((v) => ({
-              id: v.id,
-              impact: v.impact,
-              nodeCount: v.nodes.length,
-            })),
-            passCount: axeResult.passes.length,
-          });
-        } catch (err) {
-          results.push({
-            theme,
-            route,
-            url,
-            error: err.message,
-            violations: [],
-            incomplete: [],
-            passCount: 0,
-          });
-        } finally {
-          await adminPage.close().catch(() => {});
-        }
-      }
-
-      await context.close();
-    }
+async function scanAdminRoute(context, theme, route) {
+  const url = `${BASE_URL}${route}`;
+  const where = { theme, route, url };
+  const adminPage = await context.newPage();
+  adminPage.setDefaultTimeout(20_000);
+  try {
+    const stub = new IdentityStub(adminPage, BASE_URL);
+    await stub.install();
+    await stub.signIn(route);
+    await waitForTheme(adminPage, theme);
+    return await scanRow(adminPage, where);
+  } catch (err) {
+    return errorRow(where, err);
   } finally {
-    await browser.close();
+    await adminPage.close().catch(() => {});
+  }
+}
+
+/** Every public and admin route in one theme. */
+async function scanTheme(browser, theme) {
+  const results = [];
+  const context = await browser.newContext({
+    colorScheme: theme,
+    reducedMotion: 'reduce',
+  });
+
+  // Force the saved-theme path so the pre-hydration script in index.html
+  // applies the requested theme deterministically.
+  await context.addInitScript((selectedTheme) => {
+    try {
+      window.localStorage.setItem('hcw-theme', selectedTheme);
+    } catch {
+      /* storage may be unavailable */
+    }
+  }, theme);
+
+  const page = await context.newPage();
+  page.setDefaultTimeout(20_000);
+
+  for (const route of ROUTES) {
+    results.push(await scanPublicRoute(page, theme, route));
   }
 
-  const reportDir = path.join('documentation', 'reports');
-  await fs.mkdir(reportDir, { recursive: true });
-  await fs.writeFile(
-    path.join(reportDir, 'axe-theme-scan.json'),
-    JSON.stringify({ startedAt, baseUrl: BASE_URL, results }, null, 2)
-  );
+  for (const route of ADMIN_ROUTES) {
+    results.push(await scanAdminRoute(context, theme, route));
+  }
 
-  // Markdown summary
-  const totalContrast = results.reduce(
-    (n, r) => n + (r.violations.find((v) => v.id === 'color-contrast')?.nodeCount ?? 0),
-    0
-  );
-  const totalAll = results.reduce(
-    (n, r) => n + r.violations.reduce((m, v) => m + v.nodeCount, 0),
-    0
-  );
+  await context.close();
+  return results;
+}
 
-  const allRoutesCount = ROUTES.length + ADMIN_ROUTES.length;
+const contrastCount = (r) => r.violations.find((v) => v.id === 'color-contrast')?.nodeCount ?? 0;
+
+/** The Markdown report: totals, a row per route, then every contrast failure. */
+function markdownReport({ results, startedAt, totalContrast, totalAll, allRoutesCount }) {
   const lines = [];
   lines.push(`# Axe Theme Scan Report`);
   lines.push(``);
@@ -280,36 +233,72 @@ async function main() {
   lines.push(`| Theme | Route | Contrast | Other | Incomplete |`);
   lines.push(`| ----- | ----- | -------- | ----- | ---------- |`);
   for (const r of results) {
-    const contrast = r.violations.find((v) => v.id === 'color-contrast')?.nodeCount ?? 0;
     const other = r.violations
       .filter((v) => v.id !== 'color-contrast')
       .reduce((n, v) => n + v.nodeCount, 0);
     const incomplete = r.incomplete.reduce((n, v) => n + v.nodeCount, 0);
-    lines.push(`| ${r.theme} | \`${r.route}\` | ${contrast} | ${other} | ${incomplete} |`);
+    lines.push(`| ${r.theme} | \`${r.route}\` | ${contrastCount(r)} | ${other} | ${incomplete} |`);
   }
 
   // Detail section: every contrast failure with selector + colors
   lines.push(``);
   lines.push(`## Color-contrast failures (detailed)`);
   lines.push(``);
-  for (const r of results) {
-    const contrastViolation = r.violations.find((v) => v.id === 'color-contrast');
-    if (!contrastViolation || contrastViolation.nodeCount === 0) continue;
-    lines.push(`### ${r.theme} — \`${r.route}\` (${contrastViolation.nodeCount} nodes)`);
-    for (const node of contrastViolation.nodes) {
-      const data = node.any?.[0]?.data ?? {};
-      lines.push(`- \`${(node.target || []).join(' ')}\``);
-      if (data.fgColor || data.bgColor || data.contrastRatio) {
-        lines.push(
-          `  - fg: ${data.fgColor ?? '?'}, bg: ${data.bgColor ?? '?'}, ratio: ${data.contrastRatio ?? '?'}, expected: ${data.expectedContrastRatio ?? '?'}`
-        );
-      }
-      if (node.html) lines.push(`  - \`${node.html.replace(/\s+/g, ' ').slice(0, 160)}\``);
+  for (const r of results) lines.push(...contrastDetail(r));
+  return lines.join('\n');
+}
+
+/** One route's contrast failures with selector and colours, or nothing when it has none. */
+function contrastDetail(r) {
+  const contrastViolation = r.violations.find((v) => v.id === 'color-contrast');
+  if (!contrastViolation || contrastViolation.nodeCount === 0) return [];
+  const lines = [`### ${r.theme} — \`${r.route}\` (${contrastViolation.nodeCount} nodes)`];
+  for (const node of contrastViolation.nodes) {
+    const data = node.any?.[0]?.data ?? {};
+    lines.push(`- \`${(node.target || []).join(' ')}\``);
+    if (data.fgColor || data.bgColor || data.contrastRatio) {
+      lines.push(
+        `  - fg: ${data.fgColor ?? '?'}, bg: ${data.bgColor ?? '?'}, ratio: ${data.contrastRatio ?? '?'}, expected: ${data.expectedContrastRatio ?? '?'}`
+      );
     }
-    lines.push(``);
+    if (node.html) lines.push(`  - \`${node.html.replace(/\s+/g, ' ').slice(0, 160)}\``);
+  }
+  lines.push(``);
+  return lines;
+}
+
+async function main() {
+  const browser = await chromium.launch({ headless: true });
+  const results = [];
+  const startedAt = new Date().toISOString();
+
+  try {
+    for (const theme of THEMES) {
+      results.push(...(await scanTheme(browser, theme)));
+    }
+  } finally {
+    await browser.close();
   }
 
-  await fs.writeFile(path.join(reportDir, 'axe-theme-scan.md'), lines.join('\n'));
+  const reportDir = path.join('documentation', 'reports');
+  await fs.mkdir(reportDir, { recursive: true });
+  await fs.writeFile(
+    path.join(reportDir, 'axe-theme-scan.json'),
+    JSON.stringify({ startedAt, baseUrl: BASE_URL, results }, null, 2)
+  );
+
+  // Markdown summary
+  const totalContrast = results.reduce((n, r) => n + contrastCount(r), 0);
+  const totalAll = results.reduce(
+    (n, r) => n + r.violations.reduce((m, v) => m + v.nodeCount, 0),
+    0
+  );
+
+  const allRoutesCount = ROUTES.length + ADMIN_ROUTES.length;
+  await fs.writeFile(
+    path.join(reportDir, 'axe-theme-scan.md'),
+    markdownReport({ results, startedAt, totalContrast, totalAll, allRoutesCount })
+  );
 
   // Console output (kept short)
   const failures = results.flatMap((r) =>

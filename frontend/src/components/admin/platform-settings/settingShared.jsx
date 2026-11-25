@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { AlertTriangle, Loader2, RefreshCw, Save } from 'lucide-react';
 import { getJSON, sendJSON } from '@/lib/api';
+import { relativeTime as relativeTimeFrom } from '@/components/admin/shared/relativeTime';
 
 // The same lists the server allowlists (functions/src/lib/platform-settings.js).
 export const HERO_PROVIDERS = Object.freeze([
@@ -126,16 +127,8 @@ export const putSetting = (route, body, etag) =>
 export const SELECT_CLASS =
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
 
-export const relativeTime = (iso) => {
-  if (!iso) return null;
-  const then = Date.parse(iso);
-  if (!Number.isFinite(then)) return null;
-  const seconds = Math.round((Date.now() - then) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
-  return `${Math.floor(seconds / 86400)} d ago`;
-};
+/** "3 min ago" for an ISO time, or null (the shared admin wording). */
+export const relativeTime = (iso) => relativeTimeFrom(iso);
 
 const EMPTY_META = Object.freeze({ exists: false, stored: null, updatedAt: null, problem: null });
 
@@ -145,6 +138,83 @@ const metaOf = (response) => ({
   updatedAt: response?.updatedAt ?? null,
   problem: response?.problem ?? null,
 });
+
+/**
+ * Load one setting into the hook's state. Returns the effect cleanup:
+ * unmounting or a newer attempt stops this load writing state.
+ */
+function loadSetting(name, generation, etagRef, setters) {
+  const { setValue, setSaved, setMeta, setOptions, setError, setLoading } = setters;
+  const mine = ++generation.current;
+  const current = () => mine === generation.current;
+  getJSON(settingRoute(name))
+    .then((response) => {
+      if (!current()) return;
+      setValue(response?.value ?? null);
+      setSaved(response?.exists ? (response?.value ?? null) : null);
+      setMeta(metaOf(response));
+      setOptions(Array.isArray(response?.options) ? response.options : []);
+      etagRef.current = response?.etag ?? null;
+      setError(null);
+    })
+    .catch((err) => {
+      if (!current()) return;
+      // Nothing from a previous load survives a failed one.
+      setValue(null);
+      setSaved(null);
+      setMeta(EMPTY_META);
+      setOptions([]);
+      etagRef.current = null;
+      setError(err?.message ?? 'Could not load this setting.');
+    })
+    .finally(() => {
+      if (current()) setLoading(false);
+    });
+  return () => {
+    // Unmounting or a newer attempt: this load may no longer write state.
+    if (current()) generation.current += 1;
+  };
+}
+
+/** The body of useSetting's `save` (see there); resolves true when it was stored. */
+async function storeSetting(name, next, ctx) {
+  const { savingRef, etagRef, setSaving, setValue, setSaved, setMeta, setOptions, toast, reload } =
+    ctx;
+  if (savingRef.current) return false;
+  savingRef.current = true;
+  setSaving(true);
+  try {
+    const response = await putSetting(settingRoute(name), next, etagRef.current);
+    etagRef.current = response?.etag ?? null;
+    setValue(response.value);
+    setSaved(response.value ?? null);
+    setMeta({ ...metaOf(response), exists: true, stored: 'valid', problem: null });
+    if (Array.isArray(response.options)) setOptions(response.options);
+    toast({ title: 'Saved', description: `${name} is stored.` });
+    return true;
+  } catch (err) {
+    if (isStaleSave(err)) {
+      // Saved elsewhere since this page read it: show what is stored now
+      // rather than keep offering a working copy that would replace it.
+      toast({
+        title: 'Changed elsewhere',
+        description: CHANGED_ELSEWHERE,
+        variant: 'destructive',
+      });
+      reload();
+      return false;
+    }
+    toast({
+      title: 'Not saved',
+      description: err?.message ?? 'The write was refused.',
+      variant: 'destructive',
+    });
+    return false;
+  } finally {
+    savingRef.current = false;
+    setSaving(false);
+  }
+}
 
 /**
  * One setting's load/save cycle. `value` is the working copy the card edits;
@@ -172,38 +242,20 @@ export function useSetting(name, authReady) {
   const etagRef = useRef(null);
   const { toast } = useToast();
 
-  useEffect(() => {
-    if (!authReady) return undefined;
-    const mine = ++generation.current;
-    const current = () => mine === generation.current;
-    getJSON(settingRoute(name))
-      .then((response) => {
-        if (!current()) return;
-        setValue(response?.value ?? null);
-        setSaved(response?.exists ? (response?.value ?? null) : null);
-        setMeta(metaOf(response));
-        setOptions(Array.isArray(response?.options) ? response.options : []);
-        etagRef.current = response?.etag ?? null;
-        setError(null);
-      })
-      .catch((err) => {
-        if (!current()) return;
-        // Nothing from a previous load survives a failed one.
-        setValue(null);
-        setSaved(null);
-        setMeta(EMPTY_META);
-        setOptions([]);
-        etagRef.current = null;
-        setError(err?.message ?? 'Could not load this setting.');
-      })
-      .finally(() => {
-        if (current()) setLoading(false);
-      });
-    return () => {
-      // Unmounting or a newer attempt: this load may no longer write state.
-      if (current()) generation.current += 1;
-    };
-  }, [name, authReady, attempt]);
+  useEffect(
+    () =>
+      authReady
+        ? loadSetting(name, generation, etagRef, {
+            setValue,
+            setSaved,
+            setMeta,
+            setOptions,
+            setError,
+            setLoading,
+          })
+        : undefined,
+    [name, authReady, attempt]
+  );
 
   const reload = useCallback(() => {
     // Supersede any load still in flight at once, not on the next effect run:
@@ -219,42 +271,18 @@ export function useSetting(name, authReady) {
    * A refusal because the setting changed elsewhere reloads it instead.
    */
   const save = useCallback(
-    async (next) => {
-      if (savingRef.current) return false;
-      savingRef.current = true;
-      setSaving(true);
-      try {
-        const response = await putSetting(settingRoute(name), next, etagRef.current);
-        etagRef.current = response?.etag ?? null;
-        setValue(response.value);
-        setSaved(response.value ?? null);
-        setMeta({ ...metaOf(response), exists: true, stored: 'valid', problem: null });
-        if (Array.isArray(response.options)) setOptions(response.options);
-        toast({ title: 'Saved', description: `${name} is stored.` });
-        return true;
-      } catch (err) {
-        if (isStaleSave(err)) {
-          // Saved elsewhere since this page read it: show what is stored now
-          // rather than keep offering a working copy that would replace it.
-          toast({
-            title: 'Changed elsewhere',
-            description: CHANGED_ELSEWHERE,
-            variant: 'destructive',
-          });
-          reload();
-          return false;
-        }
-        toast({
-          title: 'Not saved',
-          description: err?.message ?? 'The write was refused.',
-          variant: 'destructive',
-        });
-        return false;
-      } finally {
-        savingRef.current = false;
-        setSaving(false);
-      }
-    },
+    (next) =>
+      storeSetting(name, next, {
+        savingRef,
+        etagRef,
+        setSaving,
+        setValue,
+        setSaved,
+        setMeta,
+        setOptions,
+        toast,
+        reload,
+      }),
     [name, toast, reload]
   );
 
