@@ -9,7 +9,8 @@
  *
  * Offline on purpose: whether a pinned release exists at all (#1862, a 1.1.0
  * that was never published) needs the registry, which these tests do not
- * call. moduleVersions.js records the date the pins were read.
+ * call; .github/workflows/check-cloud-module-pins.yml asks it weekly (#1869).
+ * moduleVersions.js records the date the pins were read.
  */
 import { describe, it, expect } from 'vitest';
 import { TERRAFORM_REQUIRED_VERSION, emitFiles, parseVersion, satisfies } from '../index';

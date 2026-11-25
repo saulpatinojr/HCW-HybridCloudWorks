@@ -29,7 +29,8 @@
  * through it. A module's `requires` includes what the registry modules it
  * calls ask for, because Terraform checks them all together.
  */
-import { registryModule } from '../cloudPack';
+// With its `.js` ending, so plain Node can load this file (see registryModule.js).
+import { registryModule } from '../registryModule.js';
 
 export const GCP_VERIFIED_ON = '2026-11-25';
 

@@ -1,36 +1,13 @@
 /**
  * The parts the AWS and GCP landing-zone packs share: how a pinned registry
- * module is written down, the order the files are emitted in, and the README
- * that lists them. Each provider folder supplies only what differs.
+ * module is written down (registryModule.js), the order the files are emitted
+ * in, and the README that lists them. Each provider folder supplies only what
+ * differs.
  */
 import { isSelected, normalizeState } from '../state';
 import { file } from './format';
 
-/**
- * A pinned Terraform registry module. Its `name` is its registry source.
- *
- * `requires` is what the release at `version` asks of Terraform and its
- * providers, copied by hand from its versions.tf files (its own and those of
- * the submodules it calls): `{ terraform: '<constraint>', providers: {
- * <name>: '<constraint>' }, readAt: '<version>' }`. `readAt` names the
- * release they were read from, and a test fails when it differs from
- * `version`, so bumping a pin forces a fresh read of its versions.tf.
- * cloudModuleVersions.test.js checks the pack's own
- * pins against it, so a bump that needs a newer provider fails a test
- * instead of `terraform init` (#1862, #1863).
- */
-export const registryModule = (source, version, summary, requires) =>
-  Object.freeze({
-    name: source,
-    source,
-    version,
-    summary,
-    requires: Object.freeze({
-      terraform: requires.terraform,
-      readAt: requires.readAt,
-      providers: Object.freeze({ ...requires.providers }),
-    }),
-  });
+export { registryModule } from './registryModule.js';
 
 /**
  * Emit one provider's pack for a builder state: `terraform.tf` and
