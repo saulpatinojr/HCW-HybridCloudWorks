@@ -190,13 +190,43 @@ export async function verifyStatusToken({
   token,
   expectedUser = DEFAULT_CODER_STATUS_USER,
 }) {
+  const works = await checkWorks(fetchImpl, config, token);
+  if (!works.ok) return works;
+  const user = await checkUser(fetchImpl, config, token, expectedUser);
+  if (user) return user;
+  const key = await checkScopes(fetchImpl, config, token);
+  if (!key.ok) return key;
+
+  // The key's own expiry, read from the record the scope check already
+  // fetched: the card shows the stored token's date from this, never the
+  // previous token's (CodeRabbit review of #1030). Null when Coder gave none.
+  // An ISO date-time only (Date.parse reads "42" as the year 2042), and
+  // Coder writes nanoseconds, so Date.parse is given milliseconds at most.
+  const raw = key.record?.expires_at;
+  const expires =
+    typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(raw)
+      ? Date.parse(raw.replace(/(\.\d{3})\d+/, '$1'))
+      : Number.NaN;
+  return {
+    ok: true,
+    running: works.count,
+    expiresAt: Number.isFinite(expires) ? new Date(expires).toISOString() : null,
+  };
+}
+
+/** works: the running-workspaces read answers an integer count. `{ ok: true, count }` or the failure. */
+async function checkWorks(fetchImpl, config, token) {
   const running = new URLSearchParams({ q: 'status:running' });
   const works = await verifiedRead(fetchImpl, config, `/api/v2/workspaces?${running}`, token);
   if (works.error) return failed('works', runningReadFailure(works.error));
   if (!Number.isInteger(works.body?.count)) {
     return failed('works', `Coder answered ${RUNNING_READ} without a count`);
   }
+  return { ok: true, count: works.body.count };
+}
 
+/** user: the token belongs to the expected user. The failure, or null. */
+async function checkUser(fetchImpl, config, token, expectedUser) {
   const me = await verifiedRead(fetchImpl, config, '/api/v2/users/me', token);
   if (me.error) {
     return failed('user', `User check: ${identityReadFailure(me.error, 'its own user', 'user:read')}`);
@@ -204,7 +234,11 @@ export async function verifyStatusToken({
   if (me.body?.username !== expectedUser) {
     return failed('user', `User check: the token does not belong to ${expectedUser}`);
   }
+  return null;
+}
 
+/** scopes: the token's own key record holds the reading scopes and nothing more. `{ ok: true, record }` or the failure. */
+async function checkScopes(fetchImpl, config, token) {
   const keyPath = `/api/v2/users/me/keys/${encodeURIComponent(tokenKeyId(token))}`;
   const key = await verifiedRead(fetchImpl, config, keyPath, token);
   if (key.error) {
@@ -215,22 +249,7 @@ export async function verifyStatusToken({
   }
   const problem = statusScopeProblem(key.body);
   if (problem) return failed('scopes', `Scope check: ${problem}`);
-
-  // The key's own expiry, read from the record the scope check already
-  // fetched: the card shows the stored token's date from this, never the
-  // previous token's (CodeRabbit review of #1030). Null when Coder gave none.
-  // An ISO date-time only (Date.parse reads "42" as the year 2042), and
-  // Coder writes nanoseconds, so Date.parse is given milliseconds at most.
-  const raw = key.body?.expires_at;
-  const expires =
-    typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(raw)
-      ? Date.parse(raw.replace(/(\.\d{3})\d+/, '$1'))
-      : Number.NaN;
-  return {
-    ok: true,
-    running: works.body.count,
-    expiresAt: Number.isFinite(expires) ? new Date(expires).toISOString() : null,
-  };
+  return { ok: true, record: key.body };
 }
 
 const failed = (check, reason) => ({ ok: false, check, reason });

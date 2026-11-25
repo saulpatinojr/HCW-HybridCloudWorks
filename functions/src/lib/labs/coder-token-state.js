@@ -103,6 +103,26 @@ function alreadyHolds(entry, refusedStatus, nowMs) {
   );
 }
 
+/** Whether a read's entry leaves this answer nothing to write: already held (on a retry), older than it, or not news. */
+function nothingToWrite(entry, { refusedStatus, nowMs, retry }) {
+  if (retry && alreadyHolds(entry, refusedStatus, nowMs)) return true;
+  if (newestAnswerMs(entry) > nowMs) return true;
+  return !worthWriting(entry, refusedStatus, nowMs);
+}
+
+/** One read, merge and write under the ETag; true when it wrote. A lost race throws the 412 or 409. */
+async function writeAnswer(store, { operation, refusedStatus, nowMs, atIso, retry }) {
+  const current = await store.readDoc('admin_config', TOKEN_STATE_DOC_ID, 'admin_config');
+  if (nothingToWrite(current?.operations?.[operation], { refusedStatus, nowMs, retry })) return false;
+  const next = nextTokenState(current, operation, refusedStatus, atIso);
+  if (current) {
+    await store.replaceDocIfMatch('admin_config', { ...next, _etag: current._etag }, { partitionKey: 'admin_config' });
+  } else {
+    await store.createDoc('admin_config', next);
+  }
+  return true;
+}
+
 /**
  * Record Coder's answer to the status token for one operation (`status` or
  * `expiry`, TOKEN_OPERATIONS): `refusedStatus` null when it accepted it, 401
@@ -134,18 +154,7 @@ export async function recordTokenAnswer({
   const atIso = new Date(nowMs).toISOString();
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      const current = await store.readDoc('admin_config', TOKEN_STATE_DOC_ID, 'admin_config');
-      const entry = current?.operations?.[operation];
-      if (attempt > 0 && alreadyHolds(entry, refusedStatus, nowMs)) return false;
-      if (newestAnswerMs(entry) > nowMs) return false;
-      if (!worthWriting(entry, refusedStatus, nowMs)) return false;
-      const next = nextTokenState(current, operation, refusedStatus, atIso);
-      if (current) {
-        await store.replaceDocIfMatch('admin_config', { ...next, _etag: current._etag }, { partitionKey: 'admin_config' });
-      } else {
-        await store.createDoc('admin_config', next);
-      }
-      return true;
+      return await writeAnswer(store, { operation, refusedStatus, nowMs, atIso, retry: attempt > 0 });
     } catch (error) {
       // 412: replaced since our read. 409: created since our read found
       // nothing. Either way, read again and merge again.
