@@ -218,6 +218,16 @@ export async function run({ input = '', env = {}, fetchImpl = fetch }) {
     return formatUnreadable('it needs GITHUB_TOKEN and GITHUB_REPOSITORY (owner/repo) to read the runs.');
   }
 
+  const found = await findOrphans(windows, { token, owner, repo, fetchImpl });
+  if (found.unreadable) return found.unreadable;
+  return orphanReport(found.orphans, windows, env);
+}
+
+/**
+ * The windows whose run is not in progress, each with its reason and run link:
+ * `{ orphans }`, or `{ unreadable }` when a run could not be read.
+ */
+async function findOrphans(windows, { token, owner, repo, fetchImpl }) {
   const orphans = [];
   for (const window of windows) {
     let runInfo = { status: 'unknown', conclusion: null, url: null };
@@ -225,13 +235,17 @@ export async function run({ input = '', env = {}, fetchImpl = fetch }) {
       try {
         runInfo = await readRun({ runId: window.runId, token, owner, repo, fetchImpl });
       } catch (error) {
-        return formatUnreadable(`the run behind \`${window.name}\` could not be read: ${error.message}`);
+        return { unreadable: formatUnreadable(`the run behind \`${window.name}\` could not be read: ${error.message}`) };
       }
     }
     const reason = orphanReason(window, runInfo);
     if (reason) orphans.push({ ...window, reason, url: runInfo.url });
   }
+  return { orphans };
+}
 
+/** The verdict: exit 0 with none orphaned, or exit 1 naming each orphan and the command that removes it. */
+function orphanReport(orphans, windows, env) {
   if (orphans.length === 0) {
     return { code: 0, lines: [`none orphaned (${windows.length} open, each held by a run in progress)`] };
   }

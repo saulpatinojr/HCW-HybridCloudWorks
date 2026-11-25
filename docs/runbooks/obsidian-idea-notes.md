@@ -364,8 +364,10 @@ Code blocks and inline code are not searched, so a shell example such as
 
 ## How it works, for whoever changes the code
 
-- `scripts/ideas/idea-notes.mjs` holds the format, the reader, the check and
-  the promotion, with no dependency. `check-idea-notes.mjs` and
+- `scripts/ideas/idea-notes.mjs` holds the check and the promotion, with no
+  dependency outside `scripts/ideas/`. The format rules, the front-matter
+  reader and the field readers sit beside it in `idea-rules.mjs`,
+  `idea-front-matter.mjs` and `idea-fields.mjs`, and it re-exports them. `check-idea-notes.mjs` and
   `promote-idea.mjs` are the two command-line entry points.
 - The properties are read by hand rather than by a YAML library, because
   Obsidian writes lists in the block form and the import's own reader takes only

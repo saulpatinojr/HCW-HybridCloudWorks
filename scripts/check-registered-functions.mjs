@@ -82,14 +82,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-
-const API = 'https://api.github.com';
+import { DEPLOY_STEP, DEPLOY_WORKFLOW, fetchInventoryAt, findDeployedCommit, INVENTORY_PATH, MAX_PAGES, MAX_RUNS } from './lib/registered-functions-github.mjs';
+// The parts below now live in their own files; they are exported from here too, so callers keep their imports.
+export { INVENTORY_PATH, DEPLOY_WORKFLOW, DEPLOY_STEP, MAX_RUNS, MAX_PAGES, findDeployedCommit, fetchInventoryAt } from './lib/registered-functions-github.mjs';
 
 /** The trigger groups the inventory may hold, in the order they are reported. */
 export const TRIGGERS = Object.freeze(['http', 'timer', 'cosmosDB', 'storageQueue']);
-
-/** Repository-relative, because the monitor reads it at other commits by this path. */
-export const INVENTORY_PATH = 'functions/function-inventory.json';
 
 /**
  * Fewer expected functions than this means the file is truncated or emptied,
@@ -99,39 +97,10 @@ export const INVENTORY_PATH = 'functions/function-inventory.json';
  */
 export const MIN_EXPECTED = 51;
 
-export const DEPLOY_WORKFLOW = 'deploy-functions.yml';
-
-/**
- * The step in `deploy-functions.yml` that replaces the live package. Renaming
- * that step without changing this would leave the monitor unable to find a
- * deploy and quietly disarmed; check-registered-functions.test.mjs reads the
- * workflow and fails first.
- */
-export const DEPLOY_STEP = 'Deploy to Azure Functions';
-
-/** How many deploy runs are listed per page while looking for the live package's commit. */
-export const MAX_RUNS = 10;
-
-/**
- * How many pages of runs are listed: fifty runs back. Listing is cheap; jobs
- * are read only for runs active after the newest upload found so far.
- */
-export const MAX_PAGES = 5;
-
 const DEFAULT_INVENTORY = join(fileURLToPath(new URL('..', import.meta.url)), INVENTORY_PATH);
 
-/**
- * The expected functions, as `{ name, trigger }`.
- *
- * Throws on anything it cannot read with certainty. An absent trigger group is
- * an empty one, so an inventory from before a group existed still reads; an
- * unknown group is refused, because its functions would otherwise go
- * unchecked.
- *
- * @param {string} text - the inventory file's contents
- * @returns {{ name: string, trigger: string }[]}
- */
-export function parseInventory(text) {
+/** The inventory's JSON: an object whose keys are known trigger groups (and `$comment`). */
+function inventoryGroups(text) {
   let doc;
   try {
     doc = JSON.parse(text);
@@ -148,16 +117,41 @@ export function parseInventory(text) {
         'Add them to TRIGGERS, or their functions go unchecked.'
     );
   }
+  return doc;
+}
 
+/** One trigger group's entries; an absent group is an empty one. */
+function groupNames(doc, trigger) {
+  const names = doc[trigger] ?? [];
+  if (!Array.isArray(names)) throw new Error(`${INVENTORY_PATH}: "${trigger}" is not a list.`);
+  return names;
+}
+
+/** An entry of a trigger group must be a function name. */
+function assertFunctionName(name, trigger) {
+  if (typeof name !== 'string' || name.trim() === '') {
+    throw new Error(`${INVENTORY_PATH}: "${trigger}" holds an entry that is not a function name.`);
+  }
+}
+
+/**
+ * The expected functions, as `{ name, trigger }`.
+ *
+ * Throws on anything it cannot read with certainty. An absent trigger group is
+ * an empty one, so an inventory from before a group existed still reads; an
+ * unknown group is refused, because its functions would otherwise go
+ * unchecked.
+ *
+ * @param {string} text - the inventory file's contents
+ * @returns {{ name: string, trigger: string }[]}
+ */
+export function parseInventory(text) {
+  const doc = inventoryGroups(text);
   const entries = [];
   const seen = new Set();
   for (const trigger of TRIGGERS) {
-    const names = doc[trigger] ?? [];
-    if (!Array.isArray(names)) throw new Error(`${INVENTORY_PATH}: "${trigger}" is not a list.`);
-    for (const name of names) {
-      if (typeof name !== 'string' || name.trim() === '') {
-        throw new Error(`${INVENTORY_PATH}: "${trigger}" holds an entry that is not a function name.`);
-      }
+    for (const name of groupNames(doc, trigger)) {
+      assertFunctionName(name, trigger);
       const key = name.toLowerCase();
       if (seen.has(key)) throw new Error(`${INVENTORY_PATH} lists ${name} twice.`);
       seen.add(key);
@@ -281,161 +275,71 @@ export function formatUnreadable(reason) {
   };
 }
 
-/** A GitHub REST request with the token and API version every call here sends. */
-async function ghFetch(fetchImpl, url, token, accept = 'application/vnd.github+json') {
-  return fetchImpl(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: accept,
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
-  });
-}
-
-/** A GitHub REST response body, or an error naming the status and URL. */
-async function ghJson(fetchImpl, url, token) {
-  const res = await ghFetch(fetchImpl, url, token);
-  if (!res.ok) throw new Error(`GitHub answered ${res.status} for ${url}`);
-  return res.json();
-}
-
-/** The `workflow_runs` array of a runs payload, or an error saying it is not one. */
-function runsOf(body) {
-  const runs = body?.workflow_runs;
-  if (!Array.isArray(runs)) {
-    throw new Error(
-      'GitHub returned a workflow-runs payload without a `workflow_runs` array. Expected the ' +
-        `response of GET /repos/:owner/:repo/actions/workflows/${DEPLOY_WORKFLOW}/runs.`
-    );
-  }
-  return runs;
-}
-
-/** When a run last changed: no step in it can have completed later. NaN when unknown. */
-const lastActivity = (run) => Date.parse(run?.updated_at ?? run?.run_started_at ?? run?.created_at ?? '');
-
-/**
- * The commit whose package is live: the newest successful `DEPLOY_STEP`
- * among the runs of `DEPLOY_WORKFLOW`, every attempt of each, whatever the
- * run's own conclusion.
- *
- * Up to `MAX_PAGES` pages of `MAX_RUNS` runs are listed, the newest run that
- * succeeded outright is asked for separately (`status=success`), and their
- * jobs are read in order of each run's last activity. A run whose last
- * activity is older than the upload already found is skipped, because no step
- * in it can have completed later. So a deploy that uploaded
- * and then failed a later check is found behind a string of later dispatches
- * that never reached the upload (refused on the ref, on a busy workspace, or
- * never approved), and the usual case, the newest run having uploaded, costs
- * one jobs call.
- *
- * @returns {Promise<{ sha: string, runNumber: number|null, completedAt: string } | null>}
- *   null when no run this can see has uploaded a package.
- */
-export async function findDeployedCommit({ token, owner, repo, fetchImpl = fetch }) {
-  const base = `${API}/repos/${owner}/${repo}/actions`;
-  const runsUrl = `${base}/workflows/${DEPLOY_WORKFLOW}/runs`;
-  const succeeded = runsOf(await ghJson(fetchImpl, `${runsUrl}?status=success&per_page=1`, token));
-  const listed = [];
-  for (let page = 1; page <= MAX_PAGES; page += 1) {
-    const batch = runsOf(await ghJson(fetchImpl, `${runsUrl}?per_page=${MAX_RUNS}&page=${page}`, token));
-    listed.push(...batch.slice(0, MAX_RUNS));
-    if (batch.length < MAX_RUNS) break;
-  }
-
-  const candidates = new Map();
-  for (const run of [...listed, ...succeeded.slice(0, 1)]) {
-    if (typeof run?.id !== 'number' || typeof run.head_sha !== 'string' || !run.head_sha) {
-      throw new Error('A deploy run came back without an id or a head_sha, so nothing can be compared.');
-    }
-    candidates.set(run.id, run);
-  }
-  // Most recent activity first. A run with no readable time goes last and is
-  // always read, since nothing bounds when its steps completed.
-  const ordered = [...candidates.values()].sort((a, b) => {
-    const x = lastActivity(a);
-    const y = lastActivity(b);
-    if (!Number.isFinite(x)) return Number.isFinite(y) ? 1 : 0;
-    if (!Number.isFinite(y)) return -1;
-    return y - x;
-  });
-
-  let best = null;
-  for (const run of ordered) {
-    // Nothing in a run last active before the upload already found can have
-    // completed after it, so its jobs are not read.
-    const activity = lastActivity(run);
-    if (best && Number.isFinite(activity) && activity < best.at) continue;
-    const jobsBody = await ghJson(fetchImpl, `${base}/runs/${run.id}/jobs?filter=all&per_page=100`, token);
-    if (!Array.isArray(jobsBody?.jobs)) {
-      throw new Error(`GitHub returned a jobs payload without a \`jobs\` array for run ${run.id}.`);
-    }
-    for (const job of jobsBody.jobs) {
-      for (const step of job?.steps ?? []) {
-        if (step?.name !== DEPLOY_STEP || step.conclusion !== 'success') continue;
-        const at = Date.parse(step.completed_at);
-        if (!Number.isFinite(at)) continue;
-        if (!best || at > best.at) {
-          best = { at, sha: run.head_sha, runNumber: run.run_number ?? null, completedAt: step.completed_at };
-        }
-      }
-    }
-  }
-  if (!best) return null;
-  return { sha: best.sha, runNumber: best.runNumber, completedAt: best.completedAt };
-}
-
-/** The inventory's text at a commit, or null when the file did not exist there. */
-export async function fetchInventoryAt({ token, owner, repo, sha, fetchImpl = fetch }) {
-  const url = `${API}/repos/${owner}/${repo}/contents/${INVENTORY_PATH}?ref=${encodeURIComponent(sha)}`;
-  const res = await ghFetch(fetchImpl, url, token, 'application/vnd.github.raw+json');
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`GitHub answered ${res.status} for ${url}`);
-  return res.text();
-}
-
 export const USAGE =
   'usage: <live function names on stdin> | node scripts/check-registered-functions.mjs [--deployed]\n' +
   '  names: az functionapp function list -n APP -g RG --query "[].name" -o tsv\n' +
   '  --deployed  compare with the inventory at the commit last deployed (needs GITHUB_TOKEN, GITHUB_REPOSITORY)';
+
+/** Something this check had to read and could not; `run` reports it as unreadable. */
+class Unreadable extends Error {}
+
+/** The answer of `work()`, or Unreadable with `describe(error)` when it throws. */
+async function orUnreadable(work, describe) {
+  try {
+    return await work();
+  } catch (error) {
+    throw new Unreadable(describe(error));
+  }
+}
 
 /**
  * Everything but the process: arguments, stdin text and environment in,
  * exit code and stdout lines out.
  */
 export async function run({ args = [], input = '', env = {}, fetchImpl = fetch, inventoryFile = DEFAULT_INVENTORY }) {
+  try {
+    return await check({ args, input, env, fetchImpl, inventoryFile });
+  } catch (error) {
+    if (error instanceof Unreadable) return formatUnreadable(error.message);
+    throw error;
+  }
+}
+
+export async function check({ args, input, env, fetchImpl, inventoryFile }) {
   const unknown = args.filter((arg) => arg !== '--deployed');
-  if (unknown.length > 0) return formatUnreadable(`unknown argument(s) ${unknown.join(' ')}. ${USAGE}`);
+  if (unknown.length > 0) throw new Unreadable(`unknown argument(s) ${unknown.join(' ')}. ${USAGE}`);
   const live = parseLiveNames(input);
 
   if (!args.includes('--deployed')) {
-    let expected;
-    try {
-      expected = parseInventory(readFileSync(inventoryFile, 'utf8'));
-    } catch (error) {
-      return formatUnreadable(error.message);
-    }
+    const expected = await orUnreadable(
+      () => parseInventory(readFileSync(inventoryFile, 'utf8')),
+      (error) => error.message
+    );
     return formatNamed(compareRegistration(expected, live), `\`${INVENTORY_PATH}\` in this checkout`);
   }
+  return checkDeployed({ env, live, fetchImpl });
+}
 
+/** --deployed: compare with the inventory at the commit last deployed, or say why there is none to compare with. */
+async function checkDeployed({ env, live, fetchImpl }) {
   const token = env.GITHUB_TOKEN;
   const [owner, repo] = String(env.GITHUB_REPOSITORY ?? '').split('/');
   if (!token || !owner || !repo) {
-    return formatUnreadable('--deployed needs GITHUB_TOKEN and GITHUB_REPOSITORY (owner/repo) to find the commit last deployed.');
+    throw new Unreadable('--deployed needs GITHUB_TOKEN and GITHUB_REPOSITORY (owner/repo) to find the commit last deployed.');
   }
 
-  let deployed;
-  let text;
-  try {
-    deployed = await findDeployedCommit({ token, owner, repo, fetchImpl });
-    if (deployed) text = await fetchInventoryAt({ token, owner, repo, sha: deployed.sha, fetchImpl });
-  } catch (error) {
-    return formatUnreadable(`the commit last deployed could not be read from GitHub: ${error.message}`);
-  }
+  const { deployed, text } = await orUnreadable(
+    async () => {
+      const found = await findDeployedCommit({ token, owner, repo, fetchImpl });
+      return { deployed: found, text: found ? await fetchInventoryAt({ token, owner, repo, sha: found.sha, fetchImpl }) : undefined };
+    },
+    (error) => `the commit last deployed could not be read from GitHub: ${error.message}`
+  );
 
+  const liveCount = new Set(live.map((name) => name.toLowerCase())).size;
   if (!deployed) {
     return formatNotArmed(
-      new Set(live.map((name) => name.toLowerCase())).size,
+      liveCount,
       `No run of \`${DEPLOY_WORKFLOW}\` has succeeded, and none of its last ${MAX_RUNS * MAX_PAGES} completed its ` +
         `\`${DEPLOY_STEP}\` step, so which commit is live is not known.`
     );
@@ -443,18 +347,13 @@ export async function run({ args = [], input = '', env = {}, fetchImpl = fetch, 
   const short = deployed.sha.slice(0, 7);
   const runLabel = deployed.runNumber === null ? 'a deploy run' : `deploy run #${deployed.runNumber}`;
   if (text === null) {
-    return formatNotArmed(
-      new Set(live.map((name) => name.toLowerCase())).size,
-      `The commit live on the host (\`${short}\`, ${runLabel}) predates \`${INVENTORY_PATH}\`.`
-    );
+    return formatNotArmed(liveCount, `The commit live on the host (\`${short}\`, ${runLabel}) predates \`${INVENTORY_PATH}\`.`);
   }
 
-  let expected;
-  try {
-    expected = parseInventory(text);
-  } catch (error) {
-    return formatUnreadable(`the inventory at \`${short}\`: ${error.message}`);
-  }
+  const expected = await orUnreadable(
+    () => parseInventory(text),
+    (error) => `the inventory at \`${short}\`: ${error.message}`
+  );
   return formatNamed(
     compareRegistration(expected, live),
     `\`${INVENTORY_PATH}\` at \`${short}\`, the commit ${runLabel} put on the host`

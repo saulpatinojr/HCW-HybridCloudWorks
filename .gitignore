@@ -1,4 +1,7 @@
-node_modules/
+# No trailing slash: a node_modules that is a symbolic link (a worktree
+# pointing at another checkout's packages) must be ignored too. With
+# `node_modules/` only folders matched, and a link was committed (#1845).
+node_modules
 dist/
 .env
 *.pem

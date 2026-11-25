@@ -62,34 +62,35 @@ export function checkFolder(root) {
   const paths = findNotes(root);
   let bad = 0;
   for (const path of paths) {
-    const name = path.split(sep).at(-1);
-    let read;
-    try {
-      read = readNoteFile(join(root, path));
-    } catch (error) {
-      bad += 1;
-      lines.push(path.split(sep).join('/'), `  cannot read this file: ${error.message}`);
-      continue;
-    }
-    if (read.tooBig) {
-      bad += 1;
-      lines.push(path.split(sep).join('/'), '  the file is over 1 MB, which is not an idea note');
-      continue;
-    }
-    const { issues, note } = checkNote(name, read.text);
+    const { problemLines, note } = checkOneNote(root, path);
     if (note) {
       byStatus[note.status] += 1;
       byType[note.type] += 1;
     }
-    if (issues.length > 0) {
+    if (problemLines.length > 0) {
       bad += 1;
-      lines.push(path.split(sep).join('/'));
-      for (const issue of issues) {
-        lines.push(`  ${issue.line ? `line ${issue.line}: ` : ''}${issue.message}`);
-      }
+      lines.push(...problemLines);
     }
   }
   return { notes: paths.length, bad, lines, byStatus, byType };
+}
+
+/**
+ * One note: the lines that report its problems (its path, then one line
+ * each; none when it is fine), and the note when it follows the format.
+ */
+function checkOneNote(root, path) {
+  const shown = path.split(sep).join('/');
+  let read;
+  try {
+    read = readNoteFile(join(root, path));
+  } catch (error) {
+    return { problemLines: [shown, `  cannot read this file: ${error.message}`], note: null };
+  }
+  if (read.tooBig) return { problemLines: [shown, '  the file is over 1 MB, which is not an idea note'], note: null };
+  const { issues, note } = checkNote(path.split(sep).at(-1), read.text);
+  const problemLines = issues.map((issue) => `  ${issue.line ? `line ${issue.line}: ` : ''}${issue.message}`);
+  return { problemLines: problemLines.length > 0 ? [shown, ...problemLines] : [], note };
 }
 
 function main(argv) {

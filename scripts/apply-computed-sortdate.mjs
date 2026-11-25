@@ -72,25 +72,31 @@ async function inspect() {
       )
       .fetchAll();
     console.log(`  ${resources.length} documents`);
-    const bad = [];
-    for (const doc of resources) {
-      for (const [field, value] of Object.entries(doc)) {
-        if (field === 'id' || value === undefined || value === null) continue;
-        if (!isSortableIso(value)) bad.push({ id: doc.id, field, value });
-      }
-    }
-    if (bad.length === 0) {
-      console.log('  every present date alias is ISO-sortable');
-    } else {
-      dirty += bad.length;
-      console.log(`  ${bad.length} NON-ISO date values — these mis-sort under ORDER BY cp_sortDate:`);
-      for (const entry of bad.slice(0, 20)) {
-        console.log(`    ${entry.id} ${entry.field} = ${JSON.stringify(entry.value)}`);
-      }
-      if (bad.length > 20) console.log(`    ... and ${bad.length - 20} more`);
-    }
+    const bad = resources.flatMap(nonIsoDates);
+    dirty += bad.length;
+    reportNonIso(bad);
   }
   process.exit(dirty ? 1 : 0);
+}
+
+/** The date aliases of one document that are present and not ISO-sortable. */
+function nonIsoDates(doc) {
+  return Object.entries(doc)
+    .filter(([field, value]) => field !== 'id' && value !== undefined && value !== null && !isSortableIso(value))
+    .map(([field, value]) => ({ id: doc.id, field, value }));
+}
+
+/** One container's verdict: all sortable, or the first 20 values that are not. */
+function reportNonIso(bad) {
+  if (bad.length === 0) {
+    console.log('  every present date alias is ISO-sortable');
+    return;
+  }
+  console.log(`  ${bad.length} NON-ISO date values — these mis-sort under ORDER BY cp_sortDate:`);
+  for (const entry of bad.slice(0, 20)) {
+    console.log(`    ${entry.id} ${entry.field} = ${JSON.stringify(entry.value)}`);
+  }
+  if (bad.length > 20) console.log(`    ... and ${bad.length - 20} more`);
 }
 
 const HELP = `Usage: node apply-computed-sortdate.mjs --inspect
