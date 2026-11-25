@@ -22,6 +22,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { AuthoredError } from '../http/error-response.js';
+import { presentedKey } from '../presented-key.js';
 
 /** The one agent this API serves. A second agent is a second record and a second tab. */
 export const AGENT_ID = 'koda';
@@ -197,21 +198,7 @@ export const KEY_HEADERS = Object.freeze(['x-api-key', 'x-agent-key']);
  * @returns {string | null}
  */
 export function agentKeyFrom(request) {
-  const read = (name) => {
-    const value = request?.headers?.get?.(name);
-    return typeof value === 'string' && value.trim() ? value.trim() : null;
-  };
-  const authorization = read('authorization');
-  if (authorization) {
-    const bearer = /^Bearer\s+(.+)$/i.exec(authorization);
-    if (bearer) return bearer[1].trim() || null;
-    return looksLikeKey(authorization) ? authorization : null;
-  }
-  for (const name of KEY_HEADERS) {
-    const value = read(name);
-    if (value) return value;
-  }
-  return null;
+  return presentedKey(request, { keyHeaders: KEY_HEADERS, looksLikeKey });
 }
 
 /**
