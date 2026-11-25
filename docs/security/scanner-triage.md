@@ -199,6 +199,11 @@ similar markup added to one of them later would not be reported there; a
 reviewer still reads it. If one of these pages grows real duplicated markup,
 move its list into a data file and name that file here instead.
 
+The same holds for copying code into a listed file: similar-code is never
+reported there, whether the copy is data or logic, so a function or a block
+of markup copied into one of the `.jsx` pages above passes the check. Only a
+reviewer catches that.
+
 ### The pull request smell check
 
 Since 2026-11-25 the `security-scan` job in `.github/workflows/ci.yml` (shown
@@ -211,7 +216,10 @@ fails only on a smell the base did not have, after applying the base
 branch's `[[triage]]` blocks. A smell already on `main` does not fail an
 unrelated pull request, even one that edits the same function. As with the
 security scan, the rules come from the base branch, so a pull request cannot
-add itself to the list above and pass on it.
+add itself to the list above and pass on it. That protects the rules and the
+checking script, not the workflow: a pull request that edits
+`.github/workflows/ci.yml` runs its own version of the step, so a change to the
+workflow itself relies on review.
 
 `qlty smells` itself always exits 0 and has no level or fail option (its
 source, `qlty-cli/src/commands/smells.rs`, ends every run with success), which
@@ -665,7 +673,8 @@ so it was not added.
 ## osv-scanner
 
 osv-scanner checks the lock files against the public OSV list of known
-vulnerable package versions. Since 2026-11-24 the `Qlty security scan` job
+vulnerable package versions. Since 2026-11-24 the `security-scan` job (shown
+as **Qlty security scan and code smells** since 2026-11-25)
 fails a pull request that changes a lock-file line with a high or medium
 advisory. Normally the answer is the upgrade. When no fixed version exists
 yet, the route is an `osv-scanner.toml` beside the lock file, one
