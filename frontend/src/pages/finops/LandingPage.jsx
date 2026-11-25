@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router';
 import { routes } from '@/lib/routeFactory';
 import ProviderLandingTemplate from '@/components/shared/ProviderLandingTemplate';
+import { designsSection, frameworksSection } from '@/pages/shared/landing/LandingSections';
 import HeroImageCarousel from '@/components/landing/HeroImageCarousel';
 
 // Generated art (#371): scripts/generate-brand-art.mjs draws this set; replace any
@@ -66,44 +67,6 @@ const COURSES = [
   },
 ];
 
-function ArchitectureCards() {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      {ARCHITECTURE_CARDS.map((card) => (
-        <Link
-          key={card.title}
-          to={routes.architectureDesigns('finops')}
-          className="glass glass-hover rounded-xl overflow-hidden flex flex-col"
-        >
-          <div className="h-2 w-full bg-primary/60" aria-hidden="true" />
-          <div className="p-5 flex flex-col gap-2 flex-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] bg-primary/15 text-primary px-2 py-0.5 rounded font-bold uppercase tracking-wide">
-                {card.label}
-              </span>
-              <span className="text-[10px] text-slate-500">{card.meta}</span>
-            </div>
-            <h3 className="font-bold text-foreground">{card.title}</h3>
-            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-              {card.text}
-            </p>
-            <div className="flex gap-1 flex-wrap mt-auto pt-2">
-              {card.tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </div>
-        </Link>
-      ))}
-    </div>
-  );
-}
-
 function FocusPanel() {
   return (
     <div className="glass rounded-xl p-6 grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
@@ -137,33 +100,6 @@ function FocusPanel() {
           )
         )}
       </ul>
-    </div>
-  );
-}
-
-function FrameworkCards() {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-      {FRAMEWORKS.map(({ abbr, name, description }) => (
-        <div key={abbr} className="glass rounded-xl p-5 flex flex-col gap-3">
-          <div className="flex items-center gap-3">
-            <div className="size-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-base" aria-hidden="true">
-                account_tree
-              </span>
-            </div>
-            <div>
-              <div className="text-[10px] font-black text-primary/80 tracking-widest uppercase">
-                {abbr}
-              </div>
-              <h3 className="text-sm font-bold text-foreground leading-snug">{name}</h3>
-            </div>
-          </div>
-          <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-            {description}
-          </p>
-        </div>
-      ))}
     </div>
   );
 }
@@ -247,24 +183,19 @@ export default function FinOpsLandingPage() {
         ],
       }}
       sections={[
-        {
-          eyebrow: 'REFERENCE DESIGNS',
-          title: 'FinOps Reference Architectures',
-          action: { label: 'All blueprints', to: routes.architectureDesigns('finops') },
-          content: <ArchitectureCards />,
-        },
+        designsSection(
+          'finops',
+          'FinOps Reference Architectures',
+          ARCHITECTURE_CARDS,
+          'All blueprints'
+        ),
         {
           eyebrow: 'OPEN STANDARD',
           title: 'Focus on FOCUS 1.4',
           action: { label: 'FOCUS hub', to: routes.focus('finops') },
           content: <FocusPanel />,
         },
-        {
-          eyebrow: 'GUIDANCE',
-          title: 'Frameworks',
-          action: { label: 'All frameworks', to: routes.frameworks('finops') },
-          content: <FrameworkCards />,
-        },
+        frameworksSection('finops', FRAMEWORKS),
         {
           eyebrow: 'LEARNING CENTER',
           title: 'Certifications & Tools',
