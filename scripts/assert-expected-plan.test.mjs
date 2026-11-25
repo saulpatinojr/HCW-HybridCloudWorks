@@ -1038,16 +1038,21 @@ describe('DECLARED', () => {
     expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [] });
   });
 
-  it('passes the plan that arms the proposal clean-up, and no longer the plan that first declared its switch (#1777)', () => {
+  it('reads any change to the proposal clean-up’s switch as unexpected, now that the owner’s arming run has applied (#1777)', () => {
     // The switch, declared off, has applied, so adding it from nothing is unexpected now.
     const again = fixture();
     again.app.after.app_settings.PROPOSAL_STRIP_ENABLED = 'false';
     expect(checkPlan(again.plan).ok).toBe(false);
 
+    // The arming run has applied too, so off to on is no longer expected, and neither is on to off.
     const armed = fixture();
     armed.app.before.app_settings.PROPOSAL_STRIP_ENABLED = 'false';
     armed.app.after.app_settings.PROPOSAL_STRIP_ENABLED = 'true';
-    expect(checkPlan(armed.plan)).toMatchObject({ ok: true, unexpected: [] });
+    expect(checkPlan(armed.plan).ok).toBe(false);
+    const disarmed = fixture();
+    disarmed.app.before.app_settings.PROPOSAL_STRIP_ENABLED = 'true';
+    disarmed.app.after.app_settings.PROPOSAL_STRIP_ENABLED = 'false';
+    expect(checkPlan(disarmed.plan).ok).toBe(false);
 
     // Absent straight to "true" would arm it without a dry run ever having applied: not declared.
     const skipped = fixture();
@@ -1057,7 +1062,7 @@ describe('DECLARED', () => {
     expect(infraSource).toMatch(/^\s*"PROPOSAL_STRIP_ENABLED"\s*=\s*"true"$/m);
   });
 
-  it('passes the plan that arms the content archive’s switch, and no longer the plan that first declared it (#1811)', () => {
+  it('reads any change to the content archive’s switch as unexpected, now that the owner’s arming run has applied (#1811)', () => {
     // The first run has applied, so creating the container or adding the switch from nothing is unexpected now.
     const again = fixture();
     again.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'false';
@@ -1069,11 +1074,15 @@ describe('DECLARED', () => {
     });
     expect(checkPlan(recreated.plan).ok).toBe(false);
 
-    // The arming plan: off to on, and nothing else beside it.
+    // The arming run has applied too, so off to on is no longer expected, and neither is on to off.
     const armed = fixture();
     armed.app.before.app_settings.CONTENT_ARCHIVE_ENABLED = 'false';
     armed.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'true';
-    expect(checkPlan(armed.plan)).toMatchObject({ ok: true, unexpected: [] });
+    expect(checkPlan(armed.plan).ok).toBe(false);
+    const disarmed = fixture();
+    disarmed.app.before.app_settings.CONTENT_ARCHIVE_ENABLED = 'true';
+    disarmed.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'false';
+    expect(checkPlan(disarmed.plan).ok).toBe(false);
     // Absent straight to "true" would arm it before it had ever applied as off: not declared.
     const skipped = fixture();
     skipped.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'true';
