@@ -136,6 +136,7 @@ on:
       - 'lab-image/**'
       - 'vps-agent/index.js'
       - 'vps-agent/lib/docker-runner.js'
+      - 'vps-agent/lib/tar-payload.js'
       - 'vps-agent/lib/capabilities.js'
       - 'frontend/src/lib/landingZone/**'
       - '.github/workflows/publish-lab-image.yml'
@@ -149,6 +150,7 @@ on:
     paths:
       - 'lab-image/**'
       - 'vps-agent/lib/docker-runner.js'
+      - 'vps-agent/lib/tar-payload.js'
       - '.github/workflows/publish-lab-image.yml'
 
 permissions:
@@ -281,7 +283,7 @@ jobs:
       # agent's own docker-runner.js (read-only root, cap-drop ALL, the 64 MB
       # tmpfs, uid 65534, the memory limit, a tar payload) against the image
       # just built, because two of #675's faults were invisible to the smoke
-      # test and fatal there. Node only; docker-runner.js has no dependency.
+      # test and fatal there. Node only; docker-runner.js (and its tar-payload.js) has no dependency.
       - name: Sandbox check
         run: node lab-image/sandbox-check.mjs hcw-lab-runner:ci
 
@@ -515,7 +517,7 @@ jobs:
       # agent's own docker-runner.js (read-only root, cap-drop ALL, the 64 MB
       # tmpfs, uid 65534, the memory limit, a tar payload) against the image
       # just built, because two of #675's faults were invisible to the smoke
-      # test and fatal there. Node only; docker-runner.js has no dependency.
+      # test and fatal there. Node only; docker-runner.js (and its tar-payload.js) has no dependency.
       - name: Sandbox check
         run: node lab-image/sandbox-check.mjs hcw-lab-runner:ci
 

@@ -225,9 +225,9 @@ describe('sections the manifest route computed (issue #373)', () => {
    * The sections the route's contract declares, read as TEXT from `functions/`.
    *
    * `scripts/` and `functions/` are independent npm packages with no workspace
-   * between them, so this cannot import the constant — the same trade
-   * `functions/src/lib/public-content-manifest.test.js` makes in the other
-   * direction when it parses ARTICLE_FIELDS out of this package.
+   * between them. The section list is read as text here rather than imported,
+   * because public-section-counts.js is the route's contract, not a list this
+   * script projects with (the field lists are imported, since #1845).
    *
    * Derived rather than restated because restating it failed exactly once and
    * silently: the fixture below was written out by hand, called itself "every

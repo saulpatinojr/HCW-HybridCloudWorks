@@ -50,6 +50,8 @@ A row that says `coming` on one side and `available` on the other is just a
 When all is well it prints `in step: N fields compared`.
 
 The code is [`scripts/addons/check-guide-drift.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/addons/check-guide-drift.mjs),
+with two sibling files it imports, `guide-drift-row.mjs` (reads the guide) and
+`guide-drift-site.mjs` (reads the website's catalogue and lab-host settings),
 tested by `scripts/addons/check-guide-drift.test.mjs`. It uses only what comes
 with Node, holds no secret and fetches nothing itself: the workflow hands it
 files.
@@ -122,7 +124,7 @@ releases, which does not matter: per
 [Dependabot's supported ecosystems](https://docs.github.com/en/code-security/dependabot/ecosystems-supported-by-dependabot/supported-ecosystems-and-repositories),
 when the commit is not tied to a tag it "will update the GitHub Actions to the
 latest commit". Each such pull request is a bump of the script, so read what
-changed in `scripts/addons/check-guide-drift.mjs` before merging it.
+changed in `scripts/addons/` (`check-guide-drift.mjs` and its two sibling files) before merging it.
 
 ## How to read a failure
 

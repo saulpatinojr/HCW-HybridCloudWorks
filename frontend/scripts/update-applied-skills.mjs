@@ -1,5 +1,12 @@
 /**
- * Refresh src/data/azure/certifications.js from Microsoft Learn.
+ * Refresh the Azure certification catalogue from Microsoft Learn.
+ *
+ * Writes two files. The certification and applied-skill rows go to
+ * src/data/azure/generated/certifications.js, which this script rewrites
+ * whole (#1845: in a folder .qlty/qlty.toml excludes, so Qlty's duplicate
+ * finder skips rows that look alike by design). src/data/azure/certifications.js
+ * re-exports them and keeps the hand-written parts; this script only stamps
+ * its sync date there.
  *
  * Sources, all GET, all learn.microsoft.com or the poster CDN it links:
  *   - the credentials browse API (certifications and applied skills),
@@ -62,7 +69,10 @@ export { SourceError, assertSourceItems, collectSources } from './applied-skills
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
+// certifications.js keeps DATA_AS_OF, the sync-date header and the
+// hand-written history; generated/certifications.js holds the rows.
 const dataFile = path.join(repoRoot, 'src', 'data', 'azure', 'certifications.js');
+const generatedFile = path.join(repoRoot, 'src', 'data', 'azure', 'generated', 'certifications.js');
 
 /** `YYYY-MM-DD` on the UTC calendar — the workflow runs on a UTC runner. */
 export function todayIso(now = new Date()) {
@@ -205,13 +215,23 @@ ${skills.map(formatSkill).join(',\n')},
 `;
 }
 
-function replaceBetween(source, startMarker, endMarker, replacement) {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error(`Could not locate block between ${startMarker} and ${endMarker}`);
+// The generated file's opening comment is kept as it stands: everything
+// before the first block marker, so an edit to that explanation is not undone
+// by the next run.
+const CERTIFICATION_MARKER = "// status: 'active' | 'beta' | 'expiring' | 'retired'";
+
+function generatedHeader(source) {
+  const start = source.indexOf(CERTIFICATION_MARKER);
+  if (start === -1) {
+    throw new Error(
+      `generated/certifications.js no longer starts its rows with "${CERTIFICATION_MARKER}", so the header could not be kept.`
+    );
   }
-  return `${source.slice(0, start)}${replacement}${source.slice(end)}`;
+  return source.slice(0, start);
+}
+
+async function formatLike(file, text) {
+  return prettier.format(text, { ...(await prettier.resolveConfig(file)), filepath: file });
 }
 
 /**
@@ -266,7 +286,7 @@ function parseArgs(argv) {
 async function main(argv = process.argv.slice(2)) {
   const { summaryPath } = parseArgs(argv);
   const today = todayIso();
-  const moduleUrl = pathToFileURL(dataFile).href;
+  const moduleUrl = pathToFileURL(generatedFile).href;
   const { appliedSkills: existingSkills, certifications: existingCertifications } = await import(
     `${moduleUrl}?t=${Date.now()}`
   );
@@ -280,29 +300,17 @@ async function main(argv = process.argv.slice(2)) {
       fetchImpl: fetch,
     });
 
+  // Read both files before writing either, so a failure to stamp the date
+  // (rule 1) leaves both untouched.
+  const generatedSource = await fs.readFile(generatedFile, 'utf8');
   const source = await fs.readFile(dataFile, 'utf8');
-  const certificationStartMarker = "// status: 'active' | 'beta' | 'expiring' | 'retired'";
-  const startMarker = '// Applied Skills — sourced from official Applied Skills Poster';
-  const endMarker = '// Timeline events';
-
-  let nextSource = replaceBetween(
-    source,
-    certificationStartMarker,
-    startMarker,
-    renderCertificationBlock(nextCertifications)
+  const nextSource = await formatLike(dataFile, stampSyncDate(source, today));
+  const nextGenerated = await formatLike(
+    generatedFile,
+    `${generatedHeader(generatedSource)}${renderCertificationBlock(nextCertifications)}${renderAppliedSkillsBlock(nextSkills)}`
   );
-  nextSource = replaceBetween(
-    nextSource,
-    startMarker,
-    endMarker,
-    renderAppliedSkillsBlock(nextSkills)
-  );
-  nextSource = stampSyncDate(nextSource, today);
-  nextSource = await prettier.format(nextSource, {
-    ...(await prettier.resolveConfig(dataFile)),
-    filepath: dataFile,
-  });
 
+  await fs.writeFile(generatedFile, nextGenerated);
   await fs.writeFile(dataFile, nextSource);
 
   const summary = summarizeChanges({
@@ -319,7 +327,7 @@ async function main(argv = process.argv.slice(2)) {
   console.log(
     `Updated ${nextCertifications.length} Certifications and ${nextSkills.length} Applied Skills in ${path.relative(
       repoRoot,
-      dataFile
+      generatedFile
     )}; DATA_AS_OF is now ${today}.`
   );
   console.log('');

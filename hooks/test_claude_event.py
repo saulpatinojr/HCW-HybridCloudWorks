@@ -28,6 +28,8 @@ from pathlib import Path
 HOOK = Path(__file__).resolve().parent / "claude_event.py"
 REPO = HOOK.parent.parent
 VALIDATOR = REPO / "tooling" / "workflow.py"
+# The validator and the two files it imports (#1845); the hook checks the same list.
+VALIDATOR_FILES = ("workflow.py", "workflow_state.py", "workflow_agents.py")
 REGISTRY = REPO / "tooling" / "agent-registry.yml"
 
 BLOCKED_NODE = {
@@ -70,7 +72,8 @@ class HookCase(unittest.TestCase):
         # under test carries a real copy rather than a stub: a change to
         # workflow.py that broke validation would otherwise pass here.
         (self.root / "tooling").mkdir()
-        shutil.copy(VALIDATOR, self.root / "tooling" / "workflow.py")
+        for name in VALIDATOR_FILES:
+            shutil.copy(VALIDATOR.parent / name, self.root / "tooling" / name)
         shutil.copy(REGISTRY, self.root / "tooling" / "agent-registry.yml")
 
     def arm(self, **overrides) -> str:
@@ -156,6 +159,19 @@ class TheGuardFailsOpen(HookCase):
         self.arm()
         (self.root / "tooling" / "workflow.py").unlink()
         self.assertIsNone(decision(run_hook(self.root, "Stop")))
+
+    def test_a_validator_missing_one_of_its_files(self):
+        # A partial install (a sibling the validator imports is gone) fails
+        # open like a missing one, rather than blocking on an ImportError.
+        self.arm()
+        (self.root / "tooling" / "workflow_state.py").unlink()
+        self.assertIsNone(decision(run_hook(self.root, "Stop")))
+
+    def test_the_hook_and_this_test_name_the_same_validator_files(self):
+        hook = HOOK.read_text(encoding="utf-8")
+        self.assertIn(f"VALIDATOR_FILES = {VALIDATOR_FILES!r}".replace("'", '"'), hook)
+        for name in VALIDATOR_FILES:
+            self.assertTrue((VALIDATOR.parent / name).is_file(), name)
 
     def test_any_event_that_is_not_stop(self):
         self.arm()

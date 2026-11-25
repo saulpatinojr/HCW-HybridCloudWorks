@@ -40,14 +40,16 @@ import { ARTICLE_SLUG, providerOf, slugOf, STRICT_SLUG } from './lib/content-man
 import { fetchPublished } from './lib/content-manifest-fetch.mjs';
 import { addDesigns, isDesignItem } from './lib/content-manifest-designs.mjs';
 import { describeSectionCounts, sectionCounts, serverSections } from './lib/content-manifest-sections.mjs';
+// The field lists, imported from functions/ rather than copied, so the
+// manifest and the route that serves it keep exactly the same fields (#1845;
+// designs did the same in #1628). Neither import needs functions/'s packages.
+import { ARTICLE_FIELDS } from '../functions/src/lib/public-article-fields.js';
+import { PUBLIC_INTERVIEW_DETAIL_FIELDS } from '../functions/src/lib/public-read-interviews.js';
 // The parts below now live in their own files; they are exported from here too, so callers keep their imports.
 export { PROVIDERS, STRICT_SLUG, ARTICLE_SLUG } from './lib/content-manifest-items.mjs';
 export { describeFetchFailure } from './lib/content-manifest-fetch.mjs';
 export { DESIGN_PROVIDERS } from './lib/content-manifest-designs.mjs';
 export { SECTION_TYPES, sectionCounts, describeSectionCounts } from './lib/content-manifest-sections.mjs';
-
-// The public detail route's allowlist, imported rather than copied: the one
-// list both sides project a design to (#1628). The module imports nothing.
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 // NOT under public/. Vite copies public/ verbatim into dist, so a manifest
@@ -66,72 +68,15 @@ const OUT_PATH = join(ROOT, 'frontend', 'data', 'content-manifest.json');
  * generate the article, which no reader ever sees. Projecting to what
  * `BlogDetailTemplate` actually reads removes about three quarters of it.
  *
+ * The list itself is functions/src/lib/public-article-fields.js, the one the
+ * manifest route projects with too; it is re-exported here for callers.
+ *
  * `content-manifest.test.mjs` scans the template for `article.<field>` and fails
  * when one is missing here, so a field added to the page cannot silently render
  * blank in the pre-rendered HTML while working in the browser — which is the
  * worst version of this bug, since only a crawler would see it.
  */
-export const ARTICLE_FIELDS = Object.freeze([
-  // identity and routing
-  'id',
-  'slug',
-  'Slug',
-  'cloudProvider',
-  'Cloud Provider',
-  // the body, in the shapes the template looks for
-  'Content',
-  'content',
-  'blogDraft',
-  'code',
-  'codeLanguage',
-  'codeSnippet',
-  'terraformCode',
-  // headings and summary
-  'Title',
-  'title',
-  'Summary',
-  'summary',
-  'description',
-  'excerpt',
-  'keyTopics',
-  // taxonomy. `type` is what the section pages select on (framework,
-  // coder_corner); the manifest counts it per provider so the pre-render can
-  // keep a section with nothing in it out of the sitemap (issue #373). No
-  // quoted strings in this comment: the drift test parses this block as text.
-  'type',
-  'Category',
-  'category',
-  'Tags',
-  'tags',
-  'language',
-  // attribution and dates
-  'Author',
-  'siteAuthor',
-  'editorAuthor',
-  'createdByName',
-  'publishedByName',
-  'Published At',
-  'publishedAt',
-  'publishedDate',
-  'datePublished',
-  'blogPublishedAt',
-  'ReadTime',
-  'readTime',
-  // media
-  'imageUrl',
-  'heroImageUrl',
-  'contentImageUrl',
-  'altCoverImage',
-  'altCoverImageVariants',
-  'aiImageUrls',
-  'aiImageVariants',
-  // outbound links
-  'url',
-  'sourceUrl',
-  'Source URL',
-  'repoUrl',
-  'CD Url',
-]);
+export { ARTICLE_FIELDS };
 
 /** Keep only the rendered fields, and only when present. */
 export function project(item) {
@@ -145,26 +90,11 @@ export function project(item) {
 /**
  * The fields the interview page renders (ADR 0040, D6): exactly the public
  * detail route's allowlist, PUBLIC_INTERVIEW_DETAIL_FIELDS in
- * functions/src/lib/public-reads.js. DUPLICATED there as INTERVIEW_FIELDS in
- * public-content-manifest.js, and `public-content-manifest.test.js` fails if
- * the two drift, for the same reason ARTICLE_FIELDS is pinned. The first
- * seven are the list route's fields, which the list page and the Azure
- * landing card read; keep them first.
+ * functions/src/lib/public-read-interviews.js, imported rather than copied
+ * (#1845). The first seven are the list route's fields, which the list page
+ * and the Azure landing card read; that file keeps them first.
  */
-export const INTERVIEW_FIELDS = Object.freeze([
-  'slug',
-  'title',
-  'subtitle',
-  'date',
-  'guest',
-  'tags',
-  'publishedAt',
-  'bio',
-  'image',
-  'qa',
-  'related',
-  'updatedAt',
-]);
+export const INTERVIEW_FIELDS = PUBLIC_INTERVIEW_DETAIL_FIELDS;
 
 /** The list route's projection: what a card and the landing page read. */
 export const INTERVIEW_LIST_FIELDS = Object.freeze(INTERVIEW_FIELDS.slice(0, 7));

@@ -22,6 +22,9 @@ coder_docker_proxy_config_sha256: "{{ lookup('ansible.builtin.file', coder_docke
 coder_launcher_source: "{{ role_path }}/../../../coder/launcher"
 coder_launcher_files:
   - index.html
+  - launcher-coder.js
+  - launcher-config.js
+  - launcher-workspace.js
   - launcher.css
   - launcher.js
   - main.js

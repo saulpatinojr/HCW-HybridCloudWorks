@@ -947,8 +947,20 @@ describe('the files Caddy serves', () => {
   const main = read(`${LAUNCHER_DIR}/main.js`);
   const launcher = read(`${LAUNCHER_DIR}/launcher.js`);
 
-  it('are these four, and nothing else', () => {
-    expect(files).toEqual(['index.html', 'launcher.css', 'launcher.js', 'main.js']);
+  // The logic is launcher.js and the three siblings it imports (split by job in #1845).
+  const LOGIC_SIBLINGS = ['launcher-coder.js', 'launcher-config.js', 'launcher-workspace.js'];
+  const siblings = LOGIC_SIBLINGS.map((file) => read(`${LAUNCHER_DIR}/${file}`));
+
+  it('are these seven, and nothing else', () => {
+    expect(files).toEqual([
+      'index.html',
+      'launcher-coder.js',
+      'launcher-config.js',
+      'launcher-workspace.js',
+      'launcher.css',
+      'launcher.js',
+      'main.js',
+    ]);
   });
 
   it('are the files the role installs by name, and the role removes anything else', () => {
@@ -981,15 +993,21 @@ describe('the files Caddy serves', () => {
   });
 
   it('set text only as text, and nothing from the query', () => {
-    for (const source of [main, launcher]) {
+    for (const source of [main, launcher, ...siblings]) {
       expect(source).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function/);
     }
     expect(main).toContain('status.textContent = text;');
     expect(main).toMatch(/^import \{[^}]+\} from '\.\/launcher\.js';$/m);
     expect(main.match(/^import /gm)).toHaveLength(1);
-    // The logic is pure: no page, no globals, no imports.
-    expect(launcher).not.toMatch(/^import /m);
-    expect(launcher).not.toMatch(/\b(?:document|window|location|localStorage)\./);
+    // The logic is pure: no page, no globals, and no imports but its own
+    // sibling logic files, which Caddy serves from the same directory.
+    for (const source of [launcher, ...siblings]) {
+      const imports = [...source.matchAll(/^import\b[\s\S]*?from '([^']+)';$/gm)].map((match) => match[1]);
+      for (const from of imports) expect(LOGIC_SIBLINGS.map((file) => `./${file}`)).toContain(from);
+      expect(source).not.toMatch(/^import\s+['"]/m);
+      expect(source).not.toMatch(/\bimport\(/);
+      expect(source).not.toMatch(/\b(?:document|window|location|localStorage)\./);
+    }
   });
 
   it('post only to the site’s two names, with its own type', () => {
