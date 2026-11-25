@@ -53,6 +53,290 @@ function readContentLength(request) {
 }
 
 /**
+ * Write a job document built by newJobDoc and queue it.
+ *
+ * @param {object} h - the handlers' dependencies
+ * @param {object} job
+ * @param {string} job.type
+ * @param {object} job.payload
+ * @param {{ user?: object }} job.auth
+ * @param {Function} [job.enqueue] the queue output; absent answers a 500
+ * @param {object} job.context
+ * @param {string} job.label the route, for the log
+ * @param {number} [job.maxPayloadBytes] the bound, when the caller holds it;
+ *   else the registered type's
+ * @returns {Promise<{jobId: string} | {error: object}>}
+ * @throws {Error} code JOB_PAYLOAD_TOO_LARGE from newJobDoc
+ */
+async function enqueueJob({ store, now, uuid }, { type, payload, auth, enqueue, context, label, maxPayloadBytes }) {
+  if (typeof enqueue !== 'function') {
+    context.error?.(`${label}: no queue output wired`);
+    return { error: json(500, { error: 'Job queue is not configured' }) };
+  }
+  const jobId = uuid();
+  const doc = newJobDoc({
+    id: jobId,
+    type,
+    payload,
+    requestedBy: auth.user,
+    createdAt: now().toISOString(),
+    maxPayloadBytes,
+  });
+  await store.upsertDoc(JOBS_CONTAINER, doc);
+  enqueue({ jobId, type });
+  return { jobId };
+}
+
+/**
+ * Remove an upload nothing will consume. Best effort: the caller is
+ * already answering a failure, and this must not become a second one.
+ * The log carries the failure's status code, never the path.
+ */
+async function discardUpload({ storage }, uploadPath, context) {
+  if (typeof storage?.deleteBlob !== 'function') {
+    context.warn?.('uploadPodcastRecording: no deleteBlob wired; orphaned upload left to the lifecycle rule');
+    return;
+  }
+  try {
+    await storage.deleteBlob(PODCAST_AUDIO_CONTAINER, uploadPath);
+  } catch (err) {
+    context.warn?.(
+      `uploadPodcastRecording: upload blob not deleted after a failed enqueue (${err?.code || err?.statusCode || 'error'})`
+    );
+  }
+}
+
+/** The request's JSON object, or null when the body is not one. */
+async function readBodyObject(request) {
+  const body = await request.json().catch(() => null);
+  return body && typeof body === 'object' ? body : null;
+}
+
+/**
+ * The transcript id the job will write: `{ transcriptId }`, or `{ response }`
+ * when Plaud is not connected or the stored recording does not exist.
+ */
+async function transcriptIdFor({ store }, payload) {
+  if (payload.recordingId) {
+    const server = await store.readDoc(MCP_CONTAINER, PLAUD_MCP_SERVER_ID, PLAUD_MCP_SERVER_ID);
+    const refusal = refusalForPlaud(server);
+    if (refusal) return { response: json(409, { error: refusal }) };
+    return { transcriptId: `plaud_${payload.recordingId}` };
+  }
+  const id = payload.storedRecordingId;
+  const recording = await store.readDoc(RECORDINGS_CONTAINER, id, id);
+  if (!recording) return { response: json(404, { error: `Recording ${id} was not found` }) };
+  return { transcriptId: `recording_${id}` };
+}
+
+/** Check the request and queue the scripting job. */
+async function queueFromRecording(h, request, context, { auth, enqueue }) {
+  const body = await readBodyObject(request);
+  if (!body) return json(400, { error: 'Body must be a JSON object' });
+  const parsed = parseRecordingPayload(body);
+  if (parsed.error) return json(400, { error: parsed.error });
+  const payload = parsed.value;
+
+  const target = await transcriptIdFor(h, payload);
+  if (target.response) return target.response;
+
+  const queued = await enqueueJob(h, {
+    type: RECORDING_JOB_TYPE,
+    payload,
+    auth,
+    enqueue,
+    context,
+    label: 'generatePodcastTranscriptFromRecording',
+  });
+  if (queued.error) return queued.error;
+
+  context.log?.(
+    'generatePodcastTranscriptFromRecording: queued'
+  );
+  return json(202, {
+    ok: true,
+    jobId: queued.jobId,
+    type: RECORDING_JOB_TYPE,
+    status: 'queued',
+    poll: `getJob?jobId=${queued.jobId}`,
+    transcriptId: target.transcriptId,
+  });
+}
+
+/**
+ * POST /api/cms/podcast/transcripts/generate-from-recording —
+ * `{ recordingId }` (Plaud library) or `{ storedRecordingId }` (the
+ * `recordings` container). 409 with the Connect-tab sentence when no
+ * Plaud token is stored; 404 when a stored recording does not exist.
+ * Both refusals happen here so the tab can show them at once rather than
+ * as a failed job it would have to poll for.
+ *
+ * @param {{ enqueue: (message: {jobId: string, type: string}) => void }} io
+ */
+async function generateFromRecording(h, request, context, { enqueue } = {}) {
+  const auth = await h.guard.requireRole(request, 'editor');
+  if (auth.error) return auth.error;
+  try {
+    return await queueFromRecording(h, request, context, { auth, enqueue });
+  } catch (error) {
+    context.error(
+      `generatePodcastTranscriptFromRecording failed (${errorFacts(error)})`
+    );
+    return json(500, { error: 'Failed to queue the transcript' });
+  }
+}
+
+/** The title's refusal, or null when it is set and short enough. */
+function titleRefusal(title) {
+  if (!title) return json(400, { error: 'title is required' });
+  if (title.length > MAX_TITLE_CHARS) {
+    return json(400, { error: `title is longer than ${MAX_TITLE_CHARS} characters` });
+  }
+  return null;
+}
+
+/** The audio's bytes from base64: `{ buffer }`, or `{ response }` when missing, too large or not base64. */
+function audioBytes(body) {
+  const dataBase64 = String(body.dataBase64 || '');
+  if (!dataBase64) return { response: json(400, { error: 'dataBase64 is required' }) };
+  if (dataBase64.length > MAX_AUDIO_BASE64_CHARS) return { response: json(413, { error: TOO_LARGE }) };
+  const buffer = Buffer.from(dataBase64, 'base64');
+  if (buffer.length === 0) return { response: json(400, { error: 'dataBase64 is not valid base64' }) };
+  if (buffer.length > MAX_AUDIO_UPLOAD_BYTES) return { response: json(413, { error: TOO_LARGE }) };
+  return { buffer };
+}
+
+/** The upload request checked: `{ title, media, buffer }`, or `{ response }` with the refusal. */
+async function readUpload(request) {
+  const body = await readBodyObject(request);
+  if (!body) return { response: json(400, { error: 'Body must be a JSON object' }) };
+  const title = String(body.title || '').trim();
+  const refused = titleRefusal(title);
+  if (refused) return { response: refused };
+  const media = checkAudioUpload({ contentType: body.contentType, fileName: body.fileName });
+  if (!media.ok) return { response: json(415, { error: media.reason }) };
+  const audio = audioBytes(body);
+  if (audio.response) return audio;
+  return { title, media, buffer: audio.buffer };
+}
+
+/**
+ * Queue the job that consumes a stored upload. The blob is reachable on the
+ * media route from the upload on. If the job that would consume it cannot
+ * be queued — no output wired, a failed job-document write, a failed queue
+ * send — nothing will ever read or delete it before the seven-day lifecycle
+ * rule, so it is removed here, best-effort, and the enqueue's own error is
+ * answered exactly as before. A failed delete is logged content-free
+ * (status code only) and never replaces that error.
+ */
+async function queueUpload(h, { payload, auth, enqueue, context }) {
+  let queued;
+  try {
+    queued = await enqueueJob(h, {
+      type: UPLOAD_JOB_TYPE,
+      payload,
+      auth,
+      enqueue,
+      context,
+      label: 'uploadPodcastRecording',
+      maxPayloadBytes: UPLOAD_JOB_MAX_PAYLOAD_BYTES,
+    });
+  } catch (err) {
+    await discardUpload(h, payload.uploadPath, context);
+    throw err;
+  }
+  if (queued.error) await discardUpload(h, payload.uploadPath, context);
+  return queued;
+}
+
+/** Store the checked upload and queue its job. */
+async function storeAndQueue(h, request, context, { auth, enqueue }) {
+  const upload = await readUpload(request);
+  if (upload.response) return upload.response;
+  const { title, media, buffer } = upload;
+
+  const uploadPath = uploadPathFor(h.uuid(), media.extension);
+  // The job's payload is bounded (#942), and a title within
+  // MAX_TITLE_CHARS can still exceed it once JSON-escaped (control
+  // characters and lone surrogates escape to six bytes each). Checked
+  // here, before the audio is stored, so an oversized title is the
+  // caller's 413 rather than an upload deleted again behind a 500.
+  const payload = { uploadPath, title };
+  if (jobPayloadBytes(payload) > UPLOAD_JOB_MAX_PAYLOAD_BYTES) {
+    return json(413, { error: TITLE_TOO_LARGE });
+  }
+  await h.storage.uploadBlob(
+    PODCAST_AUDIO_CONTAINER,
+    uploadPath,
+    buffer,
+    media.contentType,
+    { source: 'recording-upload', uploadedBy: String(auth.user?.oid || '') },
+    { overwrite: false }
+  );
+
+  const queued = await queueUpload(h, { payload, auth, enqueue, context });
+  if (queued.error) return queued.error;
+
+  context.log?.(`uploadPodcastRecording: queued (${buffer.length} B)`);
+  return json(202, {
+    ok: true,
+    jobId: queued.jobId,
+    type: UPLOAD_JOB_TYPE,
+    status: 'queued',
+    poll: `getJob?jobId=${queued.jobId}`,
+    uploadPath,
+    audioUrl: mediaUrlFor(PODCAST_AUDIO_CONTAINER, uploadPath),
+    bytes: buffer.length,
+  });
+}
+
+/** The refusal before the body is read: an oversized request, or Plaud Embedded not set up. */
+function uploadPrecheck(h, request) {
+  if (readContentLength(request) > MAX_UPLOAD_REQUEST_BYTES) {
+    return json(413, { error: TOO_LARGE });
+  }
+  if (!isPlaudEmbeddedConfigured(h.env)) {
+    return json(503, { error: PLAUD_EMBEDDED_NOT_CONFIGURED_MESSAGE });
+  }
+  return null;
+}
+
+/**
+ * POST /api/cms/podcast/recordings/upload —
+ * `{ title, fileName, contentType, dataBase64 }` → 202 with the job id,
+ * the blob path and the media URL Plaud will be handed.
+ *
+ * Refuses before reading the body when the request is oversized, and
+ * before storing anything when Plaud Embedded is not configured.
+ */
+async function uploadRecording(h, request, context, { enqueue } = {}) {
+  const auth = await h.guard.requireRole(request, 'editor');
+  if (auth.error) return auth.error;
+
+  const early = uploadPrecheck(h, request);
+  if (early) return early;
+
+  try {
+    return await storeAndQueue(h, request, context, { auth, enqueue });
+  } catch (error) {
+    if (error?.statusCode === 404 || error?.code === 'ContainerNotFound') {
+      return json(409, {
+        error:
+          `Blob container "${PODCAST_AUDIO_CONTAINER}" is not provisioned yet; it is declared in ` +
+          'infra/storage.tf — run the Terraform apply that creates it, then upload again.',
+      });
+    }
+    // The error's code, status and class only: never its message or the
+    // object, whose properties (a storage response, a request body) are not
+    // for the log.
+    context.error(
+      `uploadPodcastRecording failed (${errorFacts(error)})`
+    );
+    return json(500, { error: 'Failed to upload the recording' });
+  }
+}
+
+/**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
  * @param {{ readDoc: Function, upsertDoc: Function }} deps.store
@@ -71,238 +355,9 @@ export function createPodcastRecordingHandlers({
   now = () => new Date(),
   uuid = () => crypto.randomUUID(),
 }) {
-  /**
-   * Write a job document built by newJobDoc and queue it.
-   *
-   * @param {object} job
-   * @param {string} job.type
-   * @param {object} job.payload
-   * @param {{ user?: object }} job.auth
-   * @param {Function} [job.enqueue] the queue output; absent answers a 500
-   * @param {object} job.context
-   * @param {string} job.label the route, for the log
-   * @param {number} [job.maxPayloadBytes] the bound, when the caller holds it;
-   *   else the registered type's
-   * @returns {Promise<{jobId: string} | {error: object}>}
-   * @throws {Error} code JOB_PAYLOAD_TOO_LARGE from newJobDoc
-   */
-  async function enqueueJob({ type, payload, auth, enqueue, context, label, maxPayloadBytes }) {
-    if (typeof enqueue !== 'function') {
-      context.error?.(`${label}: no queue output wired`);
-      return { error: json(500, { error: 'Job queue is not configured' }) };
-    }
-    const jobId = uuid();
-    const doc = newJobDoc({
-      id: jobId,
-      type,
-      payload,
-      requestedBy: auth.user,
-      createdAt: now().toISOString(),
-      maxPayloadBytes,
-    });
-    await store.upsertDoc(JOBS_CONTAINER, doc);
-    enqueue({ jobId, type });
-    return { jobId };
-  }
-
-  /**
-   * Remove an upload nothing will consume. Best effort: the caller is
-   * already answering a failure, and this must not become a second one.
-   * The log carries the failure's status code, never the path.
-   */
-  async function discardUpload(uploadPath, context) {
-    if (typeof storage?.deleteBlob !== 'function') {
-      context.warn?.('uploadPodcastRecording: no deleteBlob wired; orphaned upload left to the lifecycle rule');
-      return;
-    }
-    try {
-      await storage.deleteBlob(PODCAST_AUDIO_CONTAINER, uploadPath);
-    } catch (err) {
-      context.warn?.(
-        `uploadPodcastRecording: upload blob not deleted after a failed enqueue (${err?.code || err?.statusCode || 'error'})`
-      );
-    }
-  }
-
+  const h = { guard, store, storage, env, now, uuid };
   return {
-    /**
-     * POST /api/cms/podcast/transcripts/generate-from-recording —
-     * `{ recordingId }` (Plaud library) or `{ storedRecordingId }` (the
-     * `recordings` container). 409 with the Connect-tab sentence when no
-     * Plaud token is stored; 404 when a stored recording does not exist.
-     * Both refusals happen here so the tab can show them at once rather than
-     * as a failed job it would have to poll for.
-     *
-     * @param {{ enqueue: (message: {jobId: string, type: string}) => void }} io
-     */
-    async generateFromRecording(request, context, { enqueue } = {}) {
-      const auth = await guard.requireRole(request, 'editor');
-      if (auth.error) return auth.error;
-      try {
-        const body = await request.json().catch(() => null);
-        if (!body || typeof body !== 'object') {
-          return json(400, { error: 'Body must be a JSON object' });
-        }
-        const parsed = parseRecordingPayload(body);
-        if (parsed.error) return json(400, { error: parsed.error });
-        const payload = parsed.value;
-
-        let transcriptId;
-        if (payload.recordingId) {
-          const server = await store.readDoc(MCP_CONTAINER, PLAUD_MCP_SERVER_ID, PLAUD_MCP_SERVER_ID);
-          const refusal = refusalForPlaud(server);
-          if (refusal) return json(409, { error: refusal });
-          transcriptId = `plaud_${payload.recordingId}`;
-        } else {
-          const id = payload.storedRecordingId;
-          const recording = await store.readDoc(RECORDINGS_CONTAINER, id, id);
-          if (!recording) return json(404, { error: `Recording ${id} was not found` });
-          transcriptId = `recording_${id}`;
-        }
-
-        const queued = await enqueueJob({
-          type: RECORDING_JOB_TYPE,
-          payload,
-          auth,
-          enqueue,
-          context,
-          label: 'generatePodcastTranscriptFromRecording',
-        });
-        if (queued.error) return queued.error;
-
-        context.log?.(
-          'generatePodcastTranscriptFromRecording: queued'
-        );
-        return json(202, {
-          ok: true,
-          jobId: queued.jobId,
-          type: RECORDING_JOB_TYPE,
-          status: 'queued',
-          poll: `getJob?jobId=${queued.jobId}`,
-          transcriptId,
-        });
-      } catch (error) {
-        context.error(
-          `generatePodcastTranscriptFromRecording failed (${errorFacts(error)})`
-        );
-        return json(500, { error: 'Failed to queue the transcript' });
-      }
-    },
-
-    /**
-     * POST /api/cms/podcast/recordings/upload —
-     * `{ title, fileName, contentType, dataBase64 }` → 202 with the job id,
-     * the blob path and the media URL Plaud will be handed.
-     *
-     * Refuses before reading the body when the request is oversized, and
-     * before storing anything when Plaud Embedded is not configured.
-     */
-    async uploadRecording(request, context, { enqueue } = {}) {
-      const auth = await guard.requireRole(request, 'editor');
-      if (auth.error) return auth.error;
-
-      if (readContentLength(request) > MAX_UPLOAD_REQUEST_BYTES) {
-        return json(413, { error: TOO_LARGE });
-      }
-      if (!isPlaudEmbeddedConfigured(env)) {
-        return json(503, { error: PLAUD_EMBEDDED_NOT_CONFIGURED_MESSAGE });
-      }
-
-      try {
-        const body = await request.json().catch(() => null);
-        if (!body || typeof body !== 'object') {
-          return json(400, { error: 'Body must be a JSON object' });
-        }
-        const title = String(body.title || '').trim();
-        if (!title) return json(400, { error: 'title is required' });
-        if (title.length > MAX_TITLE_CHARS) {
-          return json(400, { error: `title is longer than ${MAX_TITLE_CHARS} characters` });
-        }
-
-        const media = checkAudioUpload({ contentType: body.contentType, fileName: body.fileName });
-        if (!media.ok) return json(415, { error: media.reason });
-
-        const dataBase64 = String(body.dataBase64 || '');
-        if (!dataBase64) return json(400, { error: 'dataBase64 is required' });
-        if (dataBase64.length > MAX_AUDIO_BASE64_CHARS) return json(413, { error: TOO_LARGE });
-
-        const buffer = Buffer.from(dataBase64, 'base64');
-        if (buffer.length === 0) return json(400, { error: 'dataBase64 is not valid base64' });
-        if (buffer.length > MAX_AUDIO_UPLOAD_BYTES) return json(413, { error: TOO_LARGE });
-
-        const uploadPath = uploadPathFor(uuid(), media.extension);
-        // The job's payload is bounded (#942), and a title within
-        // MAX_TITLE_CHARS can still exceed it once JSON-escaped (control
-        // characters and lone surrogates escape to six bytes each). Checked
-        // here, before the audio is stored, so an oversized title is the
-        // caller's 413 rather than an upload deleted again behind a 500.
-        const payload = { uploadPath, title };
-        if (jobPayloadBytes(payload) > UPLOAD_JOB_MAX_PAYLOAD_BYTES) {
-          return json(413, { error: TITLE_TOO_LARGE });
-        }
-        await storage.uploadBlob(
-          PODCAST_AUDIO_CONTAINER,
-          uploadPath,
-          buffer,
-          media.contentType,
-          { source: 'recording-upload', uploadedBy: String(auth.user?.oid || '') },
-          { overwrite: false }
-        );
-
-        // The blob is reachable on the media route from this line on. If the
-        // job that would consume it cannot be queued — no output wired, a
-        // failed job-document write, a failed queue send — nothing will ever
-        // read or delete it before the seven-day lifecycle rule, so it is
-        // removed here, best-effort, and the enqueue's own error is answered
-        // exactly as before. A failed delete is logged content-free (status
-        // code only) and never replaces that error.
-        let queued;
-        try {
-          queued = await enqueueJob({
-            type: UPLOAD_JOB_TYPE,
-            payload,
-            auth,
-            enqueue,
-            context,
-            label: 'uploadPodcastRecording',
-            maxPayloadBytes: UPLOAD_JOB_MAX_PAYLOAD_BYTES,
-          });
-        } catch (err) {
-          await discardUpload(uploadPath, context);
-          throw err;
-        }
-        if (queued.error) {
-          await discardUpload(uploadPath, context);
-          return queued.error;
-        }
-
-        context.log?.(`uploadPodcastRecording: queued (${buffer.length} B)`);
-        return json(202, {
-          ok: true,
-          jobId: queued.jobId,
-          type: UPLOAD_JOB_TYPE,
-          status: 'queued',
-          poll: `getJob?jobId=${queued.jobId}`,
-          uploadPath,
-          audioUrl: mediaUrlFor(PODCAST_AUDIO_CONTAINER, uploadPath),
-          bytes: buffer.length,
-        });
-      } catch (error) {
-        if (error?.statusCode === 404 || error?.code === 'ContainerNotFound') {
-          return json(409, {
-            error:
-              `Blob container "${PODCAST_AUDIO_CONTAINER}" is not provisioned yet; it is declared in ` +
-              'infra/storage.tf — run the Terraform apply that creates it, then upload again.',
-          });
-        }
-        // The error's code, status and class only: never its message or the
-        // object, whose properties (a storage response, a request body) are not
-        // for the log.
-        context.error(
-          `uploadPodcastRecording failed (${errorFacts(error)})`
-        );
-        return json(500, { error: 'Failed to upload the recording' });
-      }
-    },
+    generateFromRecording: (request, context, io) => generateFromRecording(h, request, context, io),
+    uploadRecording: (request, context, io) => uploadRecording(h, request, context, io),
   };
 }
