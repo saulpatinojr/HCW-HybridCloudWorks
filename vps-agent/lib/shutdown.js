@@ -102,6 +102,75 @@ export function shutdownTimeoutMs(env = process.env) {
  * @param {(code: number) => void} [deps.exit]            tests only
  * @param {Record<string, string|undefined>} [deps.env]   tests only
  */
+/** The terminal status a container's result is reported as. */
+function resultStatus(result) {
+  if (result.aborted) return 'failed';
+  if (result.timedOut) return 'timeout';
+  return result.exitCode === 0 ? 'succeeded' : 'failed';
+}
+
+/** The `failed` report for a job that has no container result. */
+function reportFailed(api, job, output) {
+  return api.completeJob({
+    jobId: job.id,
+    claimId: job.claimId,
+    status: 'failed',
+    exitCode: -1,
+    output,
+  });
+}
+
+/**
+ * Runs the job's container, unless its claim came back after the signal,
+ * and reports the result. Throws when the report cannot be sent.
+ */
+async function runAndReport({ api, log, runInDocker, limits }, capability, job, controller, lateClaim) {
+  // The whole claimed job goes in: its id becomes the container's
+  // hcw.lab-job label and its payloadEncoding selects how the payload is
+  // staged (lib/docker-runner.js).
+  const result = lateClaim ? NOT_STARTED : await runInDocker(capability, job, limits, { signal: controller.signal });
+  const status = resultStatus(result);
+
+  await api.completeJob({
+    jobId: job.id,
+    claimId: job.claimId,
+    status,
+    exitCode: result.aborted ? -1 : result.exitCode,
+    output: result.aborted ? INTERRUPTED_OUTPUT : result.output,
+  });
+  // A failed or timed-out job is the learner's result, not the agent's
+  // fault, so it is information; an interrupted one is the host's doing
+  // and says so here, on the host's journal.
+  log.info(
+    `job ${job.id} -> ${status} (exit ${result.exitCode})${result.aborted ? '; interrupted by shutdown' : ''}`
+  );
+}
+
+/** Refuses a job this agent has no local recipe for, and reports it failed. */
+async function refuse(api, log, job) {
+  log.error(`refusing a job: no local capability for type ${job.type}`);
+  log.info(`refused job ${job.id} (${job.type})`);
+  await reportFailed(api, job, `agent has no capability for job type ${job.type}`).catch((err) =>
+    log.fault('error', 'could not report a refusal', err, `job ${job.id}`)
+  );
+}
+
+/**
+ * Resolves true once no job is running and no claim is unanswered, false
+ * at the budget. It looks again every DRAIN_TICK_MS rather than awaiting
+ * a fixed list, because a claim that comes back during the drain adds a
+ * job to report after the drain began.
+ */
+async function drain(active, claimsInFlight, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (active.size > 0 || claimsInFlight() > 0) {
+    const left = deadline - Date.now();
+    if (left <= 0) return false;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(DRAIN_TICK_MS, left)));
+  }
+  return true;
+}
+
 export function createShutdown({
   api,
   log,
@@ -136,17 +205,7 @@ export function createShutdown({
     // actually run the command, so it refuses anything it has no allowlisted
     // recipe for rather than trusting the response.
     if (!capability) {
-      log.error(`refusing a job: no local capability for type ${job.type}`);
-      log.info(`refused job ${job.id} (${job.type})`);
-      await api
-        .completeJob({
-          jobId: job.id,
-          claimId: job.claimId,
-          status: 'failed',
-          exitCode: -1,
-          output: `agent has no capability for job type ${job.type}`,
-        })
-        .catch((err) => log.fault('error', 'could not report a refusal', err, `job ${job.id}`));
+      await refuse(api, log, job);
       return;
     }
 
@@ -159,69 +218,21 @@ export function createShutdown({
     log.info(lateClaim ? `not starting job ${job.id} (${job.type}): stopping` : `running job ${job.id} (${job.type})`);
 
     try {
-      // The whole claimed job goes in: its id becomes the container's
-      // hcw.lab-job label and its payloadEncoding selects how the payload is
-      // staged (lib/docker-runner.js).
-      const result = lateClaim
-        ? NOT_STARTED
-        : await runInDocker(capability, job, limits, { signal: controller.signal });
-      const status = result.aborted
-        ? 'failed'
-        : result.timedOut
-          ? 'timeout'
-          : result.exitCode === 0
-            ? 'succeeded'
-            : 'failed';
-
-      await api.completeJob({
-        jobId: job.id,
-        claimId: job.claimId,
-        status,
-        exitCode: result.aborted ? -1 : result.exitCode,
-        output: result.aborted ? INTERRUPTED_OUTPUT : result.output,
-      });
-      // A failed or timed-out job is the learner's result, not the agent's
-      // fault, so it is information; an interrupted one is the host's doing
-      // and says so here, on the host's journal.
-      log.info(
-        `job ${job.id} -> ${status} (exit ${result.exitCode})${result.aborted ? '; interrupted by shutdown' : ''}`
-      );
+      await runAndReport({ api, log, runInDocker, limits }, capability, job, controller, lateClaim);
     } catch (err) {
       log.fault('error', 'job errored', err, `job ${job.id}`);
       // Best effort: if this also fails the job's claim lease expires
       // server-side and another agent picks it up, which is why the lease
       // exists.
-      await api
-        .completeJob({
-          jobId: job.id,
-          claimId: job.claimId,
-          status: 'failed',
-          exitCode: -1,
-          output: `agent error: ${err.message}`,
-        })
-        .catch((reportErr) => log.fault('error', 'could not report a failure', reportErr, `job ${job.id}`));
+      await reportFailed(api, job, `agent error: ${err.message}`).catch((reportErr) =>
+        log.fault('error', 'could not report a failure', reportErr, `job ${job.id}`)
+      );
     } finally {
       active.delete(controller);
       // Not while stopping: the shutdown's own `offline` is the last word,
       // and a `stopping` beat from a finishing job could land after it.
       if (!stopping) sendHeartbeat();
     }
-  }
-
-  /**
-   * Resolves true once no job is running and no claim is unanswered, false
-   * at the budget. It looks again every DRAIN_TICK_MS rather than awaiting
-   * a fixed list, because a claim that comes back during the drain adds a
-   * job to report after the drain began.
-   */
-  async function drain() {
-    const deadline = Date.now() + timeoutMs;
-    while (active.size > 0 || claimsInFlight() > 0) {
-      const left = deadline - Date.now();
-      if (left <= 0) return false;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(DRAIN_TICK_MS, left)));
-    }
-    return true;
   }
 
   /**
@@ -247,7 +258,7 @@ export function createShutdown({
     // reports rather than ahead of them, so a slow API cannot spend the
     // job's budget on a heartbeat.
     const stoppingBeat = sendHeartbeat('stopping', { timeoutMs: SHUTDOWN_HEARTBEAT_TIMEOUT_MS });
-    const reported = await drain();
+    const reported = await drain(active, claimsInFlight, timeoutMs);
     await stoppingBeat;
 
     if (!reported) {

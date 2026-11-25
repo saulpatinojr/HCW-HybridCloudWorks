@@ -157,6 +157,40 @@ export function ackPath(env = process.env) {
 const unreadable = (now, written) =>
   now < written + MAX_HOLD_MS ? { state: 'held-unreadable', until: written + MAX_HOLD_MS } : { state: 'expired' };
 
+/** The answer when the hold cannot be opened, from the error that said so. */
+function unopened(err, path, now, fsImpl) {
+  if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return { state: 'none' };
+  if (err?.code !== 'EACCES' && err?.code !== 'EPERM') return { state: 'unknown' };
+  // There and not ours to read: its write time still bounds the hold, and
+  // a stat of the path reads that without the content, so there is no
+  // pair to keep together.
+  try {
+    return unreadable(now, fsImpl.statSync(path).mtimeMs);
+  } catch {
+    return { state: 'unknown' };
+  }
+}
+
+/** The answer from an open hold: its write time and its content, both from `fd`. */
+function readOpen(fd, now, fsImpl) {
+  let written;
+  try {
+    written = fsImpl.fstatSync(fd).mtimeMs;
+  } catch {
+    return { state: 'unknown' };
+  }
+  let text;
+  try {
+    text = fsImpl.readFileSync(fd, 'utf8');
+  } catch {
+    return unreadable(now, written);
+  }
+  const found = EXPIRY.exec(text);
+  if (!found) return unreadable(now, written);
+  const until = Math.min(Number(found[1]) * 1000, written + MAX_HOLD_MS);
+  return now < until ? { state: 'held', until, expiry: found[1] } : { state: 'expired' };
+}
+
 /**
  * Reads the hold once, from one descriptor. Never throws.
  *
@@ -173,34 +207,10 @@ export function readHold(path, { now = Date.now(), fsImpl = fs } = {}) {
   try {
     fd = fsImpl.openSync(path, 'r');
   } catch (err) {
-    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return { state: 'none' };
-    if (err?.code !== 'EACCES' && err?.code !== 'EPERM') return { state: 'unknown' };
-    // There and not ours to read: its write time still bounds the hold, and
-    // a stat of the path reads that without the content, so there is no
-    // pair to keep together.
-    try {
-      return unreadable(now, fsImpl.statSync(path).mtimeMs);
-    } catch {
-      return { state: 'unknown' };
-    }
+    return unopened(err, path, now, fsImpl);
   }
   try {
-    let written;
-    try {
-      written = fsImpl.fstatSync(fd).mtimeMs;
-    } catch {
-      return { state: 'unknown' };
-    }
-    let text;
-    try {
-      text = fsImpl.readFileSync(fd, 'utf8');
-    } catch {
-      return unreadable(now, written);
-    }
-    const found = EXPIRY.exec(text);
-    if (!found) return unreadable(now, written);
-    const until = Math.min(Number(found[1]) * 1000, written + MAX_HOLD_MS);
-    return now < until ? { state: 'held', until, expiry: found[1] } : { state: 'expired' };
+    return readOpen(fd, now, fsImpl);
   } finally {
     try {
       fsImpl.closeSync(fd);
