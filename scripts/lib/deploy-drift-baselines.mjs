@@ -1,6 +1,6 @@
 /** Each service's baseline (the commit it was last deployed from) and how old the oldest change since then is (check-deploy-drift.mjs). */
 import { MAX_RUN_PAGES, RUNS_PER_PAGE } from './deploy-drift-settings.mjs';
-import { indexIncluded, ingressCommitFor } from '../check-tfc-plan.mjs';
+import { indexIncluded, ingressCommitFor } from './tfc-run-select.mjs';
 import { ORGANIZATION, WORKSPACE } from '../tfc-workspace-busy.mjs';
 
 /**
