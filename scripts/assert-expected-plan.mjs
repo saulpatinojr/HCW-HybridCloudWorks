@@ -862,40 +862,17 @@ export const DECLARED = [
   // The job adds no Terraform of its own: it rides the nightly export's
   // timer, so there is no new timer flag and no new row on
   // alert-timer-overdue.
-  {
-    address: "azurerm_storage_container.content_archive",
-    action: "create",
-    reason: "#1811 ADR 0046: the private content-archive container for the yearly content archive",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.CONTENT_ARCHIVE_ENABLED",
-    before: undefined,
-    after: "false",
-    reason: "#1811 ADR 0046: the yearly content archive's switch declared, off",
-  },
+  // The container and the switch (declared off) were applied on 2026-11-24:
+  // the owner's dry runs that day wrote their reports and the Archive card
+  // read the switch as Off. Those two declarations are gone, so a plan that
+  // creates the container again, or adds the switch from nothing, is read as
+  // unexpected. What is left is the arming change the owner asked for.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.CONTENT_ARCHIVE_ENABLED",
     before: "false",
     after: "true",
     reason: "#1811 ADR 0046: the owner armed the yearly content archive",
-  },
-
-  // #1823 (ADR 0045): the Community Days developer key's app setting, a Key
-  // Vault reference like every other credential's. The plan shows it as one
-  // added key on the Function App and nothing else. It does not read the
-  // vault, so the plan and the apply are the same whether or not the owner
-  // has pasted COMMUNITY-DAYS-API-KEY yet. Delete this entry once the apply
-  // has run, and its test in assert-expected-plan.test.mjs with it.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.COMMUNITY_DAYS_API_KEY",
-    before: undefined,
-    after:
-      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/COMMUNITY-DAYS-API-KEY)",
-    reason:
-      "#1823: Key Vault reference for COMMUNITY-DAYS-API-KEY, the Community Days developer key the Speaking hub reads open calls for speakers with",
   },
 
   // The app-exceptions alert stops counting the storage errors that follow

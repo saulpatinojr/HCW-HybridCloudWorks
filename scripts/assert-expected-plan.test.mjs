@@ -1055,15 +1055,17 @@ describe('DECLARED', () => {
     expect(infraSource).toMatch(/^\s*"PROPOSAL_STRIP_ENABLED"\s*=\s*"false"$/m);
   });
 
-  it('passes the plan after #1811’s merge (the content-archive container and its switch, off) and the plan that arms the switch', () => {
-    // Once the first run has applied, delete the two "merged" declarations and that half of this test.
-    const merged = fixture();
-    merged.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'false';
-    merged.plan.resource_changes.push({
+  it('passes the plan that arms the content archive’s switch, and no longer the plan that first declared it (#1811)', () => {
+    // The first run has applied, so creating the container or adding the switch from nothing is unexpected now.
+    const again = fixture();
+    again.app.after.app_settings.CONTENT_ARCHIVE_ENABLED = 'false';
+    expect(checkPlan(again.plan).ok).toBe(false);
+    const recreated = fixture();
+    recreated.plan.resource_changes.push({
       address: 'azurerm_storage_container.content_archive',
       change: { actions: ['create'] },
     });
-    expect(checkPlan(merged.plan)).toMatchObject({ ok: true, unexpected: [] });
+    expect(checkPlan(recreated.plan).ok).toBe(false);
 
     // The arming plan: off to on, and nothing else beside it.
     const armed = fixture();
@@ -1084,7 +1086,8 @@ describe('DECLARED', () => {
       expect(checkPlan(lost.plan).ok).toBe(false);
     }
 
-    expect(infraSource).toMatch(/^\s*"CONTENT_ARCHIVE_ENABLED"\s*=\s*"false"$/m);
+    // Armed by the owner on 2026-11-24 ("arm now", #1811).
+    expect(infraSource).toMatch(/^\s*"CONTENT_ARCHIVE_ENABLED"\s*=\s*"true"$/m);
     const block = /resource "azurerm_storage_container" "content_archive" \{[\s\S]*?\n\}/.exec(infraSource);
     expect(block, 'azurerm_storage_container.content_archive is not in infra/').not.toBeNull();
     expect(block[0]).toMatch(/name\s*=\s*"content-archive"/);
@@ -1095,33 +1098,12 @@ describe('DECLARED', () => {
     expect(infraSource).not.toMatch(/"content-archive\//);
   });
 
-  it('declares the Community Days key’s Key Vault reference exactly as infra/ writes it, and passes the plan that adds only that (#1823)', () => {
-    const entry = DECLARED.find((candidate) => candidate.path === 'app_settings.COMMUNITY_DAYS_API_KEY');
-    expect(entry, 'no declaration for the Community Days key’s app setting').toBeDefined();
-    expect(entry.address).toBe(FUNCTION_APP);
-    expect(entry.before).toBeUndefined();
-
-    // The declared value is the tree's reference with the vault's address filled in.
-    const tree =
-      /^\s*"COMMUNITY_DAYS_API_KEY"\s*=\s*"@Microsoft\.KeyVault\(SecretUri=\$\{azurerm_key_vault\.hcw\.vault_uri\}secrets\/([A-Z0-9-]+)\)"\s*$/m.exec(
-        infraSource
-      );
-    expect(tree, 'COMMUNITY_DAYS_API_KEY is not a Key Vault reference in infra/').not.toBeNull();
-    expect(tree[1]).toBe('COMMUNITY-DAYS-API-KEY');
-    expect(variableDefault('key_vault_name')).toBe('"kv-site-prod-cus-01"');
-    expect(entry.after).toBe(
-      '@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/COMMUNITY-DAYS-API-KEY)'
-    );
-
-    // The plan this pull request queues: the Function App gains that one key.
+  it('no longer declares the Community Days key’s app setting: its run has applied, so a plan that adds it again is unexpected (#1823)', () => {
+    expect(DECLARED.find((candidate) => candidate.path === 'app_settings.COMMUNITY_DAYS_API_KEY')).toBeUndefined();
     const added = fixture();
-    added.app.after.app_settings.COMMUNITY_DAYS_API_KEY = entry.after;
-    expect(checkPlan(added.plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
-
-    // The same key pointing at another secret is not what was declared.
-    const wrong = fixture();
-    wrong.app.after.app_settings.COMMUNITY_DAYS_API_KEY = entry.after.replace('COMMUNITY-DAYS-API-KEY', 'STREAMYARD-API-KEY');
-    const result = checkPlan(wrong.plan);
+    added.app.after.app_settings.COMMUNITY_DAYS_API_KEY =
+      '@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/COMMUNITY-DAYS-API-KEY)';
+    const result = checkPlan(added.plan);
     expect(result.ok).toBe(false);
     expect(result.unexpected.some((line) => line.includes('app_settings.COMMUNITY_DAYS_API_KEY'))).toBe(true);
   });
