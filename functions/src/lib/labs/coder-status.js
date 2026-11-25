@@ -294,6 +294,153 @@ function transportFailure(error) {
   return 'Coder could not be reached';
 }
 
+/** Coder's answer to the token for one operation, recorded for the health pulse (#1009). Never throws. */
+const onTokenAnswer = (deps, operation, context) => (refusedStatus) =>
+  recordTokenAnswer({ store: deps.store, operation, refusedStatus, now: deps.now, context });
+
+/** Coder answered: the build info, then the token's detail (or unknown). */
+async function readAnswered(deps, config, context, asOf) {
+  try {
+    await readReachable(deps.fetchImpl, config);
+    const detail = await readDetailOrUnknown({
+      fetchImpl: deps.fetchImpl,
+      config,
+      context,
+      onTokenAnswer: onTokenAnswer(deps, 'status', context),
+    });
+    return { configured: true, reachable: true, ...detail, asOf };
+  } catch (error) {
+    context?.warn?.(`coder-status: Coder unreachable: ${errorFacts(error)}`);
+    return {
+      configured: true,
+      reachable: false,
+      templates: [],
+      capacity: { running: null, max: config.max },
+      asOf,
+    };
+  }
+}
+
+/**
+ * The status body — the same object the route returns, for the estate read
+ * (estate.js) to fold in without a second Coder call or a second cache.
+ */
+async function readStatus(deps, context) {
+  const config = readCoderConfig(deps.env);
+  if (!config) {
+    if (hasCoderUrl(deps.env)) {
+      context?.warn?.('coder-status: CODER_URL is not an https URL; reporting unconfigured');
+    }
+    return { configured: false };
+  }
+
+  const cached = await deps.cache.read(context);
+  if (cached) return cached;
+
+  const body = await readAnswered(deps, config, context, new Date(deps.now()).toISOString());
+  await deps.cache.write(body, context);
+  return body;
+}
+
+/**
+ * The scheduled token check: the status read's two calls (templates, and
+ * running workspaces), asked of Coder directly, never through the minute
+ * cache, and recorded as the `status` operation's answer. Writes the same
+ * warning a status read does. Leaves the cache alone, so it neither hides
+ * behind a warm one nor changes what a visitor sees. Resolves
+ * `{ checked, refusedStatus }`; never throws.
+ */
+async function checkToken(deps, context) {
+  const config = readCoderConfig(deps.env);
+  if (!config?.token) return { checked: false, reason: config ? 'unset' : 'unconfigured' };
+  const running = new URLSearchParams({ q: 'status:running' });
+  try {
+    await Promise.all([
+      coderGet(deps.fetchImpl, config, '/api/v2/templates', config.token),
+      coderGet(deps.fetchImpl, config, `/api/v2/workspaces?${running}`, config.token),
+    ]);
+  } catch (error) {
+    return tokenCheckFailed(deps, error, context);
+  }
+  await onTokenAnswer(deps, 'status', context)(null);
+  return { checked: true, refusedStatus: null };
+}
+
+/** A token check that did not pass: Coder refused the token (recorded), or no verdict was reached. */
+async function tokenCheckFailed(deps, error, context) {
+  if (error?.status === 401 || error?.status === 403) {
+    warnRefusal(context, error.status, 'the scheduled check found it');
+    await onTokenAnswer(deps, 'status', context)(error.status);
+    return { checked: true, refusedStatus: error.status };
+  }
+  context?.warn?.(
+    `coder-status: the scheduled token check could not reach a verdict (${Number.isInteger(error?.status) ? `Coder answered ${error.status}` : 'no answer'})`
+  );
+  return { checked: false, reason: 'error' };
+}
+
+/** The status operation's newest recorded answer, epoch ms; NaN when there is none or it cannot be read. */
+async function lastStatusAnswerMs(store) {
+  let entry = null;
+  try {
+    entry = (await store.readDoc('admin_config', TOKEN_STATE_DOC_ID, 'admin_config'))?.operations?.status ?? null;
+  } catch {
+    entry = null;
+  }
+  const answers = [entry?.lastAcceptedAt, entry?.lastRefusedAt]
+    .map((iso) => Date.parse(String(iso ?? '')))
+    .filter(Number.isFinite);
+  return answers.length ? Math.max(...answers) : Number.NaN;
+}
+
+/**
+ * `checkToken`, at most once per TOKEN_STATE_REFRESH_MS: due when the
+ * status operation's newest recorded answer is that old, or when there is
+ * none or it cannot be read (failing toward asking). Without
+ * CODER_STATUS_TOKEN it asks nothing. Never throws.
+ */
+async function checkTokenIfDue(deps, context) {
+  const lastMs = await lastStatusAnswerMs(deps.store);
+  if (Number.isFinite(lastMs) && deps.now() - lastMs < TOKEN_STATE_REFRESH_MS) {
+    return { checked: false, reason: 'not due' };
+  }
+  return checkToken(deps, context);
+}
+
+/**
+ * GET /api/cms/labs/coder-token — editor. When the status token expires,
+ * for the Integrations card (#763). Not cached: it is read on demand.
+ */
+async function getCoderToken(deps, request, context) {
+  if (!deps.guard) return privateJson(500, { error: 'The token read is not wired with a guard' });
+  const auth = await deps.guard.requireRole(request, 'editor');
+  if (auth.error) return auth.error;
+  const config = readCoderConfig(deps.env);
+  if (!config) return privateJson(200, { configured: false });
+  try {
+    const token = await readTokenExpiry({ fetchImpl: deps.fetchImpl, config, context, now: deps.now });
+    // Coder's own answer to the token, for the health pulse: a 401 here is
+    // as much a refusal as one on the public read (#1009).
+    if (token.reason === 'refused') await onTokenAnswer(deps, 'expiry', context)(401);
+    else if (token.known) await onTokenAnswer(deps, 'expiry', context)(null);
+    return privateJson(200, { configured: true, token, warningDays: TOKEN_RENEW_WARNING_DAYS });
+  } catch (error) {
+    context.error('cmsLabsCoderToken failed:', errorFacts(error));
+    return privateJson(500, { error: 'Failed to read the Coder status token' });
+  }
+}
+
+/** GET /api/public/labs/coder-status */
+async function getCoderStatus(deps, request, context) {
+  try {
+    const body = await readStatus(deps, context);
+    return jsonResponse(200, body, body.configured ? CODER_STATUS_CACHE_SECONDS : 0);
+  } catch (error) {
+    context.error('publicGetLabsCoderStatus failed:', errorFacts(error));
+    return jsonResponse(500, { error: 'Failed to read Coder status' });
+  }
+}
+
 /**
  * @param {object} deps
  * @param {{ readDoc: Function, upsertDoc: Function }} deps.store
@@ -316,144 +463,12 @@ export function createCoderStatusHandlers({
     now,
     seconds: CODER_STATUS_CACHE_SECONDS,
   });
-
-  /** Coder's answer to the token for one operation, recorded for the health pulse (#1009). Never throws. */
-  const onTokenAnswer = (operation, context) => (refusedStatus) =>
-    recordTokenAnswer({ store, operation, refusedStatus, now, context });
-
-  /**
-   * The status body — the same object the route returns, for the estate read
-   * (estate.js) to fold in without a second Coder call or a second cache.
-   */
-  async function readStatus(context) {
-    const config = readCoderConfig(env);
-    if (!config) {
-      if (hasCoderUrl(env)) {
-        context?.warn?.('coder-status: CODER_URL is not an https URL; reporting unconfigured');
-      }
-      return { configured: false };
-    }
-
-    const cached = await cache.read(context);
-    if (cached) return cached;
-
-    const asOf = new Date(now()).toISOString();
-    let body;
-    try {
-      await readReachable(fetchImpl, config);
-      const detail = await readDetailOrUnknown({
-        fetchImpl,
-        config,
-        context,
-        onTokenAnswer: onTokenAnswer('status', context),
-      });
-      body = { configured: true, reachable: true, ...detail, asOf };
-    } catch (error) {
-      context?.warn?.(`coder-status: Coder unreachable: ${errorFacts(error)}`);
-      body = {
-        configured: true,
-        reachable: false,
-        templates: [],
-        capacity: { running: null, max: config.max },
-        asOf,
-      };
-    }
-
-    await cache.write(body, context);
-    return body;
-  }
-
-  /**
-   * The scheduled token check: the status read's two calls (templates, and
-   * running workspaces), asked of Coder directly, never through the minute
-   * cache, and recorded as the `status` operation's answer. Writes the same
-   * warning a status read does. Leaves the cache alone, so it neither hides
-   * behind a warm one nor changes what a visitor sees. Resolves
-   * `{ checked, refusedStatus }`; never throws.
-   */
-  async function checkToken(context) {
-    const config = readCoderConfig(env);
-    if (!config?.token) return { checked: false, reason: config ? 'unset' : 'unconfigured' };
-    const running = new URLSearchParams({ q: 'status:running' });
-    try {
-      await Promise.all([
-        coderGet(fetchImpl, config, '/api/v2/templates', config.token),
-        coderGet(fetchImpl, config, `/api/v2/workspaces?${running}`, config.token),
-      ]);
-    } catch (error) {
-      if (error?.status === 401 || error?.status === 403) {
-        warnRefusal(context, error.status, 'the scheduled check found it');
-        await onTokenAnswer('status', context)(error.status);
-        return { checked: true, refusedStatus: error.status };
-      }
-      context?.warn?.(
-        `coder-status: the scheduled token check could not reach a verdict (${Number.isInteger(error?.status) ? `Coder answered ${error.status}` : 'no answer'})`
-      );
-      return { checked: false, reason: 'error' };
-    }
-    await onTokenAnswer('status', context)(null);
-    return { checked: true, refusedStatus: null };
-  }
-
-  /**
-   * `checkToken`, at most once per TOKEN_STATE_REFRESH_MS: due when the
-   * status operation's newest recorded answer is that old, or when there is
-   * none or it cannot be read (failing toward asking). Without
-   * CODER_STATUS_TOKEN it asks nothing. Never throws.
-   */
-  async function checkTokenIfDue(context) {
-    let entry = null;
-    try {
-      entry = (await store.readDoc('admin_config', TOKEN_STATE_DOC_ID, 'admin_config'))?.operations?.status ?? null;
-    } catch {
-      entry = null;
-    }
-    const answers = [entry?.lastAcceptedAt, entry?.lastRefusedAt]
-      .map((iso) => Date.parse(String(iso ?? '')))
-      .filter(Number.isFinite);
-    if (answers.length && now() - Math.max(...answers) < TOKEN_STATE_REFRESH_MS) {
-      return { checked: false, reason: 'not due' };
-    }
-    return checkToken(context);
-  }
-
+  const deps = { store, guard, fetchImpl, env, now, cache };
   return {
-    readStatus,
-    checkToken,
-    checkTokenIfDue,
-
-    /**
-     * GET /api/cms/labs/coder-token — editor. When the status token expires,
-     * for the Integrations card (#763). Not cached: it is read on demand.
-     */
-    async getCoderToken(request, context) {
-      if (!guard) return privateJson(500, { error: 'The token read is not wired with a guard' });
-      const auth = await guard.requireRole(request, 'editor');
-      if (auth.error) return auth.error;
-      const config = readCoderConfig(env);
-      if (!config) return privateJson(200, { configured: false });
-      try {
-        const token = await readTokenExpiry({ fetchImpl, config, context, now });
-        // Coder's own answer to the token, for the health pulse: a 401 here is
-        // as much a refusal as one on the public read (#1009).
-        if (token.reason === 'refused') await onTokenAnswer('expiry', context)(401);
-        else if (token.known) await onTokenAnswer('expiry', context)(null);
-        return privateJson(200, { configured: true, token, warningDays: TOKEN_RENEW_WARNING_DAYS });
-      } catch (error) {
-        context.error('cmsLabsCoderToken failed:', errorFacts(error));
-        return privateJson(500, { error: 'Failed to read the Coder status token' });
-      }
-    },
-
-    /** GET /api/public/labs/coder-status */
-    async getCoderStatus(request, context) {
-      try {
-        const body = await readStatus(context);
-        return jsonResponse(200, body, body.configured ? CODER_STATUS_CACHE_SECONDS : 0);
-      } catch (error) {
-        context.error('publicGetLabsCoderStatus failed:', errorFacts(error));
-        return jsonResponse(500, { error: 'Failed to read Coder status' });
-      }
-    },
+    readStatus: (context) => readStatus(deps, context),
+    checkToken: (context) => checkToken(deps, context),
+    checkTokenIfDue: (context) => checkTokenIfDue(deps, context),
+    getCoderToken: (request, context) => getCoderToken(deps, request, context),
+    getCoderStatus: (request, context) => getCoderStatus(deps, request, context),
   };
 }
