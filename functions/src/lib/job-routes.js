@@ -15,28 +15,26 @@ import {
 } from './job-model.js';
 
 /**
- * POST /api/enqueueJob — editor (or the type's own role).
- * @param {object} request
- * @param {object} context
- * @param {{ enqueue: (message: {jobId: string, type: string}) => void }} io - the queue output
+ * The body, the job type and its spec, once the body is JSON, the type is
+ * registered and the caller holds the type's own role: `{ body, type, spec }`,
+ * or `{ response }` refusing.
  */
-export async function enqueueJob({ guard, store, now, uuid, types }, request, context, { enqueue } = {}) {
-  const auth = await guard.requireRole(request, 'editor');
-  if (auth.error) return auth.error;
-
+async function readEnqueueRequest({ guard, types }, request) {
   let body;
   try {
     body = await request.json();
   } catch {
-    return json(400, { ok: false, error: 'Body must be JSON' });
+    return { response: json(400, { ok: false, error: 'Body must be JSON' }) };
   }
   const type = typeof body?.type === 'string' ? body.type.trim() : '';
   const spec = types.get(type);
   if (!spec) {
-    return json(400, {
-      ok: false,
-      error: `Unknown job type. Allowed: ${[...types.keys()].join(', ')}`,
-    });
+    return {
+      response: json(400, {
+        ok: false,
+        error: `Unknown job type. Allowed: ${[...types.keys()].join(', ')}`,
+      }),
+    };
   }
   // Escalate to the type's own role whenever it outranks the floor above.
   // Compared by hierarchy level, not string inequality: the old
@@ -46,25 +44,91 @@ export async function enqueueJob({ guard, store, now, uuid, types }, request, co
   // token (T-701).
   if (roleLevel(spec.role) > roleLevel('editor')) {
     const stricter = await guard.requireRole(request, spec.role);
-    if (stricter.error) return stricter.error;
+    if (stricter.error) return { response: stricter.error };
   }
+  return { body, type, spec };
+}
 
-  const payload = body.payload === undefined ? {} : body.payload;
+/** The payload's JSON size, or `{ response }` when it is not JSON or over the type's limit. */
+function measurePayload(payload, spec, type) {
   let payloadBytes;
   try {
     payloadBytes = Buffer.byteLength(JSON.stringify(payload), 'utf8');
   } catch {
-    return json(400, {
-      ok: false,
-      error: 'payload must be JSON-serialisable',
-    });
+    return {
+      response: json(400, {
+        ok: false,
+        error: 'payload must be JSON-serialisable',
+      }),
+    };
   }
   if (payloadBytes > spec.maxPayloadBytes) {
-    return json(413, {
-      ok: false,
-      error: `Payload too large (${payloadBytes} bytes; max ${spec.maxPayloadBytes} for ${type})`,
-    });
+    return {
+      response: json(413, {
+        ok: false,
+        error: `Payload too large (${payloadBytes} bytes; max ${spec.maxPayloadBytes} for ${type})`,
+      }),
+    };
   }
+  return { payloadBytes };
+}
+
+/** The type's acceptedDetails for the 202 body, or {} when it has none or it throws (logged). */
+function acceptedDetailsOf(spec, payload, type, context) {
+  if (typeof spec.acceptedDetails !== 'function') return {};
+  try {
+    return serialisableObject(spec.acceptedDetails(payload));
+  } catch (error) {
+    context.warn?.('enqueueJob: acceptedDetails failed for', type, errorFacts(error));
+    return {};
+  }
+}
+
+/** The job id a getJob request names: the query first, then a non-GET body; '' when none. */
+async function requestedJobId(request) {
+  let jobId = '';
+  try {
+    jobId = request.query?.get?.('jobId') || '';
+    if (!jobId && request.method !== 'GET') {
+      const body = await request.json().catch(() => ({}));
+      jobId = typeof body?.jobId === 'string' ? body.jobId : '';
+    }
+  } catch {
+    jobId = '';
+  }
+  return String(jobId).trim();
+}
+
+/** Read one job and answer it under its type's own role. */
+async function readJobAs({ guard, store, types }, request, jobId) {
+  const doc = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
+  if (!doc) return json(404, { ok: false, error: 'Job not found' });
+
+  const requiredRole = types.get(doc.type)?.role ?? JOB_READ_FLOOR;
+  const stricter = await guard.requireRole(request, requiredRole);
+  if (stricter.error) return stricter.error;
+
+  return json(200, { ok: true, job: publicJob(doc) });
+}
+
+/**
+ * POST /api/enqueueJob — editor (or the type's own role).
+ * @param {object} request
+ * @param {object} context
+ * @param {{ enqueue: (message: {jobId: string, type: string}) => void }} io - the queue output
+ */
+export async function enqueueJob({ guard, store, now, uuid, types }, request, context, { enqueue } = {}) {
+  const auth = await guard.requireRole(request, 'editor');
+  if (auth.error) return auth.error;
+
+  const asked = await readEnqueueRequest({ guard, types }, request);
+  if (asked.response) return asked.response;
+  const { body, type, spec } = asked;
+
+  const payload = body.payload === undefined ? {} : body.payload;
+  const sized = measurePayload(payload, spec, type);
+  if (sized.response) return sized.response;
+  const { payloadBytes } = sized;
   if (typeof enqueue !== 'function') {
     // Misconfigured route, not a client error: say so loudly rather than
     // writing a document nothing will ever pick up.
@@ -90,15 +154,13 @@ export async function enqueueJob({ guard, store, now, uuid, types }, request, co
   // the hook's result would answer 500 for a job that IS queued and invite
   // a duplicate on retry. Bookkeeping must not be able to report the work
   // it is bookkeeping as failed — the same rule as recordAiUsage's header.
-  let details = {};
-  if (typeof spec.acceptedDetails === 'function') {
-    try {
-      details = serialisableObject(spec.acceptedDetails(payload));
-    } catch (error) {
-      context.warn?.('enqueueJob: acceptedDetails failed for', type, errorFacts(error));
-      details = {};
-    }
-  }
+  const details = acceptedDetailsOf(spec, payload, type, context);
+  return queueJob({ store, enqueue }, { doc, details, payloadBytes }, context);
+}
+
+/** Write the job document, send its queue message, and answer 202 (or 500 when either fails). */
+async function queueJob({ store, enqueue }, { doc, details, payloadBytes }, context) {
+  const { id: jobId, type } = doc;
   try {
     await store.upsertDoc(JOBS_CONTAINER, doc);
     enqueue({ jobId, type });
@@ -135,28 +197,11 @@ export async function getJob({ guard, store, types }, request, context) {
   const auth = await guard.requireRole(request, 'viewer');
   if (auth.error) return auth.error;
 
-  let jobId = '';
-  try {
-    jobId = request.query?.get?.('jobId') || '';
-    if (!jobId && request.method !== 'GET') {
-      const body = await request.json().catch(() => ({}));
-      jobId = typeof body?.jobId === 'string' ? body.jobId : '';
-    }
-  } catch {
-    jobId = '';
-  }
-  jobId = String(jobId).trim();
+  const jobId = await requestedJobId(request);
   if (!jobId) return json(400, { ok: false, error: 'jobId is required' });
 
   try {
-    const doc = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
-    if (!doc) return json(404, { ok: false, error: 'Job not found' });
-
-    const requiredRole = types.get(doc.type)?.role ?? JOB_READ_FLOOR;
-    const stricter = await guard.requireRole(request, requiredRole);
-    if (stricter.error) return stricter.error;
-
-    return json(200, { ok: true, job: publicJob(doc) });
+    return await readJobAs({ guard, store, types }, request, jobId);
   } catch (error) {
     return errorResponse(context, 'Failed to read job', error, 500, request);
   }
