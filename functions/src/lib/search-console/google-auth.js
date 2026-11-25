@@ -151,6 +151,74 @@ async function readJson(response) {
 }
 
 /**
+ * One POST of a sign-in hop: the response and its JSON body once Google
+ * answered 2xx. No answer, or any other status, fails as that hop.
+ */
+async function postHop(s, hop, url, init) {
+  let response;
+  try {
+    response = await fetchWithTimeout(s.fetchImpl, url, { method: 'POST', ...init, ...s.cancel });
+  } catch {
+    throw new GoogleAuthError(hop);
+  }
+  if (!response.ok) throw new GoogleAuthError(hop, response.status);
+  return { response, body: await readJson(response) };
+}
+
+/** Hop 1: a token from Microsoft Entra, minted for the Application ID URI. */
+async function entraToken(s) {
+  s.azureCredential ??= defaultAzureCredential(s.env);
+  const scope = `${s.appIdUri}/.default`;
+  let answer = null;
+  try {
+    answer = s.signal ? await s.azureCredential.getToken(scope, { abortSignal: s.signal }) : await s.azureCredential.getToken(scope);
+  } catch {
+    // The credential's own error can name endpoints and claims; only the hop is kept.
+    throw new GoogleAuthError('entra');
+  }
+  if (!answer || typeof answer.token !== 'string' || !answer.token) throw new GoogleAuthError('entra');
+  return answer.token;
+}
+
+/** Hop 2: Google's token exchange swaps the Entra token for a federated one. */
+async function federatedToken(s, subjectToken) {
+  const form = new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+    audience: s.audience,
+    scope: CLOUD_PLATFORM_SCOPE,
+    requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+    subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
+    subject_token: subjectToken,
+  });
+  const { response, body } = await postHop(s, 'sts', STS_TOKEN_URL, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  const token = typeof body?.access_token === 'string' ? body.access_token : '';
+  if (!token) throw new GoogleAuthError('sts', response.status);
+  return token;
+}
+
+/** Hop 3: the federated token buys a short-lived token for the service account. */
+async function serviceAccountToken(s, federated) {
+  const url = `${IAM_CREDENTIALS_BASE}/${encodeURIComponent(s.serviceAccountEmail)}:generateAccessToken`;
+  const { response, body } = await postHop(s, 'impersonation', url, {
+    headers: { Authorization: `Bearer ${federated}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope: [SEARCH_CONSOLE_READONLY_SCOPE], lifetime: TOKEN_LIFETIME }),
+  });
+  const token = typeof body?.accessToken === 'string' ? body.accessToken : '';
+  if (!token) throw new GoogleAuthError('impersonation', response.status);
+  const expiry = Date.parse(body?.expireTime);
+  return { token, expiresAt: Number.isFinite(expiry) ? expiry : s.now() + 3600 * 1000 };
+}
+
+async function signIn(s) {
+  const subject = await entraToken(s);
+  const federated = await federatedToken(s, subject);
+  return serviceAccountToken(s, federated);
+}
+
+/**
  * Build the sign-in. `getAccessToken()` returns a Search Console access
  * token string; `reset()` drops the cached one (used after Google answers
  * 401 to a token it issued).
@@ -176,85 +244,25 @@ export function createGoogleTokenProvider({
   signal,
 }) {
   let cached = null; // { token, expiresAt }
-  /** Added to every request, so the run's cancel switch reaches it. */
-  const cancel = signal ? { signal } : {};
   let inflight = null;
-  let azureCredential = credential ?? null;
-
-  async function entraToken() {
-    azureCredential ??= defaultAzureCredential(env);
-    let answer = null;
-    try {
-      answer = signal
-        ? await azureCredential.getToken(`${appIdUri}/.default`, { abortSignal: signal })
-        : await azureCredential.getToken(`${appIdUri}/.default`);
-    } catch {
-      // The credential's own error can name endpoints and claims; only the hop is kept.
-      throw new GoogleAuthError('entra');
-    }
-    if (!answer || typeof answer.token !== 'string' || !answer.token) throw new GoogleAuthError('entra');
-    return answer.token;
-  }
-
-  async function federatedToken(subjectToken) {
-    const form = new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-      audience,
-      scope: CLOUD_PLATFORM_SCOPE,
-      requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-      subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
-      subject_token: subjectToken,
-    });
-    let response;
-    try {
-      response = await fetchWithTimeout(fetchImpl, STS_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: form.toString(),
-        ...cancel,
-      });
-    } catch {
-      throw new GoogleAuthError('sts');
-    }
-    if (!response.ok) throw new GoogleAuthError('sts', response.status);
-    const body = await readJson(response);
-    const token = typeof body?.access_token === 'string' ? body.access_token : '';
-    if (!token) throw new GoogleAuthError('sts', response.status);
-    return token;
-  }
-
-  async function serviceAccountToken(federated) {
-    const url = `${IAM_CREDENTIALS_BASE}/${encodeURIComponent(serviceAccountEmail)}:generateAccessToken`;
-    let response;
-    try {
-      response = await fetchWithTimeout(fetchImpl, url, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${federated}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scope: [SEARCH_CONSOLE_READONLY_SCOPE], lifetime: TOKEN_LIFETIME }),
-        ...cancel,
-      });
-    } catch {
-      throw new GoogleAuthError('impersonation');
-    }
-    if (!response.ok) throw new GoogleAuthError('impersonation', response.status);
-    const body = await readJson(response);
-    const token = typeof body?.accessToken === 'string' ? body.accessToken : '';
-    if (!token) throw new GoogleAuthError('impersonation', response.status);
-    const expiry = Date.parse(body?.expireTime);
-    return { token, expiresAt: Number.isFinite(expiry) ? expiry : now() + 3600 * 1000 };
-  }
-
-  async function signIn() {
-    const subject = await entraToken();
-    const federated = await federatedToken(subject);
-    return serviceAccountToken(federated);
-  }
+  const s = {
+    audience,
+    appIdUri,
+    serviceAccountEmail,
+    env,
+    fetchImpl,
+    now,
+    signal,
+    /** Added to every request, so the run's cancel switch reaches it. */
+    cancel: signal ? { signal } : {},
+    azureCredential: credential ?? null,
+  };
 
   return {
     /** A Search Console access token, from the cache while it has five minutes left. */
     async getAccessToken() {
       if (cached && cached.expiresAt - now() > EARLY_RENEW_MS) return cached.token;
-      inflight ??= signIn().finally(() => {
+      inflight ??= signIn(s).finally(() => {
         inflight = null;
       });
       cached = await inflight;

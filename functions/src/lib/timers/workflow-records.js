@@ -90,16 +90,24 @@ export async function writeSystemAudit(
   return doc;
 }
 
+/**
+ * How to read a time that is not a plain string, first match wins: a Date,
+ * a Firestore Timestamp (toMillis or toDate), or a migrated Firestore time
+ * stored as plain JSON: { seconds, nanoseconds } or { _seconds, _nanoseconds }
+ * (#1516).
+ */
+const TIME_READERS = [
+  [(value) => value instanceof Date, (value) => value.getTime()],
+  [(value) => typeof value.toMillis === 'function', (value) => value.toMillis()],
+  [(value) => typeof value.toDate === 'function', (value) => value.toDate().getTime()],
+  [(value) => typeof (value.seconds ?? value._seconds) === 'number', (value) => (value.seconds ?? value._seconds) * 1000],
+];
+
 /** Epoch ms of an ISO string / Date / Firestore-shaped value, else 0. */
 export function toMillis(value) {
   if (!value) return 0;
-  if (value instanceof Date) return value.getTime();
-  if (typeof value.toMillis === 'function') return value.toMillis();
-  if (typeof value.toDate === 'function') return value.toDate().getTime();
-  // A migrated Firestore time stored as plain JSON: { seconds, nanoseconds }
-  // or { _seconds, _nanoseconds } (#1516).
-  const seconds = value.seconds ?? value._seconds;
-  if (typeof seconds === 'number') return seconds * 1000;
+  const reader = TIME_READERS.find(([fits]) => fits(value));
+  if (reader) return reader[1](value);
   const parsed = Date.parse(String(value));
   return Number.isNaN(parsed) ? 0 : parsed;
 }

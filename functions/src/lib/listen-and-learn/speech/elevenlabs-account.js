@@ -117,6 +117,7 @@
  * show the sentence whole (`authoredMessage`).
  */
 
+import { creditShortfall, creditsNeeded, describeShortfall, isFreePlan } from './elevenlabs-credits.js';
 import { AuthoredError, codeShaped, errorCode as failureCode } from '../../http/error-response.js';
 
 export const SUBSCRIPTION_URL = 'https://api.elevenlabs.io/v1/user/subscription';
@@ -130,8 +131,15 @@ export const API_KEYS_PAGE = 'https://elevenlabs.io/app/developers/api-keys';
 /** Seconds, not minutes: long enough to share one read, short enough to stay true. */
 export const SUBSCRIPTION_CACHE_TTL_MS = 15_000;
 
-/** Eleven v3's rate, and the ceiling for every other model (see the header). */
-export const CREDITS_PER_CHARACTER = 1;
+// The credit arithmetic lives in elevenlabs-credits.js; exported again here
+// so callers keep importing from elevenlabs-account.js.
+export {
+  CREDITS_PER_CHARACTER,
+  creditShortfall,
+  creditsNeeded,
+  describeShortfall,
+  isFreePlan,
+} from './elevenlabs-credits.js';
 
 /** `code` for a subscription that could not be read. */
 export const SUBSCRIPTION_UNAVAILABLE = 'subscription_unavailable';
@@ -156,8 +164,6 @@ export const PAID_PLAN_REQUIRED = 'paid_plan_required';
  */
 export const VOICE_PICKER_PAGE = 'https://hybridcloudworks.com/admin/platform-settings?tab=audio';
 
-const FREE_TIER = 'free';
-const FREE_STATUSES = new Set(['free', 'free_disabled']);
 const PERMISSION_CODES = new Set(['missing_permissions', 'insufficient_permissions']);
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
@@ -174,8 +180,6 @@ export function isPermissionRefusal(status, code) {
 export const isRetryableStatus = (status) => RETRYABLE_STATUSES.has(status);
 const MAX_ATTEMPTS = 3;
 const NOTHING_SENT = 'nothing was sent, so no credits were spent';
-
-const numberFormat = new Intl.NumberFormat('en-US');
 
 /**
  * The error every ElevenLabs failure is reported with.
@@ -320,14 +324,6 @@ export function dialogueRefusal(status, bodyText) {
   };
 }
 
-/** Whether a plan is the free one, from what the subscription says. */
-export function isFreePlan({ tier, status } = {}) {
-  return (
-    String(tier || '').toLowerCase() === FREE_TIER ||
-    FREE_STATUSES.has(String(status || '').toLowerCase())
-  );
-}
-
 const unavailable = (reason, status = null) =>
   new ElevenLabsSpeechError(`Could not read the ElevenLabs subscription (${reason}); ${NOTHING_SENT}.`, {
     status,
@@ -359,33 +355,39 @@ async function fetchSubscription({ key, fetchImpl, sleep }) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    let response;
-    try {
-      response = await fetchImpl(SUBSCRIPTION_URL, {
-        method: 'GET',
-        headers: { 'xi-api-key': key, Accept: 'application/json' },
-      });
-    } catch (err) {
-      lastError = unavailable(`could not reach ElevenLabs (${failureCode(err?.cause ?? err)})`);
-      if (attempt === MAX_ATTEMPTS) throw lastError;
-      await sleep(attempt * 500);
-      continue;
-    }
-
-    const text = await response.text().catch(() => '');
-    if (response.ok) {
-      try {
-        return JSON.parse(text);
-      } catch {
-        throw unavailable('the answer was not JSON', response.status);
-      }
-    }
-    lastError = refusalFor(response.status, text);
-    if (!isRetryableStatus(response.status) || attempt === MAX_ATTEMPTS) throw lastError;
+    const answer = await askSubscription(key, fetchImpl);
+    if (answer.body !== undefined) return answer.body;
+    lastError = answer.error;
+    if (!answer.retryable || attempt === MAX_ATTEMPTS) throw lastError;
     await sleep(attempt * 500);
   }
 
   throw lastError;
+}
+
+/**
+ * One subscription request: `{ body }`, or `{ error, retryable }`. An
+ * answer that is 2xx but not JSON throws at once, as it is never retried.
+ */
+async function askSubscription(key, fetchImpl) {
+  let response;
+  try {
+    response = await fetchImpl(SUBSCRIPTION_URL, {
+      method: 'GET',
+      headers: { 'xi-api-key': key, Accept: 'application/json' },
+    });
+  } catch (err) {
+    return { error: unavailable(`could not reach ElevenLabs (${failureCode(err?.cause ?? err)})`), retryable: true };
+  }
+  const text = await response.text().catch(() => '');
+  if (!response.ok) {
+    return { error: refusalFor(response.status, text), retryable: isRetryableStatus(response.status) };
+  }
+  try {
+    return { body: JSON.parse(text) };
+  } catch {
+    throw unavailable('the answer was not JSON', response.status);
+  }
 }
 
 /**
@@ -486,55 +488,6 @@ export function invalidateSubscription(key) {
 /** Drop every cached read. For tests, which must not see each other's accounts. */
 export function clearSubscriptionCache() {
   cache.clear();
-}
-
-/** Credits a job of `characters` code points will be charged, rounded up. */
-export function creditsNeeded(characters) {
-  return Math.ceil(Math.max(0, Number(characters) || 0) * CREDITS_PER_CHARACTER);
-}
-
-/**
- * Null when the account can pay for `needed` credits, else what it is short.
- *
- * Usage-based billing counts as headroom, but only when the account is
- * entitled to it AND an admin has set an extension above 0. That is an opt-in
- * made in ElevenLabs's own settings. The free plan has neither, so on it this
- * compares the allowance left with the job.
- *
- * @param {ReturnType<typeof normalizeSubscription>} subscription
- * @param {number} needed credits
- */
-export function creditShortfall(subscription, needed) {
-  const overage =
-    subscription.overageCredits === 'unlimited'
-      ? Number.POSITIVE_INFINITY
-      : Number(subscription.overageCredits) || 0;
-  const available = subscription.creditLimit - subscription.creditsUsed + overage;
-  if (needed <= available) return null;
-  return {
-    needed,
-    left: subscription.creditsLeft,
-    limit: subscription.creditLimit,
-    overage,
-    resetAt: subscription.resetAt,
-    tier: subscription.tier,
-  };
-}
-
-/**
- * "ElevenLabs has 1,000 credits left of 10,000, this episode needs 9,000; the
- * allowance resets on 2026-10-26 (UTC). Nothing was sent, …"
- */
-export function describeShortfall({ needed, left, limit, overage, resetAt }) {
-  const extra = overage > 0 ? ` (plus ${numberFormat.format(overage)} of usage-based billing)` : '';
-  const reset = resetAt
-    ? `the allowance resets on ${resetAt.slice(0, 10)} (UTC)`
-    : 'ElevenLabs did not say when the allowance resets';
-  return (
-    `ElevenLabs has ${numberFormat.format(left)} credits left of ${numberFormat.format(limit)}${extra}, ` +
-    `this episode needs ${numberFormat.format(needed)}; ${reset}. ` +
-    `Nothing was sent, so no credits were spent.`
-  );
 }
 
 /**

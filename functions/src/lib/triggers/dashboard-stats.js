@@ -180,65 +180,83 @@ export async function rederiveMarkers({ store, items, now = () => new Date() }) 
   return tally;
 }
 
+/** The marker as a position: where the counters last counted this document. */
+const positionOf = (marker) =>
+  marker ? { exists: true, bucket: marker.bucket ?? null, type: marker.type ?? null } : ABSENT_POSITION;
+
+/**
+ * Write the marker at its new position, under the ETag it was read with
+ * when it has one. False when the change feed moved it meanwhile (412):
+ * that write is newer, and this transition is a no-op.
+ */
+async function writeMarker({ store, now, log }, contentId, marker, afterPosition) {
+  const next = {
+    ...(marker || {}),
+    id: contentId,
+    bucket: afterPosition.bucket,
+    type: afterPosition.type,
+    updatedAt: now().toISOString(),
+  };
+  if (!marker?._etag) {
+    await store.upsertDoc(MARKERS_CONTAINER, next);
+    return true;
+  }
+  try {
+    await store.replaceDocIfMatch(MARKERS_CONTAINER, next);
+    return true;
+  } catch (err) {
+    if (err?.code === 412 || err?.statusCode === 412) {
+      log.log?.('[dashboard-stats] a marker advanced concurrently; no-op');
+      return false;
+    }
+    throw err;
+  }
+}
+
+/** Add the deltas to the stats document. */
+async function writeStats({ store, now }, deltas) {
+  const stats = (await store.readDoc(
+    'system',
+    DASHBOARD_STATS_DOC_ID,
+    DASHBOARD_STATS_DOC_ID
+  )) || { id: DASHBOARD_STATS_DOC_ID, schemaVersion: 1 };
+  const updated = {
+    ...applyDeltas(stats, deltas),
+    id: DASHBOARD_STATS_DOC_ID,
+    updatedAt: now().toISOString(),
+  };
+  await store.upsertDoc('system', updated);
+}
+
+/**
+ * Move the counters for one content document to its current position.
+ * `afterData === null` means the document is gone (the delete endpoints).
+ * @returns {Promise<object>} the deltas applied ({} when nothing moved)
+ */
+async function applyTransition(d, { contentId, afterData }) {
+  const { store } = d;
+  const afterPosition = resolveStatsPosition(afterData);
+  const marker = await store.readDoc(MARKERS_CONTAINER, contentId, contentId);
+  const beforePosition = positionOf(marker);
+
+  if (!afterPosition.exists) {
+    if (marker) await store.deleteDoc(MARKERS_CONTAINER, contentId, contentId);
+  } else if (!positionsEqual(beforePosition, afterPosition)) {
+    if (!(await writeMarker(d, contentId, marker, afterPosition))) return {};
+  }
+
+  const deltas = buildDashboardStatsDeltas(beforePosition, afterPosition);
+  if (Object.keys(deltas).length === 0) return deltas;
+  await writeStats(d, deltas);
+  return deltas;
+}
+
 /**
  * @param {object} deps
  * @param {{ readDoc: Function, upsertDoc: Function, replaceDocIfMatch: Function, deleteDoc: Function, patchDoc: Function }} deps.store
  * @param {() => Date} [deps.now]
  */
 export function createDashboardStatsMaintainer({ store, now = () => new Date(), log = {} }) {
-  /**
-   * Move the counters for one content document to its current position.
-   * `afterData === null` means the document is gone (the delete endpoints).
-   * @returns {Promise<object>} the deltas applied ({} when nothing moved)
-   */
-  async function applyTransition({ contentId, afterData }) {
-    const afterPosition = resolveStatsPosition(afterData);
-    const marker = await store.readDoc(MARKERS_CONTAINER, contentId, contentId);
-    const beforePosition = marker
-      ? { exists: true, bucket: marker.bucket ?? null, type: marker.type ?? null }
-      : ABSENT_POSITION;
-
-    if (!afterPosition.exists) {
-      if (marker) await store.deleteDoc(MARKERS_CONTAINER, contentId, contentId);
-    } else if (!positionsEqual(beforePosition, afterPosition)) {
-      const next = {
-        ...(marker || {}),
-        id: contentId,
-        bucket: afterPosition.bucket,
-        type: afterPosition.type,
-        updatedAt: now().toISOString(),
-      };
-      if (marker?._etag) {
-        try {
-          await store.replaceDocIfMatch(MARKERS_CONTAINER, next);
-        } catch (err) {
-          if (err?.code === 412 || err?.statusCode === 412) {
-            log.log?.('[dashboard-stats] a marker advanced concurrently; no-op');
-            return {};
-          }
-          throw err;
-        }
-      } else {
-        await store.upsertDoc(MARKERS_CONTAINER, next);
-      }
-    }
-
-    const deltas = buildDashboardStatsDeltas(beforePosition, afterPosition);
-    if (Object.keys(deltas).length === 0) return deltas;
-
-    const stats = (await store.readDoc(
-      'system',
-      DASHBOARD_STATS_DOC_ID,
-      DASHBOARD_STATS_DOC_ID
-    )) || { id: DASHBOARD_STATS_DOC_ID, schemaVersion: 1 };
-    const updated = {
-      ...applyDeltas(stats, deltas),
-      id: DASHBOARD_STATS_DOC_ID,
-      updatedAt: now().toISOString(),
-    };
-    await store.upsertDoc('system', updated);
-    return deltas;
-  }
-
-  return { applyTransition };
+  const d = { store, now, log };
+  return { applyTransition: (args) => applyTransition(d, args) };
 }

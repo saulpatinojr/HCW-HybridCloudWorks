@@ -19,51 +19,13 @@
  * beyond the move to ESM and to this repository's cheerio import style.
  */
 import { load as loadHtml } from 'cheerio';
-import { AuthoredError } from '../http/error-response.js';
+import { clean, slugify, StudyGuideError, weightLabel } from './studyguide-text.js';
+import { parseMicrosoftLearn } from './studyguide-learn.js';
 
-/**
- * "Manage Azure identities and governance (20–25%)" → name, low, high.
- * Microsoft uses an en dash; a plain hyphen and a single percentage
- * ("Monitor resources (15%)") both appear across providers.
- */
-const HEADING_WEIGHT =
-  /^(?<name>.+?)\s*\(\s*(?<low>\d{1,3})\s*(?:[-–—]\s*(?<high>\d{1,3})\s*)?%\s*\)\s*$/;
-
-/** h2 sections that end the skills-measured region. */
-const TERMINATORS = ['study resources', 'change log', 'related links'];
-
-/** Summary list that repeats every area — parsing it would duplicate them all. */
-const GLANCE = 'skills at a glance';
-
-/** Containers whose list items are navigation or link tables, not objectives. */
-const SKIPPED = 'nav, table, script, style';
-
-const clean = (text) =>
-  String(text || '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-/** `Manage Azure identities` → `manage-azure-identities`. */
-export function slugify(text) {
-  return clean(text)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-/**
- * A study guide this module could not read, in its own sentence (a status,
- * a redirect, a layout with no weighted areas). Authored (#945): the job and
- * the episode store it as written.
- */
-export class StudyGuideError extends AuthoredError {}
-
-/** `20–25%`, `15%`, or `''` when the guide states no weighting. */
-export function weightLabel(low, high) {
-  if (low === null || low === undefined) return '';
-  if (high === null || high === undefined || high === low) return `${low}%`;
-  return `${low}–${high}%`;
-}
+// The shared text rules live in studyguide-text.js and the Microsoft Learn
+// parser in studyguide-learn.js; exported again here so callers keep
+// importing from studyguide.js.
+export { slugify, StudyGuideError, weightLabel } from './studyguide-text.js';
 
 /**
  * Phrases worth searching YouTube for, most specific first.
@@ -74,106 +36,6 @@ export function weightLabel(low, high) {
  */
 export function searchTerms(area) {
   return [...area.subheadings, area.name];
-}
-
-/**
- * Microsoft Learn `resources/study-guides/{exam}` pages have a stable shape
- * across Azure, GitHub and Microsoft 365 exams:
- *
- *   h2  Skills measured as of April 17, 2026
- *   h3  Skills at a glance                        <- summary list, skipped
- *   h3  Manage Azure identities and governance (20–25%)
- *   h4    Manage Microsoft Entra users and groups
- *   li      Create users and groups
- *   h2  Study resources                           <- ends the skills section
- */
-function parseMicrosoftLearn(html, { examCode, sourceUrl }) {
-  const $ = loadHtml(html);
-  $(SKIPPED).remove();
-
-  const areas = [];
-  let current = null;
-  let inGlance = false;
-
-  const nodes = $('h2, h3, h4, li').toArray();
-
-  for (const node of nodes) {
-    const tag = node.tagName.toLowerCase();
-    const text = clean($(node).text());
-    if (!text) continue;
-    const lowered = text.toLowerCase();
-
-    if (tag === 'h2') {
-      if (TERMINATORS.some((t) => lowered.startsWith(t))) break;
-      inGlance = false;
-      continue;
-    }
-
-    if (tag === 'h3') {
-      inGlance = lowered.startsWith(GLANCE);
-      const match = HEADING_WEIGHT.exec(text);
-      if (match && !inGlance) {
-        const { name, low, high } = match.groups;
-        current = {
-          name: clean(name),
-          slug: slugify(name),
-          // The heading's own `id`, read off the DOM rather than derived. Learn
-          // builds its anchors from the WHOLE heading — "(20–25%)" becomes
-          // "2025" — so `slugify(name)` cannot reproduce them, and a guessed
-          // fragment would scroll the reader to the top of the page while
-          // looking like a deep link. `null` when the page carries none; the
-          // caller renders a plain link rather than a broken one (#498).
-          anchor: $(node).attr('id') || null,
-          weightLow: Number(low),
-          weightHigh: high === undefined ? null : Number(high),
-          subheadings: [],
-          objectives: [],
-          sections: [],
-        };
-        areas.push(current);
-      } else if (!match) {
-        // A non-weighted h3 (e.g. "Audience profile") ends the previous area
-        // so its bullets are not absorbed as objectives.
-        current = null;
-      }
-      continue;
-    }
-
-    if (!current || inGlance) continue;
-
-    if (tag === 'h4') {
-      if (!current.subheadings.includes(text)) {
-        current.subheadings.push(text);
-        current.sections.push({ title: text, objectives: [] });
-      }
-      continue;
-    }
-
-    // Learn repeats some bullets between the objective list and the change
-    // log; dedupe so an area is not padded with the same line twice.
-    if (!current.objectives.includes(text)) current.objectives.push(text);
-    // Also attached to the subsection it sits under, so the script prompt can
-    // require coverage section by section rather than as one flat list.
-    const section = current.sections.at(-1);
-    if (section && !section.objectives.includes(text)) section.objectives.push(text);
-  }
-
-  if (areas.length === 0) {
-    throw new StudyGuideError(
-      `No weighted skill areas found in the study guide for ${examCode}. ` +
-        `The page layout may have changed: ${sourceUrl}`
-    );
-  }
-
-  const title =
-    clean($('h1').first().text()) || `Study guide for Exam ${String(examCode).toUpperCase()}`;
-
-  return {
-    examCode: String(examCode).toUpperCase(),
-    title,
-    sourceUrl,
-    areas: areas.map((a) => ({ ...a, weightLabel: weightLabel(a.weightLow, a.weightHigh) })),
-  };
 }
 
 /**

@@ -46,24 +46,28 @@ import { readKey } from '../ai/router.js';
 import { USAGE_SOURCES, featureSource, monthToDateUsage, recordAiUsage } from '../ai/usage.js';
 import { mediaUrlFor } from '../blob-paths.js';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
-import {
-  composeSetPrompt,
-  lineageFor,
-  loadKeywordMatrix,
-  resolvePromptSetForContent,
-} from '../cms/image-prompts.js';
 import { measureImage } from '../gallery-images.js';
 import { claimRisingEdge, releaseRisingEdgeClaim, SKIP_REASONS } from './rising-edge-claim.js';
 import { fetchImage as defaultFetchImage } from './fetch-image.js';
-import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 import { AuthoredError, errorCode, recordedFailure, errorFacts } from '../http/error-response.js';
+import { aiCoverBlobPath, pickDefaultHero, resolveAiCoverTargets, resolveCoverPrompt, DEFAULT_HEROES_CONFIG_ID } from './ai-cover-prompt.js';
+import { awaitPrediction, CoverGenerationError, createPrediction, predictionImageUrl } from './replicate-prediction.js';
 
-// Deadlines for the Replicate calls (T-712). This runs inside a change-feed
-// handler, so a hung socket does not just fail one cover — it holds the lease
-// and queues every subsequent change behind it.
-const REPLICATE_POST_TIMEOUT_MS = 90_000; // clears the `Prefer: wait=60` hold
-const REPLICATE_POLL_TIMEOUT_MS = 30_000;
-const REPLICATE_POLL_BUDGET_MS = 5 * 60 * 1000; // wall clock for the whole poll loop
+// The prompt and the file path live in ai-cover-prompt.js, and one Replicate
+// prediction in replicate-prediction.js; exported again here so callers keep
+// importing from ai-cover.js.
+export {
+  aiCoverBlobPath,
+  BUILTIN_PROMPT_VERSION,
+  buildImagePrompt,
+  compactStamp,
+  DEFAULT_HEROES_CONFIG_ID,
+  pickDefaultHero,
+  PROVIDER_THEMES,
+  resolveAiCoverTargets,
+  resolveCoverPrompt,
+} from './ai-cover-prompt.js';
+export { CoverGenerationError } from './replicate-prediction.js';
 
 export const AI_COVER_CLAIM_FIELDS = Object.freeze({
   flagField: 'altCoverImageTrigger',
@@ -95,32 +99,6 @@ const positiveNumber = (value, fallback) => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 
-/**
- * The curated per-provider default heroes (T-606): admin_config/default_heroes
- * carries { heroes: { Azure: '/api/public/media/covers/…', AWS: …, Multi: … } }
- * — uploaded once by the owner through the image gallery. Absent doc or
- * provider key = no fallback, same behavior as before the feature.
- */
-export const DEFAULT_HEROES_CONFIG_ID = 'default_heroes';
-
-/** Case-insensitive provider → hero URL, with Multi as the catch-all. */
-export function pickDefaultHero(heroes = {}, providerRaw = '') {
-  const provider = String(providerRaw || '')
-    .trim()
-    .toLowerCase();
-  const entries = Object.entries(heroes || {});
-  const byKey = (wanted) => entries.find(([key]) => key.toLowerCase() === wanted)?.[1] || null;
-  if (provider) {
-    const exact = byKey(provider);
-    if (exact) return exact;
-    if (provider.includes('google')) {
-      const gcp = byKey('gcp');
-      if (gcp) return gcp;
-    }
-  }
-  return byKey('multi');
-}
-
 /** Mirrors applyPublishTimeCoverTrigger's "already has a cover" field list. */
 function hasCover(data = {}) {
   return [
@@ -131,222 +109,6 @@ function hasCover(data = {}) {
     data.heroImageUrl,
     data.coverImage,
   ].some(Boolean);
-}
-
-export const PROVIDER_THEMES = Object.freeze({
-  Azure: { color: 'blue and white', vibe: 'modern and corporate' },
-  AWS: { color: 'orange and dark blue', vibe: 'professional and energetic' },
-  GCP: { color: 'multicolor (blue, red, yellow, green)', vibe: 'playful and innovative' },
-  GitHub: { color: 'purple and dark gray', vibe: 'developer-focused and sleek' },
-  Terraform: { color: 'purple', vibe: 'technical and structured' },
-  FinOps: { color: 'teal and green', vibe: 'financial and analytical' },
-  // #775. Docker's blue is the site's --docker-blue, #1D63ED.
-  Docker: { color: 'bright blue and white', vibe: 'modular and developer-friendly' },
-  Multi: { color: 'multicolor gradient', vibe: 'versatile and integrated' },
-});
-
-/** The built-in prompt: the ultimate fallback when no set applies. */
-export const BUILTIN_PROMPT_VERSION = 'builtin-lego-v1';
-
-export function buildImagePrompt(article) {
-  const provider =
-    [article.cloudProvider, article['Cloud Provider'], article.provider, article.Provider].find(
-      Boolean
-    ) || 'Azure';
-  const theme = PROVIDER_THEMES[provider] || PROVIDER_THEMES.Azure;
-  if (article.keyTopics && article.visualTheme && article.summary) {
-    return `Create a professional technical illustration in ${theme.color} color scheme with a ${theme.vibe} aesthetic.
-
-Scene: 2-3 cute Lego minifigure-style characters collaborating to build cloud infrastructure.
-
-They are constructing and working on: ${article.keyTopics.join(', ')}
-
-Visual metaphor: ${article.visualTheme}
-
-Context: ${article.summary}
-
-Style requirements:
-- Isometric 3D illustration, clean and modern design
-- Modular building blocks with Lego brick aesthetic
-- Characters actively building/connecting/deploying components
-- Subtle ${provider} branding elements (colors, logo hints)
-- Tech-focused and professional yet playful
-- No text overlays, labels, or written words in the image
-- Focus on the collaborative building activity
-
-The scene should visually represent the article's core concepts through the Lego characters' construction work.`;
-  }
-  const resources =
-    [article.resources, article.Resources, article.title, article.Title].find(Boolean) ||
-    'cloud infrastructure';
-  return `Create a professional technical illustration in ${theme.color} color scheme with a ${theme.vibe} aesthetic. The scene features cute Lego minifigure-style characters collaborating to build cloud infrastructure. Show 2-3 blocky characters working together on: ${resources}. The characters should be constructing these as modular building blocks, similar to Lego bricks. Include subtle ${provider} branding elements. Style: isometric 3D illustration, clean and modern, tech-focused, with a playful builder theme. No text or logos, just the visual scene.`;
-}
-
-/**
- * The prompt a cover generation sends, and where it came from.
- *
- *   override  the editor typed one (`altCoverImagePrompt`) — used verbatim
- *   library   the Image Prompts set resolved for this document
- *   builtin   the Lego prompt above
- *
- * Never throws: a library that cannot be read falls through to the built-in
- * prompt with the reason logged, because a cover is still owed.
- *
- * @returns {Promise<{ prompt: string, source: 'override'|'library'|'builtin', lineage: object, aspectRatio?: string }>}
- */
-export async function resolveCoverPrompt({ store, log = {} }, data, { slot = 'hero' } = {}) {
-  const provided = typeof data.altCoverImagePrompt === 'string' && data.altCoverImagePrompt.trim();
-  if (provided) {
-    return {
-      prompt: provided,
-      source: 'override',
-      aspectRatio: undefined,
-      lineage: lineageFor({
-        set: null,
-        prompt: null,
-        promptText: provided,
-        slot,
-        source: 'override',
-      }),
-    };
-  }
-  try {
-    const resolved = await resolvePromptSetForContent(store, data);
-    if (resolved?.set?.primaryPrompt) {
-      const keyword = await loadKeywordMatrix(store, log);
-      const prompt = composeSetPrompt({
-        set: resolved.set,
-        prompt: resolved.prompt,
-        slot,
-        article: data,
-        keyword,
-      });
-      return {
-        prompt,
-        source: 'library',
-        aspectRatio: String(resolved.set.aspectRatio || '').trim() || undefined,
-        lineage: lineageFor({
-          set: resolved.set,
-          prompt: resolved.prompt,
-          promptText: prompt,
-          slot,
-          source: resolved.source,
-        }),
-      };
-    }
-  } catch (error) {
-    log.warn?.(
-      `[generateAiCover] prompt library unavailable, using built-in prompt: ${errorFacts(error)}`
-    );
-  }
-  const prompt = buildImagePrompt(data);
-  return {
-    prompt,
-    source: 'builtin',
-    aspectRatio: undefined,
-    lineage: {
-      ...lineageFor({ set: null, prompt: null, promptText: prompt, slot, source: 'builtin' }),
-      promptTemplateVersion: BUILTIN_PROMPT_VERSION,
-    },
-  };
-}
-
-/** Requested image slots, capped at 4; hero-only when none are set. */
-export function resolveAiCoverTargets(data) {
-  return Array.isArray(data.aiImageTargets) && data.aiImageTargets.length > 0
-    ? data.aiImageTargets.slice(0, 4)
-    : ['hero'];
-}
-
-/** `2026-08-28T12:00:00.000Z` → `20260828120000`: safe in a blob name. */
-export function compactStamp(iso) {
-  return String(iso || '')
-    .replace(/[-:TZ]/g, '')
-    .replace(/\..*$/, '')
-    .slice(0, 14);
-}
-
-/**
- * The blob path for one generated cover. Stamped so a regeneration writes a
- * new file beside the old one rather than over it (ADR 0033 §6.2).
- */
-export function aiCoverBlobPath(contentId, target, stampIso) {
-  return `${contentId}-ai-${target}-${compactStamp(stampIso)}.png`;
-}
-
-const RETRYABLE_STATUSES = [429, 503, 502, 504];
-const PREDICTION_SETTLED = ['succeeded', 'failed', 'canceled'];
-
-/** POST the prediction, retrying the transient statuses with backoff. */
-async function createPrediction(fetchImpl, { model, headers, input, sleep }) {
-  let lastStatus = 0;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const response = await fetchWithTimeout(
-      fetchImpl,
-      `https://api.replicate.com/v1/models/${model}/predictions`,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ input }),
-        // `Prefer: wait=60` asks Replicate to hold the connection for up to
-        // 60s, so the deadline has to clear that plus slack — otherwise the
-        // timeout would fire on the happy path (T-712).
-        timeoutMs: REPLICATE_POST_TIMEOUT_MS,
-      }
-    );
-    if (response.ok) return response.json();
-    lastStatus = response.status;
-    if (!RETRYABLE_STATUSES.includes(response.status) || attempt === 3) break;
-    await sleep(2 ** attempt * 1000);
-  }
-  throw new CoverGenerationError(`Replicate HTTP ${lastStatus}`, { status: lastStatus });
-}
-
-/**
- * Poll until the prediction settles. Prefer: wait returns a completed
- * prediction in the common case; this is the otherwise. An iteration count
- * alone does not bound wall-clock time: each iteration sleeps 2s AND makes
- * a request, so a run of slow-but-not-timing-out polls could sit here far
- * longer than the arithmetic suggests. The deadline is the real bound
- * (T-712).
- */
-async function awaitPrediction(fetchImpl, prediction, { authorization, sleep }) {
-  const pollDeadline = Date.now() + REPLICATE_POLL_BUDGET_MS;
-  let current = prediction;
-  for (let poll = 0; poll < 60 && !PREDICTION_SETTLED.includes(current.status); poll += 1) {
-    if (Date.now() > pollDeadline) {
-      throw new CoverGenerationError(
-        `Replicate prediction still ${current.status} after ${Math.round(REPLICATE_POLL_BUDGET_MS / 1000)}s`
-      );
-    }
-    await sleep(2000);
-    const response = await fetchWithTimeout(
-      fetchImpl,
-      current.urls?.get || `https://api.replicate.com/v1/predictions/${current.id}`,
-      { headers: { Authorization: authorization }, timeoutMs: REPLICATE_POLL_TIMEOUT_MS }
-    );
-    if (!response.ok) {
-      throw new CoverGenerationError(`Replicate poll HTTP ${response.status}`, {
-        status: response.status,
-      });
-    }
-    current = await response.json();
-  }
-  return current;
-}
-
-/** The image URL a settled prediction carries, in any of its output shapes. */
-function predictionImageUrl(prediction) {
-  if (prediction.status !== 'succeeded') {
-    // The prediction's own error text is Replicate's (and can quote the
-    // prompt), so the stored sentence names the status only (#945).
-    throw new CoverGenerationError(`Replicate prediction ${prediction.status}`);
-  }
-  const output = prediction.output;
-  const imageUrl =
-    typeof output === 'string' ? output : Array.isArray(output) ? output[0] : output?.url;
-  if (!imageUrl) throw new CoverGenerationError('No image URL returned from Replicate API');
-  return imageUrl;
 }
 
 /**
@@ -395,15 +157,6 @@ async function assertImageBudget({
  * totals, so the manual image routes show it (authored, #945).
  */
 export class ImageBudgetError extends AuthoredError {}
-
-/**
- * A cover generation this module refuses or gives up on, in its own
- * sentence: an unset key, a task with no image model, a status from
- * Replicate, a generation that is not an image. Authored (#945): the
- * document's altCoverImageError and the manual image routes carry it as
- * written. Replicate's own error text never goes in one.
- */
-export class CoverGenerationError extends AuthoredError {}
 
 /**
  * One row per output image, under the task's source with the image slug as
@@ -640,6 +393,91 @@ export async function generateCoversForContent(
   return { generatedUrls, update, stamp, records };
 }
 
+/** Generate the covers and record them, once the claim is held. */
+async function generateAndStore(d, contentId, data) {
+  const { store, log } = d;
+  const resolved = await resolveCoverPrompt({ store, log }, data);
+  const targets = resolveAiCoverTargets(data);
+  const { update } = await generateCoversForContent(d, contentId, data, {
+    targets,
+    prompt: resolved.prompt,
+    lineage: resolved.lineage,
+    aspectRatio: resolved.aspectRatio,
+  });
+  await store.patchDoc('content', contentId, {
+    ...releaseRisingEdgeClaim(AI_COVER_CLAIM_FIELDS),
+    altCoverImageTrigger: false,
+    altCoverImagePromptSource: resolved.source,
+    ...update,
+  });
+  return { ran: true, reason: 'generated', targets, promptSource: resolved.source };
+}
+
+/**
+ * The owner's default hero for this document's provider, or null. Best
+ * effort: a failure reading the mapping is logged and gives null.
+ */
+async function defaultHeroFor({ store, log }, data) {
+  try {
+    const config = await store.readDoc('admin_config', DEFAULT_HEROES_CONFIG_ID, ADMIN_CONFIG_PARTITION);
+    return pickDefaultHero(config?.heroes, data['Cloud Provider'] || data.cloudProvider || '');
+  } catch (fallbackErr) {
+    log.warn?.(`[generateAiCover:content] default-hero fallback failed: ${errorFacts(fallbackErr)}`);
+    return null;
+  }
+}
+
+/**
+ * @param {object} d - the generator's dependencies
+ * @param {string} contentId
+ * @param {string} eventId - stable across redeliveries (the item's _etag)
+ * @returns {Promise<{ ran: boolean, reason: string, targets?: string[] }>}
+ */
+async function run(d, contentId, eventId) {
+  const { store, now, log } = d;
+  const claim = await claimRisingEdge(store, 'content', contentId, {
+    ...AI_COVER_CLAIM_FIELDS,
+    eventId,
+    now,
+  });
+  if (!claim.claim) {
+    if (claim.reason !== SKIP_REASONS.FLAG_NOT_SET)
+      log.log?.(`[generateAiCover:content] a document was skipped: ${claim.reason}`);
+    return { ran: false, reason: claim.reason };
+  }
+  const data = claim.data;
+  try {
+    return await generateAndStore(d, contentId, data);
+  } catch (err) {
+    // The review page shows altCoverImageError: this module's sentence, or
+    // a fixed one with the code and the reference of the content-free log
+    // line, never Replicate's or a socket's own words (#945).
+    const failure = recordedFailure(log, 'The cover could not be generated.', err);
+    // Releasing the claim is required: a claim left behind blocks the next request for the whole window.
+    const errorUpdate = {
+      ...releaseRisingEdgeClaim(AI_COVER_CLAIM_FIELDS),
+      altCoverImageTrigger: false,
+      altCoverImageError: failure,
+    };
+    // Deterministic fallback (T-606): generation failed or is unconfigured,
+    // but a post should still stage with a designed cover. Best effort — a
+    // failure reading the mapping keeps the plain error patch.
+    const fallback = hasCover(data) ? null : await defaultHeroFor(d, data);
+    if (fallback) {
+      // contentImageUrl too: the public list projection carries it but
+      // not heroImageUrl (lib/public-reads.js PUBLIC_CONTENT_LIST_FIELDS).
+      errorUpdate.altCoverImage = fallback;
+      errorUpdate.contentImageUrl = fallback;
+      errorUpdate.altCoverImageError = `fallback: default hero (${failure})`;
+    }
+    await store.patchDoc('content', contentId, errorUpdate);
+    return {
+      ran: false,
+      reason: fallback ? `error_with_default_hero: ${errorCode(err)}` : `error: ${errorCode(err)}`,
+    };
+  }
+}
+
 /**
  * @param {object} deps
  * @param {{ readDoc: Function, patchDoc: Function, upsertDoc: Function, replaceDocIfMatch: Function, queryDocs?: Function }} deps.store
@@ -657,92 +495,6 @@ export function createAiCoverGenerator({
   uuid,
   log = {},
 }) {
-  /**
-   * @param {string} contentId
-   * @param {string} eventId - stable across redeliveries (the item's _etag)
-   * @returns {Promise<{ ran: boolean, reason: string, targets?: string[] }>}
-   */
-  async function run(contentId, eventId) {
-    const claim = await claimRisingEdge(store, 'content', contentId, {
-      ...AI_COVER_CLAIM_FIELDS,
-      eventId,
-      now,
-    });
-    if (!claim.claim) {
-      if (claim.reason !== SKIP_REASONS.FLAG_NOT_SET)
-        log.log?.(`[generateAiCover:content] a document was skipped: ${claim.reason}`);
-      return { ran: false, reason: claim.reason };
-    }
-    const data = claim.data;
-    try {
-      const resolved = await resolveCoverPrompt({ store, log }, data);
-      const targets = resolveAiCoverTargets(data);
-      const { update } = await generateCoversForContent(
-        { store, storage, replicate, fetchImage, now, uuid },
-        contentId,
-        data,
-        {
-          targets,
-          prompt: resolved.prompt,
-          lineage: resolved.lineage,
-          aspectRatio: resolved.aspectRatio,
-        }
-      );
-      await store.patchDoc('content', contentId, {
-        ...releaseRisingEdgeClaim(AI_COVER_CLAIM_FIELDS),
-        altCoverImageTrigger: false,
-        altCoverImagePromptSource: resolved.source,
-        ...update,
-      });
-      return { ran: true, reason: 'generated', targets, promptSource: resolved.source };
-    } catch (err) {
-      // The review page shows altCoverImageError: this module's sentence, or
-      // a fixed one with the code and the reference of the content-free log
-      // line, never Replicate's or a socket's own words (#945).
-      const failure = recordedFailure(log, 'The cover could not be generated.', err);
-      // Releasing the claim is required: a claim left behind blocks the next request for the whole window.
-      const errorUpdate = {
-        ...releaseRisingEdgeClaim(AI_COVER_CLAIM_FIELDS),
-        altCoverImageTrigger: false,
-        altCoverImageError: failure,
-      };
-      // Deterministic fallback (T-606): generation failed or is unconfigured,
-      // but a post should still stage with a designed cover. Best effort — a
-      // failure reading the mapping keeps the plain error patch.
-      let fallbackApplied = false;
-      if (!hasCover(data)) {
-        try {
-          const config = await store.readDoc(
-            'admin_config',
-            DEFAULT_HEROES_CONFIG_ID,
-            ADMIN_CONFIG_PARTITION
-          );
-          const fallback = pickDefaultHero(
-            config?.heroes,
-            data['Cloud Provider'] || data.cloudProvider || ''
-          );
-          if (fallback) {
-            // contentImageUrl too: the public list projection carries it but
-            // not heroImageUrl (lib/public-reads.js PUBLIC_CONTENT_LIST_FIELDS).
-            errorUpdate.altCoverImage = fallback;
-            errorUpdate.contentImageUrl = fallback;
-            errorUpdate.altCoverImageError = `fallback: default hero (${failure})`;
-            fallbackApplied = true;
-          }
-        } catch (fallbackErr) {
-          log.warn?.(
-            `[generateAiCover:content] default-hero fallback failed: ${errorFacts(fallbackErr)}`
-          );
-        }
-      }
-      await store.patchDoc('content', contentId, errorUpdate);
-      return {
-        ran: false,
-        reason: fallbackApplied
-          ? `error_with_default_hero: ${errorCode(err)}`
-          : `error: ${errorCode(err)}`,
-      };
-    }
-  }
-  return { run };
+  const d = { store, storage, replicate, fetchImage, now, uuid, log };
+  return { run: (contentId, eventId) => run(d, contentId, eventId) };
 }
