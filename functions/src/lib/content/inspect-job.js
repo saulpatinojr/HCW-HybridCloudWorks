@@ -14,6 +14,38 @@ export const DEFAULT_BATCH = 10;
 export const MAX_BATCH = 25;
 export const STAGGER_MS = 4000;
 
+/** Flagged ingested documents first, then unflagged ones that have not failed before. */
+async function select(store, limit) {
+  const flagged = await store.queryDocs(
+    'content',
+    `SELECT TOP ${limit} * FROM c WHERE c.contentStatus = 'ingested' AND c.inspectTrigger = true`,
+    []
+  );
+  if (flagged.length >= limit) return flagged.slice(0, limit);
+  const seen = new Set(flagged.map((d) => d.id));
+  const unflagged = await store.queryDocs(
+    'content',
+    `SELECT TOP ${limit} * FROM c WHERE c.contentStatus = 'ingested' AND (NOT IS_DEFINED(c.inspectTrigger) OR c.inspectTrigger = false) AND NOT IS_DEFINED(c.inspectError)`,
+    []
+  );
+  return [...flagged, ...unflagged.filter((d) => !seen.has(d.id))].slice(0, limit);
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
+}
+
+/** The batch size asked for, kept between 1 and MAX_BATCH. */
+const batchSize = (limit) => Math.min(Math.max(Number(limit) || DEFAULT_BATCH, 1), MAX_BATCH);
+
+const hasSourceUrl = (doc) => Boolean(doc.url || doc.sourceUrl || doc['CD Url']);
+
+function countInspected(result, doc, outcome) {
+  result.inspected += 1;
+  if (outcome.contentStatus === 'needs_rework') result.needsRework += 1;
+  result.ids.inspected.push(doc.id);
+}
+
 /**
  * @param {object} deps
  * @param {{ queryDocs: Function, patchDoc: Function }} deps.store
@@ -30,22 +62,6 @@ export function createInspectBatch({
   log = {},
   signal: defaultSignal,
 }) {
-  async function select(limit) {
-    const flagged = await store.queryDocs(
-      'content',
-      `SELECT TOP ${limit} * FROM c WHERE c.contentStatus = 'ingested' AND c.inspectTrigger = true`,
-      []
-    );
-    if (flagged.length >= limit) return flagged.slice(0, limit);
-    const seen = new Set(flagged.map((d) => d.id));
-    const unflagged = await store.queryDocs(
-      'content',
-      `SELECT TOP ${limit} * FROM c WHERE c.contentStatus = 'ingested' AND (NOT IS_DEFINED(c.inspectTrigger) OR c.inspectTrigger = false) AND NOT IS_DEFINED(c.inspectError)`,
-      []
-    );
-    return [...flagged, ...unflagged.filter((d) => !seen.has(d.id))].slice(0, limit);
-  }
-
   return {
     /**
      * @param {{ limit?: number, signal?: AbortSignal }} [payload]
@@ -53,9 +69,8 @@ export function createInspectBatch({
      */
     async run({ limit = DEFAULT_BATCH, signal: callSignal } = {}) {
       const activeSignal = callSignal || defaultSignal;
-      if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
-      const batch = Math.min(Math.max(Number(limit) || DEFAULT_BATCH, 1), MAX_BATCH);
-      const docs = await select(batch);
+      throwIfAborted(activeSignal);
+      const docs = await select(store, batchSize(limit));
       const result = {
         total: docs.length,
         inspected: 0,
@@ -66,10 +81,9 @@ export function createInspectBatch({
       };
 
       for (let i = 0; i < docs.length; i += 1) {
-        if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
+        throwIfAborted(activeSignal);
         const doc = docs[i];
-        const url = doc.url || doc.sourceUrl || doc['CD Url'];
-        if (!url) {
+        if (!hasSourceUrl(doc)) {
           result.skipped += 1;
           continue;
         }
@@ -80,9 +94,7 @@ export function createInspectBatch({
             newData: doc,
             signal: activeSignal,
           });
-          result.inspected += 1;
-          if (outcome.contentStatus === 'needs_rework') result.needsRework += 1;
-          result.ids.inspected.push(doc.id);
+          countInspected(result, doc, outcome);
         } catch (error) {
           result.failed += 1;
           result.ids.failed.push(doc.id);
