@@ -2,9 +2,9 @@ import React from 'react';
 import { routes } from '@/lib/routeFactory';
 import ProviderLandingTemplate from '@/components/shared/ProviderLandingTemplate';
 import {
-  CertTrackGrid,
   FeatureCardGrid,
-  QuickLinkGrid,
+  learningTracksSection,
+  quickLinksSection,
 } from '@/pages/shared/landing/LandingSections';
 
 const CODE_CARDS = [
@@ -104,23 +104,8 @@ export default function AnsibleLandingPage() {
           action: { label: 'All patterns', to: routes.code('ansible') },
           content: <FeatureCardGrid cards={CODE_CARDS} />,
         },
-        {
-          eyebrow: 'QUICK REFERENCE',
-          title: 'Most-Used Resources',
-          content: <QuickLinkGrid links={QUICK_LINKS} />,
-        },
-        {
-          eyebrow: 'LEARNING CENTER',
-          title: 'Certification & Learning Tracks',
-          action: { label: 'Learning hub', to: routes.education('ansible') },
-          content: (
-            <CertTrackGrid
-              certs={LEARNING}
-              linkFor={() => routes.education('ansible')}
-              columns={3}
-            />
-          ),
-        },
+        quickLinksSection(QUICK_LINKS),
+        learningTracksSection('ansible', LEARNING),
       ]}
     />
   );

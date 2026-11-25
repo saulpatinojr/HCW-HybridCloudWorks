@@ -293,4 +293,23 @@ export function certTracksSection(provider, gridProps) {
   };
 }
 
+/** "Quick reference": the most-used links. */
+export function quickLinksSection(links) {
+  return {
+    eyebrow: 'QUICK REFERENCE',
+    title: 'Most-Used Resources',
+    content: <QuickLinkGrid links={links} />,
+  };
+}
+
+/** "Learning center" on the tooling pages: every track opens the provider's learning hub. */
+export function learningTracksSection(provider, certs) {
+  return {
+    eyebrow: 'LEARNING CENTER',
+    title: 'Certification & Learning Tracks',
+    action: { label: 'Learning hub', to: routes.education(provider) },
+    content: <CertTrackGrid certs={certs} linkFor={() => routes.education(provider)} columns={3} />,
+  };
+}
+
 export { SKILL_CHIP, IconChip };

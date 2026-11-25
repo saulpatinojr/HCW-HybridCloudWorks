@@ -2,9 +2,9 @@ import React from 'react';
 import { routes } from '@/lib/routeFactory';
 import ProviderLandingTemplate from '@/components/shared/ProviderLandingTemplate';
 import {
-  CertTrackGrid,
   FeatureCardGrid,
-  QuickLinkGrid,
+  learningTracksSection,
+  quickLinksSection,
 } from '@/pages/shared/landing/LandingSections';
 import HeroImageCarousel from '@/components/landing/HeroImageCarousel';
 
@@ -131,23 +131,8 @@ export default function TerraformLandingPage() {
           action: { label: 'All modules', to: routes.modules('terraform') },
           content: <FeatureCardGrid cards={MODULE_CARDS} />,
         },
-        {
-          eyebrow: 'QUICK REFERENCE',
-          title: 'Most-Used Resources',
-          content: <QuickLinkGrid links={QUICK_LINKS} />,
-        },
-        {
-          eyebrow: 'LEARNING CENTER',
-          title: 'Certification & Learning Tracks',
-          action: { label: 'Learning hub', to: routes.education('terraform') },
-          content: (
-            <CertTrackGrid
-              certs={LEARNING}
-              linkFor={() => routes.education('terraform')}
-              columns={3}
-            />
-          ),
-        },
+        quickLinksSection(QUICK_LINKS),
+        learningTracksSection('terraform', LEARNING),
       ]}
     />
   );
