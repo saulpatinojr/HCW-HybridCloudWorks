@@ -201,6 +201,164 @@ function readContentLength(request) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+/** The refusals that need no body: an unknown container, or a declared size over the limit. The response, or null. */
+function refusalBeforeBody(request, container) {
+  if (!UPLOAD_CONTAINERS.has(container)) {
+    return json(404, { error: 'Unknown container' });
+  }
+  // Before the body is read. The Functions host has no request-size knob of
+  // its own — `extensions.http` in host.json exposes routePrefix,
+  // concurrency, hsts and customHeaders, and nothing else — so this is the
+  // only place an oversized body can be turned away early.
+  if (readContentLength(request) > MAX_REQUEST_BYTES) {
+    return json(413, { error: 'File exceeds the 15MB upload limit' });
+  }
+  return null;
+}
+
+/** The body's fields checked before anything is decoded: the refusal, or null. */
+function uploadFieldsRefusal({ container, path, contentType, dataBase64 }) {
+  if (!isValidBlobPath(path)) {
+    return json(400, { error: 'Invalid path' });
+  }
+
+  const mediaType = checkUploadMediaType({ container, path, contentType });
+  if (!mediaType.ok) {
+    return json(415, { error: mediaType.reason });
+  }
+
+  if (!dataBase64) {
+    return json(400, { error: 'dataBase64 is required' });
+  }
+  // Before `Buffer.from`, so an oversized payload costs one comparison
+  // rather than a second full-size allocation.
+  if (dataBase64.length > MAX_BASE64_CHARS) {
+    return json(413, { error: 'File exceeds the 15MB upload limit' });
+  }
+  return null;
+}
+
+/** The decoded bytes checked: the refusal, or null. */
+function decodedSizeRefusal(buffer) {
+  if (buffer.length === 0) {
+    return json(400, { error: 'dataBase64 is not valid base64' });
+  }
+  if (buffer.length > MAX_UPLOAD_BYTES) {
+    return json(413, { error: 'File exceeds the 15MB upload limit' });
+  }
+  return null;
+}
+
+/**
+ * The upload body checked and decoded: `{ path, contentType, buffer }`, or
+ * `{ error }` holding the refusal. Every size check runs before the bytes are
+ * decoded, so an oversized payload costs one comparison.
+ */
+function decodeUpload(body, container) {
+  const path = String(body?.path || '').trim();
+  const contentType = normalizeMediaType(body?.contentType);
+  const dataBase64 = String(body?.dataBase64 || '');
+
+  const refused = uploadFieldsRefusal({ container, path, contentType, dataBase64 });
+  if (refused) return { error: refused };
+
+  const buffer = Buffer.from(dataBase64, 'base64');
+  const sizeRefused = decodedSizeRefusal(buffer);
+  if (sizeRefused) return { error: sizeRefused };
+  return { path, contentType, buffer };
+}
+
+/**
+ * What is written: the decoded file as it came, or, for a normalised
+ * container, the normalised PNG. `{ buffer, storedPath, storedType }`, or
+ * `{ error }` holding the refusal.
+ */
+async function prepareUpload(body, container, normalizeImage) {
+  const decoded = decodeUpload(body, container);
+  if (decoded.error) return decoded;
+  const { path, contentType, buffer } = decoded;
+
+  // After the size checks, so an oversized body is refused before it is
+  // decoded, and before the write, so nothing but the normalised PNG
+  // ever reaches a normalised container (badge-image.js).
+  if (!NORMALIZED_UPLOAD_CONTAINERS.has(container)) {
+    return { buffer, storedPath: path, storedType: contentType };
+  }
+  const normalized = await normalizeImage(buffer, { contentType });
+  if (normalized.error) {
+    return { error: json(415, { error: normalized.error }) };
+  }
+  return {
+    buffer: normalized.buffer,
+    storedType: normalized.contentType,
+    storedPath: withExtension(path, normalized.extension),
+  };
+}
+
+/** The answer for an upload that threw: 409 for a taken path, otherwise 500 and one log line. */
+function uploadFailure(error, context) {
+  if (error?.statusCode === 409 || error?.code === 'BlobAlreadyExists') {
+    return json(409, { error: 'A file already exists at that path' });
+  }
+  context.error('uploadFile failed:', errorFacts(error));
+  return json(500, { error: 'Failed to upload file' });
+}
+
+/** POST /api/cms/uploads/{container} — {path, contentType, dataBase64} → {url} */
+async function uploadFile({ guard, storage, store, now, uuid, normalizeImage }, request, context) {
+  const auth = await guard.requireRole(request, 'editor');
+  if (auth.error) return auth.error;
+
+  const container = String(request.params.container || '').trim();
+  const refused = refusalBeforeBody(request, container);
+  if (refused) return refused;
+
+  try {
+    const body = await request.json().catch(() => null);
+    const prepared = await prepareUpload(body, container, normalizeImage);
+    if (prepared.error) return prepared.error;
+    const { buffer, storedPath, storedType } = prepared;
+
+    // `overwrite: false`. The path is caller-chosen, so without the
+    // condition a request naming an existing key silently replaces a live
+    // asset — every page that already persisted that URL starts serving
+    // the new bytes. All three callers mint timestamped, randomized paths,
+    // so a 409 here means something unintended.
+    const blobUrl = await storage.uploadBlob(
+      container,
+      storedPath,
+      buffer,
+      storedType,
+      {},
+      { overwrite: false }
+    );
+
+    // The pages persist `url` into Cosmos, so it must be the URL that will
+    // actually serve. The raw blob URL does not: the account is closed to
+    // the internet and `allow_nested_items_to_be_public = false` overrides
+    // the containers' public access (T-105). Public containers get
+    // the delivery route; private ones get no URL at all rather than a
+    // plausible-looking dead one.
+    const url = PUBLIC_MEDIA_CONTAINERS.has(container) ? mediaUrlFor(container, storedPath) : '';
+
+    if (store) {
+      await recordMutationAudit(store, {
+        action: 'admin_upload_completed',
+        actor: auth.user,
+        resource: `${container}:${storedPath}`,
+        details: { container, path: storedPath, size: buffer.length, contentType: storedType },
+        now,
+        uuid,
+        context,
+      });
+    }
+
+    return json(200, { success: true, url, blobUrl, container, path: storedPath });
+  } catch (error) {
+    return uploadFailure(error, context);
+  }
+}
+
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
@@ -218,114 +376,9 @@ export function createAdminUploadHandlers({
   uuid = randomUUID,
   normalizeImage = normalizeBadgeImage,
 }) {
+  const deps = { guard, storage, store, now, uuid, normalizeImage };
   return {
     /** POST /api/cms/uploads/{container} — {path, contentType, dataBase64} → {url} */
-    async uploadFile(request, context) {
-      const auth = await guard.requireRole(request, 'editor');
-      if (auth.error) return auth.error;
-
-      const container = String(request.params.container || '').trim();
-      if (!UPLOAD_CONTAINERS.has(container)) {
-        return json(404, { error: 'Unknown container' });
-      }
-
-      // Before the body is read. The Functions host has no request-size knob of
-      // its own — `extensions.http` in host.json exposes routePrefix,
-      // concurrency, hsts and customHeaders, and nothing else — so this is the
-      // only place an oversized body can be turned away early.
-      if (readContentLength(request) > MAX_REQUEST_BYTES) {
-        return json(413, { error: 'File exceeds the 15MB upload limit' });
-      }
-
-      try {
-        const body = await request.json().catch(() => null);
-        const path = String(body?.path || '').trim();
-        const contentType = normalizeMediaType(body?.contentType);
-        const dataBase64 = String(body?.dataBase64 || '');
-
-        if (!isValidBlobPath(path)) {
-          return json(400, { error: 'Invalid path' });
-        }
-
-        const mediaType = checkUploadMediaType({ container, path, contentType });
-        if (!mediaType.ok) {
-          return json(415, { error: mediaType.reason });
-        }
-
-        if (!dataBase64) {
-          return json(400, { error: 'dataBase64 is required' });
-        }
-        // Before `Buffer.from`, so an oversized payload costs one comparison
-        // rather than a second full-size allocation.
-        if (dataBase64.length > MAX_BASE64_CHARS) {
-          return json(413, { error: 'File exceeds the 15MB upload limit' });
-        }
-
-        let buffer = Buffer.from(dataBase64, 'base64');
-        if (buffer.length === 0) {
-          return json(400, { error: 'dataBase64 is not valid base64' });
-        }
-        if (buffer.length > MAX_UPLOAD_BYTES) {
-          return json(413, { error: 'File exceeds the 15MB upload limit' });
-        }
-
-        // After the size checks, so an oversized body is refused before it is
-        // decoded, and before the write, so nothing but the normalised PNG
-        // ever reaches a normalised container (badge-image.js).
-        let storedPath = path;
-        let storedType = contentType;
-        if (NORMALIZED_UPLOAD_CONTAINERS.has(container)) {
-          const normalized = await normalizeImage(buffer, { contentType });
-          if (normalized.error) {
-            return json(415, { error: normalized.error });
-          }
-          buffer = normalized.buffer;
-          storedType = normalized.contentType;
-          storedPath = withExtension(path, normalized.extension);
-        }
-
-        // `overwrite: false`. The path is caller-chosen, so without the
-        // condition a request naming an existing key silently replaces a live
-        // asset — every page that already persisted that URL starts serving
-        // the new bytes. All three callers mint timestamped, randomized paths,
-        // so a 409 here means something unintended.
-        const blobUrl = await storage.uploadBlob(
-          container,
-          storedPath,
-          buffer,
-          storedType,
-          {},
-          { overwrite: false }
-        );
-
-        // The pages persist `url` into Cosmos, so it must be the URL that will
-        // actually serve. The raw blob URL does not: the account is closed to
-        // the internet and `allow_nested_items_to_be_public = false` overrides
-        // the containers' public access (T-105). Public containers get
-        // the delivery route; private ones get no URL at all rather than a
-        // plausible-looking dead one.
-        const url = PUBLIC_MEDIA_CONTAINERS.has(container) ? mediaUrlFor(container, storedPath) : '';
-
-        if (store) {
-          await recordMutationAudit(store, {
-            action: 'admin_upload_completed',
-            actor: auth.user,
-            resource: `${container}:${storedPath}`,
-            details: { container, path: storedPath, size: buffer.length, contentType: storedType },
-            now,
-            uuid,
-            context,
-          });
-        }
-
-        return json(200, { success: true, url, blobUrl, container, path: storedPath });
-      } catch (error) {
-        if (error?.statusCode === 409 || error?.code === 'BlobAlreadyExists') {
-          return json(409, { error: 'A file already exists at that path' });
-        }
-        context.error('uploadFile failed:', errorFacts(error));
-        return json(500, { error: 'Failed to upload file' });
-      }
-    },
+    uploadFile: (request, context) => uploadFile(deps, request, context),
   };
 }
