@@ -117,6 +117,114 @@ both ways on 2026-11-24: clean on this branch, and exit 1 on a throwaway
 commit that added a random 32-character `apiKey` to a source file (gitleaks,
 high) and a `subprocess.call(..., shell=True)` (bandit B602, high).
 
+## Code smells in data and style tables
+
+**Owner decision 2026-11-25 on
+[#1845](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1845#issuecomment-7150118516).**
+This section is about code smells, not security findings: it sits on this
+page because this is where `.qlty/qlty.toml` sends every silence.
+
+A *code smell* is a pattern Qlty's own checks report: a function that is too
+complex, one with too many `return` lines, or a block of code that looks like
+another block ("similar code"). Qlty's duplicate finder compares the *shape* of
+the code, so a file that is a list of records, where every record has the same
+fields, reads to it as the same block written many times. The files below are
+that kind of file: catalogue rows, architecture write-ups, learning paths, card
+lists, or tables of Tailwind colour classes (Tailwind needs each class written
+out in full, so a colour table cannot be built from a loop). Their rows look
+alike by design, and there is no code to share between them.
+
+So one `[[triage]]` block in `.qlty/qlty.toml` ignores **only
+`qlty:similar-code`**, **only in the files named below, one by one**. It does
+not limit what these files may contain. Every other smell (a complex
+function, many returns, copied *identical* code) still reports in them, and a
+new data file is not covered until it is added to the block by name, with a
+row here. The data stays JavaScript (moving it to JSON was declined the same
+day). The generated Azure certification rows are not listed: they moved to
+`frontend/src/data/azure/generated/certifications.js`, a folder
+`.qlty/qlty.toml` excludes by its exact path (not every folder called
+`generated/`, so hand-written code put in another one is still checked).
+The other entries in that file's `exclude_patterns` still exempt files from
+smells as well as from the linters: `qlty init`'s defaults such as
+`**/assets/**`, `**/build/**`, `**/vendor/**` and `*.min.*`, and every file
+matching `test_patterns` (`**/*.test.*`, `**/test/**` and the rest), whose
+smells Qlty does not report at all.
+
+**Qlty does not apply this block itself yet.** Qlty's `[[triage]]` and
+`[[exclude]]` blocks reach only its plugins' findings, not its own smells, in
+the CLI and in Qlty Cloud
+([qltysh/qlty#2902](https://github.com/qltysh/qlty/issues/2902), confirmed by
+a Qlty maintainer on 2026-10-04; checked here with Qlty CLI 0.672.0 on
+2026-11-25: the block validates and `qlty smells` still lists the findings).
+So the Qlty Cloud dashboard still shows these as similar code. The pull
+request check below reads the block and applies it the way Qlty documents
+`[[triage]]`, so the check and this list agree. When Qlty applies triage to
+smells, the dashboard will follow with no change here.
+
+| File | Why its rows look alike |
+| --- | --- |
+| `frontend/src/data/addons/catalogue.js` | One record per add-on, same fields each |
+| `frontend/src/data/ansible/education.js` | Ansible certification, learning-path and resource records (the resource rows match VMware's) |
+| `frontend/src/data/architectures.js` | Architecture write-ups, one record per design, same sections each |
+| `frontend/src/data/aws/certifications.js` | AWS certification records, same fields each |
+| `frontend/src/data/labs/catalogue.js` | One record per lab, same fields each |
+| `frontend/src/data/serviceDocsData.js` | One entry per documented service or tool server, same fields each |
+| `frontend/src/data/vmware/education.js` | VMware certification, learning-path and resource records |
+| `frontend/src/lib/landingZone/hcl/aws/index.js` | AWS's table of landing-zone files for the shared `cloudPack.js` emitter; the GCP file has the same shape with its own files |
+| `frontend/src/lib/landingZone/hcl/aws/readme.js` | AWS's README text for the shared `cloudReadme` helper |
+| `frontend/src/lib/landingZone/hcl/gcp/index.js` | GCP's table of landing-zone files for the shared `cloudPack.js` emitter |
+| `frontend/src/lib/landingZone/hcl/gcp/readme.js` | GCP's README text for the shared `cloudReadme` helper |
+| `frontend/src/pages/ansible/LandingPage.jsx` | Page-local card and quick-link lists |
+| `frontend/src/pages/aws/EducationPage.jsx` | Level colour table and resource-card list |
+| `frontend/src/pages/aws/education/CertDetailPage.jsx` | Level colour table |
+| `frontend/src/pages/aws/education/MicrocredentialDetailPage.jsx` | One record per AWS microcredential |
+| `frontend/src/pages/azure/EducationPage.jsx` | Learning-path list, one record per path |
+| `frontend/src/pages/azure/education/CertDetailPage.jsx` | Level colour table |
+| `frontend/src/pages/azure/education/azureTimeline.jsx` | Timeline event-type colour table |
+| `frontend/src/pages/finops/EducationPage.jsx` | Learning-path and resource-card lists |
+| `frontend/src/pages/finops/FocusPage.jsx` | FOCUS focus-area card list handed to the shared listing template |
+| `frontend/src/pages/finops/architecture-blueprints.js` | FinOps reference-architecture records |
+| `frontend/src/pages/gcp/EducationPage.jsx` | Resource-card list |
+| `frontend/src/pages/gcp/LandingPage.jsx` | Certification card list |
+| `frontend/src/pages/gcp/architecture-blueprints.js` | Google Cloud reference-architecture records |
+| `frontend/src/pages/github/EducationPage.jsx` | Learning-path and resource-card lists |
+| `frontend/src/pages/github/LandingPage.jsx` | Action-card list |
+| `frontend/src/pages/shared/PodcastPage.jsx` | Per-provider Tailwind colour table (`PROVIDER_META`) |
+| `frontend/src/pages/terraform/LandingPage.jsx` | Page-local card and quick-link lists |
+| `frontend/src/pages/terraform/ModulesPage.jsx` | Module card list handed to the shared listing template |
+| `functions/src/lib/ambassador/programs.js` | Seed records for the ambassador programmes, same fields each |
+
+The page files above also hold markup. The block covers the whole file, so
+similar markup added to one of them later would not be reported there; a
+reviewer still reads it. If one of these pages grows real duplicated markup,
+move its list into a data file and name that file here instead.
+
+The same holds for copying code into a listed file: similar-code is never
+reported there, whether the copy is data or logic, so a function or a block
+of markup copied into one of the `.jsx` pages above passes the check. Only a
+reviewer catches that.
+
+### The pull request smell check
+
+Since 2026-11-25 the `security-scan` job in `.github/workflows/ci.yml` (shown
+as **Qlty security scan and code smells**), which `gate` waits for, also
+fails a pull request that **adds** a medium or high code smell. It runs
+`qlty smells` on the files the pull request changes and again on the same
+files at the base commit, and
+[`scripts/check-new-smells.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/check-new-smells.mjs)
+fails only on a smell the base did not have, after applying the base
+branch's `[[triage]]` blocks. A smell already on `main` does not fail an
+unrelated pull request, even one that edits the same function. As with the
+security scan, the rules come from the base branch, so a pull request cannot
+add itself to the list above and pass on it. That protects the rules and the
+checking script, not the workflow: a pull request that edits
+`.github/workflows/ci.yml` runs its own version of the step, so a change to the
+workflow itself relies on review.
+
+`qlty smells` itself always exits 0 and has no level or fail option (its
+source, `qlty-cli/src/commands/smells.rs`, ends every run with success), which
+is why the comparison is a script and not a flag.
+
 ## zizmor
 
 ### artipacked (19, medium): fixed
@@ -565,7 +673,8 @@ so it was not added.
 ## osv-scanner
 
 osv-scanner checks the lock files against the public OSV list of known
-vulnerable package versions. Since 2026-11-24 the `Qlty security scan` job
+vulnerable package versions. Since 2026-11-24 the `security-scan` job (shown
+as **Qlty security scan and code smells** since 2026-11-25)
 fails a pull request that changes a lock-file line with a high or medium
 advisory. Normally the answer is the upgrade. When no fixed version exists
 yet, the route is an `osv-scanner.toml` beside the lock file, one

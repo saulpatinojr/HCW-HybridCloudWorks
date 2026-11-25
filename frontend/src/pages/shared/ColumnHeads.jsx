@@ -8,8 +8,10 @@ export default function ColumnHeads({ className, columns }) {
   return (
     <thead>
       <tr className={className}>
-        {columns.map(([label, cellClass]) => (
-          <th key={label} scope="col" className={cellClass}>
+        {/* Keyed by position and label: two blank headers would share a key
+            if the label were used alone. */}
+        {columns.map(([label, cellClass], index) => (
+          <th key={`${index}-${label}`} scope="col" className={cellClass}>
             {label}
           </th>
         ))}

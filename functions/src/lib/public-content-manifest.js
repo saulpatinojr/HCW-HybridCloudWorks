@@ -70,80 +70,12 @@ import {
 import { countSections } from './public-section-counts.js';
 import { errorFacts } from './http/error-response.js';
 
-/**
- * The fields the manifest keeps, and therefore the only fields this returns.
- *
- * DUPLICATED from `scripts/build-content-manifest.mjs`, deliberately, and
- * `public-content-manifest.test.js` fails if the two drift. `functions/` and
- * `scripts/` are independent npm packages with no workspace between them, and
- * this repository already carries that trade for `terraform-source` — one copy
- * each side, a guard that reads the other, and a note saying change both.
- *
- * The consequence of drift is specific rather than cosmetic: a field added
- * there but not here is silently absent from every pre-rendered article, which
- * presents as a rendering bug in the static HTML and nowhere else.
- */
-export const ARTICLE_FIELDS = Object.freeze([
-  // identity and routing
-  'id',
-  'slug',
-  'Slug',
-  'cloudProvider',
-  'Cloud Provider',
-  // the body, in the shapes the template looks for
-  'Content',
-  'content',
-  'blogDraft',
-  'code',
-  'codeLanguage',
-  'codeSnippet',
-  'terraformCode',
-  // headings and summary
-  'Title',
-  'title',
-  'Summary',
-  'summary',
-  'description',
-  'excerpt',
-  'keyTopics',
-  // taxonomy. `type` is what the section pages select on (framework,
-  // coder_corner); the manifest counts it per provider so the pre-render can
-  // keep a section with nothing in it out of the sitemap (issue #373). No
-  // quoted strings in this comment: the drift test parses this block as text.
-  'type',
-  'Category',
-  'category',
-  'Tags',
-  'tags',
-  'language',
-  // attribution and dates
-  'Author',
-  'siteAuthor',
-  'editorAuthor',
-  'createdByName',
-  'publishedByName',
-  'Published At',
-  'publishedAt',
-  'publishedDate',
-  'datePublished',
-  'blogPublishedAt',
-  'ReadTime',
-  'readTime',
-  // media
-  'imageUrl',
-  'heroImageUrl',
-  'contentImageUrl',
-  'altCoverImage',
-  'altCoverImageVariants',
-  'aiImageUrls',
-  'aiImageVariants',
-  // outbound links
-  'url',
-  'sourceUrl',
-  'Source URL',
-  'repoUrl',
-  'CD Url',
-]);
+// The fields the manifest keeps for an article live in their own file, which
+// scripts/build-content-manifest.mjs imports too (#1845: one list, not two).
+import { ARTICLE_FIELDS } from './public-article-fields.js';
+
+export { ARTICLE_FIELDS };
+
 
 /**
  * Keep only the allowlisted fields, and only when present.
@@ -255,8 +187,8 @@ export const PUBLISHED_QUERY = `SELECT ${ARTICLE_PROJECTION} FROM c WHERE ${PUBL
 /**
  * The fields the manifest keeps per interview: exactly the public detail
  * route's allowlist, so the pre-rendered page and the live page read the
- * same shape. DUPLICATED in `scripts/build-content-manifest.mjs` as
- * INTERVIEW_FIELDS, with the same drift test as ARTICLE_FIELDS.
+ * same shape. `scripts/build-content-manifest.mjs` imports the same list
+ * (PUBLIC_INTERVIEW_DETAIL_FIELDS) rather than keeping a copy (#1845).
  */
 export const INTERVIEW_FIELDS = PUBLIC_INTERVIEW_DETAIL_FIELDS;
 

@@ -14,8 +14,14 @@ export default function ColumnHeads({ labels, cellClassName, lastCellClassName =
   const last = labels.length - 1;
   return (
     <tr>
+      {/* Keyed by position and label: two blank headers would share a key
+          if the label were used alone. */}
       {labels.map((label, index) => (
-        <th key={label} scope="col" className={index === last ? lastCellClassName : cellClassName}>
+        <th
+          key={`${index}-${label}`}
+          scope="col"
+          className={index === last ? lastCellClassName : cellClassName}
+        >
           {label}
         </th>
       ))}

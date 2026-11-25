@@ -22,6 +22,9 @@ const WORKFLOW = join(
 );
 
 const CATALOGUE_PATH = 'frontend/src/data/azure/certifications.js';
+// The rows the updater writes, split out of CATALOGUE_PATH by #1845 so Qlty's
+// duplicate finder skips them (.qlty/qlty.toml excludes that folder by name).
+const GENERATED_PATH = 'frontend/src/data/azure/generated/certifications.js';
 // A directory since #500: one module per guide plus index.js.
 const GUIDES_PATH = 'frontend/src/data/azure/study-guides';
 
@@ -45,6 +48,10 @@ describe('the Learn catalogue workflow', () => {
     expect(lines.some((l) => l.includes(`git add ${CATALOGUE_PATH}`))).toBe(true);
   });
 
+  it('stages the generated catalogue rows by path too (#1845)', () => {
+    expect(lines.some((l) => l.includes(`git add ${GENERATED_PATH}`))).toBe(true);
+  });
+
   it('stages the study-guide outlines by path too (#499)', () => {
     expect(lines.some((l) => l.includes(`git add ${GUIDES_PATH}`))).toBe(true);
   });
@@ -55,14 +62,15 @@ describe('the Learn catalogue workflow', () => {
    * is no longer "stages the catalogue" but "stages these two and nothing
    * else": enumerating every `git add` argument makes a third output a
    * deliberate edit here rather than a line that slips in with a feature.
+   * #1845 made it three: the catalogue's rows moved to their own file.
    */
-  it('stages exactly those two paths and nothing else', () => {
+  it('stages exactly those three paths and nothing else', () => {
     const staged = lines
       .filter((l) => /\bgit add\b/.test(l))
       .map((l) => l.replace(/^.*\bgit add\s+/, '').trim())
       .sort();
 
-    expect(staged).toEqual([CATALOGUE_PATH, GUIDES_PATH].sort());
+    expect(staged).toEqual([CATALOGUE_PATH, GENERATED_PATH, GUIDES_PATH].sort());
   });
 
   /**
@@ -81,6 +89,7 @@ describe('the Learn catalogue workflow', () => {
     for (const check of checks) {
       expect(check).toContain('git status --porcelain');
       expect(check).toContain(GUIDES_PATH);
+      expect(check).toContain(GENERATED_PATH);
     }
     expect(lines.some((l) => l.includes('study-guides.js'))).toBe(false);
   });

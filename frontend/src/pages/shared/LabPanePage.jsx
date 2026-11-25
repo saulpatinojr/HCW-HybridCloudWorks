@@ -163,7 +163,7 @@ export const WORKSPACE_STATUS_KEY = 'labs:workspace-status';
 
 /**
  * The states the launcher reports (STATES in
- * lab-host/coder/launcher/launcher.js), and the words the toolbar shows for
+ * lab-host/coder/launcher/launcher-config.js), and the words the toolbar shows for
  * each. `unavailable` has no words here: it shows the unavailable section.
  */
 export const PANE_STATE_WORDS = Object.freeze({

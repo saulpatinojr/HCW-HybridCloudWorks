@@ -31,28 +31,25 @@ import { evaluatePredicate } from '../../test/cosmos-predicate.js';
 
 const REPO = join(fileURLToPath(new URL('../../..', import.meta.url)));
 
-describe('ARTICLE_FIELDS stays in step with scripts/', () => {
+describe('ARTICLE_FIELDS is one list, shared with scripts/', () => {
   /**
-   * Read as TEXT rather than imported: `scripts/` is a separate npm package
-   * with its own dependencies, and importing across that boundary from a
-   * functions test coupled two installs that are otherwise independent.
+   * Until #1845 scripts/ kept its own copy and this test compared the two as
+   * text. scripts/ now imports the list from public-article-fields.js, so
+   * what is checked is that it still imports it and has not grown a copy
+   * again. Read as TEXT: importing scripts/ from here would tie together two
+   * npm packages that install separately.
    */
-  function scriptsFieldList() {
-    const source = readFileSync(join(REPO, 'scripts', 'build-content-manifest.mjs'), 'utf8');
-    const block = source.match(/ARTICLE_FIELDS = Object\.freeze\(\[([\s\S]*?)\]\)/);
-    if (!block) throw new Error('ARTICLE_FIELDS not found in scripts/build-content-manifest.mjs');
-    return [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  }
+  const scriptsSource = () => readFileSync(join(REPO, 'scripts', 'build-content-manifest.mjs'), 'utf8');
 
-  it('finds a plausible list at all — a silent parse failure would pass everything', () => {
-    expect(scriptsFieldList().length).toBeGreaterThan(30);
+  it('is imported by scripts/build-content-manifest.mjs, not copied', () => {
+    const source = scriptsSource();
+    expect(source).toContain("import { ARTICLE_FIELDS } from '../functions/src/lib/public-article-fields.js';");
+    expect(source).not.toMatch(/ARTICLE_FIELDS\s*=\s*Object\.freeze\(/);
   });
 
-  it('is exactly the list scripts/ projects with, in the same order', () => {
-    // Drift here is invisible: a field added there but not here is simply
-    // absent from every pre-rendered article, which presents as a rendering
-    // bug in the static HTML and nowhere else.
-    expect([...ARTICLE_FIELDS]).toEqual(scriptsFieldList());
+  it('is a plausible list, frozen', () => {
+    expect(ARTICLE_FIELDS.length).toBeGreaterThan(30);
+    expect(Object.isFrozen(ARTICLE_FIELDS)).toBe(true);
   });
 });
 
@@ -411,13 +408,13 @@ describe('the published interviews it carries (ADR 0040, D6)', () => {
     expect(res.jsonBody.interviews.map((i) => i.slug)).toEqual(['live']);
   });
 
-  it('is exactly the list scripts/ projects interviews with, in the same order', () => {
+  it('is the list scripts/ projects interviews with, imported rather than copied (#1845)', () => {
     const source = readFileSync(join(REPO, 'scripts', 'build-content-manifest.mjs'), 'utf8');
-    const block = source.match(/INTERVIEW_FIELDS = Object\.freeze\(\[([\s\S]*?)\]\)/);
-    if (!block) throw new Error('INTERVIEW_FIELDS not found in scripts/build-content-manifest.mjs');
-    const scripted = [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    expect(scripted.length).toBeGreaterThan(5);
-    expect([...INTERVIEW_FIELDS]).toEqual(scripted);
+    expect(source).toContain(
+      "import { PUBLIC_INTERVIEW_DETAIL_FIELDS } from '../functions/src/lib/public-read-interviews.js';"
+    );
+    expect(source).toContain('export const INTERVIEW_FIELDS = PUBLIC_INTERVIEW_DETAIL_FIELDS;');
+    expect(source).not.toMatch(/INTERVIEW_FIELDS\s*=\s*Object\.freeze\(/);
   });
 
   it('leaves interviews out of the article corpus by type, and keeps a document with no type in', () => {

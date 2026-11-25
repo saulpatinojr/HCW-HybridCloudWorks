@@ -98,7 +98,11 @@ jobs:
           repository: saulpatinojr/HCW-HybridCloudWorks
           ref: ${{ job.workflow_sha }}
           path: .hcw-site-tools
-          sparse-checkout: scripts/addons/check-guide-drift.mjs
+          # The script and the two files it imports (split by side in #1845).
+          sparse-checkout: |
+            scripts/addons/check-guide-drift.mjs
+            scripts/addons/guide-drift-row.mjs
+            scripts/addons/guide-drift-site.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -115,7 +119,7 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
-      # The script imports node: built-ins only, so there is no npm install.
+      # The three script files import node: built-ins only, so there is no npm install.
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
