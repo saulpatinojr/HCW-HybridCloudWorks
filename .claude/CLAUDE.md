@@ -213,15 +213,12 @@ never does on its own.
   missing permission is never the reason to hand work back", above); sessions
   merge the pull requests they open and never hand the owner a merge, with
   Dependabot's as the exception ("A Copilot
-  review that recommends approval" and "CodeRabbit's approval is the merge
-  signal; its request for changes is a gate", below); CodeRabbit's code-writing
-  boxes are never ticked
-  ("CodeRabbit's summary is a checklist to work, not to tick", below); and two
+  review that recommends approval" and "The ruleset requires no approval, but
+  a review that asks for changes still blocks", below); and two
   pull requests that touch the same lines, above all `CHANGELOG.md`, go one at a
   time ("Several PRs at once, but conflicts are resolved one at a time", at the
-  end). CodeRabbit is removed until further notice, so the CodeRabbit parts of
-  those bullets (its approval and its boxes) are paused; the merge signal that
-  replaces them is the first bullet of "Pull requests open ready for review" below.
+  end). The merge signal itself is the first bullet of "Pull requests open
+  ready for review" below.
 
 ## A new credential arrives with its register row, its test and its reminder
 
@@ -437,7 +434,7 @@ much as they should be.
     is opened is the one for its main area, plus `infrastructure-pr-reviewer`
     when the change is workflow or deployment code.
 - **The per-folder points a pre-PR review must check** (#1575). They were
-  CodeRabbit's review notes until it was removed on 2026-11-06 (#1574). Where
+  a review bot's notes until that bot was removed on 2026-11-06 (#1574). Where
   a test or CI check already fails on a violation, it is named and the
   reviewer need not repeat it; the rest no test can read, so the reviewer
   agent is told to check them by name in its briefing, for every changed
@@ -633,32 +630,17 @@ draft, and the owner had to flip each one to ready for review before merging
 repository setting that forces this; it is chosen by whoever creates the PR,
 so it is recorded here, where every session reads it.
 
-- **CodeRabbit is removed until further notice (owner instruction
-  2026-11-06).** CodeRabbit is the review bot that used to read every pull
-  request. Do not comment `@coderabbitai`, do not wait for a CodeRabbit
-  review, and do not treat its approval as the merge signal.
-  `.coderabbit.yaml` (its settings file) is deleted in every HCW repository
-  that had one, and suspending the CodeRabbit GitHub App is the owner's step
-  ([installed apps](https://github.com/settings/installations)). The merge
-  signal is now: every required status check green on a head that is up to
-  date with `main`, every review conversation answered and resolved, and the
-  pre-PR specialist agent review (see "Use the specialist agents") done and
-  its findings worked. Where a bullet below names CodeRabbit, only the
-  CodeRabbit parts are paused until the owner restores it; the rest of each
-  bullet still applies, including the pull request template, Copilot's
-  findings worked on their threads within three rounds, and the code scanning
-  check on the pull request and on `main` after a merge. Dependabot's pull requests still go to the
-  owner: when one is green, tell the owner with its link, and do not merge it
-  on a session's own judgement. A CodeRabbit request for changes left
-  standing on an open pull request still blocks its merge and no new
-  CodeRabbit review will replace it, so the owner dismisses it (the review's
-  **⋯** menu, **Dismiss review**); a session gives the owner the link and does
-  not dismiss it. Restoring means bringing back `.coderabbit.yaml` from git
-  history (the
-  [last version](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/0951d574373fcfe0be973a7e51c0d71e0eb585b9/.coderabbit.yaml)),
-  its line in the allowed root files of
-  [`scripts/validate-repository-structure.ps1`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/validate-repository-structure.ps1),
-  and the App installation.
+- **The merge signal.** A session merges its pull request when every
+  required status check is green on a head that is up to date with `main`,
+  every review conversation is answered and resolved, and the pre-PR
+  specialist agent review (see "Use the specialist agents") is done and its
+  findings worked. Copilot's review is worked when it comes, within the
+  three-round cap, and code scanning is checked on the pull request and on
+  `main` after the merge; the bullets below say how. (The CodeRabbit review
+  bot was removed on 2026-11-06, #1574, and is not used; restoring it would
+  mean bringing back its settings file from git history, the
+  [last version](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/0951d574373fcfe0be973a7e51c0d71e0eb585b9/.coderabbit.yaml),
+  and writing its rules back into this file.)
 - **Create the PR ready for review.** Copilot reviews either state, CI runs
   on either state, and nothing in this repository keys on draft.
 - **The PR title is one line, at most about 72 characters, in the shape
@@ -674,8 +656,8 @@ so it is recorded here, where every session reads it.
   than a change, say so in the first line of the description and open it as
   a draft. Otherwise not.
 - **The description follows `.github/pull_request_template.md`.** Owner
-  instruction 2026-10-08, through CodeRabbit's Description check, which
-  warns on a body that skips the template's sections. Keep each section —
+  instruction 2026-10-08: a body that skips the template's sections makes
+  the pull request harder to review. Keep each section —
   Summary, Related issue or decision, Type of change, Scope and impact,
   Verification, Security and data review, Documentation and operations,
   Author checklist — and tick only the boxes that are true. Drop
@@ -691,8 +673,8 @@ so it is recorded here, where every session reads it.
 
   The verdict and the inline findings live in two different places and a
   session needs both — the review body carries the verdict, and the line
-  comments carry what to actually fix. CodeRabbit's checklist and code
-  scanning's alerts live in two more. **The lines below are bash (Git
+  comments carry what to actually fix. Code scanning's alerts live in a
+  third. **The lines below are bash (Git
   Bash), not PowerShell** — the same rule as the top of this file, which
   applies to a session's own commands as much as to the owner's. In a cloud
   session the first two lines are refused, because `gh pr view` uses
@@ -706,7 +688,6 @@ so it is recorded here, where every session reads it.
   gh pr view "$PR" --json headRefOid -q .headRefOid
   gh api repos/saulpatinojr/HCW-HybridCloudWorks/pulls/"$PR"/reviews --paginate --jq '.[] | select(.user.login=="copilot-pull-request-reviewer[bot]") | "\(.commit_id[0:8]) \(.state) \((.body // "") | split("\n")[0])"'
   gh api repos/saulpatinojr/HCW-HybridCloudWorks/pulls/"$PR"/comments --paginate --jq '.[] | "\(.path):line \(.line // .original_line // "unknown")\n\(.body)\n"'
-  gh api "repos/saulpatinojr/HCW-HybridCloudWorks/issues/$PR/comments?per_page=100" --paginate --jq '.[] | select(.user.login=="coderabbitai[bot]") | .body' | grep -E 'up to `|Actionable comments posted|Retained concerns|_proposed_|Failed checks|^- \*\*(Critical|High|Medium|Low) ·'
   gh api "repos/saulpatinojr/HCW-HybridCloudWorks/code-scanning/alerts?ref=refs/heads/main&state=open&per_page=100" --paginate --jq '.[] | "#\(.number) \(.rule.id) \(.rule.severity) \(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)"'
   ```
 
@@ -733,11 +714,6 @@ so it is recorded here, where every session reads it.
     the same actor `copilot-pull-request-reviewer`, with no suffix. A filter
     written for one and run against the other matches nothing and reads
     exactly like "no reviews yet".
-  - **CodeRabbit's checklist is an issue comment, not a review**, edited in
-    place each round, so its line reads the issue comments and keeps the
-    lines that name work. Its `up to` line names the commit that round
-    judged, the same question the reviews line answers for Copilot. While
-    it reads `Currently processing new changes`, the next round is coming.
   - **Code scanning's alerts are read on the pull request before the merge,
     and on `main` after it.** Owner decision 2026-11-24
     ([#1545](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1545)):
@@ -827,8 +803,8 @@ so it is recorded here, where every session reads it.
   recommends changes, or any review thread still unresolved on the head, is
   not that: fix, push, and wait for the next review of the new head. Ready
   for review on its own is still not permission to merge.
-- **CodeRabbit's approval is the merge signal; its request for changes is a
-  gate.** The ruleset (the
+- **The ruleset requires no approval, but a review that asks for changes
+  still blocks.** The ruleset (the
   repository's merge rules for `main`, the `Default` ruleset, id 20680114,
   [settings page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/rules/20680114))
   does not require any approving review. Read from the API on 2026-10-31 with
@@ -861,65 +837,35 @@ so it is recorded here, where every session reads it.
 
   So no approval is needed, but **a review that asks for changes still blocks
   the merge** until a newer review from the same reviewer replaces it, even
-  after every thread is resolved and the commit it judged is long gone. Seen
-  on [#1460](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1460)
-  on 2026-10-31: CodeRabbit's request for changes on `baf10df` was still
-  standing three pushes later, and the merge API refused with `1 review
-  requesting changes by reviewers with write access` (HTTP 405). When that
-  happens, comment `@coderabbitai review` so it reviews the current head.
-  A fresh review does not always replace the old one: on #1460 CodeRabbit
-  withdrew its request on the thread and its next review found nothing, yet
-  it posted no approval, and it refuses `@coderabbitai resolve` and
-  `@coderabbitai approve` from the pull request's author. Then the owner
-  dismisses the old review (its **⋯** menu, **Dismiss review**), with a link
-  to where CodeRabbit withdrew it. A session does not dismiss a review to get
-  past it.
-  [`.coderabbit.yaml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.coderabbit.yaml)
-  still has `request_changes_workflow: true` and `allow_author_approval:
-  false`: CodeRabbit posts a review asking for changes while any of its
-  findings is open, and approves the head once every thread is resolved and
-  its pre-merge checks pass. That approval of the **current head** is the
-  signal to merge, read the same way as Copilot's verdict above, and the round
-  cap in the next bullet still applies. Since 2026-11-01 the review that
-  carries it is asked for, not automatic (`auto_review.enabled: false`,
-  [#1487](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1487);
-  how to ask is in "Each bot's first review is waited for" below). Sessions
-  merge the pull requests they open on it; never hand the owner a merge. **Dependabot's pull requests are
-  the exception:** `.coderabbit.yaml` lists `dependabot[bot]` under
-  `ignore_usernames`, so CodeRabbit never reviews them and no CodeRabbit
-  approval will arrive, and its comment says the owner approves them (no
-  runbook describes that step further). Do not wait for CodeRabbit on one,
-  and do not merge one on a session's own judgement; tell the owner it is
-  ready, with its link. Two separate controls stop a session approving its
-  own work. GitHub does not let the author of a pull request approve it, and
-  a session authors as the owner's account. Separately, `.coderabbit.yaml`'s
-  `allow_author_approval: false` makes CodeRabbit ignore `@coderabbitai
-  approve` from the author, so the author cannot have the bot approve
-  instead.
+  after every thread is resolved and the commit it judged is long gone; the
+  merge API then refuses with `1 review requesting changes by reviewers with
+  write access` (HTTP 405). Ask that reviewer for a review of the current
+  head. If no newer review will come, the owner dismisses the old one (its
+  **⋯** menu, **Dismiss review**); a session gives the owner the link and
+  does not dismiss a review to get past it.
 
-  History, briefly: on 2026-10-18 the owner chose option F on
-  [#972](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/972),
-  which set the count to 1 with last-push approval so that CodeRabbit's
-  approval was a required gate (proven on
-  [#1272](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1272)).
-  By the ruleset's change of 2026-10-20 both settings were back at `0` and
-  `false`; no record of why was found in the repository when this was written.
-  Making the approval a gate again is the owner's decision, to be recorded on
+  Sessions merge the pull requests they open on the merge signal; never hand
+  the owner a merge. **Dependabot's pull requests are the exception:** when
+  one is green, tell the owner it is ready, with its link, and do not merge
+  it on a session's own judgement. A session cannot approve its own work
+  either: GitHub does not let the author of a pull request approve it, and a
+  session authors as the owner's account.
+
+  Making an approval required again (the count above 0) is the owner's
+  decision, to be recorded on
   [#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455),
   and the ruleset change is the owner's to make. A session that finds the
   count above 0 again reads it from the API and updates this bullet.
-- **Every review bot is worked, for at most three rounds each; then all
-  green is the merge.** Owner instruction 2026-10-08, after Copilot reviews
-  resumed on #1034 and #1035 and CodeRabbit (#1031) began posting a
-  checklist with each review. It replaces the 2026-10-03 bullet that turned
-  Copilot review off and capped it at two rounds once it returned.
+- **Copilot's review is worked, for at most three rounds; then all green is
+  the merge.** Owner instruction 2026-10-08, after Copilot reviews resumed
+  on #1034 and #1035. It replaces the 2026-10-03 bullet that turned Copilot
+  review off and capped it at two rounds once it returned.
 
-  - **Two reviewers on the pull request, none optional, and code scanning
-    beside them.** Copilot (`copilot-pull-request-reviewer`) and
-    CodeRabbit (`coderabbitai`) review a PR. Every finding from each is
+  - **Copilot on the pull request, and code scanning beside it.** Copilot
+    (`copilot-pull-request-reviewer`) reviews a PR. Every finding is
     fixed, or answered on its thread with the reason, and the thread
     resolved, as the bullets above and below say. A finding is not optional
-    because its bot is not a required check. Code scanning
+    because Copilot is not a required check. Code scanning
     (`github-advanced-security`, posting CodeQL's alerts) reviews pull
     requests too. Owner decision 2026-11-24: CodeQL runs on pull requests
     again, for the languages the pull request touched, as well as on each
@@ -936,31 +882,16 @@ so it is recorded here, where every session reads it.
     cloud session cannot look at that page's list, so it hands the owner
     the page instead; see "Code scanning's alerts are read on the pull
     request").
-  - **Each bot's first review is waited for, and CodeRabbit's is asked
-    for.** A PR is not merge-ready until Copilot and CodeRabbit have each
-    reviewed it once.
-    Copilot reviews on its own. CodeRabbit does not, since the owner's
-    decision of 2026-11-01
-    ([#1487](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1487)):
-    `.coderabbit.yaml` has `auto_review.enabled: false`, because on the free
-    plan every push and every "Update branch" spent one of the five included
-    reviews an hour, and on 2026-11-01 three pull requests used the hour
-    between them while #1485 waited for the review that would lift a stale
-    request for changes. Now a push or an "Update branch" starts no review
-    and spends nothing; only the ask does. So once the required checks are
-    green on the head you want read, comment `@coderabbitai review` (the
-    whole comment is the command). "Review rate limited" in its reply means
-    the hour's allowance is spent and no review happened: wait for the
-    minute it names, then ask again for the same head. Once a head has been
-    reviewed, ask again only for a head that changed. If a bot's first review has not
-    arrived when it was due, say so on the PR, naming the bot, and treat it
-    as unavailable for that PR: reviews stopped arriving altogether once
-    before (2026-10-03), and a PR does not wait on a reviewer that is not
-    coming. **Copilot is due 15 minutes after the required checks went
-    green, and is not waited for at all when it was never asked.** Owner
-    instruction 2026-11-25. The ruleset's **Automatically request Copilot
-    code review** rule asks Copilot only when the author has Copilot code
-    review and AI credits left, which is not always the case; on 2026-11-25
+  - **Copilot's first review is waited for, briefly.** Copilot reviews on
+    its own when it was asked. If its first review has not arrived when it
+    was due, say so on the PR and treat Copilot as unavailable for that PR:
+    reviews stopped arriving altogether once before (2026-10-03), and a PR
+    does not wait on a reviewer that is not coming. **Copilot is due 15
+    minutes after the required checks went green, and is not waited for at
+    all when it was never asked.** Owner
+    instruction 2026-11-25. GitHub's automatic Copilot review setting asks
+    Copilot only when the author has Copilot code review and AI credits
+    left, which is not always the case; on 2026-11-25
     five pull requests in a row
     ([#1865](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1865)
     to [#1881](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1881))
@@ -969,12 +900,10 @@ so it is recorded here, where every session reads it.
     `gh api repos/saulpatinojr/HCW-HybridCloudWorks/pulls/<n>/requested_reviewers --jq '.users[].login'`
     and the reviews line above: if Copilot is neither a requested reviewer
     nor the author of a review, it was not asked and will not come, and the
-    PR proceeds at once; if it was asked, wait at most 15 minutes. CodeRabbit
-    keeps its hour, counted from the first ask that was not rate limited,
-    since a rate-limited ask starts no review.
-  - **At most three rounds per bot.** A round is one review of a head by one
-    bot, and the fixes pushed in answer to it. Work the loop above for a
-    bot's first three reviews; after the third round's fixes are pushed,
+    PR proceeds at once; if it was asked, wait at most 15 minutes.
+  - **At most three rounds.** A round is one review of a head by Copilot,
+    and the fixes pushed in answer to it. Work the loop above for Copilot's
+    first three reviews; after the third round's fixes are pushed,
     merge once required checks are green and every thread is replied to and
     resolved. Do not request, or wait for, a fourth review. The cap
     overrides the approval bullet above: before the cap, a review that
@@ -984,20 +913,6 @@ so it is recorded here, where every session reads it.
     has its findings answered on their threads before the merge. #835 and
     #836 ran three and four Copilot rounds; the owner put a loop at "more
     than 3 turns".
-  - **CodeRabbit's summary is a checklist to work, not to tick.** Its
-    walkthrough comment is not a review thread, so nothing blocks the merge
-    on it, which is what makes it easy to miss. It carries actionable
-    comments, the Merge Risk section's **Retained concerns** and hardening
-    proposals (its `_proposed_` lines), and the **Failed checks** among its
-    pre-merge checks. On #1035 a medium security concern lived there and in
-    no thread. Work every item, then post one PR comment with a table of
-    each item and what was done: the commit that fixed it, or the reason it
-    was not done. Then comment `@coderabbitai run pre-merge checks`. The
-    checkboxes are triggers, not records of work: **Commit to this branch**,
-    **Create a new PR** and **Fix all pre-merge checks with AI** make
-    CodeRabbit write and push code, and **Autopilot** makes it keep pushing
-    past the round cap. Do the work by hand, to the file's own style, and
-    leave them unticked; never tick Autopilot.
   - **A code scanning alert is fixed in code, or dismissed by the owner.**
     Its thread closes on the next analysis once the code is fixed. An alert
     that is right but intended (a test that makes a file world-readable to
@@ -1020,11 +935,14 @@ so it is recorded here, where every session reads it.
     merging session's to fix in a follow-up pull request, or to hand to the
     owner with its page and the reason to choose.
 
-  The owner put the `copilot_code_review` rule back on the `Default` ruleset
-  (20680114) on 2026-11-25, with `review_on_push: true` and
-  `review_draft_pull_requests: true`. It asks Copilot only when the author
-  has Copilot code review and AI credits, so a missing review is expected
-  some days; the 15-minute rule above covers it.
+  Copilot review is meant to be requested automatically (owner,
+  2026-11-25). Whichever setting does it, GitHub asks Copilot only when the
+  author has Copilot code review and AI credits, so a missing review is
+  expected some days; the 15-minute and never-requested rule above covers
+  it. As read from the API on 2026-11-25, the `Default` ruleset (20680114)
+  carries no `copilot_code_review` rule; if it is put back there, its
+  parameters would be `review_on_push: true` and
+  `review_draft_pull_requests: true`.
 - **Every review conversation is resolved before the merge, including the
   ones that ask for nothing.** Owner instruction 2026-09-06, after a merge
   was blocked with `A conversation must be resolved before this pull request
