@@ -1,7 +1,16 @@
 import { block, file, joinBlocks, q } from '../format';
+import { isSelected } from '../../state';
+import { githubOrganizationVariable } from './identity';
 
-export function variablesTf() {
+/**
+ * The pack's variables. `github_organization` has no default, so Terraform
+ * stops until it is set; it is written only when identity.tf is, so a pack
+ * without the GitHub sign-in never asks for it (#1870).
+ */
+export function variablesTf(state) {
   const blocks = [];
+
+  if (isSelected(state, 'identity')) blocks.push(githubOrganizationVariable());
 
   blocks.push(
     block('variable "organization_id"', [
@@ -82,5 +91,13 @@ export function tfvarsExample(state) {
     `corp_count         = ${state.options?.corpCount ?? 1}`,
     `online_count       = ${state.options?.onlineCount ?? 1}`,
   ];
+  if (isSelected(state, 'identity')) {
+    lines.push(
+      '',
+      '# Required: the GitHub organisation (or user) whose Actions workflows may sign in.',
+      '# Change this to your own; no other organisation is accepted.',
+      'github_organization = "example-org"'
+    );
+  }
   return file('terraform.tfvars.example', lines);
 }

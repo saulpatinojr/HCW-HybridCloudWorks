@@ -57,7 +57,7 @@ export function emitCloudPack(state, pack) {
     files.push(pack.workloads(normalized));
   }
 
-  files.push(pack.variables(), pack.tfvars(normalized));
+  files.push(pack.variables(normalized), pack.tfvars(normalized));
   files.push(pack.readme(normalized, files));
   return files;
 }
