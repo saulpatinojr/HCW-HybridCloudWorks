@@ -65,9 +65,8 @@
  * on `/provenance/audio/uploads` fails when `provenance` does not exist yet.
  */
 import { randomUUID } from 'node:crypto';
-import { INTERVIEWS_AUDIO_CONTAINER, audioBlobPath } from './storage.js';
+import { INTERVIEWS_AUDIO_CONTAINER, MAX_AUDIO_BYTES, audioBlobPath } from './storage.js';
 import {
-  BLOCK_SIZE,
   CONTENT_CONTAINER,
   INDEX_PATTERN,
   MAX_OPEN_SESSIONS,
@@ -89,9 +88,7 @@ import {
 import { completeUpload } from './upload-complete.js';
 
 export {
-  BLOCK_SIZE,
   CONTENT_CONTAINER,
-  MAX_BLOCK_COUNT,
   MAX_OPEN_SESSIONS,
   UPLOAD_SOURCE,
   blockIdFor,
@@ -101,6 +98,16 @@ export {
   ownsAudioPath,
   parseOpenBody,
 } from './upload-checks.js';
+
+// Defined here, not in upload-checks.js: frontend/src/lib/interviewUpload.test.js
+// reads this file's text to pin the browser's block size to the server's.
+// upload-checks.js imports BLOCK_SIZE back and uses it only inside functions.
+
+/** Bytes per block: the browser slices at this, and no request is larger. */
+export const BLOCK_SIZE = 4 * 1024 * 1024;
+
+/** The most blocks a file at the cap takes; bounds the index and the id width. */
+export const MAX_BLOCK_COUNT = Math.ceil(MAX_AUDIO_BYTES / BLOCK_SIZE);
 
 /** A new open session for a checked upload, and the document's sessions with it (at most MAX_OPEN_SESSIONS). */
 function openSession(deps, doc, oid, value) {

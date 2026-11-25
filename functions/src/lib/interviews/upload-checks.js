@@ -13,12 +13,11 @@ import {
   canonicalAudioType,
 } from './storage.js';
 import { isValidBlobPath } from '../blob-paths.js';
+import { BLOCK_SIZE } from './upload.js';
 
-/** Bytes per block: the browser slices at this, and no request is larger. */
-export const BLOCK_SIZE = 4 * 1024 * 1024;
-
-/** The most blocks a file at the cap takes; bounds the index and the id width. */
-export const MAX_BLOCK_COUNT = Math.ceil(MAX_AUDIO_BYTES / BLOCK_SIZE);
+// BLOCK_SIZE and MAX_BLOCK_COUNT are defined in upload.js (a frontend test
+// reads them there). BLOCK_SIZE is used here only inside functions, so the
+// two files importing each other is safe at load time.
 
 /** The content document's container, partitioned by `/id` like every item. */
 export const CONTENT_CONTAINER = 'content';
