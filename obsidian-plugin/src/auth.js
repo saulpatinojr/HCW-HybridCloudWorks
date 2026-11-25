@@ -15,13 +15,11 @@ function atStep(stage, error, networkClient) {
   return tagged;
 }
 
-export async function createAuth(
-  settings,
-  showCode,
-  { helperPath, networkClient } = {},
-) {
-  const fail = (stage, message) =>
-    Object.assign(new Error(message), { stage });
+const fail = (stage, message) => Object.assign(new Error(message), { stage });
+
+/** Refuses to start off Windows, or without the three ids from HCW admin
+ * and the local application folder. */
+function checkSetup(settings) {
   if (process.platform !== "win32")
     throw fail(
       "settings",
@@ -40,6 +38,47 @@ export async function createAuth(
       "token cache",
       "Windows local application storage is unavailable.",
     );
+}
+
+/** The device-code sign-in: shows the code, waits for the browser, and
+ * closes the code dialog however it ends. */
+async function deviceCodeSignIn(app, scopes, showCode, networkClient) {
+  let closeCodeDialog;
+  let codeShown = false;
+  networkClient?.clearFailure?.();
+  try {
+    return await app.acquireTokenByDeviceCode({
+      scopes,
+      deviceCodeCallback: (code) => {
+        // MSAL does not check the device-code reply's status. When Entra
+        // refuses the request there is no code; stop here instead of
+        // opening an empty dialog and polling with no device code.
+        if (!code?.userCode || !code?.verificationUri)
+          throw fail(
+            "device code request",
+            "Microsoft did not issue a sign-in code.",
+          );
+        codeShown = true;
+        closeCodeDialog = showCode(code);
+      },
+    });
+  } catch (error) {
+    throw atStep(
+      codeShown ? "waiting for browser sign-in" : "device code request",
+      error,
+      networkClient,
+    );
+  } finally {
+    if (typeof closeCodeDialog === "function") closeCodeDialog();
+  }
+}
+
+export async function createAuth(
+  settings,
+  showCode,
+  { helperPath, networkClient } = {},
+) {
+  checkSetup(settings);
   const directory = join(
     process.env.LOCALAPPDATA,
     "HybridCloudWorks",
@@ -89,35 +128,7 @@ export async function createAuth(
       throw Object.assign(new Error("Sign in to synchronize."), {
         status: 401,
       });
-    let closeCodeDialog;
-    let codeShown = false;
-    let result;
-    networkClient?.clearFailure?.();
-    try {
-      result = await app.acquireTokenByDeviceCode({
-        scopes,
-        deviceCodeCallback: (code) => {
-          // MSAL does not check the device-code reply's status. When Entra
-          // refuses the request there is no code; stop here instead of
-          // opening an empty dialog and polling with no device code.
-          if (!code?.userCode || !code?.verificationUri)
-            throw fail(
-              "device code request",
-              "Microsoft did not issue a sign-in code.",
-            );
-          codeShown = true;
-          closeCodeDialog = showCode(code);
-        },
-      });
-    } catch (error) {
-      throw atStep(
-        codeShown ? "waiting for browser sign-in" : "device code request",
-        error,
-        networkClient,
-      );
-    } finally {
-      if (typeof closeCodeDialog === "function") closeCodeDialog();
-    }
+    const result = await deviceCodeSignIn(app, scopes, showCode, networkClient);
     settings.accountId = result.account.homeAccountId;
     return result.accessToken;
   };

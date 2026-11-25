@@ -1,6 +1,6 @@
 # ADR 0042: A public Developer API v1 for events and call for speakers, keyed per organizer
 
-**Status:** Proposed
+**Status:** Accepted on 2026-11-25. Phase 1 is built and live; the owner said the record should read as built, not proposed ([#1777](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1777)). Phase 2 is not built.
 **Decision date:** 2026-11-20
 **Owners:** Workload owner and architecture owner
 
@@ -267,8 +267,8 @@ Left as they were, on purpose:
 
 - **Ids of unpublished site events are not reserved.** Accepted in the
   runbook's "Accepted risks in Phase 1"; Phase 2's event records settle it.
-- **This ADR's status.** Whether it moves from Proposed to Accepted is the
-  owner's decision.
+- **This ADR's status.** It was left as Proposed for the owner to decide.
+  The owner decided on 2026-11-25: Accepted, because Phase 1 is built.
 - **The credential register: decided, they stay out (owner, 2026-11-24, on
   #1777).** Neither site-issued key (Koda's `hcwk_`, the organizers' `hcdk_`)
   has a row in `functions/src/lib/credentials/register.js`, and neither will
