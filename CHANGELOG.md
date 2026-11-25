@@ -285,6 +285,8 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **ADR 0042, the Developer API's design record, is Accepted ([#1777](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1777)).** It still said "Proposed" although Phase 1 (organizer keys, published events, speakers and the call for speakers) is built and live. The owner said on 2026-11-25 that it should read as built, so the [record](docs/decisions/0042-developer-api.md) and its row in the [decision register](docs/decisions/index.md) now say Accepted. Phase 2 is not built.
+
 - **The plan checker flags any change to the two switches armed on 2026-11-25 ([#1777](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1777), [#1811](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1811)).** The owner confirmed the Terraform run that set `PROPOSAL_STRIP_ENABLED` and `CONTENT_ARCHIVE_ENABLED` to `"true"`, so the two entries that told [`assert-expected-plan.mjs`](scripts/assert-expected-plan.mjs) to expect that change are removed. A plan that switches either one off, or on again, is now shown as unexpected.
 
 - **The site's Firecrawl calls use version 2 of its API, and Firecrawl is recorded as a paid service ([#1848](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1848)).** Firecrawl is the outside service that reads a web page and returns what is on it. Its version 1 API stops answering on 10 December 2026 ([the vendor's migration page](https://docs.firecrawl.dev/migrate-to-v2), read 2026-11-25), so every call moved before that date.
