@@ -4,13 +4,12 @@ import {
   Setting,
   Modal,
   Notice,
-  TFile,
-  normalizePath,
-  parseYaml,
-  stringifyYaml,
   requestUrl,
 } from "obsidian";
 import { SyncEngine } from "./engine.js";
+import { vaultFiles } from "./vault-files.js";
+import { decodeNote, encodeNote } from "./note-format.js";
+import { brainApi } from "./brain-api.js";
 import { createAuth } from "./auth.js";
 import { createMsalNetworkClient } from "./auth-network.js";
 import { describeError, failureText } from "./errors.js";
@@ -22,34 +21,22 @@ const DEFAULTS = {
   clientId: "",
   audience: "",
 };
+const API_HOSTS = ["api-azure.hybridcloudworks.com", "hybridcloudworks.com"];
 const allowedBase = (raw) => {
   const url = new URL(raw);
+  // No query, #fragment, user name or password.
+  const plain = ![url.search, url.hash, url.username, url.password].some(
+    Boolean,
+  );
   if (
     url.protocol !== "https:" ||
-    !["api-azure.hybridcloudworks.com", "hybridcloudworks.com"].includes(
-      url.hostname,
-    ) ||
+    !API_HOSTS.includes(url.hostname) ||
     url.pathname.replace(/\/$/, "") !== "/api" ||
-    url.search ||
-    url.hash ||
-    url.username ||
-    url.password
+    !plain
   )
     throw new Error("Use the HCW HTTPS API address.");
   return url.origin + "/api";
 };
-function frontmatter(raw) {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  if (!match) return { properties: {}, body: raw };
-  const properties = parseYaml(match[1]);
-  if (
-    !properties ||
-    typeof properties !== "object" ||
-    Array.isArray(properties)
-  )
-    throw new Error("Invalid note properties. Fix them before syncing.");
-  return { properties, body: raw.slice(match[0].length) };
-}
 class CodeModal extends Modal {
   constructor(app, code) {
     super(app);
@@ -286,154 +273,26 @@ export default class HCWSecondBrainPlugin extends Plugin {
         ),
       },
     );
-    const vault = this.app.vault;
-    const ensure = async (path) => {
-      const parts = normalizePath(path).split("/");
-      parts.pop();
-      let folder = "";
-      for (const part of parts) {
-        folder = folder ? `${folder}/${part}` : part;
-        if (!vault.getAbstractFileByPath(folder)) {
-          try {
-            await vault.createFolder(folder);
-          } catch {
-            if (!vault.getAbstractFileByPath(folder))
-              throw new Error("Could not create sync folder.");
-          }
-        }
-      }
-    };
-    const read = async (path) => {
-      const file = vault.getAbstractFileByPath(path);
-      return file instanceof TFile ? vault.read(file) : null;
-    };
-    const compareAndWrite = async (path, expected, value) => {
-      await ensure(path);
-      const file = vault.getAbstractFileByPath(path);
-      if (!file) {
-        if (expected !== null)
-          throw new Error("The note moved during sync. Retry.");
-        await vault.create(path, value);
-      } else if (file instanceof TFile)
-        await vault.process(file, (current) => {
-          if (current !== expected)
-            throw new Error("The note changed during sync. Retry.");
-          return value;
-        });
-      else throw new Error("A folder is using the note path.");
-    };
-    const decode = (raw, path) => {
-      const { properties: p, body } = frontmatter(raw || "");
-      const list = (v) =>
-        Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
-      const links = new Set(list(p.hcw_links));
-      for (const match of body.matchAll(/\[\[([^\]|#]+)(?:[^\]]*)\]\]/g)) {
-        const file = this.app.metadataCache.getFirstLinkpathDest(
-          match[1],
-          path,
-        );
-        const found =
-          file &&
-          Object.entries(this.state.entries).find(
-            ([, e]) => e.path === file.path,
-          );
-        if (found) links.add(found[0]);
-      }
-      const properties = Object.fromEntries(
-        Object.entries(p).filter(
-          ([key]) =>
-            !key.startsWith("hcw_") && !["title", "tags"].includes(key),
-        ),
-      );
-      return {
-        type: ["note", "topic", "project", "conflict"].includes(p.hcw_type)
-          ? p.hcw_type
-          : "note",
-        title:
-          typeof p.title === "string"
-            ? p.title
-            : path.split("/").at(-1)?.replace(/\.md$/, "") || "Untitled",
-        body,
-        properties,
-        tags: list(p.tags),
-        links: [...links],
-        collections: list(p.hcw_collections),
-        urls: list(p.hcw_urls),
-        archived: p.hcw_archived === true,
-        inbox: p.hcw_inbox !== false,
-      };
-    };
-    const encode = (item, previous) => {
-      const { properties } = frontmatter(previous);
-      const p = {
-        ...properties,
-        ...item.properties,
-        title: item.title,
-        tags: item.tags || [],
-        hcw_id: item.id,
-        hcw_type: item.type,
-        hcw_links: item.links || [],
-        hcw_collections: item.collections || [],
-        hcw_urls: item.urls || [],
-        hcw_archived: item.archived === true,
-        hcw_inbox: item.inbox !== false,
-      };
-      if (item.href) p.hcw_source = `https://hybridcloudworks.com${item.href}`;
-      if (item.type === "reference")
-        p.hcw_reference_truncated = item.truncated === true;
-      return `---\n${stringifyYaml(p).trimEnd()}\n---\n${item.body}`;
-    };
-    const call = async (action, method = "GET", body) => {
-      const token = await this.auth.token();
-      const response = await requestUrl({
-        url: `${baseUrl}/cms/brain/${action}`,
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        ...(body && { body: JSON.stringify(body) }),
-        throw: false,
-      });
-      if (response.status >= 400)
-        throw Object.assign(new Error("HCW sync request failed."), {
-          status: response.status,
-          details: response.json,
-        });
-      return response.json;
-    };
     this.engine = new SyncEngine({
       files: {
-        read,
-        decode,
-        encode,
-        compareAndWrite,
-        create: async (path, value) => {
-          await ensure(path);
-          await vault.create(path, value);
-        },
-        trashIfUnchanged: async (path, expected) => {
-          const file = vault.getAbstractFileByPath(path);
-          if (!(file instanceof TFile) || (await vault.read(file)) !== expected)
-            throw new Error("The note changed before archiving. Retry.");
-          // Vault trash preserves recovery. An active editor is never replaced
-          // by a raw filesystem unlink.
-          await vault.trash(file, false);
-        },
+        ...vaultFiles(this.app.vault),
+        decode: (raw, path) =>
+          decodeNote(raw, path, (target) => this.linkedEntry(target, path)),
+        encode: encodeNote,
       },
-      api: {
-        push: (body) => call("sync", "POST", body),
-        pull: (cursor) => call(`sync?cursor=${cursor}`),
-        references: (cursor) =>
-          call(
-            `sync-references${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
-          ),
-        status: (body) => call("sync-status", "POST", body),
-      },
+      api: brainApi(baseUrl, () => this.auth.token()),
       state: this.state,
       persist: () => this.persist(),
       report: (message) => this.report(message),
     });
+  }
+  // The [id, entry] of the enrolled note a [[link]] in `path` points at.
+  linkedEntry(target, path) {
+    const file = this.app.metadataCache.getFirstLinkpathDest(target, path);
+    return (
+      file &&
+      Object.entries(this.state.entries).find(([, e]) => e.path === file.path)
+    );
   }
   async sync(manual) {
     if (!manual && !this.settings.accountId) return;
