@@ -84,6 +84,122 @@ export { agentKeyFrom, KEY_HEADERS } from './keys.js';
 
 
 /**
+ * Write one denial row through the sink. `where` is what the caller knows
+ * about the request that the guard does not: the admin surface and the route
+ * template, when the admin role guard delegates here (admin-access.js, ADR
+ * 0038). The v1 routes pass nothing.
+ */
+function audit(auditDenial, entry, where = {}) {
+  try {
+    const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_USER.agent, ...where, ...entry });
+    // writeDenialAudit never rejects; a test double might. Nothing on a
+    // denial path may become an unhandled rejection.
+    if (result && typeof result.catch === 'function') result.catch(() => {});
+  } catch {
+    // The denial answer is unchanged when the audit sink fails.
+  }
+}
+
+/** lastUsedAt, at most once per LAST_USED_EVERY_MS, best effort and never awaited. */
+function touchLastUsed(store, record, nowMs) {
+  const last = Date.parse(record.lastUsedAt || '') || 0;
+  if (nowMs - last < LAST_USED_EVERY_MS) return;
+  Promise.resolve()
+    .then(() =>
+      store.patchDoc(
+        'admin_config',
+        KEY_RECORD_ID,
+        { lastUsedAt: new Date(nowMs).toISOString() },
+        { partitionKey: ADMIN_CONFIG_PARTITION },
+      ),
+    )
+    .catch(() => {});
+}
+
+/** The 401 every failed key check answers with. */
+const unauthenticated = () => ({ record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) });
+
+/** The stored key record when `secret` is the live key; null, after its denial row, when not. */
+async function matchingRecord({ store, auditDenial }, secret, where) {
+  const record = await store.readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION);
+  if (!isUsable(record)) {
+    audit(auditDenial, { outcome: 'denied', reason: record ? 'revoked-key' : 'no-key' }, where);
+    return null;
+  }
+  if (!hashMatches(secret, record.keyHash)) {
+    audit(auditDenial, { outcome: 'denied', reason: 'wrong-key' }, where);
+    return null;
+  }
+  return record;
+}
+
+/** The per-minute limit: the 429 answer, after its denial row, when this request is over it; null when not. */
+async function rateLimitRefusal({ store, auditDenial, requestsPerMinute }, nowMs, where) {
+  try {
+    await enforceSubmissionQuota(store, quotaKeyFor(nowMs), { now: nowMs, limit: requestsPerMinute });
+    return null;
+  } catch (error) {
+    if (error?.code !== 'SUBMISSION_RATE_LIMIT') throw error;
+    audit(auditDenial, { outcome: 'denied', reason: 'rate-limited' }, where);
+    return {
+      record: null,
+      user: null,
+      error: deny(
+        429,
+        'RATE_LIMITED',
+        `Too many requests: at most ${requestsPerMinute} a minute. Wait and try again.`,
+        { 'Retry-After': String(secondsToNextMinute(nowMs)) },
+      ),
+    };
+  }
+}
+
+/**
+ * The three gates. Resolves `{ record, user }` or `{ error }`, where `error`
+ * is the HTTP answer to return.
+ */
+async function authenticate(deps, request, where = {}) {
+  const secret = agentKeyFrom(request);
+  // No key, or a value not shaped like a site key, is no credential at all:
+  // refused without a store read and without an audit row, so the random
+  // tokens internet scanners send cannot turn into a write per request on
+  // admin_audit_logs.
+  if (!secret || !looksLikeKey(secret)) return unauthenticated();
+
+  const record = await matchingRecord(deps, secret, where);
+  if (!record) return unauthenticated();
+
+  const nowMs = deps.now();
+  const limited = await rateLimitRefusal(deps, nowMs, where);
+  if (limited) return limited;
+
+  touchLastUsed(deps.store, record, nowMs);
+  return { record, user: { ...AGENT_USER, keyHint: record.keyHint || null }, error: null };
+}
+
+/** The gates, then the capability the route needs. */
+async function requireCapability(deps, request, capability) {
+  const auth = await authenticate(deps, request);
+  if (auth.error) return auth;
+  // What the record allows, with the defaults filled in, so an older key
+  // record is read the same way as a new one: a switch it never stored
+  // takes today's default, and a switch stored false stays off.
+  if (!enabledCapabilities(auth.record).includes(capability)) {
+    audit(deps.auditDenial, { outcome: 'denied', reason: 'capability-off', capability });
+    return {
+      record: null,
+      user: null,
+      error: deny(
+        403,
+        'FORBIDDEN',
+        `Koda's key does not allow this: "${labelOf(capability)}" is switched off on the AI Engine's Koda tab.`,
+      ),
+    };
+  }
+  return auth;
+}
+
+/**
  * @param {object} deps
  * @param {{ readDoc: Function, patchDoc: Function, incrementIf: Function, createDoc: Function,
  *   replaceDocIfMatch: Function }} deps.store
@@ -98,109 +214,11 @@ export function createAgentContentGuard({
   requestsPerMinute = REQUESTS_PER_MINUTE,
 }) {
   if (!store) throw new Error('createAgentContentGuard requires a store');
-
-  // `where` is what the caller knows about the request that the guard does
-  // not: the admin surface and the route template, when the admin role guard
-  // delegates here (admin-access.js, ADR 0038). The v1 routes pass nothing.
-  const audit = (entry, where = {}) => {
-    try {
-      const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_USER.agent, ...where, ...entry });
-      // writeDenialAudit never rejects; a test double might. Nothing on a
-      // denial path may become an unhandled rejection.
-      if (result && typeof result.catch === 'function') result.catch(() => {});
-    } catch {
-      // The denial answer is unchanged when the audit sink fails.
-    }
+  const deps = { store, now, auditDenial, requestsPerMinute };
+  return {
+    authenticate: (request, where = {}) => authenticate(deps, request, where),
+    requireCapability: (request, capability) => requireCapability(deps, request, capability),
   };
-
-  /** lastUsedAt, at most once per LAST_USED_EVERY_MS, best effort and never awaited. */
-  const touchLastUsed = (record, nowMs) => {
-    const last = Date.parse(record.lastUsedAt || '') || 0;
-    if (nowMs - last < LAST_USED_EVERY_MS) return;
-    Promise.resolve()
-      .then(() =>
-        store.patchDoc(
-          'admin_config',
-          KEY_RECORD_ID,
-          { lastUsedAt: new Date(nowMs).toISOString() },
-          { partitionKey: ADMIN_CONFIG_PARTITION },
-        ),
-      )
-      .catch(() => {});
-  };
-
-  /**
-   * The three gates. Resolves `{ record, user }` or `{ error }`, where `error`
-   * is the HTTP answer to return.
-   */
-  async function authenticate(request, where = {}) {
-    const secret = agentKeyFrom(request);
-    if (!secret) {
-      return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
-    }
-    // A value not shaped like a site key is no credential at all, like a
-    // missing header: refused without a store read and without an audit
-    // row, so the random tokens internet scanners send cannot turn into a
-    // write per request on admin_audit_logs.
-    if (!looksLikeKey(secret)) {
-      return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
-    }
-
-    const record = await store.readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION);
-    if (!isUsable(record)) {
-      audit({ outcome: 'denied', reason: record ? 'revoked-key' : 'no-key' }, where);
-      return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
-    }
-    if (!hashMatches(secret, record.keyHash)) {
-      audit({ outcome: 'denied', reason: 'wrong-key' }, where);
-      return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
-    }
-
-    const nowMs = now();
-    try {
-      await enforceSubmissionQuota(store, quotaKeyFor(nowMs), { now: nowMs, limit: requestsPerMinute });
-    } catch (error) {
-      if (error?.code !== 'SUBMISSION_RATE_LIMIT') throw error;
-      audit({ outcome: 'denied', reason: 'rate-limited' }, where);
-      return {
-        record: null,
-        user: null,
-        error: deny(
-          429,
-          'RATE_LIMITED',
-          `Too many requests: at most ${requestsPerMinute} a minute. Wait and try again.`,
-          { 'Retry-After': String(secondsToNextMinute(nowMs)) },
-        ),
-      };
-    }
-
-    touchLastUsed(record, nowMs);
-    return { record, user: { ...AGENT_USER, keyHint: record.keyHint || null }, error: null };
-  }
-
-  /** The gates, then the capability the route needs. */
-  async function requireCapability(request, capability) {
-    const auth = await authenticate(request);
-    if (auth.error) return auth;
-    // What the record allows, with the defaults filled in, so an older key
-    // record is read the same way as a new one: a switch it never stored
-    // takes today's default, and a switch stored false stays off.
-    if (!enabledCapabilities(auth.record).includes(capability)) {
-      audit({ outcome: 'denied', reason: 'capability-off', capability });
-      return {
-        record: null,
-        user: null,
-        error: deny(
-          403,
-          'FORBIDDEN',
-          `Koda's key does not allow this: "${labelOf(capability)}" is switched off on the AI Engine's Koda tab.`,
-        ),
-      };
-    }
-    return auth;
-  }
-
-  return { authenticate, requireCapability };
 }
 
 let guard = null;

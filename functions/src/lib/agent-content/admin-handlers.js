@@ -60,6 +60,152 @@ const NO_KEY = () =>
 const actorOf = (user = {}) =>
   [user.email, user.preferred_username, user.oid, user.sub].find(Boolean) || 'admin';
 
+const readRecord = (store) => store.readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION);
+
+/** One audit row for a key change. Best effort: a failed row is logged, never answered. */
+async function audit({ store, now, uuid, log }, action, { user, request, details = {} }) {
+  try {
+    await store.upsertDoc('admin_audit_logs', {
+      id: uuid(),
+      timestamp: now().toISOString(),
+      action,
+      userId: user.oid || user.sub || null,
+      userEmail: user.email || null,
+      resourceType: 'agent_content_key',
+      resourceId: AGENT_ID,
+      details,
+      userAgent: request.headers?.get?.('user-agent') || null,
+      compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true },
+    });
+  } catch (error) {
+    log.error?.(`[agent-content] audit row ${action} failed`, errorFacts(error));
+  }
+}
+
+/** One write of the record: a create when there is none, otherwise a replace under the ETag this attempt read. */
+async function writeOnce(store, current, next) {
+  if (!current) return (await store.createDoc('admin_config', next)) || next;
+  // The ETag travels inside the document (cosmos-call-shape.js): the
+  // replace is conditional on the version this attempt read.
+  return (
+    (await store.replaceDocIfMatch(
+      'admin_config',
+      { ...next, _etag: current._etag },
+      { partitionKey: ADMIN_CONFIG_PARTITION },
+    )) || next
+  );
+}
+
+/**
+ * Create the record, or replace it under its ETag; one retry on a lost
+ * race. `build` receives the record as this attempt read it (null before
+ * the first key), so a retry works from the latest version, never from a
+ * value computed before the race.
+ */
+async function write(store, build) {
+  let lastError = null;
+  for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+    const current = await readRecord(store);
+    const next = build(current);
+    try {
+      return await writeOnce(store, current, next);
+    } catch (error) {
+      if (error?.code !== 409 && error?.code !== 412) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+const describe = (record) => ({
+  ok: true,
+  agent: AGENT_ID,
+  key: presentKeyRecord(record),
+  capabilities: CAPABILITIES,
+  limits: LIMITS,
+  basePath: `/api/${API_BASE_PATH}`,
+  endpoints: ENDPOINTS.map(([method, path, capability]) => ({ method, path, capability })),
+  adminAccess: describePolicy(record),
+});
+
+/** A route: the role check, then `work`, with its refusals and failures turned into answers. */
+function route(guard, role, what, work) {
+  return async (request, context) => {
+    const auth = await guard.requireRole(request, role);
+    if (auth.error) return auth.error;
+    try {
+      return await work({ request, context, user: auth.user });
+    } catch (error) {
+      if (error instanceof Answer) return error.response;
+      if (isAuthoredError(error)) {
+        return json(400, { ok: false, code: 'INVALID', error: authoredMessage(error, `Could not ${what}.`) });
+      }
+      return errorResponse(context, `Failed to ${what}`, error, 500);
+    }
+  };
+}
+
+/** POST cms/agent-content/key — make or rotate. The plaintext is in this answer and nowhere else. */
+async function generateKeyWork(deps, { request, user }) {
+  const { store, now, generate } = deps;
+  const secret = generate();
+  const actor = actorOf(user);
+  let rotated = false;
+  const written = await write(store, (current) => {
+    rotated = Boolean(current?.keyHash || current?.revokedAt);
+    return { ...(current || {}), ...buildKeyRecord({ secret, actor, now, previous: current }) };
+  });
+  await audit(deps, rotated ? 'agent_content_key_rotated' : 'agent_content_key_generated', {
+    user,
+    request,
+    details: { keyHint: written.keyHint },
+  });
+  return json(201, { ...describe(written), secret, shownOnce: true });
+}
+
+/** PATCH cms/agent-content/key — { capabilities: { id: boolean } } */
+async function updateCapabilitiesWork(deps, { request, user }) {
+  const { store, now } = deps;
+  const body = await request.json().catch(() => ({}));
+  // The change is one or more switches, merged over the switches as they
+  // are at write time (inside the build, so a retry after a lost race
+  // merges over the other tab's change instead of reverting it).
+  const change = normalizeCapabilities(body?.capabilities, {});
+  const asked = Object.keys(body?.capabilities || {});
+  const written = await write(store, (latest) => {
+    if (!latest) throw NO_KEY();
+    const merged = { ...normalizeCapabilities(null, latest.capabilities || {}) };
+    for (const id of asked) merged[id] = change[id];
+    return {
+      ...latest,
+      capabilities: merged,
+      capabilitiesChangedAt: now().toISOString(),
+      capabilitiesChangedBy: actorOf(user),
+    };
+  });
+  await audit(deps, 'agent_content_capabilities_changed', {
+    user,
+    request,
+    details: { capabilities: written.capabilities },
+  });
+  return json(200, describe(written));
+}
+
+/** DELETE cms/agent-content/key — revoke. The next request with the old key is 401. */
+async function revokeKeyWork(deps, { request, user }) {
+  const { store, now } = deps;
+  const current = await readRecord(store);
+  if (!current || !current.keyHash) {
+    return json(200, describe(current));
+  }
+  const written = await write(store, (latest) => {
+    const { keyHash: _removed, ...rest } = latest;
+    return { ...rest, revokedAt: now().toISOString(), revokedBy: actorOf(user) };
+  });
+  await audit(deps, 'agent_content_key_revoked', { user, request, details: { keyHint: written.keyHint } });
+  return json(200, describe(written));
+}
+
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard the admin role guard
@@ -78,142 +224,18 @@ export function createAgentContentAdminHandlers({
   generate = generateKey,
   log = {},
 }) {
-  const readRecord = () => store.readDoc('admin_config', KEY_RECORD_ID, ADMIN_CONFIG_PARTITION);
-
-  async function audit(action, { user, request, details = {} }) {
-    try {
-      await store.upsertDoc('admin_audit_logs', {
-        id: uuid(),
-        timestamp: now().toISOString(),
-        action,
-        userId: user.oid || user.sub || null,
-        userEmail: user.email || null,
-        resourceType: 'agent_content_key',
-        resourceId: AGENT_ID,
-        details,
-        userAgent: request.headers?.get?.('user-agent') || null,
-        compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true },
-      });
-    } catch (error) {
-      log.error?.(`[agent-content] audit row ${action} failed`, errorFacts(error));
-    }
-  }
-
-  /**
-   * Create the record, or replace it under its ETag; one retry on a lost
-   * race. `build` receives the record as this attempt read it (null before
-   * the first key), so a retry works from the latest version, never from a
-   * value computed before the race.
-   */
-  async function write(build) {
-    let lastError = null;
-    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
-      const current = await readRecord();
-      const next = build(current);
-      try {
-        if (!current) return (await store.createDoc('admin_config', next)) || next;
-        // The ETag travels inside the document (cosmos-call-shape.js): the
-        // replace is conditional on the version this attempt read.
-        return (
-          (await store.replaceDocIfMatch(
-            'admin_config',
-            { ...next, _etag: current._etag },
-            { partitionKey: ADMIN_CONFIG_PARTITION },
-          )) || next
-        );
-      } catch (error) {
-        if (error?.code !== 409 && error?.code !== 412) throw error;
-        lastError = error;
-      }
-    }
-    throw lastError;
-  }
-
-  const describe = (record) => ({
-    ok: true,
-    agent: AGENT_ID,
-    key: presentKeyRecord(record),
-    capabilities: CAPABILITIES,
-    limits: LIMITS,
-    basePath: `/api/${API_BASE_PATH}`,
-    endpoints: ENDPOINTS.map(([method, path, capability]) => ({ method, path, capability })),
-    adminAccess: describePolicy(record),
-  });
-
-  const route = (role, what, work) => async (request, context) => {
-    const auth = await guard.requireRole(request, role);
-    if (auth.error) return auth.error;
-    try {
-      return await work({ request, context, user: auth.user });
-    } catch (error) {
-      if (error instanceof Answer) return error.response;
-      if (isAuthoredError(error)) {
-        return json(400, { ok: false, code: 'INVALID', error: authoredMessage(error, `Could not ${what}.`) });
-      }
-      return errorResponse(context, `Failed to ${what}`, error, 500);
-    }
-  };
-
+  const deps = { store, now, uuid, generate, log };
   return {
     /** GET cms/agent-content/key */
-    getKey: route(READ_ROLE, 'read the agent key', async () => json(200, describe(await readRecord()))),
+    getKey: route(guard, READ_ROLE, 'read the agent key', async () => json(200, describe(await readRecord(store)))),
 
     /** POST cms/agent-content/key — make or rotate. The plaintext is in this answer and nowhere else. */
-    generateKey: route(WRITE_ROLE, 'generate the agent key', async ({ request, user }) => {
-      const secret = generate();
-      const actor = actorOf(user);
-      let rotated = false;
-      const written = await write((current) => {
-        rotated = Boolean(current?.keyHash || current?.revokedAt);
-        return { ...(current || {}), ...buildKeyRecord({ secret, actor, now, previous: current }) };
-      });
-      await audit(rotated ? 'agent_content_key_rotated' : 'agent_content_key_generated', {
-        user,
-        request,
-        details: { keyHint: written.keyHint },
-      });
-      return json(201, { ...describe(written), secret, shownOnce: true });
-    }),
+    generateKey: route(guard, WRITE_ROLE, 'generate the agent key', (args) => generateKeyWork(deps, args)),
 
     /** PATCH cms/agent-content/key — { capabilities: { id: boolean } } */
-    updateCapabilities: route(WRITE_ROLE, 'change the agent key', async ({ request, user }) => {
-      const body = await request.json().catch(() => ({}));
-      // The change is one or more switches, merged over the switches as they
-      // are at write time (inside the build, so a retry after a lost race
-      // merges over the other tab's change instead of reverting it).
-      const change = normalizeCapabilities(body?.capabilities, {});
-      const asked = Object.keys(body?.capabilities || {});
-      const written = await write((latest) => {
-        if (!latest) throw NO_KEY();
-        const merged = { ...normalizeCapabilities(null, latest.capabilities || {}) };
-        for (const id of asked) merged[id] = change[id];
-        return {
-          ...latest,
-          capabilities: merged,
-          capabilitiesChangedAt: now().toISOString(),
-          capabilitiesChangedBy: actorOf(user),
-        };
-      });
-      await audit('agent_content_capabilities_changed', {
-        user,
-        request,
-        details: { capabilities: written.capabilities },
-      });
-      return json(200, describe(written));
-    }),
+    updateCapabilities: route(guard, WRITE_ROLE, 'change the agent key', (args) => updateCapabilitiesWork(deps, args)),
 
     /** DELETE cms/agent-content/key — revoke. The next request with the old key is 401. */
-    revokeKey: route(WRITE_ROLE, 'revoke the agent key', async ({ request, user }) => {
-      const current = await readRecord();
-      if (!current || !current.keyHash) {
-        return json(200, describe(current));
-      }
-      const written = await write((latest) => {
-        const { keyHash: _removed, ...rest } = latest;
-        return { ...rest, revokedAt: now().toISOString(), revokedBy: actorOf(user) };
-      });
-      await audit('agent_content_key_revoked', { user, request, details: { keyHint: written.keyHint } });
-      return json(200, describe(written));
-    }),
+    revokeKey: route(guard, WRITE_ROLE, 'revoke the agent key', (args) => revokeKeyWork(deps, args)),
   };
 }
