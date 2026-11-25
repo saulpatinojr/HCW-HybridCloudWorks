@@ -47,23 +47,30 @@
  * equivalent failure is an unset Worker secret, so absence is loud.
  */
 export function parseConnectionString(raw) {
-  const parts = Object.fromEntries(
-    String(raw || '')
-      .split(';')
-      .filter(Boolean)
-      .map((pair) => {
-        const eq = pair.indexOf('=');
-        return [pair.slice(0, eq).trim(), pair.slice(eq + 1).trim()];
-      })
-  );
-  const iKey = parts.InstrumentationKey;
-  const endpoint = parts.IngestionEndpoint;
+  const parts = connectionStringParts(raw);
+  const iKey = parts.get('InstrumentationKey');
+  const endpoint = parts.get('IngestionEndpoint');
   if (!iKey || !endpoint) {
     throw new Error(
       'APPLICATIONINSIGHTS_CONNECTION_STRING must carry InstrumentationKey and IngestionEndpoint'
     );
   }
   return { iKey, endpoint: endpoint.endsWith('/') ? endpoint : `${endpoint}/` };
+}
+
+/**
+ * `a=1;b=2` → Map { a → '1', b → '2' }. Empty pairs are skipped, and a name
+ * given twice keeps its last value. A Map, so no name can reach an object's
+ * built-in properties.
+ */
+function connectionStringParts(raw) {
+  const parts = new Map();
+  for (const pair of String(raw || '').split(';')) {
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    parts.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+  }
+  return parts;
 }
 
 /** Milliseconds → the hh:mm:ss.fff TimeSpan string AvailabilityData expects. */
