@@ -33,7 +33,7 @@ const workspaceClass = (selection, view) =>
     ? 'grid items-start gap-6 xl:grid-cols-[minmax(20rem,1fr)_minmax(28rem,1fr)]'
     : '';
 
-const byNewest = (a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt));
+const newestFirst = (a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt));
 const inInbox = (n) => n.inbox || n.type === 'conflict';
 
 // Follow `?item=` and `?capture=` on every navigation, not only on mount
@@ -65,7 +65,7 @@ function ActiveView({ view, page }) {
         onRefresh={() => notes.loadNotes().catch(page.reportError)}
         onReindex={notes.reindex}
       >
-        <ItemList items={[...notes.notes].sort(byNewest).slice(0, 8)} onSelect={open} />
+        <ItemList items={[...notes.notes].sort(newestFirst).slice(0, 8)} onSelect={open} />
       </WorkspaceHome>
     );
   }
