@@ -23,6 +23,10 @@ import {
 } from './ambassadorModel';
 import { ReadsStatus, allLanded } from './Parts';
 import { AdditionalPrograms, ProgramDetails, UpkeepLine, WINDOW_BADGE } from './ProgramParts';
+import { DraftForProgramButton } from './ProgramPipeline';
+import { linkedId } from '@/hooks/useLinkedItem';
+import { LINK_PARAMS } from '@/lib/itemLinks';
+import { useToast } from '@/components/ui/use-toast';
 
 const byIdOf = (programs) => programById(programs);
 
@@ -112,6 +116,11 @@ function ProgramCard({
             )}
             Start application
           </Button>
+          {/* A held membership whose program asks for regular contributions can
+              start its next piece from here (#1886). */}
+          {showsUpkeep(program, evidenceRows) && !disabled && (
+            <DraftForProgramButton program={program} />
+          )}
         </div>
       </CardContent>
     </Card>
@@ -125,8 +134,12 @@ export default function ProgramsTab({ hub, nav }) {
   // would read as nothing filed.
   const evidenceRows = evidence && allLanded([evidence]) ? evidence.data : null;
   const reads = [programs, applications];
-  const [detailsId, setDetailsId] = useState(null);
+  // `?program=<id>` opens that program's details: where a Pipeline chip that
+  // says "Ambassador · <program>" leads (lib/pageLinks.js, #1886).
+  const [detailsId, setDetailsId] = useState(() => linkedId(LINK_PARAMS.program));
   const [starting, setStarting] = useState(null);
+  const [filing, setFiling] = useState(null);
+  const { toast } = useToast();
   const today = todayIso();
 
   const pursuedPrograms = useMemo(
@@ -158,7 +171,38 @@ export default function ProgramsTab({ hub, nav }) {
     }
   };
 
-  const details = ordered.find((p) => p.id === detailsId) || null;
+  // From the whole list, not just the cards shown: a link may name a program
+  // whose card is hidden (an additional program whose parent is not Active).
+  const details = programs.data.find((p) => p.id === detailsId && !p.softDeletedAt) || null;
+  const linkedMissing = Boolean(detailsId) && allLanded(reads) && !details;
+
+  // A live piece from the Pipeline becomes evidence for this program through
+  // the existing import from Published content (one row per piece, so a
+  // second click finds the first row).
+  const fileEvidence = async (contentId) => {
+    if (!details || filing) return;
+    setFiling(contentId);
+    const result = await hub.writes.importEvidence('content', [contentId], [details.id]);
+    setFiling(null);
+    if (!result) return; // refused: the write guard's toast already said why
+    // The import answers 200 whether it filed the piece or not (review of
+    // #1890), so the message follows what it actually did with this id.
+    const listOf = (value) => (Array.isArray(value) ? value : []);
+    if (listOf(result.created).some((row) => row?.sourceId === contentId)) {
+      toast({ title: `Filed as evidence for ${details.name}` });
+    } else if (listOf(result.missing).includes(contentId)) {
+      toast({
+        title: 'Not filed',
+        description: 'That piece is no longer live, so it cannot be filed as evidence.',
+        variant: 'destructive',
+      });
+    } else {
+      toast({
+        title: 'Already filed',
+        description: 'It was filed before; attach it to this program on the Evidence tab.',
+      });
+    }
+  };
 
   return (
     <div className="space-y-4 pt-4">
@@ -168,6 +212,11 @@ export default function ProgramsTab({ hub, nav }) {
         point until you match it to the program&apos;s current published rules.
       </p>
       <ReadsStatus reads={reads} label="programs" />
+      {linkedMissing && (
+        <p className="text-sm text-muted-foreground" role="status">
+          The program that link names is no longer in the catalogue.
+        </p>
+      )}
       {allLanded(reads) &&
         (ordered.length === 0 ? (
           <EmptyState
@@ -205,6 +254,8 @@ export default function ProgramsTab({ hub, nav }) {
         onStart={start}
         starting={Boolean(starting)}
         pursuing={details ? pursuedPrograms.has(details.id) : false}
+        onFileEvidence={fileEvidence}
+        filing={filing}
       />
     </div>
   );

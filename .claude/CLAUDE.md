@@ -381,6 +381,192 @@ what the admin portal already has for that kind of thing (a register, a
 health probe, a reminder, a settings page, a directory entry) and add the new
 thing to each, in the same pull request.
 
+## How the admin Pages connect
+
+Owner instructions of 2026-11-25
+([#1886](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1886)).
+The admin portal (everything under `/admin`) is one connected system, not a
+set of separate tools. A feature is not finished until it is joined up the
+way this section describes.
+
+**Words used here, the owner's own.** A **Blade** is a group in the sidebar
+(Pipeline, Enhanced, Creative, Amplify, Spotlight, Platform). A **Page** is
+an entry under a Blade (Drafts, Speaking, Ambassador, Health). A **Tab** is a
+section inside a Page (Ambassador's Programs, Evidence, Settings). Every Page
+is one row of the nav registry,
+[`frontend/src/config/adminNav.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/config/adminNav.js),
+which holds its label, route, icon, description and lowest role. The nav
+stays in code; the owner does not want it editable from the portal.
+
+**The four ways Pages connect.** The owner asked for all four:
+
+1. **Hand-offs that remember where they came from.** A Page sends work to
+   the Page that does that kind of work, instead of doing it itself. The
+   receiving Page shows where the work came from, with a link back; the
+   sending Page shows how far it has got.
+2. **Related items.** A Page shows what other Pages hold about the same
+   thing.
+3. **The next step.** After an action, a Page offers the natural next Page.
+4. **One "waiting on you" list.** Anything a Page needs from the owner
+   reaches the Dashboard and Telegram, each item linking to the exact record.
+
+**Rules.**
+
+- **One engine per kind of work; other Pages hand work to it.** Content is
+  drafted, reviewed, scheduled and published only by the Pipeline (Drafts →
+  Review Queue → Editor → Publish → Live Pages). A Page that needs a piece
+  of content (a contribution for a program, a talk's recap)
+  starts a draft there and lists it; it never grows its own draft, queue,
+  schedule or publish step. The same goes for the shared services below: a
+  Page plugs into them and does not copy them.
+- **Where a piece came from is one checked field, written once.** Content a
+  Page sent carries `originRef` (`{ page, id, part, label }`): `page` is the
+  sending Page's nav id, `id` the record on it. The server checks it against
+  that record when the draft is created
+  ([`page-links/origin-ref.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/page-links/origin-ref.js)),
+  and no later save can change it (`originRef` is a protected field in
+  `content-update-validation.js`, which also refuses any field name with a
+  dot, because a partial update reads `originRef.label` as a path into the
+  field). The caller never supplies the label; the server reads it from the
+  record. Do not add another `source`-style field
+  to say "this came from Page X".
+- **A Page's name, icon and route come from the nav registry, never
+  retyped.** Code that names or links another Page reads `navItemById(id)`
+  and the deep-link helpers in
+  [`frontend/src/lib/itemLinks.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/lib/itemLinks.js)
+  and
+  [`frontend/src/lib/pageLinks.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/src/lib/pageLinks.js).
+  A Page that opens one record from a link reads a named parameter from
+  `LINK_PARAMS` (`?program=`, `?application=`), so every link to it works
+  the same way.
+- **Show the link where the content already shows its labels.** The "sent
+  from" chip (`OriginChip`) lives inside `TaxonomyChips`, which every
+  Pipeline list and board already renders, so a new Page's pieces are
+  labelled everywhere with no change to any Pipeline page. Put a cross-Page
+  label in a shared component like this, not in each page.
+- **The state belongs to the record that owns it.** A sending Page reads a
+  piece's stage from the content record each time (`GET
+  cms/content?originPage=&originId=`); it never stores a copy of the stage.
+  Two Pages then cannot disagree.
+- **Prefer a list (a registry) over a new `if`.** The shared services below
+  each have a list that a new Page joins with one entry. If a feature needs
+  a third Page-specific branch in shared code, turn the branches into a list
+  first. Each list on the server that the browser mirrors has a test that
+  fails when the two differ (`pageLinks.test.js`, `itemLinks.test.js`);
+  keep that pattern.
+- **Join only where it helps the owner.** A link, chip or reminder is added
+  because it saves the owner a step or a search, not to make Pages look
+  connected.
+- **A hand-off cannot happen twice by accident.** A button that creates
+  something is disabled while its request is in flight. A step that may be
+  repeated uses an id that is the same every time (Ambassador evidence from a
+  piece of content is one row per piece, `importedEvidenceId`), so a second
+  try finds the first result. A timer or reminder stamps what it has done
+  under a conditional write (`ifMatch`), as the reminders sheet does.
+- **Roles do not change across a hand-off.** Starting a draft for another
+  Page needs only the editor role, the same as Drafts. Publishing still needs
+  publisher, scheduling still needs publisher, and an agent key still
+  cannot publish, schedule or delete. A hand-off never lets a lower role do
+  what the target Page would refuse it. Nor does it let an agent key see more
+  than its switches allow: a reference names a record and returns its name,
+  so each Page in `ORIGIN_PAGES` names the switch that guards it
+  (`agentSection`). While that switch is off, the key's reference is refused,
+  every answer it reads leaves the reference out
+  (`answerWithoutHiddenOrigins`, applied where the content, Drafts and
+  snapshot routes answer), and a list filtered by that Page is refused. A new
+  route that returns content to an agent key goes through the same helper.
+- **An action that files or imports by id checks the id itself.** A list
+  that offers only some records (live content, say) is not a check: the
+  route that acts on an id holds it to the same rule (`accepts` on an
+  Ambassador import reader), because a request can name any id.
+
+**The shared services to plug into, and where each list lives.**
+
+| Service | What a Page adds | Where |
+|---|---|---|
+| Pipeline hand-off | An entry in `ORIGIN_PAGES` (server) and `ORIGIN_RECORD_PATHS` (browser); `SendToPipelineButton` and `PipelinePieces` on the Page | `functions/src/lib/page-links/origin-pages.js` (the list; it imports nothing, so the browser's mirror test can read it), `functions/src/lib/page-links/origin-ref.js` (the check), `frontend/src/lib/pageLinks.js`, `frontend/src/components/admin/shared/pipeline/` |
+| Dashboard "waiting on you" list (the Decision Center) | A source in `OTHER_SOURCES`, and its labels in `decisionCenterModel.js` | `functions/src/lib/decision-center/sources.js` |
+| Calendar | A collector in `COLLECTORS` and a kind in `CALENDAR_KINDS` | `functions/src/lib/calendar/collectors.js`, `functions/src/lib/calendar.js` |
+| Telegram reminders | Rows on the reminders sheet; today only the credential register writes rows by itself | `functions/src/lib/timers/reminders.js`, `functions/src/lib/credentials/reminders.js` |
+| Telegram alerts | `createNotifier().notifyTelegram` with a `source` per thing, so its 15-minute cooldown is per thing | `functions/src/lib/notify.js` |
+| Background work | A job type through `registerJobType` | `functions/src/lib/job-model.js` |
+| Telegram commands | One entry in `COMMANDS` | `functions/src/lib/telegram/commands.js` |
+| Agent keys (the owner's content agent) | Nothing: an agent key uses the same routes, through its own key, switches and allow-list | `functions/src/lib/agent-content/admin-access.js` |
+
+**Built so far, and still to come.** Phase 1 of #1886 built the Pipeline
+hand-off with Ambassador as its first Page: "Draft a piece" on a held
+program's card and in the details of any program that is switched on, the
+program's pieces with their stage, "File as evidence" once a piece is live,
+and the "sent from" chip across the Pipeline. Still to come, in later phases
+of #1886: Ambassador's dates and activity requirements on the Dashboard and
+Telegram (through a list of reminder-row providers, with the credential
+register as the first), hand-offs from the other Pages, next-step
+suggestions, and related items. Until a phase is merged, do not describe its
+part as working.
+
+**Checklist: adding a Page, program or request type to the flow.** Go down
+it in the pull request and say for each line *done* (with the file), *already
+correct*, or *does not apply* (with the reason), as the credential checklist
+above does.
+
+1. **The Page exists in the nav registry** (`adminNav.js`), so its name,
+   icon and route are known everywhere.
+2. **It can be opened at one record** through a named `LINK_PARAMS`
+   parameter, read with `linkedId` or `useLinkedItem`.
+3. **If it needs content written:** it is in `ORIGIN_PAGES` with a `check`
+   that refuses a missing or deleted record, an `ideaOrigin` the taxonomy
+   ships and the `agentSection` switch that guards it for an agent key, and in
+   `ORIGIN_RECORD_PATHS`; it uses `SendToPipelineButton` and
+   `PipelinePieces`, not its own draft or publish code.
+4. **If the owner must act on something by a date:** a Decision Center
+   source, a Calendar collector, and Telegram through the reminders sheet,
+   each linking to the record.
+5. **If a step may be repeated:** it is safe to repeat (a fixed id, a
+   conditional write, a button disabled while busy), and a test shows the
+   second try changes nothing.
+6. **Roles:** every new route asks for the same role the target Page would,
+   and the agent allow-list is checked for anything it should or should not
+   reach.
+7. **Tests** cover the server check, the browser mirror, and the hand-off
+   from the Page's own test file.
+8. **This section** is updated if the change adds a rule, a list or a
+   service.
+
+## Public text about Ambassador and community programs
+
+Owner instruction 2026-11-25. This repository is public, and the programs the
+Ambassador Page tracks (community, ambassador and recognition programs) can
+read it. Ambassador exists to help the owner plan, write, track and record
+genuine contributions faster. Nothing public may read as a way to meet,
+shortcut or game a program's requirements.
+
+- **No real program is named in anything a session adds.** Not in a pull
+  request title or description, an issue, a commit message, a review reply,
+  a code comment, a test name or fixture, a changelog entry or a document.
+  Tests and examples use made-up programs ("Example Program",
+  `program-example`). Refer to the owner's own program tickets by number
+  only. The program catalogue the Page ships with (its seed data) is product
+  data and stays as it is; do not add to it or describe it elsewhere.
+- **Describe the work, not the requirement.** Say "plan and track
+  contributions", "an activity requirement", "requirement not yet met this
+  period" and "record a published piece as evidence". Never "quota", "the
+  minimum to stay active", "keep status", "short quarter" or anything that
+  frames the goal as the count rather than the contribution. This includes
+  text the product itself shows (reminder titles, Dashboard items, messages).
+- **The content agent and Ambassador are never mentioned together in public
+  text.** Whatever the code lets an agent key do on any Page, documentation,
+  changelog entries, pull requests, issues and code comments describe agent
+  access in general terms ("an agent key", "its switch for that Page") and
+  never as producing content for a program. The owner briefs the agent
+  privately.
+- **Nothing in a test or example implies counting the same work twice,**
+  filing unpublished work, or backdating evidence; the code refuses all three
+  and the text should never suggest them.
+- **Check before every push.** Search the diff and the text of the pull
+  request, issue or comment for program names and for the words above, and
+  fix what is found before it is posted. Text already posted is edited, and
+  the owner is told what was public and for how long.
+
 ## Everything named to the owner carries its link
 
 Owner instruction 2026-10-25, given after being told to decide "the copyleft

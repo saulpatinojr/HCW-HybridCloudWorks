@@ -397,3 +397,60 @@ describe("createContentItem document shape", () => {
     expect(doc.contentQuality.score).toBeTypeOf("number");
   });
 });
+
+describe("createContentItem originRef (#1886)", () => {
+  const PROGRAM = {
+    id: "program-example",
+    docType: "program",
+    name: "Example Program",
+    requirements: [],
+  };
+  const readDoc = vi.fn(async (container, id) =>
+    container === "ambassador" && id === PROGRAM.id ? PROGRAM : null,
+  );
+
+  it("stores the checked reference, never the caller's own label", async () => {
+    const store = makeStore({ readDoc });
+    const handler = createContentCreateHandler({
+      guard: allowGuard,
+      store,
+      ...fixed,
+    });
+    const res = await handler(
+      makeRequest({
+        data: { Title: "T", originRef: { page: "ambassador", id: PROGRAM.id } },
+      }),
+      context,
+    );
+    expect(res.status).toBe(200);
+    expect(store.upsertDoc.mock.calls[0][1].originRef).toEqual({
+      page: "ambassador",
+      id: PROGRAM.id,
+      part: null,
+      label: "Example Program",
+    });
+  });
+
+  it("refuses a reference to a record that does not exist, and writes nothing", async () => {
+    const store = makeStore({ readDoc });
+    const handler = createContentCreateHandler({
+      guard: allowGuard,
+      store,
+      ...fixed,
+    });
+    const res = await handler(
+      makeRequest({
+        data: {
+          Title: "T",
+          originRef: { page: "ambassador", id: "program-none" },
+        },
+      }),
+      context,
+    );
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toBe(
+      "No Ambassador program has that id.",
+    );
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+});

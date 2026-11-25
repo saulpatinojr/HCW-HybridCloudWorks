@@ -69,6 +69,12 @@ import {
   TaxonomyFieldError,
   validateTaxonomyFieldsWithStore,
 } from "./taxonomy-fields.js";
+import {
+  OriginRefForbiddenError,
+  answerWithoutHiddenOrigins,
+  defaultIdeaOriginFor,
+  resolveOriginRef,
+} from "../page-links/origin-ref.js";
 
 /** Who to record as the editor: the first identity the sign-in carries. */
 export const editorOf = (user = {}) =>
@@ -117,6 +123,7 @@ const LIST_PROJECTION = [
   "c.contentStatus",
   "c.Live",
   "c.draftOrigin",
+  "c.originRef",
   "c.kind",
   "c.ideaOrigin",
   "c.type",
@@ -364,6 +371,13 @@ function failure(context, what, error) {
  */
 function answerFor(error, context, what) {
   if (error instanceof Refusal) return error.response;
+  if (error instanceof OriginRefForbiddenError) {
+    return refused({
+      status: 403,
+      code: "FORBIDDEN",
+      error: authoredMessage(error, `Could not ${what}.`),
+    });
+  }
   if (isAuthoredError(error)) {
     return refused({
       status: 400,
@@ -412,7 +426,10 @@ const route = (deps, what, work) => async (request, context) => {
   const auth = await deps.guard.requireRole(request, "editor");
   if (auth.error) return auth.error;
   try {
-    return await work(deps, { request, context, user: auth.user });
+    const response = await work(deps, { request, context, user: auth.user });
+    // The agent key never sees where a draft came from for a Page its key may not
+    // read (page-links/origin-ref.js, review of #1890).
+    return await answerWithoutHiddenOrigins(deps.store, auth.user, response);
   } catch (error) {
     return answerFor(error, context, what);
   }
@@ -445,17 +462,29 @@ async function getDraft(deps, { request }) {
   return json(200, { ok: true, draft: withLinks(deps, toDraftView(doc)) });
 }
 
-/** POST cms/drafts — { fields } */
+/**
+ * POST cms/drafts — { fields, originRef? }
+ *
+ * `originRef` is how another admin Page sends a piece into the Pipeline
+ * (#1886, page-links/origin-ref.js): checked against the record it names and
+ * stored once. A draft sent that way gets that Page's idea origin when the
+ * caller names none, ahead of the factory's default, because it says more.
+ */
 async function createDraft(deps, { request, user }) {
+  const body = await readBody(request);
+  const draftFields = validateDraftFields(body.fields);
+  const originRef = await resolveOriginRef(deps.store, body.originRef, { user });
+  const fromPage = defaultIdeaOriginFor(originRef);
   const fields = await checkedTaxonomyWithDefault(
-    deps,
-    validateDraftFields((await readBody(request)).fields),
+    fromPage ? { ...deps, defaultIdeaOrigin: fromPage } : deps,
+    draftFields,
   );
   const doc = buildNewDraftDocument({
     id: deps.uuid(),
     fields,
     editor: editorOf(user),
     ...(deps.origin ? { origin: deps.origin } : {}),
+    originRef,
     now: deps.now,
   });
   const created = (await deps.store.createDoc("content", doc)) || doc;
