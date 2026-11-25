@@ -70,6 +70,25 @@ describe('the Key Vault part is the catalogue, whole', () => {
     expect(status.source).toMatchObject({ coder: 'statusToken' });
   });
 
+  it('registers the Firecrawl key as hand-renewed, with a reminder and what really uses it (#1848)', () => {
+    const entry = findCredential('kv-firecrawl-api-key');
+    expect(entry).toMatchObject({
+      name: 'FIRECRAWL-API-KEY',
+      store: 'key-vault',
+      renewal: 'hand',
+      lifetimeDays: HAND_ROTATION_DAYS,
+    });
+    expect(entry.source).toEqual({ secret: 'FIRECRAWL-API-KEY' });
+    // The blog listings and the tool server use it; nothing summarises links with it.
+    expect(entry.consumer).toMatch(/blog listings/i);
+    expect(entry.consumer).toMatch(/tool server/i);
+    expect(entry.consumer).not.toMatch(/summar/i);
+    expect(entry.rotate).toMatch(/Integrations → Keys/);
+    // docs/security/credential-rotation-schedule.md gives this key the same
+    // 180 days. No test reads that page from here: this CI job does not run
+    // on a change to docs/security, so a test that read it could be skipped.
+  });
+
   it('registers the Community Days key as a hand-renewed Key Vault credential with a reminder (#1823)', () => {
     const entry = findCredential('kv-community-days-api-key');
     expect(entry).toMatchObject({
@@ -169,6 +188,9 @@ describe('the issue’s list', () => {
         // #1823: the Community Days developer key. It expires six months
         // after it is made (read by the owner at the vendor, 2026-11-24).
         'kv-community-days-api-key',
+        // #1848: Firecrawl is a paid service; its key has no expiry at the
+        // vendor, so it takes the owner's 180-day rule.
+        'kv-firecrawl-api-key',
         'gh-manifest-app-private-key',
         'gh-claude-code-oauth-token',
         'gh-copilot-review-app-private-key',
@@ -208,6 +230,7 @@ describe('the issue’s list', () => {
     for (const id of [
       'kv-anthropic-api-key',
       'kv-telegram-bot-token',
+      'kv-firecrawl-api-key',
       'gh-manifest-app-private-key',
       'gh-copilot-review-app-private-key',
       'lab-coder-github-oauth-secret',

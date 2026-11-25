@@ -77,7 +77,7 @@ it('manual listing intake preserves source settings and resolves article links r
       json: async () => ({
         success: true,
         data: {
-          extract: {
+          json: {
             articles: [
               { title: 'Listing article', url: 'relative-post' },
               { title: 'Malformed', url: 'https://[' },
@@ -133,7 +133,7 @@ it('does not fail listing ingestion when its run-status write fails', async () =
       ok: true,
       json: async () => ({
         success: true,
-        data: { extract: { articles: [{ title: 'Article', url: 'relative-post' }] } },
+        data: { json: { articles: [{ title: 'Article', url: 'relative-post' }] } },
       }),
     }))
   );

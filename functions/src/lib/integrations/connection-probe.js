@@ -463,17 +463,25 @@ export const PROBES = Object.freeze({
   }),
 
   /**
-   * `GET /v1/team/credit-usage` — the team's remaining Firecrawl credits
+   * `GET /v2/team/credit-usage` — the team's remaining Firecrawl credits
    * (ADR 0033 Platform). Read-only and free, where a scrape would spend a
    * credit on a page nobody asked for; the count also tells the operator how
-   * close the summariser is to running dry. No key verdict, same reason.
+   * close the blog listings timer is to running dry. No key verdict, same
+   * reason.
+   *
+   * Version 2 of the API since #1848; version 1 stops answering on
+   * 2026-12-10 (https://docs.firecrawl.dev/migrate-to-v2). The answer's
+   * fields are spelled differently in v2: `data.remainingCredits`, where v1
+   * said `data.remaining_credits`
+   * (https://docs.firecrawl.dev/api-reference/endpoint/credit-usage). The
+   * body is passed through as it is, so the card's test reads the new name.
    */
   firecrawl: createProbe({
     name: 'firecrawl',
     service: 'Firecrawl',
     settings: ['FIRECRAWL_API_KEY'],
     buildRequest: ({ values }) => ({
-      url: 'https://api.firecrawl.dev/v1/team/credit-usage',
+      url: 'https://api.firecrawl.dev/v2/team/credit-usage',
       headers: {
         Authorization: `Bearer ${values.FIRECRAWL_API_KEY}`,
         Accept: 'application/json',

@@ -4,9 +4,20 @@
  * drafts, the same shape the RSS ingest writes.
  *
  * Ported from Site-Main index.js (088f458). Upstream used the Firecrawl SDK;
- * this calls the v1 REST endpoint with fetch (one fewer dependency, same
- * request: `formats: ['extract']` with a JSON schema). `FIRECRAWL_API_KEY`
- * is a Key Vault reference on the app; a missing key skips the run.
+ * this calls the REST endpoint with fetch (one fewer dependency).
+ * `FIRECRAWL_API_KEY` is a Key Vault reference on the app; a missing key
+ * skips the run.
+ *
+ * The call uses version 2 of Firecrawl's API (#1848). Version 1 stops
+ * answering on 2026-12-10 (https://docs.firecrawl.dev/migrate-to-v2, read
+ * 2026-11-25). What changed for this file, from that page and the scrape
+ * reference (https://docs.firecrawl.dev/api-reference/endpoint/scrape):
+ *   - the address ends `/v2/scrape`, not `/v1/scrape`;
+ *   - the schema travels inside `formats`, as `{ type: 'json', schema }`,
+ *     where v1 took `formats: ['extract']` and a separate `extract` field;
+ *   - the answer is read from `data.json`, not `data.extract`.
+ * No `prompt` is sent: v1 sent none, and in v2 it is optional (only `type`
+ * is required on the json format), so the request asks for the same thing.
  */
 import { recordRun } from '../rss/source-run.js';
 import { randomUUID } from 'node:crypto';
@@ -14,7 +25,7 @@ import { readKey } from '../ai/router.js';
 import { buildRssContentDoc, truncateText } from '../rss/feeds.js';
 import { AuthoredError, errorCode, storedFailure } from '../http/error-response.js';
 
-export const FIRECRAWL_SCRAPE_URL = 'https://api.firecrawl.dev/v1/scrape';
+export const FIRECRAWL_SCRAPE_URL = 'https://api.firecrawl.dev/v2/scrape';
 export const MAX_ARTICLES_PER_SOURCE = 20;
 
 export const BLOG_SCRAPE_SOURCES = Object.freeze([
@@ -119,8 +130,7 @@ export async function scrapeListingPage(
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: listingUrl,
-      formats: ['extract'],
-      extract: { schema: ARTICLE_SCHEMA },
+      formats: [{ type: 'json', schema: ARTICLE_SCHEMA }],
     }),
   });
   let result;
@@ -132,7 +142,7 @@ export async function scrapeListingPage(
     throw new AuthoredError('The blog listing response could not be read.', { code: 'UNREADABLE_BODY' });
   }
   if (!response.ok || result.success === false) throw scrapeRefusal(response, result, listingUrl);
-  const articles = result.data?.extract?.articles || result.extract?.articles || [];
+  const articles = result.data?.json?.articles || [];
   return articles.map((a) => ({ ...a, url: resolveArticleUrl(a.url, listingUrl) }));
 }
 
