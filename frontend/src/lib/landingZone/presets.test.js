@@ -134,6 +134,19 @@ describe('Landing Zone Builder architectural presets (presets.js)', () => {
     expect(awsBaseline.totalMonthlyUsd).toBeGreaterThan(400);
     expect(awsBaseline.items.some((i) => i.label.includes('Transit Gateway'))).toBe(true);
 
+    // The pack builds two firewall endpoints and two NAT gateways, one per
+    // zone, and attaches the hub VPC as well as the spokes (#1876).
+    const byLabel = (b, text) => b.items.find((i) => i.label.includes(text));
+    expect(byLabel(awsBaseline, 'Network Firewall').monthlyUsd).toBe(576);
+    expect(byLabel(awsBaseline, 'hub VPC attachment').monthlyUsd).toBe(37);
+    // NAT gateways in the firewall's path have no hourly fee; without it they do.
+    expect(byLabel(awsBaseline, 'NAT gateways').monthlyUsd).toBe(0);
+    const noFirewall = estimateMonthlyBaseline({
+      cloud: 'aws',
+      selected: ['management-groups', 'connectivity-hub', 'corp'],
+    });
+    expect(byLabel(noFirewall, 'NAT gateways').monthlyUsd).toBe(66);
+
     // GCP presets
     const gcpBaseline = estimateMonthlyBaseline({ cloud: 'gcp' });
     expect(gcpBaseline.totalMonthlyUsd).toBeGreaterThan(150);

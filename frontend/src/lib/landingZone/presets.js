@@ -293,6 +293,36 @@ export const MULTI_CLOUD_PRESETS = Object.freeze({
   gcp: GCP_PRESETS,
 });
 
+// AWS list prices used below, US East, read 2026-11-25 (#1876):
+// Transit Gateway $0.05 per VPC attachment-hour
+// (https://aws.amazon.com/transit-gateway/pricing/), NAT gateway $0.045 an
+// hour (https://aws.amazon.com/vpc/pricing/), Network Firewall $0.395 per
+// endpoint-hour, which also waives the hourly charge of a NAT gateway in the
+// same path (https://aws.amazon.com/network-firewall/pricing/). 730 hours a
+// month. Data processed is charged per gigabyte on top and is not included.
+const AWS_MONTHLY = Object.freeze({ attachment: 37, natGateway: 33, firewallEndpoint: 288 });
+// The pack uses two Availability Zones: two NAT gateways, two firewall endpoints.
+const AWS_ZONES = 2;
+
+function awsHubItems(state) {
+  if (!isSelected(state, 'connectivity-hub')) return [];
+  const firewall = isSelected(state, 'firewall');
+  return [
+    {
+      label: 'AWS Transit Gateway (hub VPC attachment)',
+      monthlyUsd: AWS_MONTHLY.attachment,
+      note: 'Hourly fee for attaching the hub VPC; traffic through the Transit Gateway is billed per GB on top.',
+    },
+    {
+      label: `NAT gateways (${AWS_ZONES}, one per Availability Zone)`,
+      monthlyUsd: firewall ? 0 : AWS_ZONES * AWS_MONTHLY.natGateway,
+      note: firewall
+        ? 'Hourly fee waived while a firewall endpoint runs in the same path; data processed is billed per GB.'
+        : 'Hourly fee for the hub’s way out to the internet; data processed is billed per GB.',
+    },
+  ];
+}
+
 function estimateAwsBaseline(state) {
   const items = [];
   if (isSelected(state, 'management')) {
@@ -302,25 +332,19 @@ function estimateAwsBaseline(state) {
       note: 'Multi-region organization trail with KMS customer-managed key.',
     });
   }
-  if (isSelected(state, 'connectivity-hub')) {
-    items.push({
-      label: 'AWS Transit Gateway & Route 53 Resolver',
-      monthlyUsd: 117,
-      note: 'Central interconnect hourly fee and Route 53 Resolver endpoints.',
-    });
-  }
+  items.push(...awsHubItems(state));
   if (isSelected(state, 'firewall')) {
     items.push({
       label: 'AWS Network Firewall (Stateful inspection)',
-      monthlyUsd: 288,
-      note: 'Hourly base fee in dedicated Inspection VPC.',
+      monthlyUsd: AWS_ZONES * AWS_MONTHLY.firewallEndpoint,
+      note: `Hourly fee for ${AWS_ZONES} endpoints in the hub VPC, one per Availability Zone; traffic inspected is billed per GB.`,
     });
   }
   const totalSpokes = countTotalSpokes(state);
   if (totalSpokes > 0) {
     items.push({
       label: `Transit Gateway VPC Attachments (${totalSpokes} spoke${totalSpokes === 1 ? '' : 's'})`,
-      monthlyUsd: totalSpokes * 36,
+      monthlyUsd: totalSpokes * AWS_MONTHLY.attachment,
       note: 'Hourly fee for connecting workload VPCs to TGW.',
     });
   }
@@ -328,7 +352,7 @@ function estimateAwsBaseline(state) {
   const finopsAdvisories = [];
   if (isSelected(state, 'firewall') && totalSpokes <= 2) {
     finopsAdvisories.push(
-      'FinOps tip: For low-throughput dev environments, an egress NAT Gateway can be used before deploying stateful Network Firewall.'
+      'FinOps tip: For low-throughput dev environments, the hub’s NAT gateways alone can be used before deploying stateful Network Firewall.'
     );
   }
   return { items, totalMonthlyUsd, totalSpokes, finopsAdvisories };
@@ -509,12 +533,12 @@ export const MULTI_CLOUD_PACKS = Object.freeze({
       componentRow(
         'connectivity-hub',
         'Transit Gateway (TGW) Hub',
-        'Multi-account network hub with Route 53 Resolver'
+        'Transit Gateway with spoke and hub route tables; hub VPC with a NAT gateway per zone'
       ),
       componentRow(
         'firewall',
         'AWS Network Firewall',
-        'Stateful inspection VPC attached to Transit Gateway'
+        'Stateful inspection in the hub VPC; the Transit Gateway routes all spoke traffic through it'
       ),
       componentRow(
         'identity',
@@ -524,12 +548,12 @@ export const MULTI_CLOUD_PACKS = Object.freeze({
       componentRow(
         'corp',
         'Private Workload VPCs',
-        'Egress routed via Transit Gateway inspection VPC'
+        'Egress through the Transit Gateway and the hub VPC, inspected when the firewall is selected'
       ),
       componentRow(
         'online',
         'Public Ingress Workload VPCs',
-        'Public ALB subnets with East-West Transit Gateway inspection'
+        'Public load balancer subnets; traffic to other VPCs goes through the Transit Gateway'
       ),
     ]),
   }),

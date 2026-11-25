@@ -15,7 +15,7 @@ import { file } from './format';
  *
  * @param {object} state the builder state `normalizeState` accepts
  * @param {object} pack the provider's emitters
- * @param {Array<[string, () => object]>} pack.components a component id and the file it adds, in emit order
+ * @param {Array<[string, (state: object) => object]>} pack.components a component id and the emitter of the file it adds, in emit order
  * @param {(state: object) => object} pack.workloads the spoke or project file, added when `corp` or `online` is selected
  * @returns {Array<{ path: string, content: string }>} the files, in emit order
  */
@@ -26,7 +26,7 @@ export function emitCloudPack(state, pack) {
   const files = [pack.terraform(), pack.providers()];
 
   for (const [component, emit] of pack.components) {
-    if (isSelected(normalized, component)) files.push(emit());
+    if (isSelected(normalized, component)) files.push(emit(normalized));
   }
   if (isSelected(normalized, 'corp') || isSelected(normalized, 'online')) {
     files.push(pack.workloads(normalized));

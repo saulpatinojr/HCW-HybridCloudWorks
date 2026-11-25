@@ -1,4 +1,5 @@
-import { block, file, joinBlocks, list, obj, q } from '../format';
+import { block, file, joinBlocks, obj, q } from '../format';
+import { firewallRouteBlocks } from './firewallRoutes';
 import { AWS_MODULES } from './moduleVersions';
 
 /** The variable that holds the egress allow-list; the README and tfvars name it too. */
@@ -14,23 +15,6 @@ const DOMAIN_PATTERN =
 export function networkFirewallTf() {
   const blocks = [];
   const nfwModule = AWS_MODULES.networkFirewall;
-  const vpcModule = AWS_MODULES.vpc;
-
-  // Dedicated Inspection VPC
-  blocks.push(
-    block('module "inspection_vpc"', [
-      ['source', q(vpcModule.source)],
-      ['version', q(vpcModule.version)],
-      ['name', q('inspection-vpc')],
-      ['cidr', 'var.hub_cidr'],
-      ['azs', list([q('${var.aws_region}a'), q('${var.aws_region}b')])],
-      [
-        'private_subnets',
-        list([q('${cidrsubnet(var.hub_cidr, 4, 0)}'), q('${cidrsubnet(var.hub_cidr, 4, 1)}')]),
-      ],
-      ['tags', obj([['Role', q('InspectionTier')]])],
-    ])
-  );
 
   // The allow-list the owner of the landing zone fills in. Empty means the
   // firewall lets no web traffic out at all, which is the safe starting point.
@@ -119,14 +103,15 @@ export function networkFirewallTf() {
       ['version', q(nfwModule.version)],
       ['name', q('hub-network-firewall')],
       ['description', q('Central stateful inspection firewall for ingress, egress, and east-west')],
-      ['vpc_id', 'module.inspection_vpc.vpc_id'],
-      // The module reads `subnet_id` from each entry of this map, so every
-      // entry is an object, not a bare subnet id (#1862).
+      ['vpc_id', 'module.hub_vpc.vpc_id'],
+      // One endpoint in each zone's firewall subnet of the hub VPC
+      // (transit-gateway.tf). The module reads `subnet_id` from each entry of
+      // this map, so every entry is an object, not a bare subnet id (#1862).
       [
         'subnet_mapping',
         obj([
-          ['subnet_1', obj([['subnet_id', 'module.inspection_vpc.private_subnets[0]']])],
-          ['subnet_2', obj([['subnet_id', 'module.inspection_vpc.private_subnets[1]']])],
+          ['subnet_1', obj([['subnet_id', 'module.hub_vpc.private_subnets[0]']])],
+          ['subnet_2', obj([['subnet_id', 'module.hub_vpc.private_subnets[1]']])],
         ]),
       ],
       ['delete_protection', 'false'],
@@ -165,6 +150,8 @@ export function networkFirewallTf() {
       ['tags', obj([['Tier', q('StatefulInspection')]])],
     ])
   );
+
+  blocks.push(...firewallRouteBlocks());
 
   return file('network-firewall.tf', joinBlocks(blocks));
 }
