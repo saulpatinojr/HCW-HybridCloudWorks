@@ -75,30 +75,41 @@ export async function changeAlerts(store, change, { now = () => new Date() } = {
     const outcome = change(current);
     if (!outcome.write) return { state: current, result: outcome.result, written: false };
 
-    const doc = {
-      id: CALENDAR_ALERTS_DOC_ID,
-      configScope: ADMIN_CONFIG_PARTITION,
-      docType: CALENDAR_ALERTS_DOC_TYPE,
-      alerts: outcome.state.alerts,
-      seeded: outcome.state.seeded,
-      updatedAt: now().toISOString(),
-    };
-    try {
-      if (stored) {
-        await store.replaceDocIfMatch(
-          CONTAINER,
-          { ...doc, _etag: stored._etag },
-          { partitionKey: ADMIN_CONFIG_PARTITION }
-        );
-      } else {
-        await store.createDoc(CONTAINER, doc);
-      }
-      return { state: outcome.state, result: outcome.result, written: true };
-    } catch (error) {
-      if (!isWriteConflict(error)) throw error;
-    }
+    const written = await writeState(store, stored, outcome.state, now);
+    if (written) return { state: outcome.state, result: outcome.result, written: true };
   }
   throw new CalendarAlertsConflictError();
+}
+
+/**
+ * Write the alerts document: over the version that was read (ifMatch), or
+ * create-only when there was none. False when another write got there
+ * first, so the caller reads again and retries.
+ */
+async function writeState(store, stored, state, now) {
+  const doc = {
+    id: CALENDAR_ALERTS_DOC_ID,
+    configScope: ADMIN_CONFIG_PARTITION,
+    docType: CALENDAR_ALERTS_DOC_TYPE,
+    alerts: state.alerts,
+    seeded: state.seeded,
+    updatedAt: now().toISOString(),
+  };
+  try {
+    if (stored) {
+      await store.replaceDocIfMatch(
+        CONTAINER,
+        { ...doc, _etag: stored._etag },
+        { partitionKey: ADMIN_CONFIG_PARTITION }
+      );
+    } else {
+      await store.createDoc(CONTAINER, doc);
+    }
+    return true;
+  } catch (error) {
+    if (!isWriteConflict(error)) throw error;
+    return false;
+  }
 }
 
 /**
