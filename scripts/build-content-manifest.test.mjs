@@ -513,9 +513,15 @@ describe('designs on the manifest (#1628)', () => {
   it('DESIGN_PROVIDERS is exactly the providers ProviderArchitectureDispatcher serves', () => {
     // Read as text, as PROVIDERS is: App.jsx is JSX and imports React.
     const source = readFileSync(join(REPO, 'frontend', 'src', 'App.jsx'), 'utf8');
-    const body = /function ProviderArchitectureDispatcher\(\) \{([\s\S]*?)\n\}/.exec(source);
-    expect(body, 'ProviderArchitectureDispatcher not found in App.jsx').not.toBeNull();
-    const served = [...body[1].matchAll(/provider === '([a-z]+)'/g)].map((match) => match[1]);
+    // The dispatcher picks the list page from ARCHITECTURE_PAGES (#1845), so
+    // the providers it serves are that table's keys; a provider outside the
+    // table answers NotFoundPage.
+    const dispatcher = /function ProviderArchitectureDispatcher\(\) \{([\s\S]*?)\n\}/.exec(source);
+    expect(dispatcher, 'ProviderArchitectureDispatcher not found in App.jsx').not.toBeNull();
+    expect(dispatcher[1]).toContain('pageFor(ARCHITECTURE_PAGES, provider)');
+    const table = /const ARCHITECTURE_PAGES = \{([\s\S]*?)\n\};/.exec(source);
+    expect(table, 'ARCHITECTURE_PAGES not found in App.jsx').not.toBeNull();
+    const served = [...table[1].matchAll(/^\s+([a-z]+): </gm)].map((match) => match[1]);
     expect(served.length).toBeGreaterThan(3);
     expect([...DESIGN_PROVIDERS].sort()).toEqual([...served].sort());
   });
