@@ -4,7 +4,7 @@
  * Extracted from src/pages/ansible/EducationPage.jsx when that page moved onto the
  * shared EducationTemplate.
  */
-import { resourceRow, titledModules } from '../educationRows';
+import { resourceRow, titledModules } from '../educationRows.js';
 
 /**
  * Catalogue last checked against Red Hat on 2026-09-09 (#461 audit): RHCSA
