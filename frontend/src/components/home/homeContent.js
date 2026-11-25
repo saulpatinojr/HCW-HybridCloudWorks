@@ -144,6 +144,26 @@ export function truncateAtWordBoundary(text, maxLength = 175) {
  * at maxPerProvider before backfilling.
  */
 export function toLatestItems(docs = [], limit = LATEST_LIMIT, maxPerProvider = 2) {
+  return balanceByProvider(toLatestCandidates(docs), limit, maxPerProvider);
+}
+
+// One card's fields for a published document.
+function toLatestCard(raw, doc, path, rawTitle) {
+  const published = publishedMillis(raw);
+  const rawSummary = stripHtmlTags(doc.summary || '').trim();
+  return {
+    path,
+    title: cleanFeedTitle(rawTitle),
+    summary: truncateAtWordBoundary(rawSummary, 175),
+    provider: canonicalizeProvider(doc.cloudProvider),
+    typeLabel: TYPE_LABELS[getCanonicalContentType(raw)] || 'Article',
+    publishedIso: published ? new Date(published).toISOString() : '',
+    publishedLabel: formatPublishedDate(published),
+  };
+}
+
+// Every document that can be shown as a card, once per page, in server order.
+function toLatestCandidates(docs) {
   const seen = new Set();
   const candidates = [];
   for (const raw of docs || []) {
@@ -152,19 +172,12 @@ export function toLatestItems(docs = [], limit = LATEST_LIMIT, maxPerProvider = 
     const rawTitle = stripHtmlTags(doc?.title || '').trim();
     if (!path || !rawTitle || seen.has(path)) continue;
     seen.add(path);
-    const published = publishedMillis(raw);
-    const rawSummary = stripHtmlTags(doc.summary || '').trim();
-    candidates.push({
-      path,
-      title: cleanFeedTitle(rawTitle),
-      summary: truncateAtWordBoundary(rawSummary, 175),
-      provider: canonicalizeProvider(doc.cloudProvider),
-      typeLabel: TYPE_LABELS[getCanonicalContentType(raw)] || 'Article',
-      publishedIso: published ? new Date(published).toISOString() : '',
-      publishedLabel: formatPublishedDate(published),
-    });
+    candidates.push(toLatestCard(raw, doc, path, rawTitle));
   }
+  return candidates;
+}
 
+function balanceByProvider(candidates, limit, maxPerProvider) {
   // Pass 1: balanced selection up to limit, capping each provider at maxPerProvider
   const items = [];
   const providerCounts = {};

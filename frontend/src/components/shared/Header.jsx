@@ -30,6 +30,75 @@ export const PROVIDER_DISPLAY_NAMES = Object.freeze({
   ansible: 'Ansible',
 });
 
+// The three links between Blogs and Learn on a cloud hub (AWS, Azure,
+// Google Cloud, VMware).
+function cloudHubLinks(provider) {
+  return [
+    {
+      label: 'Architecture',
+      path: routes.architectureDesigns(provider),
+      section: 'architecture',
+    },
+    { label: 'Podcast', path: routes.audioArchitecture(provider), section: 'podcast' },
+    // Exactly nine links on every hub, Azure included: the toolbar is a fixed grid
+    // of nine 100 px slots and its divider must sit in the same place everywhere.
+    // Azure's interviews are linked from its landing page, not from here: a tenth
+    // link overflowed the toolbar at desktop widths (CodeRabbit, #1337).
+    { label: 'Frameworks', path: routes.frameworks(provider), section: 'frameworks' },
+  ];
+}
+
+// A tool hub's Code link, its own middle link, then Tools.
+function toolHubLinks(provider, middle) {
+  return [
+    { label: 'Code', path: routes.code(provider), section: 'code' },
+    middle,
+    { label: 'Tools', path: routes.tools(provider), section: 'tools' },
+  ];
+}
+
+// The links between Blogs and Learn, per hub. A provider not listed here
+// gets only the four base links.
+const HUB_MIDDLE_LINKS = {
+  aws: cloudHubLinks,
+  azure: cloudHubLinks,
+  gcp: cloudHubLinks,
+  vmware: cloudHubLinks,
+  finops: () => [
+    {
+      label: 'Architecture',
+      path: routes.architectureDesigns('finops'),
+      section: 'architecture',
+    },
+    { label: 'FOCUS', path: routes.focus('finops'), section: 'focus' },
+    { label: 'Frameworks', path: routes.frameworks('finops'), section: 'frameworks' },
+  ],
+  github: () =>
+    toolHubLinks('github', {
+      label: 'Workflows',
+      path: routes.workflows('github'),
+      section: 'workflows',
+    }),
+  terraform: () =>
+    toolHubLinks('terraform', {
+      label: 'Modules',
+      path: routes.modules('terraform'),
+      section: 'modules',
+    }),
+  docker: () =>
+    toolHubLinks('docker', {
+      label: 'Sandboxes',
+      path: routes.sandboxes('docker'),
+      section: 'sandboxes',
+    }),
+  ansible: () =>
+    toolHubLinks('ansible', {
+      label: 'Podcast',
+      path: routes.audioArchitecture('ansible'),
+      section: 'podcast',
+    }),
+};
+
 /**
  * Symmetrical 9-slot primary navigation builder.
  *
@@ -76,79 +145,8 @@ export function getPrimaryNavItems(currentProvider) {
       : []),
   ];
 
-  if (['aws', 'azure', 'gcp', 'vmware'].includes(currentProvider)) {
-    return [
-      ...baseLinks,
-      {
-        label: 'Architecture',
-        path: routes.architectureDesigns(currentProvider),
-        section: 'architecture',
-      },
-      { label: 'Podcast', path: routes.audioArchitecture(currentProvider), section: 'podcast' },
-      // Exactly nine links on every hub, Azure included: the toolbar is a fixed grid
-      // of nine 100 px slots and its divider must sit in the same place everywhere.
-      // Azure's interviews are linked from its landing page, not from here: a tenth
-      // link overflowed the toolbar at desktop widths (CodeRabbit, #1337).
-      { label: 'Frameworks', path: routes.frameworks(currentProvider), section: 'frameworks' },
-      ...tailLinks,
-    ];
-  }
-
-  if (currentProvider === 'finops') {
-    return [
-      ...baseLinks,
-      {
-        label: 'Architecture',
-        path: routes.architectureDesigns('finops'),
-        section: 'architecture',
-      },
-      { label: 'FOCUS', path: routes.focus('finops'), section: 'focus' },
-      { label: 'Frameworks', path: routes.frameworks('finops'), section: 'frameworks' },
-      ...tailLinks,
-    ];
-  }
-
-  if (currentProvider === 'github') {
-    return [
-      ...baseLinks,
-      { label: 'Code', path: routes.code('github'), section: 'code' },
-      { label: 'Workflows', path: routes.workflows('github'), section: 'workflows' },
-      { label: 'Tools', path: routes.tools('github'), section: 'tools' },
-      ...tailLinks,
-    ];
-  }
-
-  if (currentProvider === 'terraform') {
-    return [
-      ...baseLinks,
-      { label: 'Code', path: routes.code('terraform'), section: 'code' },
-      { label: 'Modules', path: routes.modules('terraform'), section: 'modules' },
-      { label: 'Tools', path: routes.tools('terraform'), section: 'tools' },
-      ...tailLinks,
-    ];
-  }
-
-  if (currentProvider === 'docker') {
-    return [
-      ...baseLinks,
-      { label: 'Code', path: routes.code('docker'), section: 'code' },
-      { label: 'Sandboxes', path: routes.sandboxes('docker'), section: 'sandboxes' },
-      { label: 'Tools', path: routes.tools('docker'), section: 'tools' },
-      ...tailLinks,
-    ];
-  }
-
-  if (currentProvider === 'ansible') {
-    return [
-      ...baseLinks,
-      { label: 'Code', path: routes.code('ansible'), section: 'code' },
-      { label: 'Podcast', path: routes.audioArchitecture('ansible'), section: 'podcast' },
-      { label: 'Tools', path: routes.tools('ansible'), section: 'tools' },
-      ...tailLinks,
-    ];
-  }
-
-  return baseLinks;
+  if (!Object.hasOwn(HUB_MIDDLE_LINKS, currentProvider)) return baseLinks;
+  return [...baseLinks, ...HUB_MIDDLE_LINKS[currentProvider](currentProvider), ...tailLinks];
 }
 
 function matchesPrefix(pathname, prefix) {

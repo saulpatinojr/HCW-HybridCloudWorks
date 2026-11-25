@@ -1,6 +1,7 @@
 import { toMillis } from '@/lib/dateUtils';
 import { postJSON } from '@/lib/api';
 import { ensureTldrSectionAtEnd } from '@/lib/contentDraft';
+import { firstField } from '@/components/shared/firstField';
 
 // Pure helpers for useEditorState: reading the fields of a content document,
 // which may use either the old or the new spelling of each field.
@@ -12,15 +13,6 @@ const PROVIDER_ALIASES = {
   'google cloud': 'gcp',
   microsoft: 'azure',
 };
-
-// The first field in `keys` that has a truthy value, else `fallback`.
-// Same result as writing `data.a || data.b || ... || fallback`.
-function firstField(data, keys, fallback) {
-  for (const key of keys) {
-    if (data?.[key]) return data[key];
-  }
-  return fallback;
-}
 
 function normalizeProvider(value = '') {
   const key = String(value || '')

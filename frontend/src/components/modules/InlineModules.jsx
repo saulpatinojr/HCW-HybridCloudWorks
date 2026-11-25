@@ -16,8 +16,24 @@ import {
   Workflow,
 } from 'lucide-react';
 import { resolveMediaUrl } from '../../lib/functionsBase';
-import StatBlock from '../shared/StatBlock';
-import Eyebrow from '../shared/Eyebrow';
+import { getModuleLayoutClass, getPictureFrameClass, getYouTubeEmbedUrl } from './moduleLayout';
+import {
+  CalloutModule,
+  ComparisonModule,
+  DesignModule,
+  PullQuoteModule,
+  StatBoardModule,
+  TimelineModule,
+} from './RichModules';
+
+export {
+  CalloutModule,
+  ComparisonModule,
+  DesignModule,
+  PullQuoteModule,
+  StatBoardModule,
+  TimelineModule,
+};
 
 export const SPACER_STYLE_OPTIONS = [
   { key: 'gradient', label: 'Gradient Bar' },
@@ -136,97 +152,53 @@ export const MODULE_TYPES = {
   },
 };
 
-function getYouTubeEmbedUrl(input = '') {
-  const raw = String(input || '').trim();
-  if (!raw) return '';
-
-  try {
-    const url = new URL(raw);
-    const host = url.hostname.replace(/^www\./, '');
-    let videoId = '';
-
-    if (host === 'youtube.com' || host === 'm.youtube.com') {
-      if (url.pathname === '/watch') {
-        videoId = url.searchParams.get('v') || '';
-      } else if (url.pathname.startsWith('/shorts/')) {
-        videoId = url.pathname.split('/')[2] || '';
-      } else if (url.pathname.startsWith('/embed/')) {
-        videoId = url.pathname.split('/')[2] || '';
-      }
-    } else if (host === 'youtu.be') {
-      videoId = url.pathname.replace('/', '');
-    }
-
-    if (!videoId) return '';
-    return `https://www.youtube.com/embed/${videoId}`;
-  } catch {
-    return '';
-  }
-}
-
-function getModuleLayoutClass(align = 'left', paired = false) {
-  if (paired) {
-    return 'w-full max-w-none';
-  }
-
-  if (align === 'right') {
-    return 'ml-auto max-w-[28rem]';
-  }
-
-  if (align === 'all') {
-    return 'w-full';
-  }
-
-  return 'mr-auto max-w-[28rem]';
-}
-
-function getPictureFrameClass(align = 'left', paired = false) {
-  if (paired) {
-    return 'w-full max-w-none';
-  }
-
-  if (align === 'all') {
-    return 'w-full';
-  }
-
-  return 'w-full max-w-[28rem]';
-}
-
 /**
- * FactModule - Highlights important facts/insights
+ * The edit and delete buttons of the original modules (fact, tip, links,
+ * picture, frame, code, video). Shown only in the editor, when a handler is
+ * passed. The rich modules use their own ModuleActions (RichModules.jsx).
  */
-export function FactModule({ content, align = 'left', onEdit = null, onDelete = null }) {
+function LegacyModuleActions({ onEdit, onDelete, className = 'flex gap-1' }) {
+  if (!onEdit && !onDelete) return null;
+  return (
+    <div className={className}>
+      {onEdit && (
+        <button onClick={onEdit} className="text-xs text-slate-400 hover:text-primary p-1">
+          ✎
+        </button>
+      )}
+      {onDelete && (
+        <button onClick={onDelete} className="text-xs text-slate-400 hover:text-red-400 p-1">
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The icon and capitalised name at the top of an original module. */
+function ModuleTitle({ Icon, typeKey, children }) {
+  const { accentColor } = MODULE_TYPES[typeKey];
+  return (
+    <div className="flex items-center gap-2">
+      <Icon className={`h-4 w-4 ${accentColor}`} />
+      <span className={`font-bold text-sm ${accentColor}`}>{children}</span>
+    </div>
+  );
+}
+
+/** The shared body of the fact and recommendation modules. */
+function HighlightModule({ typeKey, Icon, title, borderClass, content, align, onEdit, onDelete }) {
   return (
     <div className="my-4 w-full transition-all duration-200">
       <div className={getModuleLayoutClass(align)}>
         <div
-          className={`border rounded-lg p-4 ${MODULE_TYPES.fact.color} border-l-4 border-l-blue-500 space-y-2`}
+          className={`border rounded-lg p-4 ${MODULE_TYPES[typeKey].color} border-l-4 ${borderClass} space-y-2`}
         >
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Lightbulb className={`h-4 w-4 ${MODULE_TYPES.fact.accentColor}`} />
-              <span className={`font-bold text-sm ${MODULE_TYPES.fact.accentColor}`}>FACT</span>
-            </div>
-            {(onEdit || onDelete) && (
-              <div className="flex gap-1">
-                {onEdit && (
-                  <button
-                    onClick={onEdit}
-                    className="text-xs text-slate-400 hover:text-primary p-1"
-                  >
-                    ✎
-                  </button>
-                )}
-                {onDelete && (
-                  <button
-                    onClick={onDelete}
-                    className="text-xs text-slate-400 hover:text-red-400 p-1"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            )}
+            <ModuleTitle Icon={Icon} typeKey={typeKey}>
+              {title}
+            </ModuleTitle>
+            <LegacyModuleActions onEdit={onEdit} onDelete={onDelete} />
           </div>
           <p className="text-sm text-slate-300 leading-relaxed">{content}</p>
         </div>
@@ -236,47 +208,38 @@ export function FactModule({ content, align = 'left', onEdit = null, onDelete = 
 }
 
 /**
+ * FactModule - Highlights important facts/insights
+ */
+export function FactModule({ content, align = 'left', onEdit = null, onDelete = null }) {
+  return (
+    <HighlightModule
+      typeKey="fact"
+      Icon={Lightbulb}
+      title="FACT"
+      borderClass="border-l-blue-500"
+      content={content}
+      align={align}
+      onEdit={onEdit}
+      onDelete={onDelete}
+    />
+  );
+}
+
+/**
  * RecommendationModule - Highlights recommendations/best practices
  */
 export function RecommendationModule({ content, align = 'left', onEdit = null, onDelete = null }) {
   return (
-    <div className="my-4 w-full transition-all duration-200">
-      <div className={getModuleLayoutClass(align)}>
-        <div
-          className={`border rounded-lg p-4 ${MODULE_TYPES.recommendation.color} border-l-4 border-l-emerald-500 space-y-2`}
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className={`h-4 w-4 ${MODULE_TYPES.recommendation.accentColor}`} />
-              <span className={`font-bold text-sm ${MODULE_TYPES.recommendation.accentColor}`}>
-                RECOMMENDATION
-              </span>
-            </div>
-            {(onEdit || onDelete) && (
-              <div className="flex gap-1">
-                {onEdit && (
-                  <button
-                    onClick={onEdit}
-                    className="text-xs text-slate-400 hover:text-primary p-1"
-                  >
-                    ✎
-                  </button>
-                )}
-                {onDelete && (
-                  <button
-                    onClick={onDelete}
-                    className="text-xs text-slate-400 hover:text-red-400 p-1"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-          <p className="text-sm text-slate-300 leading-relaxed">{content}</p>
-        </div>
-      </div>
-    </div>
+    <HighlightModule
+      typeKey="recommendation"
+      Icon={CheckCircle2}
+      title="RECOMMENDATION"
+      borderClass="border-l-emerald-500"
+      content={content}
+      align={align}
+      onEdit={onEdit}
+      onDelete={onDelete}
+    />
   );
 }
 
@@ -292,30 +255,10 @@ export function LinksModule({ links = [], align = 'left', onEdit = null, onDelet
           className={`border rounded-lg p-4 ${MODULE_TYPES.links.color} border-l-4 border-l-blue-500 space-y-2`}
         >
           <div className="mb-3 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Link2 className={`h-4 w-4 ${MODULE_TYPES.links.accentColor}`} />
-              <span className={`font-bold text-sm ${MODULE_TYPES.links.accentColor}`}>LINKS</span>
-            </div>
-            {(onEdit || onDelete) && (
-              <div className="flex gap-1">
-                {onEdit && (
-                  <button
-                    onClick={onEdit}
-                    className="text-xs text-slate-400 hover:text-primary p-1"
-                  >
-                    ✎
-                  </button>
-                )}
-                {onDelete && (
-                  <button
-                    onClick={onDelete}
-                    className="text-xs text-slate-400 hover:text-red-400 p-1"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            )}
+            <ModuleTitle Icon={Link2} typeKey="links">
+              LINKS
+            </ModuleTitle>
+            <LegacyModuleActions onEdit={onEdit} onDelete={onDelete} />
           </div>
           <ul className="space-y-1">
             {linksList.map((link, i) => (
@@ -365,26 +308,7 @@ export function PictureModule({
           )}
           <div className="space-y-2 p-4">
             {caption && <p className="text-sm italic text-slate-300">{caption}</p>}
-            {(onEdit || onDelete) && (
-              <div className="flex gap-1">
-                {onEdit && (
-                  <button
-                    onClick={onEdit}
-                    className="text-xs text-slate-400 hover:text-primary p-1"
-                  >
-                    ✎
-                  </button>
-                )}
-                {onDelete && (
-                  <button
-                    onClick={onDelete}
-                    className="text-xs text-slate-400 hover:text-red-400 p-1"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            )}
+            <LegacyModuleActions onEdit={onEdit} onDelete={onDelete} />
           </div>
         </div>
       </div>
@@ -425,23 +349,11 @@ export function TextFrameModule({
         <div
           className={`relative border rounded-lg p-4 ${MODULE_TYPES.text.color} border-l-4 border-l-sky-500`}
         >
-          {(onEdit || onDelete) && (
-            <div className="absolute right-2 top-2 flex gap-1">
-              {onEdit && (
-                <button onClick={onEdit} className="text-xs text-slate-400 hover:text-primary p-1">
-                  ✎
-                </button>
-              )}
-              {onDelete && (
-                <button
-                  onClick={onDelete}
-                  className="text-xs text-slate-400 hover:text-red-400 p-1"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          )}
+          <LegacyModuleActions
+            onEdit={onEdit}
+            onDelete={onDelete}
+            className="absolute right-2 top-2 flex gap-1"
+          />
           <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{content}</p>
         </div>
       </div>
@@ -463,30 +375,10 @@ export function CodeModule({
           className={`relative border rounded-lg p-4 ${MODULE_TYPES.code.color} border-l-4 border-l-indigo-500`}
         >
           <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <FileCode2 className={`h-4 w-4 ${MODULE_TYPES.code.accentColor}`} />
-              <span className={`font-bold text-sm ${MODULE_TYPES.code.accentColor}`}>CODE</span>
-            </div>
-            {(onEdit || onDelete) && (
-              <div className="flex gap-1">
-                {onEdit && (
-                  <button
-                    onClick={onEdit}
-                    className="text-xs text-slate-400 hover:text-primary p-1"
-                  >
-                    ✎
-                  </button>
-                )}
-                {onDelete && (
-                  <button
-                    onClick={onDelete}
-                    className="text-xs text-slate-400 hover:text-red-400 p-1"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            )}
+            <ModuleTitle Icon={FileCode2} typeKey="code">
+              CODE
+            </ModuleTitle>
+            <LegacyModuleActions onEdit={onEdit} onDelete={onDelete} />
           </div>
           <pre className="overflow-x-auto rounded-md border border-indigo-500/30 bg-black/30 p-3 text-xs leading-relaxed text-slate-200">
             <code>{content || ''}</code>
@@ -560,26 +452,7 @@ export function VideoModule({
             <p className="text-[11px] text-slate-400">
               Double-click video to toggle 50% screen mode.
             </p>
-            {(onEdit || onDelete) && (
-              <div className="flex gap-1">
-                {onEdit && (
-                  <button
-                    onClick={onEdit}
-                    className="text-xs text-slate-400 hover:text-primary p-1"
-                  >
-                    ✎
-                  </button>
-                )}
-                {onDelete && (
-                  <button
-                    onClick={onDelete}
-                    className="text-xs text-slate-400 hover:text-red-400 p-1"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            )}
+            <LegacyModuleActions onEdit={onEdit} onDelete={onDelete} />
           </div>
         </div>
       </div>
@@ -587,235 +460,38 @@ export function VideoModule({
   );
 }
 
-/** Editor-only edit/delete affordance shared by the rich modules below. */
-function ModuleActions({ onEdit = null, onDelete = null, className = '' }) {
-  if (!onEdit && !onDelete) return null;
-  return (
-    <div className={`flex gap-1 ${className}`}>
-      {onEdit && (
-        <button
-          type="button"
-          aria-label="Edit module"
-          onClick={onEdit}
-          className="text-xs text-slate-400 hover:text-primary p-1"
-        >
-          ✎
-        </button>
-      )}
-      {onDelete && (
-        <button
-          type="button"
-          aria-label="Delete module"
-          onClick={onDelete}
-          className="text-xs text-slate-400 hover:text-red-400 p-1"
-        >
-          <X className="h-3 w-3" />
-        </button>
-      )}
-    </div>
-  );
-}
-
-/**
- * PullQuoteModule - Editorial pull quote in the Bookerly serif with a
- * provider-accent rule. Light/dark aware, unlike the legacy dark-only frames.
- */
-export function PullQuoteModule({
-  text,
-  attribution = '',
-  align = 'left',
-  paired = false,
-  onEdit = null,
-  onDelete = null,
-}) {
-  return (
-    <div className="my-6 w-full transition-all duration-200">
-      <div className={getModuleLayoutClass(align, paired)}>
-        <figure className="relative pl-5">
-          <span
-            aria-hidden="true"
-            className="absolute left-0 top-1 bottom-1 w-[3px] rounded-full bg-gradient-to-b from-primary to-transparent"
-          />
-          <ModuleActions onEdit={onEdit} onDelete={onDelete} className="absolute right-0 top-0" />
-          <blockquote
-            className="text-xl md:text-2xl leading-snug text-slate-900 dark:text-white"
-            style={{ fontFamily: 'var(--font-bookerly)' }}
-          >
-            {'“'}
-            {text}
-            {'”'}
-          </blockquote>
-          {attribution && (
-            <figcaption className="eyebrow-label mt-3 text-slate-600 dark:text-slate-400">
-              {attribution}
-            </figcaption>
-          )}
-        </figure>
-      </div>
-    </div>
-  );
-}
-
-/**
- * StatBoardModule - Row of StatBlock glass tiles (2-4). Always full width.
- */
-export function StatBoardModule({ stats = [], onEdit = null, onDelete = null }) {
-  const statList = (Array.isArray(stats) ? stats : []).filter(Boolean);
-  const gridCols = { 2: 'sm:grid-cols-2', 3: 'sm:grid-cols-3', 4: 'sm:grid-cols-2 lg:grid-cols-4' };
-  return (
-    <div className="my-6 w-full transition-all duration-200">
-      <ModuleActions onEdit={onEdit} onDelete={onDelete} className="justify-end" />
-      <div className={`grid grid-cols-1 gap-3 ${gridCols[statList.length] || 'sm:grid-cols-2'}`}>
-        {statList.map((stat, i) => (
-          <StatBlock
-            key={i}
-            value={stat.value}
-            label={stat.sublabel ? `${stat.label} · ${stat.sublabel}` : stat.label}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/**
- * ComparisonModule - Glass-framed comparison table. Always full width.
- */
-export function ComparisonModule({ columns = [], rows = [], onEdit = null, onDelete = null }) {
-  const columnList = Array.isArray(columns) ? columns : [];
-  const rowList = Array.isArray(rows) ? rows : [];
-  return (
-    <div className="my-6 w-full transition-all duration-200">
-      <ModuleActions onEdit={onEdit} onDelete={onDelete} className="justify-end" />
-      <div className="glass rounded-xl overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 dark:border-white/10">
-              {columnList.map((column, i) => (
-                <th
-                  key={i}
-                  className="eyebrow-label px-4 py-3 text-left text-slate-600 dark:text-slate-400"
-                >
-                  {column}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rowList.map((row, rIdx) => (
-              <tr
-                key={rIdx}
-                className="border-b border-slate-100 last:border-0 dark:border-white/5"
-              >
-                {(Array.isArray(row) ? row : []).map((cell, cIdx) => (
-                  <td
-                    key={cIdx}
-                    className={`px-4 py-3 align-top ${
-                      cIdx === 0
-                        ? 'font-medium text-slate-900 dark:text-white'
-                        : 'text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-/**
- * TimelineModule - Vertical step list with NumberedSection-style zero-padded
- * markers. Always full width.
- */
-export function TimelineModule({ steps = [], onEdit = null, onDelete = null }) {
-  const stepList = (Array.isArray(steps) ? steps : []).filter(Boolean);
-  return (
-    <div className="my-6 w-full transition-all duration-200">
-      <ModuleActions onEdit={onEdit} onDelete={onDelete} className="justify-end" />
-      <ol className="space-y-0">
-        {stepList.map((step, i) => (
-          <li key={i} className="relative flex gap-4 pb-6 last:pb-0">
-            {i < stepList.length - 1 && (
-              <span
-                aria-hidden="true"
-                className="absolute left-[1.05rem] top-8 bottom-0 w-px bg-slate-200 dark:bg-white/10"
-              />
-            )}
-            <span className="section-number shrink-0 text-2xl text-primary dark:text-(--slate-blue)">
-              {String(i + 1).padStart(2, '0')}
-            </span>
-            <div className="min-w-0 pt-0.5">
-              <p className="font-medium text-slate-900 dark:text-white">{step.title}</p>
-              {step.body && (
-                <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-slate-400">
-                  {step.body}
-                </p>
-              )}
-            </div>
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-/**
- * CalloutModule - Eyebrow-labelled glass frame for asides worth a border.
- */
-export function CalloutModule({
-  eyebrow = '',
-  title,
-  body,
-  align = 'left',
-  paired = false,
-  onEdit = null,
-  onDelete = null,
-}) {
-  return (
-    <div className="my-6 w-full transition-all duration-200">
-      <div className={getModuleLayoutClass(align, paired)}>
-        <div className="glass relative rounded-xl border-l-4 border-l-primary p-5">
-          <ModuleActions onEdit={onEdit} onDelete={onDelete} className="absolute right-2 top-2" />
-          <Eyebrow>{eyebrow || 'Note'}</Eyebrow>
-          <p className="mt-2 font-medium text-slate-900 dark:text-white">{title}</p>
-          <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-slate-400">{body}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * DesignModule - Mermaid diagram source. Renders the source in a labelled
- * mono frame; client-side mermaid rendering is backlog. This exists so a
- * design module renders *something* instead of null (the old behavior
- * silently destroyed the diagram on round-trip).
- */
-export function DesignModule({ content, onEdit = null, onDelete = null }) {
-  return (
-    <div className="my-6 w-full transition-all duration-200">
-      <div className="glass relative rounded-xl p-4">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Workflow className="h-4 w-4 text-primary" />
-            <span className="eyebrow-label text-slate-600 dark:text-slate-400">
-              Diagram (Mermaid)
-            </span>
-          </div>
-          <ModuleActions onEdit={onEdit} onDelete={onDelete} />
-        </div>
-        <pre className="overflow-x-auto rounded-md bg-slate-100 p-3 text-xs leading-relaxed text-slate-800 dark:bg-black/30 dark:text-slate-200">
-          <code>{content || ''}</code>
-        </pre>
-      </div>
-    </div>
-  );
-}
+// How each module type is drawn from its parsed data. `p` carries the
+// layout and editor props: align, paired, onEdit and onDelete.
+const MODULE_RENDERERS = {
+  fact: (d, p) => (
+    <FactModule content={d.content} align={p.align} onEdit={p.onEdit} onDelete={p.onDelete} />
+  ),
+  recommendation: (d, p) => (
+    <RecommendationModule
+      content={d.content}
+      align={p.align}
+      onEdit={p.onEdit}
+      onDelete={p.onDelete}
+    />
+  ),
+  links: (d, p) => (
+    <LinksModule links={d.links} align={p.align} onEdit={p.onEdit} onDelete={p.onDelete} />
+  ),
+  picture: (d, p) => <PictureModule imageUrl={d.imageUrl} caption={d.caption} {...p} />,
+  spacer: (d) => <SpacerModule style={d.style} height={d.height} />,
+  video: (d, p) => <VideoModule videoUrl={d.videoUrl} caption={d.caption} {...p} />,
+  text: (d, p) => <TextFrameModule content={d.content} {...p} />,
+  code: (d, p) => <CodeModule content={d.content} {...p} />,
+  // The Phase 4 rich types (RichModules.jsx).
+  design: (d, p) => <DesignModule content={d.content} onEdit={p.onEdit} onDelete={p.onDelete} />,
+  pull_quote: (d, p) => <PullQuoteModule text={d.text} attribution={d.attribution} {...p} />,
+  stat_board: (d, p) => <StatBoardModule stats={d.stats} onEdit={p.onEdit} onDelete={p.onDelete} />,
+  comparison: (d, p) => (
+    <ComparisonModule columns={d.columns} rows={d.rows} onEdit={p.onEdit} onDelete={p.onDelete} />
+  ),
+  timeline: (d, p) => <TimelineModule steps={d.steps} onEdit={p.onEdit} onDelete={p.onDelete} />,
+  callout: (d, p) => <CalloutModule eyebrow={d.eyebrow} title={d.title} body={d.body} {...p} />,
+};
 
 /**
  * ModuleContainer - Display module with inline text wrapping
@@ -831,121 +507,6 @@ export function ModuleContainer({
   ...inlineData
 }) {
   const moduleData = data || inlineData || {};
-
-  switch (type) {
-    case 'fact':
-      return (
-        <FactModule
-          content={moduleData.content}
-          align={align}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
-      );
-    case 'recommendation':
-      return (
-        <RecommendationModule
-          content={moduleData.content}
-          align={align}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
-      );
-    case 'links':
-      return (
-        <LinksModule links={moduleData.links} align={align} onEdit={onEdit} onDelete={onDelete} />
-      );
-    case 'picture':
-      return (
-        <PictureModule
-          imageUrl={moduleData.imageUrl}
-          caption={moduleData.caption}
-          align={align}
-          paired={paired}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
-      );
-    case 'spacer':
-      return <SpacerModule style={moduleData.style} height={moduleData.height} />;
-    case 'video':
-      return (
-        <VideoModule
-          videoUrl={moduleData.videoUrl}
-          caption={moduleData.caption}
-          align={align}
-          paired={paired}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
-      );
-    case 'text':
-      return (
-        <TextFrameModule
-          content={moduleData.content}
-          align={align}
-          paired={paired}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
-      );
-    case 'code':
-      return (
-        <CodeModule
-          content={moduleData.content}
-          align={align}
-          paired={paired}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
-      );
-    default:
-      return renderRichModule({ type, moduleData, align, paired, onEdit, onDelete });
-  }
-}
-
-/** The Phase 4 rich types, split out of ModuleContainer's switch. */
-function renderRichModule({ type, moduleData, align, paired, onEdit, onDelete }) {
-  switch (type) {
-    case 'design':
-      return <DesignModule content={moduleData.content} onEdit={onEdit} onDelete={onDelete} />;
-    case 'pull_quote':
-      return (
-        <PullQuoteModule
-          text={moduleData.text}
-          attribution={moduleData.attribution}
-          align={align}
-          paired={paired}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
-      );
-    case 'stat_board':
-      return <StatBoardModule stats={moduleData.stats} onEdit={onEdit} onDelete={onDelete} />;
-    case 'comparison':
-      return (
-        <ComparisonModule
-          columns={moduleData.columns}
-          rows={moduleData.rows}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
-      );
-    case 'timeline':
-      return <TimelineModule steps={moduleData.steps} onEdit={onEdit} onDelete={onDelete} />;
-    case 'callout':
-      return (
-        <CalloutModule
-          eyebrow={moduleData.eyebrow}
-          title={moduleData.title}
-          body={moduleData.body}
-          align={align}
-          paired={paired}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
-      );
-    default:
-      return null;
-  }
+  if (!Object.hasOwn(MODULE_RENDERERS, type)) return null;
+  return MODULE_RENDERERS[type](moduleData, { align, paired, onEdit, onDelete });
 }

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ScrollTrigger } from '@/components/animations';
 import { safeUrl } from '@/lib/safeUrl';
+import { firstField } from '@/components/shared/firstField';
 
 const FEED_ICONS = {
   'Azure Updates': 'cloud',
@@ -69,7 +70,7 @@ function formatRelativeTime(dateString) {
 }
 
 function extractFeedName(item) {
-  return item.feedName || item.source || item['Source Feed'] || item.author || 'RSS Feed';
+  return firstField(item, ['feedName', 'source', 'Source Feed', 'author'], 'RSS Feed');
 }
 
 function extractCategory(item) {
@@ -85,7 +86,7 @@ function extractSummary(item) {
 }
 
 function extractLink(item) {
-  return item.link || item.url || item.sourceUrl || item['CD Url'] || '#';
+  return firstField(item, ['link', 'url', 'sourceUrl', 'CD Url'], '#');
 }
 
 // ⚡ Bolt: Prevent unnecessary re-renders of individual timeline items when parent timeline updates

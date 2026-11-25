@@ -1,6 +1,7 @@
 // Plain-data helpers for BlogDetailTemplate: where the back link goes, and how
 // a blog or content document is turned into the one shape the page renders.
 import { pickPublicImageUrl } from '@/lib/blogUtils';
+import { firstField } from '@/components/shared/firstField';
 
 // Back link per section; anything else goes back to the blog list.
 const BACK_LINKS = {
@@ -11,17 +12,8 @@ const BACK_LINKS = {
 const DEFAULT_BACK_LINK = { path: 'blog', label: 'Back to Blog' };
 
 export function backLinkFor(provider, section) {
-  const link = BACK_LINKS[section] || DEFAULT_BACK_LINK;
+  const link = Object.hasOwn(BACK_LINKS, section) ? BACK_LINKS[section] : DEFAULT_BACK_LINK;
   return { backPath: `/${provider}/${link.path}`, backLabel: link.label };
-}
-
-// The first field in `keys` that has a truthy value, else `fallback`.
-// Same result as writing `a.x || a.y || ... || fallback`.
-function firstField(article, keys, fallback) {
-  for (const key of keys) {
-    if (article[key]) return article[key];
-  }
-  return fallback;
 }
 
 const DATE_FIELDS = [
