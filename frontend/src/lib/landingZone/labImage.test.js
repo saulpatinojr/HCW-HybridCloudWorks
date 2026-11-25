@@ -25,6 +25,7 @@ import {
   LAB_IMAGE_AVM,
   LAB_IMAGE_BUILDER_AVM,
   LAB_IMAGE_CHILD_AVM,
+  TERRAFORM_REQUIRED_VERSION,
   chooseVendored,
   decodeLz,
   emitFiles,
@@ -180,6 +181,22 @@ describe('Terraform constraints, as tf_constraints.py reads them', () => {
     expect(carried(SPOKE)).toContain(pinned(SPOKE));
     expect(chooseVendored(vendored, SPOKE, pinned(SPOKE))).toBe(pinned(SPOKE));
     expect(chooseVendored(vendored, SPOKE, absent(SPOKE))).toBeNull();
+  });
+});
+
+// The lab runs every pack with the one Terraform the image carries, and the
+// weekly pin bump moves that to HashiCorp's newest release. A bump outside
+// the packs' rule (Terraform 2.0, say) would make `terraform init` refuse
+// all three packs in the lab, so it fails here first (#1860).
+describe('the lab image’s Terraform', () => {
+  it('satisfies the packs’ required_version', () => {
+    const { TERRAFORM_VERSION } = readVersionsEnv();
+    expect(parseVersion(TERRAFORM_VERSION)).not.toBeNull();
+    expect(satisfies(parseVersion(TERRAFORM_VERSION), TERRAFORM_REQUIRED_VERSION)).toBe(true);
+  });
+
+  it('would be caught at 2.0', () => {
+    expect(satisfies(parseVersion('2.0.0'), TERRAFORM_REQUIRED_VERSION)).toBe(false);
   });
 });
 

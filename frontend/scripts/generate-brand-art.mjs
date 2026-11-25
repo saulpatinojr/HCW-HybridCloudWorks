@@ -308,9 +308,7 @@ function frame({ width, height }, p, body) {
     `<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">` +
     `<stop offset="0" stop-color="${p.bg[0]}"/><stop offset="1" stop-color="${p.bg[1]}"/>` +
     `</linearGradient></defs>` +
-    `<rect width="${width}" height="${height}" fill="url(#bg)"/>` +
-    body +
-    '</svg>'
+    `<rect width="${width}" height="${height}" fill="url(#bg)"/>${body}</svg>`
   );
 }
 
@@ -397,6 +395,20 @@ export function outputs() {
 }
 
 /**
+ * The PNG Paeth predictor: of the byte to the left (a), above (b) and above
+ * left (c), the one nearest to a + b - c, preferring a, then b, on a tie.
+ */
+function paeth(a, b, c) {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
+/**
  * Minimal PNG writer: 8-bit RGBA (colour type 6, like azure-hero/), one IDAT,
  * per-row filter chosen by the smallest sum of absolute residuals, deflate
  * level 9. Written here so the bytes depend on node:zlib alone and not on a
@@ -426,13 +438,7 @@ export function encodePng(width, height, rgba) {
         else if (f === 1) predicted = a;
         else if (f === 2) predicted = b;
         else if (f === 3) predicted = (a + b) >> 1;
-        else {
-          const pp = a + b - c;
-          const pa = Math.abs(pp - a);
-          const pb = Math.abs(pp - b);
-          const pc = Math.abs(pp - c);
-          predicted = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
-        }
+        else predicted = paeth(a, b, c);
         const v = (row[i] - predicted) & 0xff;
         out[i] = v;
         sum += v < 128 ? v : 256 - v;

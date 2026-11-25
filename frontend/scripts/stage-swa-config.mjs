@@ -167,7 +167,7 @@ export function collectInlineStyles(pages) {
   for (const [path, html] of pages) {
     for (const match of html.matchAll(STYLE_ELEMENT)) {
       elementCount += 1;
-      const body = match[1];
+      const [, body] = match;
       const hash = sha256Source(body);
       const entry = elements.get(hash) ?? { bytes: Buffer.byteLength(body, 'utf8'), files: [] };
       if (!entry.files.includes(path)) entry.files.push(path);
@@ -229,6 +229,16 @@ export function withInlineStyleHashes(policy, { elementHashes = [], attributeHas
 }
 
 /**
+ * Sort order for directory entries: by name in code-unit order, not the
+ * locale's, so the walk is the same on every machine.
+ */
+function byName(a, b) {
+  if (a.name < b.name) return -1;
+  if (a.name > b.name) return 1;
+  return 0;
+}
+
+/**
  * Every file under a directory with one of the extensions, as
  * `[relative path, text]`, each level in code-unit order of its names so the
  * result is the same on every filesystem. Shared with check-image-hosts.mjs.
@@ -243,9 +253,7 @@ export function withInlineStyleHashes(policy, { elementHashes = [], attributeHas
 export function filesUnder(root, extensions) {
   const files = [];
   const walk = (dir) => {
-    const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-      a.name < b.name ? -1 : a.name > b.name ? 1 : 0
-    );
+    const entries = readdirSync(dir, { withFileTypes: true }).sort(byName);
     for (const entry of entries) {
       const path = join(dir, entry.name);
       if (entry.isDirectory()) walk(path);

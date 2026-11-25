@@ -26,5 +26,4 @@ export const GCP_MODULES = Object.freeze({
 });
 
 export const GCP_PROVIDER_PIN = '~> 6.15';
-export const TERRAFORM_REQUIRED_VERSION = '>= 1.9.0';
 export const GCP_VERIFIED_ON = '2026-10-14';

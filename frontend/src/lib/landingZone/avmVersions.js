@@ -66,8 +66,11 @@ export function isAvmSource(source) {
   return AVM_BY_SOURCE.has(source);
 }
 
-/**
- * What `terraform.tf` requires, chosen so every module above is satisfied.
+/*
+ * What each module above requires of Terraform and its providers, which
+ * PROVIDER_PINS below and the shared Terraform rule in terraformVersion.js
+ * must both satisfy. The Terraform rule lives there, not here, because the
+ * AWS and Google Cloud packs write the same line (#1860).
  * Each module's own `terraform.tf` at its pinned tag, read on 2026-11-10
  * (https://raw.githubusercontent.com/Azure/terraform-azurerm-<module>/v<version>/terraform.tf):
  *
@@ -96,7 +99,6 @@ export function isAvmSource(source) {
  * modules it vendors. Its azurerm 5.x copy satisfies none of the azurerm
  * constraints above, so Terraform picks the 4.x copy it also carries.
  */
-export const TERRAFORM_REQUIRED_VERSION = '>= 1.12, < 2.0';
 
 /**
  * What someone must do before applying this build over a landing zone that

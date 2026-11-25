@@ -190,16 +190,10 @@ export function stampSyncDate(source, today) {
 export function reconcileLifecycle({ existing = {}, sourced = {}, label, report = [] }) {
   const fileStatus = existing.status in LIFECYCLE_RANK ? existing.status : undefined;
   const sourceStatus = sourced.status in LIFECYCLE_RANK ? sourced.status : undefined;
-  const keepFile = {
-    status: fileStatus || 'active',
-    ...(existing.expiryDate ? { expiryDate: existing.expiryDate } : {}),
-  };
+  const keepFile = { status: fileStatus || 'active', ...expiryField(existing.expiryDate) };
 
   if (!fileStatus) {
-    return {
-      status: sourceStatus || 'active',
-      ...(sourced.expiryDate ? { expiryDate: sourced.expiryDate } : {}),
-    };
+    return { status: sourceStatus || 'active', ...expiryField(sourced.expiryDate) };
   }
 
   if (sourceStatus && LIFECYCLE_RANK[sourceStatus] < LIFECYCLE_RANK[fileStatus]) {
@@ -219,10 +213,13 @@ export function reconcileLifecycle({ existing = {}, sourced = {}, label, report 
 
   return {
     status: sourceStatus || fileStatus,
-    ...(sourced.expiryDate || existing.expiryDate
-      ? { expiryDate: sourced.expiryDate || existing.expiryDate }
-      : {}),
+    ...expiryField(sourced.expiryDate || existing.expiryDate),
   };
+}
+
+/** `{ expiryDate }` when there is a date, and nothing when there is not. */
+function expiryField(expiryDate) {
+  return expiryDate ? { expiryDate } : {};
 }
 
 /**
@@ -286,7 +283,7 @@ export function summarizeChanges({
   section('Source disagreed with the file (file kept)', disagreements);
   section('On the poster but in neither the Learn catalogue nor the file (not added)', unverified);
   section('Refused because another catalogue owns the exam (#496)', foreign);
-  return lines.join('\n').trimEnd() + '\n';
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
 function stripMicrosoftPrefix(title) {
@@ -364,52 +361,34 @@ function extractCodeFromExam(exam) {
   return raw.toUpperCase().match(/\b[A-Z]{2,4}-\d{3,4}\b/)?.[0] || null;
 }
 
-function inferArea(skill) {
+/**
+ * The site's area for an applied skill, from words in its subjects, products
+ * and title. The first row with a matching word wins, so the order matters:
+ * a Kubernetes security skill is Security, not Containers. "data " keeps its
+ * space so that words such as "update" do not count.
+ */
+const AREA_KEYWORDS = [
+  ['Security', ['security', 'compliance', 'identity', 'active directory']],
+  [
+    'AI Business',
+    ['power platform', 'power apps', 'power automate', 'microsoft 365 copilot', 'copilot studio'],
+  ],
+  ['Operations', ['monitor', 'management task']],
+  ['Containers', ['container', 'kubernetes']],
+  ['Data', ['data ', 'database', 'sql', 'postgresql', 'fabric']],
+  ['DevTools', ['github', 'devops', 'c#', 'app development']],
+  ['AI Business', ['business applications']],
+  ['Storage', ['storage']],
+  ['Networking', ['network']],
+];
+
+export function inferArea(skill) {
   const subjects = (skill.display_subjects || []).join(' ').toLowerCase();
   const products = (skill.display_products || []).join(' ').toLowerCase();
   const title = skill.title.toLowerCase();
   const combined = `${subjects} ${products} ${title}`;
-
-  if (
-    combined.includes('security') ||
-    combined.includes('compliance') ||
-    combined.includes('identity') ||
-    combined.includes('active directory')
-  ) {
-    return 'Security';
-  }
-  if (
-    combined.includes('power platform') ||
-    combined.includes('power apps') ||
-    combined.includes('power automate') ||
-    combined.includes('microsoft 365 copilot') ||
-    combined.includes('copilot studio')
-  ) {
-    return 'AI Business';
-  }
-  if (combined.includes('monitor') || combined.includes('management task')) return 'Operations';
-  if (combined.includes('container') || combined.includes('kubernetes')) return 'Containers';
-  if (
-    combined.includes('data ') ||
-    combined.includes('database') ||
-    combined.includes('sql') ||
-    combined.includes('postgresql') ||
-    combined.includes('fabric')
-  ) {
-    return 'Data';
-  }
-  if (
-    combined.includes('github') ||
-    combined.includes('devops') ||
-    combined.includes('c#') ||
-    combined.includes('app development')
-  ) {
-    return 'DevTools';
-  }
-  if (combined.includes('business applications')) return 'AI Business';
-  if (combined.includes('storage')) return 'Storage';
-  if (combined.includes('network')) return 'Networking';
-  return 'AI';
+  const row = AREA_KEYWORDS.find(([, words]) => words.some((word) => combined.includes(word)));
+  return row ? row[0] : 'AI';
 }
 
 function makeCode(slug, usedCodes) {
@@ -621,14 +600,8 @@ export function buildCertificationFromSources(
   existingIndexes,
   disagreements = []
 ) {
-  const api =
-    apiIndexes.byCode.get(posterEntry.code) ||
-    apiIndexes.byTitle.get(normalizeTitle(posterEntry.title)) ||
-    null;
-  const known =
-    existingIndexes.byCode.get(posterEntry.code) ||
-    existingIndexes.byTitle.get(normalizeTitle(posterEntry.title)) ||
-    null;
+  const api = findCertification(apiIndexes, posterEntry);
+  const known = findCertification(existingIndexes, posterEntry);
   if (!api && !known) return null;
   const existing = known || {};
   const title = existing.title || `Microsoft Certified: ${posterEntry.title}`;
@@ -642,59 +615,90 @@ export function buildCertificationFromSources(
     label: posterEntry.code,
     report: disagreements,
   });
+  const name = normalizeCertificationTitle(title);
+  const examId = posterEntry.code.toLowerCase();
+  const effort = LEVEL_EFFORT.get(level) || DEFAULT_EFFORT;
 
   return {
-    id: existing.id || posterEntry.code.toLowerCase(),
+    id: existing.id || examId,
     slug,
     code: posterEntry.code,
     officialCode: posterEntry.code,
     title,
     level,
     status: lifecycle.status,
-    ...(existing.featured ? { featured: existing.featured } : {}),
-    ...(existing.retiredDate ? { retiredDate: existing.retiredDate } : {}),
-    ...(lifecycle.expiryDate ? { expiryDate: lifecycle.expiryDate } : {}),
-    ...(existing.replacedBy ? { replacedBy: existing.replacedBy } : {}),
-    ...(existing.betaEndDate ? { betaEndDate: existing.betaEndDate } : {}),
-    ...(existing.betaDiscount ? { betaDiscount: existing.betaDiscount } : {}),
-    ...(existing.gaDate ? { gaDate: existing.gaDate } : {}),
-    // #1091 (2026-10-12): a status read ahead of the vendor's day is stored
-    // with the day it was read on, and a row stored before its availability
-    // with that day; deriveStatus holds the badge on them until the day. Both
-    // are the file's, never the sources', and the 2026-10-19 run proved a
-    // field this list omits is a field the next run deletes: PL-400 lost its
-    // statusReadDate, turned `retired` two weeks early, and the data test
-    // refused the pull request.
-    ...(existing.statusReadDate ? { statusReadDate: existing.statusReadDate } : {}),
-    ...(existing.availableDate ? { availableDate: existing.availableDate } : {}),
-    description:
-      existing.description ||
-      `${normalizeCertificationTitle(title)} validates role-based Microsoft cloud skills.`,
-    longDescription:
-      existing.longDescription ||
-      `${normalizeCertificationTitle(title)} validates skills for Microsoft cloud and AI workloads using official Microsoft certification requirements.`,
-    topics: existing.topics ||
-      api?.display_subjects?.slice(0, 4) ||
-      api?.display_products?.slice(0, 4) || [normalizeCertificationTitle(title)],
-    hours: existing.hours || (level === 'Fundamentals' ? 10 : level === 'Expert' ? 60 : 35),
-    prepTime:
-      existing.prepTime ||
-      (level === 'Fundamentals' ? '~4 weeks' : level === 'Expert' ? '~10 weeks' : '~6 weeks'),
-    successRate: existing.successRate || null,
+    ...presentFields({
+      featured: existing.featured,
+      retiredDate: existing.retiredDate,
+      expiryDate: lifecycle.expiryDate,
+      replacedBy: existing.replacedBy,
+      betaEndDate: existing.betaEndDate,
+      betaDiscount: existing.betaDiscount,
+      gaDate: existing.gaDate,
+      // #1091 (2026-10-12): a status read ahead of the vendor's day is stored
+      // with the day it was read on, and a row stored before its availability
+      // with that day; deriveStatus holds the badge on them until the day.
+      // Both are the file's, never the sources', and the 2026-10-19 run
+      // proved a field this list omits is a field the next run deletes:
+      // PL-400 lost its statusReadDate, turned `retired` two weeks early, and
+      // the data test refused the pull request.
+      statusReadDate: existing.statusReadDate,
+      availableDate: existing.availableDate,
+    }),
+    ...fileOrDefault(existing, {
+      description: `${name} validates role-based Microsoft cloud skills.`,
+      longDescription: `${name} validates skills for Microsoft cloud and AI workloads using official Microsoft certification requirements.`,
+      topics: defaultTopics(api, name),
+      hours: effort.hours,
+      prepTime: effort.prepTime,
+      successRate: null,
+    }),
     learnUrl,
-    studyGuideUrl:
-      existing.studyGuideUrl ||
-      `https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/${posterEntry.code.toLowerCase()}`,
-    practiceUrl:
-      existing.practiceUrl ||
-      `https://learn.microsoft.com/en-us/credentials/certifications/practice-assessments-for-microsoft-certifications#examid=${posterEntry.code.toLowerCase()}`,
-    modules: existing.modules || [],
-    appliedSkills: existing.appliedSkills || [],
-    prerequisites:
-      existing.prerequisites ||
-      'Review the official Microsoft Learn certification page for prerequisites.',
-    nextCerts: existing.nextCerts || [],
+    ...fileOrDefault(existing, {
+      studyGuideUrl: `https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/${examId}`,
+      practiceUrl: `https://learn.microsoft.com/en-us/credentials/certifications/practice-assessments-for-microsoft-certifications#examid=${examId}`,
+      modules: [],
+      appliedSkills: [],
+      prerequisites: 'Review the official Microsoft Learn certification page for prerequisites.',
+      nextCerts: [],
+    }),
   };
+}
+
+/** Up to four of the API's subjects, else of its products, else the certification's own name. */
+function defaultTopics(api, name) {
+  return api?.display_subjects?.slice(0, 4) || api?.display_products?.slice(0, 4) || [name];
+}
+
+/** A certification by the poster entry's code, or failing that its title; null when neither. */
+function findCertification(indexes, posterEntry) {
+  return (
+    indexes.byCode.get(posterEntry.code) ||
+    indexes.byTitle.get(normalizeTitle(posterEntry.title)) ||
+    null
+  );
+}
+
+/** The study time a new certification is given, by level, when the file has none. */
+const LEVEL_EFFORT = new Map([
+  ['Fundamentals', { hours: 10, prepTime: '~4 weeks' }],
+  ['Expert', { hours: 60, prepTime: '~10 weeks' }],
+]);
+const DEFAULT_EFFORT = { hours: 35, prepTime: '~6 weeks' };
+
+/** Only the fields that have a value, in the order given (the order they are written in). */
+function presentFields(fields) {
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value));
+}
+
+/**
+ * Each field as the file has it, or the default when the file has no value.
+ * Keys keep the order of `defaults`, which is the order they are written in.
+ */
+function fileOrDefault(existing, defaults) {
+  return Object.fromEntries(
+    Object.entries(defaults).map(([key, fallback]) => [key, existing[key] || fallback])
+  );
 }
 
 function formatObject(obj, indent = 2) {
@@ -859,63 +863,66 @@ export async function collectSources({ fetchImpl = fetch, readPdf = fetchPdfText
 }
 
 /**
- * The next catalogue from the sources and the file, with the report lines.
- * Pure apart from the per-skill detail fetches, which go through `fetchImpl`.
+ * What an applied skill's detail page says about its lifecycle: no opinion
+ * when the page did not answer; otherwise the retirement banner decides.
  */
-export async function buildCatalogue({
-  existingSkills,
-  existingCertifications,
-  sources,
-  fetchImpl,
-}) {
-  const kept = [];
-  const disagreements = [];
-  const unverified = [];
-  const foreign = [];
-  const { bySlug, byTitle } = buildExistingIndexes(existingSkills);
-  const usedCodes = new Set();
+function sourcedSkillLifecycle(detail) {
+  if (!detail.known) return {};
+  if (detail.retirementDate) return { status: 'expiring', expiryDate: detail.retirementDate };
+  return { status: 'active' };
+}
 
-  const nextSkills = [];
-  for (const result of sources.browseResults) {
+/** One applied skill from the browse API's record, its detail page and the file's entry. */
+function buildSkillFromSource({ result, slug, code, existing, detail, disagreements }) {
+  const lifecycle = reconcileLifecycle({
+    existing,
+    sourced: sourcedSkillLifecycle(detail),
+    label: `${code} (${slug})`,
+    report: disagreements,
+  });
+  return {
+    id: existing.id || slug,
+    slug,
+    code,
+    officialCode: result.uid || slug,
+    title: stripMicrosoftPrefix(result.title),
+    area: inferArea(result),
+    level: result.display_levels?.[0] || existing.level || 'Intermediate',
+    status: lifecycle.status,
+    expiryDate: lifecycle.expiryDate,
+    description:
+      detail.description ||
+      existing.description ||
+      `Validate hands-on skills for ${stripMicrosoftPrefix(result.title)}.`,
+    learnUrl: normalizeUrl(result.url),
+  };
+}
+
+/** Every applied skill the browse API lists, each with its detail page read. */
+async function skillsFromSources({
+  browseResults,
+  existingSkills,
+  usedCodes,
+  fetchImpl,
+  disagreements,
+}) {
+  const { bySlug, byTitle } = buildExistingIndexes(existingSkills);
+  const skills = [];
+  for (const result of browseResults) {
     const slug = slugFromUrl(result.url);
     const existing = bySlug.get(slug) || byTitle.get(normalizeTitle(result.title)) || {};
     const detail = await fetchDetail(result, fetchImpl);
     const code =
       existing.code && !usedCodes.has(existing.code) ? existing.code : makeCode(slug, usedCodes);
     usedCodes.add(code);
-
-    // No opinion when the page did not answer; otherwise the banner decides.
-    const sourced = !detail.known
-      ? {}
-      : detail.retirementDate
-        ? { status: 'expiring', expiryDate: detail.retirementDate }
-        : { status: 'active' };
-    const lifecycle = reconcileLifecycle({
-      existing,
-      sourced,
-      label: `${code} (${slug})`,
-      report: disagreements,
-    });
-
-    nextSkills.push({
-      id: existing.id || slug,
-      slug,
-      code,
-      officialCode: result.uid || slug,
-      title: stripMicrosoftPrefix(result.title),
-      area: inferArea(result),
-      level: result.display_levels?.[0] || existing.level || 'Intermediate',
-      status: lifecycle.status,
-      expiryDate: lifecycle.expiryDate,
-      description:
-        detail.description ||
-        existing.description ||
-        `Validate hands-on skills for ${stripMicrosoftPrefix(result.title)}.`,
-      learnUrl: normalizeUrl(result.url),
-    });
+    skills.push(buildSkillFromSource({ result, slug, code, existing, detail, disagreements }));
   }
+  return skills;
+}
 
-  const appliedPosterTitles = extractAppliedPosterTitles(sources.appliedPosterText);
+/** The poster-only skills the Applied Skills poster lists and the API does not, added in place. */
+function addPosterOnlySkills({ nextSkills, appliedPosterText, usedCodes }) {
+  const appliedPosterTitles = extractAppliedPosterTitles(appliedPosterText);
   const nextSlugs = new Set(nextSkills.map((skill) => skill.slug));
   for (const posterOnlySkill of POSTER_ONLY_APPLIED_SKILLS) {
     const posterHasSkill = appliedPosterTitles.some(
@@ -927,10 +934,16 @@ export async function buildCatalogue({
       usedCodes.add(posterOnlySkill.code);
     }
   }
+  return nextSlugs;
+}
 
-  // Rule 3: an applied skill the sources no longer list stays, as the file
-  // has it. A retired skill drops out of the browse API, and dropping it here
-  // would erase the retirement the file records.
+/**
+ * Rule 3: an applied skill the sources no longer list stays, as the file
+ * has it. A retired skill drops out of the browse API, and dropping it here
+ * would erase the retirement the file records. Added in place, with one
+ * report line each on `kept`.
+ */
+function keepUnlistedSkills({ nextSkills, nextSlugs, existingSkills, usedCodes, kept }) {
   const nextSkillTitles = new Set(nextSkills.map((skill) => normalizeTitle(skill.title)));
   for (const skill of existingSkills) {
     if (nextSlugs.has(skill.slug) || nextSkillTitles.has(normalizeTitle(skill.title))) continue;
@@ -946,10 +959,10 @@ export async function buildCatalogue({
         : `${code} — ${skill.title} (${skill.status}) — kept as ${code} (was ${skill.code}, now taken by a sourced skill)`
     );
   }
+}
 
-  nextSkills.sort((a, b) => a.title.localeCompare(b.title));
-  assertUniqueCodes(nextSkills, 'Applied Skills');
-
+/** The certifications, from the poster, the Learn API and the file, with their report lines. */
+function certificationsFromSources({ sources, existingCertifications, report }) {
   const apiCertificationIndexes = buildApiCertificationIndexes(sources.certificationApiResults);
   const existingCertificationIndexes = buildCertificationIndexes(existingCertifications);
   const nextCertifications = [];
@@ -957,17 +970,17 @@ export async function buildCatalogue({
     // Refused before it is built: another catalogue owns this exam (#496).
     const owner = foreignOwnerFor(entry.code);
     if (owner) {
-      foreign.push(`${entry.code} — ${entry.title} — carried by ${owner}`);
+      report.foreign.push(`${entry.code} — ${entry.title} — carried by ${owner}`);
       continue;
     }
     const cert = buildCertificationFromSources(
       entry,
       apiCertificationIndexes,
       existingCertificationIndexes,
-      disagreements
+      report.disagreements
     );
     if (cert) nextCertifications.push(cert);
-    else unverified.push(`${entry.code} — ${entry.title}`);
+    else report.unverified.push(`${entry.code} — ${entry.title}`);
   }
 
   // Rule 3 again, for certifications: the poster drops a retired exam the
@@ -977,12 +990,49 @@ export async function buildCatalogue({
     if (nextCodes.has(cert.code)) continue;
     nextCertifications.push(cert);
     nextCodes.add(cert.code);
-    kept.push(`${cert.code} — ${cert.title} (${cert.status})`);
+    report.kept.push(`${cert.code} — ${cert.title} (${cert.status})`);
   }
   nextCertifications.sort((a, b) => a.code.localeCompare(b.code));
   assertUniqueCodes(nextCertifications, 'Certifications');
+  return nextCertifications;
+}
 
-  return { nextSkills, nextCertifications, kept, disagreements, unverified, foreign };
+/**
+ * The next catalogue from the sources and the file, with the report lines.
+ * Pure apart from the per-skill detail fetches, which go through `fetchImpl`.
+ */
+export async function buildCatalogue({
+  existingSkills,
+  existingCertifications,
+  sources,
+  fetchImpl,
+}) {
+  const report = { kept: [], disagreements: [], unverified: [], foreign: [] };
+  const usedCodes = new Set();
+
+  const nextSkills = await skillsFromSources({
+    browseResults: sources.browseResults,
+    existingSkills,
+    usedCodes,
+    fetchImpl,
+    disagreements: report.disagreements,
+  });
+  const nextSlugs = addPosterOnlySkills({
+    nextSkills,
+    appliedPosterText: sources.appliedPosterText,
+    usedCodes,
+  });
+  keepUnlistedSkills({ nextSkills, nextSlugs, existingSkills, usedCodes, kept: report.kept });
+  nextSkills.sort((a, b) => a.title.localeCompare(b.title));
+  assertUniqueCodes(nextSkills, 'Applied Skills');
+
+  const nextCertifications = certificationsFromSources({
+    sources,
+    existingCertifications,
+    report,
+  });
+
+  return { nextSkills, nextCertifications, ...report };
 }
 
 function parseArgs(argv) {

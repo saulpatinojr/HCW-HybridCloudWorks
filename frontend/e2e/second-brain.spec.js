@@ -83,11 +83,17 @@ test('map supports exploration, dragging, zoom and relationship filtering', asyn
   identity,
 }, testInfo) => {
   const topics = ['Docker delivery', 'Azure architecture', 'Creator workflow'];
+  // The first three nodes are the topics, the next three notes, the rest references.
+  const typeOf = (index) => {
+    if (index < 3) return 'topic';
+    if (index < 6) return 'note';
+    return 'reference';
+  };
   const nodes = Array.from({ length: 27 }, (_, index) => ({
     ...note,
     id: `map-${index}`,
     title: index < 3 ? topics[index] : `${topics[index % 3]} · Research ${index}`,
-    type: index < 3 ? 'topic' : index < 6 ? 'note' : 'reference',
+    type: typeOf(index),
     tags: [topics[index % 3].split(' ')[0].toLowerCase()],
   }));
   const edges = nodes.slice(3).map((node, index) => ({

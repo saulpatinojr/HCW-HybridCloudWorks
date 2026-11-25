@@ -114,38 +114,48 @@ function srcsetUrls(value) {
   return urls;
 }
 
-/** Every image URL a page's markup fetches, with the element and attribute it came from. */
-export function imageSourcesInHtml(html) {
+/**
+ * The images a <link> fetches: an icon, or a preload or prefetch of an image
+ * (its href and every imagesrcset candidate). Any other link fetches none.
+ */
+function linkImageSources(read) {
+  const rel = (read('rel') || '').toLowerCase();
+  const preloadsImage =
+    /\b(preload|prefetch)\b/.test(rel) && (read('as') || '').toLowerCase() === 'image';
+  if (!preloadsImage && !/\bicon\b/.test(rel)) return [];
   const found = [];
-  // Attributes are read by startTags, in all three forms and only in
-  // attribute position, so `src=` in an alt text is not taken for the source.
-  for (const { name: tag, attributes } of startTags(html)) {
-    if (!IMAGE_ELEMENTS.has(tag)) continue;
-    const read = (name) => attributes.get(name);
-    if (tag === 'link') {
-      const rel = (read('rel') || '').toLowerCase();
-      const preloadsImage =
-        /\b(preload|prefetch)\b/.test(rel) && (read('as') || '').toLowerCase() === 'image';
-      if (!preloadsImage && !/\bicon\b/.test(rel)) continue;
-      const href = read('href');
-      if (href) found.push({ url: href, where: 'link.href' });
-      const imagesrcset = read('imagesrcset');
-      if (imagesrcset) {
-        for (const url of srcsetUrls(imagesrcset)) found.push({ url, where: 'link.imagesrcset' });
-      }
-      continue;
-    }
-    if (tag === 'input' && (read('type') || '').toLowerCase() !== 'image') continue;
-    for (const name of tag === 'video' ? ['poster'] : ['src']) {
-      const value = read(name);
-      if (value) found.push({ url: value, where: `${tag}.${name}` });
-    }
-    const srcset = read('srcset');
-    if (srcset) for (const url of srcsetUrls(srcset)) found.push({ url, where: `${tag}.srcset` });
+  const href = read('href');
+  if (href) found.push({ url: href, where: 'link.href' });
+  const imagesrcset = read('imagesrcset');
+  if (imagesrcset) {
+    for (const url of srcsetUrls(imagesrcset)) found.push({ url, where: 'link.imagesrcset' });
   }
-  // The CSS a page carries inline fetches images exactly as a stylesheet
-  // does: a background in a <style> block or in a style attribute is an image
-  // request, and the stylesheet scan below would never see it.
+  return found;
+}
+
+/**
+ * The images any other image element fetches: a video's poster, everyone
+ * else's src, and every srcset candidate. An <input> fetches one only when it
+ * is `type="image"`.
+ */
+function elementImageSources(tag, read) {
+  if (tag === 'input' && (read('type') || '').toLowerCase() !== 'image') return [];
+  const found = [];
+  const name = tag === 'video' ? 'poster' : 'src';
+  const value = read(name);
+  if (value) found.push({ url: value, where: `${tag}.${name}` });
+  const srcset = read('srcset');
+  if (srcset) for (const url of srcsetUrls(srcset)) found.push({ url, where: `${tag}.srcset` });
+  return found;
+}
+
+/**
+ * The CSS a page carries inline fetches images exactly as a stylesheet
+ * does: a background in a <style> block or in a style attribute is an image
+ * request, and the stylesheet scan would never see it.
+ */
+function inlineCssImageSources(html) {
+  const found = [];
   for (const match of html.matchAll(STYLE_ELEMENT)) {
     for (const entry of imageSourcesInCss(match[1])) {
       found.push({ url: entry.url, where: 'style element url()' });
@@ -156,6 +166,21 @@ export function imageSourcesInHtml(html) {
       found.push({ url: entry.url, where: 'style attribute url()' });
     }
   }
+  return found;
+}
+
+/** Every image URL a page's markup fetches, with the element and attribute it came from. */
+export function imageSourcesInHtml(html) {
+  const found = [];
+  // Attributes are read by startTags, in all three forms and only in
+  // attribute position, so `src=` in an alt text is not taken for the source.
+  for (const { name: tag, attributes } of startTags(html)) {
+    if (!IMAGE_ELEMENTS.has(tag)) continue;
+    const read = (name) => attributes.get(name);
+    const sources = tag === 'link' ? linkImageSources(read) : elementImageSources(tag, read);
+    found.push(...sources);
+  }
+  found.push(...inlineCssImageSources(html));
   return found;
 }
 
@@ -250,6 +275,20 @@ export function imgSrcOf(policy) {
   return directive ? directive.slice('img-src'.length).trim().split(/\s+/).filter(Boolean) : [];
 }
 
+/** `allowed` when img-src lets the origin in, `retired` when it is tolerated, else `missing`. */
+function originStatus(origin, sources, retired) {
+  if (allowedBy(origin, sources)) return 'allowed';
+  if (retired[origin]) return 'retired';
+  return 'missing';
+}
+
+/** The last column of a row in the build log: the reason, the failure, or where it was seen. */
+export function rowNote(row) {
+  if (row.status === 'retired') return `RETIRED, tolerated: ${row.reason}`;
+  if (row.status === 'missing') return 'NOT IN img-src';
+  return row.where.join(', ');
+}
+
 /**
  * Every origin the references use, judged against the sources: `allowed`,
  * `retired` (tolerated, with its reason) or `missing` (a failure). A retired
@@ -270,11 +309,7 @@ export function evaluate({ sources, references, retired = RETIRED_IMAGE_HOSTS })
   const rows = [...byOrigin.values()]
     .sort((a, b) => b.count - a.count || a.origin.localeCompare(b.origin))
     .map((row) => {
-      const status = allowedBy(row.origin, sources)
-        ? 'allowed'
-        : retired[row.origin]
-          ? 'retired'
-          : 'missing';
+      const status = originStatus(row.origin, sources, retired);
       return { ...row, where: [...row.where].sort(), status, reason: retired[row.origin] };
     });
   const failures = rows
@@ -356,12 +391,7 @@ function main() {
     `[check-image-hosts] ${references.length} image reference(s) in ${pages} page(s), ${stylesheets} stylesheet(s) and ${articles} article bod(ies), against img-src ${sources.join(' ')}`
   );
   for (const row of rows) {
-    const note =
-      row.status === 'retired'
-        ? `RETIRED, tolerated: ${row.reason}`
-        : row.status === 'missing'
-          ? 'NOT IN img-src'
-          : row.where.join(', ');
+    const note = rowNote(row);
     console.log(`  ${String(row.count).padStart(5)}  ${row.origin.padEnd(46)} ${note}`);
   }
   for (const failure of failures) console.error(`::error::${failure}`);

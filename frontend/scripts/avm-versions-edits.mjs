@@ -88,7 +88,7 @@ export function latestFromRegistry(document, name) {
       `The registry lists ${name} at ${JSON.stringify(document?.version ?? null)}, which is not a MAJOR.MINOR.PATCH release, so nothing was written.`
     );
   }
-  const tag = document.tag == null ? null : String(document.tag);
+  const tag = document.tag === undefined || document.tag === null ? null : String(document.tag);
   if (tag !== null && tag !== `v${version}`) {
     throw new RegistryError(
       `The registry lists ${name} ${version} under tag ${JSON.stringify(tag)} rather than v${version}, so nothing was written.`
@@ -296,7 +296,7 @@ export function rewriteSmokePin(payloadSource, name, fromVersion, toVersion) {
       `the smoke payload holds ${matches.length} blocks for ${name}, not one, so it was not written.`
     );
   }
-  const [, , current] = matches[0];
+  const [[, , current]] = matches;
   if (/^\d+\.\d+\.\d+$/.test(current) && current !== fromVersion) {
     throw new EditRefused(
       `the smoke payload pins ${name} at ${current}, not the ${fromVersion} avmVersions.js pins, so it was not written.`
