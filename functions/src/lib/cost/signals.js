@@ -30,136 +30,183 @@ const AI_HREF = '/admin/cost?tab=ai';
 const SERVICES_HREF = '/admin/cost?tab=services';
 const OVERVIEW_HREF = '/admin/cost?tab=overview';
 
-function signal(id, severity, area, title, detail, href) {
-  return { id, severity, area, title, detail, href };
-}
+/** A maker of signals that all link to `href` (one tab of the Cost page). */
+const signalAt = (href) => (id, severity, area, title, detail) => ({ id, severity, area, title, detail, href });
+const azureSignal = signalAt(AZURE_HREF);
+const aiSignal = signalAt(AI_HREF);
+const serviceSignal = signalAt(SERVICES_HREF);
+const overviewSignal = signalAt(OVERVIEW_HREF);
+
+/** The budget rungs, highest first: the first one a percentage reaches is its rung. */
+const BUDGET_RUNGS = Object.freeze([
+  { rung: 100, severity: 'critical' },
+  { rung: 90, severity: 'critical' },
+  { rung: 75, severity: 'warning' },
+  { rung: 50, severity: 'info' },
+]);
 
 /** The highest budget rung a percentage has reached, or null under 50. */
 export function budgetRung(percentUsed) {
   const p = Number(percentUsed);
   if (!Number.isFinite(p)) return null;
-  if (p >= 100) return { rung: 100, severity: 'critical' };
-  if (p >= 90) return { rung: 90, severity: 'critical' };
-  if (p >= 75) return { rung: 75, severity: 'warning' };
-  if (p >= 50) return { rung: 50, severity: 'info' };
-  return null;
+  const reached = BUDGET_RUNGS.find(({ rung }) => p >= rung);
+  return reached ? { ...reached } : null;
+}
+
+const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+/** One scope's budget signals: the rung it has reached, and a forecast past 100 % below that rung. */
+function budgetSignals(scope, daysLeft) {
+  const out = [];
+  const budget = scope.budget;
+  const used = budgetRung(budget.percentUsed);
+  if (used) {
+    out.push(
+      azureSignal(
+        `azure:${scope.id}:actual:${used.rung}`,
+        used.severity,
+        'azure',
+        `${scope.label} is at ${pct(budget.percentUsed)} of its ${usd(budget.amount)} budget`,
+        `${usd(budget.currentSpend)} spent with ${plural(daysLeft, 'day')} left` +
+          (Number.isFinite(scope.forecast) ? `; the month is estimated at ${usd(scope.forecast)}.` : '.')
+      )
+    );
+  }
+  const forecastPast = Number.isFinite(budget.percentForecast) && budget.percentForecast >= 100;
+  if (forecastPast && (!used || used.rung < 100)) {
+    out.push(
+      azureSignal(
+        `azure:${scope.id}:forecast:100`,
+        'warning',
+        'azure',
+        `${scope.label} is forecast to pass its ${usd(budget.amount)} budget`,
+        `Azure's own estimate for the month is ${usd(budget.forecastSpend)} (${pct(budget.percentForecast)} of the budget).`
+      )
+    );
+  }
+  return out;
+}
+
+/** One scope's signals: unreadable, or showing kept figures, and then its budget's. */
+function scopeSignals(scope, daysLeft) {
+  if (scope.error) {
+    return [azureSignal(`azure:${scope.id}:unreadable`, 'warning', 'data', `${scope.label}: costs could not be read`, scope.error)];
+  }
+  const out = [];
+  if (scope.note) {
+    out.push(azureSignal(`azure:${scope.id}:kept`, 'info', 'data', `${scope.label}: showing earlier figures`, scope.note));
+  }
+  if (scope.budget) out.push(...budgetSignals(scope, daysLeft));
+  return out;
 }
 
 function azureSignals(azure, period) {
-  const out = [];
-  if (!azure || azure.neverRead) return out;
+  if (!azure || azure.neverRead) return [];
   if (!azure.available) {
-    out.push(
-      signal(
-        'azure:unavailable',
-        'warning',
-        'data',
-        'Azure costs could not be read',
-        azure.reason || 'No Azure scope answered.',
-        AZURE_HREF
-      )
-    );
-    return out;
+    return [
+      azureSignal('azure:unavailable', 'warning', 'data', 'Azure costs could not be read', azure.reason || 'No Azure scope answered.'),
+    ];
   }
   const daysLeft = Math.max(0, (period?.daysInMonth ?? 0) - (period?.daysElapsed ?? 0));
-  for (const scope of azure.scopes || []) {
-    if (scope.error) {
-      out.push(
-        signal(`azure:${scope.id}:unreadable`, 'warning', 'data', `${scope.label}: costs could not be read`, scope.error, AZURE_HREF)
-      );
-      continue;
-    }
-    if (scope.note) {
-      out.push(
-        signal(`azure:${scope.id}:kept`, 'info', 'data', `${scope.label}: showing earlier figures`, scope.note, AZURE_HREF)
-      );
-    }
-    const budget = scope.budget;
-    if (!budget) continue;
-    const used = budgetRung(budget.percentUsed);
-    if (used) {
-      out.push(
-        signal(
-          `azure:${scope.id}:actual:${used.rung}`,
-          used.severity,
-          'azure',
-          `${scope.label} is at ${pct(budget.percentUsed)} of its ${usd(budget.amount)} budget`,
-          `${usd(budget.currentSpend)} spent with ${daysLeft} day${daysLeft === 1 ? '' : 's'} left` +
-            (Number.isFinite(scope.forecast) ? `; the month is estimated at ${usd(scope.forecast)}.` : '.'),
-          AZURE_HREF
-        )
-      );
-    }
-    if (Number.isFinite(budget.percentForecast) && budget.percentForecast >= 100 && (!used || used.rung < 100)) {
-      out.push(
-        signal(
-          `azure:${scope.id}:forecast:100`,
-          'warning',
-          'azure',
-          `${scope.label} is forecast to pass its ${usd(budget.amount)} budget`,
-          `Azure's own estimate for the month is ${usd(budget.forecastSpend)} (${pct(budget.percentForecast)} of the budget).`,
-          AZURE_HREF
-        )
-      );
-    }
+  return (azure.scopes || []).flatMap((scope) => scopeSignals(scope, daysLeft));
+}
+
+/** The AI budget's signal, when one is set and spend has reached 80 % of it. */
+function aiBudgetSignals(ai) {
+  const budget = Number(ai.budgetUsd);
+  const spend = Number(ai.monthToDate?.costUsd ?? 0);
+  if (!Number.isFinite(budget) || budget <= 0) return [];
+  const p = (spend / budget) * 100;
+  const detail = `${usd(spend)} estimated so far this month.`;
+  if (p >= 100) return [aiSignal('ai:budget:100', 'critical', 'ai', `AI spend has reached its ${usd(budget)} monthly budget`, detail)];
+  if (p >= 80) return [aiSignal('ai:budget:80', 'warning', 'ai', `AI spend is at ${pct(p)} of its ${usd(budget)} monthly budget`, detail)];
+  return [];
+}
+
+/** A credits card's signal: unreadable, nearly out (under 5 %), or low (under 20 %). */
+function creditSignals(card) {
+  if (card.error) {
+    return [aiSignal(`${card.id}:unreadable`, 'info', 'data', `${card.label} credits could not be read`, card.error)];
   }
+  if (!Number.isFinite(card.percentLeft)) return [];
+  const reset = card.resetAt ? ` They reset on ${String(card.resetAt).slice(0, 10)}.` : '';
+  if (card.percentLeft < 5) {
+    return [aiSignal(`${card.id}:credits:5`, 'critical', 'ai', `${card.label} is nearly out of credits`, `${card.left} of ${card.limit} credits left.${reset}`)];
+  }
+  if (card.percentLeft < 20) {
+    return [aiSignal(`${card.id}:credits:20`, 'warning', 'ai', `${card.label} has ${pct(card.percentLeft)} of its credits left`, `${card.left} of ${card.limit} credits.${reset}`)];
+  }
+  return [];
+}
+
+/** An image-budget card's signal: spent (100 %) or past 80 %. */
+function imageBudgetSignals(card) {
+  if (card.percentUsed >= 100) {
+    return [aiSignal(`${card.id}:budget:100`, 'critical', 'ai', `${card.label} has spent its ${usd(card.budget)} monthly budget`, `${card.images} images this month; generation is paused until the 1st.`)];
+  }
+  if (card.percentUsed >= 80) {
+    return [aiSignal(`${card.id}:budget:80`, 'warning', 'ai', `${card.label} is at ${pct(card.percentUsed)} of its ${usd(card.budget)} monthly budget`, `${card.images} images this month.`)];
+  }
+  return [];
+}
+
+function providerSignals(card) {
+  const out = [];
+  if (card.kind === 'credits' && card.configured) out.push(...creditSignals(card));
+  if (card.kind === 'budget' && Number.isFinite(card.percentUsed)) out.push(...imageBudgetSignals(card));
   return out;
 }
 
 function aiSignals(ai) {
-  const out = [];
-  if (!ai) return out;
-  const budget = Number(ai.budgetUsd);
-  const spend = Number(ai.monthToDate?.costUsd ?? 0);
-  if (Number.isFinite(budget) && budget > 0) {
-    const p = (spend / budget) * 100;
-    if (p >= 100) {
-      out.push(signal('ai:budget:100', 'critical', 'ai', `AI spend has reached its ${usd(budget)} monthly budget`, `${usd(spend)} estimated so far this month.`, AI_HREF));
-    } else if (p >= 80) {
-      out.push(signal('ai:budget:80', 'warning', 'ai', `AI spend is at ${pct(p)} of its ${usd(budget)} monthly budget`, `${usd(spend)} estimated so far this month.`, AI_HREF));
-    }
+  if (!ai) return [];
+  return [...aiBudgetSignals(ai), ...(ai.providers || []).flatMap(providerSignals)];
+}
+
+const CYCLE_WORDS = new Map([
+  ['annual', 'year'],
+  ['quarterly', 'quarter'],
+]);
+
+/** What a subscription costs, as the signal says it. */
+function priceOf(item) {
+  if (item.amount === null) return 'amount not recorded';
+  return `${item.currency} ${Number(item.amount).toFixed(2)} per ${CYCLE_WORDS.get(item.cycle) ?? 'month'}`;
+}
+
+/** One subscription's renewal signal, or null: overdue (unless it renews by itself), due today or tomorrow, or inside the lead days. */
+function renewalSignal(item, lead) {
+  const days = item.daysUntilRenewal;
+  const price = priceOf(item);
+  if (days < 0) {
+    if (item.autoRenew) return null; // auto-renewed: the date is just stale, the Services tab shows it
+    return serviceSignal(`service:${item.id}:overdue`, 'warning', 'services', `${item.name} renewal date has passed`, `Was due ${item.nextRenewal} (${price}); update the date or mark it cancelled.`);
   }
-  for (const card of ai.providers || []) {
-    if (card.kind === 'credits' && card.configured) {
-      if (card.error) {
-        out.push(signal(`${card.id}:unreadable`, 'info', 'data', `${card.label} credits could not be read`, card.error, AI_HREF));
-      } else if (Number.isFinite(card.percentLeft)) {
-        const reset = card.resetAt ? ` They reset on ${String(card.resetAt).slice(0, 10)}.` : '';
-        if (card.percentLeft < 5) {
-          out.push(signal(`${card.id}:credits:5`, 'critical', 'ai', `${card.label} is nearly out of credits`, `${card.left} of ${card.limit} credits left.${reset}`, AI_HREF));
-        } else if (card.percentLeft < 20) {
-          out.push(signal(`${card.id}:credits:20`, 'warning', 'ai', `${card.label} has ${pct(card.percentLeft)} of its credits left`, `${card.left} of ${card.limit} credits.${reset}`, AI_HREF));
-        }
-      }
-    }
-    if (card.kind === 'budget' && Number.isFinite(card.percentUsed)) {
-      if (card.percentUsed >= 100) {
-        out.push(signal(`${card.id}:budget:100`, 'critical', 'ai', `${card.label} has spent its ${usd(card.budget)} monthly budget`, `${card.images} images this month; generation is paused until the 1st.`, AI_HREF));
-      } else if (card.percentUsed >= 80) {
-        out.push(signal(`${card.id}:budget:80`, 'warning', 'ai', `${card.label} is at ${pct(card.percentUsed)} of its ${usd(card.budget)} monthly budget`, `${card.images} images this month.`, AI_HREF));
-      }
-    }
+  if (days <= 1) {
+    return serviceSignal(`service:${item.id}:due`, 'warning', 'services', `${item.name} renews ${days === 0 ? 'today' : 'tomorrow'}`, `${price}${item.autoRenew ? ', renews by itself' : ', not set to renew by itself'}.`);
   }
-  return out;
+  if (days <= lead) {
+    return serviceSignal(`service:${item.id}:soon`, 'info', 'services', `${item.name} renews in ${days} days`, `On ${item.nextRenewal}; ${price}.`);
+  }
+  return null;
 }
 
 function serviceSignals(services, settings) {
-  const out = [];
   const lead = Number(settings?.renewalLeadDays) || 7;
-  for (const item of services?.items || []) {
-    if (item.status === 'cancelled' || !Number.isFinite(item.daysUntilRenewal)) continue;
-    const days = item.daysUntilRenewal;
-    const price = item.amount === null ? 'amount not recorded' : `${item.currency} ${Number(item.amount).toFixed(2)} per ${item.cycle === 'annual' ? 'year' : item.cycle === 'quarterly' ? 'quarter' : 'month'}`;
-    if (days < 0) {
-      if (item.autoRenew) continue; // auto-renewed: the date is just stale, the Services tab shows it
-      out.push(signal(`service:${item.id}:overdue`, 'warning', 'services', `${item.name} renewal date has passed`, `Was due ${item.nextRenewal} (${price}); update the date or mark it cancelled.`, SERVICES_HREF));
-    } else if (days <= 1) {
-      out.push(signal(`service:${item.id}:due`, 'warning', 'services', `${item.name} renews ${days === 0 ? 'today' : 'tomorrow'}`, `${price}${item.autoRenew ? ', renews by itself' : ', not set to renew by itself'}.`, SERVICES_HREF));
-    } else if (days <= lead) {
-      out.push(signal(`service:${item.id}:soon`, 'info', 'services', `${item.name} renews in ${days} days`, `On ${item.nextRenewal}; ${price}.`, SERVICES_HREF));
-    }
+  return (services?.items || [])
+    .filter((item) => item.status !== 'cancelled' && Number.isFinite(item.daysUntilRenewal))
+    .map((item) => renewalSignal(item, lead))
+    .filter(Boolean);
+}
+
+/** The signal for figures never read, or read too long ago; null when they are fresh. */
+function freshnessSignal(readAt, now) {
+  if (!readAt) {
+    return overviewSignal('data:never-read', 'info', 'data', 'The cost figures have not been read yet', 'Press Refresh on the Cost page, or wait for the hourly watch to read them.');
   }
-  return out;
+  if (isStale(readAt, now)) {
+    return overviewSignal('data:stale', 'info', 'data', 'The cost figures may be out of date', `They were last read on ${String(readAt).slice(0, 16).replace('T', ' ')} UTC. Press Refresh to read again.`);
+  }
+  return null;
 }
 
 /**
@@ -175,15 +222,8 @@ export function computeSignals(snapshot, settings, now) {
     ...aiSignals(snapshot?.ai),
     ...serviceSignals(snapshot?.services, settings),
   ];
-  if (!snapshot?.readAt) {
-    out.push(
-      signal('data:never-read', 'info', 'data', 'The cost figures have not been read yet', 'Press Refresh on the Cost page, or wait for the hourly watch to read them.', OVERVIEW_HREF)
-    );
-  } else if (isStale(snapshot.readAt, now)) {
-    out.push(
-      signal('data:stale', 'info', 'data', 'The cost figures may be out of date', `They were last read on ${String(snapshot.readAt).slice(0, 16).replace('T', ' ')} UTC. Press Refresh to read again.`, OVERVIEW_HREF)
-    );
-  }
+  const freshness = freshnessSignal(snapshot?.readAt, now);
+  if (freshness) out.push(freshness);
   return out.sort((a, b) => RANK[a.severity] - RANK[b.severity] || a.id.localeCompare(b.id));
 }
 
