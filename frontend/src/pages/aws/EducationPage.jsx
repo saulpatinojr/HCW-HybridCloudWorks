@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
+import {
+  LearningResourcesSection,
+  OfficialLinksSection,
+} from '@/pages/shared/education/EducationSections';
 import { Link } from 'react-router';
 import CatalogueFreshness from '@/components/education/CatalogueFreshness';
 import CertStatusBadge from '@/components/education/CertStatusBadge';
@@ -167,6 +171,28 @@ const resources = [
   },
 ];
 
+/** The two big links to the issuer's own sites, near the top of the page. */
+const OFFICIAL_LINKS = [
+  {
+    href: 'https://aws.amazon.com/certification/',
+    tone: 'amber',
+    icon: 'workspace_premium',
+    title: 'AWS Certification Portal',
+    badge: 'Official',
+    address: 'aws.amazon.com/certification',
+    text: 'Browse all AWS certifications, register for exams, view your certification transcript, and download digital badges from the official AWS portal.',
+  },
+  {
+    href: 'https://skillbuilder.aws/',
+    tone: 'orange',
+    icon: 'model_training',
+    title: 'AWS Skill Builder',
+    badge: 'Free + Paid',
+    address: 'skillbuilder.aws',
+    text: '600+ courses, hands-on labs, practice exams, and game-based learning — the official AWS digital learning platform for all skill levels.',
+  },
+];
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AWSEducationPage() {
@@ -236,81 +262,7 @@ export default function AWSEducationPage() {
         </section>
 
         {/* ── Official Resources Banner ─────────────────────────────────── */}
-        <section className="mb-12">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <a
-              href="https://aws.amazon.com/certification/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group relative bg-gradient-to-br from-amber-900/40 to-card/40 backdrop-blur-md border border-amber-500/30 rounded-2xl p-6 hover:shadow-[0_0_30px_rgba(245,158,11,0.2)] hover:border-amber-400/60 transition-all duration-300 flex items-start gap-5"
-            >
-              <div className="w-14 h-14 shrink-0 bg-amber-500/20 rounded-xl flex items-center justify-center">
-                <span
-                  className="text-amber-400 text-[28px] material-symbols-outlined"
-                  aria-hidden="true"
-                >
-                  workspace_premium
-                </span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <h2 className="text-lg font-bold text-slate-950 dark:text-white group-hover:text-amber-300 transition-colors">
-                    AWS Certification Portal
-                  </h2>
-                  <span className="px-2 py-0.5 bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-bold rounded-full uppercase tracking-wider shrink-0">
-                    Official
-                  </span>
-                </div>
-                <p className="text-sm text-foreground mb-3">
-                  Browse all AWS certifications, register for exams, view your certification
-                  transcript, and download digital badges from the official AWS portal.
-                </p>
-                <div className="flex items-center gap-1.5 text-amber-400 text-sm font-semibold">
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                    open_in_new
-                  </span>
-                  aws.amazon.com/certification
-                </div>
-              </div>
-            </a>
-
-            <a
-              href="https://skillbuilder.aws/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group relative bg-gradient-to-br from-orange-900/40 to-card/40 backdrop-blur-md border border-orange-500/30 rounded-2xl p-6 hover:shadow-[0_0_30px_rgba(249,115,22,0.2)] hover:border-orange-400/60 transition-all duration-300 flex items-start gap-5"
-            >
-              <div className="w-14 h-14 shrink-0 bg-orange-500/20 rounded-xl flex items-center justify-center">
-                <span
-                  className="text-orange-400 text-[28px] material-symbols-outlined"
-                  aria-hidden="true"
-                >
-                  model_training
-                </span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <h2 className="text-lg font-bold text-slate-950 dark:text-white group-hover:text-orange-300 transition-colors">
-                    AWS Skill Builder
-                  </h2>
-                  <span className="px-2 py-0.5 bg-orange-500/20 border border-orange-500/30 text-orange-300 text-[10px] font-bold rounded-full uppercase tracking-wider shrink-0">
-                    Free + Paid
-                  </span>
-                </div>
-                <p className="text-sm text-foreground mb-3">
-                  600+ courses, hands-on labs, practice exams, and game-based learning — the
-                  official AWS digital learning platform for all skill levels.
-                </p>
-                <div className="flex items-center gap-1.5 text-orange-400 text-sm font-semibold">
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                    open_in_new
-                  </span>
-                  skillbuilder.aws
-                </div>
-              </div>
-            </a>
-          </div>
-        </section>
+        <OfficialLinksSection links={OFFICIAL_LINKS} />
 
         {/* ── Featured Starting Point + Sidebar ───────────────────────── */}
         <section className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-8 mb-12">
@@ -765,50 +717,7 @@ export default function AWSEducationPage() {
         </section>
 
         {/* ── Learning Resources ───────────────────────────────────────── */}
-        <section className="mb-16">
-          <h3 className="text-2xl font-bold text-slate-950 dark:text-white mb-6 flex items-center gap-2">
-            <span
-              className="text-amber-400 text-[24px] material-symbols-outlined"
-              aria-hidden="true"
-            >
-              library_books
-            </span>
-            Learning Resources
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {resources.map((resource) => (
-              <a
-                key={resource.id}
-                href={resource.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6 flex flex-col hover:shadow-[0_0_25px_rgba(245,158,11,0.15)] hover:border-amber-400/50 transition-all duration-300"
-              >
-                <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <span
-                    className="material-symbols-outlined text-amber-400 text-[24px]"
-                    aria-hidden="true"
-                  >
-                    {resource.icon}
-                  </span>
-                </div>
-                <div className="text-xs font-bold text-amber-400/70 uppercase tracking-wider mb-1">
-                  {resource.type}
-                </div>
-                <h4 className="font-bold text-slate-950 dark:text-white mb-2 group-hover:text-amber-300 transition-colors">
-                  {resource.title}
-                </h4>
-                <p className="text-xs text-foreground flex-1">{resource.description}</p>
-                <div className="mt-4 flex items-center gap-1 text-amber-400 text-xs font-semibold">
-                  Explore{' '}
-                  <span className="material-symbols-outlined text-[14px]" aria-hidden="true">
-                    open_in_new
-                  </span>
-                </div>
-              </a>
-            ))}
-          </div>
-        </section>
+        <LearningResourcesSection resources={resources} palette="amber" />
       </main>
     </>
   );
