@@ -314,22 +314,25 @@ export function describeRunWindow(payload) {
     if (resource?.id) byId.set(`${resource.type}:${resource.id}`, resource);
   }
 
-  let withCommit = 0;
   let newest = null;
   for (const run of runs) {
     const createdAt = run?.attributes?.['created-at'];
     if (typeof createdAt === 'string' && (!newest || createdAt > newest)) newest = createdAt;
-
-    const cvRef = run?.relationships?.['configuration-version']?.data;
-    if (!cvRef?.id) continue;
-    const cv = byId.get(`${cvRef.type ?? 'configuration-versions'}:${cvRef.id}`);
-    const iaRef = cv?.relationships?.['ingress-attributes']?.data;
-    if (!iaRef?.id) continue;
-    const ia = byId.get(`${iaRef.type ?? 'ingress-attributes'}:${iaRef.id}`);
-    if (typeof ia?.attributes?.['commit-sha'] === 'string') withCommit += 1;
   }
+  const withCommit = runs.filter((run) => carriesCommit(run, byId)).length;
 
   return { count: runs.length, withCommit, newest };
+}
+
+/** Whether a run's configuration version leads, through `included`, to ingress attributes with a commit sha. */
+function carriesCommit(run, byId) {
+  const cvRef = run?.relationships?.['configuration-version']?.data;
+  if (!cvRef?.id) return false;
+  const cv = byId.get(`${cvRef.type ?? 'configuration-versions'}:${cvRef.id}`);
+  const iaRef = cv?.relationships?.['ingress-attributes']?.data;
+  if (!iaRef?.id) return false;
+  const ia = byId.get(`${iaRef.type ?? 'ingress-attributes'}:${iaRef.id}`);
+  return typeof ia?.attributes?.['commit-sha'] === 'string';
 }
 
 function arg(name) {
@@ -400,52 +403,61 @@ async function main() {
     return 2;
   }
 
-  let run;
+  const run = await resolveRun(token);
+  if (!run) return 2;
+  describeRun(run);
+  return checkRunPlan(token, run);
+}
+
+/** The run to check: --run, the run for --commit, or the workspace's latest. Null, after saying why, when there is none. */
+async function resolveRun(token) {
   const runId = normaliseRunId(arg('run'));
   const commit = (arg('commit') ?? '').trim();
 
   if (runId && commit) {
     console.error('Pass --run or --commit, not both: they select the same thing two ways.');
-    return 2;
+    return null;
   }
+  if (runId) return tfc(token, `/runs/${runId}`);
+  if (commit) return runForCommit(token, commit);
+  const workspace = await tfc(token, `/organizations/${ORGANIZATION}/workspaces/${WORKSPACE}`);
+  const runs = await tfc(token, `/workspaces/${workspace.id}/runs?page%5Bsize%5D=1`);
+  if (!runs?.length) throw new Error(`No runs found in ${ORGANIZATION}/${WORKSPACE}.`);
+  return runs[0];
+}
 
-  if (runId) {
-    run = await tfc(token, `/runs/${runId}`);
-  } else if (commit) {
-    const workspace = await tfc(token, `/organizations/${ORGANIZATION}/workspaces/${WORKSPACE}`);
-    // 50 rather than 1: the commit's run is not necessarily the newest, and
-    // this window has to span whatever else ran alongside it.
-    const payload = await tfc(
-      token,
-      `/workspaces/${workspace.id}/runs?page%5Bsize%5D=50&include=configuration_version.ingress_attributes`,
-      { raw: true }
-    );
-    run = selectRunForCommit(payload, commit);
-    if (!run) {
-      // NOT 0. "I found no run for this commit" is not "the plan is boring",
-      // and answering the second question when asked the first is how a check
-      // goes green without checking anything.
-      const seen = describeRunWindow(payload);
-      console.error(`\nNo run for commit ${commit}.`);
-      console.error(
-        `\nThe window held ${seen.count} run(s), ${seen.withCommit} of them carrying a commit ` +
-          `sha; newest created ${seen.newest ?? 'unknown'}.`
-      );
-      console.error(
-        '\nIf the newest run predates the commit, HCP Terraform has not planned it yet — a ' +
-          'speculative plan lags the push. If runs are recent but few or none carry a commit ' +
-          'sha, the plan for this commit is not in the listing this tool reads and selecting ' +
-          `by commit cannot work here. Check https://app.terraform.io/app/${ORGANIZATION}/workspaces/${WORKSPACE}/runs`
-      );
-      return 2;
-    }
-  } else {
-    const workspace = await tfc(token, `/organizations/${ORGANIZATION}/workspaces/${WORKSPACE}`);
-    const runs = await tfc(token, `/workspaces/${workspace.id}/runs?page%5Bsize%5D=1`);
-    if (!runs?.length) throw new Error(`No runs found in ${ORGANIZATION}/${WORKSPACE}.`);
-    run = runs[0];
-  }
+/** The run HCP Terraform planned for a commit, or null after describing the window it looked in. */
+async function runForCommit(token, commit) {
+  const workspace = await tfc(token, `/organizations/${ORGANIZATION}/workspaces/${WORKSPACE}`);
+  // 50 rather than 1: the commit's run is not necessarily the newest, and
+  // this window has to span whatever else ran alongside it.
+  const payload = await tfc(
+    token,
+    `/workspaces/${workspace.id}/runs?page%5Bsize%5D=50&include=configuration_version.ingress_attributes`,
+    { raw: true }
+  );
+  const run = selectRunForCommit(payload, commit);
+  if (run) return run;
+  // NOT 0. "I found no run for this commit" is not "the plan is boring",
+  // and answering the second question when asked the first is how a check
+  // goes green without checking anything.
+  const seen = describeRunWindow(payload);
+  console.error(`\nNo run for commit ${commit}.`);
+  console.error(
+    `\nThe window held ${seen.count} run(s), ${seen.withCommit} of them carrying a commit ` +
+      `sha; newest created ${seen.newest ?? 'unknown'}.`
+  );
+  console.error(
+    '\nIf the newest run predates the commit, HCP Terraform has not planned it yet — a ' +
+      'speculative plan lags the push. If runs are recent but few or none carry a commit ' +
+      'sha, the plan for this commit is not in the listing this tool reads and selecting ' +
+      `by commit cannot work here. Check https://app.terraform.io/app/${ORGANIZATION}/workspaces/${WORKSPACE}/runs`
+  );
+  return null;
+}
 
+/** The run's id, status, message and date, and whether it is a plan awaiting a decision. */
+function describeRun(run) {
   console.log(`run     : ${run.id}`);
   console.log(`status  : ${run.attributes.status}`);
   // First line only: a later line would start at column 0 of the log, where
@@ -484,7 +496,10 @@ async function main() {
     );
     console.log('      Pass --run <id> to check a specific run.');
   }
+}
 
+/** Read the run's plan and judge it: 0 boring, 1 something unexpected, 2 no plan or a malformed one. */
+async function checkRunPlan(token, run) {
   const planId = run.relationships?.plan?.data?.id;
   if (!planId) {
     console.error(`\nRun ${run.id} has no plan yet (status ${run.attributes.status}).`);
@@ -516,20 +531,24 @@ async function main() {
   // Declared changes (#719) are listed on both paths: what a pull request said
   // to expect is part of the verdict, and a declaration the plan no longer
   // contains is a prompt to delete it, not a failure.
-  if (result.ok) {
-    console.log(
-      result.declared.length === 0
-        ? '\nOK — the plan carries the known permanent diff and nothing else:'
-        : '\nOK — the plan carries the known permanent diff, its declared changes, and nothing else:'
-    );
-    for (const address of EXPECTED.replaced) console.log(`     replace  ${address}`);
-    for (const { address, attribute } of EXPECTED.updated) {
-      console.log(`     update   ${address} (${attribute})`);
-    }
-    for (const line of declarationLines(result)) console.log(line);
-    return 0;
-  }
+  return result.ok ? reportExpected(result) : reportUnexpected(result);
+}
 
+function reportExpected(result) {
+  console.log(
+    result.declared.length === 0
+      ? '\nOK — the plan carries the known permanent diff and nothing else:'
+      : '\nOK — the plan carries the known permanent diff, its declared changes, and nothing else:'
+  );
+  for (const address of EXPECTED.replaced) console.log(`     replace  ${address}`);
+  for (const { address, attribute } of EXPECTED.updated) {
+    console.log(`     update   ${address} (${attribute})`);
+  }
+  for (const line of declarationLines(result)) console.log(line);
+  return 0;
+}
+
+function reportUnexpected(result) {
   console.error('');
   for (const line of declarationLines(result)) console.error(line);
   for (const line of result.unexpected) console.error(`UNEXPECTED  ${line}`);

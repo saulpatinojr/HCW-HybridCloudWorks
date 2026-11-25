@@ -208,126 +208,155 @@ function noteFirewallWaits() {
 
 // ── tier 1: anonymous surface ────────────────────────────────────────────────
 
+/**
+ * Tier 1's checks, in order: each a name and a body that is given the base
+ * address and `get` (a GET of a path under it). Kept as a table so each body
+ * reads on its own.
+ */
+const ANONYMOUS_CHECKS = [
+  [
+    'health answers and discloses no runtime',
+    async ({ get }) => {
+      const res = await get('health');
+      expectStatus(res, 200);
+      const body = await res.json();
+      // T-402 hardening: node version / site name must not be reported.
+      if ('node' in body || 'site' in body) throw new Error('health leaks runtime details');
+      return `status=${body.status}`;
+    },
+  ],
+  [
+    'public content list: filtered, projected, bounded',
+    async ({ get }) => {
+      const res = await get('public/content?limit=5');
+      expectStatus(res, 200);
+      const body = await res.json();
+      if (!Array.isArray(body.items)) throw new Error('no items array');
+      for (const item of body.items) {
+        if (!looksPublic(item)) throw new Error(`non-public doc leaked: ${item.id}`);
+        const leaks = projectionLeaks(item);
+        if (leaks.length) throw new Error(`projection leaked ${leaks.join(',')} on ${item.id}`);
+      }
+      if (typeof body.total !== 'number' || body.total < body.items.length) {
+        throw new Error(`total=${body.total} below page size ${body.items.length} (T-407 regressed)`);
+      }
+      return `${body.items.length} items, total=${body.total}`;
+    },
+  ],
+  [
+    'detail read: found by slug/id, missing 404s',
+    async ({ get }) => {
+      const list = await (await get('public/content?limit=1')).json();
+      const first = list.items?.[0];
+      if (first) {
+        const res = await get(`public/content/${encodeURIComponent(first.slug || first.id)}`);
+        expectStatus(res, 200);
+      }
+      const missing = await get('public/content/smoke-definitely-missing-9z9z9z');
+      expectStatus(missing, 404);
+      return first ? `resolved ${first.slug || first.id}` : 'list empty; 404 path only';
+    },
+  ],
+  [
+    'curated-image miss: 200 null, short cache',
+    async ({ get }) => {
+      const res = await get('public/curated-image/smoke-no-such-article');
+      expectStatus(res, 200);
+      const body = await res.json();
+      if (body.imageUrl !== null) throw new Error(`expected null, got ${body.imageUrl}`);
+      const cache = res.headers.get('cache-control') || '';
+      if (!/max-age=60\b/.test(cache)) {
+        throw new Error(`miss cached as "${cache}" — negative caching regressed (T-210 review)`);
+      }
+    },
+  ],
+  [
+    'platform-health: four providers, enum statuses, no 500',
+    async ({ get }) => {
+      const res = await get('public/platform-health');
+      expectStatus(res, 200);
+      const body = await res.json();
+      const providers = Object.keys(body.statuses || {});
+      if (providers.length < 4) throw new Error(`expected 4 providers, saw ${providers.length}`);
+      return providers.join(',');
+    },
+  ],
+  [
+    'guards are live: admin RPCs refuse anonymous callers',
+    async ({ base }) => {
+      // The route-inventory test proves this in-process; this proves the
+      // DEPLOYED app wired the same guard — authLevel is 'anonymous' at the
+      // host, so the app-level guard is the only thing standing here.
+      for (const [method, path] of [
+        ['GET', 'getCurrentAdminStatus'],
+        ['POST', 'saveEditorDraft'],
+        ['GET', 'cms/content?limit=1'],
+        ['POST', 'aiProxy'],
+      ]) {
+        const res = await originFetch(`${base}/${path}`, { method });
+        if (![401, 403].includes(res.status)) {
+          throw new Error(`${method} ${path} answered ${res.status} anonymously`);
+        }
+      }
+    },
+  ],
+  [
+    'CORS: disallowed origin refused, allowed origin preflights',
+    async ({ base, get }) => {
+      const evil = await get('public/content', { Origin: 'https://evil.example' });
+      expectStatus(evil, 403);
+      const pre = await originFetch(`${base}/public/content`, {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://hybridcloudworks.com' },
+      });
+      expectStatus(pre, 204);
+    },
+  ],
+  [
+    'notImplemented RPCs still 404 (contract holds)',
+    async ({ base }) => {
+      // An unregistered or missing RPC must 404 rather than answering 200 or 500.
+      // api-contract.test.js enforces that all historical notImplemented RPCs
+      // are now implemented and registered; this proves the host fails closed on
+      // unmapped RPC endpoints.
+      const res = await originFetch(`${base}/notImplementedRpcCheck`, { method: 'POST' });
+      expectStatus(res, 404);
+    },
+  ],
+  [
+    'labs-estate: answers configured contract with Arc, agent, Coder',
+    async ({ get }) => {
+      const res = await get('public/labs/estate');
+      expectStatus(res, 200);
+      const body = await res.json();
+      if (!looksValidEstate(body)) {
+        throw new Error(`invalid estate payload: configured=${body?.configured}`);
+      }
+      return body.configured
+        ? `configured: arc=${body.arc.status}, agent=${body.agent.online ? 'online' : 'offline'}`
+        : 'unconfigured estate (offline host)';
+    },
+  ],
+  [
+    'coder-status: answers configured contract with capacity',
+    async ({ get }) => {
+      const res = await get('public/labs/coder-status');
+      expectStatus(res, 200);
+      const body = await res.json();
+      if (!looksValidCoderStatus(body)) {
+        throw new Error(`invalid coder status payload: configured=${body?.configured}`);
+      }
+      return body.configured
+        ? `configured: reachable=${body.reachable}, running=${body.capacity?.running || 0}`
+        : 'unconfigured coder (no CODER_URL)';
+    },
+  ],
+];
+
 async function tierAnonymous(base) {
   console.log(`\nTier 1 — anonymous surface against ${base}`);
   const get = (path, headers = {}) => originFetch(`${base}/${path}`, { headers });
-
-  await check(1, 'health answers and discloses no runtime', async () => {
-    const res = await get('health');
-    expectStatus(res, 200);
-    const body = await res.json();
-    // T-402 hardening: node version / site name must not be reported.
-    if ('node' in body || 'site' in body) throw new Error('health leaks runtime details');
-    return `status=${body.status}`;
-  });
-
-  await check(1, 'public content list: filtered, projected, bounded', async () => {
-    const res = await get('public/content?limit=5');
-    expectStatus(res, 200);
-    const body = await res.json();
-    if (!Array.isArray(body.items)) throw new Error('no items array');
-    for (const item of body.items) {
-      if (!looksPublic(item)) throw new Error(`non-public doc leaked: ${item.id}`);
-      const leaks = projectionLeaks(item);
-      if (leaks.length) throw new Error(`projection leaked ${leaks.join(',')} on ${item.id}`);
-    }
-    if (typeof body.total !== 'number' || body.total < body.items.length) {
-      throw new Error(`total=${body.total} below page size ${body.items.length} (T-407 regressed)`);
-    }
-    return `${body.items.length} items, total=${body.total}`;
-  });
-
-  await check(1, 'detail read: found by slug/id, missing 404s', async () => {
-    const list = await (await get('public/content?limit=1')).json();
-    const first = list.items?.[0];
-    if (first) {
-      const res = await get(`public/content/${encodeURIComponent(first.slug || first.id)}`);
-      expectStatus(res, 200);
-    }
-    const missing = await get('public/content/smoke-definitely-missing-9z9z9z');
-    expectStatus(missing, 404);
-    return first ? `resolved ${first.slug || first.id}` : 'list empty; 404 path only';
-  });
-
-  await check(1, 'curated-image miss: 200 null, short cache', async () => {
-    const res = await get('public/curated-image/smoke-no-such-article');
-    expectStatus(res, 200);
-    const body = await res.json();
-    if (body.imageUrl !== null) throw new Error(`expected null, got ${body.imageUrl}`);
-    const cache = res.headers.get('cache-control') || '';
-    if (!/max-age=60\b/.test(cache)) {
-      throw new Error(`miss cached as "${cache}" — negative caching regressed (T-210 review)`);
-    }
-  });
-
-  await check(1, 'platform-health: four providers, enum statuses, no 500', async () => {
-    const res = await get('public/platform-health');
-    expectStatus(res, 200);
-    const body = await res.json();
-    const providers = Object.keys(body.statuses || {});
-    if (providers.length < 4) throw new Error(`expected 4 providers, saw ${providers.length}`);
-    return providers.join(',');
-  });
-
-  await check(1, 'guards are live: admin RPCs refuse anonymous callers', async () => {
-    // The route-inventory test proves this in-process; this proves the
-    // DEPLOYED app wired the same guard — authLevel is 'anonymous' at the
-    // host, so the app-level guard is the only thing standing here.
-    for (const [method, path] of [
-      ['GET', 'getCurrentAdminStatus'],
-      ['POST', 'saveEditorDraft'],
-      ['GET', 'cms/content?limit=1'],
-      ['POST', 'aiProxy'],
-    ]) {
-      const res = await originFetch(`${base}/${path}`, { method });
-      if (![401, 403].includes(res.status)) {
-        throw new Error(`${method} ${path} answered ${res.status} anonymously`);
-      }
-    }
-  });
-
-  await check(1, 'CORS: disallowed origin refused, allowed origin preflights', async () => {
-    const evil = await get('public/content', { Origin: 'https://evil.example' });
-    expectStatus(evil, 403);
-    const pre = await originFetch(`${base}/public/content`, {
-      method: 'OPTIONS',
-      headers: { Origin: 'https://hybridcloudworks.com' },
-    });
-    expectStatus(pre, 204);
-  });
-
-  await check(1, 'notImplemented RPCs still 404 (contract holds)', async () => {
-    // An unregistered or missing RPC must 404 rather than answering 200 or 500.
-    // api-contract.test.js enforces that all historical notImplemented RPCs
-    // are now implemented and registered; this proves the host fails closed on
-    // unmapped RPC endpoints.
-    const res = await originFetch(`${base}/notImplementedRpcCheck`, { method: 'POST' });
-    expectStatus(res, 404);
-  });
-
-  await check(1, 'labs-estate: answers configured contract with Arc, agent, Coder', async () => {
-    const res = await get('public/labs/estate');
-    expectStatus(res, 200);
-    const body = await res.json();
-    if (!looksValidEstate(body)) {
-      throw new Error(`invalid estate payload: configured=${body?.configured}`);
-    }
-    return body.configured
-      ? `configured: arc=${body.arc.status}, agent=${body.agent.online ? 'online' : 'offline'}`
-      : 'unconfigured estate (offline host)';
-  });
-
-  await check(1, 'coder-status: answers configured contract with capacity', async () => {
-    const res = await get('public/labs/coder-status');
-    expectStatus(res, 200);
-    const body = await res.json();
-    if (!looksValidCoderStatus(body)) {
-      throw new Error(`invalid coder status payload: configured=${body?.configured}`);
-    }
-    return body.configured
-      ? `configured: reachable=${body.reachable}, running=${body.capacity?.running || 0}`
-      : 'unconfigured coder (no CODER_URL)';
-  });
+  for (const [name, run] of ANONYMOUS_CHECKS) await check(1, name, () => run({ base, get }));
 }
 
 // ── tier 2: cosmos conditional patch ─────────────────────────────────────────

@@ -30,35 +30,30 @@ export const DEFAULT_ATTACHMENT_CONTAINER = 'speakerevents';
  */
 export function searchRecordFields(value, query, prefix = '') {
   if (!value || !query) return [];
+  if (typeof value === 'string') return stringMatch(value, query, prefix);
+  return childEntries(value, prefix).flatMap(([childPath, child]) => searchRecordFields(child, query, childPath));
+}
+
+/** A string that contains the query, as one match with about 40 characters either side; none when it does not. */
+function stringMatch(value, query, prefix) {
   const q = query.toLowerCase();
-  const matches = [];
+  const idx = value.toLowerCase().indexOf(q);
+  if (idx === -1) return [];
+  const start = Math.max(0, idx - 40);
+  const end = Math.min(value.length, idx + q.length + 40);
+  const snippet = (start > 0 ? '...' : '') + value.slice(start, end).trim() + (end < value.length ? '...' : '');
+  return [{ path: prefix, snippet }];
+}
 
-  if (typeof value === 'string') {
-    if (value.toLowerCase().includes(q)) {
-      const idx = value.toLowerCase().indexOf(q);
-      const start = Math.max(0, idx - 40);
-      const end = Math.min(value.length, idx + q.length + 40);
-      const snippet = (start > 0 ? '...' : '') + value.slice(start, end).trim() + (end < value.length ? '...' : '');
-      matches.push({ path: prefix, snippet });
-    }
-    return matches;
-  }
-
+/** The items of a list or the fields of an object, each with its path; none for anything else. */
+function childEntries(value, prefix) {
   if (Array.isArray(value)) {
-    value.forEach((item, index) => {
-      matches.push(...searchRecordFields(item, query, prefix ? `${prefix}[${index}]` : `[${index}]`));
-    });
-    return matches;
+    return value.map((item, index) => [prefix ? `${prefix}[${index}]` : `[${index}]`, item]);
   }
-
   if (typeof value === 'object') {
-    for (const [key, val] of Object.entries(value)) {
-      const childPath = prefix ? `${prefix}.${key}` : key;
-      matches.push(...searchRecordFields(val, query, childPath));
-    }
+    return Object.entries(value).map(([key, val]) => [prefix ? `${prefix}.${key}` : key, val]);
   }
-
-  return matches;
+  return [];
 }
 
 /**
@@ -77,21 +72,30 @@ export function extractDocAttachments(doc) {
     ['file', doc.files],
     ['image', doc.images],
   ]) {
-    if (Array.isArray(list)) {
-      for (const item of list) {
-        if (!item || typeof item !== 'object') continue;
-        const name = String(item.name || item.path || item.url || 'unnamed');
-        const container = item.container ? String(item.container) : item.path ? DEFAULT_ATTACHMENT_CONTAINER : null;
-        const path = item.path ? String(item.path) : null;
-        const url = item.url ? String(item.url) : null;
-        if (path || url) {
-          attachments.push({ docId, docType, kind, name, container, path, url });
-        }
-      }
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      const attachment = attachmentOf(item);
+      if (attachment) attachments.push({ docId, docType, kind, ...attachment });
     }
   }
 
   return attachments;
+}
+
+/** Where the container is not named, a stored path lives in DEFAULT_ATTACHMENT_CONTAINER. */
+function containerOf(item) {
+  if (item.container) return String(item.container);
+  return item.path ? DEFAULT_ATTACHMENT_CONTAINER : null;
+}
+
+/** One entry of `files` or `images` as `{ name, container, path, url }`, or null when it names no path or URL. */
+function attachmentOf(item) {
+  if (!item || typeof item !== 'object') return null;
+  const path = item.path ? String(item.path) : null;
+  const url = item.url ? String(item.url) : null;
+  if (!path && !url) return null;
+  const name = String(item.name || item.path || item.url || 'unnamed');
+  return { name, container: containerOf(item), path, url };
 }
 
 /**
@@ -115,10 +119,7 @@ export function scanDocuments(docs, query) {
       matches.push({ docId, docType, hits });
     }
 
-    const docAttachments = extractDocAttachments(doc);
-    if (docAttachments.length > 0) {
-      attachments.push(...docAttachments);
-    }
+    attachments.push(...extractDocAttachments(doc));
   }
 
   return { matches, attachments };
