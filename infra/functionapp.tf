@@ -954,10 +954,13 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # month of grace, a proposal that was not accepted loses the speaker's
     # name, email and bio and the review note; that cannot be undone. So,
     # like the three above, the step only COUNTS what it would strip (one
-    # audit row a day) until this reads "true". Flip it in a pull request of
-    # its own, after the owner has read a dry-run count and said yes
-    # (docs/runbooks/developer-api.md, "The yearly clean-up of proposals").
-    "PROPOSAL_STRIP_ENABLED" = "false"
+    # audit row a day) until this reads "true". It is flipped in a pull
+    # request of its own (docs/runbooks/developer-api.md, "The yearly
+    # clean-up of proposals"). The owner armed it on 2026-11-25 (#1777)
+    # without waiting for the first dry-run count, on the grounds that
+    # proposals were added only days earlier, so no cycle is over before
+    # 1 February 2027 and nothing is due.
+    "PROPOSAL_STRIP_ENABLED" = "true"
 
     # #1811, ADR 0046, owner decision 2026-11-24: the yearly content archive
     # (a long-term copy of the site's content in the content-archive
