@@ -258,6 +258,16 @@ that is not listed, or to let it publish, change the table in
   published answers `200` with `code: "PUBLISHED_ELSEWHERE"` and
   `existingId`; neither writes a second draft. `POST drafts` makes a new id
   every time, so a lost answer and a retry there would make two drafts.
+- To write a piece for an Ambassador program (the owner agreed on 2026-11-25,
+  [#1886](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1886)),
+  `POST drafts` also takes `"originRef": { "page": "ambassador", "id":
+  "<program id>" }`, with an optional `"part"` naming one of the program's
+  requirement ids. The program ids are in `GET cms/ambassador/programs`, which
+  the key may read. The site checks that the program exists and stores the
+  program's name with the draft. The draft then shows "Ambassador · <program>"
+  on every Pipeline page and is listed on the program in Ambassador. A program
+  that does not exist answers `400 INVALID`. Only `POST drafts` takes it: the
+  markdown route does not, and no later change can add, move or remove it.
 - A key whose **Read drafts** switch is off still gets its answers, but
   wherever one would carry the draft as the page sees it (`draft` with
   `fields`), the text is replaced by `bodyWithheld: true` and the summary

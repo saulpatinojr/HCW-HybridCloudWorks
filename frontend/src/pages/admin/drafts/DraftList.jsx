@@ -58,7 +58,7 @@ function DraftRow({ draft, selected, busy, onSelect, onBackToDrafts }) {
           {ORIGIN_LABELS[draft.origin] || 'Written here'}
           {draft.updatedAt ? ` · ${formatUpdated(draft.updatedAt)}` : ''}
         </span>
-        <TaxonomyChips item={draft} className="mt-1" />
+        <TaxonomyChips item={draft} sourceAsLink={false} className="mt-1" />
       </button>
       {draft.stage === 'in_review' && (
         <div className="mt-2 flex flex-wrap items-center gap-2">

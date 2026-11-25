@@ -126,6 +126,10 @@ export const FORBIDDEN_CONTENT_UPDATE_KEYS = new Set([
   // unaffected — it never passes through this validator.
   "slug",
   "Slug",
+  // Where the piece came from (page-links/origin-ref.js, #1886) is written
+  // once, checked against the record it names, when the draft is created.
+  // A later save cannot move a piece to another program or invent a Page.
+  "originRef",
   // An interview's private blocks (ADR 0040, D9 and D10) have one writer
   // each on the server: the consent record is written by POST cms/interviews
   // from the token, the recording's provenance by the upload and fetch

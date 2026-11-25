@@ -25,6 +25,7 @@ import {
 } from './ambassadorModel';
 import { ReadinessPanel } from './Parts';
 import useReadiness from './useReadiness';
+import ProgramPipeline from './ProgramPipeline';
 
 export const WINDOW_BADGE = {
   open: { id: 'open', label: 'Window open', tone: 'ok', help: 'Applications are being taken now.' },
@@ -227,6 +228,8 @@ export function ProgramDetails({
   onStart,
   starting,
   pursuing,
+  onFileEvidence,
+  filing = null,
 }) {
   const readiness = useReadiness(program?.id, readinessPeriodFor(program), {
     enabled: Boolean(program),
@@ -294,6 +297,14 @@ export function ProgramDetails({
             progress={evidence ? upkeepProgress(program, evidence, todayIso()) : null}
           />
           <AdditionalPrograms program={program} additional={additional} byId={byId} />
+          {onFileEvidence && (
+            <ProgramPipeline
+              program={program}
+              evidenceRows={evidence}
+              onFileEvidence={onFileEvidence}
+              filing={filing}
+            />
+          )}
           <div className="rounded-md border border-border p-3">
             <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Readiness from your evidence

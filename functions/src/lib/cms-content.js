@@ -31,6 +31,7 @@ import {
   derivedOriginSources,
 } from "./cms/taxonomy-fields.js";
 import { errorFacts } from './http/error-response.js';
+import { originFilterClause } from './page-links/origin-ref.js';
 
 /**
  * Ported verbatim from Site-Main cms-functions.js:2211
@@ -114,6 +115,8 @@ export const ADMIN_CONTENT_SNAPSHOT_FIELDS = [
   // Taxonomy (ADR 0033 §4): what the item becomes, how it became an idea.
   "kind",
   "ideaOrigin",
+  // The admin Page that sent it into the Pipeline (#1886, page-links/origin-ref.js).
+  "originRef",
 ];
 
 export const LIST_DEFAULT_LIMIT = 25;
@@ -295,6 +298,14 @@ export function buildListQuery(query) {
   const parameters = [{ name: "@limit", value: max }];
   const kind = queryLower(query, "kind");
   const ideaOrigin = queryLower(query, "ideaOrigin");
+  // `?originPage=ambassador&originId=<program id>`: the pieces one Page sent (#1886).
+  // Pushed before the other clauses' parameters on purpose: Cosmos binds by name.
+  const origin = originFilterClause(
+    queryText(query, "originPage"),
+    queryText(query, "originId"),
+    parameters,
+  );
+  if (origin.error) return { error: origin.error };
   // In parameter order: each clause pushes its own parameters as it is built.
   const clauses = [
     statusClause(queryText(query, "status"), parameters),
@@ -302,6 +313,7 @@ export function buildListQuery(query) {
     typeClause(queryLower(query, "type"), parameters),
     kind ? kindFilterClause(kind, parameters) : null,
     ideaOrigin ? ideaOriginFilterClause(ideaOrigin, parameters) : null,
+    origin.clause,
     searchClause(search, parameters),
   ].filter(Boolean);
 

@@ -55,6 +55,9 @@ export const ORIGIN_LABELS = Object.freeze({
   'repo-import': 'From docs/content',
   vault: 'From my vault',
   paste: 'Pasted in',
+  // Koda, the content agent (Agent Content API, ADR 0037): drafts it writes
+  // carry DRAFT_ORIGINS.agent, and read "Written here" until this line (#1886).
+  agent: 'Written by Koda',
 });
 
 /** What a stage lets the owner do, for a draft not saved yet. */

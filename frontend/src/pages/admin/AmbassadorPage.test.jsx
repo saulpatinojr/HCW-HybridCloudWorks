@@ -16,6 +16,7 @@ const getJSON = vi.fn();
 const postJSON = vi.fn();
 const sendJSON = vi.fn();
 const setSearchParams = vi.fn();
+const navigate = vi.fn();
 let searchParams = '';
 
 vi.mock('@/lib/api', () => ({
@@ -28,6 +29,7 @@ vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: vi.fn() 
 vi.mock('react-router', () => ({
   useSearchParams: () => [new URLSearchParams(searchParams), setSearchParams],
   useLocation: () => ({ pathname: '/admin/ambassador' }),
+  useNavigate: () => navigate,
   Link: ({ to, children, ...rest }) => (
     <a href={to} {...rest}>
       {children}
@@ -169,6 +171,8 @@ const routes =
       'cms/ambassador/applications': { items: APPLICATIONS },
       'cms/ambassador/evidence': { items: EVIDENCE },
       'cms/ambassador/readiness/program-mvp': { readiness: READINESS },
+      // The Pipeline pieces a program started (#1886): none unless a test says so.
+      'cms/content': { success: true, items: [] },
       'cms/ambassador/evidence/sources/speaking': {
         items: [
           { id: 'event-1', title: 'KCDC talk', date: '2026-08-14', imported: true },
@@ -188,6 +192,7 @@ const panel = () => within(screen.getByRole('tabpanel'));
 beforeEach(() => {
   searchParams = '';
   setSearchParams.mockReset();
+  navigate.mockReset();
   getJSON.mockReset().mockImplementation(routes());
   postJSON
     .mockReset()
@@ -286,32 +291,33 @@ describe('Programs', () => {
   });
 });
 
-describe('Programs: keeping a membership active (2026-10-11)', () => {
-  const today = new Date();
-  const pad = (v) => String(v).padStart(2, '0');
-  const day = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-  const quarter = `Q${Math.floor(today.getMonth() / 3) + 1} ${today.getFullYear()}`;
-  const UPKEEP_PROGRAM = {
-    id: 'program-gk',
-    docType: 'program',
-    name: 'GitKraken Ambassador',
-    provider: 'GitKraken',
-    category: 'developer-advocacy',
-    description: 'Ambassadors.',
-    enabled: true,
-    order: 4,
-    membershipStatus: 'active',
-    applicationWindow: { opens: null, closes: null, note: 'Rolling applications.' },
-    requirements: [],
-    upkeep: { period: 'quarter', minCount: 2, evidenceTypes: [], note: 'Log each piece.' },
-    contributionTrackerUrl: 'https://example.com/tracker',
-  };
-  const FILED = [
-    { ...EVIDENCE[0], id: 'evidence-gk-1', date: day, programIds: ['program-gk'] },
-    // General evidence is not filed under the program, so it is not counted.
-    { ...EVIDENCE[0], id: 'evidence-general', date: day, programIds: [] },
-  ];
+// A held membership with a quota to keep: GitKraken's two pieces a quarter.
+const today = new Date();
+const pad = (v) => String(v).padStart(2, '0');
+const day = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+const quarter = `Q${Math.floor(today.getMonth() / 3) + 1} ${today.getFullYear()}`;
+const UPKEEP_PROGRAM = {
+  id: 'program-gk',
+  docType: 'program',
+  name: 'GitKraken Ambassador',
+  provider: 'GitKraken',
+  category: 'developer-advocacy',
+  description: 'Ambassadors.',
+  enabled: true,
+  order: 4,
+  membershipStatus: 'active',
+  applicationWindow: { opens: null, closes: null, note: 'Rolling applications.' },
+  requirements: [],
+  upkeep: { period: 'quarter', minCount: 2, evidenceTypes: [], note: 'Log each piece.' },
+  contributionTrackerUrl: 'https://example.com/tracker',
+};
+const FILED = [
+  { ...EVIDENCE[0], id: 'evidence-gk-1', date: day, programIds: ['program-gk'] },
+  // General evidence is not filed under the program, so it is not counted.
+  { ...EVIDENCE[0], id: 'evidence-general', date: day, programIds: [] },
+];
 
+describe('Programs: keeping a membership active (2026-10-11)', () => {
   it('shows this quarter’s count and the tracker on a held membership’s card, and the rule in its details', async () => {
     searchParams = 'tab=programs';
     getJSON.mockImplementation(
@@ -354,6 +360,148 @@ describe('Programs: keeping a membership active (2026-10-11)', () => {
     render(<AmbassadorPage />);
     await panel().findAllByTestId('program-card');
     expect(panel().queryByTestId('program-upkeep')).not.toBeInTheDocument();
+  });
+});
+
+describe('Programs: into the Pipeline and back (#1886)', () => {
+  const LIVE_PIECE = {
+    id: 'content-live',
+    Title: 'Reading a busy commit graph',
+    contentStatus: 'published',
+    Live: true,
+    originRef: { page: 'ambassador', id: 'program-gk', part: null, label: 'GitKraken Ambassador' },
+  };
+  const DRAFT_PIECE = {
+    id: 'content-draft',
+    Title: 'Merge conflicts, calmly',
+    contentStatus: 'drafting',
+    Live: false,
+    originRef: LIVE_PIECE.originRef,
+  };
+  const upkeepRoutes = (over = {}) =>
+    routes({
+      'cms/ambassador/programs': { items: [...PROGRAMS, UPKEEP_PROGRAM] },
+      'cms/ambassador/evidence': { items: FILED },
+      'cms/ambassador/readiness/program-gk': {
+        readiness: { ...READINESS, programId: 'program-gk', requirements: [], missing: [] },
+      },
+      ...over,
+    });
+  const gitKrakenCard = () =>
+    panel()
+      .getAllByTestId('program-card')
+      .find((c) => c.textContent.startsWith('GitKraken Ambassador'));
+
+  it('starts a draft for a held program from its card, tagged to the program, and opens it on Drafts', async () => {
+    searchParams = 'tab=programs';
+    getJSON.mockImplementation(upkeepRoutes());
+    postJSON.mockResolvedValue({ ok: true, draft: { id: 'draft-1' } });
+    render(<AmbassadorPage />);
+    await panel().findByTestId('program-upkeep');
+    await act(async () => {
+      fireEvent.click(within(gitKrakenCard()).getByRole('button', { name: /Draft a piece/ }));
+    });
+    fireEvent.change(screen.getByLabelText('Working title'), {
+      target: { value: 'Reading a busy commit graph' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Create draft' }));
+    });
+    expect(postJSON).toHaveBeenCalledWith('cms/drafts', {
+      fields: { title: 'Reading a busy commit graph', tags: [] },
+      originRef: { page: 'ambassador', id: 'program-gk' },
+    });
+    expect(navigate).toHaveBeenCalledWith('/admin/drafts?draft=draft-1');
+  });
+
+  it('offers no draft button on a program that is not held', async () => {
+    searchParams = 'tab=programs';
+    getJSON.mockImplementation(
+      upkeepRoutes({
+        'cms/ambassador/programs': {
+          items: [...PROGRAMS, { ...UPKEEP_PROGRAM, membershipStatus: 'none' }],
+        },
+      })
+    );
+    render(<AmbassadorPage />);
+    await panel().findAllByTestId('program-card');
+    expect(
+      within(gitKrakenCard()).queryByRole('button', { name: /Draft a piece/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it('lists the program’s pieces with their stage, and files a live one as evidence once', async () => {
+    searchParams = 'tab=programs';
+    getJSON.mockImplementation(
+      upkeepRoutes({ 'cms/content': { success: true, items: [LIVE_PIECE, DRAFT_PIECE] } })
+    );
+    postJSON.mockResolvedValue({ success: true, created: 1, existing: 0 });
+    render(<AmbassadorPage />);
+    await panel().findByTestId('program-upkeep');
+    await act(async () => {
+      fireEvent.click(within(gitKrakenCard()).getByRole('button', { name: 'Details' }));
+    });
+    const pipeline = await screen.findByTestId('program-pipeline');
+    await within(pipeline).findByText('Reading a busy commit graph');
+    expect(getJSON).toHaveBeenCalledWith(
+      'cms/content?originPage=ambassador&originId=program-gk&sort=updatedAt&limit=100'
+    );
+    expect(within(pipeline).getByText('Merge conflicts, calmly')).toBeInTheDocument();
+    // Only the live piece can be filed; the draft is still in the Pipeline.
+    const fileButtons = within(pipeline).getAllByRole('button', { name: /File as evidence/ });
+    expect(fileButtons).toHaveLength(1);
+    await act(async () => {
+      fireEvent.click(fileButtons[0]);
+    });
+    expect(postJSON).toHaveBeenCalledWith('cms/ambassador/evidence/import', {
+      sourceModule: 'content',
+      ids: ['content-live'],
+      programIds: ['program-gk'],
+    });
+  });
+
+  it('marks a live piece already filed instead of offering it again', async () => {
+    searchParams = 'tab=programs';
+    getJSON.mockImplementation(
+      upkeepRoutes({
+        'cms/content': { success: true, items: [LIVE_PIECE] },
+        'cms/ambassador/evidence': {
+          items: [
+            ...FILED,
+            {
+              id: 'evidence-import-x',
+              title: LIVE_PIECE.Title,
+              date: '2026-11-20',
+              sourceModule: 'content',
+              sourceId: 'content-live',
+              programIds: ['program-gk'],
+            },
+          ],
+        },
+      })
+    );
+    render(<AmbassadorPage />);
+    await panel().findByTestId('program-upkeep');
+    await act(async () => {
+      fireEvent.click(within(gitKrakenCard()).getByRole('button', { name: 'Details' }));
+    });
+    const pipeline = await screen.findByTestId('program-pipeline');
+    await within(pipeline).findByText('Filed as evidence');
+    expect(
+      within(pipeline).queryByRole('button', { name: /File as evidence/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it('opens a program’s details from a Pipeline chip’s link (?program=)', async () => {
+    searchParams = 'tab=programs&program=program-gk';
+    window.history.pushState({}, '', '/admin/ambassador?tab=programs&program=program-gk');
+    getJSON.mockImplementation(upkeepRoutes());
+    try {
+      render(<AmbassadorPage />);
+      expect(await screen.findByTestId('program-pipeline')).toBeInTheDocument();
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
   });
 });
 

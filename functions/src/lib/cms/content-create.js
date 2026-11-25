@@ -37,6 +37,7 @@ import {
   buildImageLineage,
 } from "./content-quality.js";
 import { findDuplicateContent, buildDedupFields } from "./content-dedup.js";
+import { OriginRefError, resolveOriginRef } from "../page-links/origin-ref.js";
 import {
   normalizePublishTarget,
   SUPPORTED_PUBLISH_TARGETS,
@@ -144,7 +145,29 @@ export async function createContentDocument({
     }
     throw error;
   }
-  const { kind: _kind, ideaOrigin: _ideaOrigin, ...rest } = data;
+  // Where the piece came from (#1886): checked against the record it names,
+  // never stored as sent.
+  let originRef;
+  try {
+    originRef = await resolveOriginRef(store, data.originRef);
+  } catch (error) {
+    if (error instanceof OriginRefError) {
+      return {
+        status: 400,
+        body: {
+          success: false,
+          error: authoredMessage(error, "The originRef was refused."),
+        },
+      };
+    }
+    throw error;
+  }
+  const {
+    kind: _kind,
+    ideaOrigin: _ideaOrigin,
+    originRef: _originRef,
+    ...rest
+  } = data;
 
   const normalizedData = normalizeContentBodyFields({
     ...rest,
@@ -226,6 +249,7 @@ export async function createContentDocument({
     // Only when the caller classified it; a null clears nothing on a create.
     ...(taxonomyFields.kind && { kind: taxonomyFields.kind }),
     ...(taxonomyFields.ideaOrigin && { ideaOrigin: taxonomyFields.ideaOrigin }),
+    ...(originRef && { originRef }),
     id: uuid(),
     contentStatus: requestedStatus,
     storageCollection: "content",

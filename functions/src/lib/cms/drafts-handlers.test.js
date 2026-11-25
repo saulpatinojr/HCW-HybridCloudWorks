@@ -1255,3 +1255,68 @@ describe("every draft answer carries its links (owner request 2026-11-01)", () =
     expect(draftLinks({ id: "d-live", contentStatus: "published" }, deps).editUrl).toContain("?draft=d-live");
   });
 });
+
+describe("POST cms/drafts with an originRef (#1886)", () => {
+  const PROGRAM = Object.freeze({
+    id: "program-gitkraken-ambassador",
+    docType: "program",
+    name: "GitKraken Ambassador",
+    requirements: [{ id: "quarterly-content", label: "Two pieces a quarter" }],
+  });
+  const REF = { page: "ambassador", id: PROGRAM.id, part: "quarterly-content" };
+
+  it("stores the checked reference and the Page's idea origin, and returns both", async () => {
+    const { handlers, store } = setup({ seed: [PROGRAM] });
+    const res = parse(
+      await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context),
+    );
+    expect(res.status).toBe(201);
+    const stored = store.docs.get(res.body.draft.id);
+    expect(stored.originRef).toEqual({ ...REF, label: "GitKraken Ambassador" });
+    expect(stored.ideaOrigin).toBe("ambassador-requirement");
+    expect(stored.contentStatus).toBe(DRAFTS_STAGE_STATUS);
+    expect(res.body.draft.originRef).toEqual({ ...REF, label: "GitKraken Ambassador" });
+  });
+
+  it("keeps an idea origin the caller chose", async () => {
+    const { handlers, store } = setup({ seed: [PROGRAM] });
+    const res = parse(
+      await handlers.create(
+        request({ body: { fields: { ...FIELDS, ideaOrigin: "audience-question" }, originRef: REF } }),
+        context,
+      ),
+    );
+    expect(store.docs.get(res.body.draft.id).ideaOrigin).toBe("audience-question");
+  });
+
+  it("is listed with the reference, so the Drafts page can show where it came from", async () => {
+    const { handlers } = setup({ seed: [PROGRAM] });
+    await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context);
+    const list = parse(await handlers.list(request(), context));
+    expect(list.body.drafts[0].originRef.label).toBe("GitKraken Ambassador");
+    expect(LIST_QUERY).toContain("c.originRef");
+  });
+
+  it("refuses a program that does not exist, and writes nothing", async () => {
+    const { handlers, store } = setup();
+    const res = parse(
+      await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("No Ambassador program has that id.");
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
+  it("a save cannot add or change the reference", async () => {
+    const { handlers } = setup({ seed: [PROGRAM] });
+    const draft = await created(handlers);
+    const res = parse(
+      await handlers.update(
+        request({ id: draft.id, body: { fields: { ...FIELDS, originRef: REF }, etag: draft.etag } }),
+        context,
+      ),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Not a draft field: originRef/);
+  });
+});

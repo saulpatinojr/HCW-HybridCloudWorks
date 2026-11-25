@@ -23,6 +23,9 @@ import {
 } from './ambassadorModel';
 import { ReadsStatus, allLanded } from './Parts';
 import { AdditionalPrograms, ProgramDetails, UpkeepLine, WINDOW_BADGE } from './ProgramParts';
+import { DraftForProgramButton } from './ProgramPipeline';
+import { linkedId } from '@/hooks/useLinkedItem';
+import { LINK_PARAMS } from '@/lib/itemLinks';
 
 const byIdOf = (programs) => programById(programs);
 
@@ -112,6 +115,11 @@ function ProgramCard({
             )}
             Start application
           </Button>
+          {/* An active membership with a quota to keep (GitKraken's two pieces a
+              quarter) starts its next piece from here (#1886). */}
+          {showsUpkeep(program, evidenceRows) && !disabled && (
+            <DraftForProgramButton program={program} />
+          )}
         </div>
       </CardContent>
     </Card>
@@ -125,8 +133,11 @@ export default function ProgramsTab({ hub, nav }) {
   // would read as nothing filed.
   const evidenceRows = evidence && allLanded([evidence]) ? evidence.data : null;
   const reads = [programs, applications];
-  const [detailsId, setDetailsId] = useState(null);
+  // `?program=<id>` opens that program's details: where a Pipeline chip that
+  // says "Ambassador · <program>" leads (lib/pageLinks.js, #1886).
+  const [detailsId, setDetailsId] = useState(() => linkedId(LINK_PARAMS.program));
   const [starting, setStarting] = useState(null);
+  const [filing, setFiling] = useState(null);
   const today = todayIso();
 
   const pursuedPrograms = useMemo(
@@ -159,6 +170,16 @@ export default function ProgramsTab({ hub, nav }) {
   };
 
   const details = ordered.find((p) => p.id === detailsId) || null;
+
+  // A live piece from the Pipeline becomes evidence for this program through
+  // the existing import from Published content (one row per piece, so a
+  // second click finds the first row).
+  const fileEvidence = async (contentId) => {
+    if (!details || filing) return;
+    setFiling(contentId);
+    await hub.writes.importEvidence('content', [contentId], [details.id]);
+    setFiling(null);
+  };
 
   return (
     <div className="space-y-4 pt-4">
@@ -205,6 +226,8 @@ export default function ProgramsTab({ hub, nav }) {
         onStart={start}
         starting={Boolean(starting)}
         pursuing={details ? pursuedPrograms.has(details.id) : false}
+        onFileEvidence={fileEvidence}
+        filing={filing}
       />
     </div>
   );

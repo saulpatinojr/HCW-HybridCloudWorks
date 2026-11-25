@@ -455,3 +455,26 @@ describe("field list provenance", () => {
     }
   });
 });
+
+describe("cms content list originRef filter (#1886)", () => {
+  it("projects originRef and filters by the Page and record that sent the piece", async () => {
+    const store = makeStore();
+    const h = createCmsContentHandlers({ guard: allowGuard, store });
+    await h.list(
+      makeRequest({ query: { originPage: "ambassador", originId: "program-gitkraken-ambassador" } }),
+      context,
+    );
+    const [, text, params] = store.queryDocs.mock.calls[0];
+    expect(text).toContain('c["originRef"]');
+    expect(text).toContain("c.originRef.page = @originPage AND c.originRef.id = @originId");
+    expect(params).toContainEqual({ name: "@originId", value: "program-gitkraken-ambassador" });
+  });
+
+  it("refuses a Page that cannot send work, before any query", async () => {
+    const store = makeStore();
+    const h = createCmsContentHandlers({ guard: allowGuard, store });
+    const res = await h.list(makeRequest({ query: { originPage: "cost" } }), context);
+    expect(res.status).toBe(400);
+    expect(store.queryDocs).not.toHaveBeenCalled();
+  });
+});
