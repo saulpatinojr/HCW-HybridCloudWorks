@@ -36,9 +36,18 @@
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { ARTICLE_SLUG, providerOf, slugOf, STRICT_SLUG } from './lib/content-manifest-items.mjs';
+import { fetchPublished } from './lib/content-manifest-fetch.mjs';
+import { addDesigns, isDesignItem } from './lib/content-manifest-designs.mjs';
+import { describeSectionCounts, sectionCounts, serverSections } from './lib/content-manifest-sections.mjs';
+// The parts below now live in their own files; they are exported from here too, so callers keep their imports.
+export { PROVIDERS, STRICT_SLUG, ARTICLE_SLUG } from './lib/content-manifest-items.mjs';
+export { describeFetchFailure } from './lib/content-manifest-fetch.mjs';
+export { DESIGN_PROVIDERS } from './lib/content-manifest-designs.mjs';
+export { SECTION_TYPES, sectionCounts, describeSectionCounts } from './lib/content-manifest-sections.mjs';
+
 // The public detail route's allowlist, imported rather than copied: the one
 // list both sides project a design to (#1628). The module imports nothing.
-import { PUBLIC_CONTENT_DETAIL_FIELDS } from '../functions/src/lib/public-reads.js';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 // NOT under public/. Vite copies public/ verbatim into dist, so a manifest
@@ -46,171 +55,6 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 // no visitor ever requests, because the browser gets its data from the API.
 // This is build input only; scripts/prerender.mjs reads it from disk.
 const OUT_PATH = join(ROOT, 'frontend', 'data', 'content-manifest.json');
-
-/**
- * Providers with a `/:provider/blog/:slug` route. Mirrors VALID_PROVIDERS in
- * frontend/src/context/ProviderContext.jsx, which the test holds it to: a
- * provider missing here gets no article pages pre-rendered and no local
- * section counts. Docker since #776, when its blog detail route arrived.
- */
-export const PROVIDERS = Object.freeze([
-  'azure',
-  'aws',
-  'gcp',
-  'github',
-  'terraform',
-  'finops',
-  'vmware',
-  'ansible',
-  'docker',
-]);
-
-/**
- * Fetch the published corpus from the Function App's origin (T-718).
- *
- * THIS USED TO QUERY COSMOS DIRECTLY, and that one workload is what held the
- * `0.0.0.0` sentinel open on the Cosmos firewall — the switch admitting any
- * workload in any Azure tenant at the network layer. Moving the query into the
- * app, which runs inside the subnet the firewall already admits, is what let
- * that close. See docs/decisions/0025-cosmos-firewall-datacenter-sentinel.md.
- *
- * THE ORIGIN HOSTNAME, NOT THE CLOUDFLARE ONE. A GitHub runner asking the
- * public host is served Cloudflare's Bot Fight Mode interstitial and a 403
- * (#175, and the reason ADR 0024 exists). The workflow opens a per-run App
- * Service IP allow rule for its own address instead and asks the origin
- * directly — the same window deploy-functions.yml already uses to probe
- * /api/health.
- *
- * No credential of any kind: the route is anonymous, and reaching it is the
- * authorization. That is why the window closes in an always() step.
- */
-/**
- * What a non-OK status from the manifest route actually means.
- *
- * SEPARATED AND EXPORTED so the wording is asserted rather than trusted. The
- * previous version said a 403 meant the origin window and "anything else is the
- * app itself", and on 2026-08-31 that sent the investigation at a Function App
- * that was entirely healthy.
- *
- * 403 — the per-run origin allow rule is shut or has not propagated, so the
- * runner's address is not admitted. Re-running is the answer.
- *
- * 404 — THE HOST ANSWERED. It is up; this route is not on the revision it is
- * running. That is a deploy that has not happened, not an outage, and the two
- * look nothing alike once said out loud. It happened exactly this way: the
- * route arrived with #277 at 2026-08-30 02:45 UTC, the last Deploy Functions
- * run was 01:21 UTC on a commit that predates it, and the nightly job failed on
- * 08-30 and 08-31 while Monitor Functions Registered reported 121 registered
- * functions and a clean bill of health. That monitor was not wrong — the
- * functions it counted were the pre-#277 set, and counting cannot see a missing
- * one. `deploy-functions.yml` is workflow_dispatch only, so merging a route
- * never deploys it.
- */
-export function describeFetchFailure(status, url) {
-  if (status === 403) {
-    return (
-      `${url} answered 403. The per-run origin window is closed or has not propagated, so this ` +
-      "runner's address is not admitted to the origin. Re-run rather than widening anything."
-    );
-  }
-  if (status === 404) {
-    return (
-      `${url} answered 404. The HOST answered, so it is up — this ROUTE is not on the revision ` +
-      'it is running, which is a deploy that has not happened rather than an outage. Check that ' +
-      'Deploy Functions has run on a commit containing ' +
-      'functions/src/functions/public-content-manifest.js: ' +
-      'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-functions.yml'
-    );
-  }
-  return (
-    `${url} answered ${status}. Neither 403 (the origin window) nor 404 (a route missing from ` +
-    'the deployed revision), so this is the app itself.'
-  );
-}
-
-async function fetchPublished() {
-  const origin = process.env.FUNCTION_ORIGIN;
-  if (!origin) {
-    throw new Error(
-      'FUNCTION_ORIGIN is not set. Expected the Function App origin hostname, e.g. ' +
-        'https://func-site-prod-cus-01.azurewebsites.net — NOT the Cloudflare host, which ' +
-        'answers datacenter clients with a bot interstitial.'
-    );
-  }
-
-  const url = `${origin.replace(/\/+$/, '')}/api/public/content-manifest`;
-
-  // TIMED OUT, and the reason is the firewall rather than politeness. The
-  // workflow opens a per-run origin allow rule and closes it in an always()
-  // step — but always() runs when the STEP ends, and a fetch with no timeout
-  // does not end. A DNS or TLS stall would hold this open until the job's own
-  // timeout, leaving a dead runner's address admitted to the origin for as long
-  // as it took. A bounded failure closes the window on schedule.
-  //
-  // Two minutes because the response is the whole published corpus — hundreds
-  // of kilobytes of article bodies — not a health check.
-  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) }).catch((error) => {
-    if (error?.name === 'TimeoutError') {
-      throw new Error(
-        `${url} did not respond within 120s. The origin window is closed by the always() step ` +
-          'regardless; re-run rather than widening the timeout unless the corpus has genuinely ' +
-          'outgrown it.'
-      );
-    }
-    throw error;
-  });
-  if (!response.ok) throw new Error(describeFetchFailure(response.status, url));
-
-  const body = await response.json();
-  if (!body?.success || !Array.isArray(body.items)) {
-    throw new Error(`${url} returned an unexpected body: ${JSON.stringify(body).slice(0, 200)}`);
-  }
-  // `sections` is optional: a deployed revision that predates it simply does
-  // not send one, and `buildManifest` then counts what it can itself. So are
-  // `interviews` (ADR 0040): a revision without them pre-renders none. And
-  // `designs` (#1628): a revision without them still sends its designs among
-  // the articles, so null (not []) tells `buildManifest` to keep them there.
-  // Present but not a list is refused: a revision that sends the field has
-  // already taken designs out of `items`, so treating it as absent would
-  // drop every design while the log said they were among the articles.
-  if (body.designs !== undefined && !Array.isArray(body.designs)) {
-    throw new Error(`${url} returned designs that are not a list: ${JSON.stringify(body.designs).slice(0, 200)}`);
-  }
-  return {
-    items: body.items,
-    sections: body.sections,
-    interviews: Array.isArray(body.interviews) ? body.interviews : [],
-    designs: Array.isArray(body.designs) ? body.designs : null,
-  };
-}
-
-/** The provider segment an article's URL lives under. */
-function providerOf(item) {
-  const raw = String(item.cloudProvider || item['Cloud Provider'] || '')
-    .toLowerCase()
-    .trim();
-  return PROVIDERS.includes(raw) ? raw : null;
-}
-
-function slugOf(item) {
-  return String(item.slug || item.Slug || '').trim();
-}
-
-/**
- * The address of every page the build writes (articles, interviews and
- * designs): lowercase words joined by single hyphens. The slug becomes a folder of the built site, so a slash, a
- * dot or anything else that could change that folder never reaches it.
- * One pattern for all three, so they cannot drift apart. It matches `SLUG` in
- * functions/src/lib/interviews/schema.js, which the test holds it to.
- */
-export const STRICT_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-/**
- * Articles follow STRICT_SLUG too since 2026-11-12 (#1628): the 23 live
- * articles were renamed to `<topic>-<id>` addresses, the last mixed-case ones
- * among them. Kept as its own name because callers and tests import it.
- */
-export const ARTICLE_SLUG = STRICT_SLUG;
 
 /**
  * The fields the article page renders. Everything else is dropped.
@@ -290,7 +134,7 @@ export const ARTICLE_FIELDS = Object.freeze([
 ]);
 
 /** Keep only the rendered fields, and only when present. */
-function project(item) {
+export function project(item) {
   const out = {};
   for (const field of ARTICLE_FIELDS) {
     if (item[field] !== undefined) out[field] = item[field];
@@ -377,183 +221,32 @@ function addInterviews(interviews, { routes, data, skipped }) {
 }
 
 /**
- * Providers with a design page, `/<provider>/architecture-designs/<slug>`.
- * Mirrors ProviderArchitectureDispatcher in frontend/src/App.jsx, which the
- * test holds it to: any other provider's design address is the app's 404
- * page, so a design there gets no page built.
+ * Why an item gets no article page, in the order they are checked; each
+ * returns the run-log line, or nothing when it does not apply.
  */
-export const DESIGN_PROVIDERS = Object.freeze(['aws', 'azure', 'gcp', 'finops', 'vmware']);
-
-const isDesignItem = (item) => String(item?.type || '').toLowerCase() === 'architecture';
-
-/**
- * The design routes and seeds (#1628), onto `routes`, `data` and `skipped`.
- * `architecture:<slug>` is the key ArchitectureDetailTemplate reads, as
- * `usePublicData` keys it.
- *
- * PROJECTED TO WHAT `public/content` ANSWERS, PUBLIC_CONTENT_DETAIL_FIELDS,
- * the same list the route projects to (DESIGN_FIELDS in
- * functions/src/lib/public-content-manifest.js), imported rather than
- * copied. The route's projection is the boundary; this one is the second
- * layer, as `project` is for articles, so a field a route regression let
- * through still never reaches the committed manifest. Not narrower than
- * that list: a page built from a seed does not fetch again in the browser,
- * so a narrower seed would show readers less than the live page does.
- *
- * A design whose address repeats one of the built-in designs
- * (frontend/src/data/architectures.js) is still listed: the pre-render drops
- * the repeated route, and the seed is the API's copy, which the page lays
- * over the built-in one exactly as it does in the browser.
- */
-/** Keep only the public detail fields, and only when present. */
-function projectDesign(item) {
-  const out = {};
-  for (const field of PUBLIC_CONTENT_DETAIL_FIELDS) {
-    if (item[field] !== undefined) out[field] = item[field];
-  }
-  return out;
-}
-
-function addDesigns(designs, { routes, data, skipped }) {
-  for (const item of designs) {
-    const slug = slugOf(item);
-    if (!slug || !STRICT_SLUG.test(slug)) {
-      skipped.push(`design ${item?.id || '(no id)'}: no usable slug`);
-      continue;
-    }
-    const provider = providerOf(item);
-    if (!provider || !DESIGN_PROVIDERS.includes(provider)) {
-      const named = item.cloudProvider || item['Cloud Provider'] || 'unset';
-      skipped.push(`design ${slug}: no design page for provider (${named})`);
-      continue;
-    }
-    if (Object.prototype.hasOwnProperty.call(data, `architecture:${slug}`)) {
-      // One key per slug, whatever the provider: the page reads
-      // `architecture:<slug>`. First one in wins, as for articles.
-      skipped.push(`design ${slug}: duplicate slug (item ${item.id}); first occurrence kept`);
-      continue;
-    }
-    routes.push(`/${provider}/architecture-designs/${slug}`);
-    data[`architecture:${slug}`] = projectDesign(item);
-  }
-}
-
-/**
- * Sections countable from the corpus this script is handed, keyed by the `type`
- * their page selects on.
- *
- * THIS IS THE FALLBACK PATH, not the main one, and it is approximate. The
- * manifest route counts every countable section across every container a
- * section page reads (functions/src/lib/public-section-counts.js) and
- * `buildManifest` prefers its answer. What is below runs only when the deployed
- * revision predates that field, so that merging the route and deploying it can
- * happen in either order without the five frameworks pages returning to the
- * sitemap in between.
- *
- * Approximate in a specific, measured way. `useFrameworkData` does NOT read the
- * `content` container alone: like useBlogData and useCoderCornerData it falls
- * back to the legacy `blogs` container when `content` yields nothing for a
- * provider, and this script is handed `content` only. That gap is survivable
- * rather than harmless — on 2026-09-07 `blogs` held five published documents,
- * all `type: blog` and all slug-duplicates of `content` documents, so it puts
- * nothing on any page and no framework in any count. `coder-corner` and `code`
- * are still absent here despite reading the same two containers, because their
- * pages had nothing in `content` at all, so this path's zero for them would
- * rest entirely on a container it cannot see.
- *
- * `architecture-designs` joins on the same terms and with a stronger claim than
- * frameworks has. The AWS and Azure architecture pages do fall back to `blogs`,
- * so this path's view of them is the same approximation as above — but a zero
- * counted here only drops a route whose `architecture-blueprints.js` is also
- * empty (`sitemapRoutes` in frontend/scripts/prerender.mjs), and the one
- * provider whose module is empty is VMware, whose page reads `content` and
- * nothing else. For the only route this count can act on, the corpus this
- * script is handed IS the corpus the page reads.
- */
-export const SECTION_TYPES = Object.freeze({
-  frameworks: 'framework',
-  'architecture-designs': 'architecture',
-});
-
-/**
- * Published items per provider per section, so the pre-render can leave a
- * section page with nothing in it out of the sitemap (issue #373).
- *
- * Returns null when no item carries a non-empty string `type` — the deployed
- * manifest route predates the field, or the corpus carries the field but no
- * value — so a consumer cannot mistake "unknown" for "zero". A `null` or empty
- * `type` counts as absent for the same reason.
- * `_unattributed` counts items of the section's type that name no recognised
- * provider; the frameworks page infers a provider from titles and URLs as a
- * last resort, so while that count is non-zero no provider's zero is trusted.
- */
-const hasType = (item) => typeof item?.type === 'string' && item.type.trim() !== '';
-
-export function sectionCounts(items) {
-  if (!items.some(hasType)) return null;
-  const sections = {};
-  for (const provider of [...PROVIDERS, '_unattributed']) {
-    sections[provider] = Object.fromEntries(Object.keys(SECTION_TYPES).map((s) => [s, 0]));
-  }
-  for (const item of items) {
-    if (!hasType(item)) continue;
-    const type = item.type.trim().toLowerCase();
-    for (const [section, wanted] of Object.entries(SECTION_TYPES)) {
-      if (type !== wanted) continue;
-      sections[providerOf(item) || '_unattributed'][section] += 1;
-    }
-  }
-  return sections;
-}
-
-/**
- * A `sections` map the route sent, or null when it sent nothing usable.
- *
- * Anything that is not a plain object is treated as absent rather than
- * repaired: the consumer reads `sections[provider][section]`, and a value that
- * is not that shape must not be allowed to answer `undefined` and be mistaken
- * for a section this build simply has no count for.
- */
-function serverSections(sections) {
-  if (!sections || typeof sections !== 'object' || Array.isArray(sections)) return null;
-  return sections;
-}
-
-/**
- * The run-log line saying where the section counts came from — or that there
- * are none.
- *
- * THREE OUTCOMES, NOT TWO, and the third is the one worth a function. The
- * first version of this line printed "counted frameworks locally" whenever the
- * route sent nothing, but `sectionCounts()` returns null when no item carries a
- * `type` at all, and then nothing was counted: `manifest.sections` is null and
- * the pre-render drops no route. That is a plausible state during exactly the
- * upgrade window this message exists to narrate — an older deployed revision
- * that sends neither `sections` nor `type` — so the message would have claimed
- * a count that did not happen, in the one situation someone reads it.
- *
- * Worth asserting rather than trusting, for the same reason
- * `describeFetchFailure` is: nobody watches this run, they read the line it
- * leaves behind, and a wrong line sends them somewhere else.
- *
- * The per-provider figure is read off whichever provider the map happens to
- * carry first rather than off `azure` by name, so a map that never mentions
- * Azure still reports its real width.
- *
- * @param {object|null} sections the counts that ended up on the manifest
- * @param {boolean} fromRoute whether the route supplied them
- */
-export function describeSectionCounts(sections, fromRoute) {
-  if (fromRoute) {
-    const providers = Object.keys(sections || {});
-    const width = providers.length ? Object.keys(sections[providers[0]] || {}).length : 0;
-    return `sections: from the route — ${width} per provider, across every container a section page reads`;
-  }
-  if (sections) {
-    return 'sections: route sent none — counted frameworks locally from the corpus; deploy Functions for the rest';
-  }
-  return 'sections: none — the route sent none and no item carries a type, so no section page leaves the sitemap this build';
-}
+const ARTICLE_SKIPS = [
+  // An interview is not an article: the route leaves them out of
+  // `items` and sends them as `interviews`; a revision that still sends
+  // one here must not put it at /<provider>/blog/<slug>.
+  ({ item, slug }) => isInterviewItem(item) && `${slug || item.id}: an interview, not an article`,
+  // The route sends designs on their own; a copy among the articles
+  // must not also put the design at /<provider>/blog/<slug>.
+  ({ item, slug, designs }) => designs !== null && isDesignItem(item) && `${slug || item.id}: a design, sent with the designs`,
+  ({ item, slug }) => !slug && `${item.id}: no slug`,
+  // Named by id, not by the slug: the slug is the part that is wrong.
+  ({ item, slug }) => !ARTICLE_SLUG.test(slug) && `${item.id}: slug is not a safe address`,
+  // Without a provider there is no URL to pre-render it at. With no file
+  // of its own, any address for it answers 404 since #1613, though the
+  // app still shows it to a reader in the browser.
+  ({ item, slug, provider }) => !provider && `${slug}: no recognised provider (${item.cloudProvider || 'unset'})`,
+  // Two published items with one slug — a re-ingested article, usually.
+  // The route is one URL either way; listing it twice made the sitemap
+  // repeat it (three times, on 2026-09-06: issue #373) and the pre-render
+  // write the same file three times. First one in wins, the rest are
+  // named here so the duplicate is visible in the run log.
+  ({ item, slug, data }) =>
+    Object.prototype.hasOwnProperty.call(data, `article:${slug}`) && `${slug}: duplicate slug (item ${item.id}); first occurrence kept`,
+];
 
 /**
  * @param {object[]} items the published articles
@@ -579,48 +272,14 @@ export function buildManifest(items, sectionsFromRoute = null, interviews = [], 
     sectionCounts(Array.isArray(designs) ? [...items, ...designs] : items);
 
   for (const item of items) {
-    const slug = slugOf(item);
-    const provider = providerOf(item);
-    if (isInterviewItem(item)) {
-      // An interview is not an article: the route leaves them out of
-      // `items` and sends them as `interviews`; a revision that still sends
-      // one here must not put it at /<provider>/blog/<slug>.
-      skipped.push(`${slug || item.id}: an interview, not an article`);
+    const article = { item, slug: slugOf(item), provider: providerOf(item), designs, data };
+    const skip = ARTICLE_SKIPS.map((check) => check(article)).find(Boolean);
+    if (skip) {
+      skipped.push(skip);
       continue;
     }
-    if (designs !== null && isDesignItem(item)) {
-      // The route sends designs on their own; a copy among the articles
-      // must not also put the design at /<provider>/blog/<slug>.
-      skipped.push(`${slug || item.id}: a design, sent with the designs`);
-      continue;
-    }
-    if (!slug) {
-      skipped.push(`${item.id}: no slug`);
-      continue;
-    }
-    if (!ARTICLE_SLUG.test(slug)) {
-      // Named by id, not by the slug: the slug is the part that is wrong.
-      skipped.push(`${item.id}: slug is not a safe address`);
-      continue;
-    }
-    if (!provider) {
-      // Without a provider there is no URL to pre-render it at. With no file
-      // of its own, any address for it answers 404 since #1613, though the
-      // app still shows it to a reader in the browser.
-      skipped.push(`${slug}: no recognised provider (${item.cloudProvider || 'unset'})`);
-      continue;
-    }
-    if (Object.prototype.hasOwnProperty.call(data, `article:${slug}`)) {
-      // Two published items with one slug — a re-ingested article, usually.
-      // The route is one URL either way; listing it twice made the sitemap
-      // repeat it (three times, on 2026-09-06: issue #373) and the pre-render
-      // write the same file three times. First one in wins, the rest are
-      // named here so the duplicate is visible in the run log.
-      skipped.push(`${slug}: duplicate slug (item ${item.id}); first occurrence kept`);
-      continue;
-    }
-    routes.push(`/${provider}/blog/${slug}`);
-    data[`article:${slug}`] = project(item);
+    routes.push(`/${article.provider}/blog/${article.slug}`);
+    data[`article:${article.slug}`] = project(item);
   }
 
   addInterviews(Array.isArray(interviews) ? interviews : [], { routes, data, skipped });
@@ -629,7 +288,7 @@ export function buildManifest(items, sectionsFromRoute = null, interviews = [], 
   return { generatedAt: null, routes, data, skipped, sections };
 }
 
-async function main() {
+export async function main() {
   // Published only, and still asserted in the QUERY rather than filtered after
   // — the query just lives in the app now
   // (functions/src/lib/public-content-manifest.js), where it is pinned by an

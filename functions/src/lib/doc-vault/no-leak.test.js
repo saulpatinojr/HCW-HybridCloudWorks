@@ -399,6 +399,10 @@ describe('lock 4: the public site does not carry the page, its client or a way t
     expect(read(join(REPO, 'frontend/src/data/searchIndex.js'))).not.toMatch(/doc.?vault/i);
     expect(read(join(REPO, 'frontend/scripts/prerender.mjs'))).not.toMatch(/doc.?vault/i);
     expect(read(join(REPO, 'scripts/build-content-manifest.mjs'))).not.toMatch(/doc.?vault/i);
+    // the manifest builder's parts, in their own files since the Qlty clean-up
+    for (const part of ['items', 'fetch', 'designs', 'sections']) {
+      expect(read(join(REPO, `scripts/lib/content-manifest-${part}.mjs`))).not.toMatch(/doc.?vault/i);
+    }
     expect(read(join(REPO, 'frontend/scripts/generate-public-data.cjs'))).not.toMatch(/doc.?vault/i);
   });
 });

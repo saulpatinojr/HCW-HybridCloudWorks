@@ -147,15 +147,8 @@ export async function movePins(floors, findings, { write, root = ROOT, tracked =
     const files = [[pin.file, moveManifestRange], ...(tracked.has(lockfile) ? [[lockfile, moveLockfileRange]] : [])];
     const written = [];
     try {
-      const edits = [];
-      for (const [file, move] of files) {
-        const original = await io.readFile(path.join(root, file), 'utf8');
-        edits.push({ file, original, text: move(file, original, pin.range, to) });
-      }
-      for (const edit of write ? edits : []) {
-        await io.writeFile(path.join(root, edit.file), edit.text);
-        written.push(edit);
-      }
+      const edits = await pinEdits(files, pin, to, { root, io });
+      if (write) await writeEdits(edits, written, { root, io });
       moved.push({ file: pin.file, line: pin.line, where: pin.where, from: pin.range, to, files: edits.map((e) => e.file) });
     } catch (err) {
       for (const edit of written) await io.writeFile(path.join(root, edit.file), edit.original);
@@ -163,6 +156,24 @@ export async function movePins(floors, findings, { write, root = ROOT, tracked =
     }
   }
   return moved;
+}
+
+/** Each file's text with the pin moved, beside its original, before anything is written. */
+async function pinEdits(files, pin, to, { root, io }) {
+  const edits = [];
+  for (const [file, move] of files) {
+    const original = await io.readFile(path.join(root, file), 'utf8');
+    edits.push({ file, original, text: move(file, original, pin.range, to) });
+  }
+  return edits;
+}
+
+/** Write the edits in order, recording each one on `written` as it lands so a failure can put it back. */
+async function writeEdits(edits, written, { root, io }) {
+  for (const edit of edits) {
+    await io.writeFile(path.join(root, edit.file), edit.text);
+    written.push(edit);
+  }
 }
 
 /** One run: read the sources, move the floors and the pins they carry, and write the summary and body asked for. */

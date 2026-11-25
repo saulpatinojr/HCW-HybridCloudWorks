@@ -217,14 +217,7 @@ export async function main(argv = process.argv.slice(2), out = console) {
   const names = await listNames(exportBlobs);
   const set = selectRestoreSet(names, { asOf: opts.asOf });
   const layers = restoreLayers(set);
-  // Every layer's manifest, because each says which containers that layer
-  // carries: a delta lists fewer than the full (layersCarrying). Each is
-  // checked before the target is opened (assertManifest).
-  const manifests = new Map();
-  for (const layer of layers) {
-    const manifest = await readJson(exportBlobs, manifestBlobName(layer.mode, layer.runId));
-    manifests.set(`${layer.mode}/${layer.runId}`, assertManifest(manifest, layer));
-  }
+  const manifests = await readManifests(exportBlobs, layers);
   const fullManifest = manifests.get(`full/${set.full}`);
   const deltaManifests = layers.slice(1).map((layer) => manifests.get(`${layer.mode}/${layer.runId}`));
   // An older set can list a container retired since (#1479); the target has no
@@ -234,7 +227,56 @@ export async function main(argv = process.argv.slice(2), out = console) {
     provisionedContainerNames(),
     opts.containers
   );
+  logPlan(out, { opts, set, containers, legacy });
 
+  const db = opts.dryRun ? null : await targetDatabase(opts.targetEndpoint, opts.database);
+  out.log(
+    formatRow(
+      ['container', 'full', 'deltas', 'created', 'replaced', opts.verify ? 'target' : '', 'ms'],
+      ROW_WIDTHS
+    )
+  );
+
+  const totals = { documents: 0, created: 0, replaced: 0, mismatches: 0 };
+  for (const name of containers) {
+    const run = { name, target: db ? db.container(name) : null, exportBlobs, layers, manifests, set, opts };
+    const row = await restoreContainer(run);
+    totals.documents += row.counts.documents;
+    totals.created += row.counts.created ?? 0;
+    totals.replaced += row.counts.replaced ?? 0;
+    if (row.mismatch) totals.mismatches += 1;
+    out.log(row.line);
+  }
+
+  logTotals(out, { opts, totals, containers, elapsedMs: Date.now() - startedAt });
+  if (totals.mismatches) {
+    out.log(
+      `${totals.mismatches} container(s) MISMATCH: the target does not hold what it held before this run plus what the run created — investigate before calling the drill passed`
+    );
+    return 1;
+  }
+  return 0;
+}
+
+/** The report's column widths. */
+const ROW_WIDTHS = [32, 10, 10, 10, 10, 10, 10];
+
+/**
+ * Every layer's manifest, because each says which containers that layer
+ * carries: a delta lists fewer than the full (layersCarrying). Each is
+ * checked before the target is opened (assertManifest).
+ */
+async function readManifests(exportBlobs, layers) {
+  const manifests = new Map();
+  for (const layer of layers) {
+    const manifest = await readJson(exportBlobs, manifestBlobName(layer.mode, layer.runId));
+    manifests.set(`${layer.mode}/${layer.runId}`, assertManifest(manifest, layer));
+  }
+  return manifests;
+}
+
+/** The lines before the table: what is restored where, and what is skipped. */
+function logPlan(out, { opts, set, containers, legacy }) {
   out.log(
     `${opts.dryRun ? 'DRY RUN — counting' : 'Restoring'} full/${set.full} + ${set.deltas.length} delta(s)` +
       (set.deltas.length ? ` (${set.deltas[0]} … ${set.deltas[set.deltas.length - 1]})` : '') +
@@ -250,95 +292,75 @@ export async function main(argv = process.argv.slice(2), out = console) {
         `target has no container for them (restore one by hand if it is wanted): ${legacy.join(', ')}`
     );
   }
+}
 
-  const db = opts.dryRun ? null : await targetDatabase(opts.targetEndpoint, opts.database);
-  const widths = [32, 10, 10, 10, 10, 10, 10];
-  out.log(
-    formatRow(
-      ['container', 'full', 'deltas', 'created', 'replaced', opts.verify ? 'target' : '', 'ms'],
-      widths
-    )
-  );
-
-  let totalDocuments = 0;
-  let totalCreated = 0;
-  let totalReplaced = 0;
-  let mismatches = 0;
-  for (const name of containers) {
-    const t0 = Date.now();
-    const target = db ? db.container(name) : null;
-    const tally = createRestoreTally({ writes: Boolean(target) });
-    // What the target already held, so --verify can expect that plus what this
-    // run creates: an empty account on a first run, more on a rerun.
-    const before = target && opts.verify ? await countDocuments(target) : 0;
-    for (const layer of layersCarrying(name, layers, manifests)) {
-      const layerName = `${layer.mode}/${layer.runId}`;
-      const blob = dataBlobName(layer.mode, layer.runId, name);
-      // Only the layers whose manifest lists this container, and a manifest is
-      // written only once every listed container's marker is present, so a
-      // missing data blob here is a corrupted or expired set, never an empty
-      // container (those still have a blob). Loud, in --dry-run too.
-      assertLayerBlobPresent(await blobExists(exportBlobs, blob), blob);
-      tally.touch(layerName);
-      if (target) {
-        // Nothing per document is kept: the upsert's status code says whether
-        // the id was new (201) or already restored by an earlier layer (200).
-        await forEachConcurrent(readDocuments(exportBlobs, blob), opts.concurrency, async (doc) => {
-          const { statusCode } = await target.items.upsert(doc);
-          tally.add(layerName, statusCode);
-        });
-      } else {
-        for await (const _doc of readDocuments(exportBlobs, blob)) tally.add(layerName);
-      }
-    }
-    const counts = tally.result();
-    const fullCount = counts.perLayer[`full/${set.full}`] ?? 0;
-    const deltaCount = Object.entries(counts.perLayer)
-      .filter(([layer]) => layer.startsWith('delta/'))
-      .reduce((n, [, c]) => n + c, 0);
-    let verified = '';
-    if (target && opts.verify) {
-      const check = verifyTargetCount({ before, created: counts.created, inTarget: await countDocuments(target) });
-      verified = check.cell;
-      if (!check.ok) mismatches += 1;
-    }
-    totalDocuments += counts.documents;
-    totalCreated += counts.created ?? 0;
-    totalReplaced += counts.replaced ?? 0;
-    out.log(
-      formatRow(
-        [
-          name,
-          fullCount,
-          deltaCount,
-          counts.created ?? '',
-          counts.replaced ?? '',
-          verified,
-          Date.now() - t0,
-        ],
-        widths
-      )
-    );
+/**
+ * One container, every layer that carries it in order; with --verify, its
+ * count in the target checked. Returns the tally, whether the count failed,
+ * and the report row.
+ */
+async function restoreContainer({ name, target, exportBlobs, layers, manifests, set, opts }) {
+  const t0 = Date.now();
+  const tally = createRestoreTally({ writes: Boolean(target) });
+  // What the target already held, so --verify can expect that plus what this
+  // run creates: an empty account on a first run, more on a rerun.
+  const before = target && opts.verify ? await countDocuments(target) : 0;
+  for (const layer of layersCarrying(name, layers, manifests)) {
+    await restoreLayer({ name, layer, target, exportBlobs, tally, concurrency: opts.concurrency });
   }
+  const counts = tally.result();
+  const fullCount = counts.perLayer[`full/${set.full}`] ?? 0;
+  const deltaCount = Object.entries(counts.perLayer)
+    .filter(([layer]) => layer.startsWith('delta/'))
+    .reduce((n, [, c]) => n + c, 0);
+  let verified = '';
+  let mismatch = false;
+  if (target && opts.verify) {
+    const check = verifyTargetCount({ before, created: counts.created, inTarget: await countDocuments(target) });
+    verified = check.cell;
+    mismatch = !check.ok;
+  }
+  const line = formatRow(
+    [name, fullCount, deltaCount, counts.created ?? '', counts.replaced ?? '', verified, Date.now() - t0],
+    ROW_WIDTHS
+  );
+  return { counts, mismatch, line };
+}
 
-  const elapsedMs = Date.now() - startedAt;
+/** One layer of one container: upserted into the target, or only counted on a dry run. */
+async function restoreLayer({ name, layer, target, exportBlobs, tally, concurrency }) {
+  const layerName = `${layer.mode}/${layer.runId}`;
+  const blob = dataBlobName(layer.mode, layer.runId, name);
+  // Only the layers whose manifest lists this container, and a manifest is
+  // written only once every listed container's marker is present, so a
+  // missing data blob here is a corrupted or expired set, never an empty
+  // container (those still have a blob). Loud, in --dry-run too.
+  assertLayerBlobPresent(await blobExists(exportBlobs, blob), blob);
+  tally.touch(layerName);
+  if (!target) {
+    for await (const _doc of readDocuments(exportBlobs, blob)) tally.add(layerName);
+    return;
+  }
+  // Nothing per document is kept: the upsert's status code says whether
+  // the id was new (201) or already restored by an earlier layer (200).
+  await forEachConcurrent(readDocuments(exportBlobs, blob), concurrency, async (doc) => {
+    const { statusCode } = await target.items.upsert(doc);
+    tally.add(layerName, statusCode);
+  });
+}
+
+/** The closing line: how many documents were (or would be) restored, and how long it took. */
+function logTotals(out, { opts, totals, containers, elapsedMs }) {
   const minutes = (elapsedMs / 60000).toFixed(1);
   if (opts.dryRun) {
     out.log(
-      `Would restore ${totalDocuments} document(s) across ${containers.length} container(s) in ${elapsedMs} ms (${minutes} min) — distinct and overwritten counts come from the upsert responses and are computed only on a real run`
+      `Would restore ${totals.documents} document(s) across ${containers.length} container(s) in ${elapsedMs} ms (${minutes} min) — distinct and overwritten counts come from the upsert responses and are computed only on a real run`
     );
   } else {
     out.log(
-      `Restored ${totalDocuments} document(s): ${totalCreated} created, ${totalReplaced} replaced (already in the target, or superseded by a later layer), across ${containers.length} container(s) in ${elapsedMs} ms (${minutes} min)`
+      `Restored ${totals.documents} document(s): ${totals.created} created, ${totals.replaced} replaced (already in the target, or superseded by a later layer), across ${containers.length} container(s) in ${elapsedMs} ms (${minutes} min)`
     );
   }
-  if (mismatches) {
-    out.log(
-      `${mismatches} container(s) MISMATCH: the target does not hold what it held before this run plus what the run created — investigate before calling the drill passed`
-    );
-    return 1;
-  }
-  return 0;
 }
 
 const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

@@ -230,7 +230,9 @@ describe('the smoke script reaches the origin only through originFetch', () => {
   // A bare fetch() added later would bring the one-request failure of run
   // 39997538990 back, for that check alone, with nothing else to say why.
   it('has no bare fetch( call outside createOriginFetch\'s default', () => {
-    const source = readFileSync(new URL('./smoke-deployed.mjs', import.meta.url), 'utf8');
+    // the script and the parts it was split into (scripts/lib/smoke-*.mjs), read as one text
+    const files = ['./smoke-deployed.mjs', './lib/smoke-runner.mjs', './lib/smoke-origin.mjs', './lib/smoke-tiers.mjs'];
+    const source = files.map((file) => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const bare = [...code.matchAll(/(?<![\w.])fetch\(/g)];
     expect(bare).toHaveLength(0);
