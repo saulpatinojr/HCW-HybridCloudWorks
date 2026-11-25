@@ -70,6 +70,35 @@ export {
 } from './gemini-http.js';
 export { parseWindowResult, transcribeWindow } from './gemini-window.js';
 
+/** Start a resumable upload; answers the URL to send the bytes to, which must be Gemini's own host. */
+async function startUpload({ fetchImpl, apiKey, length, mimeType, signal }) {
+  const start = await request(fetchImpl, `${GEMINI_API_BASE}/upload/v1beta/files`, {
+    method: 'POST',
+    headers: {
+      'x-goog-api-key': apiKey,
+      'X-Goog-Upload-Protocol': 'resumable',
+      'X-Goog-Upload-Command': 'start',
+      'X-Goog-Upload-Header-Content-Length': String(length),
+      'X-Goog-Upload-Header-Content-Type': mimeType,
+      'Content-Type': 'application/json',
+    },
+    // No display name: a file name is the owner's data and Gemini needs none.
+    body: JSON.stringify({ file: {} }),
+    timeoutMs: WINDOW_TIMEOUT_MS,
+    signal,
+  });
+  if (start.status < 200 || start.status >= 300) throw statusError(start.status, 'upload start');
+  const uploadUrl = start.headers?.get?.('x-goog-upload-url');
+  // The key goes to this URL as a header, so it must be Gemini's own host.
+  if (!uploadUrl || !isGeminiUrl(uploadUrl)) {
+    throw new GeminiFilesError('Gemini answered the upload start without an upload URL.', {
+      code: 'GEMINI_NO_UPLOAD_URL',
+      status: 502,
+    });
+  }
+  return uploadUrl;
+}
+
 /**
  * Upload a stream to Gemini's Files API and wait until the file is ACTIVE.
  *
@@ -96,30 +125,7 @@ export async function uploadToGemini({
   if (!Number.isInteger(length) || length <= 0) {
     throw new GeminiFilesError('The recording has no length to upload.', { code: 'AUDIO_EMPTY', status: 422 });
   }
-  const start = await request(fetchImpl, `${GEMINI_API_BASE}/upload/v1beta/files`, {
-    method: 'POST',
-    headers: {
-      'x-goog-api-key': apiKey,
-      'X-Goog-Upload-Protocol': 'resumable',
-      'X-Goog-Upload-Command': 'start',
-      'X-Goog-Upload-Header-Content-Length': String(length),
-      'X-Goog-Upload-Header-Content-Type': mimeType,
-      'Content-Type': 'application/json',
-    },
-    // No display name: a file name is the owner's data and Gemini needs none.
-    body: JSON.stringify({ file: {} }),
-    timeoutMs: WINDOW_TIMEOUT_MS,
-    signal,
-  });
-  if (start.status < 200 || start.status >= 300) throw statusError(start.status, 'upload start');
-  const uploadUrl = start.headers?.get?.('x-goog-upload-url');
-  // The key goes to this URL as a header, so it must be Gemini's own host.
-  if (!uploadUrl || !isGeminiUrl(uploadUrl)) {
-    throw new GeminiFilesError('Gemini answered the upload start without an upload URL.', {
-      code: 'GEMINI_NO_UPLOAD_URL',
-      status: 502,
-    });
-  }
+  const uploadUrl = await startUpload({ fetchImpl, apiKey, length, mimeType, signal });
 
   const body = typeof stream?.getReader === 'function' ? stream : Readable.toWeb(stream);
   const finish = await request(fetchImpl, uploadUrl, {
@@ -144,8 +150,16 @@ export async function uploadToGemini({
     });
   }
 
-  // A large file is PROCESSING for a moment; a prompt that names it before
-  // it is ACTIVE is refused, so wait, briefly and boundedly.
+  file = await waitUntilActive(file, { fetchImpl, apiKey, sleep, signal });
+  return { name: file.name, uri: file.uri, mimeType: file.mimeType || mimeType };
+}
+
+/**
+ * A large file is PROCESSING for a moment; a prompt that names it before
+ * it is ACTIVE is refused, so wait, briefly and boundedly. Answers the file
+ * once ACTIVE; any other end state is a refusal.
+ */
+async function waitUntilActive(file, { fetchImpl, apiKey, sleep, signal }) {
   for (let poll = 0; file.state === 'PROCESSING' && poll < ACTIVE_POLL_LIMIT; poll += 1) {
     if (signal?.aborted) throw abortError(signal);
     await sleep(ACTIVE_POLL_MS);
@@ -164,7 +178,7 @@ export async function uploadToGemini({
       status: 422,
     });
   }
-  return { name: file.name, uri: file.uri, mimeType: file.mimeType || mimeType };
+  return file;
 }
 
 /**
