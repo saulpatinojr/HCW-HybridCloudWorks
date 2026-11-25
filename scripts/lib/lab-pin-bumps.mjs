@@ -1002,35 +1002,8 @@ async function ansibleCoreBump({ text, pinned, pinnedSha, target, http }) {
     throw new Error(`ansible-core ${target} declares Requires-Python ${requiresPython[0]}, where ${pinned} declared ${requiresPython[1]}; check it against BASE_PYTHON_VERSION and bootstrap.sh's PYTHON_VERSION by hand`);
   }
 
-  // What the new release requires, against what the pinned one did. Only an
-  // exact pin is followed; any other change leaves open whether the pinned
-  // dependency still satisfies it, which is not evaluated here.
   const deps = readAnsibleCoreDeps(text);
-  const byName = new Map(deps.map((dep) => [normalizePyName(dep.name), dep]));
-  const wanted = requirementsOf(next.info?.requires_dist);
-  const had = requirementsOf(current.info?.requires_dist);
-  const moves = new Map();
-  const show = (req) => `${req.name}${req.specifier || ' (any version)'}${req.marker ? `; ${req.marker}` : ''}`;
-  for (const [key, req] of wanted) {
-    const dep = byName.get(key);
-    if (!dep) throw new Error(`ansible-core ${target} requires ${show(req)}, which ANSIBLE_CORE_DEPS does not list`);
-    const exact = exactPin(req.specifier);
-    if (exact) {
-      if (exact !== dep.version) moves.set(key, exact);
-      continue;
-    }
-    const before = had.get(key);
-    if (!before || before.specifier !== req.specifier || before.marker !== req.marker) {
-      throw new Error(
-        `ansible-core ${target} requires ${show(req)}, where ${pinned} required ${before ? show(before) : 'nothing of it'}; whether ${dep.name}==${dep.version} still satisfies that is not evaluated here`
-      );
-    }
-  }
-  for (const [key, req] of had) {
-    if (!wanted.has(key)) {
-      throw new Error(`ansible-core ${target} no longer requires ${req.name}; ANSIBLE_CORE_DEPS still lists it, and which of its other lines go with it is not worked out here`);
-    }
-  }
+  const moves = dependencyMoves({ deps, next, current, pinned, target });
 
   const edits = [envEditOf('ANSIBLE_CORE_VERSION', target), envEditOf('ANSIBLE_CORE_SHA256', nextWheel.sha256)];
   const evidence = [
@@ -1045,41 +1018,89 @@ async function ansibleCoreBump({ text, pinned, pinnedSha, target, http }) {
   // request carries the whole requirements file's provenance, not just the
   // line that moved.
   for (const dep of deps) {
-    const url = `${PYPI}/${dep.name}/${dep.version}/json`;
-    const release = await http.json(url);
-    const pinnedWheel = wheelsOf(release).find((f) => f.digests?.sha256 === dep.sha256);
-    if (!pinnedWheel) {
-      throw new Error(`${url} lists no wheel of ${dep.name} ${dep.version} with the SHA256 ANSIBLE_CORE_DEPS pins (${dep.sha256.slice(0, 12)}…)`);
-    }
-    const moveTo = moves.get(normalizePyName(dep.name));
-    if (!moveTo) {
-      evidence.push({ item: `${pinnedWheel.filename} (SHA256, unchanged)`, value: dep.sha256, source: url });
+    const found = await dependencyEvidence(dep, moves.get(normalizePyName(dep.name)), target, http);
+    if (found.edit) edits.push(found.edit);
+    evidence.push(found.evidence);
+  }
+  return { key: 'ansible-core', label: 'ansible-core (lab image and lab host)', from: pinned, to: target, edits, evidence };
+}
+
+/** A requirement as a reader writes it: `name>=1.2; marker`. */
+const showRequirement = (req) => `${req.name}${req.specifier || ' (any version)'}${req.marker ? `; ${req.marker}` : ''}`;
+
+/**
+ * What the new release requires, against what the pinned one did. Only an
+ * exact pin is followed; any other change leaves open whether the pinned
+ * dependency still satisfies it, which is not evaluated here. Returns the
+ * dependencies to move, as normalized name -> version; throws on anything else
+ * that changed.
+ */
+function dependencyMoves({ deps, next, current, pinned, target }) {
+  const byName = new Map(deps.map((dep) => [normalizePyName(dep.name), dep]));
+  const wanted = requirementsOf(next.info?.requires_dist);
+  const had = requirementsOf(current.info?.requires_dist);
+  const moves = new Map();
+  for (const [key, req] of wanted) {
+    const dep = byName.get(key);
+    if (!dep) throw new Error(`ansible-core ${target} requires ${showRequirement(req)}, which ANSIBLE_CORE_DEPS does not list`);
+    const exact = exactPin(req.specifier);
+    if (exact) {
+      if (exact !== dep.version) moves.set(key, exact);
       continue;
     }
-    const movedUrl = `${PYPI}/${dep.name}/${moveTo}/json`;
-    const moved = await http.json(movedUrl);
-    const tags = wheelTags(pinnedWheel.filename);
-    const same = wheelsOf(moved).filter((f) => wheelTags(f.filename) === tags);
-    if (same.length !== 1 || !SHA256_HEX.test(same[0].digests?.sha256 ?? '')) {
-      throw new Error(`ansible-core ${target} pins ${dep.name}==${moveTo}, and ${movedUrl} lists ${same.length} wheels with a SHA256 for ${tags}, the tags of the pinned ${pinnedWheel.filename}`);
+    const before = had.get(key);
+    if (!before || before.specifier !== req.specifier || before.marker !== req.marker) {
+      throw new Error(
+        `ansible-core ${target} requires ${showRequirement(req)}, where ${pinned} required ${before ? showRequirement(before) : 'nothing of it'}; whether ${dep.name}==${dep.version} still satisfies that is not evaluated here`
+      );
     }
-    if (!sameRequirements(requirementsOf(release.info?.requires_dist), requirementsOf(moved.info?.requires_dist))) {
-      throw new Error(`ansible-core ${target} pins ${dep.name}==${moveTo}, whose own requirements differ from ${dep.version}'s (${movedUrl}), so which other lines move with it is not worked out here`);
+  }
+  for (const [key, req] of had) {
+    if (!wanted.has(key)) {
+      throw new Error(`ansible-core ${target} no longer requires ${req.name}; ANSIBLE_CORE_DEPS still lists it, and which of its other lines go with it is not worked out here`);
     }
-    const line = `${dep.name}==${moveTo} --hash=sha256:${same[0].digests.sha256}`;
-    edits.push({
+  }
+  return moves;
+}
+
+/**
+ * One ANSIBLE_CORE_DEPS line read back from PyPI: its evidence, and when the
+ * new ansible-core pins it to another version (`moveTo`), the edit that moves it.
+ */
+async function dependencyEvidence(dep, moveTo, target, http) {
+  const url = `${PYPI}/${dep.name}/${dep.version}/json`;
+  const release = await http.json(url);
+  const pinnedWheel = wheelsOf(release).find((f) => f.digests?.sha256 === dep.sha256);
+  if (!pinnedWheel) {
+    throw new Error(`${url} lists no wheel of ${dep.name} ${dep.version} with the SHA256 ANSIBLE_CORE_DEPS pins (${dep.sha256.slice(0, 12)}…)`);
+  }
+  if (!moveTo) {
+    return { evidence: { item: `${pinnedWheel.filename} (SHA256, unchanged)`, value: dep.sha256, source: url } };
+  }
+  const movedUrl = `${PYPI}/${dep.name}/${moveTo}/json`;
+  const moved = await http.json(movedUrl);
+  const tags = wheelTags(pinnedWheel.filename);
+  const same = wheelsOf(moved).filter((f) => wheelTags(f.filename) === tags);
+  if (same.length !== 1 || !SHA256_HEX.test(same[0].digests?.sha256 ?? '')) {
+    throw new Error(`ansible-core ${target} pins ${dep.name}==${moveTo}, and ${movedUrl} lists ${same.length} wheels with a SHA256 for ${tags}, the tags of the pinned ${pinnedWheel.filename}`);
+  }
+  if (!sameRequirements(requirementsOf(release.info?.requires_dist), requirementsOf(moved.info?.requires_dist))) {
+    throw new Error(`ansible-core ${target} pins ${dep.name}==${moveTo}, whose own requirements differ from ${dep.version}'s (${movedUrl}), so which other lines move with it is not worked out here`);
+  }
+  const line = `${dep.name}==${moveTo} --hash=sha256:${same[0].digests.sha256}`;
+  return {
+    edit: {
       file: VERSIONS_ENV_PATH,
       where: `ANSIBLE_CORE_DEPS ${dep.name}`,
       to: line,
       apply: (t) => replaceOne(t, new RegExp(`^(${escapeRe(dep.line)})$`, 'm'), line, `ANSIBLE_CORE_DEPS ${dep.name}`),
-    });
-    evidence.push({
+    },
+    evidence: {
       item: `${same[0].filename} (SHA256; ansible-core ${target} pins ${dep.name}==${moveTo})`,
       value: same[0].digests.sha256,
       source: `${movedUrl}, the wheel for the same tags as the ${pinnedWheel.filename} it replaces`,
-    });
-  }
-  return { key: 'ansible-core', label: 'ansible-core (lab image and lab host)', from: pinned, to: target, edits, evidence };
+    },
+  };
 }
 
 /**
@@ -1231,195 +1252,210 @@ export function renderReadmeMirrorProse(versions) {
   return `The mirror holds azurerm ${versions.PROVIDER_AZURERM_VERSION} and ${versions.PROVIDER_AZURERM_V4_VERSION}, azapi ${versions.PROVIDER_AZAPI_VERSION}, alz\n  ${versions.PROVIDER_ALZ_VERSION}, random ${versions.PROVIDER_RANDOM_VERSION}, modtm ${versions.PROVIDER_MODTM_VERSION} and time ${versions.PROVIDER_TIME_VERSION}, each zip verified after`;
 }
 
-export async function planImageTools({ files, http }) {
-  const env = readEnv(files[VERSIONS_ENV_PATH]);
-  const bumps = [];
-  const notes = [];
-  const envEdit = (key, to) => ({ file: VERSIONS_ENV_PATH, where: key, to, apply: (t) => setEnvValue(t, key, to) });
+/** The note a tool gets when its bump could not be verified: what was pinned and why it did not move. */
+const toolNote = (label, from, error) => ({ label, from: from ?? '—', to: '—', reason: error?.message || String(error) });
 
-  // 1. Terraform
-  try {
-    const indexUrl = 'https://releases.hashicorp.com/terraform/index.json';
-    const target = newestHashicorp(await http.json(indexUrl));
-    const pinned = env.TERRAFORM_VERSION;
-    if (target && compareVersions(target, pinned) > 0) {
-      const sumsUrl = `https://releases.hashicorp.com/terraform/${target}/terraform_${target}_SHA256SUMS`;
-      const file = `terraform_${target}_linux_amd64.zip`;
-      const hex = sumsLine(await http.text(sumsUrl), file);
-      if (!hex) throw new Error(`${sumsUrl} has no line for ${file}`);
-      bumps.push({
-        key: 'terraform',
-        label: 'Terraform (runner target)',
-        from: pinned,
-        to: target,
-        edits: [envEdit('TERRAFORM_VERSION', target), envEdit('TERRAFORM_SHA256', hex)],
-        evidence: [{ item: `${file} (SHA256)`, value: hex, source: sumsUrl }],
-      });
-    }
-  } catch (error) {
-    notes.push({ label: 'Terraform', from: env.TERRAFORM_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
+/**
+ * The tools whose release index, checksum file and versions.env keys share one
+ * shape: the newest release from an index, and its SHA256 from a checksums file.
+ */
+const CHECKSUMMED_TOOLS = [
+  {
+    key: 'terraform',
+    note: 'Terraform',
+    label: 'Terraform (runner target)',
+    versionKey: 'TERRAFORM_VERSION',
+    shaKey: 'TERRAFORM_SHA256',
+    indexUrl: 'https://releases.hashicorp.com/terraform/index.json',
+    newestOf: (index) => newestHashicorp(index),
+    sumsUrl: (target) => `https://releases.hashicorp.com/terraform/${target}/terraform_${target}_SHA256SUMS`,
+    file: (target) => `terraform_${target}_linux_amd64.zip`,
+  },
+  {
+    key: 'kubeconform',
+    note: 'kubeconform',
+    label: 'kubeconform (runner target)',
+    versionKey: 'KUBECONFORM_VERSION',
+    shaKey: 'KUBECONFORM_SHA256',
+    indexUrl: 'https://api.github.com/repos/yannh/kubeconform/releases?per_page=30',
+    newestOf: (index) => newestGitHubRelease(index),
+    sumsUrl: (target) => `https://github.com/yannh/kubeconform/releases/download/v${target}/CHECKSUMS`,
+    file: () => 'kubeconform-linux-amd64.tar.gz',
+  },
+  {
+    key: 'helm',
+    note: 'Helm',
+    label: 'Helm (runner target)',
+    versionKey: 'HELM_VERSION',
+    shaKey: 'HELM_SHA256',
+    indexUrl: 'https://api.github.com/repos/helm/helm/releases?per_page=30',
+    newestOf: (index) => newestGitHubRelease(index),
+    sumsUrl: (target) => `https://get.helm.sh/helm-v${target}-linux-amd64.tar.gz.sha256sum`,
+    file: (target) => `helm-v${target}-linux-amd64.tar.gz`,
+  },
+];
+
+/** One CHECKSUMMED_TOOLS entry's bump, or null when the pin is already the newest. */
+async function checksummedToolBump(tool, env, http) {
+  const target = tool.newestOf(await http.json(tool.indexUrl));
+  const pinned = env[tool.versionKey];
+  if (!target || compareVersions(target, pinned) <= 0) return null;
+  const sumsUrl = tool.sumsUrl(target);
+  const file = tool.file(target);
+  const hex = sumsLine(await http.text(sumsUrl), file);
+  if (!hex) throw new Error(`${sumsUrl} has no line for ${file}`);
+  return {
+    key: tool.key,
+    label: tool.label,
+    from: pinned,
+    to: target,
+    edits: [envEditOf(tool.versionKey, target), envEditOf(tool.shaKey, hex)],
+    evidence: [{ item: `${file} (SHA256)`, value: hex, source: sumsUrl }],
+  };
+}
+
+/**
+ * kubectl. A patch release of the pinned Kubernetes line is a bump. A
+ * newer line is a note: the schemas kubeconform checks against
+ * (KUBERNETES_JSON_SCHEMA_*) are a commit and a tree hash that no publisher
+ * serves a checksum for, so a bot cannot move them with kubectl, and the
+ * line is moved by hand with a test holding the two on one line (#1323). The
+ * patch comes from the pinned line's own pointer, so a newer line does not
+ * hide a patch release of the line in use. A newer line's note goes onto
+ * `notes`; the bump, if any, is returned.
+ */
+async function kubectlBump(env, http, notes) {
+  const pinned = env.KUBECTL_VERSION;
+  if (!STABLE_VERSION.test(pinned ?? '')) throw new Error('versions.env has no KUBECTL_VERSION to move from');
+  const line = lineOf(pinned);
+  const newest = coreVersion((await http.text('https://dl.k8s.io/release/stable.txt')).trim());
+  if (newest && compareVersions(lineOf(newest), line) > 0) {
+    notes.push({
+      label: 'Kubernetes release line',
+      from: pinned,
+      to: newest,
+      reason: `Kubernetes ${newest} starts the ${lineOf(newest)} line, so kubectl stays on ${line} until the line is moved by hand. Move KUBECTL_VERSION, KUBECTL_SHA256 and the three KUBERNETES_JSON_SCHEMA_ lines in one pull request (lab-image/README.md, "Kubernetes schemas"); a test fails when they sit on different lines`,
+    });
   }
+  const lineUrl = `https://dl.k8s.io/release/stable-${line}.txt`;
+  const target = coreVersion((await http.text(lineUrl)).trim());
+  if (target && lineOf(target) !== line) throw new Error(`${lineUrl} names ${target}, which is not on the ${line} line`);
+  if (!target || compareVersions(target, pinned) <= 0) return null;
+  const sumsUrl = `https://dl.k8s.io/release/v${target}/bin/linux/amd64/kubectl.sha256`;
+  const hex = (await http.text(sumsUrl)).trim();
+  if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error(`${sumsUrl} served invalid SHA256: ${hex}`);
+  return {
+    key: 'kubectl',
+    label: 'kubectl (full target)',
+    from: pinned,
+    to: target,
+    edits: [envEditOf('KUBECTL_VERSION', target), envEditOf('KUBECTL_SHA256', hex)],
+    evidence: [{ item: `kubectl v${target} (SHA256)`, value: hex, source: sumsUrl }],
+  };
+}
 
-  // 2. kubeconform
-  try {
-    const relsUrl = 'https://api.github.com/repos/yannh/kubeconform/releases?per_page=30';
-    const target = newestGitHubRelease(await http.json(relsUrl));
-    const pinned = env.KUBECONFORM_VERSION;
-    if (target && compareVersions(target, pinned) > 0) {
-      const sumsUrl = `https://github.com/yannh/kubeconform/releases/download/v${target}/CHECKSUMS`;
-      const file = 'kubeconform-linux-amd64.tar.gz';
-      const hex = sumsLine(await http.text(sumsUrl), file);
-      if (!hex) throw new Error(`${sumsUrl} has no line for ${file}`);
-      bumps.push({
-        key: 'kubeconform',
-        label: 'kubeconform (runner target)',
-        from: pinned,
-        to: target,
-        edits: [envEdit('KUBECONFORM_VERSION', target), envEdit('KUBECONFORM_SHA256', hex)],
-        evidence: [{ item: `${file} (SHA256)`, value: hex, source: sumsUrl }],
-      });
-    }
-  } catch (error) {
-    notes.push({ label: 'kubeconform', from: env.KUBECONFORM_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
-  }
+/** Azure CLI: the older of the newest releases in the two apt suites, so it is published in both. */
+async function azureCliBump(env, http) {
+  const bookwormUrl = 'https://packages.microsoft.com/repos/azure-cli/dists/bookworm/main/binary-amd64/Packages';
+  const resoluteUrl = 'https://packages.microsoft.com/repos/azure-cli/dists/resolute/main/binary-amd64/Packages';
+  const [bookworm, resolute] = await Promise.all([http.text(bookwormUrl), http.text(resoluteUrl)]);
+  const vBookworm = newestAptVersion(bookworm, 'azure-cli');
+  const vResolute = newestAptVersion(resolute, 'azure-cli');
+  const target = vBookworm && vResolute && compareVersions(vBookworm, vResolute) <= 0 ? vBookworm : vResolute;
+  const pinned = env.AZURE_CLI_VERSION;
+  if (!target || compareVersions(target, pinned) <= 0) return null;
+  return {
+    key: 'azure-cli',
+    label: 'Azure CLI (full target & sandbox)',
+    from: pinned,
+    to: target,
+    edits: [envEditOf('AZURE_CLI_VERSION', target)],
+    evidence: [
+      {
+        item: `azure-cli ${target} (Debian bookworm & Ubuntu resolute)`,
+        value: target,
+        source: `${bookwormUrl} and ${resoluteUrl}; verified published in both suites`,
+      },
+    ],
+  };
+}
 
-  // 3. Helm
-  try {
-    const relsUrl = 'https://api.github.com/repos/helm/helm/releases?per_page=30';
-    const target = newestGitHubRelease(await http.json(relsUrl));
-    const pinned = env.HELM_VERSION;
-    if (target && compareVersions(target, pinned) > 0) {
-      const sumsUrl = `https://get.helm.sh/helm-v${target}-linux-amd64.tar.gz.sha256sum`;
-      const file = `helm-v${target}-linux-amd64.tar.gz`;
-      const hex = sumsLine(await http.text(sumsUrl), file);
-      if (!hex) throw new Error(`${sumsUrl} has no line for ${file}`);
-      bumps.push({
-        key: 'helm',
-        label: 'Helm (runner target)',
-        from: pinned,
-        to: target,
-        edits: [envEdit('HELM_VERSION', target), envEdit('HELM_SHA256', hex)],
-        evidence: [{ item: `${file} (SHA256)`, value: hex, source: sumsUrl }],
-      });
-    }
-  } catch (error) {
-    notes.push({ label: 'Helm', from: env.HELM_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
-  }
+/** One Terraform provider's bump from the registry, or null when the pin is already the newest. */
+async function providerBump(key, spec, pinned, http) {
+  const versionsUrl = `https://registry.terraform.io/v1/providers/${spec.namespace}/${spec.name}/versions`;
+  const index = await http.json(versionsUrl);
+  const candidates = (index.versions ?? [])
+    .map((v) => coreVersion(v.version))
+    .filter((v) => v && (!spec.line || v.startsWith(`${spec.line}.`)));
+  const target = newest(candidates);
+  if (!target || compareVersions(target, pinned) <= 0) return null;
+  const dlUrl = `https://registry.terraform.io/v1/providers/${spec.namespace}/${spec.name}/${target}/download/linux/amd64`;
+  const dl = await http.json(dlUrl);
+  const hex = dl.shasum;
+  if (!/^[0-9a-f]{64}$/.test(hex ?? '')) throw new Error(`${dlUrl} gave invalid shasum: ${hex}`);
+  return {
+    key,
+    label: spec.label,
+    from: pinned,
+    to: target,
+    edits: [envEditOf(spec.versionKey, target), envEditOf(spec.shaKey, hex)],
+    evidence: [{ item: `${spec.name} v${target} (linux_amd64 SHA256)`, value: hex, source: dlUrl }],
+  };
+}
 
-  // 4. kubectl. A patch release of the pinned Kubernetes line is a bump. A
-  // newer line is a note: the schemas kubeconform checks against
-  // (KUBERNETES_JSON_SCHEMA_*) are a commit and a tree hash that no publisher
-  // serves a checksum for, so a bot cannot move them with kubectl, and the
-  // line is moved by hand with a test holding the two on one line (#1323). The
-  // patch comes from the pinned line's own pointer, so a newer line does not
-  // hide a patch release of the line in use.
-  try {
-    const pinned = env.KUBECTL_VERSION;
-    if (!STABLE_VERSION.test(pinned ?? '')) throw new Error('versions.env has no KUBECTL_VERSION to move from');
-    const line = lineOf(pinned);
-    const newest = coreVersion((await http.text('https://dl.k8s.io/release/stable.txt')).trim());
-    if (newest && compareVersions(lineOf(newest), line) > 0) {
-      notes.push({
-        label: 'Kubernetes release line',
-        from: pinned,
-        to: newest,
-        reason: `Kubernetes ${newest} starts the ${lineOf(newest)} line, so kubectl stays on ${line} until the line is moved by hand. Move KUBECTL_VERSION, KUBECTL_SHA256 and the three KUBERNETES_JSON_SCHEMA_ lines in one pull request (lab-image/README.md, "Kubernetes schemas"); a test fails when they sit on different lines`,
-      });
-    }
-    const lineUrl = `https://dl.k8s.io/release/stable-${line}.txt`;
-    const target = coreVersion((await http.text(lineUrl)).trim());
-    if (target && lineOf(target) !== line) throw new Error(`${lineUrl} names ${target}, which is not on the ${line} line`);
-    if (target && compareVersions(target, pinned) > 0) {
-      const sumsUrl = `https://dl.k8s.io/release/v${target}/bin/linux/amd64/kubectl.sha256`;
-      const hex = (await http.text(sumsUrl)).trim();
-      if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error(`${sumsUrl} served invalid SHA256: ${hex}`);
-      bumps.push({
-        key: 'kubectl',
-        label: 'kubectl (full target)',
-        from: pinned,
-        to: target,
-        edits: [envEdit('KUBECTL_VERSION', target), envEdit('KUBECTL_SHA256', hex)],
-        evidence: [{ item: `kubectl v${target} (SHA256)`, value: hex, source: sumsUrl }],
-      });
-    }
-  } catch (error) {
-    notes.push({ label: 'kubectl', from: env.KUBECTL_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
-  }
-
-  // 5. Azure CLI
-  try {
-    const bookwormUrl = 'https://packages.microsoft.com/repos/azure-cli/dists/bookworm/main/binary-amd64/Packages';
-    const resoluteUrl = 'https://packages.microsoft.com/repos/azure-cli/dists/resolute/main/binary-amd64/Packages';
-    const [bookworm, resolute] = await Promise.all([http.text(bookwormUrl), http.text(resoluteUrl)]);
-    const vBookworm = newestAptVersion(bookworm, 'azure-cli');
-    const vResolute = newestAptVersion(resolute, 'azure-cli');
-    const target = vBookworm && vResolute && compareVersions(vBookworm, vResolute) <= 0 ? vBookworm : vResolute;
-    const pinned = env.AZURE_CLI_VERSION;
-    if (target && compareVersions(target, pinned) > 0) {
-      bumps.push({
-        key: 'azure-cli',
-        label: 'Azure CLI (full target & sandbox)',
-        from: pinned,
-        to: target,
-        edits: [envEdit('AZURE_CLI_VERSION', target)],
-        evidence: [
-          {
-            item: `azure-cli ${target} (Debian bookworm & Ubuntu resolute)`,
-            value: target,
-            source: `${bookwormUrl} and ${resoluteUrl}; verified published in both suites`,
-          },
-        ],
-      });
-    }
-  } catch (error) {
-    notes.push({ label: 'Azure CLI', from: env.AZURE_CLI_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
-  }
-
-  // 6. Terraform Providers
+/**
+ * Every Terraform provider's bump, with the README's mirror sentence moved in
+ * the first one when any provider moved and the README was read.
+ */
+async function providerBumps(env, files, http, notes) {
   const nextVersions = { ...env };
-  const providerBumps = [];
+  const bumps = [];
   for (const [key, spec] of Object.entries(PROVIDER_SPECS)) {
     const pinned = env[spec.versionKey];
     try {
-      const versionsUrl = `https://registry.terraform.io/v1/providers/${spec.namespace}/${spec.name}/versions`;
-      const index = await http.json(versionsUrl);
-      const candidates = (index.versions ?? [])
-        .map((v) => coreVersion(v.version))
-        .filter((v) => v && (!spec.line || v.startsWith(`${spec.line}.`)));
-      const target = newest(candidates);
-      if (target && compareVersions(target, pinned) > 0) {
-        const dlUrl = `https://registry.terraform.io/v1/providers/${spec.namespace}/${spec.name}/${target}/download/linux/amd64`;
-        const dl = await http.json(dlUrl);
-        const hex = dl.shasum;
-        if (!/^[0-9a-f]{64}$/.test(hex ?? '')) throw new Error(`${dlUrl} gave invalid shasum: ${hex}`);
-        nextVersions[spec.versionKey] = target;
-        nextVersions[spec.shaKey] = hex;
-        providerBumps.push({
-          key,
-          label: spec.label,
-          from: pinned,
-          to: target,
-          edits: [envEdit(spec.versionKey, target), envEdit(spec.shaKey, hex)],
-          evidence: [{ item: `${spec.name} v${target} (linux_amd64 SHA256)`, value: hex, source: dlUrl }],
-        });
-      }
+      const bump = await providerBump(key, spec, pinned, http);
+      if (!bump) continue;
+      nextVersions[spec.versionKey] = bump.to;
+      nextVersions[spec.shaKey] = bump.edits[1].to;
+      bumps.push(bump);
     } catch (error) {
-      notes.push({ label: spec.label, from: pinned ?? '—', to: '—', reason: error?.message || String(error) });
+      notes.push(toolNote(spec.label, pinned, error));
     }
   }
 
   // If any provider moved and README_PATH was read, update the prose in README_PATH
-  if (providerBumps.length > 0 && files[README_PATH]) {
+  if (bumps.length > 0 && files[README_PATH]) {
     const prose = renderReadmeMirrorProse(nextVersions);
-    providerBumps[0].edits.push({
+    bumps[0].edits.push({
       file: README_PATH,
       where: 'provider filesystem mirror prose',
       to: prose,
       apply: (t) => replaceOne(t, README_MIRROR_RE, prose, 'provider mirror prose'),
     });
   }
+  return bumps;
+}
 
-  bumps.push(...providerBumps);
+export async function planImageTools({ files, http }) {
+  const env = readEnv(files[VERSIONS_ENV_PATH]);
+  const bumps = [];
+  const notes = [];
+  // Each step's bump, or its note when it throws; the steps run one after another, in this order.
+  const steps = [
+    ...CHECKSUMMED_TOOLS.map((tool) => [tool.note, tool.versionKey, () => checksummedToolBump(tool, env, http)]),
+    ['kubectl', 'KUBECTL_VERSION', () => kubectlBump(env, http, notes)],
+    ['Azure CLI', 'AZURE_CLI_VERSION', () => azureCliBump(env, http)],
+  ];
+  for (const [label, versionKey, run] of steps) {
+    try {
+      const bump = await run();
+      if (bump) bumps.push(bump);
+    } catch (error) {
+      notes.push(toolNote(label, env[versionKey], error));
+    }
+  }
+
+  bumps.push(...(await providerBumps(env, files, http, notes)));
   const result = applyBumps(files, bumps);
   return { files: result.files, applied: result.applied, notes: [...notes, ...result.notes] };
 }
@@ -1439,17 +1475,10 @@ const TEMPLATE_DIGEST = /^[ \t]*image_digest[ \t]*=[ \t]*"(sha256:[0-9a-f]{64})"
 export async function planImageDigests({ files, http, runner, full }) {
   const bumps = [];
   const notes = [];
-  const runnerRef = parseImageRef(runner);
-  const fullRef = parseImageRef(full);
-  if (runnerRef?.name !== RUNNER_IMAGE || !runnerRef.tag || !runnerRef.digest) {
-    throw new Error(`--runner must be ${RUNNER_IMAGE}:<tag>@sha256:<digest>, got ${runner}`);
-  }
-  if (fullRef?.name !== FULL_IMAGE || !fullRef.tag || !fullRef.digest) {
-    throw new Error(`--full must be ${FULL_IMAGE}:<tag>@sha256:<digest>, got ${full}`);
-  }
+  const runnerRef = imageRefArgument('--runner', runner, RUNNER_IMAGE);
+  const fullRef = imageRefArgument('--full', full, FULL_IMAGE);
 
-  const currentRunner = files[CAPABILITIES_PATH].match(RUNNER_PIN)?.[1];
-  const currentFullDigest = files[CODER_TEMPLATE_PATH].match(TEMPLATE_DIGEST)?.[1];
+  const currentRunner = parseImageRef(files[CAPABILITIES_PATH].match(RUNNER_PIN)?.[1])?.digest;
   // Each template that pins `hcw-lab` and is not on the published digest yet
   // (#1704): all of them move together, so none stays on an older build.
   const templatesBehind = CODER_TEMPLATE_PATHS.filter(
@@ -1459,46 +1488,69 @@ export async function planImageDigests({ files, http, runner, full }) {
   // What a line says the pin moves from. For the workspace image, the digest
   // of the first template that is behind, so a line or a note never reads
   // `x -> x` when only a guided lab moved (Copilot on #1710).
-  const fromOf = (ref, current) =>
-    (ref === runnerRef ? current : files[templatesBehind[0]]?.match(TEMPLATE_DIGEST)?.[1]) ?? '—';
+  const targets = [
+    {
+      key: 'runner',
+      ref: runnerRef,
+      label: 'hcw-lab-runner (vps-agent job image)',
+      behind: currentRunner !== runnerRef.digest,
+      from: currentRunner ?? '—',
+      edits: (pinned) => [{ file: CAPABILITIES_PATH, where: 'IMAGES.hcwLabRunner', to: pinned, apply: (t) => replaceOne(t, RUNNER_PIN, pinned, 'IMAGES.hcwLabRunner') }],
+    },
+    {
+      key: 'full',
+      ref: fullRef,
+      label: 'hcw-lab (Coder workspace images)',
+      behind: templatesBehind.length > 0,
+      from: files[templatesBehind[0]]?.match(TEMPLATE_DIGEST)?.[1] ?? '—',
+      edits: () =>
+        templatesBehind.flatMap((file) => [
+          { file, where: 'local.image_tag', to: fullRef.tag, apply: (t) => replaceOne(t, TEMPLATE_TAG, fullRef.tag, 'image_tag') },
+          { file, where: 'local.image_digest', to: fullRef.digest, apply: (t) => replaceOne(t, TEMPLATE_DIGEST, fullRef.digest, 'image_digest') },
+        ]),
+    },
+  ];
 
-  for (const [ref, label, current] of [
-    [runnerRef, 'hcw-lab-runner (vps-agent job image)', parseImageRef(currentRunner)?.digest],
-    [fullRef, 'hcw-lab (Coder workspace images)', currentFullDigest],
-  ]) {
-    if (ref === runnerRef ? current === ref.digest : templatesBehind.length === 0) continue;
+  for (const target of targets.filter((t) => t.behind)) {
     try {
-      const read = await readManifest(http, ref.name, ref.tag);
-      if (read.digest !== ref.digest) throw new Error(`${ref.name}:${ref.tag} is ${read.digest} on Docker Hub, not the ${ref.digest} the publish job reported`);
-      const pinned = `${ref.name}:${ref.tag}@${ref.digest}`;
-      const edits =
-        ref === runnerRef
-          ? [{ file: CAPABILITIES_PATH, where: 'IMAGES.hcwLabRunner', to: pinned, apply: (t) => replaceOne(t, RUNNER_PIN, pinned, 'IMAGES.hcwLabRunner') }]
-          : templatesBehind.flatMap((file) => [
-              { file, where: 'local.image_tag', to: ref.tag, apply: (t) => replaceOne(t, TEMPLATE_TAG, ref.tag, 'image_tag') },
-              { file, where: 'local.image_digest', to: ref.digest, apply: (t) => replaceOne(t, TEMPLATE_DIGEST, ref.digest, 'image_digest') },
-            ]);
-      bumps.push({
-        key: ref === runnerRef ? 'runner' : 'full',
-        label,
-        from: fromOf(ref, current).slice(0, 19),
-        to: ref.digest.slice(0, 19),
-        edits,
-        evidence: [
-          {
-            item: `${ref.name}:${ref.tag} (manifest digest)`,
-            value: ref.digest,
-            source: `the publish job's \`docker buildx imagetools inspect\` of the pushed tag, and ${read.url} read again here (bytes hashed, Docker-Content-Digest agreed); provenance attested to GHCR by that job`,
-          },
-        ],
-      });
+      bumps.push(await imageDigestBump(target, http));
     } catch (error) {
-      notes.push({ label, from: fromOf(ref, current), to: ref.digest, reason: error?.message || String(error) });
+      notes.push({ label: target.label, from: target.from, to: target.ref.digest, reason: error?.message || String(error) });
     }
   }
 
   const result = applyBumps(files, bumps);
   return { files: result.files, applied: result.applied, notes: [...notes, ...result.notes] };
+}
+
+/** An image argument parsed, or an error saying the shape it must have. */
+function imageRefArgument(flag, value, image) {
+  const ref = parseImageRef(value);
+  if (ref?.name !== image || !ref.tag || !ref.digest) {
+    throw new Error(`${flag} must be ${image}:<tag>@sha256:<digest>, got ${value}`);
+  }
+  return ref;
+}
+
+/** One image's bump, after its digest is read again from Docker Hub by tag and found to agree. */
+async function imageDigestBump({ key, ref, label, from, edits }, http) {
+  const read = await readManifest(http, ref.name, ref.tag);
+  if (read.digest !== ref.digest) throw new Error(`${ref.name}:${ref.tag} is ${read.digest} on Docker Hub, not the ${ref.digest} the publish job reported`);
+  const pinned = `${ref.name}:${ref.tag}@${ref.digest}`;
+  return {
+    key,
+    label,
+    from: from.slice(0, 19),
+    to: ref.digest.slice(0, 19),
+    edits: edits(pinned),
+    evidence: [
+      {
+        item: `${ref.name}:${ref.tag} (manifest digest)`,
+        value: ref.digest,
+        source: `the publish job's \`docker buildx imagetools inspect\` of the pushed tag, and ${read.url} read again here (bytes hashed, Docker-Content-Digest agreed); provenance attested to GHCR by that job`,
+      },
+    ],
+  };
 }
 
 // ── Reporting ──────────────────────────────────────────────────────────────

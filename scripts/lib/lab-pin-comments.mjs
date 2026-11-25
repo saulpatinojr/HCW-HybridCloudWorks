@@ -108,6 +108,29 @@ function commentsBeside(file, lines, line) {
  * `{ file, where, line, value }`.
  */
 export function pinCommentProblems(files, pins) {
+  const problems = new Map();
+  // The pins a problem is about: for a version, the pins of the same length (or the one it repeats);
+  // for a digest, the checksums and digests. All of the group when none fits.
+  const add = (site, comment, { kind, token, repeats, aboutThis }) => {
+    const id = `${site.file}:${comment.line}:${token}`;
+    if (problems.has(id)) return;
+    const about = site.pins.filter(aboutThis);
+    const shown = (about.length > 0 ? about : site.pins).map(({ file, where, line, value }) => ({ file, where, line, value }));
+    problems.set(id, { file: site.file, line: comment.line, kind, token, repeats, pins: shown });
+  };
+  for (const site of pinSites(files, pins)) {
+    for (const comment of site.comments) {
+      for (const finding of commentFindings(site, comment)) add(site, comment, finding);
+    }
+  }
+  return [...problems.values()];
+}
+
+/**
+ * The pins grouped by the comments beside them: `{ file, comments, pins }` for
+ * each group, where pins sharing one set of comment lines share one group.
+ */
+function pinSites(files, pins) {
   const sites = new Map();
   const seen = new Set();
   for (const { file, where } of pins) {
@@ -122,39 +145,31 @@ export function pinCommentProblems(files, pins) {
     site.pins.push({ file, where, line, value, core: coreVersion(value) });
     sites.set(key, site);
   }
+  return sites.values();
+}
 
-  const problems = new Map();
-  // The pins a problem is about: for a version, the pins of the same length (or the one it repeats);
-  // for a digest, the checksums and digests. All of the group when none fits.
-  const add = (site, comment, kind, token, repeats, aboutThis) => {
-    const id = `${site.file}:${comment.line}:${token}`;
-    if (problems.has(id)) return;
-    const about = site.pins.filter(aboutThis);
-    const shown = (about.length > 0 ? about : site.pins).map(({ file, where, line, value }) => ({ file, where, line, value }));
-    problems.set(id, { file: site.file, line: comment.line, kind, token, repeats, pins: shown });
-  };
-  for (const site of sites.values()) {
-    // A checksum or digest has no version of its own to compare with. The releases
-    // the bump moves have three parts (29.9.2), so that is what an exact version
-    // looks like beside one (the caddy test's CADDY_SHA512 is such a pin).
-    const counted = site.pins.filter((p) => p.core).map((p) => p.core.split('.').length);
-    const parts = new Set(counted.length > 0 ? counted : [3]);
-    for (const comment of site.comments) {
-      for (const m of comment.text.matchAll(VERSION)) {
-        const core = m[1];
-        const length = core.split('.').length;
-        if (!parts.has(length)) continue;
-        const repeats = site.pins.some((p) => p.core === core);
-        add(site, comment, 'version', m[0], repeats, repeats ? (p) => p.core === core : (p) => p.core?.split('.').length === length);
-      }
-      for (const m of comment.text.matchAll(DIGEST)) {
-        if (!/\d/.test(m[1]) || !/[a-f]/.test(m[1])) continue;
-        const repeats = site.pins.some((p) => p.value.includes(m[1]));
-        add(site, comment, 'digest', m[0], repeats, repeats ? (p) => p.value.includes(m[1]) : (p) => !p.core);
-      }
-    }
+/** The versions and digests one comment names that count as a problem beside this group of pins, in order. */
+function commentFindings(site, comment) {
+  // A checksum or digest has no version of its own to compare with. The releases
+  // the bump moves have three parts (29.9.2), so that is what an exact version
+  // looks like beside one (the caddy test's CADDY_SHA512 is such a pin).
+  const counted = site.pins.filter((p) => p.core).map((p) => p.core.split('.').length);
+  const parts = new Set(counted.length > 0 ? counted : [3]);
+  const findings = [];
+  for (const m of comment.text.matchAll(VERSION)) {
+    const core = m[1];
+    const length = core.split('.').length;
+    if (!parts.has(length)) continue;
+    const repeats = site.pins.some((p) => p.core === core);
+    const aboutThis = repeats ? (p) => p.core === core : (p) => p.core?.split('.').length === length;
+    findings.push({ kind: 'version', token: m[0], repeats, aboutThis });
   }
-  return [...problems.values()];
+  for (const m of comment.text.matchAll(DIGEST)) {
+    if (!/\d/.test(m[1]) || !/[a-f]/.test(m[1])) continue;
+    const repeats = site.pins.some((p) => p.value.includes(m[1]));
+    findings.push({ kind: 'digest', token: m[0], repeats, aboutThis: repeats ? (p) => p.value.includes(m[1]) : (p) => !p.core });
+  }
+  return findings;
 }
 
 /** One problem as a sentence a junior administrator can act on: file, line, what the comment names, what the pin holds. */

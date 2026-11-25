@@ -21,14 +21,10 @@ export function parseArgs(argv, spec) {
   const options = {};
 
   for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (!arg.startsWith('--')) throw new Error(`Unexpected argument: ${arg}`);
-
-    const separator = arg.indexOf('=');
-    const name = (separator === -1 ? arg.slice(2) : arg.slice(2, separator)).trim();
+    const { name, inline } = splitArg(argv[index]);
 
     if (spec.flags.includes(name)) {
-      if (separator !== -1) throw new Error(`--${name} is a flag and takes no value`);
+      if (inline !== undefined) throw new Error(`--${name} is a flag and takes no value`);
       flags[name] = true;
       continue;
     }
@@ -37,19 +33,31 @@ export function parseArgs(argv, spec) {
       throw new Error(`Unknown argument: --${name}`);
     }
 
-    let value;
-    if (separator !== -1) {
-      value = arg.slice(separator + 1);
+    if (inline !== undefined) {
+      options[name] = inline;
     } else {
-      value = argv[++index];
-      if (value === undefined || value.startsWith('--')) {
-        throw new Error(`--${name} requires a value`);
-      }
+      index += 1;
+      options[name] = requireValue(name, argv[index]);
     }
-    options[name] = value;
   }
 
   return { flags, options };
+}
+
+/** `--name=value` or `--name` into its name and, when written with `=`, its value. */
+function splitArg(arg) {
+  if (!arg.startsWith('--')) throw new Error(`Unexpected argument: ${arg}`);
+  const separator = arg.indexOf('=');
+  if (separator === -1) return { name: arg.slice(2).trim(), inline: undefined };
+  return { name: arg.slice(2, separator).trim(), inline: arg.slice(separator + 1) };
+}
+
+/** The value after `--name`, which must be there and must not be the next option. */
+function requireValue(name, value) {
+  if (value === undefined || value.startsWith('--')) {
+    throw new Error(`--${name} requires a value`);
+  }
+  return value;
 }
 
 /** Split a comma-separated option into a trimmed, non-empty list. */
