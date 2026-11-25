@@ -239,45 +239,24 @@ export async function updateTfcVariable({
     Authorization: `Bearer ${tfcToken}`,
     'Content-Type': 'application/vnd.api+json',
   };
+  const where = `${organization}/${workspace}`;
 
   // 1. Resolve workspace ID
   const wsUrl = `https://app.terraform.io/api/v2/organizations/${encodeURIComponent(organization)}/workspaces/${encodeURIComponent(workspace)}`;
-  const wsResponse = await fetchImpl(wsUrl, { method: 'GET', headers });
-  let wsData = null;
-  try {
-    wsData = await wsResponse.json();
-  } catch {}
-
-  if (!wsResponse.ok || !wsData?.data?.id) {
-    const err =
-      wsData?.errors?.map((e) => e.detail || e.title).join('; ') ||
-      wsResponse.statusText;
-    throw withStatus(
-      new Error(`HCP Terraform workspace ${organization}/${workspace} lookup failed (${wsResponse.status}): ${err}`),
-      wsResponse.status
-    );
+  const ws = await tfcCall(fetchImpl, wsUrl, { method: 'GET', headers });
+  if (!ws.response.ok || !ws.data?.data?.id) {
+    throw tfcFailure(ws, `HCP Terraform workspace ${where} lookup failed (${ws.response.status})`);
   }
-  const workspaceId = wsData.data.id;
+  const workspaceId = ws.data.data.id;
 
   // 2. List variables to match key and category
   const varsUrl = `https://app.terraform.io/api/v2/workspaces/${encodeURIComponent(workspaceId)}/vars`;
-  const varsResponse = await fetchImpl(varsUrl, { method: 'GET', headers });
-  let varsData = null;
-  try {
-    varsData = await varsResponse.json();
-  } catch {}
-
-  if (!varsResponse.ok || !Array.isArray(varsData?.data)) {
-    const err =
-      varsData?.errors?.map((e) => e.detail || e.title).join('; ') ||
-      varsResponse.statusText;
-    throw withStatus(
-      new Error(`HCP Terraform list vars failed for ${organization}/${workspace} (${varsResponse.status}): ${err}`),
-      varsResponse.status
-    );
+  const vars = await tfcCall(fetchImpl, varsUrl, { method: 'GET', headers });
+  if (!vars.response.ok || !Array.isArray(vars.data?.data)) {
+    throw tfcFailure(vars, `HCP Terraform list vars failed for ${where} (${vars.response.status})`);
   }
 
-  const existing = varsData.data.find(
+  const existing = vars.data.data.find(
     (v) => v.attributes?.key === key && v.attributes?.category === category
   );
 
@@ -290,78 +269,49 @@ export async function updateTfcVariable({
     ...(description ? { description } : {}),
   };
 
-  if (existing) {
-    const updateUrl = `https://app.terraform.io/api/v2/workspaces/${encodeURIComponent(workspaceId)}/vars/${encodeURIComponent(existing.id)}`;
-    const patchResponse = await fetchImpl(updateUrl, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({
-        data: {
-          id: existing.id,
-          type: 'vars',
-          attributes,
-        },
-      }),
-    });
-    let patchData = null;
-    try {
-      patchData = await patchResponse.json();
-    } catch {}
-
-    if (!patchResponse.ok || !patchData?.data?.id) {
-      const err =
-        patchData?.errors?.map((e) => e.detail || e.title).join('; ') ||
-        patchResponse.statusText;
-      throw withStatus(
-        new Error(`HCP Terraform update variable ${key} in ${organization}/${workspace} failed (${patchResponse.status}): ${err}`),
-        patchResponse.status
-      );
-    }
-
-    return {
-      ok: true,
-      action: 'updated',
-      variableId: patchData.data.id,
-      key,
-      category,
-      workspace: `${organization}/${workspace}`,
-    };
-  } else {
-    const createUrl = `https://app.terraform.io/api/v2/workspaces/${encodeURIComponent(workspaceId)}/vars`;
-    const postResponse = await fetchImpl(createUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        data: {
-          type: 'vars',
-          attributes,
-        },
-      }),
-    });
-    let postData = null;
-    try {
-      postData = await postResponse.json();
-    } catch {}
-
-    if (!postResponse.ok || !postData?.data?.id) {
-      const err =
-        postData?.errors?.map((e) => e.detail || e.title).join('; ') ||
-        postResponse.statusText;
-      throw withStatus(
-        new Error(`HCP Terraform create variable ${key} in ${organization}/${workspace} failed (${postResponse.status}): ${err}`),
-        postResponse.status
-      );
-    }
-
-    return {
-      ok: true,
-      action: 'created',
-      variableId: postData.data.id,
-      key,
-      category,
-      workspace: `${organization}/${workspace}`,
-    };
+  // 3. Change the variable that is there, or create it.
+  const write = existing
+    ? {
+        action: 'updated',
+        verb: 'update',
+        url: `${varsUrl}/${encodeURIComponent(existing.id)}`,
+        method: 'PATCH',
+        data: { id: existing.id, type: 'vars', attributes },
+      }
+    : { action: 'created', verb: 'create', url: varsUrl, method: 'POST', data: { type: 'vars', attributes } };
+  const written = await tfcCall(fetchImpl, write.url, {
+    method: write.method,
+    headers,
+    body: JSON.stringify({ data: write.data }),
+  });
+  if (!written.response.ok || !written.data?.data?.id) {
+    throw tfcFailure(written, `HCP Terraform ${write.verb} variable ${key} in ${where} failed (${written.response.status})`);
   }
+
+  return {
+    ok: true,
+    action: write.action,
+    variableId: written.data.data.id,
+    key,
+    category,
+    workspace: where,
+  };
+}
+
+/** One HCP Terraform API call: the response and its JSON body, or a null body when it is not JSON. */
+async function tfcCall(fetchImpl, url, init) {
+  const response = await fetchImpl(url, init);
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {}
+  return { response, data };
+}
+
+/** The error for a refused HCP Terraform call: `sentence`, then the API's own error details or the status text. */
+function tfcFailure({ response, data }, sentence) {
+  const err = data?.errors?.map((e) => e.detail || e.title).join('; ') || response.statusText;
+  return withStatus(new Error(`${sentence}: ${err}`), response.status);
 }
 
 /**

@@ -64,6 +64,130 @@ export function buildAutopostBulk(accounts, text, scheduledAtIso) {
   };
 }
 
+/** The autopost settings and the accounts they name (those with an id). */
+async function readAutopost(store) {
+  const config = await store
+    .readDoc('admin_config', AUTOPOST_CONFIG_ID, ADMIN_CONFIG_PARTITION)
+    .catch(() => null);
+  const accounts = (Array.isArray(config?.accountIds) ? config.accountIds : []).filter(
+    (account) => account?.id
+  );
+  return { config, accounts };
+}
+
+/** Queue the post to Publer when it is set up; otherwise it stays a draft. */
+async function scheduleOnPubler({ publer, now }, config, accounts, text) {
+  if (!publer.configured) {
+    return { publerJobId: null, scheduledAtIso: null, reason: 'queued_draft:publer_not_configured' };
+  }
+  const delayMinutes = Number(config.scheduleDelayMinutes) || DEFAULT_DELAY_MINUTES;
+  const scheduledAtIso = new Date(now().getTime() + delayMinutes * 60 * 1000).toISOString();
+  const response = await publer.request(
+    '/posts/schedule',
+    'POST',
+    { bulk: buildAutopostBulk(accounts, text, scheduledAtIso) }
+  );
+  const publerJobId = response?.data?.job_id || response?.job_id || null;
+  return { publerJobId, scheduledAtIso, reason: 'queued_to_publer' };
+}
+
+/** Write the caption, queue it and record it, once the claim is held. */
+async function writeAndQueue(d, contentId, data) {
+  const { store, ai, now } = d;
+  const { config, accounts } = await readAutopost(store);
+  if (!config?.enabled || accounts.length === 0) {
+    // Off (or pointed at no accounts): clear quietly, no model call spent.
+    await store.patchDoc('content', contentId, {
+      ...releaseRisingEdgeClaim(SOCIAL_CAPTION_CLAIM_FIELDS),
+      socialCaptionTrigger: false,
+    });
+    return { ran: false, reason: 'autopost_disabled' };
+  }
+
+  const platforms = [...new Set(accounts.map((a) => String(a.provider || '').toLowerCase()))]
+    .filter(Boolean);
+  const caption = await generateCaptionText(
+    { ai },
+    {
+      title: data.Title || data.title || '',
+      summary: data.Summary || data.summary || '',
+      platforms,
+    }
+  );
+  if (!caption) throw new Error('Caption generation returned nothing');
+
+  const url = publicUrlOf(data);
+  const text = url ? `${caption}\n\n${url}` : caption;
+  const stamp = now().toISOString();
+  const { publerJobId, scheduledAtIso, reason } = await scheduleOnPubler(d, config, accounts, text);
+
+  // The doc SocialHubPage's manual compose writes, plus provenance. The
+  // reconcile timer adopts it by publerJobId once Publer materializes
+  // the posts.
+  const socialPostId = d.uuid();
+  await store.upsertDoc('social_posts', {
+    id: socialPostId,
+    contentId,
+    caption,
+    url: url || null,
+    accountIds: accounts.map((account) => account.id),
+    platforms,
+    scheduledAt: scheduledAtIso,
+    publerJobId,
+    status: publerJobId ? 'scheduled' : 'draft',
+    source: 'auto_publish',
+    syncStatus: publerJobId ? 'pending' : 'draft',
+    syncOrigin: 'system',
+    createdAt: stamp,
+  });
+
+  await store.patchDoc('content', contentId, {
+    ...releaseRisingEdgeClaim(SOCIAL_CAPTION_CLAIM_FIELDS),
+    socialCaptionTrigger: false,
+    socialCaptionGeneratedAt: stamp,
+    socialPostId,
+    socialCaptionError: null,
+  });
+  return { ran: true, reason, socialPostId };
+}
+
+/**
+ * Claim the rising edge, write the caption and queue it. A failure clears
+ * the flag and stores a sentence with a code and a reference (#945).
+ *
+ * @param {object} d - the queuer's dependencies
+ * @param {string} contentId - the published document
+ * @param {string} eventId - the change feed's event id for the claim
+ * @returns {Promise<{ ran: boolean, reason: string, socialPostId?: string }>}
+ */
+async function run(d, contentId, eventId) {
+  const { store, now, log } = d;
+  const claim = await claimRisingEdge(store, 'content', contentId, {
+    ...SOCIAL_CAPTION_CLAIM_FIELDS,
+    eventId,
+    now,
+  });
+  if (!claim.claim) {
+    if (claim.reason !== SKIP_REASONS.FLAG_NOT_SET)
+      log.log?.(`[social-caption] a document was skipped: ${claim.reason}`);
+    return { ran: false, reason: claim.reason };
+  }
+  try {
+    return await writeAndQueue(d, contentId, claim.data);
+  } catch (err) {
+    // ai-cover discipline: release the claim AND clear the flag — a caption
+    // is not worth a retry loop; the Social Hub deep link is the fallback.
+    // The stored error is a sentence with the code and the reference of
+    // the content-free log line (#945).
+    await store.patchDoc('content', contentId, {
+      ...releaseRisingEdgeClaim(SOCIAL_CAPTION_CLAIM_FIELDS),
+      socialCaptionTrigger: false,
+      socialCaptionError: recordedFailure(log, 'The social caption could not be written.', err),
+    });
+    return { ran: false, reason: `error: ${errorCode(err)}` };
+  }
+}
+
 /**
  * Build the social caption queuer: a caption written and queued to Publer
  * once per published document.
@@ -85,114 +209,6 @@ export function createSocialCaptionQueuer({
   uuid,
   log = {},
 }) {
-  /**
-   * Claim the rising edge, write the caption and queue it. A failure clears
-   * the flag and stores a sentence with a code and a reference (#945).
-   *
-   * @param {string} contentId - the published document
-   * @param {string} eventId - the change feed's event id for the claim
-   * @returns {Promise<{ ran: boolean, reason: string, socialPostId?: string }>}
-   */
-  async function run(contentId, eventId) {
-    const claim = await claimRisingEdge(store, 'content', contentId, {
-      ...SOCIAL_CAPTION_CLAIM_FIELDS,
-      eventId,
-      now,
-    });
-    if (!claim.claim) {
-      if (claim.reason !== SKIP_REASONS.FLAG_NOT_SET)
-        log.log?.(`[social-caption] a document was skipped: ${claim.reason}`);
-      return { ran: false, reason: claim.reason };
-    }
-    const data = claim.data;
-
-    try {
-      const config = await store
-        .readDoc('admin_config', AUTOPOST_CONFIG_ID, ADMIN_CONFIG_PARTITION)
-        .catch(() => null);
-      const accounts = (Array.isArray(config?.accountIds) ? config.accountIds : []).filter(
-        (account) => account?.id
-      );
-      if (!config?.enabled || accounts.length === 0) {
-        // Off (or pointed at no accounts): clear quietly, no model call spent.
-        await store.patchDoc('content', contentId, {
-          ...releaseRisingEdgeClaim(SOCIAL_CAPTION_CLAIM_FIELDS),
-          socialCaptionTrigger: false,
-        });
-        return { ran: false, reason: 'autopost_disabled' };
-      }
-
-      const platforms = [...new Set(accounts.map((a) => String(a.provider || '').toLowerCase()))]
-        .filter(Boolean);
-      const caption = await generateCaptionText(
-        { ai },
-        {
-          title: data.Title || data.title || '',
-          summary: data.Summary || data.summary || '',
-          platforms,
-        }
-      );
-      if (!caption) throw new Error('Caption generation returned nothing');
-
-      const url = publicUrlOf(data);
-      const text = url ? `${caption}\n\n${url}` : caption;
-      const stamp = now().toISOString();
-
-      let publerJobId = null;
-      let scheduledAtIso = null;
-      let reason = 'queued_draft:publer_not_configured';
-      if (publer.configured) {
-        const delayMinutes = Number(config.scheduleDelayMinutes) || DEFAULT_DELAY_MINUTES;
-        scheduledAtIso = new Date(now().getTime() + delayMinutes * 60 * 1000).toISOString();
-        const response = await publer.request(
-          '/posts/schedule',
-          'POST',
-          { bulk: buildAutopostBulk(accounts, text, scheduledAtIso) }
-        );
-        publerJobId = response?.data?.job_id || response?.job_id || null;
-        reason = 'queued_to_publer';
-      }
-
-      // The doc SocialHubPage's manual compose writes, plus provenance. The
-      // reconcile timer adopts it by publerJobId once Publer materializes
-      // the posts.
-      const socialPostId = uuid();
-      await store.upsertDoc('social_posts', {
-        id: socialPostId,
-        contentId,
-        caption,
-        url: url || null,
-        accountIds: accounts.map((account) => account.id),
-        platforms,
-        scheduledAt: scheduledAtIso,
-        publerJobId,
-        status: publerJobId ? 'scheduled' : 'draft',
-        source: 'auto_publish',
-        syncStatus: publerJobId ? 'pending' : 'draft',
-        syncOrigin: 'system',
-        createdAt: stamp,
-      });
-
-      await store.patchDoc('content', contentId, {
-        ...releaseRisingEdgeClaim(SOCIAL_CAPTION_CLAIM_FIELDS),
-        socialCaptionTrigger: false,
-        socialCaptionGeneratedAt: stamp,
-        socialPostId,
-        socialCaptionError: null,
-      });
-      return { ran: true, reason, socialPostId };
-    } catch (err) {
-      // ai-cover discipline: release the claim AND clear the flag — a caption
-      // is not worth a retry loop; the Social Hub deep link is the fallback.
-      // The stored error is a sentence with the code and the reference of
-      // the content-free log line (#945).
-      await store.patchDoc('content', contentId, {
-        ...releaseRisingEdgeClaim(SOCIAL_CAPTION_CLAIM_FIELDS),
-        socialCaptionTrigger: false,
-        socialCaptionError: recordedFailure(log, 'The social caption could not be written.', err),
-      });
-      return { ran: false, reason: `error: ${errorCode(err)}` };
-    }
-  }
-  return { run };
+  const d = { store, ai, publer, now, uuid, log };
+  return { run: (contentId, eventId) => run(d, contentId, eventId) };
 }

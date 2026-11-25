@@ -73,6 +73,15 @@ export function buildConfirmationToken(
  * @returns {{ email: string, source: string } | null}
  */
 export function verifyConfirmationToken(key, token, nowMs) {
+  const payload = signedPayload(key, token);
+  if (payload === null) return null;
+  const claims = readClaims(payload);
+  if (!claimsValid(claims, nowMs)) return null;
+  return { email: claims.e, source: typeof claims.s === 'string' ? claims.s : 'website' };
+}
+
+/** The payload of a token this key signed, or null. */
+function signedPayload(key, token) {
   if (!key || typeof token !== 'string' || token.length > 2048) return null;
   const dot = token.lastIndexOf('.');
   if (dot <= 0) return null;
@@ -81,15 +90,21 @@ export function verifyConfirmationToken(key, token, nowMs) {
   const expected = Buffer.from(sign(key, payload));
   // Length is not secret: every signature is 43 base64url characters.
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+  return payload;
+}
 
-  let claims;
+/** The payload's claims, or null when it is not JSON. */
+function readClaims(payload) {
   try {
-    claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
   } catch {
     return null;
   }
-  if (claims?.v !== TOKEN_VERSION) return null;
-  if (!Number.isFinite(claims.x) || claims.x <= nowMs) return null;
-  if (typeof claims.e !== 'string' || !claims.e) return null;
-  return { email: claims.e, source: typeof claims.s === 'string' ? claims.s : 'website' };
+}
+
+/** Whether the claims are this version's, unexpired, and name an email. */
+function claimsValid(claims, nowMs) {
+  if (claims?.v !== TOKEN_VERSION) return false;
+  if (!Number.isFinite(claims.x) || claims.x <= nowMs) return false;
+  return typeof claims.e === 'string' && Boolean(claims.e);
 }

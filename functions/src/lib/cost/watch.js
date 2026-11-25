@@ -56,6 +56,85 @@ export function digestMessage(month, figures) {
   ].join('\n');
 }
 
+/** Whether the snapshot is due a refresh, and whether the signals are due a check, at `atMs`. */
+function whatIsDue(snapshot, ledger, atMs) {
+  const refreshDueMs = (Number(ledger.settings.refreshHours) || 6) * HOUR_MS;
+  const lastRead = Date.parse(snapshot?.readAt || '');
+  const lastCheck = Date.parse(snapshot?.lastSignalCheckAt || '');
+  return {
+    refreshDue: !Number.isFinite(lastRead) || atMs - lastRead >= refreshDueMs,
+    checkDue: !Number.isFinite(lastCheck) || atMs - lastCheck >= SIGNAL_CHECK_INTERVAL_MS,
+  };
+}
+
+/** The snapshot rebuilt; on a failure the old one is kept and the failure logged by its code. */
+async function refreshOrKeep(deps, snapshot, ledger) {
+  const { store, now, env, fetchImpl, log } = deps;
+  try {
+    return { snapshot: await deps.refresh({ store, ledger, now, env, fetchImpl }), refreshed: true };
+  } catch (error) {
+    log.warn?.(`[costWatch] the snapshot could not be refreshed (${error?.code ?? 'error'})`);
+    return { snapshot, refreshed: false };
+  }
+}
+
+/** One message per notable signal the owner has not been told about; the ids that went. */
+async function tellNewSignals(say, wanted, known) {
+  const told = [];
+  for (const sig of wanted) {
+    if (known[sig.id]) continue;
+    const sent = await say(sig.title, `${sig.detail}\n\n${sig.href}`, sig.severity);
+    if (sent) told.push(sig.id);
+  }
+  return told;
+}
+
+/** Last month's closing figures, once, when the digest is on; the month it went for, or null. */
+async function sendDigest(say, snapshot, ledger, at) {
+  const lastMonth = previousMonthOf(monthOf(at));
+  const closing = snapshot?.months?.[lastMonth];
+  if (!ledger.settings.monthlyDigest || !closing || snapshot?.digestSentFor === lastMonth) return null;
+  const sent = await say(`Costs for ${lastMonth} (closing figures)`, digestMessage(lastMonth, closing), 'info');
+  return sent ? lastMonth : null;
+}
+
+/** Record what was told (forgetting signals no longer true), the check time and the digest month. */
+async function recordCheck(store, { wanted, told, digest, at }) {
+  await changeSnapshot(store, (stored) => {
+    const base = stored ?? { readAt: null, azure: null, ai: null, sources: [], months: {} };
+    const keep = new Set(wanted.map((sig) => sig.id));
+    const notified = Object.fromEntries(
+      Object.entries(base.notified ?? {}).filter(([id]) => keep.has(id))
+    );
+    for (const id of told) notified[id] = at.toISOString();
+    return {
+      ...base,
+      notified,
+      lastSignalCheckAt: at.toISOString(),
+      digestSentFor: digest ?? base.digestSentFor ?? null,
+    };
+  });
+}
+
+/** One due run (see the top of the file); throws on a store failure, which checkIfDue logs. */
+async function runCheck(deps, say) {
+  const at = deps.now();
+  let snapshot = await readSnapshot(deps.store);
+  const ledger = await readLedger(deps.store);
+  const due = whatIsDue(snapshot, ledger, at.getTime());
+  if (!due.refreshDue && !due.checkDue) return { checked: false, reason: 'not due' };
+
+  let wasRefreshed = false;
+  if (due.refreshDue) ({ snapshot, refreshed: wasRefreshed } = await refreshOrKeep(deps, snapshot, ledger));
+
+  const summary = buildSummary({ snapshot, ledger, now: at });
+  const wanted = notable(summary.signals);
+  const told = ledger.settings.telegram ? await tellNewSignals(say, wanted, snapshot?.notified ?? {}) : [];
+  const digest = await sendDigest(say, snapshot, ledger, at);
+  await recordCheck(deps.store, { wanted, told, digest, at });
+  return { checked: true, refreshed: wasRefreshed, told: told.length, digest };
+}
+
 /**
  * @param {object} deps
  * @param {object} deps.store readDoc, createDoc, replaceDocIfMatch, queryDocs
@@ -75,6 +154,7 @@ export function createCostWatch({
   env = process.env,
   fetchImpl = globalThis.fetch,
 }) {
+  const deps = { store, now, log, refresh, env, fetchImpl };
   const say = async (title, message, severity) => {
     if (!notifier) return false;
     const outcome = await notifier.notifyTelegram({ title, message, severity, source: COST_SOURCE });
@@ -87,64 +167,7 @@ export function createCostWatch({
    */
   async function checkIfDue() {
     try {
-      const at = now();
-      const atMs = at.getTime();
-      let snapshot = await readSnapshot(store);
-      const ledger = await readLedger(store);
-      const refreshDueMs = (Number(ledger.settings.refreshHours) || 6) * HOUR_MS;
-      const lastRead = Date.parse(snapshot?.readAt || '');
-      const lastCheck = Date.parse(snapshot?.lastSignalCheckAt || '');
-      const refreshDue = !Number.isFinite(lastRead) || atMs - lastRead >= refreshDueMs;
-      const checkDue = !Number.isFinite(lastCheck) || atMs - lastCheck >= SIGNAL_CHECK_INTERVAL_MS;
-      if (!refreshDue && !checkDue) return { checked: false, reason: 'not due' };
-
-      let refreshed = false;
-      if (refreshDue) {
-        try {
-          snapshot = await refresh({ store, ledger, now, env, fetchImpl });
-          refreshed = true;
-        } catch (error) {
-          log.warn?.(`[costWatch] the snapshot could not be refreshed (${error?.code ?? 'error'})`);
-        }
-      }
-
-      const summary = buildSummary({ snapshot, ledger, now: at });
-      const wanted = notable(summary.signals);
-      const known = snapshot?.notified ?? {};
-      const told = [];
-      if (ledger.settings.telegram) {
-        for (const sig of wanted) {
-          if (known[sig.id]) continue;
-          const sent = await say(sig.title, `${sig.detail}\n\n${sig.href}`, sig.severity);
-          if (sent) told.push(sig.id);
-        }
-      }
-
-      let digest = null;
-      const month = monthOf(at);
-      const lastMonth = previousMonthOf(month);
-      const closing = snapshot?.months?.[lastMonth];
-      if (ledger.settings.monthlyDigest && closing && snapshot?.digestSentFor !== lastMonth) {
-        const sent = await say(`Costs for ${lastMonth} (closing figures)`, digestMessage(lastMonth, closing), 'info');
-        if (sent) digest = lastMonth;
-      }
-
-      await changeSnapshot(store, (stored) => {
-        const base = stored ?? { readAt: null, azure: null, ai: null, sources: [], months: {} };
-        const keep = new Set(wanted.map((sig) => sig.id));
-        const notified = Object.fromEntries(
-          Object.entries(base.notified ?? {}).filter(([id]) => keep.has(id))
-        );
-        for (const id of told) notified[id] = at.toISOString();
-        return {
-          ...base,
-          notified,
-          lastSignalCheckAt: at.toISOString(),
-          digestSentFor: digest ?? base.digestSentFor ?? null,
-        };
-      });
-
-      return { checked: true, refreshed, told: told.length, digest };
+      return await runCheck(deps, say);
     } catch (error) {
       log.warn?.(`[costWatch] failed (${error?.code ?? 'error'})`);
       return { checked: false, reason: 'failed' };

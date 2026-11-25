@@ -125,7 +125,7 @@ describe('fetchAudioToContainer', () => {
     });
     expect(report).toEqual({ interviewId: 'int-1', bytes: 6, contentType: 'audio/mp4', path: 'audio/int-1/job-7.m4a' });
     expect(storage.uploaded['interviews-audio/audio/int-1/job-7.m4a'].toString()).toBe('abcdef');
-    expect(storage.uploadBlobFromStream.mock.calls[0].slice(3)).toEqual([4 * 1024 * 1024, 'audio/mp4']);
+    expect(storage.uploadBlobFromStream.mock.calls[0].slice(3)).toEqual(['audio/mp4', { bufferSize: 4 * 1024 * 1024 }]);
     expect(fetchStream).toHaveBeenCalledWith(URL_OK, {
       httpsOnly: true,
       maxRedirects: 5,

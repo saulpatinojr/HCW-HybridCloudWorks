@@ -507,7 +507,6 @@ describe('the status token\'s own expiry (#763)', () => {
   });
 });
 
-
 describe('verifying a renewed status token before it is stored (Coder automation)', () => {
   // Shaped like a Coder key and plainly not one. Every key-shaped value here,
   // near misses included, is built at run time: a literal in Coder's API key

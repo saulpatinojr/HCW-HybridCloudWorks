@@ -20,6 +20,13 @@ import crypto from 'node:crypto';
 import { setVaultSecret, refreshKeyVaultReferences } from '../secret-vault.js';
 import { withStatus } from '../http/error-response.js';
 
+/** Refuse a missing or non-text argument with `message`. */
+function requireText(value, message) {
+  if (!value || typeof value !== 'string') {
+    throw new Error(message);
+  }
+}
+
 export const AWS_TARGETS = Object.freeze({
   pricing: Object.freeze({
     id: 'kv-aws-access-key-pair',
@@ -56,12 +63,8 @@ export function signSigV4({
   secretAccessKey,
   now = new Date(),
 }) {
-  if (!accessKeyId || typeof accessKeyId !== 'string') {
-    throw new Error('accessKeyId must be specified');
-  }
-  if (!secretAccessKey || typeof secretAccessKey !== 'string') {
-    throw new Error('secretAccessKey must be specified');
-  }
+  requireText(accessKeyId, 'accessKeyId must be specified');
+  requireText(secretAccessKey, 'secretAccessKey must be specified');
 
   const parsedUrl = new URL(url);
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
@@ -121,6 +124,40 @@ export function signSigV4({
   };
 }
 
+const IAM_URL = 'https://iam.amazonaws.com/';
+
+/** The `&UserName=` part of an IAM request, or '' for the calling user. */
+const userParam = (userName) => (userName ? `&UserName=${encodeURIComponent(userName)}` : '');
+
+/** One signed form POST to IAM (us-east-1, the region IAM signs in). */
+async function postToIam({ body, accessKeyId, secretAccessKey, fetchImpl, now }) {
+  const headers = signSigV4({
+    method: 'POST',
+    url: IAM_URL,
+    body,
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    region: 'us-east-1',
+    service: 'iam',
+    accessKeyId,
+    secretAccessKey,
+    now,
+  });
+  return fetchImpl(IAM_URL, {
+    method: 'POST',
+    headers,
+    body,
+  });
+}
+
+/** The error for a refused IAM call: IAM's own <Message>, or the HTTP status, with the status kept. */
+function iamFailure(response, text, what) {
+  const errorMatch = text.match(/<Message>(.*?)<\/Message>/s);
+  const err = errorMatch ? errorMatch[1] : `HTTP ${response.status}`;
+  return withStatus(new Error(`AWS IAM ${what} failed: ${err}`), response.status);
+}
+
 /**
  * Lists access keys for the specified user or current caller.
  *
@@ -139,37 +176,18 @@ export async function listAwsAccessKeys({
   fetchImpl = globalThis.fetch,
   now,
 }) {
-  const url = 'https://iam.amazonaws.com/';
-  const body = `Action=ListAccessKeys&Version=2010-05-08${userName ? `&UserName=${encodeURIComponent(userName)}` : ''}`;
-
-  const headers = signSigV4({
-    method: 'POST',
-    url,
-    body,
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-    region: 'us-east-1',
-    service: 'iam',
-    accessKeyId,
-    secretAccessKey,
-    now,
-  });
-
-  const response = await fetchImpl(url, {
-    method: 'POST',
-    headers,
-    body,
-  });
+  const body = `Action=ListAccessKeys&Version=2010-05-08${userParam(userName)}`;
+  const response = await postToIam({ body, accessKeyId, secretAccessKey, fetchImpl, now });
 
   const text = await response.text();
 
-  if (!response.ok) {
-    const errorMatch = text.match(/<Message>(.*?)<\/Message>/s);
-    const err = errorMatch ? errorMatch[1] : `HTTP ${response.status}`;
-    throw withStatus(new Error(`AWS IAM ListAccessKeys failed: ${err}`), response.status);
-  }
+  if (!response.ok) throw iamFailure(response, text, 'ListAccessKeys');
 
+  return parseAccessKeys(text);
+}
+
+/** The access keys in a ListAccessKeys answer (XML): each member's id and status. */
+function parseAccessKeys(text) {
   // Parse access keys from XML response
   const keys = [];
   const memberRegex = /<member>(.*?)<\/member>/gs;
@@ -207,36 +225,12 @@ export async function createAwsAccessKey({
   fetchImpl = globalThis.fetch,
   now,
 }) {
-  const url = 'https://iam.amazonaws.com/';
-  const body = `Action=CreateAccessKey&Version=2010-05-08${userName ? `&UserName=${encodeURIComponent(userName)}` : ''}`;
-
-  const headers = signSigV4({
-    method: 'POST',
-    url,
-    body,
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-    region: 'us-east-1',
-    service: 'iam',
-    accessKeyId,
-    secretAccessKey,
-    now,
-  });
-
-  const response = await fetchImpl(url, {
-    method: 'POST',
-    headers,
-    body,
-  });
+  const body = `Action=CreateAccessKey&Version=2010-05-08${userParam(userName)}`;
+  const response = await postToIam({ body, accessKeyId, secretAccessKey, fetchImpl, now });
 
   const text = await response.text();
 
-  if (!response.ok) {
-    const errorMatch = text.match(/<Message>(.*?)<\/Message>/s);
-    const err = errorMatch ? errorMatch[1] : `HTTP ${response.status}`;
-    throw withStatus(new Error(`AWS IAM CreateAccessKey failed: ${err}`), response.status);
-  }
+  if (!response.ok) throw iamFailure(response, text, 'CreateAccessKey');
 
   const newIdMatch = text.match(/<AccessKeyId>(.*?)<\/AccessKeyId>/);
   const newSecretMatch = text.match(/<SecretAccessKey>(.*?)<\/SecretAccessKey>/);
@@ -273,38 +267,13 @@ export async function deleteAwsAccessKey({
   fetchImpl = globalThis.fetch,
   now,
 }) {
-  if (!targetAccessKeyId || typeof targetAccessKeyId !== 'string') {
-    throw new Error('targetAccessKeyId must be specified');
-  }
+  requireText(targetAccessKeyId, 'targetAccessKeyId must be specified');
 
-  const url = 'https://iam.amazonaws.com/';
-  const body = `Action=DeleteAccessKey&AccessKeyId=${encodeURIComponent(targetAccessKeyId)}&Version=2010-05-08${userName ? `&UserName=${encodeURIComponent(userName)}` : ''}`;
-
-  const headers = signSigV4({
-    method: 'POST',
-    url,
-    body,
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-    region: 'us-east-1',
-    service: 'iam',
-    accessKeyId,
-    secretAccessKey,
-    now,
-  });
-
-  const response = await fetchImpl(url, {
-    method: 'POST',
-    headers,
-    body,
-  });
+  const body = `Action=DeleteAccessKey&AccessKeyId=${encodeURIComponent(targetAccessKeyId)}&Version=2010-05-08${userParam(userName)}`;
+  const response = await postToIam({ body, accessKeyId, secretAccessKey, fetchImpl, now });
 
   if (!response.ok) {
-    const text = await response.text();
-    const errorMatch = text.match(/<Message>(.*?)<\/Message>/s);
-    const err = errorMatch ? errorMatch[1] : `HTTP ${response.status}`;
-    throw withStatus(new Error(`AWS IAM DeleteAccessKey for ${targetAccessKeyId} failed: ${err}`), response.status);
+    throw iamFailure(response, await response.text(), `DeleteAccessKey for ${targetAccessKeyId}`);
   }
 
   return {
@@ -367,6 +336,86 @@ export async function verifyAwsPricingAccess({
   }
 }
 
+function requireCurrentKey(currentAccessKeyId, currentSecretAccessKey) {
+  requireText(currentAccessKeyId, 'currentAccessKeyId is required');
+  requireText(currentSecretAccessKey, 'currentSecretAccessKey is required');
+}
+
+/**
+ * Probe the new key up to `maxVerifyAttempts` times, waiting a second longer
+ * after each failure (a new IAM key takes a few seconds to work everywhere).
+ * Throws the last attempt's error when every attempt failed.
+ */
+async function verifyWithRetry(newKey, { pricingClient, maxVerifyAttempts, sleepImpl }) {
+  let lastVerifyError = null;
+  for (let attempt = 1; attempt <= maxVerifyAttempts; attempt += 1) {
+    try {
+      await verifyAwsPricingAccess({
+        accessKeyId: newKey.accessKeyId,
+        secretAccessKey: newKey.secretAccessKey,
+        clientImpl: pricingClient,
+      });
+      return;
+    } catch (err) {
+      lastVerifyError = err;
+      if (attempt < maxVerifyAttempts) {
+        await sleepImpl(attempt * 1000);
+      }
+    }
+  }
+  throw lastVerifyError;
+}
+
+/** Delete the newly minted key with the current one, best effort: a failure here must not hide the first one. */
+async function discardNewKey(current, newKey) {
+  try {
+    await deleteAwsAccessKey({
+      accessKeyId: current.accessKeyId,
+      secretAccessKey: current.secretAccessKey,
+      targetAccessKeyId: newKey.accessKeyId,
+      userName: current.userName,
+      fetchImpl: current.fetchImpl,
+      now: current.now,
+    });
+  } catch {}
+}
+
+/** Write both halves of the new key to Key Vault; on a failure, put the old id back, drop the new key and rethrow. */
+async function writeNewKey(vault, current, newKey) {
+  try {
+    await vault.setSecret(AWS_TARGETS.pricing.idSecretName, newKey.accessKeyId);
+    await vault.setSecret(AWS_TARGETS.pricing.secretSecretName, newKey.secretAccessKey);
+  } catch (writeErr) {
+    // Every failure here comes at or after the ID write was sent, and a Key
+    // Vault PUT can fail after the service accepted it, so the old ID is always
+    // restored: a same-value version when the write never landed, never a
+    // wrong one.
+    try {
+      await vault.setSecret(AWS_TARGETS.pricing.idSecretName, current.accessKeyId);
+    } catch {}
+    await discardNewKey(current, newKey);
+    throw writeErr;
+  }
+}
+
+/** The app's own check of the new key; on a failure, put the old key back in Key Vault, drop the new one and throw. */
+async function verifyFromAppOrRollBack(verifyFromApp, vault, current, newKey) {
+  try {
+    await verifyFromApp({
+      accessKeyId: newKey.accessKeyId,
+      secretAccessKey: newKey.secretAccessKey,
+    });
+  } catch (appErr) {
+    try {
+      await vault.setSecret(AWS_TARGETS.pricing.idSecretName, current.accessKeyId);
+      await vault.setSecret(AWS_TARGETS.pricing.secretSecretName, current.secretAccessKey);
+      await vault.refreshReferences();
+    } catch {}
+    await discardNewKey(current, newKey);
+    throw new Error(`Post-refresh app verification failed: ${appErr.message}`);
+  }
+}
+
 /**
  * Orchestrates rolling the AWS price-list IAM access key with verify-before-delete semantics:
  * 1. Checks existing key count (enforces < 2 keys).
@@ -403,12 +452,8 @@ export async function rollAndApplyAwsKey({
   verifyFromApp,
   now,
 }) {
-  if (!currentAccessKeyId || typeof currentAccessKeyId !== 'string') {
-    throw new Error('currentAccessKeyId is required');
-  }
-  if (!currentSecretAccessKey || typeof currentSecretAccessKey !== 'string') {
-    throw new Error('currentSecretAccessKey is required');
-  }
+  requireCurrentKey(currentAccessKeyId, currentSecretAccessKey);
+  const current = { accessKeyId: currentAccessKeyId, secretAccessKey: currentSecretAccessKey, userName, fetchImpl, now };
 
   // Step 1: Check existing access keys count
   const existingKeys = await listAwsAccessKeys({
@@ -436,38 +481,11 @@ export async function rollAndApplyAwsKey({
 
   // Step 3: Functionally probe new credentials against AWS Pricing API with bounded retry and backoff
   if (verify) {
-    let verified = false;
-    let lastVerifyError = null;
-
-    for (let attempt = 1; attempt <= maxVerifyAttempts; attempt += 1) {
-      try {
-        await verifyAwsPricingAccess({
-          accessKeyId: newKey.accessKeyId,
-          secretAccessKey: newKey.secretAccessKey,
-          clientImpl: pricingClient,
-        });
-        verified = true;
-        break;
-      } catch (err) {
-        lastVerifyError = err;
-        if (attempt < maxVerifyAttempts) {
-          await sleepImpl(attempt * 1000);
-        }
-      }
-    }
-
-    if (!verified) {
+    try {
+      await verifyWithRetry(newKey, { pricingClient, maxVerifyAttempts, sleepImpl });
+    } catch (lastVerifyError) {
       // Clean up newly minted key so user quota is not exhausted
-      try {
-        await deleteAwsAccessKey({
-          accessKeyId: currentAccessKeyId,
-          secretAccessKey: currentSecretAccessKey,
-          targetAccessKeyId: newKey.accessKeyId,
-          userName,
-          fetchImpl,
-          now,
-        });
-      } catch {}
+      await discardNewKey(current, newKey);
       throw new Error(
         `New AWS access key verification probe failed after ${maxVerifyAttempts} attempt(s) (${lastVerifyError?.message}). Minted key was deleted; old key preserved.`
       );
@@ -475,57 +493,13 @@ export async function rollAndApplyAwsKey({
   }
 
   // Step 4: Write both parts to Azure Key Vault and refresh references with rollback on write failure
-  try {
-    await vault.setSecret(AWS_TARGETS.pricing.idSecretName, newKey.accessKeyId);
-    await vault.setSecret(AWS_TARGETS.pricing.secretSecretName, newKey.secretAccessKey);
-  } catch (writeErr) {
-    // Every failure here comes at or after the ID write was sent, and a Key
-    // Vault PUT can fail after the service accepted it, so the old ID is always
-    // restored: a same-value version when the write never landed, never a
-    // wrong one.
-    try {
-      await vault.setSecret(AWS_TARGETS.pricing.idSecretName, currentAccessKeyId);
-    } catch {}
-    try {
-      await deleteAwsAccessKey({
-        accessKeyId: currentAccessKeyId,
-        secretAccessKey: currentSecretAccessKey,
-        targetAccessKeyId: newKey.accessKeyId,
-        userName,
-        fetchImpl,
-        now,
-      });
-    } catch {}
-    throw writeErr;
-  }
+  await writeNewKey(vault, current, newKey);
 
   const refreshResult = await vault.refreshReferences();
 
   // Post-refresh app verification if provided
   if (verify && typeof verifyFromApp === 'function') {
-    try {
-      await verifyFromApp({
-        accessKeyId: newKey.accessKeyId,
-        secretAccessKey: newKey.secretAccessKey,
-      });
-    } catch (appErr) {
-      try {
-        await vault.setSecret(AWS_TARGETS.pricing.idSecretName, currentAccessKeyId);
-        await vault.setSecret(AWS_TARGETS.pricing.secretSecretName, currentSecretAccessKey);
-        await vault.refreshReferences();
-      } catch {}
-      try {
-        await deleteAwsAccessKey({
-          accessKeyId: currentAccessKeyId,
-          secretAccessKey: currentSecretAccessKey,
-          targetAccessKeyId: newKey.accessKeyId,
-          userName,
-          fetchImpl,
-          now,
-        });
-      } catch {}
-      throw new Error(`Post-refresh app verification failed: ${appErr.message}`);
-    }
+    await verifyFromAppOrRollBack(verifyFromApp, vault, current, newKey);
   }
 
   // Step 5: Delete old access key on AWS IAM using the NEW credentials ONLY if App Service refreshed

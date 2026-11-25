@@ -82,15 +82,12 @@ export const GENERATED_MEDIA_CONTAINERS = new Set(['listenandlearn', 'podcast'])
  * @returns {boolean}
  */
 export function isValidBlobPath(path) {
-  return (
-    typeof path === 'string' &&
-    path.length > 0 &&
-    path.length <= MAX_PATH_LENGTH &&
-    PATH_PATTERN.test(path) &&
-    !path.includes('..') &&
-    !path.endsWith('/')
-  );
+  return hasBlobPathLength(path) && PATH_PATTERN.test(path) && !path.includes('..') && !path.endsWith('/');
 }
+
+/** A string of 1 to MAX_PATH_LENGTH characters. */
+const hasBlobPathLength = (path) =>
+  typeof path === 'string' && path.length > 0 && path.length <= MAX_PATH_LENGTH;
 
 /**
  * Build the URL for a blob served through the media delivery route.

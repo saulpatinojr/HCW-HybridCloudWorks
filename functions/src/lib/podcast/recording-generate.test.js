@@ -268,7 +268,7 @@ describe('a full run from the Plaud library', () => {
     });
 
     expect(storage.uploadBlob.mock.calls[0].slice(0, 2)).toEqual(['podcast', 'plaud/rec-1.mp3']);
-    expect(storage.uploadBlob.mock.calls[0][4]).toEqual({
+    expect(storage.uploadBlob.mock.calls[0][4].metadata).toEqual({
       sourceKind: 'plaud',
       sourceId: 'rec-1',
       sourceSlug: '',

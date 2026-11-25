@@ -173,6 +173,90 @@ export function buildListingContentDoc({ article, source, dedupFields, now, uuid
   return { ...doc, source: 'firecrawl', readTime: '3 min' };
 }
 
+/** Stop between steps once the job's signal fired. */
+function stopIfAborted(signal) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
+}
+
+/** The article's canonical address, when the listing gave one. */
+const canonicalOf = (article) => article.canonicalUrl || article.canonical || '';
+
+/** Save one article as a draft unless it is already there. True when it was new. */
+async function ingestArticle(d, source, article) {
+  const { store, dedup, now } = d;
+  const sourceUrl = article.url;
+  if (!sourceUrl || !sourceUrl.startsWith('http')) return false;
+  const title = article.title || 'Untitled';
+  const publishedMs = article.publishedAt ? Date.parse(article.publishedAt) : NaN;
+  const dup = await dedup.findDuplicateContent(store, {
+    url: sourceUrl,
+    canonicalUrl: canonicalOf(article),
+    title,
+    publishedMs: Number.isNaN(publishedMs) ? now().getTime() : publishedMs,
+  });
+  if (dup.duplicate) return false;
+  const doc = buildListingContentDoc({
+    article,
+    source,
+    dedupFields: dedup.buildDedupFields({
+      url: sourceUrl,
+      canonicalUrl: canonicalOf(article),
+      title,
+    }),
+    now: now(),
+    uuid: d.uuid,
+  });
+  await store.upsertDoc('content', doc);
+  return true;
+}
+
+/** Scrape one listing and save its new articles, adding to the run's counts. */
+async function scrapeSource(d, apiKey, source, results) {
+  const { log, signal } = d;
+  // The provider and counts only: a source's name is typed by an editor (#1635).
+  log.log?.(`[blogScraper] Scraping a ${source.provider} listing`);
+  const articles = await scrapeListingPage({ apiKey, fetch: d.fetchImpl }, source.url, signal);
+  results.scraped += 1;
+  let newCount = 0;
+  for (const article of articles.slice(0, source.maxItems || MAX_ARTICLES_PER_SOURCE)) {
+    stopIfAborted(signal);
+    if (await ingestArticle(d, source, article)) newCount += 1;
+  }
+  results.newArticles += newCount;
+  await recordRun(d.store, source, 'succeeded', { fetchedAt: d.now().toISOString(), itemCount: articles.length });
+  log.log?.(`[blogScraper] ${source.provider} listing: ${articles.length} found, ${newCount} new`);
+}
+
+async function run(d) {
+  const { store, log, signal, now } = d;
+  const apiKey = readKey(d.env, 'FIRECRAWL_API_KEY');
+  if (!apiKey) {
+    log.warn?.('[blogScraper] FIRECRAWL_API_KEY not configured; skipping');
+    return { skipped: true, reason: 'not_configured', scraped: 0, newArticles: 0, errors: 0 };
+  }
+  const results = { skipped: false, scraped: 0, newArticles: 0, errors: 0, failures: [] };
+  for (const source of d.sources) {
+    stopIfAborted(signal);
+    try {
+      await scrapeSource(d, apiKey, source, results);
+    } catch (err) {
+      if (signal?.aborted) throw signal.reason || err;
+      await recordRun(store, source, 'failed', { fetchedAt: now().toISOString() });
+      results.errors += 1;
+      // Stored as the `sync-blog-source` job's result, which an admin can
+      // read: a sentence written here with the error's code, never the
+      // error's own text (#945, #1794).
+      results.failures.push({
+        source: source.name,
+        error: storedFailure(err, 'The listing could not be read.'),
+      });
+      // The provider and the error's code: no editor-typed name or raw error text (#1642).
+      log.error?.(`[blogScraper] ${source.provider} listing failed: ${errorCode(err)}`);
+    }
+  }
+  return results;
+}
+
 /**
  * @param {object} deps
  * @param {{ queryDocs: Function, upsertDoc: Function }} deps.store
@@ -189,73 +273,11 @@ export function createBlogListingsScrape({
   log = {},
   signal,
 }) {
-  async function ingestArticle(source, article) {
-    const sourceUrl = article.url;
-    if (!sourceUrl || !sourceUrl.startsWith('http')) return false;
-    const title = article.title || 'Untitled';
-    const publishedMs = article.publishedAt ? Date.parse(article.publishedAt) : NaN;
-    const dup = await dedup.findDuplicateContent(store, {
-      url: sourceUrl,
-      canonicalUrl: article.canonicalUrl || article.canonical || '',
-      title,
-      publishedMs: Number.isNaN(publishedMs) ? now().getTime() : publishedMs,
-    });
-    if (dup.duplicate) return false;
-    const doc = buildListingContentDoc({
-      article,
-      source,
-      dedupFields: dedup.buildDedupFields({
-        url: sourceUrl,
-        canonicalUrl: article.canonicalUrl || article.canonical || '',
-        title,
-      }),
-      now: now(),
-      uuid,
-    });
-    await store.upsertDoc('content', doc);
-    return true;
-  }
-
-  async function run() {
-    const apiKey = readKey(env, 'FIRECRAWL_API_KEY');
-    if (!apiKey) {
-      log.warn?.('[blogScraper] FIRECRAWL_API_KEY not configured; skipping');
-      return { skipped: true, reason: 'not_configured', scraped: 0, newArticles: 0, errors: 0 };
-    }
-    const results = { skipped: false, scraped: 0, newArticles: 0, errors: 0, failures: [] };
-    for (const source of sources) {
-      if (signal?.aborted) throw signal.reason || new Error('aborted');
-      try {
-        // The provider and counts only: a source's name is typed by an editor (#1635).
-        log.log?.(`[blogScraper] Scraping a ${source.provider} listing`);
-        const articles = await scrapeListingPage({ apiKey, fetch: fetchImpl }, source.url, signal);
-        results.scraped += 1;
-        let newCount = 0;
-        for (const article of articles.slice(0, source.maxItems || MAX_ARTICLES_PER_SOURCE)) {
-          if (signal?.aborted) throw signal.reason || new Error('aborted');
-          if (await ingestArticle(source, article)) newCount += 1;
-        }
-        results.newArticles += newCount;
-        await recordRun(store, source, 'succeeded', { fetchedAt: now().toISOString(), itemCount: articles.length });
-        log.log?.(`[blogScraper] ${source.provider} listing: ${articles.length} found, ${newCount} new`);
-      } catch (err) {
-        if (signal?.aborted) throw signal.reason || err;
-        await recordRun(store, source, 'failed', { fetchedAt: now().toISOString() });
-        results.errors += 1;
-        // Stored as the `sync-blog-source` job's result, which an admin can
-        // read: a sentence written here with the error's code, never the
-        // error's own text (#945, #1794).
-        results.failures.push({
-          source: source.name,
-          error: storedFailure(err, 'The listing could not be read.'),
-        });
-        // The provider and the error's code: no editor-typed name or raw error text (#1642).
-        log.error?.(`[blogScraper] ${source.provider} listing failed: ${errorCode(err)}`);
-      }
-    }
-    return results;
-  }
-  return { run, ingestArticle };
+  const d = { store, dedup, fetchImpl, env, sources, now, uuid, log, signal };
+  return {
+    run: () => run(d),
+    ingestArticle: (source, article) => ingestArticle(d, source, article),
+  };
 }
 
 /**

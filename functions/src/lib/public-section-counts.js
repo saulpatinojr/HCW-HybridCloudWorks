@@ -237,22 +237,27 @@ export function emptySections() {
  * authority everywhere else in the public read path.
  */
 export function countContentDocs(sections, docs) {
-  for (const doc of docs || []) {
-    if (!isPublicDocument(doc)) continue;
+  for (const doc of (docs || []).filter((row) => isPublicDocument(row))) {
     const type = String(doc?.type ?? '')
       .trim()
       .toLowerCase();
     const providers = providersOfContent(doc);
-    for (const [section, matchesType] of Object.entries(CONTENT_SECTION_TYPES)) {
-      if (!matchesType(type)) continue;
-      if (providers.length > 0) {
-        for (const provider of providers) sections[provider][section] += 1;
-      } else if (SECTIONS[section].providerInferred) {
-        sections[UNATTRIBUTED][section] += 1;
-      }
-    }
+    const matching = Object.entries(CONTENT_SECTION_TYPES).filter(([, matchesType]) => matchesType(type));
+    for (const [section] of matching) countContentRow(sections, section, providers);
   }
   return sections;
+}
+
+/**
+ * One content row in one section: once for each provider it names, or once
+ * as unattributed where the section infers a provider the row does not name.
+ */
+function countContentRow(sections, section, providers) {
+  if (providers.length > 0) {
+    for (const provider of providers) sections[provider][section] += 1;
+  } else if (SECTIONS[section].providerInferred) {
+    sections[UNATTRIBUTED][section] += 1;
+  }
 }
 
 /**
@@ -269,13 +274,10 @@ export function countContentDocs(sections, docs) {
  * page shows, and this page shows the show.
  */
 export function countPodcastDocs(sections, docs) {
-  for (const doc of docs || []) {
-    if (isSoftDeleted(doc) || isPodcastMediaRetired(doc)) continue;
-    if (doc?.provider === MAIN_PODCAST_PROVIDER) {
-      for (const provider of PROVIDERS) addAudioRow(sections, provider);
-      continue;
-    }
-    addAudioRow(sections, doc?.provider);
+  const listed = (docs || []).filter((doc) => !isSoftDeleted(doc) && !isPodcastMediaRetired(doc));
+  for (const doc of listed) {
+    const providers = doc?.provider === MAIN_PODCAST_PROVIDER ? PROVIDERS : [doc?.provider];
+    for (const provider of providers) addAudioRow(sections, provider);
   }
   return sections;
 }
@@ -286,15 +288,16 @@ export function countPodcastDocs(sections, docs) {
  * item this page has.
  */
 export function countListenAndLearnDocs(sections, docs) {
-  for (const doc of docs || []) {
-    if (isSoftDeleted(doc)) continue;
-    if (doc?.status !== LISTEN_AND_LEARN_PUBLISHED_STATUS) continue;
-    // Retired-host audio (#1119) counts as none: the list omits it too.
-    if (!servableListenAndLearnAudioUrl(doc)) continue;
-    addAudioRow(sections, doc?.provider);
-  }
+  for (const doc of (docs || []).filter(isListedEpisode)) addAudioRow(sections, doc?.provider);
   return sections;
 }
+
+/** A published, not deleted episode with servable audio. */
+const isListedEpisode = (doc) =>
+  !isSoftDeleted(doc) &&
+  doc?.status === LISTEN_AND_LEARN_PUBLISHED_STATUS &&
+  // Retired-host audio (#1119) counts as none: the list omits it too.
+  Boolean(servableListenAndLearnAudioUrl(doc));
 
 /**
  * Both audio containers key on the lowercase route slug in SQL, so an exact

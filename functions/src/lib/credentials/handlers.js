@@ -62,6 +62,17 @@ const NOT_RECORDABLE = Object.freeze({
  */
 export function parseRotationBody(body, today) {
   if (!isPlainObject(body)) return { error: 'The body must be a JSON object' };
+  const found = credentialOf(body);
+  if (found.error) return found;
+  const { entry } = found;
+  if (body.rotatedOn === null) return { value: { entry, rotatedOn: null } };
+  const refusal = rotatedOnRefusal(body.rotatedOn, today);
+  if (refusal) return { error: refusal };
+  return { value: { entry, rotatedOn: body.rotatedOn } };
+}
+
+/** The register entry the body names, `{ entry }`, or `{ error }` for an unknown key or a credential that takes no record. */
+function credentialOf(body) {
   const unknown = Object.keys(body).find((key) => !ROTATION_BODY_FIELDS.includes(key));
   if (unknown !== undefined) {
     return {
@@ -71,15 +82,18 @@ export function parseRotationBody(body, today) {
   const entry = typeof body.credentialId === 'string' ? findCredential(body.credentialId) : undefined;
   if (!entry) return { error: 'credentialId is not a credential the register knows' };
   if (!isRecordable(entry)) return { error: `${entry.name} ${NOT_RECORDABLE[entry.renewal]}` };
+  return { entry };
+}
 
-  if (body.rotatedOn === null) return { value: { entry, rotatedOn: null } };
-  if (parseDateOnly(body.rotatedOn) === null) {
-    return { error: 'rotatedOn must be a real date as YYYY-MM-DD, or null to clear the record' };
+/** Why `rotatedOn` (not null) cannot be recorded, or null when it can. */
+function rotatedOnRefusal(rotatedOn, today) {
+  if (parseDateOnly(rotatedOn) === null) {
+    return 'rotatedOn must be a real date as YYYY-MM-DD, or null to clear the record';
   }
-  if (body.rotatedOn < EARLIEST_ROTATION) return { error: `rotatedOn must be on or after ${EARLIEST_ROTATION}` };
+  if (rotatedOn < EARLIEST_ROTATION) return `rotatedOn must be on or after ${EARLIEST_ROTATION}`;
   // One day of grace for a clock ahead of UTC; past that it has not happened yet.
-  if (daysUntil(body.rotatedOn, today) > 1) return { error: 'rotatedOn is in the future: record a rotation once it is done' };
-  return { value: { entry, rotatedOn: body.rotatedOn } };
+  if (daysUntil(rotatedOn, today) > 1) return 'rotatedOn is in the future: record a rotation once it is done';
+  return null;
 }
 
 /**
@@ -130,6 +144,101 @@ export function presentRegister({ sources, unavailable }, nowMs) {
   };
 }
 
+async function answer(deps, extra = {}) {
+  const read = await readCredentialSources(deps.store);
+  return privateJson(200, { ...presentRegister(read, deps.now().getTime()), ...extra });
+}
+
+/** Best effort, like every audit writer here: the record has landed. */
+async function audit(deps, user, details, context) {
+  try {
+    await deps.store.upsertDoc('admin_audit_logs', {
+      id: deps.uuid(),
+      action: ROTATION_AUDIT_ACTION,
+      userId: user?.oid || user?.sub || null,
+      userName: user?.name || null,
+      userEmail: user?.email || user?.preferred_username || null,
+      timestamp: deps.now().toISOString(),
+      details,
+    });
+  } catch (error) {
+    context.warn?.(`putCredentialRotation: recorded, but the audit row failed (${error?.code ?? 'error'})`);
+  }
+}
+
+/** The reminders sync as a summary that never throws: the caller's write has landed. */
+async function syncQuietly(deps, context) {
+  try {
+    return await deps.sync({ store: deps.store, now: deps.now, log: context });
+  } catch (error) {
+    context.warn?.(`credentials: the reminders sync failed (${error?.code ?? 'error'})`);
+    return { synced: false, reason: 'error' };
+  }
+}
+
+/** Store the rotation date; answers null when it landed, or the refusal to send back. */
+async function storeRotation(deps, { entry, rotatedOn, user }, context) {
+  try {
+    await recordRotation(deps.store, {
+      credentialId: entry.id,
+      rotatedOn,
+      actor: user?.oid ?? user?.preferred_username ?? 'unknown',
+      at: deps.now().toISOString(),
+    });
+    return null;
+  } catch (error) {
+    context.error?.(`putCredentialRotation failed (${error?.code ?? 'error'})`);
+    const status = error?.code === 'CONFLICT' ? 409 : 500;
+    return privateJson(status, { success: false, error: 'The rotation could not be recorded; nothing changed' });
+  }
+}
+
+/** GET cms/credentials */
+async function getRegister(deps, request, context) {
+  const auth = await deps.guard.requireRole(request, CREDENTIALS_ROLE);
+  if (auth.error) return auth.error;
+  try {
+    return await answer(deps);
+  } catch (error) {
+    context.error?.(`getCredentialRegister failed (${error?.code ?? 'error'})`);
+    return privateJson(500, { error: 'Failed to read the credential register' });
+  }
+}
+
+/** PUT cms/credentials — { credentialId, rotatedOn: 'YYYY-MM-DD' | null } */
+async function putRotation(deps, request, context) {
+  const auth = await deps.guard.requireRole(request, CREDENTIALS_ROLE);
+  if (auth.error) return auth.error;
+  const parsed = parseRotationBody(await request.json().catch(() => null), dateOnly(deps.now()));
+  if (parsed.error) return privateJson(400, { success: false, error: parsed.error });
+  const { entry, rotatedOn } = parsed.value;
+
+  const refused = await storeRotation(deps, { entry, rotatedOn, user: auth.user }, context);
+  if (refused) return refused;
+  await audit(deps, auth.user, { credentialId: entry.id, rotatedOn, cleared: rotatedOn === null }, context);
+  const reminders = await syncQuietly(deps, context);
+  try {
+    return await answer(deps, { recorded: { credentialId: entry.id, rotatedOn }, reminders });
+  } catch (error) {
+    // Recorded is recorded: a failed re-read must not read as a failed write.
+    context.warn?.(`putCredentialRotation: recorded, but the re-read failed (${error?.code ?? 'error'})`);
+    return privateJson(200, { success: true, recorded: { credentialId: entry.id, rotatedOn }, reminders });
+  }
+}
+
+/** POST cms/credentials/reminders */
+async function syncReminders(deps, request, context) {
+  const auth = await deps.guard.requireRole(request, CREDENTIALS_ROLE);
+  if (auth.error) return auth.error;
+  const reminders = await syncQuietly(deps, context);
+  try {
+    return await answer(deps, { reminders });
+  } catch (error) {
+    context.error?.(`syncCredentialReminders: the re-read failed (${error?.code ?? 'error'})`);
+    return privateJson(500, { error: 'Failed to read the credential register', reminders });
+  }
+}
+
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
@@ -146,93 +255,10 @@ export function createCredentialRegisterHandlers({
   uuid = randomUUID,
   sync = syncCredentialReminders,
 }) {
-  async function answer(extra = {}) {
-    const read = await readCredentialSources(store);
-    return privateJson(200, { ...presentRegister(read, now().getTime()), ...extra });
-  }
-
-  /** Best effort, like every audit writer here: the record has landed. */
-  async function audit(user, details, context) {
-    try {
-      await store.upsertDoc('admin_audit_logs', {
-        id: uuid(),
-        action: ROTATION_AUDIT_ACTION,
-        userId: user?.oid || user?.sub || null,
-        userName: user?.name || null,
-        userEmail: user?.email || user?.preferred_username || null,
-        timestamp: now().toISOString(),
-        details,
-      });
-    } catch (error) {
-      context.warn?.(`putCredentialRotation: recorded, but the audit row failed (${error?.code ?? 'error'})`);
-    }
-  }
-
-  /** The reminders sync as a summary that never throws: the caller's write has landed. */
-  async function syncQuietly(context) {
-    try {
-      return await sync({ store, now, log: context });
-    } catch (error) {
-      context.warn?.(`credentials: the reminders sync failed (${error?.code ?? 'error'})`);
-      return { synced: false, reason: 'error' };
-    }
-  }
-
-  /** GET cms/credentials */
-  async function getRegister(request, context) {
-    const auth = await guard.requireRole(request, CREDENTIALS_ROLE);
-    if (auth.error) return auth.error;
-    try {
-      return await answer();
-    } catch (error) {
-      context.error?.(`getCredentialRegister failed (${error?.code ?? 'error'})`);
-      return privateJson(500, { error: 'Failed to read the credential register' });
-    }
-  }
-
-  /** PUT cms/credentials — { credentialId, rotatedOn: 'YYYY-MM-DD' | null } */
-  async function putRotation(request, context) {
-    const auth = await guard.requireRole(request, CREDENTIALS_ROLE);
-    if (auth.error) return auth.error;
-    const parsed = parseRotationBody(await request.json().catch(() => null), dateOnly(now()));
-    if (parsed.error) return privateJson(400, { success: false, error: parsed.error });
-    const { entry, rotatedOn } = parsed.value;
-
-    try {
-      await recordRotation(store, {
-        credentialId: entry.id,
-        rotatedOn,
-        actor: auth.user?.oid ?? auth.user?.preferred_username ?? 'unknown',
-        at: now().toISOString(),
-      });
-    } catch (error) {
-      context.error?.(`putCredentialRotation failed (${error?.code ?? 'error'})`);
-      const status = error?.code === 'CONFLICT' ? 409 : 500;
-      return privateJson(status, { success: false, error: 'The rotation could not be recorded; nothing changed' });
-    }
-    await audit(auth.user, { credentialId: entry.id, rotatedOn, cleared: rotatedOn === null }, context);
-    const reminders = await syncQuietly(context);
-    try {
-      return await answer({ recorded: { credentialId: entry.id, rotatedOn }, reminders });
-    } catch (error) {
-      // Recorded is recorded: a failed re-read must not read as a failed write.
-      context.warn?.(`putCredentialRotation: recorded, but the re-read failed (${error?.code ?? 'error'})`);
-      return privateJson(200, { success: true, recorded: { credentialId: entry.id, rotatedOn }, reminders });
-    }
-  }
-
-  /** POST cms/credentials/reminders */
-  async function syncReminders(request, context) {
-    const auth = await guard.requireRole(request, CREDENTIALS_ROLE);
-    if (auth.error) return auth.error;
-    const reminders = await syncQuietly(context);
-    try {
-      return await answer({ reminders });
-    } catch (error) {
-      context.error?.(`syncCredentialReminders: the re-read failed (${error?.code ?? 'error'})`);
-      return privateJson(500, { error: 'Failed to read the credential register', reminders });
-    }
-  }
-
-  return { getRegister, putRotation, syncReminders };
+  const deps = { guard, store, now, uuid, sync };
+  return {
+    getRegister: (request, context) => getRegister(deps, request, context),
+    putRotation: (request, context) => putRotation(deps, request, context),
+    syncReminders: (request, context) => syncReminders(deps, request, context),
+  };
 }

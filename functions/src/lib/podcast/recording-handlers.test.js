@@ -205,8 +205,7 @@ describe('uploadRecording', () => {
       'uploads/dddddddd-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3',
       expect.any(Buffer),
       'audio/mpeg',
-      { source: 'recording-upload', uploadedBy: 'oid-1' },
-      { overwrite: false }
+      { metadata: { source: 'recording-upload', uploadedBy: 'oid-1' }, overwrite: false }
     );
     expect(store.upsertDoc.mock.calls[0][1]).toMatchObject({
       type: UPLOAD_JOB_TYPE,

@@ -115,6 +115,24 @@ function dryRunReport(task, resolved) {
   };
 }
 
+/** The Test's answer for one task: a dry run for a media task, otherwise the chain walked. */
+async function taskTestReport(ctx, task, context) {
+  const { tasks } = await ctx.effectiveSelection();
+  const resolved = tasks[task];
+  if (isMediaTask(AI_TASKS[task])) return dryRunReport(task, resolved);
+  const { answeredBy, skipped } = await walkChain(ctx, resolved.chain, context);
+  return {
+    ok: Boolean(answeredBy),
+    task,
+    mode: resolved.mode,
+    answeredBy,
+    skipped,
+    rejected: resolved.rejected,
+    flags: resolved.flags,
+    ...(answeredBy ? {} : { error: 'No candidate of the chain answered' }),
+  };
+}
+
 /**
  * POST /api/cms/ai-routing/test/{task} — run the task's effective chain with
  * the Test's limits. 200 with `ok: false` when no candidate answered, as the
@@ -130,20 +148,7 @@ async function testAiTask(ctx, request, context) {
     return json(503, { ok: false, error: 'The AI router is not available to this process' });
   }
   try {
-    const { tasks } = await ctx.effectiveSelection();
-    const resolved = tasks[param.task];
-    if (isMediaTask(AI_TASKS[param.task])) return json(200, dryRunReport(param.task, resolved));
-    const { answeredBy, skipped } = await walkChain(ctx, resolved.chain, context);
-    return json(200, {
-      ok: Boolean(answeredBy),
-      task: param.task,
-      mode: resolved.mode,
-      answeredBy,
-      skipped,
-      rejected: resolved.rejected,
-      flags: resolved.flags,
-      ...(answeredBy ? {} : { error: 'No candidate of the chain answered' }),
-    });
+    return json(200, await taskTestReport(ctx, param.task, context));
   } catch (error) {
     context.error('testAiTask failed:', errorFacts(error));
     return json(500, { ok: false, error: 'Failed to test the task' });

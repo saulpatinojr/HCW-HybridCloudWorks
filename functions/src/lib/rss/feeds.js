@@ -188,14 +188,16 @@ export function categorizeItem(item) {
 /** RSS enclosures may be audio/video; those cannot occupy an article image slot. */
 export function feedImageUrl(item) {
   const media = item.mediaContent?.$;
-  for (const entry of [item.enclosure, media]) {
-    const url = entry?.url;
-    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) continue;
-    if (entry.type && !entry.type.startsWith('image/')) continue;
-    if (/\.(?:mp3|mp4|m4a|wav|ogg|webm|mov|pdf)(?:[?#]|$)/i.test(url)) continue;
-    return url;
-  }
-  return '';
+  const found = [item.enclosure, media].find(isArticleImage);
+  return found ? found.url : '';
+}
+
+/** An enclosure or media entry that is a web image: an http(s) address, an image type, not a media file. */
+function isArticleImage(entry) {
+  const url = entry?.url;
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return false;
+  if (entry.type && !entry.type.startsWith('image/')) return false;
+  return !/\.(?:mp3|mp4|m4a|wav|ogg|webm|mov|pdf)(?:[?#]|$)/i.test(url);
 }
 
 /** rss_cache document id for a provider + feed. */
@@ -302,6 +304,19 @@ export function buildRssContentDoc({
   };
 }
 
+/** The plain-English reason for each kind of feed failure, first match wins. */
+const FEED_ERROR_REASONS = [
+  [/TLS validation failed|UNABLE_TO_GET_ISSUER_CERT|CERT_HAS_EXPIRED/i, "their site's security certificate couldn't be verified, so we skipped it to stay safe"],
+  [
+    /Non-whitespace before first tag|Invalid character|Unexpected (end|close tag)|not well-formed|Unencoded/i,
+    "their feed sent back badly formatted data we couldn't read",
+  ],
+  [/Status code (403|401)/i, 'their site refused the request (it may block automated readers)'],
+  [/Status code 404/i, 'the feed address no longer exists'],
+  [/Status code 5\d\d/i, 'their site had a server error'],
+  [/timeout|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN/i, "we couldn't reach their site in time"],
+];
+
 /**
  * A one-line plain-English reason for a feed failure, from the raw
  * "provider/feed: detail" string the ingest records.
@@ -312,27 +327,8 @@ export function describeFeedError(rawError) {
   const feedName = match ? match[2] : '';
   const detail = match ? match[3] : rawError;
 
-  let reason;
-  if (/TLS validation failed|UNABLE_TO_GET_ISSUER_CERT|CERT_HAS_EXPIRED/i.test(detail)) {
-    reason =
-      "their site's security certificate couldn't be verified, so we skipped it to stay safe";
-  } else if (
-    /Non-whitespace before first tag|Invalid character|Unexpected (end|close tag)|not well-formed|Unencoded/i.test(
-      detail
-    )
-  ) {
-    reason = "their feed sent back badly formatted data we couldn't read";
-  } else if (/Status code (403|401)/i.test(detail)) {
-    reason = 'their site refused the request (it may block automated readers)';
-  } else if (/Status code 404/i.test(detail)) {
-    reason = 'the feed address no longer exists';
-  } else if (/Status code 5\d\d/i.test(detail)) {
-    reason = 'their site had a server error';
-  } else if (/timeout|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN/i.test(detail)) {
-    reason = "we couldn't reach their site in time";
-  } else {
-    reason = `we hit an unexpected problem (${truncateText(detail, 80)})`;
-  }
+  const known = FEED_ERROR_REASONS.find(([pattern]) => pattern.test(detail));
+  const reason = known ? known[1] : `we hit an unexpected problem (${truncateText(detail, 80)})`;
   const label = feedName ? `${feedName}${provider ? ` (${provider})` : ''}` : provider || 'A feed';
   return `${label}: ${reason}.`;
 }
@@ -352,26 +348,38 @@ export function buildHomepageFeedItems(
 ) {
   const perProvider = {};
   for (const provider of PROVIDERS) {
-    const all = [];
-    for (const doc of cacheDocsByProvider[provider] || []) {
-      for (const item of doc.items || []) {
-        all.push({
-          provider,
-          title: cleanFeedTitle(item.title || 'Untitled'),
-          description: truncateText(item.summary || '', 180),
-          link: item.link || '',
-          category: item.category || 'Update',
-          pubDate: item.pubDate || '',
-          feedName: doc.feedName || '',
-        });
-      }
-    }
-    perProvider[provider] = all
-      .filter((item) => Boolean(item.link))
-      .sort((a, b) => (Date.parse(b.pubDate) || 0) - (Date.parse(a.pubDate) || 0))
-      .slice(0, maxPerProvider);
+    perProvider[provider] = newestProviderItems(provider, cacheDocsByProvider[provider], maxPerProvider);
   }
+  return interleaveProviders(perProvider, maxPerProvider, total);
+}
 
+/** One cached item as the homepage shows it. */
+function homepageItem(provider, doc, item) {
+  return {
+    provider,
+    title: cleanFeedTitle(item.title || 'Untitled'),
+    description: truncateText(item.summary || '', 180),
+    link: item.link || '',
+    category: item.category || 'Update',
+    pubDate: item.pubDate || '',
+    feedName: doc.feedName || '',
+  };
+}
+
+/** A provider's newest linked items across its cache documents, at most `max`. */
+function newestProviderItems(provider, docs, max) {
+  const all = [];
+  for (const doc of docs || []) {
+    for (const item of doc.items || []) all.push(homepageItem(provider, doc, item));
+  }
+  return all
+    .filter((item) => Boolean(item.link))
+    .sort((a, b) => (Date.parse(b.pubDate) || 0) - (Date.parse(a.pubDate) || 0))
+    .slice(0, max);
+}
+
+/** Round-robin across providers, one item from each per pass, `total` in all. */
+function interleaveProviders(perProvider, maxPerProvider, total) {
   const items = [];
   for (let pass = 0; pass < maxPerProvider && items.length < total; pass += 1) {
     for (const provider of PROVIDERS) {

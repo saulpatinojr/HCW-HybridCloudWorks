@@ -58,6 +58,74 @@ const deny = (status, error) => ({
 /** The App Role the agent's app registration must be assigned. */
 export const ENTRA_LAB_AGENT_APP_ROLE = 'LabAgent';
 
+/** A refusal in the shape requireAgent returns. */
+const refused = (status, error) => ({ agent: null, identity: null, error: deny(status, error) });
+
+/**
+ * The caller's verified token claims as `{ identity }`, or null when there is
+ * no bearer token or it does not verify (that second case is audited).
+ */
+async function verifiedIdentity(request, verifier, audit) {
+  const token = bearerTokenFrom(request);
+  if (!token) return null;
+  try {
+    return { identity: await verifier.verify(token) };
+  } catch (err) {
+    // The verifier's code, not its sentence: the row is stored (#945).
+    audit({ outcome: 'denied', reason: 'invalid-token', detail: errorCode(err) });
+    return null;
+  }
+}
+
+/**
+ * Checks on the token's own claims, before any database read. Returns the
+ * refusal to send, with the audit entry to write, or null when they pass.
+ */
+function claimsDenial(identity, oid, agentId, id) {
+  const forbidden = (entry) => ({ status: 403, error: 'Agent access required', entry });
+
+  // An agent token is CLIENT-CREDENTIALS: it carries `roles` and, by
+  // construction, no `scp`. A token bearing a delegated scope is a user's
+  // token, and a user's token must never satisfy the agent path however many
+  // app roles it happens to carry (#515).
+  //
+  // The disjointness this file argues for below was, until now, enforced only
+  // by the two role names being different. This is the other half: the admin
+  // guard requires `scp` and this one refuses it, so neither token type can
+  // cross into the other's path even if a principal were assigned both roles.
+  if (typeof identity.scp === 'string' && identity.scp.trim()) {
+    return forbidden({ outcome: 'denied', reason: 'delegated-token-on-agent-path', oid, agentId });
+  }
+
+  // Gate 1: the coarse App Role.
+  const claimRoles = Array.isArray(identity.roles) ? identity.roles : [];
+  if (!claimRoles.includes(ENTRA_LAB_AGENT_APP_ROLE)) {
+    return forbidden({ outcome: 'denied', reason: 'missing-app-role', oid, agentId });
+  }
+
+  // A caller that omits the id cannot be bound to a registry record, so it
+  // cannot be authorized — there is no "default agent".
+  if (!id) {
+    return { status: 400, error: 'agentId is required', entry: { outcome: 'denied', reason: 'no-agent-id', oid } };
+  }
+  return null;
+}
+
+/**
+ * Gate 2: checks on the `lab_agents` record. Returns the reason to refuse
+ * (and any extra audit field), or null when the record is present, active
+ * and bound to this token.
+ */
+function recordDenial(record, oid) {
+  if (!record) return { reason: 'no-agent-record' };
+  if (record.active !== true) return { reason: 'inactive' };
+  // The binding. Without this, any holder of a LabAgent token could act as
+  // any registered agent — claim another host's jobs, or write results
+  // attributed to it.
+  if (record.oid !== oid) return { reason: 'oid-mismatch', expected: record.oid };
+  return null;
+}
+
 /**
  * Create the agent guard.
  *
@@ -97,71 +165,28 @@ export function createAgentGuard({ verifier, lookupAgent, auditDenial }) {
    * @returns {Promise<{agent: object|null, identity: object|null, error: object|null}>}
    */
   async function requireAgent(request, agentId) {
-    const token = bearerTokenFrom(request);
-
-    if (!token) {
-      return { agent: null, identity: null, error: deny(401, 'Authentication required') };
-    }
-
-    let identity;
-    try {
-      identity = await verifier.verify(token);
-    } catch (err) {
-      // The verifier's code, not its sentence: the row is stored (#945).
-      audit({ outcome: 'denied', reason: 'invalid-token', detail: errorCode(err) });
-      return { agent: null, identity: null, error: deny(401, 'Authentication required') };
-    }
+    const verified = await verifiedIdentity(request, verifier, audit);
+    if (!verified) return refused(401, 'Authentication required');
+    const { identity } = verified;
 
     const oid = identity.oid ?? identity.sub;
-
-    // An agent token is CLIENT-CREDENTIALS: it carries `roles` and, by
-    // construction, no `scp`. A token bearing a delegated scope is a user's
-    // token, and a user's token must never satisfy the agent path however many
-    // app roles it happens to carry (#515).
-    //
-    // The disjointness this file argues for below was, until now, enforced only
-    // by the two role names being different. This is the other half: the admin
-    // guard requires `scp` and this one refuses it, so neither token type can
-    // cross into the other's path even if a principal were assigned both roles.
-    if (typeof identity.scp === 'string' && identity.scp.trim()) {
-      audit({ outcome: 'denied', reason: 'delegated-token-on-agent-path', oid, agentId });
-      return { agent: null, identity: null, error: deny(403, 'Agent access required') };
-    }
-
-    // Gate 1: the coarse App Role.
-    const claimRoles = Array.isArray(identity.roles) ? identity.roles : [];
-    if (!claimRoles.includes(ENTRA_LAB_AGENT_APP_ROLE)) {
-      audit({ outcome: 'denied', reason: 'missing-app-role', oid, agentId });
-      return { agent: null, identity: null, error: deny(403, 'Agent access required') };
-    }
-
-    // A caller that omits the id cannot be bound to a registry record, so it
-    // cannot be authorized — there is no "default agent".
     const id = typeof agentId === 'string' ? agentId.trim() : '';
-    if (!id) {
-      audit({ outcome: 'denied', reason: 'no-agent-id', oid });
-      return { agent: null, identity: null, error: deny(400, 'agentId is required') };
+
+    const claimsProblem = claimsDenial(identity, oid, agentId, id);
+    if (claimsProblem) {
+      audit(claimsProblem.entry);
+      return refused(claimsProblem.status, claimsProblem.error);
     }
 
     // Gate 2: the authoritative record. Not wrapped in try/catch, for the same
     // reason require-role.js does not: a lookup failure must become a 500, not
     // a fallback to the token's own claim about who it is.
     const record = await lookupAgent(id);
-    if (!record) {
-      audit({ outcome: 'denied', reason: 'no-agent-record', oid, agentId: id });
-      return { agent: null, identity: null, error: deny(403, 'Agent access required') };
-    }
-    if (record.active !== true) {
-      audit({ outcome: 'denied', reason: 'inactive', oid, agentId: id });
-      return { agent: null, identity: null, error: deny(403, 'Agent access required') };
-    }
-
-    // The binding. Without this, any holder of a LabAgent token could act as
-    // any registered agent — claim another host's jobs, or write results
-    // attributed to it.
-    if (record.oid !== oid) {
-      audit({ outcome: 'denied', reason: 'oid-mismatch', oid, agentId: id, expected: record.oid });
-      return { agent: null, identity: null, error: deny(403, 'Agent access required') };
+    const recordProblem = recordDenial(record, oid);
+    if (recordProblem) {
+      const { reason, ...extra } = recordProblem;
+      audit({ outcome: 'denied', reason, oid, agentId: id, ...extra });
+      return refused(403, 'Agent access required');
     }
 
     return { agent: { ...record, agentId: id }, identity, error: null };

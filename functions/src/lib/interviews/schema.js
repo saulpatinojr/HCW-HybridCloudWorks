@@ -39,10 +39,16 @@ export const isObject = (value) => value !== null && typeof value === 'object' &
 
 /** The same rule as the frontend's `safeLink`: on this site (one leading `/`) or `https://`. */
 export function safeLink(url) {
-  if (typeof url !== 'string') return null;
-  const value = url.trim();
+  const value = typeof url === 'string' ? url.trim() : '';
   if (!value || /[\u0000-\u001f\u007f\\\s]/.test(value)) return null;
-  if (value.startsWith('/')) return value.startsWith('//') ? null : value;
+  return value.startsWith('/') ? siteLink(value) : httpsLink(value);
+}
+
+/** A path on this site: one leading `/`, never `//` (which is another host). */
+const siteLink = (value) => (value.startsWith('//') ? null : value);
+
+/** An https:// address with a host, or null. */
+function httpsLink(value) {
   if (!/^https:\/\/[^/]/i.test(value)) return null;
   try {
     const parsed = new URL(value);
@@ -55,11 +61,16 @@ export function safeLink(url) {
 /** A sentence this validator wrote for the field it names: an authored error, so a route may show it. */
 class FieldError extends AuthoredError {}
 
+const isBlank = (value) => value === undefined || value === null || value === '';
+
+/** A field left out: refused when it is required, else empty. */
+function missing(where, required) {
+  if (required) throw new FieldError(`${where} is missing.`);
+  return '';
+}
+
 function text(value, where, { max = LIMITS.MAX_SHORT, required = true } = {}) {
-  if (value === undefined || value === null || value === '') {
-    if (required) throw new FieldError(`${where} is missing.`);
-    return '';
-  }
+  if (isBlank(value)) return missing(where, required);
   if (typeof value !== 'string') throw new FieldError(`${where} must be text.`);
   const trimmed = value.trim();
   if (!trimmed && required) throw new FieldError(`${where} is empty.`);
@@ -73,12 +84,14 @@ function isoDate(value, where) {
   const raw = text(value, where, { max: 10 });
   const match = ISO_DATE.exec(raw);
   if (!match) throw new FieldError(`${where} must be a date written YYYY-MM-DD.`);
-  const [, year, month, day] = match.map(Number);
-  const real = new Date(Date.UTC(year, month - 1, day));
-  if (real.getUTCFullYear() !== year || real.getUTCMonth() !== month - 1 || real.getUTCDate() !== day) {
-    throw new FieldError(`${where} is not a real date.`);
-  }
+  if (!isRealDate(match.map(Number))) throw new FieldError(`${where} is not a real date.`);
   return raw;
+}
+
+/** True when the year, month and day name a day the calendar has (no 31 April). */
+function isRealDate([, year, month, day]) {
+  const real = new Date(Date.UTC(year, month - 1, day));
+  return real.getUTCFullYear() === year && real.getUTCMonth() === month - 1 && real.getUTCDate() === day;
 }
 
 function link(value, where) {
@@ -93,18 +106,26 @@ function link(value, where) {
   return { title, url };
 }
 
-function links(value, where) {
+/** A list field: [] when left out, refused when it is not a list or holds more than `max`. */
+function boundedList(value, max, { notList, tooMany }) {
   if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) throw new FieldError(`${where} must be a list.`);
-  if (value.length > LIMITS.MAX_LINKS) throw new FieldError(`${where} has more than ${LIMITS.MAX_LINKS} links.`);
-  return value.map((item, index) => link(item, `${where}[${index + 1}]`));
+  if (!Array.isArray(value)) throw new FieldError(notList);
+  if (value.length > max) throw new FieldError(tooMany);
+  return value;
+}
+
+function links(value, where) {
+  return boundedList(value, LIMITS.MAX_LINKS, {
+    notList: `${where} must be a list.`,
+    tooMany: `${where} has more than ${LIMITS.MAX_LINKS} links.`,
+  }).map((item, index) => link(item, `${where}[${index + 1}]`));
 }
 
 function tags(value) {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) throw new FieldError('tags must be a list.');
-  if (value.length > LIMITS.MAX_TAGS) throw new FieldError(`tags has more than ${LIMITS.MAX_TAGS} entries.`);
-  return value.map((tag, index) => {
+  return boundedList(value, LIMITS.MAX_TAGS, {
+    notList: 'tags must be a list.',
+    tooMany: `tags has more than ${LIMITS.MAX_TAGS} entries.`,
+  }).map((tag, index) => {
     if (typeof tag !== 'string' || !TAG.test(tag)) {
       throw new FieldError(`tags[${index + 1}] must be lower-case words joined by hyphens (for example landing-zones).`);
     }

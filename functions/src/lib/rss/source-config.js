@@ -97,7 +97,8 @@ export function publicHttpsUrl(value) {
   } catch {
     throw new Error('Enter a public HTTPS URL.');
   }
-  if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.port)
+  const extras = [url.username, url.password, url.hash, url.port].some(Boolean);
+  if (url.protocol !== 'https:' || extras)
     throw new Error('Use an HTTPS URL without credentials, port or fragment.');
   return url.href;
 }

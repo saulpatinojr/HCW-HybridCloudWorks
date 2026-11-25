@@ -93,6 +93,17 @@ export function resolveSources(sources) {
   return [...pages.map(entry('page')), ...videos.map(entry('video'))];
 }
 
+/** The refusal for the platform, exam code or title, or null when all three are fine. */
+function sourceFieldError(platform, examCode, title) {
+  if (!isSupportedPlatform(platform)) {
+    return `Listen & Learn is not available for "${platform}". Supported platforms: ${Object.keys(SUPPORTED_PLATFORMS).join(', ')}.`;
+  }
+  if (!examCode) return 'examCode is required';
+  if (!title) return 'title is required for a source-grounded episode';
+  if (title.length > MAX_SOURCE_TITLE_LENGTH) return `title must be at most ${MAX_SOURCE_TITLE_LENGTH} characters`;
+  return null;
+}
+
 /**
  * Validate a source-episode payload. Returns `{ value }` or `{ error }`, the
  * same contract as `parseGeneratePayload`, so the route and the worker say
@@ -105,16 +116,8 @@ export function parseSourceEpisodePayload(payload) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (!isSupportedPlatform(platform)) {
-    return {
-      error: `Listen & Learn is not available for "${platform}". Supported platforms: ${Object.keys(SUPPORTED_PLATFORMS).join(', ')}.`,
-    };
-  }
-  if (!examCode) return { error: 'examCode is required' };
-  if (!title) return { error: 'title is required for a source-grounded episode' };
-  if (title.length > MAX_SOURCE_TITLE_LENGTH) {
-    return { error: `title must be at most ${MAX_SOURCE_TITLE_LENGTH} characters` };
-  }
+  const fieldError = sourceFieldError(platform, examCode, title);
+  if (fieldError) return { error: fieldError };
 
   let areaSlug;
   try {

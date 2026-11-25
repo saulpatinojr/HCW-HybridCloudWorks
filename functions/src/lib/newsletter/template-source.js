@@ -64,6 +64,33 @@ export const sharedTemplateCache = createTemplateCache();
 
 const problem = (code, message) => ({ problem: { code, message } });
 
+/** Why Resend's answer gives no usable template, or null when it holds published HTML. */
+function templateProblem(result) {
+  if (result.status === 0) {
+    return problem('TEMPLATE_FETCH_FAILED', 'Resend did not answer when the template was requested.');
+  }
+  if (result.status === 404) {
+    return problem('TEMPLATE_NOT_FOUND', 'The chosen template no longer exists in Resend.');
+  }
+  if (!result.ok) {
+    return problem('TEMPLATE_FETCH_FAILED', `Resend refused the template request (HTTP ${result.status}).`);
+  }
+  return publishedProblem(result.data);
+}
+
+/** Why a fetched template cannot be used: not published, or no HTML; null when it can. */
+function publishedProblem(data) {
+  const status = typeof data?.status === 'string' ? data.status.trim().toLowerCase() : '';
+  if (status !== 'published') {
+    return problem('TEMPLATE_NOT_PUBLISHED', 'The chosen template is not published in Resend. Publish it, then try again.');
+  }
+  const html = data?.html;
+  if (typeof html !== 'string' || !html.trim()) {
+    return problem('TEMPLATE_NOT_HTML', 'The chosen template has no HTML.');
+  }
+  return null;
+}
+
 /**
  * @param {object} options
  * @param {string} options.templateId a validated Resend template id
@@ -86,23 +113,9 @@ export async function loadTemplateHtml({ templateId, apiKey, fetch: fetchImpl, c
   } catch {
     result = { ok: false, status: 0, data: null };
   }
-  if (result.status === 0) {
-    return problem('TEMPLATE_FETCH_FAILED', 'Resend did not answer when the template was requested.');
-  }
-  if (result.status === 404) {
-    return problem('TEMPLATE_NOT_FOUND', 'The chosen template no longer exists in Resend.');
-  }
-  if (!result.ok) {
-    return problem('TEMPLATE_FETCH_FAILED', `Resend refused the template request (HTTP ${result.status}).`);
-  }
-  const status = typeof result.data?.status === 'string' ? result.data.status.trim().toLowerCase() : '';
-  if (status !== 'published') {
-    return problem('TEMPLATE_NOT_PUBLISHED', 'The chosen template is not published in Resend. Publish it, then try again.');
-  }
-  const html = result.data?.html;
-  if (typeof html !== 'string' || !html.trim()) {
-    return problem('TEMPLATE_NOT_HTML', 'The chosen template has no HTML.');
-  }
+  const refusal = templateProblem(result);
+  if (refusal) return refusal;
+  const html = result.data.html;
   // Only a template the layout can use is held. An unusable one (no body
   // marker, the marker twice, oversized) is returned so the caller can say why,
   // but not cached: the owner's fix in Resend must show on the next request,

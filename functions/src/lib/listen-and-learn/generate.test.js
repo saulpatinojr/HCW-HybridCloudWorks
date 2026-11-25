@@ -469,7 +469,7 @@ describe('persistence details', () => {
       'azure/az-104/area-1.mp3',
       expect.any(Buffer),
       'audio/mpeg',
-      expect.objectContaining({ examCode: 'AZ-104', areaSlug: 'area-1' })
+      { metadata: expect.objectContaining({ examCode: 'AZ-104', areaSlug: 'area-1' }) }
     );
   });
 

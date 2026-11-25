@@ -117,6 +117,75 @@ function watched(containers, partitionKeys, name) {
 }
 
 /**
+ * One run as the block reports it, from its record and manifest. `deps` are
+ * the reader's blob store, authored list, partition keys and log.
+ */
+async function readRun({ blobs, authored, partitionKeys, log }, date) {
+  const runId = runIdFor(date);
+  const mode = modeFor(date);
+  const names = blobNames({ mode, runId, container: '' });
+  const run = await blobs.readJson(names.run);
+  if (!run || typeof run !== 'object') return null;
+  const base = {
+    runId,
+    mode,
+    startedAt: timeString(run.enqueuedAt),
+    expectedCount: Array.isArray(run.containers) ? run.containers.length : null,
+  };
+  const manifest = await blobs.readJson(names.manifest);
+  if (manifest && typeof manifest === 'object') {
+    const containers = manifestContainers(manifest);
+    return {
+      ...base,
+      complete: true,
+      completedAt: timeString(manifest.completedAt),
+      containerCount: containers.length,
+      containers,
+      authored: authoredCoverage(containers, authored),
+      watched: watched(containers, partitionKeys, WATCHED_CONTAINER),
+    };
+  }
+  const markers = await countMarkers({ blobs, log }, names.prefix, `${mode}/${runId}`);
+  return { ...base, complete: false, completedAt: null, markers };
+}
+
+/**
+ * Incomplete: say how far it got, from the markers written so far. A
+ * listing that fails leaves the count unknown (null) and the reading
+ * whole; the completed runs already read are the ones that matter.
+ */
+async function countMarkers({ blobs, log }, prefix, label) {
+  try {
+    const present = await blobs.listNames(prefix);
+    return present.filter((name) => name.endsWith('.marker.json')).length;
+  } catch (error) {
+    log.warn?.(`[backupStatus] listing ${label} failed: ${errorCode(error)}`);
+    return null;
+  }
+}
+
+/**
+ * `readFresh`, but no longer than `timeoutMs`. The race alone would leave
+ * the losing read walking on; the flag stops it at its next read.
+ */
+function readBounded(readFresh, timeoutMs) {
+  if (!(timeoutMs > 0)) return readFresh();
+  let timer;
+  let cancelled = false;
+  const deadline = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      cancelled = true;
+      reject(Object.assign(new Error('backup status read timed out'), { code: 'ETIMEDOUT' }));
+    }, timeoutMs);
+  });
+  // The losing read's own rejection (ECANCELED) has nowhere to go once the
+  // race is decided; swallow it there so nothing is reported as unhandled.
+  const reading = readFresh(() => cancelled);
+  reading.catch(() => {});
+  return Promise.race([reading, deadline]).finally(() => clearTimeout(timer));
+}
+
+/**
  * @param {object} deps
  * @param {import('./cosmos-export.js').ExportBlobStore} deps.blobs the export blob store
  * @param {() => Date} [deps.now]
@@ -140,45 +209,6 @@ export function createBackupStatusReader({
   let cached = null;
   let inFlight = null;
 
-  /** One run as the block reports it, from its record and manifest. */
-  async function readRun(date) {
-    const runId = runIdFor(date);
-    const mode = modeFor(date);
-    const names = blobNames({ mode, runId, container: '' });
-    const run = await blobs.readJson(names.run);
-    if (!run || typeof run !== 'object') return null;
-    const base = {
-      runId,
-      mode,
-      startedAt: timeString(run.enqueuedAt),
-      expectedCount: Array.isArray(run.containers) ? run.containers.length : null,
-    };
-    const manifest = await blobs.readJson(names.manifest);
-    if (manifest && typeof manifest === 'object') {
-      const containers = manifestContainers(manifest);
-      return {
-        ...base,
-        complete: true,
-        completedAt: timeString(manifest.completedAt),
-        containerCount: containers.length,
-        containers,
-        authored: authoredCoverage(containers, authored),
-        watched: watched(containers, partitionKeys, WATCHED_CONTAINER),
-      };
-    }
-    // Incomplete: say how far it got, from the markers written so far. A
-    // listing that fails leaves the count unknown (null) and the reading
-    // whole; the completed runs already read are the ones that matter.
-    let markers = null;
-    try {
-      const present = await blobs.listNames(names.prefix);
-      markers = present.filter((name) => name.endsWith('.marker.json')).length;
-    } catch (error) {
-      log.warn?.(`[backupStatus] listing ${mode}/${runId} failed: ${errorCode(error)}`);
-    }
-    return { ...base, complete: false, completedAt: null, markers };
-  }
-
   /**
    * One full reading. `isCancelled` is checked between the sequential reads
    * so a reading whose deadline has passed stops at the next boundary
@@ -192,7 +222,7 @@ export function createBackupStatusReader({
       if (isCancelled()) {
         throw Object.assign(new Error('backup status read cancelled'), { code: 'ECANCELED' });
       }
-      const run = await readRun(new Date(at.getTime() - back * DAY_MS));
+      const run = await readRun({ blobs, authored, partitionKeys, log }, new Date(at.getTime() - back * DAY_MS));
       if (run) runs.push(run);
     }
     const lastCompleted = runs.find((run) => run.complete) || null;
@@ -206,27 +236,6 @@ export function createBackupStatusReader({
   }
 
   /**
-   * `readFresh`, but no longer than `timeoutMs`. The race alone would leave
-   * the losing read walking on; the flag stops it at its next read.
-   */
-  function readBounded() {
-    if (!(timeoutMs > 0)) return readFresh();
-    let timer;
-    let cancelled = false;
-    const deadline = new Promise((_resolve, reject) => {
-      timer = setTimeout(() => {
-        cancelled = true;
-        reject(Object.assign(new Error('backup status read timed out'), { code: 'ETIMEDOUT' }));
-      }, timeoutMs);
-    });
-    // The losing read's own rejection (ECANCELED) has nowhere to go once the
-    // race is decided; swallow it there so nothing is reported as unhandled.
-    const reading = readFresh(() => cancelled);
-    reading.catch(() => {});
-    return Promise.race([reading, deadline]).finally(() => clearTimeout(timer));
-  }
-
-  /**
    * The block, from the cache while it is younger than `ttlMs`, otherwise
    * read again; callers that arrive during a read share it. A read that
    * throws or times out is not cached: its code is logged and the error
@@ -236,7 +245,7 @@ export function createBackupStatusReader({
     const nowMs = now().getTime();
     if (cached && nowMs - cached.at < ttlMs) return cached.value;
     if (!inFlight) {
-      inFlight = readBounded()
+      inFlight = readBounded(readFresh, timeoutMs)
         .then((value) => {
           cached = { at: now().getTime(), value };
           return value;

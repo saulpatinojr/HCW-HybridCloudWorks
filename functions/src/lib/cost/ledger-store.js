@@ -57,6 +57,55 @@ const isWriteConflict = (error) => {
 };
 
 /**
+ * Run one setting's check. Read from the page (`strict`), a bad value is the
+ * 400 the check throws; read from a stored document edited by hand, it is the
+ * default instead.
+ */
+function soft(check, fallback, strict) {
+  try {
+    return check();
+  } catch (error) {
+    if (strict) throw error;
+    return fallback;
+  }
+}
+
+function budgetOf(input) {
+  const value = input.aiMonthlyBudgetUsd;
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) fail('aiMonthlyBudgetUsd must be a number of 0 or more, or empty');
+  return Number(n.toFixed(2));
+}
+
+/** A whole number from 1 to `max`, or the default when it is absent. */
+function wholeNumberOf(input, key, max) {
+  const value = input[key];
+  if (value === undefined || value === null) return DEFAULT_SETTINGS[key];
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > max) {
+    fail(`${key} must be a whole number from 1 to ${max}`);
+  }
+  return n;
+}
+
+function flagOf(input, key) {
+  const value = input[key];
+  if (value === undefined || value === null) return DEFAULT_SETTINGS[key];
+  if (typeof value !== 'boolean') fail(`${key} must be true or false`);
+  return value;
+}
+
+/** How each setting is read, in the order the settings object lists them. */
+const SETTING_READERS = Object.freeze({
+  aiMonthlyBudgetUsd: budgetOf,
+  renewalLeadDays: (input) => wholeNumberOf(input, 'renewalLeadDays', MAX_RENEWAL_LEAD_DAYS),
+  telegram: (input) => flagOf(input, 'telegram'),
+  monthlyDigest: (input) => flagOf(input, 'monthlyDigest'),
+  refreshHours: (input) => wholeNumberOf(input, 'refreshHours', MAX_REFRESH_HOURS),
+});
+
+/**
  * The settings as stored, checked, with defaults for anything missing. A
  * value outside its range is a 400 from the page and the default when read
  * from a document edited by hand.
@@ -66,52 +115,16 @@ export function normalizeSettings(input, { strict = false } = {}) {
   if (typeof input !== 'object' || Array.isArray(input)) fail('settings must be an object');
   const unknown = Object.keys(input).filter((key) => !SETTINGS_FIELDS.includes(key));
   if (unknown.length > 0) fail(`Unknown setting(s): ${unknown.join(', ')}. Allowed: ${SETTINGS_FIELDS.join(', ')}`);
-
-  const soft = (check, fallback) => {
-    try {
-      return check();
-    } catch (error) {
-      if (strict) throw error;
-      return fallback;
-    }
-  };
-  const budget = soft(() => {
-    const value = input.aiMonthlyBudgetUsd;
-    if (value === undefined || value === null || value === '') return null;
-    const n = Number(value);
-    if (!Number.isFinite(n) || n < 0) fail('aiMonthlyBudgetUsd must be a number of 0 or more, or empty');
-    return Number(n.toFixed(2));
-  }, DEFAULT_SETTINGS.aiMonthlyBudgetUsd);
-  const lead = soft(() => {
-    const value = input.renewalLeadDays;
-    if (value === undefined || value === null) return DEFAULT_SETTINGS.renewalLeadDays;
-    const n = Number(value);
-    if (!Number.isInteger(n) || n < 1 || n > MAX_RENEWAL_LEAD_DAYS) {
-      fail(`renewalLeadDays must be a whole number from 1 to ${MAX_RENEWAL_LEAD_DAYS}`);
-    }
-    return n;
-  }, DEFAULT_SETTINGS.renewalLeadDays);
-  const flag = (key) =>
-    soft(() => {
-      const value = input[key];
-      if (value === undefined || value === null) return DEFAULT_SETTINGS[key];
-      if (typeof value !== 'boolean') fail(`${key} must be true or false`);
-      return value;
-    }, DEFAULT_SETTINGS[key]);
-  const hours = soft(() => {
-    const value = input.refreshHours;
-    if (value === undefined || value === null) return DEFAULT_SETTINGS.refreshHours;
-    const n = Number(value);
-    if (!Number.isInteger(n) || n < 1 || n > MAX_REFRESH_HOURS) {
-      fail(`refreshHours must be a whole number from 1 to ${MAX_REFRESH_HOURS}`);
-    }
-    return n;
-  }, DEFAULT_SETTINGS.refreshHours);
+  const read = (key) => soft(() => SETTING_READERS[key](input), DEFAULT_SETTINGS[key], strict);
+  // Read in this order, so the page is refused for the same first bad field as before.
+  const budget = read('aiMonthlyBudgetUsd');
+  const lead = read('renewalLeadDays');
+  const hours = read('refreshHours');
   return {
     aiMonthlyBudgetUsd: budget,
     renewalLeadDays: lead,
-    telegram: flag('telegram'),
-    monthlyDigest: flag('monthlyDigest'),
+    telegram: read('telegram'),
+    monthlyDigest: read('monthlyDigest'),
     refreshHours: hours,
   };
 }
@@ -124,6 +137,23 @@ export function readState(doc) {
 
 export async function readLedger(store) {
   return readState(await store.readDoc(CONTAINER, LEDGER_DOC_ID, ADMIN_CONFIG_PARTITION));
+}
+
+/**
+ * Write the ledger: over the document that was read, under the ETag of that
+ * read (a 412 when it was replaced since), or as a new document when the read
+ * found none (a 409 when one was created since).
+ */
+async function writeLedger(store, stored, doc) {
+  if (stored) {
+    await store.replaceDocIfMatch(
+      CONTAINER,
+      { ...doc, _etag: stored._etag },
+      { partitionKey: ADMIN_CONFIG_PARTITION }
+    );
+  } else {
+    await store.createDoc(CONTAINER, doc);
+  }
 }
 
 /**
@@ -151,15 +181,7 @@ export async function changeLedger(store, change, { now = () => new Date() } = {
       updatedAt: now().toISOString(),
     };
     try {
-      if (stored) {
-        await store.replaceDocIfMatch(
-          CONTAINER,
-          { ...doc, _etag: stored._etag },
-          { partitionKey: ADMIN_CONFIG_PARTITION }
-        );
-      } else {
-        await store.createDoc(CONTAINER, doc);
-      }
+      await writeLedger(store, stored, doc);
       return { state: outcome.state, result: outcome.result, written: true };
     } catch (error) {
       if (!isWriteConflict(error)) throw error;

@@ -97,7 +97,7 @@ export async function generatePromptSetSample(ctx, request, context) {
     const stamp = now().toISOString();
     const articleId = sampleArticleId(setName);
     const blobPath = `${articleId}-${slot}-${compact(stamp)}.png`;
-    await storage.uploadBlob('covers', blobPath, buffer, contentType, { articleId, slot });
+    await storage.uploadBlob('covers', blobPath, buffer, contentType, { metadata: { articleId, slot } });
     const imageUrl = mediaUrlFor('covers', blobPath);
     const imageId = uuid();
     await store.upsertDoc('generated_content_images', {

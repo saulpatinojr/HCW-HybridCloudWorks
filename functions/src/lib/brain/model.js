@@ -50,14 +50,21 @@ export function ownerEnabled(user, env = process.env) {
   return (
     env.BRAIN_ENABLED === 'true' &&
     Boolean(env.BRAIN_OWNER_OID && env.BRAIN_OWNER_TENANT_ID) &&
-    String(user?.oid || '').toLowerCase() ===
-      env.BRAIN_OWNER_OID.toLowerCase() &&
-    String(user?.tid || '').toLowerCase() ===
-      env.BRAIN_OWNER_TENANT_ID.toLowerCase()
+    isOwner(user, env)
   );
 }
 
-export function validateRecord(input) {
+const isOwner = (user, env) =>
+  sameText(user?.oid, env.BRAIN_OWNER_OID) &&
+  sameText(user?.tid, env.BRAIN_OWNER_TENANT_ID);
+
+// Compared without regard to case; a missing value is empty text.
+const sameText = (value, expected) =>
+  String(value || '').toLowerCase() === expected.toLowerCase();
+
+// The checks on a record's id, type, body and title, in the order a caller
+// meets them.
+function checkRecordHead(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input))
     fail(400, 'INVALID', 'A note or collection is required.');
   if (!ID.test(input.id || ''))
@@ -79,26 +86,32 @@ export function validateRecord(input) {
     input.title.length > 300
   )
     fail(400, 'INVALID', 'A title of at most 300 characters is required.');
-  const list = (key, max, check) => {
-    const values = input[key] ?? [];
-    if (
-      !Array.isArray(values) ||
-      values.length > max ||
-      values.some((v) => typeof v !== 'string' || !check(v))
-    )
-      fail(400, 'INVALID', `Invalid ${key}.`);
-    return [...new Set(values)];
-  };
-  const urls = list('urls', 30, (v) => {
-    try {
-      return (
-        ['https:', 'http:'].includes(new URL(v).protocol) && v.length <= 2000
-      );
-    } catch {
-      return false;
-    }
-  });
-  const properties = input.properties ?? {};
+}
+
+// A list field of a record: at most `max` text items that each pass
+// `check`, with repeats removed.
+function uniqueList(input, key, max, check) {
+  const values = input[key] ?? [];
+  if (
+    !Array.isArray(values) ||
+    values.length > max ||
+    values.some((v) => typeof v !== 'string' || !check(v))
+  )
+    fail(400, 'INVALID', `Invalid ${key}.`);
+  return [...new Set(values)];
+}
+
+const isWebAddress = (v) => {
+  try {
+    return (
+      ['https:', 'http:'].includes(new URL(v).protocol) && v.length <= 2000
+    );
+  } catch {
+    return false;
+  }
+};
+
+function checkPropertiesObject(properties) {
   if (
     !properties ||
     typeof properties !== 'object' ||
@@ -106,37 +119,45 @@ export function validateRecord(input) {
     Buffer.byteLength(JSON.stringify(properties)) > 16384
   )
     fail(400, 'INVALID', 'Note properties must be an object of at most 16 KB.');
-  const checkProperties = (value, depth = 0) => {
-    if (depth > 20)
-      fail(400, 'INVALID', 'Note properties are nested too deeply.');
-    if (value && typeof value === 'object')
-      for (const [key, nested] of Object.entries(value)) {
-        if (['__proto__', 'constructor', 'prototype'].includes(key))
-          fail(400, 'INVALID', 'Unsupported note property name.');
-        checkProperties(nested, depth + 1);
-      }
-  };
-  checkProperties(properties);
-  if (
-    properties.heading !== undefined &&
-    (typeof properties.heading !== 'string' ||
-      !properties.heading.trim() ||
-      properties.heading.length > 80 ||
-      properties.heading.trim().split(/\s+/).length > 4)
-  )
+  checkPropertyNames(properties);
+  if (properties.heading !== undefined && !isShortHeading(properties.heading))
     fail(
       400,
       'INVALID',
       'Use a short heading of 1–4 words and at most 80 characters.',
     );
+}
+
+function checkPropertyNames(value, depth = 0) {
+  if (depth > 20)
+    fail(400, 'INVALID', 'Note properties are nested too deeply.');
+  if (!value || typeof value !== 'object') return;
+  for (const [key, nested] of Object.entries(value)) {
+    if (['__proto__', 'constructor', 'prototype'].includes(key))
+      fail(400, 'INVALID', 'Unsupported note property name.');
+    checkPropertyNames(nested, depth + 1);
+  }
+}
+
+const isShortHeading = (heading) =>
+  typeof heading === 'string' &&
+  Boolean(heading.trim()) &&
+  heading.length <= 80 &&
+  heading.trim().split(/\s+/).length <= 4;
+
+export function validateRecord(input) {
+  checkRecordHead(input);
+  const urls = uniqueList(input, 'urls', 30, isWebAddress);
+  const properties = input.properties ?? {};
+  checkPropertiesObject(properties);
   return {
     id: input.id,
     type: input.type,
     title: input.title.trim(),
     body: input.body,
-    tags: list('tags', 30, (v) => v.length > 0 && v.length <= 60),
-    links: list('links', 100, (v) => ID.test(v)),
-    collections: list('collections', 50, (v) => ID.test(v)),
+    tags: uniqueList(input, 'tags', 30, (v) => v.length > 0 && v.length <= 60),
+    links: uniqueList(input, 'links', 100, (v) => ID.test(v)),
+    collections: uniqueList(input, 'collections', 50, (v) => ID.test(v)),
     urls,
     properties: JSON.parse(JSON.stringify(properties)),
     archived: input.archived === true,

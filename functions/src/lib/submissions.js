@@ -98,6 +98,53 @@ function checkUrl(value, field) {
   return null;
 }
 
+/** The title and summary rules: both present, both under their caps. */
+function titleSummaryError(title, summary) {
+  if (!title) return 'Title is required';
+  if (title.length > MAX_TITLE_LENGTH) return 'Title is too long';
+  if (!summary) return 'Summary is required';
+  if (summary.length > MAX_SUMMARY_LENGTH) return 'Summary is too long';
+  return null;
+}
+
+/** The provider must be one this submission type's page offers. */
+function providerError(spec, provider) {
+  if (spec.providers.includes(provider)) return null;
+  return `cloudProvider must be one of: ${spec.providers.join(', ')}`;
+}
+
+/**
+ * A long field (content or overview), when this submission type requires it:
+ * present and under the cap. Null when the type does not require it.
+ */
+function longFieldError(spec, field, value, label) {
+  if (!spec.requires.includes(field)) return null;
+  if (!value) return `${label} is required`;
+  if (value.length > MAX_CONTENT_LENGTH) {
+    return `${label} must be under ${MAX_CONTENT_LENGTH / 1000}KB`;
+  }
+  return null;
+}
+
+/** The fields this submission type requires beyond title and summary. */
+function requiredBodyError(spec, { content, overviewHtml, language }) {
+  const languageMissing = spec.requires.includes('language') && !language;
+  return (
+    longFieldError(spec, 'content', content, 'Content') ||
+    longFieldError(spec, 'overviewHtml', overviewHtml, 'Overview') ||
+    (languageMissing ? 'Language is required' : null)
+  );
+}
+
+/** The optional links, each checked only when it is filled in. */
+function urlFieldsError(body) {
+  for (const field of ['sourceUrl', 'diagramUrl', 'docLink', 'repoUrl']) {
+    const err = checkUrl(str(body[field]), field);
+    if (err) return err;
+  }
+  return null;
+}
+
 /**
  * Validate a raw request body against the per-type contract.
  *
@@ -114,16 +161,7 @@ export function validateSubmission(body) {
 
   const title = str(body.title);
   const summary = str(body.summary);
-  if (!title) return { error: 'Title is required' };
-  if (title.length > MAX_TITLE_LENGTH) return { error: 'Title is too long' };
-  if (!summary) return { error: 'Summary is required' };
-  if (summary.length > MAX_SUMMARY_LENGTH) return { error: 'Summary is too long' };
-
   const provider = str(body.cloudProvider || body.provider);
-  if (!spec.providers.includes(provider)) {
-    return { error: `cloudProvider must be one of: ${spec.providers.join(', ')}` };
-  }
-
   const content = str(body.content);
   // Sanitized here, not merely on render. This field arrives anonymously and
   // is eventually rendered with dangerouslySetInnerHTML on a public template;
@@ -134,31 +172,14 @@ export function validateSubmission(body) {
   // exists to bound what is stored, and measuring the input would let a
   // payload of stripped markup pass a check the stored string never met.
   const overviewHtml = sanitizeSubmittedHtml(str(body.overviewHtml));
-  if (spec.requires.includes('content')) {
-    if (!content) return { error: 'Content is required' };
-    if (content.length > MAX_CONTENT_LENGTH) {
-      return { error: `Content must be under ${MAX_CONTENT_LENGTH / 1000}KB` };
-    }
-  }
-  if (spec.requires.includes('overviewHtml')) {
-    if (!overviewHtml) return { error: 'Overview is required' };
-    if (overviewHtml.length > MAX_CONTENT_LENGTH) {
-      return { error: `Overview must be under ${MAX_CONTENT_LENGTH / 1000}KB` };
-    }
-  }
-  if (spec.requires.includes('language') && !str(body.language)) {
-    return { error: 'Language is required' };
-  }
 
-  for (const [field, value] of [
-    ['sourceUrl', str(body.sourceUrl)],
-    ['diagramUrl', str(body.diagramUrl)],
-    ['docLink', str(body.docLink)],
-    ['repoUrl', str(body.repoUrl)],
-  ]) {
-    const err = checkUrl(value, field);
-    if (err) return { error: err };
-  }
+  // Checked in this order, and the first broken rule is the answer.
+  const error =
+    titleSummaryError(title, summary) ||
+    providerError(spec, provider) ||
+    requiredBodyError(spec, { content, overviewHtml, language: str(body.language) }) ||
+    urlFieldsError(body);
+  if (error) return { error };
 
   let tags = Array.isArray(body.tags) ? body.tags : str(body.tags).split(',');
   tags = tags.map(str).filter(Boolean).slice(0, MAX_TAGS);
@@ -225,52 +246,52 @@ export function composeSubmissionDoc(value, { nowIso = new Date().toISOString(),
     updatedAt: nowIso,
   };
 
-  switch (value.type) {
-    case 'blog':
-      return {
-        ...base,
-        content: value.content,
-        Content: value.content,
-        postContent: value.content,
-        sourceUrl: value.sourceUrl,
-      };
-    case 'coder_corner':
-      return {
-        ...base,
-        content: value.content,
-        Content: value.content,
-        postContent: value.content,
-        category: 'Coder Corner',
-        language: value.language,
-        repoUrl: value.repoUrl,
-        codeSnippet: value.codeSnippet,
-        explanation: value.explanation,
-        tags: ['coder-corner', value.provider.toLowerCase(), ...value.tags]
-          .filter(Boolean)
-          .slice(0, MAX_TAGS),
-      };
-    case 'architecture':
-      return {
-        ...base,
-        category: value.category,
-        complexity: value.complexity,
-        diagramUrl: value.diagramUrl,
-        overviewHtml: value.overviewHtml,
-      };
-    case 'framework':
-      return {
-        ...base,
-        category: value.category,
-        complexity: value.complexity,
-        docLink: value.docLink,
-        overviewHtml: value.overviewHtml,
-        commandExample: value.commandExample,
-      };
-    /* c8 ignore next 2 -- unreachable: validateSubmission rejects unknown types */
-    default:
-      throw new Error(`Unhandled submission type: ${value.type}`);
+  const typeFields = TYPE_FIELDS[value.type];
+  /* c8 ignore next 3 -- unreachable: validateSubmission rejects unknown types */
+  if (!typeFields) {
+    throw new Error(`Unhandled submission type: ${value.type}`);
   }
+  return { ...base, ...typeFields(value) };
 }
+
+/** The body fields the blog and Coder Corner pages both wrote, casing duplicates included. */
+const contentFields = (value) => ({
+  content: value.content,
+  Content: value.content,
+  postContent: value.content,
+});
+
+/** The fields each submission type adds to the shared base document, by type. */
+const TYPE_FIELDS = Object.freeze({
+  blog: (value) => ({
+    ...contentFields(value),
+    sourceUrl: value.sourceUrl,
+  }),
+  coder_corner: (value) => ({
+    ...contentFields(value),
+    category: 'Coder Corner',
+    language: value.language,
+    repoUrl: value.repoUrl,
+    codeSnippet: value.codeSnippet,
+    explanation: value.explanation,
+    tags: ['coder-corner', value.provider.toLowerCase(), ...value.tags]
+      .filter(Boolean)
+      .slice(0, MAX_TAGS),
+  }),
+  architecture: (value) => ({
+    category: value.category,
+    complexity: value.complexity,
+    diagramUrl: value.diagramUrl,
+    overviewHtml: value.overviewHtml,
+  }),
+  framework: (value) => ({
+    category: value.category,
+    complexity: value.complexity,
+    docLink: value.docLink,
+    overviewHtml: value.overviewHtml,
+    commandExample: value.commandExample,
+  }),
+});
 
 /**
  * How many times a request will re-evaluate the quota after losing a race.
@@ -302,6 +323,80 @@ export class SubmissionRateLimitError extends AuthoredError {
  */
 function rateLimitError() {
   return new SubmissionRateLimitError();
+}
+
+/**
+ * Step 1 of the quota: the in-window, under-the-limit case, as one
+ * server-side compare-and-increment. True when the request was counted;
+ * false when only a read can say what happened (no document yet, or the
+ * window rolled over, or the limit is reached).
+ */
+async function tryIncrementInWindow(store, key, { windowFloor, limit }) {
+  try {
+    await store.incrementIf('submission_quota', key, {
+      path: '/count',
+      value: 1,
+      condition: 'FROM c WHERE c.windowStartMs > @windowFloor AND c.count < @limit',
+      conditionValues: { windowFloor, limit },
+    });
+    return true;
+  } catch (err) {
+    // 404: no document yet. 412: the predicate failed — either the window
+    // rolled over or we are genuinely at the limit, and only a read can say
+    // which. Anything else is a real fault and must not be swallowed into
+    // "allowed".
+    if (err?.code !== 404 && err?.code !== 412) throw err;
+    return false;
+  }
+}
+
+/**
+ * Step 2 of the quota: read the counter, refuse when it is full, otherwise
+ * create it or start a new window. True when this request's write won;
+ * false when another request wrote first, so the caller goes around again.
+ *
+ * @throws {SubmissionRateLimitError} when the counter is already at the limit
+ */
+async function tryStartOrResetWindow(store, key, { now, limit }) {
+  const existing = await store.readDoc('submission_quota', key, key);
+  const windowStartMs = Number(existing?.windowStartMs) || 0;
+  // Absence is checked explicitly rather than through `now - 0 < WINDOW_MS`:
+  // the source's arithmetic-only form happens to work because real epoch
+  // milliseconds dwarf the window, which is a coincidence, not a contract.
+  const inWindow = existing != null && now - windowStartMs < WINDOW_MS;
+  const count = inWindow ? Number(existing?.count) || 0 : 0;
+
+  if (count >= limit) throw rateLimitError();
+
+  const updatedAt = new Date(now).toISOString();
+  try {
+    if (existing == null) {
+      await store.createDoc('submission_quota', {
+        id: key,
+        windowStartMs: now,
+        count: 1,
+        updatedAt,
+      });
+    } else {
+      // Spread `existing` so its `_etag` rides along — that is what makes the
+      // replace conditional, and what gives a concurrent resetter a 412
+      // instead of a silent overwrite.
+      await store.replaceDocIfMatch('submission_quota', {
+        ...existing,
+        id: key,
+        windowStartMs: inWindow ? windowStartMs : now,
+        count: count + 1,
+        updatedAt,
+      });
+    }
+    return true;
+  } catch (err) {
+    // 409: someone else created it first. 412: someone else wrote it between
+    // our read and our write. Both mean the document now says something we
+    // have not seen, so go around again rather than assuming.
+    if (err?.code !== 409 && err?.code !== 412) throw err;
+    return false;
+  }
 }
 
 /**
@@ -352,60 +447,8 @@ export async function enforceSubmissionQuota(
   const windowFloor = now - WINDOW_MS;
 
   for (let attempt = 0; attempt < QUOTA_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      await store.incrementIf('submission_quota', key, {
-        path: '/count',
-        value: 1,
-        condition: 'FROM c WHERE c.windowStartMs > @windowFloor AND c.count < @limit',
-        conditionValues: { windowFloor, limit },
-      });
-      return;
-    } catch (err) {
-      // 404: no document yet. 412: the predicate failed — either the window
-      // rolled over or we are genuinely at the limit, and only a read can say
-      // which. Anything else is a real fault and must not be swallowed into
-      // "allowed".
-      if (err?.code !== 404 && err?.code !== 412) throw err;
-    }
-
-    const existing = await store.readDoc('submission_quota', key, key);
-    const windowStartMs = Number(existing?.windowStartMs) || 0;
-    // Absence is checked explicitly rather than through `now - 0 < WINDOW_MS`:
-    // the source's arithmetic-only form happens to work because real epoch
-    // milliseconds dwarf the window, which is a coincidence, not a contract.
-    const inWindow = existing != null && now - windowStartMs < WINDOW_MS;
-    const count = inWindow ? Number(existing?.count) || 0 : 0;
-
-    if (count >= limit) throw rateLimitError();
-
-    const updatedAt = new Date(now).toISOString();
-    try {
-      if (existing == null) {
-        await store.createDoc('submission_quota', {
-          id: key,
-          windowStartMs: now,
-          count: 1,
-          updatedAt,
-        });
-      } else {
-        // Spread `existing` so its `_etag` rides along — that is what makes the
-        // replace conditional, and what gives a concurrent resetter a 412
-        // instead of a silent overwrite.
-        await store.replaceDocIfMatch('submission_quota', {
-          ...existing,
-          id: key,
-          windowStartMs: inWindow ? windowStartMs : now,
-          count: count + 1,
-          updatedAt,
-        });
-      }
-      return;
-    } catch (err) {
-      // 409: someone else created it first. 412: someone else wrote it between
-      // our read and our write. Both mean the document now says something we
-      // have not seen, so go around again rather than assuming.
-      if (err?.code !== 409 && err?.code !== 412) throw err;
-    }
+    if (await tryIncrementInWindow(store, key, { windowFloor, limit })) return;
+    if (await tryStartOrResetWindow(store, key, { now, limit })) return;
   }
 
   throw rateLimitError();

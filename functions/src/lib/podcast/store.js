@@ -204,9 +204,11 @@ export async function uploadSourceAudio({ storage, source, audio, contentType })
   const path = audioPathFor(source);
 
   await storage.uploadBlob(PODCAST_AUDIO_CONTAINER, path, audio, contentType, {
-    sourceKind: source.kind,
-    sourceId: String(source.id || ''),
-    sourceSlug: source.slug || '',
+    metadata: {
+      sourceKind: source.kind,
+      sourceId: String(source.id || ''),
+      sourceSlug: source.slug || '',
+    },
   });
 
   return { path, url: mediaUrlFor(PODCAST_AUDIO_CONTAINER, path), bytes: audio.length };

@@ -187,6 +187,27 @@ function noProviderReason(env) {
 }
 
 /**
+ * The first rule a guide-run payload breaks, as the message the caller sees,
+ * or null when it breaks none. Checked in this order on purpose: the platform
+ * first, so an unsupported one is named before anything else.
+ */
+function guidePayloadError({ platform, examCode, studyGuideUrl, areas }) {
+  if (!isSupportedPlatform(platform)) {
+    return `Listen & Learn is not available for "${platform}". Supported platforms: ${Object.keys(SUPPORTED_PLATFORMS).join(', ')}.`;
+  }
+  if (!examCode) return 'examCode is required';
+  // https only: the URL is fetched server-side, so a plain-http, file or
+  // localhost URL here would be an SSRF foothold rather than a typo.
+  if (!/^https:\/\//.test(studyGuideUrl)) {
+    return 'studyGuideUrl must be an https URL';
+  }
+  if (areas && areas.length > MAX_AREAS_PER_RUN) {
+    return `At most ${MAX_AREAS_PER_RUN} areas can be generated per request`;
+  }
+  return null;
+}
+
+/**
  * Validate a generate payload. Returns `{ value }` or `{ error }` so the rules
  * are testable on their own and the job worker stays a thin adapter.
  *
@@ -208,20 +229,8 @@ export function parseGeneratePayload(payload) {
   const studyGuideUrl = String(payload?.studyGuideUrl || '').trim();
   const areas = Array.isArray(payload?.areas) ? payload.areas.map(String) : null;
 
-  if (!isSupportedPlatform(platform)) {
-    return {
-      error: `Listen & Learn is not available for "${platform}". Supported platforms: ${Object.keys(SUPPORTED_PLATFORMS).join(', ')}.`,
-    };
-  }
-  if (!examCode) return { error: 'examCode is required' };
-  // https only: the URL is fetched server-side, so a plain-http, file or
-  // localhost URL here would be an SSRF foothold rather than a typo.
-  if (!/^https:\/\//.test(studyGuideUrl)) {
-    return { error: 'studyGuideUrl must be an https URL' };
-  }
-  if (areas && areas.length > MAX_AREAS_PER_RUN) {
-    return { error: `At most ${MAX_AREAS_PER_RUN} areas can be generated per request` };
-  }
+  const error = guidePayloadError({ platform, examCode, studyGuideUrl, areas });
+  if (error) return { error };
 
   return {
     value: {
