@@ -24,43 +24,24 @@
  * `unknown`, said as such.
  */
 import { classifyFailure } from './status-model.js';
-import { isAgentOnline } from '../labs.js';
 import { storedFailure } from '../http/error-response.js';
+import { MINUTE_MS, ago, plural, result, toMillis } from './pulse-words.js';
+import { checkContentAgent, checkNightlyExport } from './pulse-agent-checks.js';
 
-const MINUTE_MS = 60 * 1000;
-const DAY_MS = 24 * 60 * MINUTE_MS;
+export { ago, toMillis } from './pulse-words.js';
+export { EXPORT_STALE_AFTER_MS, checkContentAgent, checkNightlyExport } from './pulse-agent-checks.js';
+export {
+  AI_TEST_STALE_AFTER_MS,
+  aiProvidersVerdict,
+  labAgentsFromRows,
+  labAgentsVerdict,
+  mcpServersVerdict,
+} from './pulse-registry-checks.js';
 
 /** The scheduled publisher's cadence: `publishScheduledContent` runs every fifteen minutes. */
 export const PUBLISHER_INTERVAL_MS = 15 * MINUTE_MS;
 /** Three missed runs, the heartbeat rule (status-model.js MISSED_BEATS). */
 export const PUBLISHER_LATE_AFTER_MS = 3 * PUBLISHER_INTERVAL_MS;
-/** The weekly AI probe, plus a day: a recorded test older than this is stale. */
-export const AI_TEST_STALE_AFTER_MS = 8 * DAY_MS;
-
-const result = (status, summary, extra = {}) => ({ status, summary, ...extra });
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-
-/** Epoch ms of an ISO string, a Date or a Firestore-shaped time; NaN otherwise. */
-export function toMillis(value) {
-  if (!value) return Number.NaN;
-  if (value instanceof Date) return value.getTime();
-  if (typeof value.toMillis === 'function') return value.toMillis();
-  if (typeof value.toDate === 'function') return value.toDate().getTime();
-  if (typeof value === 'object' && typeof value.seconds === 'number') return value.seconds * 1000;
-  return Date.parse(String(value));
-}
-
-/** "just now", "12 min ago", "3 h ago", "2 d ago" (frontend/src/lib/status.js describeAge). */
-export function ago(value, now) {
-  const then = toMillis(value);
-  if (!Number.isFinite(then)) return null;
-  const minutes = Math.round(Math.max(0, now - then) / MINUTE_MS);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${hours} h ago`;
-  return `${Math.floor(hours / 24)} d ago`;
-}
 
 // ── From the ops snapshot ────────────────────────────────────────────────────
 
@@ -259,106 +240,6 @@ export function checkTelegramNotify(snapshot, now) {
   );
 }
 
-/**
- * The content agent (Koda): its key and the day's refusals, from the
- * snapshot's `agent` block. No key is a fact, not a fault (the agent is not
- * set up); a key record the read could not reach is unknown, not "no key";
- * a revoked key with recent refusals is degraded, because something is
- * still calling with it; denials the read could not count are unknown.
- */
-export function checkContentAgent(snapshot, now) {
-  const agent = snapshot?.agent;
-  if (!agent) return result('unknown', 'This snapshot carries no content-agent block.');
-  const key = agent.key || {};
-  const denials = agent.denials || {};
-  const label = agent.label || 'The content agent';
-  if (key.unavailable) {
-    return result('unknown', `${label}'s key record could not be read, so its state is not known.`);
-  }
-  if (!key.present) return result('healthy', `${label} has no key yet: nothing can call as it.`);
-  const used = key.lastUsedAt ? `last used ${ago(key.lastUsedAt, now) ?? 'at an unknown time'}` : 'never used';
-  const refusals = denials.unavailable
-    ? 'its refusals could not be counted'
-    : `${plural(denials.total ?? 0, 'refusal')}${denials.bounded ? ' or more' : ''} in the last day`;
-  if (denials.unavailable) {
-    return result('unknown', `${label}'s key is ${key.active ? 'active' : 'revoked'}, ${used}; ${refusals}.`);
-  }
-  if (!key.active) {
-    return result(
-      (denials.total ?? 0) > 0 ? 'degraded' : 'healthy',
-      `${label}'s key is revoked, ${used}; ${refusals}.`
-    );
-  }
-  const off = Array.isArray(agent.sectionsOff) ? agent.sectionsOff.length : 0;
-  const switches = off > 0 ? ` ${plural(off, 'switch')} off.` : '';
-  return result(
-    (denials.total ?? 0) > 0 ? 'degraded' : 'healthy',
-    `${label}'s key is active, ${used}; ${refusals}.${switches}`
-  );
-}
-
-/**
- * The nightly export is due every 24 hours at 03:00 UTC; two hours of grace
- * for a slow run, then the newest completed run is late (#1409).
- */
-export const EXPORT_STALE_AFTER_MS = 26 * 60 * MINUTE_MS;
-
-/** "delta/2026-11-03" — the run as its blob prefix names it. */
-const runLabel = (run) => `${run.mode}/${run.runId}`;
-
-/**
- * Did last night's export run, and did it cover every authored container
- * (#1409)? From the snapshot's `backups` block (backup/backup-status.js):
- * not known when the manifests could not be read; critical when no completed
- * run is in the window, the newest one is older than EXPORT_STALE_AFTER_MS,
- * or an authored container is missing from it; healthy otherwise, naming
- * `brain_records` and its partition key, which is what the ticket asks.
- */
-export function checkNightlyExport(snapshot, now) {
-  const backups = snapshot?.backups;
-  if (!backups) return result('unknown', 'This snapshot carries no backups block.');
-  if (backups.unavailable) {
-    return result(
-      'unknown',
-      "The export's run manifests could not be read, so last night's export is not known."
-    );
-  }
-  const last = backups.lastCompleted;
-  const days = backups.lookbackDays ?? 7;
-  if (!last) {
-    const newest = Array.isArray(backups.runs) ? backups.runs[0] : null;
-    const progress = newest
-      ? ` The newest run, ${runLabel(newest)}, has ${plural(newest.markers ?? 0, 'container marker')}${newest.expectedCount ? ` of ${newest.expectedCount}` : ''} and no manifest.`
-      : '';
-    return result('critical', `No completed export manifest in the last ${plural(days, 'day')}.${progress}`);
-  }
-  const finished = ago(last.completedAt, now) ?? 'at an unknown time';
-  const ageMs = now - toMillis(last.completedAt);
-  const missing = Array.isArray(last.authored?.missing) ? last.authored.missing : [];
-  const watched = last.watched;
-  const watchedWords = watched
-    ? watched.present
-      ? ` ${watched.container}: ${plural(watched.docs ?? 0, 'record')}, partition key ${watched.partitionKey}.`
-      : ` ${watched.container} is not in it.`
-    : '';
-  if (!Number.isFinite(ageMs) || ageMs > EXPORT_STALE_AFTER_MS) {
-    return result(
-      'critical',
-      `The newest completed export, ${runLabel(last)}, finished ${finished}; a run is due every 24 h.${watchedWords}`
-    );
-  }
-  if (missing.length > 0) {
-    return result(
-      'critical',
-      `Export ${runLabel(last)} completed ${finished} with ${plural(last.containerCount ?? 0, 'container')}, but ${plural(missing.length, 'authored container')} ${missing.length === 1 ? 'is' : 'are'} missing: ${missing.join(', ')}.${watchedWords}`
-    );
-  }
-  return result(
-    'healthy',
-    `Export ${runLabel(last)} completed ${finished}: ${plural(last.containerCount ?? 0, 'container')}, every authored container present (${last.authored?.present ?? 0} of ${last.authored?.expected ?? 0}).${watchedWords}`
-  );
-}
-
 /** Every check the snapshot answers, by the probe id it records. */
 export const SNAPSHOT_CHECKS = Object.freeze({
   cosmos: checkCosmos,
@@ -376,125 +257,3 @@ export const SNAPSHOT_CHECKS = Object.freeze({
   'nightly-export': checkNightlyExport,
 });
 
-// ── From the registries ──────────────────────────────────────────────────────
-
-const latestOf = (values) =>
-  values.filter((value) => Number.isFinite(toMillis(value))).sort((a, b) => toMillis(a) - toMillis(b)).at(-1);
-
-/**
- * Lab agents by their heartbeat: online while the last beat is under 90 s old
- * and it did not announce a shutdown, and the agent is not deactivated
- * (labs.js isAgentOnline, the rule the Labs page and the public door use).
- * `agents` are `{ lastSeenAt, online }` — the pulse computes `online` from
- * `lastSeenAt`; the page reads it from getLabsSnapshot, which does the same.
- */
-export function labAgentsVerdict(agents, now) {
-  if (agents.length === 0) return result('unknown', 'No lab agent has registered yet.');
-  const online = agents.filter((agent) => agent.online).length;
-  const latest = latestOf(agents.map((agent) => agent.lastSeenAt));
-  const seen = latest ? ` Last heartbeat ${ago(latest, now) ?? 'at an unknown time'}.` : '';
-  if (online === agents.length) return result('healthy', `${plural(agents.length, 'agent')} online.${seen}`);
-  if (online === 0) return result('offline', `All ${agents.length} agents are offline.${seen}`);
-  return result('degraded', `${online} of ${agents.length} agents online.${seen}`);
-}
-
-/** lab_agents rows as the verdict reads them. */
-export const labAgentsFromRows = (rows, now) =>
-  (rows || []).map((row) => ({
-    lastSeenAt: row.lastSeenAt ?? null,
-    // The whole row: the rule reads status and active as well as lastSeenAt
-    // (#1009, #1018), so a stopping or deactivated agent is not online.
-    online: isAgentOnline(row, now),
-  }));
-
-const mcpLine = (server) => {
-  const name = server.id ?? server.name ?? 'server';
-  if (server.status === 'connected') return `${name}: connected`;
-  if (server.status === 'error') return `${name}: ${server.lastError || 'failed'}`;
-  return `${name}: not synced yet`;
-};
-
-/**
- * MCP servers by their last tool sync (lib/ai/mcp.js writes `status`,
- * `lastTested` and `lastError` on every sync). Only servers switched on count:
- * the MCP route refuses a disabled one before it is ever called.
- */
-export function mcpServersVerdict(servers, now) {
-  const enabled = (servers || []).filter((server) => server?.enabled === true);
-  if (enabled.length === 0) return result('unknown', 'No MCP server is enabled on the AI Engine page.');
-  const ok = enabled.filter((server) => server.status === 'connected');
-  const failing = enabled.filter((server) => server.status === 'error');
-  const latest = latestOf(enabled.map((server) => server.lastTested));
-  const when = latest ? ` Newest sync ${ago(latest, now) ?? 'at an unknown time'}.` : '';
-  const detail = enabled.map(mcpLine).join('\n');
-  if (ok.length === enabled.length) {
-    return result('healthy', `${plural(ok.length, 'enabled MCP server')} answered their last tool sync.${when}`, {
-      detail,
-    });
-  }
-  if (ok.length === 0 && failing.length === 0) {
-    return result('unknown', `${plural(enabled.length, 'enabled MCP server')}, none synced yet.`, { detail });
-  }
-  if (ok.length === 0) {
-    return result(
-      classifyFailure(failing[0].lastError),
-      `None of the ${enabled.length} enabled MCP servers answered its last tool sync.${when}`,
-      { detail }
-    );
-  }
-  return result(
-    'degraded',
-    `${ok.length} of ${enabled.length} enabled MCP servers answered their last tool sync.${when}`,
-    { detail }
-  );
-}
-
-const aiLine = (provider) =>
-  provider.status === 'connected'
-    ? `${provider.id}: connected${Number.isFinite(provider.latencyMs) ? ` in ${provider.latencyMs} ms` : ''}`
-    : `${provider.id}: ${provider.lastTestError || (provider.lastTested ? 'failed' : 'not tested yet')}`;
-
-/**
- * AI providers by their last RECORDED test — the AI Engine's Test button or
- * the weekly probe, both of which write `status` and `lastTested` onto the
- * provider document. The pulse spends no model call: asking every provider a
- * word every five minutes is the browser Test's job, on demand. A newest test
- * older than the weekly probe plus a day is stale, and said to be.
- */
-export function aiProvidersVerdict(providers, now) {
-  const enabled = (providers || []).filter((provider) => provider?.enabled !== false);
-  if (enabled.length === 0) return result('critical', 'No AI provider is enabled on the AI Engine page.');
-  const latest = latestOf(enabled.map((provider) => provider.lastTested));
-  if (!latest) {
-    return result(
-      'unknown',
-      `${plural(enabled.length, 'enabled provider')}, none with a recorded test yet. The AI Engine's Test, or the weekly probe, records one.`
-    );
-  }
-  const newest = enabled.find((provider) => provider.lastTested === latest);
-  const by = newest?.lastTestedBy === 'probe' ? 'the weekly probe' : 'a Test button';
-  const note = ` Newest recorded test: ${newest?.id ?? 'a provider'} ${ago(latest, now)} by ${by}.`;
-  const detail = enabled.map(aiLine).join('\n');
-  if (now - toMillis(latest) > AI_TEST_STALE_AFTER_MS) {
-    return result('unknown', `No provider has been tested for over eight days.${note}`, { detail });
-  }
-  const ok = enabled.filter((provider) => provider.status === 'connected').length;
-  if (ok === enabled.length) {
-    return result('healthy', `${plural(ok, 'enabled provider')} passed their last recorded test.${note}`, {
-      detail,
-    });
-  }
-  if (ok === 0) {
-    const firstError = enabled.find((provider) => provider.lastTestError)?.lastTestError;
-    return result(
-      classifyFailure(firstError),
-      `None of the ${enabled.length} enabled providers passed their last recorded test.${note}`,
-      { detail }
-    );
-  }
-  return result(
-    'degraded',
-    `${ok} of ${enabled.length} enabled providers passed their last recorded test.${note}`,
-    { detail }
-  );
-}

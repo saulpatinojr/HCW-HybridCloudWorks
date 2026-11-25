@@ -138,21 +138,23 @@ export const KEY_HEADERS = Object.freeze(['x-api-key']);
  * @returns {string | null}
  */
 export function developerKeyFrom(request) {
-  const read = (name) => {
-    const value = request?.headers?.get?.(name);
-    return typeof value === 'string' && value.trim() ? value.trim() : null;
-  };
-  const authorization = read('authorization');
-  if (authorization) {
-    const bearer = /^Bearer\s+(.+)$/i.exec(authorization);
-    if (bearer) return bearer[1].trim() || null;
-    return looksLikeKey(authorization) ? authorization : null;
-  }
-  for (const name of KEY_HEADERS) {
-    const value = read(name);
-    if (value) return value;
-  }
-  return null;
+  const authorization = headerText(request, 'authorization');
+  if (authorization) return keyInAuthorization(authorization);
+  const named = KEY_HEADERS.map((name) => headerText(request, name)).find(Boolean);
+  return named ?? null;
+}
+
+/** A header's value, trimmed; null when it is absent or blank. */
+function headerText(request, name) {
+  const value = request?.headers?.get?.(name);
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+/** The key in an Authorization value: after `Bearer`, or the whole value when it is shaped like a key. */
+function keyInAuthorization(authorization) {
+  const bearer = /^Bearer\s+(.+)$/i.exec(authorization);
+  if (bearer) return bearer[1].trim() || null;
+  return looksLikeKey(authorization) ? authorization : null;
 }
 
 /** Does the presented key hash to the stored hash? Constant time over two equal-length digests. */
