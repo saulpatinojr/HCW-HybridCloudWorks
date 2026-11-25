@@ -44,6 +44,7 @@
 import { randomUUID } from 'node:crypto';
 import { ROLE_NAMES, roleLevel } from './auth/roles.js';
 import { runAsJob } from './job-context.js';
+import { buildJobSweeper } from './job-sweeper.js';
 import { AuthoredError, errorResponse, logFailure, storedFailure, errorFacts } from './http/error-response.js';
 
 export const JOBS_CONTAINER = 'jobs';
@@ -680,176 +681,25 @@ export function createJobHandlers({
   };
 }
 
-// ── Stale-queued sweeper ─────────────────────────────────────────────────────
-//
-// The enqueue handler writes the job document and THEN the output binding
-// sends the queue message; a binding failure leaves the job `queued` with no
-// message behind it. The sweeper (functions/jobs-sweeper.js, a timer)
-// re-enqueues those. Duplicates are harmless: runJob's etag-conditioned claim
-// skips a job that already started.
+// ── Stale-queued sweeper (job-sweeper.js) ───────────────────────────────────
 
-export const STALE_QUEUED_MS = 10 * 60 * 1000;
-export const SWEEP_BATCH = 20;
-export const MAX_REQUEUE_COUNT = 3;
-/**
- * Margin added to a job type's own timeoutMs before the sweeper will call a
- * `running` job abandoned (T-710). It absorbs clock skew between the worker
- * and the sweeper plus the delay between a host dying and the next sweep, so
- * the reaper never steals a job from a worker that is merely slow.
- */
-export const RUNNING_GRACE_MS = 5 * 60 * 1000;
+export {
+  MAX_REQUEUE_COUNT,
+  RUNNING_GRACE_MS,
+  STALE_QUEUED_MS,
+  SWEEP_BATCH,
+} from './job-sweeper.js';
 
 /**
- * @param {object} deps
- * @param {{ queryDocs: Function, patchDoc: Function }} deps.store
- * @param {() => Date} [deps.now]
- * @param {{ log?: Function, warn?: Function }} [deps.log]
- * @param {Map<string, object>} [deps.registry]
+ * The stale-queued and abandoned-job sweeper (job-sweeper.js), over this
+ * module's container and registry.
+ *
+ * @param {object} [deps] store, now, log, and a registry for tests
  */
-export function createJobSweeper({ store, now = () => new Date(), log = {}, registry: customRegistry } = {}) {
-  const typesToUse = customRegistry || registry;
-
-  /**
-   * Jobs abandoned in `running` (T-710).
-   *
-   * A worker that dies mid-run — host restart, scale-in, deploy, or the
-   * platform timeout beating the job's own budget — leaves the document
-   * `running` forever: redelivery sees `status !== 'queued'` and returns
-   * `skipped`, the queued sweep below ignores it, `getJob` reports `running`
-   * to a client that polls indefinitely, and the type's `onComplete` never
-   * fires, so the failure notification that exists to bring a failed approval
-   * back to the phone is lost too.
-   *
-   * The cutoff is per type, not one blanket value: budgets range from 5 to 28
-   * minutes, and a single conservative cutoff would leave short jobs hanging
-   * for half an hour. A job is reaped only once its OWN budget plus a grace
-   * margin has elapsed, so a slow-but-live worker is never stolen from.
-   *
-   * This query and the queued one read whole documents (#1198), so the hooks
-   * get `job.payload`. That stays cheap because newJobDoc bounds every job
-   * document's payload by its type's `maxPayloadBytes`.
-   */
-  async function reapAbandoned(types = typesToUse) {
-    const cutoff = new Date(now().getTime() - RUNNING_GRACE_MS).toISOString();
-    const running = await store.queryDocs(
-      JOBS_CONTAINER,
-      `SELECT TOP ${SWEEP_BATCH} * FROM c WHERE c.status = 'running' AND IS_DEFINED(c.startedAt) AND c.startedAt < @cutoff`,
-      [{ name: '@cutoff', value: cutoff }]
-    );
-    const reaped = [];
-    for (const doc of running || []) {
-      // An unreadable startedAt is not evidence of abandonment. Comparing an
-      // Invalid Date returns false for every operator, so without this an
-      // undated row would fall straight through into being reaped.
-      const startedMs = Date.parse(doc.startedAt);
-      if (!Number.isFinite(startedMs)) {
-        log.warn?.('sweep: a job is running with no readable startedAt; leaving it');
-        continue;
-      }
-      const spec = types?.get?.(doc.type);
-      // An unregistered type cannot state a budget; fall back to the default
-      // rather than leaving it running forever.
-      const budget = Number(spec?.timeoutMs) || DEFAULT_TIMEOUT_MS;
-      if (startedMs > now().getTime() - budget - RUNNING_GRACE_MS) continue;
-
-      const finishedAt = now().toISOString();
-      const error = `abandoned while running: no terminal write within ${Math.round(
-        (budget + RUNNING_GRACE_MS) / 60000
-      )} minutes (worker process lost)`;
-      try {
-        const update = { status: 'timeout', finishedAt, error };
-        if (doc._etag) {
-          await store.patchDoc(JOBS_CONTAINER, doc.id, update, { ifMatch: doc._etag });
-        } else {
-          await store.patchDoc(JOBS_CONTAINER, doc.id, update);
-        }
-        reaped.push({ jobId: doc.id, type: doc.type });
-        // Same best-effort contract as runJob's: a throwing hook is logged and
-        // never changes the outcome that was already written.
-        if (typeof spec?.onComplete === 'function') {
-          try {
-            await spec.onComplete(
-              { job: doc, status: 'timeout', result: null, error },
-              { context: log, now }
-            );
-          } catch (hookError) {
-            log.warn?.(
-              `sweep: onComplete for ${doc.type} failed: ${errorFacts(hookError)}`
-            );
-          }
-        }
-      } catch (err) {
-        log.warn?.(`sweep: could not reap a job: ${errorFacts(err)}`);
-      }
-    }
-    return reaped;
-  }
-
-  return {
-    reapAbandoned,
-    /** @returns {Promise<{ requeued: {jobId: string, type: string}[], reaped: {jobId: string, type: string}[] }>} */
-    async sweep() {
-      const cutoff = new Date(now().getTime() - STALE_QUEUED_MS).toISOString();
-      const stale = await store.queryDocs(
-        JOBS_CONTAINER,
-        `SELECT TOP ${SWEEP_BATCH} * FROM c WHERE c.status = 'queued' AND c.createdAt < @cutoff AND (NOT IS_DEFINED(c.requeuedAt) OR c.requeuedAt < @cutoff)`,
-        [{ name: '@cutoff', value: cutoff }]
-      );
-      const requeued = [];
-      for (const doc of stale || []) {
-        const currentCount = Number(doc.requeueCount) || 0;
-        if (currentCount >= MAX_REQUEUE_COUNT) {
-          const finishedAt = now().toISOString();
-          const error = `exceeded maximum requeue attempts (${MAX_REQUEUE_COUNT}); marked as poison message`;
-          try {
-            const failUpdate = { status: 'failed', finishedAt, error };
-            if (doc._etag) {
-              await store.patchDoc(JOBS_CONTAINER, doc.id, failUpdate, { ifMatch: doc._etag });
-            } else {
-              await store.patchDoc(JOBS_CONTAINER, doc.id, failUpdate);
-            }
-            log.warn?.(
-              `sweep: a job reached maximum requeue attempts (${MAX_REQUEUE_COUNT}); marked failed as poison message`
-            );
-            const spec = typesToUse?.get?.(doc.type);
-            if (typeof spec?.onComplete === 'function') {
-              try {
-                await spec.onComplete(
-                  { job: doc, status: 'failed', result: null, error },
-                  { context: log, now }
-                );
-              } catch (hookError) {
-                log.warn?.(
-                  `sweep: onComplete for poison ${doc.type} failed: ${errorFacts(hookError)}`
-                );
-              }
-            }
-          } catch (err) {
-            log.warn?.(`sweep: could not fail a poison job: ${errorFacts(err)}`);
-          }
-        } else {
-          try {
-            const stampUpdate = {
-              requeuedAt: now().toISOString(),
-              requeueCount: currentCount + 1,
-            };
-            if (doc._etag) {
-              await store.patchDoc(JOBS_CONTAINER, doc.id, stampUpdate, { ifMatch: doc._etag });
-            } else {
-              await store.patchDoc(JOBS_CONTAINER, doc.id, stampUpdate);
-            }
-            requeued.push({ jobId: doc.id, type: doc.type });
-          } catch (err) {
-            log.warn?.(`sweep: could not stamp a job: ${errorFacts(err)}`);
-          }
-        }
-      }
-      // The queued gap and the running gap are the same failure one state
-      // apart, so they are swept together (T-710). Reaping cannot re-enqueue:
-      // a job whose worker may have completed real side effects before dying
-      // must not be run again silently — it lands `timeout` and visible.
-      const reaped = await reapAbandoned(typesToUse);
-      return { requeued, reaped };
-    },
-  };
+export function createJobSweeper(deps = {}) {
+  return buildJobSweeper(deps, {
+    container: JOBS_CONTAINER,
+    registry,
+    defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
+  });
 }
