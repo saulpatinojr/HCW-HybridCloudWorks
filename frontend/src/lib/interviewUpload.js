@@ -141,7 +141,11 @@ export function audioFileProblem(file) {
   if (extensionOf(file.name) !== AUDIO_TYPES[type]) {
     return `The file name should end in .${AUDIO_TYPES[type]} for this kind of recording. Rename it and choose it again.`;
   }
-  const size = Number(file.size);
+  return sizeProblem(file.size);
+}
+
+function sizeProblem(bytes) {
+  const size = Number(bytes);
   if (!Number.isInteger(size) || size < 1) return 'The recording is empty.';
   if (size > MAX_AUDIO_BYTES) return 'Recordings must be 500 MB or smaller.';
   return '';
@@ -321,103 +325,7 @@ export function createAudioUpload({ interviewId, file, durationSec, onProgress, 
     stopped: null,
   };
   const report = (phase, done, total) => onProgress?.({ phase, done, total });
-
-  async function sendBlock(index, signal) {
-    const [start, end] = blockRange(file.size, index, state.session.blockSize);
-    for (let attempt = 1; ; attempt += 1) {
-      if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
-      try {
-        const body = await readSlice(file.slice(start, end));
-        // Checked again after the read: Stop pressed while a slice was being
-        // read must not let that block go.
-        if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
-        await put(`cms/interviews/uploads/${state.session.uploadId}/blocks/${index}`, body, {
-          signal,
-        });
-        return;
-      } catch (error) {
-        if (attempt >= BLOCK_ATTEMPTS || !isRetryable(error)) throw error;
-        await wait(1000 * attempt);
-      }
-    }
-  }
-
-  async function sendMissingBlocks(signal) {
-    const { blockCount } = state.session;
-    const queue = [];
-    for (let i = 0; i < blockCount; i += 1) if (!state.acknowledged.has(i)) queue.push(i);
-    let failure = null;
-    const doneBytes = () =>
-      [...state.acknowledged].reduce((sum, i) => {
-        const [s, e] = blockRange(file.size, i, state.session.blockSize);
-        return sum + (e - s);
-      }, 0);
-    report('uploading', doneBytes(), file.size);
-    const worker = async () => {
-      while (queue.length > 0 && !failure) {
-        const index = queue.shift();
-        try {
-          await sendBlock(index, signal);
-          state.acknowledged.add(index);
-          report('uploading', doneBytes(), file.size);
-        } catch (error) {
-          failure = failure || error;
-        }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(PARALLEL_BLOCKS, queue.length) }, worker));
-    if (failure) throw failure;
-  }
-
-  /** Open the session, and check the plan the server answers with. */
-  async function openSession() {
-    const opened = await post('cms/interviews/uploads', {
-      interviewId,
-      fileName: file.name,
-      contentType: audioTypeOf(file),
-      bytes: file.size,
-      sha256: state.sha256,
-      durationSec,
-    });
-    const expected = Math.ceil(file.size / BLOCK_SIZE);
-    if (
-      typeof opened?.uploadId !== 'string' ||
-      !UPLOAD_ID_PATTERN.test(opened.uploadId) ||
-      opened.blockSize !== BLOCK_SIZE ||
-      opened.blockCount !== expected
-    ) {
-      throw new UploadError(
-        'The server answered the upload with a plan this page does not understand. Reload the page and try again.',
-        'BAD_SESSION'
-      );
-    }
-    return {
-      uploadId: opened.uploadId,
-      blockSize: opened.blockSize,
-      blockCount: opened.blockCount,
-    };
-  }
-
-  /** Commit the blocks; the server checks the size and the hash. */
-  async function complete() {
-    try {
-      return await post(`cms/interviews/uploads/${state.session.uploadId}/complete`, {});
-    } catch (error) {
-      // A 422 at completion is a missing block, or a size or hash mismatch
-      // after which the server deleted the session's blob (and its staged
-      // blocks) but kept the session open. Either way the next run sends
-      // every block again on the same session.
-      if (error?.status === 422) state.acknowledged.clear();
-      // A 409 is either "already completed" (an earlier completion landed
-      // but its answer was lost, a timeout say) or "the interview changed,
-      // try again"; the server gives neither a code. The interview itself
-      // says which: if it points at this upload, the recording is stored.
-      if (error?.status === 409 && error?.code !== 'INTERVIEW_DELETED') {
-        return completedEarlier(error);
-      }
-      throw error;
-    }
-  }
+  const upload = { interviewId, file, post, get, put, wait, state, report };
 
   return {
     state,
@@ -446,10 +354,10 @@ export function createAudioUpload({ interviewId, file, durationSec, onProgress, 
             onProgress: (done, total) => report('hashing', done, total),
           });
         }
-        if (!state.session) state.session = await openSession();
-        await sendMissingBlocks(signal);
+        if (!state.session) state.session = await openSession(upload, durationSec);
+        await sendMissingBlocks(upload, signal);
         report('completing', file.size, file.size);
-        const answer = await complete();
+        const answer = await complete(upload);
         state.completed = answer;
         report('done', file.size, file.size);
         return answer;
@@ -460,14 +368,116 @@ export function createAudioUpload({ interviewId, file, durationSec, onProgress, 
       }
     },
   };
+}
 
-  /** The completion an earlier attempt made, read back from the interview, or the 409 again. */
-  async function completedEarlier(conflict) {
-    const read = await get(`cms/interviews/${encodeURIComponent(interviewId)}`).catch(() => null);
-    const audio = read?.interview?.provenance?.audio;
-    if (audio && audio.uploadId === state.session.uploadId) {
-      return { ok: true, bytes: audio.bytes, sha256: audio.sha256, contentType: audio.contentType };
+// The steps of one upload. Each takes the upload's parts (`upload`): the file,
+// the interview, the request functions, `state` and `report`.
+
+async function sendBlock({ file, put, wait, state }, index, signal) {
+  const [start, end] = blockRange(file.size, index, state.session.blockSize);
+  for (let attempt = 1; ; attempt += 1) {
+    if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
+    try {
+      const body = await readSlice(file.slice(start, end));
+      // Checked again after the read: Stop pressed while a slice was being
+      // read must not let that block go.
+      if (signal?.aborted) throw new UploadError('The upload was stopped.', 'ABORTED');
+      await put(`cms/interviews/uploads/${state.session.uploadId}/blocks/${index}`, body, {
+        signal,
+      });
+      return;
+    } catch (error) {
+      if (attempt >= BLOCK_ATTEMPTS || !isRetryable(error)) throw error;
+      await wait(1000 * attempt);
     }
-    throw conflict;
   }
+}
+
+async function sendMissingBlocks(upload, signal) {
+  const { file, state, report } = upload;
+  const { blockCount } = state.session;
+  const queue = [];
+  for (let i = 0; i < blockCount; i += 1) if (!state.acknowledged.has(i)) queue.push(i);
+  let failure = null;
+  const doneBytes = () =>
+    [...state.acknowledged].reduce((sum, i) => {
+      const [s, e] = blockRange(file.size, i, state.session.blockSize);
+      return sum + (e - s);
+    }, 0);
+  report('uploading', doneBytes(), file.size);
+  const worker = async () => {
+    while (queue.length > 0 && !failure) {
+      const index = queue.shift();
+      try {
+        await sendBlock(upload, index, signal);
+        state.acknowledged.add(index);
+        report('uploading', doneBytes(), file.size);
+      } catch (error) {
+        failure = failure || error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARALLEL_BLOCKS, queue.length) }, worker));
+  if (failure) throw failure;
+}
+
+/** Open the session, and check the plan the server answers with. */
+async function openSession({ interviewId, file, post, state }, durationSec) {
+  const opened = await post('cms/interviews/uploads', {
+    interviewId,
+    fileName: file.name,
+    contentType: audioTypeOf(file),
+    bytes: file.size,
+    sha256: state.sha256,
+    durationSec,
+  });
+  const expected = Math.ceil(file.size / BLOCK_SIZE);
+  if (
+    typeof opened?.uploadId !== 'string' ||
+    !UPLOAD_ID_PATTERN.test(opened.uploadId) ||
+    opened.blockSize !== BLOCK_SIZE ||
+    opened.blockCount !== expected
+  ) {
+    throw new UploadError(
+      'The server answered the upload with a plan this page does not understand. Reload the page and try again.',
+      'BAD_SESSION'
+    );
+  }
+  return {
+    uploadId: opened.uploadId,
+    blockSize: opened.blockSize,
+    blockCount: opened.blockCount,
+  };
+}
+
+/** Commit the blocks; the server checks the size and the hash. */
+async function complete(upload) {
+  const { post, state } = upload;
+  try {
+    return await post(`cms/interviews/uploads/${state.session.uploadId}/complete`, {});
+  } catch (error) {
+    // A 422 at completion is a missing block, or a size or hash mismatch
+    // after which the server deleted the session's blob (and its staged
+    // blocks) but kept the session open. Either way the next run sends
+    // every block again on the same session.
+    if (error?.status === 422) state.acknowledged.clear();
+    // A 409 is either "already completed" (an earlier completion landed
+    // but its answer was lost, a timeout say) or "the interview changed,
+    // try again"; the server gives neither a code. The interview itself
+    // says which: if it points at this upload, the recording is stored.
+    if (error?.status === 409 && error?.code !== 'INTERVIEW_DELETED') {
+      return completedEarlier(upload, error);
+    }
+    throw error;
+  }
+}
+
+/** The completion an earlier attempt made, read back from the interview, or the 409 again. */
+async function completedEarlier({ interviewId, get, state }, conflict) {
+  const read = await get(`cms/interviews/${encodeURIComponent(interviewId)}`).catch(() => null);
+  const audio = read?.interview?.provenance?.audio;
+  if (audio && audio.uploadId === state.session.uploadId) {
+    return { ok: true, bytes: audio.bytes, sha256: audio.sha256, contentType: audio.contentType };
+  }
+  throw conflict;
 }

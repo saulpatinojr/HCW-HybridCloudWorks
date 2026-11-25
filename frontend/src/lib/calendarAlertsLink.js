@@ -3,6 +3,10 @@
  * calendar file builder can use it without reaching the API client.
  */
 
+// Path segments (lower-cased) an admin link may not contain: a step up, or
+// any part of the OAuth callback.
+const BLOCKED_SEGMENTS = ['..', 'oauth', 'callback'];
+
 /**
  * The link as the browser may open it, or null. Checked again here, though
  * the server only stores these two shapes, because the row is a document a
@@ -27,12 +31,7 @@ export function safeAlertLink(link) {
     // The OAuth callback acts on its query (code, state): an alert may not aim at it,
     // in any case, because the router reads paths case-insensitively.
     const lower = segments.map((segment) => segment.toLowerCase());
-    const safe =
-      inside &&
-      query &&
-      !lower.includes('..') &&
-      !lower.includes('oauth') &&
-      !lower.includes('callback');
+    const safe = inside && query && !lower.some((segment) => BLOCKED_SEGMENTS.includes(segment));
     return safe ? { kind: 'admin', href: link } : null;
   }
   try {

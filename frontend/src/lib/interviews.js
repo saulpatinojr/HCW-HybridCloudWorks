@@ -80,11 +80,15 @@ export function safeLink(url) {
   // "https:///host" into "https://host", and an address that does not look the
   // way it works has no place in a file a person typed.
   if (!/^https:\/\/[^/]/i.test(value)) return null;
+  return parsesAsHttpsWithHost(value) ? value : null;
+}
+
+function parsesAsHttpsWithHost(value) {
   try {
     const parsed = new URL(value);
-    return parsed.protocol === 'https:' && parsed.hostname ? value : null;
+    return parsed.protocol === 'https:' && Boolean(parsed.hostname);
   } catch {
-    return null;
+    return false;
   }
 }
 

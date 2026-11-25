@@ -41,23 +41,29 @@ export function isYouTubeVideoUrl(url) {
   return segments.length === 2 && segments[0] === 'shorts' && YOUTUBE_ID.test(segments[1]);
 }
 
+/** `{ parsed }` for an http(s) address, or `{ error }` saying what is wrong with it. */
+function parseHttpUrl(url) {
+  if (!url) return { error: 'is empty' };
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { error: 'is not a valid URL' };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { error: 'is not an http(s) URL' };
+  }
+  return { parsed };
+}
+
 /**
  * One line of the form → `{ kind: 'page'|'video', url }` or `{ url, error }`.
  * The error is a sentence for the person typing, in the server's words.
  */
 export function classifySourceUrl(raw) {
   const url = String(raw || '').trim();
-  if (!url) return { url, error: 'is empty' };
-
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { url, error: 'is not a valid URL' };
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return { url, error: 'is not an http(s) URL' };
-  }
+  const { parsed, error } = parseHttpUrl(url);
+  if (error) return { url, error };
   if (isYouTubeVideoUrl(url)) return { kind: 'video', url };
   if (YOUTUBE_HOSTS.has(parsed.hostname.toLowerCase())) {
     return {
