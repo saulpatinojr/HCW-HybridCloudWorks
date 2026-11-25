@@ -17,8 +17,14 @@
  *    vault writer, and sleep helper for testability without live side-effects.
  */
 
-import { setVaultSecret, refreshKeyVaultReferences } from '../secret-vault.js';
 import { withStatus } from '../http/error-response.js';
+
+/** Refuse a missing or non-text argument with `message`. */
+function requireText(value, message) {
+  if (!value || typeof value !== 'string') {
+    throw new Error(message);
+  }
+}
 
 export const GOOGLE_TARGETS = Object.freeze({
   gemini: Object.freeze({
@@ -49,6 +55,21 @@ export const GOOGLE_TARGETS = Object.freeze({
 
 export const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The JSON body of a response, or null when it has none. */
+async function readJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+/** The error for a refused Google call: `sentence`, then Google's own message or the status text, with the status kept. */
+function googleFailure(response, data, sentence) {
+  const err = data?.error?.message || response.statusText || 'unknown error';
+  return withStatus(new Error(`${sentence}: ${err}`), response.status);
+}
+
 /**
  * Looks up an existing Google Cloud API key resource by its secret keyString.
  *
@@ -63,12 +84,8 @@ export async function lookupGoogleApiKey({
   gcpToken,
   fetchImpl = globalThis.fetch,
 }) {
-  if (!keyString || typeof keyString !== 'string') {
-    throw new Error('keyString must be a non-empty string');
-  }
-  if (!gcpToken || typeof gcpToken !== 'string') {
-    throw new Error('gcpToken must be a non-empty string');
-  }
+  requireText(keyString, 'keyString must be a non-empty string');
+  requireText(gcpToken, 'gcpToken must be a non-empty string');
 
   const url = `https://apikeys.googleapis.com/v2/keys:lookupKey?keyString=${encodeURIComponent(keyString)}`;
   const response = await fetchImpl(url, {
@@ -82,14 +99,9 @@ export async function lookupGoogleApiKey({
     return null;
   }
 
-  let data = null;
-  try {
-    data = await response.json();
-  } catch {}
-
+  const data = await readJson(response);
   if (!response.ok || !data?.name) {
-    const err = data?.error?.message || response.statusText || 'unknown error';
-    throw withStatus(new Error(`Google API key lookup failed (HTTP ${response.status}): ${err}`), response.status);
+    throw googleFailure(response, data, `Google API key lookup failed (HTTP ${response.status})`);
   }
 
   return {
@@ -112,12 +124,8 @@ export async function getGoogleKeyDetails({
   gcpToken,
   fetchImpl = globalThis.fetch,
 }) {
-  if (!keyName || typeof keyName !== 'string') {
-    throw new Error('keyName must be a non-empty string');
-  }
-  if (!gcpToken || typeof gcpToken !== 'string') {
-    throw new Error('gcpToken must be a non-empty string');
-  }
+  requireText(keyName, 'keyName must be a non-empty string');
+  requireText(gcpToken, 'gcpToken must be a non-empty string');
 
   const url = `https://apikeys.googleapis.com/v2/${keyName}`;
   const response = await fetchImpl(url, {
@@ -127,14 +135,9 @@ export async function getGoogleKeyDetails({
     },
   });
 
-  let data = null;
-  try {
-    data = await response.json();
-  } catch {}
-
+  const data = await readJson(response);
   if (!response.ok || !data?.name) {
-    const err = data?.error?.message || response.statusText || 'unknown error';
-    throw withStatus(new Error(`Google API key details read failed (HTTP ${response.status}): ${err}`), response.status);
+    throw googleFailure(response, data, `Google API key details read failed (HTTP ${response.status})`);
   }
 
   return {
@@ -162,15 +165,9 @@ export async function createGoogleApiKey({
   gcpToken,
   fetchImpl = globalThis.fetch,
 }) {
-  if (!parent || typeof parent !== 'string') {
-    throw new Error('parent project must be specified (e.g. projects/123)');
-  }
-  if (!displayName || typeof displayName !== 'string') {
-    throw new Error('displayName must be specified');
-  }
-  if (!gcpToken || typeof gcpToken !== 'string') {
-    throw new Error('gcpToken must be a non-empty string');
-  }
+  requireText(parent, 'parent project must be specified (e.g. projects/123)');
+  requireText(displayName, 'displayName must be specified');
+  requireText(gcpToken, 'gcpToken must be a non-empty string');
 
   const parentPath = parent.startsWith('projects/') ? parent : `projects/${parent}`;
   const url = `https://apikeys.googleapis.com/v2/${parentPath}/locations/global/keys`;
@@ -189,14 +186,9 @@ export async function createGoogleApiKey({
     body: JSON.stringify(body),
   });
 
-  let data = null;
-  try {
-    data = await response.json();
-  } catch {}
-
+  const data = await readJson(response);
   if (!response.ok || !data?.name) {
-    const err = data?.error?.message || response.statusText || 'unknown error';
-    throw withStatus(new Error(`Google API key creation initiation failed (HTTP ${response.status}): ${err}`), response.status);
+    throw googleFailure(response, data, `Google API key creation initiation failed (HTTP ${response.status})`);
   }
 
   return {
@@ -224,9 +216,7 @@ export async function pollGoogleOperation({
   sleep = defaultSleep,
   maxAttempts = 20,
 }) {
-  if (!operationName || typeof operationName !== 'string') {
-    throw new Error('operationName must be specified');
-  }
+  requireText(operationName, 'operationName must be specified');
 
   const url = `https://apikeys.googleapis.com/v2/${operationName}`;
 
@@ -237,28 +227,8 @@ export async function pollGoogleOperation({
         Authorization: `Bearer ${gcpToken}`,
       },
     });
-
-    let data = null;
-    try {
-      data = await response.json();
-    } catch {}
-
-    if (!response.ok) {
-      const err = data?.error?.message || response.statusText || 'unknown error';
-      throw withStatus(new Error(`Polling operation ${operationName} failed (HTTP ${response.status}): ${err}`), response.status);
-    }
-
-    if (data.error) {
-      throw new Error(`Google API key operation failed: ${data.error.message || 'unknown error'}`);
-    }
-
-    if (data.done) {
-      const keyName = data.response?.name;
-      if (!keyName) {
-        throw new Error('Google API key operation completed without returning a key name');
-      }
-      return { keyName };
-    }
+    const keyName = finishedKeyName(response, await readJson(response), operationName);
+    if (keyName) return { keyName };
 
     if (attempt < maxAttempts) {
       await sleep(100 * Math.min(attempt, 5));
@@ -266,6 +236,25 @@ export async function pollGoogleOperation({
   }
 
   throw new Error(`Google API key operation ${operationName} timed out after ${maxAttempts} attempts`);
+}
+
+/**
+ * One poll's answer: the new key's name once the operation is done, null while
+ * it runs, and an error when the poll or the operation failed.
+ */
+function finishedKeyName(response, data, operationName) {
+  if (!response.ok) {
+    throw googleFailure(response, data, `Polling operation ${operationName} failed (HTTP ${response.status})`);
+  }
+  if (data.error) {
+    throw new Error(`Google API key operation failed: ${data.error.message || 'unknown error'}`);
+  }
+  if (!data.done) return null;
+  const keyName = data.response?.name;
+  if (!keyName) {
+    throw new Error('Google API key operation completed without returning a key name');
+  }
+  return keyName;
 }
 
 /**
@@ -282,9 +271,7 @@ export async function getGoogleKeyString({
   gcpToken,
   fetchImpl = globalThis.fetch,
 }) {
-  if (!keyName || typeof keyName !== 'string') {
-    throw new Error('keyName must be a non-empty string');
-  }
+  requireText(keyName, 'keyName must be a non-empty string');
 
   const url = `https://apikeys.googleapis.com/v2/${keyName}/keyString`;
   const response = await fetchImpl(url, {
@@ -294,14 +281,9 @@ export async function getGoogleKeyString({
     },
   });
 
-  let data = null;
-  try {
-    data = await response.json();
-  } catch {}
-
+  const data = await readJson(response);
   if (!response.ok || !data?.keyString) {
-    const err = data?.error?.message || response.statusText || 'unknown error';
-    throw withStatus(new Error(`Retrieving keyString for ${keyName} failed (HTTP ${response.status}): ${err}`), response.status);
+    throw googleFailure(response, data, `Retrieving keyString for ${keyName} failed (HTTP ${response.status})`);
   }
 
   return data.keyString;
@@ -321,9 +303,7 @@ export async function deleteGoogleApiKey({
   gcpToken,
   fetchImpl = globalThis.fetch,
 }) {
-  if (!keyName || typeof keyName !== 'string') {
-    throw new Error('keyName must be a non-empty string');
-  }
+  requireText(keyName, 'keyName must be a non-empty string');
 
   const url = `https://apikeys.googleapis.com/v2/${keyName}`;
   const response = await fetchImpl(url, {
@@ -334,12 +314,8 @@ export async function deleteGoogleApiKey({
   });
 
   if (!response.ok) {
-    let data = null;
-    try {
-      data = await response.json();
-    } catch {}
-    const err = data?.error?.message || response.statusText || 'unknown error';
-    throw withStatus(new Error(`Deleting Google API key ${keyName} failed (HTTP ${response.status}): ${err}`), response.status);
+    const data = await readJson(response);
+    throw googleFailure(response, data, `Deleting Google API key ${keyName} failed (HTTP ${response.status})`);
   }
 
   return {
@@ -367,9 +343,7 @@ export async function verifyGoogleApiKey({
   if (!target || !target.probeEndpoint) {
     throw new Error('Target configuration with probeEndpoint is required');
   }
-  if (!keyString || typeof keyString !== 'string') {
-    throw new Error('keyString must be a non-empty string');
-  }
+  requireText(keyString, 'keyString must be a non-empty string');
 
   let url = target.probeEndpoint;
   const options = { method: 'GET' };
@@ -393,161 +367,5 @@ export async function verifyGoogleApiKey({
   return { ok: true, verified: true };
 }
 
-/**
- * Orchestrates rolling a Google Cloud API key with verify-before-delete semantics:
- * 1. Mint new key matching existing target restrictions.
- * 2. Functionally probe new key against the actual Google service.
- *    If verification fails, delete the new key immediately and abort (old key untouched).
- * 3. Commit new key to Azure Key Vault and trigger configuration reference refresh.
- * 4. Delete old key from Google Cloud API Keys.
- *
- * @param {object} params
- * @param {object} params.target Target descriptor (e.g. GOOGLE_TARGETS.gemini)
- * @param {string} params.gcpToken OAuth2 access token with apikeys admin permissions
- * @param {string} [params.oldKeyString] Current key secret (used to lookup old resource)
- * @param {string} [params.oldKeyName] Explicit old key resource name if known
- * @param {string} [params.parent] Project resource name (e.g. projects/123456 or projects/my-proj)
- * @param {object} [params.vault] Injectable vault object with setSecret and refreshReferences
- * @param {typeof fetch} [params.fetchImpl] Injectable fetch
- * @param {Function} [params.sleep] Injectable sleep
- * @param {boolean} [params.verify=true] Verify functional access before committing
- * @param {boolean} [params.allowUnmanagedOldKey=false] Allow creating a new key if oldKeyString is not found
- * @param {(params: { keyString: string, target: object }) => Promise<void>} [params.verifyFromApp] Optional post-refresh app verifier
- * @returns {Promise<{ ok: boolean, secretName: string, newKeyName: string, oldKeyDeleted: boolean, refreshed: boolean, refreshReason: string|null }>}
- */
-export async function rollAndApplyGoogleKey({
-  target,
-  gcpToken,
-  oldKeyString,
-  oldKeyName: explicitOldKeyName,
-  parent: explicitParent,
-  vault = { setSecret: setVaultSecret, refreshReferences: refreshKeyVaultReferences },
-  fetchImpl = globalThis.fetch,
-  sleep = defaultSleep,
-  verify = true,
-  allowUnmanagedOldKey = false,
-  verifyFromApp,
-}) {
-  if (!target || typeof target !== 'object' || !target.secretName) {
-    throw new Error('Target configuration with secretName is required');
-  }
-  if (!gcpToken || typeof gcpToken !== 'string') {
-    throw new Error('gcpToken is required');
-  }
-
-  let resolvedOldKeyName = explicitOldKeyName ?? null;
-  let resolvedParent = explicitParent ?? null;
-  let restrictions = {
-    apiTargets: [{ service: target.service }],
-  };
-
-  // Step 1: Discover old key resource if oldKeyString is provided
-  if (oldKeyString && !resolvedOldKeyName) {
-    const lookup = await lookupGoogleApiKey({ keyString: oldKeyString, gcpToken, fetchImpl });
-    if (lookup) {
-      resolvedOldKeyName = lookup.name;
-      resolvedParent ??= lookup.parent;
-      const details = await getGoogleKeyDetails({ keyName: lookup.name, gcpToken, fetchImpl });
-      if (details?.restrictions && Object.keys(details.restrictions).length > 0) {
-        restrictions = details.restrictions;
-      }
-    } else if (!allowUnmanagedOldKey) {
-      throw new Error(
-        `Failed to locate Google API key for ${target.secretName} in GCP; cannot rotate safely without revoking old key.`
-      );
-    }
-  }
-
-  if (!resolvedParent) {
-    throw new Error(`Cannot roll ${target.secretName}: GCP parent project could not be resolved`);
-  }
-
-  // Step 2: Mint new key on Google Cloud API Keys API
-  const initResult = await createGoogleApiKey({
-    parent: resolvedParent,
-    displayName: target.displayName,
-    restrictions,
-    gcpToken,
-    fetchImpl,
-  });
-
-  let newKeyName = initResult.keyName;
-  if (!newKeyName) {
-    const pollResult = await pollGoogleOperation({
-      operationName: initResult.operationName,
-      gcpToken,
-      fetchImpl,
-      sleep,
-    });
-    newKeyName = pollResult.keyName;
-  }
-
-  const newKeyString = await getGoogleKeyString({
-    keyName: newKeyName,
-    gcpToken,
-    fetchImpl,
-  });
-
-  // Step 3: Verify the newly minted key against live service BEFORE committing or deleting
-  if (verify) {
-    try {
-      await verifyGoogleApiKey({ target, keyString: newKeyString, fetchImpl });
-    } catch (verifyErr) {
-      // Clean up newly minted key so estate is not polluted with defective keys
-      try {
-        await deleteGoogleApiKey({ keyName: newKeyName, gcpToken, fetchImpl });
-      } catch {}
-      throw new Error(
-        `New API key verification probe failed for ${target.secretName} (${verifyErr.message}). Minted key was deleted; old key preserved.`
-      );
-    }
-  }
-
-  // Step 4: Write to Azure Key Vault and refresh references
-  try {
-    await vault.setSecret(target.secretName, newKeyString);
-  } catch (writeErr) {
-    try {
-      await deleteGoogleApiKey({ keyName: newKeyName, gcpToken, fetchImpl });
-    } catch {}
-    throw writeErr;
-  }
-
-  const refreshResult = await vault.refreshReferences();
-
-  // Post-refresh app verification if provided
-  if (verify && typeof verifyFromApp === 'function') {
-    try {
-      await verifyFromApp({ keyString: newKeyString, target });
-    } catch (appErr) {
-      if (oldKeyString) {
-        try {
-          await vault.setSecret(target.secretName, oldKeyString);
-          await vault.refreshReferences();
-        } catch {}
-      }
-      try {
-        await deleteGoogleApiKey({ keyName: newKeyName, gcpToken, fetchImpl });
-      } catch {}
-      throw new Error(`Post-refresh app verification failed for ${target.secretName}: ${appErr.message}`);
-    }
-  }
-
-  // Step 5: Delete old key on Google Cloud ONLY if App Service refreshed
-  let oldKeyDeleted = false;
-  if (refreshResult?.refreshed && resolvedOldKeyName && resolvedOldKeyName !== newKeyName) {
-    try {
-      await deleteGoogleApiKey({ keyName: resolvedOldKeyName, gcpToken, fetchImpl });
-      oldKeyDeleted = true;
-    } catch {}
-  }
-
-  return {
-    ok: true,
-    secretName: target.secretName,
-    newKeyName,
-    oldKeyDeleted,
-    refreshed: Boolean(refreshResult?.refreshed),
-    refreshReason: refreshResult?.reason ?? null,
-  };
-}
+/** The whole rotation, in google-rotate.js; re-exported so callers keep one import. */
+export { rollAndApplyGoogleKey } from './google-rotate.js';
