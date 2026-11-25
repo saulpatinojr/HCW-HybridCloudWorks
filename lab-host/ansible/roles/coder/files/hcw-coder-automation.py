@@ -151,6 +151,8 @@ STATUS_KEEP = 2
 STATUS_MIN_AGE_TO_DELETE = datetime.timedelta(hours=48)
 
 ROTATION_PREFIX = "hcw-status-rotation-"
+# What every message calls the token this helper keeps on disk to do its work.
+ROTATION_CREDENTIAL = "the rotation credential"
 ROTATION_LIFETIME = datetime.timedelta(days=365)
 ROTATION_RENEW_BEFORE_EXPIRY = datetime.timedelta(days=60)
 
@@ -164,6 +166,9 @@ PUSH_TIMEOUT_SECONDS = 1800
 LOCK_WAIT_SECONDS = 600
 LAST_ERROR_MAX = 300
 SKIPPED = 3
+# Coder's "who am I" call: it answers with the user a token belongs to, or
+# 401 when Coder no longer accepts the token.
+USERS_ME = "/api/v2/users/me"
 
 CONFIG_KEYS = {
     "coder_url": str,
@@ -334,7 +339,9 @@ class Coder:
         except urllib.error.HTTPError as error:
             status, raw = error.code, b""
             error.close()
-        except (urllib.error.URLError, OSError) as error:
+        # OSError covers urllib's URLError too (it is a kind of OSError): no
+        # connection, a refused port, a timeout.
+        except OSError as error:
             reason = getattr(error, "reason", error)
             raise Failure(f"Coder did not answer at {self.url} ({type(reason).__name__})") from None
         if not 200 <= status < 300 or not raw:
@@ -480,7 +487,7 @@ def identity_problem(who, user, what):
 
 def check_identity(coder, token, user, what):
     """Refuse a token that Coder refuses, or whose user fails identity_problem."""
-    status, who = coder.call("GET", "/api/v2/users/me", token)
+    status, who = coder.call("GET", USERS_ME, token)
     if status == 401:
         raise Failure(
             f"Coder refused {what} (HTTP 401): it has expired or been deleted. Run "
@@ -791,7 +798,7 @@ def renew_status_if_due(coder, config, token, keys, state, started, force):
     return True
 
 
-def prune(coder, config, token, keys, state, started):
+def prune(coder, token, keys, state, started):
     """Delete hcw-status's older status tokens; returns the names deleted.
 
     Keeps the newest two, the one the site holds and the one before it, and
@@ -817,48 +824,65 @@ def prune(coder, config, token, keys, state, started):
     return deleted
 
 
+def usable_rotation_credential(coder, config, args, state, started, errors):
+    """The stored rotation credential, checked and renewed when due, or None when it cannot be used.
+
+    A problem that still leaves a working credential (its renewal failed, or
+    the old one was not deleted) is added to `errors` and the run goes on.
+    """
+    try:
+        token = read_credential(config["credential_file"])
+        if token is None:
+            raise Failure(
+                f"no rotation credential at {config['credential_file']}; run hcw-coder-automation-seed "
+                "once (docs/runbooks/labs-host.md, \"Automatic renewal\")"
+            )
+        check_identity(coder, token, config["status_user"], ROTATION_CREDENTIAL)
+        expires = parse_time(own_key(coder, token, key_id(token), ROTATION_CREDENTIAL).get("expires_at"))
+        state["rotationTokenExpiresAt"] = iso(expires)
+        if args.rotate_credential or expires - started < ROTATION_RENEW_BEFORE_EXPIRY:
+            say(f"renewing the rotation credential, which expires on {day(expires)}")
+            try:
+                token, expires, problem = renew_rotation(coder, config, token, state, started)
+                if problem:
+                    errors.append(problem)
+            except Failure as error:
+                errors.append(f"renewing the rotation credential failed: {error}")
+    except Failure as error:
+        errors.append(str(error))
+        return None
+    return token
+
+
+def tidy_status_tokens(coder, config, token, state, started, rotate_now, errors):
+    """With a working rotation credential: finish listed deletions, renew the site's token when due, prune.
+
+    Each failure is added to `errors`; the first step's failure does not stop the second.
+    """
+    user = config["status_user"]
+    try:
+        retry_discards(coder, token, state)
+    except Failure as error:
+        errors.append(str(error))
+    try:
+        keys = list_tokens(coder, token, user)
+        if renew_status_if_due(coder, config, token, keys, state, started, rotate_now):
+            keys = list_tokens(coder, token, user)
+        prune(coder, token, keys, state, started)
+    except Failure as error:
+        errors.append(str(error))
+
+
 def run(config, args):
     """The timer's run: check the credential, renew what is due, delete what is listed or old, report. 0 or 1."""
     coder = Coder(config["coder_url"])
-    user = config["status_user"]
     errors = []
     with locked(config):
         state = load_state(config)
         started = now()
-        token = None
-        try:
-            token = read_credential(config["credential_file"])
-            if token is None:
-                raise Failure(
-                    f"no rotation credential at {config['credential_file']}; run hcw-coder-automation-seed "
-                    "once (docs/runbooks/labs-host.md, \"Automatic renewal\")"
-                )
-            check_identity(coder, token, user, "the rotation credential")
-            expires = parse_time(own_key(coder, token, key_id(token), "the rotation credential").get("expires_at"))
-            state["rotationTokenExpiresAt"] = iso(expires)
-            if args.rotate_credential or expires - started < ROTATION_RENEW_BEFORE_EXPIRY:
-                say(f"renewing the rotation credential, which expires on {day(expires)}")
-                try:
-                    token, expires, problem = renew_rotation(coder, config, token, state, started)
-                    if problem:
-                        errors.append(problem)
-                except Failure as error:
-                    errors.append(f"renewing the rotation credential failed: {error}")
-        except Failure as error:
-            errors.append(str(error))
-            token = None
+        token = usable_rotation_credential(coder, config, args, state, started, errors)
         if token is not None:
-            try:
-                retry_discards(coder, token, state)
-            except Failure as error:
-                errors.append(str(error))
-            try:
-                keys = list_tokens(coder, token, user)
-                if renew_status_if_due(coder, config, token, keys, state, started, args.rotate_now):
-                    keys = list_tokens(coder, token, user)
-                prune(coder, config, token, keys, state, started)
-            except Failure as error:
-                errors.append(str(error))
+            tidy_status_tokens(coder, config, token, state, started, args.rotate_now, errors)
         report = report_fields(state, started, source_digest_or_none(config))
         if errors:
             report["lastError"] = clip(errors)
@@ -904,84 +928,105 @@ def read_stdin_token():
     return remember(text)
 
 
+def stored_credential_kept(coder, existing, user, force):
+    """True when the stored rotation credential still works and is kept (no --force); says which either way."""
+    status, who = coder.call("GET", USERS_ME, existing)
+    if status != 200 or not isinstance(who, dict):
+        problem = f"it no longer works (Coder answered HTTP {status})"
+    else:
+        problem = identity_problem(who, user, "it")
+    if problem is None and not force:
+        expires = parse_time(own_key(coder, existing, key_id(existing), ROTATION_CREDENTIAL).get("expires_at"))
+        say(
+            f"a working rotation credential for {user} is already stored (it expires on {day(expires)}); "
+            "nothing was changed. --force replaces it"
+        )
+        return True
+    if problem is not None:
+        say(f"the stored rotation credential cannot be kept: {problem}; checking the token on stdin to replace it")
+    return False
+
+
+def check_seed_token(coder, owner, user):
+    """Refuse the owner's token on stdin when Coder refuses it, or when `user` cannot hold the credential."""
+    status, who = coder.call("GET", USERS_ME, owner)
+    if status == 401:
+        raise Failure(
+            "Coder refused the token on stdin (HTTP 401): it has expired or been deleted. Make another "
+            "in a pane (lab-host/README.md, \"The status token for the site\", step 1); nothing was changed"
+        )
+    if status != 200 or not isinstance(who, dict):
+        raise Failure(f"Coder answered HTTP {status} when asked whose the token on stdin is; nothing was changed")
+    status, target = coder.call("GET", f"/api/v2/users/{user}", owner)
+    if status == 404:
+        raise Failure(
+            f"Coder has no user {user}; create it first (lab-host/README.md, \"The status token for the "
+            "site\", step 2); nothing was changed"
+        )
+    if status != 200 or not isinstance(target, dict):
+        raise Failure(f"Coder answered HTTP {status} when asked for the user {user}; nothing was changed")
+    roles = role_names(target)
+    if "owner" in roles:
+        raise Failure(
+            f"{user} holds the Owner role; the rotation credential is meant to carry Template Admin only. "
+            f"Remove Owner from {user} and run this again; nothing was changed"
+        )
+    if "template-admin" not in roles:
+        raise Failure(
+            f"{user} is not a Template Admin, which reading every workspace and publishing the template "
+            "need (lab-host/README.md, \"The status token for the site\", step 2); nothing was changed"
+        )
+
+
+def store_seeded_credential(coder, config, state, owner, existing):
+    """Make a rotation credential with the owner's token, check and store it, retire the old one.
+
+    Returns (its name, its expiry, a sentence about the previous one or "").
+    """
+    user = config["status_user"]
+    started = now()
+    new, name = create_token(coder, owner, user, f"{ROTATION_PREFIX}{day(started)}",
+                             ROTATION_LIFETIME, None, "rotation credential")
+    replacing = existing is not None and existing != new
+    try:
+        check_identity(coder, new, user, f"the new rotation credential {name}")
+        expires = parse_time(own_key(coder, new, key_id(new), f"the new rotation credential {name}").get("expires_at"))
+        if replacing:
+            mark_for_deletion(state, key_id(existing))
+            save_state(config, state)
+        store_credential(config["credential_file"], new)
+    except Failure as error:
+        outcome = discard_new_credential(coder, owner, user, new, name, state, user)
+        save_state(config, state)
+        raise Failure(f"{error}; {outcome}") from None
+    note = ""
+    if replacing:
+        if retire(coder, new, state, key_id(existing)):
+            note = " The previous one is deleted."
+        else:
+            note = " Coder did not delete the previous one; the next run deletes it."
+    state["rotationTokenExpiresAt"] = iso(expires)
+    save_state(config, state)
+    return name, expires, note
+
+
 def seed(config, args):
-    """Store the rotation credential from the owner's token on stdin. 0, or a Failure or Refusal."""
+    """Store the rotation credential from the owner's token on stdin.
+
+    Returns nothing, which main() turns into exit 0; any problem is a Failure
+    or Refusal instead.
+    """
     owner = read_stdin_token()
     coder = Coder(config["coder_url"])
     user = config["status_user"]
-    path = config["credential_file"]
     with locked(config):
         state = load_state(config)
-        existing = read_credential(path)
-        if existing is not None:
-            status, who = coder.call("GET", "/api/v2/users/me", existing)
-            if status != 200 or not isinstance(who, dict):
-                problem = f"it no longer works (Coder answered HTTP {status})"
-            else:
-                problem = identity_problem(who, user, "it")
-            if problem is None and not args.force:
-                expires = parse_time(own_key(coder, existing, key_id(existing), "the rotation credential").get("expires_at"))
-                say(
-                    f"a working rotation credential for {user} is already stored (it expires on {day(expires)}); "
-                    "nothing was changed. --force replaces it"
-                )
-                return 0
-            if problem is not None:
-                say(f"the stored rotation credential cannot be kept: {problem}; checking the token on stdin to replace it")
-
-        status, who = coder.call("GET", "/api/v2/users/me", owner)
-        if status == 401:
-            raise Failure(
-                "Coder refused the token on stdin (HTTP 401): it has expired or been deleted. Make another "
-                "in a pane (lab-host/README.md, \"The status token for the site\", step 1); nothing was changed"
-            )
-        if status != 200 or not isinstance(who, dict):
-            raise Failure(f"Coder answered HTTP {status} when asked whose the token on stdin is; nothing was changed")
-        status, target = coder.call("GET", f"/api/v2/users/{user}", owner)
-        if status == 404:
-            raise Failure(
-                f"Coder has no user {user}; create it first (lab-host/README.md, \"The status token for the "
-                "site\", step 2); nothing was changed"
-            )
-        if status != 200 or not isinstance(target, dict):
-            raise Failure(f"Coder answered HTTP {status} when asked for the user {user}; nothing was changed")
-        roles = role_names(target)
-        if "owner" in roles:
-            raise Failure(
-                f"{user} holds the Owner role; the rotation credential is meant to carry Template Admin only. "
-                f"Remove Owner from {user} and run this again; nothing was changed"
-            )
-        if "template-admin" not in roles:
-            raise Failure(
-                f"{user} is not a Template Admin, which reading every workspace and publishing the template "
-                "need (lab-host/README.md, \"The status token for the site\", step 2); nothing was changed"
-            )
-
-        started = now()
-        new, name = create_token(coder, owner, user, f"{ROTATION_PREFIX}{day(started)}",
-                                 ROTATION_LIFETIME, None, "rotation credential")
-        replacing = existing is not None and existing != new
-        try:
-            check_identity(coder, new, user, f"the new rotation credential {name}")
-            expires = parse_time(own_key(coder, new, key_id(new), f"the new rotation credential {name}").get("expires_at"))
-            if replacing:
-                mark_for_deletion(state, key_id(existing))
-                save_state(config, state)
-            store_credential(path, new)
-        except Failure as error:
-            outcome = discard_new_credential(coder, owner, user, new, name, state, user)
-            save_state(config, state)
-            raise Failure(f"{error}; {outcome}") from None
-        note = ""
-        if replacing:
-            if retire(coder, new, state, key_id(existing)):
-                note = " The previous one is deleted."
-            else:
-                note = " Coder did not delete the previous one; the next run deletes it."
-        state["rotationTokenExpiresAt"] = iso(expires)
-        save_state(config, state)
+        existing = read_credential(config["credential_file"])
+        if existing is not None and stored_credential_kept(coder, existing, user, args.force):
+            return
+        check_seed_token(coder, owner, user)
+        name, expires, note = store_seeded_credential(coder, config, state, owner, existing)
     say(f"stored the rotation credential {name} for {user}; it expires on {day(expires)}.{note}")
-    return 0
 
 
 # --- push-template ----------------------------------------------------------
@@ -1144,14 +1189,14 @@ def push_template(config, args):
                 "the next bootstrap.sh run publishes them; until then, publish each with hcw-coder-template-push"
             )
             return SKIPPED
-        status, _ = coder.call("GET", "/api/v2/users/me", token)
+        status, _ = coder.call("GET", USERS_ME, token)
         if status == 401:
             say(
                 f"{names} not published by this run: Coder refused the rotation credential (HTTP 401). "
                 "Run hcw-coder-automation-seed --force (docs/runbooks/labs-host.md, \"Automatic renewal\")"
             )
             return SKIPPED
-        check_identity(coder, token, user, "the rotation credential")
+        check_identity(coder, token, user, ROTATION_CREDENTIAL)
         state = load_state(config)
         failed = []
         for name, directory in templates:
@@ -1169,7 +1214,10 @@ def push_template(config, args):
 
 
 def revoke(config, args):
-    """Turn the automation off: delete the rotation credential in Coder, then the file. 0 or a Failure."""
+    """Turn the automation off: delete the rotation credential in Coder, then the file.
+
+    Returns nothing, which main() turns into exit 0; any problem is a Failure.
+    """
     coder = Coder(config["coder_url"])
     path = config["credential_file"]
     with locked(config):
@@ -1177,11 +1225,11 @@ def revoke(config, args):
         token = read_credential(path)
         if token is None:
             say("there is no rotation credential to revoke; nothing was changed")
-            return 0
+            return
         # 401: Coder no longer accepts it (it expired, or it or its user was
         # deleted, as the runbook's leak containment does), so nothing is
         # left in Coder for it to delete: only the file goes.
-        status, _ = coder.call("GET", "/api/v2/users/me", token)
+        status, _ = coder.call("GET", USERS_ME, token)
         refused = status == 401
         if not refused:
             # The listed credentials first: once the stored one is gone,
@@ -1223,14 +1271,17 @@ def revoke(config, args):
             "removed it" if refused else "revoked the rotation credential in Coder and removed it")
     say(f"{done}; the daily run is now skipped and bootstrap.sh no longer publishes. "
         "hcw-coder-automation-seed turns it back on")
-    return 0
 
 
 COMMANDS = {"seed": seed, "run": run, "push-template": push_template, "revoke": revoke}
 
 
 def main(argv=None):
-    """Parse the command line and run one command: 2 for a refusal, 1 for a failure."""
+    """Parse the command line and run one command: 2 for a refusal, 1 for a failure.
+
+    A command that returns nothing (seed, revoke) succeeded, which is exit 0;
+    run and push-template return their own exit code.
+    """
     global me
     parser = argparse.ArgumentParser(prog="hcw-coder-automation", description=__doc__.splitlines()[0])
     parser.add_argument("--config", default=DEFAULT_CONFIG)
@@ -1248,13 +1299,14 @@ def main(argv=None):
         me = "hcw-coder-automation-seed"
     os.umask(0o077)
     try:
-        return COMMANDS[args.command](load_config(args.config), args)
+        code = COMMANDS[args.command](load_config(args.config), args)
     except Refusal as refusal:
         warn(str(refusal))
         return 2
     except Failure as failure:
         warn(str(failure))
         return 1
+    return 0 if code is None else code
 
 
 if __name__ == "__main__":

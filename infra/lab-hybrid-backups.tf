@@ -55,6 +55,17 @@
 # and a container-scoped grant gate every call, and an IP rule that drifted
 # would stop the nightly backup silently. docs/security/scanner-triage.md,
 # "trivy". The ignore must be the line directly above the resource.
+#
+# Also accepted:
+# AVD-AZU-0061 (infrastructure encryption) follows ADR 0031's 2026-09-14
+# choice for the two storage accounts that existed then; this account came
+# later (2026-10-14); the owner extended that choice to it on 2026-11-24.
+# It can be set only when an account is created; AVD-AZU-0057 (classic Storage Analytics logging) is
+# answered by azurerm_monitor_diagnostic_setting.lab_hybrid_backups_blob,
+# which sends blob read, write and delete logs to Log Analytics; trivy reads
+# only the older per-account logging switch.
+#trivy:ignore:AVD-AZU-0061
+#trivy:ignore:AVD-AZU-0057
 #trivy:ignore:AVD-AZU-0012
 resource "azurerm_storage_account" "lab_hybrid_backups" {
   #checkov:skip=CKV_AZURE_59:Public network access stays on: the only writer is the lab VPS, outside Azure with no private path, the same reason given for the lab Key Vault (CKV_AZURE_109 there). Entra-only auth and one container-scoped grant gate every call. ADR 0032 amendment 2026-10-14. docs/security/scanner-triage.md#checkov

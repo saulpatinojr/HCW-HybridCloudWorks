@@ -218,6 +218,7 @@
   when: not ansible_check_mode or (caddy_admin_socket_live.stat.issock | default(false))
 
 - name: Check that Caddy answers on the admin socket
+  # checkov:skip=CKV2_ANSIBLE_1:Caddy's Unix admin socket, not the network; the URL's host is never resolved. docs/security/scanner-triage.md#checkov
   ansible.builtin.uri:
     url: http://localhost/config/
     unix_socket: "{{ caddy_admin_socket }}"

@@ -1,18 +1,16 @@
-# gitleaks false positives, one fingerprint per verified finding.
-# Each is triaged in docs/security/scanner-triage.md#gitleaks — read the row
-# before adding a line here. Fingerprint shape for a filesystem scan is
-# path:rule:line, so a line that moves needs its fingerprint moved with it.
-
-# Firebase Storage download URLs for images the public site already serves;
-# the token grants read on that one public object. The manifest is
-# regenerated weekly (publish-content-manifest.yml), so these three move when
-# it does: re-verify the new lines are the same URL shape, then move them.
-frontend/data/content-manifest.json:generic-api-key:407
-frontend/data/content-manifest.json:generic-api-key:830
-frontend/data/content-manifest.json:generic-api-key:831
-
-# Test fixture: base64url of {"v":1} and of the word "signature". Not a token.
-frontend/src/pages/NewsletterConfirmPage.test.jsx:generic-api-key:16
+# gitleaks false positives that .gitleaks.toml's rules cannot describe, one
+# fingerprint per verified finding. Prefer a rule in .gitleaks.toml (it does
+# not move when a line moves) or an inline `gitleaks:allow` comment; use this
+# file only for a file that can carry neither. Each line is triaged in
+# docs/security/scanner-triage.md#gitleaks — read the row before adding one.
+# Fingerprint shape for a filesystem scan is path:rule:line, so a line that
+# moves needs its fingerprint moved with it.
+#
+# The content-manifest Firebase links and the NewsletterConfirmPage test
+# fixture that used to be listed here are covered by .gitleaks.toml since
+# the Qlty security clean-up of 2026-11-24.
 
 # The Azure Cosmos DB emulator's published well-known key, against localhost.
+# JSON cannot carry an inline comment, and an allowlist keyed on an .example
+# file name would also wave through a real key pasted into one.
 functions/local.settings.json.example:generic-api-key:7

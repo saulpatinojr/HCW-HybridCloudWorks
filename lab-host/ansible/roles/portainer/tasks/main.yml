@@ -101,7 +101,11 @@
 # "Administrator initialization timeout"). Both answers mean Portainer is up;
 # 303 is reported below rather than failing a run that happens to come later.
 # Redirects are not followed, because the 303 leads to a page that answers 200.
+# The certificate is not checked: it is the self-signed one Portainer makes for
+# itself, and this read stays on 127.0.0.1, sends no token and only asks
+# whether Portainer is up.
 - name: Wait for Portainer to answer on the loopback
+  # checkov:skip=CKV_ANSIBLE_1:Portainer's self-signed certificate on 127.0.0.1; no credential is sent. docs/security/scanner-triage.md#checkov
   ansible.builtin.uri:
     url: "https://127.0.0.1:{{ portainer_https_port }}/api/system/status"
     validate_certs: false

@@ -381,6 +381,7 @@
 # route already says who is deployed, so one tool that fails to come up
 # cannot leave another tool's retirement or route change undone.
 - name: Wait for each deployed add-on to answer its health read on the loopback
+  # checkov:skip=CKV2_ANSIBLE_1:the add-on's port on 127.0.0.1 (vars/main.yml); nothing leaves the host. docs/security/scanner-triage.md#checkov
   ansible.builtin.uri:
     url: "http://{{ addons_publish_address }}:{{ item.port }}/api/health"
     follow_redirects: none

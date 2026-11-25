@@ -2092,6 +2092,113 @@ jobs:
           printf 'linting %s\n' "${files[@]}"
           hadolint --failure-threshold warning --format tty "${files[@]}"
 
+  # Qlty's security scanners on the lines a pull request changes (2026-11-24).
+  # Qlty Cloud grades the repository's Security from the same scanners, but
+  # only after a merge, so until now a new finding reached `main` first and
+  # the grade dropped (to F on 2026-11-24, with no real secret involved).
+  # This runs the same CLI, with the same .qlty/qlty.toml and the same
+  # scanner rule files (.gitleaks.toml, .bandit, .checkov.yaml), on the pull
+  # request, and fails on any HIGH or MEDIUM finding in a changed line. A
+  # finding that is wrong is answered where docs/security/scanner-triage.md
+  # says, never by skipping this job.
+  #
+  # `--upstream` compares against the base commit, so findings already on
+  # `main` do not fail an unrelated pull request. Pull requests only: on a
+  # push to `main` there is no upstream to compare against, and Qlty Cloud
+  # analyses that push itself.
+  #
+  # PINNED. The CLI version and its SHA-256 are checked before it runs; the
+  # digest is the one Qlty publishes beside the file
+  # (<release>.tar.xz.sha256). Each CLI release fixes the scanner versions
+  # it downloads, so the pin fixes those too. To move it: change both
+  # values, from that .sha256 file. No token: this reads nothing from Qlty
+  # Cloud.
+  security-scan:
+    name: Qlty security scan
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20 # the scanners download on first use; a scan of a few files takes about 3 minutes
+    permissions:
+      contents: read
+    env:
+      QLTY_VERSION: 0.672.0
+      QLTY_SHA256: 4a03ad031c9ae88f9675242cefb1a7c4bf8c92727d5780a6e36d75dcd14c7ad0
+      QLTY_SECURITY_PLUGINS: bandit,checkov,gitleaks,osv-scanner,trivy,trufflehog,zizmor
+    steps:
+      # fetch-depth: 0 so `--upstream` can reach the base commit.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install the Qlty CLI (pinned, digest checked)
+        run: |
+          set -euo pipefail
+          tools="${RUNNER_TEMP}/qlty"
+          mkdir -p "$tools"
+          cd "$tools"
+          tarball="qlty-x86_64-unknown-linux-gnu.tar.xz"
+          curl -sSfL --retry 3 --retry-all-errors -o "$tarball" "https://qlty-releases.s3.amazonaws.com/qlty/v${QLTY_VERSION}/${tarball}"
+          echo "${QLTY_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xJf "$tarball" --strip-components=1 qlty-x86_64-unknown-linux-gnu/qlty
+          chmod 0755 qlty
+          echo "$tools" >> "$GITHUB_PATH"
+
+      # The rules come from the base branch, not from the pull request being
+      # judged, so a pull request cannot loosen its own scan (add an exclude, an
+      # allowlist or a skipped check and pass on it). A change to a rule file
+      # is still allowed; it takes effect for the pull requests after it
+      # merges, and the log says which files it changed. A rule file the base
+      # does not have is removed, so the scanner runs on its own defaults: a
+      # new rule file cannot excuse anything in the pull request that adds it.
+      # A rule path that is a symbolic link (a file that points at another
+      # file) is refused, and each file is removed before it is written, so
+      # writing the base copy can never overwrite the file a link points at.
+      # Inline notes on one line (`# nosec`, `checkov:skip`, `trivy:ignore`,
+      # `gitleaks:allow`) still come from the pull request: each sits on the
+      # line it excuses, in the diff a reviewer reads. Review of #1841,
+      # 2026-11-24.
+      - name: Use the base branch's scanner rules
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ -L .qlty ]; then
+            echo "::error file=.qlty,title=Scanner rules::.qlty is a symbolic link; the scan refuses to run with it."
+            exit 1
+          fi
+          for file in .qlty/qlty.toml .gitleaks.toml .gitleaksignore .bandit .checkov.yaml; do
+            if [ -L "${file}" ]; then
+              echo "::error file=${file},title=Scanner rules::${file} is a symbolic link; the scan refuses to run with it."
+              exit 1
+            fi
+            if git cat-file -e "${BASE_SHA}:${file}" 2> /dev/null; then
+              if ! git diff --quiet "${BASE_SHA}" HEAD -- "${file}"; then
+                echo "::notice file=${file},title=Scanner rules changed::This pull request changes ${file}. The scan below uses the base branch's copy; the change applies to pull requests after this one merges."
+              fi
+              mkdir -p "$(dirname -- "${file}")"
+              rm -f -- "${file}"
+              git show "${BASE_SHA}:${file}" > "${file}"
+            elif [ -e "${file}" ]; then
+              echo "::notice file=${file},title=Scanner rules added::${file} is not on the base branch, so this scan runs without it; it applies to pull requests after this one merges."
+              rm -f -- "${file}"
+            fi
+          done
+
+      - name: Scan the changed lines
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          qlty --version
+          # How much there was to scan, so a scan that looked at nothing does
+          # not read like a clean one. (Qlty's --summary was tried: it prints
+          # only the counts and hides which file and line failed.)
+          echo "files this pull request changes: $(git diff --numstat "${BASE_SHA}" HEAD | wc -l)"
+          qlty check --upstream "${BASE_SHA}" --filter "${QLTY_SECURITY_PLUGINS}" \
+            --no-formatters --no-fix --no-progress --level medium --fail-level medium
+
   # THE ONE REQUIRED CHECK (#1545). The `main` ruleset requires `gate`, and
   # `gate` waits for every job above. `!cancelled()` keeps it running when a
   # needed job was skipped (its `if:` said the change did not touch its
@@ -2103,7 +2210,7 @@ jobs:
   # context, which lists every job named below with its result.
   gate:
     name: gate
-    needs: [changes, verify, frontend-unit, frontend-unit-merge, e2e, ansible-lint, role-tests, coder-template, harness, complexity, coverage, lint-actions-docker]
+    needs: [changes, verify, frontend-unit, frontend-unit-merge, e2e, ansible-lint, role-tests, coder-template, harness, complexity, coverage, lint-actions-docker, security-scan]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5

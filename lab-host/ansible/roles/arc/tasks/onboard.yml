@@ -157,6 +157,20 @@
       register: arc_connect
       changed_when: arc_connect.rc == 0
 
+  # Not a recovery: the run still stops, as it would with no rescue, and the
+  # always: below still deletes the file. The rescue only says what to do
+  # next. Ansible prints the failed task's own output above this message.
+  # (It is also what checkov's CKV2_ANSIBLE_3 asks of a block, and checkov
+  # cannot read an inline skip on a block; docs/security/scanner-triage.md#checkov.)
+  rescue:
+    - name: Stop, with the host not connected to Azure Arc
+      ansible.builtin.fail:
+        msg: >-
+          Connecting to Azure Arc stopped at "{{ ansible_failed_task.name }}", so the host
+          is not connected. The connect configuration is deleted next all the same. Read
+          the output of that task above, then see "Arc onboarding" in
+          docs/runbooks/labs-host.md.
+
   always:
     - name: Delete the connect configuration
       ansible.builtin.file:
