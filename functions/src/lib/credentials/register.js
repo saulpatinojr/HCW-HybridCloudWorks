@@ -171,9 +171,19 @@ const KEY_VAULT_METADATA = Object.freeze({
     issuer: "Azure AI Speech",
     consumer: "Listen & Learn spare narrator, not set up on purpose",
   },
+  // Firecrawl is a paid service here (owner, 2026-11-25, #1848). The vendor
+  // sets no expiry: "Firecrawl API keys do not have permissions or an expiry
+  // date" (https://docs.firecrawl.dev/firecrawl-for-platforms, read
+  // 2026-11-25). So the reminder uses the owner's rule for a hand-renewed
+  // credential that never expires, which is also the 180 days
+  // docs/security/credential-rotation-schedule.md gives this key.
   "FIRECRAWL-API-KEY": {
-    issuer: "Firecrawl",
-    consumer: "Link summaries for content research",
+    issuer: "Firecrawl (dashboard, API Keys)",
+    consumer:
+      "Blog listings timer: finds new articles on blog pages that have no feed; and the Firecrawl tool server on the AI Engine page, when switched on",
+    lifetimeDays: HAND_ROTATION_DAYS,
+    rotate:
+      "Make a new key at firecrawl.dev/app/api-keys, paste it on Integrations → Keys, press Test on the Firecrawl card, then delete the old key at Firecrawl.",
   },
   "REPLICATE-API-KEY": { issuer: "Replicate", consumer: "Post cover images" },
   "PUBLER-API-KEY": { issuer: "Publer", consumer: "Social publishing" },

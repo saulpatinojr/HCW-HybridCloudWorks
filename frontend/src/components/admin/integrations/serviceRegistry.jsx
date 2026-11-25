@@ -206,10 +206,13 @@ async function testReplicate() {
 }
 
 async function testFirecrawl() {
-  // GET /v1/team/credit-usage, server-side (ADR 0033): free, and the count
-  // says how close the summariser is to running dry.
+  // GET /v2/team/credit-usage, server-side (ADR 0033): free, and the count
+  // says how close the blog listings timer is to running dry. Version 2 of
+  // Firecrawl's API names the field `remainingCredits`; version 1 called it
+  // `remaining_credits` and stops answering on 2026-12-10 (#1848,
+  // https://docs.firecrawl.dev/api-reference/endpoint/credit-usage).
   const body = unwrapProxy(await postJSON('connectionProbe', { probe: 'firecrawl' }), 'Firecrawl');
-  const credits = body?.data?.remaining_credits ?? body?.remaining_credits;
+  const credits = body?.data?.remainingCredits;
   return Number.isFinite(credits)
     ? `Connected — ${credits} credits remaining.`
     : 'Connected to Firecrawl.';
@@ -920,15 +923,27 @@ export const SERVICES = Object.freeze([
     group: 'ai-services',
     icon: ScanText,
     name: 'Firecrawl',
-    description: 'Reads a web page and pulls out its text, so a link can be summarised.',
+    description:
+      'Reads a web page and returns what is on it. The site uses it to find new articles on blog pages that have no feed.',
     url: 'https://www.firecrawl.dev/app/api-keys',
     test: testFirecrawl,
     secrets: ['FIRECRAWL-API-KEY'],
-    capabilities: ['Scrape a page to clean text'],
-    usedIn: ['New Content (submit a URL)', 'Review Queue (inspector)'],
-    cost: 'Credits on the Firecrawl account, one or more per page read; the Test shows how many are left.',
-    dataDirection: 'Outbound: a public URL goes to Firecrawl; the page text comes back.',
-    securityNote: 'Read on the server only. The test reads the credit balance and scrapes nothing.',
+    capabilities: [
+      'Read a blog listing page into a list of its articles',
+      'Web reading tools for the AI Engine’s assistant, when its tool server is switched on',
+    ],
+    // What calls it today (#1848): the blog listings timer, the "run intake"
+    // button on the Blogs page, and the tool server on the AI Engine page.
+    // Nothing on New Content or in the Review Queue does, as this card said.
+    usedIn: ['Blogs (blog listing sources)', 'AI Engine (MCP Servers)'],
+    // The kind of bill only. It is a paid plan (owner, 2026-11-25), so the
+    // plan and its price are the owner's, on the Cost page's ledger.
+    cost: 'A paid plan that includes credits, and each page read spends one or more of them. The Test shows how many are left.',
+    costOnLedger: true,
+    dataDirection:
+      'Outbound: the address of a public blog page goes to Firecrawl; the list of articles on it comes back.',
+    securityNote:
+      'Read on the server only, and sent only to Firecrawl’s own addresses. The test reads the credit balance and reads no page.',
   },
   {
     id: 'replicate',

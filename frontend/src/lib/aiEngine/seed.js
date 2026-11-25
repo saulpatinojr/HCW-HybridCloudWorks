@@ -213,16 +213,21 @@ export const DEFAULT_MCP_SERVERS = [
   {
     id: 'firecrawl',
     name: 'Firecrawl',
-    description: 'Web scraping and content extraction — already in your project',
-    url: 'https://mcp.firecrawl.dev/sse',
-    transport: 'sse',
+    description: 'Web reading tools: scrape a page, search the web, pull out structured data',
+    // The vendor's own address for a connection that signs in with an API
+    // key, sent as a bearer header (a line of the request, never part of the
+    // address): https://docs.firecrawl.dev/mcp-server and
+    // https://docs.firecrawl.dev/mcp-server/keyless#add-an-api-key, read
+    // 2026-11-25 (#1848). It replaced `/sse`, which those pages no longer list.
+    url: 'https://mcp.firecrawl.dev/v2/mcp',
+    transport: 'http',
     enabled: false,
     apiKeyEnvVar: 'FIRECRAWL_API_KEY',
     tools: [],
     status: 'untested',
     order: 2,
     notes:
-      'Your project already uses @mendable/firecrawl-js. Connect via MCP for tool-based access.',
+      'Uses the same Firecrawl key as the blog listings timer, which calls Firecrawl’s API directly. Switch this on for tool-based access from the Playground.',
   },
   {
     id: 'context7',
@@ -402,10 +407,14 @@ const MCP_URL_PATCHES = {
   'microsoftdocs-mcp': 'https://learn.microsoft.com/api/mcp',
   'replicate-mcp': 'https://mcp.replicate.com/sse',
   'hostinger-mcp': 'https://mcp.hostinger.com',
+  // #1848: the address Firecrawl documents today, in place of `/sse`.
+  firecrawl: 'https://mcp.firecrawl.dev/v2/mcp',
 };
 const MCP_TRANSPORT_PATCHES = {
   'replicate-mcp': 'sse',
   'hostinger-mcp': 'http',
+  // Streamable HTTP (one request, one answer), which the new address speaks.
+  firecrawl: 'http',
 };
 
 /**
@@ -419,10 +428,18 @@ const MCP_TRANSPORT_PATCHES = {
  *
  * Written in ONE patch with any URL change: the API checks a key name
  * against the URL beside it, and the old key name is no longer allowed.
+ *
+ * Firecrawl joined on 2026-11-25 (#1848) for a smaller reason: its address
+ * and transport moved, and its stored description and notes follow the seed
+ * so they stop naming a code library the site no longer uses. Its key name
+ * and its on/off switch are left as the owner set them.
  */
 const MCP_FIELD_PATCH_KEYS = {
   'replicate-mcp': ['apiKeyEnvVar', 'authType', 'notes'],
   'hostinger-mcp': ['apiKeyEnvVar', 'authType', 'description', 'notes'],
+  // #1848: the old notes named an SDK (a vendor's code library) the site
+  // stopped using. The key name is not touched.
+  firecrawl: ['description', 'notes'],
 };
 
 const putConfig = (route, id, data) => sendJSON(`cms/config/${route}/${id}`, 'PUT', data);

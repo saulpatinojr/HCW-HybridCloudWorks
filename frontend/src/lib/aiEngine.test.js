@@ -495,9 +495,54 @@ describe('the OAuth Connect servers (2026-10-08) match the API', () => {
     expect(mcpServerPatch(migrated)).toEqual({});
   });
 
+  it('seeds Firecrawl at the address its vendor documents, with the key as a header and never in the address (#1848)', () => {
+    const firecrawl = byId('firecrawl');
+    expect(firecrawl).toMatchObject({
+      url: 'https://mcp.firecrawl.dev/v2/mcp',
+      transport: 'http',
+      apiKeyEnvVar: 'FIRECRAWL_API_KEY',
+      enabled: false,
+    });
+    // The key travels as a bearer header to an allow-listed host. Nothing
+    // that could be a key sits in the address: no query, no sign-in part,
+    // and a path of exactly /v2/mcp.
+    const url = new URL(firecrawl.url);
+    expect(url.pathname).toBe('/v2/mcp');
+    expect(url.search).toBe('');
+    expect(url.username + url.password).toBe('');
+    expect(validateMcpKeyBinding(firecrawl)).toBe('FIRECRAWL_API_KEY');
+    expect(apiUsesOAuthConnect(firecrawl)).toBe(false);
+    // The notes no longer name a code library the site does not use.
+    expect(firecrawl.notes).not.toMatch(/firecrawl-js|SDK/i);
+  });
+
+  it('moves a stored Firecrawl document from the old address to the new one, and leaves its switch and key name alone (#1848)', () => {
+    const stored = {
+      ...byId('firecrawl'),
+      url: 'https://mcp.firecrawl.dev/sse',
+      transport: 'sse',
+      enabled: true,
+      description: 'Web scraping and content extraction — already in your project',
+      notes:
+        'Your project already uses @mendable/firecrawl-js. Connect via MCP for tool-based access.',
+    };
+    const patch = mcpServerPatch(stored);
+    expect(patch).toEqual({
+      url: 'https://mcp.firecrawl.dev/v2/mcp',
+      transport: 'http',
+      description: byId('firecrawl').description,
+      notes: byId('firecrawl').notes,
+    });
+    expect(patch).not.toHaveProperty('enabled');
+    expect(patch).not.toHaveProperty('apiKeyEnvVar');
+    // The API's own save-time check accepts the patched document.
+    expect(validateMcpKeyBinding({ ...stored, ...patch })).toBe('FIRECRAWL_API_KEY');
+    expect(mcpServerPatch({ ...stored, ...patch })).toEqual({});
+  });
+
   it('touches no other server, and treats an absent key name as no key name', () => {
     const others = DEFAULT_MCP_SERVERS.filter(
-      (s) => !['replicate-mcp', 'hostinger-mcp'].includes(s.id)
+      (s) => !['replicate-mcp', 'hostinger-mcp', 'firecrawl'].includes(s.id)
     );
     for (const server of others) {
       expect(mcpServerPatch(server), server.id).toEqual({});

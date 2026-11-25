@@ -210,7 +210,7 @@ export const SECRET_CATALOG = Object.freeze([
     secret: "FIRECRAWL-API-KEY",
     section: "ai-services",
     label: "Firecrawl",
-    help: "API key. Reads a web page and pulls out its text, so a link can be summarised.",
+    help: "API key. Reads blog listing pages to find new articles, and powers the Firecrawl tool server on the AI Engine page.",
     probe: null,
   },
   {
