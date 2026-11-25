@@ -198,6 +198,12 @@ describe('the command', () => {
     expect(result.stdout).toContain('1 new code smell in this pull request');
   });
 
+  it('exits 2 on an empty smells file, which means a run that failed, not a clean one', () => {
+    expect(run('--head', write('h-empty.json', ''), '--base', write('b-ok.json', '[]'), '--config', config).status).toBe(2);
+    expect(run('--head', write('h-ok.json', '[]'), '--base', write('b-empty.json', ''), '--config', config).status).toBe(2);
+    expect(run('--head', write('h-nl.json', '\n[]\n'), '--base', write('b-nl.json', '[]'), '--config', config).status).toBe(0);
+  });
+
   it('exits 2 on wrong use or an unreadable file', () => {
     expect(run('--head', 'x').status).toBe(2);
     expect(run('--head', join(dir, 'missing.json'), '--base', join(dir, 'missing.json'), '--config', config).status).toBe(2);

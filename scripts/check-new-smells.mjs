@@ -123,8 +123,10 @@ export function parseArgs(argv) {
 }
 
 /** A smells JSON file as an array; Qlty prints `[]` when there is nothing. */
+// No fallback for an empty file: Qlty prints `[]` when it finds nothing, and the workflow writes `[]` itself when
+// the base has no files to read, so an empty file means a run that failed, and that is a usage error (exit 2).
 function readIssues(path) {
-  const parsed = JSON.parse(readFileSync(path, 'utf8') || '[]');
+  const parsed = JSON.parse(readFileSync(path, 'utf8'));
   if (!Array.isArray(parsed)) throw new Error(`${path} is not a list of smells`);
   return parsed;
 }
