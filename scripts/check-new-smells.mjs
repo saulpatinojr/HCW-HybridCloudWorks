@@ -56,14 +56,34 @@ export function smellKey(issue, pathOf = (path) => path) {
   return [issue.ruleKey, path, message].join('|');
 }
 
-/** The pull request's smells that fail the check: medium or high after triage, and not already on the base. */
+/** How many smells the base had of each key. */
+function countByKey(issues) {
+  const counts = new Map();
+  for (const issue of issues) {
+    const key = smellKey(issue);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * The pull request's smells that fail the check: medium or high after triage, and more of their key than the base
+ * had. Counted, not just looked up, because some keys name no function ("Deeply nested control flow", "Complex
+ * binary expression") and two functions in one file can share a name: with a plain lookup, one such smell on the
+ * base would excuse any number of new ones. When the base had N of a key, the first N in the pull request are the
+ * old ones and every one after them is new.
+ */
 export function newSmells({ head, base, blocks, renames = new Map() }) {
-  const known = new Set(base.map((issue) => smellKey(issue)));
+  const remaining = countByKey(base);
   const toBasePath = (path) => renames.get(path) || path;
   return head.filter((issue) => {
     const verdict = triage(blocks, issue);
     if (verdict.ignored || !FAILING_LEVELS.includes(verdict.level)) return false;
-    return !known.has(smellKey(issue, toBasePath));
+    const key = smellKey(issue, toBasePath);
+    const left = remaining.get(key) || 0;
+    if (left === 0) return true;
+    remaining.set(key, left - 1);
+    return false;
   });
 }
 

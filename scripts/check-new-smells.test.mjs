@@ -148,6 +148,19 @@ describe('what counts as a new smell', () => {
     expect(newSmells({ head, base, blocks: [] })).toEqual(head);
   });
 
+  it('counts smells whose key names no function: one on the base excuses one, not three', () => {
+    const nested = (line) =>
+      smell({ rule: 'nested-control-flow', line, message: 'Deeply nested control flow (level = 5)' });
+    const flagged = newSmells({ head: [nested(5), nested(40), nested(90)], base: [nested(5)], blocks: [] });
+    expect(flagged).toHaveLength(2);
+  });
+
+  it('counts two same-named functions in one file as two', () => {
+    const fn = (line) => smell({ line, message: 'Function with high complexity (count = 20): handler' });
+    expect(newSmells({ head: [fn(1), fn(50)], base: [fn(1)], blocks: [] })).toHaveLength(1);
+    expect(newSmells({ head: [fn(1), fn(50)], base: [fn(1), fn(50)], blocks: [] })).toEqual([]);
+  });
+
   it('lets a low smell through, and one set aside by triage', () => {
     const blocks = parseTriageBlocks('[[triage]]\nmatch.rules = ["qlty:similar-code"]\nmatch.file_patterns = ["a.js"]\nset.ignored = true\n');
     expect(newSmells({ head: [smell({ level: 'LEVEL_LOW' })], base: [], blocks: [] })).toEqual([]);
