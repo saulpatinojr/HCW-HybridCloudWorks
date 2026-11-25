@@ -416,6 +416,22 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     expect(navigate).toHaveBeenCalledWith('/admin/drafts?draft=draft-1');
   });
 
+  it('offers the draft button on a held program with no activity rule too (review of #1891)', async () => {
+    searchParams = 'tab=programs';
+    getJSON.mockImplementation(
+      upkeepRoutes({
+        'cms/ambassador/programs': {
+          items: [...PROGRAMS, { ...UPKEEP_PROGRAM, upkeep: null }],
+        },
+      })
+    );
+    render(<AmbassadorPage />);
+    await panel().findAllByTestId('program-card');
+    expect(
+      within(exampleCard()).getByRole('button', { name: /Draft a piece/ })
+    ).toBeInTheDocument();
+  });
+
   it('offers no draft button on a program that is not held', async () => {
     searchParams = 'tab=programs';
     getJSON.mockImplementation(

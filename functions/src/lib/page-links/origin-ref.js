@@ -149,7 +149,15 @@ export function withoutHiddenOrigins(value, hidden) {
  * caller's hidden references removed. Any other answer is returned as it is.
  */
 export async function answerWithoutHiddenOrigins(store, user, response) {
-  const hidden = await hiddenOriginPages(store, user);
+  return stripHiddenOrigins(response, await hiddenOriginPages(store, user));
+}
+
+/**
+ * The same for an answer whose hidden Pages were read already: a route that
+ * must clean its error answers too reads them once, before its work, so the
+ * clean-up cannot itself fail inside an error path.
+ */
+export function stripHiddenOrigins(response, hidden) {
   if (!hidden.length || typeof response?.body !== "string") return response;
   let body;
   try {

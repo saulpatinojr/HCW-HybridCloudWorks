@@ -1355,6 +1355,23 @@ describe("POST cms/drafts with an originRef (#1886)", () => {
       expect(one.body.draft).not.toHaveProperty("originRef");
     });
 
+    it("leaves the reference out of a conflict too, so a stale save cannot reveal it (review of #1891)", async () => {
+      const tagged = { ...DRAFT_FROM_PROGRAM };
+      const { handlers } = setup({ seed: [tagged, keyRecord(false)], guard: agentGuard() });
+      const res = parse(
+        await handlers.update(
+          request({ id: tagged.id, body: { fields: { ...FIELDS }, etag: '"stale"' } }),
+          context,
+        ),
+      );
+      expect(res.status).toBe(412);
+      // The conflict answer carries the draft as it now stands...
+      expect(res.body.current?.id).toBe(tagged.id);
+      // ...without where it came from.
+      expect(JSON.stringify(res.body)).not.toContain("originRef");
+      expect(JSON.stringify(res.body)).not.toContain("Example Program");
+    });
+
     it("asks nothing of a draft that names no Page", async () => {
       const { handlers } = setup({ seed: [keyRecord(false)], guard: agentGuard() });
       const res = parse(await handlers.create(request({ body: { fields: FIELDS } }), context));

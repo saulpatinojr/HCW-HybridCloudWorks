@@ -71,8 +71,9 @@ import {
 } from "./taxonomy-fields.js";
 import {
   OriginRefForbiddenError,
-  answerWithoutHiddenOrigins,
   defaultIdeaOriginFor,
+  hiddenOriginPages,
+  stripHiddenOrigins,
   resolveOriginRef,
 } from "../page-links/origin-ref.js";
 
@@ -425,13 +426,16 @@ async function checkedTaxonomyWithDefault(deps, fields) {
 const route = (deps, what, work) => async (request, context) => {
   const auth = await deps.guard.requireRole(request, "editor");
   if (auth.error) return auth.error;
+  // The agent key never sees where a draft came from for a Page it may not
+  // read (page-links/origin-ref.js), in any answer: a refusal such as a
+  // conflict carries the draft's current summary too (review of #1891).
+  let hidden = [];
   try {
+    hidden = await hiddenOriginPages(deps.store, auth.user);
     const response = await work(deps, { request, context, user: auth.user });
-    // The agent key never sees where a draft came from for a Page its key may not
-    // read (page-links/origin-ref.js, review of #1890).
-    return await answerWithoutHiddenOrigins(deps.store, auth.user, response);
+    return stripHiddenOrigins(response, hidden);
   } catch (error) {
-    return answerFor(error, context, what);
+    return stripHiddenOrigins(answerFor(error, context, what), hidden);
   }
 };
 

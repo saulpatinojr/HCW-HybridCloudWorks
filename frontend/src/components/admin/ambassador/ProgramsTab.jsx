@@ -116,9 +116,10 @@ function ProgramCard({
             )}
             Start application
           </Button>
-          {/* A held membership whose program asks for regular contributions can
-              start its next piece from here (#1886). */}
-          {showsUpkeep(program, evidenceRows) && !disabled && (
+          {/* A held membership starts its next piece from here, whether or not
+              its program states an activity rule, and without waiting for the
+              evidence list (#1886, review of #1891). */}
+          {program.membershipStatus === 'active' && !disabled && (
             <DraftForProgramButton program={program} />
           )}
         </div>
