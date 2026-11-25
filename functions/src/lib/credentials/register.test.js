@@ -208,13 +208,15 @@ describe('the issue’s list', () => {
     for (const id of [
       'kv-anthropic-api-key',
       'kv-telegram-bot-token',
-      'kv-community-days-api-key',
       'gh-manifest-app-private-key',
       'gh-copilot-review-app-private-key',
       'lab-coder-github-oauth-secret',
     ]) {
       expect(findCredential(id).lifetimeDays, id).toBe(HAND_ROTATION_DAYS);
     }
+    // The Community Days key does expire (six months after it is made), so
+    // its 180 is its own number, not this rule (#1823).
+    expect(findCredential('kv-community-days-api-key').lifetimeDays).toBe(180);
   });
 
   it('marks the Coder tokens as renewed by the lab host, with their lifetimes', () => {
