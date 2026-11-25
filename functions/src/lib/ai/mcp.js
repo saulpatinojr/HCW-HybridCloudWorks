@@ -278,140 +278,183 @@ function matchingSseResponse(data, targetId) {
  * SSE transport in the seeded configuration, while custom servers default to
  * Streamable HTTP.
  */
-function sseRpc(sseUrl, authHeaders, rpcBody, { fetchImpl, timeoutMs, requireSameOriginEndpoint }) {
-  return new Promise(async (resolve, reject) => {
-    const controller = new AbortController();
-    const timeoutHandle = setTimeout(
-      () => finish(null, new McpUpstreamError('SSE MCP request timed out')),
-      Math.min(timeoutMs, SSE_TIMEOUT_MS)
-    );
-    let postUrl = null;
-    let requestSent = false;
-    let settled = false;
-    let buffer = '';
-    let readyTimer = null;
-
-    const finish = (result, error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutHandle);
-      if (readyTimer) clearTimeout(readyTimer);
-      controller.abort();
-      if (error) reject(error);
-      else resolve(result);
-    };
-
-    const post = async (body) => {
-      const response = await fetchWithTimeout(
-        fetchImpl,
-        postUrl,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            ...authHeaders,
-          },
-          body: JSON.stringify(body),
-        },
-        timeoutMs
-      );
-      await response.text();
-      if (!response.ok)
-        throw new McpUpstreamError(`SSE MCP POST returned HTTP ${response.status}`, {
-          status: response.status,
-        });
-    };
-
-    const sendRequest = async () => {
-      if (requestSent || settled || !postUrl) return;
-      requestSent = true;
-      try {
-        // The SSE transport requires initialize and initialized before the
-        // requested tools/list or tools/call message.
-        await post({
-          jsonrpc: '2.0',
-          method: 'initialize',
-          params: {
-            protocolVersion: '2024-11-05',
-            capabilities: {},
-            clientInfo: { name: 'hcw-mcp-proxy', version: '1.0.0' },
-          },
-          id: -1,
-        });
-        await post({
-          jsonrpc: '2.0',
-          method: 'notifications/initialized',
-          params: {},
-        });
-        await post(rpcBody);
-      } catch (error) {
-        finish(null, error);
-      }
-    };
-
-    try {
-      const response = await fetchWithTimeout(
-        fetchImpl,
-        sseUrl,
-        {
-          method: 'GET',
-          headers: {
-            Accept: 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            ...authHeaders,
-          },
-          signal: controller.signal,
-        },
-        timeoutMs
-      );
-      if (!response.ok) {
-        return finish(
-          null,
-          new McpUpstreamError(`SSE GET returned HTTP ${response.status}`, {
-            status: response.status,
-          })
-        );
-      }
-      if (!response.body?.getReader) {
-        return finish(null, new McpUpstreamError('SSE server returned no readable event stream'));
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      while (!settled) {
-        const { value, done } = await reader.read();
-        if (done)
-          return finish(null, new McpUpstreamError('SSE stream ended before the MCP response'));
-        buffer += decoder.decode(value, { stream: true });
-        const drained = drainSseFrames(buffer);
-        buffer = drained.tail;
-        for (const frame of drained.frames) {
-          postUrl = sseEndpoint(postUrl, frame, sseUrl);
-          // An OAuth Connect token is for this server only (RFC 8707): a
-          // stream that names its message endpoint on another host, or over
-          // plain http, does not get it.
-          if (postUrl && requireSameOriginEndpoint && !sameOriginHttps(postUrl, sseUrl)) {
-            return finish(
-              null,
-              new McpUpstreamError(
-                'The SSE server named a message endpoint on another host or over http; the sign-in token is not sent there'
-              )
-            );
-          }
-          if (postUrl && !readyTimer) readyTimer = setTimeout(sendRequest, 1_000);
-          if (postUrl && frame.data.includes('SSE Connection established')) {
-            if (readyTimer) clearTimeout(readyTimer);
-            readyTimer = setTimeout(sendRequest, 50);
-          }
-          const matched = matchingSseResponse(frame.data, rpcBody.id);
-          if (matched) finish(matched, null);
-        }
-      }
-    } catch (error) {
-      if (!settled && error?.name !== 'AbortError') finish(null, error);
-    }
+function sseRpc(sseUrl, authHeaders, rpcBody, options) {
+  return new Promise((resolve, reject) => {
+    const session = openSseSession({ sseUrl, authHeaders, rpcBody, options, resolve, reject });
+    readSseStream(session).catch((error) => {
+      if (!session.settled && error?.name !== 'AbortError') session.finish(null, error);
+    });
   });
+}
+
+/**
+ * The state of one SSE exchange: where to POST (once the stream names it),
+ * whether the request went, the unparsed tail of the stream, and `finish`,
+ * which settles the exchange once and stops the stream and the timers.
+ */
+function openSseSession({ sseUrl, authHeaders, rpcBody, options, resolve, reject }) {
+  const session = {
+    sseUrl,
+    authHeaders,
+    rpcBody,
+    options,
+    controller: new AbortController(),
+    postUrl: null,
+    requestSent: false,
+    settled: false,
+    buffer: '',
+    readyTimer: null,
+    timeoutHandle: null,
+  };
+  session.finish = (result, error) => {
+    if (session.settled) return;
+    session.settled = true;
+    clearTimeout(session.timeoutHandle);
+    if (session.readyTimer) clearTimeout(session.readyTimer);
+    session.controller.abort();
+    if (error) reject(error);
+    else resolve(result);
+  };
+  session.timeoutHandle = setTimeout(
+    () => session.finish(null, new McpUpstreamError('SSE MCP request timed out')),
+    Math.min(options.timeoutMs, SSE_TIMEOUT_MS)
+  );
+  return session;
+}
+
+/** POST one JSON-RPC message to the endpoint the stream named. */
+async function postSse({ postUrl, authHeaders, options }, body) {
+  const response = await fetchWithTimeout(
+    options.fetchImpl,
+    postUrl,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...authHeaders,
+      },
+      body: JSON.stringify(body),
+    },
+    options.timeoutMs
+  );
+  await response.text();
+  if (!response.ok)
+    throw new McpUpstreamError(`SSE MCP POST returned HTTP ${response.status}`, {
+      status: response.status,
+    });
+}
+
+/** Send the request once, after the endpoint is known; a failed POST finishes the exchange. */
+async function sendSseRequest(session) {
+  if (session.requestSent || session.settled || !session.postUrl) return;
+  session.requestSent = true;
+  try {
+    // The SSE transport requires initialize and initialized before the
+    // requested tools/list or tools/call message.
+    await postSse(session, {
+      jsonrpc: '2.0',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'hcw-mcp-proxy', version: '1.0.0' },
+      },
+      id: -1,
+    });
+    await postSse(session, {
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+      params: {},
+    });
+    await postSse(session, session.rpcBody);
+  } catch (error) {
+    session.finish(null, error);
+  }
+}
+
+/** Why the event stream cannot be read: a non-2xx answer or no readable body. Null when it can. */
+function sseStreamRefusal(response) {
+  if (!response.ok) {
+    return new McpUpstreamError(`SSE GET returned HTTP ${response.status}`, {
+      status: response.status,
+    });
+  }
+  if (!response.body?.getReader) {
+    return new McpUpstreamError('SSE server returned no readable event stream');
+  }
+  return null;
+}
+
+/** Open the event stream and read it until the exchange is settled. */
+async function readSseStream(session) {
+  const { sseUrl, authHeaders, options } = session;
+  const response = await fetchWithTimeout(
+    options.fetchImpl,
+    sseUrl,
+    {
+      method: 'GET',
+      headers: {
+        Accept: 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        ...authHeaders,
+      },
+      signal: session.controller.signal,
+    },
+    options.timeoutMs
+  );
+  const refused = sseStreamRefusal(response);
+  if (refused) return session.finish(null, refused);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  while (!session.settled) {
+    const { value, done } = await reader.read();
+    if (done)
+      return session.finish(null, new McpUpstreamError('SSE stream ended before the MCP response'));
+    session.buffer += decoder.decode(value, { stream: true });
+    const drained = drainSseFrames(session.buffer);
+    session.buffer = drained.tail;
+    for (const frame of drained.frames) {
+      if (handleSseFrame(session, frame)) return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** One frame of the stream: the endpoint, the request timing, the answer. True when it ended the exchange early. */
+function handleSseFrame(session, frame) {
+  session.postUrl = sseEndpoint(session.postUrl, frame, session.sseUrl);
+  // An OAuth Connect token is for this server only (RFC 8707): a
+  // stream that names its message endpoint on another host, or over
+  // plain http, does not get it.
+  if (
+    session.postUrl &&
+    session.options.requireSameOriginEndpoint &&
+    !sameOriginHttps(session.postUrl, session.sseUrl)
+  ) {
+    session.finish(
+      null,
+      new McpUpstreamError(
+        'The SSE server named a message endpoint on another host or over http; the sign-in token is not sent there'
+      )
+    );
+    return true;
+  }
+  scheduleSseRequest(session, frame);
+  const matched = matchingSseResponse(frame.data, session.rpcBody.id);
+  if (matched) session.finish(matched, null);
+  return false;
+}
+
+/** Send a second after the endpoint is known, or 50 ms after the server says it is ready. */
+function scheduleSseRequest(session, frame) {
+  if (!session.postUrl) return;
+  if (!session.readyTimer) session.readyTimer = setTimeout(() => sendSseRequest(session), 1_000);
+  if (frame.data.includes('SSE Connection established')) {
+    clearTimeout(session.readyTimer);
+    session.readyTimer = setTimeout(() => sendSseRequest(session), 50);
+  }
 }
 
 function callMcpRpc({ serverId, url, transport, authHeaders, rpcBody, options }) {
