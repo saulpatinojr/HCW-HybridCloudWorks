@@ -47,133 +47,65 @@
  * (lib/timers/plaud-token.js); `usesOAuthConnect` in mcp-policy.js is the line
  * between the two.
  */
-import { createHash, randomBytes } from 'node:crypto';
-import { PRODUCTION_ORIGINS } from '../auth/cors.js';
+import { randomBytes } from 'node:crypto';
 import { guardedFetch } from '../http/guarded-fetch.js';
-import { AuthoredError, authoredMessage, codeShaped, errorCode } from '../http/error-response.js';
+import { authoredMessage, errorCode } from '../http/error-response.js';
 import { outsideJob } from '../job-context.js';
-import { MCP_OAUTH_CALLBACK_PATH, validateMcpUrl } from './mcp-policy.js';
+import { validateMcpUrl } from './mcp-policy.js';
+import {
+  MCP_OAUTH_REDIRECT_URI,
+  McpOAuthError,
+  PENDING_TTL_MS,
+  bare,
+  base64url,
+  parseJson,
+  requireHttpsUrl,
+  stringList,
+} from './mcp-oauth-base.js';
+import {
+  buildAuthorizationUrl,
+  codeChallengeS256,
+  createCodeVerifier,
+  describeOAuthReply,
+  hashState,
+  registerClient,
+  reusableClient,
+} from './mcp-oauth-client.js';
+import { parseTokenResponse, tokenRequest } from './mcp-oauth-tokens.js';
+import {
+  afterRefusedRefresh,
+  isGrantRejection,
+  markDisconnected,
+  storeRefreshed,
+} from './mcp-oauth-refresh-store.js';
 
-const MCP_CONTAINER = 'mcp_servers';
-
-/**
- * Where every vendor sends the browser back to. Dynamic client registration
- * records this string verbatim, so it is built from the one site origin the
- * API already treats as the site (cors.js PRODUCTION_ORIGINS[0], the apex),
- * not from a request header a caller could choose.
- */
-export const MCP_OAUTH_REDIRECT_URI = `${PRODUCTION_ORIGINS[0]}${MCP_OAUTH_CALLBACK_PATH}`;
-
-/** The name this site registers under; vendors show it on their consent page. */
-export const MCP_OAUTH_CLIENT_NAME = 'HybridCloudWorks';
-
-/** A started sign-in is good for ten minutes, once. */
-export const PENDING_TTL_MS = 10 * 60_000;
-
-/** Refresh before an RPC when the access token has less than this left. */
-export const REFRESH_SKEW_MS = 2 * 60_000;
-
-/** The client authentication methods this site can use, in preference order. */
-const AUTH_METHODS = Object.freeze(['none', 'client_secret_basic', 'client_secret_post']);
-
-/** Upstream OAuth error codes that mean the grant itself is dead, not the network. */
-const GRANT_REJECTIONS = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client']);
-
-/**
- * A failure in the flow, carrying a sentence an owner can act on. `status` is
- * what this API answers for it; `upstreamStatus` and `oauthError` are what the
- * vendor said, kept so the refresh path can tell a dead grant from an outage.
- */
-export class McpOAuthError extends AuthoredError {
-  /**
-   * @param {string} message - the authored sentence (#945: no provider sentence or socket text)
-   * @param {object} [options] - status, upstreamStatus, oauthError, code
-   */
-  constructor(message, { status = 502, upstreamStatus = null, oauthError = null, code = 'OAUTH_FAILED' } = {}) {
-    super(message);
-    this.name = 'McpOAuthError';
-    this.status = status;
-    this.upstreamStatus = upstreamStatus;
-    this.oauthError = oauthError;
-    this.code = code;
-  }
-}
-
-/**
- * Thrown before any RPC to an OAuth server that has no live connection, so
- * nothing is sent without a token and the card can say "press Connect"
- * instead of a red HTTP 401.
- */
-export class McpOAuthNotConnectedError extends AuthoredError {
-  /** @param {string} message - the authored "press Connect" sentence */
-  constructor(message) {
-    super(message);
-    this.name = 'McpOAuthNotConnectedError';
-    this.code = 'NOT_CONNECTED';
-  }
-}
-
-const base64url = (bytes) => Buffer.from(bytes).toString('base64url');
-const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-const stringList = (value) =>
-  Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item.trim()) : [];
-
-function parseJson(text) {
-  try {
-    const value = JSON.parse(text);
-    return isObject(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-/** A path of URL characters only, capped: all of a path an address may show. */
-const PATH_SHAPE = /^\/[A-Za-z0-9._~%/-]{0,120}$/;
-
-/**
- * An address for a sentence: `scheme://host/path`, with the scheme and the
- * host held to the door's code shape and the path to URL characters, and no
- * query, fragment or credentials; a fixed phrase for anything else. Most
- * addresses named here come from a provider's metadata, so nothing else of
- * them is repeated, and a value that is not a URL is never echoed (#945).
- *
- * @param {unknown} url - the address
- * @returns {string}
- */
-function bare(url) {
-  let parsed;
-  try {
-    parsed = new URL(String(url ?? ''));
-  } catch {
-    return 'an address that is not a URL';
-  }
-  const scheme = codeShaped(parsed.protocol.replace(/:$/, ''));
-  const host = codeShaped(parsed.host);
-  if (!scheme || !host) return 'an address that cannot be shown';
-  return `${scheme}://${host}${PATH_SHAPE.test(parsed.pathname) ? parsed.pathname : '/(path not shown)'}`;
-}
-
-/**
- * `value` as a parsed https URL with no credentials or fragment, or a refusal
- * naming `what`. Every endpoint the flow sends anything to passes this.
- */
-export function requireHttpsUrl(value, what) {
-  let parsed;
-  try {
-    parsed = new URL(String(value ?? ''));
-  } catch {
-    // The value is not repeated: it is often a provider's metadata (#945).
-    const blank = value === undefined || value === null || String(value).trim() === '';
-    throw new McpOAuthError(`${what} is ${blank ? 'missing' : 'not a valid URL'}.`);
-  }
-  if (parsed.protocol !== 'https:') {
-    throw new McpOAuthError(`${what} must be an https address; it is ${bare(parsed.href)}.`);
-  }
-  if (parsed.username || parsed.password || parsed.hash) {
-    throw new McpOAuthError(`${what} must not carry credentials or a fragment.`);
-  }
-  return parsed;
-}
+export {
+  MCP_OAUTH_CLIENT_NAME,
+  MCP_OAUTH_REDIRECT_URI,
+  McpOAuthError,
+  McpOAuthNotConnectedError,
+  PENDING_TTL_MS,
+  REFRESH_SKEW_MS,
+  requireHttpsUrl,
+} from './mcp-oauth-base.js';
+export {
+  buildAuthorizationUrl,
+  chooseTokenEndpointAuthMethod,
+  codeChallengeS256,
+  createCodeVerifier,
+  hashState,
+  registrationRequestBody,
+  reusableClient,
+} from './mcp-oauth-client.js';
+export {
+  connectedUpdates,
+  exchangeAuthorizationCode,
+  notConnectedMessage,
+  oauthConnectionState,
+  parseTokenResponse,
+  tokenExpiresWithin,
+  tokenRequest,
+} from './mcp-oauth-tokens.js';
 
 /**
  * Why an outbound request got no usable answer, in this module's words: the
@@ -549,133 +481,6 @@ export async function discoverOAuth({ serverUrl, challenge = null, http, name = 
   };
 }
 
-// ─── Dynamic client registration ────────────────────────────────────────────
-
-/** `none` when offered, else the first secret method offered, else null. */
-export function chooseTokenEndpointAuthMethod(supported) {
-  const offered = stringList(supported);
-  return AUTH_METHODS.find((method) => offered.includes(method)) || null;
-}
-
-/** The RFC 7591 registration request this site sends. */
-export function registrationRequestBody({ redirectUri, tokenEndpointAuthMethod }) {
-  return {
-    client_name: MCP_OAUTH_CLIENT_NAME,
-    redirect_uris: [redirectUri],
-    grant_types: ['authorization_code', 'refresh_token'],
-    response_types: ['code'],
-    token_endpoint_auth_method: tokenEndpointAuthMethod,
-  };
-}
-
-/** The stored registration when it is for this issuer and redirect URI, else null. */
-export function reusableClient(server, { issuer, redirectUri }) {
-  const client = server?.oauthClient;
-  if (!isObject(client) || client.issuer !== issuer || client.redirectUri !== redirectUri) return null;
-  if (typeof client.clientId !== 'string' || !client.clientId) return null;
-  if (!AUTH_METHODS.includes(client.tokenEndpointAuthMethod)) return null;
-  if (client.tokenEndpointAuthMethod !== 'none' && !server.oauthClientSecret) return null;
-  return client;
-}
-
-/**
- * An OAuth endpoint's refusal as its status and RFC 6749 error code. The
- * `error_description` is the provider's own sentence and is not carried
- * (#945); the code (`invalid_grant`) is what an owner acts on.
- *
- * @param {object|null} body - the parsed answer
- * @param {number} status - its HTTP status
- * @returns {string}
- */
-function describeOAuthReply(body, status) {
-  const code = typeof body?.error === 'string' ? codeShaped(body.error) : '';
-  return code ? `${code} (HTTP ${status})` : `HTTP ${status}`;
-}
-
-async function registerClient({ discovery, redirectUri, http, now, name }) {
-  const tokenEndpointAuthMethod = chooseTokenEndpointAuthMethod(discovery.tokenEndpointAuthMethods);
-  if (!tokenEndpointAuthMethod) {
-    throw new McpOAuthError(
-      `${name}'s sign-in server offers no client authentication this site supports (none, client_secret_basic or client_secret_post).`
-    );
-  }
-  const res = await http(discovery.registrationEndpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(registrationRequestBody({ redirectUri, tokenEndpointAuthMethod })),
-  });
-  const body = parseJson(res.text);
-  if (![200, 201].includes(res.status) || typeof body?.client_id !== 'string' || !body.client_id.trim()) {
-    throw new McpOAuthError(
-      `${name}'s sign-in server refused to register this site: ${describeOAuthReply(body, res.status)}.`,
-      { upstreamStatus: res.status, oauthError: body?.error ?? null }
-    );
-  }
-  const method = AUTH_METHODS.includes(body.token_endpoint_auth_method)
-    ? body.token_endpoint_auth_method
-    : tokenEndpointAuthMethod;
-  const secret = typeof body.client_secret === 'string' && body.client_secret ? body.client_secret : null;
-  if (method !== 'none' && !secret) {
-    throw new McpOAuthError(
-      `${name}'s sign-in server registered this site for ${method} but issued no client secret.`
-    );
-  }
-  return {
-    client: {
-      issuer: discovery.issuer,
-      redirectUri,
-      clientId: body.client_id.trim(),
-      tokenEndpointAuthMethod: method,
-      registeredAt: now().toISOString(),
-    },
-    clientSecret: method === 'none' ? null : secret,
-  };
-}
-
-// ─── PKCE, state and the authorization request ──────────────────────────────
-
-/** A PKCE code verifier: 32 random bytes, base64url — 43 characters (RFC 7636 §4.1). */
-export function createCodeVerifier(random = randomBytes) {
-  return base64url(random(32));
-}
-
-/**
- * The S256 code challenge of a verifier (RFC 7636 §4.2).
- *
- * SHA-256 is the method the RFC fixes, BASE64URL(SHA256(ASCII(verifier))),
- * and the authorization server computes the same to compare, so no other
- * hash is possible. The verifier is not a password: it is 32 bytes from
- * randomBytes, used once. CodeQL's js/insufficient-password-hash reads it as
- * one from the names it flows through, and is dismissed as a false positive
- * on this ground (#1019).
- */
-export function codeChallengeS256(verifier) {
-  return base64url(createHash('sha256').update(String(verifier), 'ascii').digest());
-}
-
-/**
- * What is stored in place of `state`: its SHA-256, hex. A fast digest on
- * purpose: `state` is 32 random bytes, single-use and ten minutes long, so
- * there is nothing to brute-force, as with a session id.
- */
-export function hashState(state) {
-  return createHash('sha256').update(String(state), 'utf8').digest('hex');
-}
-
-/** The URL the browser is sent to. */
-export function buildAuthorizationUrl({ authorizationEndpoint, clientId, redirectUri, codeChallenge, state, resource, scope }) {
-  const url = new URL(authorizationEndpoint);
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('client_id', clientId);
-  url.searchParams.set('redirect_uri', redirectUri);
-  url.searchParams.set('code_challenge', codeChallenge);
-  url.searchParams.set('code_challenge_method', 'S256');
-  url.searchParams.set('state', state);
-  if (resource) url.searchParams.set('resource', resource);
-  if (scope) url.searchParams.set('scope', scope);
-  return url.toString();
-}
-
 /**
  * Discover, register (or reuse the registration), and mint the sign-in for
  * one server. Returns the URL to send the browser to and the document
@@ -745,133 +550,6 @@ export async function startOAuthConnect({
     }),
     updates,
   };
-}
-
-// ─── Token requests ─────────────────────────────────────────────────────────
-
-/**
- * Headers and form body for a token-endpoint request, with the client
- * authentication its registration chose: nothing for a public client, HTTP
- * Basic, or the secret in the body.
- */
-export function tokenRequest({ params, clientId, tokenEndpointAuthMethod = 'none', clientSecret = null }) {
-  const form = new URLSearchParams();
-  for (const [key, value] of Object.entries({ ...params, client_id: clientId })) {
-    if (value !== undefined && value !== null && value !== '') form.set(key, String(value));
-  }
-  const headers = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
-  if (tokenEndpointAuthMethod === 'client_secret_basic' && clientSecret) {
-    const pair = `${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`;
-    headers.Authorization = `Basic ${Buffer.from(pair, 'utf8').toString('base64')}`;
-  } else if (tokenEndpointAuthMethod === 'client_secret_post' && clientSecret) {
-    form.set('client_secret', clientSecret);
-  }
-  return { headers, body: form.toString() };
-}
-
-/** A token-endpoint reply as `{ accessToken, refreshToken, expiresAt, scope }`, or a refusal. */
-export function parseTokenResponse({ status, text }, { name, grant, now }) {
-  const body = parseJson(text);
-  if (status !== 200 || !body || body.error) {
-    throw new McpOAuthError(
-      `${name}'s sign-in server refused the ${grant}: ${describeOAuthReply(body, status)}.`,
-      { upstreamStatus: status, oauthError: typeof body?.error === 'string' ? body.error : null }
-    );
-  }
-  if (typeof body.access_token !== 'string' || !body.access_token) {
-    throw new McpOAuthError(`${name}'s sign-in server answered the ${grant} with no access token.`, {
-      upstreamStatus: status,
-    });
-  }
-  if (body.token_type !== undefined && !/^bearer$/i.test(String(body.token_type))) {
-    // Named only when it has the shape of a token type (#945).
-    const tokenType = codeShaped(body.token_type);
-    throw new McpOAuthError(
-      tokenType
-        ? `${name}'s sign-in server issued a "${tokenType}" token, not a bearer token.`
-        : `${name}'s sign-in server issued a token that is not a bearer token.`,
-      { upstreamStatus: status }
-    );
-  }
-  const seconds = Number(body.expires_in);
-  return {
-    accessToken: body.access_token,
-    refreshToken: typeof body.refresh_token === 'string' && body.refresh_token ? body.refresh_token : null,
-    expiresAt:
-      Number.isFinite(seconds) && seconds > 0 ? new Date(now().getTime() + seconds * 1000).toISOString() : null,
-    scope: typeof body.scope === 'string' && body.scope.trim() ? body.scope.trim() : null,
-  };
-}
-
-/**
- * Trade the code for tokens at the token endpoint discovered when the
- * sign-in started (never one supplied by the callback).
- */
-export async function exchangeAuthorizationCode({ pending, code, clientSecret = null, http, now = () => new Date(), name }) {
-  requireHttpsUrl(pending.tokenEndpoint, `${name}'s token endpoint`);
-  const request = tokenRequest({
-    params: {
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: pending.redirectUri,
-      code_verifier: pending.codeVerifier,
-      resource: pending.resource,
-    },
-    clientId: pending.clientId,
-    tokenEndpointAuthMethod: pending.tokenEndpointAuthMethod,
-    clientSecret,
-  });
-  const res = await http(pending.tokenEndpoint, { method: 'POST', ...request });
-  return parseTokenResponse(res, { name, grant: 'sign-in code', now });
-}
-
-/** The document updates a successful exchange stores. */
-export function connectedUpdates({ pending, tokens, now }) {
-  return {
-    oauthToken: tokens.accessToken,
-    oauthRefreshToken: tokens.refreshToken,
-    oauth: {
-      status: 'connected',
-      issuer: pending.issuer,
-      tokenEndpoint: pending.tokenEndpoint,
-      // Absent on documents connected before #1116: Disconnect then has
-      // nowhere to revoke and says so (`revoked: null`).
-      revocationEndpoint: pending.revocationEndpoint ?? null,
-      clientId: pending.clientId,
-      tokenEndpointAuthMethod: pending.tokenEndpointAuthMethod,
-      resource: pending.resource,
-      scope: tokens.scope ?? pending.scope ?? null,
-      connectedAt: now().toISOString(),
-      expiresAt: tokens.expiresAt,
-      refreshedAt: null,
-    },
-    oauthPending: null,
-    status: 'untested',
-    lastError: null,
-  };
-}
-
-// ─── Connection state and refresh ───────────────────────────────────────────
-
-/** 'connected', 'expired' (a refresh failed) or 'not_connected'. */
-export function oauthConnectionState(server) {
-  if (server?.oauth?.status === 'connected' && server.oauthToken) return 'connected';
-  if (server?.oauth?.status === 'disconnected') return 'expired';
-  return 'not_connected';
-}
-
-/** The sentence a server without a live connection is refused with. */
-export function notConnectedMessage(server, serverId) {
-  const name = server?.name || serverId;
-  return oauthConnectionState(server) === 'expired'
-    ? `Sign-in to ${name} has expired. Press Connect on its card under AI Engine → MCP Servers to sign in again.`
-    : `${name} is not connected. Press Connect on its card under AI Engine → MCP Servers and sign in.`;
-}
-
-/** Whether the stored access token expires within `withinMs` (or already has). */
-export function tokenExpiresWithin(server, withinMs, now = () => new Date()) {
-  const at = Date.parse(server?.oauth?.expiresAt ?? '');
-  return Number.isFinite(at) && at - now().getTime() <= withinMs;
 }
 
 // ─── Revocation (RFC 7009) ──────────────────────────────────────────────────
@@ -949,147 +627,6 @@ export async function revokeOAuthGrant({ server, serverId, http }) {
     }
   }
   return reason ? { revoked: false, issuer, reason } : { revoked: true, issuer };
-}
-
-function isGrantRejection(error) {
-  return (
-    error instanceof McpOAuthError &&
-    (GRANT_REJECTIONS.has(error.oauthError) || [400, 401].includes(error.upstreamStatus))
-  );
-}
-
-const isPreconditionFailure = (error) => error?.code === 412 || error?.statusCode === 412;
-
-/**
- * Whether `latest` is at the same place as `server`, with the same sign-in
- * method, and still connected to the same resource: what both checks below
- * start from.
- */
-function connectedToSameResource(latest, server) {
-  return (
-    Boolean(latest) &&
-    sameAddressAndMethod(latest, server) &&
-    latest.oauth?.status === 'connected' &&
-    latest.oauth?.resource === server?.oauth?.resource
-  );
-}
-
-/** The same URL and the same sign-in method. */
-const sameAddressAndMethod = (latest, server) =>
-  latest.url === server?.url && latest.authType === server?.authType;
-
-/**
- * Whether `latest` is still the connection `server` was refreshing: the same
- * place, the same sign-in method, still connected, with the same refresh
- * token. A write between the two that left all of that alone (a rename, a
- * status line) does not make the refresh stale; anything else does.
- */
-function sameConnection(latest, server) {
-  return connectedToSameResource(latest, server) && latest.oauthRefreshToken === server?.oauthRefreshToken;
-}
-
-/**
- * Whether `latest` holds a newer connection to the same resource than the
- * one `server` was refreshing: another instance refreshed (the refresh token
- * rotated) or the owner pressed Connect again. Its tokens are as good as a
- * refresh's, so they are used instead of clearing or overwriting them.
- */
-function newerConnection(latest, server) {
-  return (
-    connectedToSameResource(latest, server) &&
-    Boolean(latest.oauthToken) &&
-    Boolean(latest.oauthRefreshToken) &&
-    latest.oauthRefreshToken !== server?.oauthRefreshToken
-  );
-}
-
-const readServer = (store, serverId) => store.readDoc(MCP_CONTAINER, serverId, serverId);
-
-/**
- * Clear a dead connection, guarded by the ETag of the document the decision
- * was made from (review of #1019). Unguarded, an instance whose refresh was
- * refused could clear the rotated token another instance had just stored.
- * On a conflict the document is read again, and a newer connection there is
- * the answer; otherwise the refusal stands and the next call decides again.
- */
-async function markDisconnected({ store, serverId, server, now, sentence }) {
-  const at = now().toISOString();
-  const updates = {
-    oauthToken: null,
-    oauthRefreshToken: null,
-    oauth: { ...(server.oauth || {}), status: 'disconnected', disconnectedAt: at, disconnectReason: 'refresh_failed' },
-    status: 'needs_connection',
-    lastError: sentence,
-    lastTested: at,
-  };
-  try {
-    await store.patchDoc(MCP_CONTAINER, serverId, updates, server._etag ? { ifMatch: server._etag } : {});
-  } catch (error) {
-    if (isPreconditionFailure(error)) {
-      const latest = await readServer(store, serverId).catch(() => null);
-      if (newerConnection(latest, server)) return { ok: true, server: latest };
-    }
-    // Otherwise the refusal is the useful result; a failed status write must not mask it.
-  }
-  return { ok: false, disconnected: true, sentence };
-}
-
-/**
- * Store a refreshed token, guarded by the ETag of the document the refresh
- * started from (review of #1019). A Disconnect, a URL move or a change of
- * sign-in method that landed while the refresh was in flight is not undone:
- * the conflict is read, and the refresh's tokens are kept only while the
- * document is still the same connection (a rename, say, retries the write);
- * a newer connection is used as it stands; anything else discards them, so
- * a token issued for the old resource is never sent to a new URL.
- */
-async function storeRefreshed({ store, serverId, server, updates, name }) {
-  let current = server._etag ? server : await readServer(store, serverId);
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (!sameConnection(current, server)) break;
-    // A document without an ETag cannot be written safely, so it is not;
-    // the stored token is used until the next try. Cosmos always sends one.
-    if (!current._etag) {
-      return { ok: false, transient: true, sentence: `${name}'s renewed sign-in could not be stored safely; the next call tries again.` };
-    }
-    try {
-      const written = await store.patchDoc(MCP_CONTAINER, serverId, updates, { ifMatch: current._etag });
-      return { ok: true, server: { ...current, ...updates, ...(written?._etag ? { _etag: written._etag } : {}) } };
-    } catch (error) {
-      if (!isPreconditionFailure(error)) throw error;
-      current = await readServer(store, serverId);
-    }
-  }
-  if (newerConnection(current, server)) return { ok: true, server: current };
-  // `disconnected` as well: to a caller, the connection it was using is gone
-  // and the call must not go ahead on the old token.
-  return {
-    ok: false,
-    disconnected: true,
-    changed: true,
-    sentence: `${name} changed while its sign-in was being renewed, so the renewal was not kept. ${notConnectedMessage(current, serverId)}`,
-  };
-}
-
-/**
- * What a refresh the sign-in server refused leaves: a newer connection
- * another instance stored, the answer that the server changed meanwhile, or
- * the server marked disconnected.
- */
-async function afterRefusedRefresh({ store, serverId, server, now, log, sentence }) {
-  // Refresh tokens rotate: another instance may have spent this one a
-  // moment ago and stored the next. Its result is as good as ours. The
-  // disconnect below is guarded by the ETag of this read, so a rotation
-  // stored after it is not cleared either (review of #1019).
-  const latest = await readServer(store, serverId).catch(() => null);
-  if (newerConnection(latest, server)) return { ok: true, server: latest };
-  // Moved, switched or disconnected meanwhile: nothing of this connection
-  // is left to clear, and writing would put a stale status on the new one.
-  if (latest && !sameConnection(latest, server)) {
-    return { ok: false, disconnected: true, sentence: notConnectedMessage(latest, serverId) };
-  }
-  log?.warn?.('[mcp-oauth] a token refresh was refused; marking the server disconnected');
-  return markDisconnected({ store, serverId, server: latest || server, now, sentence });
 }
 
 /**
