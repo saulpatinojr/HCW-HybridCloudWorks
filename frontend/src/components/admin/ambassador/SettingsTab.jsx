@@ -21,18 +21,16 @@ import StatusBadge from '@/components/admin/shared/StatusBadge';
 import {
   AMBASSADOR_STATUS,
   APPLICATION_STATUSES,
-  EMPTY_REQUIREMENT,
   EVIDENCE_SOURCES,
   MEMBERSHIP_STATUS,
   MEMBERSHIP_STATUSES,
   PROGRAM_STATE,
   latestApplicationFor,
   programById,
-  programForm,
   programGate,
-  programPayload,
   sourceLabel,
 } from './ambassadorModel';
+import { EMPTY_REQUIREMENT, programForm, programPayload } from './programFormModel';
 import DataTable from './DataTable';
 import {
   Field,
@@ -493,6 +491,128 @@ function ApplicationStateSelect({ program, gate, busy, value, onChange }) {
   );
 }
 
+/** Requirement evidence types, each once, by their labels; a dash when there are none. */
+function evidenceSummary(program) {
+  return (
+    (program.requirements || [])
+      .flatMap((r) => r.evidenceTypes)
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .map(sourceLabel)
+      .join(', ') || '—'
+  );
+}
+
+/** " · additional to X", with "(opens when Active)" until the parent is held. */
+function gateNote(gate) {
+  if (!gate.gated) return false;
+  const opens = gate.unlocked ? '' : ' (opens when Active)';
+  return ` · additional to ${gate.parent.name || gate.parent.id}${opens}`;
+}
+
+/** One program's row in the Settings table. */
+function ProgramSettingsRow({
+  program,
+  index,
+  count,
+  busy,
+  gate,
+  applicationStatus,
+  onMove,
+  onEdit,
+  onDelete,
+  onPatch,
+  onApplicationState,
+}) {
+  const disabled = program.enabled === false;
+  return (
+    <tr className={disabled ? 'opacity-60' : ''}>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0"
+            aria-label={`Move ${program.name} up`}
+            disabled={busy || index === 0}
+            onClick={() => onMove(index, -1)}
+          >
+            <ArrowUp className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0"
+            aria-label={`Move ${program.name} down`}
+            disabled={busy || index === count - 1}
+            onClick={() => onMove(index, 1)}
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <div className="font-medium">{program.name}</div>
+        <div className="text-xs text-muted-foreground">
+          {program.provider}
+          {gateNote(gate)}
+        </div>
+      </td>
+      <td className="px-4 py-3 text-xs">
+        {(program.requirements || []).length} · {evidenceSummary(program)}
+      </td>
+      <td className="px-4 py-3 text-xs text-muted-foreground">
+        {program.reminders?.daysBeforeDeadline ?? 14}d before a deadline ·{' '}
+        {program.reminders?.daysBeforeRenewal ?? 30}d before a renewal
+      </td>
+      <td className="px-4 py-3">
+        <StatusBadge size="xs" status={PROGRAM_STATE[disabled ? 'disabled' : 'enabled']} />
+      </td>
+      <td className="px-4 py-3">
+        <MembershipSelect
+          program={program}
+          busy={busy}
+          onChange={(value) => onPatch({ membershipStatus: value })}
+        />
+      </td>
+      <td className="px-4 py-3">
+        <ApplicationStateSelect
+          program={program}
+          gate={gate}
+          busy={busy}
+          value={applicationStatus}
+          onChange={onApplicationState}
+        />
+      </td>
+      <td className="px-4 py-3 text-right">
+        <div className="flex justify-end gap-1">
+          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => onEdit(program)}>
+            <Pencil className="mr-1 h-3 w-3" /> Edit
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2"
+            disabled={busy}
+            onClick={() => onPatch({ enabled: disabled })}
+          >
+            {disabled ? 'Re-enable' : 'Disable'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2 text-destructive"
+            disabled={busy}
+            onClick={() => onDelete(program)}
+          >
+            <Trash2 className="h-3 w-3" />
+            <span className="sr-only">Delete {program.name}</span>
+          </Button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 export default function SettingsTab({ hub }) {
   const { programs, applications } = hub;
   const [editing, setEditing] = useState(null); // null | {} (new) | program
@@ -552,119 +672,24 @@ export default function SettingsTab({ hub }) {
             </Button>
           </div>
           <DataTable columns={COLUMNS}>
-            {ordered.map((program, index) => {
-              const busy = hub.busyIds.has(program.id);
-              const disabled = program.enabled === false;
-              const gate = programGate(program, byId);
-              return (
-                <tr key={program.id} className={disabled ? 'opacity-60' : ''}>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-7 p-0"
-                        aria-label={`Move ${program.name} up`}
-                        disabled={busy || index === 0}
-                        onClick={() => move(index, -1)}
-                      >
-                        <ArrowUp className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-7 p-0"
-                        aria-label={`Move ${program.name} down`}
-                        disabled={busy || index === ordered.length - 1}
-                        onClick={() => move(index, 1)}
-                      >
-                        <ArrowDown className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{program.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {program.provider}
-                      {gate.gated &&
-                        ` · additional to ${gate.parent.name || gate.parent.id}${
-                          gate.unlocked ? '' : ' (opens when Active)'
-                        }`}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-xs">
-                    {(program.requirements || []).length} ·{' '}
-                    {(program.requirements || [])
-                      .flatMap((r) => r.evidenceTypes)
-                      .filter((v, i, a) => a.indexOf(v) === i)
-                      .map(sourceLabel)
-                      .join(', ') || '—'}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {program.reminders?.daysBeforeDeadline ?? 14}d before a deadline ·{' '}
-                    {program.reminders?.daysBeforeRenewal ?? 30}d before a renewal
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge
-                      size="xs"
-                      status={PROGRAM_STATE[disabled ? 'disabled' : 'enabled']}
-                    />
-                  </td>
-                  <td className="px-4 py-3">
-                    <MembershipSelect
-                      program={program}
-                      busy={busy}
-                      onChange={(value) =>
-                        hub.writes.patchProgram(program.id, { membershipStatus: value })
-                      }
-                    />
-                  </td>
-                  <td className="px-4 py-3">
-                    <ApplicationStateSelect
-                      program={program}
-                      gate={gate}
-                      busy={busy}
-                      value={
-                        latestApplicationFor(applications?.data, program.id)?.status ||
-                        NO_APPLICATION
-                      }
-                      onChange={(value) => setApplicationState(program, value)}
-                    />
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2"
-                        onClick={() => setEditing(program)}
-                      >
-                        <Pencil className="mr-1 h-3 w-3" /> Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2"
-                        disabled={busy}
-                        onClick={() => hub.writes.patchProgram(program.id, { enabled: disabled })}
-                      >
-                        {disabled ? 'Re-enable' : 'Disable'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-destructive"
-                        disabled={busy}
-                        onClick={() => setConfirmDelete(program)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                        <span className="sr-only">Delete {program.name}</span>
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+            {ordered.map((program, index) => (
+              <ProgramSettingsRow
+                key={program.id}
+                program={program}
+                index={index}
+                count={ordered.length}
+                busy={hub.busyIds.has(program.id)}
+                gate={programGate(program, byId)}
+                applicationStatus={
+                  latestApplicationFor(applications?.data, program.id)?.status || NO_APPLICATION
+                }
+                onMove={move}
+                onEdit={setEditing}
+                onDelete={setConfirmDelete}
+                onPatch={(change) => hub.writes.patchProgram(program.id, change)}
+                onApplicationState={(value) => setApplicationState(program, value)}
+              />
+            ))}
           </DataTable>
         </>
       )}

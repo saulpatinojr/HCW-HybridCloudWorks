@@ -516,23 +516,16 @@ function ReachCard({ data }) {
   );
 }
 
-export default function DeveloperApiTab() {
-  const { toast } = useToast();
-  const { data, loaded, error, refresh, create, rotate, update, revoke } = useDeveloperKeys();
-  const { busyIds, claim, release } = useWriteGuard();
-  // { secret, organizerName, keyId } for the one reveal, or null.
-  const [reveal, setReveal] = useState(null);
-  // { kind: 'rotate' | 'revoke', key } while a confirmation is open.
-  const [confirm, setConfirm] = useState(null);
-
-  // Leaving the tab drops the secret; nothing keeps it.
-  useEffect(() => () => setReveal(null), []);
-
+/**
+ * One write at a time per key, with its outcome told in a toast. Returns
+ * `run(id, work, done)`.
+ */
+function makeGuardedWrite(toast, claim, release) {
   // A write that landed but whose re-read failed is still a write that
   // landed: `done` runs with the answer (for Make and Rotate, the only copy
   // of the key), and a second toast says the list may be stale. Resolves
   // true when the write landed.
-  const run = async (id, work, done) => {
+  return async (id, work, done) => {
     if (!claim(id)) return false;
     try {
       const { answer, refreshed } = await work();
@@ -555,6 +548,21 @@ export default function DeveloperApiTab() {
       release(id);
     }
   };
+}
+
+export default function DeveloperApiTab() {
+  const { toast } = useToast();
+  const { data, loaded, error, refresh, create, rotate, update, revoke } = useDeveloperKeys();
+  const { busyIds, claim, release } = useWriteGuard();
+  // { secret, organizerName, keyId } for the one reveal, or null.
+  const [reveal, setReveal] = useState(null);
+  // { kind: 'rotate' | 'revoke', key } while a confirmation is open.
+  const [confirm, setConfirm] = useState(null);
+
+  // Leaving the tab drops the secret; nothing keeps it.
+  useEffect(() => () => setReveal(null), []);
+
+  const run = makeGuardedWrite(toast, claim, release);
 
   const showSecret = (answer, fallbackName) => {
     setReveal(

@@ -32,6 +32,28 @@ function lineClasses(status) {
   return 'bg-muted/10 border-transparent';
 }
 
+/** One side of the diff: every line of one draft, coloured by its status. */
+function DiffColumn({ title, rows, field }) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">{title}</p>
+      <div className="border rounded-md overflow-hidden">
+        {rows.map((row) => (
+          <div
+            key={`${field}-${row.id}`}
+            className={`grid grid-cols-[48px_1fr] text-xs border-b last:border-b-0 ${lineClasses(row.status)}`}
+          >
+            <span className="px-2 py-1 text-muted-foreground border-r">{row.lineNumber}</span>
+            <pre className="px-2 py-1 whitespace-pre-wrap break-words font-mono">
+              {row[field] || ' '}
+            </pre>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function EditorDiffView({ baseText = '', editedText = '' }) {
   const rows = useMemo(() => buildLineDiffRows(baseText, editedText), [baseText, editedText]);
 
@@ -51,47 +73,8 @@ export default function EditorDiffView({ baseText = '', editedText = '' }) {
               {changedCount} line{changedCount === 1 ? '' : 's'} changed
             </p>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
-                  Edited Draft
-                </p>
-                <div className="border rounded-md overflow-hidden">
-                  {rows.map((row) => (
-                    <div
-                      key={`edited-${row.id}`}
-                      className={`grid grid-cols-[48px_1fr] text-xs border-b last:border-b-0 ${lineClasses(row.status)}`}
-                    >
-                      <span className="px-2 py-1 text-muted-foreground border-r">
-                        {row.lineNumber}
-                      </span>
-                      <pre className="px-2 py-1 whitespace-pre-wrap break-words font-mono">
-                        {row.edited || ' '}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
-                  AI Draft
-                </p>
-                <div className="border rounded-md overflow-hidden">
-                  {rows.map((row) => (
-                    <div
-                      key={`base-${row.id}`}
-                      className={`grid grid-cols-[48px_1fr] text-xs border-b last:border-b-0 ${lineClasses(row.status)}`}
-                    >
-                      <span className="px-2 py-1 text-muted-foreground border-r">
-                        {row.lineNumber}
-                      </span>
-                      <pre className="px-2 py-1 whitespace-pre-wrap break-words font-mono">
-                        {row.base || ' '}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <DiffColumn title="Edited Draft" rows={rows} field="edited" />
+              <DiffColumn title="AI Draft" rows={rows} field="base" />
             </div>
           </>
         )}
