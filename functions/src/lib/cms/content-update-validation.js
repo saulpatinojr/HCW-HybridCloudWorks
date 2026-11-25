@@ -126,6 +126,10 @@ export const FORBIDDEN_CONTENT_UPDATE_KEYS = new Set([
   // unaffected — it never passes through this validator.
   "slug",
   "Slug",
+  // Where the piece came from (page-links/origin-ref.js, #1886) is written
+  // once, checked against the record it names, when the draft is created.
+  // A later save cannot move a piece to another program or invent a Page.
+  "originRef",
   // An interview's private blocks (ADR 0040, D9 and D10) have one writer
   // each on the server: the consent record is written by POST cms/interviews
   // from the token, the recording's provenance by the upload and fetch
@@ -408,6 +412,15 @@ function normalizeEntry(normalized, field, value) {
   }
   if (FORBIDDEN_CONTENT_UPDATE_KEYS.has(field)) {
     throw new ContentValidationError(`updates cannot modify protected field: ${field}`);
+  }
+  // patchDoc reads a dot as a path into an object, so "originRef.label" or
+  // "slug.x" would rewrite part of a protected field that the whole-name
+  // check above lets through (review of #1886). No caller sends a nested
+  // field this way, so a dotted name is refused outright.
+  if (field.includes(".")) {
+    throw new ContentValidationError(
+      "updates cannot name a nested field with a dot; send the whole field",
+    );
   }
   if (value === undefined) return;
   if (value === null) {

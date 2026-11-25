@@ -23,6 +23,7 @@
  *     load exactly as the source did.
  */
 import { ADMIN_CONTENT_SNAPSHOT_FIELDS } from "./cms-content.js";
+import { answerWithoutHiddenOrigins } from "./page-links/origin-ref.js";
 import { REVIEW_DECISION_STATUSES } from "./cms/content-status.js";
 import { errorFacts, errorResponse } from "./http/error-response.js";
 import {
@@ -139,7 +140,12 @@ export function readyToPublishWhere() {
 const sortDescBy = (field) => (a, b) => toMillis(b[field]) - toMillis(a[field]);
 
 /** Where an item's arrival time is read from, first one present wins. */
-const REVIEW_WAIT_FALLBACKS = ["fetchedAt", "createdAt", "Created At", "updatedAt"];
+const REVIEW_WAIT_FALLBACKS = [
+  "fetchedAt",
+  "createdAt",
+  "Created At",
+  "updatedAt",
+];
 
 /**
  * When an item started waiting for its review decision: when it was sent to
@@ -153,7 +159,11 @@ export function reviewWaitingSince(item = {}) {
     String(item.contentStatus || "") === "in_review"
       ? item.sentToReviewAt
       : null;
-  return sent || REVIEW_WAIT_FALLBACKS.map((field) => item[field]).find(Boolean) || null;
+  return (
+    sent ||
+    REVIEW_WAIT_FALLBACKS.map((field) => item[field]).find(Boolean) ||
+    null
+  );
 }
 
 const byReviewWaitDesc = (a, b) =>
@@ -205,11 +215,23 @@ function createSnapshotReads(store) {
    */
   async function fetchInViewOrder(where, params, top, field) {
     if (!/^[A-Za-z][A-Za-z0-9]*$/.test(field)) {
-      throw new Error(`fetchInViewOrder: ${JSON.stringify(field)} is not a sort field`);
+      throw new Error(
+        `fetchInViewOrder: ${JSON.stringify(field)} is not a sort field`,
+      );
     }
     const [withField, withoutField] = await Promise.all([
-      fetchProjected(`(${where}) AND IS_DEFINED(c.${field})`, params, top, ` ORDER BY c.${field} DESC`),
-      fetchProjected(`(${where}) AND NOT IS_DEFINED(c.${field})`, params, top, NEWEST_WRITTEN_FIRST),
+      fetchProjected(
+        `(${where}) AND IS_DEFINED(c.${field})`,
+        params,
+        top,
+        ` ORDER BY c.${field} DESC`,
+      ),
+      fetchProjected(
+        `(${where}) AND NOT IS_DEFINED(c.${field})`,
+        params,
+        top,
+        NEWEST_WRITTEN_FIRST,
+      ),
     ]);
     return [...(withField || []), ...(withoutField || [])];
   }
@@ -245,7 +267,13 @@ function createSnapshotReads(store) {
     return { items: rows, stats: summarizeDashboardItems(rows) };
   }
 
-  return { countWhere, fetchProjected, fetchInViewOrder, recentNeedsReviewItems, fullScanStats };
+  return {
+    countWhere,
+    fetchProjected,
+    fetchInViewOrder,
+    recentNeedsReviewItems,
+    fullScanStats,
+  };
 }
 
 const seedFromStats = (stats, totalDocs) => {
@@ -260,7 +288,8 @@ const seedFromStats = (stats, totalDocs) => {
 
 /** Times a Recount scans again when the change feed overtakes it. */
 const RECOUNT_ATTEMPTS = 3;
-const isWriteConflict = (error) => [409, 412].includes(error?.code ?? error?.statusCode);
+const isWriteConflict = (error) =>
+  [409, 412].includes(error?.code ?? error?.statusCode);
 
 /**
  * One Recount: the counters' ETag, the scan, the markers, then the counters,
@@ -271,7 +300,11 @@ const isWriteConflict = (error) => [409, 412].includes(error?.code ?? error?.sta
  * older counts never land over newer ones (review of #1021).
  */
 async function recountOnce({ store, reads, now, user, rederiveMarkers }) {
-  const before = await store.readDoc("system", DASHBOARD_STATS_DOC_ID, DASHBOARD_STATS_DOC_ID);
+  const before = await store.readDoc(
+    "system",
+    DASHBOARD_STATS_DOC_ID,
+    DASHBOARD_STATS_DOC_ID,
+  );
   const scan = await reads.fullScanStats();
   const markers = await rederiveMarkers({ store, items: scan.items, now });
   if (markers.skipped > 0) return { written: false, scan, markers };
@@ -281,12 +314,14 @@ async function recountOnce({ store, reads, now, user, rederiveMarkers }) {
   const nowIso = now().toISOString();
   seed.updatedAt = nowIso;
   seed.recalculatedAt = nowIso;
-  seed.recalculatedBy = user.email || user.preferred_username || user.oid || "admin";
+  seed.recalculatedBy =
+    user.email || user.preferred_username || user.oid || "admin";
 
   // Deliberate full replace (source used .set() without merge): a
   // recalculation must clear drifted keys, not merge over them.
   try {
-    if (before?._etag) await store.replaceDocIfMatch("system", { ...seed, _etag: before._etag });
+    if (before?._etag)
+      await store.replaceDocIfMatch("system", { ...seed, _etag: before._etag });
     else await store.createDoc("system", seed);
   } catch (error) {
     if (isWriteConflict(error)) return { written: false, scan, markers };
@@ -354,7 +389,10 @@ async function buildQueueSnapshot({ reads, now }, body) {
   const window = Object.hasOwn(QUEUE_SORTS, statusFilter)
     ? reads.fetchProjected(where, params, fetchSize, NEWEST_WRITTEN_FIRST)
     : reads.fetchInViewOrder(where, params, fetchSize, sortField);
-  const [totalCount, rawItems] = await Promise.all([reads.countWhere(where, params), window]);
+  const [totalCount, rawItems] = await Promise.all([
+    reads.countWhere(where, params),
+    window,
+  ]);
 
   const blockedInPage = rawItems.filter(isBlockedContentSource).length;
   const filters = queueItemFilters({
@@ -432,9 +470,19 @@ export function createAdminSnapshotHandlers({
 
       try {
         const body = (await request.json().catch(() => null)) || {};
-        return json(200, await buildQueueSnapshot(ctx, body));
+        return answerWithoutHiddenOrigins(
+          store,
+          auth.user,
+          json(200, await buildQueueSnapshot(ctx, body)),
+        );
       } catch (error) {
-        return errorResponse(context, "Failed to generate queue snapshot", error, 500, request);
+        return errorResponse(
+          context,
+          "Failed to generate queue snapshot",
+          error,
+          500,
+          request,
+        );
       }
     },
 
@@ -466,16 +514,28 @@ export function createAdminSnapshotHandlers({
           sortDescBy("publishedAt"),
         );
 
-        return json(200, {
-          success: true,
-          generatedAt: now().toISOString(),
-          readyTotal,
-          publishedTotal,
-          readyCandidates,
-          publishedItems,
-        });
+        // The agent key never sees where a piece came from for a Page its key may
+        // not read (page-links/origin-ref.js, review of #1890).
+        return answerWithoutHiddenOrigins(
+          store,
+          auth.user,
+          json(200, {
+            success: true,
+            generatedAt: now().toISOString(),
+            readyTotal,
+            publishedTotal,
+            readyCandidates,
+            publishedItems,
+          }),
+        );
       } catch (error) {
-        return errorResponse(context, "Failed to generate publish snapshot", error, 500, request);
+        return errorResponse(
+          context,
+          "Failed to generate publish snapshot",
+          error,
+          500,
+          request,
+        );
       }
     },
 
@@ -489,8 +549,8 @@ export function createAdminSnapshotHandlers({
         // has no bucket for it (ready statuses fall in inProgress), so it is
         // one COUNT, the same one getPublishSnapshot's readyTotal runs.
         const ready = readyToPublishWhere();
-        const [statsDoc, recentNeedsReview, readyToPublish] =
-          await Promise.all([
+        const [statsDoc, recentNeedsReview, readyToPublish] = await Promise.all(
+          [
             store.readDoc(
               "system",
               DASHBOARD_STATS_DOC_ID,
@@ -498,20 +558,31 @@ export function createAdminSnapshotHandlers({
             ),
             reads.recentNeedsReviewItems(10),
             reads.countWhere(ready.where, ready.params),
-          ]);
+          ],
+        );
         const stats = statsDoc
           ? projectStats(statsDoc)
           : await scanAndSeedStats(ctx, context);
 
-        return json(200, {
-          success: true,
-          generatedAt: now().toISOString(),
-          stats,
-          readyToPublish,
-          recentNeedsReview,
-        });
+        return answerWithoutHiddenOrigins(
+          store,
+          auth.user,
+          json(200, {
+            success: true,
+            generatedAt: now().toISOString(),
+            stats,
+            readyToPublish,
+            recentNeedsReview,
+          }),
+        );
       } catch (error) {
-        return errorResponse(context, "Failed to generate dashboard snapshot", error, 500, request);
+        return errorResponse(
+          context,
+          "Failed to generate dashboard snapshot",
+          error,
+          500,
+          request,
+        );
       }
     },
 
@@ -542,9 +613,16 @@ export function createAdminSnapshotHandlers({
         // Loaded here rather than imported: triggers/dashboard-stats.js
         // imports this module, and a static import back would make the two a
         // cycle whose evaluation order decides whether either loads.
-        const { rederiveMarkers } = await import("./triggers/dashboard-stats.js");
+        const { rederiveMarkers } =
+          await import("./triggers/dashboard-stats.js");
         for (let attempt = 1; attempt <= RECOUNT_ATTEMPTS; attempt += 1) {
-          const outcome = await recountOnce({ store, reads, now, user, rederiveMarkers });
+          const outcome = await recountOnce({
+            store,
+            reads,
+            now,
+            user,
+            rederiveMarkers,
+          });
           if (outcome.written) {
             return json(200, {
               success: true,
@@ -560,7 +638,13 @@ export function createAdminSnapshotHandlers({
           message: `Content changed during each of ${RECOUNT_ATTEMPTS} recounts, so the counters were left as they were. Press Recount again in a minute.`,
         });
       } catch (error) {
-        return errorResponse(context, "Failed to recalculate dashboard stats", error, 500, request);
+        return errorResponse(
+          context,
+          "Failed to recalculate dashboard stats",
+          error,
+          500,
+          request,
+        );
       }
     },
   };

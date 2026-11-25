@@ -47,6 +47,7 @@ export function contentItemHref(item) {
  *   reminder     Platform Settings → Reminders
  *   chapter      Listen & Learn → Review, with the book's `platform` and `exam`
  *   application  Ambassador Hub → Applications
+ *   program      Ambassador Hub → Programs, with the program's details open (#1886)
  */
 export const LINK_PARAMS = Object.freeze({
   transcript: 'transcript',
@@ -57,6 +58,7 @@ export const LINK_PARAMS = Object.freeze({
   platform: 'platform',
   exam: 'exam',
   application: 'application',
+  program: 'program',
 });
 
 /** An address inside the admin, and nothing that could leave it. */

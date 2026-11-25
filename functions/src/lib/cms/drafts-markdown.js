@@ -102,6 +102,13 @@ export function markdownDraftContentId(title) {
  */
 export function readMarkdownRequest(body, { origin: forcedOrigin = null } = {}) {
   const { markdown, origin } = body && typeof body === "object" ? body : {};
+  // Only POST cms/drafts takes a sending Page (#1886). Said, not dropped: a
+  // caller that sent one would otherwise get a draft without it and not know.
+  if (body && typeof body === "object" && Object.hasOwn(body, "originRef")) {
+    throw new MarkdownRequestError(
+      "originRef is taken by POST cms/drafts only, not by the markdown route.",
+    );
+  }
   const draftOrigin =
     forcedOrigin ||
     (Object.hasOwn(MARKDOWN_ORIGINS, origin) ? MARKDOWN_ORIGINS[origin] : null);
