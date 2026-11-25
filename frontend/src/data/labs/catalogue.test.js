@@ -53,10 +53,10 @@ const labHostFile = (path) => readFileSync(join(process.cwd(), '..', 'lab-host',
 
 /** The launcher's LAB_WORKSPACES, read from its source as `{ id: name }`. */
 function launcherWorkspaces() {
-  const source = labHostFile('coder/launcher/launcher.js');
+  const source = labHostFile('coder/launcher/launcher-config.js');
   const block = source.match(/export const LAB_WORKSPACES = Object\.freeze\(\{([^}]*)\}\);/);
   if (!block)
-    throw new Error('lab-host/coder/launcher/launcher.js no longer declares LAB_WORKSPACES');
+    throw new Error('lab-host/coder/launcher/launcher-config.js no longer declares LAB_WORKSPACES');
   return Object.fromEntries(
     [...block[1].matchAll(/'([a-z0-9-]+)':\s*'([a-z0-9-]+)'/g)].map(([, id, name]) => [id, name])
   );

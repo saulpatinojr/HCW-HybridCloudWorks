@@ -16,7 +16,7 @@
  *      has that route) and `technology` naming what it exercises;
  *   2. one entry in the Coder template's lab map and parameter options
  *      (lab-host/coder/templates/hcw-lab/main.tf) and one in the launcher's
- *      LAB_WORKSPACES (lab-host/coder/launcher/launcher.js), both keyed by
+ *      LAB_WORKSPACES (lab-host/coder/launcher/launcher-config.js), both keyed by
  *      the same `id`.
  *
  * No new route, page or component: the provider list filters by
@@ -35,7 +35,7 @@
  *
  * `workspaceName` is the name the launcher gives the learner's workspace for
  * this lab, one per lab per learner. The launcher keeps the same map
- * (LAB_WORKSPACES in lab-host/coder/launcher/launcher.js) because it may only
+ * (LAB_WORKSPACES in lab-host/coder/launcher/launcher-config.js) because it may only
  * act on names it holds itself; this test and
  * scripts/lab-host-launcher.test.mjs both fail when the two differ. At most
  * 16 characters: code-server's address is `code-server--<workspace>--<owner>`,
