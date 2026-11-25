@@ -61,43 +61,52 @@ const hasKnownCost = (row) => row?.unpriced !== true && Number.isFinite(Number(r
 export function aggregateUsage(rows) {
   const byProvider = new Map();
   const bySource = new Map();
-  let costUsd = 0;
-  let unpricedCalls = 0;
-  let tokens = 0;
-  const add = (map, key) => {
-    if (!map.has(key)) map.set(key, { costUsd: 0, calls: 0, tokens: 0, unpricedCalls: 0 });
-    return map.get(key);
-  };
+  const totals = emptyBucket();
   for (const row of rows || []) {
-    const priced = hasKnownCost(row);
-    const cost = priced ? Number(row.estimatedCostUsd) : 0;
-    const rowTokens = Number(row?.totalTokens) || 0;
-    costUsd += cost;
-    tokens += rowTokens;
-    if (!priced) unpricedCalls += 1;
-    for (const [map, key] of [
-      [byProvider, String(row?.provider || 'unknown')],
-      [bySource, String(row?.source || 'ai:unspecified')],
-    ]) {
-      const bucket = add(map, key);
-      bucket.costUsd += cost;
-      bucket.calls += 1;
-      bucket.tokens += rowTokens;
-      if (!priced) bucket.unpricedCalls += 1;
-    }
+    const facts = rowFacts(row);
+    addToBucket(totals, facts);
+    addToBucket(bucketFor(byProvider, String(row?.provider || 'unknown')), facts);
+    addToBucket(bucketFor(bySource, String(row?.source || 'ai:unspecified')), facts);
   }
-  const present = (map, key) =>
-    [...map.entries()]
-      .map(([name, bucket]) => ({ [key]: name, ...bucket, costUsd: money(bucket.costUsd) }))
-      .sort((a, b) => b.costUsd - a.costUsd || b.calls - a.calls || a[key].localeCompare(b[key]));
   return {
-    costUsd: money(costUsd),
+    costUsd: money(totals.costUsd),
     calls: (rows || []).length,
-    unpricedCalls,
-    tokens,
-    byProvider: present(byProvider, 'provider'),
-    bySource: present(bySource, 'source'),
+    unpricedCalls: totals.unpricedCalls,
+    tokens: totals.tokens,
+    byProvider: presentBuckets(byProvider, 'provider'),
+    bySource: presentBuckets(bySource, 'source'),
   };
+}
+
+const emptyBucket = () => ({ costUsd: 0, calls: 0, tokens: 0, unpricedCalls: 0 });
+
+/** What one ledger row adds: its cost (0 when unpriced), its tokens, and whether it was priced. */
+function rowFacts(row) {
+  const priced = hasKnownCost(row);
+  return {
+    priced,
+    cost: priced ? Number(row.estimatedCostUsd) : 0,
+    tokens: Number(row?.totalTokens) || 0,
+  };
+}
+
+function bucketFor(map, key) {
+  if (!map.has(key)) map.set(key, emptyBucket());
+  return map.get(key);
+}
+
+function addToBucket(bucket, { priced, cost, tokens }) {
+  bucket.costUsd += cost;
+  bucket.calls += 1;
+  bucket.tokens += tokens;
+  if (!priced) bucket.unpricedCalls += 1;
+}
+
+/** A grouped map as rows, dearest first, then busiest, then by name. */
+function presentBuckets(map, key) {
+  return [...map.entries()]
+    .map(([name, bucket]) => ({ [key]: name, ...bucket, costUsd: money(bucket.costUsd) }))
+    .sort((a, b) => b.costUsd - a.costUsd || b.calls - a.calls || a[key].localeCompare(b[key]));
 }
 
 /** The fields one month's aggregation needs; the row's text fields never leave the store. */
@@ -151,6 +160,31 @@ export async function readCredits({ env, fetchImpl, now }) {
     return { configured: true, error: storedFailure(error, 'Could not read the ElevenLabs subscription.') };
   }
 }
+
+/** What each kind of provider card adds to the shared fields, by `card.kind`. */
+const CARD_EXTRAS = {
+  // Figures come from the Azure scope with this id (snapshot.js fills them in).
+  'azure-budget': ({ card }) => ({ scopeId: card.scopeId, budget: null, forecast: null, note: FOUNDRY_NOTE }),
+  credits: ({ credits }) => ({
+    plan: credits.plan ?? null,
+    planStatus: credits.planStatus ?? null,
+    used: credits.used ?? null,
+    limit: credits.limit ?? null,
+    left: credits.left ?? null,
+    percentLeft: credits.percentLeft ?? null,
+    resetAt: credits.resetAt ?? null,
+    error: credits.error,
+  }),
+  budget: ({ row, image, ledgerRow }) => ({
+    budget: image.budget,
+    images: ledgerRow(IMAGE_PROVIDER).calls,
+    maxImages: image.maxImages,
+    unitCostUsd: image.unitCostUsd,
+    percentUsed: percent(row.costUsd, image.budget),
+  }),
+  free: () => ({ note: FREE_NOTE }),
+  ledger: () => ({ note: LEDGER_NOTE }),
+};
 
 /**
  * The AI section of the snapshot.
@@ -219,36 +253,8 @@ export async function readAiCosts({
       monthToDate: row.costUsd,
       calls: row.calls,
     };
-    switch (card.kind) {
-      case 'azure-budget':
-        // Figures come from the Azure scope with this id (snapshot.js fills them in).
-        return { ...base, scopeId: card.scopeId, budget: null, forecast: null, note: FOUNDRY_NOTE };
-      case 'credits':
-        return {
-          ...base,
-          plan: credits.plan ?? null,
-          planStatus: credits.planStatus ?? null,
-          used: credits.used ?? null,
-          limit: credits.limit ?? null,
-          left: credits.left ?? null,
-          percentLeft: credits.percentLeft ?? null,
-          resetAt: credits.resetAt ?? null,
-          error: credits.error,
-        };
-      case 'budget':
-        return {
-          ...base,
-          budget: image.budget,
-          images: ledgerRow(IMAGE_PROVIDER).calls,
-          maxImages: image.maxImages,
-          unitCostUsd: image.unitCostUsd,
-          percentUsed: percent(row.costUsd, image.budget),
-        };
-      case 'free':
-        return { ...base, note: FREE_NOTE };
-      default:
-        return { ...base, note: LEDGER_NOTE };
-    }
+    const extra = CARD_EXTRAS[card.kind] ?? CARD_EXTRAS.ledger;
+    return { ...base, ...extra({ card, row, credits, image, ledgerRow }) };
   });
 
   return {
