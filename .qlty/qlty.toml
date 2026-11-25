@@ -246,3 +246,56 @@ set.ignored = true
 [[exclude]]
 plugins = ["checkov", "trivy"]
 file_patterns = ["lab-image/smoke/**"]
+
+# DATA AND STYLE TABLES: similar-code only (owner decision 2026-11-25, #1845).
+# These files are lists of records (catalogue rows, write-ups, learning paths,
+# card lists) or tables of Tailwind colour classes. Their rows look alike
+# because every row has the same fields, so Qlty's duplicate finder reports
+# them as "similar code"; there is no code to share. This block ignores ONLY
+# `qlty:similar-code`, ONLY in the files named below, one by one. Every other
+# smell (complex functions, many returns, copied identical code) still reports
+# in these files, and a new data file is not covered until it is added here by
+# name, with its reason in docs/security/scanner-triage.md#code-smells-in-data-and-style-tables.
+#
+# Who reads this block. Qlty itself does not apply [[triage]] to its own
+# smells yet, in the CLI or in Qlty Cloud (qltysh/qlty#2902, confirmed by a
+# Qlty maintainer on 2026-10-04), so the Qlty Cloud dashboard still lists
+# these. The pull request smell check in ci.yml (scripts/check-new-smells.mjs)
+# reads this block and applies it the way Qlty documents [[triage]], so the
+# check and this list cannot disagree.
+[[triage]]
+match.plugins = ["qlty"]
+match.rules = ["qlty:similar-code"]
+match.file_patterns = [
+  "frontend/src/data/addons/catalogue.js",
+  "frontend/src/data/ansible/education.js",
+  "frontend/src/data/architectures.js",
+  "frontend/src/data/aws/certifications.js",
+  "frontend/src/data/labs/catalogue.js",
+  "frontend/src/data/serviceDocsData.js",
+  "frontend/src/data/vmware/education.js",
+  "frontend/src/lib/landingZone/hcl/aws/index.js",
+  "frontend/src/lib/landingZone/hcl/aws/readme.js",
+  "frontend/src/lib/landingZone/hcl/gcp/index.js",
+  "frontend/src/lib/landingZone/hcl/gcp/readme.js",
+  "frontend/src/pages/ansible/LandingPage.jsx",
+  "frontend/src/pages/aws/EducationPage.jsx",
+  "frontend/src/pages/aws/education/CertDetailPage.jsx",
+  "frontend/src/pages/aws/education/MicrocredentialDetailPage.jsx",
+  "frontend/src/pages/azure/EducationPage.jsx",
+  "frontend/src/pages/azure/education/CertDetailPage.jsx",
+  "frontend/src/pages/azure/education/azureTimeline.jsx",
+  "frontend/src/pages/finops/EducationPage.jsx",
+  "frontend/src/pages/finops/FocusPage.jsx",
+  "frontend/src/pages/finops/architecture-blueprints.js",
+  "frontend/src/pages/gcp/EducationPage.jsx",
+  "frontend/src/pages/gcp/LandingPage.jsx",
+  "frontend/src/pages/gcp/architecture-blueprints.js",
+  "frontend/src/pages/github/EducationPage.jsx",
+  "frontend/src/pages/github/LandingPage.jsx",
+  "frontend/src/pages/shared/PodcastPage.jsx",
+  "frontend/src/pages/terraform/LandingPage.jsx",
+  "frontend/src/pages/terraform/ModulesPage.jsx",
+  "functions/src/lib/ambassador/programs.js",
+]
+set.ignored = true
