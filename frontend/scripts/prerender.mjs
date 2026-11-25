@@ -533,6 +533,52 @@ export function outputPathFor(dist, route) {
 }
 
 /**
+ * What to do with one rendered route: write it (`{ ok: true }`), skip it as
+ * the 404 page (`{ skip: true }`), or fail the build (`{ failure }`, one line
+ * naming the route and the reason). The checks run in this order, and the
+ * first that applies decides.
+ */
+export function judgeRender(route, rendered) {
+  if (rendered.errors.length > 0) {
+    // An error boundary produces perfectly valid-looking HTML. Without this
+    // check the error state would be written out and published as the page.
+    return { failure: `${route}: rendered an error — ${rendered.errors[0].message}` };
+  }
+
+  const streamed = findStreamedBoundary(rendered.html);
+  if (streamed) {
+    // A page in Fizz's streamed form passed every check below on 2026-09-06:
+    // the shell had header, footer and a spinner, the page itself sat in a
+    // hidden segment, and the text count was well above the shell floor.
+    // It is not a page — nothing without JavaScript ever sees the content,
+    // and the browser cannot run the swap script under this site's CSP.
+    return { failure: `${route}: ${streamed} (see prerender-entry.jsx progressiveChunkSize)` };
+  }
+
+  if (rendered.html.includes('data-page="not-found"')) {
+    // Not an error. `/:provider/<section>` is declared for every provider,
+    // and the dispatcher behind it renders the 404 page for the combinations
+    // that have no content — /azure/code and /github/frameworks among them.
+    // The route list is a candidate grid, so this is the expected answer for
+    // a real part of it.
+    //
+    // It must still be SKIPPED rather than written: the page says "this page
+    // does not exist" and would be served at HTTP 200 for a crawler to index
+    // as content. Reported so the count is visible and a sudden jump is not.
+    return { skip: true };
+  }
+
+  const text = rendered.html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length < MIN_TEXT_CHARS) {
+    return { failure: `${route}: only ${text.length} characters of text — a shell, not a page` };
+  }
+  return { ok: true };
+}
+
+/**
  * Minimal browser globals for libraries that need a document at import time.
  *
  * Installing a window is not free. Before this, `typeof window === 'undefined'`
@@ -685,44 +731,13 @@ async function main() {
       continue;
     }
 
-    if (rendered.errors.length > 0) {
-      // An error boundary produces perfectly valid-looking HTML. Without this
-      // check the error state would be written out and published as the page.
-      failures.push(`${route}: rendered an error — ${rendered.errors[0].message}`);
+    const verdict = judgeRender(route, rendered);
+    if (verdict.failure) {
+      failures.push(verdict.failure);
       continue;
     }
-
-    const streamed = findStreamedBoundary(rendered.html);
-    if (streamed) {
-      // A page in Fizz's streamed form passed every check below on 2026-09-06:
-      // the shell had header, footer and a spinner, the page itself sat in a
-      // hidden segment, and the text count was well above the shell floor.
-      // It is not a page — nothing without JavaScript ever sees the content,
-      // and the browser cannot run the swap script under this site's CSP.
-      failures.push(`${route}: ${streamed} (see prerender-entry.jsx progressiveChunkSize)`);
-      continue;
-    }
-
-    if (rendered.html.includes('data-page="not-found"')) {
-      // Not an error. `/:provider/<section>` is declared for every provider,
-      // and the dispatcher behind it renders the 404 page for the combinations
-      // that have no content — /azure/code and /github/frameworks among them.
-      // The route list is a candidate grid, so this is the expected answer for
-      // a real part of it.
-      //
-      // It must still be SKIPPED rather than written: the page says "this page
-      // does not exist" and would be served at HTTP 200 for a crawler to index
-      // as content. Reported so the count is visible and a sudden jump is not.
+    if (verdict.skip) {
       skipped.push(route);
-      continue;
-    }
-
-    const text = rendered.html
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (text.length < MIN_TEXT_CHARS) {
-      failures.push(`${route}: only ${text.length} characters of text — a shell, not a page`);
       continue;
     }
 

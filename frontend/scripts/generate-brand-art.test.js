@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import {
   COVER_PROVIDERS,
   COVER_SIZE,
@@ -124,5 +125,60 @@ describe('generated brand art', () => {
     expect(png[25]).toBe(6);
     expect(png.subarray(png.length - 8, png.length - 4).toString('ascii')).toBe('IEND');
     expect(() => encodePng(2, 2, Buffer.alloc(3))).toThrow(/expected 16/);
+  });
+
+  // Written before #1859 moved the Paeth predictor into its own function. A
+  // PNG row is stored as the difference from a guess (the filter), and the
+  // encoder picks the guess that makes the row smallest. This decodes the
+  // file with the PNG specification's own rules, written separately here, so
+  // a wrong guess anywhere in the encoder shows up as a wrong pixel.
+  it('picks the smallest filter per row, and the pixels decode back exactly', () => {
+    const width = 8;
+    const height = 6;
+    const rgba = Buffer.alloc(width * height * 4);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const i = (y * width + x) * 4;
+        rgba[i] = x * 20 + y * 7;
+        rgba[i + 1] = (x * x + y * 3) & 0xff;
+        rgba[i + 2] = (y * y * 5 + x) & 0xff;
+        rgba[i + 3] = 255;
+      }
+    }
+    const png = encodePng(width, height, rgba);
+    const idat = [];
+    for (let at = 8; at < png.length;) {
+      const length = png.readUInt32BE(at);
+      if (png.subarray(at + 4, at + 8).toString('ascii') === 'IDAT') {
+        idat.push(png.subarray(at + 8, at + 8 + length));
+      }
+      at += 12 + length;
+    }
+    const raw = inflateSync(Buffer.concat(idat));
+    const stride = width * 4;
+    const paeth = (a, b, c) => {
+      const p = a + b - c;
+      const pa = Math.abs(p - a);
+      const pb = Math.abs(p - b);
+      const pc = Math.abs(p - c);
+      if (pa <= pb && pa <= pc) return a;
+      if (pb <= pc) return b;
+      return c;
+    };
+    const decoded = Buffer.alloc(stride * height);
+    const filters = [];
+    for (let y = 0; y < height; y += 1) {
+      const filter = raw[y * (stride + 1)];
+      filters.push(filter);
+      for (let i = 0; i < stride; i += 1) {
+        const a = i >= 4 ? decoded[y * stride + i - 4] : 0;
+        const b = y > 0 ? decoded[(y - 1) * stride + i] : 0;
+        const c = y > 0 && i >= 4 ? decoded[(y - 1) * stride + i - 4] : 0;
+        const guess = [0, a, b, (a + b) >> 1, paeth(a, b, c)][filter];
+        decoded[y * stride + i] = (raw[y * (stride + 1) + 1 + i] + guess) & 0xff;
+      }
+    }
+    expect(filters).toEqual([1, 4, 4, 4, 4, 4]);
+    expect(decoded.equals(rgba)).toBe(true);
   });
 });

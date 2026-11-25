@@ -296,7 +296,7 @@ export function rewriteSmokePin(payloadSource, name, fromVersion, toVersion) {
       `the smoke payload holds ${matches.length} blocks for ${name}, not one, so it was not written.`
     );
   }
-  const [, , current] = matches[0];
+  const [[, , current]] = matches;
   if (/^\d+\.\d+\.\d+$/.test(current) && current !== fromVersion) {
     throw new EditRefused(
       `the smoke payload pins ${name} at ${current}, not the ${fromVersion} avmVersions.js pins, so it was not written.`

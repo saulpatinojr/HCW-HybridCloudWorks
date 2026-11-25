@@ -36,6 +36,19 @@ export default [
       'node_modules/**',
       'coverage/**',
       'documentation/archive/**',
+      // Made by a build or a test run, never written by hand, and ignored by
+      // git (.gitignore). `npm run lint` reads this whole folder since #1859,
+      // so a local run after a build or a browser test would otherwise lint
+      // them: dist-ssr/ is the pre-render step's server bundle, public/data/
+      // the data snapshot generate-public-data.cjs writes, and the rest are
+      // Playwright's, Lighthouse's and Vitest's reports.
+      'dist-ssr/**',
+      'public/data/**',
+      'playwright-report/**',
+      'test-results/**',
+      'reports/**',
+      '.lighthouseci/**',
+      '.vitest/**',
     ],
   },
   {
