@@ -50,7 +50,7 @@
  *     titles, summaries and URLs when the document does not carry one
  *     (`blog`, `frameworks`). Such an item can surface on any provider's
  *     page, so while one exists no provider's zero for that section is
- *     trusted — `sitemapRoutes` in frontend/scripts/prerender.mjs reads the
+ *     trusted — `sitemapRoutes` in frontend/scripts/prerender-routes.mjs reads the
  *     bucket for exactly that. The remaining sections filter on a stored
  *     field in SQL (`c.provider = @provider`, or the `Cloud Provider` alias
  *     match), so an item naming no recognised provider is fetched by no page

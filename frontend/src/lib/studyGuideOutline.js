@@ -31,7 +31,8 @@
  * `prerenderToNodeStream` waits for every suspended boundary before it
  * completes (the same mechanism that renders the lazy route pages), and
  * prerender-entry.jsx's `progressiveChunkSize` keeps the finished boundary
- * inline — prerender.mjs's findStreamedBoundary gate refuses the build if not.
+ * inline — the findStreamedBoundary gate (prerender-html.mjs) refuses the
+ * build if not.
  */
 import { use } from 'react';
 
