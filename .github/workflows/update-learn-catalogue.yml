@@ -4,6 +4,12 @@ name: Update Learn Catalogue
 # the outlines in frontend/src/data/azure/study-guides/ from Microsoft Learn and
 # opens one pull request when either changed (#461 item 3, #499).
 #
+# THE CATALOGUE IS TWO FILES SINCE #1845. The rows the script writes moved to
+# frontend/src/data/azure/generated/certifications.js, so Qlty's duplicate
+# finder skips them (it ignores **/generated/** by default);
+# certifications.js keeps the sync date and the hand-written history and
+# re-exports the rows. Both are staged by exact path, like the outlines.
+#
 # ONE DIRECTORY, NOT ONE FILE, SINCE #500. The outlines are one module per
 # guide plus index.js, so a detail page downloads only its own. The directory
 # is staged by path as a single output: `git add <dir>` stages additions,
@@ -222,7 +228,7 @@ jobs:
         # this week is an UNTRACKED file, which `git diff` does not report.
         run: |
           set -euo pipefail
-          if [ -z "$(git status --porcelain -- frontend/src/data/azure/certifications.js frontend/src/data/azure/study-guides)" ]; then
+          if [ -z "$(git status --porcelain -- frontend/src/data/azure/certifications.js frontend/src/data/azure/generated/certifications.js frontend/src/data/azure/study-guides)" ]; then
             echo "Neither the catalogue nor the outlines changed."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -240,6 +246,7 @@ jobs:
           name: learn-catalogue
           path: |
             frontend/src/data/azure/certifications.js
+            frontend/src/data/azure/generated/certifications.js
             frontend/src/data/azure/study-guides/
             learn-catalogue-summary.md
             study-guides-summary.md
@@ -320,11 +327,12 @@ jobs:
         run: |
           set -euo pipefail
           cp "${RUNNER_TEMP}/learn-catalogue/frontend/src/data/azure/certifications.js" frontend/src/data/azure/certifications.js
+          cp "${RUNNER_TEMP}/learn-catalogue/frontend/src/data/azure/generated/certifications.js" frontend/src/data/azure/generated/certifications.js
           # The directory is REPLACED, not merged into: a guide the updater
           # deleted (its exam left the catalogue) must be absent here too.
           rm -rf frontend/src/data/azure/study-guides
           cp -R "${RUNNER_TEMP}/learn-catalogue/frontend/src/data/azure/study-guides" frontend/src/data/azure/study-guides
-          if [ -z "$(git status --porcelain -- frontend/src/data/azure/certifications.js frontend/src/data/azure/study-guides)" ]; then
+          if [ -z "$(git status --porcelain -- frontend/src/data/azure/certifications.js frontend/src/data/azure/generated/certifications.js frontend/src/data/azure/study-guides)" ]; then
             echo "Neither the catalogue nor the outlines changed."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -388,6 +396,7 @@ jobs:
           git config user.email 'hcw-manifest[bot]@users.noreply.github.com'
           git checkout -b "${branch}"
           git add frontend/src/data/azure/certifications.js
+          git add frontend/src/data/azure/generated/certifications.js
           git add frontend/src/data/azure/study-guides
           git commit -m "chore: refresh the Azure Learn catalogue and study-guide outlines (checked ${AS_OF})"
           git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
@@ -409,7 +418,7 @@ jobs:
           {
             echo "## Summary"
             echo
-            echo "Weekly refresh of \`frontend/src/data/azure/certifications.js\` and the outlines in \`frontend/src/data/azure/study-guides/\` from Microsoft Learn by \`.github/workflows/update-learn-catalogue.yml\` (#461 item 3, #499, #500). Opened by the App rather than pushed to \`main\`, so the required checks run on it. That file and that directory are the only paths it may touch."
+            echo "Weekly refresh of \`frontend/src/data/azure/certifications.js\` (rows in \`frontend/src/data/azure/generated/certifications.js\`) and the outlines in \`frontend/src/data/azure/study-guides/\` from Microsoft Learn by \`.github/workflows/update-learn-catalogue.yml\` (#461 item 3, #499, #500). Opened by the App rather than pushed to \`main\`, so the required checks run on it. Those two files and that directory are the only paths it may touch."
             echo
             cat "${SUMMARY}"
             echo

@@ -42,6 +42,9 @@ exclude_patterns = [
   "**/deps/**",
   "**/extern/**",
   "**/external/**",
+  # Kept on purpose (owner decision 2026-11-25, #1845): the Azure
+  # certification rows that frontend/scripts/update-applied-skills.mjs writes
+  # live in frontend/src/data/azure/generated/ so this pattern skips them.
   "**/generated/**",
   "**/Godeps/**",
   "**/gradlew/**",
