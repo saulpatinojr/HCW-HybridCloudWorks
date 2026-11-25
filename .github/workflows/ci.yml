@@ -2143,6 +2143,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install the Qlty CLI (pinned, digest checked)
+        id: qlty-install
         run: |
           set -euo pipefail
           tools="${RUNNER_TEMP}/qlty"
@@ -2170,6 +2171,7 @@ jobs:
       # line it excuses, in the diff a reviewer reads. Review of #1841,
       # 2026-11-24.
       - name: Use the base branch's scanner rules
+        id: base-rules
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -2211,8 +2213,11 @@ jobs:
 
       # Node.js 26, the line scripts/package.json requires, for the smell
       # check below. That script imports node: built-ins only, so nothing is
-      # installed and there is nothing to cache.
+      # installed and there is nothing to cache. Runs, like the smell check,
+      # even when the security scan above failed, so one pull request sees
+      # both answers in one run.
       - name: Set up Node.js
+        if: ${{ !cancelled() && steps.qlty-install.outcome == 'success' && steps.base-rules.outcome == 'success' }}
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '26'
@@ -2228,7 +2233,12 @@ jobs:
       # (qltysh/qlty#2902), which is why the script does. The script is taken
       # from the base commit when it is there, like the rules, so a pull
       # request cannot loosen the check that judges it.
+      #
+      # It runs even when the security scan failed (only a cancelled run, a
+      # missing CLI or missing base rules stop it), so both answers arrive in
+      # one run.
       - name: Check for new code smells
+        if: ${{ !cancelled() && steps.qlty-install.outcome == 'success' && steps.base-rules.outcome == 'success' }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
