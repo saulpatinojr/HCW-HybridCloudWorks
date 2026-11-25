@@ -153,7 +153,7 @@ const AWS_CERT_ROUTES = [
  * (#1628): scripts/build-content-manifest.mjs lists each published design at
  * this same address, with its seed under `architecture:<slug>` holding what
  * the API answers for it, so the built page is the whole design. A design in
- * both places is listed twice and built once (`dedupeRoutes` in prerender.mjs).
+ * both places is listed twice and built once (`dedupeRoutes` in prerender-routes.mjs).
  * not-found-routing.test.js holds every design the manifest carries to a page.
  */
 const ARCHITECTURE_ROUTES = Object.entries(architecturesByProvider).flatMap(

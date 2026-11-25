@@ -62,12 +62,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import {
-  decodeAttribute,
-  filesUnder,
-  startTags,
-  styleAttributeValues,
-} from './stage-swa-config.mjs';
+import { decodeAttribute, filesUnder } from './stage-swa-config.mjs';
+import { allowedBy, imageOrigin, imgSrcOf } from './image-hosts-policy.mjs';
+import { imageSourcesInCss, imageSourcesInHtml } from './image-hosts-sources.mjs';
+
+// The readers and the policy helpers live in sibling modules (#1845) and are
+// re-exported here, so check-image-hosts.test.js imports from one place.
+export { allowedBy, imageOrigin, imgSrcOf } from './image-hosts-policy.mjs';
+export { imageSourcesInCss, imageSourcesInHtml } from './image-hosts-sources.mjs';
 
 /**
  * Hosts whose references are reported and tolerated, with the reason. An
@@ -79,120 +81,8 @@ export const RETIRED_IMAGE_HOSTS = Object.freeze({
     'the Firebase-era storage bucket is gone (#518); two article pages still carry its URLs for a gallery image until they are re-hosted through the media route',
 });
 
-const FONT_URL = /\.(woff2?|ttf|otf|eot)([?#]|$)|^data:(font\/|application\/(x-)?font)/i;
-const IMAGE_ELEMENTS = new Set(['img', 'source', 'video', 'input', 'link']);
-const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/g;
 const HTML_IMG_SRC = /<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
 const MARKDOWN_IMAGE = /!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
-
-const STYLE_ELEMENT = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
-const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
-
-/**
- * The candidate URLs of a srcset, read the way the HTML specification reads
- * them: skip whitespace and commas, take the next run of non-whitespace as
- * the URL, drop any commas it ends with, and unless it ended with one skip
- * the descriptors up to the next comma. A split on ", " is not that: a hand
- * written `a.png 1x,b.png 2x` has no space after its comma and would lose
- * its second candidate, and a data URI carries commas of its own.
- */
-function srcsetUrls(value) {
-  const urls = [];
-  let position = 0;
-  while (position < value.length) {
-    while (position < value.length && /[\s,]/.test(value[position])) position += 1;
-    if (position >= value.length) break;
-    const start = position;
-    while (position < value.length && !/\s/.test(value[position])) position += 1;
-    const token = value.slice(start, position);
-    const url = token.replace(/,+$/, '');
-    if (url) urls.push(url);
-    if (!token.endsWith(',')) {
-      while (position < value.length && value[position] !== ',') position += 1;
-    }
-  }
-  return urls;
-}
-
-/**
- * The images a <link> fetches: an icon, or a preload or prefetch of an image
- * (its href and every imagesrcset candidate). Any other link fetches none.
- */
-function linkImageSources(read) {
-  const rel = (read('rel') || '').toLowerCase();
-  const preloadsImage =
-    /\b(preload|prefetch)\b/.test(rel) && (read('as') || '').toLowerCase() === 'image';
-  if (!preloadsImage && !/\bicon\b/.test(rel)) return [];
-  const found = [];
-  const href = read('href');
-  if (href) found.push({ url: href, where: 'link.href' });
-  const imagesrcset = read('imagesrcset');
-  if (imagesrcset) {
-    for (const url of srcsetUrls(imagesrcset)) found.push({ url, where: 'link.imagesrcset' });
-  }
-  return found;
-}
-
-/**
- * The images any other image element fetches: a video's poster, everyone
- * else's src, and every srcset candidate. An <input> fetches one only when it
- * is `type="image"`.
- */
-function elementImageSources(tag, read) {
-  if (tag === 'input' && (read('type') || '').toLowerCase() !== 'image') return [];
-  const found = [];
-  const name = tag === 'video' ? 'poster' : 'src';
-  const value = read(name);
-  if (value) found.push({ url: value, where: `${tag}.${name}` });
-  const srcset = read('srcset');
-  if (srcset) for (const url of srcsetUrls(srcset)) found.push({ url, where: `${tag}.srcset` });
-  return found;
-}
-
-/**
- * The CSS a page carries inline fetches images exactly as a stylesheet
- * does: a background in a <style> block or in a style attribute is an image
- * request, and the stylesheet scan would never see it.
- */
-function inlineCssImageSources(html) {
-  const found = [];
-  for (const match of html.matchAll(STYLE_ELEMENT)) {
-    for (const entry of imageSourcesInCss(match[1])) {
-      found.push({ url: entry.url, where: 'style element url()' });
-    }
-  }
-  for (const value of styleAttributeValues(html)) {
-    for (const entry of imageSourcesInCss(value)) {
-      found.push({ url: entry.url, where: 'style attribute url()' });
-    }
-  }
-  return found;
-}
-
-/** Every image URL a page's markup fetches, with the element and attribute it came from. */
-export function imageSourcesInHtml(html) {
-  const found = [];
-  // Attributes are read by startTags, in all three forms and only in
-  // attribute position, so `src=` in an alt text is not taken for the source.
-  for (const { name: tag, attributes } of startTags(html)) {
-    if (!IMAGE_ELEMENTS.has(tag)) continue;
-    const read = (name) => attributes.get(name);
-    const sources = tag === 'link' ? linkImageSources(read) : elementImageSources(tag, read);
-    found.push(...sources);
-  }
-  found.push(...inlineCssImageSources(html));
-  return found;
-}
-
-/** Every `url()` in a stylesheet that is not a font. */
-export function imageSourcesInCss(css) {
-  const found = [];
-  for (const match of css.matchAll(CSS_URL)) {
-    const url = (match[1] ?? match[2] ?? match[3] ?? '').trim();
-    if (url && !FONT_URL.test(url)) found.push({ url, where: 'css url()' });
-  }
-  return found;
-}
 
 /**
  * Every image an article body renders, from the manifest's `data` map. Every
@@ -214,65 +104,6 @@ export function imageSourcesInManifest(manifest) {
     }
   }
   return found.filter((entry) => entry.url);
-}
-
-/**
- * What a URL needs from img-src: `'self'` for a relative path, its origin
- * for http and https, and otherwise its scheme as a token (`data:`, `blob:`,
- * and equally `ftp:` or `javascript:`). Only a URL with NO scheme is
- * relative: anything else goes to `allowedBy` under its own name, so a
- * scheme the policy never heard of is reported missing rather than waved
- * through as a page of the site. A protocol-relative URL resolves on https.
- */
-export function imageOrigin(url) {
-  const value = url.trim();
-  if (value.startsWith('//')) {
-    try {
-      return new URL(`https:${value}`).origin;
-    } catch {
-      return value;
-    }
-  }
-  const scheme = SCHEME.exec(value)?.[1].toLowerCase();
-  if (!scheme) return "'self'";
-  if (scheme === 'http' || scheme === 'https') {
-    try {
-      return new URL(value).origin;
-    } catch {
-      return value;
-    }
-  }
-  return `${scheme}:`;
-}
-
-/**
- * Whether an origin is admitted by a list of img-src sources. `'self'` admits
- * only relative URLs: the site answers on the apex and on www, and an absolute
- * URL to one of them would fail on the other. A `https://*.example` source
- * admits every subdomain and not the bare domain, as the browser reads it.
- */
-export function allowedBy(origin, sources) {
-  if (origin === "'self'" || origin === 'data:' || origin === 'blob:')
-    return sources.includes(origin);
-  if (!origin.startsWith('https://')) return false;
-  const host = origin.slice('https://'.length);
-  return sources.some((source) => {
-    if (source === origin) return true;
-    if (source.startsWith('https://*.')) {
-      const suffix = source.slice('https://*'.length);
-      return host.endsWith(suffix) && host.length > suffix.length;
-    }
-    return false;
-  });
-}
-
-/** The img-src sources of a policy, or an empty list when the directive is absent. */
-export function imgSrcOf(policy) {
-  const directive = policy
-    .split(';')
-    .map((part) => part.trim())
-    .find((part) => part === 'img-src' || part.startsWith('img-src '));
-  return directive ? directive.slice('img-src'.length).trim().split(/\s+/).filter(Boolean) : [];
 }
 
 /** `allowed` when img-src lets the origin in, `retired` when it is tolerated, else `missing`. */
