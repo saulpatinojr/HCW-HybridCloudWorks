@@ -125,32 +125,55 @@ function chooseDraftsFolder({ vault, env, repoRoot }) {
   return { drafts, realRoot };
 }
 
+/** Options that are on when given: option -> the field it sets. */
+const FLAG_OPTIONS = { '--help': 'help', '-h': 'help', '--dry-run': 'dryRun' };
+/** Options that take the next argument: option -> [the field it sets, what the value must be]. */
+const VALUE_OPTIONS = { '--name': ['name', 'a value'], '--vault': ['vault', 'a folder'] };
+/** Options that are refused with their own message. */
+const RETIRED_OPTIONS = {
+  '--out-dir': '--out-dir no longer exists: drafts go to <vault>/Drafts. Give your vault with --vault <folder> or set HCW_VAULT',
+};
+
 function readArgs(argv) {
   const options = { note: null, name: undefined, vault: undefined, dryRun: false, help: false };
   for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === '--help' || arg === '-h') options.help = true;
-    else if (arg === '--dry-run') options.dryRun = true;
-    else if (arg === '--out-dir') {
-      return {
-        error:
-          '--out-dir no longer exists: drafts go to <vault>/Drafts. Give your vault with --vault <folder> or set HCW_VAULT',
-      };
-    } else if (arg === '--name' || arg === '--vault') {
-      // The next argument is this option's value. A missing one, or another
-      // option standing where the value should be, is a mistake to report, not
-      // a path to guess (an empty folder name would resolve to the current folder).
-      const value = argv[++index];
-      if (!value || value.startsWith('-')) {
-        return { error: `${arg} needs ${arg === '--name' ? 'a value' : 'a folder'}` };
-      }
-      if (arg === '--name') options.name = value;
-      else options.vault = value;
-    } else if (arg.startsWith('-')) return { error: `unknown option ${arg}` };
-    else if (options.note === null) options.note = arg;
-    else return { error: 'give one note at a time' };
+    const step = readArg(argv[index], argv[index + 1], options);
+    if (step.error) return { error: step.error };
+    index += step.consumed;
   }
   return { options };
+}
+
+/** One argument onto `options`: `{ consumed }`, how many arguments after it were its value, or `{ error }`. */
+function readArg(arg, next, options) {
+  if (Object.hasOwn(FLAG_OPTIONS, arg)) {
+    options[FLAG_OPTIONS[arg]] = true;
+    return { consumed: 0 };
+  }
+  if (Object.hasOwn(VALUE_OPTIONS, arg)) return readValue(arg, next, options);
+  if (arg.startsWith('-')) return { error: RETIRED_OPTIONS[arg] ?? `unknown option ${arg}` };
+  if (options.note !== null) return { error: 'give one note at a time' };
+  options.note = arg;
+  return { consumed: 0 };
+}
+
+function readValue(arg, value, options) {
+  // The next argument is this option's value. A missing one, or another
+  // option standing where the value should be, is a mistake to report, not
+  // a path to guess (an empty folder name would resolve to the current folder).
+  const [field, needs] = VALUE_OPTIONS[arg];
+  if (!value || value.startsWith('-')) return { error: `${arg} needs ${needs}` };
+  options[field] = value;
+  return { consumed: 1 };
+}
+
+/** The run stops here: exit `code`, with `lines` on stderr. */
+class Stop extends Error {
+  constructor(code, lines) {
+    super(lines[0]);
+    this.code = code;
+    this.lines = lines;
+  }
 }
 
 function main(argv, { now = () => new Date(), env = process.env, repoRoot = REPO_ROOT } = {}) {
@@ -159,53 +182,80 @@ function main(argv, { now = () => new Date(), env = process.env, repoRoot = REPO
     console.error(`${error}\n\n${USAGE}`);
     return 2;
   }
-  if (options.help) {
+  if (options.help || !options.note) {
     console.log(USAGE);
-    return 0;
+    return options.help ? 0 : 2;
   }
-  if (!options.note) {
-    console.log(USAGE);
-    return 2;
+  try {
+    return promote(options, { now, env, repoRoot });
+  } catch (stop) {
+    if (!(stop instanceof Stop)) throw stop;
+    for (const line of stop.lines) console.error(line);
+    return stop.code;
   }
+}
 
-  // The folder is decided, and refused if it is inside the repository, before
-  // anything else is read or made.
+/**
+ * The folder the draft goes in. It is decided, and refused if it is inside the
+ * repository, before anything else is read or made.
+ */
+function draftsFolderFor(options, { env, repoRoot }) {
   const where = chooseDraftsFolder({ vault: options.vault, env, repoRoot });
-  if (where.error) {
-    console.error(where.error);
-    return where.refused ? 1 : 2;
-  }
+  if (where.error) throw new Stop(where.refused ? 1 : 2, [where.error]);
   const vaultFolder = dirname(where.drafts);
   if (!existsSync(vaultFolder) || !statSync(vaultFolder).isDirectory()) {
-    console.error(`The vault folder "${vaultFolder}" does not exist. Check the path you gave.`);
-    return 2;
+    throw new Stop(2, [`The vault folder "${vaultFolder}" does not exist. Check the path you gave.`]);
   }
+  return where;
+}
 
-  let text;
+function readNoteText(notePath) {
   try {
-    const read = readNoteFile(options.note);
+    const read = readNoteFile(notePath);
     if (read.tooBig) throw new Error('the file is over 1 MB');
-    text = read.text;
+    return read.text;
   } catch (readError) {
-    console.error(`Cannot read "${options.note}": ${readError.message}`);
-    return 2;
+    throw new Stop(2, [`Cannot read "${notePath}": ${readError.message}`]);
   }
+}
 
-  const { issues, note } = checkNote(basename(options.note), text);
+/** The draft's file name and text, or a Stop naming why the note is not promoted. */
+function promotionFor(notePath, text, { name, now }) {
+  const { issues, note } = checkNote(basename(notePath), text);
   if (!note) {
-    console.error(`${options.note} does not follow the idea-note format, so it was not promoted:`);
-    for (const issue of issues) {
-      console.error(`  ${issue.line ? `line ${issue.line}: ` : ''}${issue.message}`);
-    }
-    return 1;
+    throw new Stop(1, [
+      `${notePath} does not follow the idea-note format, so it was not promoted:`,
+      ...issues.map((issue) => `  ${issue.line ? `line ${issue.line}: ` : ''}${issue.message}`),
+    ]);
   }
+  const plan = planPromotion(note, { name, now });
+  if (!plan.ok) throw new Stop(1, [`${notePath} was not promoted:`, ...plan.reasons.map((reason) => `  ${reason}`)]);
+  return plan;
+}
 
-  const plan = planPromotion(note, { name: options.name, now });
-  if (!plan.ok) {
-    console.error(`${options.note} was not promoted:`);
-    for (const reason of plan.reasons) console.error(`  ${reason}`);
-    return 1;
+/** Write the draft, never over an existing file and never inside the repository. */
+function writeDraft(where, target, text, repoRoot) {
+  try {
+    mkdirSync(where.drafts, { recursive: true });
+    // Look again now that the folder exists: a link made in the meantime, or one
+    // the first look could not see, must not carry the file into the repository.
+    if (isInside(realPathOf(where.drafts), where.realRoot)) {
+      throw new Stop(1, [`Refused: "${where.drafts}" is inside the repository "${repoRoot}". Nothing was written.`]);
+    }
+    writeFileSync(target, text, { encoding: 'utf8', flag: 'wx' });
+  } catch (writeError) {
+    if (writeError instanceof Stop) throw writeError;
+    if (writeError.code === 'EEXIST') {
+      throw new Stop(1, [`${target} already exists, and this script never overwrites. Pick another file name with --name.`]);
+    }
+    throw new Stop(2, [`Cannot write ${target}: ${writeError.message}`]);
   }
+}
+
+function promote(options, { now, env, repoRoot }) {
+  const where = draftsFolderFor(options, { env, repoRoot });
+  const text = readNoteText(options.note);
+  const plan = promotionFor(options.note, text, { name: options.name, now });
 
   const target = join(where.drafts, plan.fileName);
   if (options.dryRun) {
@@ -213,23 +263,7 @@ function main(argv, { now = () => new Date(), env = process.env, repoRoot = REPO
     console.log(plan.text);
     return 0;
   }
-  try {
-    mkdirSync(where.drafts, { recursive: true });
-    // Look again now that the folder exists: a link made in the meantime, or one
-    // the first look could not see, must not carry the file into the repository.
-    if (isInside(realPathOf(where.drafts), where.realRoot)) {
-      console.error(`Refused: "${where.drafts}" is inside the repository "${repoRoot}". Nothing was written.`);
-      return 1;
-    }
-    writeFileSync(target, plan.text, { encoding: 'utf8', flag: 'wx' });
-  } catch (writeError) {
-    if (writeError.code === 'EEXIST') {
-      console.error(`${target} already exists, and this script never overwrites. Pick another file name with --name.`);
-      return 1;
-    }
-    console.error(`Cannot write ${target}: ${writeError.message}`);
-    return 2;
-  }
+  writeDraft(where, target, plan.text, repoRoot);
   console.log(`Wrote ${target}`);
   console.log('');
   console.log('Next:');

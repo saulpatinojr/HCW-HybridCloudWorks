@@ -211,7 +211,9 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 2) {
     const name = argv[i]?.startsWith('--') ? argv[i].slice(2) : null;
     const value = argv[i + 1];
-    if (!name || !wanted.has(name) || value === undefined || value.startsWith('--') || name in args) throw new Error(USAGE);
+    // A known option, given once, followed by a value that is not another option.
+    if (!name || !wanted.has(name) || name in args) throw new Error(USAGE);
+    if (value === undefined || value.startsWith('--')) throw new Error(USAGE);
     args[name] = value;
   }
   if ([...wanted].some((name) => !(name in args))) throw new Error(USAGE);

@@ -472,28 +472,30 @@ export function cell(value) {
     .replace(/\r?\n/g, ' ');
 }
 
+/** One service's mark and the text of its "Behind by" cell. */
+function rowState(r, thresholdHours) {
+  if (r.error) return { mark: '⚠️', text: cell(r.error) };
+  if (r.neverDeployed) return { mark: '❌', text: 'never deployed' };
+  // ❌ and not ⚠️: this WAS read. Production is running a commit `main`
+  // does not contain, which is a stronger finding than drift, and the one
+  // a drift count of zero would have hidden.
+  if (r.notOnMain) {
+    return {
+      mark: '❌',
+      text: `applied from ${cell(String(r.notOnMain.sha).slice(0, 8))}, which is not on main (${cell(r.notOnMain.status)})`,
+    };
+  }
+  if (!r.oldest) return { mark: '✅', text: 'up to date' };
+  const stale = isStale(r.hours, thresholdHours);
+  return { mark: stale ? '❌' : '✅', text: `${r.count} commit(s), oldest ${r.hours}h — ${cell(r.oldest.message)}` };
+}
+
 /** The job-summary table, and whether anything in it is stale. */
 export function formatReport(results, thresholdHours) {
-  const rows = results.map((r) => {
-    if (r.error) return `| ${cell(r.name)} | ⚠️ | ${cell(r.error)} |`;
-    if (r.neverDeployed) return `| ${cell(r.name)} | ❌ | never deployed |`;
-    // ❌ and not ⚠️: this WAS read. Production is running a commit `main`
-    // does not contain, which is a stronger finding than drift, and the one
-    // a drift count of zero would have hidden.
-    if (r.notOnMain) {
-      return (
-        `| ${cell(r.name)} | ❌ | applied from ${cell(String(r.notOnMain.sha).slice(0, 8))}, ` +
-        `which is not on main (${cell(r.notOnMain.status)}) |`
-      );
-    }
-    if (!r.oldest) return `| ${cell(r.name)} | ✅ | up to date |`;
-    const stale = isStale(r.hours, thresholdHours);
-    return `| ${cell(r.name)} | ${stale ? '❌' : '✅'} | ${r.count} commit(s), oldest ${r.hours}h — ${cell(r.oldest.message)} |`;
-  });
-
-  const failed = results.some(
-    (r) => r.error || r.neverDeployed || r.notOnMain || (r.oldest && isStale(r.hours, thresholdHours))
-  );
+  const states = results.map((r) => rowState(r, thresholdHours));
+  const rows = results.map((r, i) => `| ${cell(r.name)} | ${states[i].mark} | ${states[i].text} |`);
+  // Anything but ✅ fails: an unread service (⚠️) as much as a stale one (❌).
+  const failed = states.some((state) => state.mark !== '✅');
 
   return {
     failed,
@@ -547,41 +549,45 @@ async function ghJson(
   token,
   { retryDelayMs = RETRY_DELAY_MS, timeoutMs = TIMEOUT_MS } = {}
 ) {
-  const retryable = (status) => status >= 500 || status === 429;
-  const pause = () => new Promise((resolve) => setTimeout(resolve, retryDelayMs));
   for (let attempt = 1; ; attempt += 1) {
     const last = attempt === 2;
-    const signal = AbortSignal.timeout(timeoutMs);
-    let res;
-    try {
-      res = await fetchImpl(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
-        signal,
-      });
-    } catch (error) {
-      if (last) throw new Error(`GitHub did not answer ${url}: ${error?.message || String(error)}`);
-      await pause();
-      continue;
-    }
-    if (!res.ok) {
-      if (last || !retryable(res.status)) throw new Error(`GitHub answered ${res.status} for ${url}`);
-      await pause();
-      continue;
-    }
-    try {
-      return await Promise.race([res.json(), abortedBy(signal)]);
-    } catch (error) {
-      if (last) {
-        throw new Error(
-          `GitHub answered ${url} but its body could not be read: ${error?.message || String(error)}`
-        );
-      }
-      await pause();
-    }
+    const outcome = await ghAttempt(fetchImpl, url, token, timeoutMs);
+    if ('value' in outcome) return outcome.value;
+    if (last || !outcome.retry) throw outcome.error;
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+  }
+}
+
+/** A 5xx or a 429 is worth asking again; any other refusal is not. */
+const retryableStatus = (status) => status >= 500 || status === 429;
+
+/**
+ * One attempt of ghJson, headers and body under one deadline: `{ value }`, or
+ * `{ error, retry }` saying what went wrong and whether to ask again.
+ */
+async function ghAttempt(fetchImpl, url, token, timeoutMs) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  let res;
+  try {
+    res = await fetchImpl(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      signal,
+    });
+  } catch (error) {
+    return { error: new Error(`GitHub did not answer ${url}: ${error?.message || String(error)}`), retry: true };
+  }
+  if (!res.ok) return { error: new Error(`GitHub answered ${res.status} for ${url}`), retry: retryableStatus(res.status) };
+  try {
+    return { value: await Promise.race([res.json(), abortedBy(signal)]) };
+  } catch (error) {
+    return {
+      error: new Error(`GitHub answered ${url} but its body could not be read: ${error?.message || String(error)}`),
+      retry: true,
+    };
   }
 }
 
@@ -647,6 +653,42 @@ async function compareWithMain(sha, { token, owner, repo, fetchImpl, retryDelayM
   );
 }
 
+/**
+ * The commits on main since the deploy that touched one path, onto `seen` by
+ * sha, the deployed commit itself left out.
+ */
+async function collectPathCommits({ path, since, deployedSha, owner, repo, gh, seen }) {
+  // PAGINATED. One page is 100 commits, and drift matters MOST when it is
+  // large — the frontend was 35 behind, and a longer gap is exactly the case
+  // a first-page-only read under-reports, returning a too-recent "oldest"
+  // and therefore a healthier age than the truth.
+  for (let page = 1; page <= MAX_COMMIT_PAGES; page += 1) {
+    const batch = await gh(
+      `${API}/repos/${owner}/${repo}/commits?sha=main&path=${encodeURIComponent(path)}` +
+        `&since=${encodeURIComponent(since)}&per_page=${COMMITS_PER_PAGE}&page=${page}`
+    );
+    // THROWN, not defaulted to []. Silently treating an unreadable payload
+    // as an empty page reports the service as up to date — the same
+    // healthier-than-reality direction as every other defect found in this
+    // file, and the one the whole check exists to avoid. driftFor's catch
+    // turns this into a ⚠️ row, which says "could not read" rather than
+    // "nothing to deploy". parseRunIds and parseCommitDate above
+    // already work this way; this line did not, which was the
+    // inconsistency review caught.
+    if (!Array.isArray(batch)) {
+      throw new Error(
+        `GitHub returned a non-array commits payload for ${path} (page ${page}). Expected ` +
+          'the response of GET /repos/:owner/:repo/commits.'
+      );
+    }
+    // `since` is inclusive of the boundary commit, which is the deployed
+    // one when it touched this path. Excluding it by sha keeps a
+    // just-deployed service from reporting itself one commit behind.
+    for (const c of batch) if (c?.sha && c.sha !== deployedSha) seen.set(c.sha, c);
+    if (batch.length < COMMITS_PER_PAGE) return;
+  }
+}
+
 /** Drift for one service. Never throws: a failure is reported as its own row. */
 export async function driftFor(
   service,
@@ -693,43 +735,9 @@ export async function driftFor(
     // service's declared paths comes back once per path and would be counted
     // twice, and pagination can repeat a boundary commit between pages.
     const seen = new Map();
-
+    const gh = (url) => ghJson(fetchImpl, url, token, { retryDelayMs, timeoutMs });
     for (const path of service.paths) {
-      // PAGINATED. One page is 100 commits, and drift matters MOST when it is
-      // large — the frontend was 35 behind, and a longer gap is exactly the case
-      // a first-page-only read under-reports, returning a too-recent "oldest"
-      // and therefore a healthier age than the truth.
-      for (let page = 1; page <= MAX_COMMIT_PAGES; page += 1) {
-        const batch = await ghJson(
-          fetchImpl,
-          `${API}/repos/${owner}/${repo}/commits?sha=main&path=${encodeURIComponent(path)}` +
-            `&since=${encodeURIComponent(since)}&per_page=${COMMITS_PER_PAGE}&page=${page}`,
-          token,
-          { retryDelayMs, timeoutMs }
-        );
-        // THROWN, not defaulted to []. Silently treating an unreadable payload
-        // as an empty page reports the service as up to date — the same
-        // healthier-than-reality direction as every other defect found in this
-        // file, and the one the whole check exists to avoid. driftFor's catch
-        // turns this into a ⚠️ row, which says "could not read" rather than
-        // "nothing to deploy". parseRunIds and parseCommitDate above
-        // already work this way; this line did not, which was the
-        // inconsistency review caught.
-        if (!Array.isArray(batch)) {
-          throw new Error(
-            `GitHub returned a non-array commits payload for ${path} (page ${page}). Expected ` +
-              'the response of GET /repos/:owner/:repo/commits.'
-          );
-        }
-        const rows = batch;
-        for (const c of rows) {
-          // `since` is inclusive of the boundary commit, which is the deployed
-          // one when it touched this path. Excluding it by sha keeps a
-          // just-deployed service from reporting itself one commit behind.
-          if (c?.sha && c.sha !== last.sha) seen.set(c.sha, c);
-        }
-        if (rows.length < COMMITS_PER_PAGE) break;
-      }
+      await collectPathCommits({ path, since, deployedSha: last.sha, owner, repo, gh, seen });
     }
 
     const commits = [...seen.values()];

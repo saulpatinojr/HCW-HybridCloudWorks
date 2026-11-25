@@ -54,33 +54,41 @@ export function parseStep(raw) {
     const found = lines[i].match(/^ {8}([A-Za-z_-]+):\s*(.*)$/);
     if (!found) continue;
     const [, key, value] = found;
-    if (key === 'env') {
-      for (let j = i + 1; j < lines.length && (lines[j].trim() === '' || /^ {10}/.test(lines[j])); j++) {
-        const entry = lines[j].match(/^ {10}([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/);
-        if (!entry) continue;
-        if (entry[2].trim() === '|') {
-          // A block scalar (`ROWS: |` in ci.yml's changes job): its lines are indented past the key, and are
-          // kept dedented, so a reader sees the text the step sees.
-          const body = [];
-          for (let k = j + 1; k < lines.length && (lines[k].trim() === '' || /^ {12}/.test(lines[k])); k++) body.push(lines[k].slice(12));
-          while (body.length && body.at(-1).trim() === '') body.pop();
-          step.env[entry[1]] = body.join('\n');
-        } else {
-          step.env[entry[1]] = scalar(entry[2]);
-        }
-      }
-    } else if (key === 'run' && value.trim() === '|') {
-      const body = [];
-      for (let j = i + 1; j < lines.length && (lines[j].trim() === '' || /^ {10}/.test(lines[j])); j++) body.push(lines[j].slice(10));
-      while (body.length && body.at(-1).trim() === '') body.pop();
-      step.run = body.join('\n');
-    } else if (key === 'run') {
-      step.run = scalar(value);
-    } else {
-      step[key] = scalar(value);
-    }
+    if (key === 'env') readEnv(lines, i + 1, step.env);
+    else if (key === 'run') step.run = value.trim() === '|' ? blockBody(lines, i + 1, 10) : scalar(value);
+    else step[key] = scalar(value);
   }
   return step;
+}
+
+/**
+ * The lines from `from` on that are blank or indented at least `indent`
+ * spaces: the body of a block under a key.
+ */
+function indentedLines(lines, from, indent) {
+  const prefix = ' '.repeat(indent);
+  const out = [];
+  for (let i = from; i < lines.length && (lines[i].trim() === '' || lines[i].startsWith(prefix)); i++) out.push(lines[i]);
+  return out;
+}
+
+/** A block scalar's text (`run: |`, `ROWS: |`): its lines dedented by `indent`, trailing blank lines dropped. */
+function blockBody(lines, from, indent) {
+  const body = indentedLines(lines, from, indent).map((line) => line.slice(indent));
+  while (body.length && body.at(-1).trim() === '') body.pop();
+  return body.join('\n');
+}
+
+/** A step's `env:` entries, from the line after `env:`, onto `env`. */
+function readEnv(lines, from, env) {
+  const block = indentedLines(lines, from, 10);
+  block.forEach((line, offset) => {
+    const entry = line.match(/^ {10}([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/);
+    if (!entry) return;
+    // A block scalar (`ROWS: |` in ci.yml's changes job): its lines are indented past the key, and are
+    // kept dedented, so a reader sees the text the step sees.
+    env[entry[1]] = entry[2].trim() === '|' ? blockBody(lines, from + offset + 1, 12) : scalar(entry[2]);
+  });
 }
 
 /**

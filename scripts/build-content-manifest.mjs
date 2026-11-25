@@ -556,6 +556,34 @@ export function describeSectionCounts(sections, fromRoute) {
 }
 
 /**
+ * Why an item gets no article page, in the order they are checked; each
+ * returns the run-log line, or nothing when it does not apply.
+ */
+const ARTICLE_SKIPS = [
+  // An interview is not an article: the route leaves them out of
+  // `items` and sends them as `interviews`; a revision that still sends
+  // one here must not put it at /<provider>/blog/<slug>.
+  ({ item, slug }) => isInterviewItem(item) && `${slug || item.id}: an interview, not an article`,
+  // The route sends designs on their own; a copy among the articles
+  // must not also put the design at /<provider>/blog/<slug>.
+  ({ item, slug, designs }) => designs !== null && isDesignItem(item) && `${slug || item.id}: a design, sent with the designs`,
+  ({ item, slug }) => !slug && `${item.id}: no slug`,
+  // Named by id, not by the slug: the slug is the part that is wrong.
+  ({ item, slug }) => !ARTICLE_SLUG.test(slug) && `${item.id}: slug is not a safe address`,
+  // Without a provider there is no URL to pre-render it at. With no file
+  // of its own, any address for it answers 404 since #1613, though the
+  // app still shows it to a reader in the browser.
+  ({ item, slug, provider }) => !provider && `${slug}: no recognised provider (${item.cloudProvider || 'unset'})`,
+  // Two published items with one slug — a re-ingested article, usually.
+  // The route is one URL either way; listing it twice made the sitemap
+  // repeat it (three times, on 2026-09-06: issue #373) and the pre-render
+  // write the same file three times. First one in wins, the rest are
+  // named here so the duplicate is visible in the run log.
+  ({ item, slug, data }) =>
+    Object.prototype.hasOwnProperty.call(data, `article:${slug}`) && `${slug}: duplicate slug (item ${item.id}); first occurrence kept`,
+];
+
+/**
  * @param {object[]} items the published articles
  * @param {object|null} sectionsFromRoute the route's section counts
  * @param {object[]} interviews the published interviews
@@ -579,48 +607,14 @@ export function buildManifest(items, sectionsFromRoute = null, interviews = [], 
     sectionCounts(Array.isArray(designs) ? [...items, ...designs] : items);
 
   for (const item of items) {
-    const slug = slugOf(item);
-    const provider = providerOf(item);
-    if (isInterviewItem(item)) {
-      // An interview is not an article: the route leaves them out of
-      // `items` and sends them as `interviews`; a revision that still sends
-      // one here must not put it at /<provider>/blog/<slug>.
-      skipped.push(`${slug || item.id}: an interview, not an article`);
+    const article = { item, slug: slugOf(item), provider: providerOf(item), designs, data };
+    const skip = ARTICLE_SKIPS.map((check) => check(article)).find(Boolean);
+    if (skip) {
+      skipped.push(skip);
       continue;
     }
-    if (designs !== null && isDesignItem(item)) {
-      // The route sends designs on their own; a copy among the articles
-      // must not also put the design at /<provider>/blog/<slug>.
-      skipped.push(`${slug || item.id}: a design, sent with the designs`);
-      continue;
-    }
-    if (!slug) {
-      skipped.push(`${item.id}: no slug`);
-      continue;
-    }
-    if (!ARTICLE_SLUG.test(slug)) {
-      // Named by id, not by the slug: the slug is the part that is wrong.
-      skipped.push(`${item.id}: slug is not a safe address`);
-      continue;
-    }
-    if (!provider) {
-      // Without a provider there is no URL to pre-render it at. With no file
-      // of its own, any address for it answers 404 since #1613, though the
-      // app still shows it to a reader in the browser.
-      skipped.push(`${slug}: no recognised provider (${item.cloudProvider || 'unset'})`);
-      continue;
-    }
-    if (Object.prototype.hasOwnProperty.call(data, `article:${slug}`)) {
-      // Two published items with one slug — a re-ingested article, usually.
-      // The route is one URL either way; listing it twice made the sitemap
-      // repeat it (three times, on 2026-09-06: issue #373) and the pre-render
-      // write the same file three times. First one in wins, the rest are
-      // named here so the duplicate is visible in the run log.
-      skipped.push(`${slug}: duplicate slug (item ${item.id}); first occurrence kept`);
-      continue;
-    }
-    routes.push(`/${provider}/blog/${slug}`);
-    data[`article:${slug}`] = project(item);
+    routes.push(`/${article.provider}/blog/${article.slug}`);
+    data[`article:${article.slug}`] = project(item);
   }
 
   addInterviews(Array.isArray(interviews) ? interviews : [], { routes, data, skipped });

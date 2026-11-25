@@ -152,6 +152,25 @@ export async function publishedRanges(fetchImpl = fetch) {
 }
 
 /**
+ * The declared ranges and Cloudflare's published list, or null (after logging
+ * why) when the declared list is below its floor or the published one cannot
+ * be read.
+ */
+async function loadRanges(source, fetchImpl, log) {
+  const declared = declaredCloudflareRanges(source);
+  if (declared.length < MIN_DECLARED_RANGES) {
+    log(`::error::${VARIABLES_PATH} declares ${declared.length} ranges, below the floor of ${MIN_DECLARED_RANGES}; nothing compared`);
+    return null;
+  }
+  try {
+    return { declared, published: await publishedRanges(fetchImpl) };
+  } catch (error) {
+    log(`::error::Cloudflare's list could not be read: ${error.message}. Nothing written.`);
+    return null;
+  }
+}
+
+/**
  * The command. `io` is injected for the tests: read/write the variables file,
  * fetch, today's date and where to append `changed=`.
  */
@@ -167,19 +186,9 @@ export async function main(argv, io = {}) {
   }
 
   const source = read();
-  const declared = declaredCloudflareRanges(source);
-  if (declared.length < MIN_DECLARED_RANGES) {
-    log(`::error::${VARIABLES_PATH} declares ${declared.length} ranges, below the floor of ${MIN_DECLARED_RANGES}; nothing compared`);
-    return 2;
-  }
-
-  let published;
-  try {
-    published = await publishedRanges(io.fetch);
-  } catch (error) {
-    log(`::error::Cloudflare's list could not be read: ${error.message}. Nothing written.`);
-    return 2;
-  }
+  const loaded = await loadRanges(source, io.fetch, log);
+  if (!loaded) return 2;
+  const { declared, published } = loaded;
 
   const change = diffRanges(declared, published.ranges);
   const output = io.output ?? process.env.GITHUB_OUTPUT;
@@ -199,19 +208,23 @@ export async function main(argv, io = {}) {
   for (const r of change.removed) log(`  - ${r}`);
 
   if (mode === 'check') return 3;
+  bumpRanges({ argv, source, declared, published, date, write, log, record });
+  return 0;
+}
 
+/** --bump: write the evidence file if asked for, then the new default unless --dry-run. */
+function bumpRanges({ argv, source, declared, published, date, write, log, record }) {
   const evidence = renderEvidence({ declared, published: published.ranges, etag: published.etag, date });
   const evidenceAt = flag(argv, '--evidence');
   if (evidenceAt) writeFileSync(evidenceAt, evidence);
   if (argv.includes('--dry-run')) {
     log(`dry run: ${VARIABLES_PATH} not written`);
     record(false);
-    return 0;
+    return;
   }
   write(renderDefault(source, published.ranges));
   log(`${VARIABLES_PATH}: default of \`${RANGES_VARIABLE}\` rewritten to the ${published.ranges.length} published ranges.`);
   record(true);
-  return 0;
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;

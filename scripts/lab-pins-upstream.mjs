@@ -217,32 +217,55 @@ export async function fetchRetrying(
   } = {}
 ) {
   const started = now();
+  const elapsed = () => now() - started;
   for (let attempt = 1; ; attempt += 1) {
-    const limit = Math.min(timeoutMs, Math.max(budgetMs - (now() - started), 1));
-    const timeout = deadline(limit);
-    const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
-    let response = null;
-    let status = null;
-    let failure;
-    try {
-      response = await fetchImpl(url, { ...init, signal });
-      if (response.ok) return await read(response);
-      status = response.status;
-      failure = `${url}: HTTP ${status}`;
-    } catch (error) {
-      if (init.signal?.aborted) throw error;
-      failure = `${url}: ${noAnswer(error, limit)}`;
-    }
-    await release(response);
+    const limit = Math.min(timeoutMs, Math.max(budgetMs - elapsed(), 1));
+    const outcome = await tryOnce(fetchImpl, url, init, { limit, deadline, read });
+    if ('value' in outcome) return outcome.value;
+    const { failure } = outcome;
     const giveUp = () => new Error(attempt > 1 ? `${failure} (tried ${attempt} times)` : failure);
-    if (status !== null && !retryableStatus(status)) throw giveUp();
     const wait = delays[attempt - 1];
-    if (wait === undefined || now() - started + wait >= budgetMs) throw giveUp();
-    if (init.signal?.aborted) throw init.signal.reason;
-    await sleep(wait, init.signal);
-    if (init.signal?.aborted) throw init.signal.reason;
-    if (now() - started >= budgetMs) throw giveUp();
+    if (!mayTryAgain(outcome.status, wait, elapsed, budgetMs)) throw giveUp();
+    await pauseUnlessCancelled(sleep, wait, init.signal);
+    if (elapsed() >= budgetMs) throw giveUp();
   }
+}
+
+/**
+ * One try of fetchRetrying: `{ value }` when it answered OK and its body was
+ * read, else `{ failure, status }` (status null when nothing answered). The
+ * caller's own cancellation is thrown as it is.
+ */
+async function tryOnce(fetchImpl, url, init, { limit, deadline, read }) {
+  const timeout = deadline(limit);
+  const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+  let response = null;
+  let status = null;
+  let failure;
+  try {
+    response = await fetchImpl(url, { ...init, signal });
+    if (response.ok) return { value: await read(response) };
+    status = response.status;
+    failure = `${url}: HTTP ${status}`;
+  } catch (error) {
+    if (init.signal?.aborted) throw error;
+    failure = `${url}: ${noAnswer(error, limit)}`;
+  }
+  await release(response);
+  return { failure, status };
+}
+
+/** Whether a failed try is worth another: a retryable status (or none), a pause left, and the budget not spent by it. */
+function mayTryAgain(status, wait, elapsed, budgetMs) {
+  if (status !== null && !retryableStatus(status)) return false;
+  return wait !== undefined && elapsed() + wait < budgetMs;
+}
+
+/** The pause between tries; the caller's cancellation, before or during it, is thrown. */
+async function pauseUnlessCancelled(sleep, wait, signal) {
+  if (signal?.aborted) throw signal.reason;
+  await sleep(wait, signal);
+  if (signal?.aborted) throw signal.reason;
 }
 
 /** A JSON body, or an error that names where it came from. */

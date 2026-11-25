@@ -260,25 +260,36 @@ export function assessWorkflow(workflow, { now, staleDays, selfPath = null, defa
   // `broken` first: it is the stronger claim, and a workflow gets one line.
   if (base.verdict === 'broken') return base;
 
+  const failing = scheduledFailing(workflow, defaultBranch);
+  if (!failing) return base;
+  const { why, newestFailure } = failing;
+
+  // Set aside, on a note line, when no later run can ever clear it.
+  const reason = setAsideReason(workflow, { selfPath, defaultBranch });
+  if (reason) return { ...base, setAside: { why, reason } };
+  return { path: workflow.path, verdict: 'failing', why, newestFailedRun: newestFailure.html_url };
+}
+
+/**
+ * The scheduled runs that failed in a row, newest first, with the sentence
+ * that says so; null when they did not, or when a success on the default
+ * branch has come since the newest of them.
+ */
+function scheduledFailing(workflow, defaultBranch) {
   const runs = Array.isArray(workflow.runs) ? workflow.runs : [];
   const scheduled = Array.isArray(workflow.scheduledRuns) ? workflow.scheduledRuns : runs;
   const failed = consecutiveScheduledFailures(scheduled);
-  if (!failed) return base;
+  if (!failed) return null;
 
   const newestFailure = failed[0];
   // `defaultBranchSuccesses` is set by `main` for a workflow that would be
   // `failing`: its newest success on the default branch, read on its own
   // because the mixed sample may no longer hold it.
   const extra = Array.isArray(workflow.defaultBranchSuccesses) ? workflow.defaultBranchSuccesses : [];
-  const clearedSince = [...runs, ...scheduled, ...extra].some(
-    (r) =>
-      PASSING_CONCLUSIONS.has(r?.conclusion) &&
-      r.head_branch === defaultBranch &&
-      r.created_at > newestFailure.created_at
-  );
-  if (clearedSince) return base;
-
   const successes = [...runs, ...scheduled, ...extra].filter((r) => PASSING_CONCLUSIONS.has(r?.conclusion));
+  const clearedSince = successes.some((r) => r.head_branch === defaultBranch && r.created_at > newestFailure.created_at);
+  if (clearedSince) return null;
+
   const lastSuccess = successes.length
     ? successes.reduce((a, b) => (a.created_at > b.created_at ? a : b)).created_at.slice(0, 10)
     : null;
@@ -286,29 +297,26 @@ export function assessWorkflow(workflow, { now, staleDays, selfPath = null, defa
     `last ${failed.length} scheduled runs failed (${failed.map((r) => r.created_at.slice(0, 10)).join(', ')}); ` +
     (lastSuccess ? `last success ${lastSuccess}` : 'no success in the runs read') +
     `; newest failed run ${newestFailure.html_url ?? '(the API gave no link)'}`;
+  return { why, newestFailure };
+}
 
-  // Set aside, on a note line, when no later run can ever clear it.
+/**
+ * Why a workflow that would be `failing` is set aside instead, or null when it
+ * is not: no later run can ever clear it.
+ */
+function setAsideReason(workflow, { selfPath, defaultBranch }) {
   if (selfPath && workflow.path === selfPath) {
     // See the header: judging the workflow that runs this check would keep it
     // red after every other finding is fixed.
-    return {
-      ...base,
-      setAside: { why, reason: "it is the workflow running this check; its own red runs are this check's findings, or the drift job's, which alerts on its own" },
-    };
+    return "it is the workflow running this check; its own red runs are this check's findings, or the drift job's, which alerts on its own";
   }
   if (workflow.state !== undefined && workflow.state !== 'active') {
-    return {
-      ...base,
-      setAside: { why, reason: `GitHub lists it as \`${workflow.state}\`, so no scheduled run will come to clear it` },
-    };
+    return `GitHub lists it as \`${workflow.state}\`, so no scheduled run will come to clear it`;
   }
   if (workflow.hasSchedule === false) {
-    return {
-      ...base,
-      setAside: { why, reason: `its file on \`${defaultBranch}\` has no \`schedule:\` trigger any more, so no scheduled run will come to clear it` },
-    };
+    return `its file on \`${defaultBranch}\` has no \`schedule:\` trigger any more, so no scheduled run will come to clear it`;
   }
-  return { path: workflow.path, verdict: 'failing', why, newestFailedRun: newestFailure.html_url };
+  return null;
 }
 
 /**
@@ -325,6 +333,9 @@ export function hasScheduleTrigger(text) {
   return lines.some((line) => /^\s*schedule\s*:/.test(line) || /^on\s*:.*\bschedule\b/.test(line));
 }
 
+/** The newest of a list of runs by `created_at`. */
+const newestOf = (runs) => runs.reduce((a, b) => (a.created_at > b.created_at ? a : b));
+
 /**
  * `healthy`, `unproven` or `broken`, from the mixed sample alone. The verdicts
  * this file had before `failing`, unchanged (#1661 kept them as they were).
@@ -339,7 +350,7 @@ function assessSample(workflow, { now, staleDays }) {
 
   const passes = finished.filter((r) => PASSING_CONCLUSIONS.has(r.conclusion));
   if (passes.length > 0) {
-    const newest = passes.reduce((a, b) => (a.created_at > b.created_at ? a : b));
+    const newest = newestOf(passes);
     return {
       path: workflow.path,
       verdict: 'healthy',
@@ -356,7 +367,7 @@ function assessSample(workflow, { now, staleDays }) {
     // why the age rides along. A workflow nobody has concluded either way in
     // months is the thing this audit was run to find, and it would otherwise
     // sit in the collapsed section forever. Raised in review on PR #426.
-    const newest = finished.reduce((a, b) => (a.created_at > b.created_at ? a : b));
+    const newest = newestOf(finished);
     const age = (now.getTime() - Date.parse(newest.created_at)) / 86_400_000;
     return {
       path: workflow.path,
@@ -365,7 +376,11 @@ function assessSample(workflow, { now, staleDays }) {
       ageDays: Number.isFinite(age) ? age : undefined,
     };
   }
+  return failedSampleVerdict(workflow, { finished, failures, now, staleDays });
+}
 
+/** The verdict on a sample where something failed and nothing succeeded: `broken`, or `unproven` while recent. */
+function failedSampleVerdict(workflow, { finished, failures, now, staleDays }) {
   // AGE COMES FROM THE NEWEST FINISHED RUN, NOT THE NEWEST FAILURE, and the
   // difference is the difference between "abandoned" and "someone is on it".
   // A workflow that failed 30 days ago and had a run cancelled yesterday has
@@ -373,7 +388,7 @@ function assessSample(workflow, { now, staleDays }) {
   // abandoned and say "nobody has been back" about a workflow somebody was
   // back at. The verdict's own words have to be true. Raised in review on
   // PR #426.
-  const newestRun = finished.reduce((a, b) => (a.created_at > b.created_at ? a : b));
+  const newestRun = newestOf(finished);
   const ageDays = (now.getTime() - Date.parse(newestRun.created_at)) / 86_400_000;
 
   if (!Number.isFinite(ageDays)) {
@@ -419,11 +434,37 @@ export function assessAll(workflows, options) {
  * @param {{staleDays: number, absent?: Array<{path: string}>, defaultBranch?: string}} options
  */
 export function renderReport(results, { staleDays, absent = [], defaultBranch = 'main' }) {
+  const lines = ['## Workflow health', '', ...findingLines(results)];
+
+  // A workflow that would have been `failing` but was set aside: the one
+  // running this check, a disabled one, or one with no schedule any more. Not
+  // a finding (see `assessWorkflow`), but not hidden either.
+  for (const r of results.filter((x) => x.setAside)) {
+    lines.push('', `Not judged as failing: \`${r.path}\` — ${r.setAside.why}. Set aside because ${r.setAside.reason}.`);
+  }
+
+  lines.push(...unprovenLines(results.filter((r) => r.verdict === 'unproven'), staleDays));
+
+  if (absent.length > 0) {
+    lines.push(
+      '',
+      `Not on \`${defaultBranch}\`, run history only, not assessed: ` +
+        absent.map((w) => `\`${w.path}\``).join(', ') +
+        '. GitHub lists a workflow while it has runs, even when its file was only ever on a branch or has since been deleted.'
+    );
+  }
+
+  const key = findingsKey(results);
+  if (key) lines.push('', key);
+
+  return lines.join('\n');
+}
+
+/** The headline, and the `broken` and `failing` sections. */
+function findingLines(results) {
   const broken = results.filter((r) => r.verdict === 'broken');
   const failing = results.filter((r) => r.verdict === 'failing');
-  const unproven = results.filter((r) => r.verdict === 'unproven');
-  const lines = ['## Workflow health', ''];
-
+  const lines = [];
   // The headline speaks only for the `broken` and `failing` sets, because
   // those are the only sets it counts. Claiming "every workflow succeeded
   // recently or is inside the window" contradicted the stalled section printed
@@ -452,19 +493,18 @@ export function renderReport(results, { staleDays, absent = [], defaultBranch = 
     );
     for (const r of failing) lines.push(`- \`${r.path}\` — ${r.why}`);
   }
+  return lines;
+}
 
-  // A workflow that would have been `failing` but was set aside: the one
-  // running this check, a disabled one, or one with no schedule any more. Not
-  // a finding (see `assessWorkflow`), but not hidden either.
-  for (const r of results.filter((x) => x.setAside)) {
-    lines.push('', `Not judged as failing: \`${r.path}\` — ${r.setAside.why}. Set aside because ${r.setAside.reason}.`);
-  }
-
-  // An unproven verdict is not a failure and never exits non-zero — nothing was
-  // measured, so nothing is claimed. But one that has been unproven for longer
-  // than the staleness window is the case this audit existed to surface, and
-  // burying it in a collapsed block is how it stays buried. Split, not
-  // reclassified.
+/**
+ * The `unproven` verdicts. An unproven verdict is not a failure and never exits
+ * non-zero — nothing was measured, so nothing is claimed. But one that has been
+ * unproven for longer than the staleness window is the case this audit existed
+ * to surface, and burying it in a collapsed block is how it stays buried.
+ * Split, not reclassified.
+ */
+function unprovenLines(unproven, staleDays) {
+  const lines = [];
   const stalled = unproven.filter((r) => Number.isFinite(r.ageDays) && r.ageDays >= staleDays);
   const recent = unproven.filter((r) => !stalled.includes(r));
 
@@ -485,20 +525,7 @@ export function renderReport(results, { staleDays, absent = [], defaultBranch = 
     for (const r of recent) lines.push(`- \`${r.path}\` — ${r.why}`);
     lines.push('', '</details>');
   }
-
-  if (absent.length > 0) {
-    lines.push(
-      '',
-      `Not on \`${defaultBranch}\`, run history only, not assessed: ` +
-        absent.map((w) => `\`${w.path}\``).join(', ') +
-        '. GitHub lists a workflow while it has runs, even when its file was only ever on a branch or has since been deleted.'
-    );
-  }
-
-  const key = findingsKey(results);
-  if (key) lines.push('', key);
-
-  return lines.join('\n');
+  return lines;
 }
 
 /**
@@ -751,41 +778,28 @@ export function readTuning(env = {}) {
   };
 }
 
-async function main() {
-  const token = process.env.GITHUB_TOKEN;
-  const repo = process.env.GITHUB_REPOSITORY;
-  const { staleDays, sample } = readTuning(process.env);
+/** Print why the check cannot answer, and end with exit 2: nothing was asserted. */
+function stop(...lines) {
+  for (const line of lines) console.error(line);
+  process.exit(2);
+}
 
-  if (!token || !repo) {
-    console.error('Usage: node check-workflow-health.mjs');
-    console.error('GITHUB_TOKEN and GITHUB_REPOSITORY are both required.');
-    process.exit(2);
-  }
-
-  let listing;
+/** `api(path)`, or stop with `why(err)` and the lines after it when it throws. */
+async function readOrStop(path, token, why, ...after) {
   try {
-    listing = await api(`/repos/${repo}/actions/workflows?per_page=${MAX_PER_PAGE}`, token);
+    return await api(path, token);
   } catch (err) {
-    console.error(`Could not read the workflow listing: ${err.message}`);
-    console.error('Nothing was asserted either way.');
-    process.exit(2);
+    return stop(why(err), ...after);
   }
+}
 
-  const refusal = listingRefusal(listing);
-  if (refusal) {
-    console.error(refusal);
-    process.exit(2);
-  }
-
-  // `dynamic/...` entries are GitHub's own (Dependabot, Copilot) and have no
-  // file in this repository to fix or delete, so they are not this tool's
-  // business.
-  const files = listing.workflows.filter((w) => w.path.startsWith('.github/workflows/'));
-
-  // Which of those files are on the default branch today (#1564). One read of
-  // the repository for the branch's name, one of the directory on it; the
-  // header says why the workflow listing alone cannot answer this. Both fail
-  // closed, like the listing above: an unreadable tree is not an empty one.
+/**
+ * Which of those files are on the default branch today (#1564). One read of
+ * the repository for the branch's name, one of the directory on it; the
+ * header says why the workflow listing alone cannot answer this. Both fail
+ * closed, like the listing: an unreadable tree is not an empty one.
+ */
+async function readDefaultBranchTree(repo, token) {
   let defaultBranch;
   let tree;
   try {
@@ -799,108 +813,127 @@ async function main() {
       token
     );
   } catch (err) {
-    console.error(`Could not read the workflow files on the default branch: ${err.message}`);
-    console.error('Nothing was asserted either way.');
-    process.exit(2);
+    stop(`Could not read the workflow files on the default branch: ${err.message}`, 'Nothing was asserted either way.');
   }
   const treeWrong = treeRefusal(tree, defaultBranch);
-  if (treeWrong) {
-    console.error(treeWrong);
-    process.exit(2);
+  if (treeWrong) stop(treeWrong);
+  return { defaultBranch, tree };
+}
+
+/** One workflow's mixed sample of runs and its scheduled runs, each checked by `runsRefusal`. */
+async function readWorkflowRuns(w, { repo, token, sample }) {
+  // `/actions/workflows/{id}/runs`, NOT `/actions/runs?workflow_id={id}`.
+  // The second form is accepted, returns HTTP 200, and IGNORES the filter:
+  // it hands back the repository's newest runs across every workflow. The
+  // first draft of this script used it, and every workflow inherited the
+  // newest repo-wide run — so all nineteen came back "healthy", including
+  // the one whose entire history is two failures. A green answer to a
+  // question that was never asked, which is the exact shape this file
+  // exists to catch. Verified 2026-09-08: the query-param form returned
+  // `monitor-unresolved-secrets.yml` runs when asked for
+  // `validate-deployed.yml`.
+  const got = await readOrStop(
+    `/repos/${repo}/actions/workflows/${w.id}/runs?per_page=${sample}`,
+    token,
+    (err) => `Could not read runs for ${w.path}: ${err.message}`
+  );
+
+  // Shape and filter, both fail-closed, both testable. See runsRefusal.
+  const runsWrong = runsRefusal(got, w);
+  if (runsWrong) stop(runsWrong);
+
+  // The runs the workflow's own schedule started, for the `failing` verdict
+  // (#1661). A second request because the mixed sample above can hold none
+  // of them (see the header); `event=schedule` is a documented filter of this
+  // endpoint (https://docs.github.com/rest/actions/workflow-runs), and the
+  // refusal below checks it held on every row. A workflow with no schedule
+  // answers an empty list, which is never `failing`.
+  const scheduled = await readOrStop(
+    `/repos/${repo}/actions/workflows/${w.id}/runs?event=schedule&per_page=${sample}`,
+    token,
+    (err) => `Could not read scheduled runs for ${w.path}: ${err.message}`
+  );
+  const scheduledWrong = runsRefusal(scheduled, w, { event: 'schedule' });
+  if (scheduledWrong) stop(scheduledWrong);
+
+  return {
+    id: w.id,
+    path: w.path,
+    state: w.state,
+    runs: got.workflow_runs,
+    scheduledRuns: scheduled.workflow_runs,
+  };
+}
+
+/**
+ * For a workflow that would be `failing`, two more reads, onto `workflow`:
+ *   1. Its newest success on the default branch, wherever it sits in time.
+ *      The mixed sample holds only the newest few runs, so a run started by
+ *      hand that fixed the workflow can fall out of it behind later runs and
+ *      the finding would never clear (Copilot review of #1668).
+ *   2. Whether its file on the default branch still has a schedule.
+ * Both fail closed like every read before them.
+ */
+async function readFailingDetails(workflow, path, { repo, token, defaultBranch }) {
+  try {
+    const passed = await api(
+      `/repos/${repo}/actions/workflows/${workflow.id}/runs?branch=${encodeURIComponent(defaultBranch)}&status=success&per_page=1`,
+      token
+    );
+    const passedWrong = runsRefusal(passed, workflow);
+    if (passedWrong) throw new Error(passedWrong);
+    workflow.defaultBranchSuccesses = passed.workflow_runs;
+    const file = await api(
+      `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(defaultBranch)}`,
+      token
+    );
+    if (typeof file?.content !== 'string') throw new Error('the file payload carried no `content`');
+    workflow.hasSchedule = hasScheduleTrigger(Buffer.from(file.content, 'base64').toString('utf8'));
+  } catch (err) {
+    stop(`Could not read ${path} on ${defaultBranch}: ${err.message}`, 'Nothing was asserted either way.');
   }
+}
+
+async function main() {
+  const token = process.env.GITHUB_TOKEN;
+  const repo = process.env.GITHUB_REPOSITORY;
+  const { staleDays, sample } = readTuning(process.env);
+
+  if (!token || !repo) {
+    stop('Usage: node check-workflow-health.mjs', 'GITHUB_TOKEN and GITHUB_REPOSITORY are both required.');
+  }
+
+  const listing = await readOrStop(
+    `/repos/${repo}/actions/workflows?per_page=${MAX_PER_PAGE}`,
+    token,
+    (err) => `Could not read the workflow listing: ${err.message}`,
+    'Nothing was asserted either way.'
+  );
+
+  const refusal = listingRefusal(listing);
+  if (refusal) stop(refusal);
+
+  // `dynamic/...` entries are GitHub's own (Dependabot, Copilot) and have no
+  // file in this repository to fix or delete, so they are not this tool's
+  // business.
+  const files = listing.workflows.filter((w) => w.path.startsWith('.github/workflows/'));
+
+  const { defaultBranch, tree } = await readDefaultBranchTree(repo, token);
   const { present, absent } = partitionByPresence(files, tree);
 
   const workflows = [];
-  for (const w of present) {
-    let got;
-    try {
-      // `/actions/workflows/{id}/runs`, NOT `/actions/runs?workflow_id={id}`.
-      // The second form is accepted, returns HTTP 200, and IGNORES the filter:
-      // it hands back the repository's newest runs across every workflow. The
-      // first draft of this script used it, and every workflow inherited the
-      // newest repo-wide run — so all nineteen came back "healthy", including
-      // the one whose entire history is two failures. A green answer to a
-      // question that was never asked, which is the exact shape this file
-      // exists to catch. Verified 2026-09-08: the query-param form returned
-      // `monitor-unresolved-secrets.yml` runs when asked for
-      // `validate-deployed.yml`.
-      got = await api(`/repos/${repo}/actions/workflows/${w.id}/runs?per_page=${sample}`, token);
-    } catch (err) {
-      console.error(`Could not read runs for ${w.path}: ${err.message}`);
-      process.exit(2);
-    }
-
-    // Shape and filter, both fail-closed, both testable. See runsRefusal.
-    const runsWrong = runsRefusal(got, w);
-    if (runsWrong) {
-      console.error(runsWrong);
-      process.exit(2);
-    }
-
-    // The runs the workflow's own schedule started, for the `failing` verdict
-    // (#1661). A second request because the mixed sample above can hold none
-    // of them (see the header); `event=schedule` is a documented filter of this
-    // endpoint (https://docs.github.com/rest/actions/workflow-runs), and the
-    // refusal below checks it held on every row. A workflow with no schedule
-    // answers an empty list, which is never `failing`.
-    let scheduled;
-    try {
-      scheduled = await api(
-        `/repos/${repo}/actions/workflows/${w.id}/runs?event=schedule&per_page=${sample}`,
-        token
-      );
-    } catch (err) {
-      console.error(`Could not read scheduled runs for ${w.path}: ${err.message}`);
-      process.exit(2);
-    }
-    const scheduledWrong = runsRefusal(scheduled, w, { event: 'schedule' });
-    if (scheduledWrong) {
-      console.error(scheduledWrong);
-      process.exit(2);
-    }
-
-    workflows.push({
-      id: w.id,
-      path: w.path,
-      state: w.state,
-      runs: got.workflow_runs,
-      scheduledRuns: scheduled.workflow_runs,
-    });
-  }
+  for (const w of present) workflows.push(await readWorkflowRuns(w, { repo, token, sample }));
 
   const selfPath = selfWorkflowPath(process.env);
   const options = { now: new Date(), staleDays, selfPath, defaultBranch };
   let results = assessAll(workflows, options);
 
-  // For each workflow that would be `failing`, two more reads, only for those
-  // (usually none), so they cost requests only when there is a finding. Both
-  // fail closed like every read above.
-  //   1. Its newest success on the default branch, wherever it sits in time.
-  //      The mixed sample holds only the newest few runs, so a run started by
-  //      hand that fixed the workflow can fall out of it behind later runs and
-  //      the finding would never clear (Copilot review of #1668).
-  //   2. Whether its file on the default branch still has a schedule.
+  // For each workflow that would be `failing`, the two reads of
+  // readFailingDetails, only for those (usually none), so they cost requests
+  // only when there is a finding; then it is judged again.
   for (const [i, r] of results.entries()) {
     if (r.verdict !== 'failing') continue;
-    try {
-      const passed = await api(
-        `/repos/${repo}/actions/workflows/${workflows[i].id}/runs?branch=${encodeURIComponent(defaultBranch)}&status=success&per_page=1`,
-        token
-      );
-      const passedWrong = runsRefusal(passed, workflows[i]);
-      if (passedWrong) throw new Error(passedWrong);
-      workflows[i].defaultBranchSuccesses = passed.workflow_runs;
-      const file = await api(
-        `/repos/${repo}/contents/${r.path}?ref=${encodeURIComponent(defaultBranch)}`,
-        token
-      );
-      if (typeof file?.content !== 'string') throw new Error('the file payload carried no `content`');
-      workflows[i].hasSchedule = hasScheduleTrigger(Buffer.from(file.content, 'base64').toString('utf8'));
-    } catch (err) {
-      console.error(`Could not read ${r.path} on ${defaultBranch}: ${err.message}`);
-      console.error('Nothing was asserted either way.');
-      process.exit(2);
-    }
+    await readFailingDetails(workflows[i], r.path, { repo, token, defaultBranch });
     results[i] = assessWorkflow(workflows[i], options);
   }
 

@@ -178,19 +178,40 @@ export const CLOUDFLARE_DCV_CHALLENGE_NAME = `${ACME_CHALLENGE_PREFIX}${ZONE_NAM
  * is not one a token can produce.
  */
 export function isCloudflareSystemActor(change) {
+  return Object.entries(SYSTEM_ACTOR_SHAPE).every(([field, value]) => change[field] === value);
+}
+
+/** Every field of a change as Cloudflare acting on its own leaves it: `type: system` and nothing else. */
+const SYSTEM_ACTOR_SHAPE = Object.freeze({
+  actorType: 'system',
+  actorFields: 'type',
+  actorContext: '',
+  actorId: '',
+  actorEmail: '',
+  actorIp: '',
+  tokenName: '',
+  tokenId: '',
+  method: '',
+  userAgent: '',
+});
+
+/** Whether a change was made as the owner, by the e-mail in the settings; never when that is not set. */
+function isOwner(change, settings) {
+  return settings.ownerEmail !== '' && change.actorEmail.toLowerCase() === settings.ownerEmail.toLowerCase();
+}
+
+/** Whether a change came from the Terraform provider with an account-owned token, off the lab host, during an apply. */
+function isWorkspaceApply(change, settings) {
   return (
-    change.actorType === 'system' &&
-    change.actorFields === 'type' &&
-    change.actorContext === '' &&
-    change.actorId === '' &&
-    change.actorEmail === '' &&
-    change.actorIp === '' &&
-    change.tokenName === '' &&
-    change.tokenId === '' &&
-    change.method === '' &&
-    change.userAgent === ''
+    change.actorType === 'account' &&
+    isTerraformProviderRequest(change) &&
+    !isFromCaddyHost(change, settings) &&
+    withinApply(change.time, settings.applyWindows)
   );
 }
+
+/** The two things Cloudflare's own certificate validation does to its TXT record. */
+const DCV_ACTIONS = new Set(['create', 'delete']);
 
 /** The apex challenge name and nothing else, case- and trailing-dot-insensitively. */
 export function isCloudflareDcvChallenge(name) {
@@ -224,11 +245,7 @@ export const ALLOWLIST = [
       `record, read with \`${ENV.tfcToken}\`. The token name is matched too, should the log ever carry it.`,
     active: (settings) => Array.isArray(settings.applyWindows),
     matches: (change, settings) =>
-      (change.tokenName !== '' && change.tokenName === HCP_TERRAFORM_TOKEN_NAME) ||
-      (change.actorType === 'account' &&
-        isTerraformProviderRequest(change) &&
-        !isFromCaddyHost(change, settings) &&
-        withinApply(change.time, settings.applyWindows)),
+      (change.tokenName !== '' && change.tokenName === HCP_TERRAFORM_TOKEN_NAME) || isWorkspaceApply(change, settings),
   },
   {
     id: 'terraform-owner-token',
@@ -241,9 +258,8 @@ export const ALLOWLIST = [
       `Identified by the e-mail in \`${ENV.ownerEmail}\` and the provider's user agent.`,
     active: (settings) => settings.ownerEmail !== '',
     matches: (change, settings) =>
-      settings.ownerEmail !== '' &&
       change.actorType === 'user' &&
-      change.actorEmail.toLowerCase() === settings.ownerEmail.toLowerCase() &&
+      isOwner(change, settings) &&
       isTerraformProviderRequest(change) &&
       !isFromCaddyHost(change, settings),
   },
@@ -276,11 +292,7 @@ export const ALLOWLIST = [
       `owner, by the e-mail in \`${ENV.ownerEmail}\`; the owner's API tokens are \`terraform-owner-token\` ` +
       'when the provider made the request, and nothing otherwise.',
     active: (settings) => settings.ownerEmail !== '',
-    matches: (change, settings) =>
-      settings.ownerEmail !== '' &&
-      change.actorContext === 'dash' &&
-      change.actorType === 'user' &&
-      change.actorEmail.toLowerCase() === settings.ownerEmail.toLowerCase(),
+    matches: (change, settings) => change.actorContext === 'dash' && change.actorType === 'user' && isOwner(change, settings),
   },
   {
     id: 'cloudflare-dcv',
@@ -303,7 +315,7 @@ export const ALLOWLIST = [
     active: () => true,
     matches: (change) =>
       isCloudflareSystemActor(change) &&
-      (change.actionType === 'create' || change.actionType === 'delete') &&
+      DCV_ACTIONS.has(change.actionType) &&
       change.recordType === 'TXT' &&
       isCloudflareDcvChallenge(change.recordName),
   },
@@ -334,12 +346,14 @@ export function actionType(entry) {
   const type = lower(entry?.action?.type);
   if (type) return type;
   const method = str(entry?.raw?.method).toUpperCase();
-  if (method === 'POST') return 'create';
-  if (method === 'PUT' || method === 'PATCH') return 'update';
-  if (method === 'DELETE') return 'delete';
-  if (method === 'GET') return 'view';
-  return '';
+  return Object.hasOwn(ACTION_BY_METHOD, method) ? ACTION_BY_METHOD[method] : '';
 }
+
+/** The action an HTTP method stands for, when the entry names no action type. */
+const ACTION_BY_METHOD = Object.freeze({ POST: 'create', PUT: 'update', PATCH: 'update', DELETE: 'delete', GET: 'view' });
+
+/** The actions that change a record. */
+const CHANGING_ACTIONS = new Set(['create', 'update', 'delete']);
 
 /**
  * Is this entry about a DNS record? The resource's product or type says so
@@ -438,10 +452,7 @@ export function normalise(entry, siblings = []) {
 /** The create/update/delete entries on DNS records in the production zone, oldest first. */
 export function dnsRecordChanges(entries, settings = {}) {
   const zoneId = str(settings.zoneId);
-  const kept = entries.filter((e) => {
-    const type = actionType(e);
-    return (type === 'create' || type === 'update' || type === 'delete') && isDnsRecordEntry(e) && isProductionZone(e, zoneId);
-  });
+  const kept = entries.filter((e) => CHANGING_ACTIONS.has(actionType(e)) && isDnsRecordEntry(e) && isProductionZone(e, zoneId));
   return kept.map((e) => normalise(e, entries)).sort((a, b) => a.time.localeCompare(b.time));
 }
 
@@ -575,21 +586,36 @@ export async function fetchTerraformApplies({ token, since, before, fetchImpl = 
     if (!Array.isArray(doc.data)) throw new AuditReadError('HCP Terraform returned a runs payload without a `data` array');
     let oldestOnPage = Number.POSITIVE_INFINITY;
     for (const run of doc.data) {
-      const a = run?.attributes ?? {};
-      const stamps = a['status-timestamps'] ?? {};
-      const created = Date.parse(str(a['created-at']));
+      const created = Date.parse(str(run?.attributes?.['created-at']));
       if (!Number.isNaN(created)) oldestOnPage = Math.min(oldestOnPage, created);
-      const start = Date.parse(str(stamps['applying-at']));
-      if (Number.isNaN(start)) continue; // never applied: a plan, a discard, a run still waiting
-      const endStamp = APPLY_END_STAMPS.find((k) => str(stamps[k]) !== '');
-      const end = endStamp ? Date.parse(str(stamps[endStamp])) : beforeMs;
-      if (Number.isNaN(end)) continue;
-      if (end >= sinceMs && start <= beforeMs) windows.push({ runId: str(run.id), start, end, outcome: str(a.status) || 'unknown' });
+      const apply = applyWindowOf(run, beforeMs);
+      if (apply && apply.end >= sinceMs && apply.start <= beforeMs) windows.push(apply);
     }
-    const nextPage = doc.meta?.pagination?.['next-page'];
-    if (doc.data.length === 0 || nextPage === null || nextPage === undefined || oldestOnPage < sinceMs) return windows;
+    if (isLastRunsPage(doc, oldestOnPage, sinceMs)) return windows;
   }
   throw new AuditReadError(`more than ${MAX_RUN_PAGES} pages of runs in the window; narrow it with --since and --before`);
+}
+
+/**
+ * One run's apply as `{ runId, start, end, outcome }`, or null for a run that
+ * never applied (a plan, a discard, a run still waiting) or whose end cannot
+ * be read. An apply still running ends at `beforeMs`.
+ */
+function applyWindowOf(run, beforeMs) {
+  const a = run?.attributes ?? {};
+  const stamps = a['status-timestamps'] ?? {};
+  const start = Date.parse(str(stamps['applying-at']));
+  if (Number.isNaN(start)) return null;
+  const endStamp = APPLY_END_STAMPS.find((k) => str(stamps[k]) !== '');
+  const end = endStamp ? Date.parse(str(stamps[endStamp])) : beforeMs;
+  if (Number.isNaN(end)) return null;
+  return { runId: str(run.id), start, end, outcome: str(a.status) || 'unknown' };
+}
+
+/** Whether no page follows this one, or this page was created wholly before the window. */
+function isLastRunsPage(doc, oldestOnPage, sinceMs) {
+  const nextPage = doc.meta?.pagination?.['next-page'];
+  return doc.data.length === 0 || nextPage === null || nextPage === undefined || oldestOnPage < sinceMs;
 }
 
 /** RFC3339 at second precision, UTC. */
@@ -713,51 +739,73 @@ export function renderReport({ window, entries, pages, judged, settings }) {
     '',
     `Window ${window.since} to ${window.before} (${window.hours} h). Read ${entries} audit log ${entries === 1 ? 'entry' : 'entries'} over ${pages} page${pages === 1 ? '' : 's'}; ${judged.length} DNS-record ${judged.length === 1 ? 'change' : 'changes'} on the zone, **${unexpected.length} unexpected**.`,
     '',
-    unexpected.length === 0
-      ? judged.length === 0
-        ? 'No DNS record in the zone was created, updated or deleted in the window.'
-        : 'Every change matches an allowlist entry.'
-      : `**${unexpected.length} change${unexpected.length === 1 ? '' : 's'} matched no allowlist entry.** Open each entry in the dashboard (https://dash.cloudflare.com/?to=/:account/audit-log, search the entry id) and read what was written; docs/runbooks/edge-dns-verification.md, "The daily DNS audit", says what to do next.`,
+    verdictSentence(judged, unexpected),
     '',
-    '**Allowlist:** ' +
-      ALLOWLIST.map((e) => {
-        const active = e.active(settings);
-        if (active && e.id === 'hcp-terraform') {
-          const n = settings.applyWindows.length;
-          return `\`${e.id}\` active (${n} ${n === 1 ? 'apply' : 'applies'} of \`${TFC_ORGANIZATION}/${TFC_WORKSPACE}\` in the window)`;
-        }
-        if (active) return `\`${e.id}\` active`;
-        const needs = e.id === 'caddy-acme' ? `${ENV.caddyHostIp} and ${ENV.caddyTokenName}` : e.id === 'hcp-terraform' ? ENV.tfcToken : ENV.ownerEmail;
-        return `\`${e.id}\` inactive (\`${needs}\` unset; its edits read UNEXPECTED)`;
-      }).join(', ') +
-      '.',
+    `**Allowlist:** ${ALLOWLIST.map((e) => allowlistState(e, settings)).join(', ')}.`,
     '',
   ];
-  if (judged.length > 0) {
-    lines.push('| Time (UTC) | Actor | Action | Type | Name | Verdict | Entry |', '| --- | --- | --- | --- | --- | --- | --- |');
-    for (const j of judged) {
-      const action = j.result === 'success' ? j.actionType : `${j.actionType} (${j.result})`;
-      const name = j.nameSource === 'sibling' ? `${j.recordName} (from the paired entry)` : j.recordName;
-      const verdict = j.verdict === 'EXPECTED' ? `EXPECTED (\`${j.rule}\`)` : '**UNEXPECTED**';
-      lines.push(`| ${cell(j.time)} | ${describeActor(j)} | ${cell(action)} | ${cell(j.recordType)} | \`${cell(name)}\` | ${verdict} | \`${cell(j.id || '-')}\` |`);
-    }
-    lines.push('');
-  }
-  if (unexpected.length > 0) {
-    // What the audit log carries for each unexpected actor, so the next
-    // allowlist entry is written to the real record (field names, request
-    // method, user agent) and not to a guess. Names of fields, never values.
-    lines.push('**Shape of the unexpected entries** (actor field names as sent, request method, user agent):', '');
-    for (const j of unexpected) {
-      const ua = j.userAgent ? `\`${cell(j.userAgent.slice(0, 60))}${j.userAgent.length > 60 ? '…' : ''}\`` : 'none';
-      lines.push(`- \`${cell(j.id || '-')}\`: actor fields \`{${cell(j.actorFields) || 'none'}}\`; ${j.method ? `\`${cell(j.method)}\`` : 'no method'}; user agent ${ua}`);
-    }
-    lines.push('');
-  }
+  if (judged.length > 0) lines.push(...changeTable(judged));
+  if (unexpected.length > 0) lines.push(...unexpectedShapes(unexpected));
   lines.push('Record contents are not read into this report by design; the dashboard entry has them.', '');
   const findings = findingsLine(judged);
   if (findings) lines.push(findings, '');
   return lines.join('\n');
+}
+
+/** The report's verdict in one sentence: no change, all allowed, or how many matched nothing and what to do. */
+function verdictSentence(judged, unexpected) {
+  if (unexpected.length > 0) {
+    return `**${unexpected.length} change${unexpected.length === 1 ? '' : 's'} matched no allowlist entry.** Open each entry in the dashboard (https://dash.cloudflare.com/?to=/:account/audit-log, search the entry id) and read what was written; docs/runbooks/edge-dns-verification.md, "The daily DNS audit", says what to do next.`;
+  }
+  return judged.length === 0
+    ? 'No DNS record in the zone was created, updated or deleted in the window.'
+    : 'Every change matches an allowlist entry.';
+}
+
+/** The settings each allowlist entry needs, named when it is inactive. */
+const ENTRY_NEEDS = {
+  'caddy-acme': `${ENV.caddyHostIp} and ${ENV.caddyTokenName}`,
+  'hcp-terraform': ENV.tfcToken,
+};
+
+/** One allowlist entry as the report lists it: active (with the applies in the window, for HCP Terraform) or inactive and why. */
+function allowlistState(e, settings) {
+  const active = e.active(settings);
+  if (active && e.id === 'hcp-terraform') {
+    const n = settings.applyWindows.length;
+    return `\`${e.id}\` active (${n} ${n === 1 ? 'apply' : 'applies'} of \`${TFC_ORGANIZATION}/${TFC_WORKSPACE}\` in the window)`;
+  }
+  if (active) return `\`${e.id}\` active`;
+  const needs = ENTRY_NEEDS[e.id] ?? ENV.ownerEmail;
+  return `\`${e.id}\` inactive (\`${needs}\` unset; its edits read UNEXPECTED)`;
+}
+
+/** The table of changes, one row each, and the blank line after it. */
+function changeTable(judged) {
+  const lines = ['| Time (UTC) | Actor | Action | Type | Name | Verdict | Entry |', '| --- | --- | --- | --- | --- | --- | --- |'];
+  for (const j of judged) {
+    const action = j.result === 'success' ? j.actionType : `${j.actionType} (${j.result})`;
+    const name = j.nameSource === 'sibling' ? `${j.recordName} (from the paired entry)` : j.recordName;
+    const verdict = j.verdict === 'EXPECTED' ? `EXPECTED (\`${j.rule}\`)` : '**UNEXPECTED**';
+    lines.push(`| ${cell(j.time)} | ${describeActor(j)} | ${cell(action)} | ${cell(j.recordType)} | \`${cell(name)}\` | ${verdict} | \`${cell(j.id || '-')}\` |`);
+  }
+  lines.push('');
+  return lines;
+}
+
+/**
+ * What the audit log carries for each unexpected actor, so the next
+ * allowlist entry is written to the real record (field names, request
+ * method, user agent) and not to a guess. Names of fields, never values.
+ */
+function unexpectedShapes(unexpected) {
+  const lines = ['**Shape of the unexpected entries** (actor field names as sent, request method, user agent):', ''];
+  for (const j of unexpected) {
+    const ua = j.userAgent ? `\`${cell(j.userAgent.slice(0, 60))}${j.userAgent.length > 60 ? '…' : ''}\`` : 'none';
+    lines.push(`- \`${cell(j.id || '-')}\`: actor fields \`{${cell(j.actorFields) || 'none'}}\`; ${j.method ? `\`${cell(j.method)}\`` : 'no method'}; user agent ${ua}`);
+  }
+  lines.push('');
+  return lines;
 }
 
 /** Exit 1 with the reason, in the report too when one was asked for. */
@@ -767,6 +815,18 @@ function cannotRead(options, log, message) {
     writeFileSync(options.report, `## Cloudflare DNS audit: \`${ZONE_NAME}\`\n\n**The audit log was not read:** ${message}\n\nNothing was evaluated; a quiet run is not this.\n`);
   }
   return 1;
+}
+
+/** A read the audit stops on; `main` reports it through cannotRead. */
+class NotRead extends Error {}
+
+/** The answer of `work()`, or NotRead with the message a read failure is reported by. */
+async function readOrStop(work) {
+  try {
+    return await work();
+  } catch (error) {
+    throw new NotRead(error instanceof AuditReadError ? error.message : `unexpected failure: ${error?.message ?? error}`);
+  }
 }
 
 /**
@@ -790,35 +850,40 @@ export async function main(argv, io = {}) {
     return 0;
   }
 
+  try {
+    return await audit({ options, env, io, now, log });
+  } catch (error) {
+    if (error instanceof NotRead) return cannotRead(options, log, error.message);
+    throw error;
+  }
+}
+
+/** Read the window, judge each change, write the report: 0 all expected, 2 something unexpected. */
+async function audit({ options, env, io, now, log }) {
   const token = str(env[ENV.token]).trim();
   const settings = settingsFrom(env);
-  if (!token) return cannotRead(options, log, `${ENV.token} is not set (a repository secret; docs/runbooks/edge-dns-verification.md, "The daily DNS audit")`);
-  if (!settings.accountId) return cannotRead(options, log, `${ENV.accountId} is not set (a repository variable)`);
+  if (!token) throw new NotRead(`${ENV.token} is not set (a repository secret; docs/runbooks/edge-dns-verification.md, "The daily DNS audit")`);
+  if (!settings.accountId) throw new NotRead(`${ENV.accountId} is not set (a repository variable)`);
 
   let window;
   try {
     window = resolveWindow(options, now);
   } catch (error) {
-    return cannotRead(options, log, error.message);
+    throw new NotRead(error.message);
   }
 
-  let read;
-  try {
-    read = await fetchAuditLog({ accountId: settings.accountId, since: window.since, before: window.before, token, fetchImpl: io.fetch });
-  } catch (error) {
-    return cannotRead(options, log, error instanceof AuditReadError ? error.message : `unexpected failure: ${error?.message ?? error}`);
-  }
+  const read = await readOrStop(() =>
+    fetchAuditLog({ accountId: settings.accountId, since: window.since, before: window.before, token, fetchImpl: io.fetch })
+  );
 
   // The applies that can clear a Terraform-looking change. Unset token: the
   // entry stays inactive and such changes read UNEXPECTED; a token that cannot
   // read the run record is a read failure, not a quiet green.
   const tfcToken = str(env[ENV.tfcToken]).trim();
   if (tfcToken) {
-    try {
-      settings.applyWindows = await fetchTerraformApplies({ token: tfcToken, since: window.since, before: window.before, fetchImpl: io.fetch });
-    } catch (error) {
-      return cannotRead(options, log, error instanceof AuditReadError ? error.message : `unexpected failure: ${error?.message ?? error}`);
-    }
+    settings.applyWindows = await readOrStop(() =>
+      fetchTerraformApplies({ token: tfcToken, since: window.since, before: window.before, fetchImpl: io.fetch })
+    );
   }
 
   const changes = dnsRecordChanges(read.entries, settings);

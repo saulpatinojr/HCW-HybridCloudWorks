@@ -99,33 +99,40 @@ export function scanCode(src, start, closer) {
   const stack = [closer];
   let j = start;
   while (j < src.length) {
-    const c = src[j];
-    const comment = skipComment(src, j);
-    if (comment !== -1) {
-      j = comment;
+    const skipped = skipOpaque(src, j);
+    if (skipped !== -1) {
+      j = skipped;
       continue;
     }
-    if (c === '"') {
-      j = skipString(src, j);
-      continue;
-    }
-    if (c === '<' && src[j + 1] === '<') {
-      const heredoc = skipHeredoc(src, j);
-      if (heredoc !== -1) {
-        j = heredoc;
-        continue;
-      }
-    }
-    if (OPENERS[c]) {
-      stack.push(OPENERS[c]);
-    } else if (CLOSERS.has(c)) {
-      const want = stack.pop();
-      if (c !== want) fail(`expected '${want}' but found '${c}'`, j);
-      if (stack.length === 0) return j + 1;
-    }
+    if (trackBracket(src, j, stack)) return j + 1;
     j += 1;
   }
   return fail(`unterminated block: no '${closer}'`, start);
+}
+
+/** Index just past a comment, string or heredoc that starts at `i`, or -1 if none does. */
+function skipOpaque(src, i) {
+  const comment = skipComment(src, i);
+  if (comment !== -1) return comment;
+  if (src[i] === '"') return skipString(src, i);
+  if (src[i] === '<' && src[i + 1] === '<') return skipHeredoc(src, i);
+  return -1;
+}
+
+/**
+ * Push an opening bracket at `i` onto `stack`, or match a closing one against
+ * it. Returns true when that closed the last bracket on the stack.
+ */
+function trackBracket(src, i, stack) {
+  const c = src[i];
+  if (OPENERS[c]) {
+    stack.push(OPENERS[c]);
+    return false;
+  }
+  if (!CLOSERS.has(c)) return false;
+  const want = stack.pop();
+  if (c !== want) fail(`expected '${want}' but found '${c}'`, i);
+  return stack.length === 0;
 }
 
 /**
@@ -199,24 +206,34 @@ export function parseBody(src) {
       j = skipTrivia(src, end);
       continue;
     }
-    const labels = [];
-    while (src[k] !== '{') {
-      k = skipTrivia(src, k);
-      if (src[k] === '"') {
-        const end = skipString(src, k);
-        labels.push(src.slice(k + 1, end - 1));
-        k = end;
-      } else if (src[k] !== '{') {
-        const label = readIdent(src, k);
-        if (!label) fail(`expected '=' or '{' after '${name}'`, k);
-        labels.push(label);
-        k += label.length;
-      }
-      k = skipTrivia(src, k);
-    }
-    const end = scanCode(src, k + 1, '}');
-    blocks.push({ type: name, labels, body: src.slice(k + 1, end - 1), offset: j });
+    const { labels, brace } = readLabels(src, k, name);
+    const end = scanCode(src, brace + 1, '}');
+    blocks.push({ type: name, labels, body: src.slice(brace + 1, end - 1), offset: j });
     j = skipTrivia(src, end);
   }
   return { attributes, blocks };
+}
+
+/**
+ * A block's labels (`resource "a" "b" {`), read from `k` up to its opening
+ * brace. Returns the labels and the index of that brace.
+ */
+function readLabels(src, start, name) {
+  const labels = [];
+  let k = start;
+  while (src[k] !== '{') {
+    k = skipTrivia(src, k);
+    if (src[k] === '"') {
+      const end = skipString(src, k);
+      labels.push(src.slice(k + 1, end - 1));
+      k = end;
+    } else if (src[k] !== '{') {
+      const label = readIdent(src, k);
+      if (!label) fail(`expected '=' or '{' after '${name}'`, k);
+      labels.push(label);
+      k += label.length;
+    }
+    k = skipTrivia(src, k);
+  }
+  return { labels, brace: k };
 }

@@ -168,26 +168,21 @@ const CODE_WORDS = {
 };
 const plainCode = (type) => CODE_WORDS[type] ?? type.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
 
+/** How each kind of value is written as a key, so two equal values get one key. A kind not here is its own key. */
+const KEY_WRITERS = new Map([
+  ['str', (v) => `str:${v.v}`],
+  ['pre', (v) => `pre:${v.v}:${v.why ?? ''}`],
+  ['url', (v) => `url:${v.href}:${v.wild}:${v.why ?? ''}`],
+  ['unk', (v) => `unk:${v.why}`],
+  ['arr', (v) => `arr[${v.items.map((alts) => alts.map(keyOf).join('|')).join(',')}]`],
+  ['obj', (v) => `${v.k}:${v.node.file}:${v.node.range[0]}`],
+  ['fn', (v) => `${v.k}:${v.node.file}:${v.node.range[0]}`],
+  ['parts', (v) => `parts:${keyOf(v.of)}`],
+]);
+
 function keyOf(v) {
-  switch (v.k) {
-    case 'str':
-      return `str:${v.v}`;
-    case 'pre':
-      return `pre:${v.v}:${v.why ?? ''}`;
-    case 'url':
-      return `url:${v.href}:${v.wild}:${v.why ?? ''}`;
-    case 'unk':
-      return `unk:${v.why}`;
-    case 'arr':
-      return `arr[${v.items.map((alts) => alts.map(keyOf).join('|')).join(',')}]`;
-    case 'obj':
-    case 'fn':
-      return `${v.k}:${v.node.file}:${v.node.range[0]}`;
-    case 'parts':
-      return `parts:${keyOf(v.of)}`;
-    default:
-      return v.k;
-  }
+  const write = KEY_WRITERS.get(v.k);
+  return write ? write(v) : v.k;
 }
 
 function uniq(values) {
@@ -327,51 +322,53 @@ function lookup(node, name) {
   return null;
 }
 
+/** The patterns inside each kind of destructuring pattern, in order. */
+const PATTERN_PARTS = new Map([
+  ['ObjectPattern', (pattern) => pattern.properties.map((p) => (p.type === 'RestElement' ? p.argument : p.value))],
+  ['ArrayPattern', (pattern) => pattern.elements.filter(Boolean)],
+  ['AssignmentPattern', (pattern) => [pattern.left]],
+  ['RestElement', (pattern) => [pattern.argument]],
+]);
+
 function patternIdentifiers(pattern, out = []) {
-  switch (pattern.type) {
-    case 'Identifier':
-      out.push(pattern);
-      break;
-    case 'ObjectPattern':
-      for (const p of pattern.properties) patternIdentifiers(p.type === 'RestElement' ? p.argument : p.value, out);
-      break;
-    case 'ArrayPattern':
-      for (const e of pattern.elements) if (e) patternIdentifiers(e, out);
-      break;
-    case 'AssignmentPattern':
-      patternIdentifiers(pattern.left, out);
-      break;
-    case 'RestElement':
-      patternIdentifiers(pattern.argument, out);
-      break;
-    default:
+  if (pattern.type === 'Identifier') {
+    out.push(pattern);
+    return out;
   }
+  const parts = PATTERN_PARTS.get(pattern.type);
+  if (parts) for (const part of parts(pattern)) patternIdentifiers(part, out);
   return out;
 }
 
 /** The module name in `require('x')` or `await import('x')`, else null. */
 function requiredModule(node) {
-  let n = node;
-  if (n?.type === 'AwaitExpression') n = n.argument;
+  const n = node?.type === 'AwaitExpression' ? node.argument : node;
   if (n?.type === 'ImportExpression' && n.source.type === 'Literal') return String(n.source.value);
-  if (
-    n?.type === 'CallExpression' &&
-    n.callee.type === 'Identifier' &&
-    n.callee.name === 'require' &&
-    n.arguments.length === 1 &&
-    n.arguments[0].type === 'Literal' &&
-    typeof n.arguments[0].value === 'string'
-  ) {
-    return n.arguments[0].value;
-  }
-  return null;
+  return isPlainRequire(n) ? n.arguments[0].value : null;
+}
+
+/** `require('x')`: the require function called with one string written out. */
+function isPlainRequire(n) {
+  if (n?.type !== 'CallExpression' || n.callee.type !== 'Identifier' || n.callee.name !== 'require') return false;
+  return n.arguments.length === 1 && n.arguments[0].type === 'Literal' && typeof n.arguments[0].value === 'string';
+}
+
+/** The name of an object property written out (`{ a }`, `{ 'a': x }`), or null for a computed one or anything else. */
+function staticKey(property) {
+  return property?.type === 'Property' && !property.computed ? (property.key.name ?? property.key.value) : null;
+}
+
+/** The property of an object pattern that declares `id` (`{ a }` or `{ a = 1 }`), or null. */
+function propertyDeclaring(pattern, id) {
+  if (pattern.type !== 'ObjectPattern') return null;
+  return pattern.properties.find((p) => p.type === 'Property' && (p.value === id || p.value?.left === id)) ?? null;
 }
 
 /** Declares the names taken out of an object by a destructuring pattern. `from` is { owner } or { init }. */
 function declareParts(scopeNode, pattern, from) {
   for (const id of patternIdentifiers(pattern)) {
-    const property = pattern.type === 'ObjectPattern' ? pattern.properties.find((p) => p.type === 'Property' && (p.value === id || p.value?.left === id)) : null;
-    const key = property && !property.computed ? (property.key.name ?? property.key.value) : null;
+    const property = propertyDeclaring(pattern, id);
+    const key = staticKey(property);
     if (key === null) bind(scopeNode, id.name, { kind: 'opaque', why: DESTRUCTURED });
     else bind(scopeNode, id.name, { kind: 'part', key, defaults: property.value.type === 'AssignmentPattern' ? [property.value.right] : [], ...from });
   }
@@ -381,16 +378,26 @@ function declareParts(scopeNode, pattern, from) {
 function declareLoopParts(scope, pattern, iterable) {
   const isArray = pattern.type === 'ArrayPattern';
   (isArray ? pattern.elements : pattern.properties).forEach((element, index) => {
-    if (!element) return;
-    const target = isArray ? element : element.type === 'Property' ? element.value : null;
-    const id = target?.type === 'AssignmentPattern' ? target.left : target;
-    const key = !isArray && element.type === 'Property' && !element.computed ? (element.key.name ?? element.key.value) : null;
-    if (id?.type !== 'Identifier' || (!isArray && key === null)) {
-      for (const ident of patternIdentifiers(element.type === 'RestElement' ? element.argument : (target ?? element))) bind(scope, ident.name, { kind: 'opaque', why: DESTRUCTURED });
-      return;
-    }
-    bind(scope, id.name, { kind: 'part', key, index: isArray ? index : null, loopOver: iterable, defaults: target.type === 'AssignmentPattern' ? [target.right] : [] });
+    if (element) declareLoopPart(scope, element, { isArray, index, iterable });
   });
+}
+
+/** One name of a loop's pattern: a part of each item, or opaque when the guard cannot say which part. */
+function declareLoopPart(scope, element, { isArray, index, iterable }) {
+  const target = loopPartTarget(element, isArray);
+  const id = target?.type === 'AssignmentPattern' ? target.left : target;
+  const key = isArray ? null : staticKey(element);
+  if (id?.type !== 'Identifier' || (!isArray && key === null)) {
+    for (const ident of patternIdentifiers(element.type === 'RestElement' ? element.argument : (target ?? element))) bind(scope, ident.name, { kind: 'opaque', why: DESTRUCTURED });
+    return;
+  }
+  bind(scope, id.name, { kind: 'part', key, index: isArray ? index : null, loopOver: iterable, defaults: target.type === 'AssignmentPattern' ? [target.right] : [] });
+}
+
+/** What a loop pattern's element declares: the element itself in a list, a property's value in an object. */
+function loopPartTarget(element, isArray) {
+  if (isArray) return element;
+  return element.type === 'Property' ? element.value : null;
 }
 
 function declareParams(fn) {
@@ -415,32 +422,47 @@ function declareParams(fn) {
 
 function declareVariable(node) {
   const declaration = node.parent;
-  const owner = declaration.parent;
   const scope = scopeOf(declaration, declaration.kind === 'var');
-  const isLoop = (owner.type === 'ForOfStatement' || owner.type === 'ForInStatement') && owner.left === declaration;
-  const loop = isLoop ? { kind: owner.type === 'ForOfStatement' ? 'of' : 'in', iterable: owner.right } : null;
+  const loop = loopOf(declaration);
   const moduleName = requiredModule(node.init);
 
-  if (node.id.type === 'Identifier') {
-    if (moduleName !== null) {
-      bind(scope, node.id.name, { kind: 'import', source: moduleName, imported: '*', file: node.file });
-      return;
-    }
-    const binding = bind(scope, node.id.name, { inits: node.init ? [node.init] : [], loop });
-    if (node.init && FUNCTION_TYPES.has(node.init.type)) node.init.$binding = binding;
+  if (node.id.type === 'Identifier') declareNamedVariable(scope, node, { moduleName, loop });
+  else if (moduleName !== null) declareRequiredParts(scope, node, moduleName);
+  else declarePatternVariable(scope, node, loop);
+}
+
+/** For `for (const x of list)` and `for (const x in object)`: which kind of loop, and what it goes over; else null. */
+function loopOf(declaration) {
+  const owner = declaration.parent;
+  const isLoop = (owner.type === 'ForOfStatement' || owner.type === 'ForInStatement') && owner.left === declaration;
+  return isLoop ? { kind: owner.type === 'ForOfStatement' ? 'of' : 'in', iterable: owner.right } : null;
+}
+
+/** `const x = ...`: an import when it is a require, else a name with what it is set to. */
+function declareNamedVariable(scope, node, { moduleName, loop }) {
+  if (moduleName !== null) {
+    bind(scope, node.id.name, { kind: 'import', source: moduleName, imported: '*', file: node.file });
     return;
   }
-  if (moduleName !== null) {
-    // const { readFileSync } = require('node:fs')
-    for (const id of patternIdentifiers(node.id)) {
-      const property = node.id.type === 'ObjectPattern' ? node.id.properties.find((p) => p.type === 'Property' && (p.value === id || p.value?.left === id)) : null;
-      const key = property && !property.computed ? (property.key.name ?? property.key.value) : null;
-      if (key === null) bind(scope, id.name, { kind: 'opaque', why: DESTRUCTURED });
-      else bind(scope, id.name, { kind: 'import', source: moduleName, imported: key, file: node.file });
-    }
-  } else if (node.init && node.id.type === 'ObjectPattern' && !loop) {
+  const binding = bind(scope, node.id.name, { inits: node.init ? [node.init] : [], loop });
+  if (node.init && FUNCTION_TYPES.has(node.init.type)) node.init.$binding = binding;
+}
+
+/** const { readFileSync } = require('node:fs') */
+function declareRequiredParts(scope, node, moduleName) {
+  for (const id of patternIdentifiers(node.id)) {
+    const key = staticKey(propertyDeclaring(node.id, id));
+    if (key === null) bind(scope, id.name, { kind: 'opaque', why: DESTRUCTURED });
+    else bind(scope, id.name, { kind: 'import', source: moduleName, imported: key, file: node.file });
+  }
+}
+
+/** A destructured declaration: parts of an object, parts of each item of a loop, or names the guard does not follow. */
+function declarePatternVariable(scope, node, loop) {
+  const isPattern = node.id.type === 'ObjectPattern' || node.id.type === 'ArrayPattern';
+  if (node.init && node.id.type === 'ObjectPattern' && !loop) {
     declareParts(scope, node.id, { init: node.init });
-  } else if (loop?.kind === 'of' && (node.id.type === 'ObjectPattern' || node.id.type === 'ArrayPattern')) {
+  } else if (loop?.kind === 'of' && isPattern) {
     declareLoopParts(scope, node.id, loop.iterable);
   } else {
     for (const id of patternIdentifiers(node.id)) bind(scope, id.name, { kind: 'opaque', why: DESTRUCTURED });
@@ -473,29 +495,41 @@ function collectExports(program) {
   const exports = new Map();
   exports.all = [];
   const programBinding = (name) => program.$scope?.get(name);
-  for (const node of program.body) {
-    if (node.type === 'ExportAllDeclaration') {
-      exports.all.push(node.source.value);
-    } else if (node.type === 'ExportNamedDeclaration' && node.source) {
-      for (const s of node.specifiers) exports.set(s.exported.name ?? s.exported.value, { from: node.source.value, name: s.local.name ?? s.local.value });
-    } else if (node.type === 'ExportNamedDeclaration') {
-      const d = node.declaration;
-      if (d?.type === 'FunctionDeclaration' || d?.type === 'ClassDeclaration') {
-        exports.set(d.id.name, programBinding(d.id.name));
-      } else if (d?.type === 'VariableDeclaration') {
-        for (const decl of d.declarations) {
-          for (const id of patternIdentifiers(decl.id)) exports.set(id.name, programBinding(id.name));
-        }
-      } else {
-        for (const s of node.specifiers) exports.set(s.exported.name ?? s.exported.value, programBinding(s.local.name));
+  for (const node of program.body) EXPORT_READERS.get(node.type)?.(node, exports, programBinding);
+  return exports;
+}
+
+/** What each kind of export statement adds to a module's exports. */
+const EXPORT_READERS = new Map([
+  ['ExportAllDeclaration', (node, exports) => exports.all.push(node.source.value)],
+  [
+    'ExportNamedDeclaration',
+    (node, exports, programBinding) => {
+      if (node.source) {
+        for (const s of node.specifiers) exports.set(s.exported.name ?? s.exported.value, { from: node.source.value, name: s.local.name ?? s.local.value });
+        return;
       }
-    } else if (node.type === 'ExportDefaultDeclaration') {
+      for (const [name, local] of namedExports(node)) exports.set(name, programBinding(local));
+    },
+  ],
+  [
+    'ExportDefaultDeclaration',
+    (node, exports, programBinding) => {
       const d = node.declaration;
       if (d.type === 'FunctionDeclaration' && d.id) exports.set('default', programBinding(d.id.name));
       else if (d.type === 'Identifier') exports.set('default', programBinding(d.name));
-    }
+    },
+  ],
+]);
+
+/** The names an `export` of this module's own declarations makes, each with the local name behind it, in order. */
+function namedExports(node) {
+  const d = node.declaration;
+  if (d?.type === 'FunctionDeclaration' || d?.type === 'ClassDeclaration') return [[d.id.name, d.id.name]];
+  if (d?.type === 'VariableDeclaration') {
+    return d.declarations.flatMap((decl) => patternIdentifiers(decl.id).map((id) => [id.name, id.name]));
   }
-  return exports;
+  return node.specifiers.map((s) => [s.exported.name ?? s.exported.value, s.local.name]);
 }
 
 /** The methods of `vi` and `jest` that name a module, as `vi.mock('./x.js')` does. */
@@ -516,6 +550,24 @@ const TEXT_IMPORT = new RegExp(
   '(?:(?:import|export|from|require)\\s*(?:\\(\\s*)?|(?:vi|jest)\\s*\\.\\s*(?:' + [...MODULE_NAMING_METHODS].join('|') + ')\\s*\\(\\s*)[\'"]([^\'"\\n]+)[\'"]',
   'g'
 );
+
+/** Statements and expressions whose `source` names a module. */
+const SOURCE_NODES = new Set(['ImportDeclaration', 'ExportAllDeclaration', 'ExportNamedDeclaration', 'ImportExpression']);
+
+/** The module path a node names with the path written out, else null. */
+function importSpecOf(node) {
+  if (SOURCE_NODES.has(node.type)) return plainText(node.source);
+  if (node.type !== 'CallExpression') return null;
+  const callee = node.callee;
+  const isRequire = callee.type === 'Identifier' && callee.name === 'require';
+  return isRequire || isModuleNamingCall(callee) ? plainText(node.arguments[0]) : null;
+}
+
+/** `vi.mock`, `jest.requireActual` and the rest of MODULE_NAMING_METHODS. */
+function isModuleNamingCall(callee) {
+  if (callee.type !== 'MemberExpression' || callee.computed || callee.object.type !== 'Identifier') return false;
+  return (callee.object.name === 'vi' || callee.object.name === 'jest') && MODULE_NAMING_METHODS.has(callee.property.name);
+}
 
 /**
  * The modules a file names: `import x from '...'`, `export ... from '...'`, `import('...')` and `require('...')` with
@@ -541,22 +593,7 @@ export function listImports(text) {
   const stack = [ast];
   while (stack.length > 0) {
     const node = stack.pop();
-    let spec = null;
-    if (node.type === 'ImportDeclaration' || node.type === 'ExportAllDeclaration' || node.type === 'ExportNamedDeclaration') {
-      spec = plainText(node.source);
-    } else if (node.type === 'ImportExpression') {
-      spec = plainText(node.source);
-    } else if (node.type === 'CallExpression') {
-      const callee = node.callee;
-      const isRequire = callee.type === 'Identifier' && callee.name === 'require';
-      const isModuleCall =
-        callee.type === 'MemberExpression' &&
-        !callee.computed &&
-        callee.object.type === 'Identifier' &&
-        (callee.object.name === 'vi' || callee.object.name === 'jest') &&
-        MODULE_NAMING_METHODS.has(callee.property.name);
-      if (isRequire || isModuleCall) spec = plainText(node.arguments[0]);
-    }
+    const spec = importSpecOf(node);
     if (spec !== null) found.push({ spec, line: node.loc.start.line, at: node.range[0] });
     for (const child of childrenOf(node)) stack.push(child);
   }
@@ -577,70 +614,68 @@ function loadModule(file, text, handed) {
   const ast = handed && !handed.$analysed ? handed : parse(text);
   ast.$analysed = true;
   const nodes = annotate(ast, file);
-  for (const node of nodes) {
-    switch (node.type) {
-      case 'ImportDeclaration':
-        declareImport(node);
-        break;
-      case 'FunctionDeclaration':
-      case 'FunctionExpression':
-      case 'ArrowFunctionExpression':
-        declareFunction(node);
-        break;
-      case 'VariableDeclarator':
-        declareVariable(node);
-        break;
-      case 'ClassDeclaration':
-        if (node.id) bind(scopeOf(node, false), node.id.name, { kind: 'opaque', why: 'a class' });
-        break;
-      case 'CatchClause':
-        if (node.param) for (const id of patternIdentifiers(node.param)) bind(node, id.name, { kind: 'opaque', why: 'a caught error' });
-        break;
-      default:
-    }
-  }
+  for (const node of nodes) DECLARERS.get(node.type)?.(node);
   return { file, text, ast, nodes, exports: collectExports(ast) };
 }
+
+/** What each kind of node declares in the table of names. */
+const DECLARERS = new Map([
+  ['ImportDeclaration', declareImport],
+  ['FunctionDeclaration', declareFunction],
+  ['FunctionExpression', declareFunction],
+  ['ArrowFunctionExpression', declareFunction],
+  ['VariableDeclarator', declareVariable],
+  [
+    'ClassDeclaration',
+    (node) => {
+      if (node.id) bind(scopeOf(node, false), node.id.name, { kind: 'opaque', why: 'a class' });
+    },
+  ],
+  [
+    'CatchClause',
+    (node) => {
+      if (node.param) for (const id of patternIdentifiers(node.param)) bind(node, id.name, { kind: 'opaque', why: 'a caught error' });
+    },
+  ],
+]);
+
+/** The value, or a computed key, of a property or class field is a use; a plain key is not. */
+const valueOrComputedKey = (parent, node) => parent.value === node || (parent.key === node && parent.computed);
+const neverAReference = () => false;
+
+/** For an Identifier under each kind of parent: whether it is a use of a name. A parent not here makes it one. */
+const REFERENCE_RULES = new Map([
+  ['MemberExpression', (parent, node) => parent.object === node || (parent.property === node && parent.computed)],
+  ['Property', (parent, node) => parent.parent.type !== 'ObjectPattern' && valueOrComputedKey(parent, node)],
+  ['VariableDeclarator', (parent, node) => parent.init === node],
+  // function load(p, read = readFileSync): the default is a use, the name on the left is a declaration
+  ['AssignmentPattern', (parent, node) => parent.right === node],
+  // class R { read = readFileSync }
+  ['PropertyDefinition', valueOrComputedKey],
+  ...['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].map((type) => [type, (parent, node) => parent.body === node]),
+  ...[
+    'ImportSpecifier',
+    'ImportDefaultSpecifier',
+    'ImportNamespaceSpecifier',
+    'ExportSpecifier',
+    'LabeledStatement',
+    'BreakStatement',
+    'ContinueStatement',
+    'MethodDefinition',
+    'CatchClause',
+    'RestElement',
+    'ArrayPattern',
+    'ObjectPattern',
+    'ClassDeclaration',
+  ].map((type) => [type, neverAReference]),
+]);
 
 /** Whether an Identifier is a use of a name (not a property key, label or declaration). */
 function isValueReference(node) {
   const parent = node.parent;
   if (!parent) return false;
-  switch (parent.type) {
-    case 'MemberExpression':
-      return parent.object === node || (parent.property === node && parent.computed);
-    case 'Property':
-      if (parent.parent.type === 'ObjectPattern') return false;
-      return parent.value === node || (parent.key === node && parent.computed);
-    case 'VariableDeclarator':
-      return parent.init === node;
-    case 'AssignmentPattern':
-      // function load(p, read = readFileSync): the default is a use, the name on the left is a declaration
-      return parent.right === node;
-    case 'PropertyDefinition':
-      // class R { read = readFileSync }
-      return parent.value === node || (parent.key === node && parent.computed);
-    case 'FunctionDeclaration':
-    case 'FunctionExpression':
-    case 'ArrowFunctionExpression':
-      return parent.body === node;
-    case 'ImportSpecifier':
-    case 'ImportDefaultSpecifier':
-    case 'ImportNamespaceSpecifier':
-    case 'ExportSpecifier':
-    case 'LabeledStatement':
-    case 'BreakStatement':
-    case 'ContinueStatement':
-    case 'MethodDefinition':
-    case 'CatchClause':
-    case 'RestElement':
-    case 'ArrayPattern':
-    case 'ObjectPattern':
-    case 'ClassDeclaration':
-      return false;
-    default:
-      return true;
-  }
+  const rule = REFERENCE_RULES.get(parent.type);
+  return rule ? rule(parent, node) : true;
 }
 
 /** The function a binding names: a function declaration, or a name set to an arrow or function expression. */
@@ -655,12 +690,16 @@ const LOOP_TYPES = new Set(['ForStatement', 'ForInStatement', 'ForOfStatement', 
 function insideLoop(node) {
   for (let n = node.parent; n; n = n.parent) {
     if (LOOP_TYPES.has(n.type)) return true;
-    if (FUNCTION_TYPES.has(n.type)) {
-      const call = n.parent;
-      return call?.type === 'CallExpression' && call.arguments.includes(n) && call.callee.type === 'MemberExpression' && !call.callee.computed && [...ITEM_CALLBACK_METHODS, 'reduce', 'reduceRight'].includes(call.callee.property.name);
-    }
+    if (FUNCTION_TYPES.has(n.type)) return isListCallback(n);
   }
   return false;
+}
+
+/** Whether a function is passed to a list method that calls it once per item (`map`, `forEach`, `reduce` ...). */
+function isListCallback(fn) {
+  const call = fn.parent;
+  if (call?.type !== 'CallExpression' || !call.arguments.includes(fn)) return false;
+  return call.callee.type === 'MemberExpression' && !call.callee.computed && [...ITEM_CALLBACK_METHODS, 'reduce', 'reduceRight'].includes(call.callee.property.name);
 }
 
 function enclosingFunction(node) {
@@ -668,9 +707,314 @@ function enclosingFunction(node) {
   return null;
 }
 
+// What a test of "was this script started from the command line" means, and
+// whether code sits where only such a start reaches, worked out once per node.
+// Keyed by the node, so each analysis has its own answers: an analysis works
+// on syntax trees of its own (see loadModule), never one another analysis used.
+const POLARITY_CACHE = new WeakMap();
+const COMMAND_LINE_ONLY_CACHE = new WeakMap();
+
 // ---------------------------------------------------------------------------
 // The analysis
 // ---------------------------------------------------------------------------
+
+/**
+ * The positions a spread value adds to a list: a list's own positions, or one
+ * position holding the unknown value (or `why`, when it is something else).
+ */
+function positionsOf(v, why) {
+  if (v.k === 'arr') return v.items;
+  return [[v.k === 'unk' ? v : unk(why)]];
+}
+
+/** Why a path built from a known start and then `v` is only partly known: null for a name from a listing. */
+function partlyKnownWhy(v, uses) {
+  if (v.k === 'name') return null;
+  return v.k === 'unk' ? v.why : `${uses} ${inWords(v)}`;
+}
+
+/** A template string with one choice of value for each `${}`, the quasis around them as written. */
+function templateValue(quasis, combo) {
+  let text = '';
+  for (let i = 0; i < quasis.length; i++) {
+    text += quasis[i].value.cooked ?? '';
+    const v = combo[i];
+    if (!v) continue;
+    if (v.k !== 'str') return templateStopsAt(text, v);
+    text += v.v;
+  }
+  return str(text);
+}
+
+/** A template string whose text so far is `text`, at a value `v` that is not plain text. */
+function templateStopsAt(text, v) {
+  if (v.k === 'pre') return pre(text + v.v, v.why);
+  if (text !== '') return pre(text, partlyKnownWhy(v, 'a template string uses'));
+  if (v.k === 'name') return NAME;
+  if (v.k === 'tmp' || v.k === 'ext' || v.k === 'unk') return v;
+  return unk('a template string starts with a value that is not known');
+}
+
+/** `l + r`, for one value of each side. */
+function concatValue(l, r) {
+  if (l.k === 'str' && r.k === 'str') return str(l.v + r.v);
+  if (l.k === 'str' && r.k === 'pre') return pre(l.v + r.v, r.why);
+  if (l.k === 'pre' || l.k === 'name' || passesThrough(l)) return l;
+  if (l.k === 'str' && l.v !== '') return pre(l.v, partlyKnownWhy(r, 'a string is joined to'));
+  return unk('it is built from a value that is not known');
+}
+
+/** Notes what an assignment does to each name it sets: a new value, a count, or a change the guard does not follow. */
+function recordAssignment(node) {
+  const targets = node.left.type === 'Identifier' ? [node.left] : patternIdentifiers(node.left);
+  for (const id of targets) {
+    const binding = lookup(id, id.name);
+    if (binding) recordAssignmentTo(binding, node);
+  }
+}
+
+function recordAssignmentTo(binding, node) {
+  if (insideLoop(node)) binding.loopAssigned = true;
+  const plainName = node.left.type === 'Identifier';
+  const addsNumber = node.right.type === 'Literal' && typeof node.right.value === 'number';
+  if (node.operator === '=' && plainName) binding.assigns.push(node.right);
+  else if (node.operator === '+=' && plainName && addsNumber) binding.counted = true;
+  // p += '/docs' is p = p + '/docs'
+  else if (node.operator === '+=' && plainName) binding.assigns.push({ type: 'BinaryExpression', operator: '+', left: node.left, right: node.right });
+  else binding.tainted = true;
+}
+
+/** `name.method(...)`, with the method written with a dot. */
+function isMethodCallOnName(node) {
+  return node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.object.type === 'Identifier' && !node.callee.computed;
+}
+
+/** A binding that holds a function: declared as one, or set to one. */
+function isFunctionBinding(binding) {
+  return binding.kind === 'function' || binding.inits.some((i) => FUNCTION_TYPES.has(i.type));
+}
+
+/** `list.map(fn)` and the other ITEM_CALLBACK_METHODS, with `node` as the callback. */
+function isItemCallbackArgument(call, node) {
+  if (call.type !== 'CallExpression' || call.arguments[0] !== node) return false;
+  return call.callee.type === 'MemberExpression' && !call.callee.computed && ITEM_CALLBACK_METHODS.has(call.callee.property.name);
+}
+
+/** The name at the start of `a.b[c].d`, or null. */
+function rootIdentifier(member) {
+  let n = member;
+  while (n.type === 'MemberExpression') n = n.object;
+  return n.type === 'Identifier' ? n : null;
+}
+
+/** Notes a name whose object or list is changed after it is made: x.k = v, x[i] = v, x.splice(...), Object.assign(x, ...). */
+function markMutations(node) {
+  const target = mutationTarget(node);
+  const binding = target && lookup(target, target.name);
+  if (binding) binding.mutated = true;
+}
+
+/** The name whose object or list `node` changes, or null. */
+function mutationTarget(node) {
+  if (isMemberWrite(node)) return rootIdentifier(node.type === 'UpdateExpression' ? node.argument : node.left);
+  if (node.type === 'UnaryExpression' && node.operator === 'delete' && node.argument.type === 'MemberExpression') return rootIdentifier(node.argument);
+  if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') return mutatingCallTarget(node);
+  return null;
+}
+
+/** x.k = v, x[i] = v, x.k++ and the like. */
+function isMemberWrite(node) {
+  if (node.type === 'AssignmentExpression') return node.left.type === 'MemberExpression';
+  return node.type === 'UpdateExpression' && node.argument.type === 'MemberExpression';
+}
+
+/** The methods that change the list they are called on, in place; push and unshift are followed for a plain name. */
+const IN_PLACE_METHODS = ['splice', 'fill', 'copyWithin'];
+/** The methods of Object that change their first argument. */
+const OBJECT_CHANGERS = ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf'];
+
+/** The name a method call changes: list.splice(...), a.b.push(...), Object.assign(x, ...); else null. */
+function mutatingCallTarget(node) {
+  const { object, property } = node.callee;
+  const method = node.callee.computed ? null : property.name;
+  if (IN_PLACE_METHODS.includes(method) || (['push', 'unshift'].includes(method) && object.type !== 'Identifier')) return rootIdentifier(object);
+  const isObjectMethod = object.type === 'Identifier' && object.name === 'Object' && OBJECT_CHANGERS.includes(method);
+  return isObjectMethod && node.arguments[0]?.type === 'Identifier' ? node.arguments[0] : null;
+}
+
+// ---- what runs when a test runs ---------------------------------------------
+
+/** A plain name, `name`. */
+const isName = (n, name) => n.type === 'Identifier' && n.name === name;
+
+/** `object.property`, written with a dot, on a plain name. */
+const isNamedMember = (n, object, property) =>
+  n.type === 'MemberExpression' && !n.computed && isName(n.object, object) && n.property.name === property;
+
+/** `import.meta.main`. */
+const isImportMetaMain = (n) => n.type === 'MemberExpression' && n.object.type === 'MetaProperty' && n.property.name === 'main';
+
+/** Whether a name set once to a value whose code passes `test` (followed at most three names deep). */
+function nameSetTo(n, depth, test) {
+  if (n.type !== 'Identifier' || depth >= 3) return false;
+  const binding = lookup(n, n.name);
+  return binding?.kind === 'var' && binding.inits.some((init) => test(init, depth + 1));
+}
+
+/** Whether any node under `root` passes `here(n)`, or is a name set to something that passes `test`. */
+function anyNodeUnder(root, depth, here, test) {
+  const stack = [root];
+  while (stack.length > 0) {
+    const n = stack.pop();
+    if (here(n) || nameSetTo(n, depth, test)) return true;
+    for (const child of childrenOf(n)) stack.push(child);
+  }
+  return false;
+}
+
+/** process.argv, require.main or import.meta.main. */
+const looksAtArgv = (n) => isNamedMember(n, 'process', 'argv') || isNamedMember(n, 'require', 'main') || isImportMetaMain(n);
+
+function mentionsArgv(root, depth = 0) {
+  return anyNodeUnder(root, depth, looksAtArgv, mentionsArgv);
+}
+
+function mentionsEnv(root) {
+  const stack = [root];
+  while (stack.length > 0) {
+    const n = stack.pop();
+    if (isNamedMember(n, 'process', 'env')) return true;
+    for (const child of childrenOf(n)) stack.push(child);
+  }
+  return false;
+}
+
+/** process.argv[i]: one element of the command line. */
+const isArgvIndex = (n) => n.type === 'MemberExpression' && n.computed && isNamedMember(n.object, 'process', 'argv');
+
+/** process.argv[i], require.main or import.meta.main. */
+const looksAtOneArgv = (n) => isArgvIndex(n) || isNamedMember(n, 'require', 'main') || isImportMetaMain(n);
+
+/** Whether a test looks at one element of process.argv (process.argv[1]), or at require.main / import.meta.main. */
+function indexesArgv(root, depth = 0) {
+  return anyNodeUnder(root, depth, looksAtOneArgv, indexesArgv);
+}
+
+/** What `!test` means: the opposite of what `test` means. */
+const NEGATED = { positive: 'negative', negative: 'positive' };
+
+/**
+ * Whether a test about "was this script started from the command line" is
+ * true when it is: 'positive' (=== ...), 'negative' (!== ..., !...), 'unclear'
+ * (|| and the like), or null when it does not look at the command line.
+ */
+function computePolarity(test, depth = 0) {
+  // a test on the environment alone ('env') says nothing about how the script was started
+  if (!mentionsArgv(test)) return mentionsEnv(test) ? 'env' : null;
+  const byShape = POLARITY_BY_SHAPE.find(([applies]) => applies(test, depth));
+  if (byShape) return byShape[1](test, depth);
+  // || and ?: can run either way; anything else that looks at the command line (process.argv[1], x.endsWith(...)) means "started from it"
+  if (test.type === 'LogicalExpression' || test.type === 'ConditionalExpression') return 'unclear';
+  return indexesArgv(test) ? 'positive' : 'unclear';
+}
+
+/** A name set once, and never again, to a test: the test it was set to. */
+function singleInit(test) {
+  const binding = lookup(test, test.name);
+  return binding?.kind === 'var' && binding.inits.length === 1 && binding.assigns.length === 0 ? binding.inits[0] : null;
+}
+
+/** The meaning of each shape of test that looks at the command line: [does it have this shape, what it means]. */
+const POLARITY_BY_SHAPE = [
+  [(test) => test.type === 'UnaryExpression' && test.operator === '!', (test, depth) => NEGATED[startedFromCommandLine(test.argument, depth)] ?? 'unclear'],
+  [
+    (test) => test.type === 'BinaryExpression',
+    (test) => {
+      if (!indexesArgv(test)) return 'unclear'; // process.argv.length === 2 says nothing about whether this is the script that was started
+      if (['===', '=='].includes(test.operator)) return 'positive';
+      return ['!==', '!='].includes(test.operator) ? 'negative' : 'unclear';
+    },
+  ],
+  [
+    (test) => test.type === 'LogicalExpression' && test.operator === '&&',
+    (test, depth) => {
+      const sides = [startedFromCommandLine(test.left, depth), startedFromCommandLine(test.right, depth)].filter((side) => side && side !== 'env');
+      return sides.length > 0 && sides.every((side) => side === sides[0]) ? sides[0] : 'unclear';
+    },
+  ],
+  [
+    (test) => test.type === 'LogicalExpression' && test.operator === '||',
+    (test, depth) => {
+      // started from the command line OR forced by an environment variable: the script still has to be the one started
+      const sides = [startedFromCommandLine(test.left, depth), startedFromCommandLine(test.right, depth)];
+      return sides.every((side) => side === 'positive' || side === 'env') && sides.includes('positive') ? 'positive' : 'unclear';
+    },
+  ],
+  [(test, depth) => test.type === 'Identifier' && depth < 3 && singleInit(test) !== null, (test, depth) => startedFromCommandLine(singleInit(test), depth + 1)],
+];
+
+function startedFromCommandLine(test, depth = 0) {
+  if (!POLARITY_CACHE.has(test)) POLARITY_CACHE.set(test, computePolarity(test, depth));
+  return POLARITY_CACHE.get(test);
+}
+
+/** True inside the branch of `if (<this script was started>)` that a test never enters. */
+function commandLineOnly(node) {
+  if (!COMMAND_LINE_ONLY_CACHE.has(node)) COMMAND_LINE_ONLY_CACHE.set(node, computeCommandLineOnly(node));
+  return COMMAND_LINE_ONLY_CACHE.get(node);
+}
+
+function computeCommandLineOnly(node) {
+  for (let n = node; n.parent; n = n.parent) {
+    if (isCommandLineBranch(n.parent, n)) return true;
+  }
+  return false;
+}
+
+/** Whether `n` is the part of `p` that runs only when the script was started from the command line. */
+function isCommandLineBranch(p, n) {
+  if (p.type === 'IfStatement' || p.type === 'ConditionalExpression') {
+    const sense = startedFromCommandLine(p.test);
+    return (sense === 'positive' && p.consequent === n) || (sense === 'negative' && p.alternate === n);
+  }
+  return p.type === 'LogicalExpression' && p.operator === '&&' && p.right === n && startedFromCommandLine(p.left) === 'positive';
+}
+
+/** The module in process.getBuiltinModule('fs'), else null. */
+function builtinModuleOf(node) {
+  const callee = node.type === 'CallExpression' ? node.callee : null;
+  if (callee?.type !== 'MemberExpression' || callee.computed || callee.property.name !== 'getBuiltinModule') return null;
+  const [arg] = node.arguments;
+  const onProcess = callee.object.type === 'Identifier' && callee.object.name === 'process';
+  return onProcess && arg?.type === 'Literal' && typeof arg.value === 'string' ? arg.value : null;
+}
+
+function sameOrFewer(values, known) {
+  const keys = new Set(known.map(keyOf));
+  return values.every((v) => keys.has(keyOf(v)));
+}
+
+/**
+ * How many rounds a name gets. A name set again inside a loop gets three and is
+ * reported if it still changes, so a climb up the folders (d = dirname(d)) gives
+ * the same answer however deep the checkout is. A name set again in a straight
+ * line gets one round per step and is not reported.
+ */
+function roundsFor(binding) {
+  if (binding.loopAssigned) return { rounds: 3, straightLine: false };
+  if (binding.assigns.length > 0) return { rounds: binding.assigns.length + 1, straightLine: true };
+  return { rounds: MAX_ROUNDS, straightLine: false };
+}
+
+function fnLabel(fn) {
+  const name = fn.$binding?.name ?? fn.id?.name;
+  return name ? `\`${name}\`` : 'a function written in place';
+}
+
+/** Every call that runs `binding`'s function: by name, and through a parameter that was handed the function. */
+const callsOf = (binding) => [...binding.calls, ...binding.viaParams.flatMap((param) => param.calls)];
+
+const isUsedAsValue = (binding) => binding.escapes || binding.callbackUses.length > 0;
 
 /**
  * @param {object} options
@@ -735,29 +1079,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     return (target && exportedBinding(target, binding.imported)) || binding;
   };
 
-  /** The name at the start of `a.b[c].d`, or null. */
-  const rootIdentifier = (member) => {
-    let n = member;
-    while (n.type === 'MemberExpression') n = n.object;
-    return n.type === 'Identifier' ? n : null;
-  };
 
-  /** Notes a name whose object or list is changed after it is made: x.k = v, x[i] = v, x.splice(...), Object.assign(x, ...). */
-  const markMutations = (node) => {
-    let target = null;
-    if ((node.type === 'AssignmentExpression' && node.left.type === 'MemberExpression') || (node.type === 'UpdateExpression' && node.argument.type === 'MemberExpression')) {
-      target = rootIdentifier(node.type === 'UpdateExpression' ? node.argument : node.left);
-    } else if (node.type === 'UnaryExpression' && node.operator === 'delete' && node.argument.type === 'MemberExpression') {
-      target = rootIdentifier(node.argument);
-    } else if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') {
-      const { object, property } = node.callee;
-      const method = node.callee.computed ? null : property.name;
-      if (['splice', 'fill', 'copyWithin'].includes(method) || (['push', 'unshift'].includes(method) && object.type !== 'Identifier')) target = rootIdentifier(object);
-      else if (object.type === 'Identifier' && object.name === 'Object' && ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf'].includes(method) && node.arguments[0]?.type === 'Identifier') target = node.arguments[0];
-    }
-    const binding = target && lookup(target, target.name);
-    if (binding) binding.mutated = true;
-  };
 
   /** Every name a module exports, including the ones that arrive through export * from. */
   const allExportNames = (file, seen = new Set()) => {
@@ -788,166 +1110,66 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
   };
 
   // Who assigns to a name, who calls a function, and which functions are passed around.
+  /** lib.f(x): a push onto a list held by a name, or a call of a function of `import * as lib from './x.mjs'`. */
+  const recordMethodCall = (node) => {
+    const holder = lookup(node.callee.object, node.callee.object.name);
+    const method = node.callee.property.name;
+    if (['push', 'unshift'].includes(method)) holder?.pushes.push(node);
+    // lib.f(x) where lib is `import * as lib from './x.mjs'`
+    if (holder?.kind !== 'import' || holder.imported !== '*') return;
+    const target = resolveImport(holder.source, holder.file);
+    const called = target && exportedBinding(target, method);
+    if (called) called.calls.push(node);
+  };
+
+  /** A function used by name as a value: a callback of a list method, an argument a helper calls, or handed elsewhere. */
+  const recordFunctionValue = (node) => {
+    markNamespaceUse(node);
+    const isCallee = node.parent.type === 'CallExpression' && node.parent.callee === node;
+    const binding = isCallee ? null : lookup(node, node.name);
+    const target = binding && linkImport(binding);
+    if (!target || !isFunctionBinding(target)) return;
+    const call = node.parent;
+    const receiver = call.type === 'CallExpression' && call.callee.type === 'Identifier' ? lookup(call.callee, call.callee.name) : null;
+    const receiverFn = receiver && linkImport(receiver);
+    const receiverParam = receiverFn && functionOf(receiverFn)?.$params?.[call.arguments.indexOf(node)];
+    if (isItemCallbackArgument(call, node)) target.callbackUses.push({ call });
+    // helper(read): the helper's own calls of its parameter are calls of `read`
+    else if (receiverParam) target.viaParams.push(receiverParam);
+    else target.escapes = true;
+  };
+
+  const recordUse = (node) => {
+    if (node.type === 'AssignmentExpression') {
+      recordAssignment(node);
+    } else if (node.type === 'UpdateExpression' && node.argument.type === 'Identifier') {
+      const binding = lookup(node.argument, node.argument.name);
+      if (binding) binding.counted = true;
+    } else if (node.type === 'CallExpression' && node.callee.type === 'Identifier') {
+      const binding = lookup(node.callee, node.callee.name);
+      if (binding) linkImport(binding).calls.push(node);
+    } else if (isMethodCallOnName(node)) {
+      recordMethodCall(node);
+    } else if (node.type === 'Identifier' && isValueReference(node)) {
+      recordFunctionValue(node);
+    }
+  };
+
   const allFunctions = [];
   for (const module of loaded.values()) {
     for (const node of module.nodes) {
       if (FUNCTION_TYPES.has(node.type)) allFunctions.push(node);
       markMutations(node);
-      if (node.type === 'AssignmentExpression') {
-        const targets = node.left.type === 'Identifier' ? [node.left] : patternIdentifiers(node.left);
-        for (const id of targets) {
-          const binding = lookup(id, id.name);
-          if (!binding) continue;
-          if (insideLoop(node)) binding.loopAssigned = true;
-          if (node.operator === '=' && node.left.type === 'Identifier') binding.assigns.push(node.right);
-          else if (node.operator === '+=' && node.left.type === 'Identifier' && node.right.type === 'Literal' && typeof node.right.value === 'number') binding.counted = true;
-          // p += '/docs' is p = p + '/docs'
-          else if (node.operator === '+=' && node.left.type === 'Identifier') binding.assigns.push({ type: 'BinaryExpression', operator: '+', left: node.left, right: node.right });
-          else binding.tainted = true;
-        }
-      } else if (node.type === 'UpdateExpression' && node.argument.type === 'Identifier') {
-        const binding = lookup(node.argument, node.argument.name);
-        if (binding) binding.counted = true;
-      } else if (node.type === 'CallExpression' && node.callee.type === 'Identifier') {
-        const binding = lookup(node.callee, node.callee.name);
-        if (binding) linkImport(binding).calls.push(node);
-      } else if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.object.type === 'Identifier' && !node.callee.computed) {
-        const holder = lookup(node.callee.object, node.callee.object.name);
-        const method = node.callee.property.name;
-        if (['push', 'unshift'].includes(method)) holder?.pushes.push(node);
-        // lib.f(x) where lib is `import * as lib from './x.mjs'`
-        if (holder?.kind === 'import' && holder.imported === '*') {
-          const target = resolveImport(holder.source, holder.file);
-          const called = target && exportedBinding(target, method);
-          if (called) called.calls.push(node);
-        }
-      } else if (node.type === 'Identifier' && isValueReference(node)) {
-        markNamespaceUse(node);
-        const isCallee = node.parent.type === 'CallExpression' && node.parent.callee === node;
-        const binding = isCallee ? null : lookup(node, node.name);
-        const target = binding && linkImport(binding);
-        if (target && (target.kind === 'function' || target.inits.some((i) => FUNCTION_TYPES.has(i.type)))) {
-          const call = node.parent;
-          const isItemCallback = call.type === 'CallExpression' && call.arguments[0] === node && call.callee.type === 'MemberExpression' && !call.callee.computed && ITEM_CALLBACK_METHODS.has(call.callee.property.name);
-          const receiver = call.type === 'CallExpression' && call.callee.type === 'Identifier' ? lookup(call.callee, call.callee.name) : null;
-          const receiverFn = receiver && linkImport(receiver);
-          const receiverParam = receiverFn && functionOf(receiverFn)?.$params?.[call.arguments.indexOf(node)];
-          if (isItemCallback) target.callbackUses.push({ call });
-          // helper(read): the helper's own calls of its parameter are calls of `read`
-          else if (receiverParam) target.viaParams.push(receiverParam);
-          else target.escapes = true;
-        }
-      }
+      recordUse(node);
     }
   }
 
-  // ---- what runs when a test runs ---------------------------------------------
-  const mentionsArgv = (root, depth = 0) => {
-    const stack = [root];
-    while (stack.length > 0) {
-      const n = stack.pop();
-      if (n.type === 'MemberExpression' && !n.computed && n.object.type === 'Identifier' && ((n.object.name === 'process' && n.property.name === 'argv') || (n.object.name === 'require' && n.property.name === 'main'))) return true;
-      if (n.type === 'MemberExpression' && n.object.type === 'MetaProperty' && n.property.name === 'main') return true;
-      if (n.type === 'Identifier' && depth < 3) {
-        const b = lookup(n, n.name);
-        if (b?.kind === 'var' && b.inits.some((init) => mentionsArgv(init, depth + 1))) return true;
-      }
-      for (const child of childrenOf(n)) stack.push(child);
-    }
-    return false;
-  };
 
-  /**
-   * Whether a test about "was this script started from the command line" is
-   * true when it is: 'positive' (=== ...), 'negative' (!== ..., !...), 'unclear'
-   * (|| and the like), or null when it does not look at the command line.
-   */
-  const mentionsEnv = (root) => {
-    const stack = [root];
-    while (stack.length > 0) {
-      const n = stack.pop();
-      if (n.type === 'MemberExpression' && !n.computed && n.object.type === 'Identifier' && n.object.name === 'process' && n.property.name === 'env') return true;
-      for (const child of childrenOf(n)) stack.push(child);
-    }
-    return false;
-  };
 
-  /** Whether a test looks at one element of process.argv (process.argv[1]), or at require.main / import.meta.main. */
-  const indexesArgv = (root, depth = 0) => {
-    const stack = [root];
-    while (stack.length > 0) {
-      const n = stack.pop();
-      if (n.type === 'MemberExpression') {
-        const isArgv = (m) => m.type === 'MemberExpression' && !m.computed && m.object.type === 'Identifier' && m.object.name === 'process' && m.property.name === 'argv';
-        if (n.computed && isArgv(n.object)) return true;
-        if (!n.computed && n.object.type === 'Identifier' && n.object.name === 'require' && n.property.name === 'main') return true;
-        if (n.object.type === 'MetaProperty' && n.property.name === 'main') return true;
-      }
-      if (n.type === 'Identifier' && depth < 3) {
-        const binding = lookup(n, n.name);
-        if (binding?.kind === 'var' && binding.inits.some((init) => indexesArgv(init, depth + 1))) return true;
-      }
-      for (const child of childrenOf(n)) stack.push(child);
-    }
-    return false;
-  };
 
-  const computePolarity = (test, depth = 0) => {
-    // a test on the environment alone ('env') says nothing about how the script was started
-    if (!mentionsArgv(test)) return mentionsEnv(test) ? 'env' : null;
-    if (test.type === 'UnaryExpression' && test.operator === '!') {
-      const inner = startedFromCommandLine(test.argument, depth);
-      return inner === 'positive' ? 'negative' : inner === 'negative' ? 'positive' : 'unclear';
-    }
-    if (test.type === 'BinaryExpression') {
-      if (!indexesArgv(test)) return 'unclear'; // process.argv.length === 2 says nothing about whether this is the script that was started
-      return ['===', '=='].includes(test.operator) ? 'positive' : ['!==', '!='].includes(test.operator) ? 'negative' : 'unclear';
-    }
-    if (test.type === 'LogicalExpression' && test.operator === '&&') {
-      const sides = [startedFromCommandLine(test.left, depth), startedFromCommandLine(test.right, depth)].filter((side) => side && side !== 'env');
-      return sides.length > 0 && sides.every((side) => side === sides[0]) ? sides[0] : 'unclear';
-    }
-    if (test.type === 'LogicalExpression' && test.operator === '||') {
-      // started from the command line OR forced by an environment variable: the script still has to be the one started
-      const sides = [startedFromCommandLine(test.left, depth), startedFromCommandLine(test.right, depth)];
-      return sides.every((side) => side === 'positive' || side === 'env') && sides.includes('positive') ? 'positive' : 'unclear';
-    }
-    if (test.type === 'Identifier' && depth < 3) {
-      const binding = lookup(test, test.name);
-      if (binding?.kind === 'var' && binding.inits.length === 1 && binding.assigns.length === 0) return startedFromCommandLine(binding.inits[0], depth + 1);
-    }
-    // || and ?: can run either way; anything else that looks at the command line (process.argv[1], x.endsWith(...)) means "started from it"
-    if (test.type === 'LogicalExpression' || test.type === 'ConditionalExpression') return 'unclear';
-    return indexesArgv(test) ? 'positive' : 'unclear';
-  };
 
-  const polarityCache = new Map();
-  const startedFromCommandLine = (test, depth = 0) => {
-    if (!polarityCache.has(test)) polarityCache.set(test, computePolarity(test, depth));
-    return polarityCache.get(test);
-  };
 
-  /** True inside the branch of `if (<this script was started>)` that a test never enters. */
-  const commandLineOnlyCache = new Map();
-  const commandLineOnly = (node) => {
-    if (!commandLineOnlyCache.has(node)) commandLineOnlyCache.set(node, computeCommandLineOnly(node));
-    return commandLineOnlyCache.get(node);
-  };
-  const computeCommandLineOnly = (node) => {
-    for (let n = node; n.parent; n = n.parent) {
-      const p = n.parent;
-      if (p.type === 'IfStatement' || p.type === 'ConditionalExpression') {
-        const sense = startedFromCommandLine(p.test);
-        if ((sense === 'positive' && p.consequent === n) || (sense === 'negative' && p.alternate === n)) return true;
-      }
-      if (p.type === 'LogicalExpression' && p.operator === '&&' && p.right === n && startedFromCommandLine(p.left) === 'positive') return true;
-    }
-    return false;
-  };
 
-  /** Every call that runs `binding`'s function: by name, and through a parameter that was handed the function. */
-  const callsOf = (binding) => [...binding.calls, ...binding.viaParams.flatMap((param) => param.calls)];
-  const isUsedAsValue = (binding) => binding.escapes || binding.callbackUses.length > 0;
 
   const runningFunctions = new Set(allFunctions.filter((fn) => TEST_FILE.test(fn.file)));
   const runsInTests = (node) => {
@@ -999,13 +1221,6 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     return null;
   };
 
-  /** The module in process.getBuiltinModule('fs'), else null. */
-  const builtinModuleOf = (node) => {
-    const callee = node.type === 'CallExpression' ? node.callee : null;
-    if (callee?.type !== 'MemberExpression' || callee.computed || callee.property.name !== 'getBuiltinModule') return null;
-    const [arg] = node.arguments;
-    return callee.object.type === 'Identifier' && callee.object.name === 'process' && arg?.type === 'Literal' && typeof arg.value === 'string' ? arg.value : null;
-  };
 
   /** What a name stands for when it is a Node module or a global: {mod, name} or null. */
   const moduleRef = (node) => {
@@ -1084,34 +1299,13 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
   const evalTemplate = (node, ctx) => {
     const combos = product(node.expressions.map((expr) => evalNode(expr, ctx)));
     if (combos === null) return [unk(TOO_MANY)];
-    return uniq(
-      combos.map((combo) => {
-        let text = '';
-        for (let i = 0; i < node.quasis.length; i++) {
-          text += node.quasis[i].value.cooked ?? '';
-          const v = combo[i];
-          if (!v) continue;
-          if (v.k === 'str') text += v.v;
-          else if (v.k === 'pre') return pre(text + v.v, v.why);
-          else if (text === '' && (v.k === 'name' || v.k === 'tmp' || v.k === 'ext')) return v.k === 'name' ? NAME : v;
-          else if (text === '') return v.k === 'unk' ? v : unk('a template string starts with a value that is not known');
-          else return pre(text, v.k === 'name' ? null : v.k === 'unk' ? v.why : `a template string uses ${inWords(v)}`);
-        }
-        return str(text);
-      })
-    );
+    return uniq(combos.map((combo) => templateValue(node.quasis, combo)));
   };
 
   const evalConcat = (node, ctx) => {
     const out = [];
     for (const l of evalNode(node.left, ctx)) {
-      for (const r of evalNode(node.right, ctx)) {
-        if (l.k === 'str' && r.k === 'str') out.push(str(l.v + r.v));
-        else if (l.k === 'str' && r.k === 'pre') out.push(pre(l.v + r.v, r.why));
-        else if (l.k === 'pre' || l.k === 'name' || passesThrough(l)) out.push(l);
-        else if (l.k === 'str' && l.v !== '') out.push(pre(l.v, r.k === 'name' ? null : r.k === 'unk' ? r.why : `a string is joined to ${inWords(r)}`));
-        else out.push(unk('it is built from a value that is not known'));
-      }
+      for (const r of evalNode(node.right, ctx)) out.push(concatValue(l, r));
     }
     return uniq(out);
   };
@@ -1121,10 +1315,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     for (const element of node.elements) {
       if (!element) continue;
       if (element.type === 'SpreadElement') {
-        for (const spread of evalNode(element.argument, ctx)) {
-          if (spread.k === 'arr') items.push(...spread.items);
-          else items.push([spread.k === 'unk' ? spread : unk('it spreads a value that is not a list (array)')]);
-        }
+        for (const spread of evalNode(element.argument, ctx)) items.push(...positionsOf(spread, 'it spreads a value that is not a list (array)'));
       } else {
         items.push(evalNode(element, ctx));
       }
@@ -1148,7 +1339,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     binding.pushes.flatMap((call) =>
       call.arguments.flatMap((a) => {
         if (a.type !== 'SpreadElement') return [evalNode(a, ctx)];
-        return evalNode(a.argument, ctx).flatMap((v) => (v.k === 'arr' ? v.items : [[v.k === 'unk' ? v : unk('items added with a spread of something that is not a list (array)')]]));
+        return evalNode(a.argument, ctx).flatMap((v) => positionsOf(v, 'items added with a spread of something that is not a list (array)'));
       })
     );
 
@@ -1217,22 +1408,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     return withLater(binding, out, ctx);
   };
 
-  const sameOrFewer = (values, known) => {
-    const keys = new Set(known.map(keyOf));
-    return values.every((v) => keys.has(keyOf(v)));
-  };
 
-  /**
-   * How many rounds a name gets. A name set again inside a loop gets three and is
-   * reported if it still changes, so a climb up the folders (d = dirname(d)) gives
-   * the same answer however deep the checkout is. A name set again in a straight
-   * line gets one round per step and is not reported.
-   */
-  const roundsFor = (binding) => {
-    if (binding.loopAssigned) return { rounds: 3, straightLine: false };
-    if (binding.assigns.length > 0) return { rounds: binding.assigns.length + 1, straightLine: true };
-    return { rounds: MAX_ROUNDS, straightLine: false };
-  };
 
   let bindingCounter = 0;
   const bindingId = (binding) => (binding.id ??= ++bindingCounter);
@@ -1300,10 +1476,6 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     return uniq(sources.flatMap((s) => (s.k === 'arr' ? itemsOf(s) : [s.k === 'unk' ? s : unk('a loop over a value that is not a list (array)')])));
   };
 
-  const fnLabel = (fn) => {
-    const name = fn.$binding?.name ?? fn.id?.name;
-    return name ? `\`${name}\`` : 'a function written in place';
-  };
 
   /** What one call passes for a parameter. */
   const argumentValues = (call, param, ctx) => {
@@ -1369,8 +1541,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
       if (node.type === 'YieldExpression' && node.argument) {
         // yield x adds one item; yield* list adds the items of list
         const values = evalNode(node.argument, ctx);
-        if (node.delegate) yielded.push(...values.flatMap((v) => (v.k === 'arr' ? v.items : [[v.k === 'unk' ? v : unk('yield* of something that is not a list (array)')]])));
-        else yielded.push(values);
+        yielded.push(...(node.delegate ? values.flatMap((v) => positionsOf(v, 'yield* of something that is not a list (array)')) : [values]));
       }
       for (const child of childrenOf(node)) if (!FUNCTION_TYPES.has(child.type)) stack.push(child);
     }

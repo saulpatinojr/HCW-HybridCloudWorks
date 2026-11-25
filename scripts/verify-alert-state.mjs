@@ -193,12 +193,12 @@ export function expectation(rule, gates = GATES) {
 // Live reads
 // ---------------------------------------------------------------------------
 
-/** Turn an ARM error response into a classified, publishable reason. */
-export function classifyError(status, body) {
-  const code = body?.error?.code ?? body?.code ?? '';
-  const message = body?.error?.message ?? body?.message ?? '';
-  const reason = redact(`HTTP ${status}${code ? ` ${code}` : ''}${message ? `: ${message}` : ''}`).slice(0, 300);
-  if (status === 401) return { status: 'unauthenticated', reason };
+/**
+ * How an ARM error is classified, in the order the tests are tried; anything
+ * none of them matches is `failed`.
+ */
+const ERROR_CLASSES = [
+  ['unauthenticated', (status) => status === 401],
   // A provider the subscription has not registered. Resource Health answers
   // this as 409 AuthError, "Make sure the resource provider has been
   // registered with this subscription" (sub-plat-mgmt-prod-cus, 2026-10-15);
@@ -206,16 +206,24 @@ export function classifyError(status, body) {
   // message counts only in that measured shape: a 403 AuthorizationFailed
   // whose text happens to name registration is still a refusal, and its fix
   // is the role, not the provider.
-  if (
-    /^MissingSubscriptionRegistration$/i.test(code) ||
-    (status === 409 && /^AuthError$/i.test(code) && /resource provider has been registered/i.test(message))
-  ) {
-    return { status: 'not-registered', reason };
-  }
-  if (status === 403 || /AuthorizationFailed/i.test(code)) return { status: 'denied', reason };
-  if (status === 404 && /ResourceGroupNotFound/i.test(code)) return { status: 'group-not-found', reason };
-  if (status === 404) return { status: 'not-found', reason };
-  return { status: 'failed', reason };
+  [
+    'not-registered',
+    (status, code, message) =>
+      /^MissingSubscriptionRegistration$/i.test(code) ||
+      (status === 409 && /^AuthError$/i.test(code) && /resource provider has been registered/i.test(message)),
+  ],
+  ['denied', (status, code) => status === 403 || /AuthorizationFailed/i.test(code)],
+  ['group-not-found', (status, code) => status === 404 && /ResourceGroupNotFound/i.test(code)],
+  ['not-found', (status) => status === 404],
+];
+
+/** Turn an ARM error response into a classified, publishable reason. */
+export function classifyError(status, body) {
+  const code = body?.error?.code ?? body?.code ?? '';
+  const message = body?.error?.message ?? body?.message ?? '';
+  const reason = redact(`HTTP ${status}${code ? ` ${code}` : ''}${message ? `: ${message}` : ''}`).slice(0, 300);
+  const matched = ERROR_CLASSES.find(([, test]) => test(status, code, message));
+  return { status: matched ? matched[0] : 'failed', reason };
 }
 
 /**
@@ -229,22 +237,43 @@ export async function armGet(path, { token, fetchImpl = fetch, list = false }) {
   let url = `${ARM}${path}`;
   const rows = [];
   for (let page = 0; url; page += 1) {
-    if (page >= 50) return { status: 'failed', reason: 'more than 50 pages; refusing to keep paging' };
-    if (!url.startsWith(`${ARM}/`)) return { status: 'failed', reason: 'nextLink left management.azure.com' };
-    let res;
-    try {
-      res = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
-    } catch (err) {
-      return { status: 'failed', reason: redact(`request failed: ${err?.message ?? err}`) };
-    }
-    const body = await res.json().catch(() => null);
-    if (!res.ok) return classifyError(res.status, body);
-    if (!list) return { status: 'ok', body };
-    if (!Array.isArray(body?.value)) return { status: 'failed', reason: 'response carried no value array' };
-    rows.push(...body.value);
-    url = body.nextLink ?? null;
+    const read = await readPage(url, page, { token, fetchImpl, list });
+    if (read.result) return read.result;
+    rows.push(...read.rows);
+    url = read.next;
   }
   return { status: 'ok', rows };
+}
+
+/** Why the next page is not requested at all, or null when it may be. */
+function pageRefusal(url, page) {
+  if (page >= 50) return 'more than 50 pages; refusing to keep paging';
+  if (!url.startsWith(`${ARM}/`)) return 'nextLink left management.azure.com';
+  return null;
+}
+
+/**
+ * One page of an ARM read: `{ result }` when the read ends here (a refusal, a
+ * failure, or a single object), else `{ rows, next }` for a list page.
+ */
+async function readPage(url, page, { token, fetchImpl, list }) {
+  const refusal = pageRefusal(url, page);
+  if (refusal) return { result: { status: 'failed', reason: refusal } };
+  let res;
+  try {
+    res = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
+  } catch (err) {
+    return { result: { status: 'failed', reason: redact(`request failed: ${err?.message ?? err}`) } };
+  }
+  const body = await res.json().catch(() => null);
+  return pageResult(res, body, list);
+}
+
+function pageResult(res, body, list) {
+  if (!res.ok) return { result: classifyError(res.status, body) };
+  if (!list) return { result: { status: 'ok', body } };
+  if (!Array.isArray(body?.value)) return { result: { status: 'failed', reason: 'response carried no value array' } };
+  return { rows: body.value, next: body.nextLink ?? null };
 }
 
 /** One live rule, normalised across the three ARM shapes. */
@@ -336,6 +365,15 @@ export async function readLive(rules, { token, fetchImpl = fetch, knownIds = new
   const subscriptionsRead =
     subs.status === 'ok' ? subs : { status: 'ok', namedOnly: true, listStatus: subs.status, reason: subs.reason };
 
+  const read = { ids, token, fetchImpl };
+  const lists = await readRuleLists(rules, read);
+  const actionGroups = await readActionGroups(rules, read);
+  const health = await readRulesHealth(rules, lists, read);
+  return { subscriptionsRead, ids, lists, actionGroups, health };
+}
+
+/** Each (subscription, resource group, rule type) list the rules live in, with its rules by lower-case name. */
+async function readRuleLists(rules, { ids, token, fetchImpl }) {
   const lists = new Map();
   const wanted = new Map();
   for (const rule of rules) {
@@ -360,7 +398,11 @@ export async function readLive(rules, { token, fetchImpl = fetch, knownIds = new
     }
     lists.set(key, read);
   }
+  return lists;
+}
 
+/** Each action group the rules name, summarised, by its Terraform address. */
+async function readActionGroups(rules, { ids, token, fetchImpl }) {
   const actionGroups = new Map();
   for (const group of uniqueActionGroups(rules)) {
     const id = ids.get(group.subscription);
@@ -377,9 +419,14 @@ export async function readLive(rules, { token, fetchImpl = fetch, knownIds = new
     const read = await armGet(path, { token, fetchImpl });
     actionGroups.set(group.address, read.status === 'ok' ? summariseActionGroup(read.body) : read);
   }
+  return actionGroups;
+}
 
-  // Resource Health for every log search rule that is live (#964). A rule
-  // the lists did not return has nothing to read; its verdict says so.
+/**
+ * Resource Health for every log search rule that is live (#964). A rule
+ * the lists did not return has nothing to read; its verdict says so.
+ */
+async function readRulesHealth(rules, lists, { ids, token, fetchImpl }) {
   const health = new Map();
   for (const rule of rules) {
     if (rule.armType !== 'Microsoft.Insights/scheduledQueryRules') continue;
@@ -388,7 +435,7 @@ export async function readLive(rules, { token, fetchImpl = fetch, knownIds = new
     if (!found) continue;
     health.set(rule.address, await readHealth(ids.get(rule.subscription), rule.resourceGroup, found.name, { token, fetchImpl }));
   }
-  return { subscriptionsRead, ids, lists, actionGroups, health };
+  return health;
 }
 
 /** One log search rule's Resource Health, or the classified failure to read it. */
@@ -445,30 +492,39 @@ export function healthVerdict(health, found, subscription) {
   const frequency = durationMinutes(found?.evaluationFrequency);
   const reported = frequency === null || frequency <= HEALTH_MAX_FREQUENCY_MINUTES;
   if (state === 'Available') return { shown: 'Available', problem: null, note: null };
-  if (state === 'Unknown') {
-    const why = reported
-      ? `Resource Health: Unknown${title && title !== 'Unknown' ? ` (${title})` : ''}`
-      : `Resource Health: Unknown, as Microsoft documents for a rule evaluated less often than every ${HEALTH_MAX_FREQUENCY_MINUTES} minutes`;
-    return { shown: 'Unknown', problem: null, note: why };
-  }
-  if (state === 'Unavailable' || state === 'Degraded') {
-    if (!reported && (!title || REASONLESS_TITLE.test(title))) {
-      return {
-        shown: state,
-        problem: null,
-        note:
-          `Resource Health: ${state}${title ? `, "${title}"` : ''}, which Microsoft documents for a rule evaluated less ` +
-          `often than every ${HEALTH_MAX_FREQUENCY_MINUTES} minutes; not a finding`,
-      };
-    }
-    const text = `${title || state} (Resource Health: ${state})${summary ? `. ${summary}` : ''}`;
-    return { shown: state, problem: ['UNHEALTHY', text], note: null };
-  }
+  if (state === 'Unknown') return { shown: 'Unknown', problem: null, note: unknownHealthNote(title, reported) };
+  if (state === 'Unavailable' || state === 'Degraded') return unhealthyVerdict({ state, title, summary, reported });
   return {
     shown: 'unread',
     problem: ['HEALTH UNREADABLE', `Resource Health answered with an availabilityState this check does not know: ${redact(String(state)).slice(0, 40)}`],
     note: null,
   };
+}
+
+/** The remark for an Unknown state: its title, or why a rule evaluated less often reads Unknown. */
+function unknownHealthNote(title, reported) {
+  if (!reported) {
+    return `Resource Health: Unknown, as Microsoft documents for a rule evaluated less often than every ${HEALTH_MAX_FREQUENCY_MINUTES} minutes`;
+  }
+  return `Resource Health: Unknown${title && title !== 'Unknown' ? ` (${title})` : ''}`;
+}
+
+/**
+ * Unavailable or Degraded: a finding, unless the rule is evaluated less often
+ * than Resource Health reports on and the title gives no reason.
+ */
+function unhealthyVerdict({ state, title, summary, reported }) {
+  if (!reported && (!title || REASONLESS_TITLE.test(title))) {
+    return {
+      shown: state,
+      problem: null,
+      note:
+        `Resource Health: ${state}${title ? `, "${title}"` : ''}, which Microsoft documents for a rule evaluated less ` +
+        `often than every ${HEALTH_MAX_FREQUENCY_MINUTES} minutes; not a finding`,
+    };
+  }
+  const text = `${title || state} (Resource Health: ${state})${summary ? `. ${summary}` : ''}`;
+  return { shown: state, problem: ['UNHEALTHY', text], note: null };
 }
 
 /** Why a rule's Resource Health could not be read, in words the owner can act on. */
@@ -895,53 +951,70 @@ exit 0  every expected rule is live, enabled and wired
 exit 1  at least one finding, named in the report
 exit 2  the check could not run`;
 
+/** The check could not run: the lines to print, before exit 2. */
+class CannotRun extends Error {
+  constructor(lines) {
+    super(lines[0]);
+    this.lines = lines;
+  }
+}
+
+/** `work()`'s answer, or CannotRun with the lines `describe(err)` gives when it throws. */
+function attempt(work, describe) {
+  try {
+    return work();
+  } catch (err) {
+    throw new CannotRun(describe(err));
+  }
+}
+
 /** The command line: --list, --help, or the live comparison. Resolves to the exit code. */
 async function main(argv) {
-  let args;
   try {
-    args = parseArgs(argv, { flags: ['list', 'help'], options: ['summary'] });
+    return await runCommand(argv);
   } catch (err) {
-    console.error(err.message);
-    console.error(USAGE);
+    if (!(err instanceof CannotRun)) throw err;
+    for (const line of err.lines) console.error(line);
     return 2;
   }
+}
+
+async function runCommand(argv) {
+  const args = attempt(
+    () => parseArgs(argv, { flags: ['list', 'help'], options: ['summary'] }),
+    (err) => [err.message, USAGE]
+  );
   if (args.flags.help) {
     console.log(USAGE);
     return 0;
   }
 
-  let rules;
-  let suffix;
-  try {
-    const source = terraformSource();
-    rules = declaredAlertRules(source);
-    suffix = environmentSuffix(source);
-  } catch (err) {
-    console.error(`Could not read the declared alert rules from infra/: ${err.message}`);
-    return 2;
-  }
+  const { rules, suffix } = attempt(
+    () => {
+      const source = terraformSource();
+      return { rules: declaredAlertRules(source), suffix: environmentSuffix(source) };
+    },
+    (err) => [`Could not read the declared alert rules from infra/: ${err.message}`]
+  );
 
   if (args.flags.list) {
     process.stdout.write(renderInventory(rules, suffix));
     return 0;
   }
 
-  let token;
-  try {
-    token = azAccessToken();
-  } catch (err) {
-    console.error(`No ARM token from az, so nothing was read: ${redact(String(err?.message ?? err)).slice(0, 300)}`);
-    return 2;
-  }
+  const token = attempt(
+    () => azAccessToken(),
+    (err) => [`No ARM token from az, so nothing was read: ${redact(String(err?.message ?? err)).slice(0, 300)}`]
+  );
+  const knownIds = attempt(
+    () => knownSubscriptionIds(process.env.ALERT_SUBSCRIPTION_IDS),
+    (err) => [err.message]
+  );
+  return compareLive(rules, { token, knownIds, summary: args.options.summary });
+}
 
-  let knownIds;
-  try {
-    knownIds = knownSubscriptionIds(process.env.ALERT_SUBSCRIPTION_IDS);
-  } catch (err) {
-    console.error(err.message);
-    return 2;
-  }
-
+/** Read the live rules, compare, write the report and outputs, and give the exit code: 1 on any finding. */
+async function compareLive(rules, { token, knownIds, summary }) {
   const live = await readLive(rules, { token, knownIds });
   const verdicts = compare(rules, live);
   const groups = actionGroupProblems(rules, live);
@@ -956,7 +1029,7 @@ async function main(argv) {
   // Both destinations, as before: the summary for a person on a phone, stdout
   // for the logs API, which does not expose the summary.
   process.stdout.write(report);
-  if (args.options.summary) appendFileSync(args.options.summary, report);
+  if (summary) appendFileSync(summary, report);
   if (asWorkflow) {
     for (const line of unreadableWarnings(verdicts, groups)) console.log(line);
   }

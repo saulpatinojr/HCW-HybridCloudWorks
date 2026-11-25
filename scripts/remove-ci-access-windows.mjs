@@ -274,129 +274,180 @@ export async function run({ env = {}, az = runAz, fetchImpl = fetch, sleep = (ms
   if (!app || !resourceGroup) return formatUnreadable('it needs APP and RG (the Function App and its resource group).');
   if (!token || !owner || !repo) return formatUnreadable('it needs GITHUB_TOKEN and GITHUB_REPOSITORY (owner/repo) to read the runs.');
 
-  const lines = [];
-  const counts = { removed: 0, kept: 0, reported: 0, failed: 0 };
-  const did = dryRun ? 'would remove' : 'removed';
-  const retry = (write) => (dryRun ? Promise.resolve('') : withRetry(write, { pauses, sleep }));
-
-  // 1. The Function App's two rule lists.
-  let windows;
+  const ctx = {
+    app,
+    resourceGroup,
+    storage,
+    az,
+    dryRun,
+    github: { token, owner, repo, fetchImpl },
+    lines: [],
+    counts: { removed: 0, kept: 0, reported: 0, failed: 0 },
+    did: dryRun ? 'would remove' : 'removed',
+    retry: (write) => (dryRun ? Promise.resolve('') : withRetry(write, { pauses, sleep })),
+  };
   try {
-    windows = parseWindows(await az(['functionapp', 'config', 'access-restriction', 'show', '-n', app, '-g', resourceGroup, '-o', 'json', '--only-show-errors']));
+    // 1. The Function App's two rule lists.
+    await closeAppWindows(ctx);
+    // 2. The host storage account, when the job names one.
+    if (storage) await closeStorageWindow(ctx);
   } catch (error) {
-    return formatUnreadable(`the Function App's access restrictions could not be read: ${firstLine(error)}`);
+    if (error instanceof Unreadable) return formatUnreadable(error.message);
+    throw error;
   }
+  return summary(ctx);
+}
 
-  for (const window of windows) {
-    let runInfo = { status: 'unknown', conclusion: null, url: null };
-    if (WORKFLOW_RULE.test(window.name) && window.runId !== null) {
-      try {
-        runInfo = await readRun({ runId: window.runId, token, owner, repo, fetchImpl });
-      } catch (error) {
-        return formatUnreadable(`the run behind ${code(window.name)} could not be read: ${error.message}`);
-      }
-    }
-    const { action, reason } = decideWindow(window, runInfo);
-    const where = `${code(window.name)} on the ${window.site}`;
-    const link = runInfo.url ? ` (${runInfo.url})` : '';
-    if (action !== 'remove') {
-      counts[action === 'keep' ? 'kept' : 'reported'] += 1;
-      lines.push(`- ${where}: left alone, ${reason}${link}.`);
-      continue;
-    }
-    const args = ['functionapp', 'config', 'access-restriction', 'remove', '-g', resourceGroup, '-n', app, '--rule-name', window.name, '--output', 'none'];
-    if (window.site === 'SCM site') args.push('--scm-site', 'true');
+/** Something this run had to read and could not; `run` turns it into the "could not read" report. */
+class Unreadable extends Error {}
+
+/** The result of `read()`, or an Unreadable saying `why(error)` when it fails. */
+async function readOrStop(read, why) {
+  try {
+    return await read();
+  } catch (error) {
+    throw new Unreadable(why(error));
+  }
+}
+
+/** The run a window or a tag names, from the Actions API. */
+const readRunOf = (runId, { token, owner, repo, fetchImpl }) => readRun({ runId, token, owner, repo, fetchImpl });
+
+/** The Function App's two rule lists: each window removed, kept or reported. */
+async function closeAppWindows(ctx) {
+  const { app, resourceGroup, az } = ctx;
+  const windows = await readOrStop(
+    async () => parseWindows(await az(['functionapp', 'config', 'access-restriction', 'show', '-n', app, '-g', resourceGroup, '-o', 'json', '--only-show-errors'])),
+    (error) => `the Function App's access restrictions could not be read: ${firstLine(error)}`
+  );
+  for (const window of windows) await closeAppWindow(ctx, window);
+}
+
+async function closeAppWindow(ctx, window) {
+  const { app, resourceGroup, az, lines, counts, did, retry } = ctx;
+  let runInfo = { status: 'unknown', conclusion: null, url: null };
+  if (WORKFLOW_RULE.test(window.name) && window.runId !== null) {
+    runInfo = await readOrStop(
+      () => readRunOf(window.runId, ctx.github),
+      (error) => `the run behind ${code(window.name)} could not be read: ${error.message}`
+    );
+  }
+  const { action, reason } = decideWindow(window, runInfo);
+  const where = `${code(window.name)} on the ${window.site}`;
+  const link = runInfo.url ? ` (${runInfo.url})` : '';
+  if (action !== 'remove') {
+    counts[action === 'keep' ? 'kept' : 'reported'] += 1;
+    lines.push(`- ${where}: left alone, ${reason}${link}.`);
+    return;
+  }
+  const args = ['functionapp', 'config', 'access-restriction', 'remove', '-g', resourceGroup, '-n', app, '--rule-name', window.name, '--output', 'none'];
+  if (window.site === 'SCM site') args.push('--scm-site', 'true');
+  try {
+    await retry(() => az(args));
+    counts.removed += 1;
+    lines.push(`- ${where}: ${did}, ${reason}${link}.`);
+  } catch (error) {
+    counts.failed += 1;
+    lines.push(`- ${where}: NOT removed (${reason}${link}): ${firstLine(error)}`);
+  }
+}
+
+/** The host storage account's firewall: restored, kept or reported. */
+async function closeStorageWindow(ctx) {
+  const { storage, resourceGroup, az, lines, counts } = ctx;
+  const readStorage = async () => parseStorage(await az(['storage', 'account', 'show', '-n', storage, '-g', resourceGroup, '--query', STORAGE_QUERY, '-o', 'json', '--only-show-errors']));
+  const account = await readOrStop(readStorage, (error) => `the storage account's firewall could not be read: ${firstLine(error)}`);
+  const tag = parseWindowTag(account.window);
+  const runInfo = tag
+    ? await readOrStop(
+        () => readRunOf(tag.runId, ctx.github),
+        (error) => `the deploy run behind the storage account's window tag could not be read: ${error.message}`
+      )
+    : null;
+  const decision = decideStorage(account, runInfo);
+  const where = `storage account ${code(storage)}`;
+  const link = runInfo?.url ? ` (${runInfo.url})` : '';
+  if (decision.action !== 'restore') {
+    if (decision.action === 'report' || (decision.action === 'keep' && tag)) counts[decision.action === 'keep' ? 'kept' : 'reported'] += 1;
+    lines.push(`- ${where}: ${decision.action === 'keep' && !tag ? '' : 'left alone, '}${decision.reason}${link}.`);
+    return;
+  }
+  if (await deployInProgress(ctx, { where, decision, link })) return;
+  await restoreStorage(ctx, { account, decision, readStorage, where, link });
+}
+
+/**
+ * A deploy in progress right now may be about to open its own window
+ * (or already has, and its tag is seconds away); the restore waits for
+ * the next hour rather than race it. Returns whether one is in progress,
+ * after noting it.
+ */
+async function deployInProgress(ctx, { where, decision, link }) {
+  const deploys = await readOrStop(
+    () => findDeploysInProgress(ctx.github),
+    (error) => `whether a functions deploy is in progress could not be read, so the storage window was left as it is: ${error.message}`
+  );
+  if (deploys.length === 0) return false;
+  const label = deploys[0].run_number ? `deploy run #${deploys[0].run_number}` : `deploy run ${deploys[0].id}`;
+  ctx.counts.kept += 1;
+  ctx.lines.push(`- ${where}: left alone this hour, ${label} is in progress${deploys.length > 1 ? ` (and ${deploys.length - 1} more)` : ''} and may be opening its own window; ${decision.reason}${link}.`);
+  return true;
+}
+
+/** The writes that close the storage window, in the close step's own order: Deny, the address, the tag. */
+function restoreSteps({ resourceGroup, storage }, decision) {
+  const steps = [];
+  if (decision.setDeny) steps.push({ label: 'default action set to Deny', args: ['storage', 'account', 'update', '-g', resourceGroup, '-n', storage, '--default-action', 'Deny', '--output', 'none'] });
+  if (decision.removeAddress) steps.push({ label: "the run's IP rule removed", args: ['storage', 'account', 'network-rule', 'remove', '-g', resourceGroup, '--account-name', storage, '--ip-address', decision.removeAddress, '--output', 'none'] });
+  steps.push({ label: 'tag cleared', args: ['storage', 'account', 'update', '-g', resourceGroup, '-n', storage, '--remove', `tags.${WINDOW_TAG}`, '--output', 'none'] });
+  return steps;
+}
+
+/**
+ * Run the restore's writes in order until one fails. The tag is
+ * read again inside every try of every write, the first included, so a
+ * retry after a pause cannot act on a stale read either; a different
+ * value means a new deploy owns the window now, and this stops
+ * (CodeRabbit on #1536). Returns the steps done, and how it stopped (null when it did not).
+ */
+async function runRestoreSteps(ctx, { account, decision, readStorage }) {
+  const done = [];
+  for (const step of restoreSteps(ctx, decision)) {
+    const ownedWrite = async () => {
+      const now = await readStorage();
+      if (now.window !== account.window) throw new WindowTaken(step.label);
+      return ctx.az(step.args);
+    };
     try {
-      await retry(() => az(args));
-      counts.removed += 1;
-      lines.push(`- ${where}: ${did}, ${reason}${link}.`);
+      await ctx.retry(ownedWrite);
+      done.push(step.label);
     } catch (error) {
-      counts.failed += 1;
-      lines.push(`- ${where}: NOT removed (${reason}${link}): ${firstLine(error)}`);
+      const outcome = error instanceof WindowTaken ? { kind: 'taken', text: error.message } : { kind: 'failed', text: `"${step.label}" failed: ${firstLine(error)}` };
+      return { done, outcome };
     }
   }
+  return { done, outcome: null };
+}
 
-  // 2. The host storage account, when the job names one.
-  if (storage) {
-    const readStorage = async () => parseStorage(await az(['storage', 'account', 'show', '-n', storage, '-g', resourceGroup, '--query', STORAGE_QUERY, '-o', 'json', '--only-show-errors']));
-    let account;
-    try {
-      account = await readStorage();
-    } catch (error) {
-      return formatUnreadable(`the storage account's firewall could not be read: ${firstLine(error)}`);
-    }
-    const tag = parseWindowTag(account.window);
-    let runInfo = null;
-    if (tag) {
-      try {
-        runInfo = await readRun({ runId: tag.runId, token, owner, repo, fetchImpl });
-      } catch (error) {
-        return formatUnreadable(`the deploy run behind the storage account's window tag could not be read: ${error.message}`);
-      }
-    }
-    const decision = decideStorage(account, runInfo);
-    const where = `storage account ${code(storage)}`;
-    const link = runInfo?.url ? ` (${runInfo.url})` : '';
-    if (decision.action !== 'restore') {
-      if (decision.action === 'report' || (decision.action === 'keep' && tag)) counts[decision.action === 'keep' ? 'kept' : 'reported'] += 1;
-      lines.push(`- ${where}: ${decision.action === 'keep' && !tag ? '' : 'left alone, '}${decision.reason}${link}.`);
-    } else {
-      // A deploy in progress right now may be about to open its own window
-      // (or already has, and its tag is seconds away); the restore waits for
-      // the next hour rather than race it.
-      let deploys;
-      try {
-        deploys = await findDeploysInProgress({ token, owner, repo, fetchImpl });
-      } catch (error) {
-        return formatUnreadable(`whether a functions deploy is in progress could not be read, so the storage window was left as it is: ${error.message}`);
-      }
-      if (deploys.length > 0) {
-        const label = deploys[0].run_number ? `deploy run #${deploys[0].run_number}` : `deploy run ${deploys[0].id}`;
-        counts.kept += 1;
-        lines.push(`- ${where}: left alone this hour, ${label} is in progress${deploys.length > 1 ? ` (and ${deploys.length - 1} more)` : ''} and may be opening its own window; ${decision.reason}${link}.`);
-        decision.action = 'waited';
-      }
-    }
-    if (decision.action === 'restore') {
-      // The close step's own order: Deny, the address, the tag. The tag is
-      // read again inside every try of every write, the first included, so a
-      // retry after a pause cannot act on a stale read either; a different
-      // value means a new deploy owns the window now, and this stops
-      // (CodeRabbit on #1536).
-      const steps = [];
-      if (decision.setDeny) steps.push({ label: 'default action set to Deny', args: ['storage', 'account', 'update', '-g', resourceGroup, '-n', storage, '--default-action', 'Deny', '--output', 'none'] });
-      if (decision.removeAddress) steps.push({ label: "the run's IP rule removed", args: ['storage', 'account', 'network-rule', 'remove', '-g', resourceGroup, '--account-name', storage, '--ip-address', decision.removeAddress, '--output', 'none'] });
-      steps.push({ label: 'tag cleared', args: ['storage', 'account', 'update', '-g', resourceGroup, '-n', storage, '--remove', `tags.${WINDOW_TAG}`, '--output', 'none'] });
-      const done = [];
-      let outcome = null;
-      for (const step of steps) {
-        const ownedWrite = async () => {
-          const now = await readStorage();
-          if (now.window !== account.window) throw new WindowTaken(step.label);
-          return az(step.args);
-        };
-        try {
-          await retry(ownedWrite);
-          done.push(step.label);
-        } catch (error) {
-          outcome = error instanceof WindowTaken ? { kind: 'taken', text: error.message } : { kind: 'failed', text: `"${step.label}" failed: ${firstLine(error)}` };
-          break;
-        }
-      }
-      const got = done.length ? `${done.join(', ')}` : 'nothing';
-      if (!outcome) {
-        counts.removed += 1;
-        lines.push(`- ${where}: ${dryRun ? 'would be restored' : 'restored'} (${got}), ${decision.reason}${link}.`);
-      } else if (outcome.kind === 'taken') {
-        counts.kept += 1;
-        lines.push(`- ${where}: ${outcome.text} (${got} done first), ${decision.reason}${link}.`);
-      } else {
-        counts.failed += 1;
-        lines.push(`- ${where}: NOT fully restored (${decision.reason}${link}): ${outcome.text}; done before that: ${got}`);
-      }
-    }
+async function restoreStorage(ctx, { account, decision, readStorage, where, link }) {
+  const { lines, counts, dryRun } = ctx;
+  // The close step's own order: Deny, the address, the tag.
+  const { done, outcome } = await runRestoreSteps(ctx, { account, decision, readStorage });
+  const got = done.length ? `${done.join(', ')}` : 'nothing';
+  if (!outcome) {
+    counts.removed += 1;
+    lines.push(`- ${where}: ${dryRun ? 'would be restored' : 'restored'} (${got}), ${decision.reason}${link}.`);
+  } else if (outcome.kind === 'taken') {
+    counts.kept += 1;
+    lines.push(`- ${where}: ${outcome.text} (${got} done first), ${decision.reason}${link}.`);
+  } else {
+    counts.failed += 1;
+    lines.push(`- ${where}: NOT fully restored (${decision.reason}${link}): ${outcome.text}; done before that: ${got}`);
   }
+}
 
+/** The report: a first line that counts what happened, then a line per window. */
+function summary({ counts, did, dryRun, lines }) {
   const parts = [];
   if (counts.removed) parts.push(`${counts.removed} ${did}`);
   if (counts.kept) parts.push(`${counts.kept} left alone (run in progress)`);

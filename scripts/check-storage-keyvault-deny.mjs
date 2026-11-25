@@ -104,6 +104,33 @@ export function verifyStoragePosture(raw) {
   };
 }
 
+/** A role assignment's role name, scope and principal, read from the top level or from `properties`. */
+function readAssignment(assignment) {
+  return {
+    roleName: assignment.roleDefinitionName || assignment.roleName || assignment.properties?.roleDefinitionName,
+    scope: assignment.scope || assignment.properties?.scope || '',
+    principalId: assignment.principalId || assignment.properties?.principalId,
+  };
+}
+
+/** The problems with one role assignment: a disallowed role, and a subscription-wide Reader when that is forbidden. */
+function grantProblems({ roleName, scope, principalId }, disallowed, options) {
+  const problems = [];
+  if (roleName && disallowed.has(roleName)) {
+    problems.push(
+      `Disallowed standing grant found: role "${roleName}" assigned at scope "${scope}" (principal: ${principalId || 'unknown'}).`
+    );
+  }
+
+  // Check for subscription-wide Reader if forbidden
+  if (options.forbidSubscriptionReader && roleName === 'Reader' && scope.match(/^\/subscriptions\/[^/]+$/i)) {
+    problems.push(
+      `Disallowed subscription-wide Reader role assigned at scope "${scope}" (principal: ${principalId || 'unknown'}).`
+    );
+  }
+  return problems;
+}
+
 /**
  * Verifies that role assignments do not contain forbidden standing broad grants.
  *
@@ -122,31 +149,13 @@ export function verifyNoStandingGrants(raw, options = {}) {
   let evaluatedCount = 0;
   for (const assignment of assignments) {
     if (!assignment || typeof assignment !== 'object') continue;
-
-    const roleName = assignment.roleDefinitionName || assignment.roleName || assignment.properties?.roleDefinitionName;
-    const scope = assignment.scope || assignment.properties?.scope || '';
-    const principalId = assignment.principalId || assignment.properties?.principalId;
-
-    if (options.targetAssignee && principalId !== options.targetAssignee) {
+    const grant = readAssignment(assignment);
+    if (options.targetAssignee && grant.principalId !== options.targetAssignee) {
       continue;
     }
 
     evaluatedCount++;
-
-    if (roleName && disallowed.has(roleName)) {
-      errors.push(
-        `Disallowed standing grant found: role "${roleName}" assigned at scope "${scope}" (principal: ${principalId || 'unknown'}).`
-      );
-    }
-
-    // Check for subscription-wide Reader if forbidden
-    if (options.forbidSubscriptionReader && roleName === 'Reader') {
-      if (scope.match(/^\/subscriptions\/[^/]+$/i)) {
-        errors.push(
-          `Disallowed subscription-wide Reader role assigned at scope "${scope}" (principal: ${principalId || 'unknown'}).`
-        );
-      }
-    }
+    errors.push(...grantProblems(grant, disallowed, options));
   }
 
   return {

@@ -65,7 +65,7 @@ export function cells(line) {
 const isSeparator = (row) => row.length > 0 && row.every((c) => /^:?-{3,}:?$/.test(c));
 const isRow = (line) => line.trim().startsWith('|');
 const isFence = (line) => /^\s*(```|~~~)/.test(line);
-const isDateHeader = (line, next) => isRow(line) && cells(line)[0] === 'Date' && isSeparator(cells(next ?? ''));
+const isDateHeader = (line, next = '') => isRow(line) && cells(line)[0] === 'Date' && isSeparator(cells(next));
 
 /**
  * The lines of the `## Drills` section, up to the next `#` or `##` heading,
@@ -101,23 +101,21 @@ export function drillRows(markdown) {
     throw new DrillTableError(`the Drills table's columns are "${columns.join(' | ')}", not "${COLUMNS.join(' | ')}"`);
   }
 
-  const rows = [];
-  for (const line of section.slice(header + 2)) {
-    if (!isRow(line)) break;
-    rows.push({ line, cells: cells(line) });
-  }
-  return rows;
+  // The rows run from below the separator to the first line that is not one.
+  const below = section.slice(header + 2);
+  const end = below.findIndex((line) => !isRow(line));
+  return below.slice(0, end === -1 ? below.length : end).map((line) => ({ line, cells: cells(line) }));
 }
 
 /** `2026-10-20` -> its UTC midnight in ms, or null when it is not a real date. */
 export function parseDate(text) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
   if (!m) return null;
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const ms = Date.UTC(y, mo - 1, d);
-  const back = new Date(ms);
-  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d) return null;
-  return ms;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // A day that does not exist (02-30) rolls over to another date, so it does
+  // not read back as the same text; nor does a year below 100, which Date.UTC
+  // takes as 19xx.
+  return new Date(ms).toISOString().slice(0, 10) === text ? ms : null;
 }
 
 /** Today's UTC date as `YYYY-MM-DD`. */
@@ -224,11 +222,13 @@ const FLAGS = {
   '--max-age-days': (options, v) => ({ ...options, maxAgeDays: positiveInteger(v) }),
 };
 
+const HELP_FLAGS = new Set(['--help', '-h']);
+
 export function parseArgs(argv) {
   let options = { runbook: RUNBOOK, today: todayUtc(), maxAgeDays: MAX_AGE_DAYS, summary: null, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
-    if (flag === '--help' || flag === '-h') {
+    if (HELP_FLAGS.has(flag)) {
       options.help = true;
       continue;
     }

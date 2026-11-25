@@ -38,15 +38,23 @@ export function parseBlobName(name) {
   const m = BLOB.exec(String(name || ''));
   if (!m) return null;
   const [, mode, runId, rest] = m;
-  if (rest === 'manifest.json') return { mode, runId, kind: 'manifest', container: null };
-  if (rest === 'run.json') return { mode, runId, kind: 'run', container: null };
-  if (rest.endsWith('.ndjson.gz')) {
-    return { mode, runId, kind: 'data', container: rest.slice(0, -'.ndjson.gz'.length) };
-  }
-  if (rest.endsWith('.marker.json')) {
-    return { mode, runId, kind: 'marker', container: rest.slice(0, -'.marker.json'.length) };
-  }
-  return { mode, runId, kind: 'other', container: null };
+  return { mode, runId, ...blobKind(rest) };
+}
+
+/** Files whose whole name says what they are. */
+const RUN_FILES = { 'manifest.json': 'manifest', 'run.json': 'run' };
+/** Endings that say what a file is; the part before the ending is the container. */
+const CONTAINER_ENDINGS = [
+  ['.ndjson.gz', 'data'],
+  ['.marker.json', 'marker'],
+];
+
+/** The kind and container of the part of a blob name after `mode/runId/`. */
+function blobKind(rest) {
+  if (Object.hasOwn(RUN_FILES, rest)) return { kind: RUN_FILES[rest], container: null };
+  const ending = CONTAINER_ENDINGS.find(([suffix]) => rest.endsWith(suffix));
+  if (ending) return { kind: ending[1], container: rest.slice(0, -ending[0].length) };
+  return { kind: 'other', container: null };
 }
 
 /**
