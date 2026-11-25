@@ -18,17 +18,19 @@ import { PROVIDER_GUIDE } from './providerGuide';
  * the classes it finds as literal strings in the source.
  */
 
-const PROVIDER_THEMES = {
-  azure: { bg: 'hsl(var(--azure-blue) / 0.16)', border: 'border-l-azure' },
-  aws: { bg: 'hsl(var(--aws-orange) / 0.16)', border: 'border-l-aws' },
-  gcp: { bg: 'hsl(var(--gcp-red) / 0.16)', border: 'border-l-gcp' },
-  finops: { bg: 'hsl(var(--finops-green) / 0.12)', border: 'border-l-finops' },
-  terraform: { bg: 'hsl(var(--terraform-purple) / 0.12)', border: 'border-l-terraform' },
-  github: { bg: 'hsl(var(--github-gray) / 0.08)', border: 'border-l-github' },
-  vmware: { bg: 'hsl(var(--vmware-blue) / 0.12)', border: 'border-l-vmware' },
-  ansible: { bg: 'hsl(var(--ansible-red) / 0.10)', border: 'border-l-ansible' },
-  docker: { bg: 'hsl(var(--docker-blue) / 0.12)', border: 'border-l-docker' },
-};
+const PROVIDER_THEMES = Object.fromEntries(
+  [
+    ['azure', 'hsl(var(--azure-blue) / 0.16)', 'border-l-azure'],
+    ['aws', 'hsl(var(--aws-orange) / 0.16)', 'border-l-aws'],
+    ['gcp', 'hsl(var(--gcp-red) / 0.16)', 'border-l-gcp'],
+    ['finops', 'hsl(var(--finops-green) / 0.12)', 'border-l-finops'],
+    ['terraform', 'hsl(var(--terraform-purple) / 0.12)', 'border-l-terraform'],
+    ['github', 'hsl(var(--github-gray) / 0.08)', 'border-l-github'],
+    ['vmware', 'hsl(var(--vmware-blue) / 0.12)', 'border-l-vmware'],
+    ['ansible', 'hsl(var(--ansible-red) / 0.10)', 'border-l-ansible'],
+    ['docker', 'hsl(var(--docker-blue) / 0.12)', 'border-l-docker'],
+  ].map(([provider, bg, border]) => [provider, { bg, border }])
+);
 
 /** For a document whose provider the site does not have a hub for. */
 const NEUTRAL_THEME = { bg: 'hsl(var(--muted) / 0.6)', border: 'border-l-slate-400' };
