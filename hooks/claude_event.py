@@ -113,6 +113,13 @@ def armed_workflow_id(root: Path) -> str | None:
     return workflow_id
 
 
+# The validator is three files since #1845: workflow.py, the command this hook
+# runs, imports the other two from its own directory. All three must be there
+# for the answer to mean anything; a partial install is a broken install, and
+# like a missing one it never traps the session.
+VALIDATOR_FILES = ("workflow.py", "workflow_state.py", "workflow_agents.py")
+
+
 def validation_fails(root: Path, workflow_id: str) -> bool:
     """Whether the repository's own validator reports the workflow incomplete.
 
@@ -122,7 +129,7 @@ def validation_fails(root: Path, workflow_id: str) -> bool:
     own broken install would be worse than no guard.
     """
     validator = root / "tooling" / "workflow.py"
-    if not validator.is_file():
+    if not all((root / "tooling" / name).is_file() for name in VALIDATOR_FILES):
         return False
     try:
         # The running interpreter on the repository's own validator; workflow_id

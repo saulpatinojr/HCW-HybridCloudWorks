@@ -466,11 +466,11 @@ describe('paneMessageState', () => {
 
   it('knows exactly the states the launcher reports', () => {
     const launcher = readFileSync(
-      join(process.cwd(), '..', 'lab-host/coder/launcher/launcher.js'),
+      join(process.cwd(), '..', 'lab-host/coder/launcher/launcher-config.js'),
       'utf8'
     );
     const block = launcher.match(/export const STATES = Object\.freeze\(\[([^\]]*)\]\);/);
-    expect(block, 'lab-host/coder/launcher/launcher.js no longer declares STATES').not.toBeNull();
+    expect(block, 'lab-host/coder/launcher/launcher-config.js no longer declares STATES').not.toBeNull();
     const states = [...block[1].matchAll(/'([a-z-]+)'/g)].map(([, state]) => state);
     expect([...PANE_STATES].sort()).toEqual([...states].sort());
     expect(launcher).toContain(`export const MESSAGE_TYPE = '${PANE_MESSAGE_TYPE}';`);
