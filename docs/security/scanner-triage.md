@@ -193,6 +193,24 @@ similar markup added to one of them later would not be reported there; a
 reviewer still reads it. If one of these pages grows real duplicated markup,
 move its list into a data file and name that file here instead.
 
+### The pull request smell check
+
+Since 2026-11-25 the `security-scan` job in `.github/workflows/ci.yml` (shown
+as **Qlty security scan and code smells**), which `gate` waits for, also
+fails a pull request that **adds** a medium or high code smell. It runs
+`qlty smells` on the files the pull request changes and again on the same
+files at the base commit, and
+[`scripts/check-new-smells.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/check-new-smells.mjs)
+fails only on a smell the base did not have, after applying the base
+branch's `[[triage]]` blocks. A smell already on `main` does not fail an
+unrelated pull request, even one that edits the same function. As with the
+security scan, the rules come from the base branch, so a pull request cannot
+add itself to the list above and pass on it.
+
+`qlty smells` itself always exits 0 and has no level or fail option (its
+source, `qlty-cli/src/commands/smells.rs`, ends every run with success), which
+is why the comparison is a script and not a flag.
+
 ## zizmor
 
 ### artipacked (19, medium): fixed

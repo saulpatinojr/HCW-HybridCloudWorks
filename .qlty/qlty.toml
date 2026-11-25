@@ -102,6 +102,13 @@ test_patterns = [
 # conversation to be resolved, so an inline "many returns" note on idiomatic
 # early-return React hooks blocked merges without being a defect. Security
 # and lint findings from the plugins below are unaffected.
+#
+# ENFORCED ON PULL REQUESTS BY CI, not by Qlty (owner decision 2026-11-24/25,
+# #1845). The `security-scan` job in .github/workflows/ci.yml fails a pull
+# request that adds a medium or high smell, through scripts/check-new-smells.mjs,
+# and applies the data-table [[triage]] block at the end of this file. This
+# mode stays "monitor" so Qlty Cloud still posts no inline comments; the CI
+# check's annotations take their place.
 [smells]
 mode = "monitor"
 
