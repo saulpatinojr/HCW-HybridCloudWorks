@@ -448,11 +448,11 @@ opened on 2026-11-24).
    **Know this about the check on that run.** The program that reads each
    Terraform plan and flags anything unexpected
    ([`assert-expected-plan.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/assert-expected-plan.mjs))
-   has been told in advance to expect this one change, `"false"` to
-   `"true"`. That is so the arming run passes. It also means the check will
-   **not** flag that change if it ever appears in a run you did not ask for.
-   So in step 2 read the plan yourself: if `CONTENT_ARCHIVE_ENABLED` is
-   changing and you did not reply `ARM`, do not confirm.
+   was told in advance to expect the first arming, and the owner confirmed
+   that run on 2026-11-25. That allowance has been removed since, so today
+   the check flags any change to `CONTENT_ARCHIVE_ENABLED`, on or off. A
+   pull request that switches it off, or on again, therefore adds its own
+   expected change to that file, and the pull request says so.
 2. Confirm the Terraform run. Open the
    [`hcw-azure` workspace's runs](https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs)
    and open the run named after that pull request.

@@ -828,45 +828,12 @@ export const DECLARED = [
       "#1754 ADR 0042: the developer_events container for calls for speakers and their proposals",
   },
 
-  // #1777: the yearly clean-up of talk proposals that were not accepted
-  // (functions/src/lib/timers/proposal-strip.js). Its switch, declared off,
-  // applied on 2026-11-24 with the runs the owner confirmed that day, so that
-  // entry is gone and a plan that adds the switch from nothing is unexpected.
-  // What is left is the arming plan the owner asked for on 2026-11-25; delete
-  // it once that run has applied.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.PROPOSAL_STRIP_ENABLED",
-    before: "false",
-    after: "true",
-    reason: "#1777: the owner armed the yearly clean-up of unaccepted proposals",
-  },
-
-  // #1811 (ADR 0046): the yearly content archive, storage and switch. The
-  // plan after the merge creates one empty private container on the content
-  // storage account and adds one app setting, off. No lifecycle rule, no
-  // immutability policy and no role assignment is added. Delete the first two
-  // entries once the run has applied. The third is the arming plan
-  // ("false" -> "true"), declared by the pull request that built the job
-  // that reads the switch (functions/src/lib/backup/archive-job.js): a
-  // one-line pull request made after the owner has read a dry-run report
-  // and said yes. It stays until that has applied. Absent straight to "true"
-  // is not declared: the switch is armed only after it has applied as off.
-  // The job adds no Terraform of its own: it rides the nightly export's
-  // timer, so there is no new timer flag and no new row on
-  // alert-timer-overdue.
-  // The container and the switch (declared off) were applied on 2026-11-24:
-  // the owner's dry runs that day wrote their reports and the Archive card
-  // read the switch as Off. Those two declarations are gone, so a plan that
-  // creates the container again, or adds the switch from nothing, is read as
-  // unexpected. What is left is the arming change the owner asked for.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.CONTENT_ARCHIVE_ENABLED",
-    before: "false",
-    after: "true",
-    reason: "#1811 ADR 0046: the owner armed the yearly content archive",
-  },
+  // #1777 and #1811: the two switches the owner armed on 2026-11-25,
+  // PROPOSAL_STRIP_ENABLED (the yearly clean-up of talk proposals) and
+  // CONTENT_ARCHIVE_ENABLED (the yearly content archive), each "false" to
+  // "true". The owner confirmed that Terraform run the same day, so both
+  // declarations are gone. From here on a plan that changes either setting,
+  // in either direction, is read as unexpected and shown to the owner.
 
   // The app-exceptions alert stops counting the storage errors that follow
   // every Terraform apply (T-511), and a second rule watches for those errors
