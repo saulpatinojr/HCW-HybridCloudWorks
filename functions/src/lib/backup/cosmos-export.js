@@ -214,6 +214,149 @@ export function createExportScheduler({
  */
 
 /**
+ * Open the page reader for one container. A full run takes a change-feed
+ * checkpoint first; a delta run reads from the stored continuation and
+ * remembers the newest token the feed hands back. `nextContinuation` is the
+ * continuation to store once the blob is safely written.
+ */
+async function openSource({ cosmos, blobs, log, pageSize }, { mode, container, names }) {
+  const opened = { source: null, nextContinuation: null, priorState: null };
+  if (mode === 'full') {
+    opened.nextContinuation = (await cosmos.changeFeedCheckpoint(container)) ?? null;
+    opened.source = fullPages({ cosmos, pageSize }, container);
+    return opened;
+  }
+  opened.priorState = await blobs.readJson(names.state);
+  const continuation = opened.priorState?.continuation || null;
+  if (!continuation) {
+    log.warn?.(
+      `[cosmosExport] ${container}: no stored continuation — reading the change feed from the beginning`
+    );
+  }
+  opened.source = deltaPages({ cosmos, pageSize }, container, continuation, (token) => {
+    if (token) opened.nextContinuation = token;
+  });
+  return opened;
+}
+
+/** Store the new continuation, once the blob is written. */
+async function storeContinuation({ blobs, log, now }, { mode, runId, container, names, opened }) {
+  if (opened.nextContinuation) {
+    await blobs.putJson(names.state, {
+      container,
+      continuation: opened.nextContinuation,
+      mode,
+      runId,
+      storedAt: now().toISOString(),
+    });
+  } else if (mode === 'delta' && opened.priorState) {
+    // The feed handed back no token (nothing changed); the old one stands.
+    log.log?.(`[cosmosExport] ${container}: continuation unchanged`);
+  }
+}
+
+/** One container's line in the run manifest, from its marker. */
+function manifestRow(container, marker) {
+  return {
+    container,
+    docs: Number(marker?.docs) || 0,
+    bytes: Number(marker?.bytes) || 0,
+    tsHighWater: Number(marker?.tsHighWater) || 0,
+    durationMs: Number(marker?.durationMs) || 0,
+  };
+}
+
+/** Every document of a container, a page at a time (a full run). */
+async function* fullPages({ cosmos, pageSize }, container) {
+  for await (const page of cosmos.queryPages(container, 'SELECT * FROM c', {
+    maxItemCount: pageSize,
+  })) {
+    yield page;
+  }
+}
+
+/** What changed since `continuation`, a page at a time (a delta run). */
+async function* deltaPages({ cosmos, pageSize }, container, continuation, onToken) {
+  for await (const page of cosmos.changeFeedPages(
+    container,
+    { continuation },
+    { maxItemCount: pageSize }
+  )) {
+    onToken(page.continuationToken);
+    if (page.items?.length) yield page.items;
+  }
+}
+
+/** One NDJSON line per document, counting into `stats` as it goes. */
+async function* ndjsonLines(pages, stats, signal) {
+  for await (const page of pages) {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
+    yield* pageLines(page, stats);
+  }
+}
+
+function* pageLines(page, stats) {
+  for (const doc of page) {
+    const line = `${JSON.stringify(doc)}\n`;
+    stats.docs += 1;
+    stats.rawBytes += Buffer.byteLength(line);
+    if (typeof doc?._ts === 'number' && doc._ts > stats.tsHighWater)
+      stats.tsHighWater = doc._ts;
+    yield line;
+  }
+}
+
+/**
+ * Write the run manifest if this worker is the one that finds every
+ * marker present, and emit the completion event once. The manifest is
+ * written with overwrite off, so two workers finishing together race
+ * safely: one wins, the other sees `false` and stays quiet.
+ */
+async function completeRunIfLast({ blobs, tracker, now, plan, log }, { mode, runId }) {
+  const names = blobNames({ mode, runId, container: '' });
+  const run = await blobs.readJson(names.run);
+  const expected =
+    Array.isArray(run?.containers) && run.containers.length ? run.containers : plan(mode);
+  const present = new Set(await blobs.listNames(names.prefix));
+  if (present.has(names.manifest)) return { written: false, reason: 'exists' };
+
+  const missing = expected.filter(
+    (container) => !present.has(blobNames({ mode, runId, container }).marker)
+  );
+  if (missing.length) return { written: false, reason: 'incomplete', missing: missing.length };
+
+  const containers = [];
+  for (const container of expected) {
+    const marker = await blobs.readJson(blobNames({ mode, runId, container }).marker);
+    containers.push(manifestRow(container, marker));
+  }
+  const manifest = {
+    runId,
+    mode,
+    containers,
+    docs: containers.reduce((n, c) => n + c.docs, 0),
+    bytes: containers.reduce((n, c) => n + c.bytes, 0),
+    durationMs: containers.reduce((n, c) => n + c.durationMs, 0),
+    completedAt: now().toISOString(),
+  };
+  const won = await blobs.putJson(names.manifest, manifest, { overwrite: false });
+  if (!won) return { written: false, reason: 'lost-race' };
+
+  log.log?.(
+    `[cosmosExport] run ${mode}/${runId} complete: ${containers.length} containers, ${manifest.docs} docs, ${manifest.bytes} bytes gzip, ${manifest.durationMs} ms of worker time`
+  );
+  const tracked = await tracker.trackEvent(EXPORT_EVENT, {
+    mode,
+    runId,
+    containers: containers.length,
+    docs: manifest.docs,
+    bytes: manifest.bytes,
+    durationMs: manifest.durationMs,
+  });
+  return { written: true, tracked };
+}
+
+/**
  * @param {object} deps
  * @param {CosmosReader} deps.cosmos
  * @param {ExportBlobStore} deps.blobs
@@ -246,26 +389,9 @@ export function createContainerExporter({
     const stats = { docs: 0, rawBytes: 0, bytes: 0, tsHighWater: 0 };
 
     // The continuation to store once the blob is safely written.
-    let nextContinuation = null;
-    let priorState = null;
-    let source;
-    if (mode === 'full') {
-      nextContinuation = (await cosmos.changeFeedCheckpoint(container)) ?? null;
-      source = fullPages(container);
-    } else {
-      priorState = await blobs.readJson(names.state);
-      const continuation = priorState?.continuation || null;
-      if (!continuation) {
-        log.warn?.(
-          `[cosmosExport] ${container}: no stored continuation — reading the change feed from the beginning`
-        );
-      }
-      source = deltaPages(container, continuation, (token) => {
-        if (token) nextContinuation = token;
-      });
-    }
+    const opened = await openSource({ cosmos, blobs, log, pageSize }, { mode, container, names });
 
-    const lines = ndjsonLines(source, stats, activeSignal);
+    const lines = ndjsonLines(opened.source, stats, activeSignal);
     const gzip = createGzip();
     const counter = new Transform({
       transform(chunk, _encoding, callback) {
@@ -287,18 +413,7 @@ export function createContainerExporter({
     ]);
 
     // Only now — the blob is written — does the continuation move.
-    if (nextContinuation) {
-      await blobs.putJson(names.state, {
-        container,
-        continuation: nextContinuation,
-        mode,
-        runId,
-        storedAt: now().toISOString(),
-      });
-    } else if (mode === 'delta' && priorState) {
-      // The feed handed back no token (nothing changed); the old one stands.
-      log.log?.(`[cosmosExport] ${container}: continuation unchanged`);
-    }
+    await storeContinuation({ blobs, log, now }, { mode, runId, container, names, opened });
 
     const durationMs = now().getTime() - startedAt.getTime();
     const marker = {
@@ -318,98 +433,12 @@ export function createContainerExporter({
       `[cosmosExport] ${container} ${mode}/${runId}: ${marker.docs} docs, ${marker.bytes} bytes gzip, ${durationMs} ms`
     );
 
-    const completion = await completeRunIfLast({ mode, runId });
+    const completion = await completeRunIfLast({ blobs, tracker, now, plan, log }, { mode, runId });
     return { ...marker, manifestWritten: completion.written };
   }
 
-  async function* fullPages(container) {
-    for await (const page of cosmos.queryPages(container, 'SELECT * FROM c', {
-      maxItemCount: pageSize,
-    })) {
-      yield page;
-    }
-  }
-
-  async function* deltaPages(container, continuation, onToken) {
-    for await (const page of cosmos.changeFeedPages(
-      container,
-      { continuation },
-      { maxItemCount: pageSize }
-    )) {
-      onToken(page.continuationToken);
-      if (page.items?.length) yield page.items;
-    }
-  }
-
-  async function* ndjsonLines(pages, stats, signal) {
-    for await (const page of pages) {
-      if (signal?.aborted) throw signal.reason || new Error('aborted');
-      for (const doc of page) {
-        const line = `${JSON.stringify(doc)}\n`;
-        stats.docs += 1;
-        stats.rawBytes += Buffer.byteLength(line);
-        if (typeof doc?._ts === 'number' && doc._ts > stats.tsHighWater)
-          stats.tsHighWater = doc._ts;
-        yield line;
-      }
-    }
-  }
-
-  /**
-   * Write the run manifest if this worker is the one that finds every
-   * marker present, and emit the completion event once. The manifest is
-   * written with overwrite off, so two workers finishing together race
-   * safely: one wins, the other sees `false` and stays quiet.
-   */
-  async function completeRunIfLast({ mode, runId }) {
-    const names = blobNames({ mode, runId, container: '' });
-    const run = await blobs.readJson(names.run);
-    const expected =
-      Array.isArray(run?.containers) && run.containers.length ? run.containers : plan(mode);
-    const present = new Set(await blobs.listNames(names.prefix));
-    if (present.has(names.manifest)) return { written: false, reason: 'exists' };
-
-    const missing = expected.filter(
-      (container) => !present.has(blobNames({ mode, runId, container }).marker)
-    );
-    if (missing.length) return { written: false, reason: 'incomplete', missing: missing.length };
-
-    const containers = [];
-    for (const container of expected) {
-      const marker = await blobs.readJson(blobNames({ mode, runId, container }).marker);
-      containers.push({
-        container,
-        docs: Number(marker?.docs) || 0,
-        bytes: Number(marker?.bytes) || 0,
-        tsHighWater: Number(marker?.tsHighWater) || 0,
-        durationMs: Number(marker?.durationMs) || 0,
-      });
-    }
-    const manifest = {
-      runId,
-      mode,
-      containers,
-      docs: containers.reduce((n, c) => n + c.docs, 0),
-      bytes: containers.reduce((n, c) => n + c.bytes, 0),
-      durationMs: containers.reduce((n, c) => n + c.durationMs, 0),
-      completedAt: now().toISOString(),
-    };
-    const won = await blobs.putJson(names.manifest, manifest, { overwrite: false });
-    if (!won) return { written: false, reason: 'lost-race' };
-
-    log.log?.(
-      `[cosmosExport] run ${mode}/${runId} complete: ${containers.length} containers, ${manifest.docs} docs, ${manifest.bytes} bytes gzip, ${manifest.durationMs} ms of worker time`
-    );
-    const tracked = await tracker.trackEvent(EXPORT_EVENT, {
-      mode,
-      runId,
-      containers: containers.length,
-      docs: manifest.docs,
-      bytes: manifest.bytes,
-      durationMs: manifest.durationMs,
-    });
-    return { written: true, tracked };
-  }
-
-  return { exportContainer, completeRunIfLast };
+  return {
+    exportContainer,
+    completeRunIfLast: (run) => completeRunIfLast({ blobs, tracker, now, plan, log }, run),
+  };
 }

@@ -124,15 +124,15 @@ function hasScope(user, scope) {
 }
 
 /**
- * Gates 2 and 3 on the `admins` record. Returns the reason and message to
+ * Gates 2 and 3 on the `admins` record. Returns the reason and refusal text to
  * refuse with (plus any extra audit field), or null when the record is
  * present, active and high enough.
  */
 function adminRecordDenial(record, minimum) {
-  if (!record) return { reason: 'no-admin-record', message: 'Admin access required' };
-  if (record.active !== true) return { reason: 'inactive', message: 'Admin access required' };
+  if (!record) return { reason: 'no-admin-record', refusal: 'Admin access required' };
+  if (record.active !== true) return { reason: 'inactive', refusal: 'Admin access required' };
   if (!satisfiesRole(record.role, minimum)) {
-    return { reason: 'insufficient-role', message: `Requires ${minimum} or higher`, actual: record.role };
+    return { reason: 'insufficient-role', refusal: `Requires ${minimum} or higher`, actual: record.role };
   }
   return null;
 }
@@ -335,9 +335,9 @@ export function createRoleGuard({ verifier, lookupAdmin, auditDenial, now = Date
     const record = await resolveAdmin(oid);
     const problem = adminRecordDenial(record, minimum);
     if (problem) {
-      const { reason, message, ...extra } = problem;
+      const { reason, refusal, ...extra } = problem;
       audit({ outcome: 'denied', reason, oid, required: minimum, ...extra });
-      return refusedRole(deny(403, message));
+      return refusedRole(deny(403, refusal));
     }
 
     return { user, role: record.role, error: null };

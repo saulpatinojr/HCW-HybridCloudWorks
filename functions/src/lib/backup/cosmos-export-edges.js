@@ -88,6 +88,39 @@ function isAlreadyExists(error) {
   );
 }
 
+/** Did storage answer that the blob is not there? */
+function isNotFound(error) {
+  return error?.statusCode === 404 || error?.code === 'BlobNotFound';
+}
+
+/**
+ * Where `state/...` files go: the given state container, else the export
+ * state container when the store is the export container, else the store's
+ * own container.
+ */
+function stateContainerFor(container, stateContainer) {
+  if (stateContainer !== undefined) return stateContainer;
+  return container === EXPORT_CONTAINER ? EXPORT_STATE_CONTAINER : container;
+}
+
+/**
+ * The checks behind setTier: only a data file of a yearly archive, and only
+ * to the Archive tier (see setTier below for why).
+ */
+function assertArchiveTierMove(name, tier) {
+  if (typeof name !== 'string' || !/^\d{4}\/cosmos\/[A-Za-z0-9_]+\.ndjson\.gz$/.test(name)) {
+    throw new Error('only a data file of a yearly archive can change tier here');
+  }
+  if (tier !== 'Archive') throw new Error('a data file of a yearly archive can only be moved to the Archive tier here');
+}
+
+/** The check behind deleteReportFile (see it below for why). */
+function assertReportFile(name) {
+  if (typeof name !== 'string' || !name.startsWith('state/archive-report/') || name.includes('..')) {
+    throw new Error('only a file of an archive dry-run report can be deleted here');
+  }
+}
+
 /**
  * @param {object} [deps]
  * @param {string} [deps.container]
@@ -100,12 +133,7 @@ export function createExportBlobStore({
   stateContainer,
   storage = defaultStorage,
 } = {}) {
-  const effectiveStateContainer =
-    stateContainer !== undefined
-      ? stateContainer
-      : container === EXPORT_CONTAINER
-        ? EXPORT_STATE_CONTAINER
-        : container;
+  const effectiveStateContainer = stateContainerFor(container, stateContainer);
 
   function targetContainer(name) {
     if (typeof name === 'string' && name.startsWith('state/')) {
@@ -169,7 +197,7 @@ export function createExportBlobStore({
         const blob = await storage.downloadBlobStream(targetContainer(name), name);
         return blob.stream;
       } catch (error) {
-        if (error?.statusCode === 404 || error?.code === 'BlobNotFound') return null;
+        if (isNotFound(error)) return null;
         throw error;
       }
     },
@@ -200,10 +228,7 @@ export function createExportBlobStore({
      * back online, which costs money and is the owner's to do.
      */
     async setTier(name, tier) {
-      if (typeof name !== 'string' || !/^\d{4}\/cosmos\/[A-Za-z0-9_]+\.ndjson\.gz$/.test(name)) {
-        throw new Error('only a data file of a yearly archive can change tier here');
-      }
-      if (tier !== 'Archive') throw new Error('a data file of a yearly archive can only be moved to the Archive tier here');
+      assertArchiveTierMove(name, tier);
       await storage.setBlobAccessTier(container, name, tier);
     },
 
@@ -218,9 +243,7 @@ export function createExportBlobStore({
      * and its bookmarks, and nothing here may ever delete one of those.
      */
     async deleteReportFile(name) {
-      if (typeof name !== 'string' || !name.startsWith('state/archive-report/') || name.includes('..')) {
-        throw new Error('only a file of an archive dry-run report can be deleted here');
-      }
+      assertReportFile(name);
       await storage.deleteBlob(targetContainer(name), name);
     },
   };
