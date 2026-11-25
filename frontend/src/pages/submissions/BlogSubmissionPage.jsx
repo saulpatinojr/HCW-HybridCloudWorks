@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { CheckCircle, Loader2, Send } from 'lucide-react';
+import { Send } from 'lucide-react';
 import { submitPublicContent } from '@/lib/publicApi';
+import { SubmitRow, SubmittedCard, TextAreaField, TitleProviderRow } from './SubmissionFields';
 
 const MAX_CONTENT_LENGTH = 50000;
 const VALID_URL_RE = /^https?:\/\/.+\..+/;
@@ -20,6 +19,18 @@ const EMPTY_FORM = {
   sourceUrl: '',
   content: '',
 };
+
+/** Why the draft cannot be sent yet, or '' when it can. */
+function blogFormProblem(form) {
+  if (!form.title.trim()) return 'Title is required.';
+  if (form.sourceUrl.trim() && !VALID_URL_RE.test(form.sourceUrl.trim())) {
+    return 'Source URL must be a valid http/https URL.';
+  }
+  if (form.content.length > MAX_CONTENT_LENGTH) {
+    return `Content must be under ${MAX_CONTENT_LENGTH / 1000}KB.`;
+  }
+  return '';
+}
 
 export default function BlogSubmissionPage() {
   const [form, setForm] = useState(EMPTY_FORM);
@@ -37,16 +48,9 @@ export default function BlogSubmissionPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!form.title.trim()) {
-      setError('Title is required.');
-      return;
-    }
-    if (form.sourceUrl.trim() && !VALID_URL_RE.test(form.sourceUrl.trim())) {
-      setError('Source URL must be a valid http/https URL.');
-      return;
-    }
-    if (form.content.length > MAX_CONTENT_LENGTH) {
-      setError(`Content must be under ${MAX_CONTENT_LENGTH / 1000}KB.`);
+    const problem = blogFormProblem(form);
+    if (problem) {
+      setError(problem);
       return;
     }
 
@@ -97,16 +101,9 @@ export default function BlogSubmissionPage() {
       </div>
 
       {submitted ? (
-        <Card className="border-green-500/30 bg-card/40">
-          <CardContent className="pt-8 pb-8 text-center space-y-3">
-            <CheckCircle className="h-12 w-12 text-green-500 mx-auto" />
-            <h2 className="text-xl font-semibold">Blog draft submitted</h2>
-            <p className="text-muted-foreground text-sm">
-              The draft has been submitted for review.
-            </p>
-            <Button onClick={() => setSubmitted(false)}>Submit another</Button>
-          </CardContent>
-        </Card>
+        <SubmittedCard title="Blog draft submitted" onAnother={() => setSubmitted(false)}>
+          The draft has been submitted for review.
+        </SubmittedCard>
       ) : (
         <Card className="bg-card/40">
           <CardHeader>
@@ -117,41 +114,21 @@ export default function BlogSubmissionPage() {
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={handleSubmit}>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm font-medium">Title</p>
-                  <Input
-                    value={form.title}
-                    onChange={(event) => handleChange('title', event.target.value)}
-                    placeholder="Enter blog title"
-                    required
-                  />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Cloud Provider</p>
-                  <select
-                    className="w-full mt-2 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    value={form.provider}
-                    onChange={(event) => handleChange('provider', event.target.value)}
-                  >
-                    {PROVIDER_OPTIONS.map((provider) => (
-                      <option key={provider} value={provider}>
-                        {provider}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              <TitleProviderRow
+                form={form}
+                onChange={handleChange}
+                titlePlaceholder="Enter blog title"
+                providerLabel="Cloud Provider"
+                providers={PROVIDER_OPTIONS}
+              />
 
-              <div>
-                <p className="text-sm font-medium">Summary</p>
-                <Textarea
-                  value={form.summary}
-                  onChange={(event) => handleChange('summary', event.target.value)}
-                  placeholder="Short summary for preview cards"
-                  rows={3}
-                />
-              </div>
+              <TextAreaField
+                label="Summary"
+                value={form.summary}
+                onChange={(value) => handleChange('summary', value)}
+                placeholder="Short summary for preview cards"
+                rows={3}
+              />
 
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
@@ -172,28 +149,15 @@ export default function BlogSubmissionPage() {
                 </div>
               </div>
 
-              <div>
-                <p className="text-sm font-medium">Blog Content</p>
-                <Textarea
-                  value={form.content}
-                  onChange={(event) => handleChange('content', event.target.value)}
-                  placeholder="Write markdown or plain text content"
-                  rows={12}
-                />
-              </div>
+              <TextAreaField
+                label="Blog Content"
+                value={form.content}
+                onChange={(value) => handleChange('content', value)}
+                placeholder="Write markdown or plain text content"
+                rows={12}
+              />
 
-              {error && <p className="text-sm text-destructive">{error}</p>}
-
-              <Button type="submit" disabled={submitting} className="w-full md:w-auto">
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Submitting...
-                  </>
-                ) : (
-                  'Submit blog draft'
-                )}
-              </Button>
+              <SubmitRow error={error} submitting={submitting} label="Submit blog draft" />
             </form>
           </CardContent>
         </Card>
