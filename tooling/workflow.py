@@ -89,23 +89,26 @@ def project_dir(cli_root: str | None) -> Path:
     env = os.environ.get("CLAUDE_PROJECT_DIR")
     if env:
         return Path(env).resolve()
+    # No git on PATH, not a repository, or git hung past the timeout: fall
+    # through to cwd rather than failing. This is the last of three fallbacks
+    # and the caller has no better answer to offer.
+    return git_toplevel() or Path.cwd().resolve()
+
+
+def git_toplevel() -> Path | None:
+    """The top of the git checkout around cwd, or None when git cannot say."""
     git = shutil.which("git")
+    if git is None:
+        return None
     try:
-        if git is None:
-            raise OSError("git is not on PATH")
         # Absolute git from shutil.which and a constant argv: nothing untrusted.
         proc = subprocess.run(  # nosec B603
-            [git, "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=10,
+            [git, "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=10,
         )
-        if proc.returncode == 0 and proc.stdout.strip():
-            return Path(proc.stdout.strip()).resolve()
+        top = proc.stdout.strip()
+        return Path(top).resolve() if proc.returncode == 0 and top else None
     except (OSError, subprocess.TimeoutExpired):
-        # No git on PATH, not a repository, or git hung past the timeout. Fall
-        # through to cwd rather than failing: this is the last of three
-        # fallbacks and the caller has no better answer to offer.
-        pass
-    return Path.cwd().resolve()
+        return None
 
 
 def frontmatter(path: Path) -> dict[str, str]:

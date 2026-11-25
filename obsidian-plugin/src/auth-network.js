@@ -1,5 +1,12 @@
 import { safeText } from "./errors.js";
 
+/** True only for plain https://login.microsoftonline.com URLs: no port,
+ * user name, password or #fragment. */
+const isAuthority = (url) =>
+  url.protocol === "https:" &&
+  url.hostname === "login.microsoftonline.com" &&
+  ![url.port, url.username, url.password, url.hash].some(Boolean);
+
 /** MSAL Node runs in Obsidian's renderer, where global fetch is subject to
  * browser CORS. Use the host's documented native HTTPS transport instead.
  * Credentials stay in memory and are sent only to Microsoft's authority.
@@ -15,14 +22,7 @@ export function createMsalNetworkClient(
   let lastFailure = null;
   const send = async (method, rawUrl, options = {}) => {
     const url = new URL(rawUrl);
-    if (
-      url.protocol !== "https:" ||
-      url.hostname !== "login.microsoftonline.com" ||
-      url.port ||
-      url.username ||
-      url.password ||
-      url.hash
-    )
+    if (!isAuthority(url))
       throw new Error(
         "Microsoft sign-in requires the configured HTTPS authority.",
       );

@@ -590,17 +590,42 @@ async function limitGate(verdict, session, { fetchImpl, view }) {
   const { blocker, end } = await readBlocker(verdict.refused.buildId, session, fetchImpl);
   if (end) return end;
   if (!blocker) return null;
+  return (await blockedBy(blocker, fetchImpl, view)) || retryOnce(verdict, session, { fetchImpl, view });
+}
+
+/**
+ * Whether the workspace named in the log still counts against the limit:
+ * `'limited'` (and Coder's page for it framed) when it does, how the step
+ * ends when it cannot be read, null when it no longer counts.
+ */
+async function blockedBy(blocker, fetchImpl, view) {
   const other = await read(fetchImpl, workspaceApiPath(blocker));
   if (other.kind === 'signed-out' || other.kind === 'error') return other.kind;
-  if (other.kind === 'ok' && isBlocking(other.body)) {
-    view.frame(workspacePagePath(blocker));
-    view.report('limited', limitMessage(blocker));
-    return 'limited';
-  }
+  if (other.kind !== 'ok' || !isBlocking(other.body)) return null;
+  view.frame(workspacePagePath(blocker));
+  view.report('limited', limitMessage(blocker));
+  return 'limited';
+}
+
+/** Start this lab's workspace again, once per visit, now the limit allows it. Null when it is not started. */
+async function retryOnce(verdict, session, { fetchImpl, view }) {
   if (session.retryTried) return null;
   session.retryTried = true;
   if (!(await startWorkspace(fetchImpl, verdict.refused.retry))) return null;
   view.frame(null);
+  view.report('starting');
+  return 'wait';
+}
+
+/**
+ * A stopped workspace is started once, without a click; if Coder takes
+ * the build the visit waits for it, otherwise Coder's page with Start.
+ * Null to go on to that page.
+ */
+async function startOnce(verdict, session, fetchImpl, view) {
+  if (!verdict.start || session.startTried) return null;
+  session.startTried = true;
+  if (!(await startWorkspace(fetchImpl, verdict.start))) return null;
   view.report('starting');
   return 'wait';
 }
@@ -614,20 +639,12 @@ async function launcherStep(session, { fetchImpl, target, view, navigate }) {
   if (!session.owner) return readOwner(session, fetchImpl);
   const verdict = workspaceVerdict(await read(fetchImpl, workspaceApiPath(target.workspace)), target, session.owner);
   if (verdict.end) return verdict.end;
-  const gate = await templateGate(verdict, session, fetchImpl);
-  if (gate) return gate;
-  const limit = await limitGate(verdict, session, { fetchImpl, view });
-  if (limit) return limit;
-  // A stopped workspace is started once, without a click; if Coder takes
-  // the build the visit waits for it, otherwise Coder's page with Start.
-  if (verdict.start && !session.startTried) {
-    session.startTried = true;
-    if (await startWorkspace(fetchImpl, verdict.start)) {
-      view.report('starting');
-      return 'wait';
-    }
-  }
-  return show(verdict, { target, view, navigate });
+  // The first of the three that has something to say ends the step.
+  const outcome =
+    (await templateGate(verdict, session, fetchImpl)) ||
+    (await limitGate(verdict, session, { fetchImpl, view })) ||
+    (await startOnce(verdict, session, fetchImpl, view));
+  return outcome || show(verdict, { target, view, navigate });
 }
 
 /**
