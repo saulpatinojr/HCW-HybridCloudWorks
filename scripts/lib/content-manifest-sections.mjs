@@ -28,7 +28,7 @@ import { providerOf, PROVIDERS } from './content-manifest-items.mjs';
  * frameworks has. The AWS and Azure architecture pages do fall back to `blogs`,
  * so this path's view of them is the same approximation as above — but a zero
  * counted here only drops a route whose `architecture-blueprints.js` is also
- * empty (`sitemapRoutes` in frontend/scripts/prerender.mjs), and the one
+ * empty (`sitemapRoutes` in frontend/scripts/prerender-routes.mjs), and the one
  * provider whose module is empty is VMware, whose page reads `content` and
  * nothing else. For the only route this count can act on, the corpus this
  * script is handed IS the corpus the page reads.
