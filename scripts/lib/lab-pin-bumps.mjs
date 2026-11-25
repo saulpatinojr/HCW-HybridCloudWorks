@@ -1044,23 +1044,22 @@ function dependencyMoves({ deps, next, current, pinned, target }) {
     const dep = byName.get(key);
     if (!dep) throw new Error(`ansible-core ${target} requires ${showRequirement(req)}, which ANSIBLE_CORE_DEPS does not list`);
     const exact = exactPin(req.specifier);
-    if (exact) {
-      if (exact !== dep.version) moves.set(key, exact);
-      continue;
-    }
-    const before = had.get(key);
-    if (!before || before.specifier !== req.specifier || before.marker !== req.marker) {
-      throw new Error(
-        `ansible-core ${target} requires ${showRequirement(req)}, where ${pinned} required ${before ? showRequirement(before) : 'nothing of it'}; whether ${dep.name}==${dep.version} still satisfies that is not evaluated here`
-      );
-    }
+    if (!exact) assertUnchanged(req, had.get(key), { dep, pinned, target });
+    else if (exact !== dep.version) moves.set(key, exact);
   }
-  for (const [key, req] of had) {
-    if (!wanted.has(key)) {
-      throw new Error(`ansible-core ${target} no longer requires ${req.name}; ANSIBLE_CORE_DEPS still lists it, and which of its other lines go with it is not worked out here`);
-    }
+  const dropped = [...had].find(([key]) => !wanted.has(key));
+  if (dropped) {
+    throw new Error(`ansible-core ${target} no longer requires ${dropped[1].name}; ANSIBLE_CORE_DEPS still lists it, and which of its other lines go with it is not worked out here`);
   }
   return moves;
+}
+
+/** A requirement that is not an exact pin must be the same as the pinned release's, or nothing moves. */
+function assertUnchanged(req, before, { dep, pinned, target }) {
+  if (before && before.specifier === req.specifier && before.marker === req.marker) return;
+  throw new Error(
+    `ansible-core ${target} requires ${showRequirement(req)}, where ${pinned} required ${before ? showRequirement(before) : 'nothing of it'}; whether ${dep.name}==${dep.version} still satisfies that is not evaluated here`
+  );
 }
 
 /**
