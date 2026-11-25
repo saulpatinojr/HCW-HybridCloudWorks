@@ -212,23 +212,19 @@ export function deriveStatus(cert, today = todayIso()) {
 
   if (isPastDate(cert.expiryDate, today)) return 'retired';
 
-  // Every date that decides a status goes through isIsoDate, not the shape
-  // regex: an impossible day such as 2026-02-30 must not flip anything.
-  const reached = (iso) => isIsoDate(iso) && isIsoDate(today) && iso <= today;
+  return statusBeforeVendorDay(cert, stored, today) || statusAfterDates(cert, stored, today);
+}
 
-  const held = statusBeforeVendorDay(cert, stored, today);
-  if (held) return held;
+// Every date that decides a status goes through isIsoDate, not the shape
+// regex: an impossible day such as 2026-02-30 must not flip anything.
+const reachedBy = (iso, today) => isIsoDate(iso) && isIsoDate(today) && iso <= today;
 
-  if (stored === 'beta') {
-    if (reached(cert.gaDate)) return 'active';
-    if (isPastDate(cert.betaEndDate, today)) {
-      return cert.betaClosesBeforeGa === true ? 'upcoming' : 'active';
-    }
-    return 'beta';
-  }
+/** Steps 3 to 6 of `deriveStatus`, once retirement and the held cases are ruled out. */
+function statusAfterDates(cert, stored, today) {
+  if (stored === 'beta') return betaStatus(cert, today);
 
   if (stored === 'upcoming') {
-    return reached(cert.availableDate) ? 'active' : 'upcoming';
+    return reachedBy(cert.availableDate, today) ? 'active' : 'upcoming';
   }
 
   if (stored === 'active' && isIsoDate(cert.expiryDate)) {
@@ -236,6 +232,14 @@ export function deriveStatus(cert, today = todayIso()) {
   }
 
   return stored;
+}
+
+function betaStatus(cert, today) {
+  if (reachedBy(cert.gaDate, today)) return 'active';
+  if (isPastDate(cert.betaEndDate, today)) {
+    return cert.betaClosesBeforeGa === true ? 'upcoming' : 'active';
+  }
+  return 'beta';
 }
 
 /**

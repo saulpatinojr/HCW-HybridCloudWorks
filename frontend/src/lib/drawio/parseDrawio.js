@@ -88,39 +88,41 @@ export function parseMxGraphModel(modelXml) {
     if (id) byId.set(id, cell);
   }
 
-  const shapes = [];
-  for (const cell of cells) {
-    if (cell.getAttribute('vertex') !== '1') continue;
-
-    const [geometry] = cell.getElementsByTagName('mxGeometry');
-    if (!geometry) continue;
-    // Edge labels are positioned along their edge, not on the canvas, so they
-    // are not anchorable.
-    if (geometry.getAttribute('relative') === '1') continue;
-
-    const width = num(geometry.getAttribute('width'));
-    const height = num(geometry.getAttribute('height'));
-    if (!width || !height) continue;
-
-    const offset = resolveParentOffset(cell, byId);
-    const absX = num(geometry.getAttribute('x')) + offset.x;
-    const absY = num(geometry.getAttribute('y')) + offset.y;
-
-    shapes.push({
-      id: cell.getAttribute('id'),
-      parentId: cell.getAttribute('parent') || null,
-      label: plainLabel(cell.getAttribute('value')),
-      style: cell.getAttribute('style') || '',
-      absX,
-      absY,
-      width,
-      height,
-      centerX: absX + width / 2,
-      centerY: absY + height / 2,
-    });
-  }
+  const shapes = cells.map((cell) => vertexShape(cell, byId)).filter(Boolean);
 
   return { shapes, bounds: boundsOf(shapes) };
+}
+
+/** One vertex cell as a shape with absolute geometry, or null when it has none to anchor to. */
+function vertexShape(cell, byId) {
+  if (cell.getAttribute('vertex') !== '1') return null;
+
+  const [geometry] = cell.getElementsByTagName('mxGeometry');
+  if (!geometry) return null;
+  // Edge labels are positioned along their edge, not on the canvas, so they
+  // are not anchorable.
+  if (geometry.getAttribute('relative') === '1') return null;
+
+  const width = num(geometry.getAttribute('width'));
+  const height = num(geometry.getAttribute('height'));
+  if (!width || !height) return null;
+
+  const offset = resolveParentOffset(cell, byId);
+  const absX = num(geometry.getAttribute('x')) + offset.x;
+  const absY = num(geometry.getAttribute('y')) + offset.y;
+
+  return {
+    id: cell.getAttribute('id'),
+    parentId: cell.getAttribute('parent') || null,
+    label: plainLabel(cell.getAttribute('value')),
+    style: cell.getAttribute('style') || '',
+    absX,
+    absY,
+    width,
+    height,
+    centerX: absX + width / 2,
+    centerY: absY + height / 2,
+  };
 }
 
 /**

@@ -100,18 +100,23 @@ function srcsetUrls(value) {
   const urls = [];
   let position = 0;
   while (position < value.length) {
-    while (position < value.length && /[\s,]/.test(value[position])) position += 1;
+    position = skipWhile(value, position, (ch) => /[\s,]/.test(ch));
     if (position >= value.length) break;
     const start = position;
-    while (position < value.length && !/\s/.test(value[position])) position += 1;
+    position = skipWhile(value, position, (ch) => !/\s/.test(ch));
     const token = value.slice(start, position);
     const url = token.replace(/,+$/, '');
     if (url) urls.push(url);
-    if (!token.endsWith(',')) {
-      while (position < value.length && value[position] !== ',') position += 1;
-    }
+    if (!token.endsWith(',')) position = skipWhile(value, position, (ch) => ch !== ',');
   }
   return urls;
+}
+
+/** The first position from `position` on whose character fails `test` (or the end). */
+function skipWhile(value, position, test) {
+  let next = position;
+  while (next < value.length && test(value[next])) next += 1;
+  return next;
 }
 
 /** Every image URL a page's markup fetches, with the element and attribute it came from. */
@@ -122,30 +127,46 @@ export function imageSourcesInHtml(html) {
   for (const { name: tag, attributes } of startTags(html)) {
     if (!IMAGE_ELEMENTS.has(tag)) continue;
     const read = (name) => attributes.get(name);
-    if (tag === 'link') {
-      const rel = (read('rel') || '').toLowerCase();
-      const preloadsImage =
-        /\b(preload|prefetch)\b/.test(rel) && (read('as') || '').toLowerCase() === 'image';
-      if (!preloadsImage && !/\bicon\b/.test(rel)) continue;
-      const href = read('href');
-      if (href) found.push({ url: href, where: 'link.href' });
-      const imagesrcset = read('imagesrcset');
-      if (imagesrcset) {
-        for (const url of srcsetUrls(imagesrcset)) found.push({ url, where: 'link.imagesrcset' });
-      }
-      continue;
-    }
-    if (tag === 'input' && (read('type') || '').toLowerCase() !== 'image') continue;
-    for (const name of tag === 'video' ? ['poster'] : ['src']) {
-      const value = read(name);
-      if (value) found.push({ url: value, where: `${tag}.${name}` });
-    }
-    const srcset = read('srcset');
-    if (srcset) for (const url of srcsetUrls(srcset)) found.push({ url, where: `${tag}.srcset` });
+    found.push(...(tag === 'link' ? linkImageSources(read) : elementImageSources(tag, read)));
   }
-  // The CSS a page carries inline fetches images exactly as a stylesheet
-  // does: a background in a <style> block or in a style attribute is an image
-  // request, and the stylesheet scan below would never see it.
+  found.push(...inlineCssImageSources(html));
+  return found;
+}
+
+/** A `<link>` fetches an image when it preloads or prefetches one, or is an icon. */
+function linkImageSources(read) {
+  const rel = (read('rel') || '').toLowerCase();
+  const preloadsImage =
+    /\b(preload|prefetch)\b/.test(rel) && (read('as') || '').toLowerCase() === 'image';
+  if (!preloadsImage && !/\bicon\b/.test(rel)) return [];
+  const found = [];
+  const href = read('href');
+  if (href) found.push({ url: href, where: 'link.href' });
+  const imagesrcset = read('imagesrcset');
+  if (imagesrcset) {
+    for (const url of srcsetUrls(imagesrcset)) found.push({ url, where: 'link.imagesrcset' });
+  }
+  return found;
+}
+
+/** An `<img>`, `<source>`, `<video>` poster or image `<input>`: its source and srcset. */
+function elementImageSources(tag, read) {
+  if (tag === 'input' && (read('type') || '').toLowerCase() !== 'image') return [];
+  const found = [];
+  for (const name of tag === 'video' ? ['poster'] : ['src']) {
+    const value = read(name);
+    if (value) found.push({ url: value, where: `${tag}.${name}` });
+  }
+  const srcset = read('srcset');
+  if (srcset) for (const url of srcsetUrls(srcset)) found.push({ url, where: `${tag}.srcset` });
+  return found;
+}
+
+// The CSS a page carries inline fetches images exactly as a stylesheet
+// does: a background in a <style> block or in a style attribute is an image
+// request, and the stylesheet scan below would never see it.
+function inlineCssImageSources(html) {
+  const found = [];
   for (const match of html.matchAll(STYLE_ELEMENT)) {
     for (const entry of imageSourcesInCss(match[1])) {
       found.push({ url: entry.url, where: 'style element url()' });
@@ -201,23 +222,20 @@ export function imageSourcesInManifest(manifest) {
  */
 export function imageOrigin(url) {
   const value = url.trim();
-  if (value.startsWith('//')) {
-    try {
-      return new URL(`https:${value}`).origin;
-    } catch {
-      return value;
-    }
-  }
+  if (value.startsWith('//')) return originOf(`https:${value}`, value);
   const scheme = SCHEME.exec(value)?.[1].toLowerCase();
   if (!scheme) return "'self'";
-  if (scheme === 'http' || scheme === 'https') {
-    try {
-      return new URL(value).origin;
-    } catch {
-      return value;
-    }
-  }
+  if (scheme === 'http' || scheme === 'https') return originOf(value, value);
   return `${scheme}:`;
+}
+
+/** The origin of an absolute URL, or `fallback` when it does not parse. */
+function originOf(absolute, fallback) {
+  try {
+    return new URL(absolute).origin;
+  } catch {
+    return fallback;
+  }
 }
 
 /**

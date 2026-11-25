@@ -3,28 +3,28 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { cfWebAnalyticsPlugin } from './scripts/cf-web-analytics.mjs';
 
+// The markdown renderer and the parser packages it is built from.
+const MARKDOWN_PACKAGES = [
+  'react-markdown',
+  'react-syntax-highlighter',
+  'remark-',
+  'rehype-',
+  'refractor',
+  'hast-',
+  'mdast-',
+  'micromark',
+  'unified',
+  'unist-',
+  'vfile',
+  'property-information',
+  'comma-separated-tokens',
+  'space-separated-tokens',
+  'character-entities',
+  'decode-named-character-reference',
+];
+
 function pickMarkdownChunk(id) {
-  if (
-    id.includes('react-markdown') ||
-    id.includes('react-syntax-highlighter') ||
-    id.includes('remark-') ||
-    id.includes('rehype-') ||
-    id.includes('refractor') ||
-    id.includes('hast-') ||
-    id.includes('mdast-') ||
-    id.includes('micromark') ||
-    id.includes('unified') ||
-    id.includes('unist-') ||
-    id.includes('vfile') ||
-    id.includes('property-information') ||
-    id.includes('comma-separated-tokens') ||
-    id.includes('space-separated-tokens') ||
-    id.includes('character-entities') ||
-    id.includes('decode-named-character-reference')
-  ) {
-    return 'vendor-markdown';
-  }
-  return null;
+  return MARKDOWN_PACKAGES.some((name) => id.includes(name)) ? 'vendor-markdown' : null;
 }
 
 /**
@@ -199,6 +199,41 @@ export function assertDeployConfig(env = {}) {
   }
 }
 
+// The other node_modules chunks, checked in order: a module goes to the first
+// chunk with a name piece found in its path.
+const VENDOR_CHUNK_RULES = [
+  ['vendor-radix', ['@radix-ui']],
+  // framer-motion v13 ships its engine as the separate motion-dom /
+  // motion-utils packages. Matching only 'framer-motion' let ~337 kB
+  // of engine fall through to the catch-all vendor chunk, which is
+  // what pushed that chunk past the 500 kB warning threshold.
+  ['vendor-framer', ['framer-motion', 'node_modules/motion-dom/', 'node_modules/motion-utils/']],
+  // MSAL is only reached on the admin/auth path, so it has no
+  // business in the chunk every public route downloads.
+  ['vendor-msal', ['node_modules/@azure/msal-']],
+  ['vendor-lucide', ['lucide-react']],
+  // Date / sanitization / interaction libs that aren't on every route.
+  ['vendor-utils', ['date-fns', 'dompurify', 'react-zoom-pan-pinch']],
+  // fflate is reached only from the Landing Zone Builder's Download
+  // zip click (#668), behind a dynamic import, so it gets its own
+  // chunk rather than riding in the one every route downloads.
+  ['vendor-zip', ['node_modules/fflate/']],
+  ['vendor-router', ['react-router']],
+  ['vendor-forms', ['react-hook-form']],
+  // The React runtime: needed on every route, but it changes far
+  // less often than application code, so it earns its own
+  // long-lived cache entry. Anchored on the '/' package boundary so
+  // it does not swallow other react-* packages.
+  ['vendor-react', ['node_modules/react/', 'node_modules/react-dom/', 'node_modules/scheduler/']],
+];
+
+/** The chunk for a node_modules module no earlier rule claimed; `vendor` for all the rest. */
+function pickVendorChunk(id) {
+  if (!id.includes('node_modules')) return undefined;
+  const rule = VENDOR_CHUNK_RULES.find(([, names]) => names.some((name) => id.includes(name)));
+  return rule ? rule[0] : 'vendor'; // all other node_modules
+}
+
 export default defineConfig(({ mode }) => {
   // Load environment variables.
   // 1. System environment variables (process.env)
@@ -292,68 +327,12 @@ export default defineConfig(({ mode }) => {
             // React first, always. Order is load-bearing here: whichever
             // predicate claims the shared runtime pulls its whole chunk onto
             // the entry's static import graph (T-715).
-            const reactChunk = pickReactChunk(id);
-            if (reactChunk) return reactChunk;
-            const markdownChunk = pickMarkdownChunk(id);
-            if (markdownChunk) return markdownChunk;
-            const chartsChunk = pickChartsChunk(id);
-            if (chartsChunk) return chartsChunk;
-            if (id.includes('node_modules')) {
-              if (id.includes('@radix-ui')) {
-                return 'vendor-radix';
-              }
-              // framer-motion v13 ships its engine as the separate motion-dom /
-              // motion-utils packages. Matching only 'framer-motion' let ~337 kB
-              // of engine fall through to the catch-all vendor chunk, which is
-              // what pushed that chunk past the 500 kB warning threshold.
-              if (
-                id.includes('framer-motion') ||
-                id.includes('node_modules/motion-dom/') ||
-                id.includes('node_modules/motion-utils/')
-              ) {
-                return 'vendor-framer';
-              }
-              // MSAL is only reached on the admin/auth path, so it has no
-              // business in the chunk every public route downloads.
-              if (id.includes('node_modules/@azure/msal-')) {
-                return 'vendor-msal';
-              }
-              if (id.includes('lucide-react')) {
-                return 'vendor-lucide';
-              }
-              // Date / sanitization / interaction libs that aren't on every route.
-              if (
-                id.includes('date-fns') ||
-                id.includes('dompurify') ||
-                id.includes('react-zoom-pan-pinch')
-              ) {
-                return 'vendor-utils';
-              }
-              // fflate is reached only from the Landing Zone Builder's Download
-              // zip click (#668), behind a dynamic import, so it gets its own
-              // chunk rather than riding in the one every route downloads.
-              if (id.includes('node_modules/fflate/')) {
-                return 'vendor-zip';
-              }
-              if (id.includes('react-router')) {
-                return 'vendor-router';
-              }
-              if (id.includes('react-hook-form')) {
-                return 'vendor-forms';
-              }
-              // The React runtime: needed on every route, but it changes far
-              // less often than application code, so it earns its own
-              // long-lived cache entry. Anchored on the '/' package boundary so
-              // it does not swallow other react-* packages.
-              if (
-                id.includes('node_modules/react/') ||
-                id.includes('node_modules/react-dom/') ||
-                id.includes('node_modules/scheduler/')
-              ) {
-                return 'vendor-react';
-              }
-              return 'vendor'; // all other node_modules
-            }
+            return (
+              pickReactChunk(id) ||
+              pickMarkdownChunk(id) ||
+              pickChartsChunk(id) ||
+              pickVendorChunk(id)
+            );
           },
         },
       },

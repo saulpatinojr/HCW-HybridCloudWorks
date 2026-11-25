@@ -270,16 +270,50 @@ async function auditPage(context, url) {
     verdict: 'works',
   };
 
-  page.on('console', (msg) => {
-    if (msg.type() !== 'error') return;
-    const text = msg.text();
-    if (CONSOLE_IGNORE.some((re) => re.test(text))) return;
-    // A "Failed to load resource" for a request the repository has already
-    // accepted (KNOWN_ACCEPTED) is the same fact twice; the note covers it.
-    const at = msg.location()?.url || '';
-    if (at && KNOWN_ACCEPTED.some((k) => k.match(at))) return;
-    record.consoleErrors.push(text.slice(0, 300));
-  });
+  listenForFailures(page, record);
+
+  try {
+    await loadPage(page, url, record);
+  } catch (error) {
+    record.pageErrors.push(`navigation: ${String(error?.message || error).slice(0, 300)}`);
+  } finally {
+    await page.close().catch(() => {});
+  }
+
+  // ── Findings ──────────────────────────────────────────────────────────
+  const f = record.findings;
+  // No document response (navigation threw, timed out, or the host was
+  // unreachable) is its own class, not "http null": the page error above
+  // carries the reason, and the row must not read as the site answering.
+  if (record.status === null) f.push('no response');
+  else if (record.status !== 200) f.push(`http ${record.status}`);
+  if (record.pageErrors.length) f.push(`page errors: ${record.pageErrors.length}`);
+  consoleFindings(record);
+  if (record.apiFailures.length) {
+    f.push(
+      `API failures: ${record.apiFailures.map((a) => `${new URL(a.url).pathname}→${a.status}`).join(', ')}`
+    );
+  }
+  if (record.failedRequests.length) f.push(`failed requests: ${record.failedRequests.length}`);
+  if (record.provider) providerFindings(record);
+  if (record.brokenImages.length) f.push(`broken images: ${record.brokenImages.length}`);
+  const badMedia = record.media.filter((m) => ![200, 206].includes(m.status));
+  if (badMedia.length) f.push(`media not served: ${badMedia.map((m) => m.status).join(',')}`);
+
+  if (f.length) {
+    record.verdict = 'defect';
+  } else {
+    const decision = decideEmptiness(record);
+    record.verdict = decision.verdict;
+    f.push(...decision.findings);
+    record.notes.push(...decision.notes);
+  }
+  return record;
+}
+
+/** Records the page's console errors, script errors and failed requests as they happen. */
+function listenForFailures(page, record) {
+  page.on('console', (msg) => recordConsoleError(record, msg));
   page.on('pageerror', (err) => record.pageErrors.push(String(err?.message || err).slice(0, 300)));
   // One shape for every entry in failedRequests / apiFailures:
   // { url, kind: 'network' | 'http', status: number | null, error: string | null }.
@@ -295,141 +329,130 @@ async function auditPage(context, url) {
     if (CANCELLED_REQUEST.test(error)) return;
     record.failedRequests.push({ url: req.url(), kind: 'network', status: null, error });
   });
-  page.on('response', (res) => {
-    const st = res.status();
-    if (st < 400) return;
-    const u = res.url();
-    const entry = { url: u, kind: 'http', status: st, error: null };
-    const accepted = KNOWN_ACCEPTED.find((k) => k.match(u));
-    if (accepted) {
-      if (!record.notes.includes(accepted.note)) record.notes.push(accepted.note);
-      record.acceptedFailures += 1;
-      return;
-    }
-    if (new URL(u).host === API_HOST) record.apiFailures.push(entry);
-    else record.failedRequests.push(entry);
-  });
+  page.on('response', (res) => recordFailedResponse(record, res));
+}
 
+function recordConsoleError(record, msg) {
+  if (msg.type() !== 'error') return;
+  const text = msg.text();
+  if (CONSOLE_IGNORE.some((re) => re.test(text))) return;
+  // A "Failed to load resource" for a request the repository has already
+  // accepted (KNOWN_ACCEPTED) is the same fact twice; the note covers it.
+  const at = msg.location()?.url || '';
+  if (at && KNOWN_ACCEPTED.some((k) => k.match(at))) return;
+  record.consoleErrors.push(text.slice(0, 300));
+}
+
+function recordFailedResponse(record, res) {
+  const st = res.status();
+  if (st < 400) return;
+  const u = res.url();
+  const entry = { url: u, kind: 'http', status: st, error: null };
+  const accepted = KNOWN_ACCEPTED.find((k) => k.match(u));
+  if (accepted) {
+    if (!record.notes.includes(accepted.note)) record.notes.push(accepted.note);
+    record.acceptedFailures += 1;
+    return;
+  }
+  if (new URL(u).host === API_HOST) record.apiFailures.push(entry);
+  else record.failedRequests.push(entry);
+}
+
+/** Opens the page, waits for it to settle, and copies what the DOM shows into the record. */
+async function loadPage(page, url, record) {
+  let response;
   try {
-    let response;
-    try {
-      response = await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
-    } catch {
-      response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-      await page.waitForTimeout(3000);
-    }
-    record.status = response ? response.status() : null;
-    await page.waitForTimeout(1500);
-
-    const dom = await page.evaluate(
-      ({ emptyCopy }) => {
-        const q = (s) => document.querySelector(s);
-        const main = q('main') || document.body;
-        const text = (main?.innerText || '').replace(/\s+/g, ' ').trim();
-        const themed = document.querySelector('[class*="theme-"]');
-        const themeClass = themed ? (themed.className.match(/\btheme-[a-z]+\b/) || [''])[0] : '';
-        return {
-          title: document.title || '',
-          ogTitle: q('meta[property="og:title"]')?.getAttribute('content') || '',
-          canonical: q('link[rel="canonical"]')?.getAttribute('href') || '',
-          themeClass,
-          h1: (q('h1')?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
-          mainChars: text.length,
-          emptyCopy: emptyCopy.filter((c) => text.includes(c)),
-          brokenImages: [...document.images]
-            .filter((img) => img.complete && img.naturalWidth === 0 && img.getAttribute('src'))
-            .map((img) => img.getAttribute('src'))
-            .slice(0, 10),
-          media: [
-            ...document.querySelectorAll(
-              'audio[src], audio source[src], video[src], video source[src]'
-            ),
-          ]
-            .map((el) => el.getAttribute('src'))
-            .filter(Boolean)
-            .slice(0, 10),
-        };
-      },
-      { emptyCopy: EMPTY_COPY }
-    );
-    Object.assign(record, dom);
-
-    record.media = await Promise.all(
-      dom.media.map(async (src) => {
-        const abs = new URL(src, url).href;
-        return { url: abs, status: await mediaStatus(abs) };
-      })
-    );
-  } catch (error) {
-    record.pageErrors.push(`navigation: ${String(error?.message || error).slice(0, 300)}`);
-  } finally {
-    await page.close().catch(() => {});
+    response = await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+  } catch {
+    response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.waitForTimeout(3000);
   }
+  record.status = response ? response.status() : null;
+  await page.waitForTimeout(1500);
 
-  // ── Findings ──────────────────────────────────────────────────────────
+  const dom = await page.evaluate(
+    ({ emptyCopy }) => {
+      const q = (s) => document.querySelector(s);
+      const main = q('main') || document.body;
+      const text = (main?.innerText || '').replace(/\s+/g, ' ').trim();
+      const themed = document.querySelector('[class*="theme-"]');
+      const themeClass = themed ? (themed.className.match(/\btheme-[a-z]+\b/) || [''])[0] : '';
+      return {
+        title: document.title || '',
+        ogTitle: q('meta[property="og:title"]')?.getAttribute('content') || '',
+        canonical: q('link[rel="canonical"]')?.getAttribute('href') || '',
+        themeClass,
+        h1: (q('h1')?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+        mainChars: text.length,
+        emptyCopy: emptyCopy.filter((c) => text.includes(c)),
+        brokenImages: [...document.images]
+          .filter((img) => img.complete && img.naturalWidth === 0 && img.getAttribute('src'))
+          .map((img) => img.getAttribute('src'))
+          .slice(0, 10),
+        media: [
+          ...document.querySelectorAll(
+            'audio[src], audio source[src], video[src], video source[src]'
+          ),
+        ]
+          .map((el) => el.getAttribute('src'))
+          .filter(Boolean)
+          .slice(0, 10),
+      };
+    },
+    { emptyCopy: EMPTY_COPY }
+  );
+  Object.assign(record, dom);
+
+  record.media = await Promise.all(
+    dom.media.map(async (src) => {
+      const abs = new URL(src, url).href;
+      return { url: abs, status: await mediaStatus(abs) };
+    })
+  );
+}
+
+/** Console errors by class, less the network lines an accepted failure explains. */
+function consoleFindings(record) {
+  if (!record.consoleErrors.length) return;
   const f = record.findings;
-  // No document response (navigation threw, timed out, or the host was
-  // unreachable) is its own class, not "http null": the page error above
-  // carries the reason, and the row must not read as the site answering.
-  if (record.status === null) f.push('no response');
-  else if (record.status !== 200) f.push(`http ${record.status}`);
-  if (record.pageErrors.length) f.push(`page errors: ${record.pageErrors.length}`);
-  if (record.consoleErrors.length) {
-    const byClass = new Map();
-    for (const text of record.consoleErrors) {
-      const c = classifyConsole(text);
-      byClass.set(c, (byClass.get(c) || 0) + 1);
-    }
-    // Chromium's "Failed to load resource" line does not always carry the
-    // resource URL, so the listener above cannot always match it to an
-    // accepted failure. Each accepted failed response accounts for at most
-    // one such line; the remainder is a real finding.
-    if (byClass.has('network-failed') && record.acceptedFailures > 0) {
-      const left = byClass.get('network-failed') - record.acceptedFailures;
-      if (left > 0) byClass.set('network-failed', left);
-      else byClass.delete('network-failed');
-    }
-    record.consoleClasses = [...byClass.keys()];
-    for (const [c, n] of byClass) f.push(`console ${c}: ${n}`);
+  const byClass = new Map();
+  for (const text of record.consoleErrors) {
+    const c = classifyConsole(text);
+    byClass.set(c, (byClass.get(c) || 0) + 1);
   }
-  if (record.apiFailures.length) {
-    f.push(
-      `API failures: ${record.apiFailures.map((a) => `${new URL(a.url).pathname}→${a.status}`).join(', ')}`
-    );
+  // Chromium's "Failed to load resource" line does not always carry the
+  // resource URL, so the listener above cannot always match it to an
+  // accepted failure. Each accepted failed response accounts for at most
+  // one such line; the remainder is a real finding.
+  if (byClass.has('network-failed') && record.acceptedFailures > 0) {
+    const left = byClass.get('network-failed') - record.acceptedFailures;
+    if (left > 0) byClass.set('network-failed', left);
+    else byClass.delete('network-failed');
   }
-  if (record.failedRequests.length) f.push(`failed requests: ${record.failedRequests.length}`);
-  if (record.provider) {
-    const names = PROVIDER_NAMES[record.provider].map((n) => n.toLowerCase());
-    const has = (s) =>
-      names.some((n) =>
-        String(s || '')
-          .toLowerCase()
-          .includes(n)
-      );
-    // A blog post's title is the article's, not the section's; the section
-    // pages and landings are where the provider name is expected. The theme
-    // class is checked everywhere — that is the #183 symptom.
-    const isDetail = /\/blog\/[^/]+$/.test(record.path);
-    const titleOk = isDetail || has(record.title);
-    const ogOk = isDetail || !record.ogTitle || has(record.ogTitle);
-    const themeOk = !record.themeClass || record.themeClass === `theme-${record.provider}`;
-    if (!titleOk) f.push(`title lacks provider name: "${record.title}"`);
-    if (!ogOk) f.push(`og:title lacks provider name: "${record.ogTitle}"`);
-    if (!themeOk) f.push(`theme class ${record.themeClass} on a ${record.provider} URL`);
-  }
-  if (record.brokenImages.length) f.push(`broken images: ${record.brokenImages.length}`);
-  const badMedia = record.media.filter((m) => ![200, 206].includes(m.status));
-  if (badMedia.length) f.push(`media not served: ${badMedia.map((m) => m.status).join(',')}`);
+  record.consoleClasses = [...byClass.keys()];
+  for (const [c, n] of byClass) f.push(`console ${c}: ${n}`);
+}
 
-  if (f.length) {
-    record.verdict = 'defect';
-  } else {
-    const decision = decideEmptiness(record);
-    record.verdict = decision.verdict;
-    f.push(...decision.findings);
-    record.notes.push(...decision.notes);
-  }
-  return record;
+/** The page's title, og:title and theme class against the provider in its URL. */
+function providerFindings(record) {
+  const f = record.findings;
+  const names = PROVIDER_NAMES[record.provider].map((n) => n.toLowerCase());
+  const has = (s) =>
+    names.some((n) =>
+      String(s || '')
+        .toLowerCase()
+        .includes(n)
+    );
+  // A blog post's title is the article's, not the section's; the section
+  // pages and landings are where the provider name is expected. The theme
+  // class is checked everywhere — that is the #183 symptom.
+  const isDetail = /\/blog\/[^/]+$/.test(record.path);
+  const titleOk = isDetail || has(record.title);
+  const ogOk = isDetail || !record.ogTitle || has(record.ogTitle);
+  const themeOk = !record.themeClass || record.themeClass === `theme-${record.provider}`;
+  if (!titleOk) f.push(`title lacks provider name: "${record.title}"`);
+  if (!ogOk) f.push(`og:title lacks provider name: "${record.ogTitle}"`);
+  if (!themeOk) f.push(`theme class ${record.themeClass} on a ${record.provider} URL`);
 }
 
 async function runPool(items, worker, size) {

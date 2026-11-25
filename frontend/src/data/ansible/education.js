@@ -4,6 +4,8 @@
  * Extracted from src/pages/ansible/EducationPage.jsx when that page moved onto the
  * shared EducationTemplate.
  */
+import { resourceRow, titledModules } from '../educationRows';
+
 /**
  * Catalogue last checked against Red Hat on 2026-09-09 (#461 audit): RHCSA
  * EX200, RHCE EX294, EX374 and EX467 are all current on
@@ -157,12 +159,12 @@ export const learningPaths = [
     hours: 30,
     description:
       'Gain intermediate competencies in Red Hat Enterprise Linux system management before diving into scripting and automation.',
-    modules: [
-      { title: 'Command Line Essentials' },
-      { title: 'Managing Users & Groups' },
-      { title: 'Configuring Storage & File Systems' },
-      { title: 'SSH & Basic Network Security' },
-    ],
+    modules: titledModules(
+      'Command Line Essentials',
+      'Managing Users & Groups',
+      'Configuring Storage & File Systems',
+      'SSH & Basic Network Security'
+    ),
     certUrl: 'https://www.redhat.com/en/services/certification/rhcsa',
   },
   {
@@ -173,12 +175,12 @@ export const learningPaths = [
     hours: 45,
     description:
       'Learn the complete workflow of writing playbooks, creating reusable roles, securing credentials with Vault, and automating infrastructure.',
-    modules: [
-      { title: 'Ansible Engine Fundamentals' },
-      { title: 'Writing Playbooks & Tasks' },
-      { title: 'Designing Reusable Roles' },
-      { title: 'Ansible Vault Credential Encryption' },
-    ],
+    modules: titledModules(
+      'Ansible Engine Fundamentals',
+      'Writing Playbooks & Tasks',
+      'Designing Reusable Roles',
+      'Ansible Vault Credential Encryption'
+    ),
     certUrl: 'https://www.redhat.com/en/services/certification/rhce',
   },
   {
@@ -189,70 +191,58 @@ export const learningPaths = [
     hours: 40,
     description:
       'Advance to enterprise orchestration using Ansible Automation Platform (AAP), Controller administration, and custom execution environments.',
-    modules: [
-      { title: 'VCS Integration & Webhooks' },
-      { title: 'Building Execution Environments' },
-      { title: 'AAP Controller Configuration' },
-      { title: 'Designing Automation Workflows' },
-    ],
+    modules: titledModules(
+      'VCS Integration & Webhooks',
+      'Building Execution Environments',
+      'AAP Controller Configuration',
+      'Designing Automation Workflows'
+    ),
     certUrl:
       'https://www.redhat.com/en/services/training/red-hat-certified-specialist-developing-automation-ansible-automation-platform-exam',
   },
 ];
 
 export const resources = [
-  {
-    id: 'redhat-training',
-    title: 'Red Hat Training Portal',
-    description:
-      'Official Red Hat training portal offering courses, certification tracks, exams, and digital badges.',
-    type: 'Learning Platform',
-    icon: 'school',
-    url: 'https://www.redhat.com/en/services/training-and-certification',
-  },
-  {
-    id: 'ansible-docs',
-    title: 'Ansible Documentation',
-    description:
-      'Comprehensive references, playbook guides, community modules documentation, and REST API guides.',
-    type: 'Documentation',
-    icon: 'description',
-    url: 'https://docs.ansible.com/',
-  },
-  {
-    id: 'ansible-galaxy',
-    title: 'Ansible Galaxy Registry',
-    description:
-      'Browse, download, and share Ansible roles and collections contributed by the automation community.',
-    type: 'Registry',
-    icon: 'inventory',
-    url: 'https://galaxy.ansible.com/',
-  },
-  {
-    id: 'redhat-dev',
-    title: 'Red Hat Developer',
-    description:
-      'Access free developer subscriptions, technical articles, and Ansible Automation Platform sandbox guides.',
-    type: 'Builder Resources',
-    icon: 'code',
-    url: 'https://developers.redhat.com/',
-  },
-  {
-    id: 'ansible-blog',
-    title: 'Official Ansible Blog',
-    description:
-      'Read the latest product announcements, case studies, automation patterns, and updates from the Ansible core team.',
-    type: 'Blog',
-    icon: 'article',
-    url: 'https://www.ansible.com/blog',
-  },
-  {
-    id: 'redhat-labs',
-    title: 'Red Hat Interactive Labs',
-    description:
-      'Free, sandbox-based interactive courses on Red Hat Enterprise Linux and Ansible Automation Platform.',
-    type: 'Labs',
-    icon: 'science',
-    url: 'https://www.redhat.com/en/interactive-labs',
-  },
+  resourceRow(
+    'redhat-training',
+    'Red Hat Training Portal',
+    ['Learning Platform', 'school'],
+    'https://www.redhat.com/en/services/training-and-certification',
+    'Official Red Hat training portal offering courses, certification tracks, exams, and digital badges.'
+  ),
+  resourceRow(
+    'ansible-docs',
+    'Ansible Documentation',
+    ['Documentation', 'description'],
+    'https://docs.ansible.com/',
+    'Comprehensive references, playbook guides, community modules documentation, and REST API guides.'
+  ),
+  resourceRow(
+    'ansible-galaxy',
+    'Ansible Galaxy Registry',
+    ['Registry', 'inventory'],
+    'https://galaxy.ansible.com/',
+    'Browse, download, and share Ansible roles and collections contributed by the automation community.'
+  ),
+  resourceRow(
+    'redhat-dev',
+    'Red Hat Developer',
+    ['Builder Resources', 'code'],
+    'https://developers.redhat.com/',
+    'Access free developer subscriptions, technical articles, and Ansible Automation Platform sandbox guides.'
+  ),
+  resourceRow(
+    'ansible-blog',
+    'Official Ansible Blog',
+    ['Blog', 'article'],
+    'https://www.ansible.com/blog',
+    'Read the latest product announcements, case studies, automation patterns, and updates from the Ansible core team.'
+  ),
+  resourceRow(
+    'redhat-labs',
+    'Red Hat Interactive Labs',
+    ['Labs', 'science'],
+    'https://www.redhat.com/en/interactive-labs',
+    'Free, sandbox-based interactive courses on Red Hat Enterprise Linux and Ansible Automation Platform.'
+  ),
 ];

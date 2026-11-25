@@ -1,4 +1,4 @@
-import { isSelected, normalizeState } from '../../state';
+import { emitCloudPack } from '../cloudPack';
 import { cloudNgfwTf } from './cloudNgfw';
 import { foldersTf } from './folders';
 import { identityTf } from './identity';
@@ -11,6 +11,16 @@ import { sharedVpcTf } from './sharedVpc';
 import { terraformTf } from './terraform';
 import { tfvarsExample, variablesTf } from './variables';
 
+// Each component the builder offers, and the file it adds, in emit order.
+const COMPONENT_FILES = [
+  ['management-groups', foldersTf],
+  ['policy', orgPoliciesTf],
+  ['management', loggingSinkTf],
+  ['connectivity-hub', sharedVpcTf],
+  ['firewall', cloudNgfwTf],
+  ['identity', identityTf],
+];
+
 /**
  * Emit the GCP landing-zone pack for one builder state: `terraform.tf` and
  * `providers.tf` always, one file per selected component, then variables,
@@ -21,34 +31,13 @@ import { tfvarsExample, variablesTf } from './variables';
  * @returns {Array<{ path: string, content: string }>} the files, in emit order
  */
 export function emitGcpFiles(state) {
-  const normalized = normalizeState(state);
-  if (!normalized.selected.length) return [readmeMd(normalized, [])];
-
-  const files = [terraformTf(), providersTf()];
-
-  if (isSelected(normalized, 'management-groups')) {
-    files.push(foldersTf());
-  }
-  if (isSelected(normalized, 'policy')) {
-    files.push(orgPoliciesTf());
-  }
-  if (isSelected(normalized, 'management')) {
-    files.push(loggingSinkTf());
-  }
-  if (isSelected(normalized, 'connectivity-hub')) {
-    files.push(sharedVpcTf());
-  }
-  if (isSelected(normalized, 'firewall')) {
-    files.push(cloudNgfwTf());
-  }
-  if (isSelected(normalized, 'identity')) {
-    files.push(identityTf());
-  }
-  if (isSelected(normalized, 'corp') || isSelected(normalized, 'online')) {
-    files.push(projectsTf(normalized));
-  }
-
-  files.push(variablesTf(), tfvarsExample(normalized));
-  files.push(readmeMd(normalized, files));
-  return files;
+  return emitCloudPack(state, {
+    terraform: terraformTf,
+    providers: providersTf,
+    components: COMPONENT_FILES,
+    workloads: projectsTf,
+    variables: variablesTf,
+    tfvars: tfvarsExample,
+    readme: readmeMd,
+  });
 }

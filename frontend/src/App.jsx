@@ -654,32 +654,46 @@ function DeferredChrome({ immediate }) {
 
 // --- Dispatch Components to handle /:provider/... rendering ---
 
+// Most dispatchers below look the provider up in a table of its page (as a
+// ready-made element, so nothing is built during render). Only a provider
+// listed in the table has a page; anything else falls through to the
+// dispatcher's own fallback.
+function pageFor(pages, provider) {
+  return Object.hasOwn(pages, provider) ? pages[provider] : null;
+}
+
+const LANDING_PAGES = {
+  aws: <AWSLandingPage />,
+  azure: <AzureLandingPage />,
+  gcp: <GCPLandingPage />,
+  finops: <FinOpsLandingPage />,
+  terraform: <TerraformLandingPage />,
+  github: <GitHubLandingPage />,
+  vmware: <VMwareLandingPage />,
+  ansible: <AnsibleLandingPage />,
+  docker: <DockerLandingPage />,
+};
+
 function ProviderLandingDispatcher() {
   const { provider } = useParams();
-  if (provider === 'aws') return <AWSLandingPage />;
-  if (provider === 'azure') return <AzureLandingPage />;
-  if (provider === 'gcp') return <GCPLandingPage />;
-  if (provider === 'finops') return <FinOpsLandingPage />;
-  if (provider === 'terraform') return <TerraformLandingPage />;
-  if (provider === 'github') return <GitHubLandingPage />;
-  if (provider === 'vmware') return <VMwareLandingPage />;
-  if (provider === 'ansible') return <AnsibleLandingPage />;
-  if (provider === 'docker') return <DockerLandingPage />;
-  return <NotFoundPage />;
+  return pageFor(LANDING_PAGES, provider) ?? <NotFoundPage />;
 }
+
+const BLOG_PAGES = {
+  aws: <AWSBlogPage />,
+  azure: <AzureBlogPage />,
+  gcp: <GCPBlogPage />,
+  finops: <FinOpsBlogPage />,
+  terraform: <TerraformBlogPage />,
+  github: <GitHubBlogPage />,
+  vmware: <VMwareBlogPage />,
+  ansible: <AnsibleBlogPage />,
+  docker: <DockerBlogPage />,
+};
 
 function ProviderBlogDispatcher() {
   const { provider } = useParams();
-  if (provider === 'aws') return <AWSBlogPage />;
-  if (provider === 'azure') return <AzureBlogPage />;
-  if (provider === 'gcp') return <GCPBlogPage />;
-  if (provider === 'finops') return <FinOpsBlogPage />;
-  if (provider === 'terraform') return <TerraformBlogPage />;
-  if (provider === 'github') return <GitHubBlogPage />;
-  if (provider === 'vmware') return <VMwareBlogPage />;
-  if (provider === 'ansible') return <AnsibleBlogPage />;
-  if (provider === 'docker') return <DockerBlogPage />;
-  return <NotFoundPage />;
+  return pageFor(BLOG_PAGES, provider) ?? <NotFoundPage />;
 }
 
 // Every provider's articles and news items open in the one article template,
@@ -700,6 +714,14 @@ function ProviderNewsDetailDispatcher() {
   return <BlogDetailTemplate provider={provider} section="news" />;
 }
 
+const ARCHITECTURE_PAGES = {
+  aws: <AWSArchitecturePage />,
+  azure: <AzureArchitecturePage />,
+  gcp: <GCPArchitecturePage />,
+  finops: <FinOpsArchitecturePage />,
+  vmware: <VMwareArchitecturePage />,
+};
+
 function ProviderArchitectureDispatcher() {
   // `slug` comes from the route pattern (`architecture-designs/:slug`), which is the
   // router's own answer to list-versus-detail. This used to sniff
@@ -708,25 +730,18 @@ function ProviderArchitectureDispatcher() {
   // one that answers "detail" for any path whose last segment happens to
   // differ, including a trailing-slash variant (T-762).
   const { provider, slug } = useParams();
-  const isDetail = Boolean(slug);
-
-  if (provider === 'aws') {
-    return isDetail ? <ArchitectureDetailTemplate provider="aws" /> : <AWSArchitecturePage />;
-  }
-  if (provider === 'azure') {
-    return isDetail ? <ArchitectureDetailTemplate provider="azure" /> : <AzureArchitecturePage />;
-  }
-  if (provider === 'gcp') {
-    return isDetail ? <ArchitectureDetailTemplate provider="gcp" /> : <GCPArchitecturePage />;
-  }
-  if (provider === 'finops') {
-    return isDetail ? <ArchitectureDetailTemplate provider="finops" /> : <FinOpsArchitecturePage />;
-  }
-  if (provider === 'vmware') {
-    return isDetail ? <ArchitectureDetailTemplate provider="vmware" /> : <VMwareArchitecturePage />;
-  }
-  return <NotFoundPage />;
+  const listPage = pageFor(ARCHITECTURE_PAGES, provider);
+  if (!listPage) return <NotFoundPage />;
+  return slug ? <ArchitectureDetailTemplate provider={provider} /> : listPage;
 }
+
+const FRAMEWORK_PAGES = {
+  aws: <AWSFrameworksPage />,
+  azure: <AzureFrameworksPage />,
+  gcp: <GCPFrameworksPage />,
+  finops: <FinOpsFrameworksPage />,
+  vmware: <VMwareFrameworksPage />,
+};
 
 function ProviderFrameworksDispatcher() {
   // `slug` comes from the route pattern (`frameworks/:slug`), which is the
@@ -736,25 +751,17 @@ function ProviderFrameworksDispatcher() {
   // one that answers "detail" for any path whose last segment happens to
   // differ, including a trailing-slash variant (T-762).
   const { provider, slug } = useParams();
-  const isDetail = Boolean(slug);
-
-  if (provider === 'aws') {
-    return isDetail ? <FrameworkDetailTemplate provider="aws" /> : <AWSFrameworksPage />;
-  }
-  if (provider === 'azure') {
-    return isDetail ? <FrameworkDetailTemplate provider="azure" /> : <AzureFrameworksPage />;
-  }
-  if (provider === 'gcp') {
-    return isDetail ? <FrameworkDetailTemplate provider="gcp" /> : <GCPFrameworksPage />;
-  }
-  if (provider === 'finops') {
-    return isDetail ? <FrameworkDetailTemplate provider="finops" /> : <FinOpsFrameworksPage />;
-  }
-  if (provider === 'vmware') {
-    return isDetail ? <FrameworkDetailTemplate provider="vmware" /> : <VMwareFrameworksPage />;
-  }
-  return <NotFoundPage />;
+  const listPage = pageFor(FRAMEWORK_PAGES, provider);
+  if (!listPage) return <NotFoundPage />;
+  return slug ? <FrameworkDetailTemplate provider={provider} /> : listPage;
 }
+
+const CODE_PAGES = {
+  github: <GitHubCodePage />,
+  terraform: <TerraformCodePage />,
+  ansible: <AnsibleCodePage />,
+  docker: <DockerCodePage />,
+};
 
 function ProviderCodeDispatcher() {
   // `slug` comes from the route pattern (`code/:slug`), which is the
@@ -764,30 +771,9 @@ function ProviderCodeDispatcher() {
   // one that answers "detail" for any path whose last segment happens to
   // differ, including a trailing-slash variant (T-762).
   const { provider, slug } = useParams();
-  const isDetail = Boolean(slug);
-
-  if (provider === 'github') {
-    return isDetail ? <BlogDetailTemplate provider="github" section="code" /> : <GitHubCodePage />;
-  }
-  if (provider === 'terraform') {
-    return isDetail ? (
-      <BlogDetailTemplate provider="terraform" section="code" />
-    ) : (
-      <TerraformCodePage />
-    );
-  }
-  if (provider === 'ansible') {
-    return isDetail ? (
-      <BlogDetailTemplate provider="ansible" section="code" />
-    ) : (
-      <AnsibleCodePage />
-    );
-  }
-  if (provider === 'docker') {
-    return isDetail ? <BlogDetailTemplate provider="docker" section="code" /> : <DockerCodePage />;
-  }
-
-  return <NotFoundPage />;
+  const listPage = pageFor(CODE_PAGES, provider);
+  if (!listPage) return <NotFoundPage />;
+  return slug ? <BlogDetailTemplate provider={provider} section="code" /> : listPage;
 }
 
 function ProviderCoderCornerDispatcher() {
@@ -799,18 +785,21 @@ function ProviderCoderCornerDispatcher() {
   return <ProviderCoderCornerPage provider={provider} />;
 }
 
+const EDUCATION_PAGES = {
+  aws: <AWSEducationPage />,
+  azure: <AzureEducationPage />,
+  gcp: <GCPEducationPage />,
+  finops: <FinOpsEducationPage />,
+  github: <GitHubEducationPage />,
+  terraform: <TerraformEducationPage />,
+  vmware: <VMwareEducationPage />,
+  ansible: <AnsibleEducationPage />,
+  docker: <DockerEducationPage />,
+};
+
 function ProviderEducationDispatcher() {
   const { provider } = useParams();
-  if (provider === 'aws') return <AWSEducationPage />;
-  if (provider === 'azure') return <AzureEducationPage />;
-  if (provider === 'gcp') return <GCPEducationPage />;
-  if (provider === 'finops') return <FinOpsEducationPage />;
-  if (provider === 'github') return <GitHubEducationPage />;
-  if (provider === 'terraform') return <TerraformEducationPage />;
-  if (provider === 'vmware') return <VMwareEducationPage />;
-  if (provider === 'ansible') return <AnsibleEducationPage />;
-  if (provider === 'docker') return <DockerEducationPage />;
-  return <NotFoundPage />;
+  return pageFor(EDUCATION_PAGES, provider) ?? <NotFoundPage />;
 }
 
 function ProviderEducationDetailDispatcher() {
@@ -851,18 +840,21 @@ function ProviderInterviewsDispatcher() {
   return <NotFoundPage />;
 }
 
+const RSS_PAGES = {
+  aws: <AWSRssPage />,
+  azure: <AzureRssPage />,
+  gcp: <GCPRssPage />,
+  finops: <FinOpsRssPage />,
+  terraform: <TerraformRssPage />,
+  github: <GitHubRssPage />,
+  vmware: <VMwareRssPage />,
+  ansible: <AnsibleRssPage />,
+  docker: <DockerRssPage />,
+};
+
 function ProviderRssDispatcher() {
   const { provider } = useParams();
-  if (provider === 'aws') return <AWSRssPage />;
-  if (provider === 'azure') return <AzureRssPage />;
-  if (provider === 'gcp') return <GCPRssPage />;
-  if (provider === 'finops') return <FinOpsRssPage />;
-  if (provider === 'terraform') return <TerraformRssPage />;
-  if (provider === 'github') return <GitHubRssPage />;
-  if (provider === 'vmware') return <VMwareRssPage />;
-  if (provider === 'ansible') return <AnsibleRssPage />;
-  if (provider === 'docker') return <DockerRssPage />;
-  return <NewsPage provider={provider} />;
+  return pageFor(RSS_PAGES, provider) ?? <NewsPage provider={provider} />;
 }
 
 /**

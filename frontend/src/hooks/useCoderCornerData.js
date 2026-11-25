@@ -23,15 +23,17 @@ function firstNonEmpty(...values) {
   return null;
 }
 
+// The fields a document may carry its publish date in, most specific first.
+const PUBLISHED_DATE_FIELDS = [
+  'publishedDate',
+  'datePublished',
+  'Published At',
+  'blogPublishedAt',
+  'publishedAt',
+];
+
 function resolvePublishedDate(doc = {}) {
-  return (
-    doc.publishedDate ||
-    doc.datePublished ||
-    doc['Published At'] ||
-    doc.blogPublishedAt ||
-    doc.publishedAt ||
-    null
-  );
+  return PUBLISHED_DATE_FIELDS.map((field) => doc[field]).find(Boolean) || null;
 }
 
 function normalizeItem(doc = {}) {

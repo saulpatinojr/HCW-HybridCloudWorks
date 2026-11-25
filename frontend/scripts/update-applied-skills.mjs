@@ -364,52 +364,31 @@ function extractCodeFromExam(exam) {
   return raw.toUpperCase().match(/\b[A-Z]{2,4}-\d{3,4}\b/)?.[0] || null;
 }
 
+// The area an applied skill is filed under: the first row with a word found
+// in its subjects, products or title wins, and 'AI' when none matches.
+const AREA_RULES = [
+  ['Security', ['security', 'compliance', 'identity', 'active directory']],
+  [
+    'AI Business',
+    ['power platform', 'power apps', 'power automate', 'microsoft 365 copilot', 'copilot studio'],
+  ],
+  ['Operations', ['monitor', 'management task']],
+  ['Containers', ['container', 'kubernetes']],
+  ['Data', ['data ', 'database', 'sql', 'postgresql', 'fabric']],
+  ['DevTools', ['github', 'devops', 'c#', 'app development']],
+  ['AI Business', ['business applications']],
+  ['Storage', ['storage']],
+  ['Networking', ['network']],
+];
+
 function inferArea(skill) {
   const subjects = (skill.display_subjects || []).join(' ').toLowerCase();
   const products = (skill.display_products || []).join(' ').toLowerCase();
   const title = skill.title.toLowerCase();
   const combined = `${subjects} ${products} ${title}`;
 
-  if (
-    combined.includes('security') ||
-    combined.includes('compliance') ||
-    combined.includes('identity') ||
-    combined.includes('active directory')
-  ) {
-    return 'Security';
-  }
-  if (
-    combined.includes('power platform') ||
-    combined.includes('power apps') ||
-    combined.includes('power automate') ||
-    combined.includes('microsoft 365 copilot') ||
-    combined.includes('copilot studio')
-  ) {
-    return 'AI Business';
-  }
-  if (combined.includes('monitor') || combined.includes('management task')) return 'Operations';
-  if (combined.includes('container') || combined.includes('kubernetes')) return 'Containers';
-  if (
-    combined.includes('data ') ||
-    combined.includes('database') ||
-    combined.includes('sql') ||
-    combined.includes('postgresql') ||
-    combined.includes('fabric')
-  ) {
-    return 'Data';
-  }
-  if (
-    combined.includes('github') ||
-    combined.includes('devops') ||
-    combined.includes('c#') ||
-    combined.includes('app development')
-  ) {
-    return 'DevTools';
-  }
-  if (combined.includes('business applications')) return 'AI Business';
-  if (combined.includes('storage')) return 'Storage';
-  if (combined.includes('network')) return 'Networking';
-  return 'AI';
+  const rule = AREA_RULES.find(([, words]) => words.some((word) => combined.includes(word)));
+  return rule ? rule[0] : 'AI';
 }
 
 function makeCode(slug, usedCodes) {
@@ -538,38 +517,47 @@ function extractAppliedPosterTitles(text) {
   );
 }
 
+const POSTER_CODE_PATTERN = /\b[A-Z]{2,4}-\d{3,4}\b/;
+
+// Poster headings that end a title when reading upwards from an exam code.
+const POSTER_STOP_LINES = new Set([
+  'Role-based',
+  'Specialty',
+  'Business',
+  'Fundamentals',
+  'Expand your technical skill set',
+  'Deepen your technical skills and',
+  'manage industry solutions',
+  'Expand your AI skills',
+  'for business roles',
+  'Master the basics',
+  'AI Business SolutionsSecurityCloud & AI Platforms',
+]);
+
+// The title printed above the code on line `index`: up to eight lines,
+// stopping at another code or a heading.
+function posterTitleAbove(lines, index) {
+  const parts = [];
+  for (let cursor = index - 1; cursor >= Math.max(0, index - 8); cursor -= 1) {
+    if (POSTER_CODE_PATTERN.test(lines[cursor]) || POSTER_STOP_LINES.has(lines[cursor])) break;
+    parts.unshift(lines[cursor]);
+  }
+  return parts.join(' ').trim();
+}
+
 export function extractCertificationPosterEntries(text) {
   const lines = text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  const codeRegex = /\b[A-Z]{2,4}-\d{3,4}\b/;
-  const stopLines = new Set([
-    'Role-based',
-    'Specialty',
-    'Business',
-    'Fundamentals',
-    'Expand your technical skill set',
-    'Deepen your technical skills and',
-    'manage industry solutions',
-    'Expand your AI skills',
-    'for business roles',
-    'Master the basics',
-    'AI Business SolutionsSecurityCloud & AI Platforms',
-  ]);
   const entries = new Map();
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const code = lines[index].match(codeRegex)?.[0];
-    if (!code) continue;
-    const parts = [];
-    for (let cursor = index - 1; cursor >= Math.max(0, index - 8); cursor -= 1) {
-      if (codeRegex.test(lines[cursor]) || stopLines.has(lines[cursor])) break;
-      parts.unshift(lines[cursor]);
-    }
-    const title = CERTIFICATION_POSTER_TITLE_OVERRIDES[code] || parts.join(' ').trim();
+  lines.forEach((line, index) => {
+    const code = line.match(POSTER_CODE_PATTERN)?.[0];
+    const title =
+      code && (CERTIFICATION_POSTER_TITLE_OVERRIDES[code] || posterTitleAbove(lines, index));
     if (title) entries.set(code, { code, title });
-  }
+  });
 
   // The overrides repair titles on a poster that parsed; applied to a poster
   // that parsed to nothing they would turn an empty source into five entries,
@@ -607,6 +595,46 @@ function buildCertificationIndexes(certifications) {
   return { byCode, byTitle };
 }
 
+/** The record an index holds for a poster entry: by code first, then by title. */
+function lookUpCertification(indexes, posterEntry) {
+  return (
+    indexes.byCode.get(posterEntry.code) ||
+    indexes.byTitle.get(normalizeTitle(posterEntry.title)) ||
+    null
+  );
+}
+
+// Fields a certification keeps from the file when it has them, in the order
+// they are written: the first list before `expiryDate`, the second after.
+const CARRIED_BEFORE_EXPIRY = ['featured', 'retiredDate'];
+const CARRIED_AFTER_EXPIRY = [
+  'replacedBy',
+  'betaEndDate',
+  'betaDiscount',
+  'gaDate',
+  // #1091 (2026-10-12): a status read ahead of the vendor's day is stored
+  // with the day it was read on, and a row stored before its availability
+  // with that day; deriveStatus holds the badge on them until the day. Both
+  // are the file's, never the sources', and the 2026-10-19 run proved a
+  // field this list omits is a field the next run deletes: PL-400 lost its
+  // statusReadDate, turned `retired` two weeks early, and the data test
+  // refused the pull request.
+  'statusReadDate',
+  'availableDate',
+];
+
+/** The listed fields of `source` that are filled in (truthy), in list order. */
+function filledFields(source, fields) {
+  return Object.fromEntries(fields.filter((field) => source[field]).map((f) => [f, source[f]]));
+}
+
+/** Study hours and preparation time for a new certification row, by level. */
+function defaultEffort(level) {
+  if (level === 'Fundamentals') return { hours: 10, prepTime: '~4 weeks' };
+  if (level === 'Expert') return { hours: 60, prepTime: '~10 weeks' };
+  return { hours: 35, prepTime: '~6 weeks' };
+}
+
 /**
  * One certification from the poster entry, the Learn API's record for it
  * and the file's. Returns null for a poster entry that neither the API nor
@@ -621,14 +649,8 @@ export function buildCertificationFromSources(
   existingIndexes,
   disagreements = []
 ) {
-  const api =
-    apiIndexes.byCode.get(posterEntry.code) ||
-    apiIndexes.byTitle.get(normalizeTitle(posterEntry.title)) ||
-    null;
-  const known =
-    existingIndexes.byCode.get(posterEntry.code) ||
-    existingIndexes.byTitle.get(normalizeTitle(posterEntry.title)) ||
-    null;
+  const api = lookUpCertification(apiIndexes, posterEntry);
+  const known = lookUpCertification(existingIndexes, posterEntry);
   if (!api && !known) return null;
   const existing = known || {};
   const title = existing.title || `Microsoft Certified: ${posterEntry.title}`;
@@ -651,22 +673,9 @@ export function buildCertificationFromSources(
     title,
     level,
     status: lifecycle.status,
-    ...(existing.featured ? { featured: existing.featured } : {}),
-    ...(existing.retiredDate ? { retiredDate: existing.retiredDate } : {}),
+    ...filledFields(existing, CARRIED_BEFORE_EXPIRY),
     ...(lifecycle.expiryDate ? { expiryDate: lifecycle.expiryDate } : {}),
-    ...(existing.replacedBy ? { replacedBy: existing.replacedBy } : {}),
-    ...(existing.betaEndDate ? { betaEndDate: existing.betaEndDate } : {}),
-    ...(existing.betaDiscount ? { betaDiscount: existing.betaDiscount } : {}),
-    ...(existing.gaDate ? { gaDate: existing.gaDate } : {}),
-    // #1091 (2026-10-12): a status read ahead of the vendor's day is stored
-    // with the day it was read on, and a row stored before its availability
-    // with that day; deriveStatus holds the badge on them until the day. Both
-    // are the file's, never the sources', and the 2026-10-19 run proved a
-    // field this list omits is a field the next run deletes: PL-400 lost its
-    // statusReadDate, turned `retired` two weeks early, and the data test
-    // refused the pull request.
-    ...(existing.statusReadDate ? { statusReadDate: existing.statusReadDate } : {}),
-    ...(existing.availableDate ? { availableDate: existing.availableDate } : {}),
+    ...filledFields(existing, CARRIED_AFTER_EXPIRY),
     description:
       existing.description ||
       `${normalizeCertificationTitle(title)} validates role-based Microsoft cloud skills.`,
@@ -676,10 +685,8 @@ export function buildCertificationFromSources(
     topics: existing.topics ||
       api?.display_subjects?.slice(0, 4) ||
       api?.display_products?.slice(0, 4) || [normalizeCertificationTitle(title)],
-    hours: existing.hours || (level === 'Fundamentals' ? 10 : level === 'Expert' ? 60 : 35),
-    prepTime:
-      existing.prepTime ||
-      (level === 'Fundamentals' ? '~4 weeks' : level === 'Expert' ? '~10 weeks' : '~6 weeks'),
+    hours: existing.hours || defaultEffort(level).hours,
+    prepTime: existing.prepTime || defaultEffort(level).prepTime,
     successRate: existing.successRate || null,
     learnUrl,
     studyGuideUrl:
@@ -872,11 +879,47 @@ export async function buildCatalogue({
   const disagreements = [];
   const unverified = [];
   const foreign = [];
-  const { bySlug, byTitle } = buildExistingIndexes(existingSkills);
   const usedCodes = new Set();
 
+  const nextSkills = await sourcedSkills({
+    browseResults: sources.browseResults,
+    indexes: buildExistingIndexes(existingSkills),
+    usedCodes,
+    disagreements,
+    fetchImpl,
+  });
+
+  const nextSlugs = new Set(nextSkills.map((skill) => skill.slug));
+  addPosterOnlySkills({
+    nextSkills,
+    nextSlugs,
+    usedCodes,
+    appliedPosterText: sources.appliedPosterText,
+  });
+  keepUnlistedSkills({ existingSkills, nextSkills, nextSlugs, usedCodes, kept });
+
+  nextSkills.sort((a, b) => a.title.localeCompare(b.title));
+  assertUniqueCodes(nextSkills, 'Applied Skills');
+
+  const nextCertifications = sourcedCertifications({
+    sources,
+    existingCertifications,
+    report: { disagreements, unverified, foreign },
+  });
+  keepUnlistedCertifications({ existingCertifications, nextCertifications, kept });
+  nextCertifications.sort((a, b) => a.code.localeCompare(b.code));
+  assertUniqueCodes(nextCertifications, 'Certifications');
+
+  return { nextSkills, nextCertifications, kept, disagreements, unverified, foreign };
+}
+
+// The phases of buildCatalogue, in the order it runs them.
+
+/** One applied skill per browse result, each read through its detail page. */
+async function sourcedSkills({ browseResults, indexes, usedCodes, disagreements, fetchImpl }) {
+  const { bySlug, byTitle } = indexes;
   const nextSkills = [];
-  for (const result of sources.browseResults) {
+  for (const result of browseResults) {
     const slug = slugFromUrl(result.url);
     const existing = bySlug.get(slug) || byTitle.get(normalizeTitle(result.title)) || {};
     const detail = await fetchDetail(result, fetchImpl);
@@ -884,15 +927,9 @@ export async function buildCatalogue({
       existing.code && !usedCodes.has(existing.code) ? existing.code : makeCode(slug, usedCodes);
     usedCodes.add(code);
 
-    // No opinion when the page did not answer; otherwise the banner decides.
-    const sourced = !detail.known
-      ? {}
-      : detail.retirementDate
-        ? { status: 'expiring', expiryDate: detail.retirementDate }
-        : { status: 'active' };
     const lifecycle = reconcileLifecycle({
       existing,
-      sourced,
+      sourced: lifecycleFromDetail(detail),
       label: `${code} (${slug})`,
       report: disagreements,
     });
@@ -914,9 +951,20 @@ export async function buildCatalogue({
       learnUrl: normalizeUrl(result.url),
     });
   }
+  return nextSkills;
+}
 
-  const appliedPosterTitles = extractAppliedPosterTitles(sources.appliedPosterText);
-  const nextSlugs = new Set(nextSkills.map((skill) => skill.slug));
+// No opinion when the page did not answer; otherwise the banner decides.
+function lifecycleFromDetail(detail) {
+  if (!detail.known) return {};
+  return detail.retirementDate
+    ? { status: 'expiring', expiryDate: detail.retirementDate }
+    : { status: 'active' };
+}
+
+/** The applied skills only the poster lists, added when the poster still shows them. */
+function addPosterOnlySkills({ nextSkills, nextSlugs, usedCodes, appliedPosterText }) {
+  const appliedPosterTitles = extractAppliedPosterTitles(appliedPosterText);
   for (const posterOnlySkill of POSTER_ONLY_APPLIED_SKILLS) {
     const posterHasSkill = appliedPosterTitles.some(
       (title) => normalizeTitle(title) === normalizeTitle(posterOnlySkill.title)
@@ -927,10 +975,12 @@ export async function buildCatalogue({
       usedCodes.add(posterOnlySkill.code);
     }
   }
+}
 
-  // Rule 3: an applied skill the sources no longer list stays, as the file
-  // has it. A retired skill drops out of the browse API, and dropping it here
-  // would erase the retirement the file records.
+// Rule 3: an applied skill the sources no longer list stays, as the file
+// has it. A retired skill drops out of the browse API, and dropping it here
+// would erase the retirement the file records.
+function keepUnlistedSkills({ existingSkills, nextSkills, nextSlugs, usedCodes, kept }) {
   const nextSkillTitles = new Set(nextSkills.map((skill) => normalizeTitle(skill.title)));
   for (const skill of existingSkills) {
     if (nextSlugs.has(skill.slug) || nextSkillTitles.has(normalizeTitle(skill.title))) continue;
@@ -946,10 +996,10 @@ export async function buildCatalogue({
         : `${code} — ${skill.title} (${skill.status}) — kept as ${code} (was ${skill.code}, now taken by a sourced skill)`
     );
   }
+}
 
-  nextSkills.sort((a, b) => a.title.localeCompare(b.title));
-  assertUniqueCodes(nextSkills, 'Applied Skills');
-
+/** One certification per poster entry that a source confirms. */
+function sourcedCertifications({ sources, existingCertifications, report }) {
   const apiCertificationIndexes = buildApiCertificationIndexes(sources.certificationApiResults);
   const existingCertificationIndexes = buildCertificationIndexes(existingCertifications);
   const nextCertifications = [];
@@ -957,21 +1007,24 @@ export async function buildCatalogue({
     // Refused before it is built: another catalogue owns this exam (#496).
     const owner = foreignOwnerFor(entry.code);
     if (owner) {
-      foreign.push(`${entry.code} — ${entry.title} — carried by ${owner}`);
+      report.foreign.push(`${entry.code} — ${entry.title} — carried by ${owner}`);
       continue;
     }
     const cert = buildCertificationFromSources(
       entry,
       apiCertificationIndexes,
       existingCertificationIndexes,
-      disagreements
+      report.disagreements
     );
     if (cert) nextCertifications.push(cert);
-    else unverified.push(`${entry.code} — ${entry.title}`);
+    else report.unverified.push(`${entry.code} — ${entry.title}`);
   }
+  return nextCertifications;
+}
 
-  // Rule 3 again, for certifications: the poster drops a retired exam the
-  // month it retires, and the file must not.
+// Rule 3 again, for certifications: the poster drops a retired exam the
+// month it retires, and the file must not.
+function keepUnlistedCertifications({ existingCertifications, nextCertifications, kept }) {
   const nextCodes = new Set(nextCertifications.map((cert) => cert.code));
   for (const cert of existingCertifications) {
     if (nextCodes.has(cert.code)) continue;
@@ -979,10 +1032,6 @@ export async function buildCatalogue({
     nextCodes.add(cert.code);
     kept.push(`${cert.code} — ${cert.title} (${cert.status})`);
   }
-  nextCertifications.sort((a, b) => a.code.localeCompare(b.code));
-  assertUniqueCodes(nextCertifications, 'Certifications');
-
-  return { nextSkills, nextCertifications, kept, disagreements, unverified, foreign };
 }
 
 function parseArgs(argv) {

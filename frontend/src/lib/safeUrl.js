@@ -70,8 +70,7 @@ export function safeUrl(value, fallback = undefined) {
   if (typeof value !== 'string') return fallback;
 
   const trimmed = value.trim();
-  if (!trimmed) return fallback;
-  if (hasControlOrSpace(trimmed)) return fallback;
+  if (!trimmed || hasControlOrSpace(trimmed)) return fallback;
 
   // Relative references carry no protocol and cannot introduce one.
   if (/^[/#?]/.test(trimmed)) return trimmed;

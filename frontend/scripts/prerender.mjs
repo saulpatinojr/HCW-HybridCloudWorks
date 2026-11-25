@@ -598,180 +598,86 @@ function buildSsrBundle(frontend) {
   }
 }
 
-async function main() {
-  const { frontend, dist, ssrDist } = paths();
-  if (!existsSync(join(dist, 'index.html'))) {
-    throw new Error('dist/index.html is missing — run `vite build` before this step');
+/**
+ * Renders one route and writes its document. Returns `{ bytes }` for a page
+ * written, `{ skipped: true }` for the 404 page, or `{ failure }` with the
+ * reason the route must not ship.
+ */
+async function prerenderRoute(route, { render, manifest, template, dist }) {
+  // Computed once and used twice: the same value must reach the server render
+  // and the browser, or hydration compares two different trees. Calling
+  // seedFor() again at injection time would work today and rot the moment it
+  // stops being pure.
+  const seed = seedFor(manifest, route);
+
+  let rendered;
+  try {
+    // Only detail routes carry a seed; everything else renders from nothing,
+    // exactly as it did before the manifest existed.
+    rendered = await render(route, seed);
+  } catch (error) {
+    return { failure: `${route}: threw — ${error?.message || error}` };
   }
 
-  buildSsrBundle(frontend);
+  const problem = renderProblem(route, rendered);
+  if (problem) return problem;
 
-  // A DOM has to exist BEFORE the bundle is imported.
-  //
-  // Article pages sanitise their body with DOMPurify and feed the result to
-  // `dangerouslySetInnerHTML`. DOMPurify binds to a window at import time and
-  // exposes no `sanitize` without one, so under plain Node every detail route
-  // died with "I.sanitize is not a function" — which the pre-render step
-  // correctly refused to write, rather than shipping the error page.
-  //
-  // Skipping sanitisation here was never an option: the output is a static file
-  // served to every visitor, so unsanitised markup would be baked in permanently
-  // rather than merely rendered once.
-  //
-  // jsdom is already a devDependency — vitest uses it as the test environment —
-  // so this adds no package, and nothing here reaches the browser bundle.
-  await installDom();
+  const html = injectIntoTemplate(template, splitHead(rendered.html), route, seed);
+  const outPath = outputPathFor(dist, route);
+  mkdirSync(dirname(outPath), { recursive: true });
+  writeFileSync(outPath, html);
+  return { bytes: Buffer.byteLength(html) };
+}
 
-  const entryUrl = pathToFileURL(join(ssrDist, 'prerender-entry.js')).href;
-  const { render, routes } = await import(entryUrl);
-
-  // Build input, not site content — see build-content-manifest.mjs. Absent is
-  // fine and simply means no detail routes this build.
-  const manifestPath = join(frontend, 'data', 'content-manifest.json');
-  let manifest = null;
-  if (existsSync(manifestPath)) {
-    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    console.log(
-      `[prerender] manifest: ${manifest.routes?.length || 0} article routes, generated ${manifest.generatedAt || 'unknown'}`
-    );
-  } else {
-    console.log('[prerender] no content manifest — article detail pages will not be pre-rendered');
+/**
+ * Why a rendered route must not be written: `{ failure }` or `{ skipped: true }`,
+ * or null when it is a page.
+ */
+function renderProblem(route, rendered) {
+  if (rendered.errors.length > 0) {
+    // An error boundary produces perfectly valid-looking HTML. Without this
+    // check the error state would be written out and published as the page.
+    return { failure: `${route}: rendered an error — ${rendered.errors[0].message}` };
   }
 
-  const template = readFileSync(join(dist, 'index.html'), 'utf8');
-
-  // The app needs a shell of its own, and this is not optional.
-  //
-  // `staticwebapp.config.json` sends two kinds of request to one bare copy of
-  // the app: the private areas (/admin, /preview, ...), which are never
-  // pre-rendered, with 200 and noindex; and any address that has no file of
-  // its own, with 404 (its `responseOverrides`). The app then renders the
-  // page in the browser, the not-found page included. There is no catch-all
-  // any more: until #1613 every unknown address got this shell with 200,
-  // which Google reports as a "Soft 404".
-  //
-  // That shell cannot be dist/index.html. Pre-rendering turns dist/index.html
-  // into the fully rendered HOME PAGE, so pointing the rules at it would serve
-  // the home page's title and body for every unknown address. Measured on the
-  // preview host before app-shell.html existed: /definitely-not-real returned
-  // 200 with the home page's title and body.
-  //
-  // So the untouched template is kept as its own file and the rules point at
-  // it. Known routes get their pre-rendered document; everything else gets a
-  // shell that starts the app.
-  writeFileSync(join(dist, 'app-shell.html'), template);
-
-  const targets = dedupeRoutes(routes(manifest));
-  const failures = [];
-  const skipped = [];
-  const publishedRoutes = [];
-  let written = 0;
-  let bytes = 0;
-
-  for (const route of targets) {
-    // Computed once and used twice: the same value must reach the server render
-    // and the browser, or hydration compares two different trees. Calling
-    // seedFor() again at injection time would work today and rot the moment it
-    // stops being pure.
-    const seed = seedFor(manifest, route);
-
-    let rendered;
-    try {
-      // Only detail routes carry a seed; everything else renders from nothing,
-      // exactly as it did before the manifest existed.
-      rendered = await render(route, seed);
-    } catch (error) {
-      failures.push(`${route}: threw — ${error?.message || error}`);
-      continue;
-    }
-
-    if (rendered.errors.length > 0) {
-      // An error boundary produces perfectly valid-looking HTML. Without this
-      // check the error state would be written out and published as the page.
-      failures.push(`${route}: rendered an error — ${rendered.errors[0].message}`);
-      continue;
-    }
-
-    const streamed = findStreamedBoundary(rendered.html);
-    if (streamed) {
-      // A page in Fizz's streamed form passed every check below on 2026-09-06:
-      // the shell had header, footer and a spinner, the page itself sat in a
-      // hidden segment, and the text count was well above the shell floor.
-      // It is not a page — nothing without JavaScript ever sees the content,
-      // and the browser cannot run the swap script under this site's CSP.
-      failures.push(`${route}: ${streamed} (see prerender-entry.jsx progressiveChunkSize)`);
-      continue;
-    }
-
-    if (rendered.html.includes('data-page="not-found"')) {
-      // Not an error. `/:provider/<section>` is declared for every provider,
-      // and the dispatcher behind it renders the 404 page for the combinations
-      // that have no content — /azure/code and /github/frameworks among them.
-      // The route list is a candidate grid, so this is the expected answer for
-      // a real part of it.
-      //
-      // It must still be SKIPPED rather than written: the page says "this page
-      // does not exist" and would be served at HTTP 200 for a crawler to index
-      // as content. Reported so the count is visible and a sudden jump is not.
-      skipped.push(route);
-      continue;
-    }
-
-    const text = rendered.html
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (text.length < MIN_TEXT_CHARS) {
-      failures.push(`${route}: only ${text.length} characters of text — a shell, not a page`);
-      continue;
-    }
-
-    const html = injectIntoTemplate(template, splitHead(rendered.html), route, seed);
-    const outPath = outputPathFor(dist, route);
-    mkdirSync(dirname(outPath), { recursive: true });
-    writeFileSync(outPath, html);
-    written += 1;
-    bytes += Buffer.byteLength(html);
-    publishedRoutes.push(route);
+  const streamed = findStreamedBoundary(rendered.html);
+  if (streamed) {
+    // A page in Fizz's streamed form passed every check below on 2026-09-06:
+    // the shell had header, footer and a spinner, the page itself sat in a
+    // hidden segment, and the text count was well above the shell floor.
+    // It is not a page — nothing without JavaScript ever sees the content,
+    // and the browser cannot run the swap script under this site's CSP.
+    return { failure: `${route}: ${streamed} (see prerender-entry.jsx progressiveChunkSize)` };
   }
 
-  // The sitemap is GENERATED from the routes that were actually written, not
-  // hand-maintained. public/sitemap.xml held 51 URLs in the non-trailing form
-  // while the live site redirected every one of them to the trailing form — the
-  // two had disagreed the whole time, and a static list drifts from the
-  // pre-render set the moment either changes. Generating it from
-  // `publishedRoutes` means sitemap, canonical and the files on disk cannot
-  // disagree: they have one source.
-  //
-  // Skipped routes are excluded by construction. Advertising a URL that renders
-  // the 404 page is worse than omitting it. Section pages known to be empty are
-  // rendered but not advertised — see sitemapRoutes. "Empty" needs both the
-  // manifest's API counts and the blueprint lists the pages hold themselves,
-  // which is what staticSectionItems reads.
-  const staticItems = await staticSectionItems(join(frontend, 'src', 'pages'));
-  const sitemap = sitemapRoutes(publishedRoutes, manifest, staticItems);
-  for (const route of sitemap.dropped) {
-    console.log(`[prerender] sitemap: omitted ${route} — no published items for this section`);
+  if (rendered.html.includes('data-page="not-found"')) {
+    // Not an error. `/:provider/<section>` is declared for every provider,
+    // and the dispatcher behind it renders the 404 page for the combinations
+    // that have no content — /azure/code and /github/frameworks among them.
+    // The route list is a candidate grid, so this is the expected answer for
+    // a real part of it.
+    //
+    // It must still be SKIPPED rather than written: the page says "this page
+    // does not exist" and would be served at HTTP 200 for a crawler to index
+    // as content. Reported so the count is visible and a sudden jump is not.
+    return { skipped: true };
   }
-  const urls = sitemap.kept
-    .map((route) => ['  <url>', `    <loc>${canonicalFor(route)}</loc>`, '  </url>'].join('\n'))
-    .join('\n');
-  writeFileSync(
-    join(dist, 'sitemap.xml'),
-    [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-      urls,
-      '</urlset>',
-      '',
-    ].join('\n')
-  );
 
-  // The SSR bundle is a build artefact, not site content. Left in place it would
-  // be uploaded with the site — and `dist-ssr` contains a copy of every page's
-  // source-mapped server build.
-  rmSync(ssrDist, { recursive: true, force: true });
+  const text = rendered.html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length < MIN_TEXT_CHARS) {
+    return { failure: `${route}: only ${text.length} characters of text — a shell, not a page` };
+  }
+  return null;
+}
 
+/**
+ * The end-of-run checks: the core routes exist, enough documents were
+ * written, the skipped routes are listed, and any failure stops the build.
+ */
+function finishRun({ written, skipped, failures }) {
   // The three routes that must always exist. Everything else is content that
   // can legitimately come and go; these are the site itself, and if one of them
   // starts rendering the 404 page something is broken badly enough that a
@@ -812,6 +718,137 @@ async function main() {
     );
     process.exit(1);
   }
+}
+
+/** sitemap.xml from the routes kept for it. */
+function writeSitemap(dist, routes) {
+  const urls = routes
+    .map((route) => ['  <url>', `    <loc>${canonicalFor(route)}</loc>`, '  </url>'].join('\n'))
+    .join('\n');
+  writeFileSync(
+    join(dist, 'sitemap.xml'),
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+      urls,
+      '</urlset>',
+      '',
+    ].join('\n')
+  );
+}
+
+/** The content manifest, or null when this build has none. */
+function readManifest(frontend) {
+  // Build input, not site content — see build-content-manifest.mjs. Absent is
+  // fine and simply means no detail routes this build.
+  const manifestPath = join(frontend, 'data', 'content-manifest.json');
+  if (!existsSync(manifestPath)) {
+    console.log('[prerender] no content manifest — article detail pages will not be pre-rendered');
+    return null;
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  console.log(
+    `[prerender] manifest: ${manifest.routes?.length || 0} article routes, generated ${manifest.generatedAt || 'unknown'}`
+  );
+  return manifest;
+}
+
+async function main() {
+  const { frontend, dist, ssrDist } = paths();
+  if (!existsSync(join(dist, 'index.html'))) {
+    throw new Error('dist/index.html is missing — run `vite build` before this step');
+  }
+
+  buildSsrBundle(frontend);
+
+  // A DOM has to exist BEFORE the bundle is imported.
+  //
+  // Article pages sanitise their body with DOMPurify and feed the result to
+  // `dangerouslySetInnerHTML`. DOMPurify binds to a window at import time and
+  // exposes no `sanitize` without one, so under plain Node every detail route
+  // died with "I.sanitize is not a function" — which the pre-render step
+  // correctly refused to write, rather than shipping the error page.
+  //
+  // Skipping sanitisation here was never an option: the output is a static file
+  // served to every visitor, so unsanitised markup would be baked in permanently
+  // rather than merely rendered once.
+  //
+  // jsdom is already a devDependency — vitest uses it as the test environment —
+  // so this adds no package, and nothing here reaches the browser bundle.
+  await installDom();
+
+  const entryUrl = pathToFileURL(join(ssrDist, 'prerender-entry.js')).href;
+  const { render, routes } = await import(entryUrl);
+
+  const manifest = readManifest(frontend);
+
+  const template = readFileSync(join(dist, 'index.html'), 'utf8');
+
+  // The app needs a shell of its own, and this is not optional.
+  //
+  // `staticwebapp.config.json` sends two kinds of request to one bare copy of
+  // the app: the private areas (/admin, /preview, ...), which are never
+  // pre-rendered, with 200 and noindex; and any address that has no file of
+  // its own, with 404 (its `responseOverrides`). The app then renders the
+  // page in the browser, the not-found page included. There is no catch-all
+  // any more: until #1613 every unknown address got this shell with 200,
+  // which Google reports as a "Soft 404".
+  //
+  // That shell cannot be dist/index.html. Pre-rendering turns dist/index.html
+  // into the fully rendered HOME PAGE, so pointing the rules at it would serve
+  // the home page's title and body for every unknown address. Measured on the
+  // preview host before app-shell.html existed: /definitely-not-real returned
+  // 200 with the home page's title and body.
+  //
+  // So the untouched template is kept as its own file and the rules point at
+  // it. Known routes get their pre-rendered document; everything else gets a
+  // shell that starts the app.
+  writeFileSync(join(dist, 'app-shell.html'), template);
+
+  const targets = dedupeRoutes(routes(manifest));
+  const failures = [];
+  const skipped = [];
+  const publishedRoutes = [];
+  let written = 0;
+  let bytes = 0;
+
+  for (const route of targets) {
+    const outcome = await prerenderRoute(route, { render, manifest, template, dist });
+    if (outcome.failure) failures.push(outcome.failure);
+    else if (outcome.skipped) skipped.push(route);
+    else {
+      written += 1;
+      bytes += outcome.bytes;
+      publishedRoutes.push(route);
+    }
+  }
+
+  // The sitemap is GENERATED from the routes that were actually written, not
+  // hand-maintained. public/sitemap.xml held 51 URLs in the non-trailing form
+  // while the live site redirected every one of them to the trailing form — the
+  // two had disagreed the whole time, and a static list drifts from the
+  // pre-render set the moment either changes. Generating it from
+  // `publishedRoutes` means sitemap, canonical and the files on disk cannot
+  // disagree: they have one source.
+  //
+  // Skipped routes are excluded by construction. Advertising a URL that renders
+  // the 404 page is worse than omitting it. Section pages known to be empty are
+  // rendered but not advertised — see sitemapRoutes. "Empty" needs both the
+  // manifest's API counts and the blueprint lists the pages hold themselves,
+  // which is what staticSectionItems reads.
+  const staticItems = await staticSectionItems(join(frontend, 'src', 'pages'));
+  const sitemap = sitemapRoutes(publishedRoutes, manifest, staticItems);
+  for (const route of sitemap.dropped) {
+    console.log(`[prerender] sitemap: omitted ${route} — no published items for this section`);
+  }
+  writeSitemap(dist, sitemap.kept);
+
+  // The SSR bundle is a build artefact, not site content. Left in place it would
+  // be uploaded with the site — and `dist-ssr` contains a copy of every page's
+  // source-mapped server build.
+  rmSync(ssrDist, { recursive: true, force: true });
+
+  finishRun({ written, skipped, failures });
 
   const average = Math.round(bytes / Math.max(written, 1) / 1024);
   console.log(`[prerender] ${written} HTML documents written, ${average} kB average`);
