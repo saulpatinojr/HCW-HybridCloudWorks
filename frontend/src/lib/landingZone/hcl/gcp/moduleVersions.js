@@ -3,26 +3,24 @@
  * Pinned to official terraform-google-modules registry releases to ensure
  * deterministic, reproducible synthesis.
  */
+import { registryModule } from '../cloudPack';
 
 export const GCP_MODULES = Object.freeze({
-  network: Object.freeze({
-    name: 'terraform-google-modules/network/google',
-    source: 'terraform-google-modules/network/google',
-    version: '10.0.0',
-    summary: 'Shared VPC Host network, subnets, Cloud Router, and Cloud NAT.',
-  }),
-  logExport: Object.freeze({
-    name: 'terraform-google-modules/log-export/google',
-    source: 'terraform-google-modules/log-export/google',
-    version: '9.0.0',
-    summary: 'Organization-level aggregated log sink and central Cloud Storage bucket.',
-  }),
-  projectFactory: Object.freeze({
-    name: 'terraform-google-modules/project-factory/google',
-    source: 'terraform-google-modules/project-factory/google',
-    version: '17.1.0',
-    summary: 'Creates service projects and attaches them to the central Shared VPC Host.',
-  }),
+  network: registryModule(
+    'terraform-google-modules/network/google',
+    '10.0.0',
+    'Shared VPC Host network, subnets, Cloud Router, and Cloud NAT.'
+  ),
+  logExport: registryModule(
+    'terraform-google-modules/log-export/google',
+    '9.0.0',
+    'Organization-level aggregated log sink and central Cloud Storage bucket.'
+  ),
+  projectFactory: registryModule(
+    'terraform-google-modules/project-factory/google',
+    '17.1.0',
+    'Creates service projects and attaches them to the central Shared VPC Host.'
+  ),
 });
 
 export const GCP_PROVIDER_PIN = '~> 6.15';
