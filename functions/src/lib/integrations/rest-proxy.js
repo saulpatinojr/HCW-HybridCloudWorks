@@ -292,6 +292,137 @@ export function isAllowedPath(allowed, pathOnly, method = null) {
   );
 }
 
+/** The first setting this integration needs that is not set, or null. */
+function missingSetting(integration, env, readKey) {
+  if (!readKey(env, integration.keyEnv)) return integration.keyEnv;
+  return integration.extraEnv.find((name) => !readKey(env, name)) ?? null;
+}
+
+/**
+ * Named, and 200-with-ok:false rather than 5xx: an unseeded key is a
+ * configuration state the Connections page renders as "not connected",
+ * not a fault to page anyone about.
+ */
+const notConfigured = (integration, name) =>
+  json(200, {
+    ok: false,
+    error: `${integration.name} is not configured: ${name} is not set`,
+    code: 'INTEGRATION_NOT_CONFIGURED',
+  });
+
+/** The 400 for a method this proxy, or this integration, does not send; null when it may go. */
+async function methodRefusal(integration, method, context, record) {
+  if (!ALLOWED_METHODS.includes(method)) {
+    await record('refused_method');
+    return json(400, { ok: false, error: `method must be one of ${ALLOWED_METHODS.join(', ')}` });
+  }
+  if (integration.allowedMethods && !integration.allowedMethods.includes(method)) {
+    context.error?.(`${integration.name}Proxy refused a method the admin UI never sends`, {
+      method,
+    });
+    await record('refused_method');
+    return json(400, {
+      ok: false,
+      error: `${method} is not an allowed ${integration.name} method`,
+    });
+  }
+  return null;
+}
+
+/** The upstream's text, redacted, as data: parsed JSON (redacted again, deep), or the first of it raw. */
+function upstreamData(text, secretsToRedact) {
+  try {
+    const parsed = text ? JSON.parse(text) : null;
+    return redactDeep(parsed, secretsToRedact);
+  } catch {
+    // Not every upstream error is JSON. Returning the raw text is more
+    // use to an operator than discarding it.
+    return { raw: redactSecrets(text.slice(0, 2000), secretsToRedact) };
+  }
+}
+
+/**
+ * The key verdicts an answer earns. The body is read BEFORE the verdict,
+ * which is the only reason the verdict can carry a reason. It used to be
+ * judged on the status alone, so the API-keys page could say a key was
+ * rejected but never why — and "Missing or invalid Authorization header"
+ * (our request is malformed) and a revoked key are the same red light with
+ * different fixes (#463 item 4).
+ */
+async function reportVerdicts(integration, response, data, reportVerdict) {
+  if (response.ok) {
+    // The key AND everything that travelled with it. A rejection can now
+    // blame a setting other than the key (Publer's 401 blames the
+    // workspace id), so clearing only `keyEnv` would leave whichever
+    // other light that rejection lit stuck red through every subsequent
+    // success. The timer's client clears the pair for the same reason;
+    // these two must agree or the page flickers between them.
+    for (const setting of [integration.keyEnv, ...integration.extraEnv]) {
+      await reportVerdict(setting, { ok: true });
+    }
+  } else if (isCredentialRejected(response.status)) {
+    await reportVerdict(integration.verdictSettingForStatus(response.status), {
+      ok: false,
+      status: response.status,
+      detail: readUpstreamError(data),
+    });
+  }
+}
+
+/**
+ * Send a checked call on to the integration, under the allowlist, and relay
+ * its answer redacted; a call that got no answer is "could not be reached".
+ */
+async function forward({ integration, env, readKey, fetchImpl, reportVerdict, record }, { request, context, body, method, path }) {
+  // The allowlist is checked against the path WITHOUT its query string, so a
+  // query cannot be used to disguise an endpoint as an allowed one.
+  const pathOnly = path.split('?')[0];
+  if (!isAllowedPath(integration.allowedPaths, pathOnly, method)) {
+    // The path is not logged: it is a route value the caller chose
+    // (#1802). The audit row below records that a path was refused.
+    context.error?.(`${integration.name}Proxy blocked a path outside the allowlist`);
+    await record('refused_path');
+    return json(400, {
+      ok: false,
+      error: `${pathOnly} is not an allowed ${integration.name} endpoint`,
+    });
+  }
+
+  const apiKey = readKey(env, integration.keyEnv);
+  const options = {
+    method,
+    headers: { 'Content-Type': 'application/json', ...integration.headers({ apiKey, env, readKey }) },
+  };
+  if (body?.body !== undefined && !['GET', 'HEAD'].includes(method)) {
+    options.body = JSON.stringify(body.body);
+  }
+
+  try {
+    const response = await fetchImpl(`${integration.baseUrl}${path}`, options);
+    const rawText = await response.text();
+    const secretsToRedact = [
+      apiKey,
+      ...integration.extraEnv.map((name) => readKey(env, name)).filter(Boolean),
+    ];
+    const data = upstreamData(redactSecrets(rawText, secretsToRedact), secretsToRedact);
+    await reportVerdicts(integration, response, data, reportVerdict);
+    await record('upstream', { status: response.status });
+    return json(200, { ok: response.ok, status: response.status, data });
+  } catch (error) {
+    // No answer came back, so there is no upstream sentence to relay: the
+    // transport's own text (a socket error quoting its target) stays out
+    // of the body and the log (#945). The code says which failure it was.
+    const correlationId = logFailure(context, `${integration.name}Proxy request failed`, error, request);
+    await record('failed');
+    return json(200, {
+      ok: false,
+      // "could not be reached" is the phrase the page reads as offline (frontend lib/status.js).
+      error: `${integration.name} could not be reached (${errorCode(error?.cause ?? error)}).`,
+      correlationId,
+    });
+  }
+}
+
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
@@ -328,26 +459,8 @@ export function createRestProxy({
       const auth = await guard.requireRole(request, 'editor');
       if (auth.error) return auth.error;
 
-      const apiKey = readKey(env, integration.keyEnv);
-      if (!apiKey) {
-        // Named, and 200-with-ok:false rather than 5xx: an unseeded key is a
-        // configuration state the Connections page renders as "not connected",
-        // not a fault to page anyone about.
-        return json(200, {
-          ok: false,
-          error: `${integration.name} is not configured: ${integration.keyEnv} is not set`,
-          code: 'INTEGRATION_NOT_CONFIGURED',
-        });
-      }
-      for (const name of integration.extraEnv) {
-        if (!readKey(env, name)) {
-          return json(200, {
-            ok: false,
-            error: `${integration.name} is not configured: ${name} is not set`,
-            code: 'INTEGRATION_NOT_CONFIGURED',
-          });
-        }
-      }
+      const unset = missingSetting(integration, env, readKey);
+      if (unset) return notConfigured(integration, unset);
 
       const body = await request.json().catch(() => null);
       const method = String(body?.method || 'GET').toUpperCase();
@@ -355,20 +468,8 @@ export function createRestProxy({
       // outcome, refused ones included (AP-B3, #938).
       const record = (outcome, extra = {}) =>
         recordProxyAudit(audit, context, { integration, auth, method, body, outcome, ...extra });
-      if (!ALLOWED_METHODS.includes(method)) {
-        await record('refused_method');
-        return json(400, { ok: false, error: `method must be one of ${ALLOWED_METHODS.join(', ')}` });
-      }
-      if (integration.allowedMethods && !integration.allowedMethods.includes(method)) {
-        context.error?.(`${integration.name}Proxy refused a method the admin UI never sends`, {
-          method,
-        });
-        await record('refused_method');
-        return json(400, {
-          ok: false,
-          error: `${method} is not an allowed ${integration.name} method`,
-        });
-      }
+      const refusedMethod = await methodRefusal(integration, method, context, record);
+      if (refusedMethod) return refusedMethod;
 
       let path;
       try {
@@ -382,83 +483,10 @@ export function createRestProxy({
         return json(400, { ok: false, error: authoredMessage(error, 'The path was refused.') });
       }
 
-      // The allowlist is checked against the path WITHOUT its query string, so a
-      // query cannot be used to disguise an endpoint as an allowed one.
-      const pathOnly = path.split('?')[0];
-      if (!isAllowedPath(integration.allowedPaths, pathOnly, method)) {
-        // The path is not logged: it is a route value the caller chose
-        // (#1802). The audit row below records that a path was refused.
-        context.error?.(`${integration.name}Proxy blocked a path outside the allowlist`);
-        await record('refused_path');
-        return json(400, {
-          ok: false,
-          error: `${pathOnly} is not an allowed ${integration.name} endpoint`,
-        });
-      }
-
-      const options = {
-        method,
-        headers: { 'Content-Type': 'application/json', ...integration.headers({ apiKey, env, readKey }) },
-      };
-      if (body?.body !== undefined && !['GET', 'HEAD'].includes(method)) {
-        options.body = JSON.stringify(body.body);
-      }
-
-      try {
-        const response = await fetchImpl(`${integration.baseUrl}${path}`, options);
-        const rawText = await response.text();
-        const secretsToRedact = [
-          apiKey,
-          ...integration.extraEnv.map((name) => readKey(env, name)).filter(Boolean),
-        ];
-        const text = redactSecrets(rawText, secretsToRedact);
-        let data = null;
-        try {
-          const parsed = text ? JSON.parse(text) : null;
-          data = redactDeep(parsed, secretsToRedact);
-        } catch {
-          // Not every upstream error is JSON. Returning the raw text is more
-          // use to an operator than discarding it.
-          data = { raw: redactSecrets(text.slice(0, 2000), secretsToRedact) };
-        }
-        // The body is read BEFORE the verdict, which is the only reason the
-        // verdict can carry a reason. It used to be judged on the status
-        // alone, so the API-keys page could say a key was rejected but never
-        // why — and "Missing or invalid Authorization header" (our request is
-        // malformed) and a revoked key are the same red light with different
-        // fixes (#463 item 4).
-        if (response.ok) {
-          // The key AND everything that travelled with it. A rejection can now
-          // blame a setting other than the key (Publer's 401 blames the
-          // workspace id), so clearing only `keyEnv` would leave whichever
-          // other light that rejection lit stuck red through every subsequent
-          // success. The timer's client clears the pair for the same reason;
-          // these two must agree or the page flickers between them.
-          for (const setting of [integration.keyEnv, ...integration.extraEnv]) {
-            await reportVerdict(setting, { ok: true });
-          }
-        } else if (isCredentialRejected(response.status)) {
-          await reportVerdict(integration.verdictSettingForStatus(response.status), {
-            ok: false,
-            status: response.status,
-            detail: readUpstreamError(data),
-          });
-        }
-        await record('upstream', { status: response.status });
-        return json(200, { ok: response.ok, status: response.status, data });
-      } catch (error) {
-        // No answer came back, so there is no upstream sentence to relay: the
-        // transport's own text (a socket error quoting its target) stays out
-        // of the body and the log (#945). The code says which failure it was.
-        const correlationId = logFailure(context, `${integration.name}Proxy request failed`, error, request);
-        await record('failed');
-        return json(200, {
-          ok: false,
-          // "could not be reached" is the phrase the page reads as offline (frontend lib/status.js).
-          error: `${integration.name} could not be reached (${errorCode(error?.cause ?? error)}).`,
-          correlationId,
-        });
-      }
+      return forward(
+        { integration, env, readKey, fetchImpl, reportVerdict, record },
+        { request, context, body, method, path }
+      );
     };
   };
 }
