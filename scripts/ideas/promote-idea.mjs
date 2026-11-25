@@ -31,18 +31,13 @@
  * the file exists, or the output folder is inside the repository. 2: could not
  * run (usage, no vault, unreadable note).
  */
-import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { checkNote, planPromotion } from './idea-notes.mjs';
 import { readNoteFile } from './read-note-file.mjs';
-
-/** The repository this script belongs to: two folders up from scripts/ideas. */
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-
-/** The vault's folder for drafts, and the environment variable that names the vault. */
-const DRAFTS_FOLDER = 'Drafts';
-const VAULT_ENV = 'HCW_VAULT';
+import { chooseDraftsFolder, isInside, realPathOf, REPO_ROOT } from './promote-paths.mjs';
+import { readArgs } from './promote-args.mjs';
 
 const USAGE = `Usage: node scripts/ideas/promote-idea.mjs <note.md> [--vault <folder>] [--name <words-with-hyphens>] [--dry-run]
 
@@ -53,119 +48,6 @@ Admin > Drafts. The note is never changed, no file is overwritten, and nothing
 is ever written inside this repository. --dry-run prints the draft and writes
 nothing. Exit 0: done. Exit 1: the note cannot be promoted, or the output
 folder is inside the repository. Exit 2: could not run.`;
-
-/**
- * The real, absolute form of a path that may not exist yet: the longest part
- * that exists is resolved through symlinks and junctions, and the rest is put
- * back on the end. Without this a link in the path would be taken at its word,
- * and a Drafts folder that does not exist yet could hide a link in its parent.
- */
-function realPathOf(path) {
-  let current = resolve(path);
-  const rest = [];
-  for (;;) {
-    try {
-      const real = realpathSync.native(current);
-      return rest.length === 0 ? real : join(real, ...rest);
-    } catch (error) {
-      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
-      const parent = dirname(current);
-      if (parent === current) return resolve(path);
-      rest.unshift(basename(current));
-      current = parent;
-    }
-  }
-}
-
-/**
- * Is `target` the repository root or anywhere below it? Both paths are taken as
- * already real (see realPathOf). Windows and macOS file systems ignore case by
- * default, so there `C:\Repo` and `c:\repo` are the same folder; elsewhere case
- * counts. A sibling whose name only starts with the repository's name
- * (`repo-copy` next to `repo`) is not inside it.
- */
-function isInside(target, root, caseInsensitive = process.platform === 'win32' || process.platform === 'darwin') {
-  const fold = (path) => (caseInsensitive ? path.toLowerCase() : path);
-  const below = relative(fold(resolve(root)), fold(resolve(target)));
-  return below === '' || (below !== '..' && !below.startsWith(`..${sep}`) && !isAbsolute(below));
-}
-
-/**
- * Where drafts go: `<vault>/Drafts`, or a plain-language reason there is none.
- * Nothing is created here; the folder is only worked out and checked.
- */
-function chooseDraftsFolder({ vault, env, repoRoot }) {
-  const given = vault ?? env[VAULT_ENV];
-  if (!given || !given.trim()) {
-    return {
-      error:
-        'No vault was given, so there is nowhere safe to put the draft. Give the folder of your Obsidian vault with ' +
-        `--vault <folder>, or set the ${VAULT_ENV} environment variable to it. Drafts are never written into this ` +
-        'repository, because it is public.',
-    };
-  }
-  const drafts = join(resolve(given), DRAFTS_FOLDER);
-  let real;
-  let realRoot;
-  try {
-    real = realPathOf(drafts);
-    realRoot = realPathOf(repoRoot);
-  } catch (error) {
-    return { error: `Cannot work out where "${drafts}" is: ${error.message}` };
-  }
-  if (isInside(real, realRoot)) {
-    return {
-      refused: true,
-      error:
-        `Refused: "${drafts}"${real === drafts ? '' : ` (which is really "${real}")`} is inside the repository ` +
-        `"${repoRoot}". The repository is public, and a draft that is not published yet must never be saved in it. ` +
-        'Use the folder of your private Obsidian vault, which belongs somewhere outside the repository.',
-    };
-  }
-  return { drafts, realRoot };
-}
-
-/** Options that are on when given: option -> the field it sets. */
-const FLAG_OPTIONS = { '--help': 'help', '-h': 'help', '--dry-run': 'dryRun' };
-/** Options that take the next argument: option -> [the field it sets, what the value must be]. */
-const VALUE_OPTIONS = { '--name': ['name', 'a value'], '--vault': ['vault', 'a folder'] };
-/** Options that are refused with their own message. */
-const RETIRED_OPTIONS = {
-  '--out-dir': '--out-dir no longer exists: drafts go to <vault>/Drafts. Give your vault with --vault <folder> or set HCW_VAULT',
-};
-
-function readArgs(argv) {
-  const options = { note: null, name: undefined, vault: undefined, dryRun: false, help: false };
-  for (let index = 0; index < argv.length; index += 1) {
-    const step = readArg(argv[index], argv[index + 1], options);
-    if (step.error) return { error: step.error };
-    index += step.consumed;
-  }
-  return { options };
-}
-
-/** One argument onto `options`: `{ consumed }`, how many arguments after it were its value, or `{ error }`. */
-function readArg(arg, next, options) {
-  if (Object.hasOwn(FLAG_OPTIONS, arg)) {
-    options[FLAG_OPTIONS[arg]] = true;
-    return { consumed: 0 };
-  }
-  if (Object.hasOwn(VALUE_OPTIONS, arg)) return readValue(arg, next, options);
-  if (arg.startsWith('-')) return { error: RETIRED_OPTIONS[arg] ?? `unknown option ${arg}` };
-  if (options.note !== null) return { error: 'give one note at a time' };
-  options.note = arg;
-  return { consumed: 0 };
-}
-
-function readValue(arg, value, options) {
-  // The next argument is this option's value. A missing one, or another
-  // option standing where the value should be, is a mistake to report, not
-  // a path to guess (an empty folder name would resolve to the current folder).
-  const [field, needs] = VALUE_OPTIONS[arg];
-  if (!value || value.startsWith('-')) return { error: `${arg} needs ${needs}` };
-  options[field] = value;
-  return { consumed: 1 };
-}
 
 /** The run stops here: exit `code`, with `lines` on stderr. */
 class Stop extends Error {
