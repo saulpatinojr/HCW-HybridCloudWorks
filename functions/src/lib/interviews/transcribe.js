@@ -61,9 +61,9 @@ import { audioInputRateFor, modelRatesFor } from '../ai/model-tables.js';
 import { featureSource, recordAiUsage } from '../ai/usage.js';
 import { readSetting } from '../http/read-setting.js';
 import { CEILING_DEFAULT_USD, CEILING_SETTING, budgetExceeded, monthInterviewSpend, monthlyCeilingUsd } from './budget.js';
-import { MAX_AUDIO_SECONDS, tooLong } from './duration.js';
+import { MAX_AUDIO_SECONDS } from './duration.js';
 import { storedFailure } from '../http/error-response.js';
-import { JOBS_CONTAINER, JobFailedError, TERMINAL_JOB_STATUSES } from '../jobs.js';
+import { JobFailedError } from '../jobs.js';
 import {
   deleteFromGemini as defaultDelete,
   geminiApiKey,
@@ -72,6 +72,7 @@ import {
 } from './gemini-files.js';
 import { INTERVIEWS_AUDIO_CONTAINER, transcriptBlobPath, transcriptPartPath } from './storage.js';
 import { transcriptDocument } from './transcript-text.js';
+import { assertNoOtherRun, chooseTranscriptionModel, recordingOf } from './transcribe-checks.js';
 
 export const TRANSCRIBE_JOB_TYPE = 'interview-transcribe';
 export const TRANSCRIBE_TASK = 'recordingTranscript';
@@ -201,230 +202,61 @@ export async function transcribeInterview({
 }) {
   const startedAt = Date.now();
   const doc = await store.readDoc(container, interviewId, interviewId);
-  if (!doc || doc.type !== 'interview') {
-    throw new JobFailedError('No interview with that id.', { code: 'INTERVIEW_NOT_FOUND', status: 404 });
-  }
-  const audio = isObject(doc.provenance) && isObject(doc.provenance.audio) ? doc.provenance.audio : null;
-  if (!audio?.path || !audio.contentType) {
-    throw new JobFailedError('This interview has no recording to transcribe; upload one or fetch it from a URL first.', {
-      code: 'AUDIO_MISSING',
-      status: 422,
-    });
-  }
-  // A known length over Gemini's cap would fail on the first request after
-  // the whole upload; the enqueue route refuses it first, and so does the
-  // worker for a job queued through the generic door.
-  if (tooLong(audio.durationSec)) {
-    throw new JobFailedError(
-      `The recording is ${Math.round(audio.durationSec / 60)} minutes long; Gemini takes at most 9.5 hours in one prompt. Split it and upload the parts as separate interviews.`,
-      { code: 'TOO_LONG', status: 422 }
-    );
-  }
+  const audio = recordingOf(doc);
   const interview = isObject(doc.interview) ? doc.interview : {};
   const provenance = isObject(doc.provenance) ? doc.provenance : {};
-  const patchStage = (stage, extra = {}) =>
-    store.patchDoc(container, interviewId, { interview: { ...interview, stage, error: null, ...extra } });
-
-  // One job per transcript at a time, whichever door queued it: the routes
-  // answer 409, and the generic enqueueJob route does not, so the worker
-  // checks too. The job the document names is this one (a re-run after the
-  // sweeper re-queued it) or a finished one; another still queued or
-  // running means this run must not write over its parts.
-  const named = isObject(doc.transcription) ? doc.transcription.jobId : null;
-  if (typeof named === 'string' && named && named !== jobId) {
-    const other = await store.readDoc(JOBS_CONTAINER, named, named);
-    if (other && !TERMINAL_JOB_STATUSES.includes(other.status)) {
-      throw new JobFailedError('Another transcription of this interview is still running; wait for it to finish.', {
-        code: 'TRANSCRIPTION_IN_FLIGHT',
-        status: 409,
-      });
-    }
-  }
-
-  // The model: the task's door, Gemini only, priced for audio.
-  const chosen = await ai.modelForTask({ task: 'recordingTranscript' });
-  if (chosen.provider !== 'gemini' || !chosen.model) {
-    throw new JobFailedError('The Recording transcripts task resolved to no Gemini model; pick one under AI Engine → Tasks.', {
-      code: 'MODEL_UNAVAILABLE',
-      status: 503,
-    });
-  }
+  await assertNoOtherRun(store, doc, jobId);
+  const chosen = await chooseTranscriptionModel(ai);
   const { provider, model } = chosen;
-  if (audioInputRateFor(provider, model) === null) {
-    throw new JobFailedError(`${model} has no audio input price in the cost table, so its spend cannot be counted; pick a priced model under AI Engine → Tasks.`, {
-      code: 'MODEL_UNPRICED',
-      status: 422,
-    });
-  }
 
-  const window = windowSeconds(env);
-  const limit = maxWindows(window);
-  const ceiling = monthlyCeilingUsd(env);
-  let month = await monthTranscriptionSpend({ store, now });
-  let jobSpentUsd = 0;
-  let jobTotalUsd = 0;
-  let promptTokensTotal = 0;
-  let completionTokensTotal = 0;
-  let requests = 0;
-  let knownPromptTokens = null;
-  // The real length when the headers gave one (duration.js, read at
-  // enqueue), else the bitrate guess that errs long.
-  const seconds = Number.isFinite(audio.durationSec) && audio.durationSec > 0
-    ? Math.min(audio.durationSec, MAX_AUDIO_SECONDS)
-    : estimateAudioSeconds({ bytes: audio.bytes, contentType: audio.contentType });
-  const estimatedTokens = Math.ceil(seconds * AUDIO_TOKENS_PER_SECOND);
-
-  /** Before every attempt: this request's estimate against the ceiling. */
-  const assertBudget = () => {
-    const promptTokens = knownPromptTokens ?? estimatedTokens;
-    const cost = requestCostUsd({ provider, model, promptTokens, at: now() });
-    if (month.costUsd + jobSpentUsd + cost > ceiling) {
-      throw budgetExceeded({ what: 'Transcription', usedUsd: month.costUsd + jobSpentUsd, ceiling, since: month.since, costUsd: cost });
-    }
+  const run = {
+    store,
+    storage,
+    ai,
+    gemini,
+    env,
+    fetchImpl,
+    sleep,
+    now,
+    uuid,
+    log,
+    signal,
+    container,
+    interviewId,
+    transcriptVersion,
+    audio,
+    chosen,
+    provider,
+    model,
+    window: windowSeconds(env),
+    ceiling: monthlyCeilingUsd(env),
+    month: await monthTranscriptionSpend({ store, now }),
+    jobSpentUsd: 0,
+    jobTotalUsd: 0,
+    promptTokensTotal: 0,
+    completionTokensTotal: 0,
+    requests: 0,
+    knownPromptTokens: null,
+    estimatedTokens: Math.ceil(audioSeconds(audio) * AUDIO_TOKENS_PER_SECOND),
+    parts: [],
+    resumedFrom: 0,
+    geminiFile: null,
+    apiKey: null,
+    patchStage: (stage, extra = {}) =>
+      store.patchDoc(container, interviewId, { interview: { ...interview, stage, error: null, ...extra } }),
   };
+  /** Before every attempt: this request's estimate against the ceiling. */
+  run.assertBudget = () => assertBudget(run);
 
   await store.patchDoc(container, interviewId, {
     transcription: { version: transcriptVersion, jobId, status: 'running', model, provider },
     interview: { ...interview, stage: 'transcribing', error: null, window: 0 },
   });
 
-  const parts = [];
-  let resumedFrom = 0;
-  let geminiFile = null;
-  let apiKey = null;
   try {
-    for (let k = 0; k < limit; k += 1) {
-      if (signal?.aborted) throw signal.reason || new Error('aborted');
-      const partPath = transcriptPartPath(interviewId, transcriptVersion, k);
-      const existing = await readPart(storage, partPath);
-      if (existing) {
-        parts.push(existing);
-        resumedFrom = k + 1;
-        if (existing.endOfAudio) break;
-        continue;
-      }
-      // The month's figure is re-read before each window so a second job
-      // running at the same time is counted; this job's own rows are in it
-      // by then, so its running total is not added twice.
-      if (k > 0 && requests > 0) {
-        month = await monthTranscriptionSpend({ store, now });
-        jobSpentUsd = 0;
-      }
-      if (!geminiFile) {
-        apiKey = geminiApiKey(env);
-        // The first request's budget is checked before a byte is uploaded:
-        // an upload the ceiling would then refuse is 500 MiB for nothing.
-        assertBudget();
-        const { stream, contentLength } = await storage.downloadBlobStream(INTERVIEWS_AUDIO_CONTAINER, audio.path);
-        geminiFile = await gemini.uploadToGemini({
-          stream,
-          bytes: Number(audio.bytes) || contentLength,
-          mimeType: audio.contentType,
-          apiKey,
-          fetch: fetchImpl,
-          sleep,
-          signal,
-        });
-      }
-      const windowStart = Date.now();
-      const result = await gemini.transcribeWindow({
-        fileUri: geminiFile.uri,
-        mimeType: geminiFile.mimeType,
-        model,
-        startSec: k * window,
-        endSec: (k + 1) * window,
-        apiKey,
-        fetch: fetchImpl,
-        sleep,
-        assertBudget,
-        signal,
-      });
-      requests += result.attempts;
-      knownPromptTokens = result.usage.promptTokens || knownPromptTokens;
-      promptTokensTotal += result.usage.promptTokens;
-      completionTokensTotal += result.usage.completionTokens;
-      const costUsd = requestCostUsd({ provider, model, promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, at: now() }) ?? 0;
-      jobSpentUsd += costUsd;
-      jobTotalUsd += costUsd;
-      const row = await recordAiUsage(
-        { store, ai, uuid, now },
-        {
-          provider,
-          model,
-          promptTokens: result.usage.promptTokens,
-          completionTokens: result.usage.completionTokens,
-          source: featureSource(TRANSCRIBE_TASK),
-          costUsd,
-          selection: chosen.selection,
-        }
-      );
-      // recordAiUsage swallows a failed write by contract; the ceiling
-      // reads the rows, so a missing one is said out loud.
-      if (!row) log?.warn?.(`${TRANSCRIBE_JOB_TYPE}: v${transcriptVersion} window ${k} usage row not written`);
-      const part = { segments: result.segments, endOfAudio: result.endOfAudio };
-      await storage.uploadBlob(INTERVIEWS_AUDIO_CONTAINER, partPath, JSON.stringify(part), 'application/json');
-      parts.push(part);
-      log?.log?.(
-        `${TRANSCRIBE_JOB_TYPE}: v${transcriptVersion} window ${k} ${result.segments.length} segments, ` +
-          `${result.usage.promptTokens}+${result.usage.completionTokens} tokens, ${result.attempts} attempt(s), ${Date.now() - windowStart} ms`
-      );
-      await patchStage('transcribing', { window: k + 1 });
-      if (result.endOfAudio) break;
-    }
-
-    // A recording with no declared length (a URL fetch whose headers gave
-    // none) that is still going when the last allowed window ends is over
-    // Gemini's cap: the parts stay for the record, the job stops here.
-    if (parts.length >= limit && !parts[parts.length - 1]?.endOfAudio) {
-      throw new JobFailedError(
-        `The recording is still going after ${parts.length} windows of ${Math.round(window / 60)} minutes; Gemini takes at most 9.5 hours in one prompt. Split it and upload the parts as separate interviews.`,
-        { code: 'TOO_LONG', status: 422 }
-      );
-    }
-    const segments = parts.flatMap((p) => p.segments);
-    const stamp = now().toISOString();
-    const transcript = transcriptDocument({
-      version: transcriptVersion,
-      source: 'gemini',
-      segments,
-      model,
-      provider,
-      windows: parts.length,
-    });
-    await storage.uploadBlob(
-      INTERVIEWS_AUDIO_CONTAINER,
-      transcriptBlobPath(interviewId, transcriptVersion),
-      JSON.stringify(transcript),
-      'application/json'
-    );
-    for (let k = 0; k < parts.length; k += 1) {
-      await storage.deleteBlob(INTERVIEWS_AUDIO_CONTAINER, transcriptPartPath(interviewId, transcriptVersion, k));
-    }
-    const record = { version: transcriptVersion, model, provider, transcribedAt: stamp, windows: parts.length };
-    await store.patchDoc(container, interviewId, {
-      transcription: { ...record, jobId, status: 'done' },
-      provenance: { ...provenance, transcription: record },
-      interview: { ...interview, stage: 'transcribed', error: null, window: parts.length },
-    });
-    const costUsd = parseFloat(jobTotalUsd.toFixed(6));
-    log?.log?.(
-      `${TRANSCRIBE_JOB_TYPE}: v${transcriptVersion} done: ${parts.length} window(s), ${requests} request(s), ` +
-        `${segments.length} segments, ${promptTokensTotal}+${completionTokensTotal} tokens, $${costUsd}, ${Date.now() - startedAt} ms` +
-        (resumedFrom ? `, resumed after ${resumedFrom} part(s)` : '')
-    );
-    return {
-      interviewId,
-      transcriptVersion,
-      windows: parts.length,
-      requests,
-      segments: segments.length,
-      promptTokens: promptTokensTotal,
-      completionTokens: completionTokensTotal,
-      costUsd,
-      model,
-      provider,
-      resumedFrom,
-    };
+    await runWindows(run);
+    assertAudioEnded(run);
+    return await finishTranscript(run, { jobId, interview, provenance, startedAt });
   } catch (error) {
     // The document records the failure in the job's own words or a code,
     // never Gemini's. A write refused after the job's deadline is logged by
@@ -440,12 +272,205 @@ export async function transcribeInterview({
     }
     throw error;
   } finally {
-    if (geminiFile) {
-      try {
-        await gemini.deleteFromGemini({ name: geminiFile.name, apiKey, fetch: fetchImpl });
-      } catch (deleteError) {
-        log?.warn?.(`${TRANSCRIBE_JOB_TYPE}: v${transcriptVersion} Gemini file not deleted (${deleteError?.code ?? 'unknown'})`);
-      }
+    await releaseGeminiFile(run);
+  }
+}
+
+/**
+ * The real length when the headers gave one (duration.js, read at
+ * enqueue), else the bitrate guess that errs long.
+ */
+function audioSeconds(audio) {
+  return Number.isFinite(audio.durationSec) && audio.durationSec > 0
+    ? Math.min(audio.durationSec, MAX_AUDIO_SECONDS)
+    : estimateAudioSeconds({ bytes: audio.bytes, contentType: audio.contentType });
+}
+
+/** This request's estimated cost against the month's ceiling; throws the budget refusal when it would pass it. */
+function assertBudget(run) {
+  const { provider, model, month, ceiling } = run;
+  const promptTokens = run.knownPromptTokens ?? run.estimatedTokens;
+  const cost = requestCostUsd({ provider, model, promptTokens, at: run.now() });
+  if (month.costUsd + run.jobSpentUsd + cost > ceiling) {
+    throw budgetExceeded({ what: 'Transcription', usedUsd: month.costUsd + run.jobSpentUsd, ceiling, since: month.since, costUsd: cost });
+  }
+}
+
+/** Every window, one after another, from the first part not already stored, until the audio ends. */
+async function runWindows(run) {
+  const limit = maxWindows(run.window);
+  for (let k = 0; k < limit; k += 1) {
+    if (run.signal?.aborted) throw run.signal.reason || new Error('aborted');
+    const part = await nextPart(run, k);
+    if (part.endOfAudio) break;
+  }
+}
+
+/** Window `k`'s part: the one a run before this one stored, or a new one transcribed now. */
+async function nextPart(run, k) {
+  const partPath = transcriptPartPath(run.interviewId, run.transcriptVersion, k);
+  const existing = await readPart(run.storage, partPath);
+  if (existing) {
+    run.parts.push(existing);
+    run.resumedFrom = k + 1;
+    return existing;
+  }
+  // The month's figure is re-read before each window so a second job
+  // running at the same time is counted; this job's own rows are in it
+  // by then, so its running total is not added twice.
+  if (k > 0 && run.requests > 0) {
+    run.month = await monthTranscriptionSpend({ store: run.store, now: run.now });
+    run.jobSpentUsd = 0;
+  }
+  await ensureUploaded(run);
+  return transcribeOneWindow(run, k, partPath);
+}
+
+/** The recording, uploaded to Gemini once, the first time a window needs it. */
+async function ensureUploaded(run) {
+  if (run.geminiFile) return;
+  run.apiKey = geminiApiKey(run.env);
+  // The first request's budget is checked before a byte is uploaded:
+  // an upload the ceiling would then refuse is 500 MiB for nothing.
+  run.assertBudget();
+  const { audio } = run;
+  const { stream, contentLength } = await run.storage.downloadBlobStream(INTERVIEWS_AUDIO_CONTAINER, audio.path);
+  run.geminiFile = await run.gemini.uploadToGemini({
+    stream,
+    bytes: Number(audio.bytes) || contentLength,
+    mimeType: audio.contentType,
+    apiKey: run.apiKey,
+    fetch: run.fetchImpl,
+    sleep: run.sleep,
+    signal: run.signal,
+  });
+}
+
+/** Count one window's tokens and cost, and write its usage row; answers the cost. */
+async function countWindow(run, result, k) {
+  const { provider, model, log } = run;
+  run.requests += result.attempts;
+  run.knownPromptTokens = result.usage.promptTokens || run.knownPromptTokens;
+  run.promptTokensTotal += result.usage.promptTokens;
+  run.completionTokensTotal += result.usage.completionTokens;
+  const costUsd = requestCostUsd({ provider, model, promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, at: run.now() }) ?? 0;
+  run.jobSpentUsd += costUsd;
+  run.jobTotalUsd += costUsd;
+  const row = await recordAiUsage(
+    { store: run.store, ai: run.ai, uuid: run.uuid, now: run.now },
+    {
+      provider,
+      model,
+      promptTokens: result.usage.promptTokens,
+      completionTokens: result.usage.completionTokens,
+      source: featureSource(TRANSCRIBE_TASK),
+      costUsd,
+      selection: run.chosen.selection,
     }
+  );
+  // recordAiUsage swallows a failed write by contract; the ceiling
+  // reads the rows, so a missing one is said out loud.
+  if (!row) log?.warn?.(`${TRANSCRIBE_JOB_TYPE}: v${run.transcriptVersion} window ${k} usage row not written`);
+}
+
+/** Transcribe window `k`, store its part, and move the stage on. */
+async function transcribeOneWindow(run, k, partPath) {
+  const { log } = run;
+  const windowStart = Date.now();
+  const result = await run.gemini.transcribeWindow({
+    fileUri: run.geminiFile.uri,
+    mimeType: run.geminiFile.mimeType,
+    model: run.model,
+    startSec: k * run.window,
+    endSec: (k + 1) * run.window,
+    apiKey: run.apiKey,
+    fetch: run.fetchImpl,
+    sleep: run.sleep,
+    assertBudget: run.assertBudget,
+    signal: run.signal,
+  });
+  await countWindow(run, result, k);
+  const part = { segments: result.segments, endOfAudio: result.endOfAudio };
+  await run.storage.uploadBlob(INTERVIEWS_AUDIO_CONTAINER, partPath, JSON.stringify(part), 'application/json');
+  run.parts.push(part);
+  log?.log?.(
+    `${TRANSCRIBE_JOB_TYPE}: v${run.transcriptVersion} window ${k} ${result.segments.length} segments, ` +
+      `${result.usage.promptTokens}+${result.usage.completionTokens} tokens, ${result.attempts} attempt(s), ${Date.now() - windowStart} ms`
+  );
+  await run.patchStage('transcribing', { window: k + 1 });
+  return part;
+}
+
+/**
+ * A recording with no declared length (a URL fetch whose headers gave
+ * none) that is still going when the last allowed window ends is over
+ * Gemini's cap: the parts stay for the record, the job stops here.
+ */
+function assertAudioEnded({ parts, window }) {
+  if (parts.length >= maxWindows(window) && !parts[parts.length - 1]?.endOfAudio) {
+    throw new JobFailedError(
+      `The recording is still going after ${parts.length} windows of ${Math.round(window / 60)} minutes; Gemini takes at most 9.5 hours in one prompt. Split it and upload the parts as separate interviews.`,
+      { code: 'TOO_LONG', status: 422 }
+    );
+  }
+}
+
+/** Write the transcript from its parts, drop the parts, record it on the interview, and answer the job's figures. */
+async function finishTranscript(run, { jobId, interview, provenance, startedAt }) {
+  const { storage, interviewId, transcriptVersion, model, provider, parts, log } = run;
+  const segments = parts.flatMap((p) => p.segments);
+  const stamp = run.now().toISOString();
+  const transcript = transcriptDocument({
+    version: transcriptVersion,
+    source: 'gemini',
+    segments,
+    model,
+    provider,
+    windows: parts.length,
+  });
+  await storage.uploadBlob(
+    INTERVIEWS_AUDIO_CONTAINER,
+    transcriptBlobPath(interviewId, transcriptVersion),
+    JSON.stringify(transcript),
+    'application/json'
+  );
+  for (let k = 0; k < parts.length; k += 1) {
+    await storage.deleteBlob(INTERVIEWS_AUDIO_CONTAINER, transcriptPartPath(interviewId, transcriptVersion, k));
+  }
+  const record = { version: transcriptVersion, model, provider, transcribedAt: stamp, windows: parts.length };
+  await run.store.patchDoc(run.container, interviewId, {
+    transcription: { ...record, jobId, status: 'done' },
+    provenance: { ...provenance, transcription: record },
+    interview: { ...interview, stage: 'transcribed', error: null, window: parts.length },
+  });
+  const costUsd = parseFloat(run.jobTotalUsd.toFixed(6));
+  log?.log?.(
+    `${TRANSCRIBE_JOB_TYPE}: v${transcriptVersion} done: ${parts.length} window(s), ${run.requests} request(s), ` +
+      `${segments.length} segments, ${run.promptTokensTotal}+${run.completionTokensTotal} tokens, $${costUsd}, ${Date.now() - startedAt} ms` +
+      (run.resumedFrom ? `, resumed after ${run.resumedFrom} part(s)` : '')
+  );
+  return {
+    interviewId,
+    transcriptVersion,
+    windows: parts.length,
+    requests: run.requests,
+    segments: segments.length,
+    promptTokens: run.promptTokensTotal,
+    completionTokens: run.completionTokensTotal,
+    costUsd,
+    model,
+    provider,
+    resumedFrom: run.resumedFrom,
+  };
+}
+
+/** The file uploaded to Gemini, deleted once the job is over; a failure here is logged, never thrown. */
+async function releaseGeminiFile(run) {
+  if (!run.geminiFile) return;
+  const { log } = run;
+  try {
+    await run.gemini.deleteFromGemini({ name: run.geminiFile.name, apiKey: run.apiKey, fetch: run.fetchImpl });
+  } catch (deleteError) {
+    log?.warn?.(`${TRANSCRIBE_JOB_TYPE}: v${run.transcriptVersion} Gemini file not deleted (${deleteError?.code ?? 'unknown'})`);
   }
 }
