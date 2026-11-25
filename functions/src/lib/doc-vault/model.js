@@ -43,7 +43,28 @@
  * anyone who can read those confirm a guessed title.
  */
 import { createHmac } from 'node:crypto';
-import { AuthoredError } from '../http/error-response.js';
+import { byteLength, normalizeVaultTitle } from './fields.js';
+
+export {
+  CATEGORIES,
+  DEFAULT_CATEGORY,
+  DocVaultInputError,
+  MAX_BODY_BYTES,
+  MAX_LINK_CHARS,
+  MAX_TAGS,
+  MAX_TAG_CHARS,
+  MAX_TITLE_CHARS,
+} from './limits.js';
+export { cleanTag, isSafeLink, readTags } from './tags-links.js';
+export {
+  EDITABLE_FIELDS,
+  byteLength,
+  canonicalCategory,
+  normalizeText,
+  normalizeVaultTitle,
+  sameContent,
+  validateFields,
+} from './fields.js';
 
 export const CONTAINER = 'doc_vault';
 
@@ -73,16 +94,6 @@ export const CONTAINER = 'doc_vault';
  */
 export const DOC_VAULT_ROLE = 'publisher';
 
-export const CATEGORIES = Object.freeze([
-  'Template',
-  'Application',
-  'Letter',
-  'Notes',
-  'Reference',
-  'Other',
-]);
-export const DEFAULT_CATEGORY = 'Other';
-
 export const DOC_TYPES = Object.freeze({ document: 'document', version: 'version', salt: 'salt' });
 
 /**
@@ -94,13 +105,6 @@ export const DOC_TYPES = Object.freeze({ document: 'document', version: 'version
 export const SALT_DOCUMENT_ID = 'vault-id-salt';
 export const SOURCES = Object.freeze({ pasted: 'pasted', uploaded: 'uploaded' });
 
-export const MAX_TITLE_CHARS = 200;
-export const MAX_TAGS = 12;
-export const MAX_TAG_CHARS = 40;
-export const MAX_LINK_CHARS = 500;
-/** The body cap, in UTF-8 bytes, as the draft body cap is. */
-export const MAX_BODY_BYTES = 256 * 1024;
-
 /**
  * How many versions of one document are kept, the current one included: the
  * newest and the nine before it.
@@ -110,33 +114,7 @@ export const KEPT_VERSIONS = 10;
 export const TRASH_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Thrown for input the owner can correct; the handler answers 400 with the sentence (authored, #945). */
-export class DocVaultInputError extends AuthoredError {}
-
-const fail = (message) => {
-  throw new DocVaultInputError(message);
-};
-
 // ── identity ───────────────────────────────────────────────────────────────
-
-/**
- * A title as a key: Unicode-folded, accents on Latin letters removed, lower
- * case, every run of anything that is not a letter or digit one space. Unlike
- * the draft dedup gate's normalizeTitleForDedup this keeps letters outside
- * A-Z, so a title in another script is still told apart rather than folding
- * to nothing.
- *
- * @param {string} title
- * @returns {string} '' when the title holds no letter or digit
- */
-export function normalizeVaultTitle(title) {
-  return String(title ?? '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]+/g, '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
-}
 
 /**
  * The stored key of a document: its category and its folded title.
@@ -189,178 +167,6 @@ export const DOCUMENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 /** Who to record: the admin's id, never their name or address. */
 export const adminIdOf = (user = {}) => [user.oid, user.sub].find(Boolean) || 'unknown';
-
-// ── fields ─────────────────────────────────────────────────────────────────
-
-/** The fields a person can set on a document. Nothing else is read from a request. */
-export const EDITABLE_FIELDS = Object.freeze(['title', 'category', 'tags', 'body', 'relatedLink']);
-
-const hasControlCharacter = (text, { allowLayout }) => {
-  for (let i = 0; i < text.length; i += 1) {
-    const code = text.charCodeAt(i);
-    if (code === 0) return true;
-    if (allowLayout && (code === 9 || code === 10 || code === 13)) continue;
-    if (code < 32 || code === 127) return true;
-  }
-  return false;
-};
-
-/** The category named, in the spelling the list uses, or null. Case does not matter. */
-export function canonicalCategory(value) {
-  const wanted = String(value ?? '')
-    .trim()
-    .toLowerCase();
-  return CATEGORIES.find((category) => category.toLowerCase() === wanted) ?? null;
-}
-
-/** A tag as stored: trimmed, without a leading '#' (Obsidian writes them with one). */
-export const cleanTag = (value) => {
-  let tag = String(value ?? '').trim();
-  while (tag.startsWith('#')) tag = tag.slice(1);
-  return tag.trim();
-};
-
-/**
- * The tags of a request: a list, or a comma-separated string, de-duplicated
- * without regard to case. More than 12, or one over 40 characters, is refused
- * (a file upload is more forgiving: markdown.js trims and says so).
- */
-export function readTags(value) {
-  if (value === undefined || value === null || value === '') return [];
-  const list = typeof value === 'string' ? value.split(',') : value;
-  if (!Array.isArray(list)) fail('tags must be a list of words');
-  const seen = new Set();
-  const tags = [];
-  for (const item of list) {
-    if (typeof item !== 'string') fail('tags must be a list of words');
-    const tag = cleanTag(item);
-    if (!tag) continue;
-    if (tag.length > MAX_TAG_CHARS) fail(`A tag can be at most ${MAX_TAG_CHARS} characters.`);
-    if (hasControlCharacter(tag, { allowLayout: false })) fail('A tag cannot hold control characters.');
-    const folded = tag.toLowerCase();
-    if (!seen.has(folded)) {
-      seen.add(folded);
-      tags.push(tag);
-    }
-  }
-  if (tags.length > MAX_TAGS) fail(`A document can have at most ${MAX_TAGS} tags.`);
-  return tags;
-}
-
-/**
- * Is this a link the page may show as one: an https address, or a route of
- * this admin (`/admin/...`)? Anything else (javascript:, data:, http:, a
- * protocol-relative address) is not, so a stored link cannot run script when
- * clicked.
- *
- * @param {unknown} value
- * @returns {boolean}
- */
-export function isSafeLink(value) {
-  if (typeof value !== 'string' || !value || value.length > MAX_LINK_CHARS) return false;
-  if (hasControlCharacter(value, { allowLayout: false }) || value.includes(' ')) return false;
-  if (value.startsWith('/')) {
-    if (value !== '/admin' && !value.startsWith('/admin/')) return false;
-    if (value.includes('\\') || value.includes('//')) return false;
-    return value.split('/').every((segment) => segment.length <= 120);
-  }
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password && Boolean(url.hostname);
-  } catch {
-    return false;
-  }
-}
-
-function readLink(value) {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== 'string') fail('relatedLink must be text');
-  const link = value.trim();
-  if (!link) return null;
-  if (!isSafeLink(link)) {
-    fail(
-      `The link must be an https address, or a page of this admin that starts with /admin/ (at most ${MAX_LINK_CHARS} characters).`
-    );
-  }
-  return link;
-}
-
-/** UTF-8 size of a text. */
-export const byteLength = (text) => Buffer.byteLength(text, 'utf8');
-
-/**
- * Line endings as LF and no byte-order mark, so the same text copied from a
- * Windows file and from the page is the same text. Linear: one scan, no
- * backtracking.
- */
-export function normalizeText(text) {
-  let source = String(text ?? '');
-  if (source.charCodeAt(0) === 0xfeff) source = source.slice(1);
-  return source.includes('\r') ? source.replace(/\r\n?/g, '\n') : source;
-}
-
-/**
- * The editable fields of a request, checked. An unknown key is refused rather
- * than ignored, so a request that tries to set `id`, `version`, `createdBy`,
- * `deletedAt`, `docType`, `contentStatus` or `Live` is a 400, not a quiet
- * success. The result is a new object built from the five known names: the
- * request's own object (and any `__proto__` key in it) is never copied.
- *
- * @param {unknown} input
- * @returns {{ title: string, category: string, tags: string[], body: string, relatedLink: string|null }}
- * @throws {DocVaultInputError}
- */
-export function validateFields(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    fail('fields is required: the title, category, tags, body and link of the document.');
-  }
-  for (const key of Object.keys(input)) {
-    if (!EDITABLE_FIELDS.includes(key)) {
-      // The key is not echoed: a refusal never repeats what it was sent.
-      fail(`The request has a field a document does not have. Send only ${EDITABLE_FIELDS.join(', ')}.`);
-    }
-  }
-
-  const rawTitle = input.title;
-  if (typeof rawTitle !== 'string') fail('title is required.');
-  const title = rawTitle.replace(/\s+/g, ' ').trim();
-  if (!title) fail('title is required.');
-  if (title.length > MAX_TITLE_CHARS) fail(`The title can be at most ${MAX_TITLE_CHARS} characters.`);
-  if (hasControlCharacter(title, { allowLayout: false })) fail('The title cannot hold control characters.');
-  if (!normalizeVaultTitle(title)) fail('The title needs at least one letter or digit.');
-
-  const category = canonicalCategory(input.category);
-  if (!category) fail(`category must be one of: ${CATEGORIES.join(', ')}.`);
-
-  if (typeof input.body !== 'string') fail('body is required: the text of the document.');
-  const body = normalizeText(input.body);
-  if (!body.trim()) fail('body is required: the text of the document.');
-  if (hasControlCharacter(body, { allowLayout: true })) {
-    fail('The text holds control characters, so it is not plain text or markdown.');
-  }
-  if (byteLength(body) > MAX_BODY_BYTES) {
-    fail(`The text is over ${MAX_BODY_BYTES / 1024} KB, the most a document can hold.`);
-  }
-
-  return {
-    title,
-    category,
-    tags: readTags(input.tags),
-    body,
-    relatedLink: readLink(input.relatedLink),
-  };
-}
-
-/** Is this the same text, tags, title, category and link? Used to avoid a version that changes nothing. */
-export function sameContent(stored, fields) {
-  return (
-    stored.title === fields.title &&
-    stored.category === fields.category &&
-    stored.body === fields.body &&
-    (stored.relatedLink ?? null) === (fields.relatedLink ?? null) &&
-    JSON.stringify(stored.tags ?? []) === JSON.stringify(fields.tags)
-  );
-}
 
 // ── documents ──────────────────────────────────────────────────────────────
 

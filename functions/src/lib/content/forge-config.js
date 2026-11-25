@@ -183,49 +183,56 @@ export function normalizePrompts(raw = {}) {
  * @param {{ warn?: Function }} [deps.log]
  */
 export function createForgeConfigLoader({ store, now = Date.now, log = {} }) {
-  let profileCache = { value: null, loadedAt: 0 };
-  let promptsCache = { value: null, loadedAt: 0 };
-
-  async function loadConfigDoc(docId) {
-    return store.readDoc('admin_config', docId, ADMIN_CONFIG_PARTITION);
-  }
-
-  async function loadForgeProfile({ bypassCache = false } = {}) {
-    const at = now();
-    if (!bypassCache && profileCache.value && at - profileCache.loadedAt < CACHE_TTL_MS) {
-      return profileCache.value;
-    }
-    let value = DEFAULT_PROFILE;
-    try {
-      const raw = await loadConfigDoc('forge_profile');
-      value = raw ? normalizeProfile(raw) : DEFAULT_PROFILE;
-    } catch (err) {
-      log.warn?.(`forge-config: profile load failed, using defaults: ${errorFacts(err)}`);
-    }
-    profileCache = { value, loadedAt: at };
-    return value;
-  }
-
-  async function loadForgePrompts({ bypassCache = false } = {}) {
-    const at = now();
-    if (!bypassCache && promptsCache.value && at - promptsCache.loadedAt < CACHE_TTL_MS) {
-      return promptsCache.value;
-    }
-    let value = DEFAULT_PROMPTS;
-    try {
-      const raw = await loadConfigDoc('forge_prompts');
-      value = raw ? normalizePrompts(raw) : DEFAULT_PROMPTS;
-    } catch (err) {
-      log.warn?.(`forge-config: prompts load failed, using defaults: ${errorFacts(err)}`);
-    }
-    promptsCache = { value, loadedAt: at };
-    return value;
-  }
+  const deps = { store, now, log };
+  const profile = cachedConfig(deps, {
+    docId: 'forge_profile',
+    label: 'profile',
+    normalize: normalizeProfile,
+    fallback: DEFAULT_PROFILE,
+  });
+  const prompts = cachedConfig(deps, {
+    docId: 'forge_prompts',
+    label: 'prompts',
+    normalize: normalizePrompts,
+    fallback: DEFAULT_PROMPTS,
+  });
 
   function clearForgeConfigCache() {
-    profileCache = { value: null, loadedAt: 0 };
-    promptsCache = { value: null, loadedAt: 0 };
+    profile.clear();
+    prompts.clear();
   }
 
-  return { loadForgeProfile, loadForgePrompts, clearForgeConfigCache };
+  return { loadForgeProfile: profile.load, loadForgePrompts: prompts.load, clearForgeConfigCache };
+}
+
+/**
+ * One `admin_config` document read through a short cache (CACHE_TTL_MS). A
+ * read that fails is logged without content and answers `fallback`, as a
+ * missing document does.
+ */
+function cachedConfig({ store, now, log }, { docId, label, normalize, fallback }) {
+  let cache = { value: null, loadedAt: 0 };
+
+  async function readValue() {
+    try {
+      const raw = await store.readDoc('admin_config', docId, ADMIN_CONFIG_PARTITION);
+      return raw ? normalize(raw) : fallback;
+    } catch (err) {
+      log.warn?.(`forge-config: ${label} load failed, using defaults: ${errorFacts(err)}`);
+      return fallback;
+    }
+  }
+
+  return {
+    async load({ bypassCache = false } = {}) {
+      const at = now();
+      if (!bypassCache && cache.value && at - cache.loadedAt < CACHE_TTL_MS) return cache.value;
+      const value = await readValue();
+      cache = { value, loadedAt: at };
+      return value;
+    },
+    clear() {
+      cache = { value: null, loadedAt: 0 };
+    },
+  };
 }

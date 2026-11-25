@@ -156,6 +156,44 @@ export function rewriteBody(body, replacements) {
   return out;
 }
 
+/** Every external image URL across the body fields, once each, in the order first seen. */
+function uniqueImageUrls(bodies) {
+  const urls = [];
+  const seen = new Set();
+  for (const body of Object.values(bodies || {})) {
+    for (const url of findInlineImageUrls(body)) {
+      if (seen.has(url)) continue;
+      seen.add(url);
+      urls.push(url);
+    }
+  }
+  return urls;
+}
+
+/** The host of a URL, or a placeholder when it cannot be read. */
+function hostOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return 'invalid-url';
+  }
+}
+
+/**
+ * A small pool: `concurrency` workers each pull the next URL until none
+ * remain.
+ */
+async function runPool(urls, concurrency, one) {
+  const queue = [...urls];
+  const workers = Array.from(
+    { length: Math.max(1, Math.min(concurrency, urls.length)) },
+    async () => {
+      while (queue.length) await one(queue.shift());
+    }
+  );
+  await Promise.all(workers);
+}
+
 /** Default number of images fetched at once; see createInlineImageRehoster. */
 export const DEFAULT_CONCURRENCY = 4;
 
@@ -186,16 +224,7 @@ export function createInlineImageRehoster({
    * @returns {Promise<{ bodies: Record<string, string>, rewritten: Array<{from: string, to: string}>, failed: Array<{url: string, reason: string}> }>}
    */
   async function rehost({ contentId, bodies }) {
-    const urls = [];
-    const seen = new Set();
-    for (const body of Object.values(bodies || {})) {
-      for (const url of findInlineImageUrls(body)) {
-        if (!seen.has(url)) {
-          seen.add(url);
-          urls.push(url);
-        }
-      }
-    }
+    const urls = uniqueImageUrls(bodies);
     const rewritten = [];
     const failed = [];
     /** Record one URL as not re-hosted and say so once, without leaking it. */
@@ -203,12 +232,7 @@ export function createInlineImageRehoster({
       failed.push({ url, reason });
       // Host only, never the full URL or the document: enough to see a
       // publisher refusing us, not enough to leak what was being read.
-      let host = 'invalid-url';
-      try {
-        host = new URL(url).hostname;
-      } catch {
-        // keep the placeholder
-      }
+      const host = hostOf(url);
       // The fetcher's own messages embed URLs; the log line carries none.
       log.warn?.(
         `[inlineImages] could not re-host an image from ${host}: ${forLog}`
@@ -230,7 +254,7 @@ export function createInlineImageRehoster({
         // Provenance without the query string: enough to say where the copy
         // came from, not enough to replay a signed or tracking URL.
         await storage.uploadBlob(INLINE_IMAGE_CONTAINER, blobPath, buffer, contentType, {
-          sourceUrl: sourceOf(url),
+          metadata: { sourceUrl: sourceOf(url) },
         });
         rewritten.push({ from: url, to: mediaUrlFor(INLINE_IMAGE_CONTAINER, blobPath) });
       } catch (error) {
@@ -238,17 +262,9 @@ export function createInlineImageRehoster({
         leaveAlone(url, String(error?.message || error || 'unknown'), errorFacts(error));
       }
     };
-    // A small pool: `concurrency` workers each pull the next URL until none
-    // remain. Results are re-ordered to the body's order afterwards so the
-    // summary is deterministic whatever finished first.
-    const queue = [...urls];
-    const workers = Array.from(
-      { length: Math.max(1, Math.min(concurrency, urls.length)) },
-      async () => {
-        while (queue.length) await one(queue.shift());
-      }
-    );
-    await Promise.all(workers);
+    await runPool(urls, concurrency, one);
+    // Results are re-ordered to the body's order so the summary is
+    // deterministic whatever finished first.
     const order = new Map(urls.map((url, i) => [url, i]));
     rewritten.sort((a, b) => order.get(a.from) - order.get(b.from));
     failed.sort((a, b) => order.get(a.url) - order.get(b.url));

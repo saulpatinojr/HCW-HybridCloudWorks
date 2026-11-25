@@ -76,6 +76,176 @@ const privateJson = (status, body) => ({
   body: JSON.stringify(body),
 });
 
+/** A refusal this code wrote (below 500) is answered with its sentence; anything else is a logged 500. */
+function failed(context, request, sentence, error) {
+  if (isAuthoredError(error) && Number.isInteger(error.status) && error.status < 500) {
+    return privateJson(error.status, {
+      ok: false,
+      error: authoredMessage(error, sentence),
+      ...(error.status === 409 ? { code: 'CONFLICT' } : {}),
+    });
+  }
+  return errorResponse(context, sentence, error, 500, request);
+}
+
+async function readBody(request) {
+  const declared = Number(request.headers?.get?.('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new CostBodyTooLargeError();
+  const body = await request.json().catch(() => null);
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new CostServiceValidationError('The body must be a JSON object');
+  }
+  if (JSON.stringify(body).length > MAX_BODY_JSON) throw new CostBodyTooLargeError();
+  return body;
+}
+
+async function audit(deps, action, user, details, context) {
+  await recordMutationAudit(deps.store, {
+    action,
+    actor: user,
+    resource: `admin_config:cost_ledger${details.itemId ? `:${details.itemId}` : ''}`,
+    details,
+    now: deps.now,
+    uuid: deps.uuid,
+    context,
+  });
+}
+
+/** The row id from the route, or the not-found refusal thrown. */
+function itemIdOf(request) {
+  const id = request.params?.itemId;
+  if (!isItemId(id)) throw new CostServiceNotFoundError();
+  return id;
+}
+
+const wantsRefresh = (request) => {
+  const value = request.query?.get?.('refresh') ?? request.query?.refresh;
+  return value === '1' || value === 'true';
+};
+
+/**
+ * One route: the role check first, then `work`, and any failure answered by
+ * `failed` with the route's own sentence.
+ */
+function costRoute(deps, sentence, work) {
+  return async (request, context) => {
+    const auth = await deps.guard.requireRole(request, COST_ROLE);
+    if (auth.error) return auth.error;
+    try {
+      return await work(deps, { request, context, user: auth.user });
+    } catch (error) {
+      return failed(context, request, sentence, error);
+    }
+  };
+}
+
+/** GET cms/cost/summary */
+async function summary(deps, { request, context, user }) {
+  const at = deps.now();
+  const ledger = await readLedger(deps.store);
+  let snapshot = await readSnapshot(deps.store);
+  let refreshState = {};
+  if (wantsRefresh(request)) {
+    const allowed = refreshAllowed(snapshot, at);
+    if (allowed.allowed) {
+      const { store, now, env, fetchImpl } = deps;
+      snapshot = await deps.refresh({ store, ledger, now, env, fetchImpl });
+      refreshState = { refreshed: true, nextRefreshAt: null };
+      await audit(deps, AUDIT_ACTIONS.refreshed, user, { by: 'page' }, context);
+    } else {
+      refreshState = { refreshed: false, nextRefreshAt: allowed.nextRefreshAt };
+    }
+  }
+  return privateJson(200, { ok: true, ...refreshState, ...buildSummary({ snapshot, ledger, now: at }) });
+}
+
+/** GET cms/cost/services */
+async function listServices(deps) {
+  const today = dateOnly(deps.now());
+  const ledger = await readLedger(deps.store);
+  const items = ledger.items
+    .filter(isStoredItem)
+    .map((row) => presentItem(row, today))
+    .sort(compareItems);
+  return privateJson(200, { ok: true, today, items, total: items.length, suggestions: suggestionsFor(items) });
+}
+
+/** POST cms/cost/services */
+async function createService(deps, { request, context, user }) {
+  const fields = normalizeFields(await readBody(request));
+  const at = deps.now().toISOString();
+  const row = newItem(fields, { id: deps.uuid(), at });
+  await changeLedger(
+    deps.store,
+    (state) => {
+      if (state.items.length >= MAX_ITEMS) throw new CostLedgerFullError();
+      return { write: true, state: { ...state, items: [...state.items, row] } };
+    },
+    { now: deps.now }
+  );
+  await audit(deps, AUDIT_ACTIONS.created, user, { itemId: row.id, category: row.category, cycle: row.cycle }, context);
+  return privateJson(201, { ok: true, item: presentItem(row, dateOnly(deps.now())) });
+}
+
+/** PATCH cms/cost/services/{itemId} */
+async function updateService(deps, { request, context, user }) {
+  const id = itemIdOf(request);
+  const body = await readBody(request);
+  const changed = patchFields(body);
+  const at = deps.now().toISOString();
+  const { result } = await changeLedger(
+    deps.store,
+    (state) => {
+      const row = state.items.find((entry) => entry?.id === id);
+      if (!row || !isStoredItem(row)) throw new CostServiceNotFoundError();
+      const next = { ...row, ...normalizeFields(body, row), updatedAt: at };
+      return {
+        write: true,
+        state: { ...state, items: state.items.map((entry) => (entry?.id === id ? next : entry)) },
+        result: next,
+      };
+    },
+    { now: deps.now }
+  );
+  await audit(deps, AUDIT_ACTIONS.updated, user, { itemId: id, fields: changed }, context);
+  return privateJson(200, { ok: true, item: presentItem(result, dateOnly(deps.now())) });
+}
+
+/** DELETE cms/cost/services/{itemId} */
+async function removeService(deps, { request, context, user }) {
+  const id = itemIdOf(request);
+  await changeLedger(
+    deps.store,
+    (state) => {
+      if (!state.items.some((entry) => entry?.id === id)) throw new CostServiceNotFoundError();
+      return { write: true, state: { ...state, items: state.items.filter((entry) => entry?.id !== id) } };
+    },
+    { now: deps.now }
+  );
+  await audit(deps, AUDIT_ACTIONS.deleted, user, { itemId: id }, context);
+  return privateJson(200, { ok: true, id });
+}
+
+/** GET cms/cost/settings */
+async function getSettings(deps) {
+  const ledger = await readLedger(deps.store);
+  return privateJson(200, { ok: true, settings: ledger.settings });
+}
+
+/** PUT cms/cost/settings */
+async function putSettings(deps, { request, context, user }) {
+  const settings = normalizeSettings(await readBody(request), { strict: true });
+  await changeLedger(deps.store, (state) => ({ write: true, state: { ...state, settings } }), { now: deps.now });
+  await audit(
+    deps,
+    AUDIT_ACTIONS.settings,
+    user,
+    { telegram: settings.telegram, monthlyDigest: settings.monthlyDigest, refreshHours: settings.refreshHours },
+    context
+  );
+  return privateJson(200, { ok: true, settings });
+}
+
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
@@ -95,206 +265,15 @@ export function createCostHandlers({
   env = process.env,
   fetchImpl = globalThis.fetch,
 }) {
-  function failed(context, request, sentence, error) {
-    if (isAuthoredError(error) && Number.isInteger(error.status) && error.status < 500) {
-      return privateJson(error.status, {
-        ok: false,
-        error: authoredMessage(error, sentence),
-        ...(error.status === 409 ? { code: 'CONFLICT' } : {}),
-      });
-    }
-    return errorResponse(context, sentence, error, 500, request);
-  }
-
-  async function readBody(request) {
-    const declared = Number(request.headers?.get?.('content-length'));
-    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new CostBodyTooLargeError();
-    const body = await request.json().catch(() => null);
-    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-      throw new CostServiceValidationError('The body must be a JSON object');
-    }
-    if (JSON.stringify(body).length > MAX_BODY_JSON) throw new CostBodyTooLargeError();
-    return body;
-  }
-
-  async function audit(action, user, details, context) {
-    await recordMutationAudit(store, {
-      action,
-      actor: user,
-      resource: `admin_config:cost_ledger${details.itemId ? `:${details.itemId}` : ''}`,
-      details,
-      now,
-      uuid,
-      context,
-    });
-  }
-
-  function itemIdOf(request) {
-    const id = request.params?.itemId;
-    return isItemId(id) ? { id } : { error: new CostServiceNotFoundError() };
-  }
-
-  const wantsRefresh = (request) => {
-    const value = request.query?.get?.('refresh') ?? request.query?.refresh;
-    return value === '1' || value === 'true';
-  };
-
+  const deps = { guard, store, now, uuid, refresh, env, fetchImpl };
   return {
-    /** GET cms/cost/summary */
-    async summary(request, context) {
-      const auth = await guard.requireRole(request, COST_ROLE);
-      if (auth.error) return auth.error;
-      try {
-        const at = now();
-        const ledger = await readLedger(store);
-        let snapshot = await readSnapshot(store);
-        let refreshed;
-        let nextRefreshAt = null;
-        if (wantsRefresh(request)) {
-          const allowed = refreshAllowed(snapshot, at);
-          if (allowed.allowed) {
-            snapshot = await refresh({ store, ledger, now, env, fetchImpl });
-            refreshed = true;
-            await audit(AUDIT_ACTIONS.refreshed, auth.user, { by: 'page' }, context);
-          } else {
-            refreshed = false;
-            nextRefreshAt = allowed.nextRefreshAt;
-          }
-        }
-        const summary = buildSummary({ snapshot, ledger, now: at });
-        return privateJson(200, {
-          ok: true,
-          ...(refreshed === undefined ? {} : { refreshed, nextRefreshAt }),
-          ...summary,
-        });
-      } catch (error) {
-        return failed(context, request, 'Failed to read the cost summary', error);
-      }
-    },
-
-    /** GET cms/cost/services */
-    async listServices(request, context) {
-      const auth = await guard.requireRole(request, COST_ROLE);
-      if (auth.error) return auth.error;
-      try {
-        const today = dateOnly(now());
-        const ledger = await readLedger(store);
-        const items = ledger.items
-          .filter(isStoredItem)
-          .map((row) => presentItem(row, today))
-          .sort(compareItems);
-        return privateJson(200, { ok: true, today, items, total: items.length, suggestions: suggestionsFor(items) });
-      } catch (error) {
-        return failed(context, request, 'Failed to read the subscriptions', error);
-      }
-    },
-
-    /** POST cms/cost/services */
-    async createService(request, context) {
-      const auth = await guard.requireRole(request, COST_ROLE);
-      if (auth.error) return auth.error;
-      try {
-        const fields = normalizeFields(await readBody(request));
-        const at = now().toISOString();
-        const row = newItem(fields, { id: uuid(), at });
-        await changeLedger(
-          store,
-          (state) => {
-            if (state.items.length >= MAX_ITEMS) throw new CostLedgerFullError();
-            return { write: true, state: { ...state, items: [...state.items, row] } };
-          },
-          { now }
-        );
-        await audit(AUDIT_ACTIONS.created, auth.user, { itemId: row.id, category: row.category, cycle: row.cycle }, context);
-        return privateJson(201, { ok: true, item: presentItem(row, dateOnly(now())) });
-      } catch (error) {
-        return failed(context, request, 'Failed to save the subscription', error);
-      }
-    },
-
-    /** PATCH cms/cost/services/{itemId} */
-    async updateService(request, context) {
-      const auth = await guard.requireRole(request, COST_ROLE);
-      if (auth.error) return auth.error;
-      try {
-        const target = itemIdOf(request);
-        if (target.error) throw target.error;
-        const body = await readBody(request);
-        const changed = patchFields(body);
-        const at = now().toISOString();
-        const { result } = await changeLedger(
-          store,
-          (state) => {
-            const row = state.items.find((entry) => entry?.id === target.id);
-            if (!row || !isStoredItem(row)) throw new CostServiceNotFoundError();
-            const next = { ...row, ...normalizeFields(body, row), updatedAt: at };
-            return {
-              write: true,
-              state: { ...state, items: state.items.map((entry) => (entry?.id === target.id ? next : entry)) },
-              result: next,
-            };
-          },
-          { now }
-        );
-        await audit(AUDIT_ACTIONS.updated, auth.user, { itemId: target.id, fields: changed }, context);
-        return privateJson(200, { ok: true, item: presentItem(result, dateOnly(now())) });
-      } catch (error) {
-        return failed(context, request, 'Failed to update the subscription', error);
-      }
-    },
-
-    /** DELETE cms/cost/services/{itemId} */
-    async removeService(request, context) {
-      const auth = await guard.requireRole(request, COST_ROLE);
-      if (auth.error) return auth.error;
-      try {
-        const target = itemIdOf(request);
-        if (target.error) throw target.error;
-        await changeLedger(
-          store,
-          (state) => {
-            if (!state.items.some((entry) => entry?.id === target.id)) throw new CostServiceNotFoundError();
-            return { write: true, state: { ...state, items: state.items.filter((entry) => entry?.id !== target.id) } };
-          },
-          { now }
-        );
-        await audit(AUDIT_ACTIONS.deleted, auth.user, { itemId: target.id }, context);
-        return privateJson(200, { ok: true, id: target.id });
-      } catch (error) {
-        return failed(context, request, 'Failed to delete the subscription', error);
-      }
-    },
-
-    /** GET cms/cost/settings */
-    async getSettings(request, context) {
-      const auth = await guard.requireRole(request, COST_ROLE);
-      if (auth.error) return auth.error;
-      try {
-        const ledger = await readLedger(store);
-        return privateJson(200, { ok: true, settings: ledger.settings });
-      } catch (error) {
-        return failed(context, request, 'Failed to read the cost settings', error);
-      }
-    },
-
-    /** PUT cms/cost/settings */
-    async putSettings(request, context) {
-      const auth = await guard.requireRole(request, COST_ROLE);
-      if (auth.error) return auth.error;
-      try {
-        const settings = normalizeSettings(await readBody(request), { strict: true });
-        await changeLedger(store, (state) => ({ write: true, state: { ...state, settings } }), { now });
-        await audit(
-          AUDIT_ACTIONS.settings,
-          auth.user,
-          { telegram: settings.telegram, monthlyDigest: settings.monthlyDigest, refreshHours: settings.refreshHours },
-          context
-        );
-        return privateJson(200, { ok: true, settings });
-      } catch (error) {
-        return failed(context, request, 'Failed to save the cost settings', error);
-      }
-    },
+    summary: costRoute(deps, 'Failed to read the cost summary', summary),
+    listServices: costRoute(deps, 'Failed to read the subscriptions', listServices),
+    createService: costRoute(deps, 'Failed to save the subscription', createService),
+    updateService: costRoute(deps, 'Failed to update the subscription', updateService),
+    removeService: costRoute(deps, 'Failed to delete the subscription', removeService),
+    getSettings: costRoute(deps, 'Failed to read the cost settings', getSettings),
+    putSettings: costRoute(deps, 'Failed to save the cost settings', putSettings),
   };
 }
 

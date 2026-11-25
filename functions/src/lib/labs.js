@@ -217,236 +217,266 @@ export function createLabHandlers({
   uuid = randomUUID,
   readChecks = readLabChecksLazily,
 }) {
+  const deps = { guard, store, now, uuid, readChecks };
   return {
-    /** POST /api/enqueueLabJob — editor; allowlisted type + payload cap. */
-    async enqueueLabJob(request, context) {
-      const auth = await guard.requireRole(request, 'editor');
-      if (auth.error) return auth.error;
-      const { user } = auth;
-
-      try {
-        const body = (await request.json().catch(() => null)) || {};
-        const { type, payload = '', payloadEncoding = 'text' } = body;
-        const spec = LAB_JOB_TYPES[type];
-        if (!spec) {
-          return json(400, {
-            error: `Unknown job type. Allowed: ${Object.keys(LAB_JOB_TYPES).join(', ')}`,
-          });
-        }
-        if (typeof payload !== 'string') {
-          return json(400, { error: 'payload must be a string' });
-        }
-        if (!spec.payloadEncodings.includes(payloadEncoding)) {
-          return json(400, {
-            error: `payloadEncoding must be one of ${spec.payloadEncodings.join(', ')} for ${type}`,
-          });
-        }
-        if (payloadEncoding === 'tar' && !/^[A-Za-z0-9+/=\s]*$/.test(payload)) {
-          return json(400, { error: 'a tar payload must be base64' });
-        }
-        const payloadBytes = Buffer.byteLength(payload, 'utf8');
-        if (payloadBytes > spec.maxPayloadBytes) {
-          return json(413, {
-            error: `Payload too large (${payloadBytes} bytes; max ${spec.maxPayloadBytes} for ${type})`,
-          });
-        }
-
-        const jobId = uuid();
-        await store.upsertDoc('lab_jobs', {
-          id: jobId,
-          type,
-          payload,
-          payloadEncoding,
-          status: 'queued',
-          requestedBy: user.oid ?? user.sub,
-          requestedByEmail: user.email || user.preferred_username || null,
-          createdAt: now().toISOString(),
-          claimedAt: null,
-          finishedAt: null,
-          agentId: null,
-          exitCode: null,
-          output: null,
-        });
-
-        context.log('enqueueLabJob', type);
-        return json(200, { jobId, type, status: 'queued' });
-      } catch (error) {
-        return errorResponse(context, 'Failed to enqueue job', error, 500, request);
-      }
-    },
-
-    /**
-     * GET|POST /api/getLabJob — viewer; one job with its output. The console
-     * tab polls it for the job it just enqueued; output is agent-written
-     * text, returned only to authenticated viewers.
-     */
-    async getLabJob(request, context) {
-      const auth = await guard.requireRole(request, 'viewer');
-      if (auth.error) return auth.error;
-
-      try {
-        let jobId;
-        if (String(request.method).toUpperCase() === 'GET') {
-          jobId = request.query.get('jobId');
-        } else {
-          const body = await request.json().catch(() => null);
-          jobId = body?.jobId;
-        }
-        jobId = String(jobId || '').trim();
-        if (!jobId) return json(400, { error: 'jobId required' });
-
-        const data = await store.readDoc('lab_jobs', jobId, jobId);
-        if (!data) return json(404, { error: `job ${jobId} not found` });
-
-        return json(200, {
-          job: {
-            id: data.id,
-            type: data.type,
-            status: data.status,
-            output: data.output ?? null,
-            exitCode: data.exitCode ?? null,
-            agentId: data.agentId || null,
-            requestedByEmail: data.requestedByEmail || null,
-            createdAt: toIsoOrNull(data.createdAt),
-            claimedAt: toIsoOrNull(data.claimedAt),
-            finishedAt: toIsoOrNull(data.finishedAt),
-          },
-        });
-      } catch (error) {
-        context.error('getLabJob failed:', errorFacts(error));
-        return json(500, { error: 'Failed to get lab job' });
-      }
-    },
-
-    /** GET|POST /api/getLabsSnapshot — viewer; agents + jobs + queue depth. */
-    async getLabsSnapshot(request, context) {
-      const auth = await guard.requireRole(request, 'viewer');
-      if (auth.error) return auth.error;
-
-      try {
-        const nowMs = now().getTime();
-
-        // Newest first in the query itself: without ORDER BY, TOP 100 was
-        // whichever 100 documents Cosmos returned, and the 25 shown were
-        // the newest of those, not of the container (ADR 0033 inventory).
-        // Every lab_jobs document carries createdAt (enqueue and the public
-        // submit both write it), so the sort drops nothing.
-        const [agentRows, jobRows, queuedCount] = await Promise.all([
-          store.queryDocs('lab_agents', 'SELECT TOP 200 * FROM c', []),
-          store.queryDocs('lab_jobs', 'SELECT TOP 100 * FROM c ORDER BY c.createdAt DESC', []),
-          store.queryDocs('lab_jobs', "SELECT VALUE COUNT(1) FROM c WHERE c.status = 'queued'", []),
-        ]);
-
-        // The recurrence checks (#1009): whether each host runs main and
-        // whether Coder serves its template, judged by the same functions the
-        // health pulse records them with (labs/lab-checks.js). Each failed read
-        // is that check's `unknown`, and even the checks failing to load at
-        // all leaves the snapshot standing, without them; never a 500.
-        const labChecks = await readChecks(store, nowMs, agentRows).catch((error) => {
-          context.warn?.(`getLabsSnapshot: the lab checks could not be read (${error?.code ?? 'error'})`);
-          return { checks: {}, drift: { agents: {} } };
-        });
-
-        const agents = agentRows.map((data) => {
-          const lastSeenMs = toMs(data.lastSeenAt);
-          const applied = appliedOf(data);
-          return {
-            agentId: data.id,
-            hostname: data.hostname || null,
-            version: data.version || null,
-            certificateExpiresAt: toIsoOrNull(data.certificateExpiresAt),
-            capabilities: data.capabilities || [],
-            status: data.status || 'unknown',
-            lastSeenAt: lastSeenMs ? new Date(lastSeenMs).toISOString() : null,
-            online: isAgentOnline(data, nowMs),
-            // The registry half of the document (#740): whether the agent
-            // guard admits it, and which service principal it is bound to.
-            // The Agents tab's Activate/Deactivate reads the first; the second
-            // is an object id, an identifier the go-live script prints, and
-            // it is how an operator tells "bound to another principal" apart
-            // from the other two ways the guard says "Agent access required".
-            active: data.active === true,
-            oid: typeof data.oid === 'string' ? data.oid : null,
-            registeredAt: toIsoOrNull(data.registeredAt),
-            // The commit the host last converged from, as its heartbeat
-            // reported it, and the drift verdict for this agent (#1009).
-            applied: applied
-              ? {
-                  commit: applied.commit,
-                  committedAt: applied.committedAt,
-                  appliedAt: applied.appliedAt,
-                }
-              : null,
-            drift: labChecks.drift.agents?.[data.id] ?? null,
-          };
-        });
-
-        // Sorted again in memory, so a store that ignores ORDER BY (a test
-        // double, a future mirror) still shows the newest 25.
-        const jobs = [...jobRows]
-          .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt))
-          .slice(0, 25)
-          .map((data) => ({
-            id: data.id,
-            type: data.type,
-            status: data.status,
-            requestedByEmail: data.requestedByEmail || null,
-            agentId: data.agentId || null,
-            exitCode: data.exitCode ?? null,
-            createdAt: toIsoOrNull(data.createdAt),
-            claimedAt: toIsoOrNull(data.claimedAt),
-            finishedAt: toIsoOrNull(data.finishedAt),
-          }));
-
-        return json(200, {
-          agents,
-          jobs,
-          queueDepth: Number(queuedCount[0]) || 0,
-          jobTypes: Object.entries(LAB_JOB_TYPES).map(([type, spec]) => ({
-            type,
-            description: spec.description,
-            maxPayloadBytes: spec.maxPayloadBytes,
-            payloadEncodings: spec.payloadEncodings,
-          })),
-          statuses: JOB_STATUSES,
-          // By Health Hub probe id: the browser's run of each lab check reads
-          // its verdict here (probeRunners.js runLabCheck).
-          checks: labChecks.checks,
-          generatedAt: now().toISOString(),
-        });
-      } catch (error) {
-        return errorResponse(context, 'Failed to build labs snapshot', error, 500, request);
-      }
-    },
-
-    /** POST /api/cancelLabJob — editor; only while still queued. */
-    async cancelLabJob(request, context) {
-      const auth = await guard.requireRole(request, 'editor');
-      if (auth.error) return auth.error;
-      const { user } = auth;
-
-      try {
-        const body = (await request.json().catch(() => null)) || {};
-        const jobId = String(body.jobId || '').trim();
-        if (!jobId) return json(400, { error: 'jobId is required' });
-
-        const job = await store.readDoc('lab_jobs', jobId, jobId);
-        if (!job) return json(404, { error: 'Job not found' });
-        if (job.status !== 'queued') {
-          return json(409, { error: 'Job is no longer queued and cannot be cancelled' });
-        }
-
-        await store.patchDoc('lab_jobs', jobId, {
-          status: 'cancelled',
-          finishedAt: now().toISOString(),
-          cancelledBy: user.oid ?? user.sub,
-        });
-
-        context.log('cancelLabJob');
-        return json(200, { jobId, status: 'cancelled' });
-      } catch (error) {
-        return errorResponse(context, 'Cancel failed', error, 500, request);
-      }
-    },
+    enqueueLabJob: (request, context) => enqueueLabJob(deps, request, context),
+    getLabJob: (request, context) => getLabJob(deps, request, context),
+    getLabsSnapshot: (request, context) => getLabsSnapshot(deps, request, context),
+    cancelLabJob: (request, context) => cancelLabJob(deps, request, context),
   };
+}
+
+/** What refuses an enqueue body, in this order: the type, the payload's type, its encoding, its size. The response, or null. */
+function enqueueRefusal({ type, payload, payloadEncoding }) {
+  const spec = LAB_JOB_TYPES[type];
+  if (!spec) {
+    return json(400, {
+      error: `Unknown job type. Allowed: ${Object.keys(LAB_JOB_TYPES).join(', ')}`,
+    });
+  }
+  if (typeof payload !== 'string') {
+    return json(400, { error: 'payload must be a string' });
+  }
+  return payloadRefusal(spec, { type, payload, payloadEncoding });
+}
+
+/** The encoding and size checks on a string payload: the response, or null. */
+function payloadRefusal(spec, { type, payload, payloadEncoding }) {
+  if (!spec.payloadEncodings.includes(payloadEncoding)) {
+    return json(400, {
+      error: `payloadEncoding must be one of ${spec.payloadEncodings.join(', ')} for ${type}`,
+    });
+  }
+  if (payloadEncoding === 'tar' && !/^[A-Za-z0-9+/=\s]*$/.test(payload)) {
+    return json(400, { error: 'a tar payload must be base64' });
+  }
+  const payloadBytes = Buffer.byteLength(payload, 'utf8');
+  if (payloadBytes > spec.maxPayloadBytes) {
+    return json(413, {
+      error: `Payload too large (${payloadBytes} bytes; max ${spec.maxPayloadBytes} for ${type})`,
+    });
+  }
+  return null;
+}
+
+/** The job id a getLabJob request names: the query on a GET, the body otherwise. */
+async function requestedJobId(request) {
+  if (String(request.method).toUpperCase() === 'GET') {
+    return String(request.query.get('jobId') || '').trim();
+  }
+  const body = await request.json().catch(() => null);
+  return String(body?.jobId || '').trim();
+}
+
+/** One agent as the Labs snapshot shows it. */
+function agentView(data, nowMs, labChecks) {
+    const lastSeenMs = toMs(data.lastSeenAt);
+    const applied = appliedOf(data);
+    return {
+      agentId: data.id,
+      hostname: data.hostname || null,
+      version: data.version || null,
+      certificateExpiresAt: toIsoOrNull(data.certificateExpiresAt),
+      capabilities: data.capabilities || [],
+      status: data.status || 'unknown',
+      lastSeenAt: lastSeenMs ? new Date(lastSeenMs).toISOString() : null,
+      online: isAgentOnline(data, nowMs),
+      // The registry half of the document (#740): whether the agent
+      // guard admits it, and which service principal it is bound to.
+      // The Agents tab's Activate/Deactivate reads the first; the second
+      // is an object id, an identifier the go-live script prints, and
+      // it is how an operator tells "bound to another principal" apart
+      // from the other two ways the guard says "Agent access required".
+      active: data.active === true,
+      oid: typeof data.oid === 'string' ? data.oid : null,
+      registeredAt: toIsoOrNull(data.registeredAt),
+      // The commit the host last converged from, as its heartbeat
+      // reported it, and the drift verdict for this agent (#1009).
+      applied: applied
+        ? {
+            commit: applied.commit,
+            committedAt: applied.committedAt,
+            appliedAt: applied.appliedAt,
+          }
+        : null,
+      drift: labChecks.drift.agents?.[data.id] ?? null,
+    };
+}
+
+/** Why a job cannot be cancelled (gone, or no longer queued): the response, or null. */
+function cancelRefusal(job) {
+  if (!job) return json(404, { error: 'Job not found' });
+  if (job.status !== 'queued') {
+    return json(409, { error: 'Job is no longer queued and cannot be cancelled' });
+  }
+  return null;
+}
+
+/** POST /api/enqueueLabJob — editor; allowlisted type + payload cap. */
+async function enqueueLabJob({ guard, store, now, uuid }, request, context) {
+  const auth = await guard.requireRole(request, 'editor');
+  if (auth.error) return auth.error;
+  const { user } = auth;
+
+  try {
+    const body = (await request.json().catch(() => null)) || {};
+    const { type, payload = '', payloadEncoding = 'text' } = body;
+    const refused = enqueueRefusal({ type, payload, payloadEncoding });
+    if (refused) return refused;
+
+    const jobId = uuid();
+    await store.upsertDoc('lab_jobs', {
+      id: jobId,
+      type,
+      payload,
+      payloadEncoding,
+      status: 'queued',
+      requestedBy: user.oid ?? user.sub,
+      requestedByEmail: user.email || user.preferred_username || null,
+      createdAt: now().toISOString(),
+      claimedAt: null,
+      finishedAt: null,
+      agentId: null,
+      exitCode: null,
+      output: null,
+    });
+
+    context.log('enqueueLabJob', type);
+    return json(200, { jobId, type, status: 'queued' });
+  } catch (error) {
+    return errorResponse(context, 'Failed to enqueue job', error, 500, request);
+  }
+}
+
+/**
+ * GET|POST /api/getLabJob — viewer; one job with its output. The console
+ * tab polls it for the job it just enqueued; output is agent-written
+ * text, returned only to authenticated viewers.
+ */
+async function getLabJob({ guard, store }, request, context) {
+  const auth = await guard.requireRole(request, 'viewer');
+  if (auth.error) return auth.error;
+
+  try {
+    const jobId = await requestedJobId(request);
+    if (!jobId) return json(400, { error: 'jobId required' });
+
+    const data = await store.readDoc('lab_jobs', jobId, jobId);
+    if (!data) return json(404, { error: `job ${jobId} not found` });
+
+    return json(200, {
+      job: {
+        id: data.id,
+        type: data.type,
+        status: data.status,
+        output: data.output ?? null,
+        exitCode: data.exitCode ?? null,
+        agentId: data.agentId || null,
+        requestedByEmail: data.requestedByEmail || null,
+        createdAt: toIsoOrNull(data.createdAt),
+        claimedAt: toIsoOrNull(data.claimedAt),
+        finishedAt: toIsoOrNull(data.finishedAt),
+      },
+    });
+  } catch (error) {
+    context.error('getLabJob failed:', errorFacts(error));
+    return json(500, { error: 'Failed to get lab job' });
+  }
+}
+
+/** GET|POST /api/getLabsSnapshot — viewer; agents + jobs + queue depth. */
+async function getLabsSnapshot({ guard, store, now, readChecks }, request, context) {
+  const auth = await guard.requireRole(request, 'viewer');
+  if (auth.error) return auth.error;
+
+  try {
+    const nowMs = now().getTime();
+
+    // Newest first in the query itself: without ORDER BY, TOP 100 was
+    // whichever 100 documents Cosmos returned, and the 25 shown were
+    // the newest of those, not of the container (ADR 0033 inventory).
+    // Every lab_jobs document carries createdAt (enqueue and the public
+    // submit both write it), so the sort drops nothing.
+    const [agentRows, jobRows, queuedCount] = await Promise.all([
+      store.queryDocs('lab_agents', 'SELECT TOP 200 * FROM c', []),
+      store.queryDocs('lab_jobs', 'SELECT TOP 100 * FROM c ORDER BY c.createdAt DESC', []),
+      store.queryDocs('lab_jobs', "SELECT VALUE COUNT(1) FROM c WHERE c.status = 'queued'", []),
+    ]);
+
+    // The recurrence checks (#1009): whether each host runs main and
+    // whether Coder serves its template, judged by the same functions the
+    // health pulse records them with (labs/lab-checks.js). Each failed read
+    // is that check's `unknown`, and even the checks failing to load at
+    // all leaves the snapshot standing, without them; never a 500.
+    const labChecks = await readChecks(store, nowMs, agentRows).catch((error) => {
+      context.warn?.(`getLabsSnapshot: the lab checks could not be read (${error?.code ?? 'error'})`);
+      return { checks: {}, drift: { agents: {} } };
+    });
+
+    const agents = agentRows.map((data) => agentView(data, nowMs, labChecks));
+
+    // Sorted again in memory, so a store that ignores ORDER BY (a test
+    // double, a future mirror) still shows the newest 25.
+    const jobs = [...jobRows]
+      .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt))
+      .slice(0, 25)
+      .map((data) => ({
+        id: data.id,
+        type: data.type,
+        status: data.status,
+        requestedByEmail: data.requestedByEmail || null,
+        agentId: data.agentId || null,
+        exitCode: data.exitCode ?? null,
+        createdAt: toIsoOrNull(data.createdAt),
+        claimedAt: toIsoOrNull(data.claimedAt),
+        finishedAt: toIsoOrNull(data.finishedAt),
+      }));
+
+    return json(200, {
+      agents,
+      jobs,
+      queueDepth: Number(queuedCount[0]) || 0,
+      jobTypes: Object.entries(LAB_JOB_TYPES).map(([type, spec]) => ({
+        type,
+        description: spec.description,
+        maxPayloadBytes: spec.maxPayloadBytes,
+        payloadEncodings: spec.payloadEncodings,
+      })),
+      statuses: JOB_STATUSES,
+      // By Health Hub probe id: the browser's run of each lab check reads
+      // its verdict here (probeRunners.js runLabCheck).
+      checks: labChecks.checks,
+      generatedAt: now().toISOString(),
+    });
+  } catch (error) {
+    return errorResponse(context, 'Failed to build labs snapshot', error, 500, request);
+  }
+}
+
+/** POST /api/cancelLabJob — editor; only while still queued. */
+async function cancelLabJob({ guard, store, now }, request, context) {
+  const auth = await guard.requireRole(request, 'editor');
+  if (auth.error) return auth.error;
+  const { user } = auth;
+
+  try {
+    const body = (await request.json().catch(() => null)) || {};
+    const jobId = String(body.jobId || '').trim();
+    if (!jobId) return json(400, { error: 'jobId is required' });
+
+    const job = await store.readDoc('lab_jobs', jobId, jobId);
+    const refused = cancelRefusal(job);
+    if (refused) return refused;
+
+    await store.patchDoc('lab_jobs', jobId, {
+      status: 'cancelled',
+      finishedAt: now().toISOString(),
+      cancelledBy: user.oid ?? user.sub,
+    });
+
+    context.log('cancelLabJob');
+    return json(200, { jobId, status: 'cancelled' });
+  } catch (error) {
+    return errorResponse(context, 'Cancel failed', error, 500, request);
+  }
 }

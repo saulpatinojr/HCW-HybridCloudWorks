@@ -13,6 +13,17 @@ export const ASK_MODES = [
 export const BRAIN_HTTP_BUDGET_MS = 85000;
 export const BRAIN_AI_BUDGET_MS = 80000;
 
+// One answer row the assistant returned: short text, and citations that are
+// all among the supplied evidence ids (at least one when `required`).
+const isCitedRow = (row, required, ids) =>
+  typeof row.text === 'string' &&
+  row.text.length <= 6000 &&
+  Array.isArray(row.sourceIds) &&
+  hasCitations(row.sourceIds, required, ids);
+
+const hasCitations = (sourceIds, required, ids) =>
+  !(required && !sourceIds.length) && sourceIds.every((id) => ids.has(id));
+
 export async function askBrain({
   sources,
   ai,
@@ -79,13 +90,7 @@ export async function askBrain({
         'The assistant did not return a verifiable answer. Try a narrower question.',
       );
     return rows.map((row) => {
-      if (
-        typeof row.text !== 'string' ||
-        row.text.length > 6000 ||
-        !Array.isArray(row.sourceIds) ||
-        (required && !row.sourceIds.length) ||
-        row.sourceIds.some((id) => !ids.has(id))
-      )
+      if (!isCitedRow(row, required, ids))
         fail(
           502,
           'INVALID_ANSWER',

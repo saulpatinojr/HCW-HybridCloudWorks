@@ -54,7 +54,7 @@
  * recorded and logged at warn with its code only, never thrown.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
-import { API_ORIGIN, API_PATH_PREFIX, REPO_NAME, REPO_OWNER, REPO_REF } from '../cms/repo-draft.js';
+import { API_ORIGIN, API_PATH_PREFIX, REPO_REF } from '../cms/repo-draft.js';
 import {
   GITHUB_FETCH_TIMEOUT_MS,
   MAX_API_BYTES,
@@ -62,143 +62,51 @@ import {
   fetchPinned,
 } from '../cms/repo-draft-source.js';
 import { errorCode, isAuthoredError, storedFailure } from '../http/error-response.js';
+import {
+  BLIND_AFTER_READS,
+  blindMessage,
+  CONTAINER,
+  DELIVERY_WATCH_DOC_ID,
+  DELIVERY_WATCH_DOC_TYPE,
+  FAILED,
+  GITHUB_JSON,
+  greenMessage,
+  HOUR_MS,
+  latestVerdictRun,
+  MAX_ALERTED_JOBS,
+  MAX_JOB_NAMES,
+  msOf,
+  PK,
+  plainName,
+  redMessage,
+  REMINDER_AFTER_MS,
+  RUNS_PER_READ,
+  storedJobs,
+  WATCH_INTERVAL_MS,
+  WATCHED_WORKFLOW,
+} from './delivery-monitor-messages.js';
 
-const MINUTE_MS = 60 * 1000;
-const HOUR_MS = 60 * MINUTE_MS;
-
-export const DELIVERY_WATCH_DOC_ID = 'delivery_monitor_watch';
-export const DELIVERY_WATCH_DOC_TYPE = 'delivery_monitor_watch';
-const CONTAINER = 'admin_config';
-const PK = { partitionKey: ADMIN_CONFIG_PARTITION };
-
-/** The workflow file this watches, by the name GitHub's runs endpoint takes. */
-export const WATCHED_WORKFLOW = 'monitor-deploy-drift.yml';
-
-/** Their own notifier sources, so "red" never holds back the "green" that ends it. */
-export const DELIVERY_RED_SOURCE = 'delivery_monitor_red';
-export const DELIVERY_GREEN_SOURCE = 'delivery_monitor_green';
-export const DELIVERY_BLIND_SOURCE = 'delivery_monitor_blind';
-
-/** Failed reads in a row (about a day of hourly reads) before the owner is told the watch is blind. */
-export const BLIND_AFTER_READS = 24;
-
-/** A little under an hour, so a five-minute timer that starts late does not slip to sixty-five. */
-export const WATCH_INTERVAL_MS = 55 * MINUTE_MS;
-
-/** Still red this long after the owner was told: say so again. */
-export const REMINDER_AFTER_MS = 24 * HOUR_MS;
-
-/** Runs asked for; enough to get past a few cancelled ones to a verdict. */
-export const RUNS_PER_READ = 10;
-const MAX_JOB_NAME_LENGTH = 80;
-const MAX_JOB_NAMES = 5;
-/** Job names kept with one alert. The monitor has a handful of jobs; this only bounds the record. */
-export const MAX_ALERTED_JOBS = 20;
-
-const GITHUB_JSON = 'application/vnd.github+json';
-const FAILED = new Set(['failure', 'timed_out']);
-const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:?\d{2})$/;
-
-const msOf = (value) => {
-  if (typeof value !== 'string' || !ISO_DATE_TIME.test(value)) return Number.NaN;
-  return Date.parse(value);
-};
-
-const runUrl = (id) => `https://github.com/${REPO_OWNER}/${REPO_NAME}/actions/runs/${id}`;
-export const WORKFLOW_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}/actions/workflows/${WATCHED_WORKFLOW}`;
-
-/** A job name as the message carries it: printable, one line, short. */
-const plainName = (value) =>
-  String(value ?? '')
-    .replace(/[^\p{L}\p{N} ?!.,:;'()/_-]/gu, '')
-    .trim()
-    .slice(0, MAX_JOB_NAME_LENGTH);
-
-/**
- * One run of GitHub's list as this module keeps it, or null when it is not
- * one. The id must be a positive integer: it is spliced into a URL.
- */
-function toRun(row) {
-  const id = row?.id;
-  if (!Number.isSafeInteger(id) || id <= 0) return null;
-  const completedAt = Number.isFinite(msOf(row?.updated_at)) ? new Date(msOf(row.updated_at)).toISOString() : null;
-  const number = Number.isSafeInteger(row?.run_number) ? row.run_number : null;
-  return { id, number, conclusion: typeof row?.conclusion === 'string' ? row.conclusion : null, completedAt };
-}
-
-/** The newest run that reached a verdict, or null. The list is newest first. */
-export function latestVerdictRun(rows) {
-  for (const row of Array.isArray(rows) ? rows : []) {
-    const run = toRun(row);
-    if (run && (run.conclusion === 'success' || FAILED.has(run.conclusion))) return run;
-  }
-  return null;
-}
-
-/**
- * The job names stored with an alert, or null when the record has none (one
- * written before #1666): null means "not known", which is not the same as an
- * empty list.
- */
-export function storedJobs(value) {
-  if (!Array.isArray(value)) return null;
-  // Keep the newest, as the union in decide() does.
-  return value.filter((name) => typeof name === 'string' && name).slice(-MAX_ALERTED_JOBS);
-}
-
-/**
- * The "red" message. `jobs` are the names of the jobs that failed; may be
- * empty. `newJobs`, when given, are the ones no earlier message in this red
- * stretch named.
- */
-export function redMessage({ run, jobs = [], newJobs = [], reminder = false, redForHours = 0 }) {
-  const which = jobs.length
-    ? `Failed: ${jobs.join('; ')}.`
-    : 'GitHub did not say which job failed; the run page does.';
-  let lead = 'The "Monitor delivery health" check failed.';
-  if (reminder) lead = `STILL RED, ${redForHours} hours after the last alert. Nothing has fixed it yet.`;
-  else if (newJobs.length) {
-    lead = `The "Monitor delivery health" check is still red, and another job has now failed too: ${newJobs.join('; ')}.`;
-  }
-  return {
-    title: reminder ? 'DELIVERY MONITOR STILL RED' : 'DELIVERY MONITOR RED',
-    message:
-      `${lead} It goes red when a deploy has waited too long behind main, or a workflow keeps failing.\n` +
-      `${which}\n` +
-      `Run${run.number ? ` #${run.number}` : ''}${run.completedAt ? ` finished ${run.completedAt}` : ''}: ${runUrl(run.id)}\n` +
-      'A merge that changes frontend/ deploys the site on its own; the functions deploy is started by hand, and Terraform is confirmed in HCP Terraform. ' +
-      'The run page has a table with a red mark on each service that is behind.',
-    severity: 'critical',
-    source: DELIVERY_RED_SOURCE,
-  };
-}
-
-/**
- * The "blind" message: the watch has not been able to read GitHub. It carries
- * the count and an error code from this repository's own list (never GitHub's
- * words), and says what still protects the owner meanwhile.
- */
-export function blindMessage({ unread, code = 'error' }) {
-  return {
-    title: 'DELIVERY MONITOR WATCH IS BLIND',
-    message:
-      `The bot has failed to read the "Monitor delivery health" runs from GitHub ${unread} times in a row (error: ${code}), about ${unread} hours. ` +
-      'If that check goes red now, there will be no Telegram message about it. GitHub\'s own failure email still goes out.\n' +
-      `Check the runs yourself: ${WORKFLOW_URL}`,
-    severity: 'warning',
-    source: DELIVERY_BLIND_SOURCE,
-  };
-}
-
-/** The "green" message that ends a red stretch the owner was told about. */
-export function greenMessage({ run }) {
-  return {
-    title: 'DELIVERY MONITOR back to green',
-    message: `The "Monitor delivery health" check passed again${run.completedAt ? ` at ${run.completedAt}` : ''}: ${runUrl(run.id)}`,
-    severity: 'info',
-    source: DELIVERY_GREEN_SOURCE,
-  };
-}
+// The fixed names and the messages live in delivery-monitor-messages.js; they
+// are exported again here so callers keep importing from this file.
+export {
+  BLIND_AFTER_READS,
+  blindMessage,
+  DELIVERY_BLIND_SOURCE,
+  DELIVERY_GREEN_SOURCE,
+  DELIVERY_RED_SOURCE,
+  DELIVERY_WATCH_DOC_ID,
+  DELIVERY_WATCH_DOC_TYPE,
+  greenMessage,
+  latestVerdictRun,
+  MAX_ALERTED_JOBS,
+  redMessage,
+  REMINDER_AFTER_MS,
+  RUNS_PER_READ,
+  storedJobs,
+  WATCH_INTERVAL_MS,
+  WATCHED_WORKFLOW,
+  WORKFLOW_URL,
+} from './delivery-monitor-messages.js';
 
 /**
  * What a failed read stores and shows: a RepoSourceError's `CODE: sentence`,
@@ -222,6 +130,202 @@ async function getJson(fetchImpl, path, timeoutMs) {
   }
 }
 
+async function latestRun(d) {
+  const query = new URLSearchParams({ branch: REPO_REF, status: 'completed', per_page: String(RUNS_PER_READ) });
+  const body = await getJson(d.fetchImpl, `actions/workflows/${WATCHED_WORKFLOW}/runs?${query}`, d.timeoutMs);
+  if (!Array.isArray(body?.workflow_runs)) {
+    throw new RepoSourceError('The run list is not a list.', { code: 'UPSTREAM_SHAPE' });
+  }
+  return latestVerdictRun(body.workflow_runs);
+}
+
+/** The names of the jobs that failed in a run. Best effort: never fails the alert. */
+async function failedJobs(d, runId) {
+  try {
+    const body = await getJson(d.fetchImpl, `actions/runs/${runId}/jobs?per_page=20`, d.timeoutMs);
+    const jobs = Array.isArray(body?.jobs) ? body.jobs : [];
+    return jobs
+      .filter((job) => FAILED.has(job?.conclusion))
+      .map((job) => plainName(job?.name))
+      .filter(Boolean)
+      .slice(0, MAX_JOB_NAMES);
+  } catch (error) {
+    d.log.warn?.(`[delivery-watch] could not read the failed jobs (${error?.code ?? 'error'}); the alert goes without them`);
+    return [];
+  }
+}
+
+/** True only when the notifier says the message went. Never throws. */
+async function say(d, message) {
+  if (!d.notifier?.notifyTelegram) return false;
+  try {
+    const result = await d.notifier.notifyTelegram(message);
+    if (result?.sent === true) return true;
+    d.log.warn?.(`[delivery-watch] message not sent (${result?.reason || 'no reason given'}); the next hourly read tries again`);
+  } catch (error) {
+    d.log.warn?.(`[delivery-watch] notification failed (${errorCode(error)}); the next hourly read tries again`);
+  }
+  return false;
+}
+
+/** The alert fields when a red message went now. */
+const alertedNow = (run, atMs, jobs) => ({ alertedRunId: run.id, alertedAt: new Date(atMs).toISOString(), alertedJobs: jobs });
+
+/**
+ * Already told about this red stretch. Read the jobs on every hourly read,
+ * so a job that starts failing is heard of now, not with the reminder.
+ */
+async function decideStillRed(d, run, current, atMs) {
+  const alertedAtMs = msOf(current?.alertedAt);
+  const jobs = await failedJobs(d, run.id);
+  const known = storedJobs(current?.alertedJobs);
+  // The jobs named so far plus today's, newest last, so the cap drops the oldest.
+  const seen = [...(known ?? []), ...jobs.filter((name) => !(known ?? []).includes(name))].slice(-MAX_ALERTED_JOBS);
+  // A new job goes first, even when the reminder is due on the same read: it
+  // leads with the new job and restarts the 24-hour clock, so the reminder
+  // waits a day rather than hide the news in its "Failed:" list (Copilot
+  // review of #1669). A record from before the jobs were kept names nothing new.
+  const added = known === null ? [] : jobs.filter((name) => !known.includes(name));
+  if (added.length) {
+    return (await say(d, redMessage({ run, jobs, newJobs: added }))) ? alertedNow(run, atMs, seen) : null;
+  }
+  if (Number.isFinite(alertedAtMs) && atMs - alertedAtMs >= REMINDER_AFTER_MS) {
+    const redForHours = Math.floor((atMs - alertedAtMs) / HOUR_MS);
+    const sent = await say(d, redMessage({ run, jobs, reminder: true, redForHours }));
+    // An old record with an unreadable job list stays "not known" (null),
+    // not "known empty", or the next read would call every job new.
+    return sent ? alertedNow(run, atMs, known === null && !jobs.length ? null : seen) : null;
+  }
+  // A record from before the jobs were kept does not know what the owner was
+  // told: adopt today's set without a message rather than call every job new.
+  // An empty read (the jobs could not be read) adds nothing, so says nothing.
+  if (known === null && jobs.length) return { alertedJobs: jobs, quiet: true };
+  return null;
+}
+
+/**
+ * Decide from the newest verdict and the record. Returns the fields to
+ * store, or null to leave the alert state as it is. `quiet: true` among
+ * them means fields changed but no message went.
+ */
+async function decide(d, run, current, atMs) {
+  const told = Number.isSafeInteger(current?.alertedRunId);
+  if (run.conclusion === 'success') {
+    if (!told) return null;
+    return (await say(d, greenMessage({ run }))) ? { alertedRunId: null, alertedAt: null, alertedJobs: null } : null;
+  }
+  if (!told) {
+    const jobs = await failedJobs(d, run.id);
+    return (await say(d, redMessage({ run, jobs }))) ? alertedNow(run, atMs, jobs) : null;
+  }
+  return decideStillRed(d, run, current, atMs);
+}
+
+/**
+ * The watch cannot read GitHub, and has not for BLIND_AFTER_READS reads in a
+ * row: say so once, because a watch that has stopped reading looks exactly
+ * like a monitor that is green (CodeRabbit, #1332). Returns the field to
+ * store when the message went, or null (too soon, already said, or not sent:
+ * an unsent notice is tried again on the next failed read).
+ */
+async function tellBlind(d, { current, unread, code, atMs }) {
+  if (unread < BLIND_AFTER_READS || current?.blindAlertedAt) return null;
+  return (await say(d, blindMessage({ unread, code }))) ? { blindAlertedAt: new Date(atMs).toISOString() } : null;
+}
+
+/** The record's fields carried over from the last read, with this attempt's time. */
+function baseRecord(current, at) {
+  return {
+    id: DELIVERY_WATCH_DOC_ID,
+    configScope: ADMIN_CONFIG_PARTITION,
+    docType: DELIVERY_WATCH_DOC_TYPE,
+    workflow: WATCHED_WORKFLOW,
+    alertedRunId: current?.alertedRunId ?? null,
+    alertedAt: current?.alertedAt ?? null,
+    alertedJobs: storedJobs(current?.alertedJobs),
+    lastRunId: current?.lastRunId ?? null,
+    lastSuccessAt: current?.lastSuccessAt ?? null,
+    consecutiveUnread: current?.consecutiveUnread ?? 0,
+    blindAlertedAt: current?.blindAlertedAt ?? null,
+    lastAttemptAt: at.toISOString(),
+  };
+}
+
+/** A read that got an answer, whatever the answer: the watch can see. */
+const SEEING = Object.freeze({ consecutiveUnread: 0, blindAlertedAt: null });
+
+/** The record and outcome after GitHub answered with a run list. */
+async function readRecord(d, base, current, at) {
+  const run = await latestRun(d);
+  if (!run) {
+    return { next: { ...base, ...SEEING, lastError: null, lastVerdict: 'none' }, outcome: { checked: true, verdict: 'none', told: false } };
+  }
+  const { quiet = false, ...changes } = (await decide(d, run, current, at.getTime())) ?? { quiet: true };
+  const next = {
+    ...base,
+    ...SEEING,
+    ...changes,
+    lastError: null,
+    lastVerdict: run.conclusion === 'success' ? 'green' : 'red',
+    lastRunId: run.id,
+    lastSuccessAt: at.toISOString(),
+  };
+  return { next, outcome: { checked: true, verdict: next.lastVerdict, told: !quiet } };
+}
+
+/** The record and outcome after a failed GitHub read. */
+async function unreadRecord(d, base, current, failure, atMs) {
+  const unread = (Number.isSafeInteger(current?.consecutiveUnread) ? current.consecutiveUnread : 0) + 1;
+  const code = /^[A-Z_]{2,40}$/.test(String(failure?.code)) ? failure.code : 'error';
+  const blind = await tellBlind(d, { current, unread, code, atMs });
+  const next = {
+    ...base,
+    consecutiveUnread: unread,
+    ...(blind ?? {}),
+    lastError: describeReadError(failure),
+    lastVerdict: current?.lastVerdict ?? null,
+  };
+  d.log.warn?.(`[delivery-watch] the monitor's runs could not be read (${code}); the next hourly read tries again`);
+  return { next, outcome: { checked: true, verdict: 'unread', told: blind !== null } };
+}
+
+/** Write the record under the ETag it was read with. False when another instance wrote first. */
+async function writeRecord(d, current, next) {
+  try {
+    if (current) await d.store.replaceDocIfMatch(CONTAINER, { ...next, _etag: current._etag }, PK);
+    else await d.store.createDoc(CONTAINER, next);
+  } catch (error) {
+    if (error?.code === 412 || error?.code === 409) return false;
+    throw error;
+  }
+  return true;
+}
+
+/**
+ * Read the monitor's runs, at most once per WATCH_INTERVAL_MS, and speak if
+ * the colour changed. Never throws on a failed GitHub read.
+ *
+ * @returns {Promise<{ checked: boolean, reason?: string, verdict?: string, told?: boolean }>}
+ */
+async function checkIfDue(d) {
+  const at = d.now();
+  const atMs = at.getTime();
+  const current = await d.store.readDoc(CONTAINER, DELIVERY_WATCH_DOC_ID, ADMIN_CONFIG_PARTITION);
+  const lastAttemptMs = msOf(current?.lastAttemptAt);
+  if (Number.isFinite(lastAttemptMs) && atMs - lastAttemptMs < WATCH_INTERVAL_MS) {
+    return { checked: false, reason: 'not due' };
+  }
+  const base = baseRecord(current, at);
+  let read;
+  try {
+    read = await readRecord(d, base, current, at);
+  } catch (error) {
+    read = await unreadRecord(d, base, current, error, atMs);
+  }
+  const written = await writeRecord(d, current, read.next);
+  return { ...read.outcome, written };
+}
+
 /**
  * @param {object} deps
  * @param {object} deps.store
@@ -239,177 +343,6 @@ export function createDeliveryMonitorWatch({
   log = {},
   timeoutMs = GITHUB_FETCH_TIMEOUT_MS,
 }) {
-  async function latestRun() {
-    const query = new URLSearchParams({ branch: REPO_REF, status: 'completed', per_page: String(RUNS_PER_READ) });
-    const body = await getJson(fetchImpl, `actions/workflows/${WATCHED_WORKFLOW}/runs?${query}`, timeoutMs);
-    if (!Array.isArray(body?.workflow_runs)) {
-      throw new RepoSourceError('The run list is not a list.', { code: 'UPSTREAM_SHAPE' });
-    }
-    return latestVerdictRun(body.workflow_runs);
-  }
-
-  /** The names of the jobs that failed in a run. Best effort: never fails the alert. */
-  async function failedJobs(runId) {
-    try {
-      const body = await getJson(fetchImpl, `actions/runs/${runId}/jobs?per_page=20`, timeoutMs);
-      const jobs = Array.isArray(body?.jobs) ? body.jobs : [];
-      return jobs
-        .filter((job) => FAILED.has(job?.conclusion))
-        .map((job) => plainName(job?.name))
-        .filter(Boolean)
-        .slice(0, MAX_JOB_NAMES);
-    } catch (error) {
-      log.warn?.(`[delivery-watch] could not read the failed jobs (${error?.code ?? 'error'}); the alert goes without them`);
-      return [];
-    }
-  }
-
-  /** True only when the notifier says the message went. Never throws. */
-  async function say(message) {
-    if (!notifier?.notifyTelegram) return false;
-    try {
-      const result = await notifier.notifyTelegram(message);
-      if (result?.sent === true) return true;
-      log.warn?.(`[delivery-watch] message not sent (${result?.reason || 'no reason given'}); the next hourly read tries again`);
-    } catch (error) {
-      log.warn?.(`[delivery-watch] notification failed (${errorCode(error)}); the next hourly read tries again`);
-    }
-    return false;
-  }
-
-  /**
-   * Decide from the newest verdict and the record. Returns the fields to
-   * store, or null to leave the alert state as it is. `quiet: true` among
-   * them means fields changed but no message went.
-   */
-  async function decide(run, current, atMs) {
-    const alertedAtMs = msOf(current?.alertedAt);
-    const told = Number.isSafeInteger(current?.alertedRunId);
-    if (run.conclusion === 'success') {
-      if (!told) return null;
-      return (await say(greenMessage({ run }))) ? { alertedRunId: null, alertedAt: null, alertedJobs: null } : null;
-    }
-    const alertedNow = (jobs) => ({ alertedRunId: run.id, alertedAt: new Date(atMs).toISOString(), alertedJobs: jobs });
-    if (!told) {
-      const jobs = await failedJobs(run.id);
-      return (await say(redMessage({ run, jobs }))) ? alertedNow(jobs) : null;
-    }
-
-    // Already told about this red stretch. Read the jobs on every hourly read,
-    // so a job that starts failing is heard of now, not with the reminder.
-    const jobs = await failedJobs(run.id);
-    const known = storedJobs(current?.alertedJobs);
-    // The jobs named so far plus today's, newest last, so the cap drops the oldest.
-    const seen = [...(known ?? []), ...jobs.filter((name) => !(known ?? []).includes(name))].slice(-MAX_ALERTED_JOBS);
-    // A new job goes first, even when the reminder is due on the same read: it
-    // leads with the new job and restarts the 24-hour clock, so the reminder
-    // waits a day rather than hide the news in its "Failed:" list (Copilot
-    // review of #1669). A record from before the jobs were kept names nothing new.
-    const added = known === null ? [] : jobs.filter((name) => !known.includes(name));
-    if (added.length) {
-      return (await say(redMessage({ run, jobs, newJobs: added }))) ? alertedNow(seen) : null;
-    }
-    if (Number.isFinite(alertedAtMs) && atMs - alertedAtMs >= REMINDER_AFTER_MS) {
-      const redForHours = Math.floor((atMs - alertedAtMs) / HOUR_MS);
-      const sent = await say(redMessage({ run, jobs, reminder: true, redForHours }));
-      // An old record with an unreadable job list stays "not known" (null),
-      // not "known empty", or the next read would call every job new.
-      return sent ? alertedNow(known === null && !jobs.length ? null : seen) : null;
-    }
-    // A record from before the jobs were kept does not know what the owner was
-    // told: adopt today's set without a message rather than call every job new.
-    // An empty read (the jobs could not be read) adds nothing, so says nothing.
-    if (known === null && jobs.length) return { alertedJobs: jobs, quiet: true };
-    return null;
-  }
-
-  /**
-   * The watch cannot read GitHub, and has not for BLIND_AFTER_READS reads in a
-   * row: say so once, because a watch that has stopped reading looks exactly
-   * like a monitor that is green (CodeRabbit, #1332). Returns the field to
-   * store when the message went, or null (too soon, already said, or not sent:
-   * an unsent notice is tried again on the next failed read).
-   */
-  async function tellBlind({ current, unread, code, atMs }) {
-    if (unread < BLIND_AFTER_READS || current?.blindAlertedAt) return null;
-    return (await say(blindMessage({ unread, code }))) ? { blindAlertedAt: new Date(atMs).toISOString() } : null;
-  }
-
-  /**
-   * Read the monitor's runs, at most once per WATCH_INTERVAL_MS, and speak if
-   * the colour changed. Never throws on a failed GitHub read.
-   *
-   * @returns {Promise<{ checked: boolean, reason?: string, verdict?: string, told?: boolean }>}
-   */
-  async function checkIfDue() {
-    const at = now();
-    const atMs = at.getTime();
-    const current = await store.readDoc(CONTAINER, DELIVERY_WATCH_DOC_ID, ADMIN_CONFIG_PARTITION);
-    const lastAttemptMs = msOf(current?.lastAttemptAt);
-    if (Number.isFinite(lastAttemptMs) && atMs - lastAttemptMs < WATCH_INTERVAL_MS) {
-      return { checked: false, reason: 'not due' };
-    }
-
-    const base = {
-      id: DELIVERY_WATCH_DOC_ID,
-      configScope: ADMIN_CONFIG_PARTITION,
-      docType: DELIVERY_WATCH_DOC_TYPE,
-      workflow: WATCHED_WORKFLOW,
-      alertedRunId: current?.alertedRunId ?? null,
-      alertedAt: current?.alertedAt ?? null,
-      alertedJobs: storedJobs(current?.alertedJobs),
-      lastRunId: current?.lastRunId ?? null,
-      lastSuccessAt: current?.lastSuccessAt ?? null,
-      consecutiveUnread: current?.consecutiveUnread ?? 0,
-      blindAlertedAt: current?.blindAlertedAt ?? null,
-      lastAttemptAt: at.toISOString(),
-    };
-    // A read that got an answer, whatever the answer: the watch can see.
-    const seeing = { consecutiveUnread: 0, blindAlertedAt: null };
-    let next;
-    let outcome;
-    try {
-      const run = await latestRun();
-      if (!run) {
-        next = { ...base, ...seeing, lastError: null, lastVerdict: 'none' };
-        outcome = { checked: true, verdict: 'none', told: false };
-      } else {
-        const { quiet = false, ...changes } = (await decide(run, current, atMs)) ?? { quiet: true };
-        next = {
-          ...base,
-          ...seeing,
-          ...changes,
-          lastError: null,
-          lastVerdict: run.conclusion === 'success' ? 'green' : 'red',
-          lastRunId: run.id,
-          lastSuccessAt: at.toISOString(),
-        };
-        outcome = { checked: true, verdict: next.lastVerdict, told: !quiet };
-      }
-    } catch (error) {
-      const unread = (Number.isSafeInteger(current?.consecutiveUnread) ? current.consecutiveUnread : 0) + 1;
-      const code = /^[A-Z_]{2,40}$/.test(String(error?.code)) ? error.code : 'error';
-      const blind = await tellBlind({ current, unread, code, atMs });
-      next = {
-        ...base,
-        consecutiveUnread: unread,
-        ...(blind ?? {}),
-        lastError: describeReadError(error),
-        lastVerdict: current?.lastVerdict ?? null,
-      };
-      outcome = { checked: true, verdict: 'unread', told: blind !== null };
-      log.warn?.(`[delivery-watch] the monitor's runs could not be read (${code}); the next hourly read tries again`);
-    }
-
-    try {
-      if (current) await store.replaceDocIfMatch(CONTAINER, { ...next, _etag: current._etag }, PK);
-      else await store.createDoc(CONTAINER, next);
-    } catch (error) {
-      if (error?.code === 412 || error?.code === 409) return { ...outcome, written: false };
-      throw error;
-    }
-    return { ...outcome, written: true };
-  }
-
-  return { checkIfDue };
+  const d = { store, notifier, fetchImpl, now, log, timeoutMs };
+  return { checkIfDue: () => checkIfDue(d) };
 }

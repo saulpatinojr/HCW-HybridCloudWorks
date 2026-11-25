@@ -36,36 +36,22 @@ import { randomUUID } from 'node:crypto';
 import { json } from '../http/admin-handler.js';
 import { authoredMessage, errorCode, errorFacts } from '../http/error-response.js';
 import { syncMcpServerTools } from './mcp.js';
-import { usesOAuthConnect, validateMcpUrl } from './mcp-policy.js';
+import { usesOAuthConnect } from './mcp-policy.js';
 import {
   McpOAuthError,
   connectedUpdates,
   createOAuthHttp,
   exchangeAuthorizationCode,
-  hashState,
   revokeOAuthGrant,
   startOAuthConnect,
 } from './mcp-oauth.js';
-
-const MCP_CONTAINER = 'mcp_servers';
-const MAX_STATE_LENGTH = 512;
-const MAX_CODE_LENGTH = 4096;
-
-const fail = (status, error, code) => json(status, { ok: false, error, ...(code ? { code } : {}) });
-
-const userIdOf = (user) => user?.oid || user?.sub || null;
-
-const isPreconditionFailure = (error) => error?.code === 412 || error?.statusCode === 412;
-
-/** Whether the server still signs in with Connect, at the pending sign-in's resource origin. */
-function stillTheResource(server, pending) {
-  if (!usesOAuthConnect(server)) return false;
-  try {
-    return new URL(validateMcpUrl(server.url)).origin === new URL(pending.resource).origin;
-  } catch {
-    return false;
-  }
-}
+import {
+  MCP_CONTAINER,
+  fail,
+  isPreconditionFailure,
+  prepareCompletion,
+  userIdOf,
+} from './mcp-oauth-callback.js';
 
 /** Why a server cannot use Connect, or null when it can. */
 function connectRefusal(server, serverId) {
@@ -111,16 +97,26 @@ async function loadRouteServer(ctx, request, context, label) {
   return { serverId, server };
 }
 
+/**
+ * Everything a start needs before it talks to the provider: the role, the
+ * server named by the route, and a user id to tie the sign-in to.
+ * `{ serverId, server, userId }`, or `{ response }` refusing.
+ */
+async function openStart(ctx, request, context) {
+  const auth = await ctx.guard.requireRole(request, 'super_admin');
+  if (auth.error) return { response: auth.error };
+  const loaded = await loadRouteServer(ctx, request, context, 'startMcpOAuth');
+  if (loaded.response) return loaded;
+  const userId = userIdOf(auth.user);
+  if (!userId) return { response: fail(403, 'Your sign-in carries no user id, so a Connect cannot be tied to you.') };
+  return { serverId: loaded.serverId, server: loaded.server, userId };
+}
+
 /** POST cms/mcp/{serverId}/oauth/start */
 async function startMcpOAuth(ctx, request, context) {
-  const auth = await ctx.guard.requireRole(request, 'super_admin');
-  if (auth.error) return auth.error;
-  const loaded = await loadRouteServer(ctx, request, context, 'startMcpOAuth');
-  if (loaded.response) return loaded.response;
-  const { serverId, server } = loaded;
-
-  const userId = userIdOf(auth.user);
-  if (!userId) return fail(403, 'Your sign-in carries no user id, so a Connect cannot be tied to you.');
+  const opened = await openStart(ctx, request, context);
+  if (opened.response) return opened.response;
+  const { serverId, server, userId } = opened;
 
   try {
     const { authorizationUrl, updates } = await startOAuthConnect({
@@ -142,143 +138,15 @@ async function startMcpOAuth(ctx, request, context) {
   }
 }
 
-/** The pending sign-in this state names, or the response refusing it. */
-async function findPending(ctx, context, { state, userId }) {
-  const stateHash = hashState(state);
-  let rows;
-  try {
-    rows = await ctx.store.queryDocs(
-      MCP_CONTAINER,
-      'SELECT * FROM c WHERE c.oauthPending.stateHash = @stateHash',
-      [{ name: '@stateHash', value: stateHash }]
-    );
-  } catch (error) {
-    context.error?.('[completeMcpOAuth] pending lookup failed:', errorFacts(error));
-    return { response: fail(500, 'Failed to read MCP server configuration') };
-  }
-  const server = (rows || []).find((doc) => doc?.oauthPending?.stateHash === stateHash);
-  if (!server) {
-    return {
-      response: fail(
-        400,
-        'This sign-in is not one this site started, or it has already been used. Press Connect on the server card to start again.',
-        'STATE_UNKNOWN'
-      ),
-    };
-  }
-  if (!userId || server.oauthPending.createdBy !== userId) {
-    return {
-      response: fail(
-        403,
-        `This sign-in for ${server.name || server.id} was started by a different administrator. Press Connect yourself to connect it.`,
-        'STATE_OTHER_ADMIN'
-      ),
-    };
-  }
-  return { server };
-}
-
-/** POST cms/mcp/oauth/complete — { state, code } from the vendor's redirect. */
-async function completeMcpOAuth(ctx, request, context) {
-  const auth = await ctx.guard.requireRole(request, 'super_admin');
-  if (auth.error) return auth.error;
-
-  const body = await request.json().catch(() => null);
-  const state = typeof body?.state === 'string' ? body.state.trim() : '';
-  const code = typeof body?.code === 'string' ? body.code.trim() : '';
-  // Verbatim, not trimmed: RFC 9207 compares `iss` as a simple string.
-  const iss = typeof body?.iss === 'string' ? body.iss.slice(0, 512) : '';
-  if (!state || !code || state.length > MAX_STATE_LENGTH || code.length > MAX_CODE_LENGTH) {
-    return fail(
-      400,
-      'The sign-in came back without a usable code and state. Press Connect on the server card to start again.',
-      'BAD_CALLBACK'
-    );
-  }
-
-  const found = await findPending(ctx, context, { state, userId: userIdOf(auth.user) });
-  if (found.response) return found.response;
-  const { server } = found;
-  const serverId = server.id;
-  const name = server.name || serverId;
-  const pending = server.oauthPending;
-
-  // Spend the state before anything else, guarded by the ETag the lookup
-  // read: of two completions racing on one state, one write wins and the
-  // other answers "already used" without reaching the token endpoint. A
-  // document read without an ETag cannot be spent safely, so it is not.
-  if (!server._etag) {
-    context.error?.('[completeMcpOAuth] the server document was read without an ETag; refusing');
-    return fail(500, 'The sign-in could not be verified. Press Connect on the server card to start again.');
-  }
-  // The document as the spend left it: its ETag guards the token write at
-  // the end, so a server moved or switched to another sign-in method after
-  // this point is not given a token for the old resource (review of #1019).
-  let spent;
-  try {
-    spent = await ctx.store.patchDoc(MCP_CONTAINER, serverId, { oauthPending: null }, { ifMatch: server._etag });
-  } catch (error) {
-    if (isPreconditionFailure(error)) {
-      return fail(409, 'This sign-in has already been used. Press Connect on the server card to start again.', 'STATE_USED');
-    }
-    context.error?.('[completeMcpOAuth] could not spend the state:', errorFacts(error));
-    return fail(500, 'Failed to update MCP server configuration');
-  }
-
-  if (!(Date.parse(pending.expiresAt) > ctx.now().getTime())) {
-    return fail(
-      400,
-      `The sign-in for ${name} took longer than 10 minutes, so it was not accepted. Press Connect on its card to start again.`,
-      'STATE_EXPIRED'
-    );
-  }
-
-  // RFC 9207: the redirect names the issuer that produced the code. Present,
-  // it must be the one this sign-in started with; absent, it is refused only
-  // where the server said it always sends it. This is the mix-up defence: a
-  // code another authorization server issued is not exchanged here.
-  if (iss ? iss !== pending.issuer : pending.issParameterSupported === true) {
-    return fail(
-      400,
-      `The sign-in came back from ${iss || 'an unnamed issuer'}, not from ${name}'s sign-in server ${pending.issuer}, so it was not accepted. Press Connect on its card to start again.`,
-      'ISSUER_MISMATCH'
-    );
-  }
-
-  // The server must still be the one the sign-in was for: still signing in
-  // with Connect, and still at the resource the token will be issued for.
-  if (!stillTheResource(server, pending)) {
-    return fail(
-      409,
-      `${name} changed while the sign-in was in progress, so it was not accepted. Press Connect on its card to start again.`,
-      'SERVER_CHANGED'
-    );
-  }
-
-  let tokens;
-  try {
-    tokens = await exchangeAuthorizationCode({
-      pending,
-      code,
-      clientSecret: server.oauthClientSecret ?? null,
-      http: ctx.oauthHttp,
-      now: ctx.now,
-      name,
-    });
-  } catch (error) {
-    // McpOAuthError is authored; anything else gets this module's sentence (#945).
-    const message = `${authoredMessage(error, `The sign-in for ${name} could not be completed.`)} Press Connect on the ${name} card to try again.`;
-    context.warn?.(`[completeMcpOAuth] the code exchange failed (${errorCode(error)})`);
-    return fail(502, message, 'EXCHANGE_FAILED');
-  }
-
-  const updates = connectedUpdates({ pending, tokens, now: ctx.now });
+/** Write the connection under the spend's ETag: the refusal, or null once stored. */
+async function storeConnection(ctx, context, { serverId, spent, updates, name }) {
   if (!spent?._etag) {
     context.error?.('[completeMcpOAuth] the spent document came back without an ETag; refusing to store the token');
     return fail(500, `${name} signed in, but the connection could not be saved. Press Connect again.`);
   }
   try {
     await ctx.store.patchDoc(MCP_CONTAINER, serverId, updates, { ifMatch: spent._etag });
+    return null;
   } catch (error) {
     if (isPreconditionFailure(error)) {
       return fail(
@@ -290,10 +158,14 @@ async function completeMcpOAuth(ctx, request, context) {
     context.error?.('[completeMcpOAuth] could not store the connection:', errorFacts(error));
     return fail(500, `${name} signed in, but the connection could not be saved. Press Connect again.`);
   }
+}
+
+/** After the connection is stored: the audit row, the first tool sync, and the answer. */
+async function finishConnection(ctx, context, { server, serverId, name, pending, updates, user }) {
   await auditConnection(ctx, context, {
     action: 'mcp_oauth_connected',
     serverId,
-    user: auth.user,
+    user,
     details: { issuer: pending.issuer, scope: updates.oauth.scope },
   });
 
@@ -317,6 +189,38 @@ async function completeMcpOAuth(ctx, request, context) {
     toolCount: sync.ok ? sync.tools.length : 0,
     ...(sync.ok ? {} : { syncError: sync.error }),
   });
+}
+
+/** POST cms/mcp/oauth/complete — { state, code } from the vendor's redirect. */
+async function completeMcpOAuth(ctx, request, context) {
+  const auth = await ctx.guard.requireRole(request, 'super_admin');
+  if (auth.error) return auth.error;
+
+  const prepared = await prepareCompletion(ctx, request, context, auth.user);
+  if (prepared.response) return prepared.response;
+  const { server, serverId, name, pending, spent, code } = prepared;
+
+  let tokens;
+  try {
+    tokens = await exchangeAuthorizationCode({
+      pending,
+      code,
+      clientSecret: server.oauthClientSecret ?? null,
+      http: ctx.oauthHttp,
+      now: ctx.now,
+      name,
+    });
+  } catch (error) {
+    // McpOAuthError is authored; anything else gets this module's sentence (#945).
+    const message = `${authoredMessage(error, `The sign-in for ${name} could not be completed.`)} Press Connect on the ${name} card to try again.`;
+    context.warn?.(`[completeMcpOAuth] the code exchange failed (${errorCode(error)})`);
+    return fail(502, message, 'EXCHANGE_FAILED');
+  }
+
+  const updates = connectedUpdates({ pending, tokens, now: ctx.now });
+  const notStored = await storeConnection(ctx, context, { serverId, spent, updates, name });
+  if (notStored) return notStored;
+  return finishConnection(ctx, context, { server, serverId, name, pending, updates, user: auth.user });
 }
 
 /** POST cms/mcp/{serverId}/oauth/disconnect */

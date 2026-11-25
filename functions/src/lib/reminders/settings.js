@@ -19,8 +19,12 @@
  * from the sheet never makes a reminder fire twice.
  */
 
-import { AuthoredError } from '../http/error-response.js';
 import { STAGES, parseDateOnly } from './calendar.js';
+import { assertOnlyKeys, fail, isPlainObject, normalizeNotified, normalizeUrl, RemindersValidationError } from './fields.js';
+
+// The field checks and the refusal's error live in fields.js; exported again
+// here so callers keep importing from settings.js.
+export { MAX_URL_LENGTH, RemindersValidationError } from './fields.js';
 
 // The calendar (dates, stages) lives beside this file; re-exported so a
 // reader of the shape finds the whole of "reminders" from one import.
@@ -45,65 +49,10 @@ export const MAX_REMINDERS = 200;
 export const REGISTER_RESERVED_ROWS = 20;
 export const MAX_TITLE_LENGTH = 200;
 export const MAX_NOTES_LENGTH = 2000;
-export const MAX_URL_LENGTH = 2048;
 export const MAX_LEAD_DAYS = 365;
 export const DEFAULT_LEAD_DAYS = 7;
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-
-/** Thrown by the normalizer; platform-settings.js turns it into a 400 (authored, #945). */
-export class RemindersValidationError extends AuthoredError {
-  /** @param {string} message - the refusal, naming the field */
-  constructor(message) {
-    super(message);
-    this.name = 'RemindersValidationError';
-    this.status = 400;
-  }
-}
-
-const fail = (message) => {
-  throw new RemindersValidationError(message);
-};
-
-const isPlainObject = (value) =>
-  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
-function assertOnlyKeys(object, allowed, where) {
-  const unknown = Object.keys(object).filter((key) => !allowed.includes(key));
-  if (unknown.length > 0) {
-    fail(`Unknown field(s) in ${where}: ${unknown.join(', ')}. Allowed: ${allowed.join(', ')}`);
-  }
-}
-
-/** An https URL with nothing that could smuggle a second one, or empty. */
-function normalizeUrl(value, where) {
-  if (value === undefined || value === null) return '';
-  if (typeof value !== 'string') fail(`${where}.url must be a string`);
-  const url = value.trim();
-  if (url === '') return '';
-  if (url.length > MAX_URL_LENGTH) fail(`${where}.url is too long`);
-  if (/[\s<>"'`\\]/.test(url) || !/^https:\/\/[^/]+/.test(url)) {
-    fail(`${where}.url must be an https URL`);
-  }
-  return url;
-}
-
-/** The timer's stamps: each stage an ISO instant or absent. Never invented here. */
-function normalizeNotified(value, where) {
-  if (value === undefined || value === null) return {};
-  if (!isPlainObject(value)) fail(`${where}.notified must be an object`);
-  assertOnlyKeys(value, STAGES, `${where}.notified`);
-  const out = {};
-  for (const stage of STAGES) {
-    const stamp = value[stage];
-    if (stamp === undefined || stamp === null) continue;
-    if (typeof stamp !== 'string' || !Number.isFinite(Date.parse(stamp))) {
-      fail(`${where}.notified.${stage} must be an ISO timestamp`);
-    }
-    out[stage] = new Date(stamp).toISOString();
-  }
-  return out;
-}
 
 function normalizeReminder(entry, index) {
   const where = `reminders[${index}]`;

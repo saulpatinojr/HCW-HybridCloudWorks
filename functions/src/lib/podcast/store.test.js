@@ -200,7 +200,7 @@ describe('uploadTranscriptAudio', () => {
       'article/picking-a-state-backend.mp3',
       expect.any(Buffer),
       'audio/mpeg',
-      { sourceKind: 'article', sourceId: 'content-1', sourceSlug: 'picking-a-state-backend' }
+      { metadata: { sourceKind: 'article', sourceId: 'content-1', sourceSlug: 'picking-a-state-backend' } }
     );
     expect(out).toEqual({
       path: 'article/picking-a-state-backend.mp3',

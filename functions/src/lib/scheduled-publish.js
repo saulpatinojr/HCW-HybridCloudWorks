@@ -125,6 +125,46 @@ export function buildPublishFailureAlert({ existing, failures, nowIso }) {
 }
 
 /**
+ * Publish one due row and count what happened on `summary`; a refusal the
+ * publish reports joins `failures`. A throw is the caller's to count.
+ */
+async function publishRow({ store, publish }, { contentId, nowIso, summary, failures }) {
+  const result = await publish.processPublishContent(contentId, {
+    user: { oid: 'publishScheduledContent', email: 'scheduler@system' },
+    markLive: true,
+    createSlugPageTrigger: true,
+    addToCurated: true,
+  });
+
+  if (result?.error) {
+    summary.failed += 1;
+    failures.push({ contentId, error: String(result.error) });
+    return;
+  }
+  if (result?.skipped) {
+    // Someone else touched the document between the read and the
+    // write. Leaving the schedule set means the next tick retries it,
+    // which is the right outcome for a lost race.
+    summary.skipped += 1;
+    return;
+  }
+
+  summary.published += 1;
+
+  // Only after a publish that actually happened. Clearing it on a
+  // failure would silently cancel the operator's schedule.
+  //
+  // `null`, not `undefined`: `patchDoc` reads `undefined` as a field
+  // deletion and reroutes to read-modify-write, and `null` is already
+  // what `saveContentSchedule` writes for an instant publish, so the
+  // two paths leave the document in the same shape.
+  await store.patchDoc('content', contentId, {
+    scheduledPublishDate: null,
+    scheduledPublishCompletedAt: nowIso,
+  });
+}
+
+/**
  * @param {object} deps
  * @param {{queryDocs: Function, patchDoc: Function, readDoc: Function, upsertDoc: Function,
  *   createDoc: Function, replaceDocIfMatch: Function}} deps.store the last two for the
@@ -202,39 +242,7 @@ export function createScheduledPublisher({ store, publish, now = () => new Date(
       for (const row of due) {
         const contentId = String(row.id);
         try {
-          const result = await publish.processPublishContent(contentId, {
-            user: { oid: 'publishScheduledContent', email: 'scheduler@system' },
-            markLive: true,
-            createSlugPageTrigger: true,
-            addToCurated: true,
-          });
-
-          if (result?.error) {
-            summary.failed += 1;
-            failures.push({ contentId, error: String(result.error) });
-            continue;
-          }
-          if (result?.skipped) {
-            // Someone else touched the document between the read and the
-            // write. Leaving the schedule set means the next tick retries it,
-            // which is the right outcome for a lost race.
-            summary.skipped += 1;
-            continue;
-          }
-
-          summary.published += 1;
-
-          // Only after a publish that actually happened. Clearing it on a
-          // failure would silently cancel the operator's schedule.
-          //
-          // `null`, not `undefined`: `patchDoc` reads `undefined` as a field
-          // deletion and reroutes to read-modify-write, and `null` is already
-          // what `saveContentSchedule` writes for an instant publish, so the
-          // two paths leave the document in the same shape.
-          await store.patchDoc('content', contentId, {
-            scheduledPublishDate: null,
-            scheduledPublishCompletedAt: nowIso,
-          });
+          await publishRow({ store, publish }, { contentId, nowIso, summary, failures });
         } catch (error) {
           summary.failed += 1;
           failures.push({

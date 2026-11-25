@@ -47,8 +47,11 @@
  * one field it is wanted for.
  */
 
-import { dateOnly, daysUntil, parseDateOnly } from '../reminders/calendar.js';
+import { dateOnly, daysUntil } from '../reminders/calendar.js';
 import { CREDENTIAL_REGISTER, CREDENTIAL_STORES, isRecordable } from './register.js';
+import { resolveLive } from './live-dates.js';
+
+export { mcpConnection, resolveLive } from './live-dates.js';
 
 export const CREDENTIAL_STATES = Object.freeze(['ok', 'due-soon', 'overdue', 'unknown']);
 
@@ -64,116 +67,6 @@ const DAY_MS = 86_400_000;
 export function dueSoonDays(entry) {
   const lifetime = entry?.lifetimeDays;
   return Number.isInteger(lifetime) && lifetime < SHORT_LIFETIME_DAYS ? SHORT_DUE_SOON_DAYS : DUE_SOON_DAYS;
-}
-
-/** An ISO instant from an ISO string or epoch ms, or null. */
-function instant(value) {
-  if (typeof value === 'number') return Number.isFinite(value) ? new Date(value).toISOString() : null;
-  if (typeof value !== 'string' || !value) return null;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
-}
-
-/** The owner's recorded date for an entry, as `YYYY-MM-DD`, or null. */
-function recordedOn(entry, records) {
-  const rotatedOn = records?.[entry.id]?.rotatedOn;
-  return isRecordable(entry) && parseDateOnly(rotatedOn) !== null ? rotatedOn : null;
-}
-
-/**
- * An MCP server's connection, from its projected record (sources.js
- * MCP_SERVER_QUERY): `connected`, `expired` (a refresh failed, so someone
- * must sign in again) or `not_connected`. Null when the record could not be
- * read, which is not the same as absent.
- *
- * Plaud's token is pasted, not obtained through Connect, and its timer marks
- * the document `disconnected` when a refresh fails (lib/timers/plaud-token.js).
- * The others are OAuth Connect servers, and this is mcp-oauth.js's
- * oauthConnectionState rule read off the projection: `oauth.status`, and
- * whether a token is there. status.test.js holds the two to the same answer.
- */
-export function mcpConnection(serverId, mcp) {
-  if (!mcp || !Object.hasOwn(mcp, serverId)) return null;
-  const record = mcp[serverId];
-  if (!record) return 'not_connected';
-  if (serverId === 'plaud') {
-    if (record.status === 'disconnected') return 'expired';
-    return record.hasToken ? 'connected' : 'not_connected';
-  }
-  if (record.oauthStatus === 'connected' && record.hasToken) return 'connected';
-  return record.oauthStatus === 'disconnected' ? 'expired' : 'not_connected';
-}
-
-/** When an MCP server's token was last renewed, from its projected record, or null. */
-function mcpRenewedAt(serverId, mcp) {
-  const record = mcp?.[serverId];
-  if (!record) return null;
-  if (serverId === 'plaud') return instant(record.lastTokenRefresh);
-  return instant(record.oauthRefreshedAt) ?? instant(record.oauthConnectedAt);
-}
-
-/** The Coder automation report's dates for one of its two tokens. */
-function coderDates(which, coder) {
-  if (!coder) return { rotatedAt: null, expiresAt: null };
-  if (which === 'statusToken') {
-    return { rotatedAt: instant(coder.statusTokenRotatedAt), expiresAt: instant(coder.statusTokenExpiresAt) };
-  }
-  return { rotatedAt: null, expiresAt: instant(coder.rotationTokenExpiresAt) };
-}
-
-/**
- * What the live sources say about one entry.
- *
- * @param {object} entry a register entry
- * @param {object} sources
- * @param {Record<string, object>} [sources.secrets] admin_config/secret_state's `secrets`
- * @param {object|null} [sources.coder] admin_config/coder_automation
- * @param {Record<string, object|null>} [sources.mcp] projected mcp_servers records by id, a failed read absent
- * @param {Record<string, object>} [sources.records] admin_config/credential_register's `credentials`
- */
-export function resolveLive(entry, sources = {}) {
-  const rotations = [];
-  const source = entry.source ?? {};
-  let expiresAt = null;
-
-  if (source.secret) {
-    const at = instant(sources.secrets?.[source.secret]?.lastWriteAt) ??
-      instant(sources.secrets?.[source.secret]?.createdAt);
-    if (at) rotations.push({ at, source: 'key-vault' });
-  }
-  if (source.coder) {
-    const dates = coderDates(source.coder, sources.coder);
-    if (dates.rotatedAt) rotations.push({ at: dates.rotatedAt, source: 'lab-host' });
-    expiresAt = dates.expiresAt;
-  }
-  if (source.labCertificate) {
-    const cert = sources.labCertificates?.[source.labCertificate];
-    const at = instant(cert?.notBefore);
-    if (at) rotations.push({ at, source: 'lab-host' });
-    if (cert?.notAfter) expiresAt = instant(cert.notAfter);
-  }
-  if (source.swaReset) {
-    const at = instant(sources.swaReset?.lastResetAt);
-    if (at) rotations.push({ at, source: 'azure' });
-  }
-  let connection = null;
-  if (source.mcpServer) {
-    connection = mcpConnection(source.mcpServer, sources.mcp);
-    const at = mcpRenewedAt(source.mcpServer, sources.mcp);
-    if (at) rotations.push({ at, source: 'oauth' });
-  }
-  const recorded = recordedOn(entry, sources.records);
-  if (recorded) rotations.push({ at: `${recorded}T00:00:00.000Z`, source: 'owner' });
-
-  // ISO strings of one shape sort as time; the latest rotation is the one that counts.
-  const latest = rotations.sort((a, b) => a.at.localeCompare(b.at)).at(-1) ?? null;
-  return {
-    lastRotatedAt: latest?.at ?? null,
-    lastRotatedSource: latest?.source ?? null,
-    recordedOn: recorded,
-    expiresAt,
-    connection,
-  };
 }
 
 /** The expiry to judge by: live, or estimated for a hand credential; null when there is none. */

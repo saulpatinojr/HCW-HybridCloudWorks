@@ -375,9 +375,11 @@ export async function uploadEpisodeAudio({
   const path = audioPath(provider, examCode, areaSlug, stamp);
 
   await storage.uploadBlob(AUDIO_CONTAINER, path, audio, contentType, {
-    provider: String(provider).toLowerCase(),
-    examCode: String(examCode).toUpperCase(),
-    areaSlug,
+    metadata: {
+      provider: String(provider).toLowerCase(),
+      examCode: String(examCode).toUpperCase(),
+      areaSlug,
+    },
   });
 
   return { path, url: mediaUrlFor(AUDIO_CONTAINER, path), bytes: audio.length };

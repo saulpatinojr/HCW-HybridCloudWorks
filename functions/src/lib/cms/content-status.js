@@ -245,47 +245,33 @@ export function buildStatusUpdateData(data, newStatus, reviewedBy, reviewNotes, 
   return updateData;
 }
 
+const isSet = (value) => value !== null && value !== undefined;
+
+/**
+ * The request checks for transitionContentStatus, in the order they are
+ * asked. Each answers the error body for a 400, or null when it passes.
+ */
+const TRANSITION_CHECKS = [
+  ({ contentId }) => (contentId && typeof contentId !== 'string' ? { error: 'contentId must be a string' } : null),
+  ({ blogId }) => (blogId && typeof blogId !== 'string' ? { error: 'blogId must be a string' } : null),
+  ({ markLive }) =>
+    isSet(markLive) && typeof markLive !== 'boolean' ? { error: 'markLive must be boolean when provided' } : null,
+  ({ reviewNotes }) =>
+    String(reviewNotes || '').length > 5000 ? { error: 'reviewNotes exceeds 5000 characters' } : null,
+  ({ reviewedBy }) => (String(reviewedBy || '').length > 240 ? { error: 'reviewedBy exceeds 240 characters' } : null),
+  ({ contentId, blogId, normalizedStatus }) =>
+    (!contentId && !blogId) || !normalizedStatus ? { error: 'contentId (or blogId) and newStatus required' } : null,
+  ({ normalizedStatus }) =>
+    VALID_STATUSES.includes(normalizedStatus)
+      ? null
+      : { error: `Invalid status: ${normalizedStatus}`, validStatuses: VALID_STATUSES },
+];
+
 /** Request-shape validation for transitionContentStatus (source :6750). */
-export function validateTransitionRequest({
-  contentId,
-  blogId,
-  normalizedStatus,
-  markLive,
-  reviewNotes,
-  reviewedBy,
-}) {
-  if (contentId && typeof contentId !== 'string') {
-    return { ok: false, status: 400, error: { error: 'contentId must be a string' } };
-  }
-  if (blogId && typeof blogId !== 'string') {
-    return { ok: false, status: 400, error: { error: 'blogId must be a string' } };
-  }
-  if (markLive !== null && markLive !== undefined && typeof markLive !== 'boolean') {
-    return {
-      ok: false,
-      status: 400,
-      error: { error: 'markLive must be boolean when provided' },
-    };
-  }
-  if (String(reviewNotes || '').length > 5000) {
-    return { ok: false, status: 400, error: { error: 'reviewNotes exceeds 5000 characters' } };
-  }
-  if (String(reviewedBy || '').length > 240) {
-    return { ok: false, status: 400, error: { error: 'reviewedBy exceeds 240 characters' } };
-  }
-  if ((!contentId && !blogId) || !normalizedStatus) {
-    return {
-      ok: false,
-      status: 400,
-      error: { error: 'contentId (or blogId) and newStatus required' },
-    };
-  }
-  if (!VALID_STATUSES.includes(normalizedStatus)) {
-    return {
-      ok: false,
-      status: 400,
-      error: { error: `Invalid status: ${normalizedStatus}`, validStatuses: VALID_STATUSES },
-    };
+export function validateTransitionRequest(request) {
+  for (const check of TRANSITION_CHECKS) {
+    const error = check(request);
+    if (error) return { ok: false, status: 400, error };
   }
   return { ok: true };
 }

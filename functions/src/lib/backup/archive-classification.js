@@ -55,31 +55,50 @@ import { createHash } from 'node:crypto';
 
 import { STRIPPED_FIELDS } from '../developer-api/proposal-cycle.js';
 import { isPublicDocument } from '../public-reads.js';
+import {
+  adminConfigDecision,
+  adminSettingsDecision,
+  ADMIN_CONFIG_KEEP,
+  ADMIN_CONFIG_LEAVE_OUT,
+  ADMIN_SETTINGS_KEEP,
+  ADMIN_SETTINGS_LEAVE_OUT,
+  leaveOutReason,
+} from './archive-classification-admin.js';
+import {
+  addressWithoutSecrets,
+  keep,
+  KINDS,
+  looksSensitive,
+  SENSITIVE_EXACT_NAMES,
+  SENSITIVE_NAME_TESTS,
+  SENSITIVE_NAME_WORDS,
+  withoutSensitiveKeys,
+} from './archive-classification-fields.js';
+import { DECISIONS, freeze, REASONS } from './archive-classification-reasons.js';
 
-/** @typedef {'archive'|'archive-changed'|'leave-out'} ArchiveDecision */
-
-export const DECISIONS = Object.freeze({
-  archive: 'archive',
-  changed: 'archive-changed',
-  leaveOut: 'leave-out',
-});
-
-/**
- * Why a container, or one record, is left out. The words are the ones the
- * report and the manifest print; none of them names a record.
- */
-export const REASONS = Object.freeze({
-  promise: 'promise', // someone was told it would be deleted, or agreed to less than keeping it for good
-  secret: 'secret', // a password, token, key or a hash of one
-  accessList: 'access-list', // who may sign in; not content
-  derived: 'derived', // a job, a publish or a script in Git rebuilds it
-  workingState: 'working-state', // jobs, counters, leases, caches: nothing later
-  unclassified: 'unclassified', // the owner has not said yet (ADR 0046, "owner to say"), or this file does not name the container at all
-  unlisted: 'unlisted', // an admin_config or admin_settings document id, or a kind of record, this file does not name
-  orphan: 'orphan', // a version whose content item is not in the backup
-});
-
-const freeze = (list) => Object.freeze([...list].sort());
+// The rules live in four files: this one (which containers, and one record),
+// archive-classification-reasons.js (the decisions and reasons),
+// archive-classification-fields.js (field names and how a kept field is
+// copied) and archive-classification-admin.js (the admin_config and
+// admin_settings documents). Everything the other three export that callers
+// used from here before is exported from here still.
+export { DECISIONS, REASONS } from './archive-classification-reasons.js';
+export {
+  addressWithoutSecrets,
+  looksSensitive,
+  SENSITIVE_EXACT_NAMES,
+  SENSITIVE_NAME_WORDS,
+} from './archive-classification-fields.js';
+export {
+  adminConfigDecision,
+  adminSettingsDecision,
+  ADMIN_CONFIG_KEEP,
+  ADMIN_CONFIG_LEAVE_OUT,
+  ADMIN_SETTINGS_KEEP,
+  ADMIN_SETTINGS_LEAVE_OUT,
+  archiveDocumentLabel,
+  OTHER_DOCUMENT,
+} from './archive-classification-admin.js';
 
 /**
  * Archived as they are. Every container here is one the code under
@@ -256,156 +275,8 @@ export const OWNER_ACCEPTED = Object.freeze({
 /** The date of the owner's decision to keep this container as the dry run showed it, or null. */
 export const ownerAcceptedOn = (container) => (OWNER_ACCEPTED.containers.includes(container) ? OWNER_ACCEPTED.date : null);
 
-// ── Names that look like a secret or a person's contact details ─────────────
-
-/**
- * Does a field NAME look like it holds a secret or someone's contact details?
- * The name is read, never the value.
- *
- * The name is first folded to lower-case letters and digits (`api_key`,
- * `apiKey` and `API-KEY` all become `apikey`). It matches when that contains
- * one of the WORDS below, or is one of the EXACT names. The list is wide on
- * purpose: a harmless name that matches (`contentHash`, `apiKeyEnvVar`) costs
- * a line in a report, and a missed one could cost a key in a permanent copy.
- *
- * Used in two places: the dry run counts the records that carry such a name,
- * at any depth, so the owner sees them before anything is archived
- * (archive-report.js); and the keep lists below drop such a name from inside
- * a kept field, so a token cannot ride in one level down.
- */
-export const SENSITIVE_NAME_WORDS = Object.freeze([
-  'token',
-  'secret',
-  'password',
-  'passwd',
-  'passphrase',
-  'apikey',
-  'accesskey',
-  'privatekey',
-  'signingkey',
-  'clientkey',
-  'authorization',
-  'credential',
-  'cookie',
-  'bearer',
-  'hash',
-  'salt',
-  'signature',
-  'email',
-  'phone',
-]);
-/** Short names that only count when they are the whole name: `sas` and `sig` (signed web addresses), `key`, `pwd`, `auth`, `pin`. */
-export const SENSITIVE_EXACT_NAMES = Object.freeze(['sas', 'sig', 'key', 'keys', 'pwd', 'auth', 'pin', 'otp', 'ssn']);
-
-/** @param {unknown} name */
-export function looksSensitive(name) {
-  if (typeof name !== 'string' || !name) return false;
-  const folded = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (!folded) return false;
-  if (SENSITIVE_EXACT_NAMES.includes(folded)) return true;
-  // `sas` and `sig` as their own word in a longer name: sasToken, url_sig.
-  if (/(^|[^a-z])(sas|sig)([^a-z]|$)/.test(name.toLowerCase())) return true;
-  if (/(^|[a-z])(Sas|Sig)([A-Z]|$)/.test(name)) return true;
-  return SENSITIVE_NAME_WORDS.some((word) => folded.includes(word));
-}
-
-/** How deep a kept field is read, and how many values of one field, before the rest is dropped. */
-const MAX_KEPT_DEPTH = 6;
-const MAX_KEPT_NODES = 5000;
-
-/**
- * A copy of a kept field's value with every key that looks sensitive taken
- * out, at any depth. Bounded: past the depth or the size limit the rest is
- * dropped, never kept unread. Returns `{ value, dropped }`.
- */
-function withoutSensitiveKeys(input) {
-  let nodes = 0;
-  let dropped = false;
-  const walk = (value, depth) => {
-    nodes += 1;
-    if (value === null || typeof value !== 'object') return value;
-    if (depth >= MAX_KEPT_DEPTH || nodes > MAX_KEPT_NODES) {
-      dropped = true;
-      return undefined;
-    }
-    if (Array.isArray(value)) {
-      return value.map((item) => walk(item, depth + 1)).filter((item) => item !== undefined);
-    }
-    const copy = {};
-    for (const [key, inner] of Object.entries(value)) {
-      if (looksSensitive(key)) {
-        dropped = true;
-        continue;
-      }
-      const kept = walk(inner, depth + 1);
-      if (kept !== undefined) copy[key] = kept;
-    }
-    return copy;
-  };
-  const value = walk(input, 0);
-  return { value, dropped };
-}
-
 // ── Keep lists: what is kept from a record, field by field ─────────────────
-
-const isScalar = (value) => value === null || ['string', 'number', 'boolean'].includes(typeof value);
-
-/** The name of an app setting, as the site spells them: `SOME_SETTING_NAME`. Never a key's value. */
-const SETTING_NAME = /^[A-Z][A-Z0-9_]{1,63}$/;
-
-/**
- * A web address with everything that can carry a key cut off: the query
- * string (`?api_key=...`), the fragment (`#...`) and any user name and
- * password (`user:pass@`). An address that cannot be read, or is not http or
- * https, is dropped whole (`null`).
- * @param {unknown} value
- * @returns {string|null}
- */
-export function addressWithoutSecrets(value) {
-  if (typeof value !== 'string' || !value.trim()) return null;
-  let parsed;
-  try {
-    parsed = new URL(value.trim());
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
-  parsed.username = '';
-  parsed.password = '';
-  parsed.search = '';
-  parsed.hash = '';
-  return parsed.toString();
-}
-
-/**
- * How one kept field is copied. Each returns the value to keep, or
- * `undefined` to drop the field.
- *
- *   scalar   text, a number, true/false or null; anything nested is dropped
- *   name     the NAME of an app setting (`SOME_SETTING_NAME`); anything else is dropped
- *   address  a web address without its query string, fragment or user name
- *   strings  a list of text items; other items are dropped
- *   tools    a list of tools as `{ name, description }`; nothing else of a tool is kept
- *   nested   any value, with every key that looks sensitive taken out at any depth
- */
-const KINDS = Object.freeze({
-  scalar: (value) => (isScalar(value) ? value : undefined),
-  name: (value) => (typeof value === 'string' && SETTING_NAME.test(value) ? value : undefined),
-  address: (value) => addressWithoutSecrets(value) ?? undefined,
-  strings: (value) => (Array.isArray(value) ? value.filter((item) => typeof item === 'string') : undefined),
-  tools: (value) =>
-    Array.isArray(value)
-      ? value
-          .filter((tool) => tool && typeof tool === 'object' && typeof tool.name === 'string')
-          .map((tool) => ({
-            name: tool.name,
-            ...(typeof tool.description === 'string' ? { description: tool.description } : {}),
-          }))
-      : undefined,
-  nested: (value) => withoutSensitiveKeys(value).value,
-});
-
-const keep = (kind, names) => Object.fromEntries(names.map((name) => [name, kind]));
+// (Each field's kind, and how it is copied, is in archive-classification-fields.js.)
 
 /**
  * An outside tool server (`mcp_servers`). The writer
@@ -721,191 +592,7 @@ export function createContentIndex() {
   };
 }
 
-// ── admin_config: one document at a time (ADR 0046 deferred this list here) ──
-
-/**
- * `admin_config` is one container that about seventy features keep a
- * document in. The archive keeps the ones that are settings or the owner's
- * own writing, and leaves out key records and short-lived state. Each id (or
- * id prefix) the code under `functions/src` writes is named below, once; the
- * test beside this file reads the source and fails when it finds an id that
- * is in neither list.
- *
- * A document whose id is on no list is LEFT OUT and counted as `unlisted` in
- * the dry-run report, so a real document the code no longer names shows up as
- * a number for the owner instead of slipping into the archive.
- */
-export const ADMIN_CONFIG_KEEP = Object.freeze({
-  ids: freeze([
-    // Platform Settings (platform-settings.js): one document per setting.
-    'default_heroes',
-    'social_autopost',
-    'podcast_feeds',
-    'podcast_voices',
-    'newsletter_settings',
-    'content_taxonomy',
-    'reminders',
-    'listen_and_learn_speech',
-    // The newsletter's From address (newsletter/sender.js): the site's own.
-    'newsletter_sender',
-    // Folder names of the image gallery (gallery-images.js).
-    'gallery_folders',
-    // The writing tool's voice profile and prompts (content/forge-studio/config.js).
-    'forge_profile',
-    'forge_prompts',
-    // Running totals of the writing tool (content/forge.js): numbers only.
-    'forge_stats',
-    // The owner's calendar alerts (calendar-alerts/model.js).
-    'calendar_alerts',
-    // The subscriptions ledger: what the owner pays (cost/ledger-store.js). The owner's own.
-    'cost_ledger',
-    // The date each credential was last replaced, by name only, never a value (credentials/sources.js).
-    'credential_register',
-  ]),
-  prefixes: Object.freeze([
-    // The owner's status, costs and notes on one community event (community-days/notes.js).
-    'community_days_event_',
-  ]),
-});
-
-/** Left out of `admin_config`, with the reason. */
-export const ADMIN_CONFIG_LEAVE_OUT = Object.freeze({
-  ids: Object.freeze({
-    // The content agent's key record: a hash of the key (agent-content/keys.js).
-    'agent_content_key:koda': REASONS.secret,
-    // When each Key Vault secret was last written (admin-secrets.js): a picture of the vault on one day.
-    secret_state: REASONS.workingState,
-    // Coder's last answers to the status token (labs/coder-status.js).
-    coder_status_token: REASONS.workingState,
-    // Reports the lab host and the lab checks write about themselves.
-    coder_automation: REASONS.workingState,
-    lab_certificates: REASONS.workingState,
-    lab_canary: REASONS.workingState,
-    lab_drift: REASONS.workingState,
-    host_checks: REASONS.workingState,
-    swa_reset: REASONS.workingState,
-    // Health results (health/probe-results.js, health/pulse.js).
-    health_pulse: REASONS.workingState,
-    // Copies of what an outside service answered, refilled on a timer or a press.
-    community_days_cache: REASONS.derived,
-    cost_snapshot: REASONS.derived,
-    podbean_host_overview: REASONS.derived,
-    podcast_last_sample: REASONS.derived,
-    search_console_snapshot: REASONS.derived,
-    streamyard_onair: REASONS.derived,
-    // Leases and watches: who is running what right now.
-    search_console_lease: REASONS.workingState,
-    delivery_monitor_watch: REASONS.workingState,
-    // The writing tool's queue of web addresses, in its earlier single-document form.
-    forge_queue: REASONS.workingState,
-  }),
-  prefixes: Object.freeze({
-    // One record per key the site issued to an organizer: the key's hash,
-    // the organizer's name and a contact note (developer-api/keys.js).
-    'developer_api_key:': REASONS.secret,
-    // One health result per probe (health/probe-results.js).
-    'health_probe_result:': REASONS.workingState,
-    // Podcast host statistics, one cached document per date range (podcast/host-stats.js).
-    podbean_host_stats_: REASONS.derived,
-    // One queued web address each, with who added it (content/forge-studio/queue.js).
-    'forge_queue_item:': REASONS.workingState,
-  }),
-});
-
-/**
- * The decision for one `admin_config` document id.
- * @param {unknown} id
- * @returns {{ keep: boolean, reason: string|null }}
- */
-export function adminConfigDecision(id) {
-  const name = typeof id === 'string' ? id : '';
-  if (!name) return { keep: false, reason: REASONS.unlisted };
-  // Leave-out is read first: if an id were ever on both lists, it stays out.
-  if (Object.hasOwn(ADMIN_CONFIG_LEAVE_OUT.ids, name)) {
-    return { keep: false, reason: ADMIN_CONFIG_LEAVE_OUT.ids[name] };
-  }
-  for (const [prefix, reason] of Object.entries(ADMIN_CONFIG_LEAVE_OUT.prefixes)) {
-    if (name.startsWith(prefix)) return { keep: false, reason };
-  }
-  if (ADMIN_CONFIG_KEEP.ids.includes(name)) return { keep: true, reason: null };
-  if (ADMIN_CONFIG_KEEP.prefixes.some((prefix) => name.startsWith(prefix))) {
-    return { keep: true, reason: null };
-  }
-  return { keep: false, reason: REASONS.unlisted };
-}
-
-// ── admin_settings: one document at a time, like admin_config ───────────────
-
-/**
- * `admin_settings` is another container several features keep one document
- * in. ADR 0046 said "phase 2 reads every document id before the first run";
- * this list is that reading, held to the code by the test beside this file.
- * A document whose id is on neither list is LEFT OUT and counted as
- * `unlisted`.
- *
- * `fields`, where an id has it, is the keep list for that one document: the
- * `integrations` document is saved by merging (admin-integrations.js), so a
- * copy carried over from the earlier site can hold fields today's writer
- * would refuse, and only the two it accepts are kept.
- */
-export const ADMIN_SETTINGS_KEEP = Object.freeze({
-  ids: Object.freeze({
-    // Which AI features are on, and where each is placed (ai/ai-config.js).
-    'ai-features': null,
-    // Which model each task uses (ai/routing-table.js, ai/selection.js).
-    'ai-routing': null,
-    // Which commands the site's Telegram bot answers (telegram/bot.js): on/off switches.
-    telegram_bot: null,
-    // The owner's speaker id and speaker profile (admin-integrations.js INTEGRATIONS_SETTINGS_FIELDS).
-    integrations: Object.freeze({ ...keep('scalar', ['id', 'sessionizeSpeakerId', 'updatedAt']), speakerProfile: 'nested' }),
-  }),
-  prefixes: Object.freeze([
-    // One news source each: its name, web addresses and limits (rss/source-handlers.js).
-    'blog-source-',
-  ]),
-});
-
-/** Left out of `admin_settings`, with the reason. */
-export const ADMIN_SETTINGS_LEAVE_OUT = Object.freeze({
-  ids: Object.freeze({
-    // Who first set the site up: an administrator's object id (admin-identity.js). Part of the access list.
-    'bootstrap-state': REASONS.accessList,
-    // The last result of each service's connection test, with who pressed
-    // the button and the far end's error sentence (integrations/integration-status.js).
-    'integration-status': REASONS.workingState,
-    // The model list fetched from the providers on a timer (ai/model-catalog.js).
-    'ai-model-catalog': REASONS.derived,
-  }),
-  prefixes: Object.freeze({
-    // The last run of one news source (rss/source-run.js).
-    'run-': REASONS.workingState,
-  }),
-});
-
-/**
- * The decision for one `admin_settings` document id.
- * @param {unknown} id
- * @returns {{ keep: boolean, reason: string|null, fields: object|null }}
- */
-export function adminSettingsDecision(id) {
-  const name = typeof id === 'string' ? id : '';
-  const out = (reason) => ({ keep: false, reason, fields: null });
-  if (!name) return out(REASONS.unlisted);
-  // Leave-out is read first, as for admin_config.
-  if (Object.hasOwn(ADMIN_SETTINGS_LEAVE_OUT.ids, name)) return out(ADMIN_SETTINGS_LEAVE_OUT.ids[name]);
-  for (const [prefix, reason] of Object.entries(ADMIN_SETTINGS_LEAVE_OUT.prefixes)) {
-    if (name.startsWith(prefix)) return out(reason);
-  }
-  if (Object.hasOwn(ADMIN_SETTINGS_KEEP.ids, name)) {
-    return { keep: true, reason: null, fields: ADMIN_SETTINGS_KEEP.ids[name] };
-  }
-  if (ADMIN_SETTINGS_KEEP.prefixes.some((prefix) => name.startsWith(prefix))) {
-    return { keep: true, reason: null, fields: null };
-  }
-  return out(REASONS.unlisted);
-}
-
-// ── For the dry-run report: names kept on purpose, and which document ────────
+// ── For the dry-run report: names kept on purpose ────────────────────────────
 
 /**
  * Field names that LOOK like a secret (`looksSensitive`) and are kept on
@@ -930,30 +617,6 @@ export const SENSITIVE_KEPT_ON_PURPOSE = Object.freeze({
     apiKeyEnvVar: 'the name of the setting a key is read from, never the key itself; anything not shaped like a setting’s name is dropped',
   }),
 });
-
-/** What the report calls a document whose id the code does not name. */
-export const OTHER_DOCUMENT = '(other)';
-
-/**
- * A printable name for one document of `admin_config` or `admin_settings`,
- * so the dry-run report can say which settings document a field is in. Only
- * an id the keep lists above name is printed, as it is written there; an id
- * that matches a kept prefix prints as the prefix and `*` (what follows the
- * prefix can be an id); anything else is `(other)`. `null` for every other
- * container: their record ids are never printed.
- *
- * @param {string} container
- * @param {unknown} id
- * @returns {string|null}
- */
-export function archiveDocumentLabel(container, id) {
-  const lists = container === 'admin_config' ? { ids: ADMIN_CONFIG_KEEP.ids, prefixes: ADMIN_CONFIG_KEEP.prefixes } : container === 'admin_settings' ? { ids: Object.keys(ADMIN_SETTINGS_KEEP.ids), prefixes: ADMIN_SETTINGS_KEEP.prefixes } : null;
-  if (!lists) return null;
-  if (typeof id !== 'string' || !id) return OTHER_DOCUMENT;
-  if (lists.ids.includes(id)) return id;
-  const prefix = lists.prefixes.find((start) => id.startsWith(start));
-  return prefix ? `${prefix}*` : OTHER_DOCUMENT;
-}
 
 // ── One record ───────────────────────────────────────────────────────────────
 
@@ -1002,49 +665,44 @@ export function archiveRecord(container, doc, ctx = {}) {
   if (!decision) return left(REASONS.unclassified);
   if (decision.decision === DECISIONS.leaveOut) return left(decision.reason);
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return left(REASONS.unlisted);
+  const check = Object.hasOwn(RECORD_CHECKS, container) ? RECORD_CHECKS[container] : null;
+  return (check && check(doc, ctx)) || { keep: true, doc, removed: [], reason: null };
+}
 
-  switch (container) {
-    case 'content':
-      if (isInterview(doc) && !isPublicDocument(doc)) return left(REASONS.promise);
-      break;
-    case 'content_versions': {
-      const index = ctx.contentIndex;
-      const parent = typeof doc.contentId === 'string' ? doc.contentId : '';
-      if (!index || !parent || !index.has(parent)) return left(REASONS.orphan);
-      // Every earlier version of an interview, public or not: see RECORD_RULES.
-      if (index.isInterview(parent)) return left(REASONS.promise);
-      break;
-    }
-    case 'doc_vault':
-      // An allow-list of kinds, and the salt's id as a second check.
-      if (!DOC_VAULT_KEPT_TYPES.includes(doc.docType) || doc.id === DOC_VAULT_SALT_ID) {
-        return left(REASONS.secret);
-      }
-      break;
-    case 'admin_config': {
-      const verdict = adminConfigDecision(doc.id);
-      if (!verdict.keep) return left(verdict.reason);
-      break;
-    }
-    case 'admin_settings': {
-      const verdict = adminSettingsDecision(doc.id);
-      if (!verdict.keep) return left(verdict.reason);
-      if (verdict.fields) return keepOnly(doc, verdict.fields);
-      break;
-    }
-    case 'developer_events': {
-      const list = Object.hasOwn(DEVELOPER_EVENT_KEEP, doc.docType) ? DEVELOPER_EVENT_KEEP[doc.docType] : null;
-      if (!list) return left(REASONS.unlisted);
-      return keepOnly(doc, list);
-    }
-    case 'mcp_servers':
-      return keepOnly(doc, MCP_SERVER_KEEP);
-    case 'ai_providers':
-      return keepOnly(doc, AI_PROVIDER_KEEP);
-    default:
-      break;
-  }
-  return { keep: true, doc, removed: [], reason: null };
+/**
+ * The containers whose records are looked at one by one, after the
+ * container itself is known to be kept. Each check returns the answer for
+ * the record, or null when the record is kept whole.
+ */
+const RECORD_CHECKS = Object.freeze({
+  content: (doc) => (isInterview(doc) && !isPublicDocument(doc) ? left(REASONS.promise) : null),
+  content_versions: (doc, ctx) => versionCheck(doc, ctx.contentIndex),
+  // An allow-list of kinds, and the salt's id as a second check.
+  doc_vault: (doc) =>
+    !DOC_VAULT_KEPT_TYPES.includes(doc.docType) || doc.id === DOC_VAULT_SALT_ID ? left(REASONS.secret) : null,
+  admin_config: (doc) => {
+    const verdict = adminConfigDecision(doc.id);
+    return verdict.keep ? null : left(verdict.reason);
+  },
+  admin_settings: (doc) => {
+    const verdict = adminSettingsDecision(doc.id);
+    if (!verdict.keep) return left(verdict.reason);
+    return verdict.fields ? keepOnly(doc, verdict.fields) : null;
+  },
+  developer_events: (doc) => {
+    const list = Object.hasOwn(DEVELOPER_EVENT_KEEP, doc.docType) ? DEVELOPER_EVENT_KEEP[doc.docType] : null;
+    return list ? keepOnly(doc, list) : left(REASONS.unlisted);
+  },
+  mcp_servers: (doc) => keepOnly(doc, MCP_SERVER_KEEP),
+  ai_providers: (doc) => keepOnly(doc, AI_PROVIDER_KEEP),
+});
+
+/** One `content_versions` record: kept only when its content item is in the same backup and is not an interview. */
+function versionCheck(doc, index) {
+  const parent = typeof doc.contentId === 'string' ? doc.contentId : '';
+  if (!index || !parent || !index.has(parent)) return left(REASONS.orphan);
+  // Every earlier version of an interview, public or not: see RECORD_RULES.
+  return index.isInterview(parent) ? left(REASONS.promise) : null;
 }
 
 // ── A fingerprint of the rules ──────────────────────────────────────────────
@@ -1065,7 +723,8 @@ let fingerprint = null;
  * that was moved to "left out" while a run was unfinished would still be
  * named by that run's manifest.
  *
- * It holds no record and no value: only this file's own lists and code.
+ * It holds no record and no value: only the lists and code of this file and
+ * the three archive-classification-*.js files beside it.
  *
  * @returns {string} lower-case hex
  */
@@ -1083,12 +742,17 @@ export function classificationFingerprint() {
     sensitive: { SENSITIVE_NAME_WORDS, SENSITIVE_EXACT_NAMES },
     code: [
       text(archiveRecord),
+      ...Object.entries(RECORD_CHECKS).map(([container, check]) => `${container}:${text(check)}`),
+      text(versionCheck),
+      text(left),
       text(keepOnly),
       text(adminConfigDecision),
       text(adminSettingsDecision),
+      text(leaveOutReason),
       text(withoutSensitiveKeys),
       text(addressWithoutSecrets),
       text(looksSensitive),
+      ...SENSITIVE_NAME_TESTS.map(text),
       text(isInterview),
       text(isPublicDocument),
       text(createContentIndex),

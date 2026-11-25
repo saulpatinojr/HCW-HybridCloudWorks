@@ -119,12 +119,13 @@ async function dedupCheckTitleWindow(store, normalizedTitle, candidatePublishedM
     [{ name: '@title', value: normalizedTitle }]
   );
   for (const data of matches) {
-    const candidateRef =
-      data.publishedAt ||
-      data['Published At'] ||
-      data.publishedDate ||
-      data.fetchedAt ||
-      data['Created At'];
+    const candidateRef = firstTruthy([
+      data.publishedAt,
+      data['Published At'],
+      data.publishedDate,
+      data.fetchedAt,
+      data['Created At'],
+    ]);
     const refDate = getDocDateValue(candidateRef);
     if (!refDate) continue;
     if (Math.abs(refDate.getTime() - candidatePublishedMs) <= TITLE_DEDUP_WINDOW_MS) {
@@ -145,28 +146,38 @@ export async function findDuplicateContent(store, candidate = {}) {
   const url = candidate.url || candidate.sourceUrl || '';
   const canonical = candidate.canonicalUrl || '';
   const title = candidate.title || candidate.Title || '';
-  let candidatePublishedMs = Date.now();
-  if (typeof candidate.publishedMs === 'number') {
-    candidatePublishedMs = candidate.publishedMs;
-  } else if (candidate.publishedAt instanceof Date) {
-    candidatePublishedMs = candidate.publishedAt.getTime();
-  } else if (typeof candidate.publishedAt === 'string') {
-    const parsed = getDocDateValue(candidate.publishedAt);
-    if (parsed) candidatePublishedMs = parsed.getTime();
-  }
+  const candidatePublishedMs = candidatePublishedMsOf(candidate);
 
   const normalizedUrl = normalizeUrlForDedup(url);
   const normalizedCanonical = normalizeUrlForDedup(canonical);
   const normalizedTitle = normalizeTitleForDedup(title);
 
-  return (
-    (await dedupCheckExactUrl(store, url)) ||
-    (await dedupCheckNormalizedUrl(store, normalizedUrl)) ||
-    (await dedupCheckCanonicalUrl(store, normalizedCanonical, normalizedUrl)) ||
-    (await dedupCheckTitleWindow(store, normalizedTitle, candidatePublishedMs)) || {
-      duplicate: false,
-    }
-  );
+  const stages = [
+    () => dedupCheckExactUrl(store, url),
+    () => dedupCheckNormalizedUrl(store, normalizedUrl),
+    () => dedupCheckCanonicalUrl(store, normalizedCanonical, normalizedUrl),
+    () => dedupCheckTitleWindow(store, normalizedTitle, candidatePublishedMs),
+  ];
+  for (const stage of stages) {
+    const hit = await stage();
+    if (hit) return hit;
+  }
+  return { duplicate: false };
+}
+
+/** The candidate's publish time in milliseconds; now when it gives none that can be read. */
+function candidatePublishedMsOf(candidate) {
+  if (typeof candidate.publishedMs === 'number') return candidate.publishedMs;
+  if (candidate.publishedAt instanceof Date) return candidate.publishedAt.getTime();
+  const now = Date.now();
+  if (typeof candidate.publishedAt !== 'string') return now;
+  const parsed = getDocDateValue(candidate.publishedAt);
+  return parsed ? parsed.getTime() : now;
+}
+
+/** The first truthy value, or the last one when none is: what `a || b || c` gives. */
+function firstTruthy(values) {
+  return values.find(Boolean) ?? values[values.length - 1];
 }
 
 /**

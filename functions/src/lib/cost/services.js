@@ -36,16 +36,35 @@
  */
 import { AuthoredError } from '../http/error-response.js';
 import { SECRET_CATALOG } from '../secret-catalog.js';
-import { CYCLES, daysUntil, money, monthlyEquivalent, parseDateOnly } from './model.js';
+import { CYCLES, daysUntil, money, monthlyEquivalent } from './model.js';
+import {
+  CostServiceValidationError,
+  MAX_NAME_LENGTH,
+  MAX_PLAN_LENGTH,
+  MAX_VENDOR_LENGTH,
+  normalizeAmount,
+  normalizeBoolean,
+  normalizeCurrency,
+  normalizeLink,
+  normalizeNote,
+  normalizePayment,
+  normalizeRenewal,
+  oneLine,
+  oneOf,
+} from './service-fields.js';
+
+export {
+  CostServiceValidationError,
+  MAX_AMOUNT,
+  MAX_LINK_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_NOTE_LENGTH,
+  MAX_PAYMENT_LENGTH,
+  MAX_PLAN_LENGTH,
+  MAX_VENDOR_LENGTH,
+} from './service-fields.js';
 
 export const MAX_ITEMS = 200;
-export const MAX_NAME_LENGTH = 120;
-export const MAX_VENDOR_LENGTH = 80;
-export const MAX_PLAN_LENGTH = 80;
-export const MAX_PAYMENT_LENGTH = 60;
-export const MAX_NOTE_LENGTH = 500;
-export const MAX_LINK_LENGTH = 2048;
-export const MAX_AMOUNT = 1_000_000;
 /** Renewals this many days out are "coming up" on the page and the calendar. */
 export const UPCOMING_DAYS = 30;
 
@@ -61,20 +80,6 @@ export const CATEGORY_IDS = Object.freeze(CATEGORIES.map((c) => c.id));
 export const STATUSES = Object.freeze(['active', 'trial', 'cancelled']);
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-const CURRENCY_PATTERN = /^[A-Z]{3}$/;
-const ANY_CONTROL_CHARACTER = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
-const CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u2028\u2029]/;
-const NOT_ADDRESS_CHARACTER = /[^!-~]/;
-const ADMIN_ROUTE = /^\/admin(?:\/[A-Za-z0-9._~-]+)*\/?(?:\?[A-Za-z0-9._~%=&-]*)?$/;
-const OAUTH_SEGMENT = /(^|\/)(oauth|callback)(\/|$)/i;
-/** A run of 13 to 19 digits, with or without spaces or dashes: a card number is never stored. */
-const CARD_NUMBER = /(?:\d[ -]?){13,19}/;
-
-export class CostServiceValidationError extends AuthoredError {
-  constructor(message) {
-    super(message, { code: 'INVALID_SERVICE', status: 400 });
-  }
-}
 
 export class CostServiceNotFoundError extends AuthoredError {
   constructor() {
@@ -101,97 +106,6 @@ const fail = (message) => {
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 export const isItemId = (id) => typeof id === 'string' && ID_PATTERN.test(id);
-
-function oneLine(value, field, max, { required = false } = {}) {
-  if (value === undefined || value === null) {
-    if (required) fail(`${field} is required`);
-    return '';
-  }
-  if (typeof value !== 'string') fail(`${field} must be text`);
-  const text = value.trim();
-  if (required && text === '') fail(`${field} is required`);
-  if (text.length > max) fail(`${field} is longer than ${max} characters`);
-  if (ANY_CONTROL_CHARACTER.test(text)) fail(`${field} must be a single line of plain text`);
-  return text;
-}
-
-function normalizeAmount(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const amount = typeof value === 'string' ? Number(value.replace(/[,$\s]/g, '')) : Number(value);
-  if (!Number.isFinite(amount) || amount < 0) fail('amount must be a number of 0 or more, or empty');
-  if (amount > MAX_AMOUNT) fail(`amount must be ${MAX_AMOUNT} or less`);
-  return money(amount);
-}
-
-function normalizeCurrency(value) {
-  if (value === undefined || value === null || value === '') return 'USD';
-  if (typeof value !== 'string') fail('currency must be a three-letter code such as USD');
-  const code = value.trim().toUpperCase();
-  if (!CURRENCY_PATTERN.test(code)) fail('currency must be a three-letter code such as USD');
-  return code;
-}
-
-function oneOf(value, field, allowed, fallback) {
-  if (value === undefined || value === null || value === '') return fallback;
-  if (!allowed.includes(value)) fail(`${field} must be one of ${allowed.join(', ')}`);
-  return value;
-}
-
-function normalizeRenewal(value) {
-  if (value === undefined || value === null || value === '') return null;
-  if (typeof value !== 'string' || parseDateOnly(value) === null) {
-    fail('nextRenewal must be a real date as YYYY-MM-DD, or empty');
-  }
-  if (value < '2000-01-01' || value > '2100-12-31') fail('nextRenewal must be between 2000 and 2100');
-  return value;
-}
-
-function normalizeBoolean(value, field, fallback) {
-  if (value === undefined || value === null) return fallback;
-  if (typeof value !== 'boolean') fail(`${field} must be true or false`);
-  return value;
-}
-
-function normalizePayment(value) {
-  const text = oneLine(value, 'paymentMethod', MAX_PAYMENT_LENGTH);
-  if (CARD_NUMBER.test(text)) fail('paymentMethod must not hold a card number; "Card ending 1234" is enough');
-  return text;
-}
-
-/** '' for no link, an https URL with no credentials in it, or a page inside /admin (the Calendar Alerts' link rule). */
-function normalizeLink(value) {
-  if (value === undefined || value === null) return '';
-  if (typeof value !== 'string') fail('link must be a web address or an admin page, or empty');
-  const link = value.trim();
-  if (link === '') return '';
-  if (link.length > MAX_LINK_LENGTH) fail('link is too long');
-  const refuse = () => fail('link must be an https web address or a page inside /admin');
-  if (link.startsWith('/')) {
-    const [path] = link.split('?');
-    if (!ADMIN_ROUTE.test(link) || path.split('/').some((s) => s === '..') || OAUTH_SEGMENT.test(path)) {
-      refuse();
-    }
-    return link;
-  }
-  if (NOT_ADDRESS_CHARACTER.test(link) || /[<>"'`\\]/.test(link) || !/^https:\/\/[^/]+/.test(link)) refuse();
-  let parsed;
-  try {
-    parsed = new URL(link);
-  } catch {
-    refuse();
-  }
-  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') refuse();
-  return link;
-}
-
-function normalizeNote(value) {
-  if (value === undefined || value === null) return '';
-  if (typeof value !== 'string') fail('note must be text');
-  const note = value.trim();
-  if (note.length > MAX_NOTE_LENGTH) fail(`note is longer than ${MAX_NOTE_LENGTH} characters`);
-  if (CONTROL_CHARACTERS.test(note)) fail('note must be plain text');
-  return note;
-}
 
 export const EDITABLE_FIELDS = Object.freeze([
   'name',
@@ -346,6 +260,15 @@ export const SUGGESTED_SUBSCRIPTIONS = Object.freeze(
   ].map(Object.freeze)
 );
 
+/** The ledger category a catalogue section's vendor is suggested under; any other section is "other". */
+const SECTION_CATEGORIES = new Map([
+  ['gen-ai', 'ai'],
+  ['ai-services', 'ai'],
+  ['communication', 'communication'],
+  ['content', 'content'],
+  ['code-quality', 'developer'],
+]);
+
 export const SUGGESTED_VENDORS = Object.freeze(
   [
     ...SUGGESTED_SUBSCRIPTIONS,
@@ -353,16 +276,7 @@ export const SUGGESTED_VENDORS = Object.freeze(
       SECRET_CATALOG.filter((entry) => !['cloud', 'platform', 'labs'].includes(entry.section)).map(
         (entry) => {
           const vendor = entry.label.split(/\s[—-]\s/)[0].trim();
-          const category =
-            entry.section === 'gen-ai' || entry.section === 'ai-services'
-              ? 'ai'
-              : entry.section === 'communication'
-                ? 'communication'
-                : entry.section === 'content'
-                  ? 'content'
-                  : entry.section === 'code-quality'
-                    ? 'developer'
-                    : 'other';
+          const category = SECTION_CATEGORIES.get(entry.section) ?? 'other';
           return [vendor.toLowerCase(), { name: vendor, vendor, category, link: '' }];
         }
       )

@@ -193,8 +193,25 @@ describe('uploadBlob overwrite conditions', () => {
     // The handler asking for the option is only half the fix; if this module
     // drops it, the caller-chosen path silently replaces a live asset and
     // admin-uploads.test.js still passes against its fake (T-307).
-    await uploadBlob('covers', 'a/b.png', Buffer.from('x'), 'image/png', {}, { overwrite: false });
+    await uploadBlob('covers', 'a/b.png', Buffer.from('x'), 'image/png', { overwrite: false });
     expect(uploadSpy.mock.calls[0][2].conditions).toEqual({ ifNoneMatch: '*' });
+  });
+
+  it('stops an upload written the old way, with metadata where the options go', async () => {
+    // The fifth argument used to be the metadata. A caller left on that shape
+    // would lose its metadata without a sound, so it is refused instead.
+    await expect(
+      uploadBlob('covers', 'a/b.png', Buffer.from('x'), 'image/png', { sourceUrl: 'https://example.com/a.png' })
+    ).rejects.toThrow(TypeError);
+    await expect(
+      uploadBlobFromStream('cosmos-export', 'a.gz', null, 'application/gzip', { storageTier: 'Cool' })
+    ).rejects.toThrow(TypeError);
+    expect(uploadSpy).not.toHaveBeenCalled();
+  });
+
+  it('passes metadata on from the options', async () => {
+    await uploadBlob('covers', 'a/b.png', Buffer.from('x'), 'image/png', { metadata: { slot: 'hero' } });
+    expect(uploadSpy.mock.calls[0][2].metadata).toEqual({ slot: 'hero' });
   });
 
   it('sets no condition by default', async () => {
@@ -234,7 +251,7 @@ describe('a write a timed-out job starts is refused (#942 follow-up)', () => {
         code: 'JOB_TIMEOUT',
       });
       await expect(
-        uploadBlobFromStream('cosmos-export', 'a.gz', null, 4, 'application/gzip')
+        uploadBlobFromStream('cosmos-export', 'a.gz', null, 'application/gzip', { bufferSize: 4 })
       ).rejects.toMatchObject({ code: 'JOB_TIMEOUT' });
       await expect(deleteBlob('podcast', 'a.mp3')).rejects.toMatchObject({ code: 'JOB_TIMEOUT' });
       // The interview upload's two writes (ADR 0040 D1) refuse the same way.
@@ -262,8 +279,8 @@ describe('a write a timed-out job starts is refused (#942 follow-up)', () => {
     deleteSpy.mockClear();
     const job = new AbortController();
     await runAsJob(job.signal, async () => {
-      await uploadBlob('podcast', 'a.mp3', Buffer.from('x'), 'audio/mpeg', {}, { overwrite: false });
-      await uploadBlobFromStream('cosmos-export', 'a.gz', null, 4, 'application/gzip', { tier: 'Cool' });
+      await uploadBlob('podcast', 'a.mp3', Buffer.from('x'), 'audio/mpeg', { overwrite: false });
+      await uploadBlobFromStream('cosmos-export', 'a.gz', null, 'application/gzip', { bufferSize: 4, tier: 'Cool' });
       await deleteBlob('podcast', 'a.mp3');
     });
     expect(uploadSpy.mock.calls[0][2]).toMatchObject({ conditions: { ifNoneMatch: '*' } });
@@ -576,9 +593,9 @@ describe('access tiers, for the yearly content archive (ADR 0046)', () => {
 
   it('uploadBlobFromStream hands a write condition to storage, and none when none is asked for', async () => {
     uploadStreamSpy.mockReset().mockResolvedValue({});
-    await uploadBlobFromStream('content-archive', '2026/cosmos/blogs.ndjson.gz', {}, 1024, 'application/gzip', { conditions: { ifNoneMatch: '*' } });
+    await uploadBlobFromStream('content-archive', '2026/cosmos/blogs.ndjson.gz', {}, 'application/gzip', { bufferSize: 1024, conditions: { ifNoneMatch: '*' } });
     expect(uploadStreamSpy.mock.calls[0][3]).toMatchObject({ conditions: { ifNoneMatch: '*' } });
-    await uploadBlobFromStream('content-archive', '2026/cosmos/blogs.ndjson.gz', {}, 1024, 'application/gzip', {});
+    await uploadBlobFromStream('content-archive', '2026/cosmos/blogs.ndjson.gz', {}, 'application/gzip', { bufferSize: 1024 });
     expect(uploadStreamSpy.mock.calls[1][3]).not.toHaveProperty('conditions');
   });
 

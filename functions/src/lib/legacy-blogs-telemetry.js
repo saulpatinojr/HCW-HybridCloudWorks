@@ -117,6 +117,23 @@ export function applyLegacyBlogsRead(existing, { source, count, details, nowIso 
 }
 
 /**
+ * The source and details of a read event, checked in this order: `{
+ * normalizedSource, sanitizedDetails }`, or `{ error }` with the sentence
+ * the route answers 400 with.
+ */
+function checkReadEvent(source, details) {
+  const normalizedSource = normalizeSource(source);
+  if (!normalizedSource) return { error: 'source is required' };
+  if (!LEGACY_BLOGS_READ_SOURCES.has(normalizedSource)) return { error: 'unrecognized source' };
+  if (!details || typeof details !== 'object' || Array.isArray(details)) {
+    return { error: 'details must be an object' };
+  }
+  const sanitizedDetails = sanitizeDetails(details);
+  if (!sanitizedDetails) return { error: 'details too large or contains non-primitive values' };
+  return { normalizedSource, sanitizedDetails };
+}
+
+/**
  * @param {object} deps
  * @param {{requireRole: Function}} deps.guard
  * @param {{readDoc: Function, upsertDoc: Function}} deps.store
@@ -133,23 +150,9 @@ export function createLegacyBlogsTelemetryHandlers({ guard, store, now = () => n
         const body = (await request.json().catch(() => null)) || {};
         const { source, count = 1, details = {} } = body;
 
-        const normalizedSource = normalizeSource(source);
-        if (!normalizedSource) {
-          return json(400, { error: 'source is required' });
-        }
-        if (!LEGACY_BLOGS_READ_SOURCES.has(normalizedSource)) {
-          return json(400, { error: 'unrecognized source' });
-        }
-        if (!details || typeof details !== 'object' || Array.isArray(details)) {
-          return json(400, { error: 'details must be an object' });
-        }
-
-        const sanitizedDetails = sanitizeDetails(details);
-        if (!sanitizedDetails) {
-          return json(400, {
-            error: 'details too large or contains non-primitive values',
-          });
-        }
+        const checked = checkReadEvent(source, details);
+        if (checked.error) return json(400, { error: checked.error });
+        const { normalizedSource, sanitizedDetails } = checked;
 
         const numericCount = Number(count);
         const normalizedCount = Number.isFinite(numericCount)

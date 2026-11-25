@@ -27,6 +27,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { AuthoredError } from '../http/error-response.js';
+import { presentedKey } from '../presented-key.js';
 
 /** Keys start with this, so a pasted value is recognisable and a wrong paste is refused before any read. */
 export const KEY_PREFIX = 'hcdk_';
@@ -138,21 +139,9 @@ export const KEY_HEADERS = Object.freeze(['x-api-key']);
  * @returns {string | null}
  */
 export function developerKeyFrom(request) {
-  const read = (name) => {
-    const value = request?.headers?.get?.(name);
-    return typeof value === 'string' && value.trim() ? value.trim() : null;
-  };
-  const authorization = read('authorization');
-  if (authorization) {
-    const bearer = /^Bearer\s+(.+)$/i.exec(authorization);
-    if (bearer) return bearer[1].trim() || null;
-    return looksLikeKey(authorization) ? authorization : null;
-  }
-  for (const name of KEY_HEADERS) {
-    const value = read(name);
-    if (value) return value;
-  }
-  return null;
+  // The same reading the agent-content API uses (presented-key.js), with
+  // this API's header list and key shape.
+  return presentedKey(request, { keyHeaders: KEY_HEADERS, looksLikeKey });
 }
 
 /** Does the presented key hash to the stored hash? Constant time over two equal-length digests. */

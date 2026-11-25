@@ -138,30 +138,30 @@ const ROTATION_DATE = Object.freeze({ field: 'rotatedOn', valid: (value) => pars
  * #1039). An absent date is just not known yet.
  */
 function recordMap(doc, field, date) {
+  return checkedMap(doc, field, (record) => record[date.field] == null || date.valid(record[date.field]));
+}
+
+/**
+ * `doc[field]` when it is a map of records that each pass `wellFormed`; `{}`
+ * when the document is absent, and null (malformed) otherwise.
+ */
+function checkedMap(doc, field, wellFormed) {
   if (!doc) return {};
   const map = doc[field];
   if (!isPlainObject(map)) return null;
   const records = Object.values(map);
   if (!records.every(isPlainObject)) return null;
-  const wellFormed = records.every((record) => record[date.field] == null || date.valid(record[date.field]));
-  return wellFormed ? map : null;
+  return records.every(wellFormed) ? map : null;
 }
+
+/** An absent date, or an ISO instant. */
+const instantOrAbsent = (value) => value == null || isInstant(value);
 
 /**
  * Secret state record map: checks both lastWriteAt and createdAt timestamps.
  */
 function secretRecordMap(doc) {
-  if (!doc) return {};
-  const map = doc.secrets;
-  if (!isPlainObject(map)) return null;
-  const records = Object.values(map);
-  if (!records.every(isPlainObject)) return null;
-  const wellFormed = records.every(
-    (record) =>
-      (record.lastWriteAt == null || isInstant(record.lastWriteAt)) &&
-      (record.createdAt == null || isInstant(record.createdAt))
-  );
-  return wellFormed ? map : null;
+  return checkedMap(doc, 'secrets', (record) => instantOrAbsent(record.lastWriteAt) && instantOrAbsent(record.createdAt));
 }
 
 const projectSecretRecords = (map) =>
@@ -179,17 +179,7 @@ const projectSecretRecords = (map) =>
  * Lab certificates record map: validates notBefore and notAfter.
  */
 function labCertificatesMap(doc) {
-  if (!doc) return {};
-  const map = doc.certificates;
-  if (!isPlainObject(map)) return null;
-  const records = Object.values(map);
-  if (!records.every(isPlainObject)) return null;
-  const wellFormed = records.every(
-    (record) =>
-      (record.notBefore == null || isInstant(record.notBefore)) &&
-      (record.notAfter == null || isInstant(record.notAfter))
-  );
-  return wellFormed ? map : null;
+  return checkedMap(doc, 'certificates', (record) => instantOrAbsent(record.notBefore) && instantOrAbsent(record.notAfter));
 }
 
 const projectLabCertificates = (map) =>
@@ -289,13 +279,16 @@ export async function readCredentialSources(store) {
     : null;
   const swaReset = swa.ok ? swaResetRecord(swa.value) : null;
   const rows = sheet.ok ? sheetRows(sheet.value) : null;
+  const failed = [
+    ['reminders', rows === null],
+    ['secret-state', secrets === null],
+    ['coder-automation', !coder.ok],
+    ['credential-register', records === null],
+    ['lab-certificates', certificates === null],
+    ['swa-reset', swaReset === null],
+  ];
   const unavailable = [
-    ...(rows === null ? ['reminders'] : []),
-    ...(secrets === null ? ['secret-state'] : []),
-    ...(coder.ok ? [] : ['coder-automation']),
-    ...(records === null ? ['credential-register'] : []),
-    ...(certificates === null ? ['lab-certificates'] : []),
-    ...(swaReset === null ? ['swa-reset'] : []),
+    ...failed.filter(([, isFailed]) => isFailed).map(([id]) => id),
     // A failed query leaves every server absent, which status.js tells
     // apart from a server with no document (null): unknown, not unconnected.
     ...(servers.ok ? [] : MCP_SERVER_IDS.map((id) => `mcp:${id}`)),
@@ -317,6 +310,32 @@ export async function readCredentialSources(store) {
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The register document as read, with one credential's record set (or, for null, removed). */
+function registerWith(current, credentialId, record) {
+  const stored = recordMap(current, 'credentials', ROTATION_DATE);
+  if (stored === null) {
+    throw Object.assign(new Error('The credential register document is malformed'), { code: 'MALFORMED' });
+  }
+  const credentials = { ...stored };
+  if (record) credentials[credentialId] = record;
+  else delete credentials[credentialId];
+  return {
+    id: CREDENTIAL_REGISTER_DOC_ID,
+    configScope: ADMIN_CONFIG_PARTITION,
+    docType: CREDENTIAL_REGISTER_DOC_TYPE,
+    credentials,
+  };
+}
+
+/** Write over the document that was read, under its ETag, or create it when the read found none. */
+async function writeRegister(store, current, next) {
+  if (current) {
+    await store.replaceDocIfMatch(CONTAINER, { ...next, _etag: current._etag }, PK);
+  } else {
+    await store.createDoc(CONTAINER, next);
+  }
+}
+
 /**
  * Record, or with `rotatedOn` null clear, when one credential was last
  * rotated. Resolves to the stored record (null when cleared); throws with
@@ -337,25 +356,9 @@ export async function recordRotation(
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (attempt > 0) await sleep(20 * 2 ** Math.min(attempt, 5) + Math.random() * 20);
     const current = await store.readDoc(CONTAINER, CREDENTIAL_REGISTER_DOC_ID, ADMIN_CONFIG_PARTITION);
-    const stored = recordMap(current, 'credentials', ROTATION_DATE);
-    if (stored === null) {
-      throw Object.assign(new Error('The credential register document is malformed'), { code: 'MALFORMED' });
-    }
-    const credentials = { ...stored };
-    if (record) credentials[credentialId] = record;
-    else delete credentials[credentialId];
-    const next = {
-      id: CREDENTIAL_REGISTER_DOC_ID,
-      configScope: ADMIN_CONFIG_PARTITION,
-      docType: CREDENTIAL_REGISTER_DOC_TYPE,
-      credentials,
-    };
+    const next = registerWith(current, credentialId, record);
     try {
-      if (current) {
-        await store.replaceDocIfMatch(CONTAINER, { ...next, _etag: current._etag }, PK);
-      } else {
-        await store.createDoc(CONTAINER, next);
-      }
+      await writeRegister(store, current, next);
       return record;
     } catch (error) {
       // 412: replaced since our read. 409: created since our read found

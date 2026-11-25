@@ -120,6 +120,7 @@
  * are Gemini's and Azure's, for Listen & Learn, and a Gemini voice name in
  * them was one step from being posted here as a `voice_id` (§2b, #725).
  */
+import { characterCount, chunkTurnsByCharacters, MAX_CHARACTERS_PER_REQUEST } from './elevenlabs-chunks.js';
 import {
   ElevenLabsSpeechError,
   PAID_PLAN_REQUIRED,
@@ -154,9 +155,6 @@ export const ELEVENLABS_OUTPUT_FORMAT = 'mp3_44100_64';
 const OUTPUT_BITS_PER_SECOND = 64_000;
 const CONTENT_TYPE = 'audio/mpeg';
 
-/** Documented ceiling on the summed `inputs[].text` length per request. */
-export const MAX_CHARACTERS_PER_REQUEST = 2000;
-
 /** None: the owner chooses (see "Voices" in the header). */
 export const ELEVENLABS_DEFAULT_VOICES = Object.freeze({});
 
@@ -171,6 +169,10 @@ export const INVALID_VOICE = 'invalid_voice';
 
 /** Attempts per request. Which statuses are retried is `dialogueRefusal`'s call. */
 const MAX_ATTEMPTS = 3;
+
+// Cutting a dialogue into requests lives in elevenlabs-chunks.js; exported
+// again here so callers keep importing from elevenlabs.js.
+export { characterCount, chunkTurnsByCharacters, dialogueCharacters, MAX_CHARACTERS_PER_REQUEST } from './elevenlabs-chunks.js';
 
 // The error class and the reading of a refusal live in elevenlabs-account.js,
 // not `./index.js`, which imports this module: a cycle would make one of the
@@ -191,100 +193,6 @@ export function voicesNotChosenMessage(hosts) {
     `Pick two under Podcast voices at ${VOICE_PICKER_PAGE}, then run it again. ` +
     'Nothing was sent, so no credits were spent.'
   );
-}
-
-/** Characters as the API counts them: code points, not UTF-16 units. */
-export const characterCount = (text) => [...String(text ?? '')].length;
-
-/** Sum of every turn's text, for the cost estimate and the usage row. */
-export function dialogueCharacters(turns) {
-  return (turns || []).reduce((total, turn) => total + characterCount(turn?.text), 0);
-}
-
-/**
- * Split one over-long turn on sentence boundaries, measured in code points.
- *
- * Both halves are spoken by the same voice, so the listener hears continuous
- * speech. Falls back to a per-character split only when a single "sentence"
- * is itself over the limit, which means punctuation-free text.
- */
-function splitTurnText(text, limit) {
-  const sentences = String(text).match(/[^.!?。！？]+[.!?。！？]*\s*/g) || [String(text)];
-  const parts = [];
-  let buffer = '';
-
-  for (const sentence of sentences) {
-    if (buffer && characterCount(buffer) + characterCount(sentence) > limit) {
-      parts.push(buffer.trim());
-      buffer = '';
-    }
-    if (characterCount(sentence) > limit) {
-      if (buffer.trim()) parts.push(buffer.trim());
-      buffer = '';
-      let chunk = '';
-      for (const char of sentence) {
-        if (characterCount(chunk) + 1 > limit) {
-          parts.push(chunk.trim());
-          chunk = '';
-        }
-        chunk += char;
-      }
-      buffer = chunk;
-      continue;
-    }
-    buffer += sentence;
-  }
-
-  if (buffer.trim()) parts.push(buffer.trim());
-  return parts.filter(Boolean);
-}
-
-/**
- * Group turns into requests of at most `limit` CODE POINTS of text.
- *
- * The same policy as azure.js's `chunkTurns` — whole turns wherever possible
- * so a speaker change never falls across a request boundary mid-thought, an
- * over-long turn split rather than sent whole and refused — in the unit this
- * API states its ceiling and its bill in. `text.length` would count UTF-16
- * units and over-count astral characters; bytes would over-count everything
- * outside ASCII.
- *
- * @param {{speaker: string, text: string}[]} turns
- * @param {number} [limit]
- * @returns {{speaker: string, text: string}[][]}
- */
-export function chunkTurnsByCharacters(turns, limit = MAX_CHARACTERS_PER_REQUEST) {
-  const chunks = [];
-  let current = [];
-  let currentCount = 0;
-
-  const flush = () => {
-    if (current.length) chunks.push(current);
-    current = [];
-    currentCount = 0;
-  };
-
-  for (const turn of turns) {
-    const text = String(turn?.text || '').trim();
-    if (!text) continue;
-    const speaker = turn.speaker;
-    const count = characterCount(text);
-
-    if (count > limit) {
-      flush();
-      for (const part of splitTurnText(text, limit)) {
-        chunks.push([{ speaker, text: part }]);
-      }
-      continue;
-    }
-
-    if (currentCount + count > limit) flush();
-    current.push({ speaker, text });
-    currentCount += count;
-  }
-
-  flush();
-  return chunks;
 }
 
 /**
@@ -334,43 +242,54 @@ async function synthesizeOne(inputs, { key, model, fetchImpl, sleep, signal }) {
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     if (signal?.aborted) throw signal.reason || new Error('aborted');
-    let response;
-    try {
-      response = await fetchImpl(`${DIALOGUE_URL}?output_format=${ELEVENLABS_OUTPUT_FORMAT}`, {
-        method: 'POST',
-        headers: {
-          'xi-api-key': key,
-          'Content-Type': 'application/json',
-          Accept: CONTENT_TYPE,
-        },
-        body: JSON.stringify({ model_id: model, inputs }),
-        signal,
-      });
-    } catch (err) {
-      lastError = new ElevenLabsSpeechError(`Failed to reach ElevenLabs (${failureCode(err?.cause ?? err)}).`);
-      if (attempt === MAX_ATTEMPTS) throw lastError;
-      await sleep(attempt * 500);
-      continue;
-    }
-
-    if (response.ok) {
-      const audio = Buffer.from(await response.arrayBuffer());
-      // `Number(null)` is 0, which would read as "billed nothing"; only a
-      // header that is actually present and numeric counts as the API's word.
-      const header = response.headers?.get?.('character-cost');
-      const billed = header === null || header === undefined || header === '' ? NaN : Number(header);
-      return { audio, billedCharacters: Number.isFinite(billed) ? billed : null };
-    }
-
-    // Out of credit and a paid-only voice are named and never retried; 429
-    // and 5xx are retried; anything else is reported as the API said it.
-    const refusal = dialogueRefusal(response.status, await response.text().catch(() => ''));
-    lastError = refusal.error;
-    if (!refusal.retryable || attempt === MAX_ATTEMPTS) throw lastError;
+    const sent = await postDialogue(inputs, { key, model, fetchImpl, signal });
+    if (sent.response?.ok) return readDialogueAudio(sent.response);
+    const failure = sent.failure ?? (await dialogueFailure(sent.response));
+    lastError = failure.error;
+    if (!failure.retryable || attempt === MAX_ATTEMPTS) throw lastError;
     await sleep(attempt * 500);
   }
 
   throw lastError;
+}
+
+/** One Text to Dialogue request: `{ response }`, or a retryable `{ failure }` when ElevenLabs could not be reached. */
+async function postDialogue(inputs, { key, model, fetchImpl, signal }) {
+  try {
+    const response = await fetchImpl(`${DIALOGUE_URL}?output_format=${ELEVENLABS_OUTPUT_FORMAT}`, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': key,
+        'Content-Type': 'application/json',
+        Accept: CONTENT_TYPE,
+      },
+      body: JSON.stringify({ model_id: model, inputs }),
+      signal,
+    });
+    return { response };
+  } catch (err) {
+    const error = new ElevenLabsSpeechError(`Failed to reach ElevenLabs (${failureCode(err?.cause ?? err)}).`);
+    return { failure: { error, retryable: true } };
+  }
+}
+
+/** The audio of a 2xx answer, and the characters ElevenLabs says it billed. */
+async function readDialogueAudio(response) {
+  const audio = Buffer.from(await response.arrayBuffer());
+  // `Number(null)` is 0, which would read as "billed nothing"; only a
+  // header that is actually present and numeric counts as the API's word.
+  const header = response.headers?.get?.('character-cost');
+  const billed = header === null || header === undefined || header === '' ? NaN : Number(header);
+  return { audio, billedCharacters: Number.isFinite(billed) ? billed : null };
+}
+
+/**
+ * The refusal of an answer that is not a 2xx. Out of credit and a paid-only
+ * voice are named and never retried; 429 and 5xx are retried; anything else
+ * is reported as the API said it.
+ */
+async function dialogueFailure(response) {
+  return dialogueRefusal(response.status, await response.text().catch(() => ''));
 }
 
 /**

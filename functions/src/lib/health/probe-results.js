@@ -46,7 +46,10 @@ import { AuthoredError, authoredMessage, errorFacts } from '../http/error-respon
 import { actorName } from '../auth/actor-name.js';
 import { satisfiesRole } from '../auth/roles.js';
 import { healthProbe } from './probe-catalogue.js';
-import { PULSE_INTERVAL_MS, PULSE_LATE_AFTER_MS, normalizeStatus } from './status-model.js';
+import { normalizeStatus } from './status-model.js';
+import { presentPulse, presentResult, text } from './probe-presenters.js';
+
+export { presentPulse, presentResult } from './probe-presenters.js';
 
 export const PROBE_RESULTS_CONTAINER = 'admin_config';
 export const PROBE_RESULT_DOC_TYPE = 'health_probe_result';
@@ -74,53 +77,12 @@ const json = (status, body) => ({
 
 export const resultDocId = (probeId) => `${PROBE_RESULT_ID_PREFIX}${probeId}`;
 
-const text = (value, max) => {
-  const out = String(value ?? '').trim();
-  return out ? out.slice(0, max) : '';
-};
-const isoOrNull = (value) =>
-  typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
-const finiteOrNull = (value) => (Number.isFinite(value) ? value : null);
-
-/**
- * One stored result as the page reads it, field by field — never a spread of
- * the document, so a field a future writer adds cannot reach the page
- * unreviewed, and `recordedBy` never does.
- */
-export function presentResult(doc) {
-  if (!doc || typeof doc !== 'object') return null;
-  return {
-    probeId: String(doc.probeId ?? ''),
-    kind: typeof doc.kind === 'string' ? doc.kind : null,
-    status: normalizeStatus(doc.status) ?? 'unknown',
-    summary: typeof doc.summary === 'string' ? doc.summary : '',
-    detail: typeof doc.detail === 'string' && doc.detail ? doc.detail : null,
-    checkedAt: isoOrNull(doc.checkedAt),
-    checkedBy: doc.checkedBy === 'pulse' ? 'pulse' : 'admin',
-    durationMs: finiteOrNull(doc.durationMs),
-    statusSince: isoOrNull(doc.statusSince),
-    previousStatus: normalizeStatus(doc.previousStatus),
-  };
-}
-
-/** The pulse's heartbeat as the page reads it, or null when it has never beaten. */
-export function presentPulse(doc) {
-  const lastBeatAt = isoOrNull(doc?.lastBeatAt);
-  if (!lastBeatAt) return null;
-  return {
-    lastBeatAt,
-    intervalMs: finiteOrNull(doc.intervalMs) ?? PULSE_INTERVAL_MS,
-    lateAfterMs: finiteOrNull(doc.lateAfterMs) ?? PULSE_LATE_AFTER_MS,
-    durationMs: finiteOrNull(doc.durationMs),
-    checks: finiteOrNull(doc.checks),
-    recorded: finiteOrNull(doc.recorded),
-    failures: Array.isArray(doc.failures)
-      ? doc.failures.slice(0, 20).map((row) => ({
-          probeId: String(row?.probeId ?? ''),
-          error: text(row?.error, 300),
-        }))
-      : [],
-  };
+/** A sent duration in whole milliseconds; null when none was sent, undefined when it is out of range. */
+function durationOf(raw) {
+  if (raw === undefined || raw === null) return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > MAX_DURATION_MS) return undefined;
+  return Math.round(value);
 }
 
 /**
@@ -137,13 +99,9 @@ export function parseResultWrite(body) {
   }
   const summary = text(body?.summary, MAX_SUMMARY_LENGTH);
   if (!summary) return { problem: 'summary is required: the sentence the probe showed' };
-  let durationMs = null;
-  if (body?.durationMs !== undefined && body?.durationMs !== null) {
-    const value = Number(body.durationMs);
-    if (!Number.isFinite(value) || value < 0 || value > MAX_DURATION_MS) {
-      return { problem: `durationMs must be a number of milliseconds up to ${MAX_DURATION_MS}` };
-    }
-    durationMs = Math.round(value);
+  const durationMs = durationOf(body?.durationMs);
+  if (durationMs === undefined) {
+    return { problem: `durationMs must be a number of milliseconds up to ${MAX_DURATION_MS}` };
   }
   return {
     probeId,
@@ -182,6 +140,12 @@ export function nextResultDoc(current, entry) {
   };
 }
 
+/** Replace the result that was read, under its ETag, or create it when the read found none. */
+const writeResult = (store, current, next) =>
+  current
+    ? store.replaceDocIfMatch(PROBE_RESULTS_CONTAINER, { ...next, _etag: current._etag }, PK)
+    : store.createDoc(PROBE_RESULTS_CONTAINER, next);
+
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -209,9 +173,7 @@ export async function recordProbeResult(
     }
     const next = nextResultDoc(current, entry);
     try {
-      const doc = current
-        ? await store.replaceDocIfMatch(PROBE_RESULTS_CONTAINER, { ...next, _etag: current._etag }, PK)
-        : await store.createDoc(PROBE_RESULTS_CONTAINER, next);
+      const doc = await writeResult(store, current, next);
       return { doc: doc ?? next, written: true };
     } catch (error) {
       // 412: someone replaced it since our read. 409: someone created it
@@ -249,6 +211,17 @@ export async function readProbeResults(store) {
   return { results, pulse: presentPulse(pulseDoc) };
 }
 
+/** The PUT body, checked: `{ parsed }`, or `{ refusal }` (400 for a bad body, 403 for a probe above this role). */
+async function readResultWrite(request, role) {
+  const body = await request.json().catch(() => null);
+  const parsed = parseResultWrite(body);
+  if (parsed.problem) return { refusal: json(400, { error: parsed.problem }) };
+  if (!satisfiesRole(role, parsed.writeRole)) {
+    return { refusal: json(403, { error: `Recording ${parsed.probeId} requires ${parsed.writeRole} or higher` }) };
+  }
+  return { parsed };
+}
+
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
@@ -277,12 +250,8 @@ export function createProbeResultHandlers({ guard, store, now = () => new Date()
       // then the probe's own role, which only the body can name.
       const auth = await guard.requireRole(request, PROBE_RESULTS_READ_ROLE);
       if (auth.error) return auth.error;
-      const body = await request.json().catch(() => null);
-      const parsed = parseResultWrite(body);
-      if (parsed.problem) return json(400, { error: parsed.problem });
-      if (!satisfiesRole(auth.role, parsed.writeRole)) {
-        return json(403, { error: `Recording ${parsed.probeId} requires ${parsed.writeRole} or higher` });
-      }
+      const { parsed, refusal } = await readResultWrite(request, auth.role);
+      if (refusal) return refusal;
       try {
         const { doc, written } = await recordProbeResult(
           store,

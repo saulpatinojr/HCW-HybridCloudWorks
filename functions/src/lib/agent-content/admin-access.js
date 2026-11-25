@@ -50,8 +50,10 @@
  * policy spells it (the template, or `unlisted`), and never the key, the
  * body or the concrete path, whose segments can be document ids.
  */
-import { satisfiesRole, minimumRole } from '../auth/roles.js';
-import { AGENT_ID, AGENT_USER, CAPABILITIES, agentKeyFrom, looksLikeKey } from './keys.js';
+import { CAPABILITIES } from './keys.js';
+import { createKeyAwareGuard } from './admin-key-guard.js';
+
+export { agentUserFor, checkBodyRule } from './admin-key-guard.js';
 
 /** The section switches, in the order the Koda tab shows them. */
 export const ADMIN_SECTION_IDS = Object.freeze(
@@ -368,66 +370,6 @@ export function openSection(row, record, path = '') {
   return sectionsFor(row, path).find((section) => switches[section] !== false) || null;
 }
 
-/**
- * Read the one body field a rule cares about, from a clone so the handler
- * still gets the body. A body that cannot be read, or is not an object, fails
- * the rule: the handler would refuse it anyway, and the rule must not be
- * passable by sending nothing.
- */
-async function bodyOf(request) {
-  try {
-    const source = typeof request?.clone === 'function' ? request.clone() : request;
-    const body = await source.json();
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false };
-    return { ok: true, body };
-  } catch {
-    return { ok: false };
-  }
-}
-
-/** `a.b.c` read off an object, undefined where the path ends early. */
-const pick = (object, path) =>
-  path.split('.').reduce((value, key) => (value && typeof value === 'object' ? value[key] : undefined), object);
-
-/**
- * Whether every body rule of a row holds for this request: `{ ok, reason,
- * field }`. The body is read once; each rule reads its field by path (the
- * create handler keeps the item under `data`, so `data.contentStatus`).
- */
-export async function checkBodyRule(row, request) {
-  if (!row.body) return { ok: true };
-  const read = await bodyOf(request);
-  if (!read.ok) return { ok: false, reason: 'body-unreadable', field: row.body[0].field };
-  for (const rule of row.body) {
-    const raw = pick(read.body, rule.field);
-    const value = typeof raw === 'string' ? raw.trim() : raw;
-    if (rule.allow && !rule.allow.includes(value)) return { ok: false, reason: 'body-not-allowed', field: rule.field };
-    if (!rule.refuse) continue;
-    // A refused field is compared as a plain value; anything else that is present (an
-    // array, an object) is refused too, because a handler that stores it as given and a
-    // reader that calls String() on it would turn ['published'] back into 'published'.
-    const present = raw !== undefined && raw !== null;
-    const plain = typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number';
-    if (present && !plain) return { ok: false, reason: 'body-not-allowed', field: rule.field };
-    if (rule.refuse.includes(value)) return { ok: false, reason: 'body-not-allowed', field: rule.field };
-  }
-  return { ok: true };
-}
-
-/** The identity the key acts with on a row: Koda, or the Second Brain's owner for `asOwner` rows. */
-export function agentUserFor(row, env = process.env) {
-  if (!row.asOwner) return { ...AGENT_USER, roles: [], scp: '' };
-  return {
-    ...AGENT_USER,
-    oid: env.BRAIN_OWNER_OID || AGENT_USER.oid,
-    sub: env.BRAIN_OWNER_OID || AGENT_USER.sub,
-    tid: env.BRAIN_OWNER_TENANT_ID || null,
-    actingFor: 'owner',
-    roles: [],
-    scp: '',
-  };
-}
-
 /** The policy as the status route and the Koda tab show it: one line per row, grouped by section. */
 export function describePolicy(record = null) {
   const switches = record?.capabilities || {};
@@ -462,14 +404,6 @@ function bodyLimitText(body) {
   return `${body.field} must not be ${body.refuse.join(' or ')}`;
 }
 
-const deny = (status, error) => ({
-  status,
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ ok: false, error }),
-});
-
-const FORBIDDEN = 'This key may not call that route.';
-
 /**
  * Wrap the admin role guard so a request that presents a site key takes the
  * key path (authenticate, then the policy), and every other request takes
@@ -481,70 +415,6 @@ const FORBIDDEN = 'This key may not call that route.';
  * @param {(entry: object) => unknown} [deps.auditDenial] the denial sink; never awaited, must not throw synchronously
  * @param {NodeJS.ProcessEnv} [deps.env]
  */
-export function withAgentAccess(roleGuard, { agentGuard, auditDenial = null, env = process.env }) {
-  const audit = (entry) => {
-    try {
-      const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_ID, ...entry });
-      if (result && typeof result.catch === 'function') result.catch(() => {});
-    } catch {
-      // The refusal is unchanged when the audit sink fails.
-    }
-  };
-
-  /** Only a value shaped like a site key takes the key path; a token, or nothing, takes the role guard's. */
-  const presentsKey = (request) => looksLikeKey(agentKeyFrom(request));
-
-  async function requireRole(request, required) {
-    if (!presentsKey(request)) return roleGuard.requireRole(request, required);
-
-    const minimum = minimumRole(required);
-    if (!minimum) throw new Error(`requireRole: unknown role requirement ${JSON.stringify(required)}`);
-
-    // The route is matched before the key is checked, so the key guard's own
-    // refusals (wrong, revoked, over the limit) carry the admin surface and
-    // the route template too. The concrete path is matched and then dropped:
-    // its segments can be document ids, and telemetry is content-free.
-    const method = String(request?.method || '').toUpperCase();
-    const path = apiPathOf(request);
-    const row = matchPolicy(method, path);
-    const where = { surface: 'admin', method, route: row ? row.route : 'unlisted' };
-
-    const auth = await agentGuard.authenticate(request, where);
-    if (auth.error) return { user: null, role: null, error: auth.error };
-
-    const refuse = (reason, extra = {}) => {
-      audit({ outcome: 'denied', reason, ...where, ...extra });
-      return { user: null, role: null, error: deny(403, FORBIDDEN) };
-    };
-
-    if (!row) return refuse('route-not-allowed');
-    const sections = sectionsFor(row, path);
-    if (!sections.length) return refuse('route-not-allowed');
-    const section = openSection(row, auth.record, path);
-    if (!section) return refuse('section-off', { section: sections[0] });
-    if (!satisfiesRole(row.role, minimum)) return refuse('role', { required: minimum, granted: row.role });
-    const body = await checkBodyRule(row, request);
-    if (!body.ok) return refuse(body.reason, { field: body.field });
-
-    return { user: agentUserFor(row, env), role: row.role, error: null };
-  }
-
-  /**
-   * A key is not a user: the user-only routes (the sign-in expectations, the
-   * current-admin status, the bootstrap) refuse it without a verifier round
-   * trip, and the refusal is a denial row like any other presented key's.
-   */
-  async function requireUser(request) {
-    if (!presentsKey(request)) return roleGuard.requireUser(request);
-    audit({
-      outcome: 'denied',
-      reason: 'user-only-route',
-      surface: 'admin',
-      method: String(request?.method || '').toUpperCase(),
-      route: 'unlisted',
-    });
-    return { user: null, role: null, error: deny(401, 'Authentication required') };
-  }
-
-  return { ...roleGuard, requireRole, requireUser };
+export function withAgentAccess(roleGuard, deps) {
+  return createKeyAwareGuard(roleGuard, deps, { apiPathOf, matchPolicy, sectionsFor, openSection });
 }

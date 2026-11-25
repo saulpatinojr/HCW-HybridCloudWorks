@@ -94,6 +94,136 @@ const deny = (status, code, error, headers = {}) => ({
 
 const labelOf = (scope) => SCOPES.find((entry) => entry.id === scope)?.label || scope;
 
+/** A denial row for the audit sink; never awaited, and a failing sink changes nothing. */
+function sendAudit(auditDenial, entry) {
+  try {
+    const result = auditDenial?.({ kind: 'developer-api-denial', ...entry });
+    if (result && typeof result.catch === 'function') result.catch(() => {});
+  } catch {
+    // The denial answer is unchanged when the audit sink fails.
+  }
+}
+
+/** True when the counter at `quotaKey` takes one more under `limit`; false when it is at the limit. */
+async function countUnder(store, quotaKey, nowMs, limit) {
+  try {
+    await enforceSubmissionQuota(store, quotaKey, { now: nowMs, limit });
+    return true;
+  } catch (error) {
+    if (error?.code === 'SUBMISSION_RATE_LIMIT') return false;
+    throw error;
+  }
+}
+
+/**
+ * The row for a refusal that costs the caller nothing to repeat: counted
+ * per key id per minute, and written only while under the cap. A fault in
+ * the counter (not the cap itself) still writes the row: losing the cap for
+ * a moment is better than losing the record of a refusal.
+ *
+ * Past the cap the same counter is asked once more with a limit one higher.
+ * Exactly one caller a minute passes that (the compare-and-increment has
+ * one winner), and that one writes the "cap reached" row. Everyone after it
+ * is refused both times and writes nothing.
+ */
+async function auditRefusal(gate, keyId, reason, nowMs) {
+  const quotaKey = refusalQuotaKeyFor(keyId, nowMs);
+  const underCap = await countUnder(gate.store, quotaKey, nowMs, gate.refusalRowsPerMinute).catch(() => true);
+  if (underCap) {
+    gate.audit({ outcome: 'denied', reason, keyId });
+    return;
+  }
+  // Already noted this minute, or the counter failed: stay silent.
+  const first = await countUnder(gate.store, quotaKey, nowMs, gate.refusalRowsPerMinute + 1).catch(() => false);
+  if (first) gate.audit({ kind: REFUSAL_CAP_REACHED, outcome: 'rows-held-back', keyId });
+}
+
+/** lastUsedAt, at most once per LAST_USED_EVERY_MS, best effort and never awaited. */
+function touchLastUsed(store, record, nowMs) {
+  const last = Date.parse(record.lastUsedAt || '') || 0;
+  if (nowMs - last < LAST_USED_EVERY_MS) return;
+  Promise.resolve()
+    .then(() =>
+      store.patchDoc(
+        'admin_config',
+        record.id,
+        { lastUsedAt: new Date(nowMs).toISOString() },
+        { partitionKey: ADMIN_CONFIG_PARTITION },
+      ),
+    )
+    .catch(() => {});
+}
+
+const unauthenticated = () => ({ record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) });
+
+/** The refusal reason for a key that is not usable or does not match, or null when it passes. */
+function keyRefusal(record, secret) {
+  if (!isUsable(record)) return 'revoked-key';
+  if (!hashMatches(secret, record.keyHash)) return 'wrong-key';
+  return null;
+}
+
+/** The per-key rate limit; the 429 answer when this call is over it, else null. */
+async function rateLimited(gate, record, nowMs) {
+  if (await countUnder(gate.store, quotaKeyFor(record.keyId, nowMs), nowMs, gate.requestsPerMinute)) return null;
+  await auditRefusal(gate, record.keyId, 'rate-limited', nowMs);
+  return {
+    record: null,
+    user: null,
+    error: deny(
+      429,
+      'RATE_LIMITED',
+      `Too many requests: at most ${gate.requestsPerMinute} a minute per key. Wait and try again.`,
+      { 'Retry-After': String(secondsToNextMinute(nowMs)) },
+    ),
+  };
+}
+
+/** The three gates. Resolves `{ record, user }` or `{ error }`, where `error` is the HTTP answer. */
+async function authenticate(gate, request) {
+  const secret = developerKeyFrom(request);
+  const parsed = parseKey(secret);
+  // Missing, or not shaped like an organizer key: no credential at all,
+  // refused without a read and without an audit row.
+  if (!parsed) return unauthenticated();
+
+  const record = await gate.store.readDoc('admin_config', keyRecordId(parsed.keyId), ADMIN_CONFIG_PARTITION);
+  const nowMs = gate.now();
+  const refusal = keyRefusal(record, secret);
+  if (refusal) {
+    // An id that names no record gets no row: anyone can make a value of the
+    // right shape, and a row each would let one caller turn requests into
+    // audit writes. A revoked key is a real key still in use, worth a row.
+    if (record) await auditRefusal(gate, parsed.keyId, refusal, nowMs);
+    return unauthenticated();
+  }
+
+  const limited = await rateLimited(gate, record, nowMs);
+  if (limited) return limited;
+
+  touchLastUsed(gate.store, record, nowMs);
+  return { record, user: organizerUser(record), error: null };
+}
+
+/** The gates, then the scope the route needs. */
+async function requireScope(gate, request, scope) {
+  const auth = await authenticate(gate, request);
+  if (auth.error) return auth;
+  if (!scopesOf(auth.record).includes(scope)) {
+    gate.audit({ outcome: 'denied', reason: 'scope-off', scope, keyId: auth.record.keyId });
+    return {
+      record: null,
+      user: null,
+      error: deny(
+        403,
+        'FORBIDDEN',
+        `This key does not have the "${scope}" scope (${labelOf(scope)}). Ask the site owner to add it.`,
+      ),
+    };
+  }
+  return auth;
+}
+
 /**
  * @param {object} deps
  * @param {{ readDoc: Function, patchDoc: Function, incrementIf: Function, createDoc: Function,
@@ -111,130 +241,17 @@ export function createDeveloperApiGuard({
   refusalRowsPerMinute = REFUSAL_ROWS_PER_MINUTE,
 }) {
   if (!store) throw new Error('createDeveloperApiGuard requires a store');
-
-  const audit = (entry) => {
-    try {
-      const result = auditDenial?.({ kind: 'developer-api-denial', ...entry });
-      if (result && typeof result.catch === 'function') result.catch(() => {});
-    } catch {
-      // The denial answer is unchanged when the audit sink fails.
-    }
+  const gate = {
+    store,
+    now,
+    audit: (entry) => sendAudit(auditDenial, entry),
+    requestsPerMinute,
+    refusalRowsPerMinute,
   };
-
-  /**
-   * The row for a refusal that costs the caller nothing to repeat: counted
-   * per key id per minute, and written only while under the cap. A fault in
-   * the counter (not the cap itself) still writes the row: losing the cap for
-   * a moment is better than losing the record of a refusal.
-   *
-   * Past the cap the same counter is asked once more with a limit one higher.
-   * Exactly one caller a minute passes that (the compare-and-increment has
-   * one winner), and that one writes the "cap reached" row. Everyone after it
-   * is refused both times and writes nothing.
-   */
-  const auditRefusal = async (keyId, reason, nowMs) => {
-    const quotaKey = refusalQuotaKeyFor(keyId, nowMs);
-    try {
-      await enforceSubmissionQuota(store, quotaKey, { now: nowMs, limit: refusalRowsPerMinute });
-    } catch (error) {
-      if (error?.code === 'SUBMISSION_RATE_LIMIT') {
-        try {
-          await enforceSubmissionQuota(store, quotaKey, { now: nowMs, limit: refusalRowsPerMinute + 1 });
-        } catch {
-          // Already noted this minute, or the counter failed: stay silent.
-          return;
-        }
-        audit({ kind: REFUSAL_CAP_REACHED, outcome: 'rows-held-back', keyId });
-        return;
-      }
-    }
-    audit({ outcome: 'denied', reason, keyId });
+  return {
+    authenticate: (request) => authenticate(gate, request),
+    requireScope: (request, scope) => requireScope(gate, request, scope),
   };
-
-  /** lastUsedAt, at most once per LAST_USED_EVERY_MS, best effort and never awaited. */
-  const touchLastUsed = (record, nowMs) => {
-    const last = Date.parse(record.lastUsedAt || '') || 0;
-    if (nowMs - last < LAST_USED_EVERY_MS) return;
-    Promise.resolve()
-      .then(() =>
-        store.patchDoc(
-          'admin_config',
-          record.id,
-          { lastUsedAt: new Date(nowMs).toISOString() },
-          { partitionKey: ADMIN_CONFIG_PARTITION },
-        ),
-      )
-      .catch(() => {});
-  };
-
-  const unauthenticated = () => ({ record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) });
-
-  /** The three gates. Resolves `{ record, user }` or `{ error }`, where `error` is the HTTP answer. */
-  async function authenticate(request) {
-    const secret = developerKeyFrom(request);
-    const parsed = parseKey(secret);
-    // Missing, or not shaped like an organizer key: no credential at all,
-    // refused without a read and without an audit row.
-    if (!parsed) return unauthenticated();
-
-    const record = await store.readDoc('admin_config', keyRecordId(parsed.keyId), ADMIN_CONFIG_PARTITION);
-    const nowMs = now();
-    if (!isUsable(record)) {
-      // An id that names no record gets no row: anyone can make a value of the
-      // right shape, and a row each would let one caller turn requests into
-      // audit writes. A revoked key is a real key still in use, worth a row.
-      if (record) await auditRefusal(parsed.keyId, 'revoked-key', nowMs);
-      return unauthenticated();
-    }
-    if (!hashMatches(secret, record.keyHash)) {
-      await auditRefusal(parsed.keyId, 'wrong-key', nowMs);
-      return unauthenticated();
-    }
-
-    try {
-      await enforceSubmissionQuota(store, quotaKeyFor(record.keyId, nowMs), {
-        now: nowMs,
-        limit: requestsPerMinute,
-      });
-    } catch (error) {
-      if (error?.code !== 'SUBMISSION_RATE_LIMIT') throw error;
-      await auditRefusal(record.keyId, 'rate-limited', nowMs);
-      return {
-        record: null,
-        user: null,
-        error: deny(
-          429,
-          'RATE_LIMITED',
-          `Too many requests: at most ${requestsPerMinute} a minute per key. Wait and try again.`,
-          { 'Retry-After': String(secondsToNextMinute(nowMs)) },
-        ),
-      };
-    }
-
-    touchLastUsed(record, nowMs);
-    return { record, user: organizerUser(record), error: null };
-  }
-
-  /** The gates, then the scope the route needs. */
-  async function requireScope(request, scope) {
-    const auth = await authenticate(request);
-    if (auth.error) return auth;
-    if (!scopesOf(auth.record).includes(scope)) {
-      audit({ outcome: 'denied', reason: 'scope-off', scope, keyId: auth.record.keyId });
-      return {
-        record: null,
-        user: null,
-        error: deny(
-          403,
-          'FORBIDDEN',
-          `This key does not have the "${scope}" scope (${labelOf(scope)}). Ask the site owner to add it.`,
-        ),
-      };
-    }
-    return auth;
-  }
-
-  return { authenticate, requireScope };
 }
 
 let guard = null;

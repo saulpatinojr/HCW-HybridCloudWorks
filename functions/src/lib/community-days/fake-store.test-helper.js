@@ -8,6 +8,12 @@
  */
 import { vi } from 'vitest';
 
+/** Store `doc` under `name` and hand it back. */
+function keep(docs, name, doc) {
+  docs.set(name, doc);
+  return doc;
+}
+
 export function fakeStore(initial = []) {
   const docs = new Map();
   let version = 0;
@@ -19,11 +25,7 @@ export function fakeStore(initial = []) {
   const store = {
     docs,
     get: (container, id) => docs.get(key(container, id)) ?? null,
-    put: (container, doc) => {
-      const stored = stamp(doc);
-      docs.set(key(container, doc.id), stored);
-      return stored;
-    },
+    put: (container, doc) => keep(docs, key(container, doc.id), stamp(doc)),
     readDoc: vi.fn(async (container, id) => {
       const doc = docs.get(key(container, id));
       return doc ? structuredClone(doc) : null;
