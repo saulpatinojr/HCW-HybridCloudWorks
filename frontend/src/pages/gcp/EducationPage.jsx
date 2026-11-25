@@ -1,6 +1,7 @@
 import React from 'react';
 import { Helmet } from 'react-helmet-async';
 import {
+  EducationHero,
   LearningPathsSection,
   LearningResourcesSection,
   OfficialLinksSection,
@@ -234,29 +235,19 @@ export default function GCPEducationPage() {
 
       <main className="grow pt-28 pb-20 px-4 md:px-8 max-w-360 mx-auto w-full">
         {/* ── Hero ─────────────────────────────────────────────────────── */}
-        <section className="mb-12 relative">
-          <div className="absolute -top-10 -left-10 w-96 h-96 bg-blue-500/5 blur-3xl rounded-full pointer-events-none" />
-          <div className="absolute -top-5 right-0 w-72 h-72 bg-cyan-500/5 blur-3xl rounded-full pointer-events-none" />
-          <h1 className="text-3xl sm:text-5xl md:text-6xl font-bold mb-4 relative z-10">
-            <span className="bg-clip-text text-transparent bg-linear-to-r from-gcp-primary via-slate-900 to-gcp-primary dark:via-white">
-              Google Cloud Education &amp; Certifications
-            </span>
-          </h1>
-          <p className="text-base sm:text-lg text-foreground max-w-3xl relative z-10">
-            Master Google Cloud Platform with structured learning paths and official certifications
-            — from Cloud Digital Leader through Professional-level specializations.
-          </p>
-          <div className="flex flex-wrap gap-2 mt-4 relative z-10">
-            {['Foundational', 'Associate', 'Professional'].map((level) => (
-              <span
-                key={level}
-                className={`px-3 py-1 border text-xs font-bold rounded-full ${LEVEL_META[level].badge}`}
-              >
-                {level}
-              </span>
-            ))}
-          </div>
-        </section>
+        <EducationHero
+          glows={[
+            'absolute -top-10 -left-10 w-96 h-96 bg-blue-500/5 blur-3xl rounded-full pointer-events-none',
+            'absolute -top-5 right-0 w-72 h-72 bg-cyan-500/5 blur-3xl rounded-full pointer-events-none',
+          ]}
+          gradient="bg-linear-to-r from-gcp-primary via-slate-900 to-gcp-primary dark:via-white"
+          title="Google Cloud Education & Certifications"
+          levels={['Foundational', 'Associate', 'Professional']}
+          levelMeta={LEVEL_META}
+        >
+          Master Google Cloud Platform with structured learning paths and official certifications —
+          from Cloud Digital Leader through Professional-level specializations.
+        </EducationHero>
 
         {/* ── Official Resources Banner ─────────────────────────────────── */}
         <OfficialLinksSection links={OFFICIAL_LINKS} />

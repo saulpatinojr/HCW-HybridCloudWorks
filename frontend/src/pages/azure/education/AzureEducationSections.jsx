@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router';
 import { getProviderPath } from '@/lib/routeFactory';
 import ResourceLink, { resourceCta } from '@/components/education/ResourceLink';
+import FeaturedTopicList from '@/components/education/FeaturedTopicList';
 import { CarouselPagination } from '@/components/education/CertificationCarouselSection';
 import { DATA_AS_OF, LEVEL_META, certifications, appliedSkills } from '@/data/azure/certifications';
 
@@ -282,22 +283,11 @@ export function FeaturedCertSection({ certs, featuredCert }) {
                   <p className="text-foreground mb-6">{featuredCert.longDescription}</p>
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-3">
-                    Topics Covered
-                  </h3>
-                  <div className="grid grid-cols-2 gap-3 mb-8">
-                    {featuredCert.topics.map((topic, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <span
-                          className="text-primary material-symbols-outlined text-[16px]"
-                          aria-hidden="true"
-                        >
-                          check_circle
-                        </span>
-                        <span className="text-foreground text-sm">{topic}</span>
-                      </div>
-                    ))}
-                  </div>
+                  <FeaturedTopicList
+                    topics={featuredCert.topics}
+                    size="md"
+                    iconColor="text-primary"
+                  />
                   <Link
                     to={`/azure/education/${featuredCert.slug}`}
                     className="block w-full h-11 px-4 bg-primary hover:bg-blue-800 text-primary-foreground font-bold rounded-lg transition-colors text-center leading-11"

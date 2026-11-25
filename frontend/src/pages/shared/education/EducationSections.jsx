@@ -1,11 +1,42 @@
 /**
- * Sections the provider education pages share: the two "official resource"
- * link cards, the "Learning Paths" picker and the "Learning Resources" grid.
+ * Sections the provider education pages share: the hero, the two "official
+ * resource" link cards, the "Learning Paths" picker and the "Learning
+ * Resources" grid.
  * Each page used to carry its own copy, differing only in colour and words;
  * the page now passes its words and a colour name (see ./educationTones).
  */
 import React, { useState } from 'react';
 import { OFFICIAL_CARD_TONES, PATH_TONES } from './educationTones';
+
+/**
+ * The page's opening section: soft background glows, the title in a
+ * gradient, a sentence about the hub, and one badge per certification level.
+ * `glows` and `gradient` are full Tailwind class strings; `levelMeta[level]`
+ * gives each badge its `badge` classes.
+ */
+export function EducationHero({ glows, gradient, title, levels, levelMeta, children }) {
+  return (
+    <section className="mb-12 relative">
+      {glows.map((glow) => (
+        <div key={glow} className={glow} />
+      ))}
+      <h1 className="text-3xl sm:text-5xl md:text-6xl font-bold mb-4 relative z-10">
+        <span className={`bg-clip-text text-transparent ${gradient}`}>{title}</span>
+      </h1>
+      <p className="text-base sm:text-lg text-foreground max-w-3xl relative z-10">{children}</p>
+      <div className="flex flex-wrap gap-2 mt-4 relative z-10">
+        {levels.map((level) => (
+          <span
+            key={level}
+            className={`px-3 py-1 border text-xs font-bold rounded-full ${levelMeta[level].badge}`}
+          >
+            {level}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 function OpenInNewIcon({ size = 'text-[16px]' }) {
   return (

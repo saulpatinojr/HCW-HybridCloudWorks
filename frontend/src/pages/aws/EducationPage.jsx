@@ -8,6 +8,7 @@ import { Link } from 'react-router';
 import CatalogueFreshness from '@/components/education/CatalogueFreshness';
 import { CarouselPagination } from '@/components/education/CertificationCarouselSection';
 import CertStatusBadge from '@/components/education/CertStatusBadge';
+import FeaturedTopicList from '@/components/education/FeaturedTopicList';
 import { DATA_AS_OF, DATA_SOURCE, certifications } from '@/data/aws/certifications';
 import { useToday } from '@/lib/certStatus';
 
@@ -292,22 +293,11 @@ export default function AWSEducationPage() {
                     <p className="text-foreground text-sm mb-4">{featuredCert.description}</p>
                   </div>
                   <div>
-                    <h3 className="text-xs font-bold text-foreground uppercase tracking-wider mb-2">
-                      Topics Covered
-                    </h3>
-                    <div className="grid grid-cols-2 gap-2 mb-5">
-                      {featuredCert.topics.map((topic, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <span
-                            className="text-amber-400 material-symbols-outlined text-[14px]"
-                            aria-hidden="true"
-                          >
-                            check_circle
-                          </span>
-                          <span className="text-foreground text-xs">{topic}</span>
-                        </div>
-                      ))}
-                    </div>
+                    <FeaturedTopicList
+                      topics={featuredCert.topics}
+                      size="sm"
+                      iconColor="text-amber-400"
+                    />
                     <Link
                       to={`/aws/education/${featuredCert.slug}`}
                       className="block w-full h-10 px-4 bg-amber-700 hover:bg-amber-600 text-white font-bold rounded-lg transition-colors text-center leading-10 text-sm"

@@ -72,8 +72,9 @@ const EDUCATION_FILES = [
   'pages/aws/education/CertDetailPage.jsx',
   'pages/azure/education/CertDetailPage.jsx',
   'pages/aws/education/MicrocredentialDetailPage.jsx',
-  // The parts the two detail pages and the microcredential page share.
+  // The parts the detail pages and the AWS and Azure hubs share.
   'components/education/CertDetailParts.jsx',
+  'components/education/FeaturedTopicList.jsx',
   'components/education/CertStatusBadge.jsx',
   // Rendered inside the Azure and AWS detail pages, and missed by the first
   // sweep: its heading was the one bare `text-white` left on those routes.
