@@ -626,6 +626,33 @@ describe('saveContentSchedule', () => {
     );
     expect(store.patchDoc.mock.calls[0][2]).not.toHaveProperty('contentStatus');
   });
+
+  it('refuses a live page with 409 and writes nothing, so it stays on the site (#1889)', async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({
+        id: 'c1',
+        type: 'blog',
+        contentStatus: 'published',
+        Live: true,
+      })),
+    });
+    const h = createContentWorkflowHandlers({
+      guard: guardAs('publisher'),
+      store,
+      ...fixed,
+    });
+    for (const body of [
+      { contentId: 'c1', instantPublish: true },
+      { contentId: 'c1', instantPublish: false, scheduledPublishDate: '2026-09-01T00:00:00Z' },
+    ]) {
+      const res = await h.saveContentSchedule(makeRequest(body), context);
+      expect(res.status).toBe(409);
+      expect(JSON.parse(res.body).error).toBe(
+        'This content is live; unpublish it before scheduling it.'
+      );
+    }
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
 });
 
 describe('unscheduleContent', () => {
