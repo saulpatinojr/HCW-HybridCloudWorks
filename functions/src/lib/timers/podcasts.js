@@ -31,6 +31,17 @@ import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { errorFacts, errorCode } from '../http/error-response.js';
 import { jsonForLog } from '../http/log-json.js';
 import { feedErrorCode } from '../rss/feed-error-code.js';
+import { buildPodcastEpisode } from './podcast-episode.js';
+
+// One feed item as its episode document lives in podcast-episode.js; exported
+// again here so callers keep importing from podcasts.js.
+export {
+  buildPodcastEpisode,
+  extractPodcastImage,
+  extractPodcastMediaFields,
+  normalizePodcastId,
+  parsePodcastPublishedDate,
+} from './podcast-episode.js';
 
 export const PODCAST_FEEDS = Object.freeze([]);
 
@@ -83,14 +94,11 @@ export function isFeedGoneError(err) {
 }
 
 /** A usable feed row: a provider slug and an https URL, nothing else assumed. */
+const isProviderSlug = (value) => typeof value === 'string' && /^[a-z0-9-]+$/.test(value);
+const isHttpsUrl = (value) => typeof value === 'string' && /^https:\/\//.test(value);
+
 export function isValidFeedEntry(entry) {
-  return (
-    !!entry &&
-    typeof entry.provider === 'string' &&
-    /^[a-z0-9-]+$/.test(entry.provider) &&
-    typeof entry.url === 'string' &&
-    /^https:\/\//.test(entry.url)
-  );
+  return !!entry && isProviderSlug(entry.provider) && isHttpsUrl(entry.url);
 }
 
 /**
@@ -150,72 +158,86 @@ export async function resolvePodcastFeeds(store, fallback = PODCAST_FEEDS) {
   return { feeds: [...fallback], source: 'default' };
 }
 
-export function normalizePodcastId(guid, title) {
-  return String(guid || title || '')
-    .toLowerCase()
-    .replace(/https?:\/\//, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 120);
+/** Store one feed item as its episode document, keeping the first `createdAt`. */
+async function storeEpisode(d, provider, item) {
+  const episode = buildPodcastEpisode(provider, item, d.now());
+  const existing = await d.store.readDoc('podcasts', episode.id, episode.id);
+  await d.store.upsertDoc('podcasts', {
+    ...(existing || {}),
+    ...episode,
+    createdAt: existing?.createdAt || episode.updatedAt,
+  });
 }
 
-/** `mediaUrl` / `mimeType` / `fileLength` from `enclosure`, then `media:content`. */
-export function extractPodcastMediaFields(item) {
-  if (item.enclosure && item.enclosure.url) {
-    return {
-      mediaUrl: item.enclosure.url,
-      mimeType: item.enclosure.type || null,
-      fileLength: item.enclosure.length || null,
-    };
+async function processFeed(d, provider, feedUrl) {
+  const { log } = d;
+  const feed = await d.parser.parseURL(feedUrl);
+  const results = { processed: 0, errors: [] };
+  const items = feed.items || [];
+  for (const [index, item] of items.entries()) {
+    try {
+      await storeEpisode(d, provider, item);
+      results.processed += 1;
+    } catch (err) {
+      // Position, not title, for the same reason as the Warning below: this
+      // array is JSON-stringified into the summary line.
+      results.errors.push({ position: index + 1, error: errorCode(err) });
+      // Warning, not Information: host.json gates `Function` at Warning
+      // (#321), so anything logged below this level never reaches the
+      // workspace. The witness for this timer is a fresh `updatedAt`; when
+      // that is missing, this line is what says the run happened at all.
+      // Position, not title: the title is third-party text and the trace
+      // stays content-free. The feed itself is named by its provider —
+      // one URL per provider in the feed list.
+      log.warn?.(
+        `[fetchPodcastFeeds] ${provider}: episode ${index + 1} of ${items.length} failed: ${errorFacts(err)}`
+      );
+    }
   }
-  if (item['media:content']) {
-    const mc = item['media:content'];
-    return {
-      mediaUrl: (mc.$ && mc.$.url) || mc.url || null,
-      mimeType: (mc.$ && mc.$.type) || mc.type || null,
-      fileLength: (mc.$ && mc.$.fileSize) || mc.fileSize || null,
-    };
+  if (results.processed === 0 && results.errors.length === 0) {
+    log.warn?.(`[fetchPodcastFeeds] ${provider}: feed returned no items`);
   }
-  return { mediaUrl: null, mimeType: null, fileLength: null };
+  return results;
 }
 
-export function extractPodcastImage(item) {
-  return (
-    (item.itunes && item.itunes.image && item.itunes.image.href) ||
-    (item.itunes && typeof item.itunes.image === 'string' && item.itunes.image) ||
-    (item.image && item.image.url) ||
-    (item['itunes:image'] && item['itunes:image'].href) ||
-    null
+/** One feed's entry in the summary when it could not be read at all. */
+function feedFailure(log, provider, err) {
+  if (isFeedGoneError(err)) {
+    log.warn?.(
+      `[fetchPodcastFeeds] ${provider}: feed gone (410) — remove it from admin_config/${PODCAST_FEEDS_CONFIG_ID} or replace the URL`
+    );
+    return { processed: 0, skipped: 'gone' };
+  }
+  // The feed library's failures are plain Errors with nothing but a
+  // message, so the code is read from its known message shapes
+  // (feedErrorCode): `HTTP_404`, `TIMEOUT`, `PARSE`. Never the message.
+  log.error?.(
+    `[fetchPodcastFeeds] ${provider}: feed failed: ${feedErrorCode(err)} (${errorFacts(err)})`
   );
+  return { processed: 0, error: feedErrorCode(err) };
 }
 
-export function parsePodcastPublishedDate(item) {
-  const raw = item.isoDate || item.pubDate;
-  if (!raw) return null;
-  const date = new Date(raw);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-export function buildPodcastEpisode(provider, item, now) {
-  const guid = item.guid || item.id || item.link || item.title;
-  const publishedAt = parsePodcastPublishedDate(item);
-  const { mediaUrl, mimeType, fileLength } = extractPodcastMediaFields(item);
-  return {
-    id: normalizePodcastId(guid, item.title),
-    provider,
-    title: item.title || '',
-    description: item.contentSnippet || item.summary || '',
-    longDescription: item['content:encoded'] || item.content || '',
-    mediaUrl,
-    mimeType,
-    length: fileLength,
-    duration: (item.itunes && item.itunes.duration) || item['itunes:duration'] || null,
-    image: extractPodcastImage(item),
-    link: item.link || null,
-    guid: guid || null,
-    publishedAt: publishedAt ? publishedAt.toISOString() : null,
-    updatedAt: now.toISOString(),
-  };
+async function run(d) {
+  const { log } = d;
+  const resolved = d.feeds ? { feeds: d.feeds, source: 'pinned' } : await resolvePodcastFeeds(d.store);
+  if (resolved.feeds.length === 0) {
+    // Warning, so the empty state is distinguishable from a timer that never
+    // fired — the same reason the empty-feed case above is a Warning.
+    log.warn?.(
+      `[fetchPodcastFeeds] no feeds configured (source: ${resolved.source}) — seed admin_config/${PODCAST_FEEDS_CONFIG_ID} as { mainFeedUrl, feeds: [{ provider, url }] }`
+    );
+    return {};
+  }
+  const summary = {};
+  for (const cfg of resolved.feeds) {
+    try {
+      summary[cfg.provider] = await processFeed(d, cfg.provider, cfg.url);
+    } catch (err) {
+      summary[cfg.provider] = feedFailure(log, cfg.provider, err);
+    }
+  }
+  log.log?.(`[fetchPodcastFeeds] (${resolved.source}) ${jsonForLog(summary)}`);
+  return summary;
 }
 
 /**
@@ -226,75 +248,9 @@ export function buildPodcastEpisode(provider, item, now) {
  *   omitted the run resolves it from `admin_config/podcast_feeds` (see above).
  */
 export function createPodcastIngest({ store, parser, feeds, now = () => new Date(), log = {} }) {
-  async function processFeed(provider, feedUrl) {
-    const feed = await parser.parseURL(feedUrl);
-    const results = { processed: 0, errors: [] };
-    const items = feed.items || [];
-    for (const [index, item] of items.entries()) {
-      try {
-        const episode = buildPodcastEpisode(provider, item, now());
-        const existing = await store.readDoc('podcasts', episode.id, episode.id);
-        await store.upsertDoc('podcasts', {
-          ...(existing || {}),
-          ...episode,
-          createdAt: existing?.createdAt || episode.updatedAt,
-        });
-        results.processed += 1;
-      } catch (err) {
-        // Position, not title, for the same reason as the Warning below: this
-        // array is JSON-stringified into the summary line.
-        results.errors.push({ position: index + 1, error: errorCode(err) });
-        // Warning, not Information: host.json gates `Function` at Warning
-        // (#321), so anything logged below this level never reaches the
-        // workspace. The witness for this timer is a fresh `updatedAt`; when
-        // that is missing, this line is what says the run happened at all.
-        // Position, not title: the title is third-party text and the trace
-        // stays content-free. The feed itself is named by its provider —
-        // one URL per provider in the feed list.
-        log.warn?.(
-          `[fetchPodcastFeeds] ${provider}: episode ${index + 1} of ${items.length} failed: ${errorFacts(err)}`
-        );
-      }
-    }
-    if (results.processed === 0 && results.errors.length === 0) {
-      log.warn?.(`[fetchPodcastFeeds] ${provider}: feed returned no items`);
-    }
-    return results;
-  }
-
-  async function run() {
-    const resolved = feeds ? { feeds, source: 'pinned' } : await resolvePodcastFeeds(store);
-    if (resolved.feeds.length === 0) {
-      // Warning, so the empty state is distinguishable from a timer that never
-      // fired — the same reason the empty-feed case above is a Warning.
-      log.warn?.(
-        `[fetchPodcastFeeds] no feeds configured (source: ${resolved.source}) — seed admin_config/${PODCAST_FEEDS_CONFIG_ID} as { mainFeedUrl, feeds: [{ provider, url }] }`
-      );
-      return {};
-    }
-    const summary = {};
-    for (const cfg of resolved.feeds) {
-      try {
-        summary[cfg.provider] = await processFeed(cfg.provider, cfg.url);
-      } catch (err) {
-        if (isFeedGoneError(err)) {
-          summary[cfg.provider] = { processed: 0, skipped: 'gone' };
-          log.warn?.(
-            `[fetchPodcastFeeds] ${cfg.provider}: feed gone (410) — remove it from admin_config/${PODCAST_FEEDS_CONFIG_ID} or replace the URL`
-          );
-          continue;
-        }
-        // The feed library's failures are plain Errors with nothing but a
-        // message, so the code is read from its known message shapes
-        // (feedErrorCode): `HTTP_404`, `TIMEOUT`, `PARSE`. Never the message.
-        summary[cfg.provider] = { processed: 0, error: feedErrorCode(err) };
-        log.error?.(
-          `[fetchPodcastFeeds] ${cfg.provider}: feed failed: ${feedErrorCode(err)} (${errorFacts(err)})`
-        );
-      }
-    }
-    log.log?.(`[fetchPodcastFeeds] (${resolved.source}) ${jsonForLog(summary)}`);
-    return summary;
-  }
-  return { run, processFeed };
+  const d = { store, parser, feeds, now, log };
+  return {
+    run: () => run(d),
+    processFeed: (provider, feedUrl) => processFeed(d, provider, feedUrl),
+  };
 }

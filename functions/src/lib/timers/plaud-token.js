@@ -50,6 +50,84 @@ function oauthCodeNote(body) {
 export const PLAUD_REFRESH_URL =
   'https://platform.plaud.ai/developer/api/oauth/third-party/access-token/refresh';
 
+/** Why the stored connection cannot be refreshed, or null when it can. */
+function storedRefusal(log, doc) {
+  if (!doc) {
+    log.warn?.('[refreshPlaudToken] mcp_servers/plaud not found');
+    return { ok: false, reason: 'missing_doc' };
+  }
+  if (!doc.oauthRefreshToken) {
+    log.warn?.(
+      '[refreshPlaudToken] no oauthRefreshToken stored; leaving the access token as it is'
+    );
+    return { ok: false, reason: 'missing_refresh_token' };
+  }
+  return null;
+}
+
+/**
+ * Ask Plaud for a new pair and store it. A refusal marks the connection
+ * disconnected with Plaud's status and OAuth code; anything else that goes
+ * wrong is thrown for run() to record.
+ */
+async function rotate(d, patch, refreshToken) {
+  const { log, now } = d;
+  const res = await d.fetchImpl(PLAUD_REFRESH_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: new URLSearchParams({ refresh_token: refreshToken }).toString(),
+  });
+  const body = await res.text();
+  if (!res.ok) {
+    log.error?.(`[refreshPlaudToken] failed: HTTP ${res.status}`);
+    await patch({
+      status: 'disconnected',
+      lastTokenRefreshError: `Plaud refused the token refresh (HTTP ${res.status}${oauthCodeNote(body)}).`,
+    });
+    return { ok: false, reason: `http_${res.status}` };
+  }
+  const parsed = JSON.parse(body);
+  if (!parsed.access_token) throw new AuthoredError('Plaud answered without an access token.');
+  const expiresInSec = Number(parsed.expires_in) || 86400;
+  await patch({
+    oauthToken: parsed.access_token,
+    oauthRefreshToken: parsed.refresh_token || refreshToken,
+    oauthExpiresAt: now().getTime() + expiresInSec * 1000,
+    status: 'connected',
+    lastTokenRefresh: now().toISOString(),
+    lastTokenRefreshError: null,
+  });
+  log.log?.(`[refreshPlaudToken] success (expires in ${expiresInSec}s)`);
+  return { ok: true, expiresInSec };
+}
+
+/**
+ * Rotate the pair, or mark the connection disconnected with a stored
+ * sentence: Plaud's status and OAuth code, or the error's code and a
+ * reference, never Plaud's body (#945).
+ *
+ * @returns {Promise<{ ok: boolean, reason?: string, expiresInSec?: number }>}
+ */
+async function run(d) {
+  const { store, log } = d;
+  const patch = (updates) => store.patchDoc('mcp_servers', 'plaud', updates);
+  const doc = await store.readDoc('mcp_servers', 'plaud', 'plaud');
+  const refused = storedRefusal(log, doc);
+  if (refused) return refused;
+  try {
+    return await rotate(d, patch, doc.oauthRefreshToken);
+  } catch (err) {
+    await patch({
+      status: 'disconnected',
+      lastTokenRefreshError: recordedFailure(log, 'The token refresh failed.', err),
+    });
+    return { ok: false, reason: 'exception' };
+  }
+}
+
 /**
  * Build the Plaud MCP token refresh.
  *
@@ -66,66 +144,6 @@ export function createPlaudTokenRefresh({
   now = () => new Date(),
   log = {},
 }) {
-  const patch = (updates) => store.patchDoc('mcp_servers', 'plaud', updates);
-
-  /**
-   * Rotate the pair, or mark the connection disconnected with a stored
-   * sentence: Plaud's status and OAuth code, or the error's code and a
-   * reference, never Plaud's body (#945).
-   *
-   * @returns {Promise<{ ok: boolean, reason?: string, expiresInSec?: number }>}
-   */
-  async function run() {
-    const doc = await store.readDoc('mcp_servers', 'plaud', 'plaud');
-    if (!doc) {
-      log.warn?.('[refreshPlaudToken] mcp_servers/plaud not found');
-      return { ok: false, reason: 'missing_doc' };
-    }
-    const refreshToken = doc.oauthRefreshToken;
-    if (!refreshToken) {
-      log.warn?.(
-        '[refreshPlaudToken] no oauthRefreshToken stored; leaving the access token as it is'
-      );
-      return { ok: false, reason: 'missing_refresh_token' };
-    }
-    try {
-      const res = await fetchImpl(PLAUD_REFRESH_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Accept: 'application/json',
-        },
-        body: new URLSearchParams({ refresh_token: refreshToken }).toString(),
-      });
-      const body = await res.text();
-      if (!res.ok) {
-        log.error?.(`[refreshPlaudToken] failed: HTTP ${res.status}`);
-        await patch({
-          status: 'disconnected',
-          lastTokenRefreshError: `Plaud refused the token refresh (HTTP ${res.status}${oauthCodeNote(body)}).`,
-        });
-        return { ok: false, reason: `http_${res.status}` };
-      }
-      const parsed = JSON.parse(body);
-      if (!parsed.access_token) throw new AuthoredError('Plaud answered without an access token.');
-      const expiresInSec = Number(parsed.expires_in) || 86400;
-      await patch({
-        oauthToken: parsed.access_token,
-        oauthRefreshToken: parsed.refresh_token || refreshToken,
-        oauthExpiresAt: now().getTime() + expiresInSec * 1000,
-        status: 'connected',
-        lastTokenRefresh: now().toISOString(),
-        lastTokenRefreshError: null,
-      });
-      log.log?.(`[refreshPlaudToken] success (expires in ${expiresInSec}s)`);
-      return { ok: true, expiresInSec };
-    } catch (err) {
-      await patch({
-        status: 'disconnected',
-        lastTokenRefreshError: recordedFailure(log, 'The token refresh failed.', err),
-      });
-      return { ok: false, reason: 'exception' };
-    }
-  }
-  return { run };
+  const d = { store, fetchImpl, now, log };
+  return { run: () => run(d) };
 }

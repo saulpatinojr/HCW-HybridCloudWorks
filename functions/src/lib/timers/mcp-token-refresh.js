@@ -32,6 +32,68 @@ import { errorFacts, errorCode } from '../http/error-response.js';
 /** The timer refreshes a connected server whose token has less than this left. */
 export const TIMER_REFRESH_WINDOW_MS = 30 * 60_000;
 
+/** The summary field one refresh's result counts towards. */
+const outcomeField = (result) => {
+  if (result.ok) return 'refreshed';
+  return result.disconnected ? 'disconnected' : 'failed';
+};
+
+/** Refresh one connected server whose token is due, counting the outcome. */
+async function refreshOne(d, server, summary) {
+  try {
+    const result = await refreshOAuthToken({
+      store: d.store,
+      serverId: server.id,
+      server,
+      http: d.oauthHttp,
+      now: d.now,
+      log: d.log,
+    });
+    summary[outcomeField(result)] += 1;
+  } catch (error) {
+    summary.failed += 1;
+    d.log.error?.(`[refreshPlaudToken] an OAuth Connect refresh threw: ${errorFacts(error)}`);
+  }
+}
+
+async function refreshConnectedServers(d) {
+  const rows = await d.store.queryDocs(
+    'mcp_servers',
+    "SELECT * FROM c WHERE c.oauth.status = 'connected'",
+    []
+  );
+  const summary = { checked: 0, refreshed: 0, notDue: 0, disconnected: 0, failed: 0 };
+  for (const server of rows || []) {
+    if (!usesOAuthConnect(server) || server?.oauth?.status !== 'connected') continue;
+    summary.checked += 1;
+    if (!tokenExpiresWithin(server, TIMER_REFRESH_WINDOW_MS, d.now)) {
+      summary.notDue += 1;
+      continue;
+    }
+    await refreshOne(d, server, summary);
+  }
+  return summary;
+}
+
+async function run(d, plaud) {
+  const { log } = d;
+  let plaudResult;
+  try {
+    plaudResult = await plaud.run();
+  } catch (error) {
+    log.error?.(`[refreshPlaudToken] Plaud refresh threw: ${errorFacts(error)}`);
+    plaudResult = { ok: false, reason: 'exception' };
+  }
+  let oauth;
+  try {
+    oauth = await refreshConnectedServers(d);
+  } catch (error) {
+    log.error?.(`[refreshPlaudToken] OAuth refresh sweep failed: ${errorFacts(error)}`);
+    oauth = { error: errorCode(error) };
+  }
+  return { plaud: plaudResult, oauth };
+}
+
 export function createMcpTokenRefresh({
   store,
   fetch,
@@ -40,58 +102,6 @@ export function createMcpTokenRefresh({
   log = {},
 }) {
   const plaud = createPlaudTokenRefresh({ store, fetch, now, log });
-
-  async function refreshConnectedServers() {
-    const rows = await store.queryDocs(
-      'mcp_servers',
-      "SELECT * FROM c WHERE c.oauth.status = 'connected'",
-      []
-    );
-    const summary = { checked: 0, refreshed: 0, notDue: 0, disconnected: 0, failed: 0 };
-    for (const server of rows || []) {
-      if (!usesOAuthConnect(server) || server?.oauth?.status !== 'connected') continue;
-      summary.checked += 1;
-      if (!tokenExpiresWithin(server, TIMER_REFRESH_WINDOW_MS, now)) {
-        summary.notDue += 1;
-        continue;
-      }
-      try {
-        const result = await refreshOAuthToken({
-          store,
-          serverId: server.id,
-          server,
-          http: oauthHttp,
-          now,
-          log,
-        });
-        if (result.ok) summary.refreshed += 1;
-        else if (result.disconnected) summary.disconnected += 1;
-        else summary.failed += 1;
-      } catch (error) {
-        summary.failed += 1;
-        log.error?.(`[refreshPlaudToken] an OAuth Connect refresh threw: ${errorFacts(error)}`);
-      }
-    }
-    return summary;
-  }
-
-  async function run() {
-    let plaudResult;
-    try {
-      plaudResult = await plaud.run();
-    } catch (error) {
-      log.error?.(`[refreshPlaudToken] Plaud refresh threw: ${errorFacts(error)}`);
-      plaudResult = { ok: false, reason: 'exception' };
-    }
-    let oauth;
-    try {
-      oauth = await refreshConnectedServers();
-    } catch (error) {
-      log.error?.(`[refreshPlaudToken] OAuth refresh sweep failed: ${errorFacts(error)}`);
-      oauth = { error: errorCode(error) };
-    }
-    return { plaud: plaudResult, oauth };
-  }
-
-  return { run };
+  const d = { store, oauthHttp, now, log };
+  return { run: () => run(d, plaud) };
 }
