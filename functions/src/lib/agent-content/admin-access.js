@@ -50,100 +50,359 @@
  * policy spells it (the template, or `unlisted`), and never the key, the
  * body or the concrete path, whose segments can be document ids.
  */
-import { satisfiesRole, minimumRole } from '../auth/roles.js';
-import { AGENT_ID, AGENT_USER, agentKeyFrom, looksLikeKey } from './keys.js';
-import {
-  apiPathOf,
-  matchPolicy,
-  openSection,
-  sectionsFor,
-} from './admin-policy.js';
+import { CAPABILITIES } from './keys.js';
+import { createKeyAwareGuard } from './admin-key-guard.js';
 
-export {
-  ADMIN_SECTION_IDS,
-  CREATE_STATUSES_REFUSED,
-  JOB_TYPES_ALLOWED,
-  LEGACY_LIVE_STATUSES,
-  POLICY,
-  TRANSITION_TARGETS_ALLOWED,
-  WORKFLOW_ALERT_ACTIONS_ALLOWED,
-  apiPathOf,
-  describePolicy,
-  matchPolicy,
-  openSection,
-  sectionsFor,
-  templateToPattern,
-} from './admin-policy.js';
+export { agentUserFor, checkBodyRule } from './admin-key-guard.js';
+
+/** The section switches, in the order the Koda tab shows them. */
+export const ADMIN_SECTION_IDS = Object.freeze(
+  CAPABILITIES.filter((capability) => capability.id.startsWith('admin.')).map((capability) => capability.id)
+);
 
 /**
- * Read the one body field a rule cares about, from a clone so the handler
- * still gets the body. A body that cannot be read, or is not an object, fails
- * the rule: the handler would refuse it anyway, and the rule must not be
- * passable by sending nothing.
+ * Status values a transition may move content to on Koda's behalf. `published`
+ * and `archived` are a publisher's act through their own routes.
  */
-async function bodyOf(request) {
+export const TRANSITION_TARGETS_ALLOWED = Object.freeze(['approved', 'editing', 'forge_ready', 'rejected']);
+
+/**
+ * Job types Koda may enqueue: the ones that produce or inspect content, never
+ * the one that publishes it. `fetch-rss-feeds` is the Telegram bot's `/rss`
+ * (owner request 2026-11-10: Koda can do what the bot can, publishing aside).
+ */
+export const JOB_TYPES_ALLOWED = Object.freeze([
+  'forge-article',
+  'forge-from-url',
+  'batch-inspect',
+  'sync-blog-source',
+  'generate-listen-and-learn',
+  'fetch-rss-feeds',
+]);
+
+/**
+ * What Koda may do to a workflow alert: the Telegram bot's `/ack` and
+ * `/resolve`, and reopening one. Spelled out rather than imported, so an
+ * action added to ops-health.js later (a delete, say) is refused until it is
+ * listed here on purpose.
+ */
+export const WORKFLOW_ALERT_ACTIONS_ALLOWED = Object.freeze(['acknowledge', 'resolve', 'reopen']);
+
+/**
+ * Statuses a new content item may not be created in by the key. The three
+ * `published_*` names are the older spellings the create handler still
+ * stores as given and the public reads still count as published
+ * (`lib/cms/content-update-validation.js` STATUS_ALIASES, `lib/public-reads.js`).
+ */
+export const CREATE_STATUSES_REFUSED = Object.freeze([
+  'published',
+  'published_blog',
+  'published_news',
+  'published_both',
+  'archived',
+]);
+
+/** The legacy `Status` spellings that mean live or published; a create may not carry one. */
+export const LEGACY_LIVE_STATUSES = Object.freeze(['Live', 'live', 'Published', 'published']);
+
+const P = 'admin.pipeline';
+const E = 'admin.enhanced';
+const B = 'admin.brain';
+const S = 'admin.spotlight';
+const H = 'admin.platform';
+
+/**
+ * One row per method and route template. `sections` is the switch (or
+ * switches, any of which) that opens the route; `role` the role the key acts
+ * with there (editor when unsaid); `asOwner` makes the key act as the Second
+ * Brain's owner; `body` names a JSON field and the values it may (or may not)
+ * carry.
+ *
+ * Templates use the registrations' own spelling (`{id}`, `{*blobPath}`), so
+ * admin-access-registry.test.js can hold every row to a registered route.
+ */
+export const POLICY = Object.freeze(
+  [
+    // Pipeline: New Content, Drafts, Review Queue, Editor, Live Pages.
+    ['GET', 'cms/content', P],
+    ['GET', 'cms/content/item', P],
+    ['POST', 'cms/content/item', P],
+    ['GET', 'cms/content/{id}/versions', P],
+    ['GET', 'cms/content/{id}/versions/{versionId}', P],
+    ['GET', 'cms/content/rehost-images', P],
+    ['GET', 'cms/drafts', P],
+    ['POST', 'cms/drafts', P],
+    ['POST', 'cms/drafts/from-markdown', P],
+    ['GET', 'cms/drafts/{id}', P],
+    ['PUT', 'cms/drafts/{id}', P],
+    ['POST', 'cms/drafts/{id}/send-to-review', P],
+    ['POST', 'cms/drafts/{id}/back-to-drafts', P],
+    // content-create.js reads the item from `body.data`, so the rules look there.
+    [
+      'POST',
+      'createContentItem',
+      P,
+      {
+        body: [
+          { field: 'data.contentStatus', refuse: CREATE_STATUSES_REFUSED },
+          { field: 'data.Live', refuse: [true] },
+          { field: 'data.Status', refuse: LEGACY_LIVE_STATUSES },
+        ],
+      },
+    ],
+    ['POST', 'updateContentItem', P],
+    ['PATCH', 'updateContentItem', P],
+    ['POST', 'saveEditorDraft', P],
+    ['POST', 'saveContentImageOrder', P],
+    ['POST', 'transitionContentStatus', P, { body: { field: 'newStatus', allow: TRANSITION_TARGETS_ALLOWED } }],
+    ['POST', 'generateArticleDraft', P],
+    ['POST', 'generateReviewHeroImage', P],
+    ['POST', 'generatePreviewImages', P],
+    ['POST', 'triggerAiImageGeneration', P],
+    ['POST', 'generateSocialCaption', P],
+    ['POST', 'enqueueJob', P, { body: { field: 'type', allow: JOB_TYPES_ALLOWED } }],
+    // Also under Platform: a job's state and the review queue are what the
+    // Telegram bot's /status and /queue answer from, so the Platform switch
+    // alone is enough to follow a run it started (owner request 2026-11-10).
+    ['GET', 'getJob', [P, H]],
+    ['POST', 'getJob', [P, H]],
+    ['POST', 'getQueueSnapshot', [P, H], { role: 'viewer' }],
+    ['POST', 'getPublishSnapshot', P, { role: 'viewer' }],
+    ['POST', 'getDecisionCenter', P, { role: 'viewer' }],
+    ['POST', 'getAdminDashboardSnapshot', P, { role: 'viewer' }],
+    // What the editor reads to fill its pickers, and the images an article can
+    // use. Not cms/config/{collection}: its only collections are the AI
+    // providers and the MCP servers, which stay closed.
+    ['GET', 'cms/settings', P],
+    ['GET', 'cms/images', P],
+    ['GET', 'cms/images/folders', P],
+    ['GET', 'cms/images/{id}/usage', P],
+    ['GET', 'cms/images/curated/{id}', P],
+    // One registered route, five containers: which switch opens it depends
+    // on the container asked for, so a key with only Spotlight on cannot
+    // write article images and the reverse (Copilot review, 2026-11-01).
+    [
+      'POST',
+      'cms/uploads/{container}',
+      [P, S],
+      { segments: { container: { content: P, blogs: P, covers: P, certifications: S, speakerevents: S } } },
+    ],
+
+    // Enhanced: Listen & Learn, Labs (read), Frameworks and Coder Corner
+    // (content routes above), Blogs.
+    ['GET', 'cms/listen-and-learn', E],
+    ['POST', 'cms/listen-and-learn', E],
+    ['GET', 'cms/listen-and-learn/speech-options', E],
+    ['POST', 'cms/listen-and-learn/estimate', E],
+    ['POST', 'cms/listen-and-learn/source-episode', E],
+    ['GET', 'cms/listen-and-learn/{platform}/{examCode}', E],
+    ['PATCH', 'cms/listen-and-learn/{platform}/{examCode}', E, { body: { field: 'archived', refuse: [true] } }],
+    ['POST', 'cms/listen-and-learn/{platform}/{examCode}/chapters', E],
+    ['PATCH', 'cms/listen-and-learn/{platform}/{examCode}/chapters', E],
+    [
+      'PATCH',
+      'cms/listen-and-learn/{platform}/{examCode}/chapters/{chapterId}',
+      E,
+      { body: { field: 'archived', refuse: [true] } },
+    ],
+    ['POST', 'cms/listen-and-learn/{platform}/{examCode}/chapters/{chapterId}/regenerate', E],
+    ['GET', 'getLabsSnapshot', E, { role: 'viewer' }],
+    ['POST', 'getLabsSnapshot', E, { role: 'viewer' }],
+    ['GET', 'getLabJob', E, { role: 'viewer' }],
+    ['POST', 'getLabJob', E, { role: 'viewer' }],
+    ['GET', 'cms/labs/starts', E],
+    ['GET', 'cms/labs/coder-automation', E],
+    ['GET', 'cms/blog-sources', E],
+    ['POST', 'cms/blog-sources', E],
+    ['PUT', 'cms/blog-sources/{id}', E],
+
+    // Creative: the Second Brain only, as the owner.
+    ['GET', 'cms/brain/status', B, { asOwner: true }],
+    ['GET', 'cms/brain/items', B, { asOwner: true }],
+    ['POST', 'cms/brain/items', B, { asOwner: true }],
+    ['GET', 'cms/brain/items/{id}', B, { asOwner: true }],
+    ['GET', 'cms/brain/history/{id}', B, { asOwner: true }],
+    ['POST', 'cms/brain/search', B, { asOwner: true }],
+    ['GET', 'cms/brain/graph', B, { asOwner: true }],
+    ['POST', 'cms/brain/draft/{id}', B, { asOwner: true }],
+    ['GET', 'cms/brain/context', B, { asOwner: true }],
+    ['POST', 'cms/brain/ask', B, { asOwner: true }],
+
+    // Spotlight: Speaking, Certifications, Ambassador, Doc Vault.
+    ['GET', 'cms/speakerevents', S],
+    ['POST', 'upsertSpeakerEvent', S],
+    ['GET', 'cms/certifications', S],
+    ['POST', 'cms/certifications', S],
+    ['PATCH', 'cms/certifications/{id}', S],
+    ['GET', 'cms/ambassador/applications', S],
+    ['POST', 'cms/ambassador/applications', S],
+    ['PATCH', 'cms/ambassador/applications/{id}', S],
+    ['GET', 'cms/ambassador/evidence', S],
+    ['POST', 'cms/ambassador/evidence', S],
+    ['PATCH', 'cms/ambassador/evidence/{id}', S],
+    ['POST', 'cms/ambassador/evidence/import', S],
+    ['GET', 'cms/ambassador/evidence/sources/{sourceModule}', S],
+    ['GET', 'cms/ambassador/files/{container}/{*blobPath}', S],
+    ['GET', 'cms/ambassador/programs', S],
+    ['GET', 'cms/ambassador/readiness/{programId}', S],
+    ['GET', 'cms/doc-vault', S, { role: 'publisher' }],
+    ['POST', 'cms/doc-vault', S, { role: 'publisher' }],
+    ['POST', 'cms/doc-vault/upload', S, { role: 'publisher' }],
+    ['GET', 'cms/doc-vault/{id}', S, { role: 'publisher' }],
+    ['PUT', 'cms/doc-vault/{id}', S, { role: 'publisher' }],
+    ['POST', 'cms/doc-vault/{id}/untrash', S, { role: 'publisher' }],
+    ['GET', 'cms/doc-vault/{id}/versions/{version}', S, { role: 'publisher' }],
+    ['POST', 'cms/doc-vault/{id}/restore-version', S, { role: 'publisher' }],
+
+    // Platform: every page under the Platform menu and the alerting around it
+    // (owner request 2026-11-10, widening ADR 0038's "health and
+    // integrations, read"). Reads of Health, Integrations, Cost, Search
+    // Console and Platform Settings; one connection test and one Search
+    // Console run; the alert log (what was sent to the owner's phone); the
+    // calendar alerts; and acknowledging, resolving or reopening a workflow
+    // alert, as the Telegram bot's /ack and /resolve do. getJob and
+    // getQueueSnapshot (above) cross section lines on purpose: with only
+    // Platform on, Koda can read any job a run of its own or another
+    // section's queued. Still closed: every
+    // settings write (Platform Settings decides autoposting, which publishes),
+    // keys and secrets, sending an alert to the owner's phone again (a
+    // person's choice, cms/alerts/resend), and every delete.
+    ['GET', 'cms/health/probe-results', H, { role: 'viewer' }],
+    ['POST', 'getOpsHealthSnapshot', H, { role: 'viewer' }],
+    ['GET', 'cms/integration-status', H],
+    ['GET', 'cms/streamyard/status', H],
+    ['POST', 'connectionProbe', H],
+    // The Cost page's reads (ADR 0039): what the platform costs, the
+    // subscriptions ledger and its settings. The writes stay closed.
+    ['GET', 'cms/cost/summary', H],
+    ['GET', 'cms/cost/services', H],
+    ['GET', 'cms/cost/settings', H],
+    ['GET', 'cms/search-console', H],
+    // Queues one run; the run keeps its own lease and the daily budget of
+    // Google inspections (lib/search-console/lease.js), so a press by Koda is
+    // held to the same rules as a person's.
+    ['POST', 'cms/search-console/run', H],
+    // Editor, as the route asks: the log keeps the reminders sheet's notices.
+    ['GET', 'cms/alerts/recent', H],
+    ['GET', 'cms/calendar-alerts', H],
+    ['GET', 'cms/platform-settings/history', H],
+    ['GET', 'cms/platform-settings/{setting}', H],
+    // The handler asks for publisher; the action is held to the three above.
+    ['POST', 'updateWorkflowAlert', H, { role: 'publisher', body: { field: 'action', allow: WORKFLOW_ALERT_ACTIONS_ALLOWED } }],
+    ['PATCH', 'updateWorkflowAlert', H, { role: 'publisher', body: { field: 'action', allow: WORKFLOW_ALERT_ACTIONS_ALLOWED } }],
+  ].map(([method, route, sections, options = {}]) =>
+    Object.freeze({
+      method,
+      route,
+      sections: Object.freeze(Array.isArray(sections) ? sections : [sections]),
+      role: options.role || 'editor',
+      asOwner: Boolean(options.asOwner),
+      body: options.body ? Object.freeze((Array.isArray(options.body) ? options.body : [options.body]).map((rule) => Object.freeze({ ...rule }))) : null,
+      segments: options.segments
+        ? Object.freeze(Object.fromEntries(Object.entries(options.segments).map(([name, map]) => [name, Object.freeze({ ...map })])))
+        : null,
+      pattern: templateToPattern(route),
+    })
+  )
+);
+
+/** A route template as a case-insensitive regular expression over the path after `/api/`. */
+export function templateToPattern(template) {
+  const source = template
+    .split('/')
+    .map((segment) => {
+      if (/^\{\*[^}]+\}$/.test(segment)) return '.+';
+      if (/^\{[^}]+\}$/.test(segment)) return '[^/]+';
+      return segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    })
+    .join('/');
+  return new RegExp(`^${source}$`, 'i');
+}
+
+/** The path after `/api/`, from the request's URL, without a query string or trailing slash. */
+export function apiPathOf(request) {
+  // A URL that does not parse, or a path with malformed percent-encoding
+  // (`/api/cms/drafts/%ZZ`), is no route: '' matches nothing and the request
+  // gets the audited 403, never a throw past the key check.
+  let decoded;
   try {
-    const source = typeof request?.clone === 'function' ? request.clone() : request;
-    const body = await source.json();
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false };
-    return { ok: true, body };
+    decoded = decodeURIComponent(new URL(request?.url || '', 'http://request.local').pathname);
   } catch {
-    return { ok: false };
+    return '';
   }
+  return decoded
+    .replace(/^\/+/, '')
+    .replace(/^api\//i, '')
+    .replace(/\/+$/, '');
 }
 
-/** `a.b.c` read off an object, undefined where the path ends early. */
-const pick = (object, path) =>
-  path.split('.').reduce((value, key) => (value && typeof value === 'object' ? value[key] : undefined), object);
+/** The first policy row for this method and path, or null. A DELETE never matches. */
+export function matchPolicy(method, path) {
+  const verb = String(method || '').toUpperCase();
+  if (verb === 'DELETE' || !path) return null;
+  return POLICY.find((row) => row.method === verb && row.pattern.test(path)) || null;
+}
 
 /**
- * Whether every body rule of a row holds for this request: `{ ok, reason,
- * field }`. The body is read once; each rule reads its field by path (the
- * create handler keeps the item under `data`, so `data.contentStatus`).
+ * The sections that can open this row for this concrete path. Most rows
+ * answer with their own sections; a row with `segments` narrows them by a
+ * path segment (the upload container), and a value the map does not know
+ * opens nothing.
  */
-export async function checkBodyRule(row, request) {
-  if (!row.body) return { ok: true };
-  const read = await bodyOf(request);
-  if (!read.ok) return { ok: false, reason: 'body-unreadable', field: row.body[0].field };
-  const broken = row.body.find((rule) => breaksBodyRule(rule, read.body));
-  return broken ? { ok: false, reason: 'body-not-allowed', field: broken.field } : { ok: true };
+export function sectionsFor(row, path = '') {
+  if (!row.segments) return row.sections;
+  const templateParts = row.route.split('/');
+  const pathParts = String(path || '').split('/');
+  const sections = [];
+  for (const [name, map] of Object.entries(row.segments)) {
+    const index = templateParts.indexOf(`{${name}}`);
+    const value = index === -1 ? undefined : pathParts[index];
+    const section = Object.hasOwn(map, value) ? map[value] : null;
+    if (!section) return [];
+    sections.push(section);
+  }
+  return sections;
 }
 
-/** Does this body break one rule: a value outside `allow`, or a value `refuse` names? */
-function breaksBodyRule(rule, body) {
-  const raw = pick(body, rule.field);
-  const value = typeof raw === 'string' ? raw.trim() : raw;
-  if (rule.allow && !rule.allow.includes(value)) return true;
-  if (!rule.refuse) return false;
-  // A refused field is compared as a plain value; anything else that is present (an
-  // array, an object) is refused too, because a handler that stores it as given and a
-  // reader that calls String() on it would turn ['published'] back into 'published'.
-  const present = raw !== undefined && raw !== null;
-  const plain = typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number';
-  return (present && !plain) || rule.refuse.includes(value);
+/** Which of the sections that open this row for this path the record has on, or null when none is. */
+export function openSection(row, record, path = '') {
+  const switches = record?.capabilities || {};
+  return sectionsFor(row, path).find((section) => switches[section] !== false) || null;
 }
 
-/** The identity the key acts with on a row: Koda, or the Second Brain's owner for `asOwner` rows. */
-export function agentUserFor(row, env = process.env) {
-  if (!row.asOwner) return { ...AGENT_USER, roles: [], scp: '' };
-  return {
-    ...AGENT_USER,
-    oid: env.BRAIN_OWNER_OID || AGENT_USER.oid,
-    sub: env.BRAIN_OWNER_OID || AGENT_USER.sub,
-    tid: env.BRAIN_OWNER_TENANT_ID || null,
-    actingFor: 'owner',
-    roles: [],
-    scp: '',
-  };
+/** The policy as the status route and the Koda tab show it: one line per row, grouped by section. */
+export function describePolicy(record = null) {
+  const switches = record?.capabilities || {};
+  return ADMIN_SECTION_IDS.map((section) => {
+    const capability = CAPABILITIES.find((entry) => entry.id === section);
+    return {
+      id: section,
+      label: capability?.label || section,
+      on: switches[section] !== false,
+      routes: POLICY.filter((row) => row.sections.includes(section)).map((row) => {
+        const limits = [
+          ...(row.body ? row.body.map(bodyLimitText) : []),
+          ...(row.segments ? Object.entries(row.segments).map(([name, map]) => segmentLimitText(name, map, section)) : []),
+        ];
+        return {
+          method: row.method,
+          path: `/api/${row.route}`,
+          ...(limits.length ? { limit: limits.join('; ') } : {}),
+        };
+      }),
+    };
+  });
 }
 
-const deny = (status, error) => ({
-  status,
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ ok: false, error }),
-});
+function segmentLimitText(name, map, section) {
+  const values = Object.entries(map).filter(([, opens]) => opens === section).map(([value]) => value);
+  return `${name} must be one of ${values.join(', ')}`;
+}
 
-const FORBIDDEN = 'This key may not call that route.';
+function bodyLimitText(body) {
+  if (body.allow) return `${body.field} must be one of ${body.allow.join(', ')}`;
+  return `${body.field} must not be ${body.refuse.join(' or ')}`;
+}
 
 /**
  * Wrap the admin role guard so a request that presents a site key takes the
@@ -156,84 +415,6 @@ const FORBIDDEN = 'This key may not call that route.';
  * @param {(entry: object) => unknown} [deps.auditDenial] the denial sink; never awaited, must not throw synchronously
  * @param {NodeJS.ProcessEnv} [deps.env]
  */
-export function withAgentAccess(roleGuard, { agentGuard, auditDenial = null, env = process.env }) {
-  const deps = { roleGuard, agentGuard, auditDenial, env };
-  return {
-    ...roleGuard,
-    requireRole: (request, required) => keyAwareRequireRole(deps, request, required),
-    requireUser: (request) => keyAwareRequireUser(deps, request),
-  };
-}
-
-/** Write a denial row through the sink, never letting the sink change the refusal. */
-function auditDenialRow(auditDenial, entry) {
-  try {
-    const result = auditDenial?.({ kind: 'agent-content-denial', agent: AGENT_ID, ...entry });
-    if (result && typeof result.catch === 'function') result.catch(() => {});
-  } catch {
-    // The refusal is unchanged when the audit sink fails.
-  }
-}
-
-/** Only a value shaped like a site key takes the key path; a token, or nothing, takes the role guard's. */
-const presentsKey = (request) => looksLikeKey(agentKeyFrom(request));
-
-/**
- * Why the policy refuses the key on this request, as `{ reason, extra }`,
- * or null when the row allows it. Checked in this order: the route, the
- * section switch, the role, then the body.
- */
-async function policyRefusal({ row, path, record, minimum }, request) {
-  if (!row) return { reason: 'route-not-allowed' };
-  const sections = sectionsFor(row, path);
-  if (!sections.length) return { reason: 'route-not-allowed' };
-  const section = openSection(row, record, path);
-  if (!section) return { reason: 'section-off', extra: { section: sections[0] } };
-  if (!satisfiesRole(row.role, minimum)) return { reason: 'role', extra: { required: minimum, granted: row.role } };
-  const body = await checkBodyRule(row, request);
-  return body.ok ? null : { reason: body.reason, extra: { field: body.field } };
-}
-
-async function keyAwareRequireRole({ roleGuard, agentGuard, auditDenial, env }, request, required) {
-  if (!presentsKey(request)) return roleGuard.requireRole(request, required);
-
-  const minimum = minimumRole(required);
-  if (!minimum) throw new Error(`requireRole: unknown role requirement ${JSON.stringify(required)}`);
-
-  // The route is matched before the key is checked, so the key guard's own
-  // refusals (wrong, revoked, over the limit) carry the admin surface and
-  // the route template too. The concrete path is matched and then dropped:
-  // its segments can be document ids, and telemetry is content-free.
-  const method = String(request?.method || '').toUpperCase();
-  const path = apiPathOf(request);
-  const row = matchPolicy(method, path);
-  const where = { surface: 'admin', method, route: row ? row.route : 'unlisted' };
-
-  const auth = await agentGuard.authenticate(request, where);
-  if (auth.error) return { user: null, role: null, error: auth.error };
-
-  const refusal = await policyRefusal({ row, path, record: auth.record, minimum }, request);
-  if (refusal) {
-    auditDenialRow(auditDenial, { outcome: 'denied', reason: refusal.reason, ...where, ...(refusal.extra || {}) });
-    return { user: null, role: null, error: deny(403, FORBIDDEN) };
-  }
-
-  return { user: agentUserFor(row, env), role: row.role, error: null };
-}
-
-/**
- * A key is not a user: the user-only routes (the sign-in expectations, the
- * current-admin status, the bootstrap) refuse it without a verifier round
- * trip, and the refusal is a denial row like any other presented key's.
- */
-async function keyAwareRequireUser({ roleGuard, auditDenial }, request) {
-  if (!presentsKey(request)) return roleGuard.requireUser(request);
-  auditDenialRow(auditDenial, {
-    outcome: 'denied',
-    reason: 'user-only-route',
-    surface: 'admin',
-    method: String(request?.method || '').toUpperCase(),
-    route: 'unlisted',
-  });
-  return { user: null, role: null, error: deny(401, 'Authentication required') };
+export function withAgentAccess(roleGuard, deps) {
+  return createKeyAwareGuard(roleGuard, deps, { apiPathOf, matchPolicy, sectionsFor, openSection });
 }
