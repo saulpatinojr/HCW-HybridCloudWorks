@@ -9,6 +9,9 @@
 import { COMPONENT_IDS } from './components';
 import { normalizeState, isSelected } from './state';
 import { encodeLz } from './share';
+import { AVM_MODULES } from './avmVersions';
+import { AWS_MODULES, AWS_PROVIDER_PIN } from './hcl/aws/moduleVersions';
+import { GCP_MODULES, GCP_PROVIDER_PIN } from './hcl/gcp/moduleVersions';
 
 /**
  * A preset's builder options. Every preset starts at the tenant root with the
@@ -27,6 +30,14 @@ const presetOptions = (location, privateDnsZones, firewallSku, corpCount, online
 
 /** A module a cloud's pack pins, its version, and the job it does. */
 const pinnedModule = (name, version, role) => ({ name, version, role });
+
+/**
+ * The same row read from the Azure, AWS or Google Cloud pin itself, so this card
+ * cannot show a version the pack does not write (it showed network-firewall
+ * v1.1.0 and log-export v9.0.0 after both were found broken, #1862, #1863,
+ * and Azure rows two or more releases behind the pins).
+ */
+const packModule = (module, role) => pinnedModule(module.source, `v${module.version}`, role);
 
 /** What one builder component becomes on a cloud. */
 const componentRow = (id, name, desc) => ({ id, name, desc });
@@ -451,20 +462,14 @@ export const MULTI_CLOUD_PACKS = Object.freeze({
     blueprintSlug: '/azure/architecture-designs/enterprise-hub-spoke-landing-zone',
     description: 'Production Azure Landing Zone powered by Azure Verified Modules (AVM).',
     pinnedModules: Object.freeze([
-      pinnedModule('Azure/avm-ptn-alz/azurerm', '0.11.0', 'Management Groups & Policy Baseline'),
-      pinnedModule(
-        'Azure/avm-ptn-alz-management/azurerm',
-        '0.6.0',
-        'Log Analytics Workspace & Diagnostics'
-      ),
-      pinnedModule(
-        'Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm',
-        '0.4.0',
+      packModule(AVM_MODULES['avm-ptn-alz'], 'Management Groups & Policy Baseline'),
+      packModule(AVM_MODULES['avm-ptn-alz-management'], 'Log Analytics Workspace & Diagnostics'),
+      packModule(
+        AVM_MODULES['avm-ptn-alz-connectivity-hub-and-spoke-vnet'],
         'Hub VNet, Bastion, DNS & Azure Firewall'
       ),
-      pinnedModule(
-        'Azure/avm-res-network-virtualnetwork/azurerm',
-        '0.5.2',
+      packModule(
+        AVM_MODULES['avm-res-network-virtualnetwork'],
         'Segmented Corp, Online & Identity Spokes'
       ),
     ]),
@@ -480,18 +485,10 @@ export const MULTI_CLOUD_PACKS = Object.freeze({
     description:
       'AWS Organizations + Transit Gateway hub-and-spoke with Service Control Policies (SCPs).',
     pinnedModules: Object.freeze([
-      pinnedModule('terraform-aws-modules/vpc/aws', 'v5.19.0', 'Inspection VPC & Workload Spokes'),
-      pinnedModule(
-        'terraform-aws-modules/transit-gateway/aws',
-        'v2.13.0',
-        'Regional Cloud Router & RAM Sharing'
-      ),
-      pinnedModule(
-        'terraform-aws-modules/network-firewall/aws',
-        'v1.1.0',
-        'Stateful AWS Network Firewall in Hub'
-      ),
-      pinnedModule('hashicorp/aws', '~> 5.80', 'Native Organizations, OUs & SCP policies'),
+      packModule(AWS_MODULES.vpc, 'Inspection VPC & Workload Spokes'),
+      packModule(AWS_MODULES.transitGateway, 'Regional Cloud Router & RAM Sharing'),
+      packModule(AWS_MODULES.networkFirewall, 'Stateful AWS Network Firewall in Hub'),
+      pinnedModule('hashicorp/aws', AWS_PROVIDER_PIN, 'Native Organizations, OUs & SCP policies'),
     ]),
     componentsMapping: Object.freeze([
       componentRow(
@@ -546,24 +543,12 @@ export const MULTI_CLOUD_PACKS = Object.freeze({
     description:
       'Enterprise Foundations / Cloud Foundation Fabric with Shared VPC and organization policies.',
     pinnedModules: Object.freeze([
-      pinnedModule(
-        'terraform-google-modules/network/google',
-        'v10.0.0',
-        'Shared VPC Host, Subnets, PSC & Cloud NAT'
-      ),
-      pinnedModule(
-        'terraform-google-modules/log-export/google',
-        'v9.0.0',
-        'Aggregated Audit Log Sink & BigQuery Dataset'
-      ),
-      pinnedModule(
-        'terraform-google-modules/project-factory/google',
-        'v17.1.0',
-        'Service Projects attached to Shared VPC'
-      ),
+      packModule(GCP_MODULES.network, 'Shared VPC Host, Subnets, PSC & Cloud NAT'),
+      packModule(GCP_MODULES.logExport, 'Aggregated Audit Log Sink to a Cloud Storage Bucket'),
+      packModule(GCP_MODULES.projectFactory, 'Service Projects attached to Shared VPC'),
       pinnedModule(
         'hashicorp/google',
-        '~> 6.15',
+        GCP_PROVIDER_PIN,
         'Resource Manager Folders & Org Policy Constraints'
       ),
     ]),
@@ -581,7 +566,7 @@ export const MULTI_CLOUD_PACKS = Object.freeze({
       {
         name: 'Central Logging Project',
         id: 'management',
-        desc: 'Organization log sink, locked Cloud Storage & BigQuery dataset',
+        desc: 'Organization log sink into a locked Cloud Storage bucket',
       },
       componentRow(
         'connectivity-hub',

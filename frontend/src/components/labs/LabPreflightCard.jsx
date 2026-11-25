@@ -7,7 +7,7 @@ import LabTerminalTranscript from './LabTerminalTranscript';
  */
 export const PREFLIGHT_TOOLS = Object.freeze(
   [
-    ['Terraform 1.9+', 'terraform', 'IaC Synthesis & Plan Validation'],
+    ['Terraform 1.12+', 'terraform', 'IaC Synthesis & Plan Validation'],
     ['tflint', 'tflint', 'AVM Rules & Security Linting'],
     ['ansible-lint', 'ansible-lint', 'Playbook Syntax & Hardening'],
     ['Docker', 'docker', 'Multi-Stage Container Runtime'],

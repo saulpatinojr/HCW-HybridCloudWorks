@@ -15,15 +15,17 @@
  *
  *       terraform-aws-vpc 5.19.0                 >= 1.0
  *       terraform-aws-transit-gateway 2.13.0     >= 0.13.1
- *       terraform-aws-network-firewall 1.1.0     not found: the registry has
- *                                                no 1.1.0 (1.0.2 says >= 1.0);
- *                                                the bad pin is #1862
+ *       terraform-aws-network-firewall 1.0.2     >= 1.0 (was 1.1.0, which was
+ *                                                never published, #1862)
  *       terraform-google-network 10.0.0          >= 1.3
- *       terraform-google-log-export 9.0.0        >= 0.13
+ *       terraform-google-log-export 10.0.0       >= 1.3 (was 9.0.0, #1863)
  *       terraform-google-project-factory 17.1.0  >= 0.13.0
- *       terraform-google-cloud-storage ~> 6.0    >= 0.13 (6.0.0 and 6.1.0)
+ *       terraform-google-cloud-storage 7.0.0     >= 0.13 (simple_bucket)
  *
- *     None sets an upper bound. Providers carry no Terraform version of their
+ *     None sets an upper bound. Each module's full record, providers
+ *     included, is its `requires` in hcl/aws/moduleVersions.js and
+ *     hcl/gcp/moduleVersions.js, and hcl/cloudModuleVersions.test.js checks
+ *     it against this line. Providers carry no Terraform version of their
  *     own: the registry lists aws 5.80 and google 6.15 on plugin protocol 5,
  *     which every Terraform 1.x speaks.
  *   - `< 2.0` keeps a future major release, which may break the language,
@@ -32,5 +34,10 @@
  * The lab image ships a Terraform inside this range
  * (lab-image/versions.env, TERRAFORM_VERSION). A module bump that raises a
  * floor above 1.12 raises this line, and its row above changes with it.
+ *
+ * The lab's own Terraform (the catalogue's samples, the lab image's smoke
+ * roots and the Coder templates) states this same rule (#1864), so raising it
+ * raises theirs: catalogue.js reads it from here, and
+ * scripts/lab-terraform-version.test.mjs fails until the .tf files match.
  */
 export const TERRAFORM_REQUIRED_VERSION = '>= 1.12, < 2.0';

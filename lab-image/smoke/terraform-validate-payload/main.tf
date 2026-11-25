@@ -22,7 +22,8 @@
 # cannot be outgrown. sandbox-check.mjs validates the builder's real default
 # build as well.
 terraform {
-  required_version = ">= 1.12"
+  # Same rule as the Landing Zone packs (frontend/src/lib/landingZone/terraformVersion.js).
+  required_version = ">= 1.12, < 2.0"
 
   required_providers {
     azurerm = {

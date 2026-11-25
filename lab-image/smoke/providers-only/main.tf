@@ -3,7 +3,8 @@
 # exactly one thing: both providers were installed from /opt/terraform/mirror
 # without a registry round trip.
 terraform {
-  required_version = ">= 1.9"
+  # Same rule as the Landing Zone packs (frontend/src/lib/landingZone/terraformVersion.js).
+  required_version = ">= 1.12, < 2.0"
 
   required_providers {
     azurerm = {
