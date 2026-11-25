@@ -25,8 +25,16 @@
  * does not run is a difference, not a skip.
  */
 import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { evaluateRowBlock, extractRowBlock, guidePort } from './guide-drift-row.mjs';
+import { loadCatalogueRow, readAddonPorts } from './guide-drift-site.mjs';
+
+// The work is split by side into two sibling files (#1845): guide-drift-row.mjs reads the guide, and
+// guide-drift-site.mjs reads the website's catalogue and lab-host settings. Both use Node built-ins only, and
+// addon-guide-check.yml fetches all three files. What this file used to export is re-exported, so the test and any
+// caller keep one import path.
+export { evaluateRowBlock, extractRowBlock, guidePort } from './guide-drift-row.mjs';
+export { loadCatalogueRow, readAddonPorts } from './guide-drift-site.mjs';
 
 /** The catalogue fields compared, in the order differences are reported. `port` is added when the guide states one. */
 export const COMPARED_FIELDS = Object.freeze([
@@ -60,103 +68,6 @@ function same(a, b) {
     return [...keys].every((key) => same(a[key], b[key]));
   }
   return false;
-}
-
-/** Turns a value that came out of the vm context into plain data of this realm (a frozen array is still an array). */
-const plain = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
-
-/**
- * The catalogue row with this id. The file is pure data with no imports (its own header says so), so it is
- * loaded as a module from a data: URL, which works whatever package.json is or is not beside the file.
- */
-export async function loadCatalogueRow(catalogueText, id) {
-  const url = `data:text/javascript;base64,${Buffer.from(catalogueText, 'utf8').toString('base64')}`;
-  let module;
-  try {
-    module = await import(url);
-  } catch (error) {
-    throw new Error(`the site's catalogue could not be loaded: ${error.message}`);
-  }
-  const rows = module.addons;
-  if (!Array.isArray(rows)) throw new Error("the site's catalogue does not export an `addons` list");
-  const row = rows.find((candidate) => candidate?.id === id);
-  return row === undefined ? null : plain(row);
-}
-
-/**
- * The text of the guide's pasted row: the first ```js block under the heading that starts "Catalogue row"
- * (a number before the words is allowed: "## 1. Catalogue row"). Returns { block } or { error }.
- */
-export function extractRowBlock(guideText) {
-  const lines = guideText.replace(/\r\n/g, '\n').split('\n');
-  const heading = lines.findIndex((line) => /^#{1,6}[ \t]+(?:\d+\.[ \t]*)?Catalogue row\b/i.test(line));
-  if (heading === -1) return { error: 'the guide has no heading that starts "Catalogue row"' };
-
-  for (let i = heading + 1; i < lines.length; i += 1) {
-    if (/^#{1,6}[ \t]/.test(lines[i])) break;
-    if (!/^```(?:js|javascript)[ \t]*$/.test(lines[i])) continue;
-    const end = lines.findIndex((line, at) => at > i && /^```[ \t]*$/.test(line));
-    if (end === -1) return { error: 'the guide\'s row block is never closed (no closing ``` line)' };
-    return { block: lines.slice(i + 1, end).join('\n') };
-  }
-  return { error: 'the guide has no ```js block under its "Catalogue row" heading' };
-}
-
-/** Evaluates the pasted object literal in an empty vm context. Returns { row } or { error }. */
-export function evaluateRowBlock(block) {
-  let value;
-  try {
-    value = vm.runInNewContext(`(${block}\n)`, Object.create(null), {
-      timeout: 1000,
-      contextCodeGeneration: { strings: false, wasm: false },
-    });
-  } catch (error) {
-    return { error: `the guide's row block is not a readable object (${String(error?.message ?? error).split('\n')[0]})` };
-  }
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return { error: "the guide's row block is not a single `{ ... }` object" };
-  }
-  let row;
-  try {
-    row = plain(value);
-  } catch (error) {
-    return { error: `the guide's row block is not plain data (${error.message})` };
-  }
-  return { row };
-}
-
-/**
- * The port the guide states, or null when it states none. Reads a table row whose label mentions the loopback
- * port; the value must start with a number (optionally in backticks, optionally `127.0.0.1:` before it).
- * "not assigned; ... the Cloud Assessor uses 18083" starts with a word, so it states nothing.
- */
-export function guidePort(guideText) {
-  for (const line of guideText.replace(/\r\n/g, '\n').split('\n')) {
-    const cells = line.split('|').map((cell) => cell.trim());
-    if (cells.length < 4 || cells[0] !== '') continue;
-    if (!/loopback port/i.test(cells[1])) continue;
-    const value = cells[2].match(/^`?(?:127\.0\.0\.1:)?(\d{2,5})\b/);
-    if (value) return Number(value[1]);
-  }
-  return null;
-}
-
-/**
- * The `port:` of each `addons:` row in the lab host's group_vars, by id. Split the same way read-addon-pins.mjs
- * splits (rows start at two spaces and `- id:`), but a row with no digest still counts: the guide may state a
- * port before the image exists.
- */
-export function readAddonPorts(groupVarsText) {
-  const block = groupVarsText.replace(/\r\n/g, '\n').match(/^addons:\n([\s\S]*?)(?=\n[A-Za-z_]+:|\n*(?![\s\S]))/m)?.[1];
-  if (!block) throw new Error('no `addons:` block in the group_vars file');
-  const ports = new Map();
-  for (const row of `\n${block}`.split(/\n {2}- id:[ \t]*/).slice(1)) {
-    const id = row.match(/^([a-z0-9-]+)/)?.[1];
-    if (!id) throw new Error('an addons row has no id');
-    const port = row.match(/^ {4}port:[ \t]*(\d+)\b/m)?.[1];
-    ports.set(id, port === undefined ? null : Number(port));
-  }
-  return ports;
 }
 
 /**

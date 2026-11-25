@@ -63,7 +63,12 @@ describe('addon-guide-check.yml', () => {
     const tools = code.slice(code.indexOf('path: .hcw-site-tools') - 400, code.indexOf('path: .hcw-site-tools') + 200);
     expect(tools).toContain('repository: saulpatinojr/HCW-HybridCloudWorks');
     expect(tools).toContain('ref: ${{ job.workflow_sha }}');
-    expect(code).toContain('sparse-checkout: scripts/addons/check-guide-drift.mjs');
+    // The script and its two siblings (#1845), each named: the checkout is sparse, so a file left out here is
+    // missing when the script imports it.
+    const sparse = tools.slice(tools.indexOf('sparse-checkout: |'));
+    for (const file of ['check-guide-drift.mjs', 'guide-drift-row.mjs', 'guide-drift-site.mjs']) {
+      expect(sparse).toContain(`scripts/addons/${file}`);
+    }
     const data = code.slice(code.indexOf('path: .hcw-site-data') - 400, code.indexOf('path: .hcw-site-data') + 300);
     expect(data).toContain('repository: saulpatinojr/HCW-HybridCloudWorks');
     expect(data).toContain('ref: main');
