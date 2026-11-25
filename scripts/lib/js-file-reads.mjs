@@ -718,6 +718,52 @@ const COMMAND_LINE_ONLY_CACHE = new WeakMap();
 // The analysis
 // ---------------------------------------------------------------------------
 
+/**
+ * The positions a spread value adds to a list: a list's own positions, or one
+ * position holding the unknown value (or `why`, when it is something else).
+ */
+function positionsOf(v, why) {
+  if (v.k === 'arr') return v.items;
+  return [[v.k === 'unk' ? v : unk(why)]];
+}
+
+/** Why a path built from a known start and then `v` is only partly known: null for a name from a listing. */
+function partlyKnownWhy(v, uses) {
+  if (v.k === 'name') return null;
+  return v.k === 'unk' ? v.why : `${uses} ${inWords(v)}`;
+}
+
+/** A template string with one choice of value for each `${}`, the quasis around them as written. */
+function templateValue(quasis, combo) {
+  let text = '';
+  for (let i = 0; i < quasis.length; i++) {
+    text += quasis[i].value.cooked ?? '';
+    const v = combo[i];
+    if (!v) continue;
+    if (v.k !== 'str') return templateStopsAt(text, v);
+    text += v.v;
+  }
+  return str(text);
+}
+
+/** A template string whose text so far is `text`, at a value `v` that is not plain text. */
+function templateStopsAt(text, v) {
+  if (v.k === 'pre') return pre(text + v.v, v.why);
+  if (text !== '') return pre(text, partlyKnownWhy(v, 'a template string uses'));
+  if (v.k === 'name') return NAME;
+  if (v.k === 'tmp' || v.k === 'ext' || v.k === 'unk') return v;
+  return unk('a template string starts with a value that is not known');
+}
+
+/** `l + r`, for one value of each side. */
+function concatValue(l, r) {
+  if (l.k === 'str' && r.k === 'str') return str(l.v + r.v);
+  if (l.k === 'str' && r.k === 'pre') return pre(l.v + r.v, r.why);
+  if (l.k === 'pre' || l.k === 'name' || passesThrough(l)) return l;
+  if (l.k === 'str' && l.v !== '') return pre(l.v, partlyKnownWhy(r, 'a string is joined to'));
+  return unk('it is built from a value that is not known');
+}
+
 /** Notes what an assignment does to each name it sets: a new value, a count, or a change the guard does not follow. */
 function recordAssignment(node) {
   const targets = node.left.type === 'Identifier' ? [node.left] : patternIdentifiers(node.left);
@@ -1253,34 +1299,13 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
   const evalTemplate = (node, ctx) => {
     const combos = product(node.expressions.map((expr) => evalNode(expr, ctx)));
     if (combos === null) return [unk(TOO_MANY)];
-    return uniq(
-      combos.map((combo) => {
-        let text = '';
-        for (let i = 0; i < node.quasis.length; i++) {
-          text += node.quasis[i].value.cooked ?? '';
-          const v = combo[i];
-          if (!v) continue;
-          if (v.k === 'str') text += v.v;
-          else if (v.k === 'pre') return pre(text + v.v, v.why);
-          else if (text === '' && (v.k === 'name' || v.k === 'tmp' || v.k === 'ext')) return v.k === 'name' ? NAME : v;
-          else if (text === '') return v.k === 'unk' ? v : unk('a template string starts with a value that is not known');
-          else return pre(text, v.k === 'name' ? null : v.k === 'unk' ? v.why : `a template string uses ${inWords(v)}`);
-        }
-        return str(text);
-      })
-    );
+    return uniq(combos.map((combo) => templateValue(node.quasis, combo)));
   };
 
   const evalConcat = (node, ctx) => {
     const out = [];
     for (const l of evalNode(node.left, ctx)) {
-      for (const r of evalNode(node.right, ctx)) {
-        if (l.k === 'str' && r.k === 'str') out.push(str(l.v + r.v));
-        else if (l.k === 'str' && r.k === 'pre') out.push(pre(l.v + r.v, r.why));
-        else if (l.k === 'pre' || l.k === 'name' || passesThrough(l)) out.push(l);
-        else if (l.k === 'str' && l.v !== '') out.push(pre(l.v, r.k === 'name' ? null : r.k === 'unk' ? r.why : `a string is joined to ${inWords(r)}`));
-        else out.push(unk('it is built from a value that is not known'));
-      }
+      for (const r of evalNode(node.right, ctx)) out.push(concatValue(l, r));
     }
     return uniq(out);
   };
@@ -1290,10 +1315,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     for (const element of node.elements) {
       if (!element) continue;
       if (element.type === 'SpreadElement') {
-        for (const spread of evalNode(element.argument, ctx)) {
-          if (spread.k === 'arr') items.push(...spread.items);
-          else items.push([spread.k === 'unk' ? spread : unk('it spreads a value that is not a list (array)')]);
-        }
+        for (const spread of evalNode(element.argument, ctx)) items.push(...positionsOf(spread, 'it spreads a value that is not a list (array)'));
       } else {
         items.push(evalNode(element, ctx));
       }
@@ -1317,7 +1339,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     binding.pushes.flatMap((call) =>
       call.arguments.flatMap((a) => {
         if (a.type !== 'SpreadElement') return [evalNode(a, ctx)];
-        return evalNode(a.argument, ctx).flatMap((v) => (v.k === 'arr' ? v.items : [[v.k === 'unk' ? v : unk('items added with a spread of something that is not a list (array)')]]));
+        return evalNode(a.argument, ctx).flatMap((v) => positionsOf(v, 'items added with a spread of something that is not a list (array)'));
       })
     );
 
@@ -1519,8 +1541,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
       if (node.type === 'YieldExpression' && node.argument) {
         // yield x adds one item; yield* list adds the items of list
         const values = evalNode(node.argument, ctx);
-        if (node.delegate) yielded.push(...values.flatMap((v) => (v.k === 'arr' ? v.items : [[v.k === 'unk' ? v : unk('yield* of something that is not a list (array)')]])));
-        else yielded.push(values);
+        yielded.push(...(node.delegate ? values.flatMap((v) => positionsOf(v, 'yield* of something that is not a list (array)')) : [values]));
       }
       for (const child of childrenOf(node)) if (!FUNCTION_TYPES.has(child.type)) stack.push(child);
     }
