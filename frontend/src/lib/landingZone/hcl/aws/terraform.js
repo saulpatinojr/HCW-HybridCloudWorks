@@ -7,18 +7,18 @@ export function terraformTf() {
     'terraform.tf',
     block('terraform', [
       ['required_version', q(TERRAFORM_REQUIRED_VERSION)],
-      [
-        'required_providers',
-        obj([
-          [
-            'aws',
-            obj([
-              ['source', q('hashicorp/aws')],
-              ['version', q(AWS_PROVIDER_PIN)],
-            ]),
-          ],
-        ]),
-      ],
+      '',
+      // A nested block, not `required_providers = { … }`: Terraform refuses
+      // the `=` form, so `terraform init` failed on every AWS pack (#1862).
+      ...block('required_providers', [
+        [
+          'aws',
+          obj([
+            ['source', q('hashicorp/aws')],
+            ['version', q(AWS_PROVIDER_PIN)],
+          ]),
+        ],
+      ]),
     ])
   );
 }

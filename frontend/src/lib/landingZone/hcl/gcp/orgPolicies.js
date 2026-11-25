@@ -1,4 +1,7 @@
-import { block, file, joinBlocks, obj, q } from '../format';
+import { block, file, joinBlocks, q } from '../format';
+
+// `spec` and `rules` are nested blocks in the google provider, so they are
+// written without `=`; the `=` form failed `terraform validate`.
 
 export function orgPoliciesTf() {
   const blocks = [];
@@ -8,7 +11,7 @@ export function orgPoliciesTf() {
     block('resource "google_org_policy_policy" "deny_external_ip"', [
       ['name', q('folders/\${google_folder.corp.folder_id}/policies/compute.vmExternalIpAccess')],
       ['parent', 'google_folder.corp.name'],
-      ['spec', obj([['rules', obj([['deny_all', q('TRUE')]])]])],
+      ...block('spec', block('rules', [['deny_all', q('TRUE')]])),
     ])
   );
 
@@ -20,7 +23,7 @@ export function orgPoliciesTf() {
         q('folders/\${google_folder.workloads.folder_id}/policies/compute.requireShieldedVm'),
       ],
       ['parent', 'google_folder.workloads.name'],
-      ['spec', obj([['rules', obj([['enforce', q('TRUE')]])]])],
+      ...block('spec', block('rules', [['enforce', q('TRUE')]])),
     ])
   );
 
@@ -34,7 +37,7 @@ export function orgPoliciesTf() {
         ),
       ],
       ['parent', 'google_folder.platform.name'],
-      ['spec', obj([['rules', obj([['enforce', q('TRUE')]])]])],
+      ...block('spec', block('rules', [['enforce', q('TRUE')]])),
     ])
   );
 

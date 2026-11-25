@@ -30,11 +30,13 @@ export function networkFirewallTf() {
       ['name', q('hub-network-firewall')],
       ['description', q('Central stateful inspection firewall for ingress, egress, and east-west')],
       ['vpc_id', 'module.inspection_vpc.vpc_id'],
+      // The module reads `subnet_id` from each entry of this map, so every
+      // entry is an object, not a bare subnet id (#1862).
       [
         'subnet_mapping',
         obj([
-          ['subnet_id_1', 'module.inspection_vpc.private_subnets[0]'],
-          ['subnet_id_2', 'module.inspection_vpc.private_subnets[1]'],
+          ['subnet_1', obj([['subnet_id', 'module.inspection_vpc.private_subnets[0]']])],
+          ['subnet_2', obj([['subnet_id', 'module.inspection_vpc.private_subnets[1]']])],
         ]),
       ],
       ['delete_protection', 'false'],

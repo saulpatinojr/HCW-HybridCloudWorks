@@ -11,6 +11,7 @@ export function readmeMd(state, files) {
     modules: [
       ['Shared VPC & Subnets', GCP_MODULES.network],
       ['Organization Log Export', GCP_MODULES.logExport],
+      ['Audit Log Bucket', GCP_MODULES.cloudStorage],
       ['Service Project Factory', GCP_MODULES.projectFactory],
     ],
     terraformVersion: TERRAFORM_REQUIRED_VERSION,

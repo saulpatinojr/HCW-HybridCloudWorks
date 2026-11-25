@@ -12,16 +12,16 @@ export function scpTf() {
         q('Enforces least privilege by denying root account usage across all member accounts.'),
       ],
       ['type', q('SERVICE_CONTROL_POLICY')],
-      [
-        'content',
-        `jsonencode({
+      // A plain line, not a [key, value] pair: a multi-line value ends the
+      // run of aligned `=` signs, as `terraform fmt` writes it.
+      `content = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "DenyRootAccountUsage"
-        Effect    = "Deny"
-        Action    = "*"
-        Resource  = "*"
+        Sid      = "DenyRootAccountUsage"
+        Effect   = "Deny"
+        Action   = "*"
+        Resource = "*"
         Condition = {
           StringLike = {
             "aws:PrincipalArn" = "arn:aws:iam::*:root"
@@ -30,7 +30,6 @@ export function scpTf() {
       }
     ]
   })`,
-      ],
     ])
   );
 
@@ -50,16 +49,16 @@ export function scpTf() {
         q('Denies running EC2 instances without token-based IMDSv2 metadata protection.'),
       ],
       ['type', q('SERVICE_CONTROL_POLICY')],
-      [
-        'content',
-        `jsonencode({
+      // A plain line, not a [key, value] pair: a multi-line value ends the
+      // run of aligned `=` signs, as `terraform fmt` writes it.
+      `content = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "EnforceIMDSv2"
-        Effect    = "Deny"
-        Action    = "ec2:RunInstances"
-        Resource  = "arn:aws:ec2:*:*:instance/*"
+        Sid      = "EnforceIMDSv2"
+        Effect   = "Deny"
+        Action   = "ec2:RunInstances"
+        Resource = "arn:aws:ec2:*:*:instance/*"
         Condition = {
           StringNotEquals = {
             "ec2:MetadataHttpTokens" = "required"
@@ -68,7 +67,6 @@ export function scpTf() {
       }
     ]
   })`,
-      ],
     ])
   );
 

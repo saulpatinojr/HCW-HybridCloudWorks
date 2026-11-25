@@ -6,9 +6,27 @@
 import { isSelected, normalizeState } from '../state';
 import { file } from './format';
 
-/** A pinned Terraform registry module. Its `name` is its registry source. */
-export const registryModule = (source, version, summary) =>
-  Object.freeze({ name: source, source, version, summary });
+/**
+ * A pinned Terraform registry module. Its `name` is its registry source.
+ *
+ * `requires` is what the release at `version` asks of Terraform and its
+ * providers, copied by hand from its versions.tf files (its own and those of
+ * the submodules it calls): `{ terraform: '<constraint>', providers: {
+ * <name>: '<constraint>' } }`. moduleVersions.test.js checks the pack's own
+ * pins against it, so a bump that needs a newer provider fails a test
+ * instead of `terraform init` (#1862, #1863).
+ */
+export const registryModule = (source, version, summary, requires) =>
+  Object.freeze({
+    name: source,
+    source,
+    version,
+    summary,
+    requires: Object.freeze({
+      terraform: requires.terraform,
+      providers: Object.freeze({ ...requires.providers }),
+    }),
+  });
 
 /**
  * Emit one provider's pack for a builder state: `terraform.tf` and

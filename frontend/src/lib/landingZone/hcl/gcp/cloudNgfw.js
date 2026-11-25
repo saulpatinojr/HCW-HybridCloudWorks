@@ -1,4 +1,4 @@
-import { block, file, joinBlocks, list, obj, q } from '../format';
+import { block, file, joinBlocks, list, q } from '../format';
 
 export function cloudNgfwTf() {
   const blocks = [];
@@ -33,13 +33,12 @@ export function cloudNgfwTf() {
       ['priority', '1000'],
       ['action', q('deny')],
       ['direction', q('INGRESS')],
-      [
-        'match',
-        obj([
-          ['src_ip_ranges', list([q('0.0.0.0/0')])],
-          ['layer4_configs', list([obj([['ip_protocol', q('all')]])])],
-        ]),
-      ],
+      // `match` and `layer4_configs` are nested blocks in the google
+      // provider, not attributes, so they are written without `=`.
+      ...block('match', [
+        ['src_ip_ranges', list([q('0.0.0.0/0')])],
+        ...block('layer4_configs', [['ip_protocol', q('all')]]),
+      ]),
     ])
   );
 
