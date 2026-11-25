@@ -312,6 +312,21 @@ function cancelRefusal(job) {
   return null;
 }
 
+/**
+ * The job a cancel request names, read and checked: `{ jobId, job }` when it
+ * can be cancelled, or `{ error }` with the answer to send (400 without a
+ * jobId, 404 or 409 from cancelRefusal).
+ */
+async function readCancellableJob(store, request) {
+  const body = (await request.json().catch(() => null)) || {};
+  const jobId = String(body.jobId || '').trim();
+  if (!jobId) return { error: json(400, { error: 'jobId is required' }) };
+
+  const job = await store.readDoc('lab_jobs', jobId, jobId);
+  const refused = cancelRefusal(job);
+  return refused ? { error: refused } : { jobId, job };
+}
+
 /** POST /api/enqueueLabJob — editor; allowlisted type + payload cap. */
 async function enqueueLabJob({ guard, store, now, uuid }, request, context) {
   const auth = await guard.requireRole(request, 'editor');
@@ -460,13 +475,9 @@ async function cancelLabJob({ guard, store, now }, request, context) {
   const { user } = auth;
 
   try {
-    const body = (await request.json().catch(() => null)) || {};
-    const jobId = String(body.jobId || '').trim();
-    if (!jobId) return json(400, { error: 'jobId is required' });
-
-    const job = await store.readDoc('lab_jobs', jobId, jobId);
-    const refused = cancelRefusal(job);
-    if (refused) return refused;
+    const target = await readCancellableJob(store, request);
+    if (target.error) return target.error;
+    const { jobId, job } = target;
 
     // The write carries the ETag (the version stamp the read came back
     // with), so it only lands if the job is still as it was read. Without
@@ -488,9 +499,8 @@ async function cancelLabJob({ guard, store, now }, request, context) {
   } catch (error) {
     // 412: the job changed between the read and the write, so nothing was
     // written. Answered 409 like the agent's side (completeLabJob).
-    if (error?.code === 412) {
-      return json(409, { error: 'Job changed while it was being cancelled; nothing was cancelled' });
-    }
-    return errorResponse(context, 'Cancel failed', error, 500, request);
+    return error?.code === 412
+      ? json(409, { error: 'Job changed while it was being cancelled; nothing was cancelled' })
+      : errorResponse(context, 'Cancel failed', error, 500, request);
   }
 }

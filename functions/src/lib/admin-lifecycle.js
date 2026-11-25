@@ -101,6 +101,40 @@ async function planAdminChange(store, body, existing) {
 }
 
 /**
+ * The admin a PATCH names and the change it asks for, read and checked:
+ * `{ targetId, existing, newRole, newActive, updateReason, demotesSuperAdmin }`,
+ * or `{ error }` with the answer to send (from readTargetAdmin or
+ * planAdminChange).
+ */
+async function readAdminChange(store, request) {
+  const target = await readTargetAdmin(store, request);
+  if (target.error) return target;
+  const body = (await request.json().catch(() => null)) || {};
+  const change = await planAdminChange(store, body, target.existing);
+  return change.error ? change : { ...target, ...change };
+}
+
+/**
+ * The write carries the ETag (the version stamp the read came back with),
+ * so it only lands if the record is still the one the checks above read.
+ * A 412 means someone else changed it in between: the whole update is
+ * refused, nothing is written, and no audit row is made. It is not retried
+ * here, because a retry would write a role decided from a record that is no
+ * longer there. Returns the 409 answer for that case, or null once written.
+ */
+async function patchUnlessChanged(store, targetId, patchedFields, etag) {
+  try {
+    await store.patchDoc('admins', targetId, patchedFields, { ifMatch: etag });
+    return null;
+  } catch (error) {
+    if (error?.code !== 412) throw error;
+    return json(409, {
+      error: 'The admin record changed since it was read; nothing was saved. Reload and try again.',
+    });
+  }
+}
+
+/**
  * PATCH /api/cms/admins/{id} — change role or active status (super_admin only).
  * Prevents demoting or deactivating the last active super admin.
  * Writes before-and-after audit and clears guard role cache.
@@ -112,14 +146,9 @@ export async function updateAdmin(ctx, request, context) {
   try {
     const { user } = auth;
     const actorOid = user.oid ?? user.sub;
-    const target = await readTargetAdmin(ctx.store, request);
-    if (target.error) return target.error;
-    const { targetId, existing } = target;
-
-    const body = (await request.json().catch(() => null)) || {};
-    const change = await planAdminChange(ctx.store, body, existing);
+    const change = await readAdminChange(ctx.store, request);
     if (change.error) return change.error;
-    const { newRole, newActive, updateReason, demotesSuperAdmin } = change;
+    const { targetId, existing, newRole, newActive, updateReason, demotesSuperAdmin } = change;
     const nowIso = ctx.now().toISOString();
 
     const patchedFields = {
@@ -131,20 +160,10 @@ export async function updateAdmin(ctx, request, context) {
       updateReason,
     };
 
-    // The write carries the ETag (the version stamp the read came back with),
-    // so it only lands if the record is still the one the checks above read.
-    // A 412 means someone else changed it in between: the whole update is
-    // refused, nothing is written, and no audit row is made. It is not retried
-    // here, because a retry would write a role decided from a record that is no
-    // longer there.
-    try {
-      await ctx.store.patchDoc('admins', targetId, patchedFields, { ifMatch: existing._etag });
-    } catch (error) {
-      if (error?.code !== 412) throw error;
-      return json(409, {
-        error: 'The admin record changed since it was read; nothing was saved. Reload and try again.',
-      });
-    }
+    // Written only if the record is unchanged since it was read (the ETag
+    // guard); see patchUnlessChanged for what a conflict means.
+    const conflict = await patchUnlessChanged(ctx.store, targetId, patchedFields, existing._etag);
+    if (conflict) return conflict;
 
     // Evict cached role entries immediately so changes take effect without waiting 60s
     ctx.guard.clearCache();

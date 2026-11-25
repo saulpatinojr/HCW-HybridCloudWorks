@@ -236,7 +236,7 @@ jobs:
         id: roletests
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^lab-host/(ansible/(roles|group_vars|inventory)/|ansible/requirements-role-tests\.txt$|coder/|bootstrap\.sh$|README\.md$)|^infra/lab-hybrid\.tf$|^infra-lab/variables\.tf$|^docs/runbooks/labs-host\.md$|^vps-agent/lib/(docker-runner|capabilities)\.js$|^vps-agent/bin/report-host-check\.js$'
+          FILTER: '^lab-host/(ansible/(roles|group_vars|inventory)/|ansible/requirements-role-tests\.txt$|coder/|bootstrap\.sh$|README\.md$)|^infra/lab-hybrid\.tf$|^infra-lab/variables\.tf$|^docs/runbooks/labs-host\.md$|^vps-agent/lib/(docker-runner|tar-payload|capabilities)\.js$|^vps-agent/bin/report-host-check\.js$'
           # Nine minutes of runner, and no test reads this file (the one that
           # did, hcw-portainer-check.test.py, hands that check to
           # scripts/ci-workflow-steps.test.mjs since 2026-11-04).
@@ -432,7 +432,7 @@ jobs:
         id: frontend
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^(frontend/|\.azure/api-surface\.json|scripts/build-content-manifest\.mjs$|scripts/lib/content-manifest-(items|fetch|designs|sections)\.mjs$|lab-image/(versions\.env|Dockerfile|smoke\.sh)$|vps-agent/lib/docker-runner\.js$|\.github/workflows/(deploy-azure-frontend|publish-lab-image)\.yml$|functions/src/lib/((ai|cms|labs|interviews)/|(labs|rss/feeds|addons/registry|admin-crud/certification-rules|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|key-verdict|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|expected-unresolved|decision-center/(links|items)|health/(status-model|probe-catalogue|pulse-checks)|integrations/(linkie-allowlist|rest-proxy|connection-probe|upstream-error)|community-days/api|cloud-tools/(history|pricing/(baseline|regions))|http/(error-response|fetch-with-timeout|guarded-fetch|read-setting)|timers/agent-health|triggers/fetch-image|ambassador/(readiness|model)|admin-crud/cert-values|health/(pulse-agent-checks|pulse-registry-checks|pulse-words)|http/(admin-handler|fetch-hops|guarded-fetch-stream|url-guard)|integrations/probe-answer|lab-agent-heartbeat|public-read-(audio|content|images|interviews|rules)|secret-state|secret-value-rules|timers/agent-health-plan)\.js$)|lab-host/(coder/launcher/launcher\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
+          FILTER: '^(frontend/|\.azure/api-surface\.json|scripts/build-content-manifest\.mjs$|scripts/lib/content-manifest-(items|fetch|designs|sections)\.mjs$|lab-image/(versions\.env|Dockerfile|smoke\.sh)$|vps-agent/lib/(docker-runner|tar-payload)\.js$|\.github/workflows/(deploy-azure-frontend|publish-lab-image)\.yml$|functions/src/lib/((ai|cms|labs|interviews)/|(labs|rss/feeds|addons/registry|admin-crud/certification-rules|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|key-verdict|lab-agent|public-reads|public-article-fields|secret-catalog|secret-vault|secrets-health|expected-unresolved|decision-center/(links|items)|health/(status-model|probe-catalogue|pulse-checks)|integrations/(linkie-allowlist|rest-proxy|connection-probe|upstream-error)|community-days/api|cloud-tools/(history|pricing/(baseline|regions))|http/(error-response|fetch-with-timeout|guarded-fetch|read-setting)|timers/agent-health|triggers/fetch-image|ambassador/(readiness|model)|admin-crud/cert-values|health/(pulse-agent-checks|pulse-registry-checks|pulse-words)|http/(admin-handler|fetch-hops|guarded-fetch-stream|url-guard)|integrations/probe-answer|lab-agent-heartbeat|public-read-(audio|content|images|interviews|rules)|secret-state|secret-value-rules|timers/agent-health-plan)\.js$)|lab-host/(coder/launcher/launcher-config\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
           # The row's install and run lines are in this file, so an edit to it runs the row.
           WORKFLOW_SELF_TRIGGER: 'true'
         run: |
@@ -592,6 +592,9 @@ jobs:
       # changes only one of these now runs this row. (TODO|CHANGELOG)\.md
       # is older than this note: the only test that reads them today is
       # no-wiki-pointers.test.mjs, which reads every tracked text file.
+      # .qlty/qlty.toml and docs/security/scanner-triage.md are read by
+      # check-new-smells.test.mjs (#1845): the data-table [[triage]] block
+      # and the page that gives each listed file its reason.
       # ci-filters.test.mjs, the test that checks every filter in this
       # list, is not left to this filter: it also runs in its own step on
       # every pull request (the step "CI path filters list every file the
@@ -618,7 +621,7 @@ jobs:
         id: scripts
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FILTER: '^(scripts/|\.github/workflows/|\.github/actions/|\.github/codeql/|\.github/(actionlint\.yaml|pull_request_template\.md|lab-image-scan-waivers\.yaml)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints|terraformVersion)\.js$|frontend/data/content-manifest\.json$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|App\.jsx|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|bin/report-host-check\.js|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/lib/(cms|labs|http|cloud-tools|interviews)/|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll|register)|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|expected-unresolved|timers/agent-health|triggers/fetch-image|credentials/google-rotate|lab-agent-heartbeat|public-read-(audio|content|images|interviews|rules)|secret-state|secret-value-rules|timers/agent-health-plan)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
+          FILTER: '^(scripts/|\.github/workflows/|\.github/actions/|\.github/codeql/|\.github/(actionlint\.yaml|pull_request_template\.md|lab-image-scan-waivers\.yaml)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|\.qlty/qlty\.toml$|docs/security/scanner-triage\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints|terraformVersion)\.js$|frontend/data/content-manifest\.json$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|App\.jsx|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|bin/report-host-check\.js|lib/(capabilities|docker-runner|tar-payload|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/lib/(cms|labs|http|cloud-tools|interviews)/|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll|register)|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|lab-agent|public-reads|public-article-fields|secret-catalog|secret-vault|secrets-health|expected-unresolved|timers/agent-health|triggers/fetch-image|credentials/google-rotate|lab-agent-heartbeat|public-read-(audio|content|images|interviews|rules)|secret-state|secret-value-rules|timers/agent-health-plan)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
           # The scripts tests read the workflow files anyway.
           WORKFLOW_SELF_TRIGGER: 'true'
         run: |
@@ -2116,8 +2119,15 @@ jobs:
   # it downloads, so the pin fixes those too. To move it: change both
   # values, from that .sha256 file. No token: this reads nothing from Qlty
   # Cloud.
+  #
+  # CODE SMELLS TOO, since 2026-11-25 (owner decision, #1845). The last step
+  # fails a pull request that adds a medium or high Qlty code smell (a too
+  # complex function, too many returns, copied code). The key stays
+  # `security-scan` because `gate` lists it by that key; only the name shown
+  # on the pull request changed. docs/security/scanner-triage.md, section
+  # "The pull request smell check", explains it.
   security-scan:
-    name: Qlty security scan
+    name: Qlty security scan and code smells
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-26.04
     timeout-minutes: 20 # the scanners download on first use; a scan of a few files takes about 3 minutes
@@ -2136,6 +2146,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install the Qlty CLI (pinned, digest checked)
+        id: qlty-install
         run: |
           set -euo pipefail
           tools="${RUNNER_TEMP}/qlty"
@@ -2163,6 +2174,7 @@ jobs:
       # line it excuses, in the diff a reviewer reads. Review of #1841,
       # 2026-11-24.
       - name: Use the base branch's scanner rules
+        id: base-rules
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -2201,6 +2213,82 @@ jobs:
           echo "files this pull request changes: $(git diff --numstat "${BASE_SHA}" HEAD | wc -l)"
           qlty check --upstream "${BASE_SHA}" --filter "${QLTY_SECURITY_PLUGINS}" \
             --no-formatters --no-fix --no-progress --level medium --fail-level medium
+
+      # Node.js 26, the line scripts/package.json requires, for the smell
+      # check below. That script imports node: built-ins only, so nothing is
+      # installed and there is nothing to cache. Runs, like the smell check,
+      # even when the security scan above failed, so one pull request sees
+      # both answers in one run.
+      - name: Set up Node.js
+        if: ${{ !cancelled() && steps.qlty-install.outcome == 'success' && steps.base-rules.outcome == 'success' }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
+      # New code smells (#1845). `qlty smells` lists smells but always exits
+      # 0, so it is run twice and compared: on the files this pull request
+      # changes, and on the same files at the base commit (a renamed file by
+      # its old name). scripts/check-new-smells.mjs fails only on a medium or
+      # high smell the base did not have, after applying the [[triage]]
+      # blocks of the base branch's .qlty/qlty.toml (the step above put that
+      # copy in place). Qlty does not apply those blocks to its own smells
+      # (qltysh/qlty#2902), which is why the script does. The script is taken
+      # from the base commit when it is there, like the rules, so a pull
+      # request cannot loosen the check that judges it.
+      #
+      # It runs even when the security scan failed (only a cancelled run, a
+      # missing CLI or missing base rules stop it), so both answers arrive in
+      # one run.
+      #
+      # THE BASE is BASE_SHA, the same commit the security scan compares
+      # against and the rules came from, so the two checks judge one diff.
+      # For a pull_request run it is also the first parent of the merge
+      # commit checked out here; the step says so if the two ever differ.
+      #
+      # `git diff -z`: every name ends in a NUL and none is quoted, so a file
+      # whose name holds a tab, a newline or a quote keeps its base smells.
+      - name: Check for new code smells
+        if: ${{ !cancelled() && steps.qlty-install.outcome == 'success' && steps.base-rules.outcome == 'success' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/smells"
+          base="${work}/base-tree"
+          mkdir -p "${work}"
+          parent="$(git rev-parse HEAD^1)"
+          if [ "${parent}" != "${BASE_SHA}" ]; then
+            echo "::warning title=Smell check::The merge commit's first parent (${parent}) is not the pull request's base (${BASE_SHA}); smells are compared with the base, like the security scan."
+          fi
+          qlty smells --upstream "${BASE_SHA}" --no-snippets --quiet --json > "${work}/head.json"
+          git diff -z --name-status -M "${BASE_SHA}" HEAD > "${work}/changes.z"
+          git worktree add --detach --quiet "${base}" "${BASE_SHA}"
+          # Each changed file's path at the base: the old name of a renamed
+          # or copied file, and nothing for a file the pull request adds.
+          paths=()
+          while IFS= read -r -d '' status; do
+            IFS= read -r -d '' first
+            case "${status}" in
+              R* | C*) IFS= read -r -d '' _ ;;
+            esac
+            if [ "${status}" != "A" ] && [ -f "${base}/${first}" ]; then
+              paths+=("${first}")
+            fi
+          done < "${work}/changes.z"
+          if [ "${#paths[@]}" -gt 0 ]; then
+            (cd "${base}" && qlty smells --no-snippets --quiet --json -- "${paths[@]}") > "${work}/base.json"
+          else
+            echo '[]' > "${work}/base.json"
+          fi
+          checker="scripts/check-new-smells.mjs"
+          if [ -f "${base}/${checker}" ] && [ -f "${base}/scripts/lib/qlty-triage.mjs" ]; then
+            checker="${base}/${checker}"
+          else
+            echo "::notice title=Smell check::The base commit has no smell check yet, so this run uses the pull request's copy."
+          fi
+          node "${checker}" --head "${work}/head.json" --base "${work}/base.json" \
+            --config .qlty/qlty.toml --renames "${work}/changes.z"
 
   # THE ONE REQUIRED CHECK (#1545). The `main` ruleset requires `gate`, and
   # `gate` waits for every job above. `!cancelled()` keeps it running when a

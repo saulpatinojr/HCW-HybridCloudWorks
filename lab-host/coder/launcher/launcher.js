@@ -37,7 +37,7 @@
  *     Coder's workspace page with Start, as it always did. Creating a
  *     workspace is still Coder's own UI in a frame of the same origin, with
  *     Coder's own consent dialog.
- *   - Everything it builds comes from constants below: the lab id and the
+ *   - Everything it builds comes from constants in launcher-config.js: the lab id and the
  *     workspace name from LAB_WORKSPACES, the template name, and the host
  *     suffix it navigates to. The query string only selects a key of
  *     LAB_WORKSPACES, and no text from it reaches the page. The one other
@@ -52,426 +52,71 @@
  *     AppSubdomain: no agent segment for a named app) for this workspace
  *     and the signed-in learner's own username (`/api/v2/users/me`).
  *
- * Pure: no DOM, no globals. main.js wires it to the page, and
+ * Pure: no DOM, no globals, and no imports but its three sibling files
+ * (launcher-config.js, launcher-coder.js, launcher-workspace.js; split by
+ * job in #1845), which Caddy serves beside it. main.js wires it to the page, and
  * scripts/lab-host-launcher.test.mjs drives it with a mocked fetch, clock and
  * navigation.
  */
 
-/** Where code-server's subdomain lives: CODER_WILDCARD_ACCESS_URL in lab-host/coder/docker-compose.yml. */
-export const APPS_HOST_SUFFIX = '.coder.lab.hybridcloudworks.com';
+import {
+  MESSAGES,
+  ME_PATH,
+  POLL,
+  TEMPLATE,
+  TEMPLATE_API_PATH,
+  createPagePath,
+  workspaceApiPath,
+  workspacePagePath,
+} from './launcher-config.js';
+import {
+  buildLogsPath,
+  isBlocking,
+  limitBlocker,
+  limitMessage,
+  read,
+  startWorkspace,
+} from './launcher-coder.js';
+import { assess, ownerName, resolveLab } from './launcher-workspace.js';
 
-/** The one workspace template (lab-host/coder/templates/hcw-lab). */
-export const TEMPLATE = 'hcw-lab';
-
-/** code-server's app slug: the module's default, which the template keeps. */
-export const APP_SLUG = 'code-server';
-
-/**
- * Where the site's pages live: both names, because www serves the site with
- * a 200 rather than redirecting (caddy_frame_ancestors in
- * lab-host/ansible/group_vars/all.yml). Each gets a post of its own; the
- * browser delivers only the one that matches the parent.
- */
-export const SITE_ORIGINS = Object.freeze([
-  'https://hybridcloudworks.com',
-  'https://www.hybridcloudworks.com',
-]);
-
-/** The `type` of every message this page posts to the site. */
-export const MESSAGE_TYPE = 'hcw-lab';
-
-/**
- * Lab id to workspace name, one workspace per lab per learner. The ids are
- * the catalogue's (frontend/src/data/labs/catalogue.js), and its
- * `workspaceName` for each is the same string; both
- * scripts/lab-host-launcher.test.mjs and the catalogue's own test fail when
- * they differ.
- *
- * Short on purpose. Coder serves code-server at
- * `code-server--<workspace>--<owner>`, one DNS label of at most 63
- * characters, and an owner name can be 32 (codersdk/name.go), so a
- * workspace name has 16 at most. Lowercase letters, digits and single
- * hyphens, which is Coder's own rule for a name.
- */
-export const LAB_WORKSPACES = Object.freeze({
-  'landing-zone-builder-output': 'lab-lzb',
-  'terraform-validate-walkthrough': 'lab-tfv',
-  'ansible-syntax-check-walkthrough': 'lab-asc',
-  'wsl-containers-walkthrough': 'lab-wslc',
-  'defender-wsl-plugin-walkthrough': 'lab-mde-wsl',
-  'aws-transit-gateway-walkthrough': 'lab-aws-tgw',
-  'gcp-shared-vpc-walkthrough': 'lab-gcp-vpc',
-  'vmware-hcx-migration-walkthrough': 'lab-vmw-hcx',
-  'docker-sandbox-agent-walkthrough': 'lab-dck-sbx',
-});
-
-/** Every state this page reports, in the order a visit can move through them. */
-export const STATES = Object.freeze([
-  'checking',
-  'signed-out',
-  'create',
-  'stopped',
-  'limited',
-  'starting',
-  'ready',
-  'unavailable',
-]);
-
-/**
- * Everything a visitor reads here. It renders inside the site's pane, so it
- * follows the site's public-pages rule: "your lab workspace", never the name
- * of a tool, the host or a setting (scripts/lab-host-visitor-copy.test.mjs).
- * `unavailable` is the site's own sentence for the same state
- * (UNAVAILABLE_SENTENCE in frontend/src/pages/shared/LabPanePage.jsx).
- */
-export const MESSAGES = Object.freeze({
-  checking: 'Opening your lab workspace…',
-  'signed-out':
-    "You're not signed in. Use Sign in with GitHub above to open your lab workspace here.",
-  create: "Your lab workspace is new. Confirm below to create it, and it opens here when it's ready.",
-  stopped:
-    "Your lab workspace isn't running. Start it on the page below, and it opens here when it's ready.",
-  starting: 'Getting your lab workspace ready. This can take a minute or two.',
-  ready: 'Your lab workspace is ready. Opening it…',
-  unavailable: "Lab workspaces aren't available right now.",
-  'unknown-lab': "There's no lab at this address.",
-  'frame-title': 'Your lab workspace',
-  // `{name}` is the other workspace's name, checked by limitBlocker.
-  limited:
-    'Only one of your lab workspaces runs at a time, and {name} is running. Stop it on the page below, and this lab starts.',
-});
-
-/**
- * How often, and for how long. The wait grows from one second to five, so
- * a workspace that starts in seconds opens in seconds and one that takes
- * minutes is asked about every five. Ten minutes covers a first start (the
- * image is on the host already; code-server installs once per workspace)
- * with time to confirm the create dialog. Six failed reads in a row, about
- * thirteen seconds, is an outage rather than a blip.
- */
-export const POLL = Object.freeze({
-  firstDelayMs: 1_000,
-  factor: 1.5,
-  maxDelayMs: 5_000,
-  capMs: 10 * 60 * 1_000,
-  maxErrors: 6,
-});
-
-export const ME_PATH = '/api/v2/users/me';
-
-/**
- * The template, read before Coder's create page is ever loaded. It is the
- * same read that page makes first (Coder v2.37.3, site CreateWorkspacePage:
- * `templateByName(organization ?? "default", template)`), and `default` is
- * Coder's name for the default organization (codersdk.DefaultOrganization,
- * resolved by httpmw.ExtractOrganizationParam), which is the one this
- * deployment has. Coder answers 404 when the template does not exist, and
- * also when the learner cannot read it (templateByOrganizationAndName,
- * httpapi.ResourceNotFound). Loaded in the pane, that 404 is Coder's own red
- * "Resource not found or you do not have access to this resource" box with
- * its response data and stack trace (2026-09-28, before the template was
- * published), so the launcher reads it first and says the site's sentence
- * instead.
- */
-export const TEMPLATE_API_PATH = `/api/v2/organizations/default/templates/${TEMPLATE}`;
-
-/** Coder's API for one of the signed-in learner's workspaces, by name. */
-export function workspaceApiPath(workspace) {
-  return `/api/v2/users/me/workspace/${encodeURIComponent(workspace)}`;
-}
-
-/**
- * Coder's own create page, with the name and the lab set. `mode=auto` shows
- * Coder's consent dialog and creates on confirm, then moves that frame to
- * the new workspace's page.
- */
-export function createPagePath(labId, workspace) {
-  const query = `mode=auto&name=${encodeURIComponent(workspace)}&param.lab=${encodeURIComponent(labId)}`;
-  return `/templates/${TEMPLATE}/workspace?${query}`;
-}
-
-/** Coder's page for the learner's workspace, where Start is. `me` resolves to the learner. */
-export function workspacePagePath(workspace) {
-  return `/@me/${encodeURIComponent(workspace)}`;
-}
-
-/**
- * Starting a stopped workspace without a click (owner, 2026-10-07, #911:
- * "the lab was enabled but I still needed to start it").
- *
- * Coder starts a workspace with `POST /api/v2/workspaces/{id}/builds
- * { transition: "start" }`, the call its own Start button makes. The
- * launcher is signed in the way Coder's pages are, by the session cookie,
- * and Coder guards every cookie-authenticated write with a CSRF token
- * (coderd/httpmw/csrf.go): the cookie is HttpOnly, so a page cannot read
- * it, and the token is instead embedded in every page Coder serves as
- * `<meta property="csrf-token">`, which Coder's own front end reads and
- * sends as `X-CSRF-TOKEN` (site/src/api/api.ts). The launcher does the
- * same: it reads one of Coder's pages and sends the token it finds. When
- * the page carries none, or Coder refuses the start, the launcher does
- * what it did before — frames Coder's workspace page, where Start is — so
- * a Coder change here costs a click, never the lab.
- *
- * Only a build that stopped or was cancelled is started this way. A failed
- * build is not: its page carries the reason and Retry, and starting it
- * blind would hide the reason. An outdated workspace is started on its
- * template's active version, so a template change (a new editor pin, say)
- * reaches every lab on its next open rather than waiting for each learner
- * to press "Update and start". One attempt per visit; the poll then waits
- * for the build like any other start.
- */
-export const CSRF_PAGE_PATH = '/';
-export const CSRF_HEADER = 'X-CSRF-TOKEN';
-const CSRF_META = /<meta\s+property="csrf-token"\s+content="([^"]+)"/i;
-const STARTABLE = new Set(['stopped', 'canceled']);
-
-/** Coder's builds API for one workspace, by id. */
-export function buildsApiPath(workspaceId) {
-  return `/api/v2/workspaces/${encodeURIComponent(workspaceId)}/builds`;
-}
-
-/** The CSRF token a Coder page carries, or null. */
-export function csrfTokenFrom(html) {
-  const match = typeof html === 'string' ? html.match(CSRF_META) : null;
-  return match ? match[1] : null;
-}
-
-/**
- * How to start this workspace, or null when it should not be started
- * without a click: `{ path, body }` for a stopped or cancelled build of a
- * workspace with an id, on the active template version when outdated.
- */
-export function startPlan(workspace) {
-  const status = workspace?.latest_build?.status;
-  return STARTABLE.has(status) ? anyStartPlan(workspace) : null;
-}
-
-/** The start call for this workspace whatever its last build did, or null without an id. */
-function anyStartPlan(workspace) {
-  if (typeof workspace?.id !== 'string' || workspace.id === '') return null;
-  const body = { transition: 'start' };
-  if (workspace.outdated === true && typeof workspace.template_active_version_id === 'string') {
-    body.template_version_id = workspace.template_active_version_id;
-  }
-  return { path: buildsApiPath(workspace.id), body };
-}
-
-/**
- * The running-workspace limit (owner decision 2026-10-16, #954). Every
- * template refuses a start while another of the learner's workspaces is
- * starting or running: a Terraform precondition fails the build at plan,
- * and Coder logs its message, `Only one lab workspace can run at a time.
- * Stop your other lab first: <name>.`, as an error line of that build's
- * log (docker_container.workspace in each template under
- * lab-host/coder/templates; Coder v2.38.0 logs a diagnostic's detail as
- * lines of its own, and the job's own error only says that `terraform plan`
- * failed). The launcher reads that log for a failed start of this lab's
- * workspace, once per build, and when it finds the line it shows the
- * learner the limit, as the state `limited`, with Coder's page for the other
- * workspace, where Stop is, in the frame. When the other workspace no
- * longer counts against the limit (isBlocking, below), the refusal no
- * longer holds, and the launcher starts this one, once per visit: the one
- * case a failed build is started without a click, because its log says why
- * it failed and that reason is gone.
- */
-export const LIMIT_REFUSAL = /Stop your other lab first: ([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)/;
-/** Coder's limit on a workspace name (codersdk/name.go). */
-const WORKSPACE_NAME_MAX = 32;
-/** A start that is queued, under way or done: what the templates count against the limit. */
-/**
- * The latest builds the templates count against the limit (`blocking_builds`
- * in each main.tf), by transition: the ones that leave a container running,
- * or may. A start that is queued, under way, done or being cancelled, and a
- * stop that failed. A failed start is not one, so a refused start never
- * holds the limit itself. template.test.mjs holds the two lists equal.
- */
-const BLOCKING = new Map([
-  ['start', new Set(['pending', 'starting', 'running', 'canceling'])],
-  ['stop', new Set(['failed'])],
-]);
-
-/** Coder's log of one build, by id. */
-export function buildLogsPath(buildId) {
-  return `/api/v2/workspacebuilds/${encodeURIComponent(buildId)}/logs`;
-}
-
-/** The other workspace a build's log says to stop first, or null when the log carries no such refusal. */
-export function limitBlocker(logs) {
-  if (!Array.isArray(logs)) return null;
-  for (const entry of logs) {
-    if (entry?.log_level !== 'error' || typeof entry.output !== 'string') continue;
-    const name = entry.output.match(LIMIT_REFUSAL)?.[1];
-    if (name && name.length <= WORKSPACE_NAME_MAX) return name;
-  }
-  return null;
-}
-
-/** Whether a workspace counts against the limit, as the templates count it. */
-export function isBlocking(workspace) {
-  const build = workspace?.latest_build;
-  return BLOCKING.get(build?.transition)?.has(build.status) === true;
-}
-
-/** What the learner reads while another of their workspaces holds the limit. */
-export function limitMessage(name) {
-  return MESSAGES.limited.replace('{name}', name);
-}
-
-/**
- * A start of this workspace that failed, which may be the limit's refusal:
- * `{ buildId, retry }`, retry being the start call to make once the other
- * workspace has stopped. Null for anything else.
- */
-export function refusedStart(workspace) {
-  const build = workspace?.latest_build;
-  if (build?.status !== 'failed' || build.transition !== 'start') return null;
-  if (typeof build.id !== 'string' || build.id === '') return null;
-  const retry = anyStartPlan(workspace);
-  return retry ? { buildId: build.id, retry } : null;
-}
-
-/** One attempt to start: true when Coder accepted the build, false for anything else. */
-async function startWorkspace(fetchImpl, plan) {
-  try {
-    const page = await fetchImpl(CSRF_PAGE_PATH, {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      redirect: 'error',
-      headers: { Accept: 'text/html' },
-    });
-    if (!page.ok) return false;
-    const token = csrfTokenFrom(await page.text());
-    if (!token) return false;
-    const response = await fetchImpl(plan.path, {
-      method: 'POST',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      redirect: 'error',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', [CSRF_HEADER]: token },
-      body: JSON.stringify(plan.body),
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-/** The lab and workspace a query string names, or null for anything but exactly one known `lab`. */
-export function resolveLab(search) {
-  let params;
-  try {
-    params = new URLSearchParams(typeof search === 'string' ? search : '');
-  } catch {
-    return null;
-  }
-  const ids = params.getAll('lab');
-  if (ids.length !== 1 || !Object.hasOwn(LAB_WORKSPACES, ids[0])) return null;
-  return { lab: ids[0], workspace: LAB_WORKSPACES[ids[0]] };
-}
-
-const SUBDOMAIN = /^code-server--[a-z0-9-]+--[a-z0-9-]+$/;
-const DNS_LABEL_MAX = 63;
-/** Coder's rule for a username (codersdk/name.go), lowercased: letters, digits and single hyphens. */
-const OWNER = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-/**
- * The signed-in learner's username from `GET /api/v2/users/me`, lowercased,
- * or null when it is not a Coder username. Lowercased because a Coder
- * username may carry capitals and a host name is case-insensitive.
- */
-export function ownerName(me) {
-  const name = typeof me?.username === 'string' ? me.username.toLowerCase() : '';
-  return OWNER.test(name) ? name : null;
-}
-
-/**
- * code-server's address, or null unless Coder's `subdomain_name` is exactly
- * the name v2.37.3 builds for this workspace of this learner:
- * `code-server--<workspace>--<owner>`, one DNS label. So the pane can only
- * ever move to the learner's own editor for this lab, never another
- * learner's. The suffix is fixed here and never read from anywhere.
- */
-export function codeServerUrl(app, workspace, owner) {
-  if (app?.subdomain !== true || typeof app.subdomain_name !== 'string') return null;
-  const name = app.subdomain_name.toLowerCase();
-  const own = typeof owner === 'string' && OWNER.test(owner) && name === `${APP_SLUG}--${workspace}--${owner}`;
-  return own && name.length <= DNS_LABEL_MAX && SUBDOMAIN.test(name) ? `https://${name}${APPS_HOST_SUFFIX}/` : null;
-}
-
-/** An array, or an empty one for anything else a response might carry. */
-const list = (value) => (Array.isArray(value) ? value : []);
-const isCodeServer = (app) => app?.slug === APP_SLUG;
-
-/** code-server's app and the agent that serves it, from a workspace's latest build. */
-export function findCodeServer(workspace) {
-  const agents = list(workspace?.latest_build?.resources).flatMap((resource) => list(resource?.agents));
-  const agent = agents.find((candidate) => list(candidate?.apps).some(isCodeServer));
-  return agent ? { agent, app: agent.apps.find(isCodeServer) } : null;
-}
-
-/**
- * A latest build that is not running, and what the learner sees for it: a
- * workspace deleted is created again, and a stopped, failed or cancelled one
- * gets Coder's workspace page, where Start (or Retry) is. Any other status is
- * waited on.
- */
-const NOT_RUNNING = new Map([
-  ['deleted', 'create'],
-  ['stopped', 'stopped'],
-  ['failed', 'stopped'],
-  ['canceled', 'stopped'],
-]);
-
-const isReady = ({ agent, app }) =>
-  agent.status === 'connected' && agent.lifecycle_state === 'ready' && app.health === 'healthy';
-
-/**
- * What a workspace read means: `{ state }`, plus `url` when it is ready.
- * Anything this does not recognise is waited on, and the poll cap ends a
- * wait that never resolves.
- */
-export function assess(workspace, workspaceName, owner) {
-  const status = workspace?.latest_build?.status;
-  if (status !== 'running') {
-    const state = NOT_RUNNING.get(status) ?? 'starting';
-    const start = state === 'stopped' ? startPlan(workspace) : null;
-    if (start) return { state, start };
-    // A failed start may be the running-workspace limit's refusal.
-    const refused = refusedStart(workspace);
-    return refused ? { state, refused } : { state };
-  }
-  const found = findCodeServer(workspace);
-  // A startup script that failed never becomes ready; the workspace page
-  // shows why and has Restart.
-  if (found?.agent.lifecycle_state === 'start_error') return { state: 'stopped' };
-  if (!found || !isReady(found)) return { state: 'starting' };
-  const url = codeServerUrl(found.app, workspaceName, owner);
-  return url ? { state: 'ready', url } : { state: 'unavailable' };
-}
-
-/** What a response's status means, where it is not simply ok or an error. */
-const STATUS_KIND = new Map([
-  [401, 'signed-out'],
-  [404, 'missing'],
-]);
-
-/** One GET: `{ kind: 'ok', body }`, `'signed-out'` (401), `'missing'` (404) or `'error'`. */
-async function read(fetchImpl, path) {
-  try {
-    const response = await fetchImpl(path, {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      redirect: 'error',
-      headers: { Accept: 'application/json' },
-    });
-    const kind = STATUS_KIND.get(response.status) ?? (response.ok ? 'ok' : 'error');
-    return kind === 'ok' ? { kind, body: await response.json() } : { kind };
-  } catch {
-    return { kind: 'error' };
-  }
-}
+// What the sibling files export is re-exported here, so main.js and the
+// tests keep one import path.
+export {
+  APPS_HOST_SUFFIX,
+  TEMPLATE,
+  APP_SLUG,
+  SITE_ORIGINS,
+  MESSAGE_TYPE,
+  LAB_WORKSPACES,
+  STATES,
+  MESSAGES,
+  POLL,
+  ME_PATH,
+  TEMPLATE_API_PATH,
+  workspaceApiPath,
+  createPagePath,
+  workspacePagePath,
+} from './launcher-config.js';
+export {
+  CSRF_PAGE_PATH,
+  CSRF_HEADER,
+  buildsApiPath,
+  csrfTokenFrom,
+  startPlan,
+  LIMIT_REFUSAL,
+  buildLogsPath,
+  limitBlocker,
+  isBlocking,
+  limitMessage,
+  refusedStart,
+} from './launcher-coder.js';
+export {
+  resolveLab,
+  ownerName,
+  codeServerUrl,
+  findCodeServer,
+  assess,
+} from './launcher-workspace.js';
 
 /** The page's text, frame and messages to the site, each changed only when it changes. */
 function createView({ ui, post }) {
