@@ -1,0 +1,18 @@
+# bandit settings (Python security linter). Qlty runs bandit as
+# `bandit --ini .bandit`, so Qlty Cloud and a local `qlty check` both read
+# this file. Before it existed every bandit default was on, and Qlty shows
+# bandit's own LOW findings as HIGH, which pulled the Security grade to F.
+#
+# Two checks are off, because each flags the SAFE way of running a program:
+#
+#   B404  "import subprocess": fires on the import alone, in every file that
+#         runs any program at all.
+#   B603  "subprocess call without shell=True": the list form, where the
+#         program and its arguments are passed separately and no shell ever
+#         reads them, so nothing in an argument can start a second command.
+#
+# The checks for the RISKY forms stay on and still fail: B602 (shell=True),
+# B605 (os.system and friends), B607 (a program named without its full path),
+# B604 and the rest. Record: docs/security/scanner-triage.md#bandit.
+[bandit]
+skips = B404,B603

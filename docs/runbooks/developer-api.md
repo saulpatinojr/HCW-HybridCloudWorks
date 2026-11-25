@@ -410,6 +410,18 @@ Owner decision 2026-11-24, on
 "the yearly cycle ends in December... If a proposal is not accepted, strip
 it," with "the previous year an extra month to complete applications".
 
+**Status: switched on.** The owner armed it on 2026-11-25, on
+[#1777](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1777),
+without waiting for the first dry-run count. The reason given: proposals were
+added to the site only days earlier, so every call closes in 2026 or later,
+no cycle is over before 1 February 2027, and nothing is due until then. The
+switch is live once the owner has confirmed the Terraform run for the arming
+pull request. The steps under "Switching it on" below are kept for the
+record and for switching it off and on again. One thing that reasoning does
+not cover: a call whose close day was typed as a date in 2025 or earlier is
+already past its clean-up day, and its proposals that were not accepted are
+stripped at the first run.
+
 **The rule.**
 
 - The cycle is the calendar year. A year's clean-up is due on **1 February of

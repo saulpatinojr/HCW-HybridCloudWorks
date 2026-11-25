@@ -46,11 +46,17 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Debian package pin breaks on every point release (#1575).
 # hadolint ignore=DL3008
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl unzip git \
+ && apt-get install -y --no-install-recommends curl git unzip \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 COPY versions.env /build/versions.env
+
+# One RUN per artefact below, on purpose (radarlint-iac S7031 asks for them
+# to be merged). Nothing in this stage ships: later stages COPY only what is
+# under /out, so its layer count does not reach any image. Kept apart, a
+# change to one pin in versions.env downloads that artefact again and takes
+# the others from the build cache, and a failed check names its own step.
 
 # Kubernetes JSON schemas for kubeconform (#675): one directory of
 # yannh/kubernetes-json-schema at a pinned commit, fetched as a sparse,
@@ -155,7 +161,10 @@ RUN set -eu; . /build/versions.env; \
     test -n "${keys}"; \
     for key in ${keys}; do \
       eval "version=\${AVM_${key}_VERSION}; sum=\${AVM_${key}_SHA256:-}"; \
-      if [ -z "${sum}" ]; then echo "versions.env: AVM_${key}_VERSION has no AVM_${key}_SHA256 beside it" >&2; exit 1; fi; \
+      if [ -z "${sum}" ]; then \
+        echo "versions.env: AVM_${key}_VERSION has no AVM_${key}_SHA256 beside it" >&2; \
+        exit 1; \
+      fi; \
       vendor "avm-$(printf '%s' "${key}" | tr 'A-Z_' 'a-z-')" "${version}" "${sum}"; \
     done; \
     ls /out/avm
@@ -460,9 +469,10 @@ RUN --mount=type=bind,from=fetch,source=/out/az-wheels,target=/tmp/az-wheels \
 # Per-lab bootloaders invoked by the Coder workspace startup script (or
 # directly via `hcw-boot <lab-id>` in a local container).
 COPY bootloaders/ /usr/local/libexec/hcw-boot/
-RUN chmod 0755 /usr/local/libexec/hcw-boot /usr/local/libexec/hcw-boot/hcw-boot /usr/local/libexec/hcw-boot/*.sh \
- && ln -sf /usr/local/libexec/hcw-boot/hcw-boot /usr/local/bin/hcw-boot
 
+# One RUN for the bootloaders and the user, so the full target gains one
+# layer here rather than two.
+#
 # uid 65534 is Debian's `nobody`, whose passwd entry has /usr/sbin/nologin
 # and a home of /nonexistent. That is right for the runner, where nothing
 # ever opens a shell, and wrong for this target: Coder's agent runs the
@@ -471,7 +481,9 @@ RUN chmod 0755 /usr/local/libexec/hcw-boot /usr/local/libexec/hcw-boot/hcw-boot 
 # The shell becomes bash and the home the /tmp/home the runner stage already
 # creates for uid 65534 and that HOME already points at. The runner target
 # is untouched: it keeps nologin.
-RUN usermod -s /bin/bash -d /tmp/home nobody \
+RUN chmod 0755 /usr/local/libexec/hcw-boot /usr/local/libexec/hcw-boot/hcw-boot /usr/local/libexec/hcw-boot/*.sh \
+ && ln -sf /usr/local/libexec/hcw-boot/hcw-boot /usr/local/bin/hcw-boot \
+ && usermod -s /bin/bash -d /tmp/home nobody \
  && test "$(getent passwd 65534 | cut -d: -f6,7)" = "/tmp/home:/bin/bash" \
  && printf '%s\n' \
       '[automount]' \

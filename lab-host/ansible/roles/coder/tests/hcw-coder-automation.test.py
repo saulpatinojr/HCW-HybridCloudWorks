@@ -55,11 +55,29 @@ ROLE = HERE.parent
 ANSIBLE = ROLE.parent.parent
 LAB_HOST = ANSIBLE.parent
 REPO = LAB_HOST.parent
-HELPER = ROLE / "files" / "hcw-coder-automation.py"
+# Names that recur through the checks, written once here so a rename is one edit.
+HELPER_FILE = "hcw-coder-automation.py"
+MAIN_YML = "main.yml"
+MAIN_TF = "main.tf"
+README_MD = "README.md"
+STATE_JSON = "state.json"
+# Coder's scopes (what a token may do): coder:all is a token with no limit.
+SCOPE_ALL = "coder:all"
+SCOPE_WORKSPACE_READ = "workspace:read"
+SCOPE_API_KEY_READ = "api_key:read"
+SCOPE_USER_READ = "user:read"
+TEMPLATE_ADMIN = "Template Admin"
+FORBIDDEN = "Forbidden."
+# Words the helper prints, which the checks look for.
+NOT_TEMPLATE_ADMIN = "not a Template Admin"
+ALREADY_STORED = "already stored"
+# A SHA-256 digest written as 64 lowercase hexadecimal characters.
+SHA256_HEX = r"[0-9a-f]{64}"
+HELPER = ROLE / "files" / HELPER_FILE
 UTC = datetime.timezone.utc
 DAY = datetime.timedelta(days=1)
 NS = 1_000_000_000
-STATUS_SCOPES = ["template:read", "workspace:read", "api_key:read", "user:read"]
+STATUS_SCOPES = ["template:read", SCOPE_WORKSPACE_READ, SCOPE_API_KEY_READ, SCOPE_USER_READ]
 
 passed = 0
 failed = 0
@@ -132,9 +150,9 @@ def render(template, values):
     return jinja_env().from_string(text).render(ansible_managed="Ansible managed", **values)
 
 
-defaults = resolved(ROLE / "defaults" / "main.yml")
+defaults = resolved(ROLE / "defaults" / MAIN_YML)
 group_vars = yaml.safe_load((ANSIBLE / "group_vars" / "all.yml").read_text(encoding="utf-8"))
-agent = resolved(ANSIBLE / "roles" / "labs_agent" / "defaults" / "main.yml",
+agent = resolved(ANSIBLE / "roles" / "labs_agent" / "defaults" / MAIN_YML,
                  extra={name: group_vars[name] for name in ("labs_agent_user", "labs_agent_home")})
 
 config = json.loads(render("hcw-coder-automation.json.j2", defaults))
@@ -145,7 +163,7 @@ push_template = (ROLE / "templates" / "hcw-coder-template-push.j2").read_text(en
 compose = (LAB_HOST / "coder" / "docker-compose.yml").read_text(encoding="utf-8")
 bootstrap = (LAB_HOST / "bootstrap.sh").read_text(encoding="utf-8")
 agent_unit = (ANSIBLE / "roles" / "labs_agent" / "templates" / "hcw-labs-agent.service.j2").read_text(encoding="utf-8")
-tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text(encoding="utf-8"))
+tasks = yaml.safe_load((ROLE / "tasks" / MAIN_YML).read_text(encoding="utf-8"))
 helper_text = HELPER.read_text(encoding="utf-8")
 
 
@@ -205,13 +223,18 @@ check("the service may write only the credential's directory and its own state",
 check("the timer runs the service daily, catching up after a day off",
       "\nUnit=hcw-coder-automation.service\n" in timer and "\nPersistent=true\n" in timer
       and f"\nOnCalendar={defaults['coder_automation_on_calendar']}\n" in timer)
-seed_check = subprocess.run(["sh", "-n"], input=seed_wrapper, capture_output=True, text=True)
+# sh by its full path, found on PATH once, so the check never runs a program
+# picked up from the working directory; a host without sh stops here, saying so.
+SH = shutil.which("sh")
+if SH is None:
+    sys.exit("hcw-coder-automation.test.py: no sh on PATH, which the seed wrapper's syntax check needs")
+seed_check = subprocess.run([SH, "-n"], input=seed_wrapper, capture_output=True, text=True)  # nosec B603 - sh -n only parses
 check("the seed wrapper parses and hands its arguments to the helper's seed command",
       seed_check.returncode == 0
       and seed_wrapper.rstrip().endswith(
           f'exec /usr/local/libexec/hcw-coder-automation --config {defaults["coder_automation_config_file"]} seed "$@"'),
       seed_check.stderr)
-_, body = task_using("ansible.builtin.copy", src="hcw-coder-automation.py")
+_, body = task_using("ansible.builtin.copy", src=HELPER_FILE)
 check("the role installs the helper as /usr/local/libexec/hcw-coder-automation, root:root 0750",
       body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
       == ("/usr/local/libexec/hcw-coder-automation", "root", "root", "0750"), str(body))
@@ -244,10 +267,22 @@ def go_time(moment):
 
 def random_text(length):
     """Random letters and digits, the alphabet of Coder's key ids and secrets."""
-    return "".join(random.choice(string.ascii_letters + string.digits) for _ in range(length))
+    # random, not secrets: these are made-up values for a fake server, and
+    # nothing about them needs to be unpredictable.
+    return "".join(random.choice(string.ascii_letters + string.digits) for _ in range(length))  # nosec B311 - test data, not security
 
 
-KNOWN_SCOPES = {"coder:all", "template:read", "workspace:read", "api_key:read", "user:read"}
+KNOWN_SCOPES = {SCOPE_ALL, "template:read", SCOPE_WORKSPACE_READ, SCOPE_API_KEY_READ, SCOPE_USER_READ}
+# The messages the fake Coder answers with, as Coder words them.
+SIGNED_OUT = "You are signed out or your session has expired."
+ROUTE_NOT_FOUND = "Route not found."
+RESOURCE_NOT_FOUND = "Resource not found"
+INTERNAL_ERROR = "Internal error."
+
+
+def is_owner(user):
+    """True when the user holds Coder's Owner role."""
+    return "owner" in {role["name"] for role in user["roles"]}
 
 
 class FakeCoder:
@@ -257,7 +292,7 @@ class FakeCoder:
             "u-owner": {"id": "u-owner", "username": "owner-gh", "status": "active",
                         "roles": [{"name": "owner", "display_name": "Owner", "organization_id": ""}]},
             "u-status": {"id": "u-status", "username": "hcw-status", "status": "dormant",
-                         "roles": [{"name": "template-admin", "display_name": "Template Admin", "organization_id": ""}]},
+                         "roles": [{"name": "template-admin", "display_name": TEMPLATE_ADMIN, "organization_id": ""}]},
         }
         self.keys = {}
         self.posts = []
@@ -297,7 +332,7 @@ class FakeCoder:
             "id": key["id"], "user_id": key["user_id"], "last_used": "0001-01-01T00:00:00Z",
             "expires_at": go_time(key["expires_at"]), "created_at": go_time(key["created_at"]),
             "updated_at": go_time(key["created_at"]), "login_type": "token",
-            "scope": "all" if "coder:all" in key["scopes"] else "", "scopes": key["scopes"],
+            "scope": "all" if SCOPE_ALL in key["scopes"] else "", "scopes": key["scopes"],
             "token_name": key["token_name"],
             "lifetime_seconds": int((key["expires_at"] - key["created_at"]).total_seconds()),
         }
@@ -321,6 +356,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     fake = None
 
     def log_message(self, *args):
+        # Left empty on purpose: the base class prints every request to stderr,
+        # which would bury the test's own ok / not ok lines.
         pass
 
     def send(self, status, body=None):
@@ -350,68 +387,102 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with fake.lock:
             key = fake.authenticate(self.headers.get("Coder-Session-Token"))
             if key is None:
-                return self.send(401, {"message": "You are signed out or your session has expired."})
+                return self.send(401, {"message": SIGNED_OUT})
             caller = fake.users[key["user_id"]]
-            unscoped = "coder:all" in key["scopes"]
-            owner = "owner" in {role["name"] for role in caller["roles"]}
             if parts == ["api", "v2", "workspaces"] and method == "GET":
-                if not (unscoped or "workspace:read" in key["scopes"]):
-                    return self.send(403, {"message": "Forbidden."})
-                fake.workspace_tokens.append((key["token_name"], urllib.parse.parse_qs(url.query).get("q")))
-                return self.send(200, {"workspaces": [], "count": 1})
+                return self.serve_workspaces(key, url)
             if parts[:3] != ["api", "v2", "users"] or len(parts) < 4:
-                return self.send(404, {"message": "Route not found."})
-            target = fake.resolve(parts[3], caller)
-            if target is None:
-                return self.send(404, {"message": "Resource not found or you do not have access to this resource"})
-            mine = target["id"] == caller["id"]
-            rest = parts[4:]
-            if rest == [] and method == "GET":
-                return self.send(200, target) if unscoped and (mine or owner) else self.send(403, {})
-            if rest == ["keys", "tokens"]:
-                if not (unscoped and (mine or owner)):
-                    return self.send(403, {"message": "Forbidden."})
-                if method == "GET":
-                    listed = [fake.key_json(k) for k in fake.keys.values()
-                              if k["user_id"] == target["id"] and k["expires_at"] > now()]
-                    return self.send(200, listed)
-                if method == "POST":
-                    fake.posts.append({"user": target["username"], "by": caller["username"], "body": body})
-                    lifetime = body.get("lifetime")
-                    target_owner = "owner" in {role["name"] for role in target["roles"]}
-                    longest = (168 if target_owner else 876600) * 3600 * NS
-                    if type(lifetime) is not int or lifetime <= 0 or lifetime > longest:
-                        return self.send(400, {"message": "Failed to validate create API key request."})
-                    scopes = body.get("scopes") or ["coder:all"]
-                    if not set(scopes) <= KNOWN_SCOPES:
-                        return self.send(400, {"message": "invalid scope"})
-                    name = body.get("token_name")
-                    if any(k["user_id"] == target["id"] and k["token_name"] == name for k in fake.keys.values()):
-                        return self.send(409, {"message": f"A token with name {name!r} already exists."})
-                    moment = now()
-                    token = fake.issue(target["id"], name, scopes, moment, moment + datetime.timedelta(seconds=lifetime / NS))
-                    return self.send(201, {"key": token})
-            if len(rest) == 2 and rest[0] == "keys":
-                found = fake.keys.get(rest[1])
-                if found is None or found["user_id"] != target["id"]:
-                    return self.send(404, {"message": "Resource not found"})
-                if method == "GET":
-                    if found["token_name"] in fake.fail_reads:
-                        return self.send(500, {"message": "Internal error."})
-                    if (mine and (unscoped or {"api_key:read", "user:read"} <= set(key["scopes"]))) or (owner and unscoped):
-                        return self.send(200, fake.key_json(found))
-                    return self.send(404, {"message": "Resource not found"})
-                if method == "DELETE":
-                    if not (unscoped and (mine or owner)):
-                        return self.send(403, {"message": "Forbidden."})
-                    if found["token_name"] in fake.fail_deletes:
-                        return self.send(500, {"message": "Internal error."})
-                    if found["token_name"] in fake.unauthorized_deletes:
-                        return self.send(401, {"message": "You are signed out or your session has expired."})
-                    fake.deleted.append(found["token_name"])
-                    del fake.keys[found["id"]]
-                    return self.send(204)
-            return self.send(404, {"message": "Route not found."})
+                return self.send(404, {"message": ROUTE_NOT_FOUND})
+            return self.serve_user(method, parts, body, key, caller)
+
+    def serve_workspaces(self, key, url):
+        """GET /api/v2/workspaces: one running workspace, for a token that may read workspaces."""
+        if not (SCOPE_ALL in key["scopes"] or SCOPE_WORKSPACE_READ in key["scopes"]):
+            return self.send(403, {"message": FORBIDDEN})
+        self.fake.workspace_tokens.append((key["token_name"], urllib.parse.parse_qs(url.query).get("q")))
+        return self.send(200, {"workspaces": [], "count": 1})
+
+    def serve_user(self, method, parts, body, key, caller):
+        """/api/v2/users/{user}[/...]: the user's record, its list of tokens, or one of its keys."""
+        target = self.fake.resolve(parts[3], caller)
+        if target is None:
+            return self.send(404, {"message": "Resource not found or you do not have access to this resource"})
+        unscoped = SCOPE_ALL in key["scopes"]
+        owner = is_owner(caller)
+        mine = target["id"] == caller["id"]
+        manages = unscoped and (mine or owner)
+        rest = parts[4:]
+        if rest == [] and method == "GET":
+            return self.send(200, target) if manages else self.send(403, {})
+        # Any other method on .../keys/tokens, once allowed, falls through to
+        # the single-key route below, which finds no key named "tokens" (404).
+        if rest == ["keys", "tokens"] and (not manages or method in ("GET", "POST")):
+            return self.serve_tokens(method, body, caller, target, manages)
+        if len(rest) == 2 and rest[0] == "keys":
+            return self.serve_key(method, rest[1], key, target, mine, owner)
+        return self.send(404, {"message": ROUTE_NOT_FOUND})
+
+    def serve_tokens(self, method, body, caller, target, allowed):
+        """GET or POST .../keys/tokens, for a caller allowed to manage the user's keys."""
+        if not allowed:
+            return self.send(403, {"message": FORBIDDEN})
+        if method == "GET":
+            return self.list_tokens(target)
+        return self.create_token(body, caller, target)
+
+    def list_tokens(self, target):
+        """GET .../keys/tokens: the user's unexpired keys."""
+        listed = [self.fake.key_json(k) for k in self.fake.keys.values()
+                  if k["user_id"] == target["id"] and k["expires_at"] > now()]
+        return self.send(200, listed)
+
+    def create_token(self, body, caller, target):
+        """POST .../keys/tokens: a new key, refused as Coder refuses a bad lifetime, scope or name."""
+        fake = self.fake
+        fake.posts.append({"user": target["username"], "by": caller["username"], "body": body})
+        lifetime = body.get("lifetime")
+        longest = (168 if is_owner(target) else 876600) * 3600 * NS
+        if type(lifetime) is not int or lifetime <= 0 or lifetime > longest:
+            return self.send(400, {"message": "Failed to validate create API key request."})
+        scopes = body.get("scopes") or [SCOPE_ALL]
+        if not set(scopes) <= KNOWN_SCOPES:
+            return self.send(400, {"message": "invalid scope"})
+        name = body.get("token_name")
+        if any(k["user_id"] == target["id"] and k["token_name"] == name for k in fake.keys.values()):
+            return self.send(409, {"message": f"A token with name {name!r} already exists."})
+        moment = now()
+        token = fake.issue(target["id"], name, scopes, moment, moment + datetime.timedelta(seconds=lifetime / NS))
+        return self.send(201, {"key": token})
+
+    def serve_key(self, method, identifier, key, target, mine, owner):
+        """GET or DELETE .../keys/{id}: one of the user's keys."""
+        fake = self.fake
+        unscoped = SCOPE_ALL in key["scopes"]
+        found = fake.keys.get(identifier)
+        if found is None or found["user_id"] != target["id"]:
+            return self.send(404, {"message": RESOURCE_NOT_FOUND})
+        if method == "GET":
+            if found["token_name"] in fake.fail_reads:
+                return self.send(500, {"message": INTERNAL_ERROR})
+            if (mine and (unscoped or {SCOPE_API_KEY_READ, SCOPE_USER_READ} <= set(key["scopes"]))) or (owner and unscoped):
+                return self.send(200, fake.key_json(found))
+            return self.send(404, {"message": RESOURCE_NOT_FOUND})
+        if method == "DELETE":
+            return self.delete_key(found, unscoped and (mine or owner))
+        return self.send(404, {"message": ROUTE_NOT_FOUND})
+
+    def delete_key(self, found, allowed):
+        """DELETE .../keys/{id}, or the failure a test planted for that key's name."""
+        fake = self.fake
+        if not allowed:
+            return self.send(403, {"message": FORBIDDEN})
+        if found["token_name"] in fake.fail_deletes:
+            return self.send(500, {"message": INTERNAL_ERROR})
+        if found["token_name"] in fake.unauthorized_deletes:
+            return self.send(401, {"message": SIGNED_OUT})
+        fake.deleted.append(found["token_name"])
+        del fake.keys[found["id"]]
+        return self.send(204)
 
 
 # --- A world: the fake Coder, the fakes on disk and a configuration ---------------
@@ -511,7 +582,7 @@ class World:
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.owner_token = self.fake.issue("u-owner", "hcw-setup", ["coder:all"])
+        self.owner_token = self.fake.issue("u-owner", "hcw-setup", [SCOPE_ALL])
         self.outputs = []
         self.automation = self.root / "etc" / "automation"
         self.automation.mkdir(parents=True, mode=0o700)
@@ -525,9 +596,9 @@ class World:
         self.src = self.root / "src"
         self.template = self.src / "lab-host" / "coder" / "templates" / "hcw-lab"
         self.template.mkdir(parents=True)
-        (self.template / "main.tf").write_text('resource "x" "y" {}\n', encoding="utf-8")
+        (self.template / MAIN_TF).write_text('resource "x" "y" {}\n', encoding="utf-8")
         (self.template / ".terraform.lock.hcl").write_text("# lock\n", encoding="utf-8")
-        (self.template / "README.md").write_text("# hcw-lab\n", encoding="utf-8")
+        (self.template / README_MD).write_text("# hcw-lab\n", encoding="utf-8")
         (self.template / "template.test.mjs").write_text("// not published\n", encoding="utf-8")
         write_fake(self.root / "bin" / "systemd-run", SYSTEMD_RUN, LOG=str(self.run_log))
         write_fake(self.app / "bin" / "report-coder-automation.js", SITE_CLI, LOG=str(self.cli_log))
@@ -581,7 +652,7 @@ class World:
 
     def state(self):
         """The helper's state file, parsed, or an empty dict."""
-        path = self.state_dir / "state.json"
+        path = self.state_dir / STATE_JSON
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
     def lines(self, path):
@@ -600,8 +671,8 @@ class World:
     def leaks(self):
         """Every place a token must never be: what the helper printed, its state, the reports."""
         places = list(self.outputs)
-        if (self.state_dir / "state.json").exists():
-            places.append((self.state_dir / "state.json").read_text(encoding="utf-8"))
+        if (self.state_dir / STATE_JSON).exists():
+            places.append((self.state_dir / STATE_JSON).read_text(encoding="utf-8"))
         for call in self.cli_calls():
             places.append(json.dumps(call["payload"].get("report", {})))
         found = []
@@ -650,13 +721,13 @@ check("seed refuses an hcw-status that holds Owner (least privilege)",
 world.fake.users["u-status"]["roles"] = []
 result = world.seed()
 check("seed refuses an hcw-status that is not a Template Admin",
-      result.returncode == 1 and "not a Template Admin" in result.stderr and not world.fake.posts, result.stderr)
+      result.returncode == 1 and NOT_TEMPLATE_ADMIN in result.stderr and not world.fake.posts, result.stderr)
 status_user = world.fake.users.pop("u-status")
 result = world.seed()
 check("seed refuses when there is no hcw-status user", result.returncode == 1 and "has no user hcw-status" in result.stderr,
       result.stderr)
 world.fake.users["u-status"] = status_user
-world.fake.users["u-status"]["roles"] = [{"name": "template-admin", "display_name": "Template Admin", "organization_id": ""}]
+world.fake.users["u-status"]["roles"] = [{"name": "template-admin", "display_name": TEMPLATE_ADMIN, "organization_id": ""}]
 
 # A BOM, blanks and a carriage return, as a Windows pipe can deliver them.
 result = world.helper("seed", stdin=b"\xef\xbb\xbf  " + world.owner_token.encode() + b" \r\n")
@@ -667,7 +738,7 @@ check("seed stores a rotation credential and prints one line naming its expiry",
 token = world.credential()
 key = world.fake.key_of(token or "-")
 check("the credential is an unscoped (coder:all) token of hcw-status",
-      key is not None and key["user_id"] == "u-status" and key["scopes"] == ["coder:all"], str(key))
+      key is not None and key["user_id"] == "u-status" and key["scopes"] == [SCOPE_ALL], str(key))
 post = world.fake.posts[-1] if world.fake.posts else {}
 check("it is created by the owner for hcw-status, named hcw-status-rotation-<date>, for 365 days in nanoseconds",
       post.get("user") == "hcw-status" and post.get("by") == "owner-gh"
@@ -681,22 +752,22 @@ check("the state records the credential's expiry and no token",
 posts = len(world.fake.posts)
 result = world.seed()
 check("a second seed finds the working credential and changes nothing",
-      result.returncode == 0 and "already stored" in result.stdout and len(world.fake.posts) == posts
+      result.returncode == 0 and ALREADY_STORED in result.stdout and len(world.fake.posts) == posts
       and world.credential() == token, result.stdout + result.stderr)
-template_admin = [{"name": "template-admin", "display_name": "Template Admin", "organization_id": ""}]
+template_admin = [{"name": "template-admin", "display_name": TEMPLATE_ADMIN, "organization_id": ""}]
 world.fake.users["u-status"]["roles"] = template_admin + [{"name": "owner", "display_name": "Owner", "organization_id": ""}]
 result = world.seed()
 check("a second seed does not keep a stored credential once hcw-status holds Owner, and creates nothing",
-      result.returncode == 1 and "already stored" not in result.stdout and "holds the Owner role" in result.stderr
+      result.returncode == 1 and ALREADY_STORED not in result.stdout and "holds the Owner role" in result.stderr
       and len(world.fake.posts) == posts and world.credential() == token, result.stdout + result.stderr)
 world.fake.users["u-status"]["roles"] = []
 result = world.seed()
 check("nor once hcw-status is no longer a Template Admin",
-      result.returncode == 1 and "already stored" not in result.stdout and "not a Template Admin" in result.stderr
+      result.returncode == 1 and ALREADY_STORED not in result.stdout and NOT_TEMPLATE_ADMIN in result.stderr
       and len(world.fake.posts) == posts and world.credential() == token, result.stdout + result.stderr)
 result = world.helper("run")
 check("and a run refuses the credential of an hcw-status that is not a Template Admin, creating nothing",
-      result.returncode == 1 and "not a Template Admin" in result.stderr and len(world.fake.posts) == posts,
+      result.returncode == 1 and NOT_TEMPLATE_ADMIN in result.stderr and len(world.fake.posts) == posts,
       result.stdout + result.stderr)
 world.fake.users["u-status"]["roles"] = template_admin
 result = world.seed("--force")
@@ -730,7 +801,7 @@ check("the report's times are UTC, to the second",
       all(re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value)
           for key, value in report.items() if key != "templateSourceDigest"), json.dumps(report))
 check("and no published digest before anything was published, so the site cannot mistake the checkout's for one",
-      "templateDigest" not in report and re.fullmatch(r"[0-9a-f]{64}", report.get("templateSourceDigest", "")),
+      "templateDigest" not in report and re.fullmatch(SHA256_HEX, report.get("templateSourceDigest", "")),
       json.dumps(report))
 argv = world.lines(world.run_log)[-1] if world.run_log.exists() else []
 check("the CLI runs as the agent's user and group, with its environment file and checkout",
@@ -782,7 +853,7 @@ check("the next run renews nothing", result.returncode == 0 and len(world.fake.b
 older = world.status_key("hcw-status-site-2026-05-01", created_days_ago=80, expires_in_days=10)
 oldest = world.status_key("eager_lovelace7", created_days_ago=100, expires_in_days=200)
 young = world.status_key("hcw-status-site-young", created_days_ago=0.04, expires_in_days=90)
-other = world.status_key("someone-elses-kind", created_days_ago=200, expires_in_days=100, scopes=["workspace:read", "user:read"])
+other = world.status_key("someone-elses-kind", created_days_ago=200, expires_in_days=100, scopes=[SCOPE_WORKSPACE_READ, SCOPE_USER_READ])
 result = world.helper("run")
 check("older status tokens past 48 hours are deleted", result.returncode == 0
       and world.fake.key_of(older) is None and world.fake.key_of(oldest) is None, result.stdout + result.stderr)
@@ -800,7 +871,7 @@ result = world.helper("run")
 renewed = world.credential()
 check("a rotation credential with under 60 days left is replaced, and the old one deleted",
       result.returncode == 0 and renewed != credential and world.fake.key_of(credential) is None
-      and world.fake.key_of(renewed)["scopes"] == ["coder:all"], result.stdout + result.stderr)
+      and world.fake.key_of(renewed)["scopes"] == [SCOPE_ALL], result.stdout + result.stderr)
 check("the new one is hcw-status's own, unscoped, for 365 days",
       world.fake.posts[-1]["by"] == "hcw-status" and world.fake.posts[-1]["body"]["lifetime"] == 365 * 86400 * NS
       and "scopes" not in world.fake.posts[-1]["body"], json.dumps(world.fake.posts[-1]))
@@ -885,14 +956,14 @@ check("and says it published, which is the role's changed_when",
 state = world.state()
 check("the state records when, which version and what was published",
       state.get("templateVersion") == "brave_turing1" and state.get("templatePushedAt", "").startswith(today())
-      and re.fullmatch(r"[0-9a-f]{64}", state.get("templateDigest", "")), json.dumps(state))
+      and re.fullmatch(SHA256_HEX, state.get("templateDigest", "")), json.dumps(state))
 result = world.helper("push-template")
 check("an unchanged template is not published again", result.returncode == 0 and "nothing was published" in result.stdout
       and len(world.lines(world.push_log)) == 1, result.stdout)
 (world.template / "template.test.mjs").write_text("// changed, still not published\n", encoding="utf-8")
 result = world.helper("push-template")
 check("a change to a file the push does not copy publishes nothing", len(world.lines(world.push_log)) == 1, result.stdout)
-(world.template / "main.tf").write_text('resource "x" "z" {}\n', encoding="utf-8")
+(world.template / MAIN_TF).write_text('resource "x" "z" {}\n', encoding="utf-8")
 result = world.helper("push-template")
 check("a changed main.tf publishes again", result.returncode == 0 and len(world.lines(world.push_log)) == 2, result.stdout)
 world.write_config(template_default_ttl="2h")
@@ -901,7 +972,7 @@ check("a changed default autostop publishes again", len(world.lines(world.push_l
 result = world.helper("push-template", "--force")
 check("--force publishes an unchanged template", len(world.lines(world.push_log)) == 4, result.stdout)
 world.push_mode.write_text("fail", encoding="utf-8")
-(world.template / "README.md").write_text("# hcw-lab, changed\n", encoding="utf-8")
+(world.template / README_MD).write_text("# hcw-lab, changed\n", encoding="utf-8")
 result = world.helper("push-template")
 check("a failed publish fails (exit 1), with the push helper's message passed on",
       result.returncode == 1 and "publishing hcw-lab failed" in result.stderr, result.stderr)
@@ -916,15 +987,15 @@ check("the daily report carries the template's publish time and version",
       and report.get("templatePushedAt", "").startswith(today()),
       json.dumps(report) + result.stderr)
 check("and the published template's digest beside the checkout's, equal straight after a publish (#1009)",
-      re.fullmatch(r"[0-9a-f]{64}", report.get("templateDigest", ""))
+      re.fullmatch(SHA256_HEX, report.get("templateDigest", ""))
       and report.get("templateDigest") == world.state().get("templateDigest")
       and report.get("templateSourceDigest") == report.get("templateDigest"),
       json.dumps(report))
-(world.template / "main.tf").write_text('resource "x" "never-published" {}\n', encoding="utf-8")
+(world.template / MAIN_TF).write_text('resource "x" "never-published" {}\n', encoding="utf-8")
 result = world.helper("run")
 report = world.cli_calls()[-1]["payload"]["report"]
 check("a checkout that moved on without a publish reports a source digest the published one does not match",
-      result.returncode == 0 and re.fullmatch(r"[0-9a-f]{64}", report.get("templateSourceDigest", ""))
+      result.returncode == 0 and re.fullmatch(SHA256_HEX, report.get("templateSourceDigest", ""))
       and report.get("templateSourceDigest") != report.get("templateDigest")
       and report.get("templateDigest") == world.state().get("templateDigest"),
       json.dumps(report) + result.stderr)
@@ -937,11 +1008,11 @@ check("and the next publish brings the two back together",
 templates = world.template.parent
 guided = templates / "na-guided-lab"
 guided.mkdir()
-(guided / "main.tf").write_text('resource "x" "guided" {}\n', encoding="utf-8")
+(guided / MAIN_TF).write_text('resource "x" "guided" {}\n', encoding="utf-8")
 (templates / "notes-only").mkdir()
-(templates / "notes-only" / "README.md").write_text("# not a template\n", encoding="utf-8")
+(templates / "notes-only" / README_MD).write_text("# not a template\n", encoding="utf-8")
 (templates / "Bad_Name").mkdir()
-(templates / "Bad_Name" / "main.tf").write_text('resource "x" "y" {}\n', encoding="utf-8")
+(templates / "Bad_Name" / MAIN_TF).write_text('resource "x" "y" {}\n', encoding="utf-8")
 before = len(world.lines(world.push_log))
 result = world.helper("push-template")
 pushes = world.lines(world.push_log)[before:]
@@ -962,8 +1033,8 @@ check("each template is recorded on its own, and hcw-lab keeps the fields the da
 result = world.helper("push-template")
 check("an unchanged second template is not published again",
       result.returncode == 0 and len(world.lines(world.push_log)) == before + 1, result.stdout)
-(guided / "main.tf").write_text('resource "x" "guided-2" {}\n', encoding="utf-8")
-(world.template / "main.tf").write_text('resource "x" "lab-2" {}\n', encoding="utf-8")
+(guided / MAIN_TF).write_text('resource "x" "guided-2" {}\n', encoding="utf-8")
+(world.template / MAIN_TF).write_text('resource "x" "lab-2" {}\n', encoding="utf-8")
 world.push_mode.write_text("fail:hcw-lab", encoding="utf-8")
 result = world.helper("push-template")
 pushes = world.lines(world.push_log)[before + 1:]
@@ -979,7 +1050,7 @@ check("and the next run publishes only the one that failed",
       result.returncode == 0 and [push["argv"] for push in pushes] == [["hcw-lab"]], result.stdout + result.stderr)
 legacy = world.state()
 legacy.pop("templates")
-(world.state_dir / "state.json").write_text(json.dumps(legacy), encoding="utf-8")
+(world.state_dir / STATE_JSON).write_text(json.dumps(legacy), encoding="utf-8")
 result = world.helper("push-template")
 pushes = world.lines(world.push_log)[before + 4:]
 check("a state from before the per-template record still knows hcw-lab was published, and publishes only the new one",
@@ -993,7 +1064,7 @@ for leftover in ("notes-only", "Bad_Name"):
 # run's: the helper, loaded in this process, with the read made to fail. As
 # root, which the container runs as, no file mode can make a read fail, so
 # the read itself is replaced (CodeRabbit, #1100).
-spec = importlib.util.spec_from_file_location("hcw_coder_automation", ROLE / "files" / "hcw-coder-automation.py")
+spec = importlib.util.spec_from_file_location("hcw_coder_automation", ROLE / "files" / HELPER_FILE)
 automation = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(automation)
 
@@ -1027,12 +1098,12 @@ bad = [p for p in payloads
        if set(p) - {"statusToken", "report"} or set(p.get("report", {})) - REPORT_FIELDS
        or any(not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", p["report"][field])
               for field in TIMES & set(p.get("report", {})))
-       or any(not re.fullmatch(r"[0-9a-f]{64}", p["report"][field]) for field in DIGESTS & set(p.get("report", {})))]
+       or any(not re.fullmatch(SHA256_HEX, p["report"][field]) for field in DIGESTS & set(p.get("report", {})))]
 check(f"all {len(payloads)} payloads hold only statusToken and report, the nine report fields, times with seconds and a zone, and hex digests",
       payloads and not bad, json.dumps(bad[:1]))
 leaks = world.leaks()
 check("no token is in anything the helper printed, its state, or any report", not leaks, ", ".join(leaks))
-check("the state file is 0600", stat.S_IMODE(os.stat(world.state_dir / "state.json").st_mode) == 0o600)
+check("the state file is 0600", stat.S_IMODE(os.stat(world.state_dir / STATE_JSON).st_mode) == 0o600)
 world.close()
 
 # --- A first run whose renewal never reached the site -------------------------------------
@@ -1123,7 +1194,7 @@ check("and the next run deletes it",
       result.stdout + result.stderr)
 planted = world.state()
 planted["discardedRotationIds"] = [world.fake.key_of(third)["id"]]
-(world.state_dir / "state.json").write_text(json.dumps(planted), encoding="utf-8")
+(world.state_dir / STATE_JSON).write_text(json.dumps(planted), encoding="utf-8")
 result = world.helper("run")
 check("the credential in use is never deleted, even with its id on the list",
       result.returncode == 0 and world.fake.key_of(third) is not None and world.credential() == third
@@ -1141,10 +1212,10 @@ check("revoke with no credential changes nothing", result.returncode == 0 and "n
 world.seed()
 credential = world.credential()
 credential_name = world.fake.key_of(credential)["token_name"]
-leftover = world.fake.issue("u-status", f"hcw-status-rotation-{today()}-9", ["coder:all"])
+leftover = world.fake.issue("u-status", f"hcw-status-rotation-{today()}-9", [SCOPE_ALL])
 planted = world.state()
 planted["discardedRotationIds"] = [leftover.split("-")[0]]
-(world.state_dir / "state.json").write_text(json.dumps(planted), encoding="utf-8")
+(world.state_dir / STATE_JSON).write_text(json.dumps(planted), encoding="utf-8")
 world.fake.fail_deletes.add(f"hcw-status-rotation-{today()}-9")
 result = world.helper("revoke")
 check("revoke stops, keeping the credential, when a listed one cannot be deleted",
@@ -1174,7 +1245,7 @@ dead = world.credential()
 world.fake.keys.pop(dead.split("-")[0])
 planted = world.state()
 planted["discardedRotationIds"] = ["gone000000"]
-(world.state_dir / "state.json").write_text(json.dumps(planted), encoding="utf-8")
+(world.state_dir / STATE_JSON).write_text(json.dumps(planted), encoding="utf-8")
 result = world.helper("revoke")
 check("revoke of a credential Coder no longer accepts removes the file, keeps the list and says so",
       result.returncode == 0 and "no longer accepts the rotation credential (HTTP 401)" in result.stdout

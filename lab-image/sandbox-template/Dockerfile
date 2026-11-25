@@ -137,11 +137,14 @@ RUN set -eu; . /tmp/versions.env; . /etc/os-release; \
       'Signed-By: /etc/apt/keyrings/microsoft.asc' > /etc/apt/sources.list.d/azure-cli.sources; \
     apt-get update; \
     apt-get install -y --no-install-recommends "azure-cli=${AZURE_CLI_VERSION}-1~${VERSION_CODENAME}"; \
-    for pkg in linux-libc-dev apt libapt-pkg7.0 libbrotli1 openjdk-25-jdk-headless openjdk-25-jre-headless docker-buildx-plugin docker-compose-plugin; do \
+    for pkg in apt docker-buildx-plugin docker-compose-plugin libapt-pkg7.0 libbrotli1 \
+      linux-libc-dev openjdk-25-jdk-headless openjdk-25-jre-headless; do \
       [ "$(dpkg-query -W -f='${db:Status-Status}' "${pkg}" 2> /dev/null)" = installed ] \
         || { echo "${pkg} is not installed in the base; edit the --only-upgrade line" >&2; exit 1; }; \
     done; \
-    apt-get install -y --no-install-recommends --only-upgrade linux-libc-dev apt libapt-pkg7.0 libbrotli1 openjdk-25-jdk-headless openjdk-25-jre-headless docker-buildx-plugin docker-compose-plugin; \
+    apt-get install -y --no-install-recommends --only-upgrade \
+      apt docker-buildx-plugin docker-compose-plugin libapt-pkg7.0 libbrotli1 \
+      linux-libc-dev openjdk-25-jdk-headless openjdk-25-jre-headless; \
     mkdir -p /tmp/az-wheels; \
     printf '%s\n' "${AZURE_CLI_PYTHON_OVERRIDES-}" | sed '/^[[:space:]]*$/d' > /tmp/az-wheels/requirements.txt; \
     while read -r spec _; do \

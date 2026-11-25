@@ -63,6 +63,7 @@ if (ROOT / "MEMORY.md").exists():
 # A pair is skipped when its directory is absent so that the fixture roots
 # the tests build (docs/ plus the three root documents) still evaluate; in
 # the real repository every one of these directories exists.
+SHELL_SCRIPTS = "**/*.sh"
 SCAN_GLOBS: list[tuple[Path, str]] = [
     (ROOT / "infra" / "roles", "*.json"),
     (ROOT / "infra", "**/*.tf"),
@@ -72,11 +73,11 @@ SCAN_GLOBS: list[tuple[Path, str]] = [
     # Every script under scripts/, tests included: the nested cutover, lab
     # and rollback scripts are where the real application id lived.
     (ROOT / "scripts", "**/*.ps1"),
-    (ROOT / "scripts", "**/*.sh"),
-    (ROOT / "lab-image", "**/*.sh"),
+    (ROOT / "scripts", SHELL_SCRIPTS),
+    (ROOT / "lab-image", SHELL_SCRIPTS),
     (ROOT / "lab-host", "**/*.yml"),
     (ROOT / "lab-host", "**/*.yaml"),
-    (ROOT / "lab-host", "**/*.sh"),
+    (ROOT / "lab-host", SHELL_SCRIPTS),
     (ROOT / "lab-host", "**/*.j2"),
     (ROOT / "functions" / "src", "**/*.js"),
     (ROOT / "frontend" / "src", "**/*.js"),

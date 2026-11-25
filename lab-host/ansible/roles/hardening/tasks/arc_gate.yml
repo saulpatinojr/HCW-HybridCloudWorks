@@ -142,6 +142,22 @@
                    or (hardening_sshd_dropin_now.content | b64decode)
                       is search('^ListenAddress 127[.]0[.]0[.]1 *$', multiline=True)) }}
 
+  # Not a recovery: a read that fails here still stops the run, as it would
+  # with no rescue, and says that nothing about SSH has changed yet (this file
+  # runs before sshd.yml and ufw.yml). The agent's own unreadable output is
+  # already settled by the inner rescue above, so this is reached only by an
+  # error such as the drop-in read. Ansible prints the failed task's output
+  # above this message. (It is also what checkov's CKV2_ANSIBLE_3 asks of a
+  # block, and checkov cannot read an inline skip on a block;
+  # docs/security/scanner-triage.md#checkov.)
+  rescue:
+    - name: Stop before port 22 or sshd is changed
+      ansible.builtin.fail:
+        msg: >-
+          The Arc gate could not be read at "{{ ansible_failed_task.name }}", so this run
+          stops before sshd.yml and ufw.yml act: port 22 at ufw and sshd's listen
+          addresses stay as they are. Read the output of that task above.
+
 # The lists this run applies: the configured ones, unless the gate keeps 22
 # allowed ('open') or leaves it as it is ('hold') on this run.
 - name: Settle the ports this run allows and closes
