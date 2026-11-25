@@ -212,6 +212,9 @@ async function syncFirst(syncCredentials, at, log) {
  * @param {() => Date} [deps.now]
  * @param {((at: Date) => Promise<{ synced: boolean, reason?: string }>)|null} [deps.syncCredentials]
  *        the credential register's sync, run before the sheet is read
+ * @param {((at: Date) => Promise<unknown>)|null} [deps.syncProviders]
+ *        every row provider's sync (reminders/providers.js, #1886), run before
+ *        the sheet is read; it says its own failures and never throws
  */
 export function createReminderCheck({
   store,
@@ -219,11 +222,13 @@ export function createReminderCheck({
   now = () => new Date(),
   log = {},
   syncCredentials = null,
+  syncProviders = null,
 }) {
   async function run() {
     const at = now();
     const today = dateOnly(at);
     if (syncCredentials) await syncFirst(syncCredentials, at, log);
+    if (syncProviders) await syncProviders(at);
     const doc = await store.readDoc('admin_config', REMINDERS_CONFIG_ID, ADMIN_CONFIG_PARTITION);
     if (!doc) return { checked: 0, sent: 0 };
 

@@ -77,7 +77,7 @@ trips. The session is the orchestrator of a team of agents and does the work.
   workflows, so the App repositories are added to the work board by
   `C:\Users\saulp\.hcw\Sync-AppTicketsToBoard.ps1`, run hourly by the
   `HCW-board-sync` scheduled task).
-  A cloud session (Claude Code on the web, claude.ai/code) has four more
+  A cloud session (Claude Code on the web, claude.ai/code) has five more
   limits, because its GitHub calls go through the Claude GitHub App (the
   app installed on the owner's GitHub account for web sessions) and a
   proxy (a go-between that checks each request before it reaches GitHub),
@@ -129,8 +129,18 @@ trips. The session is the orchestrator of a team of agents and does the work.
     `check` job refused it, nothing was published, and since a pushed
     tag cannot be moved the release went out as `v0.4.3`.
 
+  - **Branches cannot be deleted.** On 2026-11-25 `gh api -X DELETE
+    repos/saulpatinojr/HCW-HybridCloudWorks/git/refs/heads/<branch>` was
+    refused with HTTP 403 "Write access to this GitHub API path is not
+    permitted through this proxy", and `git push origin --delete <branch>`
+    was cut off ("the remote end hung up unexpectedly"); the branch stayed.
+    So a cloud session gives the owner the **Delete branch** button at the
+    bottom of the branch's closed or merged pull request, and checks
+    afterwards with `gh api repos/{owner}/{repo}/branches/<branch>` (404
+    means gone).
+
   Sessions on the owner's own computer use the owner's `gh` sign-in and
-  have none of these four cloud-session limits.
+  have none of these five cloud-session limits.
 - **Use the team.** Hand each ticket, review, build and test run to the
   matching agent (see "Use the specialist agents"), brief it fully, run
   independent ones in parallel, and check what comes back yourself before you
@@ -487,7 +497,8 @@ stays in code; the owner does not want it editable from the portal.
 | Pipeline hand-off | An entry in `ORIGIN_PAGES` (server) and `ORIGIN_RECORD_PATHS` (browser); `SendToPipelineButton` and `PipelinePieces` on the Page | `functions/src/lib/page-links/origin-pages.js` (the list; it imports nothing, so the browser's mirror test can read it), `functions/src/lib/page-links/origin-ref.js` (the check), `frontend/src/lib/pageLinks.js`, `frontend/src/components/admin/shared/pipeline/` |
 | Dashboard "waiting on you" list (the Decision Center) | A source in `OTHER_SOURCES`, and its labels in `decisionCenterModel.js` | `functions/src/lib/decision-center/sources.js` |
 | Calendar | A collector in `COLLECTORS` and a kind in `CALENDAR_KINDS` | `functions/src/lib/calendar/collectors.js`, `functions/src/lib/calendar.js` |
-| Telegram reminders | Rows on the reminders sheet; today only the credential register writes rows by itself | `functions/src/lib/timers/reminders.js`, `functions/src/lib/credentials/reminders.js` |
+| Telegram reminders | A row provider: an entry in `REMINDER_PROVIDERS`, its id prefix and reserved rows in `PROVIDED_ROWS`, the same prefix in the Reminders tab's `ROW_KEEPERS` (a test holds the two lists together), and a sync built on `syncProvidedRows`, which keeps the timer's stamps, writes under `ifMatch` and never lets an editor's save change a kept row. Today: the credential register and Ambassador | `functions/src/lib/reminders/providers.js`, `functions/src/lib/reminders/provided-rows.js`, `functions/src/lib/reminders/settings.js`, `frontend/src/components/admin/platform-settings/RemindersTab.jsx` |
+| What a Page needs from the owner, worked out once | One pure function that turns the Page's records into dated items, read by both its Dashboard source and its reminder rows, so the two cannot disagree (Ambassador's is `ambassadorAttention`) | `functions/src/lib/ambassador/attention.js` |
 | Telegram alerts | `createNotifier().notifyTelegram` with a `source` per thing, so its 15-minute cooldown is per thing | `functions/src/lib/notify.js` |
 | Background work | A job type through `registerJobType` | `functions/src/lib/job-model.js` |
 | Telegram commands | One entry in `COMMANDS` | `functions/src/lib/telegram/commands.js` |
@@ -497,12 +508,13 @@ stays in code; the owner does not want it editable from the portal.
 hand-off with Ambassador as its first Page: "Draft a piece" on a held
 program's card and in the details of any program that is switched on, the
 program's pieces with their stage, "File as evidence" once a piece is live,
-and the "sent from" chip across the Pipeline. Still to come, in later phases
-of #1886: Ambassador's dates and activity requirements on the Dashboard and
-Telegram (through a list of reminder-row providers, with the credential
-register as the first), hand-offs from the other Pages, next-step
-suggestions, and related items. Until a phase is merged, do not describe its
-part as working.
+and the "sent from" chip across the Pipeline. Phase 2 put Ambassador's dates
+and activity requirements on the Dashboard (from each program's own lead
+times), the Calendar (each item opening its application) and Telegram
+(through the list of reminder-row providers, with the credential register as
+the first). Still to come, in later phases of #1886: hand-offs from the other
+Pages, next-step suggestions, and related items. Until a phase is merged, do
+not describe its part as working.
 
 **Checklist: adding a Page, program or request type to the flow.** Go down
 it in the pull request and say for each line *done* (with the file), *already

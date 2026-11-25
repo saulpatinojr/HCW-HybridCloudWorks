@@ -87,21 +87,23 @@
  */
 
 import { PRODUCTION_ORIGINS } from '../auth/cors.js';
-import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { dateOnly, parseDateOnly } from '../reminders/calendar.js';
 import {
   CREDENTIAL_ROW_PREFIX,
   MAX_NOTES_LENGTH,
   MAX_TITLE_LENGTH,
-  REMINDERS_CONFIG_ID,
   RemindersValidationError,
   isCredentialRow,
-  normalizeReminders,
   readStoredReminders,
 } from '../reminders/settings.js';
 import { CREDENTIAL_STORES } from './register.js';
 import { readCredentialSources } from './sources.js';
 import { buildRegisterView } from './status.js';
+import {
+  SYNC_WRITE_ATTEMPTS,
+  mergeProvidedRows,
+  syncProvidedRows,
+} from '../reminders/provided-rows.js';
 
 /** The reserved id prefix, from the sheet's own module so the save and the sync agree. */
 export const CREDENTIAL_REMINDER_PREFIX = CREDENTIAL_ROW_PREFIX;
@@ -109,8 +111,8 @@ export const CREDENTIAL_REMINDER_PREFIX = CREDENTIAL_ROW_PREFIX;
 /** Where every credential reminder links: the tab that records the rotation. */
 export const CREDENTIALS_TAB_URL = `${PRODUCTION_ORIGINS[0]}/admin/integrations?tab=credentials`;
 
-/** Read → merge → write-if-unchanged attempts on the reminders document. */
-export const SYNC_WRITE_ATTEMPTS = 4;
+// Read → merge → write-if-unchanged attempts, shared with every row provider.
+export { SYNC_WRITE_ATTEMPTS };
 
 /** The sources a reminder's due date depends on; the sync waits while one is unreadable. */
 export const REMINDER_SOURCES = Object.freeze(['secret-state', 'credential-register', 'reminders']);
@@ -212,9 +214,6 @@ export function wantedReminders(credentials, { today, stored = [] }) {
   });
 }
 
-/** Whether a stored credential row is the same cycle as the wanted one: same kind, same due date. */
-const sameCycle = (row, next) => row.dueDate === next.dueDate && row.title === next.title;
-
 /**
  * The sheet's rows with the register's merged in (see the header): the
  * owner's rows untouched and in place, each credential row replaced in place
@@ -225,66 +224,7 @@ const sameCycle = (row, next) => row.dueDate === next.dueDate && row.title === n
  * row marked done by anyone but the register is reopened (see the header).
  */
 export function mergeCredentialReminders(stored = [], wanted = []) {
-  const wantedById = new Map(wanted.map((row) => [row.id, row]));
-  const placed = new Set();
-  const out = [];
-  for (const row of stored) {
-    if (!isCredentialReminder(row)) {
-      out.push(row);
-      continue;
-    }
-    const next = wantedById.get(row.id);
-    if (!next || placed.has(row.id)) continue;
-    placed.add(row.id);
-    out.push(sameCycle(row, next) ? { ...next, notified: row.notified ?? {} } : next);
-  }
-  for (const row of wanted) if (!placed.has(row.id)) out.push(row);
-  return out;
-}
-
-const sameRows = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-
-const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * One attempt's rows, from one read: the stored rows and the merged ones,
- * both validated as the timer will read them, or `{ invalid }` when the
- * sheet does not validate or the merge would pass MAX_REMINDERS.
- */
-function plannedRows({ sources, unavailable, reminderDoc }, nowMs) {
-  try {
-    const stored = readStoredReminders(reminderDoc).reminders;
-    const { credentials } = buildRegisterView(sources, nowMs, unavailable);
-    const wanted = wantedReminders(credentials, { today: dateOnly(nowMs), stored });
-    const merged = normalizeReminders({ reminders: mergeCredentialReminders(stored, wanted) });
-    return { stored, rows: merged.reminders, wanted: wanted.length };
-  } catch (error) {
-    if (error instanceof RemindersValidationError) return { invalid: true };
-    throw error;
-  }
-}
-
-/** Write the merged rows under the document's ETag; false when another writer got there first. */
-async function writeRows(store, current, rows) {
-  try {
-    if (current) {
-      await store.replaceDocIfMatch(
-        'admin_config',
-        { ...current, reminders: rows },
-        { partitionKey: ADMIN_CONFIG_PARTITION }
-      );
-    } else {
-      await store.createDoc('admin_config', {
-        id: REMINDERS_CONFIG_ID,
-        configScope: ADMIN_CONFIG_PARTITION,
-        reminders: rows,
-      });
-    }
-    return true;
-  } catch (error) {
-    if (error?.code === 412 || error?.code === 409) return false;
-    throw error;
-  }
+  return mergeProvidedRows(stored, wanted, isCredentialReminder);
 }
 
 /**
@@ -302,31 +242,40 @@ export async function syncCredentialReminders({
   now = () => new Date(),
   log = {},
   attempts = SYNC_WRITE_ATTEMPTS,
-  sleep = defaultSleep,
+  sleep,
 }) {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (attempt > 0) await sleep(20 * 2 ** Math.min(attempt, 5) + Math.random() * 20);
-    // Everything again, every attempt: the sheet, then the dates (header).
+  // Everything again, every attempt: the sheet, then the dates (header).
+  const plan = async () => {
     const read = await readCredentialSources(store);
     const blocked = read.unavailable.filter((id) => REMINDER_SOURCES.includes(id));
     if (blocked.length) {
       // A due date read without its source would remove a reminder that
       // should stay; waiting a day costs nothing the timer cannot repeat.
       log.warn?.(`[credentialReminders] ${blocked.length} source(s) could not be read; reminders left as they are`);
-      return { synced: false, reason: 'unreadable' };
+      return { skip: 'unreadable' };
     }
-    const plan = plannedRows(read, now().getTime());
-    if (plan.invalid) {
-      // Not the normalizer's sentence: it can quote a row's hand-chosen id,
-      // and a hand-chosen id is content (timers/reminders.js).
+    const nowMs = now().getTime();
+    let stored;
+    try {
+      stored = readStoredReminders(read.reminderDoc).reminders;
+    } catch (error) {
+      if (!(error instanceof RemindersValidationError)) throw error;
       log.warn?.('[credentialReminders] the reminders sheet would not validate, or would pass its limit; left as it is');
-      return { synced: false, reason: 'invalid' };
+      return { skip: 'invalid' };
     }
-    if (sameRows(plan.stored, plan.rows)) return { synced: true, changed: false, reminders: plan.wanted };
-    if (await writeRows(store, read.reminderDoc, plan.rows)) {
-      return { synced: true, changed: true, reminders: plan.wanted };
-    }
-  }
-  log.warn?.(`[credentialReminders] the reminders sheet kept changing; tried ${attempts} times`);
-  return { synced: false, reason: 'conflict' };
+    const { credentials } = buildRegisterView(read.sources, nowMs, read.unavailable);
+    return {
+      reminderDoc: read.reminderDoc,
+      wanted: wantedReminders(credentials, { today: dateOnly(nowMs), stored }),
+    };
+  };
+  return syncProvidedRows({
+    store,
+    label: 'credentialReminders',
+    isMine: isCredentialReminder,
+    plan,
+    log,
+    attempts,
+    ...(sleep ? { sleep } : {}),
+  });
 }

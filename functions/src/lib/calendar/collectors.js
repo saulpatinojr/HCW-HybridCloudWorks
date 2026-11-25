@@ -8,6 +8,7 @@
  */
 import { collectAlerts } from '../calendar-alerts/collector.js';
 import { collectRenewals } from '../cost/collector.js';
+import { ambassadorHref } from '../decision-center/links.js';
 import {
   PER_SOURCE_LIMIT,
   dayParams,
@@ -258,7 +259,9 @@ const AMBASSADOR_DEADLINES = {
 };
 
 function ambassadorItem(row, when, field) {
-  const name = row.programName || row.title || row.programId || 'Ambassador application';
+  // An application's title is "<program name> <year>" unless the owner changed
+  // it; there is no programName field on an application (#1886).
+  const name = row.title || row.programId || 'Ambassador application';
   return item({
     id: `ambassador:${row.id}:${field}`,
     kind: 'ambassador',
@@ -266,7 +269,8 @@ function ambassadorItem(row, when, field) {
     start: when.iso,
     allDay: when.allDay,
     status: 'deadline',
-    href: '/admin/ambassador',
+    // The application itself, not the hub's Dashboard (#1886).
+    href: ambassadorHref(row.id),
     sourceId: row.id,
     sourceCollection: 'ambassador',
     meta: { deadline: field, applicationStatus: row.status || null },
@@ -279,7 +283,7 @@ export async function collectAmbassadorDeadlines({ store, from, to }) {
   try {
     rows = await store.queryDocs(
       'ambassador',
-      `SELECT TOP ${PER_SOURCE_LIMIT} c.id, c.programName, c.programId, c.title, c.status, c.submissionDeadline, c.renewalDate, c.expirationDate FROM c WHERE c.docType = 'application' AND ((IS_STRING(c.submissionDeadline) AND c.submissionDeadline >= @fromDay AND c.submissionDeadline < @toDay) OR (IS_STRING(c.renewalDate) AND c.renewalDate >= @fromDay AND c.renewalDate < @toDay) OR (IS_STRING(c.expirationDate) AND c.expirationDate >= @fromDay AND c.expirationDate < @toDay))`,
+      `SELECT TOP ${PER_SOURCE_LIMIT} c.id, c.programId, c.title, c.status, c.submissionDeadline, c.renewalDate, c.expirationDate FROM c WHERE c.docType = 'application' AND (NOT IS_DEFINED(c.softDeletedAt) OR IS_NULL(c.softDeletedAt)) AND ((IS_STRING(c.submissionDeadline) AND c.submissionDeadline >= @fromDay AND c.submissionDeadline < @toDay) OR (IS_STRING(c.renewalDate) AND c.renewalDate >= @fromDay AND c.renewalDate < @toDay) OR (IS_STRING(c.expirationDate) AND c.expirationDate >= @fromDay AND c.expirationDate < @toDay))`,
       dayParams(from, to)
     );
   } catch (error) {

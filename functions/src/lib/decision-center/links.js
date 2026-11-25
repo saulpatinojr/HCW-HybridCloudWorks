@@ -92,6 +92,9 @@ export function chapterHref({ provider, examCode, id }) {
 /** The Applications tab with this application open (`?application=` alone lands on Dashboard). */
 export const ambassadorHref = (id) => `/admin/ambassador?tab=applications&application=${enc(id)}`;
 
+/** The Programs tab with this program's details open (#1886: an activity requirement, a Pipeline chip). */
+export const ambassadorProgramHref = (id) => `/admin/ambassador?tab=programs&program=${enc(id)}`;
+
 /** Compose, with the article the post was for already chosen when it is known. */
 export const socialComposeHref = (contentId) =>
   contentId ? `/admin/social-hub?tab=compose&contentId=${enc(contentId)}` : '/admin/social-hub?tab=compose';

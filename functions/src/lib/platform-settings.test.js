@@ -1161,8 +1161,8 @@ describe('handlers', () => {
       const rows = Array.from({ length: 200 }, (_, i) => ({ id: `r${i}`, title: 'T', dueDate: '2027-01-04' }));
       const { put, written } = await save(rows);
       expect(put.status).toBe(400);
-      // The owner's share runs out first: REGISTER_RESERVED_ROWS stay the register's (review of #1039).
-      expect(parse(put).error).toMatch(/at most 180 of your own entries; 20 are kept for the credential register/);
+      // The owner's share runs out first: the providers' rows stay theirs (review of #1039, #1886).
+      expect(parse(put).error).toMatch(/at most 180 of your own entries; 40 are kept for the credential register and Ambassador/);
       expect(written).toBeUndefined();
     });
   });

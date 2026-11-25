@@ -145,6 +145,13 @@ describe('the API’s deep links name a tab and a parameter each page reads', ()
     expect(params.get(LINK_PARAMS.application)).toBe('app1');
   });
 
+  it('program → Ambassador Hub, Programs, with its details open (#1886)', () => {
+    const { path, tab, params } = parse(api.ambassadorProgramHref('program-example'));
+    expect(path).toBe('/admin/ambassador');
+    expect(ids(AMBASSADOR_TABS)).toContain(tab);
+    expect(params.get(LINK_PARAMS.program)).toBe('program-example');
+  });
+
   it('social and the Forge Studio Queue open real tabs', () => {
     expect(ids(SOCIAL_TABS)).toContain(parse(api.socialComposeHref('c1')).tab);
     expect(parse(api.socialComposeHref('c1')).params.get('contentId')).toBe('c1');

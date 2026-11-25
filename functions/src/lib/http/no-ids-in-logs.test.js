@@ -423,6 +423,7 @@ const ALLOWED = [
   { site: 'lib/addons/status.js › readStatus › id', why: "looks up the add-on's setting name; the id itself is not printed" },
   { site: 'lib/addons/status.js › refresh › id', why: "looks up the add-on's setting name; the id itself is not printed" },
   // The registered name of a tool server the owner added, read from the store before the line runs.
+  { site: 'lib/reminders/providers.js › syncReminderProviders › provider.id', why: 'a fixed provider name from REMINDER_PROVIDERS ("credentials", "ambassador"), never a stored id; says which sync to look at (#1886)', times: 2 },
   { site: 'lib/ai/mcp.js › getSessionId › serverId', why: 'the registered name of a tool server; says which server to fix' },
   { site: 'lib/ai/mcp.js › callMcpTool › serverId', why: 'the registered name of a tool server; says which server to fix' },
   // A provider's name from the catalogue in the code.

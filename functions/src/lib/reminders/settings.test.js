@@ -9,6 +9,8 @@ import {
   MAX_REMINDERS,
   OVERDUE_REPEAT_DAYS,
   REGISTER_RESERVED_ROWS,
+  PROVIDED_RESERVED_ROWS,
+  isProvidedRow,
   RemindersValidationError,
   daysUntil,
   isCredentialRow,
@@ -264,12 +266,29 @@ describe('the credential register’s rows survive any save unchanged (review of
     expect(() => mergeStoredStamps(full, stored())).toThrow(RemindersValidationError);
   });
 
-  it('keeps REGISTER_RESERVED_ROWS free for the register, even before any of its rows exist (review of #1039)', () => {
+  it('keeps every provider’s rows free, even before any of them exist (review of #1039, #1886)', () => {
     const own = (n) =>
       normalizeReminders({ reminders: Array.from({ length: n }, (_, i) => reminder({ id: `r${i}` })) });
-    const limit = MAX_REMINDERS - REGISTER_RESERVED_ROWS;
+    const limit = MAX_REMINDERS - PROVIDED_RESERVED_ROWS;
+    // The owner's own allowance did not shrink when Ambassador joined.
+    expect(limit).toBe(180);
+    expect(PROVIDED_RESERVED_ROWS).toBe(REGISTER_RESERVED_ROWS + 20);
     expect(mergeStoredStamps(own(limit), null).reminders).toHaveLength(limit);
-    expect(() => mergeStoredStamps(own(limit + 1), null)).toThrow(/kept for the credential register/);
+    expect(() => mergeStoredStamps(own(limit + 1), null)).toThrow(/kept for the credential register and Ambassador/);
+  });
+
+  it('keeps Ambassador’s rows as stored, whatever a save sends (#1886)', () => {
+    const kept = reminder({ id: 'ambassador-0123456789ab', title: 'Example Program: Q4 2026 activity', notified: { ahead: '2026-11-20T13:00:00.000Z' } });
+    const storedDoc = { reminders: [kept] };
+    const sent = normalizeReminders({
+      reminders: [{ ...kept, done: true, dueDate: '2030-01-01', notified: {} }, reminder({ id: 'mine' })],
+    });
+    const merged = mergeStoredStamps(sent, storedDoc).reminders;
+    expect(merged.find((row) => row.id === 'ambassador-0123456789ab')).toEqual(
+      normalizeReminders({ reminders: [kept] }).reminders[0]
+    );
+    expect(isProvidedRow(kept)).toBe(true);
+    expect(isProvidedRow(reminder({ id: 'mine' }))).toBe(false);
   });
 });
 
