@@ -1038,10 +1038,11 @@ describe('DECLARED', () => {
     expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [] });
   });
 
-  it('passes the plan after #1777’s merge (the proposal clean-up’s switch, off) and the plan that arms it', () => {
-    const merged = fixture();
-    merged.app.after.app_settings.PROPOSAL_STRIP_ENABLED = 'false';
-    expect(checkPlan(merged.plan)).toMatchObject({ ok: true, unexpected: [] });
+  it('passes the plan that arms the proposal clean-up, and no longer the plan that first declared its switch (#1777)', () => {
+    // The switch, declared off, has applied, so adding it from nothing is unexpected now.
+    const again = fixture();
+    again.app.after.app_settings.PROPOSAL_STRIP_ENABLED = 'false';
+    expect(checkPlan(again.plan).ok).toBe(false);
 
     const armed = fixture();
     armed.app.before.app_settings.PROPOSAL_STRIP_ENABLED = 'false';
@@ -1052,7 +1053,8 @@ describe('DECLARED', () => {
     const skipped = fixture();
     skipped.app.after.app_settings.PROPOSAL_STRIP_ENABLED = 'true';
     expect(checkPlan(skipped.plan).ok).toBe(false);
-    expect(infraSource).toMatch(/^\s*"PROPOSAL_STRIP_ENABLED"\s*=\s*"false"$/m);
+    // Armed by the owner on 2026-11-25 (#1777).
+    expect(infraSource).toMatch(/^\s*"PROPOSAL_STRIP_ENABLED"\s*=\s*"true"$/m);
   });
 
   it('passes the plan that arms the content archive’s switch, and no longer the plan that first declared it (#1811)', () => {
