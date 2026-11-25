@@ -1,0 +1,80 @@
+# gitleaks configuration: the built-in rules, plus allowlists that describe
+# KINDS of harmless match rather than single lines.
+#
+# Why this file exists. Until this file, every false positive was silenced in
+# .gitleaksignore by `path:rule:line`. Any edit that moved such a line brought
+# the finding back as a new high "secret" in Qlty Cloud, and new test files
+# brought new ones, so the Code and Security tab's Security grade kept falling
+# to F with no real secret in the repository. An allowlist keyed on what the
+# match is (a test file, a checksum, a commit id) does not move with the line.
+#
+# Kept narrow on purpose. Each allowlist names the one rule it answers
+# (`targetRules`), so every precise rule (AWS keys, GitHub tokens, private
+# keys and the rest) still runs everywhere, test files included. Only the
+# broad `generic-api-key` heuristic, which matched every made-up value, is
+# quietened, and only where the allowlist says. A rule's whole-line match is
+# avoided where it could hide a second secret on the same line.
+#
+# Who reads it. gitleaks finds `.gitleaks.toml` in the folder it scans, and
+# Qlty's gitleaks plugin passes `--config .gitleaks.toml` when the file exists
+# (`config_files` in Qlty's plugin definition, CLI 0.672.0), so a local run
+# and Qlty Cloud apply the same rules.
+#
+# What else would catch a real key in a test file: GitHub secret scanning and
+# push protection (on for this repository) for known providers' tokens.
+# trufflehog runs in Qlty with --only-verified, so it reports only a key the
+# issuer confirms is live; it is not a net for made-up-looking values.
+#
+# The record of each decision is docs/security/scanner-triage.md#gitleaks.
+# A new allowlist needs a row there first.
+
+title = "HCW gitleaks configuration"
+
+[extend]
+# Keep every built-in rule and its own allowlists; this file only adds.
+useDefault = true
+
+[[allowlists]]
+description = "generic-api-key in automated tests and their fixtures: values there are made up so the code under test has something to read"
+targetRules = ["generic-api-key"]
+paths = [
+  '''\.(test|spec)\.[A-Za-z0-9]+$''',
+  '''\.Tests\.ps1$''',
+  '''(^|/)test_[^/]+\.py$''',
+  '''(^|/)tests?/''',
+  '''(^|/)__fixtures__/''',
+  '''(^|/)__tests__/''',
+]
+
+[[allowlists]]
+description = "generic-api-key on a published checksum or a public key fingerprint: it identifies a file or a public key and unlocks nothing"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = [
+  # lab-image/versions.env: `NAME_SHA256=<64 hex>`, the digest a download is
+  # checked against. Nothing else may follow on the line.
+  '''^\s*[A-Za-z0-9_]*_SHA256=[0-9a-fA-F]{64}\s*$''',
+  # Ansible defaults: the fingerprint of a PUBLIC PGP key, 40 hex characters.
+  '''^\s*[a-z0-9_]*_fingerprint:\s*"?[0-9A-Fa-f]{40}"?\s*$''',
+]
+
+[[allowlists]]
+description = "A git commit id in the documentation: 40 hex characters have the shape of a legacy Sourcegraph token"
+targetRules = ["sourcegraph-access-token"]
+condition = "AND"
+paths = ['''^docs/.*\.md$''']
+# The matched value itself, not the line: a modern `sgp_` token on the same
+# line is still reported.
+regexes = ['''^[0-9a-f]{40}$''']
+
+[[allowlists]]
+description = "Firebase Storage download tokens in the generated content manifest; each reads one public image the site already serves"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^frontend/data/content-manifest\.json$''']
+# The match itself (`token=<UUID>` at the end of a download link), not the
+# line: any other value on the same line is still checked. Review of #1841.
+regexTarget = "match"
+regexes = [
+  '''^token=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"?$''',
+]

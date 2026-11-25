@@ -390,6 +390,7 @@ resource "coder_agent" "main" {
 # v2.37.3 leaves the agent out of a named app's name), the name the wildcard
 # certificate exists for and the one the lab launcher opens in the site's pane.
 module "code-server" {
+  # checkov:skip=CKV_TF_1: Coder registry module pinned to exact release 1.6.0. docs/security/scanner-triage.md#checkov
   count           = data.coder_workspace.me.start_count
   source          = "registry.coder.com/coder/code-server/coder"
   version         = "1.6.0"

@@ -76,6 +76,13 @@ HELPER = ROLE / "files" / "hcw-portainer-check"
 UTC = datetime.timezone.utc
 DAY = datetime.timedelta(days=1)
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+# The same UTC time to the second, as strftime and strptime write it.
+TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+# Names that recur through the checks, written once here so a rename is one edit.
+MAIN_YML = "main.yml"
+REPORT_CLI = "bin/report-host-check.js"
+ENDPOINTS_PATH = "/api/endpoints"
+CONTAINERS_JSON = "/containers/json"
 REPORT_REQUIRED = {"checkedAt", "up", "licenseValid", "licenseExpiresAt", "environmentName", "environmentUp",
                    "containers", "imagesChecked", "imagesOutdated", "error"}
 REPORT_OPTIONAL = {"version", "edition"}
@@ -95,7 +102,7 @@ DOCUMENTED_CONFIG = {
     "agent_group": "hcw-labs-agent",
     "agent_env_file": "/etc/hcw/labs-agent.env",
     "agent_app_dir": "/opt/hcw-labs-agent/vps-agent",
-    "report_cli": "bin/report-host-check.js",
+    "report_cli": REPORT_CLI,
     "report_timeout_seconds": 60,
     "environment_wait_seconds": 30,
 }
@@ -171,10 +178,10 @@ far = int((now() + 300 * DAY).timestamp())
 near = int((now() + 10 * DAY).timestamp())
 check("the licence is valid when one licence says so, and its expiry is the latest valid one's",
       helper.licence_state([{"valid": False, "expiresAt": far}, {"valid": True, "expiresAt": near}])
-      == (True, datetime.datetime.fromtimestamp(near, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")))
+      == (True, datetime.datetime.fromtimestamp(near, UTC).strftime(TIME_FORMAT)))
 check("not valid when one says so and none is valid, with the latest expiry of all",
       helper.licence_state([{"valid": False, "expiresAt": near}, {"valid": False, "expiresAt": far}])
-      == (False, datetime.datetime.fromtimestamp(far, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")))
+      == (False, datetime.datetime.fromtimestamp(far, UTC).strftime(TIME_FORMAT)))
 check("unknown when Portainer says neither (valid null), when there is no licence, and no expiry when it is not a number",
       helper.licence_state([{"valid": None, "expiresAt": far}])[0] is None
       and helper.licence_state([{"valid": None, "expiresAt": far}])[1] is not None
@@ -243,30 +250,41 @@ def names_set_in(node):
             yield from names_set_in(value)
 
 
-def check_rendered_files():
-    """Render the role's files with its defaults and hold them to the repository; returns the configuration."""
-    defaults = resolved(ROLE / "defaults" / "main.yml", ROLE / "vars" / "main.yml")
+def task_using(tasks, module, **match):
+    """The role's first task calling a module with the given arguments, and its body."""
+    for task in tasks:
+        body = task.get(module)
+        if isinstance(body, dict) and all(body.get(k) == v for k, v in match.items()):
+            return task, body
+    return None, None
+
+
+def rendered_role():
+    """The role's defaults and rendered files, the agent's and coder role's defaults, its tasks and argument spec."""
+    defaults = resolved(ROLE / "defaults" / MAIN_YML, ROLE / "vars" / MAIN_YML)
     group_vars = yaml.safe_load((ANSIBLE / "group_vars" / "all.yml").read_text(encoding="utf-8"))
-    agent = resolved(ANSIBLE / "roles" / "labs_agent" / "defaults" / "main.yml",
-                     extra={name: group_vars[name] for name in ("labs_agent_user", "labs_agent_home")})
-    coder = resolved(ANSIBLE / "roles" / "coder" / "defaults" / "main.yml")
-    config = json.loads(render("hcw-portainer-check.json.j2", defaults))
-    service = render("hcw-portainer-check.service.j2", defaults)
-    timer = render("hcw-portainer-check.timer.j2", defaults)
-    agent_unit = (ANSIBLE / "roles" / "labs_agent" / "templates" / "hcw-labs-agent.service.j2").read_text(encoding="utf-8")
-    tasks_text = (ROLE / "tasks" / "main.yml").read_text(encoding="utf-8")
-    tasks = yaml.safe_load(tasks_text)
+    tasks_text = (ROLE / "tasks" / MAIN_YML).read_text(encoding="utf-8")
     spec = yaml.safe_load((ROLE / "meta" / "argument_specs.yml").read_text(encoding="utf-8"))
-    options = spec["argument_specs"]["main"]["options"]
+    return {
+        "defaults": defaults,
+        "group_vars": group_vars,
+        "agent": resolved(ANSIBLE / "roles" / "labs_agent" / "defaults" / MAIN_YML,
+                          extra={name: group_vars[name] for name in ("labs_agent_user", "labs_agent_home")}),
+        "coder": resolved(ANSIBLE / "roles" / "coder" / "defaults" / MAIN_YML),
+        "config": json.loads(render("hcw-portainer-check.json.j2", defaults)),
+        "service": render("hcw-portainer-check.service.j2", defaults),
+        "timer": render("hcw-portainer-check.timer.j2", defaults),
+        "agent_unit": (ANSIBLE / "roles" / "labs_agent" / "templates" / "hcw-labs-agent.service.j2").read_text(encoding="utf-8"),
+        "tasks_text": tasks_text,
+        "tasks": yaml.safe_load(tasks_text),
+        "options": spec["argument_specs"]["main"]["options"],
+    }
 
-    def task_using(module, **match):
-        """The role's first task calling a module with the given arguments, and its body."""
-        for task in tasks:
-            body = task.get(module)
-            if isinstance(body, dict) and all(body.get(k) == v for k, v in match.items()):
-                return task, body
-        return None, None
 
+def check_rendered_config(role):
+    """Hold the rendered configuration to the role's defaults, the agent's and the coder role's."""
+    defaults, group_vars, agent, coder = role["defaults"], role["group_vars"], role["agent"], role["coder"]
+    config, agent_unit, tasks_text = role["config"], role["agent_unit"], role["tasks_text"]
     check("the rendered configuration is the documented one", config == DOCUMENTED_CONFIG, json.dumps(config))
     check("it names Portainer on the loopback port the role publishes and waits on",
           config["portainer_url"] == f"https://127.0.0.1:{defaults['portainer_https_port']}"
@@ -288,8 +306,13 @@ def check_rendered_files():
               for name in ("user", "group", "env_file", "app_dir")),
           json.dumps({name: defaults[f"portainer_check_agent_{name}"] for name in ("user", "group", "env_file", "app_dir")}))
     check("the CLI is vps-agent/bin/report-host-check.js, through /usr/bin/systemd-run, with the role's timeout",
-          config["report_cli"] == "bin/report-host-check.js" and config["systemd_run"] == "/usr/bin/systemd-run"
+          config["report_cli"] == REPORT_CLI and config["systemd_run"] == "/usr/bin/systemd-run"
           and config["report_timeout_seconds"] == defaults["portainer_check_report_timeout_seconds"] == 60)
+
+
+def check_rendered_units(role):
+    """Hold the rendered service and timer to the role's defaults and the hardening role."""
+    defaults, config, service, timer = role["defaults"], role["config"], role["service"], role["timer"]
     check("the check waits up to the role's 30 s for the environment to read up, well inside the unit's six minutes",
           config["environment_wait_seconds"] == defaults["portainer_check_environment_wait_seconds"] == 30
           and "\nTimeoutStartSec=6min\n" in service, str(config["environment_wait_seconds"]))
@@ -320,25 +343,30 @@ def check_rendered_files():
           and f"\nOnUnitActiveSec={defaults['portainer_check_interval']}\n" in timer
           and "\nRandomizedDelaySec=1min\n" in timer and "\nWantedBy=timers.target\n" in timer
           and (defaults["portainer_check_boot_delay"], defaults["portainer_check_interval"]) == ("5min", "15min"))
-    _, body = task_using("ansible.builtin.copy", src="hcw-portainer-check")
+
+
+def check_role_tasks(role):
+    """Hold the role's tasks and argument spec to its defaults: what it installs, the token, the timer."""
+    defaults, tasks, options = role["defaults"], role["tasks"], role["options"]
+    _, body = task_using(tasks, "ansible.builtin.copy", src="hcw-portainer-check")
     check("the role installs the helper as /usr/local/libexec/hcw-portainer-check, root:root 0750",
           body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
           == ("{{ portainer_check_script }}", "root", "root", "0750")
           and defaults["portainer_check_script"] == "/usr/local/libexec/hcw-portainer-check", str(body))
-    token_task, body = task_using("ansible.builtin.copy", dest="{{ portainer_check_token_file }}")
+    token_task, body = task_using(tasks, "ansible.builtin.copy", dest="{{ portainer_check_token_file }}")
     check("the role writes the token root:root 0600 from the vault key, with no_log, only while the key is set",
           body is not None and (body["owner"], body["group"], body["mode"]) == ("root", "root", "0600")
           and "lookup('ansible.builtin.vars', 'vault_portainer_api_token', default='')" in body["content"]
           and token_task.get("no_log") is True and "portainer_check_configured" in str(token_task.get("when")),
           str(token_task))
-    _, body = task_using("ansible.builtin.file", path="{{ portainer_check_dir }}")
+    _, body = task_using(tasks, "ansible.builtin.file", path="{{ portainer_check_dir }}")
     check("the token's directory is root:root 0700",
           body is not None and (body["owner"], body["group"], body["mode"], body["state"]) == ("root", "root", "0700", "directory")
           and defaults["portainer_check_dir"] == "/etc/hcw/portainer", str(body))
-    _, body = task_using("ansible.builtin.file", path="{{ portainer_check_token_file }}")
+    _, body = task_using(tasks, "ansible.builtin.file", path="{{ portainer_check_token_file }}")
     check("the token file is removed while the key is unset", body is not None and body.get("state") == "absent", str(body))
     declared = set()
-    for path in (ROLE / "defaults" / "main.yml", ROLE / "vars" / "main.yml"):
+    for path in (ROLE / "defaults" / MAIN_YML, ROLE / "vars" / MAIN_YML):
         declared |= set(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
     check("the role never declares or sets vault_portainer_api_token (hcw-vault-set refuses a key the playbook defines)",
           "vault_portainer_api_token" not in declared and "vault_portainer_api_token" not in set(names_set_in(tasks))
@@ -346,14 +374,22 @@ def check_rendered_files():
     check("the run says how to set the key, in the sentence lab-host/README.md names",
           any(task.get("ansible.builtin.debug", {}).get("msg") == NOT_CONFIGURED for task in tasks
               if isinstance(task.get("ansible.builtin.debug"), dict)))
-    _, body = task_using("ansible.builtin.systemd_service", name="{{ portainer_check_unit }}.timer", enabled=True)
+    _, body = task_using(tasks, "ansible.builtin.systemd_service", name="{{ portainer_check_unit }}.timer", enabled=True)
     check("the timer is enabled only while the check is configured",
           body is not None and body.get("state") == "started" and body.get("daemon_reload") is True)
     check("every portainer_check_* default is in the argument spec with the same value",
           all(name in options and options[name].get("default") == value
               for name, value in defaults.items() if name.startswith("portainer_check_") and name != "portainer_check_dir"),
           ", ".join(name for name in defaults if name.startswith("portainer_check_") and name not in options))
-    return config
+
+
+def check_rendered_files():
+    """Render the role's files with its defaults and hold them to the repository; returns the configuration."""
+    role = rendered_role()
+    check_rendered_config(role)
+    check_rendered_units(role)
+    check_role_tasks(role)
+    return role["config"]
 
 
 if jinja2 and yaml:
@@ -368,7 +404,10 @@ else:
 
 
 def random_text(length, alphabet=string.ascii_letters + string.digits):
-    return "".join(random.choice(alphabet) for _ in range(length))
+    """Random characters from the alphabet, for fake tokens and ids."""
+    # random, not secrets: made-up values for a fake server, and nothing
+    # about them needs to be unpredictable.
+    return "".join(random.choice(alphabet) for _ in range(length))  # nosec B311 - test data, not security
 
 
 def container(cid, state, status, name, image):
@@ -427,6 +466,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     fake = None
 
     def log_message(self, *args):
+        # Left empty on purpose: the base class prints every request to stderr,
+        # which would bury the test's own ok / not ok lines.
         pass
 
     def send(self, status, body=None):
@@ -470,31 +511,49 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(200, {"Version": fake.version, "InstanceID": "fixture-instance"})
             if self.headers.get("X-API-Key") != fake.token:
                 return self.send(401, {"message": "Invalid JWT token", "details": "unauthorized"})
-            if parts == ["api", "system", "version"]:
-                return self.send(200, {"ServerVersion": fake.version, "ServerEdition": fake.edition,
-                                       "DatabaseVersion": fake.version, "UpdateAvailable": fake.update_available,
-                                       "LatestVersion": fake.version, "Build": {"BuildNumber": "fixture"}})
-            if parts == ["api", "licenses"]:
-                return self.send(200, fake.licenses)
-            if parts == ["api", "endpoints"]:
-                endpoints = fake.endpoints
-                if fake.down_reads > 0:
-                    fake.down_reads -= 1
-                    endpoints = [dict(item, Status=2) if item.get("Name") == "local" else item for item in endpoints]
-                return self.send(200, endpoints)
-            if len(parts) == 6 and parts[:2] == ["api", "endpoints"] and parts[3:] == ["docker", "containers", "json"]:
-                if query.get("all") != ["true"]:
-                    return self.send(400, {"message": "the helper must ask for every container"})
-                try:
-                    return self.send(200, fake.containers[int(parts[2])])
-                except (KeyError, ValueError):
-                    return self.send(404, {"message": "Unable to find an environment with the specified identifier"})
-            if len(parts) == 6 and parts[:2] == ["api", "docker"] and parts[3] == "containers" and parts[5] == "image_status":
-                verdict = fake.image_status.get(parts[4])
-                if parts[2] != "3" or verdict is None:
-                    return self.send(404, {"message": "Unable to find a container with the specified identifier"})
-                return self.send(200, {"Status": verdict, "Message": ""})
-            return self.send(404, {"message": "Route not found."})
+            return self.serve_signed_in(parts, query)
+
+    def serve_signed_in(self, parts, query):
+        """The reads that need the token: version, licences, environments, containers and image status."""
+        fake = self.fake
+        if parts == ["api", "system", "version"]:
+            return self.send(200, {"ServerVersion": fake.version, "ServerEdition": fake.edition,
+                                   "DatabaseVersion": fake.version, "UpdateAvailable": fake.update_available,
+                                   "LatestVersion": fake.version, "Build": {"BuildNumber": "fixture"}})
+        if parts == ["api", "licenses"]:
+            return self.send(200, fake.licenses)
+        if parts == ["api", "endpoints"]:
+            return self.serve_endpoints()
+        if len(parts) == 6 and parts[:2] == ["api", "endpoints"] and parts[3:] == ["docker", "containers", "json"]:
+            return self.serve_containers(parts[2], query)
+        if len(parts) == 6 and parts[:2] == ["api", "docker"] and parts[3] == "containers" and parts[5] == "image_status":
+            return self.serve_image_status(parts[2], parts[4])
+        return self.send(404, {"message": "Route not found."})
+
+    def serve_endpoints(self):
+        """GET /api/endpoints: the environments, the local one down while down_reads lasts."""
+        fake = self.fake
+        endpoints = fake.endpoints
+        if fake.down_reads > 0:
+            fake.down_reads -= 1
+            endpoints = [dict(item, Status=2) if item.get("Name") == "local" else item for item in endpoints]
+        return self.send(200, endpoints)
+
+    def serve_containers(self, environment, query):
+        """GET /api/endpoints/{id}/docker/containers/json?all=true: one environment's containers."""
+        if query.get("all") != ["true"]:
+            return self.send(400, {"message": "the helper must ask for every container"})
+        try:
+            return self.send(200, self.fake.containers[int(environment)])
+        except (KeyError, ValueError):
+            return self.send(404, {"message": "Unable to find an environment with the specified identifier"})
+
+    def serve_image_status(self, environment, container_id):
+        """GET /api/docker/{id}/containers/{id}/image_status: whether a container's image is current."""
+        verdict = self.fake.image_status.get(container_id)
+        if environment != "3" or verdict is None:
+            return self.send(404, {"message": "Unable to find a container with the specified identifier"})
+        return self.send(200, {"Status": verdict, "Message": ""})
 
 
 # --- A world: the fake Portainer, the fakes on disk and a configuration ---------------
@@ -714,6 +773,11 @@ def well_formed(report):
     keys = set(report)
     if not REPORT_REQUIRED <= keys <= REPORT_REQUIRED | REPORT_OPTIONAL:
         return f"keys {sorted(keys ^ REPORT_REQUIRED)}"
+    return status_fields_problem(report) or count_fields_problem(report)
+
+
+def status_fields_problem(report):
+    """Why the report's time, up/down, version, edition or licence fields are wrong, or an empty string."""
     if not TIME.fullmatch(report["checkedAt"]):
         return f"checkedAt {report['checkedAt']!r}"
     if not isinstance(report["up"], bool) or not isinstance(report["environmentUp"], bool):
@@ -726,6 +790,11 @@ def well_formed(report):
         return f"licenseValid {report['licenseValid']!r}"
     if report["licenseExpiresAt"] is not None and not TIME.fullmatch(report["licenseExpiresAt"]):
         return f"licenseExpiresAt {report['licenseExpiresAt']!r}"
+    return ""
+
+
+def count_fields_problem(report):
+    """Why the report's environment name, counts or error are wrong, or an empty string."""
     if not (isinstance(report["environmentName"], str) and 0 < len(report["environmentName"]) <= 64):
         return f"environmentName {report['environmentName']!r}"
     counts = report["containers"]
@@ -737,7 +806,6 @@ def well_formed(report):
     if report["error"] is not None and not (isinstance(report["error"], str) and 0 < len(report["error"]) <= 300):
         return f"error {report['error']!r}"
     return ""
-
 
 world = World()
 if world.systemd_run is None:
@@ -770,7 +838,7 @@ check("it checked the three running containers' images and found none outdated, 
       report.get("imagesChecked") == 3 and report.get("imagesOutdated") == 0 and report.get("error") is None, json.dumps(report))
 check("checkedAt is UTC to the second, and now",
       TIME.fullmatch(report.get("checkedAt", "")) and abs(
-          (datetime.datetime.strptime(report["checkedAt"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC) - now()).total_seconds()) < 60,
+          (datetime.datetime.strptime(report["checkedAt"], TIME_FORMAT).replace(tzinfo=UTC) - now()).total_seconds()) < 60,
       report.get("checkedAt"))
 run = world.runs()[-1] if world.runs() else {}
 argv = run.get("args", [])
@@ -783,7 +851,7 @@ check("through systemd-run --pipe --wait, with hcw-coder-automation's properties
       and all(f"--property={name}" in argv for name in
               ("Environment=NODE_ENV=production", "NoNewPrivileges=yes", "PrivateTmp=yes", "ProtectSystem=full",
                "ProtectHome=yes", "RuntimeMaxSec=20"))
-      and argv[-3:] == ["--", sys.executable, "bin/report-host-check.js"], json.dumps(argv))
+      and argv[-3:] == ["--", sys.executable, REPORT_CLI], json.dumps(argv))
 check("systemd-run gets PATH and LC_ALL and nothing else: no $CREDENTIALS_DIRECTORY, no token",
       run.get("env") == ["LC_ALL", "PATH"], json.dumps(run.get("env")))
 check("the CLI saw the agent's environment and NODE_ENV=production, and ran in the agent's checkout",
@@ -798,7 +866,7 @@ check("the summary line carries the counts and the licence date, and no containe
 # What the fake saw in that run: the order of the reads, and the environment they were read from.
 seen = list(world.fake.calls)
 check("the helper reads status, version, licences, endpoints, then the containers of the environment named local (Id 3)",
-      world.paths()[:5] == ["/api/system/status", "/api/system/version", "/api/licenses", "/api/endpoints",
+      world.paths()[:5] == ["/api/system/status", "/api/system/version", "/api/licenses", ENDPOINTS_PATH,
                             "/api/endpoints/3/docker/containers/json"]
       and len(seen) > 4 and seen[4][2] == {"all": ["true"]}, json.dumps(seen))
 check("and one image_status per running container, under /docker/3, none for the exited one or the decoy",
@@ -910,7 +978,7 @@ result = world.helper()
 report = world.last_report()
 check("the local environment down (Status 2): exit 1, environmentUp false, the reason in error, no containers read",
       result.returncode == 1 and report.get("environmentUp") is False and "is down (Portainer Status 2)" in str(report.get("error"))
-      and not any("/containers/json" in path for path in world.paths()), json.dumps(report))
+      and not any(CONTAINERS_JSON in path for path in world.paths()), json.dumps(report))
 world.fake.endpoints[1]["Status"] = 1
 # A Portainer that has only just started can read its environment down for a
 # moment (#1328): the helper asks again, up to environment_wait_seconds, and
@@ -920,25 +988,25 @@ world.fake.down_reads = 2
 result = world.helper()
 report = world.last_report()
 check("the local environment reads down twice and then up inside the wait: exit 0, environmentUp true, three reads of /endpoints",
-      result.returncode == 0 and report.get("environmentUp") is True and world.paths().count("/api/endpoints") == 3
-      and any("/containers/json" in path for path in world.paths()), json.dumps(report) + result.stderr)
+      result.returncode == 0 and report.get("environmentUp") is True and world.paths().count(ENDPOINTS_PATH) == 3
+      and any(CONTAINERS_JSON in path for path in world.paths()), json.dumps(report) + result.stderr)
 world.write_config(environment_wait_seconds=3)
 world.fake.endpoints[1]["Status"] = 2
 result = world.helper()
 report = world.last_report()
 check("the local environment still down when the wait ends: exit 1, environmentUp false, the reason in error, asked more than once",
       result.returncode == 1 and report.get("environmentUp") is False and "is down (Portainer Status 2)" in str(report.get("error"))
-      and world.paths().count("/api/endpoints") > 1 and not any("/containers/json" in path for path in world.paths()),
+      and world.paths().count(ENDPOINTS_PATH) > 1 and not any(CONTAINERS_JSON in path for path in world.paths()),
       json.dumps(report) + str(world.paths()))
 world.fake.endpoints[1]["Status"] = 1
 world.write_config(environment_wait_seconds=6)
 world.fake.endpoints[1]["Name"] = "renamed-fixture"
 result = world.helper()
 check("no environment named local is not waited for: exit 1 after one read of /endpoints",
-      result.returncode == 1 and world.paths().count("/api/endpoints") == 1, str(world.paths()))
+      result.returncode == 1 and world.paths().count(ENDPOINTS_PATH) == 1, str(world.paths()))
 world.fake.endpoints[1]["Name"] = "local"
 world.write_config(environment_wait_seconds=0)
-world.fake.fail["/api/endpoints"] = 500
+world.fake.fail[ENDPOINTS_PATH] = 500
 result = world.helper()
 report = world.last_report()
 check("an endpoints read that fails: exit 1 with the status in error, the report still delivered",

@@ -11,7 +11,14 @@
 # scanner's own native ignore file, not with [[triage]] or [[exclude]] blocks
 # here, so the same decision holds when the scanner runs outside Qlty. The record of every triaged
 # finding is docs/security/scanner-triage.md (#567). Do not add a security
-# silence to this file; add it where that page says.
+# silence to this file; add it where that page says. Those native files are
+# .gitleaks.toml (rules) and .gitleaksignore (gitleaks), .bandit (bandit),
+# .checkov.yaml and inline `checkov:skip` (checkov), inline `trivy:ignore`
+# (trivy). Prefer a rule that describes a KIND of match, or an inline comment
+# that moves with its line, over a `path:line` fingerprint: a fingerprint
+# breaks on the next edit above it and the finding returns (2026-11-24).
+# exclude_patterns below is different: it says a folder is not source code
+# (build output, generated data, test fixtures), and each entry says why.
 config_version = "0"
 
 # Qlty already honours .gitignore, so node_modules/, dist/, site/ (the MkDocs
@@ -105,6 +112,11 @@ default = true
 
 [[plugin]]
 name = "actionlint"
+# The version CI's `actionlint, zizmor, hadolint` job pins (ci.yml
+# ACTIONLINT_VERSION); move both together. Qlty's default, 1.7.9, predates
+# the `artifact-metadata` permission (actionlint 1.7.10), which
+# publish-lab-image.yml uses, and reported it as unknown (2026-11-24).
+version = "1.7.12"
 
 [[plugin]]
 name = "editorconfig-checker"
@@ -183,6 +195,9 @@ name = "trufflehog"
 
 [[plugin]]
 name = "zizmor"
+# The version CI's `actionlint, zizmor, hadolint` job pins (ci.yml
+# ZIZMOR_VERSION); move both together, as for actionlint above.
+version = "1.31.1"
 
 # LINT TRIAGE (#588). Not security silences (those stay in each scanner's own
 # ignore file, per the header). Open work lives in GitHub issues (owner
@@ -202,3 +217,29 @@ name = "zizmor"
 match.plugins = ["ripgrep"]
 match.rules = ["TODO", "NOTE", "OPTIMIZE"]
 set.ignored = true
+
+# lab-image/Dockerfile's `fetch` stage keeps one RUN per downloaded artefact
+# on purpose (2026-11-24): the stage ships nothing (later stages COPY only
+# /out), so its layer count reaches no image, and kept apart a change to one
+# pin in versions.env downloads only that artefact again. The comment above
+# those RUNs says so. radarlint-iac has no inline skip, so the rule is
+# ignored for that one file here; S7031 still reports in every other
+# Dockerfile. docs/security/scanner-triage.md#radarlint-iac.
+[[triage]]
+match.plugins = ["radarlint-iac"]
+match.rules = ["radarlint-iac:docker:S7031"]
+match.file_patterns = ["lab-image/Dockerfile"]
+set.ignored = true
+
+# Test inputs, not infrastructure (2026-11-24). lab-image/smoke.sh hands each
+# file under lab-image/smoke/ to a validator inside the lab image
+# (hcw-kubeconform, hcw-helm-template, hcw-terraform-validate, ansible
+# --check) to prove the validator works; kubeconform-payload/invalid is
+# broken on purpose. Nothing there is applied or deployed, so checkov's and
+# trivy's production rules (69 high and medium findings that day) describe a
+# cluster that does not exist. Only those two plugins skip the folder:
+# gitleaks, trufflehog and osv-scanner still read it.
+# docs/security/scanner-triage.md#lab-image-smoke-fixtures.
+[[exclude]]
+plugins = ["checkov", "trivy"]
+file_patterns = ["lab-image/smoke/**"]
