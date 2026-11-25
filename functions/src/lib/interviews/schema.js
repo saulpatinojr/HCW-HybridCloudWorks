@@ -39,8 +39,7 @@ export const isObject = (value) => value !== null && typeof value === 'object' &
 
 /** The same rule as the frontend's `safeLink`: on this site (one leading `/`) or `https://`. */
 export function safeLink(url) {
-  if (typeof url !== 'string') return null;
-  const value = url.trim();
+  const value = typeof url === 'string' ? url.trim() : '';
   if (!value || /[\u0000-\u001f\u007f\\\s]/.test(value)) return null;
   if (value.startsWith('/')) return value.startsWith('//') ? null : value;
   if (!/^https:\/\/[^/]/i.test(value)) return null;

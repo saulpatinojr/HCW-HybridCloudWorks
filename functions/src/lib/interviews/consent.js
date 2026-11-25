@@ -109,22 +109,27 @@ export function attributeConsent(consent, user = {}, nowIso) {
  */
 export function consentRefusal(doc = {}, { now }) {
   const consent = doc?.consent;
-  const refuse = (error) => ({ code: CONSENT_REQUIRED, error });
-  if (!consent || typeof consent !== 'object') {
-    return refuse('This interview has no consent record; confirm the guest’s agreement first.');
-  }
-  if (consent.confirmed !== true) {
-    return refuse('The guest’s agreement to publish has not been confirmed.');
-  }
-  const date = realDate(consent.date);
-  if (!date) return refuse('The consent record has no valid date.');
-  if (date > todayOf(now)) return refuse('The consent date is in the future.');
-  if (consent.wording !== CONSENT_WORDING_VERSION) {
-    return refuse('The consent record does not name the wording the guest agreed to.');
-  }
-  const oid = consent.confirmedBy?.oid;
-  if (typeof oid !== 'string' || !oid.trim()) {
-    return refuse('The consent record was not confirmed by a signed-in administrator.');
-  }
-  return null;
+  const broken = CONSENT_RULES.find(([breaks]) => breaks(consent, now));
+  return broken ? { code: CONSENT_REQUIRED, error: broken[1] } : null;
 }
+
+const hasNoAdministrator = (consent) => {
+  const oid = consent.confirmedBy?.oid;
+  return typeof oid !== 'string' || !oid.trim();
+};
+
+/** The rules a consent record must keep, in the order they are checked, each with the sentence for breaking it. */
+const CONSENT_RULES = Object.freeze([
+  [
+    (consent) => !consent || typeof consent !== 'object',
+    'This interview has no consent record; confirm the guest’s agreement first.',
+  ],
+  [(consent) => consent.confirmed !== true, 'The guest’s agreement to publish has not been confirmed.'],
+  [(consent) => !realDate(consent.date), 'The consent record has no valid date.'],
+  [(consent, now) => realDate(consent.date) > todayOf(now), 'The consent date is in the future.'],
+  [
+    (consent) => consent.wording !== CONSENT_WORDING_VERSION,
+    'The consent record does not name the wording the guest agreed to.',
+  ],
+  [hasNoAdministrator, 'The consent record was not confirmed by a signed-in administrator.'],
+]);

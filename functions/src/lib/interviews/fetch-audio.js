@@ -85,20 +85,29 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/;
  */
 export function checkAudioUrl(value) {
   const raw = typeof value === 'string' ? value.trim() : '';
-  if (!raw) return { ok: false, error: 'url is required.' };
-  if (raw.length > MAX_URL_CHARS) return { ok: false, error: `The URL is longer than ${MAX_URL_CHARS} characters.` };
-  let parsed;
+  const parsed = readAudioUrl(raw);
+  const error = parsed.error ?? urlRefusal(parsed.url);
+  return error ? { ok: false, error } : { ok: true, url: parsed.url.href };
+}
+
+/** The text as a URL: `{ url }`, or `{ error }` when it is missing, too long or not a URL. */
+function readAudioUrl(raw) {
+  if (!raw) return { error: 'url is required.' };
+  if (raw.length > MAX_URL_CHARS) return { error: `The URL is longer than ${MAX_URL_CHARS} characters.` };
   try {
-    parsed = new URL(raw);
+    return { url: new URL(raw) };
   } catch {
-    return { ok: false, error: 'The URL could not be read.' };
+    return { error: 'The URL could not be read.' };
   }
-  if (parsed.protocol !== 'https:') return { ok: false, error: 'Only an https:// URL is fetched.' };
+}
+
+/** Why a parsed URL is not fetched (not https, no public host, credentials in it), or null. */
+function urlRefusal(parsed) {
+  if (parsed.protocol !== 'https:') return 'Only an https:// URL is fetched.';
   if (!parsed.hostname || parsed.hostname === 'localhost' || parsed.hostname.startsWith('[')) {
-    return { ok: false, error: 'The URL must name a public host.' };
+    return 'The URL must name a public host.';
   }
-  if (parsed.username || parsed.password) return { ok: false, error: 'A URL with credentials is not fetched.' };
-  return { ok: true, url: parsed.href };
+  return parsed.username || parsed.password ? 'A URL with credentials is not fetched.' : null;
 }
 
 /** `{ interviewId, sourceUrl }`, or a refusal. Shared with the route that enqueues. */
