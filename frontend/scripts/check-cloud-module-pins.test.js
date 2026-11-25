@@ -68,6 +68,9 @@ const FIREWALL_230 =
 const FIREWALL_TF =
   'https://raw.githubusercontent.com/terraform-aws-modules/terraform-aws-network-firewall/v2.3.0/versions.tf';
 
+// Retries wait between tries; the tests do not need to.
+const noWait = () => null;
+
 describe('reading a registry source', () => {
   it('splits the three parts and keeps the submodule apart', () => {
     expect(registryAddress(BUCKET.source)).toEqual({
@@ -264,7 +267,11 @@ describe('checking a pin against made-up answers', () => {
 
   it('reports a registry outage as "could not finish", never as fine', async () => {
     const fetchImpl = fakeFetch({ [FIREWALL_VERSIONS]: [503, 'down'] });
-    const result = await checkPin('AWS', 'networkFirewall', FIREWALL, { fetchImpl, attempts: 2 });
+    const result = await checkPin('AWS', 'networkFirewall', FIREWALL, {
+      fetchImpl,
+      attempts: 2,
+      sleep: noWait,
+    });
     expect(result.status).toBe('error');
     expect(result.message).toMatch(/answered HTTP 503/);
     expect(fetchImpl.calls).toHaveLength(2);
@@ -314,16 +321,16 @@ describe('fetching', () => {
     const timeout = Object.assign(new Error('aborted'), { name: 'TimeoutError' });
     const fetchImpl = fakeFetch({ 'https://x.test/a': timeout });
     await expect(
-      fetchText('https://x.test/a', { fetchImpl, timeoutMs: 1000, attempts: 2 })
+      fetchText('https://x.test/a', { fetchImpl, timeoutMs: 1000, attempts: 2, sleep: noWait })
     ).rejects.toThrow('https://x.test/a could not be read: no answer within 1 seconds.');
     expect(fetchImpl.calls).toHaveLength(2);
   });
 
   it('does not retry a 403', async () => {
     const fetchImpl = fakeFetch({ 'https://x.test/a': [403, 'no'] });
-    await expect(fetchText('https://x.test/a', { fetchImpl, attempts: 3 })).rejects.toThrow(
-      /HTTP 403/
-    );
+    await expect(
+      fetchText('https://x.test/a', { fetchImpl, attempts: 3, sleep: noWait })
+    ).rejects.toThrow(/HTTP 403/);
     expect(fetchImpl.calls).toHaveLength(1);
   });
 });

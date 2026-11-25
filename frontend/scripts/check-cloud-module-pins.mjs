@@ -75,10 +75,15 @@ class NotFound extends Error {}
  * or a 5xx is tried once more; anything still wrong throws CheckError (or
  * NotFound for a 404) with one sentence naming the URL.
  */
+// A short wait before the next try, so a busy registry gets a moment. Not
+// after the last try, which has nothing left to wait for.
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function fetchText(
   url,
-  { fetchImpl = fetch, timeoutMs = TIMEOUT_MS, attempts = ATTEMPTS } = {}
+  { fetchImpl = fetch, timeoutMs = TIMEOUT_MS, attempts = ATTEMPTS, sleep = wait } = {}
 ) {
+  const pause = (attempt) => (attempt < attempts ? sleep(2000 * attempt) : null);
   let last = 'no attempt was made';
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let response;
@@ -92,12 +97,14 @@ export async function fetchText(
         error?.name === 'TimeoutError'
           ? `no answer within ${timeoutMs / 1000} seconds`
           : `the request failed (${error?.message ?? error})`;
+      await pause(attempt);
       continue;
     }
     if (response.status === 404) throw new NotFound(url);
     if (response.ok) return response.text();
     last = `it answered HTTP ${response.status}`;
     if (response.status !== 429 && response.status < 500) break;
+    await pause(attempt);
   }
   throw new CheckError(`${url} could not be read: ${last}.`);
 }

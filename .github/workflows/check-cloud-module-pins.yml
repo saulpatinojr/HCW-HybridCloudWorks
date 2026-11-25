@@ -129,7 +129,9 @@ jobs:
     needs: check
     # !cancelled(), not always(): a run someone cancelled checked nothing and
     # should not open an issue saying so.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    # Only main's result speaks for the pins: a manual run from another
+    # branch reports in its log but never touches the issue.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:

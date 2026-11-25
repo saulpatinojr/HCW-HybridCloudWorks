@@ -29,7 +29,7 @@ const FIREWALL_SECTION = [
   '',
   '- Every packet, whole or fragmented, goes to the stateful engine (`aws:forward_to_sfe`); nothing is passed without inspection.',
   '- Rules are evaluated in the order they are written (`STRICT_ORDER`).',
-  '- A connection no rule allowed is dropped (`aws:drop_established`). The TCP handshake is let through first so the firewall can read the domain name.',
+  '- A connection no rule allowed is dropped (`aws:drop_established_app_layer_to_server`). The TCP handshake is let through, and the decision waits until the firewall has read the domain name, even when a browser splits it over two packets. Replies from the server are never dropped by this setting.',
   '',
   'This pack does not yet send traffic to the firewall: the inspection VPC is not attached to the Transit Gateway and no route table points at the firewall endpoints. Until those routes are added, traffic does not pass through the firewall at all.',
   '',

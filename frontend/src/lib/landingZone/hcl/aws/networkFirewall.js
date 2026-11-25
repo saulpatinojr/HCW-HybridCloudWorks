@@ -7,7 +7,9 @@ export const ALLOW_LIST_VARIABLE = 'firewall_allowed_domains';
 // An explicit name (api.example.com) or a wildcard for a domain and all its
 // subdomains, written with a leading dot (.example.com), as AWS accepts them.
 // No scheme, path, port or `*`. HCL string, so the backslashes are escaped.
-const DOMAIN_PATTERN = '^\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$';
+// Each label starts and ends with a letter or digit, so `-.com` is refused.
+const DOMAIN_PATTERN =
+  '^\\.?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$';
 
 export function networkFirewallTf() {
   const blocks = [];
@@ -76,7 +78,8 @@ export function networkFirewallTf() {
         q('Domains workloads may reach through the hub firewall (HTTP Host and TLS SNI).'),
       ],
       ['type', q('STATEFUL')],
-      '# Capacity is fixed at creation; each domain uses about two rules.',
+      '# Capacity is fixed at creation; each domain uses about two rules. Raising',
+      '# it replaces the group, which fails while the policy uses it: detach it first.',
       ['capacity', '1000'],
       '',
       ...block('rule_group', [
@@ -134,11 +137,13 @@ export function networkFirewallTf() {
       '# Inspect everything, allow only what a rule allows (#1871).',
       '# - Every packet, whole or fragmented, goes to the stateful engine.',
       '# - Rules are evaluated in the order they are written (STRICT_ORDER).',
-      '# - drop_established lets the TCP handshake through so the engine can read',
-      '#   the HTTP Host or TLS server name, then drops the connection unless a',
-      '#   rule allowed it. drop_strict would drop the first packet, before any',
-      '#   name is visible, so no domain could ever be allowed. UDP and ICMP are',
-      '#   dropped either way. alert_established logs each drop once logging is on.',
+      '# - drop_established_app_layer_to_server lets the TCP handshake through and',
+      '#   holds the decision until the HTTP Host or TLS server name is seen, even',
+      '#   when a large TLS hello is split over two packets, then drops what no',
+      '#   rule allowed. Plain drop_established can decide on the first packet and',
+      '#   drop an allowed site. The to_server form never drops server-to-client',
+      '#   packets (keep-alives, resets, replies). UDP and ICMP are dropped either',
+      '#   way. The matching alert logs each drop once logging is on.',
       ['policy_stateless_default_actions', '["aws:forward_to_sfe"]'],
       ['policy_stateless_fragment_default_actions', '["aws:forward_to_sfe"]'],
       [
@@ -148,7 +153,10 @@ export function networkFirewallTf() {
           ['stream_exception_policy', q('DROP')],
         ]),
       ],
-      ['policy_stateful_default_actions', '["aws:drop_established", "aws:alert_established"]'],
+      [
+        'policy_stateful_default_actions',
+        '["aws:drop_established_app_layer_to_server", "aws:alert_established_app_layer_to_server"]',
+      ],
       [
         'policy_stateful_rule_group_reference',
         '{ for k, g in aws_networkfirewall_rule_group.egress_allow_list : k => { priority = 100, resource_arn = g.arn } }',

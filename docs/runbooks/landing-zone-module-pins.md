@@ -25,8 +25,8 @@ In [#1862](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1862)
 one pin named a release that was never published, so `terraform init` failed
 for everyone who downloaded the AWS pack. The tests that run on every pull
 request cannot catch that, because they do not call the registry. This
-workflow does, once a week, and also on any pull request that changes one of
-the two files.
+workflow does, once a week, and also on any pull request that changes a pin
+file, the check's own scripts or the workflow itself.
 
 For each pin, the script
 ([`frontend/scripts/check-cloud-module-pins.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/scripts/check-cloud-module-pins.mjs))

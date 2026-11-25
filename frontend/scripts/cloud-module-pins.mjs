@@ -222,7 +222,11 @@ export function exitCodeFor(results) {
   return 0;
 }
 
-const code = (value) => (value === null || value === undefined ? '(none)' : `\`${value}\``);
+// Text from the registry and from a module's versions.tf goes into an issue
+// body. Keep only what a version constraint or a source name can hold, so a
+// backtick cannot break the formatting and an @name cannot notify anyone.
+const clean = (value) => String(value).replace(/[^0-9A-Za-z .,<>=~!/:_-]/g, '');
+const code = (value) => (value === null || value === undefined ? '(none)' : `\`${clean(value)}\``);
 
 /** One line per pin, in plain words, for the log. */
 export function logLines(results) {

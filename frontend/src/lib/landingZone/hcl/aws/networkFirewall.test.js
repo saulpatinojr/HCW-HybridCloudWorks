@@ -33,7 +33,13 @@ describe.each([
   });
 
   it('drops by default what no stateful rule allowed', () => {
-    expect(tf).toMatch(/policy_stateful_default_actions\s+=\s+\[[^\]]*"aws:drop_established"/);
+    // The app-layer form waits for the domain name even when a large TLS
+    // hello is split over two packets; plain drop_established can decide on
+    // the first packet and drop an allowed site.
+    expect(tf).toMatch(
+      /policy_stateful_default_actions\s+=\s+\[[^\]]*"aws:drop_established_app_layer_to_server"/
+    );
+    expect(tf).not.toMatch(/"aws:(drop|alert)_established"/);
   });
 
   it('declares the allow-list variable and feeds it to a strict-order rule group', () => {

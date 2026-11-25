@@ -7,8 +7,6 @@
 import { isSelected, normalizeState } from '../state';
 import { file } from './format';
 
-export { registryModule } from './registryModule.js';
-
 /**
  * Emit one provider's pack for a builder state: `terraform.tf` and
  * `providers.tf` always, one file per selected component, then variables,
