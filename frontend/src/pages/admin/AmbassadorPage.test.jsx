@@ -492,6 +492,53 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('points a piece filed under another program to Evidence instead of offering a filing that would change nothing', async () => {
+    searchParams = 'tab=programs';
+    getJSON.mockImplementation(
+      upkeepRoutes({
+        'cms/content': { success: true, items: [LIVE_PIECE] },
+        'cms/ambassador/evidence': {
+          items: [
+            ...FILED,
+            {
+              id: 'evidence-import-y',
+              title: LIVE_PIECE.Title,
+              date: '2026-11-20',
+              sourceModule: 'content',
+              sourceId: 'content-live',
+              programIds: [],
+            },
+          ],
+        },
+      })
+    );
+    render(<AmbassadorPage />);
+    await panel().findByTestId('program-upkeep');
+    await act(async () => {
+      fireEvent.click(within(gitKrakenCard()).getByRole('button', { name: 'Details' }));
+    });
+    const pipeline = await screen.findByTestId('program-pipeline');
+    const link = await within(pipeline).findByRole('link', { name: /not under this program/ });
+    expect(link).toHaveAttribute('href', '/admin/ambassador?tab=evidence');
+    expect(
+      within(pipeline).queryByRole('button', { name: /File as evidence/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it('says so when a link names a program no longer in the catalogue', async () => {
+    searchParams = 'tab=programs&program=program-gone';
+    window.history.pushState({}, '', '/admin/ambassador?tab=programs&program=program-gone');
+    getJSON.mockImplementation(upkeepRoutes());
+    try {
+      render(<AmbassadorPage />);
+      expect(
+        await panel().findByText('The program that link names is no longer in the catalogue.')
+      ).toBeInTheDocument();
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
+  });
+
   it('opens a program’s details from a Pipeline chip’s link (?program=)', async () => {
     searchParams = 'tab=programs&program=program-gk';
     window.history.pushState({}, '', '/admin/ambassador?tab=programs&program=program-gk');

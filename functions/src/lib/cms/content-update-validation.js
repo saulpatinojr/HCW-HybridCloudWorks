@@ -413,6 +413,15 @@ function normalizeEntry(normalized, field, value) {
   if (FORBIDDEN_CONTENT_UPDATE_KEYS.has(field)) {
     throw new ContentValidationError(`updates cannot modify protected field: ${field}`);
   }
+  // patchDoc reads a dot as a path into an object, so "originRef.label" or
+  // "slug.x" would rewrite part of a protected field that the whole-name
+  // check above lets through (review of #1886). No caller sends a nested
+  // field this way, so a dotted name is refused outright.
+  if (field.includes(".")) {
+    throw new ContentValidationError(
+      "updates cannot name a nested field with a dot; send the whole field",
+    );
+  }
   if (value === undefined) return;
   if (value === null) {
     normalized[field] = null;

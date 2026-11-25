@@ -425,8 +425,10 @@ stays in code; the owner does not want it editable from the portal.
   that record when the draft is created
   ([`page-links/origin-ref.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/page-links/origin-ref.js)),
   and no later save can change it (`originRef` is a protected field in
-  `content-update-validation.js`). The caller never supplies the label; the
-  server reads it from the record. Do not add another `source`-style field
+  `content-update-validation.js`, which also refuses any field name with a
+  dot, because a partial update reads `originRef.label` as a path into the
+  field). The caller never supplies the label; the server reads it from the
+  record. Do not add another `source`-style field
   to say "this came from Page X".
 - **A Page's name, icon and route come from the nav registry, never
   retyped.** Code that names or links another Page reads `navItemById(id)`
@@ -465,7 +467,11 @@ stays in code; the owner does not want it editable from the portal.
   Page needs only the editor role, the same as Drafts. Publishing still needs
   publisher, scheduling still needs publisher, and Koda's key still cannot
   publish, schedule or delete. A hand-off never lets a lower role do what the
-  target Page would refuse it.
+  target Page would refuse it. Nor does it let Koda see more than its key's
+  switches allow: a reference names a record and returns its name, so each
+  Page in `ORIGIN_PAGES` names the switch that lets Koda read it
+  (`agentSection`, Spotlight for Ambassador), and Koda's reference is
+  refused while that switch is off.
 
 **The shared services to plug into, and where each list lives.**
 
@@ -473,7 +479,7 @@ stays in code; the owner does not want it editable from the portal.
 |---|---|---|
 | Pipeline hand-off | An entry in `ORIGIN_PAGES` (server) and `ORIGIN_RECORD_PATHS` (browser); `SendToPipelineButton` and `PipelinePieces` on the Page | `functions/src/lib/page-links/origin-ref.js`, `frontend/src/lib/pageLinks.js`, `frontend/src/components/admin/shared/pipeline/` |
 | Dashboard "waiting on you" list (the Decision Center) | A source in `OTHER_SOURCES`, and its labels in `decisionCenterModel.js` | `functions/src/lib/decision-center/sources.js` |
-| Calendar | A collector in `COLLECTORS` and a kind in `CALENDAR_KINDS` | `functions/src/lib/calendar/collectors.js` |
+| Calendar | A collector in `COLLECTORS` and a kind in `CALENDAR_KINDS` | `functions/src/lib/calendar/collectors.js`, `functions/src/lib/calendar.js` |
 | Telegram reminders | Rows on the reminders sheet; today only the credential register writes rows by itself | `functions/src/lib/timers/reminders.js`, `functions/src/lib/credentials/reminders.js` |
 | Telegram alerts | `createNotifier().notifyTelegram` with a `source` per thing, so its 15-minute cooldown is per thing | `functions/src/lib/notify.js` |
 | Background work | A job type through `registerJobType` | `functions/src/lib/job-model.js` |
@@ -482,9 +488,10 @@ stays in code; the owner does not want it editable from the portal.
 
 **Built so far, and still to come.** Phase 1 of #1886 built the Pipeline
 hand-off with Ambassador as its first Page: "Draft a piece" on a held
-program's card and in its details, the program's pieces with their stage,
+program's card and in the details of any program that is switched on, the program's pieces with their stage,
 "File as evidence" once a piece is live, and the "sent from" chip across the
-Pipeline. Koda can send `originRef` on its drafts route too. Still to come,
+Pipeline. Koda can send `originRef` on its drafts route too, while its
+Spotlight switch is on. Still to come,
 in later phases of #1886: Ambassador's deadlines and quarterly minimum on
 the Dashboard and Telegram (through a list of reminder-row providers, with
 the credential register as the first), hand-offs from the other Pages,
@@ -501,8 +508,9 @@ above does.
 2. **It can be opened at one record** through a named `LINK_PARAMS`
    parameter, read with `linkedId` or `useLinkedItem`.
 3. **If it needs content written:** it is in `ORIGIN_PAGES` with a `check`
-   that refuses a missing or deleted record and an `ideaOrigin` the taxonomy
-   ships, and in `ORIGIN_RECORD_PATHS`; it uses `SendToPipelineButton` and
+   that refuses a missing or deleted record, an `ideaOrigin` the taxonomy
+   ships and the `agentSection` switch that guards it for Koda, and in
+   `ORIGIN_RECORD_PATHS`; it uses `SendToPipelineButton` and
    `PipelinePieces`, not its own draft or publish code.
 4. **If the owner must act on something by a date:** a Decision Center
    source, a Calendar collector, and Telegram through the reminders sheet,

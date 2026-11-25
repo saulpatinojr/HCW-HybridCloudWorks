@@ -1307,6 +1307,56 @@ describe("POST cms/drafts with an originRef (#1886)", () => {
     expect(store.createDoc).not.toHaveBeenCalled();
   });
 
+  describe("from Koda, which may send one only when it could read the Page", () => {
+    const KODA = { oid: "agent:koda", agent: "koda" };
+    const kodaGuard = () => ({
+      requireRole: vi.fn(async () => ({ user: KODA, role: "editor", error: null })),
+    });
+    const keyRecord = (spotlight) => ({
+      id: "agent_content_key:koda",
+      capabilities: { "admin.spotlight": spotlight },
+    });
+
+    it("refuses with 403, before reading the program, when the Spotlight switch is off", async () => {
+      const { handlers, store } = setup({ seed: [PROGRAM, keyRecord(false)], guard: kodaGuard() });
+      const res = parse(
+        await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context),
+      );
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatch(/switch for that section is off/);
+      expect(store.readDoc).not.toHaveBeenCalledWith("ambassador", PROGRAM.id, PROGRAM.id);
+      expect(store.createDoc).not.toHaveBeenCalled();
+    });
+
+    it("accepts it when the switch is on", async () => {
+      const { handlers } = setup({ seed: [PROGRAM, keyRecord(true)], guard: kodaGuard() });
+      const res = parse(
+        await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context),
+      );
+      expect(res.status).toBe(201);
+      expect(res.body.draft.originRef.label).toBe("GitKraken Ambassador");
+    });
+
+    it("asks nothing of a draft that names no Page", async () => {
+      const { handlers } = setup({ seed: [keyRecord(false)], guard: kodaGuard() });
+      const res = parse(await handlers.create(request({ body: { fields: FIELDS } }), context));
+      expect(res.status).toBe(201);
+    });
+  });
+
+  it("the markdown route refuses an originRef rather than dropping it", async () => {
+    const { handlers, store } = setup({ seed: [PROGRAM] });
+    const res = parse(
+      await handlers.createFromMarkdown(
+        request({ body: { markdown: "# A title\n\nBody.", origin: "paste", originRef: REF } }),
+        context,
+      ),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/POST cms\/drafts only/);
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
   it("a save cannot add or change the reference", async () => {
     const { handlers } = setup({ seed: [PROGRAM] });
     const draft = await created(handlers);

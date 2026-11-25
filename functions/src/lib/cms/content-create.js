@@ -37,7 +37,11 @@ import {
   buildImageLineage,
 } from "./content-quality.js";
 import { findDuplicateContent, buildDedupFields } from "./content-dedup.js";
-import { OriginRefError, resolveOriginRef } from "../page-links/origin-ref.js";
+import {
+  OriginRefError,
+  OriginRefForbiddenError,
+  resolveOriginRef,
+} from "../page-links/origin-ref.js";
 import {
   normalizePublishTarget,
   SUPPORTED_PUBLISH_TARGETS,
@@ -149,8 +153,17 @@ export async function createContentDocument({
   // never stored as sent.
   let originRef;
   try {
-    originRef = await resolveOriginRef(store, data.originRef);
+    originRef = await resolveOriginRef(store, data.originRef, { user });
   } catch (error) {
+    if (error instanceof OriginRefForbiddenError) {
+      return {
+        status: 403,
+        body: {
+          success: false,
+          error: authoredMessage(error, "The originRef was refused."),
+        },
+      };
+    }
     if (error instanceof OriginRefError) {
       return {
         status: 400,

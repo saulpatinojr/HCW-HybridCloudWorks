@@ -29,6 +29,7 @@ import { draftPath, startDraftFor } from './pipelineHandoff';
  *   originRef: { page: string, id: string, part?: string|null },
  *   recordLabel: string,
  *   label?: string,
+ *   ariaLabel?: string,
  *   tags?: string[],
  *   size?: string,
  *   variant?: string,
@@ -39,6 +40,7 @@ export default function SendToPipelineButton({
   originRef,
   recordLabel,
   label = 'Draft a piece',
+  ariaLabel,
   tags = [],
   size = 'sm',
   variant = 'outline',
@@ -70,7 +72,7 @@ export default function SendToPipelineButton({
 
   return (
     <>
-      <Button size={size} variant={variant} onClick={() => setOpen(true)}>
+      <Button size={size} variant={variant} onClick={() => setOpen(true)} aria-label={ariaLabel}>
         <FilePen className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
         {label}
       </Button>

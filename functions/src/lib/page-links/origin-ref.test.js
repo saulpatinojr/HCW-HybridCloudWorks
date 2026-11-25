@@ -147,6 +147,13 @@ describe("resolveOriginRef: the Ambassador entry", () => {
 });
 
 describe("every Page on the list", () => {
+  it("names the switch on Koda's key that guards it", async () => {
+    const { CAPABILITY_IDS } = await import("../agent-content/keys.js");
+    for (const id of ORIGIN_PAGE_IDS) {
+      expect(CAPABILITY_IDS, id).toContain(ORIGIN_PAGES[id].agentSection);
+    }
+  });
+
   it("names an idea origin the taxonomy ships", () => {
     const shipped = new Set(
       DEFAULT_IDEA_ORIGINS.map((entry) => entry.id ?? entry),
@@ -201,6 +208,14 @@ describe("originFilterClause", () => {
       { name: "@originPage", value: "ambassador" },
       { name: "@originId", value: PROGRAM.id },
     ]);
+  });
+
+  it("refuses an id without a Page, which would otherwise list everything", () => {
+    const parameters = [];
+    expect(originFilterClause("", "program-x", parameters).error).toMatch(
+      /originId needs originPage/,
+    );
+    expect(parameters).toEqual([]);
   });
 
   it("refuses a Page not on the list and a malformed id", () => {

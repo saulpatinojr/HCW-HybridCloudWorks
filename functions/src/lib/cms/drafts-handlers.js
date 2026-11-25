@@ -70,6 +70,7 @@ import {
   validateTaxonomyFieldsWithStore,
 } from "./taxonomy-fields.js";
 import {
+  OriginRefForbiddenError,
   defaultIdeaOriginFor,
   resolveOriginRef,
 } from "../page-links/origin-ref.js";
@@ -369,6 +370,13 @@ function failure(context, what, error) {
  */
 function answerFor(error, context, what) {
   if (error instanceof Refusal) return error.response;
+  if (error instanceof OriginRefForbiddenError) {
+    return refused({
+      status: 403,
+      code: "FORBIDDEN",
+      error: authoredMessage(error, `Could not ${what}.`),
+    });
+  }
   if (isAuthoredError(error)) {
     return refused({
       status: 400,
@@ -461,7 +469,7 @@ async function getDraft(deps, { request }) {
 async function createDraft(deps, { request, user }) {
   const body = await readBody(request);
   const draftFields = validateDraftFields(body.fields);
-  const originRef = await resolveOriginRef(deps.store, body.originRef);
+  const originRef = await resolveOriginRef(deps.store, body.originRef, { user });
   const fromPage = defaultIdeaOriginFor(originRef);
   const fields = await checkedTaxonomyWithDefault(
     fromPage ? { ...deps, defaultIdeaOrigin: fromPage } : deps,

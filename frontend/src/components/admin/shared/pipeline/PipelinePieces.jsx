@@ -14,10 +14,19 @@ import { Loader2 } from 'lucide-react';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
 import useGuardedLoad from '@/components/admin/shared/useGuardedLoad';
 import { contentItemHref } from '@/lib/itemLinks';
-import { loadPiecesFor } from './pipelineHandoff';
+import { contentStatusInfo } from '@/lib/status';
+import { draftPath, loadPiecesFor } from './pipelineHandoff';
 
 const NO_PIECES = Object.freeze([]);
 const describeError = (err) => `Could not read the pipeline: ${err?.message || 'unknown error'}`;
+
+/**
+ * Where a piece opens: a draft opens itself on Drafts (the shared stage table
+ * opens the Drafts list, because the Dashboard's links have no draft to name);
+ * every other stage opens where the Pipeline pages open it.
+ */
+export const pieceHref = (piece) =>
+  contentStatusInfo(piece).stage === 'drafts' ? draftPath(piece.id) : contentItemHref(piece);
 
 export const pieceTitle = (piece) =>
   String(piece?.Title || piece?.title || '').trim() || 'Untitled draft';
@@ -52,10 +61,12 @@ export default function PipelinePieces({
     );
   }
   if (pieces.error) return <p className="text-sm text-destructive">{pieces.error}</p>;
-  if (pieces.data.length === 0) return <p className="text-sm text-muted-foreground">{emptyText}</p>;
+  // A piece removed from the Pipeline (soft-deleted) no longer counts as one.
+  const shown = pieces.data.filter((piece) => !piece.softDeletedAt);
+  if (shown.length === 0) return <p className="text-sm text-muted-foreground">{emptyText}</p>;
   return (
     <ul className="space-y-2" data-testid="pipeline-pieces">
-      {pieces.data.map((piece) => {
+      {shown.map((piece) => {
         return (
           <li
             key={piece.id}
@@ -63,7 +74,7 @@ export default function PipelinePieces({
           >
             <span className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-2">
               <Link
-                to={contentItemHref(piece)}
+                to={pieceHref(piece)}
                 className="min-w-0 truncate text-sm font-medium underline"
               >
                 {pieceTitle(piece)}

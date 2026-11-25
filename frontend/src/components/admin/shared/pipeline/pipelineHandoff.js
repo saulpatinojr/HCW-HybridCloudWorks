@@ -17,7 +17,7 @@
  */
 import { getJSON, postJSON } from '@/lib/api';
 
-/** How many pieces a Page lists for one record. Matches the list route's ceiling for one call. */
+/** How many pieces a Page lists for one record (the list route allows up to 500). */
 export const MAX_PIECES = 100;
 
 /** The Drafts page with one draft open. */

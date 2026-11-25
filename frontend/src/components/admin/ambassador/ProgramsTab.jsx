@@ -26,6 +26,7 @@ import { AdditionalPrograms, ProgramDetails, UpkeepLine, WINDOW_BADGE } from './
 import { DraftForProgramButton } from './ProgramPipeline';
 import { linkedId } from '@/hooks/useLinkedItem';
 import { LINK_PARAMS } from '@/lib/itemLinks';
+import { useToast } from '@/components/ui/use-toast';
 
 const byIdOf = (programs) => programById(programs);
 
@@ -138,6 +139,7 @@ export default function ProgramsTab({ hub, nav }) {
   const [detailsId, setDetailsId] = useState(() => linkedId(LINK_PARAMS.program));
   const [starting, setStarting] = useState(null);
   const [filing, setFiling] = useState(null);
+  const { toast } = useToast();
   const today = todayIso();
 
   const pursuedPrograms = useMemo(
@@ -169,7 +171,10 @@ export default function ProgramsTab({ hub, nav }) {
     }
   };
 
-  const details = ordered.find((p) => p.id === detailsId) || null;
+  // From the whole list, not just the cards shown: a link may name a program
+  // whose card is hidden (an additional program whose parent is not Active).
+  const details = programs.data.find((p) => p.id === detailsId && !p.softDeletedAt) || null;
+  const linkedMissing = Boolean(detailsId) && allLanded(reads) && !details;
 
   // A live piece from the Pipeline becomes evidence for this program through
   // the existing import from Published content (one row per piece, so a
@@ -177,8 +182,9 @@ export default function ProgramsTab({ hub, nav }) {
   const fileEvidence = async (contentId) => {
     if (!details || filing) return;
     setFiling(contentId);
-    await hub.writes.importEvidence('content', [contentId], [details.id]);
+    const result = await hub.writes.importEvidence('content', [contentId], [details.id]);
     setFiling(null);
+    if (result) toast({ title: `Filed as evidence for ${details.name}` });
   };
 
   return (
@@ -189,6 +195,11 @@ export default function ProgramsTab({ hub, nav }) {
         point until you match it to the program&apos;s current published rules.
       </p>
       <ReadsStatus reads={reads} label="programs" />
+      {linkedMissing && (
+        <p className="text-sm text-muted-foreground" role="status">
+          The program that link names is no longer in the catalogue.
+        </p>
+      )}
       {allLanded(reads) &&
         (ordered.length === 0 ? (
           <EmptyState

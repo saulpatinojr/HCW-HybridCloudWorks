@@ -299,14 +299,14 @@ export function buildListQuery(query) {
   const kind = queryLower(query, "kind");
   const ideaOrigin = queryLower(query, "ideaOrigin");
   // `?originPage=ambassador&originId=<program id>`: the pieces one Page sent (#1886).
-  // Pushed before the other clauses' parameters on purpose: Cosmos binds by name.
   const origin = originFilterClause(
     queryText(query, "originPage"),
     queryText(query, "originId"),
     parameters,
   );
   if (origin.error) return { error: origin.error };
-  // In parameter order: each clause pushes its own parameters as it is built.
+  // Each clause pushes its own parameters; Cosmos binds them by name, so the
+  // order they are pushed in does not matter.
   const clauses = [
     statusClause(queryText(query, "status"), parameters),
     query.get("live") === "true" ? "c.Live = true" : null,

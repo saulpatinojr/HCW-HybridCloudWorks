@@ -31,6 +31,12 @@
  * The checklist is in .claude/CLAUDE.md, "How the admin Pages connect".
  */
 import { AuthoredError } from "../http/error-response.js";
+import { ADMIN_CONFIG_PARTITION } from "../cosmos-client.js";
+import {
+  AGENT_ID,
+  KEY_RECORD_ID,
+  enabledCapabilities,
+} from "../agent-content/keys.js";
 
 /** Record ids on the Pages below: uuids with a prefix, or fixed seed ids. */
 const REF_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -56,6 +62,10 @@ const trimmedLabel = (value) =>
  * The Pages that may send work into the Pipeline, by nav id.
  *
  *   container    the Cosmos container the record lives in (partition key /id)
+ *   agentSection the switch on Koda's key that lets it read this Page
+ *                (agent-content/keys.js CAPABILITIES). A reference names a record
+ *                and returns its name, so Koda may send one only when it could
+ *                read the Page anyway (review of #1886).
  *   ideaOrigin   the taxonomy id a draft from this Page gets when the caller names
  *                none (functions/src/lib/cms/taxonomy.js DEFAULT_IDEA_ORIGINS)
  *   check(doc, part)  the record's label, or a sentence saying why the reference
@@ -64,6 +74,7 @@ const trimmedLabel = (value) =>
 export const ORIGIN_PAGES = Object.freeze({
   ambassador: Object.freeze({
     container: "ambassador",
+    agentSection: "admin.spotlight",
     ideaOrigin: "ambassador-requirement",
     check(doc, part) {
       if (!doc || doc.docType !== "program" || doc.softDeletedAt) {
@@ -118,20 +129,47 @@ export function parseOriginRef(input) {
   return { page, id, part: null };
 }
 
+/** Refused because the caller may not read the Page the reference names; answered 403. */
+export class OriginRefForbiddenError extends AuthoredError {}
+
+/**
+ * Whether Koda's key has the switch that lets it read this Page. A person
+ * (any caller that is not the agent) is not asked: the route's own role
+ * check already covers them, and the Pages on the list need no more than
+ * the editor role that Drafts needs.
+ */
+async function agentMayRead(store, user, page) {
+  if (user?.agent !== AGENT_ID) return true;
+  const record = await store.readDoc(
+    "admin_config",
+    KEY_RECORD_ID,
+    ADMIN_CONFIG_PARTITION,
+  );
+  return enabledCapabilities(record || {}).includes(page.agentSection);
+}
+
 /**
  * A request's `originRef`, checked against the record it names. Returns the
  * value to store (`{ page, id, part, label }`), or null when the request
  * names none. Throws OriginRefError when the record is missing, deleted or
- * has no such part.
+ * has no such part, and OriginRefForbiddenError when the caller is Koda and
+ * its key's switch for that Page is off (checked before the record is read,
+ * so the answer says nothing about the record).
  *
  * @param {{ readDoc: Function }} store
  * @param {unknown} input
+ * @param {{ user?: { agent?: string } }} [caller]
  * @returns {Promise<{ page: string, id: string, part: string|null, label: string }|null>}
  */
-export async function resolveOriginRef(store, input) {
+export async function resolveOriginRef(store, input, { user = null } = {}) {
   const ref = parseOriginRef(input);
   if (!ref) return null;
   const page = ORIGIN_PAGES[ref.page];
+  if (!(await agentMayRead(store, user, page))) {
+    throw new OriginRefForbiddenError(
+      "Koda's key may not send work for this Page: its switch for that section is off on the AI Engine's Koda tab.",
+    );
+  }
   const doc = await store.readDoc(page.container, ref.id, ref.id);
   const verdict = page.check(doc || null, ref.part);
   if (verdict.refusal) fail(verdict.refusal);
@@ -170,7 +208,12 @@ export function originRefOf(doc) {
  * Returns `{ error }` for a Page that is not in ORIGIN_PAGES or a malformed id.
  */
 export function originFilterClause(originPage, originId, parameters) {
-  if (!originPage) return { clause: null };
+  if (!originPage) {
+    // An id with no Page would otherwise answer the whole unfiltered list,
+    // which a caller could take for "the pieces for this record".
+    if (originId) return { error: "originId needs originPage" };
+    return { clause: null };
+  }
   if (!Object.hasOwn(ORIGIN_PAGES, originPage)) {
     return {
       error: `originPage must be one of: ${ORIGIN_PAGE_IDS.join(", ")}`,

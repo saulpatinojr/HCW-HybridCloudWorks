@@ -323,3 +323,20 @@ describe("an interview's private blocks and its type through updateContentItem (
     stubSiblingModulesForTests(null);
   });
 });
+
+describe("protected fields cannot be reached through a dotted name (review of #1886)", () => {
+  it.each(["originRef.label", "originRef.id", "slug.x", "a.b"])(
+    "refuses %s, which patchDoc would read as a path into an object",
+    (key) => {
+      expect(() =>
+        validateAndNormalizeUpdateContentItemUpdates({ [key]: "Forged" }),
+      ).toThrow(/nested field with a dot/);
+    },
+  );
+
+  it("still refuses the whole field by name", () => {
+    expect(() =>
+      validateAndNormalizeUpdateContentItemUpdates({ originRef: { page: "ambassador" } }),
+    ).toThrow(/protected field: originRef/);
+  });
+});
