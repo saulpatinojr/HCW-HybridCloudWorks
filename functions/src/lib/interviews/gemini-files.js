@@ -37,159 +37,38 @@
  * caller, and every test stubs `fetch`.
  */
 import { Readable } from 'node:stream';
-import { readKey, parseJsonWithFallbacks } from '../ai/router.js';
-import { AuthoredError } from '../http/error-response.js';
+import {
+  ACTIVE_POLL_LIMIT,
+  ACTIVE_POLL_MS,
+  FILE_NAME,
+  GEMINI_API_BASE,
+  GeminiFilesError,
+  UPLOAD_TIMEOUT_MS,
+  WINDOW_TIMEOUT_MS,
+  abortError,
+  isGeminiUrl,
+  request,
+  statusError,
+} from './gemini-http.js';
 
-export const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
-
-/** The key's app setting, the same one the router reads (KEY_ENV.gemini). */
-export const GEMINI_KEY_SETTING = 'GEMINI_API_KEY';
-
-/** Attempts per window call, and the waits between them (the router's backoff). */
-export const WINDOW_ATTEMPTS = 3;
-export const RETRY_WAITS_MS = Object.freeze([2000, 4000]);
-
-/** Statuses retried; everything else fails the call at once. */
-const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
-
-/** Deadlines per request: the upload carries the whole file, a window answers in a few minutes. */
-export const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
-export const WINDOW_TIMEOUT_MS = 5 * 60 * 1000;
-export const ACTIVE_POLL_MS = 2000;
-export const ACTIVE_POLL_LIMIT = 60;
-
-/** The most of an answer that is read: a window's JSON is well under this; anything larger is not an answer. */
-export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-
-/** The host every Gemini URL must be on, the upload URL the start answers with included. */
-export const GEMINI_HOST = 'generativelanguage.googleapis.com';
-const FILE_NAME = /^files\/[A-Za-z0-9._-]{1,128}$/;
-
-/** A failure this module authored: a status and a code, never Gemini's text. */
-export class GeminiFilesError extends AuthoredError {
-  /**
-   * @param {string} message - a sentence written here
-   * @param {{ code: string, status?: number, retryable?: boolean }} fields
-   */
-  constructor(message, { code, status = null, retryable = false }) {
-    super(message, { code });
-    this.status = status;
-    this.retryable = retryable;
-  }
-}
-
-/** The key, or a refusal the worker can store. */
-export function geminiApiKey(env = process.env) {
-  const key = readKey(env, GEMINI_KEY_SETTING);
-  if (!key) {
-    throw new GeminiFilesError(
-      'Gemini is not configured: seed GEMINI_API_KEY in Key Vault before transcribing.',
-      { code: 'GEMINI_NOT_CONFIGURED', status: 503 }
-    );
-  }
-  return key;
-}
-
-/** `MM:SS` from seconds, for the window prompt. */
-export function clock(seconds) {
-  const whole = Math.max(0, Math.floor(Number(seconds) || 0));
-  const minutes = Math.floor(whole / 60);
-  const rest = whole % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
-}
-
-/**
- * The window prompt. Fixed text: no user text, no file name, no guest name
- * enters it, so there is nothing to fence. The model is told the file may
- * end inside the window and to say so.
- */
-export function windowPrompt({ startSec, endSec }) {
-  return [
-    `Transcribe the audio from ${clock(startSec)} to ${clock(endSec)} only, with speaker labels.`,
-    'Label speakers "Speaker 1", "Speaker 2" and so on, consistently across the whole recording.',
-    'Write what was said, verbatim, in the language spoken. Do not summarise, do not add anything.',
-    'Return JSON only, in this exact shape:',
-    '{"segments":[{"start":<seconds>,"end":<seconds>,"speaker":"Speaker 1","text":"..."}],"endOfAudio":<true if the recording ends before or inside this window, else false>}',
-    'Times are seconds from the start of the recording. If nothing is spoken in the window, return an empty segments list.',
-  ].join('\n');
-}
-
-/** True for an https URL on Gemini's host: where the key may be sent. */
-export function isGeminiUrl(value) {
-  try {
-    const url = new URL(String(value));
-    return url.protocol === 'https:' && url.hostname === GEMINI_HOST;
-  } catch {
-    return false;
-  }
-}
-
-const abortError = (signal) => signal?.reason || Object.assign(new Error('aborted'), { name: 'AbortError' });
-
-/**
- * One request under a deadline and the caller's signal. Answers
- * `{ status, headers, json }` for any status; the caller judges it. A
- * network failure or a timeout is a retryable GeminiFilesError.
- */
-async function request(fetchImpl, url, { method, headers, body, duplex, timeoutMs, signal: parentSignal }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const signal = parentSignal ? AbortSignal.any([parentSignal, controller.signal]) : controller.signal;
-  if (signal.aborted) {
-    clearTimeout(timer);
-    throw abortError(parentSignal);
-  }
-  try {
-    const response = await fetchImpl(url, {
-      method,
-      headers,
-      body,
-      signal,
-      ...(duplex ? { duplex } : {}),
-    });
-    const declared = Number(response.headers?.get?.('content-length'));
-    if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
-      throw new GeminiFilesError('Gemini answered with more than this job reads.', { code: 'GEMINI_RESPONSE_TOO_LARGE', status: 502 });
-    }
-    const text = await response.text();
-    if (text.length > MAX_RESPONSE_BYTES) {
-      throw new GeminiFilesError('Gemini answered with more than this job reads.', { code: 'GEMINI_RESPONSE_TOO_LARGE', status: 502 });
-    }
-    let json = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      json = null;
-    }
-    return { status: response.status, headers: response.headers, json };
-  } catch (error) {
-    if (parentSignal?.aborted) throw abortError(parentSignal);
-    if (error instanceof GeminiFilesError) throw error;
-    if (error?.name === 'AbortError') {
-      throw new GeminiFilesError(`Gemini did not answer within ${Math.round(timeoutMs / 1000)} s.`, {
-        code: 'GEMINI_TIMEOUT',
-        status: 408,
-        retryable: true,
-      });
-    }
-    throw new GeminiFilesError('Gemini could not be reached.', {
-      code: 'GEMINI_UNREACHABLE',
-      status: 503,
-      retryable: true,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** A non-2xx answer as the error this module stores: status and code only. */
-function statusError(status, what) {
-  return new GeminiFilesError(`Gemini answered HTTP ${status} to the ${what}.`, {
-    code: `GEMINI_HTTP_${status}`,
-    status,
-    retryable: RETRYABLE.has(status),
-  });
-}
+export {
+  ACTIVE_POLL_LIMIT,
+  ACTIVE_POLL_MS,
+  GEMINI_API_BASE,
+  GEMINI_HOST,
+  GEMINI_KEY_SETTING,
+  GeminiFilesError,
+  MAX_RESPONSE_BYTES,
+  RETRY_WAITS_MS,
+  UPLOAD_TIMEOUT_MS,
+  WINDOW_ATTEMPTS,
+  WINDOW_TIMEOUT_MS,
+  clock,
+  geminiApiKey,
+  isGeminiUrl,
+  windowPrompt,
+} from './gemini-http.js';
+export { parseWindowResult, transcribeWindow } from './gemini-window.js';
 
 /**
  * Upload a stream to Gemini's Files API and wait until the file is ACTIVE.
@@ -304,137 +183,4 @@ export async function deleteFromGemini({ name, apiKey, fetch: fetchImpl = global
   if (gone.status === 404) return true;
   if (gone.status < 200 || gone.status >= 300) throw statusError(gone.status, 'file delete');
   return true;
-}
-
-const MAX_SEGMENTS_PER_WINDOW = 2000;
-const MAX_SEGMENT_CHARS = 4000;
-const MAX_SPEAKER_CHARS = 40;
-
-/**
- * The model's answer as the shape the job stores, or a refusal. Every
- * field is checked at runtime: the answer is untrusted output.
- *
- * @param {unknown} raw
- * @returns {{ segments: Array<{start:number,end:number,speaker:string,text:string}>, endOfAudio: boolean }}
- */
-export function parseWindowResult(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.segments)) {
-    throw new GeminiFilesError('The transcription answer was not in the expected shape.', {
-      code: 'TRANSCRIPT_SHAPE',
-      status: 422,
-    });
-  }
-  if (raw.segments.length > MAX_SEGMENTS_PER_WINDOW) {
-    throw new GeminiFilesError('The transcription answer had too many segments for one window.', {
-      code: 'TRANSCRIPT_SHAPE',
-      status: 422,
-    });
-  }
-  const segments = [];
-  for (const item of raw.segments) {
-    if (!item || typeof item !== 'object') continue;
-    const text = typeof item.text === 'string' ? item.text.trim() : '';
-    if (!text) continue;
-    const start = Number(item.start);
-    const end = Number(item.end);
-    const speaker = typeof item.speaker === 'string' && item.speaker.trim() ? item.speaker.trim() : 'Speaker 1';
-    segments.push({
-      start: Number.isFinite(start) && start >= 0 ? start : 0,
-      end: Number.isFinite(end) && end >= 0 ? end : 0,
-      speaker: speaker.slice(0, MAX_SPEAKER_CHARS),
-      text: text.slice(0, MAX_SEGMENT_CHARS),
-    });
-  }
-  return { segments, endOfAudio: raw.endOfAudio === true };
-}
-
-/**
- * One window of the uploaded file as JSON segments, with the usage Gemini
- * reported for the request.
- *
- * @param {object} args
- * @param {string} args.fileUri
- * @param {string} args.mimeType
- * @param {string} args.model
- * @param {number} args.startSec
- * @param {number} args.endSec
- * @param {string} args.apiKey
- * @param {typeof fetch} [args.fetch]
- * @param {(ms: number) => Promise<void>} [args.sleep]
- * @param {(info: { attempt: number }) => Promise<void>|void} [args.assertBudget] - called before
- *   every attempt; a throw ends the call without a request
- * @param {AbortSignal} [args.signal]
- * @returns {Promise<{ segments: Array, endOfAudio: boolean, usage: { promptTokens: number, completionTokens: number }, attempts: number }>}
- */
-export async function transcribeWindow({
-  fileUri,
-  mimeType,
-  model,
-  startSec,
-  endSec,
-  apiKey,
-  fetch: fetchImpl = globalThis.fetch,
-  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
-  assertBudget = null,
-  signal = null,
-}) {
-  const url = `${GEMINI_API_BASE}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-  const body = JSON.stringify({
-    contents: [
-      {
-        role: 'user',
-        parts: [{ fileData: { fileUri, mimeType } }, { text: windowPrompt({ startSec, endSec }) }],
-      },
-    ],
-    generationConfig: { responseMimeType: 'application/json', temperature: 0 },
-  });
-  let lastError = null;
-  for (let attempt = 1; attempt <= WINDOW_ATTEMPTS; attempt += 1) {
-    if (signal?.aborted) throw abortError(signal);
-    if (attempt > 1) await sleep(RETRY_WAITS_MS[attempt - 2]);
-    if (typeof assertBudget === 'function') await assertBudget({ attempt });
-    let answer;
-    try {
-      answer = await request(fetchImpl, url, {
-        method: 'POST',
-        headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
-        body,
-        timeoutMs: WINDOW_TIMEOUT_MS,
-        signal,
-      });
-    } catch (error) {
-      if (error?.retryable) {
-        lastError = error;
-        continue;
-      }
-      throw error;
-    }
-    if (answer.status < 200 || answer.status >= 300) {
-      const error = statusError(answer.status, 'transcription');
-      if (error.retryable) {
-        lastError = error;
-        continue;
-      }
-      throw error;
-    }
-    const parts = answer.json?.candidates?.[0]?.content?.parts;
-    const text = Array.isArray(parts) ? parts.map((p) => (typeof p?.text === 'string' ? p.text : '')).join('') : '';
-    let parsed;
-    try {
-      parsed = parseJsonWithFallbacks(text);
-    } catch {
-      throw new GeminiFilesError('The transcription answer was not JSON.', { code: 'TRANSCRIPT_SHAPE', status: 422 });
-    }
-    const usage = answer.json?.usageMetadata || {};
-    return {
-      ...parseWindowResult(parsed),
-      usage: {
-        promptTokens: Number(usage.promptTokenCount) || 0,
-        completionTokens:
-          (Number(usage.candidatesTokenCount) || 0) + (Number(usage.thoughtsTokenCount) || 0),
-      },
-      attempts: attempt,
-    };
-  }
-  throw lastError;
 }
