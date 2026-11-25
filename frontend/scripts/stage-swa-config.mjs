@@ -92,22 +92,22 @@ const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp:
  * fail the build on one stray `&#x110000;` (CodeRabbit on #1185).
  */
 export function decodeAttribute(value) {
-  return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body) => {
-    if (body[0] === '#') {
-      const hex = body[1] === 'x' || body[1] === 'X';
-      const code = parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
-      if (
-        !Number.isFinite(code) ||
-        code === 0 ||
-        code > 0x10ffff ||
-        (code >= 0xd800 && code <= 0xdfff)
-      ) {
-        return '\uFFFD';
-      }
-      return String.fromCodePoint(code);
-    }
-    return NAMED_ENTITIES[body.toLowerCase()] ?? whole;
-  });
+  return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body) =>
+    body[0] === '#' ? decodeNumericReference(body) : (NAMED_ENTITIES[body.toLowerCase()] ?? whole)
+  );
+}
+
+/** `#123` or `#x7B` as its character, or U+FFFD for a code point the spec calls invalid. */
+function decodeNumericReference(body) {
+  const hex = body[1] === 'x' || body[1] === 'X';
+  const code = parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
+  return isInvalidCodePoint(code) ? '\uFFFD' : String.fromCodePoint(code);
+}
+
+/** Zero, a surrogate, past U+10FFFF, or not a number at all. */
+function isInvalidCodePoint(code) {
+  const surrogate = code >= 0xd800 && code <= 0xdfff;
+  return !Number.isFinite(code) || code === 0 || code > 0x10ffff || surrogate;
 }
 
 /**
@@ -170,19 +170,23 @@ export function collectInlineStyles(pages) {
       const body = match[1];
       const hash = sha256Source(body);
       const entry = elements.get(hash) ?? { bytes: Buffer.byteLength(body, 'utf8'), files: [] };
-      if (!entry.files.includes(path)) entry.files.push(path);
-      elements.set(hash, entry);
+      elements.set(hash, seenIn(entry, path));
     }
     for (const value of styleAttributeValues(html)) {
       attributeCount += 1;
       const hash = sha256Source(value);
       const entry = attributes.get(hash) ?? { value, count: 0, files: [] };
       entry.count += 1;
-      if (!entry.files.includes(path)) entry.files.push(path);
-      attributes.set(hash, entry);
+      attributes.set(hash, seenIn(entry, path));
     }
   }
   return { elements, attributes, elementCount, attributeCount };
+}
+
+/** Adds `path` to an entry's files once, and returns the entry. */
+function seenIn(entry, path) {
+  if (!entry.files.includes(path)) entry.files.push(path);
+  return entry;
 }
 
 /** The policy split into `[name, sources[]]` pairs, in order. */
