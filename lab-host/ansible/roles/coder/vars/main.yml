@@ -46,3 +46,20 @@ coder_oauth2_github_team_pattern: '^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$'
 coder_template_default_ttl_pattern: '^[1-9][0-9]*h$'
 coder_pg_connection_url: "postgresql://coder:{{ coder_postgres_password }}@coder-postgres:5432/coder?sslmode=disable"
 coder_backup_keep_minutes: "{{ coder_backup_keep_days | int * 1440 }}"
+# hcw-coder-automation's modules (#1845), every file in
+# files/hcw_coder_automation/; tests/hcw-coder-automation.test.py fails if
+# this list and the folder part.
+coder_automation_modules:
+  - __init__.py
+  - cli.py
+  - coder_api.py
+  - common.py
+  - daily.py
+  - delivery.py
+  - publish.py
+  - revoke.py
+  - rotation.py
+  - seed.py
+  - status.py
+  - storage.py
+  - template_source.py

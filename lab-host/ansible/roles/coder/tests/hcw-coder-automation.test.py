@@ -29,14 +29,18 @@ workstation, bash, with Docker, from the repository root:
 """
 
 import argparse
+import ast
+import contextlib
 import datetime
 import http.server
-import importlib.util
+import importlib
+import io
 import json
 import os
 import pathlib
 import random
 import re
+import runpy
 import shutil
 import socket
 import stat
@@ -74,6 +78,13 @@ ALREADY_STORED = "already stored"
 # A SHA-256 digest written as 64 lowercase hexadecimal characters.
 SHA256_HEX = r"[0-9a-f]{64}"
 HELPER = ROLE / "files" / HELPER_FILE
+# The helper's modules (#1845), the launcher that checks them before they are
+# imported, and where the role installs each.
+PACKAGE_DIR = ROLE / "files" / "hcw_coder_automation"
+LAUNCHER_FILE = "hcw-lab-python-launch.py"
+LAUNCHER_SOURCE = ROLE / "files" / LAUNCHER_FILE
+INSTALLED_LAUNCHER = "/usr/local/libexec/hcw-lab-python-launch"
+LIB_DIR = "/usr/local/lib/hcw-lab/coder-automation"
 UTC = datetime.timezone.utc
 DAY = datetime.timedelta(days=1)
 NS = 1_000_000_000
@@ -107,6 +118,53 @@ def now():
 
 def today():
     return now().strftime("%Y-%m-%d")
+
+
+def constants_of(text):
+    """The top-level NAME = "string" assignments of a Python source, as a dict."""
+    return {target.id: node.value.value for node in ast.parse(text).body if isinstance(node, ast.Assign)
+            for target in node.targets if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant)}
+
+
+def stage_tree(top, lib_dir, package_dir):
+    """Install a copy of a package under top, at lib_dir, as the role does: directories 0755, files 0644."""
+    target = pathlib.Path(str(top) + lib_dir) / package_dir.name
+    target.mkdir(parents=True)
+    for source in package_dir.glob("*.py"):
+        shutil.copyfile(source, target / source.name)
+        (target / source.name).chmod(0o644)
+    directory = target
+    while directory != pathlib.Path(top):
+        directory.chmod(0o755)
+        directory = directory.parent
+    return target
+
+
+# The helper as the unit runs it, with one change: its run_path(LAUNCHER) is
+# answered with this checkout's launcher, which then checks and imports the
+# copy stage_tree installed under the scratch top, owned by this user,
+# instead of the host's /usr/local/lib/hcw-lab. Everything else, the
+# helper's own constants included, runs as it ships.
+RUN_ENTRY = r'''
+import os, runpy, sys
+entry, launcher, top = sys.argv[1:4]
+del sys.argv[1:4]
+real_run_path = runpy.run_path
+def run_path(path, *args, **kwargs):
+    if path != "/usr/local/libexec/hcw-lab-python-launch":
+        sys.exit(f"the helper loaded {path}, not the installed launcher")
+    real_launch = real_run_path(launcher)["launch"]
+    def launch(lib_dir, package, me):
+        return real_launch(top + lib_dir, package, me, os.getuid(), top)
+    return {"launch": launch}
+runpy.run_path = run_path
+real_run_path(entry, run_name="__main__")
+'''
+
+
+def helper_command(top):
+    """The command that runs the helper as it ships, its modules staged under top (RUN_ENTRY)."""
+    return [sys.executable, "-I", "-B", "-c", RUN_ENTRY, str(HELPER), str(LAUNCHER_SOURCE), str(top)]
 
 
 # --- The role's files, rendered -----------------------------------------------
@@ -177,13 +235,46 @@ def task_using(module, **match):
 
 
 check("the helper is Python 3, run isolated", helper_text.startswith("#!/usr/bin/python3 -I\n"))
-try:
-    # In this process, so a read-only checkout gets no __pycache__ written into it.
-    compile(helper_text, str(HELPER), "exec")
-    compile_error = ""
-except SyntaxError as error:
-    compile_error = str(error)
-check("the helper compiles", not compile_error, compile_error)
+# Since 2026-11-25 (#1845) the script is only the way in: it hands the
+# launcher its constants, and the helper is the package beside it.
+modules = sorted(PACKAGE_DIR.glob("*.py"))
+compile_error = ""
+for source in [HELPER, LAUNCHER_SOURCE, *modules]:
+    try:
+        # In this process, so a read-only checkout gets no __pycache__ written into it.
+        compile(source.read_text(encoding="utf-8"), str(source), "exec")
+    except SyntaxError as error:
+        compile_error += f"{source.name}: {error}; "
+check("the helper, the launcher and every module compile", not compile_error, compile_error)
+entry_constants = constants_of(helper_text)
+check("the helper hands the installed launcher the module directory and package the role installs, and nothing else",
+      entry_constants == {"LAUNCHER": INSTALLED_LAUNCHER, "LIB_DIR": LIB_DIR, "PACKAGE": PACKAGE_DIR.name}
+      and helper_text.rstrip().endswith(
+          'sys.exit(runpy.run_path(LAUNCHER)["launch"](LIB_DIR, PACKAGE, "hcw-coder-automation"))'),
+      json.dumps(entry_constants))
+dirs_task, body = task_using("ansible.builtin.file", path="{{ item }}", state="directory")
+package_path = f"{LIB_DIR}/{PACKAGE_DIR.name}"
+check("the role makes every directory down to the package root:root 0755",
+      body is not None and (body["owner"], body["group"], body["mode"]) == ("root", "root", "0755")
+      and dirs_task.get("loop") == ["/usr/local/lib/hcw-lab", LIB_DIR, package_path], str(dirs_task))
+modules_task, body = task_using("ansible.builtin.copy", src=f"{PACKAGE_DIR.name}/{{{{ item }}}}")
+role_vars = yaml.safe_load((ROLE / "vars" / MAIN_YML).read_text(encoding="utf-8"))
+check("the role installs every module, and only those, root:root 0644 in the package's directory",
+      body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
+      == (f"{package_path}/{{{{ item }}}}", "root", "root", "0644")
+      and modules_task.get("loop") == "{{ coder_automation_modules }}"
+      and role_vars["coder_automation_modules"] == [module.name for module in modules],
+      json.dumps(role_vars.get("coder_automation_modules")))
+launcher_task, body = task_using("ansible.builtin.copy", src=LAUNCHER_FILE)
+check("the role installs the launcher where the helper loads it, root:root 0644",
+      body is not None and (body["dest"], body["owner"], body["group"], body["mode"])
+      == (INSTALLED_LAUNCHER, "root", "root", "0644"), str(body))
+helper_task, _ = task_using("ansible.builtin.copy", src=HELPER_FILE)
+order = [task.get("name") for task in tasks]
+check("the modules and the launcher go in before the helper that loads them",
+      None not in (dirs_task, modules_task, launcher_task, helper_task)
+      and order.index(dirs_task["name"]) < order.index(modules_task["name"]) < order.index(launcher_task["name"])
+      < order.index(helper_task["name"]), str(order))
 check("the rendered configuration names Coder on the port the Compose file publishes on the loopback",
       config["coder_url"] == f"http://127.0.0.1:{defaults['coder_http_port']}"
       and f'"127.0.0.1:{defaults["coder_http_port"]}:7080"' in compose, config["coder_url"])
@@ -619,6 +710,7 @@ class World:
             report_timeout_seconds=20,
         )
         self.config_file = self.root / "automation.json"
+        stage_tree(self.root, LIB_DIR, PACKAGE_DIR)
         self.write_config()
 
     def write_config(self, **changes):
@@ -633,7 +725,7 @@ class World:
 
     def helper(self, *args, stdin=b""):
         """Run the helper with arguments and stdin, keeping its output for the leak check."""
-        completed = subprocess.run([sys.executable, "-I", str(HELPER), "--config", str(self.config_file), *args],
+        completed = subprocess.run([*helper_command(self.root), "--config", str(self.config_file), *args],
                                    input=stdin, capture_output=True, timeout=120)
         result = subprocess.CompletedProcess(completed.args, completed.returncode,
                                              completed.stdout.decode("utf-8", "replace"),
@@ -692,7 +784,7 @@ class World:
 
 world = World()
 master, slave = os.openpty()
-completed = subprocess.run([sys.executable, "-I", str(HELPER), "--config", str(world.config_file), "seed"],
+completed = subprocess.run([*helper_command(world.root), "--config", str(world.config_file), "seed"],
                            stdin=slave, capture_output=True, text=True, timeout=60)
 os.close(master)
 os.close(slave)
@@ -1063,10 +1155,13 @@ for leftover in ("notes-only", "Bad_Name"):
 # A template whose files cannot be read is that template's failure, not the
 # run's: the helper, loaded in this process, with the read made to fail. As
 # root, which the container runs as, no file mode can make a read fail, so
-# the read itself is replaced (CodeRabbit, #1100).
-spec = importlib.util.spec_from_file_location("hcw_coder_automation", ROLE / "files" / HELPER_FILE)
-automation = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(automation)
+# the read itself is replaced (CodeRabbit, #1100). publish_one and the
+# template_digest it calls are the publish module's since #1845, so that is
+# the name replaced. No bytecode beside the modules: the role ships files/
+# as it is.
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(PACKAGE_DIR.parent))
+automation = importlib.import_module(f"{PACKAGE_DIR.name}.publish")
 
 
 def unreadable(config, directory=None):
@@ -1258,6 +1353,129 @@ check("and the first run after the next seed works through the kept list",
 leaks = world.leaks()
 check("no token leaks from a revoke", not leaks, ", ".join(leaks))
 world.close()
+
+# --- The launcher: the modules are checked before root imports them (#1845) -------------
+#
+# files/hcw-lab-python-launch.py, which hcw-coder-automation and
+# hcw-portainer-check both load, refuses a package root could be tricked
+# into importing: a directory or file someone other than root can write, a
+# symbolic link, or anything beside the package in its directory. Held here
+# against a made-up package staged in a scratch directory, with this user
+# standing in for root (the `owner` the tests alone pass).
+
+launcher_text = LAUNCHER_SOURCE.read_text(encoding="utf-8")
+launcher_names = {node.attr if isinstance(node, ast.Attribute) else node.id
+                  for node in ast.walk(ast.parse(launcher_text)) if isinstance(node, (ast.Attribute, ast.Name))}
+check("the launcher takes the module directory from its caller only: no environment, no file location, no argv",
+      not launcher_names & {"environ", "getenv", "__file__", "argv", "getcwd"}
+      and launcher_text.count("sys.path.insert(0, lib_dir)") == 1
+      and launcher_text.index("trust_problem(lib_dir, package, owner, top)") < launcher_text.index("sys.path.insert(0, lib_dir)"))
+launcher = runpy.run_path(str(LAUNCHER_SOURCE))
+uid = os.getuid()
+scratch = pathlib.Path(tempfile.mkdtemp(prefix="hcw-lab-python-launch."))
+probe_source = scratch / "source" / "hcw_launch_probe"
+probe_source.mkdir(parents=True)
+(probe_source / "__init__.py").write_text("", encoding="utf-8")
+(probe_source / "cli.py").write_text("def main():\n    return 7\n", encoding="utf-8")
+PROBE_LIB = "/usr/local/lib/hcw-lab/probe"
+
+
+def fresh_tree(name, package_source=probe_source):
+    """A scratch top with the probe package staged under it as the role installs one: (top, lib_dir, package)."""
+    top = scratch / name
+    top.mkdir()
+    package = stage_tree(top, PROBE_LIB, package_source)
+    return str(top), str(top) + PROBE_LIB, package
+
+
+def trust(top, lib, owner=uid, package="hcw_launch_probe"):
+    """The launcher's verdict on a staged tree: None when trusted, or the reason."""
+    return launcher["trust_problem"](lib, package, owner, top)
+
+
+top, lib, package = fresh_tree("good")
+verdict = trust(top, lib)
+check("the launcher trusts a tree that is its owner's alone to write, with only the package in its directory",
+      verdict is None, str(verdict))
+check("and runs the package's cli.main() from it, returning its exit code",
+      launcher["launch"](lib, "hcw_launch_probe", "hcw-probe", uid, top) == 7
+      and sys.modules["hcw_launch_probe.cli"].__file__.startswith(lib))
+
+top, lib, package = fresh_tree("group-writable-module")
+(package / "cli.py").chmod(0o664)
+verdict = trust(top, lib)
+check("a module its group can write is refused, by name",
+      verdict == f"{package / 'cli.py'} is writable by its group or by others", str(verdict))
+
+top, lib, package = fresh_tree("world-writable-parent")
+pathlib.Path(top + "/usr/local/lib").chmod(0o777)
+verdict = trust(top, lib)
+check("a directory anyone can write on the way down to the package is refused, by name",
+      verdict == f"{top}/usr/local/lib is writable by its group or by others", str(verdict))
+
+top, lib, package = fresh_tree("linked-module")
+(package / "cli.py").unlink()
+(package / "cli.py").symlink_to(probe_source / "cli.py")
+verdict = trust(top, lib)
+check("a module that is a symbolic link is refused, even to a good file",
+      verdict == f"{package / 'cli.py'} is not a regular file", str(verdict))
+
+top, lib, package = fresh_tree("linked-directory")
+good_top, good_lib, _ = fresh_tree("linked-directory-target")
+shutil.rmtree(lib)
+pathlib.Path(lib).symlink_to(good_lib)
+verdict = trust(top, lib)
+check("a module directory that is a symbolic link is refused, even to a good tree",
+      verdict == f"{lib} is not a directory", str(verdict))
+
+top, lib, package = fresh_tree("shadow")
+(pathlib.Path(lib) / "json.py").write_text("raise SystemExit('shadowed')\n", encoding="utf-8")
+pathlib.Path(lib, "json.py").chmod(0o644)
+verdict = trust(top, lib)
+check("anything beside the package, which would come before the standard library on the path, is refused",
+      verdict == f"{lib} must hold hcw_launch_probe and nothing else", str(verdict))
+
+top, lib, package = fresh_tree("missing-package")
+verdict = trust(top, lib, package="hcw_launch_absent")
+check("a directory without the package is refused", verdict == f"{lib} must hold hcw_launch_absent and nothing else",
+      str(verdict))
+verdict = launcher["trust_problem"](str(scratch / "elsewhere"), "hcw_launch_probe", uid, top)
+check("a module directory outside the top it is checked from is refused", verdict is not None and "is not under" in verdict,
+      str(verdict))
+
+top, lib, package = fresh_tree("not-root")
+if uid != 0:
+    verdict = trust(top, lib, owner=0)
+    check("with root as the owner, as on the host, a tree another user owns is refused",
+          verdict == f"{top} is not owned by root", str(verdict))
+else:
+    skip("a tree another user owns is refused", "this test runs as root, so every file it makes is root's")
+ancestors = [str(path) for path in reversed(pathlib.Path(lib).parents)] + [lib]
+loose = next((path for path in ancestors if os.lstat(path).st_mode & 0o022
+              or os.lstat(path).st_uid not in (0, uid) or stat.S_ISLNK(os.lstat(path).st_mode)), None)
+if loose is not None:
+    verdict = launcher["trust_problem"](lib, "hcw_launch_probe", uid)
+    check("checked from / as on the host, the first loose directory above the scratch tree is refused",
+          verdict is not None and verdict.startswith(loose), f"{verdict} (expected {loose})")
+else:
+    skip("checked from /, a loose directory above the tree is refused", "every directory above the scratch tree is tight")
+
+refused_source = scratch / "source-refused" / "hcw_launch_refused"
+refused_source.mkdir(parents=True)
+(refused_source / "__init__.py").write_text("", encoding="utf-8")
+(refused_source / "cli.py").write_text("def main():\n    return 7\n", encoding="utf-8")
+refused_top = scratch / "refused"
+refused_top.mkdir()
+refused_package = stage_tree(refused_top, PROBE_LIB, refused_source)
+(refused_package / "cli.py").chmod(0o666)
+captured = io.StringIO()
+with contextlib.redirect_stderr(captured):
+    code = launcher["launch"](str(refused_top) + PROBE_LIB, "hcw_launch_refused", "hcw-probe", uid, str(refused_top))
+check("a refused tree is never imported: exit 1 and one line naming the path",
+      code == 1 and "hcw_launch_refused" not in sys.modules and "hcw_launch_refused.cli" not in sys.modules
+      and captured.getvalue() == f"hcw-probe: refusing to run: {refused_package / 'cli.py'} is writable by its group or "
+      "by others; re-run bootstrap.sh to install the modules again\n", captured.getvalue())
+shutil.rmtree(scratch, ignore_errors=True)
 
 print(f"hcw-coder-automation.test.py: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

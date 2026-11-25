@@ -117,6 +117,11 @@ starts or stops it, adds the Caddy route and keeps a week of nightly dumps.
     `files/hcw-coder-automation.py` as
     `/usr/local/libexec/hcw-coder-automation` and the owner's
     `/usr/local/sbin/hcw-coder-automation-seed` (both `root:root` `0750`),
+    the helper's modules from `files/hcw_coder_automation/` in
+    `/usr/local/lib/hcw-lab/coder-automation/hcw_coder_automation/` and the
+    launcher that checks them, `files/hcw-lab-python-launch.py`, as
+    `/usr/local/libexec/hcw-lab-python-launch` (directories `root:root`
+    `0755`, files `root:root` `0644`; "The modules", below),
     its configuration `/etc/hcw/coder/automation.json` (paths and names, no
     secret), the rotation credential's directory `/etc/hcw/coder/automation`
     and the state directory `/var/lib/hcw-coder-automation` (both `root`
@@ -271,6 +276,35 @@ Python 3 standard library only, run isolated (`-I`) on the host's
 `templates/hcw-coder-automation-seed.j2`. Every command takes a lock under
 the state directory, so the timer, a seed and a bootstrap's publish never
 write the same files at once.
+
+### The modules
+
+Until 2026-11-25 the helper was that one file, 1,333 lines that Qlty (the
+code-quality scanner) rated too complex to review as one piece. It is now a
+package, `files/hcw_coder_automation/`, split by job: `common.py` (settings,
+the token scrub, messages and times), `coder_api.py` (Coder's API),
+`storage.py` (the credential, state, lock and configuration files),
+`delivery.py` (the site's CLI), `rotation.py` and `status.py` (the two kinds
+of token), one module per command (`daily.py` for `run`, `seed.py`,
+`publish.py` with `template_source.py`, `revoke.py`) and `cli.py`, the
+command line. The functions moved unchanged (#1845).
+
+The helper runs as root, so whatever it imports is code root runs. The
+script in `/usr/local/libexec` is therefore only the way in: it loads
+`/usr/local/libexec/hcw-lab-python-launch` (`files/hcw-lab-python-launch.py`,
+which the `portainer` role installs too, from this same file) and hands it
+two constants, the module directory
+`/usr/local/lib/hcw-lab/coder-automation` and the package name. Before
+anything is imported, the launcher checks that every directory from `/` down
+to the package, and every file in it, is a real directory or file (not a
+symbolic link), owned by root and writable by root alone, and that the
+module directory holds the package and nothing else, so no file there can
+stand in for a module of Python's standard library. If any of that fails, it
+prints one line naming the path, `hcw-coder-automation: refusing to run:
+<path> ...; re-run bootstrap.sh to install the modules again`, and exits 1,
+which fails the unit (and its alert) like any other failure. No path comes
+from the environment, an argument or the working directory, and no bytecode
+is written, so the installed files stay exactly what the role copied.
 
 ### The rotation credential
 
@@ -754,7 +788,8 @@ the job's Python, which has Jinja2 and PyYAML from ansible-core. To run it
 without a host, see `lab-host/README.md`, "Validating without a host".
 
 `tests/hcw-coder-automation.test.py` runs `files/hcw-coder-automation.py` as
-it ships against a fake Coder API on a loopback port (answering as v2.38.0
+it ships, with its modules staged in a scratch directory and checked by the
+launcher there, against a fake Coder API on a loopback port (answering as v2.38.0
 does: `<10>-<22>` tokens, `lifetime` in nanoseconds, `coder:all` for no
 scope, 409 on a name in use, nine fractional digits in its times, expired
 tokens left out), a fake `systemd-run` that reads the `EnvironmentFile=` and
@@ -807,7 +842,15 @@ defaults. No root, no Docker, no network. It checks:
   retries after a failed publish;
 - an undelivered `hcw-status-site-` token is never taken for the site's;
 - no token appears in anything the helper printed, its state file or any
-  report.
+  report;
+- the role installs the modules, every one of them, and the launcher before
+  the helper, with the owners and modes above, and the helper hands the
+  launcher exactly the paths the tasks install to; the launcher refuses,
+  naming the path and importing nothing, a module or directory its group or
+  anyone else can write, a symbolic link (to a file or to the module
+  directory), anything beside the package, a missing package, and a tree
+  not owned by root (when the test is not run as root), and runs a sound
+  one.
 
 The same job runs it with its own Python. To run it without a host, see
 `lab-host/README.md`, "Validating without a host".
