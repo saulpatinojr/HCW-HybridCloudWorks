@@ -116,8 +116,8 @@ function ProgramCard({
             )}
             Start application
           </Button>
-          {/* An active membership with a quota to keep (GitKraken's two pieces a
-              quarter) starts its next piece from here (#1886). */}
+          {/* A held membership whose program asks for regular contributions can
+              start its next piece from here (#1886). */}
           {showsUpkeep(program, evidenceRows) && !disabled && (
             <DraftForProgramButton program={program} />
           )}

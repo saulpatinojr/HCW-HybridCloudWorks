@@ -293,16 +293,16 @@ describe('Programs', () => {
   });
 });
 
-// A held membership with a quota to keep: GitKraken's two pieces a quarter.
+// A held membership whose program asks for regular contributions each quarter.
 const today = new Date();
 const pad = (v) => String(v).padStart(2, '0');
 const day = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
 const quarter = `Q${Math.floor(today.getMonth() / 3) + 1} ${today.getFullYear()}`;
 const UPKEEP_PROGRAM = {
-  id: 'program-gk',
+  id: 'program-example',
   docType: 'program',
-  name: 'GitKraken Ambassador',
-  provider: 'GitKraken',
+  name: 'Example Program',
+  provider: 'Example',
   category: 'developer-advocacy',
   description: 'Ambassadors.',
   enabled: true,
@@ -314,7 +314,7 @@ const UPKEEP_PROGRAM = {
   contributionTrackerUrl: 'https://example.com/tracker',
 };
 const FILED = [
-  { ...EVIDENCE[0], id: 'evidence-gk-1', date: day, programIds: ['program-gk'] },
+  { ...EVIDENCE[0], id: 'evidence-gk-1', date: day, programIds: ['program-example'] },
   // General evidence is not filed under the program, so it is not counted.
   { ...EVIDENCE[0], id: 'evidence-general', date: day, programIds: [] },
 ];
@@ -326,8 +326,8 @@ describe('Programs: keeping a membership active (2026-10-11)', () => {
       routes({
         'cms/ambassador/programs': { items: [...PROGRAMS, UPKEEP_PROGRAM] },
         'cms/ambassador/evidence': { items: FILED },
-        'cms/ambassador/readiness/program-gk': {
-          readiness: { ...READINESS, programId: 'program-gk', requirements: [], missing: [] },
+        'cms/ambassador/readiness/program-example': {
+          readiness: { ...READINESS, programId: 'program-example', requirements: [], missing: [] },
         },
       })
     );
@@ -340,7 +340,7 @@ describe('Programs: keeping a membership active (2026-10-11)', () => {
     );
     const card = panel()
       .getAllByTestId('program-card')
-      .find((c) => c.textContent.startsWith('GitKraken Ambassador'));
+      .find((c) => c.textContent.startsWith('Example Program'));
     await act(async () => {
       fireEvent.click(within(card).getByRole('button', { name: 'Details' }));
     });
@@ -371,7 +371,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     Title: 'Reading a busy commit graph',
     contentStatus: 'published',
     Live: true,
-    originRef: { page: 'ambassador', id: 'program-gk', part: null, label: 'GitKraken Ambassador' },
+    originRef: { page: 'ambassador', id: 'program-example', part: null, label: 'Example Program' },
   };
   const DRAFT_PIECE = {
     id: 'content-draft',
@@ -384,15 +384,15 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     routes({
       'cms/ambassador/programs': { items: [...PROGRAMS, UPKEEP_PROGRAM] },
       'cms/ambassador/evidence': { items: FILED },
-      'cms/ambassador/readiness/program-gk': {
-        readiness: { ...READINESS, programId: 'program-gk', requirements: [], missing: [] },
+      'cms/ambassador/readiness/program-example': {
+        readiness: { ...READINESS, programId: 'program-example', requirements: [], missing: [] },
       },
       ...over,
     });
-  const gitKrakenCard = () =>
+  const exampleCard = () =>
     panel()
       .getAllByTestId('program-card')
-      .find((c) => c.textContent.startsWith('GitKraken Ambassador'));
+      .find((c) => c.textContent.startsWith('Example Program'));
 
   it('starts a draft for a held program from its card, tagged to the program, and opens it on Drafts', async () => {
     searchParams = 'tab=programs';
@@ -401,7 +401,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     render(<AmbassadorPage />);
     await panel().findByTestId('program-upkeep');
     await act(async () => {
-      fireEvent.click(within(gitKrakenCard()).getByRole('button', { name: /Draft a piece/ }));
+      fireEvent.click(within(exampleCard()).getByRole('button', { name: /Draft a piece/ }));
     });
     fireEvent.change(screen.getByLabelText('Working title'), {
       target: { value: 'Reading a busy commit graph' },
@@ -411,7 +411,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     });
     expect(postJSON).toHaveBeenCalledWith('cms/drafts', {
       fields: { title: 'Reading a busy commit graph', tags: [] },
-      originRef: { page: 'ambassador', id: 'program-gk' },
+      originRef: { page: 'ambassador', id: 'program-example' },
     });
     expect(navigate).toHaveBeenCalledWith('/admin/drafts?draft=draft-1');
   });
@@ -428,7 +428,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     render(<AmbassadorPage />);
     await panel().findAllByTestId('program-card');
     expect(
-      within(gitKrakenCard()).queryByRole('button', { name: /Draft a piece/ })
+      within(exampleCard()).queryByRole('button', { name: /Draft a piece/ })
     ).not.toBeInTheDocument();
   });
 
@@ -447,12 +447,12 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     render(<AmbassadorPage />);
     await panel().findByTestId('program-upkeep');
     await act(async () => {
-      fireEvent.click(within(gitKrakenCard()).getByRole('button', { name: 'Details' }));
+      fireEvent.click(within(exampleCard()).getByRole('button', { name: 'Details' }));
     });
     const pipeline = await screen.findByTestId('program-pipeline');
     await within(pipeline).findByText('Reading a busy commit graph');
     expect(getJSON).toHaveBeenCalledWith(
-      'cms/content?originPage=ambassador&originId=program-gk&sort=updatedAt&limit=500'
+      'cms/content?originPage=ambassador&originId=program-example&sort=updatedAt&limit=500'
     );
     expect(within(pipeline).getByText('Merge conflicts, calmly')).toBeInTheDocument();
     // Only the live piece can be filed; the draft is still in the Pipeline.
@@ -464,7 +464,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     expect(postJSON).toHaveBeenCalledWith('cms/ambassador/evidence/import', {
       sourceModule: 'content',
       ids: ['content-live'],
-      programIds: ['program-gk'],
+      programIds: ['program-example'],
     });
   });
 
@@ -476,7 +476,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     render(<AmbassadorPage />);
     await panel().findByTestId('program-upkeep');
     await act(async () => {
-      fireEvent.click(within(gitKrakenCard()).getByRole('button', { name: 'Details' }));
+      fireEvent.click(within(exampleCard()).getByRole('button', { name: 'Details' }));
     });
     const pipeline = await screen.findByTestId('program-pipeline');
     const fileButton = await within(pipeline).findByRole('button', { name: /File as evidence/ });
@@ -492,7 +492,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     });
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Not filed' }));
     expect(toast).not.toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Filed as evidence for GitKraken Ambassador' })
+      expect.objectContaining({ title: 'Filed as evidence for Example Program' })
     );
 
     postJSON.mockResolvedValueOnce({
@@ -504,7 +504,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     await act(async () => {
       fireEvent.click(within(pipeline).getByRole('button', { name: /File as evidence/ }));
     });
-    expect(toast).toHaveBeenCalledWith({ title: 'Filed as evidence for GitKraken Ambassador' });
+    expect(toast).toHaveBeenCalledWith({ title: 'Filed as evidence for Example Program' });
   });
 
   it('marks a live piece already filed instead of offering it again', async () => {
@@ -521,7 +521,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
               date: '2026-11-20',
               sourceModule: 'content',
               sourceId: 'content-live',
-              programIds: ['program-gk'],
+              programIds: ['program-example'],
             },
           ],
         },
@@ -530,7 +530,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     render(<AmbassadorPage />);
     await panel().findByTestId('program-upkeep');
     await act(async () => {
-      fireEvent.click(within(gitKrakenCard()).getByRole('button', { name: 'Details' }));
+      fireEvent.click(within(exampleCard()).getByRole('button', { name: 'Details' }));
     });
     const pipeline = await screen.findByTestId('program-pipeline');
     await within(pipeline).findByText('Filed as evidence');
@@ -562,7 +562,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     render(<AmbassadorPage />);
     await panel().findByTestId('program-upkeep');
     await act(async () => {
-      fireEvent.click(within(gitKrakenCard()).getByRole('button', { name: 'Details' }));
+      fireEvent.click(within(exampleCard()).getByRole('button', { name: 'Details' }));
     });
     const pipeline = await screen.findByTestId('program-pipeline');
     const link = await within(pipeline).findByRole('link', { name: /not under this program/ });
@@ -587,8 +587,8 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
   });
 
   it('opens a program’s details from a Pipeline chip’s link (?program=)', async () => {
-    searchParams = 'tab=programs&program=program-gk';
-    window.history.pushState({}, '', '/admin/ambassador?tab=programs&program=program-gk');
+    searchParams = 'tab=programs&program=program-example';
+    window.history.pushState({}, '', '/admin/ambassador?tab=programs&program=program-example');
     getJSON.mockImplementation(upkeepRoutes());
     try {
       render(<AmbassadorPage />);

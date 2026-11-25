@@ -258,22 +258,6 @@ that is not listed, or to let it publish, change the table in
   published answers `200` with `code: "PUBLISHED_ELSEWHERE"` and
   `existingId`; neither writes a second draft. `POST drafts` makes a new id
   every time, so a lost answer and a retry there would make two drafts.
-- To write a piece for an Ambassador program (the owner agreed on 2026-11-25,
-  [#1886](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1886)),
-  `POST drafts` also takes `"originRef": { "page": "ambassador", "id":
-  "<program id>" }`, with an optional `"part"` naming one of the program's
-  requirement ids. It needs the key's **Spotlight** switch on, the one that
-  lets Koda read Ambassador; with it off the request answers `403 FORBIDDEN`
-  before the program is read. The program ids are in `GET
-  cms/ambassador/programs`, which the key may read while that switch is on.
-  The site checks that the program exists and stores the program's name with
-  the draft. The draft then shows "Ambassador · <program>" on every Pipeline
-  page and is listed on the program in Ambassador. Its idea origin becomes
-  "Ambassador requirement" unless Koda names one, in place of the usual
-  "AI recommendation"; the draft is still marked as Koda's. A program that
-  does not exist answers `400 INVALID`. Only `POST drafts` takes it: the
-  markdown route answers `400` if one is sent, and no later change can add,
-  move or remove it.
 - A key whose **Read drafts** switch is off still gets its answers, but
   wherever one would carry the draft as the page sees it (`draft` with
   `fields`), the text is replaced by `bodyWithheld: true` and the summary

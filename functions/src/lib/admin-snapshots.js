@@ -514,7 +514,7 @@ export function createAdminSnapshotHandlers({
           sortDescBy("publishedAt"),
         );
 
-        // Koda never sees where a piece came from for a Page its key may
+        // The agent key never sees where a piece came from for a Page its key may
         // not read (page-links/origin-ref.js, review of #1890).
         return answerWithoutHiddenOrigins(
           store,

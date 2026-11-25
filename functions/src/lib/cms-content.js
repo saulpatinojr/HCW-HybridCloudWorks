@@ -340,7 +340,7 @@ function guarded(guard, { name, failure }, fn, store = null) {
     if (auth.error) return auth.error;
     try {
       const response = await fn(request, context, auth);
-      // Koda never sees where a piece came from for a Page its key may not
+      // The agent key never sees where a piece came from for a Page its key may not
       // read (page-links/origin-ref.js, review of #1890).
       return store ? await answerWithoutHiddenOrigins(store, auth.user, response) : response;
     } catch (error) {
@@ -386,7 +386,7 @@ export function createCmsContentHandlers({
       async (request, context, auth) => {
         const built = buildListQuery(request.query);
         if (built.error) return json(400, { error: built.error });
-        // Filtering by a Page Koda may not read would tell it which pieces
+        // Filtering by a Page the agent key may not read would tell it which pieces
         // that Page sent, so the filter is refused rather than emptied.
         const originPage = queryText(request.query, "originPage");
         if (!(await mayFilterByOrigin(store, auth.user, originPage))) {

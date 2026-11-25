@@ -400,9 +400,9 @@ describe("createContentItem document shape", () => {
 
 describe("createContentItem originRef (#1886)", () => {
   const PROGRAM = {
-    id: "program-gitkraken-ambassador",
+    id: "program-example",
     docType: "program",
-    name: "GitKraken Ambassador",
+    name: "Example Program",
     requirements: [],
   };
   const readDoc = vi.fn(async (container, id) =>
@@ -427,7 +427,7 @@ describe("createContentItem originRef (#1886)", () => {
       page: "ambassador",
       id: PROGRAM.id,
       part: null,
-      label: "GitKraken Ambassador",
+      label: "Example Program",
     });
   });
 

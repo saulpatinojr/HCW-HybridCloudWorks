@@ -21,9 +21,9 @@ export const trimmedLabel = (value) =>
  * The Pages that may send work into the Pipeline, by nav id.
  *
  *   container    the Cosmos container the record lives in (partition key /id)
- *   agentSection the switch on Koda's key that lets it read this Page
+ *   agentSection the switch on the agent key that lets it read this Page
  *                (agent-content/keys.js CAPABILITIES). A reference names a record
- *                and returns its name, so Koda may send one only when it could
+ *                and returns its name, so the agent key may send one only when it could
  *                read the Page anyway (review of #1886).
  *   ideaOrigin   the taxonomy id a draft from this Page gets when the caller names
  *                none (functions/src/lib/cms/taxonomy.js DEFAULT_IDEA_ORIGINS)

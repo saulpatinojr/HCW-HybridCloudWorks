@@ -16,9 +16,9 @@ vi.mock('./useTaxonomy', () => ({
 
 const REF = {
   page: 'ambassador',
-  id: 'program-gitkraken-ambassador',
+  id: 'program-example',
   part: null,
-  label: 'GitKraken Ambassador',
+  label: 'Example Program',
 };
 
 describe('OriginChip', () => {
@@ -28,17 +28,14 @@ describe('OriginChip', () => {
         <OriginChip originRef={REF} />
       </MemoryRouter>
     );
-    const link = screen.getByRole('link', { name: 'Ambassador · GitKraken Ambassador' });
-    expect(link).toHaveAttribute(
-      'href',
-      '/admin/ambassador?tab=programs&program=program-gitkraken-ambassador'
-    );
+    const link = screen.getByRole('link', { name: 'Ambassador · Example Program' });
+    expect(link).toHaveAttribute('href', '/admin/ambassador?tab=programs&program=program-example');
   });
 
   it('is a plain chip when asked, for a row that is already a button', () => {
     render(<OriginChip originRef={REF} asLink={false} />);
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
-    expect(screen.getByText('Ambassador · GitKraken Ambassador')).toBeInTheDocument();
+    expect(screen.getByText('Ambassador · Example Program')).toBeInTheDocument();
   });
 
   it('renders nothing for content no Page sent', () => {
@@ -54,11 +51,11 @@ describe('TaxonomyChips', () => {
         <TaxonomyChips item={{ kind: 'article', ideaOrigin: 'manual', originRef: REF }} />
       </MemoryRouter>
     );
-    expect(screen.getByRole('link', { name: /GitKraken Ambassador/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Example Program/ })).toBeInTheDocument();
   });
 
   it('can leave it out', () => {
     render(<TaxonomyChips item={{ originRef: REF }} showSource={false} />);
-    expect(screen.queryByText(/GitKraken Ambassador/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Example Program/)).not.toBeInTheDocument();
   });
 });

@@ -35,14 +35,14 @@ describe('originLink', () => {
   it('names the Page from the nav registry and links the record', () => {
     const link = originLink({
       page: 'ambassador',
-      id: 'program-gitkraken-ambassador',
+      id: 'program-example',
       part: null,
-      label: 'GitKraken Ambassador',
+      label: 'Example Program',
     });
     expect(link).toMatchObject({
       pageLabel: 'Ambassador',
-      label: 'GitKraken Ambassador',
-      href: '/admin/ambassador?tab=programs&program=program-gitkraken-ambassador',
+      label: 'Example Program',
+      href: '/admin/ambassador?tab=programs&program=program-example',
     });
     expect(link.icon).toBeTruthy();
   });

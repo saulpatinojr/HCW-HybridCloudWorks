@@ -90,7 +90,7 @@ export function parseOriginRef(input) {
 export class OriginRefForbiddenError extends AuthoredError {}
 
 /**
- * Whether Koda's key has the switch that lets it read this Page. A person
+ * Whether the agent key has the switch that lets it read this Page. A person
  * (any caller that is not the agent) is not asked: the route's own role
  * check already covers them, and the Pages on the list need no more than
  * the editor role that Drafts needs.
@@ -107,7 +107,7 @@ async function agentMayRead(store, user, page) {
 
 /**
  * The Pages whose references this caller may not see: none for a person,
- * and for Koda every Page whose switch is off on its key (review of #1890).
+ * and for the agent key every Page whose switch is off on it (review of #1890).
  * A reference carries a record's name, so it is shown only to a caller that
  * could read that Page anyway. Read once per request.
  *
@@ -164,7 +164,7 @@ export async function answerWithoutHiddenOrigins(store, user, response) {
 }
 
 /**
- * Whether this caller may filter a list by a Page: false for Koda when that
+ * Whether this caller may filter a list by a Page: false for the agent key when that
  * Page's switch is off, so the filter cannot be used to find which pieces a
  * hidden Page sent.
  */
@@ -177,7 +177,7 @@ export async function mayFilterByOrigin(store, user, originPage) {
  * A request's `originRef`, checked against the record it names. Returns the
  * value to store (`{ page, id, part, label }`), or null when the request
  * names none. Throws OriginRefError when the record is missing, deleted or
- * has no such part, and OriginRefForbiddenError when the caller is Koda and
+ * has no such part, and OriginRefForbiddenError when the caller is the agent key and
  * its key's switch for that Page is off (checked before the record is read,
  * so the answer says nothing about the record).
  *
@@ -192,7 +192,7 @@ export async function resolveOriginRef(store, input, { user = null } = {}) {
   const page = ORIGIN_PAGES[ref.page];
   if (!(await agentMayRead(store, user, page))) {
     throw new OriginRefForbiddenError(
-      "Koda's key may not send work for this Page: its switch for that section is off on the AI Engine's Koda tab.",
+      "This key may not send work for this Page: its switch for that section is off.",
     );
   }
   const doc = await store.readDoc(page.container, ref.id, ref.id);

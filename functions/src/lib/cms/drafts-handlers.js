@@ -427,7 +427,7 @@ const route = (deps, what, work) => async (request, context) => {
   if (auth.error) return auth.error;
   try {
     const response = await work(deps, { request, context, user: auth.user });
-    // Koda never sees where a draft came from for a Page its key may not
+    // The agent key never sees where a draft came from for a Page its key may not
     // read (page-links/origin-ref.js, review of #1890).
     return await answerWithoutHiddenOrigins(deps.store, auth.user, response);
   } catch (error) {

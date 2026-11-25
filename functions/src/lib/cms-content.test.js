@@ -1,3 +1,4 @@
+import { AGENT_USER, KEY_RECORD_ID } from "./agent-content/keys.js";
 import { describe, it, expect, vi } from "vitest";
 import {
   createCmsContentHandlers,
@@ -286,11 +287,7 @@ describe("cms content list taxonomy filters and ordering (ADR 0033)", () => {
     const store = makeStore();
     const h = createCmsContentHandlers({ guard: allowGuard, store });
 
-    for (const search of [
-      "k",
-      " k ",
-      "x".repeat(LIST_SEARCH_MAX_CHARS + 1),
-    ]) {
+    for (const search of ["k", " k ", "x".repeat(LIST_SEARCH_MAX_CHARS + 1)]) {
       const res = await h.list(makeRequest({ query: { search } }), context);
       expect(res.status).toBe(400);
       expect(JSON.parse(res.body)).toEqual({
@@ -312,8 +309,7 @@ describe("cms content list taxonomy filters and ordering (ADR 0033)", () => {
       expect(store.queryDocs.mock.calls.at(-1)[1]).toContain("@search");
     }
     expect(
-      (await h.list(makeRequest({ query: { search: "   " } }), context))
-        .status,
+      (await h.list(makeRequest({ query: { search: "   " } }), context)).status,
     ).toBe(200);
     expect(store.queryDocs.mock.calls.at(-1)[1]).not.toContain("@search");
   });
@@ -461,45 +457,70 @@ describe("cms content list originRef filter (#1886)", () => {
     const store = makeStore();
     const h = createCmsContentHandlers({ guard: allowGuard, store });
     await h.list(
-      makeRequest({ query: { originPage: "ambassador", originId: "program-gitkraken-ambassador" } }),
+      makeRequest({
+        query: { originPage: "ambassador", originId: "program-example" },
+      }),
       context,
     );
     const [, text, params] = store.queryDocs.mock.calls[0];
     expect(text).toContain('c["originRef"]');
-    expect(text).toContain("c.originRef.page = @originPage AND c.originRef.id = @originId");
-    expect(params).toContainEqual({ name: "@originId", value: "program-gitkraken-ambassador" });
+    expect(text).toContain(
+      "c.originRef.page = @originPage AND c.originRef.id = @originId",
+    );
+    expect(params).toContainEqual({
+      name: "@originId",
+      value: "program-example",
+    });
   });
 
   it("refuses a Page that cannot send work, before any query", async () => {
     const store = makeStore();
     const h = createCmsContentHandlers({ guard: allowGuard, store });
-    const res = await h.list(makeRequest({ query: { originPage: "cost" } }), context);
+    const res = await h.list(
+      makeRequest({ query: { originPage: "cost" } }),
+      context,
+    );
     expect(res.status).toBe(400);
     expect(store.queryDocs).not.toHaveBeenCalled();
   });
 });
 
-describe("cms content list for Koda with its Spotlight switch off (review of #1890)", () => {
-  const kodaGuard = {
-    requireRole: vi.fn(async () => ({ user: { oid: "agent:koda", agent: "koda" }, role: "editor", error: null })),
+describe("cms content list for the agent key with that Page's switch off (review of #1890)", () => {
+  const agentGuard = {
+    requireRole: vi.fn(async () => ({
+      user: AGENT_USER,
+      role: "editor",
+      error: null,
+    })),
   };
-  const ref = { page: "ambassador", id: "program-gk", part: null, label: "GitKraken Ambassador" };
-  const keyOff = async () => ({ id: "agent_content_key:koda", capabilities: { "admin.spotlight": false } });
+  const ref = {
+    page: "ambassador",
+    id: "program-example",
+    part: null,
+    label: "Example Program",
+  };
+  const keyOff = async () => ({
+    id: KEY_RECORD_ID,
+    capabilities: { "admin.spotlight": false },
+  });
 
   it("lists the content without where it came from", async () => {
     const store = makeStore({
       queryDocs: vi.fn(async () => [{ id: "c1", Title: "T", originRef: ref }]),
       readDoc: vi.fn(keyOff),
     });
-    const h = createCmsContentHandlers({ guard: kodaGuard, store });
+    const h = createCmsContentHandlers({ guard: agentGuard, store });
     const res = await h.list(makeRequest(), context);
     expect(JSON.parse(res.body).items).toEqual([{ id: "c1", Title: "T" }]);
   });
 
   it("refuses a list filtered by that Page, before any query", async () => {
     const store = makeStore({ readDoc: vi.fn(keyOff) });
-    const h = createCmsContentHandlers({ guard: kodaGuard, store });
-    const res = await h.list(makeRequest({ query: { originPage: "ambassador" } }), context);
+    const h = createCmsContentHandlers({ guard: agentGuard, store });
+    const res = await h.list(
+      makeRequest({ query: { originPage: "ambassador" } }),
+      context,
+    );
     expect(res.status).toBe(403);
     expect(store.queryDocs).not.toHaveBeenCalled();
   });

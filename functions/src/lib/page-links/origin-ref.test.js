@@ -4,6 +4,7 @@
  * exists and is not deleted, only a part the record has; the stored shape;
  * the list filter; and that no later update can rewrite it.
  */
+import { AGENT_USER, KEY_RECORD_ID } from "../agent-content/keys.js";
 import { describe, it, expect, vi } from "vitest";
 import {
   ORIGIN_PAGES,
@@ -24,9 +25,9 @@ import { DEFAULT_IDEA_ORIGINS } from "../cms/taxonomy.js";
 import { isAuthoredError } from "../http/error-response.js";
 
 const PROGRAM = Object.freeze({
-  id: "program-gitkraken-ambassador",
+  id: "program-example",
   docType: "program",
-  name: "GitKraken Ambassador",
+  name: "Example Program",
   requirements: [{ id: "quarterly-content", label: "Two pieces a quarter" }],
 });
 
@@ -96,7 +97,7 @@ describe("resolveOriginRef: the Ambassador entry", () => {
       page: "ambassador",
       id: PROGRAM.id,
       part: "quarterly-content",
-      label: "GitKraken Ambassador",
+      label: "Example Program",
     });
   });
 
@@ -151,7 +152,7 @@ describe("resolveOriginRef: the Ambassador entry", () => {
 });
 
 describe("every Page on the list", () => {
-  it("names the switch on Koda's key that guards it", async () => {
+  it("names the switch on the agent key that guards it", async () => {
     const { CAPABILITY_IDS } = await import("../agent-content/keys.js");
     for (const id of ORIGIN_PAGE_IDS) {
       expect(CAPABILITY_IDS, id).toContain(ORIGIN_PAGES[id].agentSection);
@@ -236,26 +237,26 @@ describe("after the create", () => {
   });
 });
 
-describe("what Koda sees (review of #1890)", () => {
-  const KODA = { oid: "agent:koda", agent: "koda" };
+describe("what the agent key sees (review of #1890)", () => {
+  const AGENT = AGENT_USER;
   const storeWithKey = (spotlight) => ({
     readDoc: vi.fn(async () => ({
-      id: "agent_content_key:koda",
+      id: KEY_RECORD_ID,
       capabilities: { "admin.spotlight": spotlight },
     })),
   });
   const REF = {
     page: "ambassador",
-    id: "program-gk",
+    id: "program-example",
     part: null,
-    label: "GitKraken Ambassador",
+    label: "Example Program",
   };
 
-  it("hides a Page whose switch is off from Koda, and nothing from a person", async () => {
-    expect(await hiddenOriginPages(storeWithKey(false), KODA)).toEqual([
+  it("hides a Page whose switch is off from the agent key, and nothing from a person", async () => {
+    expect(await hiddenOriginPages(storeWithKey(false), AGENT)).toEqual([
       "ambassador",
     ]);
-    expect(await hiddenOriginPages(storeWithKey(true), KODA)).toEqual([]);
+    expect(await hiddenOriginPages(storeWithKey(true), AGENT)).toEqual([]);
     const store = storeWithKey(false);
     expect(await hiddenOriginPages(store, { oid: "u1" })).toEqual([]);
     expect(store.readDoc).not.toHaveBeenCalled();
@@ -279,7 +280,7 @@ describe("what Koda sees (review of #1890)", () => {
     expect(withoutHiddenOrigins(value, [])).toBe(value);
   });
 
-  it("rewrites a route answer for Koda, and leaves a person's untouched", async () => {
+  it("rewrites a route answer for the agent key, and leaves a person's untouched", async () => {
     const response = {
       status: 200,
       headers: {},
@@ -287,7 +288,7 @@ describe("what Koda sees (review of #1890)", () => {
     };
     const hidden = await answerWithoutHiddenOrigins(
       storeWithKey(false),
-      KODA,
+      AGENT,
       response,
     );
     expect(JSON.parse(hidden.body)).toEqual({ item: { id: "c1" } });
@@ -300,13 +301,13 @@ describe("what Koda sees (review of #1890)", () => {
     ).toBe(response);
   });
 
-  it("refuses Koda a filter by a hidden Page", async () => {
+  it("refuses the agent key a filter by a hidden Page", async () => {
     expect(
-      await mayFilterByOrigin(storeWithKey(false), KODA, "ambassador"),
+      await mayFilterByOrigin(storeWithKey(false), AGENT, "ambassador"),
     ).toBe(false);
     expect(
-      await mayFilterByOrigin(storeWithKey(true), KODA, "ambassador"),
+      await mayFilterByOrigin(storeWithKey(true), AGENT, "ambassador"),
     ).toBe(true);
-    expect(await mayFilterByOrigin(storeWithKey(false), KODA, "")).toBe(true);
+    expect(await mayFilterByOrigin(storeWithKey(false), AGENT, "")).toBe(true);
   });
 });

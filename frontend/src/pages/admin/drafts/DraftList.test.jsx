@@ -20,9 +20,9 @@ const DRAFT = {
   actions: {},
   originRef: {
     page: 'ambassador',
-    id: 'program-gk',
+    id: 'program-example',
     part: null,
-    label: 'GitKraken Ambassador',
+    label: 'Example Program',
   },
 };
 
@@ -33,8 +33,8 @@ describe('DraftList', () => {
         <DraftList drafts={[DRAFT]} loading={false} selectedId={null} onSelect={vi.fn()} />
       </MemoryRouter>
     );
-    const link = screen.getByRole('link', { name: 'Ambassador · GitKraken Ambassador' });
-    expect(link).toHaveAttribute('href', '/admin/ambassador?tab=programs&program=program-gk');
+    const link = screen.getByRole('link', { name: 'Ambassador · Example Program' });
+    expect(link).toHaveAttribute('href', '/admin/ambassador?tab=programs&program=program-example');
     const rowButton = screen.getByRole('button', { name: /Reading a commit graph/ });
     expect(within(rowButton).queryByRole('link')).not.toBeInTheDocument();
   });

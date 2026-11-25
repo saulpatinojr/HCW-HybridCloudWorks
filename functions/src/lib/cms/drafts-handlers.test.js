@@ -9,6 +9,7 @@
  * with it and refuses anything live; the markdown upload is idempotent and
  * recognises an article already in Drafts or In Review.
  */
+import { AGENT_USER, KEY_RECORD_ID } from "../agent-content/keys.js";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { LIST_QUERY, createDraftsHandlers, draftLinks } from "./drafts-handlers.js";
@@ -1258,9 +1259,9 @@ describe("every draft answer carries its links (owner request 2026-11-01)", () =
 
 describe("POST cms/drafts with an originRef (#1886)", () => {
   const PROGRAM = Object.freeze({
-    id: "program-gitkraken-ambassador",
+    id: "program-example",
     docType: "program",
-    name: "GitKraken Ambassador",
+    name: "Example Program",
     requirements: [{ id: "quarterly-content", label: "Two pieces a quarter" }],
   });
   const REF = { page: "ambassador", id: PROGRAM.id, part: "quarterly-content" };
@@ -1270,7 +1271,7 @@ describe("POST cms/drafts with an originRef (#1886)", () => {
     contentStatus: DRAFTS_STAGE_STATUS,
     draftOrigin: "drafts",
     Live: false,
-    originRef: { ...REF, label: "GitKraken Ambassador" },
+    originRef: { ...REF, label: "Example Program" },
   });
 
   it("stores the checked reference and the Page's idea origin, and returns both", async () => {
@@ -1280,10 +1281,10 @@ describe("POST cms/drafts with an originRef (#1886)", () => {
     );
     expect(res.status).toBe(201);
     const stored = store.docs.get(res.body.draft.id);
-    expect(stored.originRef).toEqual({ ...REF, label: "GitKraken Ambassador" });
+    expect(stored.originRef).toEqual({ ...REF, label: "Example Program" });
     expect(stored.ideaOrigin).toBe("ambassador-requirement");
     expect(stored.contentStatus).toBe(DRAFTS_STAGE_STATUS);
-    expect(res.body.draft.originRef).toEqual({ ...REF, label: "GitKraken Ambassador" });
+    expect(res.body.draft.originRef).toEqual({ ...REF, label: "Example Program" });
   });
 
   it("keeps an idea origin the caller chose", async () => {
@@ -1301,7 +1302,7 @@ describe("POST cms/drafts with an originRef (#1886)", () => {
     const { handlers } = setup({ seed: [PROGRAM] });
     await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context);
     const list = parse(await handlers.list(request(), context));
-    expect(list.body.drafts[0].originRef.label).toBe("GitKraken Ambassador");
+    expect(list.body.drafts[0].originRef.label).toBe("Example Program");
     expect(LIST_QUERY).toContain("c.originRef");
   });
 
@@ -1315,18 +1316,18 @@ describe("POST cms/drafts with an originRef (#1886)", () => {
     expect(store.createDoc).not.toHaveBeenCalled();
   });
 
-  describe("from Koda, which may send one only when it could read the Page", () => {
-    const KODA = { oid: "agent:koda", agent: "koda" };
-    const kodaGuard = () => ({
-      requireRole: vi.fn(async () => ({ user: KODA, role: "editor", error: null })),
+  describe("from the agent key, which may send one only when it could read the Page", () => {
+    const AGENT = AGENT_USER;
+    const agentGuard = () => ({
+      requireRole: vi.fn(async () => ({ user: AGENT, role: "editor", error: null })),
     });
     const keyRecord = (spotlight) => ({
-      id: "agent_content_key:koda",
+      id: KEY_RECORD_ID,
       capabilities: { "admin.spotlight": spotlight },
     });
 
     it("refuses with 403, before reading the program, when the Spotlight switch is off", async () => {
-      const { handlers, store } = setup({ seed: [PROGRAM, keyRecord(false)], guard: kodaGuard() });
+      const { handlers, store } = setup({ seed: [PROGRAM, keyRecord(false)], guard: agentGuard() });
       const res = parse(
         await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context),
       );
@@ -1337,17 +1338,17 @@ describe("POST cms/drafts with an originRef (#1886)", () => {
     });
 
     it("accepts it when the switch is on", async () => {
-      const { handlers } = setup({ seed: [PROGRAM, keyRecord(true)], guard: kodaGuard() });
+      const { handlers } = setup({ seed: [PROGRAM, keyRecord(true)], guard: agentGuard() });
       const res = parse(
         await handlers.create(request({ body: { fields: FIELDS, originRef: REF } }), context),
       );
       expect(res.status).toBe(201);
-      expect(res.body.draft.originRef.label).toBe("GitKraken Ambassador");
+      expect(res.body.draft.originRef.label).toBe("Example Program");
     });
 
-    it("does not show Koda where a draft came from while the switch is off", async () => {
+    it("does not show the agent key where a draft came from while the switch is off", async () => {
       const tagged = { ...DRAFT_FROM_PROGRAM };
-      const { handlers } = setup({ seed: [tagged, keyRecord(false)], guard: kodaGuard() });
+      const { handlers } = setup({ seed: [tagged, keyRecord(false)], guard: agentGuard() });
       const list = parse(await handlers.list(request(), context));
       expect(list.body.drafts[0]).not.toHaveProperty("originRef");
       const one = parse(await handlers.get(request({ id: tagged.id }), context));
@@ -1355,7 +1356,7 @@ describe("POST cms/drafts with an originRef (#1886)", () => {
     });
 
     it("asks nothing of a draft that names no Page", async () => {
-      const { handlers } = setup({ seed: [keyRecord(false)], guard: kodaGuard() });
+      const { handlers } = setup({ seed: [keyRecord(false)], guard: agentGuard() });
       const res = parse(await handlers.create(request({ body: { fields: FIELDS } }), context));
       expect(res.status).toBe(201);
     });

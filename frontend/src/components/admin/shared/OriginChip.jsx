@@ -1,6 +1,6 @@
 /**
  * OriginChip — which admin Page sent a piece of content into the Pipeline,
- * and which record on it (#1886): "Ambassador · GitKraken Ambassador", with
+ * and which record on it (#1886): "Ambassador · Example Program", with
  * that Page's icon, linking back to the record.
  *
  * Rendered by TaxonomyChips, so every Pipeline list and board that shows the
