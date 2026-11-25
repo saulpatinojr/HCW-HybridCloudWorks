@@ -61,21 +61,9 @@ export function variablesTf(state) {
     ])
   );
 
-  blocks.push(
-    block('variable "corp_count"', [
-      ['description', q('Number of private Corp service projects to attach to the Shared VPC.')],
-      ['type', 'number'],
-      ['default', '1'],
-    ])
-  );
-
-  blocks.push(
-    block('variable "online_count"', [
-      ['description', q('Number of public edge Online service projects to attach.')],
-      ['type', 'number'],
-      ['default', '1'],
-    ])
-  );
+  // No corp_count / online_count: the builder writes one project module per
+  // service project, so a count in tfvars would change nothing (the AWS pack
+  // dropped the same two for the same reason, #1876).
 
   return file('variables.tf', joinBlocks(blocks));
 }
@@ -89,8 +77,6 @@ export function tfvarsExample(state) {
     'host_project_id    = "prj-shared-vpc-host-hcw"',
     'logging_project_id = "prj-logging-hub-hcw"',
     `spoke_cidr         = "${state.options?.spokeCidr || '10.1.0.0/16'}"`,
-    `corp_count         = ${state.options?.corpCount ?? 1}`,
-    `online_count       = ${state.options?.onlineCount ?? 1}`,
   ];
   if (isSelected(state, 'identity')) {
     lines.push(
