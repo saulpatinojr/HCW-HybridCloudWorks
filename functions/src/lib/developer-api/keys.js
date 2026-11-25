@@ -27,6 +27,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { AuthoredError } from '../http/error-response.js';
+import { presentedKey } from '../presented-key.js';
 
 /** Keys start with this, so a pasted value is recognisable and a wrong paste is refused before any read. */
 export const KEY_PREFIX = 'hcdk_';
@@ -138,23 +139,9 @@ export const KEY_HEADERS = Object.freeze(['x-api-key']);
  * @returns {string | null}
  */
 export function developerKeyFrom(request) {
-  const authorization = headerText(request, 'authorization');
-  if (authorization) return keyInAuthorization(authorization);
-  const named = KEY_HEADERS.map((name) => headerText(request, name)).find(Boolean);
-  return named ?? null;
-}
-
-/** A header's value, trimmed; null when it is absent or blank. */
-function headerText(request, name) {
-  const value = request?.headers?.get?.(name);
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-/** The key in an Authorization value: after `Bearer`, or the whole value when it is shaped like a key. */
-function keyInAuthorization(authorization) {
-  const bearer = /^Bearer\s+(.+)$/i.exec(authorization);
-  if (bearer) return bearer[1].trim() || null;
-  return looksLikeKey(authorization) ? authorization : null;
+  // The same reading the agent-content API uses (presented-key.js), with
+  // this API's header list and key shape.
+  return presentedKey(request, { keyHeaders: KEY_HEADERS, looksLikeKey });
 }
 
 /** Does the presented key hash to the stored hash? Constant time over two equal-length digests. */
