@@ -65,6 +65,31 @@ const RESEND_REFUSALS = Object.freeze({
   exception: [502, 'The message could not be sent. Try again in a minute.'],
 });
 
+/** The alert a resend names, from a small body: `{ id }`, or `{ response }` refusing the body. */
+async function resendIdOf(request) {
+  const read = await readJsonBodyWithin(request, RESEND_BODY_MAX_BYTES);
+  if (read.tooLarge) {
+    return {
+      response: privateJson(413, {
+        ok: false,
+        error: 'body_too_large',
+        message: 'Send only the alert id.',
+      }),
+    };
+  }
+  const id = typeof read.body?.id === 'string' ? read.body.id.trim() : '';
+  if (!LOG_ID_PATTERN.test(id)) {
+    return {
+      response: privateJson(400, {
+        ok: false,
+        error: 'bad_id',
+        message: 'Name the alert to send again by its id from the alert log.',
+      }),
+    };
+  }
+  return { id };
+}
+
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
@@ -89,21 +114,9 @@ export function createAlertLogHandlers({ guard, store, notifier }) {
     async resend(request, context) {
       const auth = await guard.requireRole(request, ALERTS_RESEND_ROLE);
       if (auth.error) return auth.error;
-      const read = await readJsonBodyWithin(request, RESEND_BODY_MAX_BYTES);
-      if (read.tooLarge)
-        return privateJson(413, {
-          ok: false,
-          error: 'body_too_large',
-          message: 'Send only the alert id.',
-        });
-      const id = typeof read.body?.id === 'string' ? read.body.id.trim() : '';
-      if (!LOG_ID_PATTERN.test(id)) {
-        return privateJson(400, {
-          ok: false,
-          error: 'bad_id',
-          message: 'Name the alert to send again by its id from the alert log.',
-        });
-      }
+      const named = await resendIdOf(request);
+      if (named.response) return named.response;
+      const { id } = named;
       try {
         const result = await notifier.resendLogged(id);
         if (result?.sent) return privateJson(200, { ok: true, sent: true });
