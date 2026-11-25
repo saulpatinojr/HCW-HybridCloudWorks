@@ -2238,6 +2238,11 @@ jobs:
       # missing CLI or missing base rules stop it), so both answers arrive in
       # one run.
       #
+      # THE BASE is BASE_SHA, the same commit the security scan compares
+      # against and the rules came from, so the two checks judge one diff.
+      # For a pull_request run it is also the first parent of the merge
+      # commit checked out here; the step says so if the two ever differ.
+      #
       # `git diff -z`: every name ends in a NUL and none is quoted, so a file
       # whose name holds a tab, a newline or a quote keeps its base smells.
       - name: Check for new code smells
@@ -2249,6 +2254,10 @@ jobs:
           work="${RUNNER_TEMP}/smells"
           base="${work}/base-tree"
           mkdir -p "${work}"
+          parent="$(git rev-parse HEAD^1)"
+          if [ "${parent}" != "${BASE_SHA}" ]; then
+            echo "::warning title=Smell check::The merge commit's first parent (${parent}) is not the pull request's base (${BASE_SHA}); smells are compared with the base, like the security scan."
+          fi
           qlty smells --upstream "${BASE_SHA}" --no-snippets --quiet --json > "${work}/head.json"
           git diff -z --name-status -M "${BASE_SHA}" HEAD > "${work}/changes.z"
           git worktree add --detach --quiet "${base}" "${BASE_SHA}"
