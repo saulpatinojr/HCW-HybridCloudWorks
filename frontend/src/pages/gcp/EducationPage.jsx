@@ -1,5 +1,10 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Helmet } from 'react-helmet-async';
+import {
+  LearningPathsSection,
+  LearningResourcesSection,
+  OfficialLinksSection,
+} from '@/pages/shared/education/EducationSections';
 import CertificationCarouselSection from '@/components/education/CertificationCarouselSection';
 import { useCertificationCarousel } from '@/components/education/useCertificationCarousel';
 import FeaturedCertSection from '@/components/education/FeaturedCertSection';
@@ -180,18 +185,37 @@ const resources = [
   },
 ];
 
+/** The two big links to the issuer's own sites, near the top of the page. */
+const OFFICIAL_LINKS = [
+  {
+    href: 'https://cloudskillsboost.google/',
+    tone: 'blue',
+    icon: 'workspace_premium',
+    title: 'Google Cloud Skills Boost',
+    badge: 'Official',
+    address: 'cloudskillsboost.google',
+    text: 'Hands-on labs, skill badges, and learning paths from Google Cloud — the official platform for building verified cloud skills at any level.',
+  },
+  {
+    href: 'https://cloud.google.com/certification',
+    tone: 'cyan',
+    icon: 'construction',
+    title: 'GCP Certification Portal',
+    badge: 'Exams & Badges',
+    address: 'cloud.google.com/certification',
+    text: 'Browse all Google Cloud certifications, find exam guides, register for exams, and access your certification transcript and digital badges.',
+  },
+];
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function GCPEducationPage() {
-  const [selectedPathId, setSelectedPathId] = useState(0);
   const carousel = useCertificationCarousel(certifications, {
     visibleCount: VISIBLE_COUNT,
     asOf: DATA_AS_OF,
   });
 
   const featuredCert = certifications.find((c) => c.featured);
-
-  const selectedPath = learningPaths[selectedPathId];
 
   return (
     <>
@@ -235,81 +259,7 @@ export default function GCPEducationPage() {
         </section>
 
         {/* ── Official Resources Banner ─────────────────────────────────── */}
-        <section className="mb-12">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <a
-              href="https://cloudskillsboost.google/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group relative bg-linear-to-br from-blue-900/40 to-card/40 backdrop-blur-md border border-blue-500/30 rounded-2xl p-6 hover:shadow-[0_0_30px_rgba(59,130,246,0.2)] hover:border-blue-400/60 transition-all duration-300 flex items-start gap-5"
-            >
-              <div className="w-14 h-14 shrink-0 bg-blue-500/20 rounded-xl flex items-center justify-center">
-                <span
-                  className="text-blue-400 text-[28px] material-symbols-outlined"
-                  aria-hidden="true"
-                >
-                  workspace_premium
-                </span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <h2 className="text-lg font-bold text-slate-950 dark:text-white group-hover:text-blue-300 transition-colors">
-                    Google Cloud Skills Boost
-                  </h2>
-                  <span className="px-2 py-0.5 bg-blue-500/20 border border-blue-500/30 text-blue-300 text-[10px] font-bold rounded-full uppercase tracking-wider shrink-0">
-                    Official
-                  </span>
-                </div>
-                <p className="text-sm text-foreground mb-3">
-                  Hands-on labs, skill badges, and learning paths from Google Cloud — the official
-                  platform for building verified cloud skills at any level.
-                </p>
-                <div className="flex items-center gap-1.5 text-blue-400 text-sm font-semibold">
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                    open_in_new
-                  </span>
-                  cloudskillsboost.google
-                </div>
-              </div>
-            </a>
-
-            <a
-              href="https://cloud.google.com/certification"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group relative bg-linear-to-br from-cyan-900/40 to-card/40 backdrop-blur-md border border-cyan-500/30 rounded-2xl p-6 hover:shadow-[0_0_30px_rgba(6,182,212,0.2)] hover:border-cyan-400/60 transition-all duration-300 flex items-start gap-5"
-            >
-              <div className="w-14 h-14 shrink-0 bg-cyan-500/20 rounded-xl flex items-center justify-center">
-                <span
-                  className="text-cyan-400 text-[28px] material-symbols-outlined"
-                  aria-hidden="true"
-                >
-                  construction
-                </span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <h2 className="text-lg font-bold text-slate-950 dark:text-white group-hover:text-cyan-300 transition-colors">
-                    GCP Certification Portal
-                  </h2>
-                  <span className="px-2 py-0.5 bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-[10px] font-bold rounded-full uppercase tracking-wider shrink-0">
-                    Exams & Badges
-                  </span>
-                </div>
-                <p className="text-sm text-foreground mb-3">
-                  Browse all Google Cloud certifications, find exam guides, register for exams, and
-                  access your certification transcript and digital badges.
-                </p>
-                <div className="flex items-center gap-1.5 text-cyan-400 text-sm font-semibold">
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                    open_in_new
-                  </span>
-                  cloud.google.com/certification
-                </div>
-              </div>
-            </a>
-          </div>
-        </section>
+        <OfficialLinksSection links={OFFICIAL_LINKS} />
 
         {/* ── Browse Certifications Carousel ───────────────────────────── */}
         <CertificationCarouselSection
@@ -334,143 +284,10 @@ export default function GCPEducationPage() {
         />
 
         {/* ── Learning Paths ───────────────────────────────────────────── */}
-        <section className="mb-16">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-            <h3 className="text-2xl font-bold text-slate-950 dark:text-white flex items-center gap-2">
-              <span
-                className="text-primary text-[24px] material-symbols-outlined"
-                aria-hidden="true"
-              >
-                bookmark
-              </span>
-              Learning Paths
-            </h3>
-            <div className="relative">
-              <select
-                value={selectedPathId}
-                onChange={(e) => setSelectedPathId(Number(e.target.value))}
-                className="appearance-none bg-card/40 backdrop-blur-md border border-card/50 text-foreground text-sm rounded-xl px-4 pr-10 h-10 hover:border-primary/50 focus:outline-none focus:border-primary transition-colors cursor-pointer"
-              >
-                {learningPaths.map((p, i) => (
-                  <option key={i} value={i} className="bg-slate-900">
-                    {p.certCode} — {p.title}
-                  </option>
-                ))}
-              </select>
-              <span
-                className="absolute right-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-[16px] text-foreground pointer-events-none"
-                aria-hidden="true"
-              >
-                expand_more
-              </span>
-            </div>
-          </div>
-
-          {selectedPath && (
-            <article className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-8 hover:shadow-[0_0_25px_rgba(59,130,246,0.15)] hover:border-primary/50 transition-all duration-300">
-              <div className="flex flex-wrap items-center gap-3 mb-4">
-                <span className="px-3 py-1 bg-primary/20 border border-primary/30 text-primary text-xs font-bold rounded font-mono">
-                  {selectedPath.certCode}
-                </span>
-                <span className="px-3 py-1 bg-card/50 text-foreground text-xs font-bold rounded">
-                  {selectedPath.level}
-                </span>
-                <span className="text-sm text-foreground/60">{selectedPath.hours} hours</span>
-              </div>
-              <h2 className="text-3xl font-bold text-slate-950 dark:text-white mb-2">
-                {selectedPath.title}
-              </h2>
-              <p className="text-foreground mb-6 text-lg">{selectedPath.description}</p>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
-                <div className="bg-card/60 rounded-lg p-4">
-                  <div className="text-sm text-foreground mb-1">Total Hours</div>
-                  <div className="text-2xl font-bold text-primary">{selectedPath.hours}</div>
-                </div>
-                <div className="bg-card/60 rounded-lg p-4">
-                  <div className="text-sm text-foreground mb-1">Modules</div>
-                  <div className="text-2xl font-bold text-cyan-400">
-                    {selectedPath.modules.length}
-                  </div>
-                </div>
-              </div>
-
-              <h3 className="text-sm font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-3">
-                Modules
-              </h3>
-              <div className="space-y-2">
-                {selectedPath.modules.map((mod, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-3 p-3 bg-card/30 rounded-lg border border-card/40"
-                  >
-                    <span className="w-6 h-6 rounded-full bg-primary/20 text-primary text-xs font-bold flex items-center justify-center shrink-0">
-                      {i + 1}
-                    </span>
-                    <span className="text-sm text-foreground">{mod.title}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-8 flex flex-col sm:flex-row gap-3">
-                <a
-                  href={selectedPath.certUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 h-11 px-4 bg-primary hover:opacity-90 text-primary-foreground font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
-                >
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                    open_in_new
-                  </span>
-                  View {selectedPath.certCode} on Google Cloud
-                </a>
-              </div>
-            </article>
-          )}
-        </section>
+        <LearningPathsSection paths={learningPaths} palette="primary" issuer="Google Cloud" />
 
         {/* ── Learning Resources ───────────────────────────────────────── */}
-        <section className="mb-16">
-          <h3 className="text-2xl font-bold text-slate-950 dark:text-white mb-6 flex items-center gap-2">
-            <span className="text-primary text-[24px] material-symbols-outlined" aria-hidden="true">
-              library_books
-            </span>
-            Learning Resources
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {resources.map((resource) => (
-              <a
-                key={resource.id}
-                href={resource.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6 flex flex-col hover:shadow-[0_0_25px_rgba(59,130,246,0.15)] hover:border-primary/50 transition-all duration-300"
-              >
-                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <span
-                    className="material-symbols-outlined text-primary text-[24px]"
-                    aria-hidden="true"
-                  >
-                    {resource.icon}
-                  </span>
-                </div>
-                <div className="text-xs font-bold text-primary/70 uppercase tracking-wider mb-1">
-                  {resource.type}
-                </div>
-                <h4 className="font-bold text-slate-950 dark:text-white mb-2 group-hover:text-primary transition-colors">
-                  {resource.title}
-                </h4>
-                <p className="text-xs text-foreground flex-1">{resource.description}</p>
-                <div className="mt-4 flex items-center gap-1 text-primary text-xs font-semibold">
-                  Explore{' '}
-                  <span className="material-symbols-outlined text-[14px]" aria-hidden="true">
-                    open_in_new
-                  </span>
-                </div>
-              </a>
-            ))}
-          </div>
-        </section>
+        <LearningResourcesSection resources={resources} palette="primary" />
       </main>
     </>
   );

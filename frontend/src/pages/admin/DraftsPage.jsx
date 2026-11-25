@@ -129,15 +129,8 @@ export default function DraftsPage() {
     // its result, which would replace a linked draft opened in the meantime.
     // And hold while a failed write's error or conflict is on screen, so the
     // switch (which clears them) does not hide what went wrong.
-    if (
-      !linkedId ||
-      linkOpened.current ||
-      list.loading ||
-      writes.busy ||
-      writes.actionError ||
-      writes.conflict
-    )
-      return;
+    const waiting = list.loading || writes.busy || writes.actionError || writes.conflict;
+    if (!linkedId || linkOpened.current || waiting) return;
     linkOpened.current = true;
     // Through the same guard as an in-page switch: if the owner started a new
     // draft while the list was still loading, the link asks before replacing

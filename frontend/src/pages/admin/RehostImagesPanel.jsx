@@ -101,6 +101,101 @@ export function shortDate(iso) {
   return Number.isNaN(parsed.getTime()) ? '—' : parsed.toISOString().slice(0, 10);
 }
 
+/** The audit row for one run: how many were asked for, re-hosted, failed and skipped. */
+function rehostSummary(ids, rows) {
+  return {
+    requested: ids.length,
+    rehosted: rows.filter((row) => row.rewritten !== null).length,
+    failed: rows.filter((row) => row.outcome.startsWith('Error')).length,
+    skipped: rows.filter((row) => row.outcome.startsWith('Skipped')).length,
+  };
+}
+
+/** One candidate article, with its checkbox, its image facts and its last run. */
+function CandidateRow({ row, checked, onToggle, running }) {
+  return (
+    <li className="flex items-start gap-3 rounded-lg border p-2 text-sm hover:bg-muted/40">
+      <input
+        id={`rehost-${row.id}`}
+        type="checkbox"
+        checked={checked}
+        onChange={() => onToggle(row.id)}
+        disabled={running}
+        aria-label={`Select ${row.title}`}
+        className="mt-1 h-4 w-4 rounded border-border accent-primary"
+      />
+      {/* The label covers the title and its facts only: a link
+          inside it would toggle the checkbox on every click. */}
+      <label htmlFor={`rehost-${row.id}`} className="flex-1 min-w-0 cursor-pointer">
+        <span className="block font-medium truncate">{row.title}</span>
+        <span className="block text-xs text-muted-foreground">
+          {row.urlCount} {row.urlCount === 1 ? 'image' : 'images'} · {(row.hosts || []).join(', ')}{' '}
+          · in {(row.fields || []).join(', ')}
+        </span>
+        {row.lastRun && (
+          <span className="block text-xs text-muted-foreground">
+            Last run {shortDate(row.lastRun.at)}: {row.lastRun.rewritten} re-hosted,{' '}
+            {row.lastRun.failed} failed
+            {row.lastRun.failedHosts?.length ? ` (${row.lastRun.failedHosts.join(', ')})` : ''}
+          </span>
+        )}
+      </label>
+      {row.live ? (
+        <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">
+          Live
+        </Badge>
+      ) : (
+        <Badge variant="outline">Staged</Badge>
+      )}
+      {row.publicUrl && (
+        <a
+          href={row.publicUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`View ${row.title}`}
+          className="text-xs underline shrink-0"
+        >
+          View
+        </a>
+      )}
+    </li>
+  );
+}
+
+/** What the last run did, one row per article. */
+function ResultsTable({ results }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm" aria-label="Re-host results">
+        <thead>
+          <tr className="text-left text-xs text-muted-foreground border-b">
+            <th className="py-1 pr-3 font-medium">Article</th>
+            <th className="py-1 pr-3 font-medium">Rewritten</th>
+            <th className="py-1 pr-3 font-medium">Failed</th>
+            <th className="py-1 pr-3 font-medium">Failed hosts</th>
+            <th className="py-1 font-medium">Outcome</th>
+          </tr>
+        </thead>
+        <tbody>
+          {results.map((row) => (
+            <tr key={row.contentId} className="border-b last:border-0 align-top">
+              <td className="py-1 pr-3 max-w-[20rem] truncate">{row.title}</td>
+              <td className="py-1 pr-3">{row.rewritten ?? '—'}</td>
+              <td className="py-1 pr-3">{row.failed ?? '—'}</td>
+              <td className="py-1 pr-3">
+                {row.failedHosts.length ? row.failedHosts.join(', ') : '—'}
+              </td>
+              <td className={`py-1 ${row.outcome.startsWith('Error') ? 'text-destructive' : ''}`}>
+                {row.outcome}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /** The backfill's panel: listing the candidates is an editor read, and the run republishes, so only the run is gated at publisher. */
 export default function RehostImagesPanel() {
   const [open, setOpen] = useState(false);
@@ -169,12 +264,7 @@ export default function RehostImagesPanel() {
         for (const result of res?.results || []) rows.push(toResultRow(result, titleById));
         setResults([...rows]);
       }
-      await logAdminAction('content_images_rehosted', {
-        requested: ids.length,
-        rehosted: rows.filter((row) => row.rewritten !== null).length,
-        failed: rows.filter((row) => row.outcome.startsWith('Error')).length,
-        skipped: rows.filter((row) => row.outcome.startsWith('Skipped')).length,
-      });
+      await logAdminAction('content_images_rehosted', rehostSummary(ids, rows));
       await load();
     } catch (err) {
       setError(`Re-host failed: ${err.message}`);
@@ -233,56 +323,13 @@ export default function RehostImagesPanel() {
 
           <ul className="space-y-2">
             {candidates.map((row) => (
-              <li
+              <CandidateRow
                 key={row.id}
-                className="flex items-start gap-3 rounded-lg border p-2 text-sm hover:bg-muted/40"
-              >
-                <input
-                  id={`rehost-${row.id}`}
-                  type="checkbox"
-                  checked={selected.has(row.id)}
-                  onChange={() => toggle(row.id)}
-                  disabled={running}
-                  aria-label={`Select ${row.title}`}
-                  className="mt-1 h-4 w-4 rounded border-border accent-primary"
-                />
-                {/* The label covers the title and its facts only: a link
-                          inside it would toggle the checkbox on every click. */}
-                <label htmlFor={`rehost-${row.id}`} className="flex-1 min-w-0 cursor-pointer">
-                  <span className="block font-medium truncate">{row.title}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {row.urlCount} {row.urlCount === 1 ? 'image' : 'images'} ·{' '}
-                    {(row.hosts || []).join(', ')} · in {(row.fields || []).join(', ')}
-                  </span>
-                  {row.lastRun && (
-                    <span className="block text-xs text-muted-foreground">
-                      Last run {shortDate(row.lastRun.at)}: {row.lastRun.rewritten} re-hosted,{' '}
-                      {row.lastRun.failed} failed
-                      {row.lastRun.failedHosts?.length
-                        ? ` (${row.lastRun.failedHosts.join(', ')})`
-                        : ''}
-                    </span>
-                  )}
-                </label>
-                {row.live ? (
-                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">
-                    Live
-                  </Badge>
-                ) : (
-                  <Badge variant="outline">Staged</Badge>
-                )}
-                {row.publicUrl && (
-                  <a
-                    href={row.publicUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={`View ${row.title}`}
-                    className="text-xs underline shrink-0"
-                  >
-                    View
-                  </a>
-                )}
-              </li>
+                row={row}
+                checked={selected.has(row.id)}
+                onToggle={toggle}
+                running={running}
+              />
             ))}
           </ul>
 
@@ -307,38 +354,7 @@ export default function RehostImagesPanel() {
         </>
       )}
 
-      {results.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm" aria-label="Re-host results">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground border-b">
-                <th className="py-1 pr-3 font-medium">Article</th>
-                <th className="py-1 pr-3 font-medium">Rewritten</th>
-                <th className="py-1 pr-3 font-medium">Failed</th>
-                <th className="py-1 pr-3 font-medium">Failed hosts</th>
-                <th className="py-1 font-medium">Outcome</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((row) => (
-                <tr key={row.contentId} className="border-b last:border-0 align-top">
-                  <td className="py-1 pr-3 max-w-[20rem] truncate">{row.title}</td>
-                  <td className="py-1 pr-3">{row.rewritten ?? '—'}</td>
-                  <td className="py-1 pr-3">{row.failed ?? '—'}</td>
-                  <td className="py-1 pr-3">
-                    {row.failedHosts.length ? row.failedHosts.join(', ') : '—'}
-                  </td>
-                  <td
-                    className={`py-1 ${row.outcome.startsWith('Error') ? 'text-destructive' : ''}`}
-                  >
-                    {row.outcome}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {results.length > 0 && <ResultsTable results={results} />}
     </CollapsiblePanel>
   );
 }

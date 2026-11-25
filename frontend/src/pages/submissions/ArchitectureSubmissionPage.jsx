@@ -22,6 +22,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { submitPublicContent } from '@/lib/publicApi';
+import { BasicInfoCard, FieldLabel } from './SubmissionFields';
 import SubmissionReceived from './SubmissionReceived';
 
 const REFERENCE_BLUEPRINTS = [
@@ -293,137 +294,34 @@ export default function ArchitectureSubmissionPage() {
         ) : (
           <form onSubmit={handleSubmit} className="max-w-4xl space-y-6">
             {/* Basic Info */}
-            <Card className="bg-card/40">
-              <CardHeader>
-                <CardTitle className="text-base">Basic Information</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label
-                      htmlFor="arch-title"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Blueprint Title *
-                    </label>
-                    <Input
-                      id="arch-title"
-                      value={form.title}
-                      onChange={(e) => handleChange('title', e.target.value)}
-                      placeholder="AWS Multi-Region Web Application"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="arch-provider"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Cloud Provider *
-                    </label>
-                    <select
-                      id="arch-provider"
-                      value={form.cloudProvider}
-                      onChange={(e) => handleChange('cloudProvider', e.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                      {PROVIDER_OPTIONS.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label
-                    htmlFor="arch-summary"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Short Description / Summary *
-                  </label>
-                  <Textarea
-                    id="arch-summary"
-                    value={form.summary}
-                    onChange={(e) => handleChange('summary', e.target.value)}
-                    placeholder="A highly available, multi-region web application architecture using..."
-                    className="min-h-[80px]"
-                    required
-                  />
-                </div>
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div>
-                    <label
-                      htmlFor="arch-category"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Category
-                    </label>
-                    <select
-                      id="arch-category"
-                      value={form.category}
-                      onChange={(e) => handleChange('category', e.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                      {CATEGORY_OPTIONS.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="arch-complexity"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Complexity
-                    </label>
-                    <select
-                      id="arch-complexity"
-                      value={form.complexity}
-                      onChange={(e) => handleChange('complexity', e.target.value)}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                      {COMPLEXITY_OPTIONS.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="arch-tags"
-                      className="text-xs font-medium text-muted-foreground mb-1 block"
-                    >
-                      Tags (comma-separated)
-                    </label>
-                    <Input
-                      id="arch-tags"
-                      value={form.tags}
-                      onChange={(e) => handleChange('tags', e.target.value)}
-                      placeholder="HA, Multi-Region, Auto-Scaling"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label
-                    htmlFor="arch-diagram"
-                    className="text-xs font-medium text-muted-foreground mb-1 block"
-                  >
-                    Architecture Diagram URL
-                  </label>
-                  <Input
-                    id="arch-diagram"
-                    value={form.diagramUrl}
-                    onChange={(e) => handleChange('diagramUrl', e.target.value)}
-                    placeholder="https://..."
-                    type="url"
-                  />
-                </div>
-              </CardContent>
-            </Card>
+            <BasicInfoCard
+              idPrefix="arch"
+              form={form}
+              onChange={handleChange}
+              text={{
+                titleLabel: 'Blueprint Title *',
+                titlePlaceholder: 'AWS Multi-Region Web Application',
+                summaryPlaceholder:
+                  'A highly available, multi-region web application architecture using...',
+                tagsPlaceholder: 'HA, Multi-Region, Auto-Scaling',
+              }}
+              options={{
+                providers: PROVIDER_OPTIONS,
+                categories: CATEGORY_OPTIONS,
+                complexities: COMPLEXITY_OPTIONS,
+              }}
+            >
+              <div>
+                <FieldLabel htmlFor="arch-diagram">Architecture Diagram URL</FieldLabel>
+                <Input
+                  id="arch-diagram"
+                  value={form.diagramUrl}
+                  onChange={(e) => handleChange('diagramUrl', e.target.value)}
+                  placeholder="https://..."
+                  type="url"
+                />
+              </div>
+            </BasicInfoCard>
 
             {/* Content Tabs */}
             <Card className="bg-card/40">

@@ -285,15 +285,21 @@ const NAV_ITEMS = [
   { id: 'references', label: 'References' },
 ];
 
-function buildInstallSection(doc) {
-  if (!doc.sections?.install?.steps?.length) return null;
+/**
+ * A section made of numbered steps (install, use, uninstall, advanced), or
+ * null when the document has no steps for it. `fallbackTitle` is used when
+ * the section names no title of its own.
+ */
+function buildStepsSection(doc, id, fallbackTitle, defaultOpen) {
+  const section = doc.sections?.[id];
+  if (!section?.steps?.length) return null;
   return {
-    id: 'install',
-    title: doc.sections.install.title || 'Install',
-    defaultOpen: true,
+    id,
+    title: section.title || fallbackTitle,
+    defaultOpen,
     content: (
       <div className="space-y-6">
-        {doc.sections.install.steps.map((step, i) => (
+        {section.steps.map((step, i) => (
           <DocStep key={i} step={step} />
         ))}
       </div>
@@ -301,53 +307,11 @@ function buildInstallSection(doc) {
   };
 }
 
-function buildUseSection(doc) {
-  if (!doc.sections?.use?.steps?.length) return null;
-  return {
-    id: 'use',
-    title: doc.sections.use.title || 'Use',
-    defaultOpen: true,
-    content: (
-      <div className="space-y-6">
-        {doc.sections.use.steps.map((step, i) => (
-          <DocStep key={i} step={step} />
-        ))}
-      </div>
-    ),
-  };
-}
-
-function buildUninstallSection(doc) {
-  if (!doc.sections?.uninstall?.steps?.length) return null;
-  return {
-    id: 'uninstall',
-    title: doc.sections.uninstall.title || 'Uninstall / Disconnect',
-    defaultOpen: false,
-    content: (
-      <div className="space-y-6">
-        {doc.sections.uninstall.steps.map((step, i) => (
-          <DocStep key={i} step={step} />
-        ))}
-      </div>
-    ),
-  };
-}
-
-function buildAdvancedSection(doc) {
-  if (!doc.sections?.advanced?.steps?.length) return null;
-  return {
-    id: 'advanced',
-    title: doc.sections.advanced.title || 'Advanced',
-    defaultOpen: false,
-    content: (
-      <div className="space-y-6">
-        {doc.sections.advanced.steps.map((step, i) => (
-          <DocStep key={i} step={step} />
-        ))}
-      </div>
-    ),
-  };
-}
+const buildInstallSection = (doc) => buildStepsSection(doc, 'install', 'Install', true);
+const buildUseSection = (doc) => buildStepsSection(doc, 'use', 'Use', true);
+const buildUninstallSection = (doc) =>
+  buildStepsSection(doc, 'uninstall', 'Uninstall / Disconnect', false);
+const buildAdvancedSection = (doc) => buildStepsSection(doc, 'advanced', 'Advanced', false);
 
 function buildReferencesSection(doc) {
   if (!doc.references?.length) return null;

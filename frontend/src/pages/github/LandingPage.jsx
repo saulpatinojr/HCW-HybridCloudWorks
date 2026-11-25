@@ -2,6 +2,11 @@ import React from 'react';
 import { Link } from 'react-router';
 import { routes } from '@/lib/routeFactory';
 import ProviderLandingTemplate from '@/components/shared/ProviderLandingTemplate';
+import {
+  CertTrackGrid,
+  FeatureCardGrid,
+  FrameworkCardGrid,
+} from '@/pages/shared/landing/LandingSections';
 import HeroImageCarousel from '@/components/landing/HeroImageCarousel';
 import { useCoderCornerData } from '@/hooks/useCoderCornerData';
 
@@ -92,44 +97,6 @@ const LEARNING = [
   },
 ];
 
-function ActionCards() {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      {ACTION_CARDS.map((card) => (
-        <Link
-          key={card.title}
-          to={card.to}
-          className="glass glass-hover rounded-xl overflow-hidden flex flex-col"
-        >
-          <div className="h-2 w-full bg-primary/60" aria-hidden="true" />
-          <div className="p-5 flex flex-col gap-2 flex-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] bg-primary/15 text-primary px-2 py-0.5 rounded font-bold uppercase tracking-wide">
-                {card.label}
-              </span>
-              <span className="text-[10px] text-slate-500">{card.meta}</span>
-            </div>
-            <h3 className="font-bold text-foreground">{card.title}</h3>
-            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-              {card.text}
-            </p>
-            <div className="flex gap-1 flex-wrap mt-auto pt-2">
-              {card.tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </div>
-        </Link>
-      ))}
-    </div>
-  );
-}
-
 function CoderCornerPanel() {
   const { items, loading } = useCoderCornerData('github');
   const visible = items.slice(0, 3);
@@ -178,72 +145,6 @@ function CoderCornerPanel() {
   );
 }
 
-function PracticeCards() {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-      {PRACTICES.map(({ abbr, name, description, to }) => (
-        <Link key={abbr} to={to} className="glass glass-hover rounded-xl p-5 flex flex-col gap-3">
-          <div className="flex items-center gap-3">
-            <div className="size-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-base" aria-hidden="true">
-                account_tree
-              </span>
-            </div>
-            <div>
-              <div className="text-[10px] font-black text-primary/80 tracking-widest uppercase">
-                {abbr}
-              </div>
-              <h3 className="text-sm font-bold text-foreground leading-snug">{name}</h3>
-            </div>
-          </div>
-          <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-            {description}
-          </p>
-        </Link>
-      ))}
-    </div>
-  );
-}
-
-function LearningList() {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-      {LEARNING.map(({ code, title, difficulty, duration, skills, to }) => (
-        <Link
-          key={code}
-          to={to}
-          className="glass glass-hover rounded-xl flex items-start gap-3 p-4"
-        >
-          <div className="size-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
-            <span className="material-symbols-outlined text-primary text-base" aria-hidden="true">
-              workspace_premium
-            </span>
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-              <span className="text-[10px] font-black text-primary">{code}</span>
-              <span className="text-[10px] text-slate-500">
-                {difficulty} · {duration}
-              </span>
-            </div>
-            <h3 className="text-sm font-bold text-foreground leading-snug">{title}</h3>
-            <div className="flex gap-1 flex-wrap mt-1">
-              {skills.map((s) => (
-                <span
-                  key={s}
-                  className="text-[10px] bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-1.5 py-0.5 rounded"
-                >
-                  {s}
-                </span>
-              ))}
-            </div>
-          </div>
-        </Link>
-      ))}
-    </div>
-  );
-}
-
 export default function GitHubLandingPage() {
   return (
     <ProviderLandingTemplate
@@ -277,7 +178,7 @@ export default function GitHubLandingPage() {
           eyebrow: 'AUTOMATION',
           title: 'GitHub Actions Library',
           action: { label: 'All workflows', to: routes.workflows('github') },
-          content: <ActionCards />,
+          content: <FeatureCardGrid cards={ACTION_CARDS} />,
         },
         {
           eyebrow: 'COMMUNITY',
@@ -288,13 +189,13 @@ export default function GitHubLandingPage() {
         {
           eyebrow: 'PRACTICES',
           title: 'Engineering Practices',
-          content: <PracticeCards />,
+          content: <FrameworkCardGrid frameworks={PRACTICES} />,
         },
         {
           eyebrow: 'LEARNING CENTER',
           title: 'Learning Tracks',
           action: { label: 'Learning hub', to: routes.education('github') },
-          content: <LearningList />,
+          content: <CertTrackGrid certs={LEARNING} linkFor={(track) => track.to} columns={3} />,
         },
       ]}
     />

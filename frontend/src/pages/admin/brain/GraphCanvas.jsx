@@ -5,20 +5,86 @@ import { Button } from '@/components/ui/button';
 import { useForceGraph } from './useForceGraph';
 import { graphLabels } from './graphLabels';
 
-function GraphNode({ node, active, neighbor, dim, label, onFocus, drag, theme, colors }) {
+/** Where a pointer event falls, in the map's own coordinates. */
+function svgPoint(event, node) {
+  const matrix = event.currentTarget.ownerSVGElement.getScreenCTM();
+  return matrix
+    ? new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse())
+    : { x: node.x, y: node.y };
+}
+
+/**
+ * A node's pointer and keyboard handling: a press without movement (or Enter
+ * or Space) focuses the node; a press that moves more than 4 pixels drags it.
+ */
+function useNodeGesture(node, drag, onFocus) {
   const gesture = useRef(null);
-  function point(event) {
-    const matrix = event.currentTarget.ownerSVGElement.getScreenCTM();
-    return matrix
-      ? new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse())
-      : { x: node.x, y: node.y };
-  }
-  function move(event) {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId) || !gesture.current) return;
-    if (Math.hypot(event.clientX - gesture.current.x, event.clientY - gesture.current.y) > 4)
-      gesture.current.moved = true;
-    if (gesture.current.moved) drag(node.id, point(event));
-  }
+  return {
+    onMouseDown: (event) => event.stopPropagation(),
+    onKeyDown: (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        onFocus(node.id);
+      }
+    },
+    onClick: () => {
+      if (!gesture.current?.moved) onFocus(node.id);
+    },
+    onPointerDown: (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      gesture.current = { x: event.clientX, y: event.clientY, moved: false };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    onPointerMove: (event) => {
+      if (!event.currentTarget.hasPointerCapture(event.pointerId) || !gesture.current) return;
+      if (Math.hypot(event.clientX - gesture.current.x, event.clientY - gesture.current.y) > 4)
+        gesture.current.moved = true;
+      if (gesture.current.moved) drag(node.id, svgPoint(event, node));
+    },
+    onPointerUp: (event) => {
+      if (gesture.current?.moved) drag(node.id, svgPoint(event, node), true);
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    },
+    onPointerCancel: (event) => {
+      drag(node.id, svgPoint(event, node), true);
+      gesture.current = null;
+    },
+  };
+}
+
+/** Topics and projects are a fixed size; other nodes grow with their links. */
+function nodeRadius(node) {
+  return node.type === 'topic' || node.type === 'project'
+    ? 11
+    : 7 + Math.min(node.degree || 0, 12) * 0.45;
+}
+
+/** The node's title beside it, in one or more lines. */
+function NodeLabel({ label, theme }) {
+  return (
+    <text
+      x={label.dx}
+      y={label.dy}
+      textAnchor={label.anchor}
+      fill={theme.text}
+      stroke={theme.background}
+      strokeWidth={label.fontSize * 0.25}
+      paintOrder="stroke"
+      className="pointer-events-none font-medium"
+      style={{ fontSize: label.fontSize }}
+    >
+      {label.lines.map((line, i) => (
+        <tspan key={i} x={label.dx} dy={i ? label.lineHeight : 0}>
+          {line}
+        </tspan>
+      ))}
+    </text>
+  );
+}
+
+function GraphNode({ node, active, neighbor, dim, label, onFocus, drag, theme, colors }) {
+  const handlers = useNodeGesture(node, drag, onFocus);
   const color = colors[node.type] || theme.nodes.reference;
   return (
     <g
@@ -29,31 +95,7 @@ function GraphNode({ node, active, neighbor, dim, label, onFocus, drag, theme, c
       aria-label={`Explore ${node.title}`}
       aria-pressed={active}
       transform={`translate(${node.x},${node.y})`}
-      onMouseDown={(event) => event.stopPropagation()}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onFocus(node.id);
-        }
-      }}
-      onClick={() => {
-        if (!gesture.current?.moved) onFocus(node.id);
-      }}
-      onPointerDown={(event) => {
-        event.stopPropagation();
-        event.preventDefault();
-        gesture.current = { x: event.clientX, y: event.clientY, moved: false };
-        event.currentTarget.setPointerCapture(event.pointerId);
-      }}
-      onPointerMove={move}
-      onPointerUp={(event) => {
-        if (gesture.current?.moved) drag(node.id, point(event), true);
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }}
-      onPointerCancel={(event) => {
-        drag(node.id, point(event), true);
-        gesture.current = null;
-      }}
+      {...handlers}
       opacity={dim ? 0.2 : 1}
     >
       <title>{node.title}</title>
@@ -67,35 +109,8 @@ function GraphNode({ node, active, neighbor, dim, label, onFocus, drag, theme, c
           strokeOpacity={active ? 1 : 0.35}
         />
       )}
-      <circle
-        r={
-          node.type === 'topic' || node.type === 'project'
-            ? 11
-            : 7 + Math.min(node.degree || 0, 12) * 0.45
-        }
-        fill={color}
-        stroke={theme.background}
-        strokeWidth="2"
-      />
-      {label && (
-        <text
-          x={label.dx}
-          y={label.dy}
-          textAnchor={label.anchor}
-          fill={theme.text}
-          stroke={theme.background}
-          strokeWidth={label.fontSize * 0.25}
-          paintOrder="stroke"
-          className="pointer-events-none font-medium"
-          style={{ fontSize: label.fontSize }}
-        >
-          {label.lines.map((line, i) => (
-            <tspan key={i} x={label.dx} dy={i ? label.lineHeight : 0}>
-              {line}
-            </tspan>
-          ))}
-        </text>
-      )}
+      <circle r={nodeRadius(node)} fill={color} stroke={theme.background} strokeWidth="2" />
+      {label && <NodeLabel label={label} theme={theme} />}
     </g>
   );
 }

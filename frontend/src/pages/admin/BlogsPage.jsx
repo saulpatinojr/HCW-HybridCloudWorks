@@ -215,6 +215,66 @@ function SourceEditor({ source, onSaved, onCancel }) {
   );
 }
 
+/** What an intake run reports when it finishes. */
+function syncMessage(source, result) {
+  const failures = Array.isArray(result.errors) ? result.errors.length : result.errors || 0;
+  return result.skipped
+    ? 'Blog-page discovery is unavailable. Check the Firecrawl integration.'
+    : `${source.name}: ${result.newContent ?? result.newArticles ?? 0} new articles; ${failures} source errors. Open the article list to review new drafts.`;
+}
+
+/** A filter for the source list: the chosen provider, and the search text in the name or URL. */
+const sourceMatches = (provider, query) => (source) =>
+  (provider === 'all' || source.provider === provider) &&
+  `${source.name} ${source.url}`.toLowerCase().includes(query.toLowerCase());
+
+/** One blog source: its settings, its last run, and Edit and Run now. */
+function SourceCard({ source, running, onEdit, onSync }) {
+  return (
+    <Card className="p-4 sm:p-5 space-y-3 min-w-0">
+      <div className="flex flex-wrap justify-between gap-2">
+        <h2 className="font-semibold break-words min-w-0">{source.name}</h2>
+        <span className="text-xs text-muted-foreground">
+          {source.enabled ? 'Enabled' : 'Paused'} ·{' '}
+          {source.official ? 'Official' : 'Custom / untrusted'}
+        </span>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {PROVIDER_LABELS[source.provider]} · {source.kind === 'rss' ? 'RSS' : 'Blog listing'} · Up
+        to {source.maxItems} articles per run
+      </p>
+      <a
+        href={source.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block text-sm text-primary break-all underline"
+      >
+        {source.url}
+      </a>
+      <p className="text-xs text-muted-foreground">
+        {source.lastRun
+          ? `Last run: ${source.lastRun.status} · ${new Date(source.lastRun.fetchedAt).toLocaleString()}`
+          : 'No recorded intake run yet.'}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        {source.fallbackImageUrl ? 'Fallback image selected' : 'No source fallback image'}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" onClick={() => onEdit(source)}>
+          Edit source
+        </Button>
+        <Button
+          size="sm"
+          disabled={!source.enabled || Boolean(running)}
+          onClick={() => onSync(source)}
+        >
+          {running === source.id ? 'Running intake…' : 'Run now'}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function Sources() {
   const { authReady } = useAuthReady();
   const [sources, setSources] = useState([]);
@@ -254,13 +314,7 @@ function Sources() {
     try {
       const job = await runJob('sync-blog-source', { sourceId: source.id });
       if (job.status !== 'succeeded') throw new Error(job.error || 'Intake did not finish.');
-      const result = job.result || {};
-      const failures = Array.isArray(result.errors) ? result.errors.length : result.errors || 0;
-      setMessage(
-        result.skipped
-          ? 'Blog-page discovery is unavailable. Check the Firecrawl integration.'
-          : `${source.name}: ${result.newContent ?? result.newArticles ?? 0} new articles; ${failures} source errors. Open the article list to review new drafts.`
-      );
+      setMessage(syncMessage(source, job.result || {}));
       setRevision((value) => value + 1);
     } catch (err) {
       setError(err.message || 'Intake could not run.');
@@ -285,11 +339,7 @@ function Sources() {
         }}
       />
     );
-  const filtered = sources.filter(
-    (source) =>
-      (provider === 'all' || source.provider === provider) &&
-      `${source.name} ${source.url}`.toLowerCase().includes(query.toLowerCase())
-  );
+  const filtered = sources.filter(sourceMatches(provider, query));
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-3 items-end">
@@ -345,47 +395,13 @@ function Sources() {
       {!loading && !error && !filtered.length && <p>No sources match these filters.</p>}
       <div className="grid gap-4 xl:grid-cols-2">
         {filtered.map((source) => (
-          <Card key={source.id} className="p-4 sm:p-5 space-y-3 min-w-0">
-            <div className="flex flex-wrap justify-between gap-2">
-              <h2 className="font-semibold break-words min-w-0">{source.name}</h2>
-              <span className="text-xs text-muted-foreground">
-                {source.enabled ? 'Enabled' : 'Paused'} ·{' '}
-                {source.official ? 'Official' : 'Custom / untrusted'}
-              </span>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {PROVIDER_LABELS[source.provider]} · {source.kind === 'rss' ? 'RSS' : 'Blog listing'}{' '}
-              · Up to {source.maxItems} articles per run
-            </p>
-            <a
-              href={source.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-sm text-primary break-all underline"
-            >
-              {source.url}
-            </a>
-            <p className="text-xs text-muted-foreground">
-              {source.lastRun
-                ? `Last run: ${source.lastRun.status} · ${new Date(source.lastRun.fetchedAt).toLocaleString()}`
-                : 'No recorded intake run yet.'}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {source.fallbackImageUrl ? 'Fallback image selected' : 'No source fallback image'}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => setEdit(source)}>
-                Edit source
-              </Button>
-              <Button
-                size="sm"
-                disabled={!source.enabled || Boolean(running)}
-                onClick={() => sync(source)}
-              >
-                {running === source.id ? 'Running intake…' : 'Run now'}
-              </Button>
-            </div>
-          </Card>
+          <SourceCard
+            key={source.id}
+            source={source}
+            running={running}
+            onEdit={setEdit}
+            onSync={sync}
+          />
         ))}
       </div>
     </div>
