@@ -131,6 +131,24 @@ function isoDate(value, where) {
   return raw;
 }
 
+/** The optional picture: null when absent, else `{ src, alt }` with a safe address. */
+function interviewImage(value, at) {
+  if (value === undefined || value === null) return null;
+  if (!isObject(value)) throw new InterviewError(at('image must have a src and an alt.'));
+  const src = safeLink(value.src);
+  if (!src) {
+    throw new InterviewError(
+      at(
+        'image src must be an address on this site (starting with one "/") or an https:// address.'
+      )
+    );
+  }
+  return {
+    src,
+    alt: text(value.alt, at('image alt (what the picture shows)'), { max: MAX_SHORT }),
+  };
+}
+
 /**
  * Check one interview file and return it in the one shape the pages read.
  * Throws an `InterviewError` naming the file (`<slug>.json`) and the field.
@@ -178,22 +196,7 @@ export function normalizeInterview(raw, slug) {
     };
   });
 
-  let image = null;
-  if (raw.image !== undefined && raw.image !== null) {
-    if (!isObject(raw.image)) throw new InterviewError(at('image must have a src and an alt.'));
-    const src = safeLink(raw.image.src);
-    if (!src) {
-      throw new InterviewError(
-        at(
-          'image src must be an address on this site (starting with one "/") or an https:// address.'
-        )
-      );
-    }
-    image = {
-      src,
-      alt: text(raw.image.alt, at('image alt (what the picture shows)'), { max: MAX_SHORT }),
-    };
-  }
+  const image = interviewImage(raw.image, at);
 
   const related = isObject(raw.related) ? raw.related : {};
   return {
