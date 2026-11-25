@@ -445,7 +445,7 @@ const ITEMS = [
     '/admin/platform-settings',
     SlidersHorizontal,
     'Platform Settings',
-    'Defaults the pipeline reads on every run: covers, voices, content types, autoposting — and the reminders sheet.',
+    'Defaults the pipeline reads on every run: covers, voices, content types, autoposting — the reminders sheet and every scheduled task.',
     { minRole: 'editor' },
   ],
   [

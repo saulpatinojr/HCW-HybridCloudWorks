@@ -84,6 +84,7 @@ describe('tabs', () => {
       ['social', 'Social automation'],
       ['audio', 'Audio'],
       ['reminders', 'Reminders'],
+      ['schedules', 'Scheduled tasks'],
       ['history', 'Change history'],
     ]);
     expect(resolveTab('audio').id).toBe('audio');
@@ -180,6 +181,17 @@ describe('tabs', () => {
     renderAt('/admin/platform-settings?tab=reminders');
     await screen.findByText(/Nothing here yet/);
     expect(routesAsked()).toEqual([settingRoute('reminders')]);
+    expect(postJSON).not.toHaveBeenCalled();
+  });
+
+  it('deep-links Scheduled tasks, which reads nothing from the server', async () => {
+    renderAt('/admin/platform-settings?tab=schedules');
+    expect(screen.getByRole('tab', { name: 'Scheduled tasks' }).getAttribute('aria-selected')).toBe(
+      'true'
+    );
+    expect(screen.getByRole('heading', { name: /GitHub Actions/ })).toBeTruthy();
+    expect(screen.getByText('Update AVM Versions')).toBeTruthy();
+    expect(routesAsked()).toEqual([]);
     expect(postJSON).not.toHaveBeenCalled();
   });
 
