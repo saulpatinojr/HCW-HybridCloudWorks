@@ -450,22 +450,20 @@ export async function synthesizeDialogue({
  * `providerEnv`.
  */
 function modelFor(providerName, env, model) {
-  if (providerName === 'elevenlabs') {
-    return (
-      (isElevenLabsModel(model) ? model : null) ||
-      readSetting(env, ELEVENLABS_MODEL_SETTING) ||
-      ELEVENLABS_DEFAULT_MODEL
-    );
-  }
-  if (providerName === 'gemini') {
-    return (
-      (model && !isElevenLabsModel(model) ? model : null) ||
-      readSetting(env, GEMINI_MODEL_SETTING) ||
-      GEMINI_DEFAULT_MODEL
-    );
-  }
-  return null;
+  if (!Object.hasOwn(MODEL_RULES, providerName)) return null;
+  const rule = MODEL_RULES[providerName];
+  return (rule.fits(model) ? model : null) || readSetting(env, rule.setting) || rule.fallback;
 }
+
+/** Per provider: whether a caller's model is one of its own, its setting, and its default. */
+const MODEL_RULES = Object.freeze({
+  elevenlabs: { fits: isElevenLabsModel, setting: ELEVENLABS_MODEL_SETTING, fallback: ELEVENLABS_DEFAULT_MODEL },
+  gemini: {
+    fits: (model) => Boolean(model) && !isElevenLabsModel(model),
+    setting: GEMINI_MODEL_SETTING,
+    fallback: GEMINI_DEFAULT_MODEL,
+  },
+});
 
 /**
  * What Gemini TTS would charge to read this many UTF-8 bytes with `model`.
