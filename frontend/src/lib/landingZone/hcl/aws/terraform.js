@@ -1,5 +1,6 @@
 import { block, file, obj, q } from '../format';
-import { AWS_PROVIDER_PIN, TERRAFORM_REQUIRED_VERSION } from './moduleVersions';
+import { TERRAFORM_REQUIRED_VERSION } from '../../terraformVersion';
+import { AWS_PROVIDER_PIN } from './moduleVersions';
 
 export function terraformTf() {
   return file(

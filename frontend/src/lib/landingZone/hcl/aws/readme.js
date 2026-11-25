@@ -1,5 +1,6 @@
 import { file } from '../format';
-import { AWS_MODULES, AWS_PROVIDER_PIN, TERRAFORM_REQUIRED_VERSION } from './moduleVersions';
+import { TERRAFORM_REQUIRED_VERSION } from '../../terraformVersion';
+import { AWS_MODULES, AWS_PROVIDER_PIN } from './moduleVersions';
 
 export function readmeMd(state, files) {
   const fileList = files.map((f) => `- \`${f.path}\``).join('\n');

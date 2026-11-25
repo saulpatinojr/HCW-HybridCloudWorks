@@ -26,5 +26,4 @@ export const AWS_MODULES = Object.freeze({
 });
 
 export const AWS_PROVIDER_PIN = '~> 5.80';
-export const TERRAFORM_REQUIRED_VERSION = '>= 1.9.0';
 export const AWS_VERIFIED_ON = '2026-10-14';
