@@ -97,12 +97,21 @@ export class OriginRefForbiddenError extends AuthoredError {}
  */
 async function agentMayRead(store, user, page) {
   if (user?.agent !== AGENT_ID) return true;
+  return (await agentSwitchesOn(store)).includes(page.agentSection);
+}
+
+/**
+ * The switches on the agent key's record, or none at all when the record
+ * cannot be found: a missing record fails closed here (review of #1891),
+ * rather than taking the all-on defaults an older record is read with.
+ */
+async function agentSwitchesOn(store) {
   const record = await store.readDoc(
     "admin_config",
     KEY_RECORD_ID,
     ADMIN_CONFIG_PARTITION,
   );
-  return enabledCapabilities(record || {}).includes(page.agentSection);
+  return record ? enabledCapabilities(record) : [];
 }
 
 /**
@@ -115,12 +124,7 @@ async function agentMayRead(store, user, page) {
  */
 export async function hiddenOriginPages(store, user) {
   if (user?.agent !== AGENT_ID) return [];
-  const record = await store.readDoc(
-    "admin_config",
-    KEY_RECORD_ID,
-    ADMIN_CONFIG_PARTITION,
-  );
-  const on = enabledCapabilities(record || {});
+  const on = await agentSwitchesOn(store);
   return ORIGIN_PAGE_IDS.filter(
     (id) => !on.includes(ORIGIN_PAGES[id].agentSection),
   );

@@ -38,6 +38,11 @@ import {
 } from "./content-quality.js";
 import { findDuplicateContent, buildDedupFields } from "./content-dedup.js";
 import {
+  CREATE_STATUSES_REFUSED,
+  LEGACY_LIVE_STATUSES,
+} from "../agent-content/admin-access.js";
+import { PUBLISHING_ROLES } from "./content-status-transition.js";
+import {
   originRefRefusalStatus,
   resolveOriginRef,
 } from "../page-links/origin-ref.js";
@@ -65,6 +70,25 @@ export const QUALITY_ENFORCED_STATUSES = [
 ];
 
 const nullCritique = async () => null;
+
+/**
+ * Whether a create would make the item public or take it off the pipeline:
+ * a published or archived status (old spellings included), a live legacy
+ * `Status`, or `Live: true`. Those are a publisher's act everywhere else
+ * (transitionContentStatus, publishContent), so a create asks for the same
+ * role (#1888). The lists are the ones the agent key is already held to.
+ */
+export function createsPublicContent(data = {}) {
+  return (
+    CREATE_STATUSES_REFUSED.includes(
+      String(data.contentStatus ?? "")
+        .trim()
+        .toLowerCase(),
+    ) ||
+    LEGACY_LIVE_STATUSES.includes(String(data.Status ?? "").trim()) ||
+    data.Live === true
+  );
+}
 
 /** The blocks only the interview routes write (ADR 0040); see `interviewAllowed`. */
 const INTERVIEW_PRIVATE_BLOCKS = Object.freeze([
@@ -291,6 +315,19 @@ export function createContentCreateHandler({
         !Array.isArray(body.data)
           ? body.data
           : {};
+
+      // Creating content that is already public is a publisher's act, as
+      // it is on every other route (#1888).
+      if (
+        createsPublicContent(data) &&
+        !PUBLISHING_ROLES.includes(String(auth.role || "").toLowerCase())
+      ) {
+        return json(403, {
+          success: false,
+          error:
+            "publisher access required to create published, live or archived content",
+        });
+      }
 
       // Where the piece came from (#1886): checked against the record it
       // names before anything else is read or written.

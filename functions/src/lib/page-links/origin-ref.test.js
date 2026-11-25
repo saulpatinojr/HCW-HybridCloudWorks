@@ -301,6 +301,14 @@ describe("what the agent key sees (review of #1890)", () => {
     ).toBe(response);
   });
 
+  it("fails closed when the key record cannot be found (review of #1891)", async () => {
+    const missing = { readDoc: vi.fn(async () => null) };
+    expect(await hiddenOriginPages(missing, AGENT)).toEqual(ORIGIN_PAGE_IDS);
+    await expect(
+      resolveOriginRef(missing, { page: "ambassador", id: "program-example" }, { user: AGENT }),
+    ).rejects.toThrow(/switch for that section is off/);
+  });
+
   it("refuses the agent key a filter by a hidden Page", async () => {
     expect(
       await mayFilterByOrigin(storeWithKey(false), AGENT, "ambassador"),
