@@ -141,8 +141,14 @@ function, many returns, copied *identical* code) still reports in them, and a
 new data file is not covered until it is added to the block by name, with a
 row here. The data stays JavaScript (moving it to JSON was declined the same
 day). The generated Azure certification rows are not listed: they moved to
-`frontend/src/data/azure/generated/certifications.js`, which Qlty skips like
-every `generated/` folder.
+`frontend/src/data/azure/generated/certifications.js`, a folder
+`.qlty/qlty.toml` excludes by its exact path (not every folder called
+`generated/`, so hand-written code put in another one is still checked).
+The other entries in that file's `exclude_patterns` still exempt files from
+smells as well as from the linters: `qlty init`'s defaults such as
+`**/assets/**`, `**/build/**`, `**/vendor/**` and `*.min.*`, and every file
+matching `test_patterns` (`**/*.test.*`, `**/test/**` and the rest), whose
+smells Qlty does not report at all.
 
 **Qlty does not apply this block itself yet.** Qlty's `[[triage]]` and
 `[[exclude]]` blocks reach only its plugins' findings, not its own smells, in

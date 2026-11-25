@@ -3,8 +3,8 @@
  *
  * Writes two files. The certification and applied-skill rows go to
  * src/data/azure/generated/certifications.js, which this script rewrites
- * whole (#1845: in a generated/ folder so Qlty's duplicate finder skips rows
- * that look alike by design). src/data/azure/certifications.js re-exports
+ * whole (#1845: in a folder .qlty/qlty.toml excludes, so Qlty's duplicate
+ * finder skips rows that look alike by design). src/data/azure/certifications.js re-exports
  * them and keeps the hand-written parts; this script only stamps its sync
  * date there.
  *

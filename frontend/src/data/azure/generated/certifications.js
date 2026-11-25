@@ -9,8 +9,9 @@
 // correction in the header of ../certifications.js, which re-exports these
 // two lists, so every import keeps using '@/data/azure/certifications'.
 //
-// Why a generated/ folder (owner decision 2026-11-25, #1845): Qlty, the
-// code-quality scanner, skips **/generated/** by default. Hundreds of rows
+// Why a folder of its own (owner decision 2026-11-25, #1845): Qlty, the
+// code-quality scanner, skips this folder (.qlty/qlty.toml names it in
+// exclude_patterns). Hundreds of rows
 // with the same fields look like copied code to its duplicate finder, but they
 // are the catalogue itself, not code to share.
 

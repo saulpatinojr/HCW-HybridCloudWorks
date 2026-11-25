@@ -23,7 +23,7 @@ const WORKFLOW = join(
 
 const CATALOGUE_PATH = 'frontend/src/data/azure/certifications.js';
 // The rows the updater writes, split out of CATALOGUE_PATH by #1845 so Qlty's
-// duplicate finder skips them (it ignores **/generated/** by default).
+// duplicate finder skips them (.qlty/qlty.toml excludes that folder by name).
 const GENERATED_PATH = 'frontend/src/data/azure/generated/certifications.js';
 // A directory since #500: one module per guide plus index.js.
 const GUIDES_PATH = 'frontend/src/data/azure/study-guides';

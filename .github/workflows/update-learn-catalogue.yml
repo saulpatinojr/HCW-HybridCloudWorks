@@ -6,7 +6,7 @@ name: Update Learn Catalogue
 #
 # THE CATALOGUE IS TWO FILES SINCE #1845. The rows the script writes moved to
 # frontend/src/data/azure/generated/certifications.js, so Qlty's duplicate
-# finder skips them (it ignores **/generated/** by default);
+# finder skips them (.qlty/qlty.toml excludes that folder by name);
 # certifications.js keeps the sync date and the hand-written history and
 # re-exports the rows. Both are staged by exact path, like the outlines.
 #

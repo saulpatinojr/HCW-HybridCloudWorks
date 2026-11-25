@@ -29,7 +29,8 @@ exclude_patterns = [
   # Defaults from `qlty init`, less "**/config/**", "**/db/**", "**/seed/**"
   # and "**/templates/**": in this repository those names hold hand-written
   # source (frontend/src/config/, frontend/src/components/templates/) that
-  # should be analysed.
+  # should be analysed. "**/generated/**" is narrowed to the one folder below
+  # (#1845).
   "*_min.*",
   "**/assets/**",
   "**/cache/**",
@@ -42,10 +43,13 @@ exclude_patterns = [
   "**/deps/**",
   "**/extern/**",
   "**/external/**",
-  # Kept on purpose (owner decision 2026-11-25, #1845): the Azure
-  # certification rows that frontend/scripts/update-applied-skills.mjs writes
-  # live in frontend/src/data/azure/generated/ so this pattern skips them.
-  "**/generated/**",
+  # The one generated/ folder (owner decision 2026-11-25, #1845): the Azure
+  # certification rows frontend/scripts/update-applied-skills.mjs writes.
+  # Named exactly, not "**/generated/**" (qlty init's default), so
+  # hand-written code put in any other folder called generated/ is still
+  # checked. On 2026-11-25 `git ls-files | grep /generated/` listed only
+  # frontend/src/data/azure/generated/certifications.js.
+  "frontend/src/data/azure/generated/**",
   "**/Godeps/**",
   "**/gradlew/**",
   "**/mvnw/**",
