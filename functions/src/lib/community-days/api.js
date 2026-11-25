@@ -35,17 +35,21 @@ export const PROBE_URL = `${API_BASE}${EVENTS_PATH}?per_page=1`;
  * @returns {string}
  */
 export function sentenceForStatus(status) {
-  if (status === 401) {
-    return 'Community Days did not accept the key: it is missing, wrong, deleted or expired. Paste a current key on Integrations → Keys';
-  }
-  if (status === 403) {
-    return 'Community Days answered that API access is not approved for this account yet, or the account is blocked. Nothing is wrong with this site; the approval is given on the Community Days developers page';
-  }
-  if (status === 429) {
-    return 'Community Days is limiting how often this site may ask. Wait a while and try again';
-  }
-  if (Number.isInteger(status) && status >= 500) return 'The Community Days service failed on its side';
-  if (Number.isInteger(status)) return 'Community Days refused the request';
-  return 'Community Days could not be reached';
+  if (STATUS_SENTENCES.has(status)) return STATUS_SENTENCES.get(status);
+  if (!Number.isInteger(status)) return 'Community Days could not be reached';
+  return status >= 500 ? 'The Community Days service failed on its side' : 'Community Days refused the request';
 }
+
+/** The statuses that have a sentence of their own. */
+const STATUS_SENTENCES = new Map([
+  [
+    401,
+    'Community Days did not accept the key: it is missing, wrong, deleted or expired. Paste a current key on Integrations → Keys',
+  ],
+  [
+    403,
+    'Community Days answered that API access is not approved for this account yet, or the account is blocked. Nothing is wrong with this site; the approval is given on the Community Days developers page',
+  ],
+  [429, 'Community Days is limiting how often this site may ask. Wait a while and try again'],
+]);
 

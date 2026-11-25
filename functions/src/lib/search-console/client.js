@@ -53,17 +53,28 @@ const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 const UNREADABLE = 'unreadable';
 const NOT_SENT = 'not_sent';
 
-/** Fixed sentences by status, so the page says what to do. */
+/** Fixed sentences by status (or by reason), so the page says what to do. */
+const SENTENCES = new Map([
+  [403, 'the service account is not a Full user on the Search Console property'],
+  [401, 'Google did not accept the access token'],
+  [429, 'Google\'s Search Console quota was used up'],
+  [404, 'Google has no such property or resource'],
+  [UNREADABLE, 'Google\'s answer could not be read'],
+  [NOT_SENT, 'the daily allowance of inspections is used up, so it was not sent'],
+  [400, 'Google refused the request as malformed'],
+]);
+
 function sentenceFor(status) {
-  if (status === 403) return 'the service account is not a Full user on the Search Console property';
-  if (status === 401) return 'Google did not accept the access token';
-  if (status === 429) return 'Google\'s Search Console quota was used up';
-  if (status === 404) return 'Google has no such property or resource';
-  if (status === UNREADABLE) return 'Google\'s answer could not be read';
-  if (status === NOT_SENT) return 'the daily allowance of inspections is used up, so it was not sent';
-  if (status === 400) return 'Google refused the request as malformed';
+  if (SENTENCES.has(status)) return SENTENCES.get(status);
   if (Number.isInteger(status) && status >= 500) return 'Google\'s Search Console service failed';
   return 'Search Console could not be reached';
+}
+
+/** The error's code: the reason when there is one, else the HTTP status, else unreachable. */
+const REASON_CODES = { [UNREADABLE]: 'GSC_UNREADABLE', [NOT_SENT]: 'GSC_NOT_SENT' };
+function errorCode(reason, status) {
+  if (reason === UNREADABLE || reason === NOT_SENT) return REASON_CODES[reason];
+  return Number.isInteger(status) ? `GSC_HTTP_${status}` : 'GSC_UNREACHABLE';
 }
 
 /**
@@ -76,9 +87,8 @@ function sentenceFor(status) {
 export class SearchConsoleError extends AuthoredError {
   constructor(kind, status, { reason } = {}) {
     const suffix = Number.isInteger(status) ? ` (HTTP ${status})` : '';
-    const code = reason === UNREADABLE ? 'GSC_UNREADABLE' : reason === NOT_SENT ? 'GSC_NOT_SENT' : Number.isInteger(status) ? `GSC_HTTP_${status}` : 'GSC_UNREACHABLE';
     super(`Search Console ${kind} failed: ${sentenceFor(reason ?? status)}${reason ? '' : suffix}.`, {
-      code,
+      code: errorCode(reason, status),
       ...(Number.isInteger(status) ? { status } : {}),
     });
     this.kind = kind;
@@ -117,6 +127,104 @@ function retryAfterMs(response) {
   return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
 }
 
+/** The pause before try `attempt + 1`: BASE_BACKOFF_MS, doubled for each try after the second. */
+const backoff = (attempt) => BASE_BACKOFF_MS * 2 ** (attempt - 1);
+
+/**
+ * Before each try: stop when the run was stopped (no further try, not even
+ * the first), or when `beforeSend` answers false.
+ */
+async function checkCanSend(kind, state, { beforeSend, signal }) {
+  if (signal?.aborted) throw state.lastFailure ?? new SearchConsoleError(kind);
+  if (typeof beforeSend === 'function' && !(await beforeSend())) {
+    throw state.lastFailure ?? new SearchConsoleError(kind, undefined, { reason: NOT_SENT });
+  }
+}
+
+/** One request; null when it got no answer at all. */
+async function sendOnce(deps, url, token, { method, body, signal }) {
+  try {
+    // A call that hangs past the helper's 30 seconds throws like a
+    // dropped connection, so it is retried the same way.
+    return await fetchWithTimeout(deps.fetchImpl, url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(signal ? { signal } : {}),
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A 2xx answer's JSON, once `valid` accepts it. Not retried: Google
+ * answered, and asking again would spend quota on the same answer. The
+ * caller keeps its last good figures instead.
+ */
+async function readAnswer(kind, response, valid) {
+  let answer;
+  try {
+    answer = await response.json();
+  } catch {
+    throw new SearchConsoleError(kind, response.status, { reason: UNREADABLE });
+  }
+  if (!isObject(answer) || (valid && !valid(answer))) {
+    throw new SearchConsoleError(kind, response.status, { reason: UNREADABLE });
+  }
+  return answer;
+}
+
+/**
+ * After an answer that is not a 2xx: the pause before the next try, null to
+ * try again at once (a refused token, signed in again), or a thrown
+ * SearchConsoleError when the call gives up.
+ */
+function afterRefusal(deps, state, kind, response, attempt) {
+  const status = response.status;
+  state.lastFailure = new SearchConsoleError(kind, status);
+  // A token Google issued and then refused: sign in again, once.
+  if (status === 401 && !state.refreshedOnce && typeof deps.auth.reset === 'function') {
+    state.refreshedOnce = true;
+    deps.auth.reset();
+    return null;
+  }
+  if (!RETRYABLE.has(status) || attempt >= deps.maxAttempts) throw state.lastFailure;
+  const wait = retryAfterMs(response) ?? backoff(attempt);
+  if (wait > MAX_BACKOFF_MS) throw state.lastFailure;
+  return wait;
+}
+
+/**
+ * One call with the retry rule; returns the parsed JSON body once `valid`
+ * accepts it. `beforeSend` (optional) is asked before every request,
+ * retries and the re-send after a refused token included; false means do
+ * not send. A first request held back fails as 'not_sent'; a retry held
+ * back fails with the failure it was going to retry.
+ */
+async function call(deps, kind, url, { method = 'GET', body, valid, beforeSend, signal } = {}) {
+  const state = { refreshedOnce: false, lastFailure: null };
+  const pause = (ms) => sleepUnlessAborted(deps.sleep, ms, signal);
+  for (let attempt = 1; ; attempt += 1) {
+    await checkCanSend(kind, state, { beforeSend, signal });
+    const token = await deps.auth.getAccessToken();
+    const response = await sendOnce(deps, url, token, { method, body, signal });
+    if (response === null) {
+      state.lastFailure = new SearchConsoleError(kind);
+      if (attempt >= deps.maxAttempts || signal?.aborted) throw state.lastFailure;
+      await pause(backoff(attempt));
+      continue;
+    }
+    if (response.ok) return readAnswer(kind, response, valid);
+    const wait = afterRefusal(deps, state, kind, response, attempt);
+    if (wait !== null) await pause(wait);
+  }
+}
+
 /**
  * @param {object} deps
  * @param {string} deps.siteUrl - the property, e.g. `sc-domain:hybridcloudworks.com`
@@ -133,73 +241,7 @@ export function createSearchConsoleClient({
   maxAttempts = MAX_ATTEMPTS,
 }) {
   const siteBase = `${API_BASE}/webmasters/v3/sites/${encodeURIComponent(siteUrl)}`;
-
-  /**
-   * One call with the retry rule; returns the parsed JSON body once `valid`
-   * accepts it. `beforeSend` (optional) is asked before every request,
-   * retries and the re-send after a refused token included; false means do
-   * not send. A first request held back fails as 'not_sent'; a retry held
-   * back fails with the failure it was going to retry.
-   */
-  async function call(kind, url, { method = 'GET', body, valid, beforeSend, signal } = {}) {
-    let refreshedOnce = false;
-    let lastFailure = null;
-    const pause = (ms) => sleepUnlessAborted(sleep, ms, signal);
-    for (let attempt = 1; ; attempt += 1) {
-      // The run was stopped: no further try, not even the first.
-      if (signal?.aborted) throw lastFailure ?? new SearchConsoleError(kind);
-      if (typeof beforeSend === 'function' && !(await beforeSend())) {
-        throw lastFailure ?? new SearchConsoleError(kind, undefined, { reason: NOT_SENT });
-      }
-      const token = await auth.getAccessToken();
-      let response;
-      try {
-        // A call that hangs past the helper's 30 seconds throws like a
-        // dropped connection, so it is retried the same way.
-        response = await fetchWithTimeout(fetchImpl, url, {
-          method,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/json',
-            ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-          },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-          ...(signal ? { signal } : {}),
-        });
-      } catch {
-        lastFailure = new SearchConsoleError(kind);
-        if (attempt >= maxAttempts || signal?.aborted) throw lastFailure;
-        await pause(BASE_BACKOFF_MS * 2 ** (attempt - 1));
-        continue;
-      }
-      if (response.ok) {
-        // Not retried: Google answered, and asking again would spend quota on
-        // the same answer. The caller keeps its last good figures instead.
-        let answer;
-        try {
-          answer = await response.json();
-        } catch {
-          throw new SearchConsoleError(kind, response.status, { reason: UNREADABLE });
-        }
-        if (!isObject(answer) || (valid && !valid(answer))) {
-          throw new SearchConsoleError(kind, response.status, { reason: UNREADABLE });
-        }
-        return answer;
-      }
-      const status = response.status;
-      lastFailure = new SearchConsoleError(kind, status);
-      // A token Google issued and then refused: sign in again, once.
-      if (status === 401 && !refreshedOnce && typeof auth.reset === 'function') {
-        refreshedOnce = true;
-        auth.reset();
-        continue;
-      }
-      if (!RETRYABLE.has(status) || attempt >= maxAttempts) throw lastFailure;
-      const wait = retryAfterMs(response) ?? BASE_BACKOFF_MS * 2 ** (attempt - 1);
-      if (wait > MAX_BACKOFF_MS) throw lastFailure;
-      await pause(wait);
-    }
-  }
+  const deps = { auth, fetchImpl, sleep, maxAttempts };
 
   return {
     siteUrl,
@@ -210,7 +252,7 @@ export function createSearchConsoleClient({
      * call (see `call`).
      */
     async inspect(inspectionUrl, { beforeSend, signal } = {}) {
-      const answer = await call('inspect', INSPECT_URL, {
+      const answer = await call(deps, 'inspect', INSPECT_URL, {
         method: 'POST',
         body: { inspectionUrl, siteUrl, languageCode: 'en-US' },
         valid: (json) => isObject(json.inspectionResult),
@@ -222,7 +264,7 @@ export function createSearchConsoleClient({
 
     /** The rows of one Search Analytics query, [] when there are none. `options.signal` stops the call. */
     async searchAnalytics(body, { signal } = {}) {
-      const answer = await call('searchAnalytics', `${siteBase}/searchAnalytics/query`, {
+      const answer = await call(deps, 'searchAnalytics', `${siteBase}/searchAnalytics/query`, {
         method: 'POST',
         body,
         valid: (json) => json.rows === undefined || Array.isArray(json.rows),
@@ -233,7 +275,7 @@ export function createSearchConsoleClient({
 
     /** The sitemaps submitted for the property, [] when there are none. `options.signal` stops the call. */
     async listSitemaps({ signal } = {}) {
-      const answer = await call('sitemaps', `${siteBase}/sitemaps`, {
+      const answer = await call(deps, 'sitemaps', `${siteBase}/sitemaps`, {
         valid: (json) => json.sitemap === undefined || Array.isArray(json.sitemap),
         signal,
       });

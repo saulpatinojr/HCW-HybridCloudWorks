@@ -145,11 +145,15 @@ const PUBLIC_ROUTE_MODULES = Object.freeze({
   // id; its only words are the 404 for an unknown id and the 500 sentence.
   "functions/addons-public-http.js": [
     "lib/addons/status.js",
+    "lib/addons/health.js",
     "lib/addons/registry.js",
   ],
   "functions/labs-public-http.js": [
     "lib/labs/estate.js",
     "lib/labs/coder-status.js",
+    "lib/labs/coder-api.js",
+    "lib/labs/coder-detail.js",
+    "lib/labs/coder-token-state.js",
     "lib/labs/minute-cache.js",
     "lib/labs/public-submit.js",
     "lib/labs/public-bounds.js",
@@ -159,6 +163,7 @@ const PUBLIC_ROUTE_MODULES = Object.freeze({
   ],
   "functions/newsletter-http.js": [
     "lib/newsletter/handlers.js",
+    "lib/newsletter/contacts.js",
     "lib/newsletter/signup-config.js",
   ],
   "functions/platform-health-http.js": ["lib/platform-health.js"],
@@ -167,6 +172,11 @@ const PUBLIC_ROUTE_MODULES = Object.freeze({
   "functions/public-preview.js": ["lib/public-preview.js"],
   "functions/public-reads.js": [
     "lib/public-reads.js",
+    "lib/public-read-content.js",
+    "lib/public-read-images.js",
+    "lib/public-read-audio.js",
+    "lib/public-read-interviews.js",
+    "lib/public-read-rules.js",
     "lib/cloud-tools/public-pricing.js",
     "lib/cloud-tools/public-price-changes.js",
   ],

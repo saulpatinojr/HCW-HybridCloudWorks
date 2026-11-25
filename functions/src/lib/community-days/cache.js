@@ -54,7 +54,11 @@
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { authoredMessage, errorCode } from '../http/error-response.js';
 import { CommunityDaysError, createCommunityDaysClient, readApiKey } from './client.js';
-import { cutToBytes, normalizeEvents, PAGE_TEXT_MAX_BYTES, talkTitles } from './events.js';
+import { normalizeEvents, talkTitles } from './events.js';
+import { fitEvents } from './cache-fit.js';
+
+// How the events are fitted into one document is in cache-fit.js.
+export { CACHE_EVENTS_MAX_BYTES, fitEvents } from './cache-fit.js';
 
 export const CONTAINER = 'admin_config';
 export const CACHE_DOC_ID = 'community_days_cache';
@@ -65,49 +69,10 @@ export const MIN_REFRESH_MS = 60 * 1000;
 export const DEFAULT_RETRY_WAIT_MS = 15 * 60 * 1000;
 /** After a refresh that failed, opening the page does not try again for this long (Refresh still may, after a minute). */
 export const FAILED_RETRY_MS = 5 * 60 * 1000;
-/**
- * The most bytes the stored events may take together. The database's limit
- * for one document is 2 MB; this leaves room for the talks, the other fields
- * and the fields the database adds.
- */
-export const CACHE_EVENTS_MAX_BYTES = 1_500_000;
 /** What the page is told when the list was read but this site's copy of it could not be saved. */
 export const SAVE_FAILED_SENTENCE =
   'The list was read from Community Days, but this site could not save its copy of it. Try Refresh again in a few minutes.';
 export const SAVE_FAILED_CODE = 'CDAYS_COPY_NOT_SAVED';
-
-const bytesOf = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8');
-
-/**
- * The events that fit in `maxBytes` once stored. Page texts are shortened
- * first (halved until the list fits, down to nothing); if the list is still
- * too large, events are dropped from the end, which keeps the soonest.
- *
- * @param {object[]} events - as events.js reduces them, soonest first
- * @param {number} [maxBytes]
- * @returns {{ events: object[], dropped: number }}
- */
-export function fitEvents(events, maxBytes = CACHE_EVENTS_MAX_BYTES) {
-  let kept = events;
-  let cap = PAGE_TEXT_MAX_BYTES;
-  while (bytesOf(kept) > maxBytes && cap > 0) {
-    cap = cap > 150 ? Math.floor(cap / 2) : 0;
-    const limit = cap;
-    kept = kept.map((event) => ({ ...event, pageText: cutToBytes(event.pageText ?? '', limit) }));
-  }
-  if (bytesOf(kept) <= maxBytes) return { events: kept, dropped: 0 };
-  // Still too large with no page text at all: count each event once and keep
-  // the ones from the front that fit (2 bytes for the list's brackets, 1 per comma).
-  const fitting = [];
-  let used = 2;
-  for (const event of kept) {
-    const size = bytesOf(event) + 1;
-    if (used + size > maxBytes) break;
-    used += size;
-    fitting.push(event);
-  }
-  return { events: fitting, dropped: kept.length - fitting.length };
-}
 
 const isWriteConflict = (error) => {
   const status = error?.code ?? error?.statusCode;
@@ -197,62 +162,11 @@ export async function loadEvents({
 
   const at = now();
   const decision = refreshDecision(state, { now: at, force });
-  const fresh = state.fetchedAt !== null && at.getTime() - Date.parse(state.fetchedAt) < CACHE_TTL_MS;
-  if (!decision.call) {
-    let notice = null;
-    if (decision.reason === 'just_tried') notice = 'The list was read less than a minute ago. Try again in a minute.';
-    // The wait is said when it is why the page shows an old copy, or when
-    // Refresh was pressed; a fresh copy opened as usual needs no sentence.
-    if (decision.reason === 'rate_limited' && (force || !fresh)) {
-      notice = 'Community Days asked this site to wait before asking again. The list will refresh after that time.';
-    }
-    // Not fresh and not asked: the copy is old (or missing) and the last
-    // try failed or was told to wait, so the page says so with that sentence.
-    let status = 'ok';
-    if (!fresh) status = state.fetchedAt === null ? 'error' : 'stale';
-    return { status, ...state, refreshed: false, error: fresh ? null : state.lastError, notice };
-  }
+  if (!decision.call) return cachedAnswer(state, decision, { at, force });
 
   const client = makeClient({ apiKey });
   try {
-    const listed = await client.listOpenCalls();
-    // The talks are a help for the estimate, not the page: when that one call
-    // fails, the events just read are still kept, with the talks from before.
-    let talks = state.talks;
-    // The events were read, so no wait is owed for them. The talks call can
-    // still be told to wait, and that wait is kept for the next refresh.
-    let retryAt = null;
-    try {
-      talks = talkTitles(await client.listTalks());
-    } catch (error) {
-      log?.warn?.(`communityDays: the talks could not be read (${errorCode(error)})`);
-      if (error instanceof CommunityDaysError) retryAt = waitUntil(error, at);
-    }
-    const normalized = normalizeEvents(listed.events);
-    const { events, dropped } = fitEvents(normalized.events);
-    const next = {
-      events,
-      talks,
-      fetchedAt: at.toISOString(),
-      total: listed.total,
-      truncated: listed.truncated || dropped > 0,
-      skipped: normalized.skipped + dropped,
-      retryAt,
-      lastError: null,
-      attemptedAt: at.toISOString(),
-    };
-    let written;
-    try {
-      written = await writeCache(store, stored, next);
-    } catch (error) {
-      return await saveFailed(error);
-    }
-    if (!written) {
-      // Another request refreshed at the same moment; answer its copy.
-      const winner = readCacheState(await store.readDoc(CONTAINER, CACHE_DOC_ID, ADMIN_CONFIG_PARTITION));
-      return { status: 'ok', ...winner, refreshed: true, error: null, notice: null };
-    }
-    return { status: 'ok', ...next, refreshed: true, error: null, notice: null };
+    return await refreshCopy({ store, stored, state, at, log }, client);
   } catch (error) {
     if (!(error instanceof CommunityDaysError)) throw error;
     log?.warn?.(`communityDays: the list could not be refreshed (${errorCode(error)})`);
@@ -270,33 +184,101 @@ export async function loadEvents({
       code: errorCode(error),
     };
   }
+}
 
-  /**
-   * The list was read, but writing this site's copy failed for a reason that
-   * is not a lost race. Record the try beside the last good copy, so the
-   * failure wait applies and the next page views do not read the outside
-   * service again. That record is a small document (the copy as it was, plus
-   * a time and a sentence), so it can be saved even when the new copy could
-   * not. If it cannot be saved either, the store is not accepting writes at
-   * all; that is logged and the same answer is given.
-   */
-  async function saveFailed(error) {
-    log?.warn?.(`communityDays: the copy of the list could not be saved (${errorCode(error)})`);
-    const next = { ...state, lastError: SAVE_FAILED_SENTENCE, attemptedAt: at.toISOString() };
-    try {
-      await writeCache(store, stored, next);
-    } catch (again) {
-      log?.warn?.(`communityDays: the failed save could not be recorded (${errorCode(again)})`);
-    }
-    return {
-      status: state.fetchedAt === null ? 'error' : 'stale',
-      ...next,
-      refreshed: false,
-      error: SAVE_FAILED_SENTENCE,
-      notice: null,
-      code: SAVE_FAILED_CODE,
-    };
+/** The answer when the API is not called: the copy as it is, and why. */
+function cachedAnswer(state, decision, { at, force }) {
+  const fresh = state.fetchedAt !== null && at.getTime() - Date.parse(state.fetchedAt) < CACHE_TTL_MS;
+  let notice = null;
+  if (decision.reason === 'just_tried') notice = 'The list was read less than a minute ago. Try again in a minute.';
+  // The wait is said when it is why the page shows an old copy, or when
+  // Refresh was pressed; a fresh copy opened as usual needs no sentence.
+  if (decision.reason === 'rate_limited' && (force || !fresh)) {
+    notice = 'Community Days asked this site to wait before asking again. The list will refresh after that time.';
   }
+  // Not fresh and not asked: the copy is old (or missing) and the last
+  // try failed or was told to wait, so the page says so with that sentence.
+  let status = 'ok';
+  if (!fresh) status = state.fetchedAt === null ? 'error' : 'stale';
+  return { status, ...state, refreshed: false, error: fresh ? null : state.lastError, notice };
+}
+
+/**
+ * Read the list (and the talks) from the API and save this site's copy.
+ * `ctx` is `{ store, stored, state, at, log }`. A failure of the list call
+ * is thrown, for loadEvents to answer.
+ */
+async function refreshCopy(ctx, client) {
+  const { store, stored, at } = ctx;
+  const listed = await client.listOpenCalls();
+  const { talks, retryAt } = await readTalks(ctx, client);
+  const normalized = normalizeEvents(listed.events);
+  const { events, dropped } = fitEvents(normalized.events);
+  const next = {
+    events,
+    talks,
+    fetchedAt: at.toISOString(),
+    total: listed.total,
+    truncated: listed.truncated || dropped > 0,
+    skipped: normalized.skipped + dropped,
+    retryAt,
+    lastError: null,
+    attemptedAt: at.toISOString(),
+  };
+  let written;
+  try {
+    written = await writeCache(store, stored, next);
+  } catch (error) {
+    return await saveFailed(ctx, error);
+  }
+  if (!written) {
+    // Another request refreshed at the same moment; answer its copy.
+    const winner = readCacheState(await store.readDoc(CONTAINER, CACHE_DOC_ID, ADMIN_CONFIG_PARTITION));
+    return { status: 'ok', ...winner, refreshed: true, error: null, notice: null };
+  }
+  return { status: 'ok', ...next, refreshed: true, error: null, notice: null };
+}
+
+/**
+ * The talks are a help for the estimate, not the page: when that one call
+ * fails, the events just read are still kept, with the talks from before.
+ * The events were read, so no wait is owed for them. The talks call can
+ * still be told to wait, and that wait is kept for the next refresh.
+ */
+async function readTalks({ state, at, log }, client) {
+  try {
+    return { talks: talkTitles(await client.listTalks()), retryAt: null };
+  } catch (error) {
+    log?.warn?.(`communityDays: the talks could not be read (${errorCode(error)})`);
+    return { talks: state.talks, retryAt: error instanceof CommunityDaysError ? waitUntil(error, at) : null };
+  }
+}
+
+/**
+ * The list was read, but writing this site's copy failed for a reason that
+ * is not a lost race. Record the try beside the last good copy, so the
+ * failure wait applies and the next page views do not read the outside
+ * service again. That record is a small document (the copy as it was, plus
+ * a time and a sentence), so it can be saved even when the new copy could
+ * not. If it cannot be saved either, the store is not accepting writes at
+ * all; that is logged and the same answer is given.
+ */
+async function saveFailed({ store, stored, state, at, log }, error) {
+  log?.warn?.(`communityDays: the copy of the list could not be saved (${errorCode(error)})`);
+  const next = { ...state, lastError: SAVE_FAILED_SENTENCE, attemptedAt: at.toISOString() };
+  try {
+    await writeCache(store, stored, next);
+  } catch (again) {
+    log?.warn?.(`communityDays: the failed save could not be recorded (${errorCode(again)})`);
+  }
+  return {
+    status: state.fetchedAt === null ? 'error' : 'stale',
+    ...next,
+    refreshed: false,
+    error: SAVE_FAILED_SENTENCE,
+    notice: null,
+    code: SAVE_FAILED_CODE,
+  };
 }
 
 /**

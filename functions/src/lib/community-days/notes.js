@@ -27,25 +27,23 @@
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { AuthoredError } from '../http/error-response.js';
 import { dayOf, httpUrl, isEventId, text } from './events.js';
+import { COST_FIELDS, NOTES_MAX, NOTE_STATUSES } from './note-fields.js';
+
+// The owner's fields and their check are in note-fields.js.
+export {
+  COST_FIELDS,
+  COST_MAX,
+  NOTE_FIELDS,
+  NOTE_STATUSES,
+  NOTES_MAX,
+  NoteValidationError,
+  normalizeNoteInput,
+} from './note-fields.js';
 
 export const CONTAINER = 'admin_config';
 export const NOTE_DOC_TYPE = 'community_days_event_note';
 export const NOTE_ID_PREFIX = 'community_days_event_';
 export const NOTES_WINDOW = 500;
-
-/** What the owner can say about an event. '' is "nothing yet". */
-export const NOTE_STATUSES = Object.freeze(['interested', 'applied', 'accepted', 'declined', 'not_going']);
-/** The cost boxes the owner fills in. A number of 0 or more, or null for empty. */
-export const COST_FIELDS = Object.freeze(['travel', 'lodging', 'other']);
-export const NOTES_MAX = 4000;
-export const COST_MAX = 1_000_000;
-export const NOTE_FIELDS = Object.freeze(['status', 'notes', 'costs', 'etag']);
-
-export class NoteValidationError extends AuthoredError {
-  constructor(message) {
-    super(message, { code: 'INVALID_NOTE', status: 400 });
-  }
-}
 
 export class NoteConflictError extends AuthoredError {
   constructor() {
@@ -62,10 +60,6 @@ export class NoteNotFoundError extends AuthoredError {
   }
 }
 
-const fail = (message) => {
-  throw new NoteValidationError(message);
-};
-
 export const noteDocId = (eventId) => `${NOTE_ID_PREFIX}${eventId}`;
 
 const isConflict = (error) => {
@@ -73,43 +67,6 @@ const isConflict = (error) => {
   return status === 412 || status === 409;
 };
 const isMissing = (error) => (error?.code ?? error?.statusCode) === 404;
-
-/**
- * The owner's fields from a request body, checked. Unknown fields are
- * refused, so nothing the page did not mean to send is ever stored.
- *
- * @param {unknown} body
- * @returns {{ status: string, notes: string, costs: Record<string, number|null> }}
- */
-export function normalizeNoteInput(body) {
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) fail('The body must be a JSON object.');
-  const unknown = Object.keys(body).filter((key) => !NOTE_FIELDS.includes(key));
-  if (unknown.length > 0) fail(`Unknown field(s): ${unknown.slice(0, 5).map((key) => text(key, 30)).join(', ')}.`);
-
-  const status = body.status === undefined || body.status === null ? '' : body.status;
-  if (status !== '' && !NOTE_STATUSES.includes(status)) fail(`status must be empty or one of: ${NOTE_STATUSES.join(', ')}.`);
-
-  const rawNotes = body.notes === undefined || body.notes === null ? '' : body.notes;
-  if (typeof rawNotes !== 'string') fail('notes must be text.');
-  if (rawNotes.length > NOTES_MAX) fail(`notes can be at most ${NOTES_MAX} characters.`);
-
-  const rawCosts = body.costs === undefined || body.costs === null ? {} : body.costs;
-  if (typeof rawCosts !== 'object' || Array.isArray(rawCosts)) fail('costs must be an object.');
-  const strange = Object.keys(rawCosts).filter((key) => !COST_FIELDS.includes(key));
-  if (strange.length > 0) fail(`costs can only hold: ${COST_FIELDS.join(', ')}.`);
-  const costs = {};
-  for (const field of COST_FIELDS) {
-    const value = rawCosts[field];
-    if (value === undefined || value === null || value === '') {
-      costs[field] = null;
-    } else {
-      const amount = typeof value === 'number' ? value : Number.NaN;
-      if (!Number.isFinite(amount) || amount < 0 || amount > COST_MAX) fail(`costs.${field} must be a number from 0 to ${COST_MAX}, or empty.`);
-      costs[field] = Math.round(amount * 100) / 100;
-    }
-  }
-  return { status, notes: rawNotes.trim(), costs };
-}
 
 /** The small copy of an event a note keeps, from a cached event or an earlier copy; null when neither is usable. */
 export function eventSnapshot(source) {

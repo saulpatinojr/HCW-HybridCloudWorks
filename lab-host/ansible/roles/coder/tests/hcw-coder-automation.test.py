@@ -1075,7 +1075,7 @@ def unreadable(config, directory=None):
 
 automation.template_digest = unreadable
 try:
-    automation.publish_one(world.config, argparse.Namespace(force=False), "token", {}, "na-guided-lab", str(guided))
+    automation.publish_one(world.config, argparse.Namespace(force=False), "token", {}, ("na-guided-lab", str(guided)))
     outcome = "no error"
 except automation.Failure as failure:
     outcome = f"Failure: {failure}"

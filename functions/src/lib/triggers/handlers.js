@@ -113,6 +113,249 @@ async function runEach(docs, context, label, fn, { budgetMs, monotonic }) {
   return results;
 }
 
+/** The curated slug-page fields, claimed once per `createSlugPageTrigger` request. */
+async function createSlugPage({ store, now }, doc) {
+  const claim = await claimRisingEdge(store, 'blogs', doc.id, {
+    ...SLUG_PAGE_CLAIM_FIELDS,
+    eventId: eventIdOf(doc),
+    now,
+  });
+  if (!claim.claim) return { created: false, reason: claim.reason };
+  const data = claim.data;
+  const rawTitle = data.Title || data.title || 'untitled-article';
+  const provider = String(
+    data.landingProvider || data.cloudProvider || data['Cloud Provider'] || 'azure'
+  ).toLowerCase();
+  // A mirrored article with no slug of its own gets the same shape a first
+  // publish gives one, `<topic>-<8 id characters>`, always lowercase (#1628).
+  // Before, it was the title plus a mixed-case id slice, which failed the
+  // strict address rule.
+  const ownSlug = data.slug || data.Slug;
+  const slug =
+    ownSlug ||
+    articleSlugFor({ contentData: data, contentId: doc.id, provider }) ||
+    generateSlug(rawTitle) ||
+    'article';
+  await store.patchDoc('blogs', doc.id, {
+    ...releaseRisingEdgeClaim(SLUG_PAGE_CLAIM_FIELDS),
+    slug,
+    Slug: slug,
+    createSlugPageTrigger: false,
+    curatedParent: data.curatedParent || 'Curated Articles',
+    curatedSubpage: true,
+    curatedSubpagePath: `/${provider}/blog/${slug}`,
+    curatedLinkedAt: now().toISOString(),
+  });
+  return { created: true, reason: 'created', slug };
+}
+
+function blogs(h, docs, context) {
+  return h.each(docs, context, 'feed:blogs', async (doc) => {
+    const mirrored = await h.mirror.mirror('blogs', doc);
+    const cover = mirrored.mirrored
+      ? { generated: false, reason: 'mirrored' }
+      : await h.mirror.generateTemplateCover(doc);
+    const slug = await createSlugPage(h, doc);
+    return { id: doc.id, mirrored: mirrored.reason, cover: cover.reason, slug: slug.reason };
+  });
+}
+
+/**
+ * Each trigger is isolated (T-733). These three used to run unguarded on
+ * the theory that every run() catches internally — but each of those
+ * catch blocks ends in a patchDoc that can itself throw, and when it did,
+ * the document-level catch took over and skipped BOTH the remaining
+ * triggers and the counter update below. Per-trigger failure semantics
+ * are deliberate and documented in each trigger's header; the isolation
+ * that makes them per-trigger was missing.
+ */
+async function runIsolated(context, label, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    context.error?.(`[${label}:content] failed: ${errorFacts(err)}`);
+    return 'error';
+  }
+}
+
+/** The content triggers a document's flags ask for: flag, result field, label, and the trigger. */
+const CONTENT_TRIGGERS = [
+  ['altCoverImageTrigger', 'aiCover', 'ai-cover', 'aiCover'],
+  ['forgeReadyNotifyTrigger', 'forgeReadyNotify', 'forge-ready-notify', 'forgeReadyNotify'],
+  ['socialCaptionTrigger', 'socialCaption', 'social-caption', 'socialCaption'],
+];
+
+/** The cover, the forge-ready notice and the caption, each isolated, then the counters. */
+async function runContentTriggers(h, doc, context, out) {
+  for (const [flag, field, label, dep] of CONTENT_TRIGGERS) {
+    if (doc[flag] === true) {
+      out[field] = await runIsolated(context, label, async () => (await h[dep].run(doc.id, eventIdOf(doc))).reason);
+    }
+  }
+  // Counters last, from the document as delivered; a claim or completion
+  // write above re-delivers this document and the marker then matches.
+  // Isolated too: counter maintenance is what the comment above calls out
+  // as needing to run, so it must not be collateral damage from a trigger.
+  out.statsMoved = await runIsolated(context, 'dashboard-stats', async () => {
+    const deltas = await h.dashboardStats.applyTransition({
+      contentId: doc.id,
+      afterData: doc,
+    });
+    return Object.keys(deltas).length > 0;
+  });
+}
+
+/**
+ * The content feed: inspection on its flag (a failure stored as a
+ * sentence with a code and a reference, #945), then the cover, the
+ * forge-ready notice and the caption, each isolated.
+ *
+ * @param {object} h - the feed handlers' dependencies
+ * @param {object[]} docs - the changed content documents
+ * @param {object} context - the invocation context
+ * @returns {Promise<object[]>}
+ */
+function content(h, docs, context) {
+  const { store, inspector, now } = h;
+  return h.each(docs, context, 'feed:content', async (doc) => {
+    const out = { id: doc.id };
+    if (doc.inspectTrigger === true) {
+      try {
+        const r = await inspector.executeInspection({
+          collectionName: 'content',
+          docId: doc.id,
+          newData: doc,
+        });
+        out.inspected = r.contentStatus;
+      } catch (err) {
+        // The editor shows inspectError: the inspector's sentence, or a
+        // fixed one with the code and the log line's reference (#945).
+        await store.patchDoc('content', doc.id, {
+          inspectTrigger: false,
+          inspectError: recordedFailure(context, 'The inspection failed.', err),
+          inspectErrorAt: now().toISOString(),
+        });
+        out.inspected = 'error';
+      }
+    }
+    await runContentTriggers(h, doc, context, out);
+    return out;
+  });
+}
+
+/** The alert fields the owner's Telegram message leaves out. */
+const ALERT_FIELDS_OMITTED = new Set([
+  'id',
+  'firstSeenAt',
+  'updatedAt',
+  'active',
+  'alertType',
+  'source',
+  ACTIVATION_NOTIFIED_FIELD,
+  '_rid',
+  '_self',
+  '_etag',
+  '_attachments',
+  '_ts',
+]);
+
+function workflowAlerts(h, docs, context) {
+  const { store, notifier, now } = h;
+  return h.each(docs, context, 'feed:workflow_alerts', async (doc) => {
+    if (!evaluateActivationNotice(doc).send)
+      return { id: doc.id, sent: false, reason: 'snapshot' };
+    const live = await store.readDoc('workflow_alerts', doc.id, doc.id);
+    const decision = evaluateActivationNotice(live);
+    if (!decision.send) return { id: doc.id, sent: false, reason: decision.reason };
+    const result = await notifier.notifyTelegram({
+      title: `Workflow alert: ${live.alertType || 'unknown'}`,
+      message: JSON.stringify(
+        Object.fromEntries(Object.entries(live).filter(([key]) => !ALERT_FIELDS_OMITTED.has(key))),
+        null,
+        2
+      ),
+      severity: live.severity || 'warning',
+      source: live.source || 'workflow_alerts',
+    });
+    // Stamped only after the send succeeded; a not-configured notifier leaves
+    // the alert unannounced so it announces once Telegram is configured.
+    if (result.sent)
+      await store.patchDoc('workflow_alerts', doc.id, {
+        [ACTIVATION_NOTIFIED_FIELD]: now().toISOString(),
+      });
+    return { id: doc.id, sent: result.sent, reason: result.reason || 'sent' };
+  });
+}
+
+/**
+ * Whether a social post's edit should be pushed to Publer: `{ skip }` with
+ * the answer when not, else `{ marker }`, the value the push is recorded by.
+ */
+async function socialPostPushCheck({ store, publer }, doc, publerPostIds) {
+  if (publerPostIds.length === 0) return { skip: { id: doc.id, pushed: false, reason: 'no_publer_ids' } };
+  if (doc.syncOrigin === 'publer' || doc.syncOrigin === 'system')
+    return { skip: { id: doc.id, pushed: false, reason: `origin_${doc.syncOrigin}` } };
+  const marker = markerForFields(doc, SOCIAL_POST_SYNC_FIELDS);
+  const decision = await shouldProcessValue({
+    value: marker,
+    snapshotMarker: doc.publerSyncedFieldsHash,
+    readLiveMarker: async () =>
+      (await store.readDoc('social_posts', doc.id, doc.id))?.publerSyncedFieldsHash,
+  });
+  if (!decision.process) return { skip: { id: doc.id, pushed: false, reason: decision.reason } };
+  if (!publer.configured) return { skip: { id: doc.id, pushed: false, reason: 'publer_not_configured' } };
+  return { marker };
+}
+
+/** Push the post's fields to each of its Publer posts, and record the push. */
+async function pushSocialPost({ store, publer, now }, doc, publerPostIds, marker) {
+  const activeIds = Array.isArray(doc.publerActivePostIds)
+    ? doc.publerActivePostIds
+    : publerPostIds;
+  const body = buildPublerUpdateBody(doc);
+  await Promise.all(activeIds.map((id) => publer.request(`/posts/${id}`, 'PUT', body)));
+  await store.patchDoc('social_posts', doc.id, {
+    publerSyncedFieldsHash: marker,
+    syncStatus: 'synced',
+    syncOrigin: 'calendar',
+    lastSyncedAt: now().toISOString(),
+    syncError: null,
+  });
+}
+
+/**
+ * The social posts feed: push a calendar edit to Publer once, and store a
+ * failed push as a sentence with a code and a reference (#945).
+ *
+ * @param {object} h - the feed handlers' dependencies
+ * @param {object[]} docs - the changed social posts
+ * @param {object} context - the invocation context
+ * @returns {Promise<object[]>}
+ */
+function socialPosts(h, docs, context) {
+  const { store, now } = h;
+  return h.each(docs, context, 'feed:social_posts', async (doc) => {
+    const publerPostIds = Array.isArray(doc.publerPostIds) ? doc.publerPostIds : [];
+    const check = await socialPostPushCheck(h, doc, publerPostIds);
+    if (check.skip) return check.skip;
+    try {
+      await pushSocialPost(h, doc, publerPostIds, check.marker);
+      return { id: doc.id, pushed: true, reason: 'pushed' };
+    } catch (err) {
+      // The calendar shows syncError: a sentence with the code (Publer's
+      // HTTP status) and the log line's reference, never Publer's own
+      // words, which the API-keys page keeps for the owner (#945).
+      await store.patchDoc('social_posts', doc.id, {
+        syncStatus: 'failed',
+        syncOrigin: 'system',
+        syncError: recordedFailure(context, 'The post could not be synced to Publer.', err),
+        lastSyncAttemptAt: now().toISOString(),
+      });
+      return { id: doc.id, pushed: false, reason: 'error' };
+    }
+  });
+}
+
 /**
  * @param {object} deps
  * @param {{ readDoc: Function, patchDoc: Function, upsertDoc: Function, replaceDocIfMatch: Function, deleteDoc: Function }} deps.store
@@ -149,236 +392,18 @@ export function createFeedHandlers({
   // shares one budget per invocation, which is the thing being bounded.
   const each = (docs, context, label, fn) =>
     runEach(docs, context, label, fn, { budgetMs: feedBudgetMs, monotonic });
-
-  const speakerevents = (docs, context) =>
-    each(docs, context, 'feed:speakerevents', (doc) => mirror.mirror('speakerevents', doc));
-  const certifications = (docs, context) =>
-    each(docs, context, 'feed:certifications', (doc) => mirror.mirror('certifications', doc));
-
-  const blogs = (docs, context) =>
-    each(docs, context, 'feed:blogs', async (doc) => {
-      const mirrored = await mirror.mirror('blogs', doc);
-      const cover = mirrored.mirrored
-        ? { generated: false, reason: 'mirrored' }
-        : await mirror.generateTemplateCover(doc);
-      const slug = await createSlugPage(doc);
-      return { id: doc.id, mirrored: mirrored.reason, cover: cover.reason, slug: slug.reason };
-    });
-
-  /** The curated slug-page fields, claimed once per `createSlugPageTrigger` request. */
-  async function createSlugPage(doc) {
-    const claim = await claimRisingEdge(store, 'blogs', doc.id, {
-      ...SLUG_PAGE_CLAIM_FIELDS,
-      eventId: eventIdOf(doc),
-      now,
-    });
-    if (!claim.claim) return { created: false, reason: claim.reason };
-    const data = claim.data;
-    const rawTitle = data.Title || data.title || 'untitled-article';
-    const provider = String(
-      data.landingProvider || data.cloudProvider || data['Cloud Provider'] || 'azure'
-    ).toLowerCase();
-    // A mirrored article with no slug of its own gets the same shape a first
-    // publish gives one, `<topic>-<8 id characters>`, always lowercase (#1628).
-    // Before, it was the title plus a mixed-case id slice, which failed the
-    // strict address rule.
-    const slug =
-      data.slug ||
-      data.Slug ||
-      articleSlugFor({ contentData: data, contentId: doc.id, provider }) ||
-      generateSlug(rawTitle) ||
-      'article';
-    await store.patchDoc('blogs', doc.id, {
-      ...releaseRisingEdgeClaim(SLUG_PAGE_CLAIM_FIELDS),
-      slug,
-      Slug: slug,
-      createSlugPageTrigger: false,
-      curatedParent: data.curatedParent || 'Curated Articles',
-      curatedSubpage: true,
-      curatedSubpagePath: `/${provider}/blog/${slug}`,
-      curatedLinkedAt: now().toISOString(),
-    });
-    return { created: true, reason: 'created', slug };
-  }
-
-  /**
-   * The content feed: inspection on its flag (a failure stored as a
-   * sentence with a code and a reference, #945), then the cover, the
-   * forge-ready notice and the caption, each isolated.
-   *
-   * @param {object[]} docs - the changed content documents
-   * @param {object} context - the invocation context
-   * @returns {Promise<object[]>}
-   */
-  const content = (docs, context) =>
-    each(docs, context, 'feed:content', async (doc) => {
-      const out = { id: doc.id };
-      if (doc.inspectTrigger === true) {
-        try {
-          const r = await inspector.executeInspection({
-            collectionName: 'content',
-            docId: doc.id,
-            newData: doc,
-          });
-          out.inspected = r.contentStatus;
-        } catch (err) {
-          // The editor shows inspectError: the inspector's sentence, or a
-          // fixed one with the code and the log line's reference (#945).
-          await store.patchDoc('content', doc.id, {
-            inspectTrigger: false,
-            inspectError: recordedFailure(context, 'The inspection failed.', err),
-            inspectErrorAt: now().toISOString(),
-          });
-          out.inspected = 'error';
-        }
-      }
-      // Each trigger is isolated (T-733). These three used to run unguarded on
-      // the theory that every run() catches internally — but each of those
-      // catch blocks ends in a patchDoc that can itself throw, and when it did,
-      // the document-level catch took over and skipped BOTH the remaining
-      // triggers and the counter update below. Per-trigger failure semantics
-      // are deliberate and documented in each trigger's header; the isolation
-      // that makes them per-trigger was missing.
-      const runIsolated = async (label, fn) => {
-        try {
-          return await fn();
-        } catch (err) {
-          context.error?.(`[${label}:content] failed: ${errorFacts(err)}`);
-          return 'error';
-        }
-      };
-
-      if (doc.altCoverImageTrigger === true) {
-        out.aiCover = await runIsolated(
-          'ai-cover',
-          async () => (await aiCover.run(doc.id, eventIdOf(doc))).reason
-        );
-      }
-      if (doc.forgeReadyNotifyTrigger === true) {
-        out.forgeReadyNotify = await runIsolated(
-          'forge-ready-notify',
-          async () => (await forgeReadyNotify.run(doc.id, eventIdOf(doc))).reason
-        );
-      }
-      if (doc.socialCaptionTrigger === true) {
-        out.socialCaption = await runIsolated(
-          'social-caption',
-          async () => (await socialCaption.run(doc.id, eventIdOf(doc))).reason
-        );
-      }
-      // Counters last, from the document as delivered; a claim or completion
-      // write above re-delivers this document and the marker then matches.
-      // Isolated too: counter maintenance is what the comment above calls out
-      // as needing to run, so it must not be collateral damage from a trigger.
-      out.statsMoved = await runIsolated('dashboard-stats', async () => {
-        const deltas = await dashboardStats.applyTransition({
-          contentId: doc.id,
-          afterData: doc,
-        });
-        return Object.keys(deltas).length > 0;
-      });
-      return out;
-    });
-
-  const workflowAlerts = (docs, context) =>
-    each(docs, context, 'feed:workflow_alerts', async (doc) => {
-      if (!evaluateActivationNotice(doc).send)
-        return { id: doc.id, sent: false, reason: 'snapshot' };
-      const live = await store.readDoc('workflow_alerts', doc.id, doc.id);
-      const decision = evaluateActivationNotice(live);
-      if (!decision.send) return { id: doc.id, sent: false, reason: decision.reason };
-      const omit = new Set([
-        'id',
-        'firstSeenAt',
-        'updatedAt',
-        'active',
-        'alertType',
-        'source',
-        ACTIVATION_NOTIFIED_FIELD,
-        '_rid',
-        '_self',
-        '_etag',
-        '_attachments',
-        '_ts',
-      ]);
-      const result = await notifier.notifyTelegram({
-        title: `Workflow alert: ${live.alertType || 'unknown'}`,
-        message: JSON.stringify(
-          Object.fromEntries(Object.entries(live).filter(([key]) => !omit.has(key))),
-          null,
-          2
-        ),
-        severity: live.severity || 'warning',
-        source: live.source || 'workflow_alerts',
-      });
-      // Stamped only after the send succeeded; a not-configured notifier leaves
-      // the alert unannounced so it announces once Telegram is configured.
-      if (result.sent)
-        await store.patchDoc('workflow_alerts', doc.id, {
-          [ACTIVATION_NOTIFIED_FIELD]: now().toISOString(),
-        });
-      return { id: doc.id, sent: result.sent, reason: result.reason || 'sent' };
-    });
-
-  /**
-   * The social posts feed: push a calendar edit to Publer once, and store a
-   * failed push as a sentence with a code and a reference (#945).
-   *
-   * @param {object[]} docs - the changed social posts
-   * @param {object} context - the invocation context
-   * @returns {Promise<object[]>}
-   */
-  const socialPosts = (docs, context) =>
-    each(docs, context, 'feed:social_posts', async (doc) => {
-      const publerPostIds = Array.isArray(doc.publerPostIds) ? doc.publerPostIds : [];
-      if (publerPostIds.length === 0) return { id: doc.id, pushed: false, reason: 'no_publer_ids' };
-      if (doc.syncOrigin === 'publer' || doc.syncOrigin === 'system')
-        return { id: doc.id, pushed: false, reason: `origin_${doc.syncOrigin}` };
-      const marker = markerForFields(doc, SOCIAL_POST_SYNC_FIELDS);
-      const decision = await shouldProcessValue({
-        value: marker,
-        snapshotMarker: doc.publerSyncedFieldsHash,
-        readLiveMarker: async () =>
-          (await store.readDoc('social_posts', doc.id, doc.id))?.publerSyncedFieldsHash,
-      });
-      if (!decision.process) return { id: doc.id, pushed: false, reason: decision.reason };
-      if (!publer.configured) return { id: doc.id, pushed: false, reason: 'publer_not_configured' };
-      try {
-        const activeIds = Array.isArray(doc.publerActivePostIds)
-          ? doc.publerActivePostIds
-          : publerPostIds;
-        const body = buildPublerUpdateBody(doc);
-        await Promise.all(activeIds.map((id) => publer.request(`/posts/${id}`, 'PUT', body)));
-        await store.patchDoc('social_posts', doc.id, {
-          publerSyncedFieldsHash: marker,
-          syncStatus: 'synced',
-          syncOrigin: 'calendar',
-          lastSyncedAt: now().toISOString(),
-          syncError: null,
-        });
-        return { id: doc.id, pushed: true, reason: 'pushed' };
-      } catch (err) {
-        // The calendar shows syncError: a sentence with the code (Publer's
-        // HTTP status) and the log line's reference, never Publer's own
-        // words, which the API-keys page keeps for the owner (#945).
-        await store.patchDoc('social_posts', doc.id, {
-          syncStatus: 'failed',
-          syncOrigin: 'system',
-          syncError: recordedFailure(context, 'The post could not be synced to Publer.', err),
-          lastSyncAttemptAt: now().toISOString(),
-        });
-        return { id: doc.id, pushed: false, reason: 'error' };
-      }
-    });
+  const h = { store, mirror, inspector, aiCover, forgeReadyNotify, socialCaption, dashboardStats, notifier, publer, now, each };
 
   return {
-    speakerevents,
-    certifications,
-    blogs,
-    content,
-    workflowAlerts,
-    socialPosts,
-    createSlugPage,
+    speakerevents: (docs, context) =>
+      each(docs, context, 'feed:speakerevents', (doc) => mirror.mirror('speakerevents', doc)),
+    certifications: (docs, context) =>
+      each(docs, context, 'feed:certifications', (doc) => mirror.mirror('certifications', doc)),
+    blogs: (docs, context) => blogs(h, docs, context),
+    content: (docs, context) => content(h, docs, context),
+    workflowAlerts: (docs, context) => workflowAlerts(h, docs, context),
+    socialPosts: (docs, context) => socialPosts(h, docs, context),
+    createSlugPage: (doc) => createSlugPage(h, doc),
   };
 }
 

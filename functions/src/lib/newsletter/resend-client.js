@@ -54,6 +54,72 @@ export const RESEND_API_BASE = 'https://api.resend.com';
 /** Long enough for Resend, short enough that a hung call cannot hold a signup. */
 export const RESEND_TIMEOUT_MS = 10_000;
 
+/** A response body as JSON, or its first 2,000 characters under `raw` when it is not JSON. */
+function parseBody(text) {
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return { raw: text.slice(0, 2000) };
+  }
+}
+
+/**
+ * One Resend request: `{ ok, status, data }`, never a throw. A request
+ * with no answer is status 0 with the failure's code as `data.name`.
+ *
+ * @param {typeof fetch} fetchImpl
+ * @param {string} apiKey
+ * @param {{ method: string, path: string, body?: object }} request - the HTTP method, the API path and the JSON body
+ * @returns {Promise<{ ok: boolean, status: number, data: object|null }>}
+ */
+async function resendCall(fetchImpl, apiKey, { method, path, body }) {
+  let response;
+  let text = '';
+  try {
+    response = await fetchImpl(`${RESEND_API_BASE}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(RESEND_TIMEOUT_MS),
+    });
+    text = await response.text();
+  } catch (error) {
+    // No answer: status 0, and the failure's code as its name. The
+    // transport's own sentence is not carried (#945); callers show and
+    // log the name, never a message.
+    return {
+      ok: false,
+      status: 0,
+      data: { name: errorCode(error) },
+    };
+  }
+  const result = { ok: response.ok, status: response.status, data: parseBody(text) };
+  if (response.status === 429) {
+    // Resend's rate limit is per team; the header says how long to wait.
+    const header = response.headers?.get?.('retry-after');
+    result.retryAfter = typeof header === 'string' ? header : null;
+  }
+  return result;
+}
+
+/**
+ * A query string from fixed keys. Values are validated by the caller; this
+ * only drops the absent ones and percent-encodes the rest.
+ */
+function qs(params) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue;
+    search.set(key, String(value));
+  }
+  const text = search.toString();
+  return text ? `?${text}` : '';
+}
+
 /**
  * @param {object} options
  * @param {string} options.apiKey a Full access key
@@ -62,71 +128,11 @@ export const RESEND_TIMEOUT_MS = 10_000;
 export function createResendClient({ apiKey, fetch: fetchImpl = globalThis.fetch }) {
   if (!apiKey) throw new Error('createResendClient needs an API key');
 
-  /**
-   * One Resend request: `{ ok, status, data }`, never a throw. A request
-   * with no answer is status 0 with the failure's code as `data.name`.
-   *
-   * @param {string} method - the HTTP method
-   * @param {string} path - the API path
-   * @param {object} [body] - the JSON body
-   * @returns {Promise<{ ok: boolean, status: number, data: object|null }>}
-   */
-  async function call(method, path, body) {
-    let response;
-    let text = '';
-    try {
-      response = await fetchImpl(`${RESEND_API_BASE}${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(RESEND_TIMEOUT_MS),
-      });
-      text = await response.text();
-    } catch (error) {
-      // No answer: status 0, and the failure's code as its name. The
-      // transport's own sentence is not carried (#945); callers show and
-      // log the name, never a message.
-      return {
-        ok: false,
-        status: 0,
-        data: { name: errorCode(error) },
-      };
-    }
-    let data = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = { raw: text.slice(0, 2000) };
-    }
-    const result = { ok: response.ok, status: response.status, data };
-    if (response.status === 429) {
-      // Resend's rate limit is per team; the header says how long to wait.
-      const header = response.headers?.get?.('retry-after');
-      result.retryAfter = typeof header === 'string' ? header : null;
-    }
-    return result;
-  }
+  const call = (method, path, body) => resendCall(fetchImpl, apiKey, { method, path, body });
 
   const contactPath = (email) => `/contacts/${encodeURIComponent(email)}`;
   const seg = (value) => encodeURIComponent(String(value));
 
-  /**
-   * A query string from fixed keys. Values are validated by the caller; this
-   * only drops the absent ones and percent-encodes the rest.
-   */
-  const qs = (params) => {
-    const search = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) {
-      if (value === undefined || value === null || value === '') continue;
-      search.set(key, String(value));
-    }
-    const text = search.toString();
-    return text ? `?${text}` : '';
-  };
   const page = ({ limit, after } = {}) => ({ limit, after });
 
   return {

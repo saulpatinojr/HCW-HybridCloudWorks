@@ -74,6 +74,188 @@ export async function createRssParser() {
   } };
 }
 
+/** Stop between steps once the job's signal fired. */
+function stopIfAborted(signal) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
+}
+
+/** Whether a failure is the run being stopped, which ends the sweep rather than one feed. */
+const isAbort = (signal, err) => Boolean(signal?.aborted) || err?.name === 'AbortError' || err?.message === 'aborted';
+
+async function cacheFeed(d, provider, feed, items) {
+  const cacheItems = buildCacheItems(items, feed, MAX_CACHE_ITEMS_PER_FEED);
+  const stamp = d.now().toISOString();
+  await d.store.upsertDoc(RSS_CACHE_CONTAINER, {
+    id: cacheDocId(provider, feed),
+    provider,
+    feedUrl: feed.url,
+    feedName: feed.name,
+    items: cacheItems,
+    itemCount: cacheItems.length,
+    lastFetched: stamp,
+    refreshedAt: stamp,
+  });
+  return cacheItems.length;
+}
+
+/** Draft one feed item as new content unless it is already there. True when it was new. */
+async function draftItem(d, provider, feed, item, sourceUrl) {
+  const { store, dedup, now } = d;
+  const title = item.title || 'Untitled';
+  const publishedMs = item.isoDate ? Date.parse(item.isoDate) : NaN;
+  const dup = await dedup.findDuplicateContent(store, {
+    url: sourceUrl,
+    title,
+    publishedMs: Number.isNaN(publishedMs) ? now().getTime() : publishedMs,
+  });
+  if (dup.duplicate) return false;
+  const doc = buildRssContentDoc({
+    item,
+    sourceUrl,
+    title,
+    summary: truncateText(item.contentSnippet || item.content || '', 300),
+    provider,
+    feed,
+    dedupFields: dedup.buildDedupFields({ url: sourceUrl, title }),
+    now: now(),
+    uuid: d.uuid,
+  });
+  await store.upsertDoc('content', doc);
+  return true;
+}
+
+/** Draft the newest items of one feed as content, counting new ones and duplicates. */
+async function draftNewContent(d, { provider, feed, results, signal }, items) {
+  for (const item of (items || []).slice(0, feed.maxItems || MAX_NEW_CONTENT_PER_FEED)) {
+    stopIfAborted(signal);
+    const sourceUrl = item.link || '';
+    if (!sourceUrl) continue;
+    if (await draftItem(d, provider, feed, item, sourceUrl)) results.newContent += 1;
+    else results.duplicates += 1;
+  }
+}
+
+/**
+ * Read one feed: `{ parsed }`, or `{ skipped: true }` when the site's
+ * certificate failed validation: that feed is skipped with the reason
+ * recorded, never read without the check.
+ */
+async function readFeed(d, provider, feed, results, signal) {
+  try {
+    return { parsed: await d.parser.parseURL(feed.url, { signal }) };
+  } catch (err) {
+    const tlsCode = err?.code || err?.cause?.code;
+    if (!TLS_CODES.has(tlsCode)) throw err;
+    // Refuse to silently bypass TLS validation: skip and say why.
+    results.errors.push(`${provider}/${feed.name}: TLS validation failed (${tlsCode})`);
+    await recordRun(d.store, feed, 'failed', { fetchedAt: d.now().toISOString() });
+    results.skipped += 1;
+    return { skipped: true };
+  }
+}
+
+async function processSingleFeed(d, provider, feed, results, signal) {
+  stopIfAborted(signal);
+  // The provider and counts only: a feed's name is typed by an editor (#1635).
+  d.info(`[rssFetcher] Fetching a ${provider} feed`);
+  const read = await readFeed(d, provider, feed, results, signal);
+  if (read.skipped) return;
+  const { parsed } = read;
+  // Not pre-sliced: buildCacheItems applies the cap itself, and it keeps the
+  // newest items rather than the first (T-319) — truncating in feed order
+  // here would decide that selection before it could. draftNewContent takes
+  // its own, smaller slice, so the drafted set is unaffected.
+  const items = parsed?.items || [];
+  const cached = await cacheFeed(d, provider, feed, items);
+  results.cached += 1;
+  await draftNewContent(d, { provider, feed, results, signal }, items);
+  results.processed += 1;
+  await recordRun(d.store, feed, 'succeeded', { fetchedAt: d.now().toISOString(), itemCount: items.length });
+  d.info(`[rssFetcher] ${provider} feed: cached ${cached} items`);
+}
+
+async function rebuildHomepage(d, feeds) {
+  const { store } = d;
+  const byProvider = {};
+  await Promise.all(
+    PROVIDERS.map(async (provider) => {
+      byProvider[provider] = await store.queryDocs(
+        RSS_CACHE_CONTAINER,
+        'SELECT * FROM c WHERE c.provider = @provider',
+        [{ name: '@provider', value: provider }]
+      );
+    })
+  );
+  for (const provider of PROVIDERS) {
+    const activeIds = new Set((feeds[provider] || []).map(feed => cacheDocId(provider, feed)));
+    byProvider[provider] = byProvider[provider].filter(doc => activeIds.has(doc.id));
+  }
+  const items = buildHomepageFeedItems(byProvider);
+  await store.upsertDoc(HOMEPAGE_FEEDS_CONTAINER, {
+    id: HOMEPAGE_FEEDS_DOC_ID,
+    items,
+    itemCount: items.length,
+    generatedAt: d.now().toISOString(),
+  });
+  return items.length;
+}
+
+/** Every [provider, feed] pair to run, in order; only the one source when `sourceId` is given. */
+function selectedFeeds(feeds, sourceId) {
+  return Object.entries(feeds).flatMap(([provider, list]) =>
+    list.filter((feed) => !sourceId || feed.id === sourceId).map((feed) => [provider, feed])
+  );
+}
+
+/**
+ * @param {object} d - createRssIngest's dependencies
+ * @param {object} [options]
+ * @param {Record<string, {name: string, url: string}[]>} [options.feeds]
+ * @param {AbortSignal} [options.signal]
+ * @returns {Promise<{processed: number, cached: number, newContent: number, duplicates: number, skipped: number, homepageItems: number|null, errors: string[]}>}
+ */
+async function processRssFeeds(d, { feeds = PROVIDER_FEEDS, signal = d.defaultSignal, sourceId = null } = {}) {
+  const { store, now, log } = d;
+  stopIfAborted(signal);
+  const results = {
+    processed: 0,
+    cached: 0,
+    newContent: 0,
+    duplicates: 0,
+    skipped: 0,
+    homepageItems: null,
+    errors: [],
+  };
+  for (const [provider, feed] of selectedFeeds(feeds, sourceId)) {
+    stopIfAborted(signal);
+    try {
+      await processSingleFeed(d, provider, feed, results, signal);
+    } catch (err) {
+      if (isAbort(signal, err)) throw err;
+      await recordRun(store, feed, 'failed', { fetchedAt: now().toISOString() });
+      // One feed failing must not abandon the sweep. The job result is
+      // served by getJob, so it names the feed and a sentence with the
+      // code and the log line's reference (#945).
+      results.errors.push(
+        `${provider}/${feed.name}: ${recordedFailure(log, 'The feed could not be read.', err)}`
+      );
+    }
+  }
+  stopIfAborted(signal);
+  try {
+    results.homepageItems = await rebuildHomepage(d, feeds);
+  } catch (err) {
+    if (isAbort(signal, err)) throw err;
+    results.errors.push(
+      `homepage_feeds: ${recordedFailure(log, 'The homepage feed could not be rebuilt.', err)}`
+    );
+  }
+  d.info(
+    `[rssFetcher] Complete: ${results.processed} feeds, ${results.cached} cached, ${results.newContent} new, ${results.duplicates} duplicates, ${results.errors.length} errors`
+  );
+  return results;
+}
+
 /**
  * @param {object} deps
  * @param {{ queryDocs: Function, upsertDoc: Function }} deps.store
@@ -93,160 +275,8 @@ export function createRssIngest({
   signal: defaultSignal = null,
 }) {
   const info = (...a) => log.log?.(...a);
-
-  async function cacheFeed(provider, feed, items) {
-    const cacheItems = buildCacheItems(items, feed, MAX_CACHE_ITEMS_PER_FEED);
-    const stamp = now().toISOString();
-    await store.upsertDoc(RSS_CACHE_CONTAINER, {
-      id: cacheDocId(provider, feed),
-      provider,
-      feedUrl: feed.url,
-      feedName: feed.name,
-      items: cacheItems,
-      itemCount: cacheItems.length,
-      lastFetched: stamp,
-      refreshedAt: stamp,
-    });
-    return cacheItems.length;
-  }
-
-  async function draftNewContent(provider, feed, items, results, signal) {
-    for (const item of (items || []).slice(0, feed.maxItems || MAX_NEW_CONTENT_PER_FEED)) {
-      if (signal?.aborted) throw signal.reason || new Error('aborted');
-      const sourceUrl = item.link || '';
-      if (!sourceUrl) continue;
-      const title = item.title || 'Untitled';
-      const publishedMs = item.isoDate ? Date.parse(item.isoDate) : NaN;
-      const dup = await dedup.findDuplicateContent(store, {
-        url: sourceUrl,
-        title,
-        publishedMs: Number.isNaN(publishedMs) ? now().getTime() : publishedMs,
-      });
-      if (dup.duplicate) {
-        results.duplicates += 1;
-        continue;
-      }
-      const doc = buildRssContentDoc({
-        item,
-        sourceUrl,
-        title,
-        summary: truncateText(item.contentSnippet || item.content || '', 300),
-        provider,
-        feed,
-        dedupFields: dedup.buildDedupFields({ url: sourceUrl, title }),
-        now: now(),
-        uuid,
-      });
-      await store.upsertDoc('content', doc);
-      results.newContent += 1;
-    }
-  }
-
-  async function processSingleFeed(provider, feed, results, signal) {
-    if (signal?.aborted) throw signal.reason || new Error('aborted');
-    // The provider and counts only: a feed's name is typed by an editor (#1635).
-    info(`[rssFetcher] Fetching a ${provider} feed`);
-    let parsed;
-    try {
-      parsed = await parser.parseURL(feed.url, { signal });
-    } catch (err) {
-      const tlsCode = err?.code || err?.cause?.code;
-      if (TLS_CODES.has(tlsCode)) {
-        // Refuse to silently bypass TLS validation: skip and say why.
-        results.errors.push(`${provider}/${feed.name}: TLS validation failed (${tlsCode})`);
-        await recordRun(store, feed, 'failed', { fetchedAt: now().toISOString() });
-        results.skipped += 1;
-        return;
-      }
-      throw err;
-    }
-    // Not pre-sliced: buildCacheItems applies the cap itself, and it keeps the
-    // newest items rather than the first (T-319) — truncating in feed order
-    // here would decide that selection before it could. draftNewContent takes
-    // its own, smaller slice, so the drafted set is unaffected.
-    const items = parsed?.items || [];
-    const cached = await cacheFeed(provider, feed, items);
-    results.cached += 1;
-    await draftNewContent(provider, feed, items, results, signal);
-    results.processed += 1;
-    await recordRun(store, feed, 'succeeded', { fetchedAt: now().toISOString(), itemCount: items.length });
-    info(`[rssFetcher] ${provider} feed: cached ${cached} items`);
-  }
-
-  async function rebuildHomepage(feeds) {
-    const byProvider = {};
-    await Promise.all(
-      PROVIDERS.map(async (provider) => {
-        byProvider[provider] = await store.queryDocs(
-          RSS_CACHE_CONTAINER,
-          'SELECT * FROM c WHERE c.provider = @provider',
-          [{ name: '@provider', value: provider }]
-        );
-      })
-    );
-    for (const provider of PROVIDERS) {
-      const activeIds = new Set((feeds[provider] || []).map(feed => cacheDocId(provider, feed)));
-      byProvider[provider] = byProvider[provider].filter(doc => activeIds.has(doc.id));
-    }
-    const items = buildHomepageFeedItems(byProvider);
-    await store.upsertDoc(HOMEPAGE_FEEDS_CONTAINER, {
-      id: HOMEPAGE_FEEDS_DOC_ID,
-      items,
-      itemCount: items.length,
-      generatedAt: now().toISOString(),
-    });
-    return items.length;
-  }
-
+  const d = { store, parser, dedup, now, uuid, log, info, defaultSignal };
   return {
-    /**
-     * @param {object} [options]
-     * @param {Record<string, {name: string, url: string}[]>} [options.feeds]
-     * @param {AbortSignal} [options.signal]
-     * @returns {Promise<{processed: number, cached: number, newContent: number, duplicates: number, skipped: number, homepageItems: number|null, errors: string[]}>}
-     */
-    async processRssFeeds({ feeds = PROVIDER_FEEDS, signal = defaultSignal, sourceId = null } = {}) {
-      if (signal?.aborted) throw signal.reason || new Error('aborted');
-      const results = {
-        processed: 0,
-        cached: 0,
-        newContent: 0,
-        duplicates: 0,
-        skipped: 0,
-        homepageItems: null,
-        errors: [],
-      };
-      for (const [provider, list] of Object.entries(feeds)) {
-        for (const feed of list) {
-          if (sourceId && feed.id !== sourceId) continue;
-          if (signal?.aborted) throw signal.reason || new Error('aborted');
-          try {
-            await processSingleFeed(provider, feed, results, signal);
-          } catch (err) {
-            if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
-            await recordRun(store, feed, 'failed', { fetchedAt: now().toISOString() });
-            // One feed failing must not abandon the sweep. The job result is
-            // served by getJob, so it names the feed and a sentence with the
-            // code and the log line's reference (#945).
-            results.errors.push(
-              `${provider}/${feed.name}: ${recordedFailure(log, 'The feed could not be read.', err)}`
-            );
-          }
-        }
-      }
-      if (signal?.aborted) throw signal.reason || new Error('aborted');
-      try {
-        results.homepageItems = await rebuildHomepage(feeds);
-      } catch (err) {
-        if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
-        results.errors.push(
-          `homepage_feeds: ${recordedFailure(log, 'The homepage feed could not be rebuilt.', err)}`
-        );
-      }
-      info(
-        `[rssFetcher] Complete: ${results.processed} feeds, ${results.cached} cached, ${results.newContent} new, ${results.duplicates} duplicates, ${results.errors.length} errors`
-      );
-      return results;
-    },
+    processRssFeeds: (options) => processRssFeeds(d, options),
   };
 }

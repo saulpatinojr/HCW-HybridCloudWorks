@@ -135,6 +135,27 @@ export async function getAwsPrice(client, serviceCode, fields, options = {}) {
   return null;
 }
 
+/** A lookup whose only per-region field is `regionCode`. */
+const inRegion = (fields) => (region) => ({ regionCode: region, ...fields });
+
+/**
+ * A service priced from two meters, each looked up by its fields and scaled
+ * by its quantity in the benchmark: `pricePerUnit` is
+ * first.usd * firstQuantity + second.usd * secondQuantity.
+ */
+const twoMeterService = ({ serviceCode, sku, unit, meters }) => {
+  const [[first, firstFields, firstQuantity], [second, secondFields, secondQuantity]] = meters;
+  return {
+    serviceCode,
+    lookups: { [first]: inRegion(firstFields), [second]: inRegion(secondFields) },
+    price: (found) => ({
+      sku,
+      unit,
+      pricePerUnit: found[first].usd * firstQuantity + found[second].usd * secondQuantity,
+    }),
+  };
+};
+
 /**
  * Per-service lookup definitions.
  *
@@ -147,8 +168,7 @@ export const AWS_SERVICE_LOOKUPS = {
   'compute-vm': {
     serviceCode: 'AmazonEC2',
     lookups: {
-      instance: (region) => ({
-        regionCode: region,
+      instance: inRegion({
         instanceType: 'm6i.xlarge',
         operatingSystem: 'Linux',
         tenancy: 'Shared',
@@ -163,32 +183,21 @@ export const AWS_SERVICE_LOOKUPS = {
     }),
   },
 
-  'compute-serverless': {
+  // 1M requests plus 400,000 GB-seconds.
+  'compute-serverless': twoMeterService({
     serviceCode: 'AWSLambda',
-    lookups: {
-      request: (region) => ({
-        regionCode: region,
-        group: 'AWS-Lambda-Requests',
-        usagetype: 'Request',
-      }),
-      duration: (region) => ({
-        regionCode: region,
-        group: 'AWS-Lambda-Duration',
-        usagetype: 'Lambda-GB-Second',
-      }),
-    },
-    price: ({ request, duration }) => ({
-      sku: SERVERLESS_BENCHMARK_SKU,
-      unit: SERVERLESS_BENCHMARK_UNIT,
-      pricePerUnit: request.usd * 1_000_000 + duration.usd * 400_000,
-    }),
-  },
+    sku: SERVERLESS_BENCHMARK_SKU,
+    unit: SERVERLESS_BENCHMARK_UNIT,
+    meters: [
+      ['request', { group: 'AWS-Lambda-Requests', usagetype: 'Request' }, 1_000_000],
+      ['duration', { group: 'AWS-Lambda-Duration', usagetype: 'Lambda-GB-Second' }, 400_000],
+    ],
+  }),
 
   'storage-object': {
     serviceCode: 'AmazonS3',
     lookups: {
-      storage: (region) => ({
-        regionCode: region,
+      storage: inRegion({
         storageClass: 'General Purpose',
         volumeType: 'Standard',
         usagetype: 'TimedStorage-ByteHrs',
@@ -204,8 +213,7 @@ export const AWS_SERVICE_LOOKUPS = {
   'database-relational': {
     serviceCode: 'AmazonRDS',
     lookups: {
-      instance: (region) => ({
-        regionCode: region,
+      instance: inRegion({
         instanceType: 'db.t3.large',
         databaseEngine: 'MySQL',
         licenseModel: 'No license required',
@@ -219,26 +227,16 @@ export const AWS_SERVICE_LOOKUPS = {
     }),
   },
 
-  'database-nosql': {
+  // 500,000 reads plus 500,000 writes.
+  'database-nosql': twoMeterService({
     serviceCode: 'AmazonDynamoDB',
-    lookups: {
-      read: (region) => ({
-        regionCode: region,
-        groupDescription: 'DynamoDB PayPerRequest Read Request Units',
-        operation: 'PayPerRequestThroughput',
-      }),
-      write: (region) => ({
-        regionCode: region,
-        groupDescription: 'DynamoDB PayPerRequest Write Request Units',
-        operation: 'PayPerRequestThroughput',
-      }),
-    },
-    price: ({ read, write }) => ({
-      sku: NOSQL_BENCHMARK_SKU,
-      unit: NOSQL_BENCHMARK_UNIT,
-      pricePerUnit: read.usd * 500_000 + write.usd * 500_000,
-    }),
-  },
+    sku: NOSQL_BENCHMARK_SKU,
+    unit: NOSQL_BENCHMARK_UNIT,
+    meters: [
+      ['read', { groupDescription: 'DynamoDB PayPerRequest Read Request Units', operation: 'PayPerRequestThroughput' }, 500_000],
+      ['write', { groupDescription: 'DynamoDB PayPerRequest Write Request Units', operation: 'PayPerRequestThroughput' }, 500_000],
+    ],
+  }),
 
   'containers-kubernetes': {
     serviceCode: 'AmazonEKS',
@@ -272,8 +270,7 @@ export const AWS_SERVICE_LOOKUPS = {
   'integration-messaging': {
     serviceCode: 'AWSQueueService',
     lookups: {
-      requests: (region) => ({
-        regionCode: region,
+      requests: inRegion({
         group: 'SQS-APIRequest-Tier1',
         queueType: 'Standard',
       }),

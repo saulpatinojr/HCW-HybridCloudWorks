@@ -328,6 +328,9 @@ function comparableTitle(value) {
     .trim();
 }
 
+/** Whether a listed episode carries an id at all. */
+const hasEpisodeId = (episode) => Boolean(episode) && ![undefined, null, ''].includes(episode.id);
+
 /**
  * The Podbean episode an earlier attempt on this document may have created
  * without its answer arriving, or null when the show has none (#1118; the
@@ -365,15 +368,12 @@ export async function findUnrecordedEpisode({ client, title, since, until }) {
   const floor = sinceMs - RECONCILE_WINDOW_MS;
   const ceiling = untilMs + ATTEMPT_SPAN_MS + RECONCILE_WINDOW_MS;
   const wanted = comparableTitle(title);
+  const inWindow = (episode) => {
+    const publishedMs = Number(episode.publish_time) * 1000;
+    return publishedMs >= floor && publishedMs <= ceiling;
+  };
   const matches = listed.episodes.filter(
-    (episode) =>
-      episode &&
-      episode.id !== undefined &&
-      episode.id !== null &&
-      episode.id !== '' &&
-      comparableTitle(episode.title) === wanted &&
-      Number(episode.publish_time) * 1000 >= floor &&
-      Number(episode.publish_time) * 1000 <= ceiling
+    (episode) => hasEpisodeId(episode) && comparableTitle(episode.title) === wanted && inWindow(episode)
   );
   matches.sort((a, b) => Number(b.publish_time) - Number(a.publish_time));
   return matches[0] ?? null;

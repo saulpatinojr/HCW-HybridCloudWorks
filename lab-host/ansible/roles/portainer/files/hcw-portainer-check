@@ -112,6 +112,14 @@ CONFIG_KEYS = {
 # token never travels in one, $CREDENTIALS_DIRECTORY does not reach the CLI,
 # and a proxy variable cannot reach it either.
 CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# The sandbox systemd-run puts the site's CLI in, each as a --property.
+CLI_SANDBOX = (
+    "Environment=NODE_ENV=production",
+    "NoNewPrivileges=yes",
+    "PrivateTmp=yes",
+    "ProtectSystem=full",
+    "ProtectHome=yes",
+)
 
 me = "hcw-portainer-check"
 SECRETS = set()
@@ -385,14 +393,8 @@ def refused(status):
     )
 
 
-def inspect(portainer, token, config, report):
-    """Fill the report from Portainer; returns (notes, update available).
-
-    Raises Failure at the first read the report cannot do without. A read it
-    can do without (the edition, the licence) leaves its fields unknown and
-    a note for the journal instead.
-    """
-    notes = []
+def read_status(portainer, token, report):
+    """GET /system/status: Portainer is up, and its version when it gives a usable one. Failure otherwise."""
     status, body = portainer.get("/system/status", token)
     if status != 200 or not isinstance(body, dict):
         raise Failure(f"GET /system/status answered HTTP {status}")
@@ -406,18 +408,23 @@ def inspect(portainer, token, config, report):
         if version and version[0].isalnum():
             report["version"] = version
 
+
+def read_edition(portainer, token, report, notes):
+    """GET /system/version: the edition, and True when an update is available. A note when it cannot be read."""
     status, body = portainer.get("/system/version", token)
     if status == 401:
         raise refused(status)
-    update_available = False
-    if status == 200 and isinstance(body, dict):
-        edition = edition_of(body)
-        if edition:
-            report["edition"] = edition
-        update_available = body.get("UpdateAvailable") is True
-    else:
+    if status != 200 or not isinstance(body, dict):
         notes.append(f"GET /system/version answered HTTP {status}; the edition is left out")
+        return False
+    edition = edition_of(body)
+    if edition:
+        report["edition"] = edition
+    return body.get("UpdateAvailable") is True
 
+
+def read_licence(portainer, token, report, notes):
+    """GET /licenses: whether the licence is valid and when it expires. A note when it cannot be read."""
     status, body = portainer.get("/licenses", token)
     if status == 401:
         raise refused(status)
@@ -426,20 +433,39 @@ def inspect(portainer, token, config, report):
     else:
         notes.append(f"GET /licenses answered HTTP {status}; the licence is reported as unknown")
 
+
+def find_environment(portainer, token, name):
+    """The environment named `name` from GET /endpoints, and its numeric Id. Failure when there is none."""
+    status, body = portainer.get("/endpoints", token)
+    if status == 401:
+        raise refused(status)
+    if status != 200 or not isinstance(body, list):
+        raise Failure(f"GET /endpoints answered HTTP {status}")
+    environment = next((item for item in body if isinstance(item, dict) and item.get("Name") == name), None)
+    if environment is None:
+        raise Failure(f"Portainer lists no environment named {name} among its {len(body)}")
+    identifier = environment.get("Id")
+    if type(identifier) is not int:
+        raise Failure(f"the environment {name} has no numeric Id")
+    return environment, identifier
+
+
+def inspect(portainer, token, config, report):
+    """Fill the report from Portainer; returns (notes, update available).
+
+    Raises Failure at the first read the report cannot do without. A read it
+    can do without (the edition, the licence) leaves its fields unknown and
+    a note for the journal instead.
+    """
+    notes = []
+    read_status(portainer, token, report)
+    update_available = read_edition(portainer, token, report, notes)
+    read_licence(portainer, token, report, notes)
+
     name = config["environment_name"]
     deadline = time.monotonic() + config["environment_wait_seconds"]
     while True:
-        status, body = portainer.get("/endpoints", token)
-        if status == 401:
-            raise refused(status)
-        if status != 200 or not isinstance(body, list):
-            raise Failure(f"GET /endpoints answered HTTP {status}")
-        environment = next((item for item in body if isinstance(item, dict) and item.get("Name") == name), None)
-        if environment is None:
-            raise Failure(f"Portainer lists no environment named {name} among its {len(body)}")
-        identifier = environment.get("Id")
-        if type(identifier) is not int:
-            raise Failure(f"the environment {name} has no numeric Id")
+        environment, identifier = find_environment(portainer, token, name)
         report["environmentUp"] = environment.get("Status") == 1
         if report["environmentUp"] or time.monotonic() + ENVIRONMENT_POLL_SECONDS > deadline:
             break
@@ -473,29 +499,18 @@ def deliver(config, report):
         )
     payload = {"check": "portainer", "report": report}
     timeout = config["report_timeout_seconds"]
-    argv = [
-        config["systemd_run"],
-        "--pipe",
-        "--wait",
-        "--quiet",
-        "--collect",
-        "--service-type=exec",
-        f"--uid={config['agent_user']}",
-        f"--gid={config['agent_group']}",
-        f"--property=EnvironmentFile={config['agent_env_file']}",
-        f"--property=WorkingDirectory={config['agent_app_dir']}",
-        "--property=Environment=NODE_ENV=production",
-        "--property=NoNewPrivileges=yes",
-        "--property=PrivateTmp=yes",
-        "--property=ProtectSystem=full",
-        "--property=ProtectHome=yes",
+    properties = [
+        f"EnvironmentFile={config['agent_env_file']}",
+        f"WorkingDirectory={config['agent_app_dir']}",
+        *CLI_SANDBOX,
         # systemd stops the CLI itself before this helper gives up on it, so
         # a hung CLI never outlives the run that started it.
-        f"--property=RuntimeMaxSec={timeout}",
-        "--",
-        config["node"],
-        config["report_cli"],
+        f"RuntimeMaxSec={timeout}",
     ]
+    argv = [config["systemd_run"], "--pipe", "--wait", "--quiet", "--collect", "--service-type=exec",
+            f"--uid={config['agent_user']}", f"--gid={config['agent_group']}"]
+    argv += [f"--property={setting}" for setting in properties]
+    argv += ["--", config["node"], config["report_cli"]]
     try:
         completed = subprocess.run(
             argv,

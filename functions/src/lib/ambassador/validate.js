@@ -79,17 +79,22 @@ const dayOrNull = (value, { key }) => {
 function validateWith(schema, body, { partial = false } = {}) {
   const unknown = Object.keys(body).filter((key) => !Object.hasOwn(schema.fields, key));
   if (unknown.length) return { error: `Unknown ${schema.name} field(s): ${unknown.join(', ')}` };
-  const out = {};
   try {
-    for (const [key, rule] of Object.entries(schema.fields)) {
-      const wanted = key in body || (rule.required && !partial);
-      if (wanted) out[key] = rule.clean(body[key], { partial, key });
-    }
+    return { value: cleanFields(schema, body, partial) };
   } catch (error) {
     if (!(error instanceof FieldError)) throw error;
     return { error: authoredMessage(error, 'A field was refused.') };
   }
-  return { value: out };
+}
+
+/** Every rule in schema order, on the fields the write touches; a rule refuses by throwing FieldError. */
+function cleanFields(schema, body, partial) {
+  const out = {};
+  for (const [key, rule] of Object.entries(schema.fields)) {
+    const wanted = key in body || (rule.required && !partial);
+    if (wanted) out[key] = rule.clean(body[key], { partial, key });
+  }
+  return out;
 }
 
 // ── programs ──────────────────────────────────────────────────────────────────
@@ -163,9 +168,7 @@ function cleanApplicationQuestions(value) {
     seen.add(id);
     const prompt =
       str(item.prompt, 1000) || refuse(`applicationQuestions[${index}].prompt is required`);
-    const kind = QUESTION_KINDS.includes(item.kind)
-      ? item.kind
-      : refuse(`applicationQuestions[${index}].kind must be one of ${QUESTION_KINDS.join(', ')}`);
+    const kind = oneOf(QUESTION_KINDS, `applicationQuestions[${index}].kind`)(item.kind);
     return {
       id,
       section: str(item.section, 200),

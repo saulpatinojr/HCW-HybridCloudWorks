@@ -191,6 +191,15 @@ export async function ensureSince(store, { day }) {
   }
 }
 
+/** Add the start to the day's document: over the one read (its ETag inside), or as a new one. */
+async function writeDay(store, existing, { day, labId }) {
+  if (existing) {
+    await store.replaceDocIfMatch(LAB_STARTS_CONTAINER, applyLabStart(existing, { day, labId }));
+  } else {
+    await store.createDoc(LAB_STARTS_CONTAINER, applyLabStart(null, { day, labId }));
+  }
+}
+
 /**
  * Count one started session.
  *
@@ -209,11 +218,7 @@ export async function recordLabStart(store, { labId, nowMs = Date.now() }) {
   for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
     const existing = await store.readDoc(LAB_STARTS_CONTAINER, id, id);
     try {
-      if (existing) {
-        await store.replaceDocIfMatch(LAB_STARTS_CONTAINER, applyLabStart(existing, { day, labId }));
-      } else {
-        await store.createDoc(LAB_STARTS_CONTAINER, applyLabStart(null, { day, labId }));
-      }
+      await writeDay(store, existing, { day, labId });
       return { counted: true, day };
     } catch (error) {
       // 409: another instance made the day's document first. 412: it changed

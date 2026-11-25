@@ -147,6 +147,21 @@ function applyTransition(updates, { existing, statusNote, stamp, actor, today, o
 }
 
 /**
+ * What refuses a patch before anything is written: a status override from
+ * below super_admin, or a move to a program that does not exist or is
+ * locked. The response, or null.
+ */
+async function patchRefusal(ctx, { auth, updates, existing, statusOverride }) {
+  if (statusOverride && !satisfiesRole(auth.role, 'super_admin')) {
+    return json(403, { error: 'Setting a status outside the transition table needs super_admin' });
+  }
+  if (!updates.programId || updates.programId === existing.programId) return null;
+  const program = await ctx.readKind('program', updates.programId);
+  if (!program) return json(400, { error: `Unknown programId ${updates.programId}` });
+  return parentLocked(ctx, program);
+}
+
+/**
  * PATCH cms/ambassador/applications/{id} — a status in the body is a
  * transition, checked against APPLICATION_TRANSITIONS and appended to
  * history[] with its note; every other field is a plain patch. With
@@ -159,15 +174,8 @@ export async function patchApplication(ctx, request, auth) {
   if (loaded.error) return loaded.error;
   const { id, existing } = loaded;
   const { statusNote, statusOverride, ...updates } = loaded.updates;
-  if (statusOverride && !satisfiesRole(auth.role, 'super_admin')) {
-    return json(403, { error: 'Setting a status outside the transition table needs super_admin' });
-  }
-  if (updates.programId && updates.programId !== existing.programId) {
-    const program = await ctx.readKind('program', updates.programId);
-    if (!program) return json(400, { error: `Unknown programId ${updates.programId}` });
-    const locked = await parentLocked(ctx, program);
-    if (locked) return locked;
-  }
+  const refusal = await patchRefusal(ctx, { auth, updates, existing, statusOverride });
+  if (refusal) return refusal;
   const stamp = ctx.nowIso();
   const refused = applyTransition(updates, {
     existing,

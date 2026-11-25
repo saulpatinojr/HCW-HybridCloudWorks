@@ -89,6 +89,23 @@ export class EstimateUnusableError extends AuthoredError {
  *   the sources that gave something, in plain words, for the page to show
  */
 export function gatherTopics({ speakerEvents = [], speakerProfile = null, talks = [] } = {}) {
+  const collector = topicCollector();
+  const from = [];
+  if (addHubTopics(collector.add, speakerEvents)) from.push('Speaking hub sessions and topics');
+  if (addAll(collector.add, listOf(talks))) from.push('Talks listed on Community Days');
+
+  const bio = text(speakerProfile?.bio, BIO_MAX);
+  if (bio) from.push('Speaker profile bio');
+  return { topics: collector.topics, bio, from };
+}
+
+const listOf = (value) => (Array.isArray(value) ? value : []);
+
+/**
+ * A list of topics without repeats (by lower case), at most MAX_TOPICS.
+ * `add` answers whether the value was added.
+ */
+function topicCollector() {
   const topics = [];
   const seen = new Set();
   const add = (value) => {
@@ -99,26 +116,24 @@ export function gatherTopics({ speakerEvents = [], speakerProfile = null, talks 
     topics.push(topic);
     return true;
   };
-  const from = [];
+  return { topics, add };
+}
 
-  let fromHub = false;
-  for (const row of Array.isArray(speakerEvents) ? speakerEvents : []) {
-    if (add(row?.topic)) fromHub = true;
-    for (const session of Array.isArray(row?.sessions) ? row.sessions : []) {
-      if (add(session?.title)) fromHub = true;
-    }
+/** Offer every value to `add`; true when any was added. */
+function addAll(add, values) {
+  let any = false;
+  for (const value of values) any = add(value) || any;
+  return any;
+}
+
+/** Each Speaking hub row's topic, then its sessions' titles; true when any was added. */
+function addHubTopics(add, speakerEvents) {
+  let any = false;
+  for (const row of listOf(speakerEvents)) {
+    any = add(row?.topic) || any;
+    any = addAll(add, listOf(row?.sessions).map((session) => session?.title)) || any;
   }
-  if (fromHub) from.push('Speaking hub sessions and topics');
-
-  let fromTalks = false;
-  for (const title of Array.isArray(talks) ? talks : []) {
-    if (add(title)) fromTalks = true;
-  }
-  if (fromTalks) from.push('Talks listed on Community Days');
-
-  const bio = text(speakerProfile?.bio, BIO_MAX);
-  if (bio) from.push('Speaker profile bio');
-  return { topics, bio, from };
+  return any;
 }
 
 const line = (label, value) => (value ? `${label}: ${value}\n` : '');

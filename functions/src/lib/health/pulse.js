@@ -75,6 +75,38 @@ import {
 
 export const PULSE_ACTOR = 'pulse';
 
+/** Time one check: `{ probeId, outcome, durationMs }` or `{ probeId, error }`. */
+async function timed(clock, probeId, check) {
+  const started = clock();
+  try {
+    const outcome = await check();
+    return { probeId, outcome, durationMs: clock() - started };
+  } catch (error) {
+    return { probeId, error };
+  }
+}
+
+/** Every check the ops snapshot answers, from one build of it. */
+async function snapshotChecks({ buildSnapshot, clock }, nowMs) {
+  const started = clock();
+  let snapshot;
+  try {
+    snapshot = await buildSnapshot();
+  } catch (error) {
+    // The snapshot IS the Cosmos check. Nothing else it would have answered
+    // is recorded: no evidence is not the same as bad evidence.
+    return [{ probeId: 'cosmos', outcome: cosmosFailure(error), durationMs: clock() - started }];
+  }
+  const durationMs = clock() - started;
+  return Object.entries(SNAPSHOT_CHECKS).map(([probeId, check]) => {
+    try {
+      return { probeId, outcome: check(snapshot, nowMs), durationMs };
+    } catch (error) {
+      return { probeId, error };
+    }
+  });
+}
+
 /**
  * @param {object} deps
  * @param {{ readDoc: Function, createDoc: Function, replaceDocIfMatch: Function,
@@ -91,40 +123,10 @@ export function createHealthPulse({
   clock = () => Date.now(),
   log = {},
 }) {
-  /** Time one check: `{ probeId, outcome, durationMs }` or `{ probeId, error }`. */
-  async function timed(probeId, check) {
-    const started = clock();
-    try {
-      const outcome = await check();
-      return { probeId, outcome, durationMs: clock() - started };
-    } catch (error) {
-      return { probeId, error };
-    }
-  }
-
-  async function snapshotChecks(nowMs) {
-    const started = clock();
-    let snapshot;
-    try {
-      snapshot = await buildSnapshot();
-    } catch (error) {
-      // The snapshot IS the Cosmos check. Nothing else it would have answered
-      // is recorded: no evidence is not the same as bad evidence.
-      return [{ probeId: 'cosmos', outcome: cosmosFailure(error), durationMs: clock() - started }];
-    }
-    const durationMs = clock() - started;
-    return Object.entries(SNAPSHOT_CHECKS).map(([probeId, check]) => {
-      try {
-        return { probeId, outcome: check(snapshot, nowMs), durationMs };
-      } catch (error) {
-        return { probeId, error };
-      }
-    });
-  }
-
+  const timedCheck = (probeId, check) => timed(clock, probeId, check);
   const registryChecks = (nowMs) =>
     Promise.all([
-      timed('lab-agents', async () =>
+      timedCheck('lab-agents', async () =>
         labAgentsVerdict(
           labAgentsFromRows(
             await store.queryDocs('lab_agents', 'SELECT TOP 200 c.id, c.lastSeenAt, c.status, c.active FROM c', []),
@@ -133,7 +135,7 @@ export function createHealthPulse({
           nowMs
         )
       ),
-      timed('ai-providers', async () =>
+      timedCheck('ai-providers', async () =>
         aiProvidersVerdict(
           await store.queryDocs(
             'ai_providers',
@@ -143,7 +145,7 @@ export function createHealthPulse({
           nowMs
         )
       ),
-      timed('mcp-servers', async () =>
+      timedCheck('mcp-servers', async () =>
         mcpServersVerdict(
           await store.queryDocs(
             'mcp_servers',
@@ -154,15 +156,15 @@ export function createHealthPulse({
         )
       ),
       // Its own words, without the per-agent lines the Labs cards carry.
-      timed(LAB_DRIFT_PROBE, async () => {
+      timedCheck(LAB_DRIFT_PROBE, async () => {
         const { agents: _perAgent, ...verdict } = await readLabDrift(store, nowMs);
         return verdict;
       }),
-      timed(CODER_TEMPLATE_PROBE, () => readCoderTemplate(store, nowMs)),
-      timed(LAB_CANARY_PROBE, () => readLabCanary(store, nowMs)),
-      timed(CODER_TOKEN_PROBE, () => readCoderToken(store, nowMs)),
+      timedCheck(CODER_TEMPLATE_PROBE, () => readCoderTemplate(store, nowMs)),
+      timedCheck(LAB_CANARY_PROBE, () => readLabCanary(store, nowMs)),
+      timedCheck(CODER_TOKEN_PROBE, () => readCoderToken(store, nowMs)),
       // The lab host's own reading of Portainer (#1282): one point read.
-      timed(PORTAINER_PROBE, () => readPortainer(store, nowMs)),
+      timedCheck(PORTAINER_PROBE, () => readPortainer(store, nowMs)),
     ]);
 
   async function record(checkedAt, row) {
@@ -193,7 +195,7 @@ export function createHealthPulse({
     const nowMs = startedAt.getTime();
     const checkedAt = startedAt.toISOString();
 
-    const rows = [...(await snapshotChecks(nowMs)), ...(await registryChecks(nowMs))];
+    const rows = [...(await snapshotChecks({ buildSnapshot, clock }, nowMs)), ...(await registryChecks(nowMs))];
     // The pulse document is served to the Health view, so each failure is a
     // sentence with the code and a log line's reference, never the check's
     // or the store's own words (#945).

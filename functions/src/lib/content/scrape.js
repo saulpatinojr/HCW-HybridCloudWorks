@@ -46,7 +46,11 @@ export function absoluteImageUrl(src, pageUrl) {
   if (!src) return null;
   if (/^https?:\/\//i.test(src)) return src;
   if (/^[a-z][a-z0-9+.-]*:/i.test(src)) return null; // data:, blob:, javascript: — not fetchable images
-  const u = new URL(pageUrl);
+  return relativeImageUrl(src, new URL(pageUrl));
+}
+
+/** A relative image src made absolute against the page's address `u`. */
+function relativeImageUrl(src, u) {
   if (src.startsWith('//')) return `${u.protocol}${src}`;
   if (src.startsWith('/')) return `${u.origin}${src}`;
   return `${u.origin}/${src}`;
@@ -290,38 +294,42 @@ const DATE_META_SELECTORS = [
 export function extractPublishedDate(html) {
   if (!html) return null;
   const $ = loadHtml(html);
-  let best = null;
-
-  const jsonLd = $('script[type="application/ld+json"]').first().text();
-  if (jsonLd) {
-    try {
-      const data = JSON.parse(jsonLd);
-      const candidate = new Date(data?.datePublished);
-      if (data?.datePublished && !Number.isNaN(candidate.getTime())) best = candidate;
-    } catch {
-      // next method
-    }
-  }
-  for (const selector of DATE_META_SELECTORS) {
-    const raw = $(selector).attr('content');
-    if (raw && raw.trim()) {
-      const candidate = new Date(raw.trim());
-      if (!Number.isNaN(candidate.getTime())) {
-        best = candidate;
-        break;
-      }
-    }
-  }
-  if (!best) {
-    const raw = $('time').first().attr('datetime');
-    if (raw && raw.trim()) {
-      const candidate = new Date(raw.trim());
-      if (!Number.isNaN(candidate.getTime())) best = candidate;
-    }
-  }
+  // A meta tag wins over JSON-LD; <time> is read only when neither gave a date.
+  const best = dateFromMeta($) ?? dateFromJsonLd($) ?? dateFromTime($);
   if (!best) return null;
   return new Date(Date.UTC(best.getUTCFullYear(), best.getUTCMonth(), best.getUTCDate()));
 }
+
+/** A date from text, or null when it is empty or not a date. */
+function dateOf(raw) {
+  if (!raw || !raw.trim()) return null;
+  const candidate = new Date(raw.trim());
+  return Number.isNaN(candidate.getTime()) ? null : candidate;
+}
+
+function dateFromJsonLd($) {
+  const jsonLd = $('script[type="application/ld+json"]').first().text();
+  if (!jsonLd) return null;
+  try {
+    const data = JSON.parse(jsonLd);
+    const candidate = new Date(data?.datePublished);
+    return data?.datePublished && !Number.isNaN(candidate.getTime()) ? candidate : null;
+  } catch {
+    // next method
+    return null;
+  }
+}
+
+/** The first meta tag that holds a readable date. */
+function dateFromMeta($) {
+  for (const selector of DATE_META_SELECTORS) {
+    const candidate = dateOf($(selector).attr('content'));
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+const dateFromTime = ($) => dateOf($('time').first().attr('datetime'));
 
 /** The lightweight shape stored at inspection: URL references only, archived at publish. */
 export function referenceScrapedImages(images) {

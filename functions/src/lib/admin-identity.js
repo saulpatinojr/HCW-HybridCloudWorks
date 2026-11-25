@@ -24,7 +24,8 @@
  *     where a "uid" is now an Entra object id.
  *
  * Each handler body is a module-level function over `ctx` (guard, store, now,
- * uuid, env, actor); `createAdminIdentityHandlers` only wires them. The
+ * uuid, env, actor); `createAdminIdentityHandlers` only wires them. The admin
+ * lifecycle handlers (list, update, deactivate) are in ./admin-lifecycle.js. The
  * speaker-event rules and handlers are ./admin-identity/speaker-event-rules.js
  * and ./admin-identity/speaker-events.js, re-exported here so
  * admin-identity-http.js and every test import exactly what they always did.
@@ -38,6 +39,12 @@ import { json } from './http/admin-handler.js';
 import { errorResponse, errorFacts } from './http/error-response.js';
 import { createSpeakerEventHandlers } from './admin-identity/speaker-events.js';
 import {
+  deactivateAdmin,
+  getPermissionsForRole,
+  listAdmins,
+  updateAdmin,
+} from './admin-lifecycle.js';
+import {
   validateClientAuditAction,
   sanitizeAuditDetails,
   AUDIT_TTL_SECONDS,
@@ -50,44 +57,23 @@ export {
   normalizeSpeakerEventDate,
   validateSpeakerEventData,
 } from './admin-identity/speaker-event-rules.js';
-
-/** Verbatim from Site-Main lib/admin-auth.js — the frontend gates UI on these. */
-export function getPermissionsForRole(role) {
-  const permissionMap = {
-    viewer: ['read:content', 'read:dashboard'],
-    editor: ['read:content', 'read:dashboard', 'write:content', 'review:content'],
-    publisher: [
-      'read:content',
-      'read:dashboard',
-      'write:content',
-      'review:content',
-      'publish:content',
-    ],
-    super_admin: [
-      'read:content',
-      'read:dashboard',
-      'write:content',
-      'review:content',
-      'publish:content',
-      'manage:admins',
-      'manage:settings',
-    ],
-  };
-  return permissionMap[String(role || '').toLowerCase()] || [];
-}
+export { getPermissionsForRole } from './admin-lifecycle.js';
 
 export const BOOTSTRAP_STATE_DOC_ID = 'bootstrap-state';
 export const BOOTSTRAP_STATE_CONTAINER = 'admin_settings';
 
+/** Each sign that a signed-in user is an external/guest account; any one is enough. */
+const GUEST_SIGNS = [
+  (user) => String(user.userType || user.user_type || '').toLowerCase() === 'guest',
+  (user) => user.acct === 1,
+  (user) => typeof user.idp === 'string' && user.idp.length > 0,
+  (user) => /#EXT#/i.test(String(user.preferred_username || user.upn || user.email || '')),
+];
+
 /** Detect whether a user is an external/guest account. */
 export function isGuestUser(user) {
   if (!user) return false;
-  if (String(user.userType || user.user_type || '').toLowerCase() === 'guest') return true;
-  if (user.acct === 1) return true;
-  if (typeof user.idp === 'string' && user.idp.length > 0) return true;
-  const upn = String(user.preferred_username || user.upn || user.email || '');
-  if (/#EXT#/i.test(upn)) return true;
-  return false;
+  return GUEST_SIGNS.some((sign) => sign(user));
 }
 
 /**
@@ -259,6 +245,29 @@ async function bootstrapRefusal({ guard, env }, request, user, initialBootstrap,
   return json(allowlist.status, { error: allowlist.error });
 }
 
+/**
+ * Is this the first bootstrap, and is the caller refused? A first bootstrap
+ * that was already completed answers 409 before the allowlist is read.
+ */
+async function bootstrapGate(ctx, request, user, context) {
+  const initialBootstrap = !(await hasActiveAdmin(ctx.store));
+  if (initialBootstrap) {
+    const bootstrapDoc = await ctx.store
+      .readDoc(BOOTSTRAP_STATE_CONTAINER, BOOTSTRAP_STATE_DOC_ID, BOOTSTRAP_STATE_DOC_ID)
+      .catch(() => null);
+    if (bootstrapDoc?.completed === true) {
+      return {
+        initialBootstrap,
+        refusal: json(409, { error: 'Initial bootstrap has already been completed' }),
+      };
+    }
+  }
+  return {
+    initialBootstrap,
+    refusal: await bootstrapRefusal(ctx, request, user, initialBootstrap, context),
+  };
+}
+
 /** Write (patch when present, create otherwise) the caller's registry record. */
 async function writeAdminRecord({ store, now }, { oid, email, role, initialBootstrap }) {
   const nowIso = now().toISOString();
@@ -306,16 +315,7 @@ async function bootstrapCurrentUserAdmin(ctx, request, context) {
         .trim()
         .toLowerCase() || null;
 
-    const initialBootstrap = !(await hasActiveAdmin(ctx.store));
-    if (initialBootstrap) {
-      const bootstrapDoc = await ctx.store
-        .readDoc(BOOTSTRAP_STATE_CONTAINER, BOOTSTRAP_STATE_DOC_ID, BOOTSTRAP_STATE_DOC_ID)
-        .catch(() => null);
-      if (bootstrapDoc?.completed === true) {
-        return json(409, { error: 'Initial bootstrap has already been completed' });
-      }
-    }
-    const refusal = await bootstrapRefusal(ctx, request, user, initialBootstrap, context);
+    const { initialBootstrap, refusal } = await bootstrapGate(ctx, request, user, context);
     if (refusal) return refusal;
 
     await writeAdminRecord(ctx, { oid, email, role: requestedRole, initialBootstrap });
@@ -381,115 +381,6 @@ async function resetBootstrapState(ctx, request, context) {
   } catch (error) {
     return errorResponse(context, 'Failed to reset bootstrap state', error, 500, request);
   }
-}
-
-/**
- * GET /api/cms/admins — list all admin records (super_admin only).
- */
-async function listAdmins(ctx, request, context) {
-  const auth = await ctx.guard.requireRole(request, 'super_admin');
-  if (auth.error) return auth.error;
-
-  try {
-    const docs = await ctx.store.queryDocs(
-      'admins',
-      'SELECT c.id, c.uid, c.email, c.role, c.permissions, c.active, c.createdAt, c.createdBy, c.updatedAt, c.updatedBy, c.updateReason FROM c'
-    );
-    const admins = (docs || []).sort((a, b) =>
-      String(a.email || a.id).localeCompare(String(b.email || b.id))
-    );
-    return json(200, { admins });
-  } catch (error) {
-    return errorResponse(context, 'Failed to list admins', error, 500, request);
-  }
-}
-
-/**
- * PATCH /api/cms/admins/{id} — change role or active status (super_admin only).
- * Prevents demoting or deactivating the last active super admin.
- * Writes before-and-after audit and clears guard role cache.
- */
-async function updateAdmin(ctx, request, context) {
-  const auth = await ctx.guard.requireRole(request, 'super_admin');
-  if (auth.error) return auth.error;
-
-  try {
-    const { user } = auth;
-    const actorOid = user.oid ?? user.sub;
-    const targetId = request.params?.id || request.params?.adminId;
-    if (!targetId) return json(400, { error: 'Admin ID is required' });
-
-    const existing = await ctx.store.readDoc('admins', targetId, targetId);
-    if (!existing) return json(404, { error: 'Admin record not found' });
-
-    const body = (await request.json().catch(() => null)) || {};
-    const requestedRole = body.role ? String(body.role).toLowerCase() : undefined;
-    if (requestedRole && !ADMIN_ROLES[requestedRole.toUpperCase()]) {
-      return json(400, { error: 'Invalid role' });
-    }
-
-    const requestedActive = typeof body.active === 'boolean' ? body.active : undefined;
-    const updateReason = String(body.reason || body.updateReason || 'Admin updated via lifecycle API');
-
-    const isCurrentlyActiveSuperAdmin = existing.role === 'super_admin' && existing.active === true;
-    const willBeActiveSuperAdmin =
-      (requestedRole ? requestedRole === 'super_admin' : existing.role === 'super_admin') &&
-      (requestedActive !== undefined ? requestedActive : existing.active);
-
-    if (isCurrentlyActiveSuperAdmin && !willBeActiveSuperAdmin) {
-      const activeSuperAdmins = await ctx.store.queryDocs(
-        'admins',
-        "SELECT c.id FROM c WHERE c.active = true AND c.role = 'super_admin'"
-      );
-      if (activeSuperAdmins.length <= 1) {
-        return json(400, { error: 'Cannot demote or deactivate the last active super admin' });
-      }
-    }
-
-    const newRole = requestedRole ?? existing.role;
-    const newActive = requestedActive !== undefined ? requestedActive : existing.active;
-    const nowIso = ctx.now().toISOString();
-
-    const patchedFields = {
-      role: newRole,
-      permissions: getPermissionsForRole(newRole),
-      active: newActive,
-      updatedAt: nowIso,
-      updatedBy: actorOid,
-      updateReason,
-    };
-
-    await ctx.store.patchDoc('admins', targetId, patchedFields);
-
-    // Evict cached role entries immediately so changes take effect without waiting 60s
-    ctx.guard.clearCache();
-
-    const updatedDoc = { ...existing, ...patchedFields };
-
-    await recordMutationAudit(ctx.store, {
-      actor: user,
-      action: isCurrentlyActiveSuperAdmin && !willBeActiveSuperAdmin ? 'admin_demoted' : 'admin_role_changed',
-      resource: `admins/${targetId}`,
-      before: { id: existing.id, role: existing.role, active: existing.active },
-      after: { id: updatedDoc.id, role: updatedDoc.role, active: updatedDoc.active },
-      details: { reason: updateReason, targetOid: targetId },
-      now: ctx.now,
-      uuid: ctx.uuid,
-      context,
-    });
-
-    return json(200, { success: true, admin: updatedDoc });
-  } catch (error) {
-    return errorResponse(context, 'Failed to update admin', error, 500, request);
-  }
-}
-
-async function deactivateAdmin(ctx, request, context) {
-  const reqWithDeactivate = {
-    ...request,
-    json: async () => ({ active: false, reason: 'Deactivated via admin lifecycle API' }),
-  };
-  return updateAdmin(ctx, reqWithDeactivate, context);
 }
 
 /** POST /api/recordAdminAudit — client-originated audit rows. */

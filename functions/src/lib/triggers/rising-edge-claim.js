@@ -45,14 +45,20 @@ function toMillis(value) {
  * @param {{ flagField: string, claimField: string, claimedAtField: string, eventId: string, now: number, claimTimeoutMs?: number }} spec
  * @returns {{ claim: boolean, reason: string }}
  */
-export function evaluateRisingEdgeClaim(
-  data,
-  { flagField, claimField, claimedAtField, eventId, now, claimTimeoutMs = DEFAULT_CLAIM_TIMEOUT_MS }
-) {
+export function evaluateRisingEdgeClaim(data, spec) {
   if (!data) return { claim: false, reason: SKIP_REASONS.DOCUMENT_MISSING };
-  if (data[flagField] !== true) return { claim: false, reason: SKIP_REASONS.FLAG_NOT_SET };
-  const existingClaim = data[claimField];
+  if (data[spec.flagField] !== true) return { claim: false, reason: SKIP_REASONS.FLAG_NOT_SET };
+  const existingClaim = data[spec.claimField];
   if (!existingClaim) return { claim: true, reason: CLAIM_REASONS.CLAIMED };
+  return existingClaimDecision(data, existingClaim, spec);
+}
+
+/** The decision when the document already carries a claim: this event's, a live one, or a stale one. */
+function existingClaimDecision(
+  data,
+  existingClaim,
+  { claimedAtField, eventId, now, claimTimeoutMs = DEFAULT_CLAIM_TIMEOUT_MS }
+) {
   if (existingClaim === eventId)
     return { claim: false, reason: SKIP_REASONS.ALREADY_RUN_BY_THIS_EVENT };
   const claimedAt = toMillis(data[claimedAtField]);

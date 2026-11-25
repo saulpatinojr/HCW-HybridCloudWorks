@@ -169,6 +169,8 @@ describe('nothing but the alerts module itself names the alerts', () => {
     // say it is kept. It names it and nothing more: it reads no document, and
     // the archive it describes is a private blob container nothing serves.
     `lib${sep}backup${sep}archive-classification.js`,
+    // The same list's admin_config part, split into its own file.
+    `lib${sep}backup${sep}archive-classification-admin.js`,
   ];
   const NAMES = /calendar[_-]?alerts?/i;
 

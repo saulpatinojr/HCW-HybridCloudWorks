@@ -161,62 +161,81 @@ export async function fetchImage(
 ) {
   let current = url;
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
-    // The connection is pinned to the address the guard validated (PR #889
-    // review): a rebinding host cannot answer the check with a public
-    // address and the connect with a private one.
-    const { address } = await validateFetchUrl(current, resolve ? { resolve } : {});
-    const dispatcher = pinnedDispatcher(address);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let response;
+    const { response, timer } = await openHop(fetchImpl, current, { resolve, timeoutMs });
     try {
-      response = await fetchImpl(current, {
-        redirect: 'manual',
-        signal: controller.signal,
-        dispatcher,
-        headers: { 'User-Agent': 'Mozilla/5.0 HybridCloudWorks-Bot/1.0' },
-      });
-    } catch (error) {
-      clearTimeout(timer);
-      dispatcher.close().catch(() => {});
-      throw error?.name === 'AbortError'
-        ? new Error(`Request timed out fetching ${current}`)
-        : error;
-    }
-    try {
-      if ([301, 302, 307, 308].includes(response.status)) {
-        const location = response.headers.get('location');
-        if (!location || hop === maxRedirects)
-          throw withUpstreamStatus(new Error(`HTTP ${response.status} fetching ${current}`), response.status);
-        current = /^https?:\/\//i.test(location) ? location : new URL(location, current).href;
+      const next = redirectTarget(response, current, hop === maxRedirects);
+      if (next !== null) {
+        current = next;
         continue;
       }
-      if (response.status < 200 || response.status >= 300)
-        throw withUpstreamStatus(new Error(`HTTP ${response.status} fetching ${current}`), response.status);
-      const contentType = normalizeMediaType(response.headers.get('content-type'));
-      // Before the bytes: a type this site will not store is refused here, so
-      // a video or an octet-stream is never buffered, never named and never
-      // uploaded. Note there is no `|| 'image/png'` fallback any more — a
-      // missing Content-Type means nothing was measured, and inventing one is
-      // the same mislabel as accepting the wrong one.
-      const refusal = mediaTypeRefusal(contentType);
-      if (refusal) return { refused: refusal.code, contentType, reason: refusal.reason };
-      // Refuse before buffering when the server declares an oversized body
-      // (T-734). Content-Length is a hint, not a guarantee, so the buffered
-      // length is re-checked below — but honouring it avoids pulling the bytes
-      // at all in the common case.
-      const declared = Number(response.headers.get('content-length'));
-      if (Number.isFinite(declared) && declared > maxBytes) {
-        throw new Error(`Image at ${current} declares ${declared} bytes (max ${maxBytes})`);
-      }
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.length > maxBytes) {
-        throw new Error(`Image at ${current} is ${buffer.length} bytes (max ${maxBytes})`);
-      }
-      return { buffer, contentType };
+      return await readImage(response, current, maxBytes);
     } finally {
       clearTimeout(timer);
     }
   }
   throw new Error(`Too many redirects fetching ${url}`);
+}
+
+/**
+ * One request, on a connection pinned to the address the guard validated
+ * (PR #889 review): a rebinding host cannot answer the check with a public
+ * address and the connect with a private one. Returns the response and the
+ * timeout's timer, which the caller clears once it has read the response.
+ */
+async function openHop(fetchImpl, current, { resolve, timeoutMs }) {
+  const { address } = await validateFetchUrl(current, resolve ? { resolve } : {});
+  const dispatcher = pinnedDispatcher(address);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(current, {
+      redirect: 'manual',
+      signal: controller.signal,
+      dispatcher,
+      headers: { 'User-Agent': 'Mozilla/5.0 HybridCloudWorks-Bot/1.0' },
+    });
+    return { response, timer };
+  } catch (error) {
+    clearTimeout(timer);
+    dispatcher.close().catch(() => {});
+    throw error?.name === 'AbortError'
+      ? new Error(`Request timed out fetching ${current}`)
+      : error;
+  }
+}
+
+/** The address a redirect points at, or null when the response is not a redirect. */
+function redirectTarget(response, current, lastHop) {
+  if (![301, 302, 307, 308].includes(response.status)) return null;
+  const location = response.headers.get('location');
+  if (!location || lastHop)
+    throw withUpstreamStatus(new Error(`HTTP ${response.status} fetching ${current}`), response.status);
+  return /^https?:\/\//i.test(location) ? location : new URL(location, current).href;
+}
+
+/** A 2xx answer's image, or the refusal of its media type; anything else throws. */
+async function readImage(response, current, maxBytes) {
+  if (response.status < 200 || response.status >= 300)
+    throw withUpstreamStatus(new Error(`HTTP ${response.status} fetching ${current}`), response.status);
+  const contentType = normalizeMediaType(response.headers.get('content-type'));
+  // Before the bytes: a type this site will not store is refused here, so
+  // a video or an octet-stream is never buffered, never named and never
+  // uploaded. Note there is no `|| 'image/png'` fallback any more — a
+  // missing Content-Type means nothing was measured, and inventing one is
+  // the same mislabel as accepting the wrong one.
+  const refusal = mediaTypeRefusal(contentType);
+  if (refusal) return { refused: refusal.code, contentType, reason: refusal.reason };
+  // Refuse before buffering when the server declares an oversized body
+  // (T-734). Content-Length is a hint, not a guarantee, so the buffered
+  // length is re-checked below — but honouring it avoids pulling the bytes
+  // at all in the common case.
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new Error(`Image at ${current} declares ${declared} bytes (max ${maxBytes})`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > maxBytes) {
+    throw new Error(`Image at ${current} is ${buffer.length} bytes (max ${maxBytes})`);
+  }
+  return { buffer, contentType };
 }

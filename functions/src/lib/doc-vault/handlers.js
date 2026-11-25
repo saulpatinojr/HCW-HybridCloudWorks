@@ -69,157 +69,69 @@ import {
   DOCUMENT_ID_PATTERN,
   DOC_TYPES,
   DOC_VAULT_ROLE,
-  KEPT_VERSIONS,
   MAX_BODY_BYTES,
   MAX_TAG_CHARS,
-  SALT_DOCUMENT_ID,
   SOURCES,
   adminIdOf,
-  buildArchivedVersion,
-  buildNewDocument,
-  buildNextDocument,
   canonicalCategory,
-  dedupeKeyOf,
   fieldsOfVersion,
   readVersionNumber,
-  sameContent,
-  toConflictSummary,
   toSummary,
-  toVersionSummary,
   toVersionView,
   toView,
-  trashCutoff,
   validateFields,
-  vaultDocumentId,
   versionDocId,
 } from './model.js';
+import {
+  ALREADY_CURRENT,
+  BAD_ID,
+  BAD_VERSION,
+  DUPLICATE,
+  ETAG_REQUIRED,
+  IN_TRASH,
+  NOT_IN_TRASH,
+  NOT_PROVISIONED,
+  PURGING,
+  Refusal,
+  TOO_LARGE,
+  VERSION_NOT_FOUND,
+  json,
+  refuseIf,
+  refused,
+} from './refusals.js';
+import {
+  LIST_ACTIVE_QUERY,
+  LIST_TRASH_QUERY,
+  MAX_LISTED_DOCUMENTS,
+  conflict,
+  eraseDocument,
+  findByKey,
+  listVersions,
+  patchUnderEtag,
+  purgeExpiredTrash,
+  readDocument,
+  readStored,
+  withinWindow,
+} from './vault-store.js';
+import { addVersion, refuseIfKeyTaken, saveDocument } from './vault-save.js';
 
-/** Rows the list returns. The vault is one person's shelf; this is generous. */
-export const MAX_LISTED_DOCUMENTS = 500;
-/** Expired Trash removed per list load, so a load stays short. */
-export const PURGE_BATCH = 20;
+export {
+  EXPIRED_TRASH_QUERY,
+  FIND_BY_KEY_QUERY,
+  LIST_ACTIVE_QUERY,
+  LIST_TRASH_QUERY,
+  MAX_LISTED_DOCUMENTS,
+  PURGE_BATCH,
+  VERSIONS_QUERY,
+  VERSION_IDS_QUERY,
+} from './vault-store.js';
+
 export const MAX_SEARCH_CHARS = 200;
 export const MAX_TAG_FILTERS = 50;
 /** The whole create or edit request, as JSON: quotes and newlines in the text can double in size once escaped. */
 export const MAX_REQUEST_BYTES = MAX_BODY_BYTES * 2 + 32 * 1024;
 /** The whole upload request: the file and its front matter, escaped, and the file name. */
 export const MAX_UPLOAD_REQUEST_BYTES = MAX_FILE_BYTES * 2 + 4 * 1024;
-
-// ── the queries, as constants so a test can name them ──────────────────────
-
-const ACTIVE = '(NOT IS_DEFINED(c.deletedAt) OR IS_NULL(c.deletedAt))';
-const TRASHED = '(IS_DEFINED(c.deletedAt) AND NOT IS_NULL(c.deletedAt))';
-const LIST_PROJECTION = [
-  'c.id',
-  'c.title',
-  'c.category',
-  'c.tags',
-  'c.source',
-  'c.relatedLink',
-  'c.version',
-  'c.bodyBytes',
-  'c.createdAt',
-  'c.updatedAt',
-  'c.deletedAt',
-  'c._etag',
-].join(', ');
-const listQuery = (clause) =>
-  `SELECT TOP ${MAX_LISTED_DOCUMENTS + 1} ${LIST_PROJECTION} FROM c WHERE c.docType = @docType AND ${clause} ORDER BY c.updatedAt DESC`;
-export const LIST_ACTIVE_QUERY = listQuery(ACTIVE);
-export const LIST_TRASH_QUERY = listQuery(TRASHED);
-export const FIND_BY_KEY_QUERY =
-  'SELECT TOP 2 * FROM c WHERE c.docType = @docType AND c.dedupeKey = @key';
-export const VERSIONS_QUERY =
-  'SELECT c.version, c.title, c.category, c.source, c.bodyBytes, c.restoredFromVersion, c.savedAt FROM c WHERE c.docType = @docType AND c.documentId = @id ORDER BY c.version DESC';
-export const VERSION_IDS_QUERY =
-  'SELECT c.id, c.version FROM c WHERE c.docType = @docType AND c.documentId = @id';
-export const EXPIRED_TRASH_QUERY = `SELECT TOP ${PURGE_BATCH} c.id, c._etag, c.purging FROM c WHERE c.docType = @docType AND ${TRASHED} AND c.deletedAt < @cutoff`;
-
-// ── answers ────────────────────────────────────────────────────────────────
-
-// Private, never stored by a browser cache or anything between: the body can be a letter.
-const json = (status, body) => ({
-  status,
-  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
-  body: JSON.stringify(body),
-});
-
-const refused = ({ status, code, error }, extra = {}) =>
-  json(status, { ok: false, code, error, ...extra });
-
-const TOO_LARGE = {
-  status: 413,
-  code: 'TOO_LARGE',
-  error: `That is too large to be a document (the text can be at most ${MAX_BODY_BYTES / 1024} KB). Nothing was saved.`,
-};
-const NOT_FOUND = { status: 404, code: 'NOT_FOUND', error: 'No such document.' };
-const VERSION_NOT_FOUND = {
-  status: 404,
-  code: 'VERSION_NOT_FOUND',
-  error: `No such version. Only the newest ${KEPT_VERSIONS} versions of a document are kept.`,
-};
-const BAD_ID = { status: 400, code: 'BAD_ID', error: 'A document id is required.' };
-const BAD_VERSION = {
-  status: 400,
-  code: 'BAD_VERSION',
-  error: 'version must be a whole number from 1.',
-};
-const ETAG_REQUIRED = {
-  status: 400,
-  code: 'ETAG_REQUIRED',
-  error:
-    'etag is required: send the etag of the version you are looking at (reload the document).',
-};
-const IN_TRASH = {
-  status: 409,
-  code: 'IN_TRASH',
-  error: 'This document is in Trash. Put it back first, then change it.',
-};
-const NOT_IN_TRASH = {
-  status: 409,
-  code: 'NOT_IN_TRASH',
-  error: 'This document is not in Trash. Move it to Trash first.',
-};
-const PURGING = {
-  status: 409,
-  code: 'PURGING',
-  error:
-    'This document is being deleted for good and cannot be put back or changed. Open Trash and choose Delete forever to finish it.',
-};
-const ALREADY_CURRENT = {
-  status: 409,
-  code: 'ALREADY_CURRENT',
-  error: 'That is already the newest version.',
-};
-const DUPLICATE = {
-  status: 409,
-  code: 'DUPLICATE',
-  error:
-    'Another document in the vault, or in its Trash, already has that title in that category. Choose a different title or category.',
-};
-const NOT_PROVISIONED = {
-  status: 503,
-  code: 'NOT_PROVISIONED',
-  error:
-    'The Doc Vault has no storage yet: the doc_vault container has not been created. See docs/runbooks/doc-vault.md.',
-};
-const CONFLICT_MESSAGE =
-  'This document changed in another tab or on another device since you opened it. Nothing was saved; reload it to see the latest version.';
-
-/** Thrown inside a handler to answer with a refusal; the route wrapper turns it into the response. */
-class Refusal extends Error {
-  constructor(refusal, extra = {}) {
-    super(refusal.code);
-    this.response = refused(refusal, extra);
-    this.refusalCode = refusal.code;
-  }
-}
-
-const refuseIf = (refusal, extra) => {
-  if (refusal) throw new Refusal(refusal, extra);
-};
-
-const isPreconditionFailure = (error) => error?.code === 412 || error?.code === 404;
 
 /** What an error becomes: a refusal's own answer, the not-provisioned notice, a corrected input, or a fixed 500. */
 function answerFor(error, context, what, request) {
@@ -257,28 +169,6 @@ const readEtag = (body) => {
   return etag;
 };
 
-/** A stored document of the kind asked for, or null. */
-async function readStored(deps, id, docType) {
-  const doc = await deps.store.readDoc(CONTAINER, id, id);
-  return doc && doc.docType === docType ? doc : null;
-}
-
-async function readDocument(deps, id) {
-  const doc = await readStored(deps, id, DOC_TYPES.document);
-  refuseIf(!doc && NOT_FOUND);
-  return doc;
-}
-
-/** The 412 a lost race answers, with what is stored now (or 404 if it is gone). Always throws. */
-async function conflict(deps, id) {
-  const latest = await readStored(deps, id, DOC_TYPES.document).catch(() => null);
-  refuseIf(!latest && { ...NOT_FOUND, error: 'This document no longer exists.' });
-  throw new Refusal(
-    { status: 412, code: 'CONFLICT', error: CONFLICT_MESSAGE },
-    { current: toConflictSummary(latest) }
-  );
-}
-
 /** The shared front half of every write to an existing document. */
 async function loadForWrite(deps, request, maxBytes = MAX_REQUEST_BYTES) {
   const id = readId(request);
@@ -287,200 +177,6 @@ async function loadForWrite(deps, request, maxBytes = MAX_REQUEST_BYTES) {
   const current = await readDocument(deps, id);
   if (current._etag !== etag) await conflict(deps, id);
   return { id, body, etag, current };
-}
-
-async function patchUnderEtag(deps, id, update, etag) {
-  try {
-    return await deps.store.patchDoc(CONTAINER, id, update, { ifMatch: etag });
-  } catch (error) {
-    if (isPreconditionFailure(error)) await conflict(deps, id);
-    throw error;
-  }
-}
-
-/** The document holding a key, other than `exceptId` (the document asking), or null. */
-async function findByKey(deps, key, exceptId = null) {
-  const rows = await deps.store.queryDocs(CONTAINER, FIND_BY_KEY_QUERY, [
-    { name: '@docType', value: DOC_TYPES.document },
-    { name: '@key', value: key },
-  ]);
-  return rows.find((row) => row.id !== exceptId) ?? null;
-}
-
-const versionRows = (deps, id) =>
-  deps.store.queryDocs(CONTAINER, VERSION_IDS_QUERY, [
-    { name: '@docType', value: DOC_TYPES.version },
-    { name: '@id', value: id },
-  ]);
-
-/** An id and a version number read from a delete's query: both or nothing. */
-const isVersionRow = (row) => typeof row?.id === 'string' && Number.isInteger(row.version);
-
-/** Remove a document that is already gone without complaint: a retry meets a half-finished delete. */
-async function deleteQuietly(deps, id) {
-  try {
-    await deps.store.deleteDoc(CONTAINER, id, id);
-  } catch (error) {
-    if (error?.code !== 404) throw error;
-  }
-}
-
-/**
- * The versions older than the newest KEPT_VERSIONS, removed. Best-effort: the
- * list and the viewer both ignore a version outside the window, so one that
- * survives a failed delete is invisible and goes with the next save.
- */
-async function pruneVersions(deps, id, currentVersion) {
-  try {
-    const rows = (await versionRows(deps, id)).filter(isVersionRow);
-    for (const row of rows) {
-      if (row.version <= currentVersion - KEPT_VERSIONS) await deleteQuietly(deps, row.id);
-    }
-  } catch {
-    // Nothing to report: the next save tries again.
-  }
-}
-
-/** Is an archived version inside the window the vault keeps? */
-const withinWindow = (current, version) =>
-  version < current.version && version > current.version - KEPT_VERSIONS;
-
-/** The earlier versions of a document that the page may offer, newest first. */
-async function listVersions(deps, current) {
-  const rows = await deps.store.queryDocs(CONTAINER, VERSIONS_QUERY, [
-    { name: '@docType', value: DOC_TYPES.version },
-    { name: '@id', value: current.id },
-  ]);
-  return rows
-    .filter((row) => Number.isInteger(row?.version) && withinWindow(current, row.version))
-    .map(toVersionSummary)
-    .sort((a, b) => b.version - a.version);
-}
-
-// ── saving ─────────────────────────────────────────────────────────────────
-
-async function refuseIfKeyTaken(deps, fields, current) {
-  const key = dedupeKeyOf(fields.category, fields.title);
-  if (key === current.dedupeKey) return;
-  refuseIf((await findByKey(deps, key, current.id)) && DUPLICATE);
-}
-
-/**
- * Write `fields` as the next version of `current`: archive what is there,
- * replace it under its etag, prune the oldest. Identical content writes
- * nothing (a document in Trash is brought back instead).
- *
- * @returns {Promise<{ outcome: 'versioned'|'unchanged'|'restored', doc: object }>}
- */
-async function addVersion(deps, { current, fields, source, adminId, restoredFromVersion = null }) {
-  refuseIf(current.purging && PURGING);
-  if (sameContent(current, fields)) {
-    if (!current.deletedAt) return { outcome: 'unchanged', doc: current };
-    const doc = await patchUnderEtag(
-      deps,
-      current.id,
-      { deletedAt: null, deletedBy: null },
-      current._etag
-    );
-    return { outcome: 'restored', doc };
-  }
-  const next = buildNextDocument({
-    current,
-    fields,
-    source,
-    adminId,
-    now: deps.now(),
-    restoredFromVersion,
-  });
-  // The earlier text goes first, under an id that names its version, so a
-  // repeat after a failure rewrites the same item rather than adding one.
-  const archive = buildArchivedVersion(current);
-  await deps.store.upsertDoc(CONTAINER, archive);
-  let stored;
-  try {
-    stored = await deps.store.replaceDocIfMatch(CONTAINER, next);
-  } catch (error) {
-    if (isPreconditionFailure(error)) {
-      // The document may have been removed, or be mid-removal, since it was
-      // read. Then the item just written belongs to nothing and nothing would
-      // ever delete it: take it back before answering.
-      const latest = await readStored(deps, current.id, DOC_TYPES.document).catch(() => null);
-      if (!latest || latest.purging) await deleteQuietly(deps, archive.id).catch(() => {});
-      await conflict(deps, current.id);
-    }
-    throw error;
-  }
-  await pruneVersions(deps, current.id, next.version);
-  return { outcome: 'versioned', doc: stored || next };
-}
-
-/**
- * The container's id salt (model.js SALT_DOCUMENT_ID): read, or made the first
- * time it is needed. Made create-only, so two instances starting together agree
- * on one: the loser of the create reads the winner's.
- */
-async function idSalt(deps) {
-  const usable = (doc) =>
-    doc && doc.docType === DOC_TYPES.salt && typeof doc.value === 'string' && doc.value.length >= 16;
-  const stored = await deps.store.readDoc(CONTAINER, SALT_DOCUMENT_ID, SALT_DOCUMENT_ID);
-  if (usable(stored)) return stored.value;
-  const value = deps.newSalt();
-  try {
-    await deps.store.createDoc(CONTAINER, {
-      id: SALT_DOCUMENT_ID,
-      docType: DOC_TYPES.salt,
-      value,
-      createdAt: deps.now().toISOString(),
-    });
-    return value;
-  } catch (error) {
-    if (error?.code !== 409) throw error;
-  }
-  const winner = await deps.store.readDoc(CONTAINER, SALT_DOCUMENT_ID, SALT_DOCUMENT_ID);
-  if (!usable(winner)) throw new Error('the id salt item exists and cannot be read');
-  return winner.value;
-}
-
-/** Create the document under its derived id; when that id is taken, say who holds it. */
-async function createNew(deps, { key, fields, source, adminId }) {
-  const build = (id) => buildNewDocument({ id, fields, source, adminId, now: deps.now() });
-  const derivedId = vaultDocumentId(key, await idSalt(deps));
-  const first = build(derivedId);
-  try {
-    return { doc: (await deps.store.createDoc(CONTAINER, first)) || first };
-  } catch (error) {
-    if (error?.code !== 409) throw error;
-  }
-  const holder = await readStored(deps, derivedId, DOC_TYPES.document);
-  if (holder && holder.dedupeKey === key) return { holder };
-  // The derived id belongs to a document since renamed to something else: use a fresh id.
-  const second = build(deps.uuid());
-  return { doc: (await deps.store.createDoc(CONTAINER, second)) || second };
-}
-
-/**
- * A pasted or uploaded document: new, or the next version of the one that
- * holds its key. A lost race with another write to the same document is run
- * once more from the top, because an upload carries no etag to ask the page
- * about.
- *
- * @returns {Promise<{ outcome: 'created'|'versioned'|'unchanged'|'restored', doc: object }>}
- */
-async function saveDocument(deps, { fields, source, adminId }) {
-  const key = dedupeKeyOf(fields.category, fields.title);
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      let current = await findByKey(deps, key);
-      if (!current) {
-        const made = await createNew(deps, { key, fields, source, adminId });
-        if (made.doc) return { outcome: 'created', doc: made.doc };
-        current = made.holder;
-      }
-      return await addVersion(deps, { current, fields, source, adminId });
-    } catch (error) {
-      if (!(error instanceof Refusal) || error.refusalCode !== 'CONFLICT' || attempt > 0) throw error;
-    }
-  }
 }
 
 // ── audit ──────────────────────────────────────────────────────────────────
@@ -554,32 +250,6 @@ const matchesSearch = (row, { category, q, tag }) => {
   if (!q) return true;
   return [row.title, row.category, ...row.tags].some((text) => text.toLowerCase().includes(q));
 };
-
-/**
- * Documents that have waited in Trash past the window, removed with their
- * versions, each under the etag the query read: a document put back since
- * fails its condition and is left alone. Best-effort, and one failure does not
- * stop the others; Trash is tidied again on the next load.
- */
-async function purgeExpiredTrash(deps) {
-  let expired = [];
-  try {
-    expired = await deps.store.queryDocs(CONTAINER, EXPIRED_TRASH_QUERY, [
-      { name: '@docType', value: DOC_TYPES.document },
-      { name: '@cutoff', value: trashCutoff(deps.now()) },
-    ]);
-  } catch {
-    return;
-  }
-  for (const row of expired) {
-    if (typeof row?.id !== 'string' || typeof row._etag !== 'string') continue;
-    try {
-      await eraseDocument(deps, { id: row.id, _etag: row._etag, purging: row.purging === true });
-    } catch {
-      // Put back, edited elsewhere or already gone: leave it.
-    }
-  }
-}
 
 const countBy = (rows, pick) => {
   const counts = new Map();
@@ -763,38 +433,6 @@ async function restoreVersion(deps, { request, context, user }) {
     });
   }
   return savedAnswer(saved, { id });
-}
-
-/**
- * Remove a document that is in Trash, and its versions, in an order that
- * neither loses a document's history while the document lives, nor leaves
- * history behind when the document goes, even if the work is interrupted or
- * races a put-back:
- *   1. mark it `purging` under its etag. From here a put-back, an edit and a
- *      second delete are refused, so nothing can revive it half-deleted; and a
- *      put-back that got in first fails this step, with the history intact.
- *   2. delete its versions (a retry meets none, quietly).
- *   3. delete the document under the marked etag.
- * An interruption after step 1 leaves a trashed document marked purging, which
- * "Delete forever" and the next list load both finish.
- *
- * @param {object} deps
- * @param {{ id: string, _etag: string, purging?: boolean }} doc a document in Trash
- */
-async function eraseDocument(deps, doc) {
-  const marked = doc.purging
-    ? doc
-    : await patchUnderEtag(deps, doc.id, { purging: true }, doc._etag);
-  for (const row of (await versionRows(deps, doc.id)).filter(isVersionRow)) {
-    await deleteQuietly(deps, row.id);
-  }
-  try {
-    await deps.store.deleteDocIfMatch(CONTAINER, doc.id, marked._etag, doc.id);
-  } catch (error) {
-    if (error?.code === 404) return;
-    if (error?.code === 412) await conflict(deps, doc.id);
-    throw error;
-  }
 }
 
 /**

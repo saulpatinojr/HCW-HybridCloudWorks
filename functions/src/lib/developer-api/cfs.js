@@ -68,6 +68,9 @@ export const callDocId = (eventId) => `cfs-call:${eventId}`;
 export const isEventId = (value) => typeof value === 'string' && EVENT_ID_RE.test(value);
 export const isSubmissionId = (value) => typeof value === 'string' && UUID_RE.test(value);
 
+/** Left out, null or empty: a field that was not given. */
+const isBlank = (value) => value === undefined || value === null || value === '';
+
 const CURSOR_RE = /^[A-Za-z0-9_-]+$/;
 // The database's continuation value travels back to it in a request header, and Node refuses a header value
 // with a line break or a character outside Latin-1 by throwing. Printable ASCII only keeps that a 400 here.
@@ -96,10 +99,15 @@ export function decodeListCursor(value, status = null) {
   } catch {
     throw new DeveloperApiInputError(BAD_CURSOR);
   }
-  if (!isObject(parsed) || parsed.v !== 1 || typeof parsed.t !== 'string' || !TOKEN_RE.test(parsed.t) || (parsed.s ?? null) !== status) {
-    throw new DeveloperApiInputError(BAD_CURSOR);
-  }
+  if (!isOurCursor(parsed, status)) throw new DeveloperApiInputError(BAD_CURSOR);
   return parsed.t;
+}
+
+/** A cursor this module made (version 1, a printable token) for this same status filter. */
+function isOurCursor(parsed, status) {
+  if (!isObject(parsed) || parsed.v !== 1) return false;
+  if (typeof parsed.t !== 'string' || !TOKEN_RE.test(parsed.t)) return false;
+  return (parsed.s ?? null) === status;
 }
 
 /**
@@ -113,15 +121,14 @@ export function decodeListCursor(value, status = null) {
 export function readListPaging(query, status = null) {
   const rawLimit = query?.get?.('limit');
   let limit = MAX_LISTED;
-  if (rawLimit !== undefined && rawLimit !== null && rawLimit !== '') {
+  if (!isBlank(rawLimit)) {
     if (!/^\d{1,4}$/.test(String(rawLimit)) || Number(rawLimit) < 1 || Number(rawLimit) > MAX_LISTED) {
       throw new DeveloperApiInputError(`limit must be a whole number from 1 to ${MAX_LISTED}.`);
     }
     limit = Number(rawLimit);
   }
   const rawCursor = query?.get?.('cursor');
-  const continuationToken =
-    rawCursor === undefined || rawCursor === null || rawCursor === '' ? null : decodeListCursor(rawCursor, status);
+  const continuationToken = isBlank(rawCursor) ? null : decodeListCursor(rawCursor, status);
   return { limit, continuationToken };
 }
 
@@ -129,15 +136,16 @@ export function readListPaging(query, status = null) {
 export const clientQuotaKey = (clientHash) => `developer-cfs:client:${clientHash}`;
 export const callQuotaKey = (eventId) => `developer-cfs:call:${eventId}`;
 
-function text(value, name, max, { required = false, multiline = false } = {}) {
-  if (value === undefined || value === null || value === '') {
-    if (required) throw new DeveloperApiInputError(`${name} is required.`);
-    return null;
-  }
+/** A given value with its spaces tidied (line breaks kept when `multiline`); refused when it is not text. */
+function cleanedText(value, name, multiline) {
   if (typeof value !== 'string') throw new DeveloperApiInputError(`${name} must be text.`);
-  const cleaned = multiline
+  return multiline
     ? value.replace(/\r\n?/g, '\n').replace(/[^\S\n]+/g, ' ').trim()
     : value.replace(/\s+/g, ' ').trim();
+}
+
+function text(value, name, max, { required = false, multiline = false } = {}) {
+  const cleaned = isBlank(value) ? '' : cleanedText(value, name, multiline);
   if (!cleaned) {
     if (required) throw new DeveloperApiInputError(`${name} is required.`);
     return null;
@@ -148,7 +156,7 @@ function text(value, name, max, { required = false, multiline = false } = {}) {
 
 /** An ISO date or date-time in the future, as an ISO string, or null. */
 function futureInstant(value, name, nowMs) {
-  if (value === undefined || value === null || value === '') return null;
+  if (isBlank(value)) return null;
   if (typeof value !== 'string') throw new DeveloperApiInputError(`${name} must be an ISO date.`);
   const ms = Date.parse(value);
   if (!Number.isFinite(ms)) throw new DeveloperApiInputError(`${name} must be an ISO date.`);
@@ -263,12 +271,12 @@ export function normalizeSpeakerEmail(value) {
  */
 export function validateSubmission(body) {
   if (!isObject(body)) throw new DeveloperApiInputError('Send a JSON object with your talk proposal.');
-  if (body.website !== undefined && body.website !== null && body.website !== '') {
+  if (!isBlank(body.website)) {
     throw new DeveloperApiInputError('The proposal could not be accepted.');
   }
   const speakerEmail = normalizeSpeakerEmail(body.speakerEmail);
   let level = null;
-  if (body.level !== undefined && body.level !== null && body.level !== '') {
+  if (!isBlank(body.level)) {
     if (!SUBMISSION_LEVELS.includes(body.level)) {
       throw new DeveloperApiInputError(`level must be one of: ${SUBMISSION_LEVELS.join(', ')}.`);
     }

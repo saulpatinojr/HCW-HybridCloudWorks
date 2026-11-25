@@ -199,7 +199,9 @@ describe('archive classification against infra/cosmos-containers.json', () => {
       expect(body, part).toContain(part);
     }
     // Every keep list and decision list the file exports is in it: a new one must be added.
-    const lists = [...source.matchAll(/^export const ([A-Z_]+_(?:KEEP|LEAVE_OUT)) = /gm)].map((m) => m[1]);
+    // The rules are split over this file and three beside it; read all four.
+    const ruleSources = [source, ...['admin', 'fields', 'reasons'].map((part) => readFileSync(new URL(`./archive-classification-${part}.js`, import.meta.url), 'utf8'))].join('\n');
+    const lists = [...ruleSources.matchAll(/^export const ([A-Z_]+_(?:KEEP|LEAVE_OUT)) = /gm)].map((m) => m[1]);
     expect(lists.length).toBeGreaterThanOrEqual(7);
     for (const name of lists) expect(body, name).toContain(name);
   });

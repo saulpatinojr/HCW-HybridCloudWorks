@@ -42,8 +42,13 @@ export function feedErrorCode(error) {
   const message = typeof error?.message === 'string' ? error.message : '';
   const status = /^Status code (\d{3})$/.exec(message);
   if (status) return `HTTP_${status[1]}`;
-  if (/^Request timed out after \d{1,9}ms$/.test(message)) return 'TIMEOUT';
-  if (message === 'Too many redirects') return 'REDIRECTS';
-  if (PARSE_MESSAGES.has(message) || XML_FAULT_SHAPE.test(message)) return 'PARSE';
-  return errorCode(error);
+  // One return for the three fixed words, so each stays a literal the
+  // describer check can read.
+  return /^Request timed out after \d{1,9}ms$/.test(message)
+    ? 'TIMEOUT'
+    : message === 'Too many redirects'
+      ? 'REDIRECTS'
+      : PARSE_MESSAGES.has(message) || XML_FAULT_SHAPE.test(message)
+        ? 'PARSE'
+        : errorCode(error);
 }

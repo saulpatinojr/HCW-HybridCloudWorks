@@ -112,8 +112,7 @@ export function errorCode(error) {
   const status = error?.status ?? error?.statusCode;
   if (Number.isInteger(status)) return `HTTP_${status}`;
   const name = error?.name;
-  if (typeof name === 'string' && CODE_SHAPE.test(name)) return name;
-  return 'UNKNOWN';
+  return typeof name === 'string' && CODE_SHAPE.test(name) ? name : 'UNKNOWN';
 }
 
 /**
@@ -197,23 +196,27 @@ function frameLines(error) {
  * @returns {string[]}
  */
 export function ownFrames(error) {
-  const out = [];
-  for (const raw of frameLines(error)) {
-    const line = raw.trim();
-    if (!line.startsWith('at ')) continue;
-    const open = line.lastIndexOf('(');
-    let location = line.endsWith(')') && open >= 0 ? line.slice(open + 1, -1) : line.slice(3);
-    location = location.replace(/^file:\/\/\/?/, '').split('\\').join('/');
-    const position = /^(.+?):(\d+)(?::\d+)?$/.exec(location);
-    if (!position || position[1].includes('/node_modules/')) continue;
-    const at = position[1].lastIndexOf('/src/');
-    if (at < 0) continue;
-    const frame = `${position[1].slice(at + 1)}:${position[2]}`;
-    if (!FRAME_SHAPE.test(frame) || /\.test\.[cm]?js:/.test(frame) || out.includes(frame)) continue;
-    out.push(frame);
-    if (out.length === MAX_FRAMES) break;
-  }
-  return out;
+  // The first MAX_FRAMES different frames, in the order the stack gives them.
+  const frames = frameLines(error).map(ownFrameOf).filter(Boolean);
+  return [...new Set(frames)].slice(0, MAX_FRAMES);
+}
+
+/**
+ * One stack line as `src/...js:<line>`, or null: not a frame, a frame in
+ * node_modules, in a test file or outside src/, or not in FRAME_SHAPE.
+ */
+function ownFrameOf(raw) {
+  const line = raw.trim();
+  if (!line.startsWith('at ')) return null;
+  const open = line.lastIndexOf('(');
+  let location = line.endsWith(')') && open >= 0 ? line.slice(open + 1, -1) : line.slice(3);
+  location = location.replace(/^file:\/\/\/?/, '').split('\\').join('/');
+  const position = /^(.+?):(\d+)(?::\d+)?$/.exec(location);
+  if (!position || position[1].includes('/node_modules/')) return null;
+  const at = position[1].lastIndexOf('/src/');
+  if (at < 0) return null;
+  const frame = `${position[1].slice(at + 1)}:${position[2]}`;
+  return FRAME_SHAPE.test(frame) && !/\.test\.[cm]?js:/.test(frame) ? frame : null;
 }
 
 /**
@@ -267,9 +270,12 @@ export function errorFacts(error) {
  * @returns {T} the same error
  */
 export function withStatus(error, status) {
-  if (error && typeof error === 'object' && Number.isInteger(status)) error.status = status;
+  if (canCarryStatus(error, status)) error.status = status;
   return error;
 }
+
+/** An error object, and a whole-number status to put on it. */
+const canCarryStatus = (error, status) => Boolean(error) && typeof error === 'object' && Number.isInteger(status);
 
 /**
  * The same, under the name `upstreamStatus`, for an error whose `status`
@@ -287,7 +293,7 @@ export function withStatus(error, status) {
  * @returns {T} the same error
  */
 export function withUpstreamStatus(error, status) {
-  if (error && typeof error === 'object' && Number.isInteger(status)) error.upstreamStatus = status;
+  if (canCarryStatus(error, status)) error.upstreamStatus = status;
   return error;
 }
 
@@ -344,9 +350,8 @@ export function failureFields(context, fallback, error, request = null) {
  * @returns {string} e.g. `The job failed (ECONNRESET; reference inv-123).`
  */
 export function storedFailure(error, fallback, { correlationId = null } = {}) {
-  if (isAuthoredError(error) && typeof error.message === 'string' && error.message.trim()) {
-    return error.message;
-  }
+  const authored = authoredMessage(error, null);
+  if (authored !== null) return authored;
   const code = errorCode(error);
   const parts = [code === 'UNKNOWN' ? 'no code' : code];
   if (typeof correlationId === 'string' && CORRELATION_SHAPE.test(correlationId)) {

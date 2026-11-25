@@ -39,6 +39,7 @@
  * and the AI intro only when it is on, in the saved tone. The Build button and
  * the Monday timer both pass no `days`, so both follow the saved window.
  */
+import { planSections } from './plan-sections.js';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { authoredMessage, errorCode, errorFacts } from '../http/error-response.js';
 import { presentSetting } from '../platform-settings.js';
@@ -53,6 +54,9 @@ import {
 } from './settings.js';
 
 export { DEFAULT_WINDOW_DAYS };
+// Which sections a build collects lives in plan-sections.js; exported again
+// here so callers keep importing from issue.js.
+export { planSections } from './plan-sections.js';
 const MAX_INTRO_LENGTH = 1200;
 
 /**
@@ -210,32 +214,6 @@ export async function suggestSubjects({ drafter, sections, subject, budgetMs = n
     );
   }
   return subjects;
-}
-
-/**
- * The registry sections a build collects, from the saved Content list: the
- * enabled ones in the saved order with their item caps. A registered section
- * the list does not name is collected after them at the default cap, the same
- * rule the settings normalizer applies, so a section passed in that the saved
- * list predates is never silently skipped.
- */
-export function planSections(registry, entries = []) {
-  const byId = new Map(registry.map((section) => [section.id, section]));
-  const named = new Set();
-  const sections = [];
-  const maxItems = {};
-  for (const entry of entries) {
-    const section = byId.get(entry?.id);
-    if (!section || named.has(section.id)) continue;
-    named.add(section.id);
-    if (!entry.enabled) continue;
-    sections.push(section);
-    if (Number.isInteger(entry.maxItems)) maxItems[section.id] = entry.maxItems;
-  }
-  for (const section of registry) {
-    if (!named.has(section.id)) sections.push(section);
-  }
-  return { sections, maxItems };
 }
 
 const defaultSubject = (since, until) => {

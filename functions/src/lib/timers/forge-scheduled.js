@@ -72,93 +72,121 @@ export function rankCandidates(rows = [], interestAreas = []) {
     .map(({ item }) => item);
 }
 
-export function createForgeScheduled({ store, config, forge, now = () => new Date(), log = {} }) {
-  const emptySummary = (reason) => ({
-    skippedRun: true,
-    reason,
+const emptySummary = (reason) => ({
+  skippedRun: true,
+  reason,
+  attempted: 0,
+  staged: 0,
+  editing: 0,
+  skipped: 0,
+  errors: 0,
+});
+
+/**
+ * Count one candidate's outcome in the summary. True when the run should
+ * stop: the budget ran out mid-loop — a manual forge consumed the rest, or
+ * the pre-loop count was stale. Stop rather than churning through the
+ * remaining candidates to be refused one at a time.
+ */
+function countOutcome(log, summary, candidate, outcome) {
+  if (outcome.ok) {
+    if (outcome.result.status === 'forge_ready') summary.staged += 1;
+    else summary.editing += 1;
+    return false;
+  }
+  if (outcome.budgetExhausted) {
+    summary.attempted -= 1;
+    summary.stoppedOnBudget = true;
+    log.log?.(`[forgeScheduled] ${outcome.error}`);
+    return true;
+  }
+  if (outcome.httpStatus === 409) summary.skipped += 1;
+  else {
+    summary.errors += 1;
+    summary.failures.push({ contentId: candidate.id, error: outcome.error });
+  }
+  // The status only: the sentence in outcome.error can quote an article's title (#1802).
+  log.warn?.(`[forgeScheduled] a candidate was not forged (HTTP ${outcome.httpStatus ?? 'unknown'})`);
+  return false;
+}
+
+/** Forge one candidate and count it. True when the run should stop. */
+async function forgeOne(d, prompts, summary, candidate) {
+  const outcome = await d.forge.runForgePipeline({
+    contentId: candidate.id,
+    actor: FORGE_SCHEDULER_ACTOR,
+    // The real ceiling, claimed per document inside the pipeline before
+    // any model call (T-761). The `remaining` slice above is now only a
+    // cheap early-out: it was computed once, before this loop, so it
+    // cannot see a manual forge that starts while the loop is running —
+    // and the count it read came from a best-effort write that swallows
+    // its own failures. Both are fine for "don't rank 25 candidates for
+    // nothing"; neither is fine as the only thing standing between this
+    // timer and an unbounded model bill.
+    budget: { limit: prompts.autoForge.dailyLimit, enforce: true },
+  });
+  return countOutcome(d.log, summary, candidate, outcome);
+}
+
+/**
+ * The candidates this run may forge, or the summary of a run that does not
+ * start: Auto-Forge switched off, or today's limit already reached.
+ */
+async function startRun(d) {
+  const { config, store, log } = d;
+  const prompts = await config.loadForgePrompts({ bypassCache: true });
+  if (!prompts.autoForge?.enabled || prompts.autoForge.dailyLimit < 1) {
+    log.log?.('[forgeScheduled] auto-forge disabled, skipping run.');
+    return { done: emptySummary('auto_forge_disabled') };
+  }
+
+  const todayKey = d.now().toISOString().slice(0, 10);
+  const stats = await store.readDoc('admin_config', 'forge_stats', ADMIN_CONFIG_PARTITION);
+  const forgedToday = forgedTodayCount(stats, todayKey);
+  const remaining = prompts.autoForge.dailyLimit - forgedToday;
+  if (remaining < 1) {
+    log.log?.(
+      `[forgeScheduled] daily limit reached (${forgedToday}/${prompts.autoForge.dailyLimit}), skipping run.`
+    );
+    return { done: { ...emptySummary('daily_limit_reached'), forgedToday } };
+  }
+
+  const profile = await config.loadForgeProfile();
+  const rows = await store.queryDocs('content', CANDIDATE_QUERY, []);
+  return { prompts, candidates: rankCandidates(rows, profile?.interestAreas).slice(0, remaining) };
+}
+
+async function run(d) {
+  const { log } = d;
+  const start = await startRun(d);
+  if (start.done) return start.done;
+
+  const summary = {
+    skippedRun: false,
     attempted: 0,
     staged: 0,
     editing: 0,
     skipped: 0,
     errors: 0,
-  });
-
-  async function run() {
-    const prompts = await config.loadForgePrompts({ bypassCache: true });
-    if (!prompts.autoForge?.enabled || prompts.autoForge.dailyLimit < 1) {
-      log.log?.('[forgeScheduled] auto-forge disabled, skipping run.');
-      return emptySummary('auto_forge_disabled');
+    failures: [],
+  };
+  for (const candidate of start.candidates) {
+    summary.attempted += 1;
+    try {
+      if (await forgeOne(d, start.prompts, summary, candidate)) break;
+    } catch (err) {
+      summary.errors += 1;
+      summary.failures.push({ contentId: candidate.id, error: errorCode(err) });
+      log.error?.(`[forgeScheduled] a candidate threw: ${errorFacts(err)}`);
     }
-
-    const todayKey = now().toISOString().slice(0, 10);
-    const stats = await store.readDoc('admin_config', 'forge_stats', ADMIN_CONFIG_PARTITION);
-    const forgedToday = forgedTodayCount(stats, todayKey);
-    const remaining = prompts.autoForge.dailyLimit - forgedToday;
-    if (remaining < 1) {
-      log.log?.(
-        `[forgeScheduled] daily limit reached (${forgedToday}/${prompts.autoForge.dailyLimit}), skipping run.`
-      );
-      return { ...emptySummary('daily_limit_reached'), forgedToday };
-    }
-
-    const profile = await config.loadForgeProfile();
-    const rows = await store.queryDocs('content', CANDIDATE_QUERY, []);
-    const candidates = rankCandidates(rows, profile?.interestAreas).slice(0, remaining);
-
-    const summary = {
-      skippedRun: false,
-      attempted: 0,
-      staged: 0,
-      editing: 0,
-      skipped: 0,
-      errors: 0,
-      failures: [],
-    };
-    for (const candidate of candidates) {
-      summary.attempted += 1;
-      try {
-        const outcome = await forge.runForgePipeline({
-          contentId: candidate.id,
-          actor: FORGE_SCHEDULER_ACTOR,
-          // The real ceiling, claimed per document inside the pipeline before
-          // any model call (T-761). The `remaining` slice above is now only a
-          // cheap early-out: it was computed once, before this loop, so it
-          // cannot see a manual forge that starts while the loop is running —
-          // and the count it read came from a best-effort write that swallows
-          // its own failures. Both are fine for "don't rank 25 candidates for
-          // nothing"; neither is fine as the only thing standing between this
-          // timer and an unbounded model bill.
-          budget: { limit: prompts.autoForge.dailyLimit, enforce: true },
-        });
-        if (!outcome.ok) {
-          // The budget ran out mid-loop — a manual forge consumed the rest, or
-          // the pre-loop count was stale. Stop rather than churning through
-          // the remaining candidates to be refused one at a time.
-          if (outcome.budgetExhausted) {
-            summary.attempted -= 1;
-            summary.stoppedOnBudget = true;
-            log.log?.(`[forgeScheduled] ${outcome.error}`);
-            break;
-          }
-          if (outcome.httpStatus === 409) summary.skipped += 1;
-          else {
-            summary.errors += 1;
-            summary.failures.push({ contentId: candidate.id, error: outcome.error });
-          }
-          // The status only: the sentence in outcome.error can quote an article's title (#1802).
-          log.warn?.(`[forgeScheduled] a candidate was not forged (HTTP ${outcome.httpStatus ?? 'unknown'})`);
-        } else if (outcome.result.status === 'forge_ready') summary.staged += 1;
-        else summary.editing += 1;
-      } catch (err) {
-        summary.errors += 1;
-        summary.failures.push({ contentId: candidate.id, error: errorCode(err) });
-        log.error?.(`[forgeScheduled] a candidate threw: ${errorFacts(err)}`);
-      }
-    }
-    log.log?.(
-      `[forgeScheduled] run complete: ${jsonForLog({ ...summary, failures: undefined })}`
-    );
-    return summary;
   }
-  return { run };
+  log.log?.(
+    `[forgeScheduled] run complete: ${jsonForLog({ ...summary, failures: undefined })}`
+  );
+  return summary;
+}
+
+export function createForgeScheduled({ store, config, forge, now = () => new Date(), log = {} }) {
+  const d = { store, config, forge, now, log };
+  return { run: () => run(d) };
 }

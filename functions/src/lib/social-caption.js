@@ -70,6 +70,20 @@ const json = (status, body) => ({
 });
 
 /**
+ * The title and summary to caption: the body's, with what it leaves out read
+ * from the content document its `contentId` names.
+ */
+async function captionSource(store, body) {
+  const { title = '', summary = '' } = body;
+  if ((title && summary) || !body.contentId) return { title, summary };
+  const doc = await store.readDoc('content', String(body.contentId), String(body.contentId));
+  return {
+    title: title || doc?.Title || doc?.title || '',
+    summary: summary || doc?.Summary || doc?.summary || '',
+  };
+}
+
+/**
  * POST /api/generateSocialCaption — { contentId?, title, summary, sourceUrl?,
  * platforms? } → { success, caption }. Title and summary come from the
  * caller's already-loaded content row (SocialHubPage sends both); when only a
@@ -82,33 +96,32 @@ export function createSocialCaptionHandlers({
   ai,
   aiBudgetMs = CAPTION_AI_BUDGET_MS,
 }) {
-  async function generateSocialCaption(request, context) {
-    const budgetLeft = startBudgetClock(aiBudgetMs);
-    const auth = await guard.requireRole(request, 'editor');
-    if (auth.error) return auth.error;
-    try {
-      const body = (await request.json().catch(() => null)) || {};
-      let { title = '', summary = '' } = body;
-      const platforms = Array.isArray(body.platforms) ? body.platforms.map(String) : [];
+  const deps = { guard, store, ai, aiBudgetMs };
+  return {
+    generateSocialCaption: (request, context) => generateSocialCaption(deps, request, context),
+  };
+}
 
-      if ((!title || !summary) && body.contentId) {
-        const doc = await store.readDoc('content', String(body.contentId), String(body.contentId));
-        title = title || doc?.Title || doc?.title || '';
-        summary = summary || doc?.Summary || doc?.summary || '';
-      }
-      if (!String(title).trim() && !String(summary).trim()) {
-        return json(400, { error: 'title or summary (or a resolvable contentId) required' });
-      }
+async function generateSocialCaption({ guard, store, ai, aiBudgetMs }, request, context) {
+  const budgetLeft = startBudgetClock(aiBudgetMs);
+  const auth = await guard.requireRole(request, 'editor');
+  if (auth.error) return auth.error;
+  try {
+    const body = (await request.json().catch(() => null)) || {};
+    const { title, summary } = await captionSource(store, body);
+    const platforms = Array.isArray(body.platforms) ? body.platforms.map(String) : [];
 
-      const caption = await generateCaptionText(
-        { ai },
-        { title, summary, platforms, budgetMs: budgetLeft() }
-      );
-      if (!caption) return json(502, { error: 'Caption generation returned nothing' });
-      return json(200, { success: true, caption });
-    } catch (error) {
-      return errorResponse(context, 'Failed to generate caption', error, 500, request);
+    if (!String(title).trim() && !String(summary).trim()) {
+      return json(400, { error: 'title or summary (or a resolvable contentId) required' });
     }
+
+    const caption = await generateCaptionText(
+      { ai },
+      { title, summary, platforms, budgetMs: budgetLeft() }
+    );
+    if (!caption) return json(502, { error: 'Caption generation returned nothing' });
+    return json(200, { success: true, caption });
+  } catch (error) {
+    return errorResponse(context, 'Failed to generate caption', error, 500, request);
   }
-  return { generateSocialCaption };
 }

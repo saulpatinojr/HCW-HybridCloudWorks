@@ -326,7 +326,7 @@ describe('cover svg + image mirror', () => {
       'b1/images/cover.jpg',
       expect.any(Buffer),
       'image/jpeg',
-      { sourceUrl: 'https://cdn.test/c.jpg' }
+      { metadata: { sourceUrl: 'https://cdn.test/c.jpg' } }
     );
     expect(store.data.blogs.get('b1')).toMatchObject({
       contentImageSourceUrl: 'https://cdn.test/c.jpg',

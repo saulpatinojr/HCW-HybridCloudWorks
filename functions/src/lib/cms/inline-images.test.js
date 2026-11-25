@@ -124,7 +124,7 @@ describe('createInlineImageRehoster', () => {
 
     expect(fetchImage).toHaveBeenCalledTimes(2);
     expect(storage.uploadBlob).toHaveBeenCalledTimes(1);
-    const [container, blobPath, buffer, contentType, metadata] = storage.uploadBlob.mock.calls[0];
+    const [container, blobPath, buffer, contentType, { metadata }] = storage.uploadBlob.mock.calls[0];
     expect(container).toBe(INLINE_IMAGE_CONTAINER);
     expect(blobPath).toBe(inlineBlobPath('c1', UPSTREAM_A, 'image/png'));
     expect(buffer).toBe(png.buffer);

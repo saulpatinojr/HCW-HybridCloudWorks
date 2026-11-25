@@ -147,26 +147,29 @@ async function pageBody(response) {
   }
 }
 
+/** One request for a page: `{ body }`, or `{ refusal, retryable }`. */
+async function askPage({ key, voiceType, pageToken, fetchImpl }) {
+  let response;
+  try {
+    response = await fetchImpl(pageUrl(voiceType, pageToken), {
+      method: 'GET',
+      headers: { 'xi-api-key': key, Accept: 'application/json' },
+    });
+  } catch (err) {
+    return { refusal: voicesError(`could not reach ElevenLabs (${failureCode(err?.cause ?? err)})`), retryable: true };
+  }
+  const { body, refusal } = await pageBody(response);
+  return refusal ? { refusal, retryable: isRetryableStatus(response.status) } : { body };
+}
+
 /** One page, retried on 429 and 5xx as every other ElevenLabs read here is. */
 async function fetchPage({ key, voiceType, pageToken, fetchImpl, sleep }) {
   let lastError = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    let response;
-    try {
-      response = await fetchImpl(pageUrl(voiceType, pageToken), {
-        method: 'GET',
-        headers: { 'xi-api-key': key, Accept: 'application/json' },
-      });
-    } catch (err) {
-      lastError = voicesError(`could not reach ElevenLabs (${failureCode(err?.cause ?? err)})`);
-      if (attempt === MAX_ATTEMPTS) throw lastError;
-      await sleep(attempt * 500);
-      continue;
-    }
-    const { body, refusal } = await pageBody(response);
-    if (!refusal) return body;
-    lastError = refusal;
-    if (!isRetryableStatus(response.status) || attempt === MAX_ATTEMPTS) throw lastError;
+    const answer = await askPage({ key, voiceType, pageToken, fetchImpl });
+    if (!answer.refusal) return answer.body;
+    lastError = answer.refusal;
+    if (!answer.retryable || attempt === MAX_ATTEMPTS) throw lastError;
     await sleep(attempt * 500);
   }
   throw lastError;

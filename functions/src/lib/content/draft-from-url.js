@@ -119,6 +119,18 @@ export async function scrapeToSource(url, { scrape = scrapeArticle, env, log, re
   };
 }
 
+/** A fetched document as a supporting-document entry; null when it holds no text. */
+function documentEntry(url, response, buffer, text) {
+  const contentType = String(response.headers?.get?.('content-type') || '').toLowerCase();
+  const name = new URL(url).pathname.split('/').filter(Boolean).at(-1) || url;
+  if (contentType.includes('application/pdf')) {
+    return { name, mimeType: 'application/pdf', base64Data: buffer.toString('base64') };
+  }
+  const content = text();
+  if (!content.trim()) return null;
+  return { name, textContent: content.slice(0, 18000) };
+}
+
 /** Fetch one KB document URL server-side into a supporting-document entry
  * (PDF → base64 inlineData, text → textContent). Returns null on any
  * failure — a KB reference the model does not see degrades the draft, it
@@ -139,19 +151,99 @@ async function fetchDocumentUrl(url, { fetchImpl = globalThis.fetch, resolve, lo
       maxBytes: DOCUMENT_FETCH_LIMIT_BYTES,
       signal,
     });
-    if (!response.ok) return null;
-    const contentType = String(response.headers?.get?.('content-type') || '').toLowerCase();
-    const name = new URL(url).pathname.split('/').filter(Boolean).at(-1) || url;
-    if (contentType.includes('application/pdf')) {
-      return { name, mimeType: 'application/pdf', base64Data: buffer.toString('base64') };
-    }
-    const content = text();
-    if (!content.trim()) return null;
-    return { name, textContent: content.slice(0, 18000) };
+    return response.ok ? documentEntry(url, response, buffer, text) : null;
   } catch (error) {
     // The error's code only: no address and no provider's words in a log line (#1642).
     log.warn?.(`[draft-from-url] document fetch failed: ${errorCode(error)}`);
     return null;
+  }
+}
+
+/** The work behind createUrlDrafter's draftFromUrl; `deps` are the drafter's own. */
+async function draftFromUrl({ drafter, scrape, fetchImpl, resolve, env, log }, {
+  url,
+  urls = [],
+  cloudProvider = null,
+  customInstructionPrompt = '',
+  instructions = '',
+  draftText = '',
+  documentUrls = [],
+  supportingDocuments = [],
+  usageOut = null,
+} = {}, { budgetMs = null } = {}) {
+  const budgetLeft = startBudgetClock(budgetMs);
+  const primary = String(url || (Array.isArray(urls) ? urls[0] : '') || '').trim();
+  const source = await scrapeToSource(primary, { scrape, env, log, resolve });
+
+  // Supporting material, in trust order, capped at the drafter's ceiling:
+  // explicit uploads first, then the caller's current draft, then fetched
+  // KB documents, then extra KB article scrapes.
+  const documents = [...normalizeSupportingDocuments(supportingDocuments)];
+  if (String(draftText || '').trim()) {
+    documents.push({ name: 'Current article draft', textContent: String(draftText) });
+  }
+  await addFetchedDocuments(documents, documentUrls, { fetchImpl, resolve, log });
+  const extraUrls = extraUrlsOf(urls, source.url);
+  await addExtraScrapes(documents, extraUrls, { scrape, env, log, resolve });
+
+  const mergedInstructions = [customInstructionPrompt, instructions]
+    .map((entry) => String(entry || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+
+  const provider = cloudProvider || inferProviderFromUrl(source.url);
+  const parsed = await drafter.generateDraft({
+    url: source.url,
+    cloudProvider: provider,
+    scrapedTitle: source.title,
+    description: source.description,
+    markdown: source.markdown,
+    customInstructionPrompt: mergedInstructions,
+    supportingDocuments: normalizeSupportingDocuments(documents),
+    usageOut,
+    budgetMs: budgetLeft(),
+  });
+
+  return {
+    draft: {
+      ...parsed,
+      sourceUrls: [source.url, ...extraUrls],
+    },
+  };
+}
+
+/** Fetched KB documents, while there is room. */
+async function addFetchedDocuments(documents, documentUrls, { fetchImpl, resolve, log }) {
+  for (const documentUrl of (Array.isArray(documentUrls) ? documentUrls : []).slice(
+    0,
+    MAX_SUPPORTING_DOCUMENTS
+  )) {
+    if (documents.length >= MAX_SUPPORTING_DOCUMENTS) break;
+    const fetched = await fetchDocumentUrl(documentUrl, { fetchImpl, resolve, log });
+    if (fetched) documents.push(fetched);
+  }
+}
+
+/** The other URLs given, without the primary one, capped. */
+const extraUrlsOf = (urls, primaryUrl) =>
+  (Array.isArray(urls) ? urls : [])
+    .map((u) => String(u || '').trim())
+    .filter((u) => u && u !== primaryUrl)
+    .slice(0, MAX_EXTRA_URL_SCRAPES);
+
+/** Extra KB article scrapes, while there is room; one that fails is skipped. */
+async function addExtraScrapes(documents, extraUrls, { scrape, env, log, resolve }) {
+  for (const extraUrl of extraUrls) {
+    if (documents.length >= MAX_SUPPORTING_DOCUMENTS) break;
+    try {
+      const extra = await scrapeToSource(extraUrl, { scrape, env, log, resolve });
+      documents.push({
+        name: `KB article: ${extra.title || extraUrl}`,
+        textContent: extra.markdown,
+      });
+    } catch (error) {
+      log.warn?.(`[draft-from-url] extra scrape failed: ${errorCode(error)}`);
+    }
   }
 }
 
@@ -183,80 +275,8 @@ export function createUrlDrafter({
   env,
   log = {},
 }) {
-  async function draftFromUrl({
-    url,
-    urls = [],
-    cloudProvider = null,
-    customInstructionPrompt = '',
-    instructions = '',
-    draftText = '',
-    documentUrls = [],
-    supportingDocuments = [],
-    usageOut = null,
-  } = {}, { budgetMs = null } = {}) {
-    const budgetLeft = startBudgetClock(budgetMs);
-    const primary = String(url || (Array.isArray(urls) ? urls[0] : '') || '').trim();
-    const source = await scrapeToSource(primary, { scrape, env, log, resolve });
-
-    // Supporting material, in trust order, capped at the drafter's ceiling:
-    // explicit uploads first, then the caller's current draft, then fetched
-    // KB documents, then extra KB article scrapes.
-    const documents = [...normalizeSupportingDocuments(supportingDocuments)];
-    if (String(draftText || '').trim()) {
-      documents.push({ name: 'Current article draft', textContent: String(draftText) });
-    }
-    for (const documentUrl of (Array.isArray(documentUrls) ? documentUrls : []).slice(
-      0,
-      MAX_SUPPORTING_DOCUMENTS
-    )) {
-      if (documents.length >= MAX_SUPPORTING_DOCUMENTS) break;
-      const fetched = await fetchDocumentUrl(documentUrl, { fetchImpl, resolve, log });
-      if (fetched) documents.push(fetched);
-    }
-    const extraUrls = (Array.isArray(urls) ? urls : [])
-      .map((u) => String(u || '').trim())
-      .filter((u) => u && u !== source.url)
-      .slice(0, MAX_EXTRA_URL_SCRAPES);
-    for (const extraUrl of extraUrls) {
-      if (documents.length >= MAX_SUPPORTING_DOCUMENTS) break;
-      try {
-        const extra = await scrapeToSource(extraUrl, { scrape, env, log, resolve });
-        documents.push({
-          name: `KB article: ${extra.title || extraUrl}`,
-          textContent: extra.markdown,
-        });
-      } catch (error) {
-        log.warn?.(`[draft-from-url] extra scrape failed: ${errorCode(error)}`);
-      }
-    }
-
-    const mergedInstructions = [customInstructionPrompt, instructions]
-      .map((entry) => String(entry || '').trim())
-      .filter(Boolean)
-      .join('\n\n');
-
-    const provider = cloudProvider || inferProviderFromUrl(source.url);
-    const parsed = await drafter.generateDraft({
-      url: source.url,
-      cloudProvider: provider,
-      scrapedTitle: source.title,
-      description: source.description,
-      markdown: source.markdown,
-      customInstructionPrompt: mergedInstructions,
-      supportingDocuments: normalizeSupportingDocuments(documents),
-      usageOut,
-      budgetMs: budgetLeft(),
-    });
-
-    return {
-      draft: {
-        ...parsed,
-        sourceUrls: [source.url, ...extraUrls],
-      },
-    };
-  }
-
-  return { draftFromUrl };
+  const deps = { drafter, scrape, fetchImpl, resolve, env, log };
+  return { draftFromUrl: (payload, options) => draftFromUrl(deps, payload, options) };
 }
 
 /** How long the HTTP handler lets one draft take. The client aborts at 90 s

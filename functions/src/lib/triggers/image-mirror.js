@@ -59,104 +59,127 @@ export function downloadUrlFor(container, blobPath, sourceUrl) {
   return PUBLIC_MEDIA_CONTAINERS.has(container) ? mediaUrlFor(container, blobPath) : sourceUrl;
 }
 
+/** Fetch the image and store it with its marker. The result `mirror` reports. */
+async function storeMirror({ store, storage, fetchImage, log }, container, doc, newUrl) {
+  const spec = MIRRORS[container];
+  log.log?.(`[${spec.tag}] Downloading for a ${container} document`);
+  const fetched = await fetchImage(newUrl);
+  // Not an image, so not a mirror (#415). The marker is deliberately not
+  // written: an editor who replaces the video with a picture gets it
+  // mirrored on the next write, exactly as after a fetch failure.
+  if (fetched.refused) {
+    // The refusal's code, not its sentence: the sentence quotes the
+    // remote server's Content-Type, which is text the far end chose (#1802).
+    log.warn?.(`[${spec.tag}] Refused for a ${container} document: ${fetched.refused}`);
+    return { mirrored: false, reason: `refused: ${fetched.refused}` };
+  }
+  const { buffer, contentType } = fetched;
+  const ext = requireImageExtension(contentType);
+  const blobPath = `${doc.id}/images/${spec.blobName}.${ext}`;
+  await storage.uploadBlob(container, blobPath, buffer, contentType, { metadata: { sourceUrl: newUrl } });
+  const field = rowyImageField({
+    downloadURL: downloadUrlFor(container, blobPath, newUrl),
+    blobPath,
+    contentType,
+    size: buffer.length,
+  });
+  // Marker written in the same patch, after the upload succeeded.
+  await store.patchDoc(container, doc.id, {
+    [spec.targetField]: field,
+    [spec.markerField]: newUrl,
+  });
+  log.log?.(`[${spec.tag}] Stored an image for a ${container} document`);
+  return { mirrored: true, reason: 'mirrored' };
+}
+
+/**
+ * Mirror one document's URL field if it is a new external URL. Swallows
+ * errors (logged): the marker is written only after success, so the next
+ * write retries.
+ * @returns {Promise<{ mirrored: boolean, reason: string }>}
+ */
+async function mirror(d, container, doc) {
+  const spec = MIRRORS[container];
+  const newUrl = doc?.[spec.urlField];
+  if (!isExternalUrlString(newUrl)) return { mirrored: false, reason: 'not_external_url' };
+  const decision = await shouldProcessValue({
+    value: newUrl,
+    snapshotMarker: doc[spec.markerField],
+    readLiveMarker: async () =>
+      (await d.store.readDoc(container, doc.id, doc.id))?.[spec.markerField],
+  });
+  if (!decision.process) return { mirrored: false, reason: decision.reason };
+
+  try {
+    return await storeMirror(d, container, doc, newUrl);
+  } catch (err) {
+    d.log.error?.(`[${spec.tag}] Failed for a ${container} document: ${errorFacts(err)}`);
+    return { mirrored: false, reason: `error: ${errorCode(err)}` };
+  }
+}
+
+/** Whether a blog already has a cover: a non-empty image array, or an image object with an address. */
+function hasCover(cover) {
+  if (Array.isArray(cover)) return cover.length > 0;
+  return Boolean(cover && typeof cover === 'object' && cover.downloadURL);
+}
+
+/** Why a blog with a title gets no template cover, or null when it should get one. */
+function coverSkipReason(doc) {
+  if (doc.contentImageUrl && String(doc.contentImageUrl).startsWith('http')) return 'has_content_image_url';
+  if (hasCover(doc['Cover Image'])) return 'has_cover';
+  if (doc.generatedCover === true) return 'already_generated';
+  return null;
+}
+
+/** Build, upload and record the branded cover. */
+async function storeTemplateCover({ store, storage, log }, doc, title) {
+  const svg = buildCoverSvg(doc['Cloud Provider'] || 'Azure', title, doc.category || 'Update');
+  const blobPath = `${doc.id}/images/generated-cover.svg`;
+  const buffer = Buffer.from(svg, 'utf8');
+  await storage.uploadBlob('blogs', blobPath, buffer, 'image/svg+xml', {
+    metadata: { sourceUrl: 'generated' },
+  });
+  const field = rowyImageField({
+    downloadURL: mediaUrlFor('blogs', blobPath),
+    blobPath,
+    contentType: 'image/svg+xml',
+    size: buffer.length,
+  });
+  await store.patchDoc('blogs', doc.id, { 'Cover Image': field, generatedCover: true });
+  log.log?.('[generateCover] Generated a template cover for a blog');
+}
+
+/**
+ * Generate the branded template cover for a blog with a title but no image
+ * source and no cover. Decides from current state alone.
+ * @returns {Promise<{ generated: boolean, reason: string }>}
+ */
+async function generateTemplateCover(d, doc) {
+  const title = doc?.Title || doc?.title;
+  if (!title) return { generated: false, reason: 'no_title' };
+  const skip = coverSkipReason(doc);
+  if (skip) return { generated: false, reason: skip };
+  try {
+    await storeTemplateCover(d, doc, title);
+    return { generated: true, reason: 'generated' };
+  } catch (err) {
+    d.log.error?.(`[generateCover] Failed for a blog: ${errorFacts(err)}`);
+    return { generated: false, reason: `error: ${errorCode(err)}` };
+  }
+}
+
 /**
  * @param {object} deps
  * @param {{ readDoc: Function, patchDoc: Function }} deps.store
- * @param {{ uploadBlob: Function }} deps.storage - uploadBlob(container, blobName, content, contentType, metadata)
+ * @param {{ uploadBlob: Function }} deps.storage - uploadBlob(container, blobName, content, contentType, { metadata })
  * @param {(url: string) => Promise<{buffer?: Buffer, contentType: string, refused?: string, reason?: string}>} [deps.fetchImage]
  * @param {{ log?: Function, warn?: Function, error?: Function }} [deps.log]
  */
 export function createImageMirror({ store, storage, fetchImage = defaultFetchImage, log = {} }) {
-  /**
-   * Mirror one document's URL field if it is a new external URL. Swallows
-   * errors (logged): the marker is written only after success, so the next
-   * write retries.
-   * @returns {Promise<{ mirrored: boolean, reason: string }>}
-   */
-  async function mirror(container, doc) {
-    const spec = MIRRORS[container];
-    const newUrl = doc?.[spec.urlField];
-    if (!isExternalUrlString(newUrl)) return { mirrored: false, reason: 'not_external_url' };
-    const decision = await shouldProcessValue({
-      value: newUrl,
-      snapshotMarker: doc[spec.markerField],
-      readLiveMarker: async () =>
-        (await store.readDoc(container, doc.id, doc.id))?.[spec.markerField],
-    });
-    if (!decision.process) return { mirrored: false, reason: decision.reason };
-
-    try {
-      log.log?.(`[${spec.tag}] Downloading for a ${container} document`);
-      const fetched = await fetchImage(newUrl);
-      // Not an image, so not a mirror (#415). The marker is deliberately not
-      // written: an editor who replaces the video with a picture gets it
-      // mirrored on the next write, exactly as after a fetch failure.
-      if (fetched.refused) {
-        // The refusal's code, not its sentence: the sentence quotes the
-        // remote server's Content-Type, which is text the far end chose (#1802).
-        log.warn?.(`[${spec.tag}] Refused for a ${container} document: ${fetched.refused}`);
-        return { mirrored: false, reason: `refused: ${fetched.refused}` };
-      }
-      const { buffer, contentType } = fetched;
-      const ext = requireImageExtension(contentType);
-      const blobPath = `${doc.id}/images/${spec.blobName}.${ext}`;
-      await storage.uploadBlob(container, blobPath, buffer, contentType, { sourceUrl: newUrl });
-      const field = rowyImageField({
-        downloadURL: downloadUrlFor(container, blobPath, newUrl),
-        blobPath,
-        contentType,
-        size: buffer.length,
-      });
-      // Marker written in the same patch, after the upload succeeded.
-      await store.patchDoc(container, doc.id, {
-        [spec.targetField]: field,
-        [spec.markerField]: newUrl,
-      });
-      log.log?.(`[${spec.tag}] Stored an image for a ${container} document`);
-      return { mirrored: true, reason: 'mirrored' };
-    } catch (err) {
-      log.error?.(`[${spec.tag}] Failed for a ${container} document: ${errorFacts(err)}`);
-      return { mirrored: false, reason: `error: ${errorCode(err)}` };
-    }
-  }
-
-  /**
-   * Generate the branded template cover for a blog with a title but no image
-   * source and no cover. Decides from current state alone.
-   * @returns {Promise<{ generated: boolean, reason: string }>}
-   */
-  async function generateTemplateCover(doc) {
-    const title = doc?.Title || doc?.title;
-    if (!title) return { generated: false, reason: 'no_title' };
-    if (doc.contentImageUrl && String(doc.contentImageUrl).startsWith('http'))
-      return { generated: false, reason: 'has_content_image_url' };
-    const cover = doc['Cover Image'];
-    if (Array.isArray(cover) && cover.length > 0) return { generated: false, reason: 'has_cover' };
-    if (cover && typeof cover === 'object' && cover.downloadURL)
-      return { generated: false, reason: 'has_cover' };
-    if (doc.generatedCover === true) return { generated: false, reason: 'already_generated' };
-
-    try {
-      const svg = buildCoverSvg(doc['Cloud Provider'] || 'Azure', title, doc.category || 'Update');
-      const blobPath = `${doc.id}/images/generated-cover.svg`;
-      const buffer = Buffer.from(svg, 'utf8');
-      await storage.uploadBlob('blogs', blobPath, buffer, 'image/svg+xml', {
-        sourceUrl: 'generated',
-      });
-      const field = rowyImageField({
-        downloadURL: mediaUrlFor('blogs', blobPath),
-        blobPath,
-        contentType: 'image/svg+xml',
-        size: buffer.length,
-      });
-      await store.patchDoc('blogs', doc.id, { 'Cover Image': field, generatedCover: true });
-      log.log?.('[generateCover] Generated a template cover for a blog');
-      return { generated: true, reason: 'generated' };
-    } catch (err) {
-      log.error?.(`[generateCover] Failed for a blog: ${errorFacts(err)}`);
-      return { generated: false, reason: `error: ${errorCode(err)}` };
-    }
-  }
-
-  return { mirror, generateTemplateCover };
+  const d = { store, storage, fetchImage, log };
+  return {
+    mirror: (container, doc) => mirror(d, container, doc),
+    generateTemplateCover: (doc) => generateTemplateCover(d, doc),
+  };
 }

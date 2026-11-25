@@ -418,15 +418,10 @@ export async function patchDoc(containerName, id, updates, options = {}) {
 
   // A caller-supplied ETag makes the retry wrong: retrying re-reads, which is
   // exactly the "decide from a stale document" the caller asked to prevent.
-  return readModifyWrite(
-    containerName,
-    container,
-    id,
-    pk,
-    plan.entries,
-    options.ifMatch ? 1 : 0,
-    options.ifMatch
-  );
+  return readModifyWrite({ containerName, container, id, pk }, plan.entries, {
+    attempt: options.ifMatch ? 1 : 0,
+    ifMatch: options.ifMatch,
+  });
 }
 
 /**
@@ -481,24 +476,33 @@ export function planPatch(updates) {
  * (#942): patchDoc's guard ran before the read, and a job whose deadline
  * passed during the read, or during the 412 re-read, must not then write.
  *
- * @param {string} containerName - for the guard; `container` is its client
- * @param {object} container
- * @param {string} id
- * @param {string} pk
+ * @param {{ containerName: string, container: object, id: string, pk: string }} target -
+ *   `containerName` is for the guard; `container` is its client
  * @param {[string, any][]} entries
- * @param {number} [attempt]
- * @param {string|null} [ifMatch]
+ * @param {{ attempt?: number, ifMatch?: string|null }} [retry]
  * @returns {Promise<object>}
  */
-async function readModifyWrite(
-  containerName,
-  container,
-  id,
-  pk,
-  entries,
-  attempt = 0,
-  ifMatch = null
-) {
+async function readModifyWrite(target, entries, { attempt = 0, ifMatch = null } = {}) {
+  const { containerName, container, id, pk } = target;
+  const current = await readForUpdate(target, ifMatch);
+  const next = withFieldPaths(current, entries);
+
+  refuseWriteAfterJobAbort(containerName);
+  try {
+    const { resource } = await container
+      .item(id, pk)
+      .replace(next, { accessCondition: { type: 'IfMatch', condition: current._etag } });
+    return resource;
+  } catch (err) {
+    if (err.code === 412 && attempt === 0) {
+      return readModifyWrite(target, entries, { attempt: attempt + 1, ifMatch });
+    }
+    throw err;
+  }
+}
+
+/** The document as it is now, refused (404 or 412) when it is gone or has moved past `ifMatch`. */
+async function readForUpdate({ container, id, pk }, ifMatch) {
   const { resource: current } = await container.item(id, pk).read();
   if (!current) {
     // The SDK's read answers a missing item with no resource rather than
@@ -513,24 +517,16 @@ async function readModifyWrite(
   if (ifMatch && current._etag !== ifMatch) {
     throw Object.assign(new Error(`patchDoc: ${id} changed since it was read`), { code: 412 });
   }
+  return current;
+}
 
+/** A copy of `current` with each dotted field path set (or deleted, for undefined). */
+function withFieldPaths(current, entries) {
   const next = structuredClone(current);
   for (const [field, value] of entries) {
     applyFieldPath(next, String(field).split('.'), value);
   }
-
-  refuseWriteAfterJobAbort(containerName);
-  try {
-    const { resource } = await container
-      .item(id, pk)
-      .replace(next, { accessCondition: { type: 'IfMatch', condition: current._etag } });
-    return resource;
-  } catch (err) {
-    if (err.code === 412 && attempt === 0) {
-      return readModifyWrite(containerName, container, id, pk, entries, attempt + 1, ifMatch);
-    }
-    throw err;
-  }
+  return next;
 }
 
 /**
@@ -551,9 +547,9 @@ export function applyFieldPath(target, segments, value) {
 
   if (value === undefined) {
     delete cursor[last];
-  } else {
-    cursor[last] = value;
+    return;
   }
+  cursor[last] = value;
 }
 
 /**

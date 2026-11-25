@@ -175,7 +175,7 @@ function renderPreviewContent({
   editModule,
 }) {
   if (editorMode === 'diff') {
-    return <EditorDiffView baseline={baselineDraft} current={fields.draft} />;
+    return <EditorDiffView baseText={baselineDraft} editedText={fields.draft} />;
   }
   if (sectionsToRender.length === 0) {
     return <p className="text-sm text-muted-foreground">Nothing to preview yet.</p>;

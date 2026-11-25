@@ -447,6 +447,30 @@ describe('cancelLabJob', () => {
       finishedAt: NOW.toISOString(),
     });
   });
+
+  it('writes under the ETag it read, and answers 409 when the job changed in between', async () => {
+    const job = { id: 'j1', status: 'queued', _etag: '"etag-1"' };
+    const queued = makeStore({ readDoc: vi.fn(async () => job) });
+    const h = createLabHandlers({ guard: guardAs('editor'), store: queued, ...fixed });
+    expect((await h.cancelLabJob(makeRequest({ jobId: 'j1' }), context)).status).toBe(200);
+    expect(queued.patchDoc.mock.calls[0][3]).toEqual({ ifMatch: '"etag-1"' });
+
+    // An agent claimed the job after the read: the store refuses the write.
+    const raced = makeStore({
+      readDoc: vi.fn(async () => job),
+      patchDoc: vi.fn(async (_c, _id, _u, options) => {
+        if (options?.ifMatch) throw Object.assign(new Error('Precondition Failed'), { code: 412 });
+        return {};
+      }),
+    });
+    const hRaced = createLabHandlers({ guard: guardAs('editor'), store: raced, ...fixed });
+    const res = await hRaced.cancelLabJob(makeRequest({ jobId: 'j1' }), context);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: 'Job changed while it was being cancelled; nothing was cancelled',
+    });
+    expect(raced.patchDoc).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('auth', () => {
