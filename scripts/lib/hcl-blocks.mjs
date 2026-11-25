@@ -16,117 +16,11 @@
  * alert rules use and refuses the rest by name, which is the property that
  * matters: a value this cannot read must stop the check, not become `''`.
  */
+import { CLOSERS, fail, OPENERS, scanCode, skipComment, skipHeredoc, skipString } from './hcl-scan.mjs';
+// The parts below now live in their own files; they are exported from here too, so callers keep their imports.
+export { skipString, scanCode } from './hcl-scan.mjs';
 
-const OPENERS = { '{': '}', '(': ')', '[': ']' };
-const CLOSERS = new Set(['}', ')', ']']);
-const HEREDOC = /<<(-?)([A-Za-z_][A-Za-z0-9_]*)\r?\n/y;
 const IDENT = /[A-Za-z_][A-Za-z0-9_-]*/y;
-
-/** Throw a scan error that names where in the source it happened. */
-function fail(message, offset) {
-  throw new Error(`${message} at offset ${offset}`);
-}
-
-/** Index of the end of the line holding `i` (the newline itself, or the end). */
-function lineEnd(src, i) {
-  const n = src.indexOf('\n', i);
-  return n === -1 ? src.length : n;
-}
-
-/** Index just past the block comment whose opening slash-star is at `i`. */
-function skipBlockComment(src, i) {
-  const end = src.indexOf('*/', i + 2);
-  if (end === -1) fail('unterminated /* comment', i);
-  return end + 2;
-}
-
-/** Index just past a heredoc whose `<<` is at `i`, or -1 if `i` starts none. */
-function skipHeredoc(src, i) {
-  HEREDOC.lastIndex = i;
-  const open = HEREDOC.exec(src);
-  if (!open) return -1;
-  const marker = open[2];
-  let at = HEREDOC.lastIndex;
-  while (at < src.length) {
-    const end = lineEnd(src, at);
-    if (src.slice(at, end).trim() === marker) return end;
-    at = end + 1;
-  }
-  return fail(`unterminated heredoc <<${marker}`, i);
-}
-
-/** Whether a comment starts at `i`, and if so the index just past it. */
-function skipComment(src, i) {
-  const c = src[i];
-  if (c === '#' || (c === '/' && src[i + 1] === '/')) return lineEnd(src, i);
-  if (c === '/' && src[i + 1] === '*') return skipBlockComment(src, i);
-  return -1;
-}
-
-/**
- * Index just past the quoted string whose opening `"` is at `i`. An
- * interpolation (`${…}`) or directive (`%{…}`) inside it is code, so it is
- * scanned as code and may hold strings of its own; `$${` and `%%{` are the
- * escapes for a literal one.
- */
-export function skipString(src, i) {
-  let j = i + 1;
-  while (j < src.length) {
-    const c = src[j];
-    if (c === '\\') {
-      j += 2;
-    } else if (c === '"') {
-      return j + 1;
-    } else if ((c === '$' || c === '%') && src[j + 1] === c && src[j + 2] === '{') {
-      j += 3;
-    } else if ((c === '$' || c === '%') && src[j + 1] === '{') {
-      j = scanCode(src, j + 2, '}');
-    } else if (c === '\n') {
-      return fail('newline inside a quoted string', i);
-    } else {
-      j += 1;
-    }
-  }
-  return fail('unterminated string', i);
-}
-
-/**
- * Scan code from `start` until the bracket that closes `closer`, and return
- * the index just past it. Strings, heredocs and comments are skipped whole, so
- * a brace inside any of them is not counted.
- */
-export function scanCode(src, start, closer) {
-  const stack = [closer];
-  let j = start;
-  while (j < src.length) {
-    const c = src[j];
-    const comment = skipComment(src, j);
-    if (comment !== -1) {
-      j = comment;
-      continue;
-    }
-    if (c === '"') {
-      j = skipString(src, j);
-      continue;
-    }
-    if (c === '<' && src[j + 1] === '<') {
-      const heredoc = skipHeredoc(src, j);
-      if (heredoc !== -1) {
-        j = heredoc;
-        continue;
-      }
-    }
-    if (OPENERS[c]) {
-      stack.push(OPENERS[c]);
-    } else if (CLOSERS.has(c)) {
-      const want = stack.pop();
-      if (c !== want) fail(`expected '${want}' but found '${c}'`, j);
-      if (stack.length === 0) return j + 1;
-    }
-    j += 1;
-  }
-  return fail(`unterminated block: no '${closer}'`, start);
-}
 
 /**
  * Where the expression that starts at `i` ends: the first newline (or comment)
@@ -199,24 +93,34 @@ export function parseBody(src) {
       j = skipTrivia(src, end);
       continue;
     }
-    const labels = [];
-    while (src[k] !== '{') {
-      k = skipTrivia(src, k);
-      if (src[k] === '"') {
-        const end = skipString(src, k);
-        labels.push(src.slice(k + 1, end - 1));
-        k = end;
-      } else if (src[k] !== '{') {
-        const label = readIdent(src, k);
-        if (!label) fail(`expected '=' or '{' after '${name}'`, k);
-        labels.push(label);
-        k += label.length;
-      }
-      k = skipTrivia(src, k);
-    }
-    const end = scanCode(src, k + 1, '}');
-    blocks.push({ type: name, labels, body: src.slice(k + 1, end - 1), offset: j });
+    const { labels, brace } = readLabels(src, k, name);
+    const end = scanCode(src, brace + 1, '}');
+    blocks.push({ type: name, labels, body: src.slice(brace + 1, end - 1), offset: j });
     j = skipTrivia(src, end);
   }
   return { attributes, blocks };
+}
+
+/**
+ * A block's labels (`resource "a" "b" {`), read from `k` up to its opening
+ * brace. Returns the labels and the index of that brace.
+ */
+function readLabels(src, start, name) {
+  const labels = [];
+  let k = start;
+  while (src[k] !== '{') {
+    k = skipTrivia(src, k);
+    if (src[k] === '"') {
+      const end = skipString(src, k);
+      labels.push(src.slice(k + 1, end - 1));
+      k = end;
+    } else if (src[k] !== '{') {
+      const label = readIdent(src, k);
+      if (!label) fail(`expected '=' or '{' after '${name}'`, k);
+      labels.push(label);
+      k += label.length;
+    }
+    k = skipTrivia(src, k);
+  }
+  return { labels, brace: k };
 }

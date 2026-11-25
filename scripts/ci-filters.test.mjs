@@ -136,6 +136,13 @@ const REVIEWED_READS = [
       'scripts tests. The guard does not rely on that filter: it also runs in its own step on every pull request (the step ' +
       '"CI path filters list every file the tests read" in ci.yml, kept outside the filter by ci-workflow-steps.test.mjs).',
   },
+  // The guard's own parts, split out of ci-filters.mjs: the same reason as the entry above.
+  ...['scripts/lib/ci-filters-paths.mjs', 'scripts/lib/ci-filters-walk.mjs', 'scripts/lib/ci-filters-reads.mjs'].map((file) => ({
+    file,
+    reason:
+      'Part of the guard itself (see scripts/lib/ci-filters.mjs above): it lists the package folders, opens every module the ' +
+      'tests import and checks which files exist, so it depends on all of them. It runs in its own step on every pull request.',
+  })),
   {
     file: 'scripts/lib/pin-text.mjs',
     expression: "readFileSync(join(root, rel), 'utf8')",

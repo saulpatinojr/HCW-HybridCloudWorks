@@ -113,25 +113,27 @@ Environment variables:
  * @returns {{ googleTargets: object[], awsTarget: boolean }}
  */
 export function resolveTargets(target) {
-  let googleTargets = [];
-  let awsTarget = false;
+  const chosen = Object.hasOwn(TARGET_SETS, target) ? TARGET_SETS[target] : { google: [], aws: false };
+  return { googleTargets: chosen.google.map((name) => GOOGLE_TARGETS[name]), awsTarget: chosen.aws };
+}
 
-  if (target === 'gemini') {
-    googleTargets = [GOOGLE_TARGETS.gemini];
-  } else if (target === 'youtube') {
-    googleTargets = [GOOGLE_TARGETS.youtube];
-  } else if (target === 'billing') {
-    googleTargets = [GOOGLE_TARGETS.billing];
-  } else if (target === 'google-all') {
-    googleTargets = [GOOGLE_TARGETS.gemini, GOOGLE_TARGETS.youtube, GOOGLE_TARGETS.billing];
-  } else if (target === 'aws') {
-    awsTarget = true;
-  } else if (target === 'all') {
-    googleTargets = [GOOGLE_TARGETS.gemini, GOOGLE_TARGETS.youtube, GOOGLE_TARGETS.billing];
-    awsTarget = true;
-  }
+/** What each --target value renews: Google keys by GOOGLE_TARGETS name, and whether the AWS pair is included. */
+const TARGET_SETS = {
+  gemini: { google: ['gemini'], aws: false },
+  youtube: { google: ['youtube'], aws: false },
+  billing: { google: ['billing'], aws: false },
+  'google-all': { google: ['gemini', 'youtube', 'billing'], aws: false },
+  aws: { google: [], aws: true },
+  all: { google: ['gemini', 'youtube', 'billing'], aws: true },
+};
 
-  return { googleTargets, awsTarget };
+/** The environment variable that holds the current value of each Google key, by its Key Vault secret name. */
+const CURRENT_KEY_VARIABLES = { 'GEMINI-API-KEY': 'GEMINI_API_KEY', 'YOUTUBE-API-KEY': 'YOUTUBE_API_KEY' };
+
+/** The current value of a Google key from the environment, trimmed; '' when it is not set. */
+function currentGoogleKey(target, env) {
+  const variable = CURRENT_KEY_VARIABLES[target.secretName] ?? 'GCP_BILLING_API_KEY';
+  return (env[variable] || '').trim();
 }
 
 /**
@@ -166,99 +168,124 @@ export async function main(
   }
 
   const { googleTargets, awsTarget } = resolveTargets(options.target);
-
-  const gcpToken = (env.GCP_ACCESS_TOKEN || env.GOOGLE_ACCESS_TOKEN || '').trim();
-  const gcpProjectId = (env.GCP_PROJECT_ID || env.GCP_PROJECT_NUMBER || '').trim();
-  const awsAccessKeyId = (env.AWS_ACCESS_KEY_ID || '').trim();
-  const awsSecretAccessKey = (env.AWS_SECRET_ACCESS_KEY || '').trim();
+  const run = {
+    options,
+    env,
+    stdout,
+    stderr,
+    fetchImpl,
+    vault,
+    pricingClient,
+    googleTargets,
+    awsTarget,
+    gcpToken: (env.GCP_ACCESS_TOKEN || env.GOOGLE_ACCESS_TOKEN || '').trim(),
+    gcpProjectId: (env.GCP_PROJECT_ID || env.GCP_PROJECT_NUMBER || '').trim(),
+    awsAccessKeyId: (env.AWS_ACCESS_KEY_ID || '').trim(),
+    awsSecretAccessKey: (env.AWS_SECRET_ACCESS_KEY || '').trim(),
+  };
 
   // Validate environment variables based on selected targets
-  if (googleTargets.length > 0) {
-    if (!gcpToken) {
-      stderr('Error: GCP_ACCESS_TOKEN (or GOOGLE_ACCESS_TOKEN) environment variable is required for Google targets.');
-      return 1;
-    }
-  }
-
-  if (awsTarget) {
-    if (!awsAccessKeyId || !awsSecretAccessKey) {
-      stderr('Error: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables are required for AWS target.');
-      return 1;
-    }
+  const missing = missingCredential(run);
+  if (missing) {
+    stderr(missing);
+    return 1;
   }
 
   // CHECK MODE: Verify current credentials and connectivity without mutating
-  if (options.check) {
-    stdout(`Checking credentials for target '${options.target}'...`);
-    let allChecksPassed = true;
+  if (options.check) return checkCredentials(run);
 
-    for (const target of googleTargets) {
-      const rawKey =
-        target.secretName === 'GEMINI-API-KEY' ? env.GEMINI_API_KEY :
-        target.secretName === 'YOUTUBE-API-KEY' ? env.YOUTUBE_API_KEY :
-        env.GCP_BILLING_API_KEY;
-      const currentKey = (rawKey || '').trim();
+  // DRY-RUN MODE: Output planned actions without side-effects; otherwise the LIVE ROTATION EXECUTION
+  return options.dryRun ? dryRunCredentials(run) : rollCredentials(run);
+}
 
-      if (currentKey) {
-        try {
-          await verifyGoogleApiKey({ target, keyString: currentKey, fetchImpl });
-          stdout(`  ✓ ${target.secretName}: Functional probe succeeded.`);
-        } catch (err) {
-          stderr(`  ✗ ${target.secretName}: Functional probe failed: ${err.message}`);
-          allChecksPassed = false;
-        }
-      } else {
-        stdout(`  - ${target.secretName}: No current key in env to probe.`);
-      }
-    }
+/** The error line for a credential the selected targets need and the environment lacks, or null. */
+function missingCredential({ googleTargets, awsTarget, gcpToken, awsAccessKeyId, awsSecretAccessKey }) {
+  if (googleTargets.length > 0 && !gcpToken) {
+    return 'Error: GCP_ACCESS_TOKEN (or GOOGLE_ACCESS_TOKEN) environment variable is required for Google targets.';
+  }
+  if (awsTarget && (!awsAccessKeyId || !awsSecretAccessKey)) {
+    return 'Error: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables are required for AWS target.';
+  }
+  return null;
+}
 
-    if (awsTarget) {
+/** --check: probe each current key, change nothing. */
+async function checkCredentials(run) {
+  const { options, env, stdout, stderr, fetchImpl, googleTargets, awsTarget } = run;
+  stdout(`Checking credentials for target '${options.target}'...`);
+  let allChecksPassed = true;
+
+  for (const target of googleTargets) {
+    const currentKey = currentGoogleKey(target, env);
+
+    if (currentKey) {
       try {
-        const keys = await listAwsAccessKeys({
-          accessKeyId: awsAccessKeyId,
-          secretAccessKey: awsSecretAccessKey,
-          fetchImpl,
-        });
-        stdout(`  ✓ AWS IAM: Access keys list reachable (currently ${keys.length} active key(s)).`);
-        await verifyAwsPricingAccess({
-          accessKeyId: awsAccessKeyId,
-          secretAccessKey: awsSecretAccessKey,
-          clientImpl: pricingClient,
-        });
-        stdout('  ✓ AWS Pricing: Functional GetProducts probe succeeded.');
+        await verifyGoogleApiKey({ target, keyString: currentKey, fetchImpl });
+        stdout(`  ✓ ${target.secretName}: Functional probe succeeded.`);
       } catch (err) {
-        stderr(`  ✗ AWS target check failed: ${err.message}`);
+        stderr(`  ✗ ${target.secretName}: Functional probe failed: ${err.message}`);
         allChecksPassed = false;
       }
+    } else {
+      stdout(`  - ${target.secretName}: No current key in env to probe.`);
     }
-
-    return allChecksPassed ? 0 : 1;
   }
 
-  // DRY-RUN MODE: Output planned actions without side-effects
-  if (options.dryRun) {
-    stdout(`[dry-run] Planned credential renewals for target '${options.target}':`);
-    for (const target of googleTargets) {
-      stdout(`  [dry-run] Google API Key: Mint new ${target.secretName} -> verify probe -> save to Key Vault -> delete old key`);
-    }
-    if (awsTarget) {
-      stdout('  [dry-run] AWS IAM Access Key: Check 2-key quota -> create new key -> probe AWS Pricing -> save to Key Vault -> delete old key');
-    }
-    stdout('[dry-run] Configuration valid; no mutations performed.');
-    return 0;
-  }
+  if (awsTarget && !(await checkAws(run))) allChecksPassed = false;
 
-  // LIVE ROTATION EXECUTION
+  return allChecksPassed ? 0 : 1;
+}
+
+/** The AWS half of --check: the key list and a Pricing probe. Returns whether both passed. */
+async function checkAws({ stdout, stderr, fetchImpl, pricingClient, awsAccessKeyId, awsSecretAccessKey }) {
+  try {
+    const keys = await listAwsAccessKeys({
+      accessKeyId: awsAccessKeyId,
+      secretAccessKey: awsSecretAccessKey,
+      fetchImpl,
+    });
+    stdout(`  ✓ AWS IAM: Access keys list reachable (currently ${keys.length} active key(s)).`);
+    await verifyAwsPricingAccess({
+      accessKeyId: awsAccessKeyId,
+      secretAccessKey: awsSecretAccessKey,
+      clientImpl: pricingClient,
+    });
+    stdout('  ✓ AWS Pricing: Functional GetProducts probe succeeded.');
+    return true;
+  } catch (err) {
+    stderr(`  ✗ AWS target check failed: ${err.message}`);
+    return false;
+  }
+}
+
+/** --dry-run: the planned steps for each target, with nothing changed. */
+function dryRunCredentials({ options, stdout, googleTargets, awsTarget }) {
+  stdout(`[dry-run] Planned credential renewals for target '${options.target}':`);
+  for (const target of googleTargets) {
+    stdout(`  [dry-run] Google API Key: Mint new ${target.secretName} -> verify probe -> save to Key Vault -> delete old key`);
+  }
+  if (awsTarget) {
+    stdout('  [dry-run] AWS IAM Access Key: Check 2-key quota -> create new key -> probe AWS Pricing -> save to Key Vault -> delete old key');
+  }
+  stdout('[dry-run] Configuration valid; no mutations performed.');
+  return 0;
+}
+
+/** The Google project the new keys are made in, as `projects/<id>`; undefined when none is set. */
+function googleParent(gcpProjectId) {
+  if (!gcpProjectId) return undefined;
+  return gcpProjectId.startsWith('projects/') ? gcpProjectId : `projects/${gcpProjectId}`;
+}
+
+/** The live renewal: each Google key, then the AWS pair. 1 when any failed. */
+async function rollCredentials(run) {
+  const { options, env, stdout, stderr, fetchImpl, vault, googleTargets, awsTarget, gcpToken, gcpProjectId } = run;
   stdout(`Executing automated credential renewal for target '${options.target}'...`);
   let hadFailure = false;
 
   // Process Google targets
   for (const target of googleTargets) {
-    const rawKey =
-      target.secretName === 'GEMINI-API-KEY' ? env.GEMINI_API_KEY :
-      target.secretName === 'YOUTUBE-API-KEY' ? env.YOUTUBE_API_KEY :
-      env.GCP_BILLING_API_KEY;
-    const currentKey = (rawKey || '').trim();
+    const currentKey = currentGoogleKey(target, env);
 
     try {
       stdout(`Rolling Google API Key '${target.secretName}'...`);
@@ -266,7 +293,7 @@ export async function main(
         target,
         gcpToken,
         oldKeyString: currentKey || undefined,
-        parent: gcpProjectId ? (gcpProjectId.startsWith('projects/') ? gcpProjectId : `projects/${gcpProjectId}`) : undefined,
+        parent: googleParent(gcpProjectId),
         vault,
         fetchImpl,
       });
@@ -278,22 +305,7 @@ export async function main(
   }
 
   // Process AWS target
-  if (awsTarget) {
-    try {
-      stdout('Rolling AWS IAM price-list access key pair...');
-      const res = await rollAndApplyAwsKey({
-        currentAccessKeyId: awsAccessKeyId,
-        currentSecretAccessKey: awsSecretAccessKey,
-        vault,
-        fetchImpl,
-        pricingClient,
-      });
-      stdout(`  ✓ AWS IAM access key renewed successfully (New key ID: ${res.newAccessKeyId}, Old deleted: ${res.oldAccessKeyIdDeleted}).`);
-    } catch (err) {
-      stderr(`  ✗ Failed to roll AWS IAM access key: ${err.message}`);
-      hadFailure = true;
-    }
-  }
+  if (awsTarget && !(await rollAws(run))) hadFailure = true;
 
   if (hadFailure) {
     stderr('\nRenewal completed with one or more failures.');
@@ -302,6 +314,25 @@ export async function main(
 
   stdout('\nAll requested credential renewals succeeded.');
   return 0;
+}
+
+/** The AWS key pair renewed. Returns whether it worked. */
+async function rollAws({ stdout, stderr, fetchImpl, vault, pricingClient, awsAccessKeyId, awsSecretAccessKey }) {
+  try {
+    stdout('Rolling AWS IAM price-list access key pair...');
+    const res = await rollAndApplyAwsKey({
+      currentAccessKeyId: awsAccessKeyId,
+      currentSecretAccessKey: awsSecretAccessKey,
+      vault,
+      fetchImpl,
+      pricingClient,
+    });
+    stdout(`  ✓ AWS IAM access key renewed successfully (New key ID: ${res.newAccessKeyId}, Old deleted: ${res.oldAccessKeyIdDeleted}).`);
+    return true;
+  } catch (err) {
+    stderr(`  ✗ Failed to roll AWS IAM access key: ${err.message}`);
+    return false;
+  }
 }
 
 // Execute when invoked directly via CLI

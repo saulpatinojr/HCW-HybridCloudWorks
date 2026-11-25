@@ -31,18 +31,13 @@
  * the file exists, or the output folder is inside the repository. 2: could not
  * run (usage, no vault, unreadable note).
  */
-import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { checkNote, planPromotion } from './idea-notes.mjs';
 import { readNoteFile } from './read-note-file.mjs';
-
-/** The repository this script belongs to: two folders up from scripts/ideas. */
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-
-/** The vault's folder for drafts, and the environment variable that names the vault. */
-const DRAFTS_FOLDER = 'Drafts';
-const VAULT_ENV = 'HCW_VAULT';
+import { chooseDraftsFolder, isInside, realPathOf, REPO_ROOT } from './promote-paths.mjs';
+import { readArgs } from './promote-args.mjs';
 
 const USAGE = `Usage: node scripts/ideas/promote-idea.mjs <note.md> [--vault <folder>] [--name <words-with-hyphens>] [--dry-run]
 
@@ -54,103 +49,13 @@ is ever written inside this repository. --dry-run prints the draft and writes
 nothing. Exit 0: done. Exit 1: the note cannot be promoted, or the output
 folder is inside the repository. Exit 2: could not run.`;
 
-/**
- * The real, absolute form of a path that may not exist yet: the longest part
- * that exists is resolved through symlinks and junctions, and the rest is put
- * back on the end. Without this a link in the path would be taken at its word,
- * and a Drafts folder that does not exist yet could hide a link in its parent.
- */
-function realPathOf(path) {
-  let current = resolve(path);
-  const rest = [];
-  for (;;) {
-    try {
-      const real = realpathSync.native(current);
-      return rest.length === 0 ? real : join(real, ...rest);
-    } catch (error) {
-      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
-      const parent = dirname(current);
-      if (parent === current) return resolve(path);
-      rest.unshift(basename(current));
-      current = parent;
-    }
+/** The run stops here: exit `code`, with `lines` on stderr. */
+class Stop extends Error {
+  constructor(code, lines) {
+    super(lines[0]);
+    this.code = code;
+    this.lines = lines;
   }
-}
-
-/**
- * Is `target` the repository root or anywhere below it? Both paths are taken as
- * already real (see realPathOf). Windows and macOS file systems ignore case by
- * default, so there `C:\Repo` and `c:\repo` are the same folder; elsewhere case
- * counts. A sibling whose name only starts with the repository's name
- * (`repo-copy` next to `repo`) is not inside it.
- */
-function isInside(target, root, caseInsensitive = process.platform === 'win32' || process.platform === 'darwin') {
-  const fold = (path) => (caseInsensitive ? path.toLowerCase() : path);
-  const below = relative(fold(resolve(root)), fold(resolve(target)));
-  return below === '' || (below !== '..' && !below.startsWith(`..${sep}`) && !isAbsolute(below));
-}
-
-/**
- * Where drafts go: `<vault>/Drafts`, or a plain-language reason there is none.
- * Nothing is created here; the folder is only worked out and checked.
- */
-function chooseDraftsFolder({ vault, env, repoRoot }) {
-  const given = vault ?? env[VAULT_ENV];
-  if (!given || !given.trim()) {
-    return {
-      error:
-        'No vault was given, so there is nowhere safe to put the draft. Give the folder of your Obsidian vault with ' +
-        `--vault <folder>, or set the ${VAULT_ENV} environment variable to it. Drafts are never written into this ` +
-        'repository, because it is public.',
-    };
-  }
-  const drafts = join(resolve(given), DRAFTS_FOLDER);
-  let real;
-  let realRoot;
-  try {
-    real = realPathOf(drafts);
-    realRoot = realPathOf(repoRoot);
-  } catch (error) {
-    return { error: `Cannot work out where "${drafts}" is: ${error.message}` };
-  }
-  if (isInside(real, realRoot)) {
-    return {
-      refused: true,
-      error:
-        `Refused: "${drafts}"${real === drafts ? '' : ` (which is really "${real}")`} is inside the repository ` +
-        `"${repoRoot}". The repository is public, and a draft that is not published yet must never be saved in it. ` +
-        'Use the folder of your private Obsidian vault, which belongs somewhere outside the repository.',
-    };
-  }
-  return { drafts, realRoot };
-}
-
-function readArgs(argv) {
-  const options = { note: null, name: undefined, vault: undefined, dryRun: false, help: false };
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === '--help' || arg === '-h') options.help = true;
-    else if (arg === '--dry-run') options.dryRun = true;
-    else if (arg === '--out-dir') {
-      return {
-        error:
-          '--out-dir no longer exists: drafts go to <vault>/Drafts. Give your vault with --vault <folder> or set HCW_VAULT',
-      };
-    } else if (arg === '--name' || arg === '--vault') {
-      // The next argument is this option's value. A missing one, or another
-      // option standing where the value should be, is a mistake to report, not
-      // a path to guess (an empty folder name would resolve to the current folder).
-      const value = argv[++index];
-      if (!value || value.startsWith('-')) {
-        return { error: `${arg} needs ${arg === '--name' ? 'a value' : 'a folder'}` };
-      }
-      if (arg === '--name') options.name = value;
-      else options.vault = value;
-    } else if (arg.startsWith('-')) return { error: `unknown option ${arg}` };
-    else if (options.note === null) options.note = arg;
-    else return { error: 'give one note at a time' };
-  }
-  return { options };
 }
 
 function main(argv, { now = () => new Date(), env = process.env, repoRoot = REPO_ROOT } = {}) {
@@ -159,53 +64,80 @@ function main(argv, { now = () => new Date(), env = process.env, repoRoot = REPO
     console.error(`${error}\n\n${USAGE}`);
     return 2;
   }
-  if (options.help) {
+  if (options.help || !options.note) {
     console.log(USAGE);
-    return 0;
+    return options.help ? 0 : 2;
   }
-  if (!options.note) {
-    console.log(USAGE);
-    return 2;
+  try {
+    return promote(options, { now, env, repoRoot });
+  } catch (stop) {
+    if (!(stop instanceof Stop)) throw stop;
+    for (const line of stop.lines) console.error(line);
+    return stop.code;
   }
+}
 
-  // The folder is decided, and refused if it is inside the repository, before
-  // anything else is read or made.
+/**
+ * The folder the draft goes in. It is decided, and refused if it is inside the
+ * repository, before anything else is read or made.
+ */
+function draftsFolderFor(options, { env, repoRoot }) {
   const where = chooseDraftsFolder({ vault: options.vault, env, repoRoot });
-  if (where.error) {
-    console.error(where.error);
-    return where.refused ? 1 : 2;
-  }
+  if (where.error) throw new Stop(where.refused ? 1 : 2, [where.error]);
   const vaultFolder = dirname(where.drafts);
   if (!existsSync(vaultFolder) || !statSync(vaultFolder).isDirectory()) {
-    console.error(`The vault folder "${vaultFolder}" does not exist. Check the path you gave.`);
-    return 2;
+    throw new Stop(2, [`The vault folder "${vaultFolder}" does not exist. Check the path you gave.`]);
   }
+  return where;
+}
 
-  let text;
+function readNoteText(notePath) {
   try {
-    const read = readNoteFile(options.note);
+    const read = readNoteFile(notePath);
     if (read.tooBig) throw new Error('the file is over 1 MB');
-    text = read.text;
+    return read.text;
   } catch (readError) {
-    console.error(`Cannot read "${options.note}": ${readError.message}`);
-    return 2;
+    throw new Stop(2, [`Cannot read "${notePath}": ${readError.message}`]);
   }
+}
 
-  const { issues, note } = checkNote(basename(options.note), text);
+/** The draft's file name and text, or a Stop naming why the note is not promoted. */
+function promotionFor(notePath, text, { name, now }) {
+  const { issues, note } = checkNote(basename(notePath), text);
   if (!note) {
-    console.error(`${options.note} does not follow the idea-note format, so it was not promoted:`);
-    for (const issue of issues) {
-      console.error(`  ${issue.line ? `line ${issue.line}: ` : ''}${issue.message}`);
-    }
-    return 1;
+    throw new Stop(1, [
+      `${notePath} does not follow the idea-note format, so it was not promoted:`,
+      ...issues.map((issue) => `  ${issue.line ? `line ${issue.line}: ` : ''}${issue.message}`),
+    ]);
   }
+  const plan = planPromotion(note, { name, now });
+  if (!plan.ok) throw new Stop(1, [`${notePath} was not promoted:`, ...plan.reasons.map((reason) => `  ${reason}`)]);
+  return plan;
+}
 
-  const plan = planPromotion(note, { name: options.name, now });
-  if (!plan.ok) {
-    console.error(`${options.note} was not promoted:`);
-    for (const reason of plan.reasons) console.error(`  ${reason}`);
-    return 1;
+/** Write the draft, never over an existing file and never inside the repository. */
+function writeDraft(where, target, text, repoRoot) {
+  try {
+    mkdirSync(where.drafts, { recursive: true });
+    // Look again now that the folder exists: a link made in the meantime, or one
+    // the first look could not see, must not carry the file into the repository.
+    if (isInside(realPathOf(where.drafts), where.realRoot)) {
+      throw new Stop(1, [`Refused: "${where.drafts}" is inside the repository "${repoRoot}". Nothing was written.`]);
+    }
+    writeFileSync(target, text, { encoding: 'utf8', flag: 'wx' });
+  } catch (writeError) {
+    if (writeError instanceof Stop) throw writeError;
+    if (writeError.code === 'EEXIST') {
+      throw new Stop(1, [`${target} already exists, and this script never overwrites. Pick another file name with --name.`]);
+    }
+    throw new Stop(2, [`Cannot write ${target}: ${writeError.message}`]);
   }
+}
+
+function promote(options, { now, env, repoRoot }) {
+  const where = draftsFolderFor(options, { env, repoRoot });
+  const text = readNoteText(options.note);
+  const plan = promotionFor(options.note, text, { name: options.name, now });
 
   const target = join(where.drafts, plan.fileName);
   if (options.dryRun) {
@@ -213,23 +145,7 @@ function main(argv, { now = () => new Date(), env = process.env, repoRoot = REPO
     console.log(plan.text);
     return 0;
   }
-  try {
-    mkdirSync(where.drafts, { recursive: true });
-    // Look again now that the folder exists: a link made in the meantime, or one
-    // the first look could not see, must not carry the file into the repository.
-    if (isInside(realPathOf(where.drafts), where.realRoot)) {
-      console.error(`Refused: "${where.drafts}" is inside the repository "${repoRoot}". Nothing was written.`);
-      return 1;
-    }
-    writeFileSync(target, plan.text, { encoding: 'utf8', flag: 'wx' });
-  } catch (writeError) {
-    if (writeError.code === 'EEXIST') {
-      console.error(`${target} already exists, and this script never overwrites. Pick another file name with --name.`);
-      return 1;
-    }
-    console.error(`Cannot write ${target}: ${writeError.message}`);
-    return 2;
-  }
+  writeDraft(where, target, plan.text, repoRoot);
   console.log(`Wrote ${target}`);
   console.log('');
   console.log('Next:');

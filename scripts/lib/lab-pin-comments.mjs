@@ -34,11 +34,8 @@
  *
  * Text only, like the bump itself: nothing here parses YAML or shell.
  */
-import { coreVersion } from '../lab-pins-upstream.mjs';
-import { CADDY_TEST_PATH, setYamlScalar } from './lab-pin-bumps.mjs';
-
-/** Files whose whole set of comments counts as beside the pin, not only the lines directly above it. */
-const WHOLE_FILE = [CADDY_TEST_PATH];
+import { coreVersion } from './lab-pins-versions.mjs';
+import { commentsBeside, locate } from './lab-pin-comment-lines.mjs';
 
 // A dotted version with an optional leading `v` and a tag-style tail
 // (`2.11.4-builder`, `26.10.0-1nodesource1`). Not preceded by a letter, digit
@@ -46,55 +43,6 @@ const WHOLE_FILE = [CADDY_TEST_PATH];
 const VERSION = /(?<![0-9A-Za-z.])v?(\d+(?:\.\d+)+)(?:-[0-9A-Za-z.~+]*[0-9A-Za-z])?/g;
 // A run of eight or more hex digits, with `sha256:` or `sha512:` in front or not.
 const DIGEST = /(?<![0-9A-Za-z])(?:sha(?:256|512):)?([0-9a-f]{8,})(?![0-9A-Za-z])/g;
-
-const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const isComment = (line) => /^\s*#/.test(line);
-
-/** Where one pin sits in one file: its 1-based line and its value. Throws when it is not exactly one line. */
-function locate(file, text, where) {
-  if (/\.ya?ml$/.test(file)) {
-    // setYamlScalar finds the key by path and refuses a key that is missing or
-    // appears twice; its edit is thrown away, only the line and old value are used.
-    const { line, from } = setYamlScalar(text, where.split('.'), 'x');
-    return { line, value: from };
-  }
-  const pattern = file.endsWith('.json')
-    ? new RegExp(`^\\s*"${escapeRe(where)}"\\s*:\\s*"?([^",]*)"?,?\\s*$`)
-    : new RegExp(`^${escapeRe(where)}=['"]?([^'"\\s#]*)['"]?(?:\\s+#.*)?$`);
-  const hits = text
-    .split(/\r?\n/)
-    .map((l, i) => [i, l.match(pattern)])
-    .filter(([, m]) => m);
-  if (hits.length !== 1) throw new Error(`${file}: expected one \`${where}\` line, found ${hits.length}`);
-  return { line: hits[0][0] + 1, value: hits[0][1][1] };
-}
-
-/** The comment lines beside the pin on 1-based line `line`: `{ line, text }` each. */
-function commentsBeside(file, lines, line) {
-  const at = line - 1;
-  const found = [];
-  if (file.endsWith('.json')) {
-    // JSON has no comments; this fixture keeps its words in `$comment`.
-    lines.forEach((l, i) => {
-      const m = l.match(/^\s*"\$comment"\s*:\s*"(.*)",?\s*$/);
-      if (m) found.push({ line: i + 1, text: m[1] });
-    });
-    return found;
-  }
-  if (WHOLE_FILE.includes(file)) {
-    lines.forEach((l, i) => {
-      if (isComment(l)) found.push({ line: i + 1, text: l });
-    });
-  } else {
-    // Up through the pin's own group of lines, then the unbroken run of comments above it.
-    let top = at;
-    while (top > 0 && lines[top - 1].trim() !== '' && !isComment(lines[top - 1])) top -= 1;
-    for (let i = top - 1; i >= 0 && isComment(lines[i]); i -= 1) found.unshift({ line: i + 1, text: lines[i] });
-  }
-  const inline = lines[at].match(/\s#\s?(.*)$/);
-  if (inline) found.push({ line, text: inline[1] });
-  return found;
-}
 
 /**
  * Every comment beside a pin the bump moves that names an exact version or a
@@ -108,6 +56,29 @@ function commentsBeside(file, lines, line) {
  * `{ file, where, line, value }`.
  */
 export function pinCommentProblems(files, pins) {
+  const problems = new Map();
+  // The pins a problem is about: for a version, the pins of the same length (or the one it repeats);
+  // for a digest, the checksums and digests. All of the group when none fits.
+  const add = (site, comment, { kind, token, repeats, aboutThis }) => {
+    const id = `${site.file}:${comment.line}:${token}`;
+    if (problems.has(id)) return;
+    const about = site.pins.filter(aboutThis);
+    const shown = (about.length > 0 ? about : site.pins).map(({ file, where, line, value }) => ({ file, where, line, value }));
+    problems.set(id, { file: site.file, line: comment.line, kind, token, repeats, pins: shown });
+  };
+  for (const site of pinSites(files, pins)) {
+    for (const comment of site.comments) {
+      for (const finding of commentFindings(site, comment)) add(site, comment, finding);
+    }
+  }
+  return [...problems.values()];
+}
+
+/**
+ * The pins grouped by the comments beside them: `{ file, comments, pins }` for
+ * each group, where pins sharing one set of comment lines share one group.
+ */
+function pinSites(files, pins) {
   const sites = new Map();
   const seen = new Set();
   for (const { file, where } of pins) {
@@ -122,39 +93,31 @@ export function pinCommentProblems(files, pins) {
     site.pins.push({ file, where, line, value, core: coreVersion(value) });
     sites.set(key, site);
   }
+  return sites.values();
+}
 
-  const problems = new Map();
-  // The pins a problem is about: for a version, the pins of the same length (or the one it repeats);
-  // for a digest, the checksums and digests. All of the group when none fits.
-  const add = (site, comment, kind, token, repeats, aboutThis) => {
-    const id = `${site.file}:${comment.line}:${token}`;
-    if (problems.has(id)) return;
-    const about = site.pins.filter(aboutThis);
-    const shown = (about.length > 0 ? about : site.pins).map(({ file, where, line, value }) => ({ file, where, line, value }));
-    problems.set(id, { file: site.file, line: comment.line, kind, token, repeats, pins: shown });
-  };
-  for (const site of sites.values()) {
-    // A checksum or digest has no version of its own to compare with. The releases
-    // the bump moves have three parts (29.9.2), so that is what an exact version
-    // looks like beside one (the caddy test's CADDY_SHA512 is such a pin).
-    const counted = site.pins.filter((p) => p.core).map((p) => p.core.split('.').length);
-    const parts = new Set(counted.length > 0 ? counted : [3]);
-    for (const comment of site.comments) {
-      for (const m of comment.text.matchAll(VERSION)) {
-        const core = m[1];
-        const length = core.split('.').length;
-        if (!parts.has(length)) continue;
-        const repeats = site.pins.some((p) => p.core === core);
-        add(site, comment, 'version', m[0], repeats, repeats ? (p) => p.core === core : (p) => p.core?.split('.').length === length);
-      }
-      for (const m of comment.text.matchAll(DIGEST)) {
-        if (!/\d/.test(m[1]) || !/[a-f]/.test(m[1])) continue;
-        const repeats = site.pins.some((p) => p.value.includes(m[1]));
-        add(site, comment, 'digest', m[0], repeats, repeats ? (p) => p.value.includes(m[1]) : (p) => !p.core);
-      }
-    }
+/** The versions and digests one comment names that count as a problem beside this group of pins, in order. */
+function commentFindings(site, comment) {
+  // A checksum or digest has no version of its own to compare with. The releases
+  // the bump moves have three parts (29.9.2), so that is what an exact version
+  // looks like beside one (the caddy test's CADDY_SHA512 is such a pin).
+  const counted = site.pins.filter((p) => p.core).map((p) => p.core.split('.').length);
+  const parts = new Set(counted.length > 0 ? counted : [3]);
+  const findings = [];
+  for (const m of comment.text.matchAll(VERSION)) {
+    const core = m[1];
+    const length = core.split('.').length;
+    if (!parts.has(length)) continue;
+    const repeats = site.pins.some((p) => p.core === core);
+    const aboutThis = repeats ? (p) => p.core === core : (p) => p.core?.split('.').length === length;
+    findings.push({ kind: 'version', token: m[0], repeats, aboutThis });
   }
-  return [...problems.values()];
+  for (const m of comment.text.matchAll(DIGEST)) {
+    if (!/\d/.test(m[1]) || !/[a-f]/.test(m[1])) continue;
+    const repeats = site.pins.some((p) => p.value.includes(m[1]));
+    findings.push({ kind: 'digest', token: m[0], repeats, aboutThis: repeats ? (p) => p.value.includes(m[1]) : (p) => !p.core });
+  }
+  return findings;
 }
 
 /** One problem as a sentence a junior administrator can act on: file, line, what the comment names, what the pin holds. */
