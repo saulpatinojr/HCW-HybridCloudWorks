@@ -306,9 +306,28 @@ export function lockProblems(doc, { declaredRanges, windowRule } = {}) {
     );
   }
 
-  // A declared range counts as admitted only when its Allow rule takes
-  // effect: a Deny that App Service evaluates first refuses the range
-  // whatever the Allow says.
+  const { covered, shadowed } = allowCoverage(rules, declared, problems);
+
+  // Only while unmatched requests are refused: with Allow, every range gets
+  // in anyway, and the first problem above already says the lock is off.
+  if (denies) problems.push(...coverageProblems({ declared, covered, shadowed }));
+
+  if (windowRule && rules.some((rule) => rule?.name === windowRule)) {
+    problems.push(`This run's window \`${windowRule}\` is still on the origin after the step that removes it.`);
+  }
+  return problems;
+}
+
+/**
+ * Which declared ranges the Allow rules admit (`covered`) and which a Deny
+ * shadows (`shadowed`: range -> the Deny and the Allow). Each Allow rule's own
+ * problems go onto `problems`.
+ *
+ * A declared range counts as admitted only when its Allow rule takes
+ * effect: a Deny that App Service evaluates first refuses the range
+ * whatever the Allow says.
+ */
+function allowCoverage(rules, declared, problems) {
   const covered = new Set();
   const shadowed = new Map();
   for (const rule of rules.filter(isAllow)) {
@@ -321,32 +340,29 @@ export function lockProblems(doc, { declaredRanges, windowRule } = {}) {
     }
   }
   for (const range of covered) shadowed.delete(range);
+  return { covered, shadowed };
+}
 
-  // Only while unmatched requests are refused: with Allow, every range gets
-  // in anyway, and the first problem above already says the lock is off.
-  if (denies) {
-    for (const [range, { deny, allow }] of shadowed) {
-      problems.push(
-        `The Deny rule \`${deny?.name || '(unnamed)'}\` (priority ${deny?.priority}) is evaluated before ` +
-          `\`${allow?.name}\` (priority ${allow?.priority}) and refuses \`${range}\`, so Cloudflare's edges ` +
-          'there are refused at the origin.'
-      );
-    }
+/** The declared ranges a Deny shadows, and those no Allow admits at all, while unmatched requests are refused. */
+function coverageProblems({ declared, covered, shadowed }) {
+  const problems = [];
+  for (const [range, { deny, allow }] of shadowed) {
+    problems.push(
+      `The Deny rule \`${deny?.name || '(unnamed)'}\` (priority ${deny?.priority}) is evaluated before ` +
+        `\`${allow?.name}\` (priority ${allow?.priority}) and refuses \`${range}\`, so Cloudflare's edges ` +
+        'there are refused at the origin.'
+    );
   }
   const uncovered = [...declared].filter((range) => !covered.has(range) && !shadowed.has(range));
-  if (denies && uncovered.length > 0) {
+  if (uncovered.length > 0) {
     problems.push(
       `No Allow rule admits ${uncovered.length} of the ${declared.size} Cloudflare ranges ` +
         `\`infra/variables.tf\` declares: ${uncovered.map((range) => `\`${range}\``).join(', ')}. ` +
         "Cloudflare's edges there are refused at the origin" +
         (covered.size === 0 ? ', and with none admitted the API is unreachable through Cloudflare.' : '.')
     );
-  } else if (denies && covered.size === 0 && declared.size > 0) {
+  } else if (covered.size === 0 && declared.size > 0) {
     problems.push('No declared Cloudflare range is admitted, so the API is unreachable through Cloudflare.');
-  }
-
-  if (windowRule && rules.some((rule) => rule?.name === windowRule)) {
-    problems.push(`This run's window \`${windowRule}\` is still on the origin after the step that removes it.`);
   }
   return problems;
 }

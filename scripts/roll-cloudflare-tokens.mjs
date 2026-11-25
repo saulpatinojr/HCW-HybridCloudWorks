@@ -123,11 +123,6 @@ export async function runRoll({
     return 0;
   }
 
-  if (options.invalid) {
-    stderr(`[error] ${options.invalid}`);
-    return 2;
-  }
-
   const rollToken = env.CLOUDFLARE_ROLL_TOKEN || env.CLOUDFLARE_API_TOKEN;
   const tfcToken = env.TFC_TOKEN || env.TFE_TOKEN;
 
@@ -136,42 +131,89 @@ export async function runRoll({
       ? Object.keys(CLOUDFLARE_TARGETS)
       : [options.target];
 
-  for (const key of targetKeys) {
-    if (!CLOUDFLARE_TARGETS[key]) {
-      stderr(`[error] Unknown target: '${key}'. Expected one of: ${Object.keys(CLOUDFLARE_TARGETS).join(', ')}, all`);
-      return 1;
-    }
+  const refusal = preflightRefusal({ options, targetKeys, rollToken, tfcToken });
+  if (refusal) {
+    stderr(`[error] ${refusal.message}`);
+    return refusal.code;
   }
 
-  if (targetKeys.length > 1 && options.tokenId) {
-    stderr('[error] --token-id cannot be used when targeting multiple targets (use environment variables or run per target)');
-    return 1;
-  }
+  const resolved = resolveTargets({ options, env, targetKeys, stderr });
+  if (resolved.code !== 0) return resolved.code;
+  const resolvedTargets = resolved.targets;
 
-  if (!options.dryRun && !options.check && !rollToken) {
-    stderr('[error] Cloudflare roll token is required (set CLOUDFLARE_ROLL_TOKEN or CLOUDFLARE_API_TOKEN)');
-    return 2;
-  }
+  // Check mode: verifies connectivity and configuration without modifying anything
+  if (options.check) return checkTargets({ resolvedTargets, tfcToken, fetchImpl, stdout, stderr });
 
-  const needsTfc = targetKeys.some((k) => CLOUDFLARE_TARGETS[k].type === 'tfc');
-  if (!options.dryRun && needsTfc && !tfcToken) {
-    stderr('[error] HCP Terraform token is required for TFC targets (set TFC_TOKEN or TFE_TOKEN)');
-    return 2;
-  }
+  // Dry run mode, or the real execution
+  return options.dryRun
+    ? dryRunTargets(resolvedTargets, stdout)
+    : rollTargets({ resolvedTargets, rollToken, tfcToken, fetchImpl, execImpl, stdout, stderr });
+}
 
-  // Resolve and validate token IDs
-  const resolvedTargets = [];
+/** --dry-run: say what would be rolled and where it would be written. */
+function dryRunTargets(resolvedTargets, stdout) {
+  for (const { target, tokenId } of resolvedTargets) {
+    stdout(`[dry-run] Would roll token ${tokenId} and update ${target.name} (${target.type})`);
+  }
+  return 0;
+}
+
+/**
+ * The checks made before anything is resolved, in order. Each returns
+ * `{ message, code }` when the options or the environment cannot go ahead.
+ */
+const PREFLIGHT_CHECKS = [
+  ({ options }) => (options.invalid ? { message: options.invalid, code: 2 } : null),
+  ({ targetKeys }) => {
+    const unknown = targetKeys.find((key) => !CLOUDFLARE_TARGETS[key]);
+    if (unknown === undefined) return null;
+    return { message: `Unknown target: '${unknown}'. Expected one of: ${Object.keys(CLOUDFLARE_TARGETS).join(', ')}, all`, code: 1 };
+  },
+  ({ options, targetKeys }) =>
+    targetKeys.length > 1 && options.tokenId
+      ? { message: '--token-id cannot be used when targeting multiple targets (use environment variables or run per target)', code: 1 }
+      : null,
+  ({ options, rollToken }) =>
+    !options.dryRun && !options.check && !rollToken
+      ? { message: 'Cloudflare roll token is required (set CLOUDFLARE_ROLL_TOKEN or CLOUDFLARE_API_TOKEN)', code: 2 }
+      : null,
+  ({ options, targetKeys, tfcToken }) => {
+    const needsTfc = targetKeys.some((k) => CLOUDFLARE_TARGETS[k].type === 'tfc');
+    return !options.dryRun && needsTfc && !tfcToken
+      ? { message: 'HCP Terraform token is required for TFC targets (set TFC_TOKEN or TFE_TOKEN)', code: 2 }
+      : null;
+  },
+];
+
+/** The first reason the run cannot go ahead, as `{ message, code }`, or null when it can. */
+function preflightRefusal(context) {
+  for (const check of PREFLIGHT_CHECKS) {
+    const refusal = check(context);
+    if (refusal) return refusal;
+  }
+  return null;
+}
+
+/** The token ID one target uses: --token-id, its own variable, or (for a single target only) CLOUDFLARE_TOKEN_ID. */
+function tokenIdFor(target, { options, env, targetKeys }) {
+  const tokenId = options.tokenId || env[target.envTokenId];
+  // Only allow single-target fallback to generic CLOUDFLARE_TOKEN_ID
+  if (!tokenId && targetKeys.length === 1) return env.CLOUDFLARE_TOKEN_ID;
+  return tokenId;
+}
+
+/**
+ * Resolve and validate token IDs. Returns `{ code: 0, targets }`, or the exit
+ * code (1) after naming every missing ID or the first repeated one.
+ */
+function resolveTargets({ options, env, targetKeys, stderr }) {
+  const targets = [];
   const seenTokenIds = new Set();
   let missing = 0;
 
   for (const key of targetKeys) {
     const target = CLOUDFLARE_TARGETS[key];
-    let tokenId = options.tokenId || env[target.envTokenId];
-
-    // Only allow single-target fallback to generic CLOUDFLARE_TOKEN_ID
-    if (!tokenId && targetKeys.length === 1) {
-      tokenId = env.CLOUDFLARE_TOKEN_ID;
-    }
+    const tokenId = tokenIdFor(target, { options, env, targetKeys });
 
     if (!tokenId) {
       stderr(`[error] Missing token ID for target '${key}' (${target.name}). Set ${target.envTokenId}.`);
@@ -181,54 +223,48 @@ export async function runRoll({
 
     if (seenTokenIds.has(tokenId)) {
       stderr(`[error] Duplicate token ID '${tokenId}' detected across multiple targets. Each target must have a distinct Cloudflare token.`);
-      return 1;
+      return { code: 1 };
     }
     seenTokenIds.add(tokenId);
 
-    resolvedTargets.push({ key, target, tokenId });
+    targets.push({ key, target, tokenId });
   }
 
-  if (missing > 0) {
-    return 1;
-  }
+  return missing > 0 ? { code: 1 } : { code: 0, targets };
+}
 
-  // Check mode: verifies connectivity and configuration without modifying anything
-  if (options.check) {
-    let checkFailures = 0;
-    for (const { key, target, tokenId } of resolvedTargets) {
-      stdout(`[check] Checking target '${key}' (${target.name}) with token ID ${tokenId}...`);
-      try {
-        if (target.type === 'tfc' && tfcToken) {
-          const wsUrl = `https://app.terraform.io/api/v2/organizations/${encodeURIComponent(target.organization)}/workspaces/${encodeURIComponent(target.workspace)}`;
-          const res = await fetchImpl(wsUrl, {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${tfcToken}`,
-              'Content-Type': 'application/vnd.api+json',
-            },
-          });
-          if (!res.ok) {
-            throw new Error(`HCP Terraform workspace lookup returned HTTP ${res.status}`);
-          }
-        }
-        stdout(`[ok] Target '${key}': verified reachable and configured`);
-      } catch (err) {
-        stderr(`[fail] Target '${key}': check failed: ${err.message}`);
-        checkFailures += 1;
-      }
+/** --check: each target's HCP Terraform workspace looked up (when there is a token), nothing changed. */
+async function checkTargets({ resolvedTargets, tfcToken, fetchImpl, stdout, stderr }) {
+  let checkFailures = 0;
+  for (const { key, target, tokenId } of resolvedTargets) {
+    stdout(`[check] Checking target '${key}' (${target.name}) with token ID ${tokenId}...`);
+    try {
+      if (target.type === 'tfc' && tfcToken) await lookUpWorkspace(target, tfcToken, fetchImpl);
+      stdout(`[ok] Target '${key}': verified reachable and configured`);
+    } catch (err) {
+      stderr(`[fail] Target '${key}': check failed: ${err.message}`);
+      checkFailures += 1;
     }
-    return checkFailures === 0 ? 0 : 1;
   }
+  return checkFailures === 0 ? 0 : 1;
+}
 
-  // Dry run mode
-  if (options.dryRun) {
-    for (const { target, tokenId } of resolvedTargets) {
-      stdout(`[dry-run] Would roll token ${tokenId} and update ${target.name} (${target.type})`);
-    }
-    return 0;
+async function lookUpWorkspace(target, tfcToken, fetchImpl) {
+  const wsUrl = `https://app.terraform.io/api/v2/organizations/${encodeURIComponent(target.organization)}/workspaces/${encodeURIComponent(target.workspace)}`;
+  const res = await fetchImpl(wsUrl, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${tfcToken}`,
+      'Content-Type': 'application/vnd.api+json',
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`HCP Terraform workspace lookup returned HTTP ${res.status}`);
   }
+}
 
-  // Real execution
+/** Roll each target's token and write it back to its store; 1 when any target failed. */
+async function rollTargets({ resolvedTargets, rollToken, tfcToken, fetchImpl, execImpl, stdout, stderr }) {
   let failed = 0;
   for (const { key, target, tokenId } of resolvedTargets) {
     try {
