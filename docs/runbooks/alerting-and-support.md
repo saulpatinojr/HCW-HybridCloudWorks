@@ -1992,6 +1992,10 @@ re-enables two standing credentials nothing uses, to solve a problem
 
 ## Related
 
+- [Platform Settings → Scheduled tasks](https://hybridcloudworks.com/admin/platform-settings?tab=schedules)
+  — every job in the estate that runs on a clock (the workflows and timers
+  this page alerts on among them), its schedule in plain words and a link to
+  where it lives
 - [Deployment Runbook](../runbooks/deployment-runbook.md) — §4 post-apply verification, §6
   day-2 operations
 - [Cost analysis](../architecture/cost-analysis.md) — what the alert fabric and the daily cap cost

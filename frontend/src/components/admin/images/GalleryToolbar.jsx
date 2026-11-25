@@ -54,7 +54,9 @@ export default function GalleryToolbar({
 
   return (
     <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-      <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Image state">
+      {/* Filter chips: each is a toggle (aria-pressed), not a tab, because the
+          gallery below is the same list filtered, not a separate panel. */}
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Image state">
         {STATE_OPTIONS.map((option) => {
           const active = filters.state === option.value;
           const count = option.value === 'all' ? undefined : counts[option.value];
@@ -62,8 +64,7 @@ export default function GalleryToolbar({
             <button
               key={option.value}
               type="button"
-              role="tab"
-              aria-selected={active}
+              aria-pressed={active}
               onClick={() => set('state')(option.value)}
               className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                 active
