@@ -828,3 +828,52 @@ and [ADR 0031](../decisions/0031-security-scanner-owner-decisions.md) records ea
 | Function host storage geo-redundancy | checkov CKV_AZURE_206, trivy AZU-0058 | Fixed: GRS |
 | Storage resource logs | checkov CKV_AZURE_33 (x2), CKV2_AZURE_21, trivy AZU-0057 | Diagnostic settings for queues on both accounts and host blob writes and deletes. Host blob reads excluded by measurement |
 | No Flex zone redundancy or always-ready instances | checkov CKV_AZURE_212, CKV_AZURE_225 | Accepted, inline skips |
+
+## The lab host's two root scripts: split, not kept
+
+**2026-11-25, owner decision on
+[#1845](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1845#issuecomment-7153913362).**
+This is a code smell, not a security finding; it is recorded here because
+the reason it was not simply left alone is a security one.
+
+Qlty reported a *file-complexity* smell (too much logic in one file to
+review comfortably) on the two Python scripts that run as root on the lab
+host: `lab-host/ansible/roles/coder/files/hcw-coder-automation.py` (1,333
+lines, total complexity 211) and
+`lab-host/ansible/roles/portainer/files/hcw-portainer-check` (616 lines,
+120). Each had been kept as one file on purpose: a script root runs from one
+root-owned file imports nothing but Python's own standard library, so there
+is nothing else on disk to swap for code of an attacker's choosing.
+
+The owner chose to split them so no file carries a medium or high smell, as
+long as the split keeps that property. Each is now a package of modules
+split by job (`files/hcw_coder_automation/`, `files/hcw_portainer_check/`),
+with every function moved unchanged, and the script in
+`/usr/local/libexec` is only the way in. What keeps the modules as safe as
+the single file was:
+
+- They are installed in a fixed directory per script,
+  `/usr/local/lib/hcw-lab/coder-automation/` and
+  `/usr/local/lib/hcw-lab/portainer-check/`, directories `root:root` `0750`
+  and files `root:root` `0640`, by the roles' own tasks.
+- Both scripts load one launcher,
+  `lab-host/ansible/roles/coder/files/hcw-lab-python-launch.py` (installed
+  as `/usr/local/libexec/hcw-lab-python-launch` beside the scripts), with the
+  directory and the package name as constants. Before anything is imported
+  it checks that every directory from `/` down to the package and every file
+  in it is a real directory or file, owned by root and writable by root
+  alone, and that the directory holds the package and nothing else (so no
+  file there can stand in for a standard-library module once it is first on
+  the module path), and that the package has its `__init__.py` (without
+  it Python would treat it as a namespace package and also look for its
+  modules in `dist-packages`, which the check never reads). Otherwise it prints one line naming the path and exits
+  1, which fails the unit and raises the lab alert like any other failure.
+- The scripts still run under `python3 -I`, so no path comes from the
+  environment, the working directory or the user's site-packages, and no
+  bytecode is written.
+
+Each role's test runs its script against a copy staged in a scratch
+directory and checked by the same launcher, and the coder role's test holds
+the launcher to every refusal above. With Qlty CLI 0.672.0, `qlty smells`
+reports nothing on the scripts, the launcher or any module (the highest
+total complexity is 43, under the threshold of 50).
