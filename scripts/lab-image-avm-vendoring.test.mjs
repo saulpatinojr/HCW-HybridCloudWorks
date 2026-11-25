@@ -58,10 +58,15 @@ describe('the lab image vendors what the Landing Zone Builder emits', () => {
   it('records what every pinned version calls, and pins every child it records', () => {
     const calls = childCalls(ENV);
     const pins = childPins(ENV);
+    // A child at a builder module's exact name@version is that builder's own
+    // directory, so vendor-avm.sh records the call and pins nothing for it.
+    const builders = new Set(MODULES.map((m) => `${m.name}@${m.version}`));
     for (const m of MODULES) {
       const children = calls.get(`${m.name}@${m.version}`);
       expect(children, `${m.name}@${m.version} in AVM_CHILD_CALLS`).toBeDefined();
-      for (const child of children) expect(pins.has(child), `${child} in AVM_CHILD_MODULES`).toBe(true);
+      for (const child of children) {
+        expect(pins.has(child) || builders.has(child), `${child} in AVM_CHILD_MODULES`).toBe(true);
+      }
     }
   });
 
@@ -113,9 +118,25 @@ describe('the check goes red when the image is left behind', () => {
   const spokeId = `${SPOKE}@${spokePin}`;
   /** A release the image does not carry: one patch above the builder's pin. */
   const absent = spokePin.replace(/\d+$/, (patch) => String(Number(patch) + 1));
-  /** The one registry child the spoke module calls, per the record. */
-  const [spokeChild, ...otherChildren] = [...(childCalls(ENV).get(spokeId) ?? [])];
+  const CALLS = childCalls(ENV);
+  /** A registry child the spoke module calls, per the record (the first, if it calls several). */
+  const [spokeChild] = [...(CALLS.get(spokeId) ?? [])];
+  /**
+   * Every builder whose record names `child`, in record order. A child can
+   * have more than one caller: on 2026-11-24 connectivity 0.18.4 began
+   * calling the same avm-utl-interfaces release as the spoke (#1877), so
+   * the expectations below are read from the record, never assumed to be
+   * the spoke alone.
+   */
+  const callersOf = (child) =>
+    [...CALLS].filter(([, children]) => children.has(child)).map(([builder]) => builder);
   const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  /** versions.env with each AVM_CHILD_CALLS line passed through `edit` (null drops the line). */
+  const editCalls = (env, edit) =>
+    env.replace(/^AVM_CHILD_CALLS='([^']*)'/m, (_, body) => {
+      const lines = body.split('\n').map((line) => (line.trim() ? edit(line.trim()) : line));
+      return `AVM_CHILD_CALLS='${lines.filter((line) => line !== null).join('\n')}'`;
+    });
 
   it('fails a builder pin bump that versions.env did not follow (the state #737 found)', () => {
     const problems = vendoringProblems({
@@ -141,9 +162,17 @@ describe('the check goes red when the image is left behind', () => {
       env,
       fixture: FIXTURE,
     });
-    expect(problems).toHaveLength(2);
+    // If another builder's tree also calls the spoke's exact release, that
+    // call stops being "a builder module" once the pin moves, so the check
+    // rightly adds one line per such caller; read them from the record.
+    const orphaned = callersOf(spokeId).map(
+      (builder) =>
+        `${builder} calls ${spokeId}, and AVM_CHILD_MODULES does not pin it, so the image does not vendor it`
+    );
+    expect(problems).toHaveLength(2 + orphaned.length);
     expect(problems[0]).toContain(`records nothing for ${SPOKE}@${absent}`);
     expect(problems[1]).toContain(`AVM_CHILD_CALLS records ${spokeId}`);
+    expect(problems.slice(2)).toEqual(orphaned);
   });
 
   it('fails a builder module the image does not vendor at all', () => {
@@ -155,16 +184,38 @@ describe('the check goes red when the image is left behind', () => {
   });
 
   it('fails a recorded child that is not pinned, and a pin nothing calls', () => {
-    expect(spokeChild, `${spokeId} calls one registry child`).toBeDefined();
-    expect(otherChildren).toEqual([]);
+    expect(spokeChild, `${spokeId} calls a registry child in AVM_CHILD_CALLS`).toBeDefined();
+    const callers = callersOf(spokeChild);
+    expect(callers, `${spokeId} is among the callers of ${spokeChild}`).toContain(spokeId);
+
+    // Unpin the child: one problem per builder that calls it, not one in all.
     const lost = ENV.replace(new RegExp(`^${escaped(spokeChild)} [0-9a-f]{64}\\n`, 'm'), '');
-    expect(vendoringProblems({ modules: MODULES, env: lost, fixture: FIXTURE })).toEqual([
-      `${spokeId} calls ${spokeChild}, and AVM_CHILD_MODULES does not pin it, so the image does not vendor it`,
-    ]);
-    const stale = ENV.replace(
-      new RegExp(`^${escaped(spokeId)} ${escaped(spokeChild)}\\n`, 'm'),
-      `${spokeId}\n`
+    expect(lost, `the AVM_CHILD_MODULES line for ${spokeChild} was removed`).not.toBe(ENV);
+    expect(vendoringProblems({ modules: MODULES, env: lost, fixture: FIXTURE })).toEqual(
+      callers.map(
+        (builder) =>
+          `${builder} calls ${spokeChild}, and AVM_CHILD_MODULES does not pin it, so the image does not vendor it`
+      )
     );
+
+    // Leave the pin but stop every caller calling it. Removing only the
+    // spoke's line would leave the other callers' lines, and the pin would
+    // still be called. A builder whose only child this was keeps its line,
+    // alone, as a builder that calls nothing does.
+    const stale = editCalls(ENV, (line) => {
+      const [builder, child] = line.split(/\s+/);
+      if (child !== spokeChild) return line;
+      return CALLS.get(builder).size === 1 ? builder : null;
+    });
+    const staleCalls = [...childCalls(stale)];
+    expect(
+      staleCalls.map(([builder]) => builder),
+      'every builder keeps a record'
+    ).toEqual([...CALLS.keys()]);
+    expect(
+      staleCalls.filter(([, children]) => children.has(spokeChild)),
+      `no line calls ${spokeChild}`
+    ).toEqual([]);
     expect(vendoringProblems({ modules: MODULES, env: stale, fixture: FIXTURE })).toEqual([
       `AVM_CHILD_MODULES pins ${spokeChild}, which no AVM_CHILD_CALLS line calls`,
     ]);
