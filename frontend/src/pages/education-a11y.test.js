@@ -49,7 +49,10 @@ const HUBS = [
  * source that holds the markup, so for these hubs they read this file.
  */
 const SHARED_CAROUSEL = 'components/education/CertificationCarouselSection.jsx';
+/** The Azure hub's sections live beside it, in their own module (Qlty smells cleanup). */
+const AZURE_SECTIONS = 'pages/azure/education/AzureEducationSections.jsx';
 const CAROUSEL_SOURCE = {
+  'pages/azure/EducationPage.jsx': AZURE_SECTIONS,
   'pages/gcp/EducationPage.jsx': SHARED_CAROUSEL,
   'pages/github/EducationPage.jsx': SHARED_CAROUSEL,
   'pages/terraform/EducationPage.jsx': SHARED_CAROUSEL,
@@ -59,6 +62,9 @@ const CAROUSEL_SOURCE = {
 const EDUCATION_FILES = [
   ...HUBS,
   SHARED_CAROUSEL,
+  AZURE_SECTIONS,
+  'pages/azure/education/azureTimeline.jsx',
+  'pages/shared/education/EducationSections.jsx',
   'pages/aws/education/CertDetailPage.jsx',
   'pages/azure/education/CertDetailPage.jsx',
   'pages/aws/education/MicrocredentialDetailPage.jsx',
