@@ -961,20 +961,31 @@ function isGrantRejection(error) {
 const isPreconditionFailure = (error) => error?.code === 412 || error?.statusCode === 412;
 
 /**
+ * Whether `latest` is at the same place as `server`, with the same sign-in
+ * method, and still connected to the same resource: what both checks below
+ * start from.
+ */
+function connectedToSameResource(latest, server) {
+  return (
+    Boolean(latest) &&
+    sameAddressAndMethod(latest, server) &&
+    latest.oauth?.status === 'connected' &&
+    latest.oauth?.resource === server?.oauth?.resource
+  );
+}
+
+/** The same URL and the same sign-in method. */
+const sameAddressAndMethod = (latest, server) =>
+  latest.url === server?.url && latest.authType === server?.authType;
+
+/**
  * Whether `latest` is still the connection `server` was refreshing: the same
  * place, the same sign-in method, still connected, with the same refresh
  * token. A write between the two that left all of that alone (a rename, a
  * status line) does not make the refresh stale; anything else does.
  */
 function sameConnection(latest, server) {
-  return (
-    Boolean(latest) &&
-    latest.url === server?.url &&
-    latest.authType === server?.authType &&
-    latest.oauth?.status === 'connected' &&
-    latest.oauth?.resource === server?.oauth?.resource &&
-    latest.oauthRefreshToken === server?.oauthRefreshToken
-  );
+  return connectedToSameResource(latest, server) && latest.oauthRefreshToken === server?.oauthRefreshToken;
 }
 
 /**
@@ -985,11 +996,7 @@ function sameConnection(latest, server) {
  */
 function newerConnection(latest, server) {
   return (
-    Boolean(latest) &&
-    latest.url === server?.url &&
-    latest.authType === server?.authType &&
-    latest.oauth?.status === 'connected' &&
-    latest.oauth?.resource === server?.oauth?.resource &&
+    connectedToSameResource(latest, server) &&
     Boolean(latest.oauthToken) &&
     Boolean(latest.oauthRefreshToken) &&
     latest.oauthRefreshToken !== server?.oauthRefreshToken
@@ -1065,6 +1072,27 @@ async function storeRefreshed({ store, serverId, server, updates, name }) {
 }
 
 /**
+ * What a refresh the sign-in server refused leaves: a newer connection
+ * another instance stored, the answer that the server changed meanwhile, or
+ * the server marked disconnected.
+ */
+async function afterRefusedRefresh({ store, serverId, server, now, log, sentence }) {
+  // Refresh tokens rotate: another instance may have spent this one a
+  // moment ago and stored the next. Its result is as good as ours. The
+  // disconnect below is guarded by the ETag of this read, so a rotation
+  // stored after it is not cleared either (review of #1019).
+  const latest = await readServer(store, serverId).catch(() => null);
+  if (newerConnection(latest, server)) return { ok: true, server: latest };
+  // Moved, switched or disconnected meanwhile: nothing of this connection
+  // is left to clear, and writing would put a stale status on the new one.
+  if (latest && !sameConnection(latest, server)) {
+    return { ok: false, disconnected: true, sentence: notConnectedMessage(latest, serverId) };
+  }
+  log?.warn?.('[mcp-oauth] a token refresh was refused; marking the server disconnected');
+  return markDisconnected({ store, serverId, server: latest || server, now, sentence });
+}
+
+/**
  * One token refresh against the server's token endpoint: the stored tokens
  * on success, or `{ ok: false, sentence }` with an authored sentence (#945).
  *
@@ -1098,19 +1126,7 @@ async function performRefresh({ store, serverId, server, http, now, log }) {
         sentence: authoredMessage(error, `The sign-in to ${name} could not be renewed just now.`),
       };
     }
-    // Refresh tokens rotate: another instance may have spent this one a
-    // moment ago and stored the next. Its result is as good as ours. The
-    // disconnect below is guarded by the ETag of this read, so a rotation
-    // stored after it is not cleared either (review of #1019).
-    const latest = await readServer(store, serverId).catch(() => null);
-    if (newerConnection(latest, server)) return { ok: true, server: latest };
-    // Moved, switched or disconnected meanwhile: nothing of this connection
-    // is left to clear, and writing would put a stale status on the new one.
-    if (latest && !sameConnection(latest, server)) {
-      return { ok: false, disconnected: true, sentence: notConnectedMessage(latest, serverId) };
-    }
-    log?.warn?.('[mcp-oauth] a token refresh was refused; marking the server disconnected');
-    return markDisconnected({ store, serverId, server: latest || server, now, sentence: expiredMessage });
+    return afterRefusedRefresh({ store, serverId, server, now, log, sentence: expiredMessage });
   }
 
   const updates = {
