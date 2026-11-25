@@ -11,18 +11,20 @@
  * body; the rest always read the whole draft. Labels match the server's
  * ASSIST_ACTIONS (forge-studio.js), which owns the prompts.
  */
-export const ASSIST_ACTIONS = Object.freeze([
-  { id: 'outline', label: 'Generate outline', scope: 'all' },
-  { id: 'expand', label: 'Expand section', scope: 'selection' },
-  { id: 'condense', label: 'Condense', scope: 'selection' },
-  { id: 'rewrite', label: 'Rewrite', scope: 'selection' },
-  { id: 'tone', label: 'Change tone', scope: 'selection' },
-  { id: 'title', label: 'Suggest title', scope: 'all' },
-  { id: 'summary', label: 'Summary', scope: 'all' },
-  { id: 'metadata', label: 'Metadata', scope: 'all' },
-  { id: 'social', label: 'Extract social posts', scope: 'all' },
-  { id: 'claims', label: 'Check unsupported claims', scope: 'all' },
-]);
+export const ASSIST_ACTIONS = Object.freeze(
+  [
+    ['outline', 'Generate outline', 'all'],
+    ['expand', 'Expand section', 'selection'],
+    ['condense', 'Condense', 'selection'],
+    ['rewrite', 'Rewrite', 'selection'],
+    ['tone', 'Change tone', 'selection'],
+    ['title', 'Suggest title', 'all'],
+    ['summary', 'Summary', 'all'],
+    ['metadata', 'Metadata', 'all'],
+    ['social', 'Extract social posts', 'all'],
+    ['claims', 'Check unsupported claims', 'all'],
+  ].map(([id, label, scope]) => ({ id, label, scope }))
+);
 
 /** The outline a model proposed, as markdown headings and bullets. */
 export function outlineToMarkdown(outline = []) {

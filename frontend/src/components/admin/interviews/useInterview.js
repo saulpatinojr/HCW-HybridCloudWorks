@@ -20,8 +20,15 @@
  * transcript version, so a reload or a slow poll never queues two.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getJSON, postJSON, sendJSON } from '@/lib/api';
+import { postJSON, sendJSON } from '@/lib/api';
 import { isInFlight, nextStep, stageOf } from './interviewModel';
+import {
+  loadInterview,
+  pollAfter,
+  postInterviewStep,
+  publishInterview,
+  stepKey,
+} from './interviewRequests';
 
 /** How often the page reads the interview again while a job works on it. */
 export const POLL_MS = 5000;
@@ -68,31 +75,7 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
     };
   }, []);
 
-  const load = useCallback(async () => {
-    if (!id) {
-      setRead({ id, data: null, error: 'No interview has that address.', done: true });
-      return null;
-    }
-    try {
-      const answer = await getJSON(`cms/interviews/${encodeURIComponent(id)}`);
-      if (!alive.current || currentId.current !== id) return null;
-      setRead({ id, data: answer, error: '', done: true });
-      return answer;
-    } catch (error) {
-      // A failed re-read keeps the document already shown for this id.
-      if (alive.current && currentId.current === id) {
-        setRead((last) => ({
-          id,
-          data: last.id === id ? last.data : null,
-          error: error?.message || 'The interview could not be read.',
-          done: true,
-        }));
-      }
-      return null;
-    } finally {
-      if (alive.current && currentId.current === id) setReads((count) => count + 1);
-    }
-  }, [id]);
+  const load = useCallback(() => loadInterview({ id, alive, currentId, setRead, setReads }), [id]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -107,23 +90,18 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
 
   // Read again every few seconds while a job is working, or while a step the
   // page started has not shown up on the document yet.
-  useEffect(() => {
-    if (!doc || !(isInFlight(doc) || advancing)) return undefined;
-    const timer = setTimeout(load, pollMs);
-    return () => clearTimeout(timer);
-  }, [doc, advancing, reads, load, pollMs]);
+  useEffect(
+    () => pollAfter(Boolean(doc) && (isInFlight(doc) || advancing), load, pollMs),
+    // `reads` schedules the next check after every finished read.
+    [doc, advancing, reads, load, pollMs]
+  );
 
   /** Queue a job; a 409 means one is already running, which is what was wanted. */
   const queueStep = useCallback(
     async (step) => {
       setAdvancing(true);
       try {
-        await postJSON(`cms/interviews/${encodeURIComponent(id)}/${step}`, {});
-        return null;
-      } catch (error) {
-        // Already running is what was wanted; an interview being deleted is not.
-        if (error?.status === 409 && error?.code !== 'INTERVIEW_DELETED') return null;
-        return error instanceof Error ? error : new Error(`The ${step} step could not start.`);
+        return await postInterviewStep(id, step);
       } finally {
         await load();
         if (alive.current) setAdvancing(false);
@@ -134,9 +112,8 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
 
   useEffect(() => {
     const step = nextStep(doc);
-    if (!step) return;
-    const key = `${id}:${step}:${stageOf(doc)}:${doc?.transcription?.version ?? 0}`;
-    if (started.current.has(key)) return;
+    const key = step && stepKey(id, step, stageOf(doc), doc);
+    if (!step || started.current.has(key)) return;
     started.current.add(key);
     queueStep(step).then((error) => {
       if (error && alive.current)
@@ -182,31 +159,7 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
       label
     );
 
-  const publish = () =>
-    act('publish', async () => {
-      const result = await postJSON('publishContent', {
-        contentIds: [contentId],
-        publishTarget: 'interview',
-        cloudProvider: 'Azure',
-        markLive: true,
-        createSlugPageTrigger: true,
-        addToCurated: true,
-      });
-      const refused = (result?.errors || []).find((entry) => entry.contentId === contentId);
-      if (refused) {
-        throw Object.assign(new Error(refused.error || 'The interview was not published.'), {
-          code: refused.code,
-        });
-      }
-      const mapping = (result?.mappings || []).find((entry) => entry.contentId === contentId);
-      toast?.({
-        title: 'Published',
-        description: mapping?.curatedSubpagePath
-          ? `Live at ${mapping.curatedSubpagePath} within five minutes.`
-          : 'The interview page is live within five minutes.',
-      });
-      return result;
-    });
+  const publish = () => act('publish', () => publishInterview(contentId, toast));
 
   const unpublish = () =>
     act(

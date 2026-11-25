@@ -20,6 +20,16 @@ import { getJSON } from '@/lib/api';
 /** A guard that is true only while `mine` is still the newest load. */
 const newestOnly = (mine, generation) => () => mine === generation.current;
 
+// The first load, once sign-in is ready. Returns the effect cleanup, which
+// bumps the generation so a load in flight never lands after unmount.
+function loadWhenReady(authReady, fetchRoute, generation) {
+  if (!authReady) return undefined;
+  fetchRoute(++generation.current);
+  return () => {
+    generation.current += 1;
+  };
+}
+
 export default function useGuardedRouteRead(route, failureText) {
   // Every one of these routes is super_admin, so a fetch before the token
   // exists is a guaranteed 401 that renders as "could not load".
@@ -57,9 +67,8 @@ export default function useGuardedRouteRead(route, failureText) {
   // for auth like the first load; the effect below loads as soon as it is ready.
   const reload = useCallback(() => {
     if (!authReady) return Promise.resolve();
-    const mine = ++generation.current;
     setLoading(true);
-    return fetchRoute(mine);
+    return fetchRoute(++generation.current);
   }, [authReady, fetchRoute]);
 
   // A write's answer is the newest data: it wins over any load in flight.
@@ -70,13 +79,7 @@ export default function useGuardedRouteRead(route, failureText) {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    if (!authReady) return undefined;
-    fetchRoute(++generation.current);
-    return () => {
-      generation.current += 1;
-    };
-  }, [authReady, fetchRoute]);
+  useEffect(() => loadWhenReady(authReady, fetchRoute, generation), [authReady, fetchRoute]);
 
   return { data, loading, error, reload, replace };
 }
