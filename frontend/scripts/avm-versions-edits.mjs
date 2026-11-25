@@ -88,7 +88,7 @@ export function latestFromRegistry(document, name) {
       `The registry lists ${name} at ${JSON.stringify(document?.version ?? null)}, which is not a MAJOR.MINOR.PATCH release, so nothing was written.`
     );
   }
-  const tag = document.tag == null ? null : String(document.tag);
+  const tag = document.tag === undefined || document.tag === null ? null : String(document.tag);
   if (tag !== null && tag !== `v${version}`) {
     throw new RegistryError(
       `The registry lists ${name} ${version} under tag ${JSON.stringify(tag)} rather than v${version}, so nothing was written.`

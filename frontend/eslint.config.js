@@ -39,12 +39,13 @@ export default [
     ],
   },
   {
-    files: ['**/*.{js,jsx,ts,tsx}'],
+    // .mjs and .cjs are here so the Node scripts in scripts/ are linted too;
+    // before #1859 they matched no block and got no rules at all.
+    files: ['**/*.{js,jsx,mjs,cjs,ts,tsx}'],
+    // No globals here on purpose. Each block below says which world a file
+    // runs in (browser, Node, or a test), so `no-undef` can catch a name that
+    // does not exist there, such as an icon used but never imported (#1856).
     languageOptions: {
-      globals: {
-        ...globals.browser,
-        ...globals.node,
-      },
       parser: tsParser,
       parserOptions: {
         ecmaFeatures: {
@@ -121,6 +122,11 @@ export default [
         { controlComponents: ['Input', 'Textarea'] },
       ],
 
+      // A name used but never defined or imported is an error. The
+      // typescript-eslint preset above turns this off; the .ts/.tsx block
+      // below keeps it off for TypeScript only.
+      'no-undef': 'error',
+
       // General code quality rules
       'no-console': [
         'warn',
@@ -175,9 +181,78 @@ export default [
       ],
     },
   },
+  // TypeScript checks names itself and knows the DOM and Node types, so
+  // `no-undef` there only adds false alarms. typescript-eslint advises
+  // against it:
+  // https://typescript-eslint.io/troubleshooting/faqs/eslint/#i-get-errors-from-the-no-undef-rule-about-global-variables-not-being-defined-even-though-there-are-no-typescript-errors
+  {
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      'no-undef': 'off',
+    },
+  },
+  // The site's own code runs in the browser, so it gets browser names only.
+  // A Node name such as `process` here would be undefined on the live page.
+  {
+    files: ['src/**'],
+    languageOptions: {
+      globals: globals.browser,
+    },
+  },
+  // Files in public/ are served as they are and run in the browser.
+  {
+    files: ['public/**'],
+    languageOptions: {
+      globals: globals.browser,
+    },
+  },
+  // Scripts and the config files at this folder's root run in Node, not in
+  // a browser.
+  {
+    files: ['scripts/**', '*.config.{js,mjs,cjs}'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
+  // These run in Node but drive a real browser, and the callbacks they pass
+  // to `page.evaluate` run inside the page, where `document` and `window`
+  // exist. So they get both sets of names.
+  {
+    files: ['e2e/**', 'scripts/audit-published-pages.mjs', 'scripts/axe-theme-scan.mjs'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.browser,
+      },
+    },
+  },
+  // .cjs files are CommonJS (require and module.exports), not ES modules.
+  {
+    files: ['**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: globals.commonjs,
+      parserOptions: {
+        sourceType: 'script',
+      },
+    },
+  },
+  // Tests run under Vitest in Node with a jsdom page (vitest.config.js sets
+  // `globals: true` and `environment: 'jsdom'`), so they really do have
+  // Vitest's names, the browser's and Node's all at once.
+  {
+    files: ['**/*.test.{js,jsx,mjs,ts,tsx}', 'src/setupTests.js', 'src/test-utils/**'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        ...globals.vitest,
+      },
+    },
+  },
   // Scripts - CLI tools that use require() and console for output
   {
-    files: ['scripts/**/*.js'],
+    files: ['scripts/**/*.{js,jsx,mjs,cjs}'],
     rules: {
       '@typescript-eslint/no-require-imports': 'off',
       'no-console': 'off',
