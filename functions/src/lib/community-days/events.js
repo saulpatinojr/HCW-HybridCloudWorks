@@ -22,6 +22,9 @@
  * only the leading `YYYY-MM-DD` is kept (`dayOf`), and no time zone
  * arithmetic is done.
  */
+import { cutToBytes, decodeEntities, stripTags } from './html-text.js';
+
+export { cutToBytes };
 
 /** Characters of page text kept per event: enough for the estimate. */
 export const PAGE_TEXT_MAX = 2500;
@@ -77,89 +80,6 @@ export function dayOf(value) {
 }
 
 /**
- * `value` cut to at most `maxBytes` bytes of UTF-8, never in the middle of a
- * character.
- *
- * @param {string} value
- * @param {number} maxBytes
- * @returns {string}
- */
-export function cutToBytes(value, maxBytes) {
-  if (typeof value !== 'string' || maxBytes <= 0) return '';
-  // No character is more than three bytes per UTF-16 unit, so short text needs no count.
-  if (value.length * 3 <= maxBytes) return value;
-  let bytes = 0;
-  let end = 0;
-  for (const char of value) {
-    const code = char.codePointAt(0);
-    let size = 4;
-    if (code < 0x80) size = 1;
-    else if (code < 0x800) size = 2;
-    else if (code < 0x10000) size = 3;
-    if (bytes + size > maxBytes) break;
-    bytes += size;
-    end += char.length;
-  }
-  return value.slice(0, end).trimEnd();
-}
-
-const ENTITIES = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' });
-
-/** Tags whose contents are code or styling, never words for a reader. */
-const UNSEEN_TAGS = Object.freeze(['script', 'style']);
-
-/**
- * The text of `html` with its tags taken out.
- *
- * A `<` starts a tag only when a letter, `/`, `!` or `?` follows it and a `>`
- * closes it later, which is how a browser reads it. Any other `<` ("a < b",
- * or one with no `>` after it) is kept as the character it is, so the words
- * after it are not lost. The contents of `<script>` and `<style>` are dropped
- * with their tags, and so is a comment.
- */
-function stripTags(html) {
-  const lower = html.toLowerCase();
-  let out = '';
-  let at = 0;
-  // Once a search finds no `>` there is none further on either; remembering
-  // that keeps a page of bare `<` characters from being searched again each time.
-  let noMoreClosers = false;
-  while (at < html.length) {
-    const open = html.indexOf('<', at);
-    if (open === -1) {
-      out += html.slice(at);
-      break;
-    }
-    out += html.slice(at, open);
-    const close = noMoreClosers ? -1 : html.indexOf('>', open + 1);
-    if (close === -1) noMoreClosers = true;
-    if (close === -1 || !/[a-z/!?]/.test(lower[open + 1] ?? '')) {
-      out += '<';
-      at = open + 1;
-      continue;
-    }
-    // A tag ends a word, so it leaves a space behind.
-    out += ' ';
-    if (lower.startsWith('<!--', open)) {
-      const end = lower.indexOf('-->', open + 4);
-      at = end === -1 ? html.length : end + 3;
-      continue;
-    }
-    const name = /^<([a-z]+)/.exec(lower.slice(open, open + 12))?.[1];
-    if (UNSEEN_TAGS.includes(name)) {
-      // Everything up to the matching end tag is dropped; with no end tag,
-      // the rest is, as a browser would treat it.
-      const end = lower.indexOf(`</${name}`, close + 1);
-      const endClose = end === -1 ? -1 : lower.indexOf('>', end);
-      at = endClose === -1 ? html.length : endClose + 1;
-      continue;
-    }
-    at = close + 1;
-  }
-  return out;
-}
-
-/**
  * HTML as plain text: tags removed (with the contents of scripts and styles),
  * block ends turned into spaces, the few common entities decoded once. The
  * result is DATA for a prompt and text for a page; it is never written back
@@ -175,17 +95,7 @@ function stripTags(html) {
 export function htmlToText(html, max = PAGE_TEXT_MAX, maxBytes = PAGE_TEXT_MAX_BYTES) {
   if (typeof html !== 'string') return '';
   // Cut first: no pattern below ever runs over more than this much text.
-  const out = stripTags(html.slice(0, max * 8));
-  const decoded = out.replace(/&(#\d{1,6}|#x[0-9a-f]{1,5}|[a-z]{2,6});/gi, (whole, name) => {
-    const key = name.toLowerCase();
-    if (Object.hasOwn(ENTITIES, key)) return ENTITIES[key];
-    if (key.startsWith('#')) {
-      const code = key[1] === 'x' ? Number.parseInt(key.slice(2), 16) : Number.parseInt(key.slice(1), 10);
-      // A decoded angle bracket stays text: nothing downstream reads this as HTML.
-      return Number.isInteger(code) && code >= 32 && code <= 0x10ffff ? String.fromCodePoint(code) : ' ';
-    }
-    return whole;
-  });
+  const decoded = decodeEntities(stripTags(html.slice(0, max * 8)));
   return cutToBytes(text(decoded, max), maxBytes);
 }
 

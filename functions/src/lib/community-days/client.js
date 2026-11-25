@@ -103,6 +103,99 @@ export function retryAfterSeconds(response) {
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /**
+ * One read. `path` must be one of ALLOWED_PATHS; `query` is a plain map of
+ * values this file chose (never a caller's text). Answers the parsed JSON
+ * object once `valid` accepts it. `conn` is the client's own settings.
+ */
+async function call(conn, kind, path, { query = {}, valid, signal } = {}) {
+  if (!ALLOWED_PATHS.includes(path)) throw new CommunityDaysError(kind, undefined, { reason: 'refused' });
+  const target = new URL(`${API_BASE}${path}`);
+  for (const [name, value] of Object.entries(query)) target.searchParams.set(name, String(value));
+
+  const fetched = await fetchAnswer(conn, kind, target, signal);
+  const { response } = fetched;
+  if (!response.ok) {
+    throw new CommunityDaysError(kind, response.status, {
+      retryAfterSeconds: response.status === 429 ? retryAfterSeconds(response) : null,
+    });
+  }
+  return readAnswer(fetched, kind, valid);
+}
+
+/** The guarded GET; any failure to get an answer is a CommunityDaysError. */
+async function fetchAnswer({ apiKey, fetchImpl, resolve, dispatcherFor, timeoutMs }, kind, target, signal) {
+  try {
+    return await guardedFetch(target.toString(), {
+      fetch: fetchImpl,
+      ...(resolve ? { resolve } : {}),
+      ...(dispatcherFor ? { dispatcherFor } : {}),
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+      httpsOnly: true,
+      maxRedirects: 0,
+      timeoutMs,
+      maxBytes: MAX_ANSWER_BYTES,
+      ...(signal ? { signal } : {}),
+    });
+  } catch (error) {
+    // A redirect is an answer, and it is refused on purpose (see the header).
+    const status = Number.isInteger(error?.status) ? error.status : undefined;
+    throw new CommunityDaysError(kind, status);
+  }
+}
+
+/** The answer's JSON object, once `valid` accepts it; anything else is unreadable. */
+function readAnswer(fetched, kind, valid) {
+  const { response } = fetched;
+  let answer;
+  try {
+    answer = JSON.parse(fetched.text());
+  } catch {
+    throw new CommunityDaysError(kind, response.status, { reason: 'unreadable' });
+  }
+  if (!isObject(answer) || (valid && !valid(answer))) {
+    throw new CommunityDaysError(kind, response.status, { reason: 'unreadable' });
+  }
+  return answer;
+}
+
+/**
+ * The page after `page`, or null. The next page must move forward; anything
+ * else ends the read, so a wrong answer can never make the loop below run on.
+ */
+const nextPageOf = (answer, page) =>
+  Number.isInteger(answer.next_page) && answer.next_page > page ? answer.next_page : null;
+
+async function listOpenCalls(conn, { signal } = {}) {
+  const events = [];
+  let total = null;
+  let page = 1;
+  let calls = 0;
+  let next = null;
+  do {
+    const answer = await call(conn, 'events', EVENTS_PATH, {
+      query: { call_for_speakers: 'true', per_page: PER_PAGE, page },
+      valid: (json) => Array.isArray(json.events),
+      signal,
+    });
+    calls += 1;
+    events.push(...answer.events.filter(isObject));
+    if (Number.isInteger(answer.total)) total = answer.total;
+    next = nextPageOf(answer, page);
+    if (next) page = next;
+  } while (next && calls < MAX_PAGES);
+  return { events, total, truncated: Boolean(next), calls };
+}
+
+async function listTalks(conn, { signal } = {}) {
+  const answer = await call(conn, 'talks', TALKS_PATH, {
+    valid: (json) => json.talks === undefined || Array.isArray(json.talks),
+    signal,
+  });
+  return (answer.talks ?? []).filter(isObject);
+}
+
+/**
  * @param {object} deps
  * @param {string} deps.apiKey - the key; never logged, never put in a URL
  * @param {typeof fetch} [deps.fetchImpl]
@@ -117,54 +210,7 @@ export function createCommunityDaysClient({
   dispatcherFor,
   timeoutMs = CALL_TIMEOUT_MS,
 }) {
-  /**
-   * One read. `path` must be one of ALLOWED_PATHS; `query` is a plain map of
-   * values this file chose (never a caller's text). Answers the parsed JSON
-   * object once `valid` accepts it.
-   */
-  async function call(kind, path, { query = {}, valid, signal } = {}) {
-    if (!ALLOWED_PATHS.includes(path)) throw new CommunityDaysError(kind, undefined, { reason: 'refused' });
-    const target = new URL(`${API_BASE}${path}`);
-    for (const [name, value] of Object.entries(query)) target.searchParams.set(name, String(value));
-
-    let fetched;
-    try {
-      fetched = await guardedFetch(target.toString(), {
-        fetch: fetchImpl,
-        ...(resolve ? { resolve } : {}),
-        ...(dispatcherFor ? { dispatcherFor } : {}),
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
-        httpsOnly: true,
-        maxRedirects: 0,
-        timeoutMs,
-        maxBytes: MAX_ANSWER_BYTES,
-        ...(signal ? { signal } : {}),
-      });
-    } catch (error) {
-      // A redirect is an answer, and it is refused on purpose (see the header).
-      const status = Number.isInteger(error?.status) ? error.status : undefined;
-      throw new CommunityDaysError(kind, status);
-    }
-
-    const { response } = fetched;
-    if (!response.ok) {
-      throw new CommunityDaysError(kind, response.status, {
-        retryAfterSeconds: response.status === 429 ? retryAfterSeconds(response) : null,
-      });
-    }
-    let answer;
-    try {
-      answer = JSON.parse(fetched.text());
-    } catch {
-      throw new CommunityDaysError(kind, response.status, { reason: 'unreadable' });
-    }
-    if (!isObject(answer) || (valid && !valid(answer))) {
-      throw new CommunityDaysError(kind, response.status, { reason: 'unreadable' });
-    }
-    return answer;
-  }
-
+  const conn = { apiKey, fetchImpl, resolve, dispatcherFor, timeoutMs };
   return {
     /**
      * Every published event whose call for speakers is open now, as the API
@@ -175,28 +221,7 @@ export function createCommunityDaysClient({
      * @param {{ signal?: AbortSignal }} [options]
      * @returns {Promise<{ events: object[], total: number|null, truncated: boolean, calls: number }>}
      */
-    async listOpenCalls({ signal } = {}) {
-      const events = [];
-      let total = null;
-      let page = 1;
-      let calls = 0;
-      let next = null;
-      do {
-        const answer = await call('events', EVENTS_PATH, {
-          query: { call_for_speakers: 'true', per_page: PER_PAGE, page },
-          valid: (json) => Array.isArray(json.events),
-          signal,
-        });
-        calls += 1;
-        events.push(...answer.events.filter(isObject));
-        if (Number.isInteger(answer.total)) total = answer.total;
-        // The next page must move forward; anything else ends the read, so a
-        // wrong answer can never make this loop.
-        next = Number.isInteger(answer.next_page) && answer.next_page > page ? answer.next_page : null;
-        if (next) page = next;
-      } while (next && calls < MAX_PAGES);
-      return { events, total, truncated: Boolean(next), calls };
-    },
+    listOpenCalls: (options) => listOpenCalls(conn, options),
 
     /**
      * The key owner's talks, as the API sends them (newest first).
@@ -204,12 +229,6 @@ export function createCommunityDaysClient({
      * @param {{ signal?: AbortSignal }} [options]
      * @returns {Promise<object[]>}
      */
-    async listTalks({ signal } = {}) {
-      const answer = await call('talks', TALKS_PATH, {
-        valid: (json) => json.talks === undefined || Array.isArray(json.talks),
-        signal,
-      });
-      return (answer.talks ?? []).filter(isObject);
-    },
+    listTalks: (options) => listTalks(conn, options),
   };
 }
