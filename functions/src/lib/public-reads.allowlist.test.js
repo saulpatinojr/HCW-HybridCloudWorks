@@ -123,8 +123,22 @@ const leakyPublishedDoc = (over = {}) => ({
   ...over,
 });
 
-/** The fields a frontend source file reads off the named variables. */
+/**
+ * The fields frontend source files read off the named variables: `x.field`,
+ * `x['field']`, and the names listed in `firstField(x, [...])` or in a
+ * `const NAME = [...]` passed to it (#1845: the detail templates moved to
+ * that helper and into sibling files, so a path may also be a list).
+ */
 function fieldsReadIn(relativePath, variables) {
+  const paths = Array.isArray(relativePath) ? relativePath : [relativePath];
+  const fields = new Set();
+  for (const path of paths) {
+    for (const field of fieldsReadInOne(path, variables)) fields.add(field);
+  }
+  return fields;
+}
+
+function fieldsReadInOne(relativePath, variables) {
   const source = readFileSync(new URL(`../../../frontend/src/${relativePath}`, import.meta.url), 'utf8');
   const names = variables.join('|');
   const fields = new Set();
@@ -134,6 +148,14 @@ function fieldsReadIn(relativePath, variables) {
   const bracketed = new RegExp(`${variable}(?:\\?\\.)?\\[\\s*'([^']+)'\\s*\\]`, 'g');
   for (const match of source.matchAll(dotted)) fields.add(match[1]);
   for (const match of source.matchAll(bracketed)) fields.add(match[1]);
+  const lists = new Map(
+    [...source.matchAll(/const\s+([A-Z_][A-Z0-9_]*)\s*=\s*(?:Object\.freeze\()?\[([\s\S]*?)\]/g)].map((m) => [m[1], m[2]])
+  );
+  const viaHelper = new RegExp(`firstField\\(\\s*${variable}\\s*,\\s*(\\[[\\s\\S]*?\\]|[A-Z_][A-Z0-9_]*)`, 'g');
+  for (const match of source.matchAll(viaHelper)) {
+    const list = match[1].startsWith('[') ? match[1].slice(1, -1) : lists.get(match[1]) ?? '';
+    for (const name of list.matchAll(/'([^']+)'/g)) fields.add(name[1]);
+  }
   return fields;
 }
 
@@ -273,17 +295,29 @@ describe('getContent — the public article detail', () => {
     const PREVIEW_ONLY = ['contentStatus', 'forgeGrade'];
 
     it('BlogDetailTemplate', () => {
-      const read = fieldsReadIn('components/templates/BlogDetailTemplate.jsx', ['article']);
+      const read = fieldsReadIn(
+        [
+          'components/templates/BlogDetailTemplate.jsx',
+          'components/templates/BlogDetailParts.jsx',
+          'components/templates/blogPostModel.js',
+        ],
+        ['article']
+      );
       expect(read.size).toBeGreaterThan(30);
       const publicRead = [...read].filter((f) => !PREVIEW_ONLY.includes(f));
       expect(missingFrom(PUBLIC_CONTENT_DETAIL_FIELDS, publicRead)).toEqual([]);
     });
 
     it('ArchitectureDetailTemplate', () => {
-      const read = fieldsReadIn('components/templates/ArchitectureDetailTemplate.jsx', [
-        'architecture',
-        'item',
-      ]);
+      const read = fieldsReadIn(
+        [
+          'components/templates/ArchitectureDetailTemplate.jsx',
+          'components/templates/ArchitectureDetailParts.jsx',
+          'components/templates/ArchitectureDeepDiveTabs.jsx',
+          'components/templates/architectureModel.js',
+        ],
+        ['architecture', 'item']
+      );
       expect(read.size).toBeGreaterThan(30);
       expect(missingFrom(PUBLIC_CONTENT_DETAIL_FIELDS, read)).toEqual([]);
     });
@@ -343,7 +377,14 @@ describe('getPreview — the signed staging preview', () => {
 
   it('covers every field BlogDetailTemplate and PreviewPage read', () => {
     const read = new Set([
-      ...fieldsReadIn('components/templates/BlogDetailTemplate.jsx', ['article']),
+      ...fieldsReadIn(
+        [
+          'components/templates/BlogDetailTemplate.jsx',
+          'components/templates/BlogDetailParts.jsx',
+          'components/templates/blogPostModel.js',
+        ],
+        ['article']
+      ),
       ...fieldsReadIn('pages/PreviewPage.jsx', ['item']),
     ]);
     expect(missingFrom(PUBLIC_PREVIEW_FIELDS, read)).toEqual([]);
