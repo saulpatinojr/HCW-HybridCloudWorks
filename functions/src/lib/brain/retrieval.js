@@ -32,15 +32,38 @@ export async function retrieveEvidence({
   if (contextId && !context.length)
     fail(404, 'NOT_FOUND', 'The selected context is no longer available.');
   const anchor = context[0];
-  const anchorTerms = anchor
-    ? meaningfulTerms(
-        `${anchor.properties?.heading || ''} ${anchor.tags.join(' ')} ${anchor.title}`,
-      ).slice(0, 8)
-    : [];
+  const anchorTerms = anchorTermsOf(anchor);
   const queryTerms = meaningfulTerms(question);
   // Generic requests without a selected item cannot identify a subject. Do
   // not spend on arbitrary matches to words such as "article" or "source".
   const terms = [...new Set([...anchorTerms, ...queryTerms])].slice(0, 12);
+  const { candidates, cursor } = await searchCandidates(
+    sources,
+    terms,
+    deadline,
+  );
+  const relevant = candidates.filter((item) => isRelevant(item, anchorTerms));
+  relevant.sort((a, b) => score(b, terms) - score(a, terms));
+  const all = unique([...context, ...relevant]);
+  const selected = all.slice(0, 8);
+  return {
+    selected,
+    focusId: anchor?.id || null,
+    needsContext: !terms.length && !context.length,
+    partial: Boolean(cursor) || isCutShort(all, selected),
+  };
+}
+
+// The selected item's own words: its heading, tags and title.
+function anchorTermsOf(anchor) {
+  if (!anchor) return [];
+  return meaningfulTerms(
+    `${anchor.properties?.heading || ''} ${anchor.tags.join(' ')} ${anchor.title}`,
+  ).slice(0, 8);
+}
+
+// Up to three pages of search results. `cursor` is set when more remained.
+async function searchCandidates(sources, terms, deadline) {
   let cursor = null;
   const candidates = [];
   for (let page = 0; terms.length && page < 3; page++) {
@@ -55,35 +78,34 @@ export async function retrieveEvidence({
     cursor = result.cursor;
     if (!cursor) break;
   }
-  const relevant = candidates.filter((item) => {
-    if (!anchorTerms.length) return true;
-    const titleTags = `${item.title} ${item.tags.join(' ')}`.toLowerCase();
-    const body = item.body.toLowerCase();
-    return (
-      anchorTerms.some((term) => titleTags.includes(term)) ||
-      anchorTerms.filter((term) => body.includes(term)).length >= 2
-    );
-  });
-  const score = (item) => {
-    const titleTags = `${item.title} ${item.tags.join(' ')}`.toLowerCase();
-    return terms.reduce(
-      (sum, term) =>
-        sum +
-        (titleTags.includes(term) ? 5 : 0) +
-        (item.body.toLowerCase().includes(term) ? 1 : 0),
-      0,
-    );
-  };
-  relevant.sort((a, b) => score(b) - score(a));
-  const all = unique([...context, ...relevant]);
-  const selected = all.slice(0, 8);
-  return {
-    selected,
-    focusId: anchor?.id || null,
-    needsContext: !terms.length && !context.length,
-    partial:
-      Boolean(cursor) ||
-      all.length > selected.length ||
-      selected.some((item) => item.truncated || item.body.length > 5000),
-  };
+  return { candidates, cursor };
 }
+
+const titleAndTags = (item) =>
+  `${item.title} ${item.tags.join(' ')}`.toLowerCase();
+
+function isRelevant(item, anchorTerms) {
+  if (!anchorTerms.length) return true;
+  const titleTags = titleAndTags(item);
+  const body = item.body.toLowerCase();
+  return (
+    anchorTerms.some((term) => titleTags.includes(term)) ||
+    anchorTerms.filter((term) => body.includes(term)).length >= 2
+  );
+}
+
+function score(item, terms) {
+  const titleTags = titleAndTags(item);
+  return terms.reduce(
+    (sum, term) =>
+      sum +
+      (titleTags.includes(term) ? 5 : 0) +
+      (item.body.toLowerCase().includes(term) ? 1 : 0),
+    0,
+  );
+}
+
+// More evidence was found than is sent, or an item was cut.
+const isCutShort = (all, selected) =>
+  all.length > selected.length ||
+  selected.some((item) => item.truncated || item.body.length > 5000);
