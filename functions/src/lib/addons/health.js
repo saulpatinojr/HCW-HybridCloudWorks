@@ -22,7 +22,7 @@ const shortString = (value) =>
   typeof value === 'string' && value.length > 0 && value.length <= SHORT_STRING_MAX ? value : null;
 
 /** What can be wrong with a health body, by code: sentences this module wrote, so a log line may carry them. */
-const HEALTH_BODY_FAULTS = {
+export const HEALTH_BODY_FAULTS = {
   HEALTH_NOT_OK: 'the health body did not say ok',
   HEALTH_NO_VERSION: 'the health body carried no semver version',
   HEALTH_TOO_LARGE: 'the health body was too large',
@@ -128,13 +128,4 @@ export async function readHealth(fetchImpl, config) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-/** Why the read failed, in words that carry no URL. */
-export function failureReason(error) {
-  if (error?.code === 'FETCH_TIMEOUT') return `no answer within ${ADDON_TIMEOUT_MS / 1000} s`;
-  if (error instanceof SyntaxError) return 'the health body was not JSON';
-  if (Number.isInteger(error?.status)) return `the health read answered ${error.status}`;
-  if (Object.hasOwn(HEALTH_BODY_FAULTS, error?.code ?? '')) return HEALTH_BODY_FAULTS[error.code];
-  return 'the health read failed';
 }

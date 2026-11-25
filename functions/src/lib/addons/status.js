@@ -49,7 +49,7 @@
 import { readSetting } from '../http/read-setting.js';
 import { createMinuteCache, jsonResponse, MINUTE_CACHE_SECONDS } from '../labs/minute-cache.js';
 import { addonEntry, isKnownAddon } from './registry.js';
-import { failureReason, readHealth } from './health.js';
+import { ADDON_TIMEOUT_MS, HEALTH_BODY_FAULTS, readHealth } from './health.js';
 
 export { ADDON_HEALTH_MAX_BYTES, ADDON_TIMEOUT_MS, projectHealth } from './health.js';
 
@@ -100,20 +100,6 @@ export function readAddonConfig(env = process.env, id) {
 /** The setting is set but unusable — worth one warning line, by name. */
 const hasAddonUrl = (env, id) => Boolean(readSetting(env, addonEntry(id)?.setting));
 
-/**
- * The AddOn's configuration when it can be used, or null. A setting that is
- * filled in but not an https URL gets one warning line, by setting name.
- */
-function usableConfig(env, id, context) {
-  const config = readAddonConfig(env, id);
-  if (!config && hasAddonUrl(env, id)) {
-    context?.warn?.(
-      `addons-status: ${addonEntry(id).setting} is not an https URL; reporting its add-on unconfigured`
-    );
-  }
-  return config;
-}
-
 /** The minute cache for one id from `caches`, created and kept there on first use. */
 function minuteCacheFor(caches, { store, now }, id) {
   if (!caches.has(id)) {
@@ -129,6 +115,15 @@ function minuteCacheFor(caches, { store, now }, id) {
     );
   }
   return caches.get(id);
+}
+
+/** Why the read failed, in words that carry no URL. */
+function failureReason(error) {
+  if (error?.code === 'FETCH_TIMEOUT') return `no answer within ${ADDON_TIMEOUT_MS / 1000} s`;
+  if (error instanceof SyntaxError) return 'the health body was not JSON';
+  if (Number.isInteger(error?.status)) return `the health read answered ${error.status}`;
+  if (Object.hasOwn(HEALTH_BODY_FAULTS, error?.code ?? '')) return HEALTH_BODY_FAULTS[error.code];
+  return 'the health read failed';
 }
 
 /** The unreachable body: the full projection shape, with nothing from the AddOn. */
@@ -169,8 +164,16 @@ export function createAddonStatusHandlers({
    * answers unconfigured here rather than throwing.
    */
   async function readStatus(id, context) {
-    const config = isKnownAddon(id) ? usableConfig(env, id, context) : null;
-    if (!config) return { configured: false };
+    const known = isKnownAddon(id);
+    const config = known ? readAddonConfig(env, id) : null;
+    if (!config) {
+      if (known && hasAddonUrl(env, id)) {
+        context?.warn?.(
+          `addons-status: ${addonEntry(id).setting} is not an https URL; reporting its add-on unconfigured`
+        );
+      }
+      return { configured: false };
+    }
 
     const cache = cacheFor(id);
     const cached = await cache.read(context);
