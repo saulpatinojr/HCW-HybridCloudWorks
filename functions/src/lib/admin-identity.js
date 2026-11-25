@@ -459,7 +459,20 @@ async function updateAdmin(ctx, request, context) {
       updateReason,
     };
 
-    await ctx.store.patchDoc('admins', targetId, patchedFields);
+    // The write carries the ETag (the version stamp the read came back with),
+    // so it only lands if the record is still the one the checks above read.
+    // A 412 means someone else changed it in between: the whole update is
+    // refused, nothing is written, and no audit row is made. It is not retried
+    // here, because a retry would write a role decided from a record that is no
+    // longer there.
+    try {
+      await ctx.store.patchDoc('admins', targetId, patchedFields, { ifMatch: existing._etag });
+    } catch (error) {
+      if (error?.code !== 412) throw error;
+      return json(409, {
+        error: 'The admin record changed since it was read; nothing was saved. Reload and try again.',
+      });
+    }
 
     // Evict cached role entries immediately so changes take effect without waiting 60s
     ctx.guard.clearCache();

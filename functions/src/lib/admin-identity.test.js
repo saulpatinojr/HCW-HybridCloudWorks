@@ -496,7 +496,7 @@ describe('updateAdmin and deactivateAdmin', () => {
     const guard = guardWith({
       requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
     });
-    const existing = { id: 'oid-2', role: 'editor', active: true };
+    const existing = { id: 'oid-2', role: 'editor', active: true, _etag: '"etag-1"' };
     const store = makeStore({
       readDoc: vi.fn(async () => existing),
       patchDoc: vi.fn(async (_c, id, patch) => ({ ...existing, ...patch })),
@@ -504,15 +504,61 @@ describe('updateAdmin and deactivateAdmin', () => {
     const h = createAdminIdentityHandlers({ guard, store, ...fixed });
     const res = await h.updateAdmin({ ...makeRequest({ role: 'publisher', active: true, reason: 'Promoted' }), params: { id: 'oid-2' } }, context);
     expect(res.status).toBe(200);
-    expect(store.patchDoc).toHaveBeenCalledWith('admins', 'oid-2', expect.objectContaining({
-      role: 'publisher',
-      active: true,
-      updatedBy: 'oid-1',
-    }));
+    // The write is guarded by the ETag (version stamp) of the record it read.
+    expect(store.patchDoc).toHaveBeenCalledWith(
+      'admins',
+      'oid-2',
+      expect.objectContaining({ role: 'publisher', active: true, updatedBy: 'oid-1' }),
+      { ifMatch: '"etag-1"' }
+    );
     expect(guard.clearCache).toHaveBeenCalled();
     expect(store.upsertDoc).toHaveBeenCalledWith('admin_audit_logs', expect.objectContaining({
       action: 'admin_role_changed',
     }));
+  });
+
+  it.each([
+    ['updateAdmin', { role: 'super_admin', reason: 'Promoted' }],
+    ['deactivateAdmin', {}],
+  ])('%s answers 409 and changes nothing when the record changed after it was read', async (handler, body) => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
+    });
+    const existing = { id: 'oid-2', role: 'editor', active: true, _etag: '"etag-1"' };
+    // The store refuses a guarded write the way Cosmos does: error code 412.
+    const store = makeStore({
+      readDoc: vi.fn(async () => existing),
+      patchDoc: vi.fn(async (_c, _id, _patch, options) => {
+        if (options?.ifMatch) throw Object.assign(new Error('Precondition Failed'), { code: 412 });
+        return {};
+      }),
+    });
+    const h = createAdminIdentityHandlers({ guard, store, ...fixed });
+    const res = await h[handler]({ ...makeRequest(body), params: { id: 'oid-2' } }, context);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: 'The admin record changed since it was read; nothing was saved. Reload and try again.',
+    });
+    // One attempt, no second write of any kind, no audit row, no cache clear.
+    expect(store.patchDoc).toHaveBeenCalledTimes(1);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(guard.clearCache).not.toHaveBeenCalled();
+  });
+
+  it('still answers 500 when the write fails for another reason', async () => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
+    });
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: 'oid-2', role: 'editor', active: true, _etag: '"etag-1"' })),
+      patchDoc: vi.fn(async () => {
+        throw Object.assign(new Error('Service Unavailable'), { code: 503 });
+      }),
+    });
+    const h = createAdminIdentityHandlers({ guard, store, ...fixed });
+    const res = await h.updateAdmin({ ...makeRequest({ role: 'publisher' }), params: { id: 'oid-2' } }, context);
+    expect(res.status).toBe(500);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
   });
 });
 
