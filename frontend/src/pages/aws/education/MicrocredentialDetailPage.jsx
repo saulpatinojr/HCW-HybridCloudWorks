@@ -2,6 +2,13 @@ import React from 'react';
 import { useParams, Link } from 'react-router';
 import { Helmet } from 'react-helmet-async';
 import { getProviderPath, routes } from '@/lib/routeFactory';
+import {
+  BackLink,
+  DetailNotFound,
+  DetailSection,
+  TopicGrid,
+} from '@/components/education/CertDetailParts';
+import { AWS_DETAIL_TONE } from './awsDetailTone';
 
 // Exported so the pre-render step can write one page per microcredential
 // (scripts/prerender-entry.jsx). Without a page on disk the URL would answer
@@ -167,32 +174,14 @@ export default function MicrocredentialDetailPage() {
 
   if (!mc) {
     return (
-      <main className="flex-grow pt-28 pb-20 px-4 md:px-8 max-w-[1440px] mx-auto w-full">
-        <div className="text-center py-20">
-          <span
-            className="text-amber-400 text-[64px] material-symbols-outlined mb-4 block"
-            aria-hidden="true"
-          >
-            search_off
-          </span>
-          <h1 className="text-3xl font-bold text-slate-950 dark:text-white mb-4">
-            Microcredential Not Found
-          </h1>
-          <p className="text-foreground mb-8">
-            The microcredential <code className="font-mono text-amber-400">{mcSlug}</code> was not
-            found.
-          </p>
-          <Link
-            to={routes.education('aws')}
-            className="px-6 h-11 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg transition-colors inline-flex items-center gap-2"
-          >
-            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-              arrow_back
-            </span>
-            Back to AWS Education
-          </Link>
-        </div>
-      </main>
+      <DetailNotFound
+        tone={AWS_DETAIL_TONE}
+        heading="Microcredential Not Found"
+        noun="microcredential"
+        slug={mcSlug}
+        backTo={routes.education('aws')}
+        backLabel="Back to AWS Education"
+      />
     );
   }
 
@@ -275,33 +264,14 @@ export default function MicrocredentialDetailPage() {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-8">
           <div className="space-y-8">
             {/* Skills Validated */}
-            <section className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6">
-              <h2 className="text-xl font-bold text-slate-950 dark:text-white mb-4 flex items-center gap-2">
-                <span
-                  className={`material-symbols-outlined text-[20px] ${c.icon}`}
-                  aria-hidden="true"
-                >
-                  check_circle
-                </span>
-                Skills Validated
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {mc.topics.map((topic, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-2 bg-card/50 rounded-xl px-3 py-2.5"
-                  >
-                    <span
-                      className={`material-symbols-outlined text-[16px] ${c.icon}`}
-                      aria-hidden="true"
-                    >
-                      verified
-                    </span>
-                    <span className="text-foreground text-sm">{topic}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
+            <DetailSection icon="check_circle" iconColor={c.icon} title="Skills Validated">
+              <TopicGrid
+                topics={mc.topics}
+                iconColor={c.icon}
+                icon="verified"
+                columns="grid-cols-1 sm:grid-cols-2"
+              />
+            </DetailSection>
 
             {/* What to Expect */}
             <section className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6">
@@ -466,15 +436,11 @@ export default function MicrocredentialDetailPage() {
               </div>
             </div>
 
-            <Link
+            <BackLink
               to={routes.education('aws')}
-              className="flex items-center gap-2 text-sm text-foreground/60 hover:text-amber-400 transition-colors"
-            >
-              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                arrow_back
-              </span>
-              Back to AWS Education
-            </Link>
+              hoverText={AWS_DETAIL_TONE.hoverText}
+              label="Back to AWS Education"
+            />
           </aside>
         </div>
       </main>

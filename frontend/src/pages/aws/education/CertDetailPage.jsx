@@ -3,6 +3,18 @@ import { useParams, Link } from 'react-router';
 import { Helmet } from 'react-helmet-async';
 import { getProviderPath, routes } from '@/lib/routeFactory';
 import CertStatusBadge from '@/components/education/CertStatusBadge';
+import {
+  BackLink,
+  CertSidebarLinks,
+  DetailNotFound,
+  DetailSection,
+  HeroStats,
+  NextCertLinks,
+  NumberedModuleLinks,
+  PrerequisitesCard,
+  StatRow,
+  TopicGrid,
+} from '@/components/education/CertDetailParts';
 import ListenAndLearn from '@/components/education/ListenAndLearn';
 import {
   DATA_AS_OF,
@@ -10,6 +22,7 @@ import {
   findCertificationBySlug,
 } from '@/data/aws/certifications';
 import { useToday } from '@/lib/certStatus';
+import { AWS_DETAIL_TONE as TONE } from './awsDetailTone';
 
 // ── Shared data ──────────────────────────────────────────────────────────────
 
@@ -46,6 +59,13 @@ const LEVEL_META = {
   },
 };
 
+/** The words on the sidebar's three buttons. */
+const SIDEBAR_LABELS = {
+  learn: 'View on AWS Certification',
+  guide: 'Official Exam Guide',
+  practice: 'Practice Questions',
+};
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function AWSCertDetailPage() {
@@ -55,32 +75,14 @@ export default function AWSCertDetailPage() {
 
   if (!cert) {
     return (
-      <main className="flex-grow pt-28 pb-20 px-4 md:px-8 max-w-[1440px] mx-auto w-full">
-        <div className="text-center py-20">
-          <span
-            className="text-amber-400 text-[64px] material-symbols-outlined mb-4 block"
-            aria-hidden="true"
-          >
-            search_off
-          </span>
-          <h1 className="text-3xl font-bold text-slate-950 dark:text-white mb-4">
-            Certification Not Found
-          </h1>
-          <p className="text-foreground mb-8">
-            The certification <code className="font-mono text-amber-400">{certSlug}</code> was not
-            found.
-          </p>
-          <Link
-            to={routes.education('aws')}
-            className="px-6 h-11 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg transition-colors inline-flex items-center gap-2"
-          >
-            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-              arrow_back
-            </span>
-            Back to AWS Education
-          </Link>
-        </div>
-      </main>
+      <DetailNotFound
+        tone={TONE}
+        heading="Certification Not Found"
+        noun="certification"
+        slug={certSlug}
+        backTo={routes.education('aws')}
+        backLabel="Back to AWS Education"
+      />
     );
   }
 
@@ -96,7 +98,7 @@ export default function AWSCertDetailPage() {
         <meta property="og:description" content={cert.longDescription} />
       </Helmet>
 
-      <main className="flex-grow pt-28 pb-20 px-4 md:px-8 max-w-[1440px] mx-auto w-full">
+      <main className={TONE.main}>
         {/* Breadcrumb */}
         <nav className="flex items-center gap-2 text-sm text-foreground/60 mb-8">
           <Link to={routes.education('aws')} className="hover:text-amber-400 transition-colors">
@@ -128,24 +130,7 @@ export default function AWSCertDetailPage() {
               {cert.title}
             </h1>
             <p className="text-foreground text-lg max-w-3xl mb-6">{cert.longDescription}</p>
-            <div className="flex flex-wrap gap-6 text-sm">
-              <div>
-                <div className="text-foreground/60 mb-0.5">Study Hours</div>
-                <div className="text-2xl font-bold text-amber-400">{cert.hours}h</div>
-              </div>
-              <div>
-                <div className="text-foreground/60 mb-0.5">Prep Time</div>
-                <div className="text-2xl font-bold text-slate-950 dark:text-white">
-                  {cert.prepTime}
-                </div>
-              </div>
-              {cert.successRate && (
-                <div>
-                  <div className="text-foreground/60 mb-0.5">Avg. Pass Rate</div>
-                  <div className="text-2xl font-bold text-amber-300">{cert.successRate}</div>
-                </div>
-              )}
-            </div>
+            <HeroStats cert={cert} hoursClass="text-amber-400" passRateClass="text-amber-300" />
           </div>
         </section>
 
@@ -160,85 +145,35 @@ export default function AWSCertDetailPage() {
             />
 
             {/* Topics */}
-            <section className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6">
-              <h2 className="text-xl font-bold text-slate-950 dark:text-white mb-4 flex items-center gap-2">
-                <span
-                  className="text-amber-400 material-symbols-outlined text-[20px]"
-                  aria-hidden="true"
-                >
-                  category
-                </span>
-                Topics Covered
-              </h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {cert.topics.map((topic, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-2 bg-card/50 rounded-xl px-3 py-2.5"
-                  >
-                    <span
-                      className="text-amber-400 material-symbols-outlined text-[16px]"
-                      aria-hidden="true"
-                    >
-                      check_circle
-                    </span>
-                    <span className="text-foreground text-sm">{topic}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
+            <DetailSection icon="category" iconColor={TONE.accentText} title="Topics Covered">
+              <TopicGrid
+                topics={cert.topics}
+                iconColor={TONE.accentText}
+                icon="check_circle"
+                columns="grid-cols-2 sm:grid-cols-3"
+              />
+            </DetailSection>
 
             {/* Skill Builder Modules — a newly announced exam version has none yet */}
             {cert.modules.length > 0 && (
-              <section className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6">
-                <h2 className="text-xl font-bold text-slate-950 dark:text-white mb-4 flex items-center gap-2">
-                  <span
-                    className="text-amber-400 material-symbols-outlined text-[20px]"
-                    aria-hidden="true"
-                  >
-                    menu_book
-                  </span>
-                  AWS Skill Builder Modules
-                </h2>
-                <div className="space-y-3">
-                  {cert.modules.map((mod, i) => (
-                    <a
-                      key={i}
-                      href={mod.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-3 group bg-card/40 hover:bg-card/60 border border-card/30 hover:border-amber-400/30 rounded-xl px-4 py-3 transition-all"
-                    >
-                      <span className="flex-shrink-0 w-6 h-6 bg-amber-500/20 rounded-full flex items-center justify-center text-xs font-bold text-amber-400">
-                        {i + 1}
-                      </span>
-                      <span className="text-sm text-foreground group-hover:text-amber-300 transition-colors flex-1">
-                        {mod.title}
-                      </span>
-                      <span
-                        className="material-symbols-outlined text-[14px] text-foreground/40 group-hover:text-amber-400 transition-colors shrink-0"
-                        aria-hidden="true"
-                      >
-                        open_in_new
-                      </span>
-                    </a>
-                  ))}
-                </div>
-              </section>
+              <DetailSection
+                icon="menu_book"
+                iconColor={TONE.accentText}
+                title="AWS Skill Builder Modules"
+              >
+                <NumberedModuleLinks modules={cert.modules} tone={TONE} />
+              </DetailSection>
             )}
 
             {/* Microcredentials */}
             {cert.microcredentialUrl && (
-              <section className="bg-card/40 backdrop-blur-md border border-amber-500/20 rounded-2xl p-6">
-                <h2 className="text-xl font-bold text-slate-950 dark:text-white mb-2 flex items-center gap-2">
-                  <span
-                    className="text-amber-400 material-symbols-outlined text-[20px]"
-                    aria-hidden="true"
-                  >
-                    verified
-                  </span>
-                  AWS Microcredentials
-                </h2>
+              <DetailSection
+                icon="verified"
+                iconColor={TONE.accentText}
+                title="AWS Microcredentials"
+                className="bg-card/40 backdrop-blur-md border border-amber-500/20 rounded-2xl p-6"
+                headingGap="mb-2"
+              >
                 <p className="text-sm text-foreground/70 mb-4">
                   Focused, skill-specific credentials on Skill Builder that complement this
                   certification with hands-on proof of competency.
@@ -254,157 +189,66 @@ export default function AWSCertDetailPage() {
                   </span>
                   Browse Related Microcredentials
                 </a>
-              </section>
+              </DetailSection>
             )}
 
             {/* What's Next */}
             {nextCerts.length > 0 && (
-              <section className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6">
-                <h2 className="text-xl font-bold text-slate-950 dark:text-white mb-4 flex items-center gap-2">
-                  <span
-                    className="text-amber-400 material-symbols-outlined text-[20px]"
-                    aria-hidden="true"
-                  >
-                    trending_up
-                  </span>
-                  What to Study Next
-                </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {nextCerts.map((next) => (
-                    <Link
-                      key={next.slug}
-                      to={getProviderPath('aws', `education/${next.slug}`)}
-                      className="group flex items-center gap-3 bg-card/40 hover:bg-card/60 border border-card/30 hover:border-amber-400/30 rounded-xl px-4 py-3 transition-all"
-                    >
-                      <span
-                        className={`w-2 h-2 rounded-full shrink-0 ${LEVEL_META[next.level]?.dot}`}
-                      />
-                      <div className="min-w-0">
-                        <div className="text-xs font-mono text-foreground/50">{next.code}</div>
-                        <div className="text-sm font-semibold text-foreground group-hover:text-amber-300 transition-colors line-clamp-1">
-                          {next.title.replace(/AWS Certified\s+/i, '')}
-                        </div>
-                      </div>
-                      <span
-                        className="material-symbols-outlined text-[16px] text-foreground/40 group-hover:text-amber-400 transition-colors ml-auto shrink-0"
-                        aria-hidden="true"
-                      >
-                        arrow_forward
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-              </section>
+              <DetailSection
+                icon="trending_up"
+                iconColor={TONE.accentText}
+                title="What to Study Next"
+              >
+                <NextCertLinks
+                  certs={nextCerts}
+                  tone={TONE}
+                  hrefFor={(next) => getProviderPath('aws', `education/${next.slug}`)}
+                  dotClassFor={(next) => LEVEL_META[next.level]?.dot}
+                  stripTitle={/AWS Certified\s+/i}
+                />
+              </DetailSection>
             )}
           </div>
 
           {/* Sidebar */}
           <aside className="space-y-6 h-fit sticky top-28">
             {/* CTA */}
-            <div className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6 space-y-3">
-              <a
-                href={cert.learnUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 w-full h-11 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg transition-colors"
-              >
-                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                  open_in_new
-                </span>
-                View on AWS Certification
-              </a>
-              {cert.studyGuideUrl && (
-                <a
-                  href={cert.studyGuideUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 w-full h-11 bg-card/50 hover:bg-card/70 text-foreground font-semibold rounded-lg transition-colors text-sm"
-                >
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                    description
-                  </span>
-                  Official Exam Guide
-                </a>
-              )}
-              {cert.practiceUrl && (
-                <a
-                  href={cert.practiceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 w-full h-11 bg-card/50 hover:bg-card/70 text-foreground font-semibold rounded-lg transition-colors text-sm"
-                >
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                    quiz
-                  </span>
-                  Practice Questions
-                </a>
-              )}
-            </div>
+            <CertSidebarLinks cert={cert} tone={TONE} labels={SIDEBAR_LABELS} />
 
             {/* Prerequisites */}
-            <div className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6">
-              <h3 className="text-base font-bold text-slate-950 dark:text-white mb-3 flex items-center gap-2">
-                <span
-                  className="text-amber-400 material-symbols-outlined text-[18px]"
-                  aria-hidden="true"
-                >
-                  info
-                </span>
-                Prerequisites
-              </h3>
-              <p className="text-sm text-foreground">{cert.prerequisites}</p>
-            </div>
+            <PrerequisitesCard text={cert.prerequisites} iconColor={TONE.accentText} />
 
             {/* Quick Stats */}
             <div className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6 space-y-4">
               <h3 className="text-base font-bold text-slate-950 dark:text-white">Quick Stats</h3>
               <div className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-foreground/60">Exam Code</span>
-                  <span className="font-mono font-bold text-amber-400">{cert.code}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-foreground/60">Level</span>
-                  <span
-                    className={`px-2 py-0.5 border text-[10px] font-bold rounded ${meta.badge}`}
-                  >
-                    {cert.level}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-foreground/60">Study Hours</span>
-                  <span className="font-bold text-slate-950 dark:text-white">{cert.hours}h</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-foreground/60">Prep Time</span>
-                  <span className="font-bold text-slate-950 dark:text-white">{cert.prepTime}</span>
-                </div>
+                <StatRow label="Exam Code" valueClass="font-mono font-bold text-amber-400">
+                  {cert.code}
+                </StatRow>
+                <StatRow
+                  label="Level"
+                  valueClass={`px-2 py-0.5 border text-[10px] font-bold rounded ${meta.badge}`}
+                >
+                  {cert.level}
+                </StatRow>
+                <StatRow label="Study Hours">{cert.hours}h</StatRow>
+                <StatRow label="Prep Time">{cert.prepTime}</StatRow>
                 {cert.successRate && (
-                  <div className="flex justify-between">
-                    <span className="text-foreground/60">Avg. Pass Rate</span>
-                    <span className="font-bold text-amber-300">{cert.successRate}</span>
-                  </div>
+                  <StatRow label="Avg. Pass Rate" valueClass="font-bold text-amber-300">
+                    {cert.successRate}
+                  </StatRow>
                 )}
                 {cert.modules.length > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-foreground/60">Skill Builder Modules</span>
-                    <span className="font-bold text-slate-950 dark:text-white">
-                      {cert.modules.length}
-                    </span>
-                  </div>
+                  <StatRow label="Skill Builder Modules">{cert.modules.length}</StatRow>
                 )}
               </div>
             </div>
 
-            <Link
+            <BackLink
               to={routes.education('aws')}
-              className="flex items-center gap-2 text-sm text-foreground/60 hover:text-amber-400 transition-colors"
-            >
-              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                arrow_back
-              </span>
-              Back to AWS Education
-            </Link>
+              hoverText={TONE.hoverText}
+              label="Back to AWS Education"
+            />
           </aside>
         </div>
       </main>

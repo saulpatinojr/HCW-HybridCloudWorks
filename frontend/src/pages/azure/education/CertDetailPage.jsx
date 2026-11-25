@@ -2,6 +2,18 @@ import React, { Suspense, memo } from 'react';
 import { useParams, Link } from 'react-router';
 import { Helmet } from 'react-helmet-async';
 import { getProviderPath, routes } from '@/lib/routeFactory';
+import {
+  BackLink,
+  CertSidebarLinks,
+  DetailNotFound,
+  DetailSection,
+  HeroStats,
+  NextCertLinks,
+  NumberedModuleLinks,
+  PrerequisitesCard,
+  StatRow,
+  TopicGrid,
+} from '@/components/education/CertDetailParts';
 import ListenAndLearn from '@/components/education/ListenAndLearn';
 import EpisodePlaylist from '@/components/education/EpisodePlaylist';
 import { outlineKeyFor, DATA_AS_OF as GUIDES_AS_OF } from '@/data/azure/study-guides/index.js';
@@ -55,6 +67,30 @@ function getNextCertDotClass(level) {
       return 'bg-amber-500';
   }
 }
+
+/**
+ * The accent for the shared parts in components/education/CertDetailParts.jsx;
+ * the keys are explained at the top of that file.
+ */
+const TONE = Object.freeze({
+  main: 'grow pt-28 pb-20 px-4 md:px-8 max-w-360 mx-auto w-full',
+  accentText: 'text-primary',
+  hoverText: 'hover:text-primary',
+  primaryButton: 'bg-primary hover:bg-blue-800 text-primary-foreground',
+  cardHoverBorder: 'hover:border-primary/30',
+  groupHoverTitle: 'group-hover:text-primary',
+  groupHoverIcon: 'group-hover:text-primary',
+  numberBadge:
+    'shrink-0 w-6 h-6 bg-primary/20 rounded-full flex items-center justify-center text-xs font-bold text-primary',
+  sideButton: 'flex items-center justify-start px-4 gap-2',
+});
+
+/** The words on the sidebar's three buttons. */
+const SIDEBAR_LABELS = {
+  learn: 'View on Microsoft Learn',
+  guide: 'Official Study Guide',
+  practice: 'Free Practice Assessment',
+};
 
 const formatDate = formatIsoDate;
 
@@ -265,32 +301,14 @@ export default function CertDetailPage() {
 
   if (!cert) {
     return (
-      <main className="grow pt-28 pb-20 px-4 md:px-8 max-w-360 mx-auto w-full">
-        <div className="text-center py-20">
-          <span
-            className="text-primary text-[64px] material-symbols-outlined mb-4 block"
-            aria-hidden="true"
-          >
-            search_off
-          </span>
-          <h1 className="text-3xl font-bold text-slate-950 dark:text-white mb-4">
-            Certification Not Found
-          </h1>
-          <p className="text-foreground mb-8">
-            The certification <code className="font-mono text-primary">{certSlug}</code> was not
-            found.
-          </p>
-          <Link
-            to={routes.education('azure')}
-            className="px-6 h-11 bg-primary hover:bg-blue-800 text-primary-foreground font-bold rounded-lg transition-colors inline-flex items-center gap-2"
-          >
-            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-              arrow_back
-            </span>
-            Back to Azure Education
-          </Link>
-        </div>
-      </main>
+      <DetailNotFound
+        tone={TONE}
+        heading="Certification Not Found"
+        noun="certification"
+        slug={certSlug}
+        backTo={routes.education('azure')}
+        backLabel="Back to Azure Education"
+      />
     );
   }
 
@@ -318,7 +336,7 @@ export default function CertDetailPage() {
         <meta property="og:description" content={cert.longDescription} />
       </Helmet>
 
-      <main className="grow pt-28 pb-20 px-4 md:px-8 max-w-360 mx-auto w-full">
+      <main className={TONE.main}>
         {/* Breadcrumb */}
         <nav className="flex items-center gap-2 text-sm text-foreground/60 mb-8">
           <Link to={routes.education('azure')} className="hover:text-primary transition-colors">
@@ -355,24 +373,7 @@ export default function CertDetailPage() {
               </h1>
               <StatusNotice status={status} cert={cert} replacement={replacement} />
               <p className="text-foreground text-lg max-w-3xl mb-6">{cert.longDescription}</p>
-              <div className="flex flex-wrap gap-6 text-sm">
-                <div>
-                  <div className="text-foreground/60 mb-0.5">Study Hours</div>
-                  <div className="text-2xl font-bold text-primary">{cert.hours}h</div>
-                </div>
-                <div>
-                  <div className="text-foreground/60 mb-0.5">Prep Time</div>
-                  <div className="text-2xl font-bold text-slate-950 dark:text-white">
-                    {cert.prepTime}
-                  </div>
-                </div>
-                {cert.successRate && (
-                  <div>
-                    <div className="text-foreground/60 mb-0.5">Avg. Pass Rate</div>
-                    <div className="text-2xl font-bold text-cyan-400">{cert.successRate}</div>
-                  </div>
-                )}
-              </div>
+              <HeroStats cert={cert} hoursClass="text-primary" passRateClass="text-cyan-400" />
             </div>
 
             <EpisodePlaylist
@@ -399,33 +400,14 @@ export default function CertDetailPage() {
             />
 
             {/* Topics */}
-            <section className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6">
-              <h2 className="text-xl font-bold text-slate-950 dark:text-white mb-4 flex items-center gap-2">
-                <span
-                  className="text-primary material-symbols-outlined text-[20px]"
-                  aria-hidden="true"
-                >
-                  category
-                </span>
-                Topics Covered
-              </h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {cert.topics.map((topic, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-2 bg-card/50 rounded-xl px-3 py-2.5"
-                  >
-                    <span
-                      className="text-primary material-symbols-outlined text-[16px]"
-                      aria-hidden="true"
-                    >
-                      check_circle
-                    </span>
-                    <span className="text-foreground text-sm">{topic}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
+            <DetailSection icon="category" iconColor={TONE.accentText} title="Topics Covered">
+              <TopicGrid
+                topics={cert.topics}
+                iconColor={TONE.accentText}
+                icon="check_circle"
+                columns="grid-cols-2 sm:grid-cols-3"
+              />
+            </DetailSection>
 
             {/* Skills measured — the official study guide's outline, area by
                 area, each deep-linked to its heading on Microsoft Learn (#498).
@@ -439,55 +421,24 @@ export default function CertDetailPage() {
             {/* Microsoft Learn Modules — only when the catalogue lists any; an
                 empty section under a heading reads as broken. */}
             {cert.modules?.length > 0 && (
-              <section className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6">
-                <h2 className="text-xl font-bold text-slate-950 dark:text-white mb-4 flex items-center gap-2">
-                  <span
-                    className="text-primary material-symbols-outlined text-[20px]"
-                    aria-hidden="true"
-                  >
-                    menu_book
-                  </span>
-                  Microsoft Learn Modules
-                </h2>
-                <div className="space-y-3">
-                  {cert.modules.map((mod, i) => (
-                    <a
-                      key={i}
-                      href={mod.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-3 group bg-card/40 hover:bg-card/60 border border-card/30 hover:border-primary/30 rounded-xl px-4 py-3 transition-all"
-                    >
-                      <span className="shrink-0 w-6 h-6 bg-primary/20 rounded-full flex items-center justify-center text-xs font-bold text-primary">
-                        {i + 1}
-                      </span>
-                      <span className="text-sm text-foreground group-hover:text-primary transition-colors flex-1">
-                        {mod.title}
-                      </span>
-                      <span
-                        className="material-symbols-outlined text-[14px] text-foreground/40 group-hover:text-primary transition-colors shrink-0"
-                        aria-hidden="true"
-                      >
-                        open_in_new
-                      </span>
-                    </a>
-                  ))}
-                </div>
-              </section>
+              <DetailSection
+                icon="menu_book"
+                iconColor={TONE.accentText}
+                title="Microsoft Learn Modules"
+              >
+                <NumberedModuleLinks modules={cert.modules} tone={TONE} />
+              </DetailSection>
             )}
 
             {/* Applied Skills */}
             {cert.appliedSkills?.length > 0 && (
-              <section className="bg-card/40 backdrop-blur-md border border-cyan-500/20 rounded-2xl p-6">
-                <h2 className="text-xl font-bold text-slate-950 dark:text-white mb-2 flex items-center gap-2">
-                  <span
-                    className="text-cyan-400 material-symbols-outlined text-[20px]"
-                    aria-hidden="true"
-                  >
-                    construction
-                  </span>
-                  Associated Applied Skills
-                </h2>
+              <DetailSection
+                icon="construction"
+                iconColor="text-cyan-400"
+                title="Associated Applied Skills"
+                className="bg-card/40 backdrop-blur-md border border-cyan-500/20 rounded-2xl p-6"
+                headingGap="mb-2"
+              >
                 <p className="text-sm text-foreground/70 mb-4">
                   Scenario-based assessments that complement this certification with hands-on proof.
                 </p>
@@ -523,143 +474,56 @@ export default function CertDetailPage() {
                     </a>
                   ))}
                 </div>
-              </section>
+              </DetailSection>
             )}
 
             {/* What's Next */}
             {nextCerts.length > 0 && (
-              <section className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6">
-                <h2 className="text-xl font-bold text-slate-950 dark:text-white mb-4 flex items-center gap-2">
-                  <span
-                    className="text-primary material-symbols-outlined text-[20px]"
-                    aria-hidden="true"
-                  >
-                    trending_up
-                  </span>
-                  What to Study Next
-                </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {nextCerts.map((next) => (
-                    <Link
-                      key={next.slug}
-                      to={getProviderPath('azure', `education/${next.slug}`)}
-                      className="group flex items-center gap-3 bg-card/40 hover:bg-card/60 border border-card/30 hover:border-primary/30 rounded-xl px-4 py-3 transition-all"
-                    >
-                      <span
-                        className={`w-2 h-2 rounded-full shrink-0 ${getNextCertDotClass(next.level)}`}
-                      />
-                      <div className="min-w-0">
-                        <div className="text-xs font-mono text-foreground/50">{next.code}</div>
-                        <div className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors line-clamp-1">
-                          {next.title.replace(/Microsoft\s+/i, '')}
-                        </div>
-                      </div>
-                      <span
-                        className="material-symbols-outlined text-[16px] text-foreground/40 group-hover:text-primary transition-colors ml-auto shrink-0"
-                        aria-hidden="true"
-                      >
-                        arrow_forward
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-              </section>
+              <DetailSection
+                icon="trending_up"
+                iconColor={TONE.accentText}
+                title="What to Study Next"
+              >
+                <NextCertLinks
+                  certs={nextCerts}
+                  tone={TONE}
+                  hrefFor={(next) => getProviderPath('azure', `education/${next.slug}`)}
+                  dotClassFor={(next) => getNextCertDotClass(next.level)}
+                  stripTitle={/Microsoft\s+/i}
+                />
+              </DetailSection>
             )}
           </div>
 
           {/* Sidebar */}
           <aside className="space-y-6 h-fit sticky top-28">
             {/* CTA */}
-            <div className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6 space-y-3">
-              <a
-                href={cert.learnUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-start px-4 gap-2 w-full h-11 bg-primary hover:bg-blue-800 text-primary-foreground font-bold rounded-lg transition-colors"
-              >
-                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                  open_in_new
-                </span>
-                View on Microsoft Learn
-              </a>
-              {cert.studyGuideUrl && (
-                <a
-                  href={cert.studyGuideUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-start px-4 gap-2 w-full h-11 bg-card/50 hover:bg-card/70 text-foreground font-semibold rounded-lg transition-colors text-sm"
-                >
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                    description
-                  </span>
-                  Official Study Guide
-                </a>
-              )}
-              {cert.practiceUrl && (
-                <a
-                  href={cert.practiceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-start px-4 gap-2 w-full h-11 bg-card/50 hover:bg-card/70 text-foreground font-semibold rounded-lg transition-colors text-sm"
-                >
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                    quiz
-                  </span>
-                  Free Practice Assessment
-                </a>
-              )}
-            </div>
+            <CertSidebarLinks cert={cert} tone={TONE} labels={SIDEBAR_LABELS} />
 
             {/* Prerequisites */}
-            <div className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6">
-              <h3 className="text-base font-bold text-slate-950 dark:text-white mb-3 flex items-center gap-2">
-                <span
-                  className="text-primary material-symbols-outlined text-[18px]"
-                  aria-hidden="true"
-                >
-                  info
-                </span>
-                Prerequisites
-              </h3>
-              <p className="text-sm text-foreground">{cert.prerequisites}</p>
-            </div>
+            <PrerequisitesCard text={cert.prerequisites} iconColor={TONE.accentText} />
 
             {/* Quick Stats */}
             <div className="bg-card/40 backdrop-blur-md border border-card/50 rounded-2xl p-6 space-y-4">
               <h3 className="text-base font-bold text-slate-950 dark:text-white">Quick Stats</h3>
               <div className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-foreground/60">Exam Code</span>
-                  <span className="font-mono font-bold text-primary">{cert.code}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-foreground/60">Level</span>
-                  <span
-                    className={`px-2 py-0.5 border text-[10px] font-bold rounded ${meta.badge}`}
-                  >
-                    {cert.level}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-foreground/60">Study Hours</span>
-                  <span className="font-bold text-slate-950 dark:text-white">{cert.hours}h</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-foreground/60">Prep Time</span>
-                  <span className="font-bold text-slate-950 dark:text-white">{cert.prepTime}</span>
-                </div>
+                <StatRow label="Exam Code" valueClass="font-mono font-bold text-primary">
+                  {cert.code}
+                </StatRow>
+                <StatRow
+                  label="Level"
+                  valueClass={`px-2 py-0.5 border text-[10px] font-bold rounded ${meta.badge}`}
+                >
+                  {cert.level}
+                </StatRow>
+                <StatRow label="Study Hours">{cert.hours}h</StatRow>
+                <StatRow label="Prep Time">{cert.prepTime}</StatRow>
                 {cert.successRate && (
-                  <div className="flex justify-between">
-                    <span className="text-foreground/60">Avg. Pass Rate</span>
-                    <span className="font-bold text-cyan-400">{cert.successRate}</span>
-                  </div>
+                  <StatRow label="Avg. Pass Rate" valueClass="font-bold text-cyan-400">
+                    {cert.successRate}
+                  </StatRow>
                 )}
-                <div className="flex justify-between">
-                  <span className="text-foreground/60">MS Learn Modules</span>
-                  <span className="font-bold text-slate-950 dark:text-white">
-                    {cert.modules?.length ?? 0}
-                  </span>
-                </div>
+                <StatRow label="MS Learn Modules">{cert.modules?.length ?? 0}</StatRow>
                 <div className="flex justify-between">
                   <span className="text-foreground/60">Catalogue checked</span>
                   <time dateTime={DATA_AS_OF} className="font-bold text-slate-950 dark:text-white">
@@ -669,15 +533,11 @@ export default function CertDetailPage() {
               </div>
             </div>
 
-            <Link
+            <BackLink
               to={routes.education('azure')}
-              className="flex items-center gap-2 text-sm text-foreground/60 hover:text-primary transition-colors"
-            >
-              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                arrow_back
-              </span>
-              Back to Azure Education
-            </Link>
+              hoverText={TONE.hoverText}
+              label="Back to Azure Education"
+            />
           </aside>
         </div>
       </main>
