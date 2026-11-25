@@ -107,7 +107,7 @@ documents. Each request is tried twice before it counts as failed.
    [HashiCorp's status page](https://status.hashicorp.com/) and wait.
 3. If the address answers in the browser but not in the run, the registry may
    have changed the shape of its answer. The reading is in
-   [`frontend/scripts/cloud-module-pins.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/scripts/cloud-module-pins.mjs),
+   [`frontend/scripts/cloud-module-pins.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/scripts/cloud-module-pins.mjs) and [`cloud-module-pins-versions.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/frontend/scripts/cloud-module-pins-versions.mjs),
    tested by `check-cloud-module-pins.test.js` beside it.
 
 ## The warnings

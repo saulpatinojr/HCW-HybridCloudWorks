@@ -47,6 +47,7 @@ on:
       - 'frontend/src/lib/landingZone/hcl/registryModule.js'
       - 'frontend/scripts/check-cloud-module-pins.mjs'
       - 'frontend/scripts/cloud-module-pins.mjs'
+      - 'frontend/scripts/cloud-module-pins-versions.mjs'
       - '.github/workflows/check-cloud-module-pins.yml'
 
 # No workflow-level permissions: each job declares its own.
