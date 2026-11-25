@@ -7,7 +7,7 @@
  * provider, read on AWS_VERIFIED_ON from its versions.tf and those of the
  * submodules it calls
  * (https://raw.githubusercontent.com/terraform-aws-modules/terraform-aws-<name>/v<version>/versions.tf).
- * moduleVersions.test.js fails when AWS_PROVIDER_PIN or the shared Terraform
+ * cloudModuleVersions.test.js fails when AWS_PROVIDER_PIN or the shared Terraform
  * rule falls outside one of them.
  *
  * Why network-firewall is on 1.0.2 and not 2.x (#1862). The old pin, 1.1.0,
@@ -27,13 +27,13 @@ export const AWS_MODULES = Object.freeze({
     'terraform-aws-modules/vpc/aws',
     '5.19.0',
     'Standard VPC with private subnets, route tables, and NAT gateways.',
-    { terraform: '>= 1.0', providers: { aws: '>= 5.79' } }
+    { terraform: '>= 1.0', readAt: '5.19.0', providers: { aws: '>= 5.79' } }
   ),
   transitGateway: registryModule(
     'terraform-aws-modules/transit-gateway/aws',
     '2.13.0',
     'Central Transit Gateway (TGW) with route domains and RAM resource shares.',
-    { terraform: '>= 0.13.1', providers: { aws: '>= 4.4' } }
+    { terraform: '>= 0.13.1', readAt: '2.13.0', providers: { aws: '>= 4.4' } }
   ),
   networkFirewall: registryModule(
     'terraform-aws-modules/network-firewall/aws',
@@ -41,7 +41,7 @@ export const AWS_MODULES = Object.freeze({
     'Stateful AWS Network Firewall and rule groups inside Inspection VPC.',
     // The root module declares no provider; its firewall and policy
     // submodules each ask for aws >= 5.2.
-    { terraform: '>= 1.0', providers: { aws: '>= 5.2' } }
+    { terraform: '>= 1.0', readAt: '1.0.2', providers: { aws: '>= 5.2' } }
   ),
 });
 

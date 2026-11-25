@@ -29,62 +29,95 @@
  * infra-lab/) run on HCP Terraform and carry their own reasons beside their
  * lines; version-floors.test.mjs covers them.
  */
-import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from "vitest";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { TERRAFORM_REQUIRED_VERSION } from '../frontend/src/lib/landingZone/terraformVersion.js';
-import { terraformConstraintAdmits } from './lib/version-math.mjs';
+import { TERRAFORM_REQUIRED_VERSION } from "../frontend/src/lib/landingZone/terraformVersion.js";
+import { terraformConstraintAdmits } from "./lib/version-math.mjs";
 
-const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /** The main.tf of every folder directly under `dir`, so a new root is checked too. */
 function roots(dir) {
   const base = path.join(repo, dir);
   return readdirSync(base, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(base, entry.name, 'main.tf'))
+    .map((entry) => path.join(base, entry.name, "main.tf"))
     .filter((file) => existsSync(file))
-    .map((file) => [path.relative(repo, file).replace(/\\/g, '/'), readFileSync(file, 'utf8')]);
+    .map((file) => [
+      path.relative(repo, file).replace(/\\/g, "/"),
+      readFileSync(file, "utf8"),
+    ]);
 }
 
-const SMOKE = roots('lab-image/smoke');
-const TEMPLATES = roots('lab-host/coder/templates');
+const SMOKE = roots("lab-image/smoke");
+const TEMPLATES = roots("lab-host/coder/templates");
 
-describe('the lab’s Terraform roots (#1864)', () => {
-  it('finds both smoke roots and all three Coder templates', () => {
+describe("the lab’s Terraform roots (#1864)", () => {
+  it("finds both smoke roots and all three Coder templates", () => {
     expect(SMOKE.map(([file]) => file)).toEqual(
       expect.arrayContaining([
-        'lab-image/smoke/providers-only/main.tf',
-        'lab-image/smoke/terraform-validate-payload/main.tf',
-      ])
+        "lab-image/smoke/providers-only/main.tf",
+        "lab-image/smoke/terraform-validate-payload/main.tf",
+      ]),
     );
     expect(TEMPLATES.length).toBeGreaterThanOrEqual(3);
   });
 
-  it.each([...SMOKE, ...TEMPLATES])('%s states the packs’ rule', (_file, text) => {
-    expect(text.match(/^\s*required_version\s*=\s*"[^"]*"/gm)?.map((line) => line.trim())).toEqual([
-      `required_version = "${TERRAFORM_REQUIRED_VERSION}"`,
-    ]);
+  it.each([...SMOKE, ...TEMPLATES])(
+    "%s states the packs’ rule",
+    (_file, text) => {
+      expect(
+        text
+          .match(/^\s*required_version\s*=\s*"[^"]*"/gm)
+          ?.map((line) => line.trim()),
+      ).toEqual([`required_version = "${TERRAFORM_REQUIRED_VERSION}"`]);
+    },
+  );
+
+  it.each([...SMOKE, ...TEMPLATES])(
+    "%s says where the rule comes from",
+    (_file, text) => {
+      expect(text).toContain(
+        "frontend/src/lib/landingZone/terraformVersion.js",
+      );
+    },
+  );
+
+  it.each(TEMPLATES)(
+    "%s says Coder runs it with its own Terraform",
+    (_file, text) => {
+      expect(text).toMatch(
+        /Coder runs this with the Terraform built into its own image/,
+      );
+    },
+  );
+
+  // 1.17.2 was read from Coder v2.39.4's own source on 2026-11-25. Coder is
+  // pinned in group_vars, so a Coder upgrade fails here until someone reads
+  // the new release's Terraform and updates both lines.
+  it("admits the Terraform the pinned Coder brings (1.17.2 in v2.39.4)", () => {
+    const vars = readFileSync(
+      path.join(repo, "lab-host", "ansible", "group_vars", "all.yml"),
+      "utf8",
+    );
+    expect(/^coder_image_tag:\s*(\S+)\s*$/m.exec(vars)?.[1]).toBe("v2.39.4");
+    expect(
+      terraformConstraintAdmits(TERRAFORM_REQUIRED_VERSION, "1.17.2"),
+    ).toBe(true);
   });
 
-  it.each([...SMOKE, ...TEMPLATES])('%s says where the rule comes from', (_file, text) => {
-    expect(text).toContain('frontend/src/lib/landingZone/terraformVersion.js');
-  });
-
-  it.each(TEMPLATES)('%s says Coder runs it with its own Terraform', (_file, text) => {
-    expect(text).toMatch(/Coder runs this with the Terraform built into its own image/);
-  });
-
-  it('admits the Terraform the pinned Coder brings (1.17.2, read 2026-11-25)', () => {
-    expect(terraformConstraintAdmits(TERRAFORM_REQUIRED_VERSION, '1.17.2')).toBe(true);
-  });
-
-  it('admits the lab image’s Terraform', () => {
-    const env = readFileSync(path.join(repo, 'lab-image', 'versions.env'), 'utf8');
+  it("admits the lab image’s Terraform", () => {
+    const env = readFileSync(
+      path.join(repo, "lab-image", "versions.env"),
+      "utf8",
+    );
     const version = /^TERRAFORM_VERSION=(\S+)$/m.exec(env)?.[1];
     expect(version).toBeTruthy();
-    expect(terraformConstraintAdmits(TERRAFORM_REQUIRED_VERSION, version)).toBe(true);
+    expect(terraformConstraintAdmits(TERRAFORM_REQUIRED_VERSION, version)).toBe(
+      true,
+    );
   });
 });

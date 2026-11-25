@@ -7,7 +7,7 @@
  * read on GCP_VERIFIED_ON from its versions.tf and those of the submodules it
  * calls, keeping the tightest bound for each provider
  * (https://raw.githubusercontent.com/terraform-google-modules/terraform-google-<name>/v<version>/versions.tf).
- * moduleVersions.test.js fails when GCP_PROVIDER_PIN or the shared Terraform
+ * cloudModuleVersions.test.js fails when GCP_PROVIDER_PIN or the shared Terraform
  * rule falls outside one of them, and when two modules ask for provider
  * ranges that do not meet.
  *
@@ -26,7 +26,9 @@
  * simple_bucket calls the kms module at `~> 2.0`, which asks for google
  * `< 6`. 7.0.0 is the first release whose kms call (`~> 3.0`, google
  * `>= 5.31, < 7`) accepts google 6; its other breaking change renames a
- * lifecycle field this pack does not set. A module's `requires` includes
+ * lifecycle field this pack does not set. 8.x and 9.x would fit too; 7.0.0
+ * is the smallest step that ends the clash, and a later bump is a choice
+ * of its own (11.x and later need google >= 6.9). A module's `requires` includes
  * what the registry modules it calls ask for, because Terraform checks them
  * all together.
  */
@@ -42,6 +44,7 @@ export const GCP_MODULES = Object.freeze({
     // google-beta's floor comes from the vpc submodule, not the root.
     {
       terraform: '>= 1.3',
+      readAt: '10.0.0',
       providers: { google: '>= 4.64, < 7', 'google-beta': '>= 6.13, < 7' },
     }
   ),
@@ -49,14 +52,14 @@ export const GCP_MODULES = Object.freeze({
     'terraform-google-modules/log-export/google',
     '10.0.0',
     'Organization-level aggregated log sink and central Cloud Storage bucket.',
-    { terraform: '>= 1.3', providers: { google: '>= 5.27, < 7' } }
+    { terraform: '>= 1.3', readAt: '10.0.0', providers: { google: '>= 5.27, < 7' } }
   ),
   cloudStorage: registryModule(
     'terraform-google-modules/cloud-storage/google//modules/simple_bucket',
     '7.0.0',
     'The Cloud Storage bucket the organization log sink writes to.',
     // Its own floor is google >= 5.43; the kms 3.x module it calls stops at < 7.
-    { terraform: '>= 0.13', providers: { google: '>= 5.43, < 7' } }
+    { terraform: '>= 0.13', readAt: '7.0.0', providers: { google: '>= 5.43, < 7' } }
   ),
   projectFactory: registryModule(
     'terraform-google-modules/project-factory/google',
@@ -66,6 +69,7 @@ export const GCP_MODULES = Object.freeze({
     // submodule the root does not call.
     {
       terraform: '>= 0.13',
+      readAt: '17.1.0',
       providers: {
         google: '>= 5.41, < 7',
         'google-beta': '>= 5.41, < 7',

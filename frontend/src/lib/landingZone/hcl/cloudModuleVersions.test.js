@@ -121,13 +121,20 @@ describe.each(rows)('$cloud module $module.source $module.version', ({ module, p
     expect(contains(constraintRange(wanted), constraintRange(pin))).toBe(true);
   });
 
-  it('accepts a Terraform inside the shared rule', () => {
+  // Every Terraform the packs' rule admits must satisfy the module, not just
+  // some of them: a module asking for >= 1.14 would let a user on 1.12 pass
+  // the pack's own check and then fail at `terraform init`.
+  it('accepts every Terraform the shared rule admits', () => {
     expect(
-      overlaps(
+      contains(
         constraintRange(module.requires.terraform),
         constraintRange(TERRAFORM_REQUIRED_VERSION)
       )
     ).toBe(true);
+  });
+
+  it('had its requirements read at the pinned version', () => {
+    expect(module.requires.readAt).toBe(module.version);
   });
 });
 
