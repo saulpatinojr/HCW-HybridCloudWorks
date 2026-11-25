@@ -106,6 +106,74 @@ async function agentMayRead(store, user, page) {
 }
 
 /**
+ * The Pages whose references this caller may not see: none for a person,
+ * and for Koda every Page whose switch is off on its key (review of #1890).
+ * A reference carries a record's name, so it is shown only to a caller that
+ * could read that Page anyway. Read once per request.
+ *
+ * @returns {Promise<string[]>} nav ids
+ */
+export async function hiddenOriginPages(store, user) {
+  if (user?.agent !== AGENT_ID) return [];
+  const record = await store.readDoc(
+    "admin_config",
+    KEY_RECORD_ID,
+    ADMIN_CONFIG_PARTITION,
+  );
+  const on = enabledCapabilities(record || {});
+  return ORIGIN_PAGE_IDS.filter(
+    (id) => !on.includes(ORIGIN_PAGES[id].agentSection),
+  );
+}
+
+/**
+ * `value` with every `originRef` that names a hidden Page removed, however
+ * deep it sits (a list, a snapshot, one draft). The same value when nothing
+ * is hidden. Plain JSON data only, as every answer here is.
+ */
+export function withoutHiddenOrigins(value, hidden) {
+  if (!hidden.length || value === null || typeof value !== "object")
+    return value;
+  if (Array.isArray(value))
+    return value.map((entry) => withoutHiddenOrigins(entry, hidden));
+  const out = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "originRef" && hidden.includes(entry?.page)) continue;
+    out[key] = withoutHiddenOrigins(entry, hidden);
+  }
+  return out;
+}
+
+/**
+ * A route answer (`{ status, headers, body }` with a JSON body) with the
+ * caller's hidden references removed. Any other answer is returned as it is.
+ */
+export async function answerWithoutHiddenOrigins(store, user, response) {
+  const hidden = await hiddenOriginPages(store, user);
+  if (!hidden.length || typeof response?.body !== "string") return response;
+  let body;
+  try {
+    body = JSON.parse(response.body);
+  } catch {
+    return response;
+  }
+  return {
+    ...response,
+    body: JSON.stringify(withoutHiddenOrigins(body, hidden)),
+  };
+}
+
+/**
+ * Whether this caller may filter a list by a Page: false for Koda when that
+ * Page's switch is off, so the filter cannot be used to find which pieces a
+ * hidden Page sent.
+ */
+export async function mayFilterByOrigin(store, user, originPage) {
+  if (!originPage) return true;
+  return !(await hiddenOriginPages(store, user)).includes(originPage);
+}
+
+/**
  * A request's `originRef`, checked against the record it names. Returns the
  * value to store (`{ page, id, part, label }`), or null when the request
  * names none. Throws OriginRefError when the record is missing, deleted or

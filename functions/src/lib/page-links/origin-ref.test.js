@@ -14,6 +14,10 @@ import {
   originRefOf,
   parseOriginRef,
   resolveOriginRef,
+  hiddenOriginPages,
+  withoutHiddenOrigins,
+  answerWithoutHiddenOrigins,
+  mayFilterByOrigin,
 } from "./origin-ref.js";
 import { FORBIDDEN_CONTENT_UPDATE_KEYS } from "../cms/content-update-validation.js";
 import { DEFAULT_IDEA_ORIGINS } from "../cms/taxonomy.js";
@@ -229,5 +233,80 @@ describe("originFilterClause", () => {
 describe("after the create", () => {
   it("no update can rewrite where a piece came from", () => {
     expect(FORBIDDEN_CONTENT_UPDATE_KEYS.has("originRef")).toBe(true);
+  });
+});
+
+describe("what Koda sees (review of #1890)", () => {
+  const KODA = { oid: "agent:koda", agent: "koda" };
+  const storeWithKey = (spotlight) => ({
+    readDoc: vi.fn(async () => ({
+      id: "agent_content_key:koda",
+      capabilities: { "admin.spotlight": spotlight },
+    })),
+  });
+  const REF = {
+    page: "ambassador",
+    id: "program-gk",
+    part: null,
+    label: "GitKraken Ambassador",
+  };
+
+  it("hides a Page whose switch is off from Koda, and nothing from a person", async () => {
+    expect(await hiddenOriginPages(storeWithKey(false), KODA)).toEqual([
+      "ambassador",
+    ]);
+    expect(await hiddenOriginPages(storeWithKey(true), KODA)).toEqual([]);
+    const store = storeWithKey(false);
+    expect(await hiddenOriginPages(store, { oid: "u1" })).toEqual([]);
+    expect(store.readDoc).not.toHaveBeenCalled();
+  });
+
+  it("removes a hidden reference however deep it sits, and keeps everything else", () => {
+    const value = {
+      items: [
+        { id: "c1", originRef: REF, title: "T" },
+        { id: "c2", title: "U" },
+      ],
+      draft: { id: "d1", originRef: REF },
+    };
+    expect(withoutHiddenOrigins(value, ["ambassador"])).toEqual({
+      items: [
+        { id: "c1", title: "T" },
+        { id: "c2", title: "U" },
+      ],
+      draft: { id: "d1" },
+    });
+    expect(withoutHiddenOrigins(value, [])).toBe(value);
+  });
+
+  it("rewrites a route answer for Koda, and leaves a person's untouched", async () => {
+    const response = {
+      status: 200,
+      headers: {},
+      body: JSON.stringify({ item: { id: "c1", originRef: REF } }),
+    };
+    const hidden = await answerWithoutHiddenOrigins(
+      storeWithKey(false),
+      KODA,
+      response,
+    );
+    expect(JSON.parse(hidden.body)).toEqual({ item: { id: "c1" } });
+    expect(
+      await answerWithoutHiddenOrigins(
+        storeWithKey(false),
+        { oid: "u1" },
+        response,
+      ),
+    ).toBe(response);
+  });
+
+  it("refuses Koda a filter by a hidden Page", async () => {
+    expect(
+      await mayFilterByOrigin(storeWithKey(false), KODA, "ambassador"),
+    ).toBe(false);
+    expect(
+      await mayFilterByOrigin(storeWithKey(true), KODA, "ambassador"),
+    ).toBe(true);
+    expect(await mayFilterByOrigin(storeWithKey(false), KODA, "")).toBe(true);
   });
 });

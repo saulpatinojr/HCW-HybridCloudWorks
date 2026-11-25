@@ -17,8 +17,12 @@
  */
 import { getJSON, postJSON } from '@/lib/api';
 
-/** How many pieces a Page lists for one record (the list route allows up to 500). */
-export const MAX_PIECES = 100;
+/**
+ * How many pieces a Page lists for one record: the list route's own ceiling
+ * (cms-content.js LIST_MAX_LIMIT), so nothing the route would return is left
+ * out (review of #1890). A record with more is told so (PipelinePieces).
+ */
+export const MAX_PIECES = 500;
 
 /** The Drafts page with one draft open. */
 export const draftPath = (id) => `/admin/drafts?draft=${encodeURIComponent(id)}`;

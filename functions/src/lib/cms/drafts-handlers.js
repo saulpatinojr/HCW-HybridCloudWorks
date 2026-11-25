@@ -71,6 +71,7 @@ import {
 } from "./taxonomy-fields.js";
 import {
   OriginRefForbiddenError,
+  answerWithoutHiddenOrigins,
   defaultIdeaOriginFor,
   resolveOriginRef,
 } from "../page-links/origin-ref.js";
@@ -425,7 +426,10 @@ const route = (deps, what, work) => async (request, context) => {
   const auth = await deps.guard.requireRole(request, "editor");
   if (auth.error) return auth.error;
   try {
-    return await work(deps, { request, context, user: auth.user });
+    const response = await work(deps, { request, context, user: auth.user });
+    // Koda never sees where a draft came from for a Page its key may not
+    // read (page-links/origin-ref.js, review of #1890).
+    return await answerWithoutHiddenOrigins(deps.store, auth.user, response);
   } catch (error) {
     return answerFor(error, context, what);
   }

@@ -10,6 +10,7 @@ import { Loader2, Undo2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import OriginChip from '@/components/admin/shared/OriginChip';
 import TaxonomyChips from '@/components/admin/shared/TaxonomyChips';
 import { ORIGIN_LABELS, STAGE_LABELS, reviewPath } from './draftForm';
 
@@ -58,8 +59,12 @@ function DraftRow({ draft, selected, busy, onSelect, onBackToDrafts }) {
           {ORIGIN_LABELS[draft.origin] || 'Written here'}
           {draft.updatedAt ? ` · ${formatUpdated(draft.updatedAt)}` : ''}
         </span>
-        <TaxonomyChips item={draft} sourceAsLink={false} className="mt-1" />
+        <TaxonomyChips item={draft} showSource={false} className="mt-1" />
       </button>
+      {/* Outside the row's button, so the chip is a real link back to the
+          Page that sent the draft (a link inside a button is not valid HTML;
+          review of #1890). */}
+      <OriginChip originRef={draft.originRef} className="mt-1" />
       {draft.stage === 'in_review' && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {draft.actions?.backToDrafts && (

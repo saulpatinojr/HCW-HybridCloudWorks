@@ -478,3 +478,29 @@ describe("cms content list originRef filter (#1886)", () => {
     expect(store.queryDocs).not.toHaveBeenCalled();
   });
 });
+
+describe("cms content list for Koda with its Spotlight switch off (review of #1890)", () => {
+  const kodaGuard = {
+    requireRole: vi.fn(async () => ({ user: { oid: "agent:koda", agent: "koda" }, role: "editor", error: null })),
+  };
+  const ref = { page: "ambassador", id: "program-gk", part: null, label: "GitKraken Ambassador" };
+  const keyOff = async () => ({ id: "agent_content_key:koda", capabilities: { "admin.spotlight": false } });
+
+  it("lists the content without where it came from", async () => {
+    const store = makeStore({
+      queryDocs: vi.fn(async () => [{ id: "c1", Title: "T", originRef: ref }]),
+      readDoc: vi.fn(keyOff),
+    });
+    const h = createCmsContentHandlers({ guard: kodaGuard, store });
+    const res = await h.list(makeRequest(), context);
+    expect(JSON.parse(res.body).items).toEqual([{ id: "c1", Title: "T" }]);
+  });
+
+  it("refuses a list filtered by that Page, before any query", async () => {
+    const store = makeStore({ readDoc: vi.fn(keyOff) });
+    const h = createCmsContentHandlers({ guard: kodaGuard, store });
+    const res = await h.list(makeRequest({ query: { originPage: "ambassador" } }), context);
+    expect(res.status).toBe(403);
+    expect(store.queryDocs).not.toHaveBeenCalled();
+  });
+});

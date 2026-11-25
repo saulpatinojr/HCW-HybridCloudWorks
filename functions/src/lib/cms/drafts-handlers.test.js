@@ -1264,6 +1264,14 @@ describe("POST cms/drafts with an originRef (#1886)", () => {
     requirements: [{ id: "quarterly-content", label: "Two pieces a quarter" }],
   });
   const REF = { page: "ambassador", id: PROGRAM.id, part: "quarterly-content" };
+  const DRAFT_FROM_PROGRAM = Object.freeze({
+    id: "draft-from-program",
+    Title: "Reading a commit graph",
+    contentStatus: DRAFTS_STAGE_STATUS,
+    draftOrigin: "drafts",
+    Live: false,
+    originRef: { ...REF, label: "GitKraken Ambassador" },
+  });
 
   it("stores the checked reference and the Page's idea origin, and returns both", async () => {
     const { handlers, store } = setup({ seed: [PROGRAM] });
@@ -1335,6 +1343,15 @@ describe("POST cms/drafts with an originRef (#1886)", () => {
       );
       expect(res.status).toBe(201);
       expect(res.body.draft.originRef.label).toBe("GitKraken Ambassador");
+    });
+
+    it("does not show Koda where a draft came from while the switch is off", async () => {
+      const tagged = { ...DRAFT_FROM_PROGRAM };
+      const { handlers } = setup({ seed: [tagged, keyRecord(false)], guard: kodaGuard() });
+      const list = parse(await handlers.list(request(), context));
+      expect(list.body.drafts[0]).not.toHaveProperty("originRef");
+      const one = parse(await handlers.get(request({ id: tagged.id }), context));
+      expect(one.body.draft).not.toHaveProperty("originRef");
     });
 
     it("asks nothing of a draft that names no Page", async () => {

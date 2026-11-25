@@ -31,7 +31,11 @@ import {
   derivedOriginSources,
 } from "./cms/taxonomy-fields.js";
 import { errorFacts } from './http/error-response.js';
-import { originFilterClause } from './page-links/origin-ref.js';
+import {
+  answerWithoutHiddenOrigins,
+  mayFilterByOrigin,
+  originFilterClause,
+} from './page-links/origin-ref.js';
 
 /**
  * Ported verbatim from Site-Main cms-functions.js:2211
@@ -330,12 +334,15 @@ export function buildListQuery(query) {
  * is logged under `name` and answered as `failure` — never error.message,
  * which is raw Cosmos text on these paths and can carry query structure.
  */
-function guarded(guard, { name, failure }, fn) {
+function guarded(guard, { name, failure }, fn, store = null) {
   return async (request, context) => {
     const auth = await guard.requireRole(request, "editor");
     if (auth.error) return auth.error;
     try {
-      return await fn(request, context);
+      const response = await fn(request, context, auth);
+      // Koda never sees where a piece came from for a Page its key may not
+      // read (page-links/origin-ref.js, review of #1890).
+      return store ? await answerWithoutHiddenOrigins(store, auth.user, response) : response;
     } catch (error) {
       context.error(`${name} failed:`, errorFacts(error));
       return json(500, { error: failure });
@@ -362,6 +369,7 @@ export function createCmsContentHandlers({
   store,
   onContentDeleted = null,
 }) {
+  const guardedHere = (options, fn) => guarded(guard, options, fn, store);
   return {
     /**
      * GET /api/cms/content — source: listContentItems.
@@ -373,12 +381,17 @@ export function createCmsContentHandlers({
      * summary substring, case-insensitively, LIST_SEARCH_MIN_CHARS to
      * LIST_SEARCH_MAX_CHARS long.
      */
-    list: guarded(
-      guard,
+    list: guardedHere(
       { name: "listContentItems", failure: "Failed to list content items" },
-      async (request) => {
+      async (request, context, auth) => {
         const built = buildListQuery(request.query);
         if (built.error) return json(400, { error: built.error });
+        // Filtering by a Page Koda may not read would tell it which pieces
+        // that Page sent, so the filter is refused rather than emptied.
+        const originPage = queryText(request.query, "originPage");
+        if (!(await mayFilterByOrigin(store, auth.user, originPage))) {
+          return json(403, { error: "This key may not list by that Page." });
+        }
         const items = await store.queryDocs(
           "content",
           built.query,
@@ -389,8 +402,7 @@ export function createCmsContentHandlers({
     ),
 
     /** GET|POST /api/cms/content/item — source: getContentItem */
-    get: guarded(
-      guard,
+    get: guardedHere(
       { name: "getContentItem", failure: "Failed to get content item" },
       async (request) => {
         const contentId = await contentIdOf(request);
@@ -408,8 +420,7 @@ export function createCmsContentHandlers({
      * on every save and read by nothing). Editor role: the same role that
      * writes them.
      */
-    listVersions: guarded(
-      guard,
+    listVersions: guardedHere(
       {
         name: "listContentVersions",
         failure: "Failed to list content versions",
@@ -432,8 +443,7 @@ export function createCmsContentHandlers({
     ),
 
     /** GET /api/cms/content/{id}/versions/{versionId} — one version, body included. */
-    getVersion: guarded(
-      guard,
+    getVersion: guardedHere(
       { name: "getContentVersion", failure: "Failed to read content version" },
       async (request) => {
         const contentId = request.params?.id;
@@ -458,8 +468,7 @@ export function createCmsContentHandlers({
     // a validation-free write path must not coexist with the real one.
 
     /** DELETE /api/cms/content/{id} — blob cleanup still pending, as before. */
-    remove: guarded(
-      guard,
+    remove: guardedHere(
       { name: "cmsDeleteContent", failure: "Failed to delete content" },
       async (request, context) => {
         const id = request.params.id;

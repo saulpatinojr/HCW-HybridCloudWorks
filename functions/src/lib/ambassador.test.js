@@ -789,6 +789,25 @@ describe('applications', () => {
 });
 
 describe('evidence', () => {
+  it('files only live content, whatever id the request names (review of #1890)', async () => {
+    const store = memStore({
+      content: [
+        { id: 'live', Title: 'Reading a commit graph', Live: true, publishedAt: '2026-11-20T00:00:00.000Z' },
+        { id: 'draft', Title: 'Still a draft', contentStatus: 'drafting', Live: false },
+        { id: 'gone', Title: 'Removed', Live: true, softDeletedAt: '2026-11-21T00:00:00.000Z' },
+      ],
+    });
+    const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
+    const result = parse(
+      await h.importEvidence(
+        makeRequest({ body: { sourceModule: 'content', ids: ['live', 'draft', 'gone'], programIds: [] } }),
+        context
+      )
+    );
+    expect(result.created.map((e) => e.sourceId)).toEqual(['live']);
+    expect(result.missing).toEqual(['draft', 'gone']);
+  });
+
   it('imports from speaking with a snapshot, once per source id, and reports what is missing', async () => {
     const store = memStore({
       speakerevents: [

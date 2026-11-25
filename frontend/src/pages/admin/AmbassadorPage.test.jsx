@@ -444,7 +444,7 @@ describe('Programs: into the Pipeline and back (#1886)', () => {
     const pipeline = await screen.findByTestId('program-pipeline');
     await within(pipeline).findByText('Reading a busy commit graph');
     expect(getJSON).toHaveBeenCalledWith(
-      'cms/content?originPage=ambassador&originId=program-gk&sort=updatedAt&limit=100'
+      'cms/content?originPage=ambassador&originId=program-gk&sort=updatedAt&limit=500'
     );
     expect(within(pipeline).getByText('Merge conflicts, calmly')).toBeInTheDocument();
     // Only the live piece can be filed; the draft is still in the Pipeline.

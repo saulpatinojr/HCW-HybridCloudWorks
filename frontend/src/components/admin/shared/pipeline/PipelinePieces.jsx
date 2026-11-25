@@ -15,7 +15,7 @@ import StatusBadge from '@/components/admin/shared/StatusBadge';
 import useGuardedLoad from '@/components/admin/shared/useGuardedLoad';
 import { contentItemHref } from '@/lib/itemLinks';
 import { contentStatusInfo } from '@/lib/status';
-import { draftPath, loadPiecesFor } from './pipelineHandoff';
+import { MAX_PIECES, draftPath, loadPiecesFor } from './pipelineHandoff';
 
 const NO_PIECES = Object.freeze([]);
 const describeError = (err) => `Could not read the pipeline: ${err?.message || 'unknown error'}`;
@@ -65,26 +65,34 @@ export default function PipelinePieces({
   const shown = pieces.data.filter((piece) => !piece.softDeletedAt);
   if (shown.length === 0) return <p className="text-sm text-muted-foreground">{emptyText}</p>;
   return (
-    <ul className="space-y-2" data-testid="pipeline-pieces">
-      {shown.map((piece) => {
-        return (
-          <li
-            key={piece.id}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-2"
-          >
-            <span className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-2">
-              <Link
-                to={pieceHref(piece)}
-                className="min-w-0 truncate text-sm font-medium underline"
-              >
-                {pieceTitle(piece)}
-              </Link>
-              <StatusBadge size="xs" content={piece} />
-            </span>
-            {renderAction?.(piece)}
-          </li>
-        );
-      })}
-    </ul>
+    <>
+      {pieces.data.length >= MAX_PIECES && (
+        <p className="mb-2 text-xs text-muted-foreground" role="status">
+          Showing the {MAX_PIECES} most recently changed pieces; older ones are on the Pipeline
+          pages.
+        </p>
+      )}
+      <ul className="space-y-2" data-testid="pipeline-pieces">
+        {shown.map((piece) => {
+          return (
+            <li
+              key={piece.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-2"
+            >
+              <span className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-2">
+                <Link
+                  to={pieceHref(piece)}
+                  className="min-w-0 truncate text-sm font-medium underline"
+                >
+                  {pieceTitle(piece)}
+                </Link>
+                <StatusBadge size="xs" content={piece} />
+              </span>
+              {renderAction?.(piece)}
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }

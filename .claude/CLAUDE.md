@@ -470,8 +470,15 @@ stays in code; the owner does not want it editable from the portal.
   target Page would refuse it. Nor does it let Koda see more than its key's
   switches allow: a reference names a record and returns its name, so each
   Page in `ORIGIN_PAGES` names the switch that lets Koda read it
-  (`agentSection`, Spotlight for Ambassador), and Koda's reference is
-  refused while that switch is off.
+  (`agentSection`, Spotlight for Ambassador). While that switch is off,
+  Koda's reference is refused, every answer it reads leaves the reference
+  out (`answerWithoutHiddenOrigins`, applied where the content, Drafts and
+  snapshot routes answer), and a list filtered by that Page is refused. A
+  new route that returns content to Koda goes through the same helper.
+- **An action that files or imports by id checks the id itself.** A list
+  that offers only some records (live content, say) is not a check: the
+  route that acts on an id holds it to the same rule (`accepts` on an
+  Ambassador import reader), because a request can name any id.
 
 **The shared services to plug into, and where each list lives.**
 
