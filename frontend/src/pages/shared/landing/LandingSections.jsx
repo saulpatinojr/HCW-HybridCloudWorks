@@ -8,6 +8,7 @@ import React from 'react';
 import { Link } from 'react-router';
 import { routes } from '@/lib/routeFactory';
 import useAudioEpisodes from '@/hooks/useAudioEpisodes';
+import HeroImageCarousel from '@/components/landing/HeroImageCarousel';
 
 const SKILL_CHIP =
   'text-[10px] bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-1.5 py-0.5 rounded';
@@ -230,6 +231,26 @@ export function QuickLinkGrid({ links }) {
  * ProviderLandingTemplate's `sections` list. Each returns the same object a
  * page would otherwise write out by hand.
  */
+
+/**
+ * The hero of a cloud provider's landing page: "Architecture intelligence
+ * for <name>", a rotating image carousel, and a button to the provider's
+ * designs. `stats` are the figures under the button.
+ */
+export function architectureHero(provider, { eyebrow, name, description, images, alt, stats }) {
+  return {
+    eyebrow,
+    title: (
+      <>
+        Architecture intelligence for <span className="display-accent">{name}</span>
+      </>
+    ),
+    description,
+    media: <HeroImageCarousel images={images} intervalMs={3000} fadeMs={800} alt={alt} />,
+    cta: { label: 'Explore Architectures', to: routes.architectureDesigns(provider) },
+    stats,
+  };
+}
 
 /** "Reference designs": the design cards, all opening the provider's designs page. */
 export function designsSection(provider, title, cards, actionLabel = 'All designs') {

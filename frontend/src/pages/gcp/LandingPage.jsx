@@ -2,12 +2,12 @@ import React from 'react';
 import { routes } from '@/lib/routeFactory';
 import ProviderLandingTemplate from '@/components/shared/ProviderLandingTemplate';
 import {
+  architectureHero,
   certTracksSection,
   designsSection,
   episodesSection,
   frameworksSection,
 } from '@/pages/shared/landing/LandingSections';
-import HeroImageCarousel from '@/components/landing/HeroImageCarousel';
 
 // Generated art (#371): scripts/generate-brand-art.mjs draws this set; replace any
 // file one-for-one to swap in real artwork. scripts/hero-assets-exist.test.js
@@ -86,30 +86,19 @@ export default function GCPLandingPage() {
   return (
     <ProviderLandingTemplate
       provider="gcp"
-      hero={{
+      hero={architectureHero('gcp', {
         eyebrow: 'DATA + AI + PLATFORM',
-        title: (
-          <>
-            Architecture intelligence for <span className="display-accent">Google Cloud</span>
-          </>
-        ),
+        name: 'Google Cloud',
         description:
           "Unlock Google Cloud's data and AI capabilities with production-ready architectures for streaming analytics, enterprise GKE deployments, and machine learning pipelines — from Pub/Sub ingestion to BigQuery warehousing.",
-        media: (
-          <HeroImageCarousel
-            images={GCP_HERO_IMAGES}
-            intervalMs={3000}
-            fadeMs={800}
-            alt="Google Cloud architecture imagery"
-          />
-        ),
-        cta: { label: 'Explore Architectures', to: routes.architectureDesigns('gcp') },
+        images: GCP_HERO_IMAGES,
+        alt: 'Google Cloud architecture imagery',
         stats: [
           { value: '6', label: 'Framework Areas' },
           { value: '2', suffix: '+', label: 'Reference Designs' },
           { value: '3', label: 'Cert Tracks' },
         ],
-      }}
+      })}
       sections={[
         designsSection('gcp', 'Google Cloud Reference Architectures', ARCHITECTURE_CARDS),
         frameworksSection('gcp', FRAMEWORKS),

@@ -1,13 +1,12 @@
 import React from 'react';
-import { routes } from '@/lib/routeFactory';
 import ProviderLandingTemplate from '@/components/shared/ProviderLandingTemplate';
 import {
+  architectureHero,
   certTracksSection,
   designsSection,
   episodesSection,
   frameworksSection,
 } from '@/pages/shared/landing/LandingSections';
-import HeroImageCarousel from '@/components/landing/HeroImageCarousel';
 
 const AWS_HERO_IMAGES = [
   '/images/aws-hero/1.png',
@@ -95,30 +94,19 @@ export default function AWSLandingPage() {
   return (
     <ProviderLandingTemplate
       provider="aws"
-      hero={{
+      hero={architectureHero('aws', {
         eyebrow: 'BUILD. INNOVATE. ELEVATE.',
-        title: (
-          <>
-            Architecture intelligence for <span className="display-accent">AWS</span>
-          </>
-        ),
+        name: 'AWS',
         description:
           'Master AWS with proven patterns for global load balancing, serverless architectures, and event-driven microservices — reference implementations that combine AWS best practices with real-world operational insight.',
-        media: (
-          <HeroImageCarousel
-            images={AWS_HERO_IMAGES}
-            intervalMs={3000}
-            fadeMs={800}
-            alt="AWS cloud architecture imagery"
-          />
-        ),
-        cta: { label: 'Explore Architectures', to: routes.architectureDesigns('aws') },
+        images: AWS_HERO_IMAGES,
+        alt: 'AWS cloud architecture imagery',
         stats: [
           { value: '6', label: 'WAF Pillars' },
           { value: '2', suffix: '+', label: 'Reference Designs' },
           { value: '4', label: 'Cert Tracks' },
         ],
-      }}
+      })}
       sections={[
         designsSection('aws', 'AWS Reference Architectures', ARCHITECTURE_CARDS),
         frameworksSection('aws', FRAMEWORKS),

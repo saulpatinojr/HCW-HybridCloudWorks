@@ -2,12 +2,12 @@ import React from 'react';
 import { routes } from '@/lib/routeFactory';
 import ProviderLandingTemplate from '@/components/shared/ProviderLandingTemplate';
 import {
+  architectureHero,
   certTracksSection,
   designsSection,
   episodesSection,
   frameworksSection,
 } from '@/pages/shared/landing/LandingSections';
-import HeroImageCarousel from '@/components/landing/HeroImageCarousel';
 import { useInterviewList } from '@/pages/azure/InterviewsPage';
 
 const AZURE_HERO_IMAGES = [
@@ -118,30 +118,19 @@ export default function LandingPage() {
   return (
     <ProviderLandingTemplate
       provider="azure"
-      hero={{
+      hero={architectureHero('azure', {
         eyebrow: 'ENTERPRISE CLOUD SOLUTIONS',
-        title: (
-          <>
-            Architecture intelligence for <span className="display-accent">Azure</span>
-          </>
-        ),
+        name: 'Azure',
         description:
           'Deploy enterprise-grade Azure landing zones with Bicep-driven infrastructure as code, hub-spoke networks with ExpressRoute connectivity, private AKS clusters, and battle-tested security patterns.',
-        media: (
-          <HeroImageCarousel
-            images={AZURE_HERO_IMAGES}
-            intervalMs={3000}
-            fadeMs={800}
-            alt="Azure cloud architecture imagery"
-          />
-        ),
-        cta: { label: 'Explore Architectures', to: routes.architectureDesigns('azure') },
+        images: AZURE_HERO_IMAGES,
+        alt: 'Azure cloud architecture imagery',
         stats: [
           { value: '5', label: 'WAF Pillars' },
           { value: '2', suffix: '+', label: 'Reference Designs' },
           { value: '4', label: 'Cert Tracks' },
         ],
-      }}
+      })}
       sections={[
         designsSection('azure', 'Azure Reference Architectures', ARCHITECTURE_CARDS),
         frameworksSection('azure', FRAMEWORKS),
