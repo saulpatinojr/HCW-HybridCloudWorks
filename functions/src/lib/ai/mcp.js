@@ -274,9 +274,9 @@ function matchingSseResponse(data, targetId) {
 }
 
 /**
- * Relay an SSE MCP connection. Firecrawl and Replicate still use the legacy
- * SSE transport in the seeded configuration, while custom servers default to
- * Streamable HTTP.
+ * Relay an SSE MCP connection. Replicate still uses the legacy SSE transport
+ * in the seeded configuration (Firecrawl moved to Streamable HTTP in #1848),
+ * while custom servers default to Streamable HTTP.
  */
 function sseRpc(sseUrl, authHeaders, rpcBody, { fetchImpl, timeoutMs, requireSameOriginEndpoint }) {
   return new Promise(async (resolve, reject) => {

@@ -1528,36 +1528,46 @@ export const SERVICE_DOCS = {
   },
 
   // ── Firecrawl ─────────────────────────────────────────────────────────────
+  // Corrected 2026-11-25 (#1848): the site calls Firecrawl's REST API (plain
+  // web requests) at version 2, with no SDK (a vendor's code library), and
+  // the account is on a paid plan. No plan name or price is written here;
+  // those are the owner's, on Cost → Services.
   firecrawl: {
     id: 'firecrawl',
     name: 'Firecrawl',
     type: 'mcp_server',
-    tagline: 'Web scraping and content extraction — already powering HCW content discovery.',
+    tagline: 'Reads web pages for the site: it finds new articles on blog listing pages.',
     requirements: [
       {
         label: 'Firecrawl account',
-        detail: 'firecrawl.dev — free tier: 500 credits/month',
+        detail:
+          'firecrawl.dev. The site’s account is on a paid plan; the plan and its price are kept on Admin → Cost → Services.',
         required: true,
       },
-      { label: 'API Key', detail: 'Dashboard → API Keys', required: true },
+      {
+        label: 'API key',
+        detail: 'Made at firecrawl.dev/app/api-keys, pasted on Admin → Integrations → Keys',
+        required: true,
+      },
     ],
     hcwUses: [
       {
-        feature: 'Content Scraping Pipeline',
+        feature: 'Blog listings',
         usage:
-          'Fetches and converts web pages to clean Markdown for ContentForge ingestion using @mendable/firecrawl-js SDK',
-        files: ['functions/index.js (scrape functions)'],
+          'Every six hours, and when intake is run from the Blogs page, each blog listing page is sent to Firecrawl’s scrape API (version 2), which returns the articles on it as structured data. New ones become drafts.',
+        files: ['functions/src/lib/timers/blog-listings.js'],
         status: HCW_STATUS.ACTIVE,
       },
       {
-        feature: 'Scrape Benchmark',
-        usage: 'functions/test-scrape-fallback.js runs batch scraping quality tests',
-        files: ['functions/test-scrape-fallback.js'],
+        feature: 'Connection test',
+        usage:
+          'The Test button on the Firecrawl card and the Health page read the credit balance (version 2 of the API). It reads no page and spends no credit.',
+        files: ['functions/src/lib/integrations/connection-probe.js'],
         status: HCW_STATUS.ACTIVE,
       },
       {
         feature: 'AI Engine MCP',
-        usage: 'Access Firecrawl tools via mcpProxy for Playground-based scraping',
+        usage: 'Firecrawl’s tools, reached through mcpProxy for the Playground',
         files: ['src/pages/admin/AIEnginePage.jsx'],
         status: HCW_STATUS.AVAILABLE,
       },
@@ -1567,38 +1577,32 @@ export const SERVICE_DOCS = {
         title: 'Install & Configure',
         steps: [
           {
-            heading: 'Configure the Azure MCP proxy',
-            body: 'The MCP proxy reads FIRECRAWL_API_KEY from the Azure Function App settings. In production, store it as an App Setting backed by Key Vault; do not put it in functions/.env or source control.',
+            heading: 'Store the API key',
+            body: 'The key lives in Azure Key Vault as FIRECRAWL-API-KEY, and the Function App reads it as the setting FIRECRAWL_API_KEY. Paste a new value on Admin → Integrations → Keys. Never put it in functions/.env, in source control or in a web address.',
             codes: [
               {
                 lang: 'text',
-                label: 'Azure Function App setting',
+                label: 'Azure Function App setting (a Key Vault reference)',
                 content: 'FIRECRAWL_API_KEY=fc-...',
               },
             ],
           },
           {
             heading: 'Enable via MCP (for Playground access)',
-            body: 'To call Firecrawl via the AI Engine MCP Servers tab, ensure the MCP server URL is set and toggle it on.',
+            body: 'On the AI Engine’s MCP Servers tab, switch Firecrawl on and press Sync Tools. The server sends the key as a bearer header (a line of the request), only to Firecrawl’s own addresses.',
             codes: [
               {
                 lang: 'text',
                 label: 'Firecrawl MCP server settings',
                 content:
-                  'Name:    Firecrawl\nURL:     https://mcp.firecrawl.dev/sse\nAuth:    FIRECRAWL_API_KEY (env var, already set)',
+                  'Name:      Firecrawl\nURL:       https://mcp.firecrawl.dev/v2/mcp\nTransport: Streamable HTTP\nAuth:      FIRECRAWL_API_KEY (app setting, sent as a bearer header)',
               },
             ],
           },
           {
             heading: 'If you need a new API key',
-            body: 'Get a key at firecrawl.dev → Dashboard → API Keys. Add it to the Azure Function App settings, preferably as a Key Vault reference.',
-            codes: [
-              {
-                lang: 'text',
-                label: 'Azure Function App setting',
-                content: 'FIRECRAWL_API_KEY=fc-...',
-              },
-            ],
+            body: 'Make a key at firecrawl.dev/app/api-keys, paste it on Admin → Integrations → Keys, press Test on the Firecrawl card, then delete the old key at Firecrawl. Firecrawl’s keys carry no expiry date, so the site reminds you to replace it every 180 days.',
+            codes: [],
           },
         ],
       },
@@ -1607,17 +1611,21 @@ export const SERVICE_DOCS = {
         steps: [
           {
             heading: 'Scrape a single URL',
-            body: 'Returns clean Markdown from any web page, including JavaScript-rendered content.',
+            body: 'Returns clean Markdown from a web page, including pages that build themselves with JavaScript. This is version 2 of the API; version 1 stops answering on 10 December 2026.',
             codes: [
               {
                 lang: 'js',
-                label: 'SDK usage in Azure Functions',
+                label: 'A v2 scrape with fetch, on the server',
                 content:
-                  "const FirecrawlApp = require('@mendable/firecrawl-js').default;\n\n" +
-                  'const app = new FirecrawlApp({ apiKey: process.env.FIRECRAWL_API_KEY });\n' +
-                  "const result = await app.scrapeUrl('https://example.com/article', {\n" +
-                  "  formats: ['markdown'],\n" +
-                  '});\n\nconsole.log(result.markdown);',
+                  "const response = await fetch('https://api.firecrawl.dev/v2/scrape', {\n" +
+                  "  method: 'POST',\n" +
+                  '  headers: {\n' +
+                  '    Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,\n' +
+                  "    'Content-Type': 'application/json',\n" +
+                  '  },\n' +
+                  "  body: JSON.stringify({ url: 'https://example.com/article', formats: ['markdown'] }),\n" +
+                  '});\n' +
+                  'const result = await response.json();\n\nconsole.log(result.data.markdown);',
               },
             ],
           },
@@ -1632,21 +1640,6 @@ export const SERVICE_DOCS = {
               },
             ],
           },
-          {
-            heading: 'Crawl an entire site',
-            body: 'The crawl tool recursively fetches all pages from a domain — useful for auditing competitor sites.',
-            codes: [
-              {
-                lang: 'js',
-                label: 'Crawl a site',
-                content:
-                  "const crawlResult = await app.crawlUrl('https://example.com', {\n" +
-                  '  limit: 50,\n' +
-                  "  scrapeOptions: { formats: ['markdown'] },\n" +
-                  '});',
-              },
-            ],
-          },
         ],
       },
       uninstall: {
@@ -1654,12 +1647,12 @@ export const SERVICE_DOCS = {
         steps: [
           {
             heading: 'Disable the MCP server',
-            body: 'Toggle off in /admin/ai-engine → MCP Servers → Firecrawl. The SDK usage in functions/ is separate and will continue working.',
+            body: 'Toggle off in /admin/ai-engine → MCP Servers → Firecrawl. The blog listings timer calls the API directly, so it keeps working.',
             codes: [],
           },
           {
             heading: 'Remove the API key',
-            body: 'Remove FIRECRAWL_API_KEY from the Azure Function App settings / Key Vault and revoke the key in your Firecrawl dashboard.',
+            body: 'Remove FIRECRAWL_API_KEY from the Azure Function App settings / Key Vault and delete the key in your Firecrawl dashboard. The blog listings timer then skips its runs.',
             codes: [],
           },
         ],
@@ -1669,31 +1662,36 @@ export const SERVICE_DOCS = {
         steps: [
           {
             heading: 'Structured data extraction',
-            body: 'Use the extract mode with a JSON schema to pull structured data from any page — no CSS selectors needed.',
+            body: 'Ask for the json format with a JSON schema to pull structured data from a page, with no CSS selectors. In version 2 the schema goes inside formats, and the answer comes back under data.json. This is how the blog listings are read.',
             codes: [
               {
                 lang: 'js',
-                label: 'LLM-powered extraction',
+                label: 'The request body, and where the answer is',
                 content:
-                  "const result = await app.scrapeUrl('https://example.com/product', {\n" +
-                  "  formats: ['extract'],\n" +
-                  '  extract: {\n' +
-                  '    schema: {\n' +
-                  "      type: 'object',\n" +
-                  '      properties: {\n' +
-                  "        title: { type: 'string' },\n" +
-                  "        price: { type: 'number' },\n" +
-                  "        description: { type: 'string' },\n" +
+                  'const body = {\n' +
+                  "  url: 'https://example.com/product',\n" +
+                  '  formats: [\n' +
+                  '    {\n' +
+                  "      type: 'json',\n" +
+                  '      schema: {\n' +
+                  "        type: 'object',\n" +
+                  '        properties: {\n' +
+                  "          title: { type: 'string' },\n" +
+                  "          price: { type: 'number' },\n" +
+                  "          description: { type: 'string' },\n" +
+                  '        },\n' +
                   '      },\n' +
                   '    },\n' +
-                  '  },\n' +
-                  '});',
+                  '  ],\n' +
+                  '};\n\n' +
+                  '// After the POST to /v2/scrape:\n' +
+                  'const product = result.data.json;',
               },
             ],
           },
           {
             heading: 'Credit usage',
-            body: 'Scraping one URL costs 1 credit. Crawling costs 1 credit per page. The free tier provides 500 credits/month. Monitor usage in the Firecrawl Dashboard.',
+            body: 'Each page read spends one or more credits; structured extraction spends more than plain text. The Test button on the Firecrawl card shows how many credits are left. The plan and its price are kept on Admin → Cost → Services.',
             codes: [],
           },
         ],
@@ -1701,11 +1699,13 @@ export const SERVICE_DOCS = {
     },
     references: [
       { label: 'Firecrawl Documentation', url: 'https://docs.firecrawl.dev' },
-      { label: 'Firecrawl Dashboard', url: 'https://firecrawl.dev' },
+      { label: 'Moving from v1 to v2', url: 'https://docs.firecrawl.dev/migrate-to-v2' },
       {
-        label: 'Firecrawl JS SDK on npm',
-        url: 'https://www.npmjs.com/package/@mendable/firecrawl-js',
+        label: 'Scrape API reference (v2)',
+        url: 'https://docs.firecrawl.dev/api-reference/endpoint/scrape',
       },
+      { label: 'MCP server', url: 'https://docs.firecrawl.dev/mcp-server' },
+      { label: 'Firecrawl API keys', url: 'https://www.firecrawl.dev/app/api-keys' },
     ],
   },
 

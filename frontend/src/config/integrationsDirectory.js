@@ -201,8 +201,9 @@ export const DIRECTORY = Object.freeze([
   {
     id: 'firecrawl',
     category: 'ai',
-    summary: 'Web scraping that returns clean text.',
-    powers: 'Reading a web page well enough to summarise it, and the blog listings.',
+    summary: 'A service that reads a web page and returns what is on it.',
+    powers:
+      'Finding new articles on blog listing pages, and web reading tools for the AI Engine’s assistant.',
     docsUrl: 'https://docs.firecrawl.dev',
   },
   {
