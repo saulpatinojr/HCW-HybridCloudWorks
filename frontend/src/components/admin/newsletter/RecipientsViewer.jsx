@@ -82,6 +82,12 @@ function useRecipients(broadcastId, type, enabled) {
   return { rows, nextAfter, loading, error, loadMore: () => load(nextAfter) };
 }
 
+// The list shows unless there is an error, or the first page is still loading.
+function showsRecipientList(recipients) {
+  const firstLoad = recipients.loading && recipients.rows.length === 0;
+  return !recipients.error && !firstLoad;
+}
+
 export default function RecipientsViewer({ broadcastId }) {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState('opened');
@@ -120,9 +126,7 @@ export default function RecipientsViewer({ broadcastId }) {
               {recipients.error}
             </p>
           )}
-          {!recipients.error && !(recipients.loading && recipients.rows.length === 0) && (
-            <RecipientList rows={recipients.rows} />
-          )}
+          {showsRecipientList(recipients) && <RecipientList rows={recipients.rows} />}
           {recipients.loading && <Loader2 className="h-4 w-4 animate-spin" aria-label="Loading" />}
           {!recipients.loading && recipients.nextAfter && (
             <Button size="sm" variant="outline" onClick={recipients.loadMore}>

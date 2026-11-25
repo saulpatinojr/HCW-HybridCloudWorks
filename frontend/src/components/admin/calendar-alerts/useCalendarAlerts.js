@@ -32,6 +32,51 @@ import {
   updateCalendarAlert,
 } from '@/lib/calendarAlerts';
 
+/** A ref that is true while the component is mounted. */
+function useMountedRef() {
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  return mounted;
+}
+
+/**
+ * Fetch the alerts and hand the answer to `landed` (or the error to
+ * `failed`), unless a newer read has started meanwhile. Resolves to the
+ * answer, or null when it failed or was overtaken.
+ */
+async function readIfNewest(mine, generation, { landed, failed }) {
+  try {
+    const result = await fetchCalendarAlerts();
+    if (mine !== generation.current) return null;
+    landed(result);
+    return result;
+  } catch (caught) {
+    if (mine === generation.current) failed(caught);
+    return null;
+  }
+}
+
+/** Mark an id busy while `work` runs, so its buttons cannot be pressed twice. */
+async function runWhileBusy(id, work, setBusyIds, mounted) {
+  setBusyIds((current) => new Set(current).add(id));
+  try {
+    return await work();
+  } finally {
+    if (mounted.current) {
+      setBusyIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+}
+
 export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged } = {}) {
   const [alerts, setAlerts] = useState([]);
   const [today, setToday] = useState(null);
@@ -39,7 +84,7 @@ export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged 
   const [error, setError] = useState(null);
   const [busyIds, setBusyIds] = useState(() => new Set());
   const generation = useRef(0);
-  const mounted = useRef(true);
+  const mounted = useMountedRef();
   const self = useRef(Symbol('calendar-alerts'));
   const isEnabled = useRef(enabled);
   const loaded = useRef(onLoaded);
@@ -51,31 +96,24 @@ export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged 
     isEnabled.current = enabled;
   });
 
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  const read = useCallback(async (mine) => {
-    try {
-      const result = await fetchCalendarAlerts();
-      if (mine !== generation.current) return null;
-      const sorted = result.alerts.slice().sort(compareAlerts);
-      setAlerts(sorted);
-      setToday(result.today);
-      setError(null);
-      setStatus('ready');
-      loaded.current?.({ alerts: sorted, today: result.today });
-      return result;
-    } catch (caught) {
-      if (mine !== generation.current) return null;
-      setError(caught);
-      setStatus('error');
-      return null;
-    }
-  }, []);
+  const read = useCallback(
+    (mine) =>
+      readIfNewest(mine, generation, {
+        landed: (result) => {
+          const sorted = result.alerts.slice().sort(compareAlerts);
+          setAlerts(sorted);
+          setToday(result.today);
+          setError(null);
+          setStatus('ready');
+          loaded.current?.({ alerts: sorted, today: result.today });
+        },
+        failed: (caught) => {
+          setError(caught);
+          setStatus('error');
+        },
+      }),
+    []
+  );
 
   useEffect(() => {
     if (enabled) read(++generation.current);
@@ -101,28 +139,20 @@ export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged 
   useEffect(
     () =>
       onAlertsChanged((source) => {
-        if (source === self.current || !isEnabled.current || !mounted.current) return;
-        read(++generation.current);
-        changed.current?.();
+        const fromElsewhere = source !== self.current;
+        if (fromElsewhere && isEnabled.current && mounted.current) {
+          read(++generation.current);
+          changed.current?.();
+        }
       }),
-    [read]
+    [mounted, read]
   );
 
   /** Mark an id busy while `work` runs, so its buttons cannot be pressed twice. */
-  const whileBusy = useCallback(async (id, work) => {
-    setBusyIds((current) => new Set(current).add(id));
-    try {
-      return await work();
-    } finally {
-      if (mounted.current) {
-        setBusyIds((current) => {
-          const next = new Set(current);
-          next.delete(id);
-          return next;
-        });
-      }
-    }
-  }, []);
+  const whileBusy = useCallback(
+    (id, work) => runWhileBusy(id, work, setBusyIds, mounted),
+    [mounted]
+  );
 
   const replace = useCallback((saved) => {
     setAlerts((current) =>
@@ -132,29 +162,28 @@ export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged 
     );
   }, []);
 
-  /** Each action resolves to the saved alert, or rejects with the server's sentence. */
-  const update = useCallback(
-    (id, changes) =>
-      whileBusy(id, async () => {
-        const saved = await updateCalendarAlert(id, changes);
-        if (mounted.current) replace(saved);
-        changed.current?.();
-        announceAlertsChanged(self.current);
-        return saved;
-      }),
-    [replace, whileBusy]
-  );
-
-  const create = useCallback(
-    async (fields) => {
-      const saved = await createCalendarAlert(fields);
+  /**
+   * Run a save, hold the alert the server answers, and tell this copy's
+   * owner and the other copies. Resolves to the saved alert.
+   */
+  const saveWith = useCallback(
+    async (work) => {
+      const saved = await work();
       if (mounted.current) replace(saved);
       changed.current?.();
       announceAlertsChanged(self.current);
       return saved;
     },
-    [replace]
+    [mounted, replace]
   );
+
+  /** Each action resolves to the saved alert, or rejects with the server's sentence. */
+  const update = useCallback(
+    (id, changes) => whileBusy(id, () => saveWith(() => updateCalendarAlert(id, changes))),
+    [saveWith, whileBusy]
+  );
+
+  const create = useCallback((fields) => saveWith(() => createCalendarAlert(fields)), [saveWith]);
 
   const remove = useCallback(
     (id) =>
@@ -164,7 +193,7 @@ export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged 
         changed.current?.();
         announceAlertsChanged(self.current);
       }),
-    [whileBusy]
+    [mounted, whileBusy]
   );
 
   return {

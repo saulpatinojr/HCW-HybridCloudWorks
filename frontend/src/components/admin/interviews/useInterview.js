@@ -20,8 +20,15 @@
  * transcript version, so a reload or a slow poll never queues two.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getJSON, postJSON, sendJSON } from '@/lib/api';
+import { postJSON, sendJSON } from '@/lib/api';
 import { isInFlight, nextStep, stageOf } from './interviewModel';
+import {
+  loadInterview,
+  pollAfter,
+  postInterviewStep,
+  publishInterview,
+  stepKey,
+} from './interviewRequests';
 
 /** How often the page reads the interview again while a job works on it. */
 export const POLL_MS = 5000;
@@ -30,16 +37,67 @@ export const POLL_MS = 5000;
  * @param {string} id - the interview's content id
  * @param {{ authReady: boolean, toast: Function, pollMs?: number }} deps
  */
+/** What the page shows from a read: only a read made for the id it is on. */
+function readFor(read, id) {
+  const mine = read.id === id;
+  return {
+    data: mine ? read.data : null,
+    loadError: mine ? read.error : '',
+    loading: !mine || !read.done,
+  };
+}
+
+/** A ref that is true while the component is mounted. */
+function useAliveRef() {
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  return alive;
+}
+
+/**
+ * Start the step `nextStep` names, at most once per stage and transcript
+ * version, and say on the page when it could not start.
+ */
+function startNextStep({ id, doc, started, queueStep, alive, setActionError }) {
+  const step = nextStep(doc);
+  const key = step && stepKey(id, step, stageOf(doc), doc);
+  if (!step || started.current.has(key)) return;
+  started.current.add(key);
+  queueStep(step).then((error) => {
+    if (error && alive.current)
+      setActionError(error.message || `The ${step} step could not start.`);
+  });
+}
+
+/** Run one owner action with the busy flag, the error line and a reload. */
+async function runOwnerAction({ setBusy, setActionError, toast, load, alive }, name, run, success) {
+  setBusy(name);
+  setActionError('');
+  try {
+    const result = await run();
+    if (success) toast?.({ title: success });
+    return result ?? true;
+  } catch (error) {
+    setActionError(error?.message || 'That did not work. Try again.');
+    return false;
+  } finally {
+    await load();
+    if (alive.current) setBusy('');
+  }
+}
+
 export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
   // Each read is stored with the id it was made for, and shown only while the
   // page is on that id: the router reuses this page when only the id
   // changes, and a slow answer for the last interview must not appear, or be
   // acted on, under the next one's address.
   const [read, setRead] = useState({ id: undefined, data: null, error: '', done: false });
-  const mine = read.id === id;
-  const data = mine ? read.data : null;
-  const loadError = mine ? read.error : '';
-  const loading = !mine || !read.done;
+  const { data, loadError, loading } = readFor(read, id);
   const [actionError, setActionError] = useState('');
   const [errorFor, setErrorFor] = useState(id);
   if (errorFor !== id) {
@@ -53,7 +111,7 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
   // read failed (a network blip must not stop the progress view).
   const [reads, setReads] = useState(0);
   const started = useRef(new Set());
-  const alive = useRef(true);
+  const alive = useAliveRef();
 
   // The id the page is on now, for answers that arrive after it moved on.
   const currentId = useRef(id);
@@ -61,38 +119,10 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
     currentId.current = id;
   }, [id]);
 
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  const load = useCallback(async () => {
-    if (!id) {
-      setRead({ id, data: null, error: 'No interview has that address.', done: true });
-      return null;
-    }
-    try {
-      const answer = await getJSON(`cms/interviews/${encodeURIComponent(id)}`);
-      if (!alive.current || currentId.current !== id) return null;
-      setRead({ id, data: answer, error: '', done: true });
-      return answer;
-    } catch (error) {
-      // A failed re-read keeps the document already shown for this id.
-      if (alive.current && currentId.current === id) {
-        setRead((last) => ({
-          id,
-          data: last.id === id ? last.data : null,
-          error: error?.message || 'The interview could not be read.',
-          done: true,
-        }));
-      }
-      return null;
-    } finally {
-      if (alive.current && currentId.current === id) setReads((count) => count + 1);
-    }
-  }, [id]);
+  const load = useCallback(
+    () => loadInterview({ id, alive, currentId, setRead, setReads }),
+    [id, alive]
+  );
 
   useEffect(() => {
     if (!authReady) return;
@@ -107,61 +137,35 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
 
   // Read again every few seconds while a job is working, or while a step the
   // page started has not shown up on the document yet.
-  useEffect(() => {
-    if (!doc || !(isInFlight(doc) || advancing)) return undefined;
-    const timer = setTimeout(load, pollMs);
-    return () => clearTimeout(timer);
-  }, [doc, advancing, reads, load, pollMs]);
+  useEffect(
+    () => pollAfter(Boolean(doc) && (isInFlight(doc) || advancing), load, pollMs),
+    // `reads` schedules the next check after every finished read.
+    [doc, advancing, reads, load, pollMs]
+  );
 
   /** Queue a job; a 409 means one is already running, which is what was wanted. */
   const queueStep = useCallback(
     async (step) => {
       setAdvancing(true);
       try {
-        await postJSON(`cms/interviews/${encodeURIComponent(id)}/${step}`, {});
-        return null;
-      } catch (error) {
-        // Already running is what was wanted; an interview being deleted is not.
-        if (error?.status === 409 && error?.code !== 'INTERVIEW_DELETED') return null;
-        return error instanceof Error ? error : new Error(`The ${step} step could not start.`);
+        return await postInterviewStep(id, step);
       } finally {
         await load();
         if (alive.current) setAdvancing(false);
       }
     },
-    [id, load]
+    [id, load, alive]
   );
 
   useEffect(() => {
-    const step = nextStep(doc);
-    if (!step) return;
-    const key = `${id}:${step}:${stageOf(doc)}:${doc?.transcription?.version ?? 0}`;
-    if (started.current.has(key)) return;
-    started.current.add(key);
-    queueStep(step).then((error) => {
-      if (error && alive.current)
-        setActionError(error.message || `The ${step} step could not start.`);
-    });
-  }, [id, doc, queueStep]);
+    startNextStep({ id, doc, started, queueStep, alive, setActionError });
+  }, [id, doc, queueStep, alive]);
 
   /** Run one owner action with the busy flag, the error line and a reload. */
   const act = useCallback(
-    async (name, run, success) => {
-      setBusy(name);
-      setActionError('');
-      try {
-        const result = await run();
-        if (success) toast?.({ title: success });
-        return result ?? true;
-      } catch (error) {
-        setActionError(error?.message || 'That did not work. Try again.');
-        return false;
-      } finally {
-        await load();
-        if (alive.current) setBusy('');
-      }
-    },
-    [load, toast]
+    (name, run, success) =>
+      runOwnerAction({ setBusy, setActionError, toast, load, alive }, name, run, success),
+    [load, toast, alive]
   );
 
   const contentId = id;
@@ -182,31 +186,7 @@ export function useInterview(id, { authReady, toast, pollMs = POLL_MS }) {
       label
     );
 
-  const publish = () =>
-    act('publish', async () => {
-      const result = await postJSON('publishContent', {
-        contentIds: [contentId],
-        publishTarget: 'interview',
-        cloudProvider: 'Azure',
-        markLive: true,
-        createSlugPageTrigger: true,
-        addToCurated: true,
-      });
-      const refused = (result?.errors || []).find((entry) => entry.contentId === contentId);
-      if (refused) {
-        throw Object.assign(new Error(refused.error || 'The interview was not published.'), {
-          code: refused.code,
-        });
-      }
-      const mapping = (result?.mappings || []).find((entry) => entry.contentId === contentId);
-      toast?.({
-        title: 'Published',
-        description: mapping?.curatedSubpagePath
-          ? `Live at ${mapping.curatedSubpagePath} within five minutes.`
-          : 'The interview page is live within five minutes.',
-      });
-      return result;
-    });
+  const publish = () => act('publish', () => publishInterview(contentId, toast));
 
   const unpublish = () =>
     act(

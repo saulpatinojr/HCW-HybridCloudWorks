@@ -45,17 +45,15 @@ import { HostLine, ReadState } from './shared';
  * only patience, and `none` is every transcript nobody has approved yet — the
  * largest group and the least interesting, so it is last and collapsed.
  */
-const GROUPS = Object.freeze([
-  { state: 'error', title: 'Failed to publish', tone: 'text-red-700 dark:text-red-300' },
-  { state: 'skipped', title: 'Skipped', tone: 'text-slate-600 dark:text-slate-300' },
-  { state: 'pending', title: 'Publishing now', tone: 'text-slate-600 dark:text-slate-300' },
-  {
-    state: 'published',
-    title: 'Published to Podbean',
-    tone: 'text-emerald-700 dark:text-emerald-300',
-  },
-  { state: 'none', title: 'Not sent', tone: 'text-slate-500' },
-]);
+const GROUPS = Object.freeze(
+  [
+    ['error', 'Failed to publish', 'text-red-700 dark:text-red-300'],
+    ['skipped', 'Skipped', 'text-slate-600 dark:text-slate-300'],
+    ['pending', 'Publishing now', 'text-slate-600 dark:text-slate-300'],
+    ['published', 'Published to Podbean', 'text-emerald-700 dark:text-emerald-300'],
+    ['none', 'Not sent', 'text-slate-500'],
+  ].map(([state, title, tone]) => ({ state, title, tone }))
+);
 
 /** The episode's page on Podbean, https only — the same rule HostLine applies to the record. */
 function liveHref(row) {

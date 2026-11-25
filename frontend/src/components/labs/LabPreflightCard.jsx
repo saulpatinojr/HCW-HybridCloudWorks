@@ -1,36 +1,19 @@
 import React from 'react';
 import { ShieldCheck, Clock, Terminal, Laptop, Cpu, CheckCircle2 } from 'lucide-react';
+import LabTerminalTranscript from './LabTerminalTranscript';
 
 /**
  * Pre-Flight Toolchain specifications.
  */
-export const PREFLIGHT_TOOLS = Object.freeze([
-  {
-    name: 'Terraform 1.9+',
-    cmd: 'terraform',
-    role: 'IaC Synthesis & Plan Validation',
-  },
-  {
-    name: 'tflint',
-    cmd: 'tflint',
-    role: 'AVM Rules & Security Linting',
-  },
-  {
-    name: 'ansible-lint',
-    cmd: 'ansible-lint',
-    role: 'Playbook Syntax & Hardening',
-  },
-  {
-    name: 'Docker',
-    cmd: 'docker',
-    role: 'Multi-Stage Container Runtime',
-  },
-  {
-    name: 'Azure CLI',
-    cmd: 'az',
-    role: 'Enterprise Cloud Management',
-  },
-]);
+export const PREFLIGHT_TOOLS = Object.freeze(
+  [
+    ['Terraform 1.9+', 'terraform', 'IaC Synthesis & Plan Validation'],
+    ['tflint', 'tflint', 'AVM Rules & Security Linting'],
+    ['ansible-lint', 'ansible-lint', 'Playbook Syntax & Hardening'],
+    ['Docker', 'docker', 'Multi-Stage Container Runtime'],
+    ['Azure CLI', 'az', 'Enterprise Cloud Management'],
+  ].map(([name, cmd, role]) => ({ name, cmd, role }))
+);
 
 /**
  * Hybrid Lab Pre-Flight Card (Audit P2-2).
@@ -133,23 +116,11 @@ export default function LabPreflightCard({ compact = false, headingLevel = 'h2' 
             SANDBOX READY
           </span>
         </div>
-        <div className="flex flex-col gap-1 text-[11px] leading-relaxed">
-          <div>
-            <span className="text-emerald-400">$ </span>
-            <span className="text-slate-100">terraform init &amp;&amp; tflint --module</span>
-          </div>
-          <div className="text-slate-400 text-[10px] pl-3">
-            ✓ Initialized providers: azurerm, aws, google
-            <br />✓ Linting complete: 0 issues found (AVM policy passed)
-          </div>
-          <div>
-            <span className="text-emerald-400">$ </span>
-            <span className="text-slate-100">ansible-playbook --syntax-check site.yml</span>
-          </div>
-          <div className="text-emerald-400 text-[10px] pl-3">
-            playbook: site.yml [PASS - syntax verified]
-          </div>
-        </div>
+        <LabTerminalTranscript
+          className="flex flex-col gap-1 text-[11px] leading-relaxed"
+          noteClassName="text-slate-400 text-[10px] pl-3"
+          passClassName="text-emerald-400 text-[10px] pl-3"
+        />
       </div>
 
       {/* Privacy and Security Disclosure */}

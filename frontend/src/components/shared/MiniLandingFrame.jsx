@@ -20,6 +20,7 @@ import React from 'react';
 import { CheckCircle2, ArrowRight, Layers, ShieldCheck, Sparkles, GitCommit } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import InteractiveDiagram from '@/components/widgets/InteractiveDiagram';
+import { firstField } from './firstField';
 
 /** Normalize a string or array of strings into non-empty trimmed lines. */
 export function normalizeLines(value) {
@@ -61,6 +62,9 @@ export function TopologyDiagram({ topology, hotspots = [], onHotspotClick }) {
   }
 
   const activeDetail = selected || topology.stages[0] || hotspots[0] || null;
+  const detailText = activeDetail
+    ? firstField(activeDetail, ['description', 'subtitle', 'guardrail'], undefined)
+    : undefined;
   const handleSelect = (entry, idx) => {
     setSelected(entry);
     onHotspotClick?.(entry, idx);
@@ -147,54 +151,27 @@ export function TopologyDiagram({ topology, hotspots = [], onHotspotClick }) {
         </div>
       )}
 
-      {activeDetail &&
-        (activeDetail.description || activeDetail.subtitle || activeDetail.guardrail) && (
-          <div
-            className="mt-4 rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-xs text-slate-300"
-            data-testid="topology-detail"
-          >
-            <span className="font-semibold text-white">
-              {activeDetail.title || activeDetail.label}:{' '}
-            </span>
-            <span>
-              {activeDetail.description || activeDetail.subtitle || activeDetail.guardrail}
-            </span>
-          </div>
-        )}
+      {detailText && (
+        <div
+          className="mt-4 rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-xs text-slate-300"
+          data-testid="topology-detail"
+        >
+          <span className="font-semibold text-white">
+            {activeDetail.title || activeDetail.label}:{' '}
+          </span>
+          <span>{detailText}</span>
+        </div>
+      )}
     </div>
   );
 }
 
-export default function MiniLandingFrame({
-  title,
-  promise,
-  eyebrow,
-  badges = [],
-  tags = [],
-  actions = null,
-  diagram = null,
-  diagramUrl = '',
-  topology = null,
-  hotspots = [],
-  onHotspotClick,
-  howItWorks = [],
-  keyServices = [],
-  practices = [],
-  outcome = '',
-  activePane = null,
-  onOpenDeepDive,
-  onSelectPane,
-  deepDiveLabels = {},
-  headingLevel = 'h1',
-}) {
-  const HeadingTag = headingLevel === 'h2' ? 'h2' : 'h1';
-  const handleOpenDeepDive = onOpenDeepDive || onSelectPane;
-  const steps = normalizeLines(howItWorks);
-  const services = normalizeKeyServices(keyServices);
-  const checklist = normalizeLines(practices);
-  const outcomeLines = normalizeLines(outcome);
-
-  const panes = [
+/**
+ * The doorway panes that have something to show, in their fixed order: How
+ * it works, Key services, Security and best practices, Outcome.
+ */
+function buildPanes({ steps, services, checklist, outcomeLines, deepDiveLabels }) {
+  return [
     steps.length > 0 && {
       id: 'how-it-works',
       title: 'How it works',
@@ -273,122 +250,190 @@ export default function MiniLandingFrame({
       ),
     },
   ].filter(Boolean);
+}
+
+// The xl column class for 1-4 panes: four or three across, else two.
+function paneGridClass(count) {
+  return { 4: 'xl:grid-cols-4', 3: 'xl:grid-cols-3' }[Math.min(count, 4)] || 'xl:grid-cols-2';
+}
+
+function MiniLandingHero({ HeadingTag, title, promise, eyebrow, badges, tags, actions }) {
+  return (
+    <header className="space-y-3" data-testid="mini-landing-hero">
+      {(eyebrow || badges.length > 0 || tags.length > 0) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {eyebrow && (
+            <span className="font-mono text-xs font-bold uppercase tracking-wider text-primary">
+              {eyebrow}
+            </span>
+          )}
+          {badges.map((badge) => (
+            <Badge key={badge.label} variant={badge.variant || 'default'}>
+              {badge.label}
+            </Badge>
+          ))}
+          {tags.map((tag, i) => (
+            <Badge key={`${tag}-${i}`} variant="outline">
+              {tag}
+            </Badge>
+          ))}
+        </div>
+      )}
+
+      {title && (
+        <HeadingTag className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight leading-tight">
+          {title}
+        </HeadingTag>
+      )}
+
+      {promise && (
+        <p
+          className="text-base sm:text-lg text-muted-foreground max-w-4xl leading-relaxed"
+          data-testid="mini-landing-promise"
+        >
+          {promise}
+        </p>
+      )}
+
+      {actions && <div className="pt-1 flex flex-wrap gap-3">{actions}</div>}
+    </header>
+  );
+}
+
+function MiniLandingDiagram({ diagram, diagramUrl, topology, hotspots, onHotspotClick }) {
+  let content = diagram;
+  if (!content && diagramUrl) {
+    content = (
+      <div className="rounded-xl border border-border bg-card/40 overflow-hidden">
+        <InteractiveDiagram
+          imageUrl={diagramUrl}
+          hotspots={hotspots}
+          onHotspotClick={onHotspotClick || (() => {})}
+        />
+      </div>
+    );
+  } else if (!content) {
+    content = (
+      <TopologyDiagram topology={topology} hotspots={hotspots} onHotspotClick={onHotspotClick} />
+    );
+  }
+  return (
+    <div className="w-full" data-testid="mini-landing-diagram">
+      {content}
+    </div>
+  );
+}
+
+function DoorwayPane({ pane, isSelected, onOpen }) {
+  const Icon = pane.icon;
+  return (
+    <div
+      data-testid={`landing-pane-${pane.id}`}
+      className={`flex flex-col justify-between rounded-xl border p-5 transition-all ${
+        isSelected
+          ? 'border-primary bg-primary/5 shadow-sm'
+          : 'border-border bg-card/50 hover:border-primary/50'
+      }`}
+    >
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Icon className="h-4 w-4 text-primary shrink-0" aria-hidden="true" />
+          <h2 className="text-sm font-bold tracking-tight">{pane.title}</h2>
+        </div>
+        {pane.body}
+      </div>
+
+      <div className="mt-4 pt-3 border-t border-border/60">
+        <a
+          href={pane.target}
+          onClick={(event) => {
+            if (onOpen) {
+              event.preventDefault();
+              onOpen(pane.id);
+            }
+          }}
+          data-testid={`landing-pane-door-${pane.id}`}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline underline-offset-4"
+        >
+          <span>{pane.cta}</span>
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
+export default function MiniLandingFrame({
+  title,
+  promise,
+  eyebrow,
+  badges = [],
+  tags = [],
+  actions = null,
+  diagram = null,
+  diagramUrl = '',
+  topology = null,
+  hotspots = [],
+  onHotspotClick,
+  howItWorks = [],
+  keyServices = [],
+  practices = [],
+  outcome = '',
+  activePane = null,
+  onOpenDeepDive,
+  onSelectPane,
+  deepDiveLabels = {},
+  headingLevel = 'h1',
+}) {
+  const HeadingTag = headingLevel === 'h2' ? 'h2' : 'h1';
+  const handleOpenDeepDive = onOpenDeepDive || onSelectPane;
+  const steps = normalizeLines(howItWorks);
+  const services = normalizeKeyServices(keyServices);
+  const checklist = normalizeLines(practices);
+  const outcomeLines = normalizeLines(outcome);
+
+  const panes = buildPanes({ steps, services, checklist, outcomeLines, deepDiveLabels });
 
   const hasDiagram = Boolean(diagram || diagramUrl || topology);
 
   return (
     <section className="space-y-6" data-testid="mini-landing-frame">
       {/* Hero */}
-      <header className="space-y-3" data-testid="mini-landing-hero">
-        {(eyebrow || badges.length > 0 || tags.length > 0) && (
-          <div className="flex flex-wrap items-center gap-2">
-            {eyebrow && (
-              <span className="font-mono text-xs font-bold uppercase tracking-wider text-primary">
-                {eyebrow}
-              </span>
-            )}
-            {badges.map((badge) => (
-              <Badge key={badge.label} variant={badge.variant || 'default'}>
-                {badge.label}
-              </Badge>
-            ))}
-            {tags.map((tag, i) => (
-              <Badge key={`${tag}-${i}`} variant="outline">
-                {tag}
-              </Badge>
-            ))}
-          </div>
-        )}
-
-        {title && (
-          <HeadingTag className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight leading-tight">
-            {title}
-          </HeadingTag>
-        )}
-
-        {promise && (
-          <p
-            className="text-base sm:text-lg text-muted-foreground max-w-4xl leading-relaxed"
-            data-testid="mini-landing-promise"
-          >
-            {promise}
-          </p>
-        )}
-
-        {actions && <div className="pt-1 flex flex-wrap gap-3">{actions}</div>}
-      </header>
+      <MiniLandingHero
+        HeadingTag={HeadingTag}
+        title={title}
+        promise={promise}
+        eyebrow={eyebrow}
+        badges={badges}
+        tags={tags}
+        actions={actions}
+      />
 
       {/* Full-width Diagram */}
       {hasDiagram && (
-        <div className="w-full" data-testid="mini-landing-diagram">
-          {diagram ||
-            (diagramUrl ? (
-              <div className="rounded-xl border border-border bg-card/40 overflow-hidden">
-                <InteractiveDiagram
-                  imageUrl={diagramUrl}
-                  hotspots={hotspots}
-                  onHotspotClick={onHotspotClick || (() => {})}
-                />
-              </div>
-            ) : (
-              <TopologyDiagram
-                topology={topology}
-                hotspots={hotspots}
-                onHotspotClick={onHotspotClick}
-              />
-            ))}
-        </div>
+        <MiniLandingDiagram
+          diagram={diagram}
+          diagramUrl={diagramUrl}
+          topology={topology}
+          hotspots={hotspots}
+          onHotspotClick={onHotspotClick}
+        />
       )}
 
       {/* Four Doorway Panes (only non-empty panes render) */}
       {panes.length > 0 && (
         <div
-          className={`grid grid-cols-1 md:grid-cols-2 ${
-            { 4: 'xl:grid-cols-4', 3: 'xl:grid-cols-3' }[Math.min(panes.length, 4)] ||
-            'xl:grid-cols-2'
-          } gap-4`}
+          className={`grid grid-cols-1 md:grid-cols-2 ${paneGridClass(panes.length)} gap-4`}
           data-testid="mini-landing-panes"
         >
-          {panes.map((pane) => {
-            const Icon = pane.icon;
-            const isSelected = activePane === pane.id;
-            return (
-              <div
-                key={pane.id}
-                data-testid={`landing-pane-${pane.id}`}
-                className={`flex flex-col justify-between rounded-xl border p-5 transition-all ${
-                  isSelected
-                    ? 'border-primary bg-primary/5 shadow-sm'
-                    : 'border-border bg-card/50 hover:border-primary/50'
-                }`}
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Icon className="h-4 w-4 text-primary shrink-0" aria-hidden="true" />
-                    <h2 className="text-sm font-bold tracking-tight">{pane.title}</h2>
-                  </div>
-                  {pane.body}
-                </div>
-
-                <div className="mt-4 pt-3 border-t border-border/60">
-                  <a
-                    href={pane.target}
-                    onClick={(event) => {
-                      if (handleOpenDeepDive) {
-                        event.preventDefault();
-                        handleOpenDeepDive(pane.id);
-                      }
-                    }}
-                    data-testid={`landing-pane-door-${pane.id}`}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline underline-offset-4"
-                  >
-                    <span>{pane.cta}</span>
-                    <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                  </a>
-                </div>
-              </div>
-            );
-          })}
+          {panes.map((pane) => (
+            <DoorwayPane
+              key={pane.id}
+              pane={pane}
+              isSelected={activePane === pane.id}
+              onOpen={handleOpenDeepDive}
+            />
+          ))}
         </div>
       )}
     </section>

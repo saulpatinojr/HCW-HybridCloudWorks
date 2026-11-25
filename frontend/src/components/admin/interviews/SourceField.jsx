@@ -44,6 +44,11 @@ function problemLinks(id, fileProblem, problem) {
   return ids.length ? { 'aria-invalid': true, 'aria-describedby': ids.join(' ') } : {};
 }
 
+// A chosen file that has been read and passed the checks.
+function audioReady(audio) {
+  return Boolean(audio?.file) && !audio.reading && !audio.problem;
+}
+
 export default function SourceField({
   form,
   onChange,
@@ -167,7 +172,7 @@ export default function SourceField({
               Reading the recording’s length…
             </p>
           )}
-          {audio?.file && !audio.reading && !audio.problem && audio.durationSec && (
+          {audioReady(audio) && audio.durationSec && (
             <p className="text-xs text-muted-foreground">
               Length: {formatDuration(audio.durationSec)}. Size:{' '}
               {(audio.file.size / (1024 * 1024)).toFixed(1)} MB.

@@ -10,7 +10,8 @@ import { ExternalLink } from 'lucide-react';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import RoleGate from '@/components/admin/RoleGate';
 import { Button } from '@/components/ui/button';
-import { STATUS_LABELS, isInFlight, livePagePath, statusActions } from './interviewModel';
+import { STATUS_LABELS, isInFlight, livePagePath } from './interviewModel';
+import { statusActions } from './interviewQa';
 
 /**
  * Delete recording, for publishers. Held while a job is working, because the

@@ -17,7 +17,7 @@ import ApplyTab, {
   SWITCHED_OFF_CODE,
 } from './ApplyTab';
 import ApplyCalendar, { UNMARKED_SHOWN, describeDay } from './ApplyCalendar';
-import { marksForMonth } from './applyModel';
+import { marksForMonth } from './applyCalendarModel';
 import { EVENTS_ROUTE, REFRESH_ROUTE } from './useApplyEvents';
 
 const getJSON = vi.fn();

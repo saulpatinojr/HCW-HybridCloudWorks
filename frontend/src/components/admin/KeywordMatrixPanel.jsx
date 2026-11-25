@@ -1,10 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Plus, Save, Trash2, RotateCcw } from 'lucide-react';
+import { Plus, Save, RotateCcw } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import { useImagePrompts } from '@/hooks/useImagePrompts';
+import {
+  LiveTester,
+  MatrixTable,
+  ROW_CLASS,
+  RowActions,
+  deleteCopy,
+  testKeywordMatrix,
+} from './KeywordMatrixParts';
 
 function slugify(s) {
   return String(s || '')
@@ -125,11 +133,6 @@ export default function KeywordMatrixPanel() {
   const handleDeleteAug = (a) => setPendingDelete({ kind: 'augmentation', item: a });
 
   // ---------- The confirmed delete ----------
-  /** The modal's title and the toast's name for a pending delete, so both say the same thing. */
-  const deleteCopy = (pending) =>
-    pending.kind === 'synonym'
-      ? { title: `Delete synonym group "${pending.item.canonical}"?`, name: pending.item.canonical }
-      : { title: `Delete augmentation "${pending.item.label}"?`, name: pending.item.label };
 
   /** Run the confirmed delete once, ignoring a second tap while it runs, then close the modal. */
   const confirmDelete = async () => {
@@ -152,26 +155,10 @@ export default function KeywordMatrixPanel() {
   };
 
   // ---------- Live tester ----------
-  const testResult = useMemo(() => {
-    const text = testInput.toLowerCase();
-    if (!text) return { canonical: [], augmentations: [] };
-    const matchedCanonical = [];
-    for (const s of synonyms) {
-      if (s.patterns.some((p) => p && text.includes(p.toLowerCase()))) {
-        matchedCanonical.push(s.canonical);
-      }
-    }
-    const matchedAugs = [];
-    for (const a of augmentations) {
-      if (a.patterns.some((p) => p && text.includes(p.toLowerCase()))) {
-        matchedAugs.push(a);
-      }
-    }
-    return {
-      canonical: Array.from(new Set(matchedCanonical)),
-      augmentations: matchedAugs,
-    };
-  }, [testInput, synonyms, augmentations]);
+  const testResult = useMemo(
+    () => testKeywordMatrix(testInput, synonyms, augmentations),
+    [testInput, synonyms, augmentations]
+  );
 
   return (
     <Card>
@@ -192,48 +179,7 @@ export default function KeywordMatrixPanel() {
         </p>
 
         {/* Live tester */}
-        <div className="p-4 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50">
-          <p className="text-sm font-semibold mb-2">Live test</p>
-          <textarea
-            value={testInput}
-            onChange={(e) => setTestInput(e.target.value)}
-            placeholder="Paste an article title, summary, or comma-separated tags here to see what the matrix would do."
-            className="w-full h-20 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm"
-          />
-          {testInput && (
-            <div className="mt-3 space-y-2 text-xs">
-              <div>
-                <span className="font-mono text-slate-500">canonical →</span>{' '}
-                {testResult.canonical.length > 0 ? (
-                  testResult.canonical.map((c) => (
-                    <span
-                      key={c}
-                      className="inline-block px-2 py-0.5 mr-1 rounded-full bg-slate-200 dark:bg-slate-700"
-                    >
-                      {c}
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-slate-400">(none)</span>
-                )}
-              </div>
-              <div>
-                <span className="font-mono text-slate-500">augmentations →</span>
-                {testResult.augmentations.length > 0 ? (
-                  <ul className="mt-1 space-y-1 ml-4 list-disc">
-                    {testResult.augmentations.map((a) => (
-                      <li key={a.id}>
-                        <span className="font-semibold">{a.label}:</span> {a.directive}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <span className="text-slate-400"> (none)</span>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+        <LiveTester testInput={testInput} setTestInput={setTestInput} testResult={testResult} />
 
         {/* Synonyms */}
         <section>
@@ -275,51 +221,33 @@ export default function KeywordMatrixPanel() {
             </Button>
           </div>
 
-          <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-100 dark:bg-slate-800/60 text-xs uppercase">
-                <tr>
-                  <th className="text-left p-2">Canonical</th>
-                  <th className="text-left p-2">Patterns</th>
-                  <th className="text-right p-2 w-32">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {synonyms.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="p-3 text-center text-slate-500">
-                      No synonym groups yet. Until you add one, no concepts are collapsed.
-                    </td>
-                  </tr>
-                )}
-                {synonyms.map((s) => (
-                  <tr
-                    key={s.id}
-                    className="border-t border-slate-200 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-800/30"
-                  >
-                    <td className="p-2 font-semibold">{s.canonical}</td>
-                    <td className="p-2 text-xs text-slate-600 dark:text-slate-400">
-                      {s.patterns.join(', ')}
-                    </td>
-                    <td className="p-2 text-right space-x-1">
-                      <Button size="sm" variant="outline" onClick={() => handleEditSyn(s)}>
-                        Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => handleDeleteSyn(s)}
-                        className="px-2"
-                        aria-label={`Delete synonym group ${s.canonical}`}
-                      >
-                        <Trash2 className="h-3 w-3" aria-hidden="true" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <MatrixTable
+            headers={
+              <>
+                <th className="text-left p-2">Canonical</th>
+                <th className="text-left p-2">Patterns</th>
+                <th className="text-right p-2 w-32">Actions</th>
+              </>
+            }
+            colSpan={3}
+            isEmpty={synonyms.length === 0}
+            emptyText="No synonym groups yet. Until you add one, no concepts are collapsed."
+          >
+            {synonyms.map((s) => (
+              <tr key={s.id} className={ROW_CLASS}>
+                <td className="p-2 font-semibold">{s.canonical}</td>
+                <td className="p-2 text-xs text-slate-600 dark:text-slate-400">
+                  {s.patterns.join(', ')}
+                </td>
+                <RowActions
+                  className="p-2 text-right space-x-1"
+                  onEdit={() => handleEditSyn(s)}
+                  onDelete={() => handleDeleteSyn(s)}
+                  deleteLabel={`Delete synonym group ${s.canonical}`}
+                />
+              </tr>
+            ))}
+          </MatrixTable>
         </section>
 
         {/* Augmentations */}
@@ -371,53 +299,35 @@ export default function KeywordMatrixPanel() {
             </div>
           </div>
 
-          <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-100 dark:bg-slate-800/60 text-xs uppercase">
-                <tr>
-                  <th className="text-left p-2 w-32">Label</th>
-                  <th className="text-left p-2 w-1/4">Patterns</th>
-                  <th className="text-left p-2">Directive</th>
-                  <th className="text-right p-2 w-32">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {augmentations.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="p-3 text-center text-slate-500">
-                      No augmentations yet. Until you add one, no directives are added.
-                    </td>
-                  </tr>
-                )}
-                {augmentations.map((a) => (
-                  <tr
-                    key={a.id}
-                    className="border-t border-slate-200 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-800/30"
-                  >
-                    <td className="p-2 font-semibold align-top">{a.label}</td>
-                    <td className="p-2 text-xs text-slate-600 dark:text-slate-400 align-top">
-                      {a.patterns.join(', ')}
-                    </td>
-                    <td className="p-2 text-xs align-top">{a.directive}</td>
-                    <td className="p-2 text-right space-x-1 align-top">
-                      <Button size="sm" variant="outline" onClick={() => handleEditAug(a)}>
-                        Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => handleDeleteAug(a)}
-                        className="px-2"
-                        aria-label={`Delete augmentation ${a.label}`}
-                      >
-                        <Trash2 className="h-3 w-3" aria-hidden="true" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <MatrixTable
+            headers={
+              <>
+                <th className="text-left p-2 w-32">Label</th>
+                <th className="text-left p-2 w-1/4">Patterns</th>
+                <th className="text-left p-2">Directive</th>
+                <th className="text-right p-2 w-32">Actions</th>
+              </>
+            }
+            colSpan={4}
+            isEmpty={augmentations.length === 0}
+            emptyText="No augmentations yet. Until you add one, no directives are added."
+          >
+            {augmentations.map((a) => (
+              <tr key={a.id} className={ROW_CLASS}>
+                <td className="p-2 font-semibold align-top">{a.label}</td>
+                <td className="p-2 text-xs text-slate-600 dark:text-slate-400 align-top">
+                  {a.patterns.join(', ')}
+                </td>
+                <td className="p-2 text-xs align-top">{a.directive}</td>
+                <RowActions
+                  className="p-2 text-right space-x-1 align-top"
+                  onEdit={() => handleEditAug(a)}
+                  onDelete={() => handleDeleteAug(a)}
+                  deleteLabel={`Delete augmentation ${a.label}`}
+                />
+              </tr>
+            ))}
+          </MatrixTable>
         </section>
       </CardContent>
 
