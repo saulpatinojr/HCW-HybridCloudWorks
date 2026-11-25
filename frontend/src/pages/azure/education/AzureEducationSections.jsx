@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router';
 import { getProviderPath } from '@/lib/routeFactory';
 import ResourceLink, { resourceCta } from '@/components/education/ResourceLink';
+import { CarouselPagination } from '@/components/education/CertificationCarouselSection';
 import { DATA_AS_OF, LEVEL_META, certifications, appliedSkills } from '@/data/azure/certifications';
 
 import { OfficialLinksSection } from '@/pages/shared/education/EducationSections';
@@ -238,47 +239,14 @@ export function CertificationCarousel({
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-3 mt-6">
-            <button
-              onClick={() => setCarouselPage((p) => Math.max(0, p - 1))}
-              disabled={carouselPage === 0}
-              aria-label="Previous page"
-              className="h-9 w-9 bg-card/40 hover:bg-card/60 disabled:opacity-30 border border-card/50 rounded-lg flex items-center justify-center transition-colors"
-            >
-              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-                chevron_left
-              </span>
-            </button>
-            {Array.from({ length: totalPages }).map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setCarouselPage(i)}
-                aria-label={`Page ${i + 1} of ${totalPages}`}
-                aria-current={i === carouselPage ? 'true' : undefined}
-                className="group flex h-6 min-w-6 items-center justify-center rounded-full"
-              >
-                <span
-                  aria-hidden="true"
-                  className={`block h-2.5 rounded-full transition-all ${i === carouselPage ? 'bg-primary w-5' : 'w-2.5 bg-card/60 group-hover:bg-card/80'}`}
-                />
-              </button>
-            ))}
-            <button
-              onClick={() => setCarouselPage((p) => Math.min(totalPages - 1, p + 1))}
-              disabled={carouselPage === totalPages - 1}
-              aria-label="Next page"
-              className="h-9 w-9 bg-card/40 hover:bg-card/60 disabled:opacity-30 border border-card/50 rounded-lg flex items-center justify-center transition-colors"
-            >
-              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-                chevron_right
-              </span>
-            </button>
-            <span className="text-xs text-muted-foreground ml-2">
-              {carouselPage * VISIBLE_COUNT + 1}–
-              {Math.min((carouselPage + 1) * VISIBLE_COUNT, filteredCerts.length)} of{' '}
-              {filteredCerts.length}
-            </span>
-          </div>
+          <CarouselPagination
+            carouselPage={carouselPage}
+            totalPages={totalPages}
+            visibleCount={VISIBLE_COUNT}
+            filteredCount={filteredCerts.length}
+            onPageChange={setCarouselPage}
+            tone={{ activeDot: 'bg-primary' }}
+          />
         )}
       </section>
     </>
