@@ -4,6 +4,7 @@ import { getProviderPath } from '@/lib/routeFactory';
 import ResourceLink, { resourceCta } from '@/components/education/ResourceLink';
 import { DATA_AS_OF, LEVEL_META, certifications, appliedSkills } from '@/data/azure/certifications';
 
+import { OfficialLinksSection } from '@/pages/shared/education/EducationSections';
 import { StatusBadge, formatDate } from './azureTimeline';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -78,87 +79,31 @@ export function EducationHero() {
   );
 }
 
+/** The two Microsoft posters: the certifications roadmap and Applied Skills. */
+const POSTER_LINKS = [
+  {
+    href: 'https://aka.ms/CertificationsPoster',
+    tone: 'azure',
+    icon: 'workspace_premium',
+    title: 'Microsoft Certifications Poster',
+    badge: 'Official',
+    address: 'aka.ms/CertificationsPoster',
+    text: 'The official Microsoft Certifications roadmap — all role-based and specialty certifications in one poster, published by Microsoft.',
+  },
+  {
+    href: 'https://go.microsoft.com/fwlink/?linkid=2321752',
+    tone: 'azureCyan',
+    icon: 'construction',
+    title: 'Applied Skills Poster',
+    badge: 'Scenario-Based',
+    address: 'View Applied Skills Poster',
+    text: 'Microsoft Applied Skills are scenario-based assessments that validate hands-on ability with specific Azure tasks. Complements certifications with practical proof.',
+  },
+];
+
 /** The page's "Posters Banner" section. */
 export function PostersBanner() {
-  return (
-    <>
-      <section className="mb-12">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <a
-            href="https://aka.ms/CertificationsPoster"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group relative bg-linear-to-br from-blue-900/40 to-card/40 backdrop-blur-md border border-blue-500/30 rounded-2xl p-6 hover:shadow-[0_0_30px_rgba(0,120,212,0.2)] hover:border-primary/60 transition-all duration-300 flex items-start gap-5"
-          >
-            <div className="w-14 h-14 shrink-0 bg-primary/20 rounded-xl flex items-center justify-center">
-              <span
-                className="text-primary text-[28px] material-symbols-outlined"
-                aria-hidden="true"
-              >
-                workspace_premium
-              </span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <h2 className="text-lg font-bold text-slate-950 dark:text-white group-hover:text-primary transition-colors">
-                  Microsoft Certifications Poster
-                </h2>
-                <span className="px-2 py-0.5 bg-primary/20 border border-primary/30 text-primary text-[10px] font-bold rounded-full uppercase tracking-wider shrink-0">
-                  Official
-                </span>
-              </div>
-              <p className="text-sm text-foreground mb-3">
-                The official Microsoft Certifications roadmap — all role-based and specialty
-                certifications in one poster, published by Microsoft.
-              </p>
-              <div className="flex items-center gap-1.5 text-primary text-sm font-semibold">
-                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                  open_in_new
-                </span>
-                aka.ms/CertificationsPoster
-              </div>
-            </div>
-          </a>
-
-          <a
-            href="https://go.microsoft.com/fwlink/?linkid=2321752"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group relative bg-linear-to-br from-cyan-900/40 to-card/40 backdrop-blur-md border border-cyan-500/30 rounded-2xl p-6 hover:shadow-[0_0_30px_rgba(0,188,212,0.2)] hover:border-cyan-400/60 transition-all duration-300 flex items-start gap-5"
-          >
-            <div className="w-14 h-14 shrink-0 bg-cyan-500/20 rounded-xl flex items-center justify-center">
-              <span
-                className="text-cyan-400 text-[28px] material-symbols-outlined"
-                aria-hidden="true"
-              >
-                construction
-              </span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <h2 className="text-lg font-bold text-slate-950 dark:text-white group-hover:text-cyan-300 transition-colors">
-                  Applied Skills Poster
-                </h2>
-                <span className="px-2 py-0.5 bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-[10px] font-bold rounded-full uppercase tracking-wider shrink-0">
-                  Scenario-Based
-                </span>
-              </div>
-              <p className="text-sm text-foreground mb-3">
-                Microsoft Applied Skills are scenario-based assessments that validate hands-on
-                ability with specific Azure tasks. Complements certifications with practical proof.
-              </p>
-              <div className="flex items-center gap-1.5 text-cyan-400 text-sm font-semibold">
-                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
-                  open_in_new
-                </span>
-                View Applied Skills Poster
-              </div>
-            </div>
-          </a>
-        </div>
-      </section>
-    </>
-  );
+  return <OfficialLinksSection links={POSTER_LINKS} />;
 }
 
 /** The page's "Browse Certifications Carousel" section. */
