@@ -142,8 +142,9 @@ describe('what counts as a new smell', () => {
   it('follows a renamed file back to its old name', () => {
     const base = [smell({ path: 'old/name.js' })];
     const head = [smell({ path: 'new/name.js' })];
-    const renames = parseRenames('M\tother.js\nR097\told/name.js\tnew/name.js\n');
+    const renames = parseRenames('M\0other.js\0R097\0old/name.js\0new/name.js\0C100\0a.js\0b.js\0D\0gone\tname.js\0');
     expect(renames.get('new/name.js')).toBe('old/name.js');
+    expect([...renames.keys()]).toEqual(['new/name.js']);
     expect(newSmells({ head, base, blocks: [], renames })).toEqual([]);
     expect(newSmells({ head, base, blocks: [] })).toEqual(head);
   });

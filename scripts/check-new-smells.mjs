@@ -12,7 +12,7 @@
  *   --base     `qlty smells --json <the same files>` run on the base commit: what was already there.
  *   --config   the BASE branch's .qlty/qlty.toml. Its [[triage]] blocks are applied to every smell (see
  *              lib/qlty-triage.mjs for why this script does that and Qlty does not).
- *   --renames  optional `git diff --name-status -M <base> HEAD` output, so a moved file keeps its old smells.
+ *   --renames  optional `git diff -z --name-status -M <base> HEAD` output, so a moved file keeps its old smells.
  *
  * A smell counts as new when, after triage, it is medium or high and the base had no smell with the same rule, file
  * and function (for copied code: the same set of files). A smell the base already had does not fail the check, even
@@ -28,12 +28,20 @@ import { parseTriageBlocks, triage } from './lib/qlty-triage.mjs';
 /** The levels that fail the check, as lib/qlty-triage.mjs spells them. */
 export const FAILING_LEVELS = Object.freeze(['medium', 'high']);
 
-/** `R100\told\tnew` lines → Map(new path → old path). Other statuses are ignored. */
+/**
+ * `git diff -z --name-status -M` output → Map(new path → old path) for each rename. With -z every field ends in
+ * a NUL and no name is quoted or escaped, so a file name with a tab, a newline or a quote keeps its smells. A
+ * rename or copy (R, C) carries two paths, every other status one.
+ */
 export function parseRenames(text) {
+  const fields = String(text || '').split('\0');
   const renames = new Map();
-  for (const line of String(text || '').split('\n')) {
-    const [status, from, to] = line.split('\t');
-    if (/^R\d*$/.test(status || '') && from && to) renames.set(to, from);
+  for (let i = 0; i < fields.length; ) {
+    const status = fields[i];
+    if (!status) break;
+    const twoPaths = /^[RC]\d*$/.test(status);
+    if (/^R\d*$/.test(status) && fields[i + 1] && fields[i + 2]) renames.set(fields[i + 2], fields[i + 1]);
+    i += twoPaths ? 3 : 2;
   }
   return renames;
 }

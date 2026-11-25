@@ -2237,6 +2237,9 @@ jobs:
       # It runs even when the security scan failed (only a cancelled run, a
       # missing CLI or missing base rules stop it), so both answers arrive in
       # one run.
+      #
+      # `git diff -z`: every name ends in a NUL and none is quoted, so a file
+      # whose name holds a tab, a newline or a quote keeps its base smells.
       - name: Check for new code smells
         if: ${{ !cancelled() && steps.qlty-install.outcome == 'success' && steps.base-rules.outcome == 'success' }}
         env:
@@ -2247,16 +2250,20 @@ jobs:
           base="${work}/base-tree"
           mkdir -p "${work}"
           qlty smells --upstream "${BASE_SHA}" --no-snippets --quiet --json > "${work}/head.json"
-          git diff --name-status -M "${BASE_SHA}" HEAD > "${work}/changes.tsv"
+          git diff -z --name-status -M "${BASE_SHA}" HEAD > "${work}/changes.z"
           git worktree add --detach --quiet "${base}" "${BASE_SHA}"
           # Each changed file's path at the base: the old name of a renamed
-          # file, and nothing for a file the pull request adds.
+          # or copied file, and nothing for a file the pull request adds.
           paths=()
-          while IFS=$'\t' read -r status first _; do
+          while IFS= read -r -d '' status; do
+            IFS= read -r -d '' first
+            case "${status}" in
+              R* | C*) IFS= read -r -d '' _ ;;
+            esac
             if [ "${status}" != "A" ] && [ -f "${base}/${first}" ]; then
               paths+=("${first}")
             fi
-          done < "${work}/changes.tsv"
+          done < "${work}/changes.z"
           if [ "${#paths[@]}" -gt 0 ]; then
             (cd "${base}" && qlty smells --no-snippets --quiet --json -- "${paths[@]}") > "${work}/base.json"
           else
@@ -2269,7 +2276,7 @@ jobs:
             echo "::notice title=Smell check::The base commit has no smell check yet, so this run uses the pull request's copy."
           fi
           node "${checker}" --head "${work}/head.json" --base "${work}/base.json" \
-            --config .qlty/qlty.toml --renames "${work}/changes.tsv"
+            --config .qlty/qlty.toml --renames "${work}/changes.z"
 
   # THE ONE REQUIRED CHECK (#1545). The `main` ruleset requires `gate`, and
   # `gate` waits for every job above. `!cancelled()` keeps it running when a
