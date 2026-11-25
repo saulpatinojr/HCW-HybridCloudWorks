@@ -35,10 +35,7 @@
  * Text only, like the bump itself: nothing here parses YAML or shell.
  */
 import { coreVersion } from './lab-pins-versions.mjs';
-import { CADDY_TEST_PATH, setYamlScalar } from './lab-pin-bumps.mjs';
-
-/** Files whose whole set of comments counts as beside the pin, not only the lines directly above it. */
-const WHOLE_FILE = [CADDY_TEST_PATH];
+import { commentsBeside, locate } from './lab-pin-comment-lines.mjs';
 
 // A dotted version with an optional leading `v` and a tag-style tail
 // (`2.11.4-builder`, `26.10.0-1nodesource1`). Not preceded by a letter, digit
@@ -46,55 +43,6 @@ const WHOLE_FILE = [CADDY_TEST_PATH];
 const VERSION = /(?<![0-9A-Za-z.])v?(\d+(?:\.\d+)+)(?:-[0-9A-Za-z.~+]*[0-9A-Za-z])?/g;
 // A run of eight or more hex digits, with `sha256:` or `sha512:` in front or not.
 const DIGEST = /(?<![0-9A-Za-z])(?:sha(?:256|512):)?([0-9a-f]{8,})(?![0-9A-Za-z])/g;
-
-const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const isComment = (line) => /^\s*#/.test(line);
-
-/** Where one pin sits in one file: its 1-based line and its value. Throws when it is not exactly one line. */
-function locate(file, text, where) {
-  if (/\.ya?ml$/.test(file)) {
-    // setYamlScalar finds the key by path and refuses a key that is missing or
-    // appears twice; its edit is thrown away, only the line and old value are used.
-    const { line, from } = setYamlScalar(text, where.split('.'), 'x');
-    return { line, value: from };
-  }
-  const pattern = file.endsWith('.json')
-    ? new RegExp(`^\\s*"${escapeRe(where)}"\\s*:\\s*"?([^",]*)"?,?\\s*$`)
-    : new RegExp(`^${escapeRe(where)}=['"]?([^'"\\s#]*)['"]?(?:\\s+#.*)?$`);
-  const hits = text
-    .split(/\r?\n/)
-    .map((l, i) => [i, l.match(pattern)])
-    .filter(([, m]) => m);
-  if (hits.length !== 1) throw new Error(`${file}: expected one \`${where}\` line, found ${hits.length}`);
-  return { line: hits[0][0] + 1, value: hits[0][1][1] };
-}
-
-/** The comment lines beside the pin on 1-based line `line`: `{ line, text }` each. */
-function commentsBeside(file, lines, line) {
-  const at = line - 1;
-  const found = [];
-  if (file.endsWith('.json')) {
-    // JSON has no comments; this fixture keeps its words in `$comment`.
-    lines.forEach((l, i) => {
-      const m = l.match(/^\s*"\$comment"\s*:\s*"(.*)",?\s*$/);
-      if (m) found.push({ line: i + 1, text: m[1] });
-    });
-    return found;
-  }
-  if (WHOLE_FILE.includes(file)) {
-    lines.forEach((l, i) => {
-      if (isComment(l)) found.push({ line: i + 1, text: l });
-    });
-  } else {
-    // Up through the pin's own group of lines, then the unbroken run of comments above it.
-    let top = at;
-    while (top > 0 && lines[top - 1].trim() !== '' && !isComment(lines[top - 1])) top -= 1;
-    for (let i = top - 1; i >= 0 && isComment(lines[i]); i -= 1) found.unshift({ line: i + 1, text: lines[i] });
-  }
-  const inline = lines[at].match(/\s#\s?(.*)$/);
-  if (inline) found.push({ line, text: inline[1] });
-  return found;
-}
 
 /**
  * Every comment beside a pin the bump moves that names an exact version or a
