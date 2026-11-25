@@ -43,44 +43,19 @@
  * also holds.
  */
 import { ADMIN_CONFIG_PARTITION } from './cosmos-client.js';
-import { AuthoredError, authoredMessage, isAuthoredError, errorFacts } from './http/error-response.js';
+import { authoredMessage, isAuthoredError, errorFacts } from './http/error-response.js';
 import { DEFAULT_HEROES_CONFIG_ID } from './triggers/ai-cover.js';
 import { AUTOPOST_CONFIG_ID } from './triggers/social-caption-trigger.js';
-import {
-  MAIN_FEED_PROVIDER,
-  PODCAST_FEEDS_CONFIG_ID,
-  dedupeFeedsByProvider,
-  isValidFeedEntry,
-} from './timers/podcasts.js';
-import { isElevenLabsVoiceId } from './listen-and-learn/speech/elevenlabs-voice-plan.js';
+import { PODCAST_FEEDS_CONFIG_ID } from './timers/podcasts.js';
 import { PODCAST_HOSTS, PODCAST_VOICES_CONFIG_ID } from './podcast/voice-settings.js';
 import {
-  BUILT_IN_TEMPLATE_ID,
   DEFAULT_NEWSLETTER_SETTINGS,
-  INTRO_TONE_IDS,
-  MAX_POSTAL_ADDRESS_LENGTH,
-  MAX_SECTION_ITEMS,
-  MAX_SIGNUP_BLURB_LENGTH,
-  MAX_SIGNUP_HEADING_LENGTH,
-  MAX_WINDOW_DAYS,
-  MIN_SECTION_ITEMS,
-  MIN_WINDOW_DAYS,
   NEWSLETTER_SETTINGS_CONFIG_ID,
-  SEND_DAYS,
-  SIGNUP_PLACEMENTS,
-  TEMPLATE_ID_PATTERN,
   newsletterContentOptions,
   newsletterSettingsDefaults,
 } from './newsletter/settings.js';
-import { MAX_ITEMS_PER_SECTION, SECTIONS } from './newsletter/sections.js';
-import { isValidSendTime, isValidTimeZone } from './newsletter/schedule.js';
-import { normalizeEmail } from './newsletter/email.js';
 import { sharedTemplateCache } from './newsletter/template-source.js';
-import {
-  CONTENT_TAXONOMY_CONFIG_ID,
-  defaultTaxonomy,
-  normalizeContentTaxonomy,
-} from './cms/taxonomy.js';
+import { CONTENT_TAXONOMY_CONFIG_ID, defaultTaxonomy, normalizeContentTaxonomy } from './cms/taxonomy.js';
 import {
   REMINDERS_CONFIG_ID,
   emptyReminders,
@@ -88,6 +63,31 @@ import {
   normalizeReminders,
   summarizeReminders,
 } from './reminders/settings.js';
+
+import { isPlainObject } from './platform-setting-checks.js';
+import {
+  DEFAULT_SCHEDULE_DELAY_MINUTES,
+  normalizeDefaultHeroes,
+  normalizePodcastFeeds,
+  normalizePodcastVoices,
+  normalizeSocialAutopost,
+} from './platform-setting-media.js';
+import { normalizeNewsletterSettings } from './platform-setting-newsletter.js';
+
+export { PlatformSettingValidationError } from './platform-setting-checks.js';
+export {
+  DEFAULT_SCHEDULE_DELAY_MINUTES,
+  HERO_PROVIDERS,
+  MAX_SCHEDULE_DELAY_MINUTES,
+  PODCAST_PROVIDERS,
+  SOCIAL_PROVIDERS,
+  isAcceptableHeroUrl,
+  normalizeDefaultHeroes,
+  normalizePodcastFeeds,
+  normalizePodcastVoices,
+  normalizeSocialAutopost,
+} from './platform-setting-media.js';
+export { normalizeNewsletterSettings } from './platform-setting-newsletter.js';
 
 /**
  * A JSON response, with the stored document's ETag as an `ETag` header when
@@ -107,502 +107,6 @@ const json = (status, body, etag = null) => ({
 });
 
 const MAX_BODY_JSON = 60_000;
-
-/**
- * Thrown by a normalizer; the handler turns it into a 400 with the message.
- * Authored (#945): every sentence is written by a normalizer here.
- */
-export class PlatformSettingValidationError extends AuthoredError {
-  /** @param {string} message - the refusal, naming the field */
-  constructor(message) {
-    super(message);
-    this.name = 'PlatformSettingValidationError';
-  }
-}
-
-const fail = (message) => {
-  throw new PlatformSettingValidationError(message);
-};
-
-const isPlainObject = (value) =>
-  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
-/** Refuse keys outside `allowed` — an allowlisted shape, not a filtered one. */
-function assertOnlyKeys(object, allowed, where) {
-  const unknown = Object.keys(object).filter((key) => !allowed.includes(key));
-  if (unknown.length > 0) {
-    fail(`Unknown field(s) in ${where}: ${unknown.join(', ')}. Allowed: ${allowed.join(', ')}`);
-  }
-}
-
-// ── default heroes ─────────────────────────────────────────────────────────
-
-/**
- * The provider keys ai-cover.js's PROVIDER_STYLES knows, in the casing the
- * hand-seeded document used. `pickDefaultHero` matches case-insensitively and
- * maps Google → GCP, so these are the canonical spellings, not a constraint
- * on the lookup.
- */
-export const HERO_PROVIDERS = Object.freeze([
-  'Azure',
-  'AWS',
-  'GCP',
-  'GitHub',
-  'Terraform',
-  'Ansible',
-  'VMware',
-  // Docker since #775; its bundled cover is /images/default-heroes/docker.png.
-  'Docker',
-  'Multi',
-]);
-
-const MAX_URL_LENGTH = 2048;
-
-/**
- * A hero URL: a same-origin path (`/images/…`, `/api/public/media/…`) or an
- * https URL. `//host/path` is protocol-relative — an off-origin reference in
- * a path's clothing — and is refused with the rest. No query string or
- * fragment on either form: this value is copied onto content documents and
- * served publicly (ai-cover.js writes it to `altCoverImage` and
- * `contentImageUrl`), so a SAS token or signature in a `?` would be
- * published with the post.
- */
-export function isAcceptableHeroUrl(value) {
-  if (typeof value !== 'string') return false;
-  if (value.length === 0 || value.length > MAX_URL_LENGTH) return false;
-  if (/[\s<>"'`\\?#]/.test(value)) return false;
-  if (value.startsWith('/')) return !value.startsWith('//');
-  return /^https:\/\/[^/]+/.test(value);
-}
-
-/**
- * `{ heroes: { <Provider>: url } }` → the document body ai-cover.js reads.
- * Keys are matched case-insensitively to HERO_PROVIDERS and stored under the
- * canonical spelling; a blank value means "no default for this provider" and
- * the key is omitted, which is what `pickDefaultHero` treats as no fallback.
- */
-export function normalizeDefaultHeroes(body) {
-  if (!isPlainObject(body)) fail('Body must be a JSON object');
-  assertOnlyKeys(body, ['heroes'], 'body');
-  const heroes = body.heroes ?? {};
-  if (!isPlainObject(heroes)) fail('heroes must be an object keyed by provider');
-
-  const out = {};
-  for (const [rawKey, rawValue] of Object.entries(heroes)) {
-    const canonical = HERO_PROVIDERS.find((p) => p.toLowerCase() === String(rawKey).toLowerCase());
-    if (!canonical) {
-      fail(`Unknown hero provider "${rawKey}". Allowed: ${HERO_PROVIDERS.join(', ')}`);
-    }
-    if (rawValue === null || rawValue === undefined) continue;
-    if (typeof rawValue !== 'string') fail(`heroes.${canonical} must be a string`);
-    const value = rawValue.trim();
-    if (value === '') continue;
-    if (!isAcceptableHeroUrl(value)) {
-      fail(
-        `heroes.${canonical} must be a same-origin path (/images/… or /api/public/media/…) or an https URL, with no query string or fragment`
-      );
-    }
-    if (canonical in out) fail(`heroes.${canonical} given more than once`);
-    out[canonical] = value;
-  }
-  return { heroes: out };
-}
-
-// ── social autopost ────────────────────────────────────────────────────────
-
-/** The networks the Social Hub composes to (SocialHubPage PLATFORM_META). */
-export const SOCIAL_PROVIDERS = Object.freeze([
-  'linkedin',
-  'twitter',
-  'facebook',
-  'instagram',
-  'youtube',
-]);
-
-export const DEFAULT_SCHEDULE_DELAY_MINUTES = 60;
-/** One week. Anything longer is a scheduling mistake, not an undo window. */
-export const MAX_SCHEDULE_DELAY_MINUTES = 7 * 24 * 60;
-const MAX_ACCOUNTS = 20;
-const MAX_ACCOUNT_ID_LENGTH = 200;
-
-/**
- * `{ enabled, accountIds: [{ id, provider }], scheduleDelayMinutes }` → the
- * document social-caption-trigger.js reads. `enabled` must be a real boolean
- * (the consumer tests truthiness, so "false" would read as ON); the delay is
- * a whole number of minutes from 1 to a week (the consumer treats 0 as
- * "use the default", which is not something a form should be able to say by
- * accident); accounts are deduplicated by id.
- */
-export function normalizeSocialAutopost(body) {
-  if (!isPlainObject(body)) fail('Body must be a JSON object');
-  assertOnlyKeys(body, ['enabled', 'accountIds', 'scheduleDelayMinutes'], 'body');
-
-  const enabled = body.enabled ?? false;
-  if (typeof enabled !== 'boolean') fail('enabled must be true or false');
-
-  const delayRaw = body.scheduleDelayMinutes ?? DEFAULT_SCHEDULE_DELAY_MINUTES;
-  const delay =
-    typeof delayRaw === 'string' && delayRaw.trim() !== '' ? Number(delayRaw) : delayRaw;
-  if (!Number.isInteger(delay) || delay < 1 || delay > MAX_SCHEDULE_DELAY_MINUTES) {
-    fail(`scheduleDelayMinutes must be a whole number from 1 to ${MAX_SCHEDULE_DELAY_MINUTES}`);
-  }
-
-  const accountsRaw = body.accountIds ?? [];
-  if (!Array.isArray(accountsRaw)) fail('accountIds must be an array of { id, provider }');
-  if (accountsRaw.length > MAX_ACCOUNTS)
-    fail(`accountIds may hold at most ${MAX_ACCOUNTS} entries`);
-
-  const seen = new Set();
-  const accountIds = [];
-  accountsRaw.forEach((entry, index) => {
-    if (!isPlainObject(entry)) fail(`accountIds[${index}] must be an object`);
-    assertOnlyKeys(entry, ['id', 'provider'], `accountIds[${index}]`);
-    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
-    if (id === '') fail(`accountIds[${index}].id is required`);
-    if (id.length > MAX_ACCOUNT_ID_LENGTH || /[\s]/.test(id)) {
-      fail(`accountIds[${index}].id is not a valid account id`);
-    }
-    const provider = String(entry.provider ?? '')
-      .trim()
-      .toLowerCase();
-    if (!SOCIAL_PROVIDERS.includes(provider)) {
-      fail(`accountIds[${index}].provider must be one of ${SOCIAL_PROVIDERS.join(', ')}`);
-    }
-    if (seen.has(id)) return;
-    seen.add(id);
-    accountIds.push({ id, provider });
-  });
-
-  if (enabled && accountIds.length === 0) {
-    fail('Add at least one account before enabling autoposting');
-  }
-
-  return { enabled, accountIds, scheduleDelayMinutes: delay };
-}
-
-// ── podcast feeds ──────────────────────────────────────────────────────────
-
-/** The rows the page always shows; the document may carry others. */
-export const PODCAST_PROVIDERS = Object.freeze([
-  'azure',
-  'aws',
-  'gcp',
-  'github',
-  'terraform',
-  'finops',
-  'vmware',
-  'ansible',
-  // #777: /docker/audio renders the shared podcast page like every provider's.
-  'docker',
-]);
-
-const MAX_FEEDS = 50;
-
-/**
- * `{ mainFeedUrl, feeds: [{ provider, url }] }` → the document
- * timers/podcasts.js reads.
- *
- * `mainFeedUrl` is the site's own show — one feed that belongs to the site
- * rather than to a provider, ingested under the reserved provider `main` and
- * shown on every provider's audio page. Blank means the site has no show yet
- * and the key is omitted, which is what `resolveMainFeedEntry` treats as none.
- *
- * A `feeds` row with a blank URL means "no feed for this provider" and is
- * dropped. Every kept row passes the timer's own `isValidFeedEntry` (lowercase
- * slug provider, https URL) and the list is deduplicated the way the timer
- * would dedupe it, so what is stored is exactly what will run.
- *
- * Two rules exist only because the main feed does:
- *
- *   - `main` is not accepted as a provider row. There is one way to name the
- *     site's show, so the page cannot write a document that says it twice.
- *   - No provider row may repeat the main feed's URL. Both ingests would build
- *     the same episode ids from the same guids and each run would overwrite
- *     the other's `provider`, so the same episode would flip between the show
- *     and a provider from one firing to the next — a duplicate that never
- *     appears as two rows, only as a page that changes under the reader.
- */
-export function normalizePodcastFeeds(body) {
-  if (!isPlainObject(body)) fail('Body must be a JSON object');
-  assertOnlyKeys(body, ['mainFeedUrl', 'feeds'], 'body');
-
-  const mainRaw = body.mainFeedUrl ?? '';
-  if (typeof mainRaw !== 'string') fail('mainFeedUrl must be a string');
-  const mainFeedUrl = mainRaw.trim();
-  if (mainFeedUrl !== '') {
-    if (mainFeedUrl.length > MAX_URL_LENGTH || /[\s<>"'`\\]/.test(mainFeedUrl)) {
-      fail('mainFeedUrl is not a valid URL');
-    }
-    if (!isValidFeedEntry({ provider: MAIN_FEED_PROVIDER, url: mainFeedUrl })) {
-      fail('mainFeedUrl must be an https URL');
-    }
-  }
-
-  const feedsRaw = body.feeds ?? [];
-  if (!Array.isArray(feedsRaw)) fail('feeds must be an array of { provider, url }');
-  if (feedsRaw.length > MAX_FEEDS) fail(`feeds may hold at most ${MAX_FEEDS} entries`);
-
-  const feeds = [];
-  feedsRaw.forEach((entry, index) => {
-    if (!isPlainObject(entry)) fail(`feeds[${index}] must be an object`);
-    assertOnlyKeys(entry, ['provider', 'url'], `feeds[${index}]`);
-    const provider = String(entry.provider ?? '')
-      .trim()
-      .toLowerCase();
-    const url = typeof entry.url === 'string' ? entry.url.trim() : '';
-    if (url === '') return;
-    if (!/^[a-z0-9-]+$/.test(provider)) {
-      fail(`feeds[${index}].provider must be a lowercase slug (letters, digits, dashes)`);
-    }
-    if (provider === MAIN_FEED_PROVIDER) {
-      fail(`feeds[${index}].provider is reserved — the site's show is the Main feed field`);
-    }
-    if (url.length > MAX_URL_LENGTH || /[\s<>"'`\\]/.test(url)) {
-      fail(`feeds[${index}].url is not a valid URL`);
-    }
-    if (mainFeedUrl !== '' && url === mainFeedUrl) {
-      fail(`feeds[${index}].url is already the main feed — one feed cannot be both`);
-    }
-    const row = { provider, url };
-    if (!isValidFeedEntry(row)) fail(`feeds[${index}].url must be an https URL`);
-    feeds.push(row);
-  });
-
-  const deduped = dedupeFeedsByProvider(feeds);
-  if (deduped.length !== feeds.length) {
-    fail('Each provider may have only one feed');
-  }
-  return mainFeedUrl === '' ? { feeds: deduped } : { mainFeedUrl, feeds: deduped };
-}
-
-// ── podcast voices ─────────────────────────────────────────────────────────
-
-/**
- * `{ Maya, Elena }` → the document every podcast render reads
- * (podcast/voice-settings.js, #725). Both hosts are required, each must look
- * like an ElevenLabs voice id, and the two must differ: a listener has to
- * tell the hosts apart. The value is sent to a paid API as `voice_id`, so it
- * is trimmed and nothing more; a near-miss is refused, not corrected.
- *
- * Whether the plan allows a voice is not checked here, because that is the
- * account's answer and this has no network. The picker offers only voices
- * the listing marks usable, and a render with any other meets ElevenLabs's
- * own 402, whose sentence points back at the picker.
- */
-export function normalizePodcastVoices(body) {
-  if (!isPlainObject(body)) fail('Body must be a JSON object');
-  assertOnlyKeys(body, PODCAST_HOSTS, 'body');
-  const voices = {};
-  for (const host of PODCAST_HOSTS) {
-    const raw = body[host];
-    if (typeof raw !== 'string' || raw.trim() === '') {
-      fail(`${host} needs a voice: choose one for each host`);
-    }
-    const id = raw.trim();
-    if (!isElevenLabsVoiceId(id)) {
-      fail(
-        `${host} must be an ElevenLabs voice id, 20 letters and digits as the voice list shows it`
-      );
-    }
-    voices[host] = id;
-  }
-  if (new Set(Object.values(voices)).size !== PODCAST_HOSTS.length) {
-    fail(
-      `${PODCAST_HOSTS.join(' and ')} must have different voices, so a listener can tell the hosts apart`
-    );
-  }
-  return voices;
-}
-
-// ── newsletter ─────────────────────────────────────────────────────────────
-
-/** More rows than any registry will hold: a bound on work, not on sections. */
-const MAX_SECTION_ROWS = 50;
-
-/** A numeric string read as a number; anything else is returned as given. */
-const toNumber = (raw) => (typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : raw);
-
-const clampInteger = (raw, min, max, where) => {
-  const n = toNumber(raw);
-  if (typeof n !== 'number' || !Number.isFinite(n)) fail(`${where} must be a number`);
-  return Math.min(max, Math.max(min, Math.floor(n)));
-};
-
-/**
- * The ordered section list: `[{ id, enabled, maxItems }]`. Ids the registry
- * does not know are DROPPED rather than refused — a section retired from the
- * code must not make every saved document unreadable — and a repeated id keeps
- * its first place. Registry sections the list does not name are appended,
- * enabled, at the builder's limit, so a section added to the code shows up in
- * the next issue without anyone saving settings. maxItems is clamped to
- * MIN_SECTION_ITEMS..MAX_SECTION_ITEMS. At least one section must be on: an
- * issue with no sections is never built, and saving that would read as "the
- * newsletter is broken" on Monday rather than as a choice.
- */
-function normalizeSectionSettings(raw) {
-  if (!Array.isArray(raw)) fail('sections must be an array of { id, enabled, maxItems }');
-  if (raw.length > MAX_SECTION_ROWS) fail(`sections may hold at most ${MAX_SECTION_ROWS} entries`);
-  const known = new Set(SECTIONS.map((section) => section.id));
-  const seen = new Set();
-  const out = [];
-  raw.forEach((entry, index) => {
-    if (!isPlainObject(entry)) fail(`sections[${index}] must be an object`);
-    if (typeof entry.id !== 'string') fail(`sections[${index}].id must be a string`);
-    // Decide to drop BEFORE validating the rest: a retired or repeated section
-    // row is discarded whatever else it carries, so it can never make the
-    // whole document invalid.
-    if (!known.has(entry.id) || seen.has(entry.id)) return;
-    assertOnlyKeys(entry, ['id', 'enabled', 'maxItems'], `sections[${index}]`);
-    // Only an absent `enabled` defaults; null is refused like any non-boolean.
-    const enabled = entry.enabled === undefined ? true : entry.enabled;
-    if (typeof enabled !== 'boolean') fail(`sections[${index}].enabled must be true or false`);
-    const maxItems =
-      entry.maxItems === undefined
-        ? MAX_ITEMS_PER_SECTION
-        : clampInteger(
-            entry.maxItems,
-            MIN_SECTION_ITEMS,
-            MAX_SECTION_ITEMS,
-            `sections[${index}].maxItems`
-          );
-    seen.add(entry.id);
-    out.push({ id: entry.id, enabled, maxItems });
-  });
-  for (const id of known) {
-    if (!seen.has(id)) out.push({ id, enabled: true, maxItems: MAX_ITEMS_PER_SECTION });
-  }
-  if (!out.some((entry) => entry.enabled)) fail('Turn on at least one section');
-  return out;
-}
-
-/** The content fields (#557): sections, windowDays, introEnabled, introTone. */
-function normalizeNewsletterContent(body, value) {
-  if (body.sections !== undefined) value.sections = normalizeSectionSettings(body.sections);
-  if (body.windowDays !== undefined) {
-    value.windowDays = clampInteger(
-      body.windowDays,
-      MIN_WINDOW_DAYS,
-      MAX_WINDOW_DAYS,
-      'windowDays'
-    );
-  }
-  if (body.introEnabled !== undefined) {
-    if (typeof body.introEnabled !== 'boolean') fail('introEnabled must be true or false');
-    value.introEnabled = body.introEnabled;
-  }
-  if (body.introTone !== undefined) {
-    if (!INTRO_TONE_IDS.includes(body.introTone)) {
-      fail(`introTone must be one of ${INTRO_TONE_IDS.join(', ')}`);
-    }
-    value.introTone = body.introTone;
-  }
-}
-
-/**
- * One line of plain text: every run of whitespace or control characters,
- * line breaks included, becomes a single space, and the ends are trimmed.
- * The site renders it as text, so nothing here is escaped; what is refused is
- * only what could not be shown as one line in a box.
- */
-function signupText(raw, field, maxLength) {
-  if (typeof raw !== 'string') fail(`${field} must be a string`);
-   
-  const text = raw.replace(/[\s\u0000-\u001f\u007f]+/g, ' ').trim();
-  if (text.length > maxLength) fail(`${field} must be at most ${maxLength} characters`);
-  return text;
-}
-
-/**
- * The signup form fields (#557): signupPlacement, signupHeading, signupBlurb.
- * The placement is checked first and on its own, so a value the site cannot
- * place is refused by name before either string is looked at. A blank heading
- * is refused — the box would open on an empty title — while a blank blurb is
- * allowed and the site then shows no paragraph.
- */
-function normalizeNewsletterSignup(body, value) {
-  if (body.signupPlacement !== undefined) {
-    if (!SIGNUP_PLACEMENTS.includes(body.signupPlacement)) {
-      fail(`signupPlacement must be one of ${SIGNUP_PLACEMENTS.join(', ')}`);
-    }
-    value.signupPlacement = body.signupPlacement;
-  }
-  if (body.signupHeading !== undefined) {
-    const heading = signupText(body.signupHeading, 'signupHeading', MAX_SIGNUP_HEADING_LENGTH);
-    if (!heading) fail('signupHeading must not be blank');
-    value.signupHeading = heading;
-  }
-  if (body.signupBlurb !== undefined) {
-    value.signupBlurb = signupText(body.signupBlurb, 'signupBlurb', MAX_SIGNUP_BLURB_LENGTH);
-  }
-}
-
-/**
- * The template field (#557): a Resend template id, or '' for the built-in
- * design. Trimmed, because it is pasted and read back from Resend's API.
- */
-function normalizeNewsletterTemplate(body, value) {
-  if (body.templateId === undefined) return;
-  if (typeof body.templateId !== 'string') fail('templateId must be a string');
-  const templateId = body.templateId.trim();
-  if (templateId !== BUILT_IN_TEMPLATE_ID && !TEMPLATE_ID_PATTERN.test(templateId)) {
-    fail('templateId must be empty (the built-in design) or a Resend template id');
-  }
-  value.templateId = templateId;
-}
-
-/**
- * `{ postalAddress, replyTo, sendDay, sendTime, timeZone, sections, windowDays,
- * introEnabled, introTone, signupPlacement, signupHeading, signupBlurb,
- * templateId }` →
- * the document the newsletter approval reads
- * (lib/newsletter/admin-handlers.js) and the issue builder reads for content
- * (lib/newsletter/issue.js). Blank address and reply-to are ALLOWED here, so
- * the page can save one before the other; approval is what refuses to send
- * without them (`missingForSending`). A field left out takes its default, so a
- * document saved before the content fields existed reads as the defaults.
- */
-export function normalizeNewsletterSettings(body) {
-  if (!isPlainObject(body)) fail('Body must be a JSON object');
-  const keys = Object.keys(DEFAULT_NEWSLETTER_SETTINGS);
-  assertOnlyKeys(body, keys, 'body');
-  const value = newsletterSettingsDefaults();
-  normalizeNewsletterContent(body, value);
-  normalizeNewsletterSignup(body, value);
-  normalizeNewsletterTemplate(body, value);
-
-  if (body.postalAddress !== undefined) {
-    if (typeof body.postalAddress !== 'string') fail('postalAddress must be a string');
-    const address = body.postalAddress.replace(/\r\n/g, '\n').trim();
-    if (address.length > MAX_POSTAL_ADDRESS_LENGTH) {
-      fail(`postalAddress must be at most ${MAX_POSTAL_ADDRESS_LENGTH} characters`);
-    }
-    value.postalAddress = address;
-  }
-  if (body.replyTo !== undefined) {
-    if (typeof body.replyTo !== 'string') fail('replyTo must be a string');
-    const trimmed = body.replyTo.trim();
-    if (trimmed && !normalizeEmail(trimmed)) fail('replyTo must be an email address');
-    // Replies to the sending subdomain go nowhere: receiving is off there.
-    if (/@news\.hybridcloudworks\.com$/i.test(trimmed)) {
-      fail('replyTo must be an inbox that receives mail; news.hybridcloudworks.com does not');
-    }
-    value.replyTo = trimmed;
-  }
-  if (body.sendDay !== undefined) {
-    if (!SEND_DAYS.includes(body.sendDay)) fail(`sendDay must be one of ${SEND_DAYS.join(', ')}`);
-    value.sendDay = body.sendDay;
-  }
-  if (body.sendTime !== undefined) {
-    if (!isValidSendTime(body.sendTime)) fail('sendTime must be HH:MM (24-hour)');
-    value.sendTime = body.sendTime;
-  }
-  if (body.timeZone !== undefined) {
-    if (!isValidTimeZone(body.timeZone))
-      fail('timeZone must be an IANA time zone such as America/Chicago');
-    value.timeZone = body.timeZone;
-  }
-  return value;
-}
 
 // ── the catalogue ──────────────────────────────────────────────────────────
 
