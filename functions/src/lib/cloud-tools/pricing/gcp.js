@@ -161,90 +161,94 @@ const rate = (sku) =>
   getGoogleTieredRatePrice(sku.pricingInfo?.[0]?.pricingExpression, { firstNonZero: true });
 
 /**
- * @param {string} serviceId
- * @param {object[]} skus  already filtered to the region
- * @param {string} providerRegion
- * @returns {{sku: string, unit: string, pricePerUnit: number}|null}
+ * A finder over one page of SKUs: the first SKU offered in the region whose
+ * description matches `pattern`, and that is on demand when `onDemand` is
+ * set and passes `extra` when one is given.
  */
-export function findGoogleSkuMatch(serviceId, skus, providerRegion) {
-  const here = (sku) => inRegion(sku, providerRegion);
-  const onDemand = (sku) => sku.category?.usageType === 'OnDemand';
-  const describes = (re) => (sku) => re.test(sku.description || '');
+function skuFinder(skus, providerRegion) {
+  return (pattern, { onDemand = false, extra = () => true } = {}) =>
+    skus.find(
+      (s) => inRegion(s, providerRegion) && usageFits(s, onDemand) && describedAs(s, pattern) && extra(s)
+    );
+}
 
-  if (serviceId === 'compute-vm') {
-    const core = skus.find((s) => here(s) && onDemand(s) && /^E2 Instance Core running in /i.test(s.description || ''));
-    const memory = skus.find((s) => here(s) && onDemand(s) && /^E2 Instance Ram running in /i.test(s.description || ''));
-    if (!core || !memory) return null;
-    return {
+const usageFits = (sku, onDemand) => !onDemand || sku.category?.usageType === 'OnDemand';
+const describedAs = (sku, pattern) => pattern.test(sku.description || '');
+
+const ON_DEMAND = { onDemand: true };
+
+/** Two on-demand SKUs priced together (a vCPU and a memory meter); null unless both are found. */
+function pricedPair(find, first, second, build) {
+  const a = find(first, ON_DEMAND);
+  const b = find(second, ON_DEMAND);
+  if (!a || !b) return null;
+  return build(rate(a), rate(b));
+}
+
+const isCount = (s) => s.pricingInfo?.[0]?.pricingExpression?.usageUnit === 'count';
+
+/** One matcher per service: given a finder, the price, or null when a SKU is missing. */
+const GOOGLE_MATCHERS = {
+  'compute-vm': (find) =>
+    pricedPair(find, /^E2 Instance Core running in /i, /^E2 Instance Ram running in /i, (core, memory) => ({
       sku: 'E2-derived 4 vCPU / 16 GiB',
       unit: 'hour',
-      pricePerUnit: 4 * rate(core) + 16 * rate(memory),
-    };
-  }
+      pricePerUnit: 4 * core + 16 * memory,
+    })),
 
-  if (serviceId === 'compute-serverless') {
-    const cpu = skus.find(
-      (s) => here(s) && onDemand(s) && /Cloud Run functions CPU \(Request-based billing\)/i.test(s.description || '')
-    );
-    const memory = skus.find(
-      (s) => here(s) && onDemand(s) && /Cloud Run functions Memory \(Request-based billing\)/i.test(s.description || '')
-    );
-    if (!cpu || !memory) return null;
-    return {
-      sku: SERVERLESS_BENCHMARK_SKU,
-      unit: SERVERLESS_BENCHMARK_UNIT,
-      pricePerUnit: 200000 * rate(cpu) + 400000 * rate(memory),
-    };
-  }
+  'compute-serverless': (find) =>
+    pricedPair(
+      find,
+      /Cloud Run functions CPU \(Request-based billing\)/i,
+      /Cloud Run functions Memory \(Request-based billing\)/i,
+      (cpu, memory) => ({
+        sku: SERVERLESS_BENCHMARK_SKU,
+        unit: SERVERLESS_BENCHMARK_UNIT,
+        pricePerUnit: 200000 * cpu + 400000 * memory,
+      })
+    ),
 
-  if (serviceId === 'storage-object') {
-    const sku = skus.find(
-      (s) =>
-        here(s) &&
-        /Standard Storage/i.test(s.description || '') &&
-        /(Dual-region|Regional|Iowa|Belgium|Oregon)/i.test(s.description || '')
-    );
+  'storage-object': (find) => {
+    const sku = find(/Standard Storage/i, {
+      extra: (s) => /(Dual-region|Regional|Iowa|Belgium|Oregon)/i.test(s.description || ''),
+    });
     if (!sku) return null;
     return { sku: sku.description, unit: 'GB-month', pricePerUnit: rate(sku) };
-  }
+  },
 
-  if (serviceId === 'database-relational') {
-    const cpu = skus.find((s) => here(s) && onDemand(s) && /Cloud SQL .* Regional - vCPU/i.test(s.description || ''));
-    const memory = skus.find((s) => here(s) && onDemand(s) && /Cloud SQL .* Regional - RAM/i.test(s.description || ''));
-    if (!cpu || !memory) return null;
-    return {
+  'database-relational': (find) =>
+    pricedPair(find, /Cloud SQL .* Regional - vCPU/i, /Cloud SQL .* Regional - RAM/i, (cpu, memory) => ({
       sku: 'Cloud SQL regional 2 vCPU / 8 GiB derived',
       unit: 'hour',
-      pricePerUnit: 2 * rate(cpu) + 8 * rate(memory),
-    };
-  }
+      pricePerUnit: 2 * cpu + 8 * memory,
+    })),
 
-  if (serviceId === 'database-nosql') {
-    const isCount = (s) => s.pricingInfo?.[0]?.pricingExpression?.usageUnit === 'count';
-    const readSku = skus.find((s) => here(s) && /Cloud Firestore Read Ops/i.test(s.description || '') && isCount(s));
-    const writeSku = skus.find((s) => here(s) && /Cloud Firestore Entity Writes/i.test(s.description || '') && isCount(s));
+  'database-nosql': (find) => {
+    const readSku = find(/Cloud Firestore Read Ops/i, { extra: isCount });
+    const writeSku = find(/Cloud Firestore Entity Writes/i, { extra: isCount });
     if (!readSku || !writeSku) return null;
     return {
       sku: NOSQL_BENCHMARK_SKU,
       unit: NOSQL_BENCHMARK_UNIT,
       pricePerUnit: rate(readSku) * 500_000 + rate(writeSku) * 500_000,
     };
-  }
+  },
 
-  if (serviceId === 'containers-kubernetes') {
-    const cpu = skus.find((s) => here(s) && onDemand(s) && /Autopilot Balanced Pod mCPU Requests/i.test(s.description || ''));
-    const memory = skus.find((s) => here(s) && onDemand(s) && /Autopilot Balanced Pod Memory Requests/i.test(s.description || ''));
-    if (!cpu || !memory) return null;
-    return {
-      sku: 'Autopilot balanced pod requests',
-      unit: 'hour',
-      // 4000 mCPU, i.e. 4 vCPU expressed in the milli-CPU meter.
-      pricePerUnit: 4000 * rate(cpu) + 16 * rate(memory),
-    };
-  }
+  'containers-kubernetes': (find) =>
+    pricedPair(
+      find,
+      /Autopilot Balanced Pod mCPU Requests/i,
+      /Autopilot Balanced Pod Memory Requests/i,
+      (cpu, memory) => ({
+        sku: 'Autopilot balanced pod requests',
+        unit: 'hour',
+        // 4000 mCPU, i.e. 4 vCPU expressed in the milli-CPU meter.
+        pricePerUnit: 4000 * cpu + 16 * memory,
+      })
+    ),
 
-  if (serviceId === 'integration-messaging') {
-    const sku = skus.find((s) => here(s) && describes(/Message Delivery Basic/i)(s));
+  'integration-messaging': (find) => {
+    const sku = find(/Message Delivery Basic/i);
     if (!sku) return null;
     const expression = sku.pricingInfo?.[0]?.pricingExpression;
     const unitPrice = getGoogleTieredRatePrice(expression, { firstNonZero: true });
@@ -256,12 +260,10 @@ export function findGoogleSkuMatch(serviceId, skus, providerRegion) {
       pricePerUnit:
         usageUnit === 'TB' ? unitPrice * (GCP_MESSAGING_BENCHMARK_BYTES / 1024 ** 4) : unitPrice,
     };
-  }
+  },
 
-  if (serviceId === 'edge-cdn') {
-    const sku = skus.find(
-      (s) => here(s) && /Networking Cloud CDN Traffic Cache Data Transfer/i.test(s.description || '')
-    );
+  'edge-cdn': (find) => {
+    const sku = find(/Networking Cloud CDN Traffic Cache Data Transfer/i);
     if (!sku) return null;
     return {
       sku: sku.description,
@@ -269,9 +271,18 @@ export function findGoogleSkuMatch(serviceId, skus, providerRegion) {
       // Note: tieredRates[0] directly, NOT firstNonZero. Carried over as-is.
       pricePerUnit: moneyToNumber(sku.pricingInfo?.[0]?.pricingExpression?.tieredRates?.[0]?.unitPrice),
     };
-  }
+  },
+};
 
-  return null;
+/**
+ * @param {string} serviceId
+ * @param {object[]} skus  already filtered to the region
+ * @param {string} providerRegion
+ * @returns {{sku: string, unit: string, pricePerUnit: number}|null}
+ */
+export function findGoogleSkuMatch(serviceId, skus, providerRegion) {
+  if (!Object.hasOwn(GOOGLE_MATCHERS, serviceId)) return null;
+  return GOOGLE_MATCHERS[serviceId](skuFinder(skus, providerRegion));
 }
 
 // ---------------------------------------------------------------------------
@@ -302,28 +313,12 @@ export async function fetchGcpPrice(serviceId, requestedRegion, deps = {}) {
   let pageToken = '';
 
   for (let page = 0; page < MAX_SKU_PAGES; page += 1) {
-    const url = new URL(`${BILLING_API}/${service.name}/skus`);
-    url.searchParams.set('pageSize', '5000');
-    if (pageToken) url.searchParams.set('pageToken', pageToken);
-    url.searchParams.set('key', apiKey);
-
-    const response = await doFetch(url);
-    if (!response.ok) throw withStatus(new Error(`Google SKUs returned ${response.status}`), response.status);
-
-    const json = await response.json();
+    const json = await readSkuPage(doFetch, { serviceName: service.name, pageToken, apiKey });
     const skus = Array.isArray(json.skus) ? json.skus : [];
-    for (const sku of skus) {
-      if (inRegion(sku, providerRegion)) candidates.push(sku);
-    }
+    candidates.push(...skus.filter((sku) => inRegion(sku, providerRegion)));
 
     const match = findGoogleSkuMatch(serviceId, candidates, providerRegion);
-    if (match) {
-      return {
-        sku: match.sku,
-        unit: match.unit,
-        pricePerUnit: Number(match.pricePerUnit.toFixed(6)),
-      };
-    }
+    if (match) return rounded(match);
 
     pageToken = json.nextPageToken || '';
     if (!pageToken) break;
@@ -331,3 +326,21 @@ export async function fetchGcpPrice(serviceId, requestedRegion, deps = {}) {
 
   return null;
 }
+
+/** One page of a service's SKUs from the Cloud Billing catalog. */
+async function readSkuPage(doFetch, { serviceName, pageToken, apiKey }) {
+  const url = new URL(`${BILLING_API}/${serviceName}/skus`);
+  url.searchParams.set('pageSize', '5000');
+  if (pageToken) url.searchParams.set('pageToken', pageToken);
+  url.searchParams.set('key', apiKey);
+
+  const response = await doFetch(url);
+  if (!response.ok) throw withStatus(new Error(`Google SKUs returned ${response.status}`), response.status);
+  return response.json();
+}
+
+const rounded = (match) => ({
+  sku: match.sku,
+  unit: match.unit,
+  pricePerUnit: Number(match.pricePerUnit.toFixed(6)),
+});
